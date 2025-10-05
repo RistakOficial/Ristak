@@ -67,19 +67,7 @@ export const AppShell: React.FC = () => {
     <>
       {syncProgressVisible && <SyncProgressBar onClose={handleProgressBarClose} />}
 
-      {/* Overlay cuando el drawer está abierto (no clickeable) */}
-      {syncProgressVisible && (
-        <div
-          className="fixed inset-0 bg-black/30 z-[1100] transition-opacity duration-300 pointer-events-none"
-        />
-      )}
-
-      <div
-        className="relative transition-all duration-300 ease-in-out"
-        style={{
-          marginRight: syncProgressVisible ? 'calc(min(480px, 100vw))' : '0',
-        }}
-      >
+      <div className="relative transition-all duration-300 ease-in-out">
         <Layout sidebar={<Sidebar locationName={locationName} />}>
           <div className="flex flex-col min-h-full">
             <Header onLogout={handleLogout} />

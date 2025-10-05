@@ -29,7 +29,7 @@ export const LabelsProvider: React.FC<{ children: ReactNode }> = ({ children }) 
 
   const fetchLabels = async () => {
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/api/highlevel/custom-labels`)
+      const response = await fetch(`${import.meta.env.VITE_API_URL || (import.meta.env.MODE === 'production' ? '' : 'http://localhost:3001')}/api/highlevel/custom-labels`)
       const json = await response.json()
 
       if (json.success && json.data) {
@@ -47,7 +47,7 @@ export const LabelsProvider: React.FC<{ children: ReactNode }> = ({ children }) 
     try {
       const updatedLabels = { ...labels, ...newLabels }
 
-      const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/api/highlevel/custom-labels`, {
+      const response = await fetch(`${import.meta.env.VITE_API_URL || (import.meta.env.MODE === 'production' ? '' : 'http://localhost:3001')}/api/highlevel/custom-labels`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'

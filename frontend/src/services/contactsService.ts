@@ -34,7 +34,7 @@ export const contactsService = {
         if (startDate) params.append('startDate', startDate)
         if (endDate) params.append('endDate', endDate)
 
-        const url = `${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/api/contacts?${params.toString()}`
+        const url = `${import.meta.env.VITE_API_URL || (import.meta.env.MODE === 'production' ? '' : 'http://localhost:3001')}/api/contacts?${params.toString()}`
         const response = await fetch(url)
         const json = await response.json()
 

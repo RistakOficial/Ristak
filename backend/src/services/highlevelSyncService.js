@@ -29,23 +29,45 @@ export function getSyncProgress() {
   return syncProgress
 }
 
+function updateGlobalProgress() {
+  // Calcular el total global y el progreso actual sumando todos los módulos
+  const totalGlobal =
+    (syncProgress.contacts.total || 0) +
+    (syncProgress.appointments.total || 0) +
+    (syncProgress.payments.total || 0) +
+    (syncProgress.metaAds?.count || 0)
+
+  const currentGlobal =
+    (syncProgress.contacts.saved || 0) +
+    (syncProgress.appointments.saved || 0) +
+    (syncProgress.payments.saved || 0) +
+    (syncProgress.metaAds?.count || 0) // Meta se considera completo cuando tiene count
+
+  syncProgress.total = totalGlobal
+  syncProgress.current = currentGlobal
+}
+
 function updateContacts(saved, total, status, message) {
   syncProgress.contacts = { saved, total, status, message }
+  updateGlobalProgress()
   logger.info(`Contactos: ${message}`)
 }
 
 function updateAppointments(saved, total, status, message) {
   syncProgress.appointments = { saved, total, status, message }
+  updateGlobalProgress()
   logger.info(`Citas: ${message}`)
 }
 
 function updatePayments(saved, total, status, message) {
   syncProgress.payments = { saved, total, status, message }
+  updateGlobalProgress()
   logger.info(`Pagos: ${message}`)
 }
 
 function updateMetaAds(synced, count, status, message) {
   syncProgress.metaAds = { synced, count, status, message }
+  updateGlobalProgress()
   logger.info(`Meta Ads: ${message}`)
 }
 
