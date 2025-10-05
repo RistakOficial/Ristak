@@ -404,7 +404,7 @@ export const getSpendOverTime = async (req, res) => {
     const spendQuery = usePostgres
       ? `
         SELECT
-          TO_CHAR(date, 'YYYY-MM-DD') as day,
+          TO_CHAR(date::date, 'YYYY-MM-DD') as day,
           SUM(spend) as spend
         FROM meta_ads
         WHERE date >= $1 AND date < ($2::date + INTERVAL '1 day')
@@ -426,7 +426,7 @@ export const getSpendOverTime = async (req, res) => {
     const revenueQuery = usePostgres
       ? `
         SELECT
-          TO_CHAR(date, 'YYYY-MM-DD') as day,
+          TO_CHAR(date::date, 'YYYY-MM-DD') as day,
           SUM(amount) as revenue
         FROM payments
         WHERE status = 'succeeded'

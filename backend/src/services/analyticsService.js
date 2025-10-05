@@ -584,19 +584,19 @@ function getGroupExpression(column, groupBy) {
 
   if (groupBy === 'year') {
     return isPostgres
-      ? `TO_CHAR(${column} AT TIME ZONE 'America/Mexico_City', 'YYYY')`
+      ? `TO_CHAR(${column}::timestamp AT TIME ZONE 'America/Mexico_City', 'YYYY')`
       : `strftime('%Y', datetime(${column}, '${tzOffset}'))`
   }
 
   if (groupBy === 'month') {
     return isPostgres
-      ? `TO_CHAR(${column} AT TIME ZONE 'America/Mexico_City', 'YYYY-MM')`
+      ? `TO_CHAR(${column}::timestamp AT TIME ZONE 'America/Mexico_City', 'YYYY-MM')`
       : `strftime('%Y-%m', datetime(${column}, '${tzOffset}'))`
   }
 
   // day
   return isPostgres
-    ? `TO_CHAR(${column} AT TIME ZONE 'America/Mexico_City', 'YYYY-MM-DD')`
+    ? `TO_CHAR(${column}::timestamp AT TIME ZONE 'America/Mexico_City', 'YYYY-MM-DD')`
     : `strftime('%Y-%m-%d', datetime(${column}, '${tzOffset}'))`
 }
 
