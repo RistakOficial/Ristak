@@ -223,7 +223,9 @@ export const getChartData = async (req, res) => {
     let ingresosQuery, gastosQuery;
     let ingresosParams, gastosParams;
 
-    if (false) {
+    const usePostgres = Boolean(process.env.DATABASE_URL);
+
+    if (usePostgres) {
       // PostgreSQL usa TO_CHAR
       const dateFormat = groupBy === 'day' ? 'YYYY-MM-DD' : 'YYYY-MM';
 
@@ -335,7 +337,9 @@ export const getRoasData = async (req, res) => {
 
     // Agrupar por mes - query según la base de datos
     let query, params;
-    if (false) {
+    const usePostgres = Boolean(process.env.DATABASE_URL);
+
+    if (usePostgres) {
       query = `
         SELECT
           TO_CHAR(i.date::timestamp, 'YYYY-MM') as periodo,
@@ -398,7 +402,9 @@ export const getNewCustomersData = async (req, res) => {
     let query;
     let params;
 
-    if (false) {
+    const usePostgres = Boolean(process.env.DATABASE_URL);
+
+    if (usePostgres) {
       const dateFormat = groupBy === 'day' ? 'YYYY-MM-DD' : 'YYYY-MM';
       query = `
         SELECT
@@ -455,7 +461,9 @@ export const getLeadsData = async (req, res) => {
     let query;
     let params;
 
-    if (false) {
+    const usePostgres = Boolean(process.env.DATABASE_URL);
+
+    if (usePostgres) {
       const dateFormat = groupBy === 'day' ? 'YYYY-MM-DD' : 'YYYY-MM';
       query = `
         SELECT
@@ -510,7 +518,9 @@ export const getAppointmentsData = async (req, res) => {
     let query;
     let params;
 
-    if (false) {
+    const usePostgres = Boolean(process.env.DATABASE_URL);
+
+    if (usePostgres) {
       const dateFormat = groupBy === 'day' ? 'YYYY-MM-DD' : 'YYYY-MM';
       query = `
         SELECT
@@ -567,7 +577,9 @@ export const getSalesData = async (req, res) => {
     let query;
     let params;
 
-    if (false) {
+    const usePostgres = Boolean(process.env.DATABASE_URL);
+
+    if (usePostgres) {
       const dateFormat = groupBy === 'day' ? 'YYYY-MM-DD' : 'YYYY-MM';
       query = `
         SELECT
