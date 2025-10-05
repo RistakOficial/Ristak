@@ -70,12 +70,14 @@ export const handleContactWebhook = async (req, res) => {
  */
 export const handlePaymentWebhook = async (req, res) => {
   try {
-    const payment = req.body;
+    const data = req.body;
+    const payment = data.payment || {};
 
-    logger.info(`📥 Webhook de pago recibido: ${payment._id || payment.id || 'sin ID'}`);
+    // HighLevel manda el ID en payment.transaction_id
+    const paymentId = payment.transaction_id || payment._id || payment.id || data.id;
+    const contactId = data.contact_id || data.contactId || payment.customer?.id;
 
-    const paymentId = payment._id || payment.id;
-    const contactId = payment.contactId || payment.contact_id;
+    logger.info(`📥 Webhook de pago recibido: ${paymentId || 'sin ID'}`);
 
     if (!paymentId || !contactId) {
       logger.warn('Webhook de pago sin ID o contactId, ignorando');
@@ -90,13 +92,15 @@ export const handlePaymentWebhook = async (req, res) => {
       logger.info(`Contacto ${contactId} no existe, creando con datos básicos...`);
 
       const contactQuery = usePostgres
-        ? `INSERT INTO contacts (id, full_name, source) VALUES ($1, $2, $3) ON CONFLICT (id) DO NOTHING`
-        : `INSERT OR IGNORE INTO contacts (id, full_name, source) VALUES (?, ?, ?)`;
+        ? `INSERT INTO contacts (id, full_name, phone, source, created_at) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id) DO NOTHING`
+        : `INSERT OR IGNORE INTO contacts (id, full_name, phone, source, created_at) VALUES (?, ?, ?, ?, ?)`;
 
       await db.run(contactQuery, [
         contactId,
-        payment.contactName || 'Contacto sin nombre',
-        'payment-webhook'
+        payment.customer?.name || data.full_name || data.contactName || 'Contacto sin nombre',
+        payment.customer?.phone || data.phone || null,
+        'payment-webhook',
+        data.date_created || new Date().toISOString()
       ]);
     }
 
@@ -111,24 +115,25 @@ export const handlePaymentWebhook = async (req, res) => {
       : `INSERT OR REPLACE INTO payments (id, contact_id, amount, currency, status, payment_method, reference, date, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 
-    // Extraer método de pago (puede venir como objeto)
-    let paymentMethod = payment.paymentProviderType || payment.payment_method || 'manual'
-    if (!paymentMethod && payment.paymentMethod) {
-      paymentMethod = typeof payment.paymentMethod === 'object'
-        ? (payment.paymentMethod.type || payment.paymentMethod.name || payment.paymentMethod.method || 'manual')
-        : payment.paymentMethod
-    }
+    // Extraer método de pago
+    const paymentMethod = payment.method || payment.gateway || payment.payment_method || 'manual';
+
+    // Crear referencia con el número de factura
+    const invoiceNumber = payment.invoice?.number || payment.entitySourceMeta?.invoiceNumber || '';
+    const reference = invoiceNumber
+      ? `Invoice ${invoiceNumber}`
+      : payment.reference || paymentId;
 
     await db.run(query, [
       paymentId,
       contactId,
-      payment.amount, // HighLevel envía el monto directo, NO en centavos
-      payment.currency || 'MXN',
-      payment.status || 'succeeded',
+      payment.total_amount || payment.amount || 0, // HighLevel envía el monto directo, NO en centavos
+      payment.currency_code || payment.currency || 'MXN',
+      payment.payment_status || payment.status || 'succeeded',
       paymentMethod,
-      `${payment.entitySourceName || ''} - Invoice #${payment.entitySourceMeta?.invoiceNumber || ''}`.trim() || payment.reference || paymentId,
-      payment.fulfilledAt || payment.date || payment.createdAt || new Date().toISOString(),
-      payment.createdAt || new Date().toISOString()
+      reference,
+      payment.created_at || payment.fulfilledAt || payment.date || payment.createdAt || new Date().toISOString(),
+      payment.created_at || payment.createdAt || new Date().toISOString()
     ]);
 
     // Actualizar estadísticas del contacto
