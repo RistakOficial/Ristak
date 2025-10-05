@@ -7,44 +7,55 @@ import { updateSingleContactStats } from '../utils/updateContactsStats.js';
  */
 export const handleContactWebhook = async (req, res) => {
   try {
-    const contact = req.body;
+    const data = req.body;
 
-    logger.info(`📥 Webhook de contacto recibido: ${contact.id || 'sin ID'}`);
+    // HighLevel puede mandar el ID en diferentes lugares
+    const contactId = data.contact_id || data.id || data.contactId;
 
-    if (!contact.id) {
+    logger.info(`📥 Webhook de contacto recibido: ${contactId || 'sin ID'}`);
+
+    if (!contactId) {
       logger.warn('Webhook de contacto sin ID, ignorando');
       return res.status(200).json({ success: true, message: 'Webhook recibido' });
     }
 
-    const attribution = contact.attributions?.find(a => a.isFirst) || {};
+    // Extraer datos de atribución (pueden venir en diferentes estructuras)
+    const attribution = data.attributions?.find(a => a.isFirst)
+      || data.contact?.attributionSource
+      || data.contact?.lastAttributionSource
+      || data.attributionSource
+      || {};
+
     const usePostgres = process.env.DATABASE_URL ? true : false;
 
     const query = usePostgres
-      ? `INSERT INTO contacts (id, phone, email, full_name, first_name, last_name, source,
+      ? `INSERT INTO contacts (id, phone, email, full_name, first_name, last_name, source, created_at,
           attribution_url, attribution_session_source, attribution_medium, attribution_ad_id, attribution_ad_name)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
          ON CONFLICT (id) DO UPDATE SET
-          phone = EXCLUDED.phone, email = EXCLUDED.email, full_name = EXCLUDED.full_name, updated_at = CURRENT_TIMESTAMP`
-      : `INSERT OR REPLACE INTO contacts (id, phone, email, full_name, first_name, last_name, source,
+          phone = EXCLUDED.phone, email = EXCLUDED.email, full_name = EXCLUDED.full_name,
+          first_name = EXCLUDED.first_name, last_name = EXCLUDED.last_name, updated_at = CURRENT_TIMESTAMP`
+      : `INSERT OR REPLACE INTO contacts (id, phone, email, full_name, first_name, last_name, source, created_at,
           attribution_url, attribution_session_source, attribution_medium, attribution_ad_id, attribution_ad_name)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 
     await db.run(query, [
-      contact.id,
-      contact.phone || contact.contactPhone,
-      contact.email,
-      contact.contactName || `${contact.firstName || ''} ${contact.lastName || ''}`.trim(),
-      contact.firstName,
-      contact.lastName,
-      contact.source || 'gohighlevel',
+      contactId,
+      data.phone || data.contactPhone,
+      data.email,
+      data.full_name || data.contactName || `${data.first_name || data.firstName || ''} ${data.last_name || data.lastName || ''}`.trim() || 'Sin nombre',
+      data.first_name || data.firstName,
+      data.last_name || data.lastName,
+      data.source || attribution.sessionSource || 'gohighlevel',
+      data.date_created || data.dateCreated || data.createdAt || new Date().toISOString(),
       attribution.pageUrl || attribution.url,
-      attribution.utmSessionSource,
+      attribution.utmSessionSource || attribution.sessionSource,
       attribution.medium,
-      attribution.utmAdId,
+      attribution.utmAdId || attribution.mediumId,
       attribution.adName
     ]);
 
-    logger.info(`✅ Contacto ${contact.id} procesado exitosamente`);
+    logger.info(`✅ Contacto ${contactId} procesado exitosamente`);
     res.status(200).json({ success: true, message: 'Contacto procesado' });
 
   } catch (error) {
