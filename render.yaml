@@ -24,6 +24,8 @@ services:
           property: connectionString
       - key: APP_URL
         value: https://ristak-app.onrender.com
+      - key: RENDER_EXTERNAL_URL
+        value: https://ristak-app.onrender.com
     healthCheckPath: /api/health
     autoDeploy: true
 

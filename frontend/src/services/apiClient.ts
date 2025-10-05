@@ -2,7 +2,8 @@ import { dedupeContactsPayload } from '@/utils/contactDedup'
 
 // IMPORTANTE: VITE_API_URL NO debe terminar con /api
 // Este cliente SIEMPRE agrega /api/ a las rutas
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001'
+// En producción usa rutas relativas (mismo origen), en desarrollo localhost:3001
+const API_BASE_URL = import.meta.env.VITE_API_URL || (import.meta.env.MODE === 'production' ? '' : 'http://localhost:3001')
 
 interface ApiRequestOptions extends RequestInit {
   params?: Record<string, string>
