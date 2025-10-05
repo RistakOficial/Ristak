@@ -1,0 +1,327 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xl);
+}
+
+.header {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--spacing-md);
+}
+
+.title {
+  font-size: var(--font-size-2xl);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+  margin: 0;
+}
+
+.titleBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.rangeLabel {
+  display: block;
+  margin-top: 0.25rem;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-tertiary);
+}
+
+.datePickerInline {
+  margin-top: var(--spacing-sm);
+}
+
+.filtersRow {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-md);
+  flex-wrap: wrap;
+  row-gap: var(--spacing-sm);
+  width: 100%;
+}
+
+.filtersRow > * {
+  flex-shrink: 0;
+}
+
+.exportButton {
+  font-weight: var(--font-weight-medium);
+  margin-left: auto;
+}
+
+
+.kpiRow {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--spacing-md);
+  margin-bottom: var(--spacing-xl);
+}
+
+.kpiStatic {
+  display: block;
+}
+
+.loadingCard {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--spacing-xl);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-base);
+}
+
+.sectionCard {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-lg);
+}
+
+.sectionHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.sectionHeader h2 {
+  margin: 0;
+  font-size: var(--font-size-xl);
+  color: var(--color-text-primary);
+}
+
+.sectionSubtitle {
+  display: block;
+  margin-top: 0.25rem;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-sm);
+}
+
+.metricsGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--spacing-md);
+}
+
+.metricLabel {
+  display: block;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-sm);
+  margin-bottom: 0.25rem;
+}
+
+.metricValue {
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+}
+
+.tableWrapper {
+  margin-top: var(--spacing-md);
+}
+
+.subsectionGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--spacing-lg);
+}
+
+.metricList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.metricList li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.metricList li:last-child {
+  border-bottom: none;
+}
+
+.metricLink {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: var(--color-text-primary);
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.metricLink:hover {
+  color: var(--color-text-primary);
+  font-weight: var(--font-weight-semibold);
+}
+
+.yearControls {
+  display: flex;
+  gap: var(--spacing-md);
+  align-items: center;
+}
+
+.yearControlGroup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+.yearButtons {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  background-color: var(--color-surface);
+  border-radius: var(--radius-md);
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--color-border-subtle);
+}
+
+.yearButtons span {
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+  min-width: 2.5rem;
+  text-align: center;
+}
+
+.monthControls {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.customMonthControls {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  background-color: var(--color-surface);
+  border-radius: var(--radius-md);
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--color-border-subtle);
+}
+
+.customControl {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+.customControl select,
+.customControl input {
+  min-width: 120px;
+  padding: 0.4rem 0.6rem;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border-subtle);
+  font-size: var(--font-size-sm);
+}
+
+.numberInput {
+  width: 90px;
+}
+
+.metricsTableCard {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.metricsLoading {
+  margin: 0;
+  padding: var(--spacing-xl);
+  text-align: center;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.metricsTableWrapper {
+  overflow-x: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background-color: var(--color-background);
+}
+
+.metricsTable {
+  width: 100%;
+  border-collapse: collapse;
+  border-spacing: 0;
+  min-width: 320px;
+}
+
+.metricsTable thead th {
+  text-align: left;
+  padding: var(--spacing-sm) var(--spacing-md);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-text-tertiary);
+  background-color: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.metricsSectionRow th {
+  text-align: left;
+  padding: var(--spacing-sm) var(--spacing-md);
+  font-size: var(--font-size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--color-text-tertiary);
+  background-color: var(--color-surface);
+  border-top: 1px solid var(--color-border);
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.metricsRow td {
+  padding: var(--spacing-sm) var(--spacing-md);
+  font-size: var(--font-size-sm);
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.metricsRow:last-child td {
+  border-bottom: none;
+}
+
+.metricsLabelCell {
+  color: var(--color-text-secondary);
+  font-weight: var(--font-weight-medium);
+}
+
+.metricsValueCell {
+  text-align: right;
+  color: var(--color-text-primary);
+  font-weight: var(--font-weight-semibold);
+  white-space: nowrap;
+}
+
+.metricsEmpty {
+  text-align: center;
+  padding: var(--spacing-xl);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-tertiary);
+}
+
+.dateCell {
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-primary);
+}
+
+.primaryText {
+  color: var(--color-text-primary);
+}
+
+.secondaryText {
+  color: var(--color-text-primary);
+}

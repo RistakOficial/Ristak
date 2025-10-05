@@ -1,0 +1,42 @@
+databases:
+  - name: ristak-db
+    databaseName: ristak_production
+    region: oregon
+    plan: free
+
+services:
+  # Web Service Principal
+  - type: web
+    name: ristak-app
+    runtime: node
+    region: oregon
+    plan: starter
+    buildCommand: npm install --prefix backend && npm install --include=dev --prefix frontend && npm run build --prefix frontend
+    startCommand: npm start --prefix backend
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3001
+      - key: DATABASE_URL
+        fromDatabase:
+          name: ristak-db
+          property: connectionString
+      - key: APP_URL
+        value: https://ristak-app.onrender.com
+    healthCheckPath: /api/health
+    autoDeploy: true
+
+  # Cron Job - Actualización de Meta Ads cada hora
+  - type: cron
+    name: ristak-meta-sync
+    runtime: node
+    region: oregon
+    schedule: "0 * * * *"
+    buildCommand: echo "Cron job configurado"
+    envVars:
+      - key: APP_URL
+        value: https://ristak-app.onrender.com
+    startCommand: |
+      curl -X POST ${APP_URL}/api/meta/update-recent \
+      -H "Content-Type: application/json"

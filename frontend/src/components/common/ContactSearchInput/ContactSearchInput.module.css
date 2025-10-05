@@ -1,0 +1,408 @@
+.container {
+  position: relative;
+}
+
+.label {
+  display: block;
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  margin-bottom: var(--spacing-xs);
+}
+
+.required {
+  color: var(--color-danger);
+}
+
+/* Chip for selected contact */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  background: var(--color-primary-light);
+  border: 1px solid var(--color-primary);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  max-width: 100%;
+}
+
+.chipContent {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  flex: 1;
+  min-width: 0;
+  color: var(--color-primary);
+}
+
+.chipName {
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chipEmail {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chipRemove {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  padding: var(--spacing-xxs);
+  border-radius: var(--radius-sm);
+  transition: all 0.2s ease;
+}
+
+.chipRemove:hover:not(:disabled) {
+  background: var(--color-bg-hover);
+  color: var(--color-text-primary);
+}
+
+.chipRemove:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Search input */
+.inputWrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  margin-bottom: 0;
+}
+
+.searchIcon {
+  position: absolute;
+  left: 14px;
+  color: var(--color-text-tertiary);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.input {
+  width: 100%;
+  padding: var(--spacing-sm) var(--spacing-md);
+  padding-left: 48px;
+  font-size: var(--font-size-base);
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  transition: all 0.2s ease;
+}
+
+.input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+}
+
+.input:disabled {
+  background: var(--color-bg-disabled);
+  cursor: not-allowed;
+}
+
+.spinner {
+  position: absolute;
+  right: var(--spacing-sm);
+  display: flex;
+  align-items: center;
+  color: var(--color-primary);
+  animation: spin 1s linear infinite;
+  z-index: 1;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* Dropdown */
+.dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  background: white;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  z-index: 10000;
+  max-height: 280px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+body.dark .dropdown {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08), 0 0 0 1px rgba(0, 0, 0, 0.04);
+}
+
+/* Suggestions */
+.suggestions {
+  list-style: none;
+  padding: var(--spacing-xs) 0;
+  margin: 0;
+  max-height: 200px;
+  overflow-y: auto;
+  flex: 1;
+  background: white;
+}
+
+.suggestionItem {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm) var(--spacing-md);
+  cursor: pointer;
+  transition: background 0.1s ease;
+}
+
+.suggestionItem:hover,
+.suggestionItem.selected {
+  background: #f5f5f5;
+}
+
+.suggestionItem svg {
+  margin-top: 2px;
+  flex-shrink: 0;
+  color: var(--color-text-tertiary);
+}
+
+.contactInfo {
+  flex: 1;
+  min-width: 0;
+}
+
+.contactName {
+  font-weight: 500;
+  font-size: var(--font-size-base);
+  color: var(--color-text-primary);
+  line-height: 1.3;
+  margin-bottom: 2px;
+}
+
+.contactDetails {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.3;
+}
+
+.highlight {
+  background: rgba(var(--color-primary-rgb), 0.2);
+  color: var(--color-primary);
+  font-weight: 600;
+  padding: 0 2px;
+  border-radius: 2px;
+}
+
+.noResults {
+  padding: var(--spacing-md);
+  text-align: center;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-sm);
+  background: white;
+}
+
+.addNewButton {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  width: 100%;
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: white;
+  border: none;
+  border-top: 1px solid #e5e5e5;
+  color: var(--color-primary);
+  font-size: var(--font-size-base);
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.1s ease;
+  flex-shrink: 0;
+}
+
+.addNewButton:hover,
+.addNewButton.selected {
+  background: rgba(var(--color-primary-rgb), 0.08);
+}
+
+.addNewButton svg {
+  flex-shrink: 0;
+}
+
+/* New contact form */
+.newContactForm {
+  padding: var(--spacing-md);
+}
+
+.formHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--spacing-md);
+  padding-bottom: var(--spacing-sm);
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.formHeader h4 {
+  margin: 0;
+  font-size: var(--font-size-base);
+  color: var(--color-text-primary);
+}
+
+.closeButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  padding: var(--spacing-xxs);
+  border-radius: var(--radius-sm);
+  transition: all 0.2s ease;
+}
+
+.closeButton:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text-primary);
+}
+
+.formBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.formRow {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--spacing-sm);
+}
+
+.formField {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xxs);
+}
+
+.formField input {
+  width: 100%;
+  padding: var(--spacing-xs) var(--spacing-sm);
+  font-size: var(--font-size-sm);
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  transition: all 0.2s ease;
+}
+
+.formField input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+}
+
+.formField input.inputError {
+  border-color: var(--color-danger);
+}
+
+.errorText {
+  font-size: var(--font-size-xs);
+  color: var(--color-danger);
+  margin-top: 2px;
+}
+
+.formActions {
+  display: flex;
+  gap: var(--spacing-sm);
+  justify-content: flex-end;
+  margin-top: var(--spacing-sm);
+  padding-top: var(--spacing-sm);
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.cancelButton {
+  padding: var(--spacing-xs) var(--spacing-md);
+  font-size: var(--font-size-sm);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.cancelButton:hover {
+  background: var(--color-bg-hover);
+}
+
+.saveButton {
+  padding: var(--spacing-xs) var(--spacing-md);
+  font-size: var(--font-size-sm);
+  background: var(--color-primary);
+  border: none;
+  border-radius: var(--radius-sm);
+  color: white;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.saveButton:hover:not(:disabled) {
+  background: var(--color-primary-dark);
+}
+
+.saveButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.error {
+  display: block;
+  font-size: var(--font-size-xs);
+  color: var(--color-danger);
+  margin-top: var(--spacing-xs);
+}
+
+/* Dark mode support */
+[data-theme="dark"] .chip {
+  background: rgba(var(--color-primary-rgb), 0.2);
+}
+
+[data-theme="dark"] .dropdown {
+  background: #1a1a1a;
+  border-color: #333;
+}
+
+[data-theme="dark"] .suggestions {
+  background: #1a1a1a;
+}
+
+[data-theme="dark"] .noResults {
+  background: #1a1a1a;
+}
+
+[data-theme="dark"] .addNewButton {
+  background: #1a1a1a;
+  border-top-color: #333;
+}
+
+[data-theme="dark"] .suggestionItem:hover,
+[data-theme="dark"] .suggestionItem.selected,
+[data-theme="dark"] .addNewButton:hover,
+[data-theme="dark"] .addNewButton.selected {
+  background: #2a2a2a;
+}
+
+[data-theme="dark"] .highlight {
+  background: rgba(var(--color-warning-rgb), 0.3);
+}

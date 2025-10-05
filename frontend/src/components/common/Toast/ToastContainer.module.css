@@ -1,0 +1,16 @@
+.container {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 10000;
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 14px;
+  pointer-events: none;
+  width: 420px;
+  max-width: calc(100vw - 48px);
+}
+
+.container > * {
+  pointer-events: auto;
+}

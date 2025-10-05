@@ -1,0 +1,220 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-lg);
+}
+
+.pageHeader {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.pageTitle {
+  font-size: var(--font-size-2xl);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+  margin: 0;
+}
+
+.datePickerInline {
+  width: fit-content;
+}
+
+.controlsRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-md);
+  flex-wrap: wrap;
+}
+
+.kpiRow {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--spacing-md);
+}
+
+.methodCell {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+}
+
+.statusBadge {
+  display: inline-block;
+  padding: 2px var(--spacing-sm);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  text-transform: uppercase;
+}
+
+.paid {
+  background-color: var(--color-success-light);
+  color: var(--color-success-dark);
+}
+
+.pending {
+  background-color: var(--color-warning-light);
+  color: var(--color-warning-dark);
+}
+
+.failed {
+  background-color: var(--color-error-light);
+  color: var(--color-error-dark);
+}
+
+.refunded {
+  background-color: var(--color-info-light);
+  color: var(--color-info-dark);
+}
+
+.actions {
+  display: flex;
+  gap: var(--spacing-xs);
+}
+
+.actionButton {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: var(--spacing-xs);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+  transition: all var(--transition-fast);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.actionButton:hover {
+  background-color: var(--color-surface);
+  color: var(--color-text-primary);
+}
+
+/* Modal */
+.modalOverlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: var(--z-index-modal);
+}
+
+.modal {
+  background-color: var(--color-background);
+  border-radius: var(--radius-lg);
+  padding: var(--spacing-xl);
+  max-width: 500px;
+  width: 90%;
+  max-height: 80vh;
+  overflow-y: auto;
+}
+
+.modal h2 {
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+  margin: 0 0 var(--spacing-lg) 0;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.formGroup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.formGroup label {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-primary);
+}
+
+.formGroup > input,
+.formGroup > select,
+.formGroup .inputWithIcon input {
+  padding: var(--spacing-sm) var(--spacing-md);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background-color: var(--color-background);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-base);
+}
+
+.formGroup > input:focus,
+.formGroup > select:focus,
+.formGroup .inputWithIcon input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+}
+
+.formActions {
+  display: flex;
+  gap: var(--spacing-sm);
+  justify-content: flex-end;
+  margin-top: var(--spacing-md);
+}
+
+/* Input con icono para monto */
+.inputWithIcon {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.inputIcon {
+  position: absolute;
+  left: var(--spacing-md);
+  color: var(--color-text-tertiary);
+  font-weight: 500;
+  font-size: var(--font-size-base);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.amountInput {
+  padding-left: calc(var(--spacing-md) * 2 + 16px) !important;
+  -webkit-appearance: none;
+  -moz-appearance: textfield;
+}
+
+.amountInput::-webkit-inner-spin-button,
+.amountInput::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--spacing-md);
+  }
+
+  .kpiRow {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .modal {
+    padding: var(--spacing-lg);
+  }
+}
+
+@media (max-width: 480px) {
+  .kpiRow {
+    grid-template-columns: 1fr;
+  }
+}

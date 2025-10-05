@@ -1,0 +1,365 @@
+- # 🧠 CONTEXTO MAESTRO - RISTAK APP
+> **IMPORTANTE**: Este archivo es la fuente de verdad del proyecto. La IA DEBE leerlo SIEMPRE antes de cualquier tarea y actualizarlo cuando haga cambios estructurales.
+
+## 📋 REGLAS CRÍTICAS DE DESARROLLO
+
+### ⚠️ MANDAMIENTOS INQUEBRANTABLES
+1. **NUNCA crear archivos nuevos si ya existe uno similar** - SIEMPRE modificar el existente
+2. **NUNCA dejar código muerto o componentes huérfanos** - Si no se usa, se elimina
+3. **NUNCA duplicar funcionalidad** - Una sola fuente de verdad para cada cosa
+4. **NUNCA hacer cambios sin verificar el contexto completo** - Leer TODO el proyecto antes
+5. **SIEMPRE actualizar este archivo** cuando cambies la estructura o agregues features
+6. **SIEMPRE limpiar imports no usados** y dependencias fantasma
+7. **NUNCA commitear console.logs** de debug en producción
+
+### �� FILOSOFÍA DE CÓDIGO
+- **Limpio > Rápido**: Preferir código mantenible sobre optimizaciones prematuras
+- **Explícito > Implícito**: Nombres descriptivos, nada de magia negra
+- **Consistente > Creativo**: Seguir los patrones ya establecidos
+- **Actualizar > Parchear**: Si algo está roto, arreglarlo bien, no poner curitas
+
+---
+
+## 🏗️ ARQUITECTURA ACTUAL
+
+### Stack Tecnológico
+```
+Frontend:
+├── React 19.0.0 + TypeScript 5.7.2
+├── Vite 6.0.11 (bundler)
+├── React Router DOM 7.1.3
+├── Recharts 2.15.0 (gráficas)
+├── Lucide React (iconos)
+└── Lodash 4.17.21 (utilidades)
+
+Backend:
+├── Node.js 20+ con ES Modules
+├── Express 4.21.2
+├── SQLite3 5.1.7 (base de datos local)
+├── Node-cron 3.0.3 (tareas programadas)
+└── CORS 2.8.5
+```
+
+### Estructura de Carpetas
+```
+/
+├── frontend/
+│   ├── src/
+│   │   ├── components/
+│   │   │   ├── common/        # Componentes reutilizables
+│   │   │   │   ├── Button/
+│   │   │   │   ├── Card/
+│   │   │   │   ├── ContactDetailsModal/
+│   │   │   │   ├── ContactSearchInput/
+│   │   │   │   ├── DateRangePicker/
+│   │   │   │   ├── Icon/
+│   │   │   │   ├── KpiCard/
+│   │   │   │   ├── LineChart/
+│   │   │   │   ├── Modal/
+│   │   │   │   ├── TabList/
+│   │   │   │   ├── Table/
+│   │   │   │   ├── Toast/
+│   │   │   │   ├── ViewSelector/
+│   │   │   │   ├── SyncProgressBar/
+│   │   │   │   └── index.ts   # Exportaciones centralizadas
+│   │   │   └── layout/
+│   │   │       └── AppShell/  # Layout principal
+│   │   ├── contexts/          # Estado global
+│   │   │   ├── AuthContext.tsx
+│   │   │   ├── DateRangeContext.tsx
+│   │   │   ├── NotificationContext.tsx
+│   │   │   ├── ThemeContext.tsx
+│   │   │   └── TimezoneContext.tsx
+│   │   ├── pages/             # Páginas/Vistas
+│   │   │   ├── Dashboard/
+│   │   │   ├── Campaigns/
+│   │   │   ├── Contacts/
+│   │   │   ├── Reports/
+│   │   │   ├── Settings/
+│   │   │   └── Transactions/
+│   │   ├── services/          # Llamadas API
+│   │   │   ├── apiClient.ts
+│   │   │   ├── campaignsService.ts
+│   │   │   ├── contactsService.ts
+│   │   │   ├── dashboardService.ts
+│   │   │   ├── highLevelService.ts
+│   │   │   ├── reportsService.ts
+│   │   │   └── transactionsService.ts
+│   │   ├── styles/            # Estilos globales
+│   │   │   ├── index.css
+│   │   │   ├── theme.css
+│   │   │   └── tokens.css
+│   │   ├── types/             # TypeScript types
+│   │   │   ├── index.ts
+│   │   │   ├── facebook.d.ts
+│   │   │   └── metrics.ts
+│   │   ├── utils/             # Utilidades
+│   │   │   ├── format.ts
+│   │   │   ├── tableStorage.ts
+│   │   │   └── timezone.ts
+│   │   ├── App.tsx            # Componente raíz
+│   │   └── main.tsx           # Entry point
+│   └── dist/                  # Build de producción
+│
+├── backend/
+│   └── src/
+│       ├── config/
+│       │   ├── constants.js
+│       │   └── database.js    # Conexión DB (SQLite/PostgreSQL)
+│       ├── controllers/
+│       │   ├── dashboardController.js
+│       │   ├── highlevelController.js
+│       │   ├── metaController.js
+│       │   ├── reportsController.js
+│       │   └── webhooksController.js
+│       ├── jobs/
+│       │   └── metaSync.cron.js
+│       ├── routes/
+│       │   ├── dashboard.routes.js
+│       │   ├── highlevel.routes.js
+│       │   ├── meta.routes.js
+│       │   ├── reports.routes.js
+│       │   └── webhooks.routes.js
+│       ├── services/
+│       │   ├── highlevelSyncService.js
+│       │   └── metaAdsService.js
+│       ├── utils/
+│       │   ├── dateUtils.js
+│       │   └── logger.js      # Sistema de logging personalizado
+│       └── server.js          # Entry point del backend
+│
+└── ristak.db                  # Base de datos SQLite (desarrollo)
+```
+
+---
+
+## 🔌 INTEGRACIONES ACTIVAS
+
+### HighLevel
+- **Estado**: Pendiente implementación completa
+- **Endpoints**: `/api/highlevel/*`
+- **Servicios**: `highlevelSyncService.js`, `highLevelService.ts`
+- **Funcionalidad**: Sincronización de contactos y pipelines
+
+### Meta Ads (Facebook)
+- **Estado**: Parcialmente implementado
+- **Endpoints**: `/api/meta/*`
+- **Servicios**: `metaAdsService.js`, `campaignsService.ts`
+- **Cron Job**: Sincronización cada X minutos via `metaSync.cron.js`
+- **Funcionalidad**: Métricas de campañas publicitarias
+
+### Webhooks
+- **Estado**: Configurado
+- **Endpoint**: `/webhook/*`
+- **Controlador**: `webhooksController.js`
+- **Funcionalidad**: Recepción de eventos externos
+
+---
+
+## 📊 MODELO DE DATOS
+
+### Tablas Principales
+```sql
+-- Estructura actual en uso
+contacts: id, email, phone, name, tags, created_at, updated_at
+campaigns: id, name, platform, status, metrics, created_at
+transactions: id, contact_id, amount, type, date, metadata
+reports: id, type, data, generated_at
+```
+
+### API Endpoints
+```
+GET    /api/health                 # Health check
+GET    /api/dashboard/stats        # KPIs principales
+GET    /api/dashboard/chart        # Datos para gráficas
+GET    /api/contacts               # Lista de contactos
+GET    /api/campaigns              # Campañas activas
+GET    /api/transactions           # Transacciones
+GET    /api/reports                # Reportes generados
+POST   /webhook/highlevel          # Webhook de HighLevel
+POST   /webhook/meta               # Webhook de Meta
+```
+
+---
+
+## 🎨 PATRONES DE DISEÑO
+
+### Frontend
+- **CSS Modules** para estilos componentes (`.module.css`)
+- **Context API** para estado global (no Redux)
+- **Services Layer** para todas las llamadas API
+- **Custom Hooks** cuando se reutiliza lógica
+- **Barrel exports** en carpetas de componentes (`index.ts`)
+
+### Backend
+- **MVC Pattern** (Model-View-Controller)
+- **Service Layer** para lógica de negocio
+- **Route Handlers** delgados (solo validación y respuesta)
+- **Utils** para funciones helper reutilizables
+- **Logger personalizado** en vez de console.log
+
+---
+
+## 🔧 CONFIGURACIÓN DE ENTORNO
+
+### ⚠️ REGLA CRÍTICA - PUERTOS FIJOS
+**BACKEND SIEMPRE EN PUERTO 3001 - FRONTEND SIEMPRE EN PUERTO 3000**
+**NUNCA CAMBIAR ESTOS PUERTOS - ESTÁN HARDCODEADOS EN MÚLTIPLES LUGARES**
+
+### Variables Requeridas
+```bash
+# ⚠️ DESARROLLO LOCAL - PUERTOS FIJOS ⚠️
+# Backend: PORT=3001 (NO CAMBIAR)
+# Frontend: puerto 3000 (configurado en vite.config.ts)
+# Frontend Proxy: apunta a http://localhost:3001 (FIJO en vite.config.ts)
+
+# Backend .env (desarrollo):
+PORT=3001
+NODE_ENV=development
+
+# Frontend .env (desarrollo):
+VITE_API_URL=http://localhost:3001
+
+# Base de datos:
+# - SQLite local (ristak.db) - Se crea automáticamente
+# - NO necesitas configurar nada
+```
+
+---
+
+## 📝 ESTADO DE COMPONENTES
+
+### ✅ Componentes Activos y Funcionales
+- AppShell, Button, Card, Modal, TabList
+- KpiCard, LineChart, Table, SyncProgressBar
+- DateRangePicker, ContactDetailsModal, ContactSearchInput
+- ViewSelector, Icon, Toast, ToastContainer
+
+### ❌ Componentes Eliminados (NO RECREAR)
+- Badge, Select, Input, DatePicker
+- SingleDatePicker, DateRangeInput
+- SyncProgressBanner
+
+---
+
+## 🚀 CÓMO ARRANCAR LA APP
+
+### ⚠️ REGLA #1 INQUEBRANTABLE ⚠️
+**SIEMPRE USAR EL SCRIPT `start-local.sh` DESDE LA RAÍZ DEL PROYECTO**
+**NUNCA arrancar frontend o backend por separado con npm run dev**
+
+### Comando Correcto (ÚNICO)
+```bash
+# Desde la raíz del proyecto /Users/raulgomez/Desktop/Ristak - High Level/
+bash start-local.sh
+
+# O con permisos de ejecución:
+./start-local.sh
+```
+
+### ¿Por qué SIEMPRE usar start-local.sh?
+- ✅ Mata procesos viejos en puertos 3000 y 3001
+- ✅ Carga variables de entorno correctamente
+- ✅ Arranca backend primero y espera que esté listo
+- ✅ Arranca frontend después
+- ✅ Abre el navegador automáticamente
+- ✅ Configura todo para usar SQLite local (no PostgreSQL)
+
+### ❌ NUNCA hacer esto:
+```bash
+# ❌ NO hacer esto:
+cd backend && npm run dev
+cd frontend && npm run dev
+
+# ❌ NO cambiar puertos manualmente
+# ❌ NO editar vite.config.ts para cambiar el proxy
+# ❌ NO arrancar con DATABASE_URL en el .env del backend
+```
+
+## 🛑 COMANDOS ESENCIALES (Solo para casos especiales)
+
+```bash
+# Si necesitas detener todo manualmente:
+killall node
+lsof -ti:3000,3001 | xargs kill -9
+
+# Build de producción (solo cuando sea necesario):
+cd frontend && npm run build
+```
+
+---
+
+## 🐛 PROBLEMAS CONOCIDOS
+
+### Actuales
+- Bundle size warning (>500KB) - Considerar code splitting
+- Falta implementación completa de HighLevel API
+
+### Funcionalidades Implementadas
+- ✓ Edición de contactos desde la tabla (modal con campos editables: nombre, email, teléfono, fuente, nombre del anuncio, ID del anuncio)
+- ✓ Eliminación de contactos con modal de confirmación
+- ✓ Endpoints backend PUT /api/contacts/:id y DELETE /api/contacts/:id
+- ✓ Protección contra eliminación accidental con confirmación explícita
+
+### Resueltos
+- ✓ Lodash instalado como dependencia directa
+- ✓ 7 componentes huérfanos eliminados (Badge, Select, Input, DatePicker, SingleDatePicker, DateRangeInput, SyncProgressBanner)
+- ✓ Imports no usados limpiados
+- ✓ Puerto sincronizado a 3001 en todo el proyecto (antes era inconsistente 3001 vs 3002)
+- ✓ Health check endpoint corregido en start-local.sh (/api/health)
+- ✓ useEffect con dependencias incorrectas arreglado en Campaigns.tsx
+- ✓ URL hardcodeada eliminada en Campaigns.tsx (ahora usa campaignsService)
+- ✓ console.logs de producción eliminados (frontend y backend)
+- ✓ Backend usa logger consistentemente en lugar de console.log
+- ✓ formatChartDate movido a utils/format.ts para reutilización
+- ✓ Archivos .env.example consolidados (solo uno en raíz con documentación completa)
+- ✓ Mapeo correcto de fechas de GHL: created_at guarda dateAdded (no fecha de sincronización)
+- ✓ Tabla contacts actualizada con campo updated_at
+- ✓ Sincronización actualiza estadísticas de contactos automáticamente (total_paid, purchases_count, last_purchase_date)
+- ✓ Webhooks recalculan estadísticas en tiempo real al recibir pagos/reembolsos
+- ✓ appointment_date se actualiza correctamente al sincronizar/recibir citas
+- ✓ PostgreSQL/Neon completamente eliminado - Solo SQLite local
+- ✓ Dependencia 'pg' removida del package.json
+- ✓ database.js simplificado (solo SQLite, sin condicionales)
+- ✓ Archivo test-neon.js eliminado
+
+---
+
+## 📅 ÚLTIMA ACTUALIZACIÓN
+
+**Fecha**: 2025-10-03
+**Versión**: 1.4.0
+**Último cambio estructural**: Agregada funcionalidad completa de edición y eliminación de contactos desde la tabla en la página de Contactos. Incluye modales de edición y confirmación de eliminación.
+
+---
+
+## ⚡ CHECKLIST ANTES DE MODIFICAR
+
+Antes de hacer CUALQUIER cambio, la IA debe:
+
+- [ ] Leer este archivo completo
+- [ ] Verificar si ya existe código similar
+- [ ] Buscar componentes/funciones relacionadas
+- [ ] Validar que no rompe nada existente
+- [ ] Actualizar este archivo si cambia la estructura
+- [ ] Eliminar código muerto que genere
+- [ ] Verificar imports y dependencias
+- [ ] **VERIFICAR que los puertos sigan siendo 3000 (frontend) y 3001 (backend)**
+- [ ] **VERIFICAR que start-local.sh sigue siendo el método de inicio**
+- [ ] Hacer build para confirmar que compila
+
+---
+
+## 🔴 RECORDATORIO FINAL
+
+**NUNCA OLVIDES**: Este proyecto debe mantenerse LIMPIO, ORDENADO y SIN REDUNDANCIAS. Cada línea de código debe tener un propósito. Si no lo tiene, no debe existir.
+
+**ACTUALIZA ESTE ARCHIVO** cuando:
+- Agregues/elimines componentes
+- Cambies la estructura de carpetas
+- Implementes nuevas integraciones
+- Modifiques el modelo de datos
+- Encuentres/resuelvas problemas
+
+NO agregues historial de cambios. ACTUALIZA la información existente para reflejar el estado ACTUAL.
+- Siempre se usa este archivo para correr la app @start-local.sh y las direcciones que vienen ahi
