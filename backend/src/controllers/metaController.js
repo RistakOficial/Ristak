@@ -398,28 +398,52 @@ export const getSpendOverTime = async (req, res) => {
 
     logger.info(`Obteniendo gastos e ingresos desde ${start} hasta ${end}`);
 
-    // SQLite queries
-    const spendQuery = `
-      SELECT
-        strftime('%Y-%m-%d', date) as day,
-        SUM(spend) as spend
-      FROM meta_ads
-      WHERE date >= ? AND date < DATE(?, '+1 day')
-      GROUP BY day
-      ORDER BY day ASC
-    `;
+    const usePostgres = Boolean(process.env.DATABASE_URL);
+
+    // Query de gastos (adaptado a PostgreSQL o SQLite)
+    const spendQuery = usePostgres
+      ? `
+        SELECT
+          TO_CHAR(date, 'YYYY-MM-DD') as day,
+          SUM(spend) as spend
+        FROM meta_ads
+        WHERE date >= $1 AND date < ($2::date + INTERVAL '1 day')
+        GROUP BY day
+        ORDER BY day ASC
+      `
+      : `
+        SELECT
+          strftime('%Y-%m-%d', date) as day,
+          SUM(spend) as spend
+        FROM meta_ads
+        WHERE date >= ? AND date < DATE(?, '+1 day')
+        GROUP BY day
+        ORDER BY day ASC
+      `;
     const spendParams = [start, end];
 
-    const revenueQuery = `
-      SELECT
-        strftime('%Y-%m-%d', date) as day,
-        SUM(amount) as revenue
-      FROM payments
-      WHERE status = 'succeeded'
-        AND date >= ? AND date < DATE(?, '+1 day')
-      GROUP BY day
-      ORDER BY day ASC
-    `;
+    // Query de ingresos (adaptado a PostgreSQL o SQLite)
+    const revenueQuery = usePostgres
+      ? `
+        SELECT
+          TO_CHAR(date, 'YYYY-MM-DD') as day,
+          SUM(amount) as revenue
+        FROM payments
+        WHERE status = 'succeeded'
+          AND date >= $1 AND date < ($2::date + INTERVAL '1 day')
+        GROUP BY day
+        ORDER BY day ASC
+      `
+      : `
+        SELECT
+          strftime('%Y-%m-%d', date) as day,
+          SUM(amount) as revenue
+        FROM payments
+        WHERE status = 'succeeded'
+          AND date >= ? AND date < DATE(?, '+1 day')
+        GROUP BY day
+        ORDER BY day ASC
+      `;
     const revenueParams = [start, end];
 
     const [spendData, revenueData] = await Promise.all([
