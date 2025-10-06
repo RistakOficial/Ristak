@@ -7,6 +7,15 @@ const capitalize = (value: string): string => {
 }
 
 /**
+ * Parsea una fecha YYYY-MM-DD como hora LOCAL (no UTC)
+ * Esto evita problemas donde new Date("2025-10-05") lo parsea como UTC
+ */
+export const parseLocalDateString = (dateStr: string): Date => {
+  const [year, month, day] = dateStr.split('-').map(Number)
+  return new Date(year, month - 1, day, 0, 0, 0, 0)
+}
+
+/**
  * Formatea una fecha a YYYY-MM-DD usando la zona horaria LOCAL (no UTC)
  * Esto evita problemas donde toISOString() cambia el día al convertir a UTC
  */
