@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { Calendar, ChevronLeft, ChevronRight, Clock, TrendingUp } from 'lucide-react'
 import styles from './DateRangePicker.module.css'
+import { formatDateToISO } from '@/utils/format'
 
 interface DateRangePickerProps {
   startDate: string
@@ -122,6 +123,11 @@ const DATE_PRESETS: DatePreset[] = [
   }
 ]
 
+// Helper: Parsear string YYYY-MM-DD como fecha LOCAL (no UTC)
+const parseLocalDate = (dateStr: string): Date => {
+  const [year, month, day] = dateStr.split('-').map(Number)
+  return new Date(year, month - 1, day, 0, 0, 0, 0)
+}
 export const DateRangePicker: React.FC<DateRangePickerProps> = ({
   startDate,
   endDate,
@@ -131,14 +137,14 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
   const [isOpen, setIsOpen] = useState(false)
   const [leftMonth, setLeftMonth] = useState(() => {
     if (startDate) {
-      const date = new Date(startDate)
+      const date = parseLocalDate(startDate)
       return new Date(date.getFullYear(), date.getMonth(), 1)
     }
     return new Date()
   })
   const [rightMonth, setRightMonth] = useState(() => {
     if (startDate) {
-      const date = new Date(startDate)
+      const date = parseLocalDate(startDate)
       const next = new Date(date.getFullYear(), date.getMonth() + 1, 1)
       return next
     }
@@ -147,10 +153,10 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
     return date
   })
   const [tempStart, setTempStart] = useState<Date | null>(
-    startDate ? new Date(startDate) : null
+    startDate ? parseLocalDate(startDate) : null
   )
   const [tempEnd, setTempEnd] = useState<Date | null>(
-    endDate ? new Date(endDate) : null
+    endDate ? parseLocalDate(endDate) : null
   )
   const [hoveredDate, setHoveredDate] = useState<Date | null>(null)
   const [selectingEndDate, setSelectingEndDate] = useState(false)
@@ -175,18 +181,18 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
   // Update temp dates when props change
   useEffect(() => {
     if (startDate) {
-      setTempStart(new Date(startDate))
+      setTempStart(parseLocalDate(startDate))
     }
     if (endDate) {
-      setTempEnd(new Date(endDate))
+      setTempEnd(parseLocalDate(endDate))
     }
   }, [startDate, endDate])
 
   const formatDateRange = () => {
     if (!startDate || !endDate) return placeholder
 
-    const start = new Date(startDate)
-    const end = new Date(endDate)
+    const start = parseLocalDate(startDate)
+    const end = parseLocalDate(endDate)
 
     const formatDate = (date: Date) => {
       const day = date.getDate()
@@ -252,16 +258,16 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
   const applyDateRange = () => {
     if (tempStart && tempEnd) {
       onChange(
-        tempStart.toISOString().split('T')[0],
-        tempEnd.toISOString().split('T')[0]
+        formatDateToISO(tempStart),
+        formatDateToISO(tempEnd)
       )
       setIsOpen(false)
     }
   }
 
   const cancelSelection = () => {
-    setTempStart(startDate ? new Date(startDate) : null)
-    setTempEnd(endDate ? new Date(endDate) : null)
+    setTempStart(startDate ? parseLocalDate(startDate) : null)
+    setTempEnd(endDate ? parseLocalDate(endDate) : null)
     setIsOpen(false)
   }
 

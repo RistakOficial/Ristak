@@ -88,9 +88,17 @@ export const DateRangeProvider: React.FC<{ children: ReactNode }> = ({ children 
     if (saved) {
       try {
         const parsed = JSON.parse(saved)
+
+        // Parsear fechas YYYY-MM-DD como fecha LOCAL, no UTC
+        // new Date("2025-10-05") lo parsea como UTC, causando problemas de zona horaria
+        const parseLocalDate = (dateStr: string): Date => {
+          const [year, month, day] = dateStr.split('-').map(Number)
+          return new Date(year, month - 1, day, 0, 0, 0, 0)
+        }
+
         return {
-          start: new Date(parsed.start),
-          end: new Date(parsed.end),
+          start: parseLocalDate(parsed.start),
+          end: parseLocalDate(parsed.end),
           preset: parsed.preset
         }
       } catch (e) {
@@ -109,9 +117,18 @@ export const DateRangeProvider: React.FC<{ children: ReactNode }> = ({ children 
     const start = dateRange.start instanceof Date ? dateRange.start : new Date(dateRange.start)
     const end = dateRange.end instanceof Date ? dateRange.end : new Date(dateRange.end)
 
+    // Guardar fechas en formato YYYY-MM-DD LOCAL (sin hora, sin UTC)
+    // para evitar problemas de zona horaria al cargar
+    const formatLocalDate = (date: Date) => {
+      const year = date.getFullYear()
+      const month = String(date.getMonth() + 1).padStart(2, '0')
+      const day = String(date.getDate()).padStart(2, '0')
+      return `${year}-${month}-${day}`
+    }
+
     sessionStorage.setItem('dateRange', JSON.stringify({
-      start: start.toISOString(),
-      end: end.toISOString(),
+      start: formatLocalDate(start),
+      end: formatLocalDate(end),
       preset: dateRange.preset
     }))
   }, [dateRange])
