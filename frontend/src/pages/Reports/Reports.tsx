@@ -21,7 +21,7 @@ import {
   type ContactListItem,
   type ReportRange
 } from '@/services/reportsService'
-import { formatCurrency, formatNumber, formatRoas, formatDate } from '@/utils/format'
+import { formatCurrency, formatNumber, formatRoas, formatDate, formatDateToISO } from '@/utils/format'
 import styles from './Reports.module.css'
 import {
   Users,
@@ -97,10 +97,8 @@ const now = new Date()
 const currentYear = now.getFullYear()
 const defaultYearRange = { start: currentYear - 2, end: currentYear }
 
-const toIsoDate = (date: Date) => {
-  const tzOffset = date.getTimezoneOffset() * 60000
-  return new Date(date.getTime() - tzOffset).toISOString().split('T')[0]
-}
+// Usar formatDateToISO en vez de toIsoDate para evitar problemas de zona horaria
+const toIsoDate = formatDateToISO
 
 const startOfMonth = (year: number, monthIndex: number) => new Date(year, monthIndex, 1, 0, 0, 0)
 const endOfMonth = (year: number, monthIndex: number) => new Date(year, monthIndex + 1, 0, 23, 59, 59)
@@ -801,7 +799,7 @@ export const Reports: React.FC = () => {
     const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
     link.href = url
-    link.download = `reportes_${reportType}_${viewType}_${new Date().toISOString().split('T')[0]}.csv`
+    link.download = `reportes_${reportType}_${viewType}_${formatDateToISO(new Date())}.csv`
     document.body.appendChild(link)
     link.click()
     document.body.removeChild(link)

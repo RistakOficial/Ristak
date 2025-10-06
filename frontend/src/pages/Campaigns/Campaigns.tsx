@@ -13,7 +13,7 @@ import {
 } from 'lucide-react'
 import { useDateRange } from '@/contexts/DateRangeContext'
 import { useLabels } from '@/contexts/LabelsContext'
-import { formatCurrency, formatRoas, formatChartDate } from '@/utils/format'
+import { formatCurrency, formatRoas, formatChartDate, formatDateToISO } from '@/utils/format'
 import { campaignsService, type CampaignContact } from '@/services/campaignsService'
 import { reportsService, type CampaignsReport } from '@/services/reportsService'
 import styles from './Campaigns.module.css'
@@ -94,8 +94,8 @@ export const Campaigns: React.FC = () => {
   const fetchCampaigns = useCallback(async () => {
     try {
       setLoading(true)
-      const startDate = dateRange.start.toISOString().split('T')[0]
-      const endDate = dateRange.end.toISOString().split('T')[0]
+      const startDate = formatDateToISO(dateRange.start)
+      const endDate = formatDateToISO(dateRange.end)
 
       const summaryPromise = reportsService
         .getCampaignsReport({ from: startDate, to: endDate })
@@ -205,8 +205,8 @@ export const Campaigns: React.FC = () => {
     setSelectedModalItem(item)
 
     try {
-      const startDate = dateRange.start.toISOString().split('T')[0]
-      const endDate = dateRange.end.toISOString().split('T')[0]
+      const startDate = formatDateToISO(dateRange.start)
+      const endDate = formatDateToISO(dateRange.end)
 
       const params: any = {
         type,
@@ -668,8 +668,8 @@ export const Campaigns: React.FC = () => {
 
       <div className={styles.controlsHeader}>
         <DateRangePicker
-          startDate={(dateRange.start instanceof Date ? dateRange.start : new Date(dateRange.start)).toISOString().split('T')[0]}
-          endDate={(dateRange.end instanceof Date ? dateRange.end : new Date(dateRange.end)).toISOString().split('T')[0]}
+          startDate={formatDateToISO(dateRange.start instanceof Date ? dateRange.start : new Date(dateRange.start))}
+          endDate={formatDateToISO(dateRange.end instanceof Date ? dateRange.end : new Date(dateRange.end))}
           onChange={(start, end) => setDateRange({
             start: new Date(start),
             end: new Date(end),

@@ -16,7 +16,7 @@ import {
   RotateCcw
 } from 'lucide-react'
 import { useDateRange } from '@/contexts/DateRangeContext'
-import { formatCurrency, formatDate, formatNumber } from '@/utils/format'
+import { formatCurrency, formatDate, formatDateToISO, formatNumber } from '@/utils/format'
 import { transactionsService, type Transaction, type TransactionSummary } from '@/services/transactionsService'
 import styles from './Transactions.module.css'
 
@@ -56,8 +56,8 @@ export const Transactions: React.FC = () => {
         // Ensure dates are Date objects
         const start = dateRange.start instanceof Date ? dateRange.start : new Date(dateRange.start)
         const end = dateRange.end instanceof Date ? dateRange.end : new Date(dateRange.end)
-        startDate = start.toISOString().split('T')[0]
-        endDate = end.toISOString().split('T')[0]
+        startDate = formatDateToISO(start)
+        endDate = formatDateToISO(end)
       }
       // Si viewMode === 'all', no enviamos fechas para obtener TODOS los pagos
 
@@ -265,8 +265,8 @@ export const Transactions: React.FC = () => {
           {viewMode === 'by-date' && (
             <div className={styles.datePickerInline}>
               <DateRangePicker
-                startDate={dateRange.start.toISOString().split('T')[0]}
-                endDate={dateRange.end.toISOString().split('T')[0]}
+                startDate={formatDateToISO(dateRange.start)}
+                endDate={formatDateToISO(dateRange.end)}
                 onChange={(start, end) => setDateRange({
                   start: new Date(start),
                   end: new Date(end),
@@ -401,7 +401,7 @@ export const Transactions: React.FC = () => {
                 <input
                   name="date"
                   type="date"
-                  defaultValue={modal.transaction?.date || new Date().toISOString().split('T')[0]}
+                  defaultValue={modal.transaction?.date || formatDateToISO(new Date())}
                   required
                 />
               </div>

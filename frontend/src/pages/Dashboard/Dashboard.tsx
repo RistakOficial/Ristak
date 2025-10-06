@@ -14,7 +14,7 @@ import { useDateRange } from '@/contexts/DateRangeContext'
 import { useAuth } from '@/contexts/AuthContext'
 import { useLabels } from '@/contexts/LabelsContext'
 import { dashboardService, type DashboardMetrics, type ChartData } from '@/services/dashboardService'
-import { formatCurrency, formatRoas, formatChartDate, formatNumber } from '@/utils/format'
+import { formatCurrency, formatRoas, formatChartDate, formatNumber, formatDateToISO } from '@/utils/format'
 
 type ChartView = 'financial' | 'conversion' | 'sales'
 
@@ -364,8 +364,8 @@ export const Dashboard: React.FC = () => {
             <p className="text-sm text-[var(--color-text-tertiary)]">Resumen financiero y de marketing</p>
           </div>
           <DateRangePicker
-            startDate={dateRange.start.toISOString().split('T')[0]}
-            endDate={dateRange.end.toISOString().split('T')[0]}
+            startDate={formatDateToISO(dateRange.start)}
+            endDate={formatDateToISO(dateRange.end)}
             onChange={(start, end) => setDateRange({ start: new Date(start), end: new Date(end), preset: 'custom' })}
           />
         </div>

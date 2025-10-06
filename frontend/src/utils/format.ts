@@ -6,6 +6,17 @@ const capitalize = (value: string): string => {
   return value.charAt(0).toUpperCase() + value.slice(1)
 }
 
+/**
+ * Formatea una fecha a YYYY-MM-DD usando la zona horaria LOCAL (no UTC)
+ * Esto evita problemas donde toISOString() cambia el día al convertir a UTC
+ */
+export const formatDateToISO = (date: Date): string => {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
 export const formatCurrency = (value: number): string => {
   return new Intl.NumberFormat('es-MX', {
     style: 'currency',

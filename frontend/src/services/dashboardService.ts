@@ -1,4 +1,6 @@
 // Servicio para el Dashboard principal
+import { formatDateToISO } from '@/utils/format'
+
 // Si no hay VITE_API_URL, usa rutas relativas
 const API_URL = import.meta.env.VITE_API_URL || '';
 
@@ -32,8 +34,8 @@ class DashboardService {
   }): Promise<DashboardMetrics> {
     try {
       const queryParams = new URLSearchParams({
-        startDate: params.start.toISOString().split('T')[0],
-        endDate: params.end.toISOString().split('T')[0]
+        startDate: formatDateToISO(params.start),
+        endDate: formatDateToISO(params.end)
       });
 
       const response = await fetch(`${API_URL}/api/dashboard/metrics?${queryParams}`);
@@ -56,8 +58,8 @@ class DashboardService {
   }): Promise<ChartData[]> {
     try {
       const queryParams = new URLSearchParams({
-        startDate: params.start.toISOString().split('T')[0],
-        endDate: params.end.toISOString().split('T')[0]
+        startDate: formatDateToISO(params.start),
+        endDate: formatDateToISO(params.end)
       });
 
       const response = await fetch(`${API_URL}/api/dashboard/chart-data?${queryParams}`);
@@ -79,8 +81,8 @@ class DashboardService {
   }): Promise<{ label: string; value: number }[]> {
     try {
       const queryParams = new URLSearchParams({
-        startDate: params.start.toISOString().split('T')[0],
-        endDate: params.end.toISOString().split('T')[0]
+        startDate: formatDateToISO(params.start),
+        endDate: formatDateToISO(params.end)
       });
 
       const response = await fetch(`${API_URL}/api/dashboard/roas?${queryParams}`);
@@ -103,8 +105,8 @@ class DashboardService {
   }): Promise<{ label: string; value: number }[]> {
     try {
       const queryParams = new URLSearchParams({
-        startDate: params.start.toISOString().split('T')[0],
-        endDate: params.end.toISOString().split('T')[0],
+        startDate: formatDateToISO(params.start),
+        endDate: formatDateToISO(params.end),
         groupBy: params.groupBy || 'day'
       });
 
@@ -128,8 +130,8 @@ class DashboardService {
   }): Promise<{ label: string; value: number }[]> {
     try {
       const queryParams = new URLSearchParams({
-        startDate: params.start.toISOString().split('T')[0],
-        endDate: params.end.toISOString().split('T')[0],
+        startDate: formatDateToISO(params.start),
+        endDate: formatDateToISO(params.end),
         groupBy: params.groupBy || 'day'
       });
 
@@ -153,8 +155,8 @@ class DashboardService {
   }): Promise<{ label: string; value: number }[]> {
     try {
       const queryParams = new URLSearchParams({
-        startDate: params.start.toISOString().split('T')[0],
-        endDate: params.end.toISOString().split('T')[0],
+        startDate: formatDateToISO(params.start),
+        endDate: formatDateToISO(params.end),
         groupBy: params.groupBy || 'day'
       });
 
@@ -178,8 +180,8 @@ class DashboardService {
   }): Promise<{ label: string; value: number }[]> {
     try {
       const queryParams = new URLSearchParams({
-        startDate: params.start.toISOString().split('T')[0],
-        endDate: params.end.toISOString().split('T')[0],
+        startDate: formatDateToISO(params.start),
+        endDate: formatDateToISO(params.end),
         groupBy: params.groupBy || 'day'
       });
 
