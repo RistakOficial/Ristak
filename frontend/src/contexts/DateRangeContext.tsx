@@ -80,10 +80,22 @@ const getPresetDates = (preset: DatePreset): { start: Date; end: Date } => {
   }
 }
 
+// Versión del formato de sessionStorage - incrementar si cambia el formato
+const STORAGE_VERSION = 2
+
 export const DateRangeProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   // Intentar cargar desde sessionStorage, si no existe usar "Este mes" como default
   const [dateRange, setDateRange] = useState<DateRange>(() => {
     const saved = sessionStorage.getItem('dateRange')
+    const version = sessionStorage.getItem('dateRangeVersion')
+
+    // Si la versión no coincide, limpiar datos viejos
+    if (version !== String(STORAGE_VERSION)) {
+      sessionStorage.removeItem('dateRange')
+      sessionStorage.setItem('dateRangeVersion', String(STORAGE_VERSION))
+      const { start, end } = getPresetDates('thisMonth')
+      return { start, end, preset: 'thisMonth' }
+    }
 
     if (saved) {
       try {
@@ -151,6 +163,7 @@ export const DateRangeProvider: React.FC<{ children: ReactNode }> = ({ children 
       end: formatLocalDate(end),
       preset: dateRange.preset
     }))
+    sessionStorage.setItem('dateRangeVersion', String(STORAGE_VERSION))
   }, [dateRange])
 
   const setPeriod = useCallback((start: Date, end: Date) => {

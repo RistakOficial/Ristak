@@ -23,19 +23,24 @@ const MONTHS = [
 
 const WEEKDAYS = ['Do', 'Lu', 'Ma', 'Mi', 'Ju', 'Vi', 'Sa']
 
+// Helper: Normalizar fecha a medianoche local (00:00:00.000)
+const toMidnight = (date: Date): Date => {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0)
+}
+
 const DATE_PRESETS: DatePreset[] = [
   {
     label: 'Hoy',
     icon: <Clock size={14} />,
     getValue: () => {
-      const today = new Date()
+      const today = toMidnight(new Date())
       return { start: today, end: today }
     }
   },
   {
     label: 'Ayer',
     getValue: () => {
-      const yesterday = new Date()
+      const yesterday = toMidnight(new Date())
       yesterday.setDate(yesterday.getDate() - 1)
       return { start: yesterday, end: yesterday }
     }
@@ -43,8 +48,8 @@ const DATE_PRESETS: DatePreset[] = [
   {
     label: 'Últimos 7 días',
     getValue: () => {
-      const end = new Date()
-      const start = new Date()
+      const end = toMidnight(new Date())
+      const start = new Date(end)
       start.setDate(start.getDate() - 6)
       return { start, end }
     }
@@ -52,8 +57,8 @@ const DATE_PRESETS: DatePreset[] = [
   {
     label: 'Últimos 14 días',
     getValue: () => {
-      const end = new Date()
-      const start = new Date()
+      const end = toMidnight(new Date())
+      const start = new Date(end)
       start.setDate(start.getDate() - 13)
       return { start, end }
     }
@@ -61,8 +66,8 @@ const DATE_PRESETS: DatePreset[] = [
   {
     label: 'Últimos 30 días',
     getValue: () => {
-      const end = new Date()
-      const start = new Date()
+      const end = toMidnight(new Date())
+      const start = new Date(end)
       start.setDate(start.getDate() - 29)
       return { start, end }
     }
@@ -88,8 +93,8 @@ const DATE_PRESETS: DatePreset[] = [
   {
     label: 'Últimos 90 días',
     getValue: () => {
-      const end = new Date()
-      const start = new Date()
+      const end = toMidnight(new Date())
+      const start = new Date(end)
       start.setDate(start.getDate() - 89)
       return { start, end }
     }
@@ -97,8 +102,8 @@ const DATE_PRESETS: DatePreset[] = [
   {
     label: 'Últimos 12 meses',
     getValue: () => {
-      const end = new Date()
-      const start = new Date()
+      const end = toMidnight(new Date())
+      const start = new Date(end)
       start.setMonth(start.getMonth() - 12)
       return { start, end }
     }
@@ -108,16 +113,16 @@ const DATE_PRESETS: DatePreset[] = [
     icon: <TrendingUp size={14} />,
     getValue: () => {
       const now = new Date()
-      const start = new Date(now.getFullYear(), 0, 1)
-      const end = new Date(now.getFullYear(), 11, 31)
+      const start = new Date(now.getFullYear(), 0, 1, 0, 0, 0, 0)
+      const end = toMidnight(now)
       return { start, end }
     }
   },
   {
     label: 'Todo el tiempo',
     getValue: () => {
-      const end = new Date()
-      const start = new Date(2020, 0, 1)
+      const end = toMidnight(new Date())
+      const start = new Date(2020, 0, 1, 0, 0, 0, 0)
       return { start, end }
     }
   }
