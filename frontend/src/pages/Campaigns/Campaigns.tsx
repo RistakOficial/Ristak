@@ -89,6 +89,7 @@ export const Campaigns: React.FC = () => {
   const [modalContacts, setModalContacts] = useState<CampaignContact[]>([])
   const [modalLoading, setModalLoading] = useState(false)
   const [modalTitle, setModalTitle] = useState('')
+  const [selectedModalItem, setSelectedModalItem] = useState<any>(null)
 
   const fetchCampaigns = useCallback(async () => {
     try {
@@ -195,12 +196,20 @@ export const Campaigns: React.FC = () => {
     }
   }, [checkSyncStatus])
 
+  // Recargar datos del modal cuando cambian las fechas
+  useEffect(() => {
+    if (isModalOpen && selectedModalItem) {
+      handleOpenContactsModal(selectedModalItem, modalType)
+    }
+  }, [dateRange])
+
   const handleOpenContactsModal = async (item: any, type: 'interesados' | 'sales') => {
     setModalLoading(true)
     setIsModalOpen(true)
     setModalType(type)
     setModalTitle(`${type === 'interesados' ? labels.leads : 'Ventas'} - ${item.name}`)
     setModalContacts([])
+    setSelectedModalItem(item)
 
     try {
       const startDate = dateRange.start.toISOString().split('T')[0]
@@ -797,7 +806,10 @@ export const Campaigns: React.FC = () => {
       {/* Modal de contactos */}
       <ContactDetailsModal
         isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
+        onClose={() => {
+          setIsModalOpen(false)
+          setSelectedModalItem(null)
+        }}
         title={modalTitle}
         subtitle={modalContacts.length === 0
           ? 'Sin datos para este periodo'

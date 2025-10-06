@@ -374,6 +374,8 @@ export const Reports: React.FC = () => {
     subtitle?: string
     contacts: ContactListItem[]
     loading: boolean
+    range?: { from: string; to: string }
+    titleOverride?: string
   }>({
     open: false,
     type: null,
@@ -422,7 +424,7 @@ export const Reports: React.FC = () => {
     }
 
     fetchMetrics()
-  }, [apiRange.from, apiRange.to, scopeParam, viewType, showToast])
+  }, [apiRange.from, apiRange.to, scopeParam, viewType, showToast, dateRange])
 
   useEffect(() => {
     const fetchSummary = async () => {
@@ -439,7 +441,7 @@ export const Reports: React.FC = () => {
     }
 
     fetchSummary()
-  }, [apiRange.from, apiRange.to, scopeParam])
+  }, [apiRange.from, apiRange.to, scopeParam, dateRange])
 
   useEffect(() => {
     setModalState(prev => ({
@@ -449,6 +451,13 @@ export const Reports: React.FC = () => {
       loading: false
     }))
   }, [reportType, viewType])
+
+  // Recargar datos del modal cuando cambian las fechas
+  useEffect(() => {
+    if (modalState.open && modalState.type) {
+      handleOpenModal(modalState.type, modalState.range, modalState.titleOverride)
+    }
+  }, [dateRange])
 
   const includeYearForTable = viewType === 'day'
     ? new Date(apiRange.from).getFullYear() !== new Date(apiRange.to).getFullYear()
@@ -519,7 +528,9 @@ export const Reports: React.FC = () => {
               : labels.customers),
       subtitle: `${formatPeriodLabel(from, 'day', { includeYear: true })} – ${formatPeriodLabel(to, 'day', { includeYear: true })}`,
       contacts: [],
-      loading: true
+      loading: true,
+      range,
+      titleOverride
     })
 
     try {
