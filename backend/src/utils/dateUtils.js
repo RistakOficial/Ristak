@@ -154,13 +154,13 @@ export function splitDateRangeIntoMonths(startDate, endDate) {
 }
 
 /**
- * Formatea una fecha a YYYY-MM-DD
+ * Formatea una fecha a YYYY-MM-DD usando UTC para evitar problemas de zona horaria
  */
 export function formatDate(date) {
   const d = new Date(date)
-  const year = d.getFullYear()
-  const month = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
+  const year = d.getUTCFullYear()
+  const month = String(d.getUTCMonth() + 1).padStart(2, '0')
+  const day = String(d.getUTCDate()).padStart(2, '0')
   return `${year}-${month}-${day}`
 }
 
