@@ -402,6 +402,11 @@
   color: var(--color-text-tertiary);
 }
 
+.detailItemLabel {
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
 .metricsGrid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);

@@ -28,6 +28,9 @@ interface ContactDetail {
   purchases?: number
   payments?: ContactPaymentDetail[]
   appointments?: ContactAppointmentDetail[]
+  source?: string
+  ad_name?: string
+  ad_id?: string
 }
 
 interface ContactDetailsModalProps {
@@ -296,6 +299,44 @@ export function ContactDetailsModal({
                     </div>
                   </div>
                 </div>
+
+                {/* Atribución */}
+                {(selectedContact.source || selectedContact.ad_name || selectedContact.ad_id) && (
+                  <div className={styles.detailSection}>
+                    <h5 className={styles.detailSectionTitle}>
+                      De dónde llegó el contacto:
+                    </h5>
+                    <div className={styles.detailSectionContent}>
+                      {selectedContact.source && (
+                        <div className={styles.detailItem}>
+                          <Icon name="tag" size={16} />
+                          <div>
+                            <span className={styles.detailItemLabel}>Fuente:</span>
+                            <span> {selectedContact.source}</span>
+                          </div>
+                        </div>
+                      )}
+                      {selectedContact.ad_name && (
+                        <div className={styles.detailItem}>
+                          <Icon name="megaphone" size={16} />
+                          <div>
+                            <span className={styles.detailItemLabel}>Anuncio:</span>
+                            <span> {selectedContact.ad_name}</span>
+                          </div>
+                        </div>
+                      )}
+                      {selectedContact.ad_id && (
+                        <div className={styles.detailItem}>
+                          <Icon name="hash" size={16} />
+                          <div>
+                            <span className={styles.detailItemLabel}>ID del Anuncio:</span>
+                            <span> {selectedContact.ad_id}</span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
 
                 {/* Métricas */}
                 {(selectedContact.ltv || 0) > 0 && (

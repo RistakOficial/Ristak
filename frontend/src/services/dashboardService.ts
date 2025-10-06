@@ -62,13 +62,24 @@ class DashboardService {
         endDate: formatDateToISO(params.end)
       });
 
-      const response = await fetch(`${API_URL}/api/dashboard/chart-data?${queryParams}`);
+      // Usar el endpoint de Meta que sabemos que funciona correctamente
+      const response = await fetch(`${API_URL}/api/meta/spend-over-time?${queryParams}`);
 
       if (!response.ok) {
         return [];
       }
 
-      return await response.json();
+      const result = await response.json();
+
+      // El endpoint de Meta retorna { success: true, data: [...] }
+      // Extraer el array de data y transformar al formato esperado
+      const rawData = result?.data || [];
+
+      return rawData.map((item: any) => ({
+        date: item.label,
+        ingresos: item.value || 0,
+        gastado: item.value2 || 0
+      }));
     } catch (error) {
       // TODO: Implement proper logging service
       return [];
