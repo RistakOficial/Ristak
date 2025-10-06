@@ -452,13 +452,6 @@ export const Reports: React.FC = () => {
     }))
   }, [reportType, viewType])
 
-  // Recargar datos del modal cuando cambian las fechas
-  useEffect(() => {
-    if (modalState.open && modalState.type) {
-      handleOpenModal(modalState.type, modalState.range, modalState.titleOverride)
-    }
-  }, [dateRange])
-
   const includeYearForTable = viewType === 'day'
     ? new Date(apiRange.from).getFullYear() !== new Date(apiRange.to).getFullYear()
     : true
@@ -505,7 +498,7 @@ export const Reports: React.FC = () => {
     })
   ), [metrics, viewType, includeYearForTable])
 
-  const handleOpenModal = async (
+  const handleOpenModal = React.useCallback(async (
     type: ModalType,
     range?: { from: string; to: string },
     titleOverride?: string
@@ -550,7 +543,14 @@ export const Reports: React.FC = () => {
       setModalState(prev => ({ ...prev, contacts: [], loading: false }))
       showToast('error', 'No se pudieron cargar los contactos', 'Intenta nuevamente más tarde')
     }
-  }
+  }, [apiRange, labels, reportTypeRef, showToast])
+
+  // Recargar datos del modal cuando cambian las fechas
+  useEffect(() => {
+    if (modalState.open && modalState.type) {
+      handleOpenModal(modalState.type, modalState.range, modalState.titleOverride)
+    }
+  }, [dateRange, modalState.open, modalState.type, modalState.range, modalState.titleOverride, handleOpenModal])
 
   const initialColumns: Column<TableRow>[] = useMemo(() => {
     const salesLabel = reportType === 'campaigns' ? 'Ventas' : 'Transacciones'

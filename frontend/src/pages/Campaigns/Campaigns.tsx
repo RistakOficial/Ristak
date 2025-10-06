@@ -196,14 +196,7 @@ export const Campaigns: React.FC = () => {
     }
   }, [checkSyncStatus])
 
-  // Recargar datos del modal cuando cambian las fechas
-  useEffect(() => {
-    if (isModalOpen && selectedModalItem) {
-      handleOpenContactsModal(selectedModalItem, modalType)
-    }
-  }, [dateRange])
-
-  const handleOpenContactsModal = async (item: any, type: 'interesados' | 'sales') => {
+  const handleOpenContactsModal = useCallback(async (item: any, type: 'interesados' | 'sales') => {
     setModalLoading(true)
     setIsModalOpen(true)
     setModalType(type)
@@ -236,7 +229,14 @@ export const Campaigns: React.FC = () => {
     } finally {
       setModalLoading(false)
     }
-  }
+  }, [dateRange, labels])
+
+  // Recargar datos del modal cuando cambian las fechas
+  useEffect(() => {
+    if (isModalOpen && selectedModalItem) {
+      handleOpenContactsModal(selectedModalItem, modalType)
+    }
+  }, [dateRange, isModalOpen, selectedModalItem, modalType, handleOpenContactsModal])
 
   const handleExport = () => {
     // TODO: Implementar exportación
