@@ -234,7 +234,7 @@ export const getChartData = async (req, res) => {
          SUM(amount) as total_ingresos
        FROM payments
        WHERE status = 'succeeded'
-       AND date >= $1 AND date < ($2::date + INTERVAL '1 day')
+       AND date::timestamp >= $1::timestamp AND date::timestamp < ($2::timestamp + INTERVAL '1 day')
        GROUP BY periodo
        ORDER BY periodo`;
       ingresosParams = [startDate, endDate];
@@ -243,7 +243,7 @@ export const getChartData = async (req, res) => {
          TO_CHAR(date::timestamp, '${dateFormat}') as periodo,
          SUM(spend) as total_gastos
        FROM meta_ads
-       WHERE date >= $1 AND date < ($2::date + INTERVAL '1 day')
+       WHERE date::timestamp >= $1::timestamp AND date::timestamp < ($2::timestamp + INTERVAL '1 day')
        GROUP BY periodo
        ORDER BY periodo`;
       gastosParams = [startDate, endDate];
@@ -346,10 +346,10 @@ export const getRoasData = async (req, res) => {
           COALESCE(SUM(i.amount), 0) as ingresos,
           COALESCE(SUM(g.spend), 0) as gastos
         FROM (
-          SELECT date, amount FROM payments WHERE status = 'succeeded' AND date >= $1 AND date < ($2::date + INTERVAL '1 day')
+          SELECT date, amount FROM payments WHERE status = 'succeeded' AND date::timestamp >= $1::timestamp AND date::timestamp < ($2::timestamp + INTERVAL '1 day')
         ) i
         LEFT JOIN (
-          SELECT date, spend FROM meta_ads WHERE date >= $3 AND date < ($4::date + INTERVAL '1 day')
+          SELECT date, spend FROM meta_ads WHERE date::timestamp >= $3::timestamp AND date::timestamp < ($4::timestamp + INTERVAL '1 day')
         ) g ON TO_CHAR(i.date::timestamp, 'YYYY-MM') = TO_CHAR(g.date::timestamp, 'YYYY-MM')
         GROUP BY periodo
         ORDER BY periodo
@@ -412,7 +412,7 @@ export const getNewCustomersData = async (req, res) => {
           COUNT(*) as total
         FROM contacts
         WHERE total_paid > 0
-        AND created_at >= $1 AND created_at < ($2::date + INTERVAL '1 day')
+        AND created_at::timestamp >= $1::timestamp AND created_at::timestamp < ($2::timestamp + INTERVAL '1 day')
         GROUP BY periodo
         ORDER BY periodo
       `;
@@ -470,7 +470,7 @@ export const getLeadsData = async (req, res) => {
           TO_CHAR(created_at::timestamp, '${dateFormat}') as periodo,
           COUNT(*) as total
         FROM contacts
-        WHERE created_at >= $1 AND created_at < ($2::date + INTERVAL '1 day')
+        WHERE created_at::timestamp >= $1::timestamp AND created_at::timestamp < ($2::timestamp + INTERVAL '1 day')
         GROUP BY periodo
         ORDER BY periodo
       `;
@@ -528,7 +528,7 @@ export const getAppointmentsData = async (req, res) => {
           COUNT(*) as total
         FROM contacts
         WHERE appointment_date IS NOT NULL
-        AND appointment_date >= $1 AND appointment_date < ($2::date + INTERVAL '1 day')
+        AND appointment_date::timestamp >= $1::timestamp AND appointment_date::timestamp < ($2::timestamp + INTERVAL '1 day')
         GROUP BY periodo
         ORDER BY periodo
       `;
@@ -587,7 +587,7 @@ export const getSalesData = async (req, res) => {
           COUNT(*) as total
         FROM payments
         WHERE status = 'succeeded'
-        AND date >= $1 AND date < ($2::date + INTERVAL '1 day')
+        AND date::timestamp >= $1::timestamp AND date::timestamp < ($2::timestamp + INTERVAL '1 day')
         GROUP BY periodo
         ORDER BY periodo
       `;
