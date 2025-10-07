@@ -192,26 +192,7 @@ export const getCampaigns = async (req, res) => {
 
     logger.info(`Obteniendo campañas Meta - rango: ${adsStart} -> ${adsEnd}`);
 
-    // Query para obtener datos agregados por campaña, adset y ad
-    const aggregationQuery = `
-      SELECT
-        campaign_id, campaign_name,
-        adset_id, adset_name,
-        ad_id, ad_name,
-        SUM(spend) as spend,
-        SUM(reach) as reach,
-        SUM(clicks) as clicks,
-        AVG(cpc) as cpc,
-        AVG(cpm) as cpm
-      FROM meta_ads
-      WHERE date BETWEEN ? AND ?
-      GROUP BY campaign_id, campaign_name, adset_id, adset_name, ad_id, ad_name
-      ORDER BY campaign_id, adset_id, ad_id
-    `;
-
-    const rows = await db.all(aggregationQuery, [adsStart, adsEnd]);
-
-    // Obtener interesados y ventas por ad_id
+    // Primero obtener interesados y ventas por ad_id
     const contactsQuery = `
       SELECT
         attribution_ad_id as ad_id,
@@ -229,6 +210,41 @@ export const getCampaigns = async (req, res) => {
       range.startUtc,
       range.endUtc
     ]);
+
+    // Obtener todos los ad_ids que tienen contactos en el período
+    const adIdsWithContacts = contactsData.map(row => row.ad_id).filter(Boolean);
+
+    // Query para obtener datos agregados por campaña, adset y ad
+    // Solo incluir gasto del período, pero asegurar que anuncios con contactos aparezcan
+    const aggregationQuery = `
+      SELECT DISTINCT
+        m.campaign_id, m.campaign_name,
+        m.adset_id, m.adset_name,
+        m.ad_id, m.ad_name,
+        COALESCE(SUM(CASE WHEN m.date BETWEEN ? AND ? THEN m.spend ELSE 0 END), 0) as spend,
+        COALESCE(SUM(CASE WHEN m.date BETWEEN ? AND ? THEN m.reach ELSE 0 END), 0) as reach,
+        COALESCE(SUM(CASE WHEN m.date BETWEEN ? AND ? THEN m.clicks ELSE 0 END), 0) as clicks,
+        AVG(CASE WHEN m.date BETWEEN ? AND ? THEN m.cpc ELSE NULL END) as cpc,
+        AVG(CASE WHEN m.date BETWEEN ? AND ? THEN m.cpm ELSE NULL END) as cpm
+      FROM meta_ads m
+      WHERE (m.date BETWEEN ? AND ?)
+      ${adIdsWithContacts.length > 0 ? `OR m.ad_id IN (${adIdsWithContacts.map(() => '?').join(',')})` : ''}
+      GROUP BY m.campaign_id, m.campaign_name, m.adset_id, m.adset_name, m.ad_id, m.ad_name
+      ORDER BY m.campaign_id, m.adset_id, m.ad_id
+    `;
+
+    // Parámetros: 5 veces el rango (para los CASE WHEN) + 1 vez el WHERE + los ad_ids
+    const aggregationParams = [
+      adsStart, adsEnd,  // CASE spend
+      adsStart, adsEnd,  // CASE reach
+      adsStart, adsEnd,  // CASE clicks
+      adsStart, adsEnd,  // CASE cpc
+      adsStart, adsEnd,  // CASE cpm
+      adsStart, adsEnd,  // WHERE
+      ...adIdsWithContacts
+    ];
+
+    const rows = await db.all(aggregationQuery, aggregationParams);
 
     // Crear un mapa de ad_id -> {interesados, ventas, revenue}
     const contactsMap = {};
@@ -556,34 +572,36 @@ export const getContactsByType = async (req, res) => {
     const adsStart = range.startZoned.toISODate();
     const adsEnd = range.endZoned.toISODate();
 
-    const adIdsFilters = ['date BETWEEN ? AND ?'];
-    const adIdsParams = [adsStart, adsEnd];
+    let adIdsList = [];
 
     // Obtener los ad_ids relevantes basándose en el filtro
     if (ad_id) {
-      adIdsFilters.push('ad_id = ?');
-      adIdsParams.push(ad_id);
+      // Si se especifica un ad_id directamente, usarlo sin filtrar por fechas en meta_ads
+      adIdsList = [ad_id];
     } else if (adset_id) {
-      adIdsFilters.push('adset_id = ?');
-      adIdsParams.push(adset_id);
+      // Si se especifica un adset_id, obtener todos los ads de ese adset (sin filtrar por fecha)
+      const adIdsQuery = `
+        SELECT DISTINCT ad_id
+        FROM meta_ads
+        WHERE adset_id = ?
+      `;
+      const adIds = await db.all(adIdsQuery, [adset_id]);
+      adIdsList = adIds.map(row => row.ad_id);
     } else if (campaign_id) {
-      adIdsFilters.push('campaign_id = ?');
-      adIdsParams.push(campaign_id);
+      // Si se especifica un campaign_id, obtener todos los ads de esa campaña (sin filtrar por fecha)
+      const adIdsQuery = `
+        SELECT DISTINCT ad_id
+        FROM meta_ads
+        WHERE campaign_id = ?
+      `;
+      const adIds = await db.all(adIdsQuery, [campaign_id]);
+      adIdsList = adIds.map(row => row.ad_id);
     } else {
       return res.status(400).json({
         success: false,
         error: 'Se requiere al menos campaign_id, adset_id o ad_id'
       });
     }
-
-    const adIdsQuery = `
-      SELECT DISTINCT ad_id
-      FROM meta_ads
-      WHERE ${adIdsFilters.join(' AND ')}
-    `;
-
-    const adIds = await db.all(adIdsQuery, adIdsParams);
-    const adIdsList = adIds.map(row => row.ad_id);
 
     if (adIdsList.length === 0) {
       return res.json({
