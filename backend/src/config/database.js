@@ -349,4 +349,11 @@ async function initTables() {
 // Inicializar al importar
 await initTables()
 
+/**
+ * Obtiene la configuración de HighLevel desde la base de datos
+ */
+export async function getHighLevelConfig() {
+  return await db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1')
+}
+
 export { db }

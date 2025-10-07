@@ -16,7 +16,8 @@ import {
   listProducts,
   listPrices,
   createInvoice,
-  recordPayment
+  recordPayment,
+  searchContacts
 } from '../controllers/highlevelController.js'
 
 const router = express.Router()
@@ -35,6 +36,9 @@ router.post('/sync-custom-values', syncCustomValues)
 router.post('/sync-contacts', syncContacts)
 router.get('/custom-labels', getCustomLabels)
 router.post('/custom-labels', updateCustomLabels)
+
+// Contacts
+router.post('/contacts/search', searchContacts)
 
 // Products and Payments
 router.get('/products', listProducts)

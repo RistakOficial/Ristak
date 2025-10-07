@@ -87,23 +87,32 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     const timer = setTimeout(async () => {
       setSearchingContact(true)
       try {
-        const response = await fetch('/api/contacts/search?q=' + encodeURIComponent(searchQuery))
+        const response = await fetch('/api/highlevel/contacts/search', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            query: searchQuery,
+            limit: 10
+          })
+        })
         if (!response.ok) {
           throw new Error('Error al buscar contactos')
         }
         const data = await response.json()
 
-        // Transform contacts to ensure they have all required fields
-        const transformedContacts = (data.contacts || []).map((contact: any) => ({
+        // Contacts come already transformed from the backend
+        const contacts = (data.contacts || []).map((contact: any) => ({
           id: contact.id,
-          name: contact.name || contact.contactName || `${contact.firstName || ''} ${contact.lastName || ''}`.trim() || 'Sin nombre',
+          name: contact.name || 'Sin nombre',
           email: contact.email || '',
           phone: contact.phone || '',
           firstName: contact.firstName || '',
           lastName: contact.lastName || ''
         }))
 
-        setContacts(transformedContacts)
+        setContacts(contacts)
         setShowContactDropdown(true)
       } catch (error) {
         console.error('Error buscando contactos:', error)
