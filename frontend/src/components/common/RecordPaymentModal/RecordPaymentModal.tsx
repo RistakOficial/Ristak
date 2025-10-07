@@ -72,7 +72,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const [customAmount, setCustomAmount] = useState('')
   const [loadingProducts, setLoadingProducts] = useState(false)
 
-  const { showNotification } = useNotification()
+  const { showToast } = useNotification()
 
   // Reset form when modal opens/closes
   useEffect(() => {
@@ -190,7 +190,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       setProducts(data.products || [])
     } catch (error) {
       console.error('Error cargando productos:', error)
-      showNotification('error', 'No se pudieron cargar los productos')
+      showToast('error', 'No se pudieron cargar los productos')
     } finally {
       setLoadingProducts(false)
     }
@@ -203,7 +203,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       setPrices(data.prices || [])
     } catch (error) {
       console.error('Error cargando precios:', error)
-      showNotification('error', 'No se pudieron cargar los precios')
+      showToast('error', 'No se pudieron cargar los precios')
     }
   }
 
@@ -237,26 +237,26 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const handleSubmit = async () => {
     // Validations
     if (!selectedContact) {
-      showNotification('error', 'Selecciona un contacto')
+      showToast('error', 'Selecciona un contacto')
       return
     }
 
     if (chargeType === 'direct') {
       if (!amount || parseFloat(amount) <= 0) {
-        showNotification('error', 'Ingresa un monto válido')
+        showToast('error', 'Ingresa un monto válido')
         return
       }
     } else {
       if (!selectedProduct) {
-        showNotification('error', 'Selecciona un producto')
+        showToast('error', 'Selecciona un producto')
         return
       }
       if (!selectedPrice) {
-        showNotification('error', 'Selecciona un precio')
+        showToast('error', 'Selecciona un precio')
         return
       }
       if (!customAmount || parseFloat(customAmount) <= 0) {
-        showNotification('error', 'Ingresa un monto válido')
+        showToast('error', 'Ingresa un monto válido')
         return
       }
     }
@@ -355,12 +355,12 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         throw new Error('Error al registrar el pago')
       }
 
-      showNotification('success', 'Pago registrado correctamente')
+      showToast('success', 'Pago registrado correctamente')
       onSuccess?.()
       onClose()
     } catch (error: any) {
       console.error('Error:', error)
-      showNotification('error', error.message || 'No se pudo registrar el pago')
+      showToast('error', error.message || 'No se pudo registrar el pago')
       setStep('form')
     } finally {
       setLoading(false)
