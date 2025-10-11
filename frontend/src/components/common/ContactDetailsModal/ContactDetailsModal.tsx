@@ -97,24 +97,47 @@ export function ContactDetailsModal({
     }).format(value)
   }
 
-  const getStatusLabel = (status?: string) => {
-    if (!status) return ''
+  const getStatusLabel = (status?: string): { text: string; className: string } => {
+    if (!status) return { text: '', className: '' }
     const statusLower = status.toLowerCase()
 
     if (['succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success'].includes(statusLower)) {
-      return 'PAGADO'
+      return { text: 'PAGADO', className: 'paid' }
     }
     if (['refunded', 'refund'].includes(statusLower)) {
-      return 'REEMBOLSADO'
+      return { text: 'REEMBOLSADO', className: 'refunded' }
     }
     if (['pending', 'processing'].includes(statusLower)) {
-      return 'PENDIENTE'
+      return { text: 'PENDIENTE', className: 'pending' }
     }
     if (['failed', 'canceled', 'cancelled'].includes(statusLower)) {
-      return 'FALLIDO'
+      return { text: 'FALLIDO', className: 'failed' }
+    }
+    if (['booked', 'confirmed', 'scheduled'].includes(statusLower)) {
+      return { text: 'RESERVADO', className: 'booked' }
     }
 
-    return status.toUpperCase()
+    return { text: status.toUpperCase(), className: '' }
+  }
+
+  const getAppointmentStatusLabel = (status?: string | null): { text: string; className: string } => {
+    if (!status) return { text: 'RESERVADO', className: 'booked' }
+    const statusLower = status.toLowerCase()
+
+    if (['confirmed', 'booked', 'scheduled'].includes(statusLower)) {
+      return { text: 'RESERVADO', className: 'booked' }
+    }
+    if (['completed', 'showed', 'attended'].includes(statusLower)) {
+      return { text: 'ASISTIÓ', className: 'paid' }
+    }
+    if (['cancelled', 'canceled', 'no_show', 'noshow'].includes(statusLower)) {
+      return { text: 'CANCELADO', className: 'failed' }
+    }
+    if (['pending', 'unconfirmed'].includes(statusLower)) {
+      return { text: 'PENDIENTE', className: 'pending' }
+    }
+
+    return { text: status.toUpperCase(), className: 'booked' }
   }
 
   // Separar pagos de reembolsos
@@ -384,17 +407,22 @@ export function ContactDetailsModal({
 
                     {paymentsExpanded && (
                       <ul className={styles.paymentList}>
-                        {payments.map(payment => (
-                          <li key={payment.id} className={styles.paymentItem}>
-                            <div>
-                              <p className={styles.paymentAmount}>{formatCurrency(payment.amount)}</p>
-                              {payment.status && (
-                                <span className={styles.paymentStatus}>{getStatusLabel(payment.status)}</span>
-                              )}
-                            </div>
-                            <span className={styles.paymentDate}>{formatDate(payment.date)}</span>
-                          </li>
-                        ))}
+                        {payments.map(payment => {
+                          const statusInfo = getStatusLabel(payment.status)
+                          return (
+                            <li key={payment.id} className={styles.paymentItem}>
+                              <div>
+                                <p className={styles.paymentAmount}>{formatCurrency(payment.amount)}</p>
+                                {payment.status && statusInfo.text && (
+                                  <span className={`${styles.paymentStatus} ${statusInfo.className ? styles[statusInfo.className] : ''}`}>
+                                    {statusInfo.text}
+                                  </span>
+                                )}
+                              </div>
+                              <span className={styles.paymentDate}>{formatDate(payment.date)}</span>
+                            </li>
+                          )
+                        })}
                       </ul>
                     )}
                   </div>
@@ -419,17 +447,22 @@ export function ContactDetailsModal({
 
                     {refundsExpanded && (
                       <ul className={styles.paymentList}>
-                        {refunds.map(refund => (
-                          <li key={refund.id} className={styles.paymentItem}>
-                            <div>
-                              <p className={styles.paymentAmount}>{formatCurrency(Math.abs(refund.amount))}</p>
-                              {refund.status && (
-                                <span className={styles.paymentStatus}>{getStatusLabel(refund.status)}</span>
-                              )}
-                            </div>
-                            <span className={styles.paymentDate}>{formatDate(refund.date)}</span>
-                          </li>
-                        ))}
+                        {refunds.map(refund => {
+                          const statusInfo = getStatusLabel(refund.status)
+                          return (
+                            <li key={refund.id} className={styles.paymentItem}>
+                              <div>
+                                <p className={styles.paymentAmount}>{formatCurrency(Math.abs(refund.amount))}</p>
+                                {refund.status && statusInfo.text && (
+                                  <span className={`${styles.paymentStatus} ${statusInfo.className ? styles[statusInfo.className] : ''}`}>
+                                    {statusInfo.text}
+                                  </span>
+                                )}
+                              </div>
+                              <span className={styles.paymentDate}>{formatDate(refund.date)}</span>
+                            </li>
+                          )
+                        })}
                       </ul>
                     )}
                   </div>
@@ -451,17 +484,20 @@ export function ContactDetailsModal({
 
                     {appointmentsExpanded && (
                       <ul className={styles.paymentList}>
-                        {selectedContact.appointments.map(appointment => (
-                          <li key={appointment.id} className={styles.paymentItem}>
-                            <div>
-                              <p className={styles.paymentAmount}>{appointment.title || 'Cita'}</p>
-                              {appointment.status && (
-                                <span className={styles.paymentStatus}>{appointment.status}</span>
-                              )}
-                            </div>
-                            <span className={styles.paymentDate}>{formatDate(appointment.start_time)}</span>
-                          </li>
-                        ))}
+                        {selectedContact.appointments.map(appointment => {
+                          const statusInfo = getAppointmentStatusLabel(appointment.status)
+                          return (
+                            <li key={appointment.id} className={styles.paymentItem}>
+                              <div>
+                                <p className={styles.paymentAmount}>{appointment.title || 'Cita'}</p>
+                                <span className={`${styles.paymentStatus} ${statusInfo.className ? styles[statusInfo.className] : ''}`}>
+                                  {statusInfo.text}
+                                </span>
+                              </div>
+                              <span className={styles.paymentDate}>{formatDate(appointment.start_time)}</span>
+                            </li>
+                          )
+                        })}
                       </ul>
                     )}
                   </div>
