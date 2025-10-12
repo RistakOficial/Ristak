@@ -62,6 +62,29 @@ export const testConnection = async (req, res) => {
 };
 
 /**
+ * Limpia todas las tablas de datos (contactos, pagos, citas, anuncios de Meta)
+ * Se usa cuando se cambia a un location diferente
+ */
+async function clearAllData() {
+  logger.info('🧹 Limpiando todas las tablas de datos...');
+
+  try {
+    // Eliminar en orden para respetar foreign keys
+    await db.run('DELETE FROM whatsapp_attribution');
+    await db.run('DELETE FROM meta_ads');
+    await db.run('DELETE FROM payments');
+    await db.run('DELETE FROM appointments');
+    await db.run('DELETE FROM contacts');
+    await db.run('DELETE FROM meta_config');
+
+    logger.success('✅ Todas las tablas de datos han sido limpiadas');
+  } catch (error) {
+    logger.error('Error limpiando tablas:', error.message);
+    throw error;
+  }
+}
+
+/**
  * Guarda la configuración de HighLevel y configura webhooks
  */
 export const saveConfig = async (req, res) => {
@@ -100,19 +123,37 @@ export const saveConfig = async (req, res) => {
       logger.warn(`No se pudieron obtener datos del location: ${error.message}`);
     }
 
-    // Primero verificar si existe una configuración
+    // Verificar si existe una configuración con un location_id DIFERENTE
     const existingConfig = await db.get(
+      'SELECT location_id FROM highlevel_config LIMIT 1'
+    );
+
+    if (existingConfig && existingConfig.location_id !== cleanLocationId) {
+      // Es un location DIFERENTE - borrar TODO de la base de datos
+      logger.warn(`⚠️ Detectado cambio de location: ${existingConfig.location_id} → ${cleanLocationId}`);
+      logger.warn('🗑️ Se eliminarán TODOS los datos existentes para iniciar con el nuevo location');
+
+      await clearAllData();
+
+      // Eliminar la config vieja
+      await db.run('DELETE FROM highlevel_config');
+
+      logger.info('✅ Base de datos limpiada completamente. Creando nueva configuración...');
+    }
+
+    // Ahora verificar si existe la config para este location específico
+    const configForThisLocation = await db.get(
       'SELECT id FROM highlevel_config WHERE location_id = ?',
       [cleanLocationId]
     );
 
-    if (existingConfig) {
-      // Actualizar configuración existente
+    if (configForThisLocation) {
+      // Actualizar configuración existente (mismo location, solo actualiza el token)
       await db.run(
         'UPDATE highlevel_config SET api_token = ?, location_data = ? WHERE location_id = ?',
         [cleanToken, locationData ? JSON.stringify(locationData) : null, cleanLocationId]
       );
-      logger.info('Configuración actualizada exitosamente');
+      logger.info('Configuración actualizada exitosamente (mismo location)');
     } else {
       // Insertar nueva configuración
       await db.run(
