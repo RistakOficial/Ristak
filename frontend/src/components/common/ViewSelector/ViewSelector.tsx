@@ -42,7 +42,7 @@ export const ViewSelector: React.FC<ViewSelectorProps> = ({
   }
 
   return (
-    <div className={`${styles.container} ${className || ''}`} ref={dropdownRef}>
+    <div className={`${styles.wrapper} ${className || ''}`} ref={dropdownRef}>
       <button
         className={styles.trigger}
         onClick={() => setIsOpen(!isOpen)}

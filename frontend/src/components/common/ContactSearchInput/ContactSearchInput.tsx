@@ -206,7 +206,7 @@ export const ContactSearchInput: React.FC<ContactSearchInputProps> = ({
   };
 
   return (
-    <div className={styles.container}>
+    <div className={styles.wrapper}>
       <label className={styles.label}>
         Contacto {required && <span className={styles.required}>*</span>}
       </label>

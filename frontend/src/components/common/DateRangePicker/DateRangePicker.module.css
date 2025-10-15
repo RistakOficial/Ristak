@@ -1,7 +1,9 @@
-.container {
+.wrapper {
   position: relative;
   display: inline-flex;
   z-index: var(--z-index-popover);
+  padding: 0;
+  margin: 0;
 }
 
 .input {

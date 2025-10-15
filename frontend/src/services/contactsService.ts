@@ -1,5 +1,6 @@
 import type { Contact as ContactType } from '@/types'
 import { dedupeContacts } from '@/utils/contactDedup'
+import { formatName } from '@/utils/format'
 import apiClient from './apiClient'
 
 export type Contact = ContactType
@@ -15,6 +16,32 @@ export interface ContactStats {
   ltvTotalPrev: number
   avgLtv: number
   avgLtvPrev: number
+}
+
+const normalizeContact = <T extends Record<string, any>>(contact: T): T => {
+  if (!contact || typeof contact !== 'object') {
+    return contact
+  }
+
+  const result = { ...contact }
+
+  if (typeof result.name === 'string') {
+    result.name = formatName(result.name)
+  }
+
+  if (typeof (result as any).full_name === 'string') {
+    (result as any).full_name = formatName((result as any).full_name)
+  }
+
+  if (typeof (result as any).fullName === 'string') {
+    (result as any).fullName = formatName((result as any).fullName)
+  }
+
+  if (typeof (result as any).contactName === 'string') {
+    (result as any).contactName = formatName((result as any).contactName)
+  }
+
+  return result
 }
 
 export const contactsService = {
@@ -56,7 +83,7 @@ export const contactsService = {
         console.warn('getContacts reached pagination safeguard limit. Verify backend pagination response.')
       }
 
-      return dedupeContacts<Contact>(allContacts)
+      return dedupeContacts<Contact>(allContacts).map(normalizeContact)
     } catch (error) {
       // TODO: Implement proper logging service
       return []
@@ -69,7 +96,7 @@ export const contactsService = {
         params: { q: searchTerm }
       })
       const results = Array.isArray(data) ? data : []
-      return dedupeContacts<Contact>(results)
+      return dedupeContacts<Contact>(results).map(normalizeContact)
     } catch (error) {
       // TODO: Implement proper logging service
       return []
@@ -114,7 +141,7 @@ export const contactsService = {
         purchases: 0,
         createdAt: utcDate // Guardar en formato ISO UTC
       })
-      return response as Contact
+      return normalizeContact(response as Contact)
     } catch (error) {
       // TODO: Implement proper logging service
       throw error
@@ -123,7 +150,7 @@ export const contactsService = {
 
   async updateContact(id: string, contact: Partial<Contact>): Promise<Contact> {
     const data = await apiClient.put<Contact>(`/contacts/${id}`, contact)
-    return data
+    return normalizeContact(data)
   },
 
   async deleteContact(id: string): Promise<void> {
@@ -132,7 +159,7 @@ export const contactsService = {
 
   async getContactDetails(id: string): Promise<Contact> {
     const data = await apiClient.get<Contact>(`/contacts/${id}`)
-    return data
+    return normalizeContact(data)
   },
 
   calculateDelta(current: number, previous: number): number {

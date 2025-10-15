@@ -190,23 +190,25 @@ export const LineChart: React.FC<LineChartProps> = ({
                 dot={
                   showPoints
                     ? {
-                        r: 5,
-                        fill: serie.color,
-                        stroke: 'var(--color-background)',
-                        strokeWidth: 2
+                        r: 6,
+                        fill: 'var(--color-background-primary)',
+                        stroke: serie.color,
+                        strokeWidth: 3
                       }
                     : false
                 }
                 activeDot={
                   showPoints
                     ? {
-                        r: 7,
-                        fill: serie.color,
-                        stroke: 'var(--color-background)',
-                        strokeWidth: 2
+                        r: 8,
+                        fill: 'var(--color-background-primary)',
+                        stroke: serie.color,
+                        strokeWidth: 3
                       }
                     : false
                 }
+                animationDuration={0}
+                animationBegin={0}
                 connectNulls
                 isAnimationActive={false}
               />

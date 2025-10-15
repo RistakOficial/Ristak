@@ -1,6 +1,8 @@
-.container {
+.wrapper {
   position: relative;
   min-width: 120px;
+  padding: 0;
+  margin: 0;
 }
 
 .trigger {

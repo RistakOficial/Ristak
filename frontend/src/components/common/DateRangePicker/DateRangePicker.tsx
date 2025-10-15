@@ -414,7 +414,7 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
   }
 
   return (
-    <div className={styles.container} ref={containerRef}>
+    <div className={styles.wrapper} ref={containerRef}>
       <button
         className={styles.input}
         onClick={() => setIsOpen(!isOpen)}

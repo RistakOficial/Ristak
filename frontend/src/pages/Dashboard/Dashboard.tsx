@@ -291,7 +291,7 @@ export const Dashboard: React.FC = () => {
     }
   }
 
-  const chartHeight = 300
+  const chartHeight = 340
 
   useEffect(() => {
     const loadData = async () => {
@@ -433,9 +433,9 @@ export const Dashboard: React.FC = () => {
         />
         </div>
 
-        <Card variant="glass" className="space-y-4">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <div>
+        <Card variant="glass" className="space-y-5">
+          <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
+            <div className="space-y-1">
               <h2 className="text-xl font-semibold text-[var(--color-text-primary)]">{selectedConfig.title}</h2>
               <p className="text-sm text-[var(--color-text-secondary)] mt-0.5">{selectedConfig.subtitle}</p>
             </div>
@@ -443,10 +443,10 @@ export const Dashboard: React.FC = () => {
               value={selectedChart}
               options={CHART_OPTIONS}
               onChange={handleChartChange}
-              className="sm:self-start"
+              className="w-full sm:w-auto"
             />
           </div>
-          <div style={{ height: chartHeight }} className="w-full">
+          <div className="relative w-full" style={{ minHeight: chartHeight, height: chartHeight }}>
             {selectedConfig.data.length > 0 ? (
               <AreaChart
                 data={selectedConfig.data}
