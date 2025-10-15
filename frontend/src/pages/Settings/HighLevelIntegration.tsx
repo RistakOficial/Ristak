@@ -83,15 +83,31 @@ export const HighLevelIntegration: React.FC = () => {
   const leadOptions = ['Interesado', 'Prospecto', 'Mensaje', 'Lead', 'Consulta']
 
   const scopes = [
+    'payments.readonly',
+    'payments.write',
+    'invoices.readonly',
+    'invoices.write',
+    'invoices/schedule.readonly',
+    'invoices/schedule.write',
     'contacts.readonly',
     'contacts.write',
     'opportunities.readonly',
     'opportunities.write',
+    'products.readonly',
+    'products.write',
     'calendars.readonly',
     'calendars.write',
     'calendars/events.readonly',
     'calendars/events.write',
-    'payments.write'
+    'locations.readonly',
+    'businesses.readonly',
+    'businesses.write',
+    'calendars/resources.readonly',
+    'calendars/resources.write',
+    'conversations.readonly',
+    'conversations.write',
+    'conversations/message.readonly',
+    'conversations/message.write'
   ]
 
   useEffect(() => {
