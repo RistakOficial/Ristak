@@ -816,6 +816,7 @@ export const Reports: React.FC = () => {
       <header className={styles.header}>
         <div className={styles.titleBlock}>
           <h1 className={styles.title}>Reportes</h1>
+          <p className={styles.subtitle}>Explora métricas financieras y de marketing agrupadas por periodo.</p>
           {metricsRangeLabel && <span className={styles.rangeLabel}>{metricsRangeLabel}</span>}
           {viewType === 'day' && (
             <div className={styles.datePickerInline}>

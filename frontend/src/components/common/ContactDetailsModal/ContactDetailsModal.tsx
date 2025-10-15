@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect } from 'react'
 import { Modal } from '../Modal'
 import { Icon } from '../Icon'
+import { Badge, type BadgeVariant } from '../Badge'
 import { formatDate } from '@/utils/format'
 import styles from './ContactDetailsModal.module.css'
 
@@ -97,47 +98,55 @@ export function ContactDetailsModal({
     }).format(value)
   }
 
-  const getStatusLabel = (status?: string): { text: string; className: string } => {
-    if (!status) return { text: '', className: '' }
+  const formatStatusText = (value: string) =>
+    value
+      .toLowerCase()
+      .split(/[\s_]+/)
+      .filter(Boolean)
+      .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+      .join(' ')
+
+  const getStatusLabel = (status?: string): { text: string; variant: BadgeVariant } => {
+    if (!status) return { text: '', variant: 'neutral' }
     const statusLower = status.toLowerCase()
 
     if (['succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success'].includes(statusLower)) {
-      return { text: 'PAGADO', className: 'paid' }
+      return { text: 'Pagado', variant: 'success' }
     }
     if (['refunded', 'refund'].includes(statusLower)) {
-      return { text: 'REEMBOLSADO', className: 'refunded' }
+      return { text: 'Reembolsado', variant: 'error' }
     }
     if (['pending', 'processing'].includes(statusLower)) {
-      return { text: 'PENDIENTE', className: 'pending' }
+      return { text: 'Pendiente', variant: 'warning' }
     }
     if (['failed', 'canceled', 'cancelled'].includes(statusLower)) {
-      return { text: 'FALLIDO', className: 'failed' }
+      return { text: 'Fallido', variant: 'error' }
     }
     if (['booked', 'confirmed', 'scheduled'].includes(statusLower)) {
-      return { text: 'RESERVADO', className: 'booked' }
+      return { text: 'Reservado', variant: 'warning' }
     }
 
-    return { text: status.toUpperCase(), className: '' }
+    return { text: formatStatusText(statusLower), variant: 'neutral' }
   }
 
-  const getAppointmentStatusLabel = (status?: string | null): { text: string; className: string } => {
-    if (!status) return { text: 'RESERVADO', className: 'booked' }
+  const getAppointmentStatusLabel = (status?: string | null): { text: string; variant: BadgeVariant } => {
+    if (!status) return { text: 'Reservado', variant: 'warning' }
     const statusLower = status.toLowerCase()
 
     if (['confirmed', 'booked', 'scheduled'].includes(statusLower)) {
-      return { text: 'RESERVADO', className: 'booked' }
+      return { text: 'Reservado', variant: 'warning' }
     }
     if (['completed', 'showed', 'attended'].includes(statusLower)) {
-      return { text: 'ASISTIÓ', className: 'paid' }
+      return { text: 'Asistió', variant: 'success' }
     }
     if (['cancelled', 'canceled', 'no_show', 'noshow'].includes(statusLower)) {
-      return { text: 'CANCELADO', className: 'failed' }
+      return { text: 'Cancelado', variant: 'error' }
     }
     if (['pending', 'unconfirmed'].includes(statusLower)) {
-      return { text: 'PENDIENTE', className: 'pending' }
+      return { text: 'Pendiente', variant: 'warning' }
     }
 
-    return { text: status.toUpperCase(), className: 'booked' }
+    return { text: formatStatusText(statusLower), variant: 'neutral' }
   }
 
   // Separar pagos de reembolsos
@@ -414,9 +423,9 @@ export function ContactDetailsModal({
                               <div>
                                 <p className={styles.paymentAmount}>{formatCurrency(payment.amount)}</p>
                                 {payment.status && statusInfo.text && (
-                                  <span className={`${styles.paymentStatus} ${statusInfo.className ? styles[statusInfo.className] : ''}`}>
+                                  <Badge variant={statusInfo.variant} className={styles.paymentStatus}>
                                     {statusInfo.text}
-                                  </span>
+                                  </Badge>
                                 )}
                               </div>
                               <span className={styles.paymentDate}>{formatDate(payment.date)}</span>
@@ -454,9 +463,9 @@ export function ContactDetailsModal({
                               <div>
                                 <p className={styles.paymentAmount}>{formatCurrency(Math.abs(refund.amount))}</p>
                                 {refund.status && statusInfo.text && (
-                                  <span className={`${styles.paymentStatus} ${statusInfo.className ? styles[statusInfo.className] : ''}`}>
+                                  <Badge variant={statusInfo.variant} className={styles.paymentStatus}>
                                     {statusInfo.text}
-                                  </span>
+                                  </Badge>
                                 )}
                               </div>
                               <span className={styles.paymentDate}>{formatDate(refund.date)}</span>
@@ -490,9 +499,9 @@ export function ContactDetailsModal({
                             <li key={appointment.id} className={styles.paymentItem}>
                               <div>
                                 <p className={styles.paymentAmount}>{appointment.title || 'Cita'}</p>
-                                <span className={`${styles.paymentStatus} ${statusInfo.className ? styles[statusInfo.className] : ''}`}>
+                                <Badge variant={statusInfo.variant} className={styles.paymentStatus}>
                                   {statusInfo.text}
-                                </span>
+                                </Badge>
                               </div>
                               <span className={styles.paymentDate}>{formatDate(appointment.start_time)}</span>
                             </li>

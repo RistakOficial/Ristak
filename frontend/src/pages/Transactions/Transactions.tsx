@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
-import { KpiCard, Card, Button, Table, DateRangePicker, ContactSearchInput, PageContainer, TabList, RecordPaymentModal } from '@/components/common'
-import type { Column } from '@/components/common'
+import { createPortal } from 'react-dom'
+import { KpiCard, Card, Button, Table, DateRangePicker, ContactSearchInput, PageContainer, TabList, RecordPaymentModal, Badge } from '@/components/common'
+import type { Column, BadgeVariant } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
 import { Contact } from '@/types'
 import {
@@ -36,6 +37,7 @@ export const Transactions: React.FC = () => {
   const [modal, setModal] = useState<ModalData>({ type: null, selectedContact: null })
   const [viewMode, setViewMode] = useState<'all' | 'by-date'>('all') // Por defecto 'all' (Todos)
   const [showRecordPaymentModal, setShowRecordPaymentModal] = useState(false)
+  const [isClient, setIsClient] = useState(false)
 
   const rangeStart = dateRange.start instanceof Date ? dateRange.start : new Date(dateRange.start)
   const rangeEnd = dateRange.end instanceof Date ? dateRange.end : new Date(dateRange.end)
@@ -45,6 +47,10 @@ export const Transactions: React.FC = () => {
   useEffect(() => {
     fetchData()
   }, [dateRange, viewMode])
+
+  useEffect(() => {
+    setIsClient(true)
+  }, [])
 
   const fetchData = async () => {
     setLoading(true)
@@ -160,20 +166,16 @@ export const Transactions: React.FC = () => {
     }
   }
 
-  const getStatusBadge = (status: string) => {
-    const statusClass = styles[status]
-    const statusText = {
-      paid: 'Pagado',
-      pending: 'Pendiente',
-      failed: 'Fallido',
-      refunded: 'Reembolsado'
-    }[status]
+  const STATUS_BADGES: Record<Transaction['status'], { label: string; variant: BadgeVariant }> = {
+    paid: { label: 'Pagado', variant: 'success' },
+    pending: { label: 'Pendiente', variant: 'warning' },
+    failed: { label: 'Fallido', variant: 'error' },
+    refunded: { label: 'Reembolsado', variant: 'error' }
+  }
 
-    return (
-      <span className={`${styles.statusBadge} ${statusClass}`}>
-        {statusText}
-      </span>
-    )
+  const getStatusBadge = (status: Transaction['status']) => {
+    const config = STATUS_BADGES[status] ?? { label: status, variant: 'neutral' as BadgeVariant }
+    return <Badge variant={config.variant}>{config.label}</Badge>
   }
 
   const columns: Column<Transaction>[] = [
@@ -214,7 +216,7 @@ export const Transactions: React.FC = () => {
     {
       key: 'status',
       header: 'Estado',
-      render: (value) => getStatusBadge(value),
+      render: (value) => getStatusBadge(value as Transaction['status']),
       sortable: true
     },
     {
@@ -262,7 +264,10 @@ export const Transactions: React.FC = () => {
     <PageContainer>
       <div className={styles.container}>
         <div className={styles.pageHeader}>
-          <h1 className={styles.pageTitle}>Pagos</h1>
+          <div>
+            <h1 className={styles.pageTitle}>Pagos</h1>
+            <p className={styles.pageSubtitle}>Monitorea ingresos, reembolsos y tickets promedio de tus operaciones.</p>
+          </div>
           {viewMode === 'by-date' && (
             <div className={styles.datePickerInline}>
               <DateRangePicker
@@ -343,7 +348,7 @@ export const Transactions: React.FC = () => {
         />
       </Card>
 
-      {modal.type && (
+      {isClient && modal.type && createPortal(
         <div className={styles.modalOverlay} onClick={() => setModal({ type: null, selectedContact: null })}>
           <div className={styles.modal} onClick={(e) => e.stopPropagation()}>
             <h2>{modal.type === 'create' ? 'Nuevo Pago' : 'Editar Pago'}</h2>
@@ -423,7 +428,8 @@ export const Transactions: React.FC = () => {
               </div>
             </form>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       <RecordPaymentModal

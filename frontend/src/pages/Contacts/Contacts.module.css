@@ -8,14 +8,28 @@
 .pageHeader {
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-sm);
+  gap: var(--spacing-xs);
 }
 
 .pageTitle {
-  font-size: var(--font-size-3xl);
+  font-size: var(--font-size-4xl);
   font-weight: var(--font-weight-bold);
   color: var(--color-text-primary);
   margin: 0;
+}
+
+.pageSubtitle {
+  font-size: var(--font-size-base);
+  color: var(--color-text-tertiary);
+  margin: 0;
+}
+
+@media (min-width: 768px) {
+  .pageHeader {
+    flex-direction: row;
+    align-items: flex-end;
+    justify-content: space-between;
+  }
 }
 
 .datePickerInline {
@@ -80,34 +94,6 @@
 .nameLink:hover {
   color: var(--color-text-primary);
   text-decoration: underline;
-}
-
-.statusBadge {
-  display: inline-block;
-  padding: 2px var(--spacing-sm);
-  border-radius: var(--radius-sm);
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-medium);
-}
-
-.lead {
-  background-color: rgba(59, 130, 246, 0.1);
-  color: #3b82f6;
-}
-
-[data-theme="dark"] .lead {
-  background-color: rgba(59, 130, 246, 0.15);
-  color: #60a5fa;
-}
-
-.appointment {
-  background-color: var(--color-warning-light);
-  color: var(--color-warning-dark);
-}
-
-.customer {
-  background-color: var(--color-success-light);
-  color: var(--color-success-dark);
 }
 
 .actions {

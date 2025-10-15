@@ -358,10 +358,10 @@ export const Dashboard: React.FC = () => {
   return (
     <PageContainer>
       <div className="flex flex-col gap-6">
-        <div className="space-y-3">
+        <div className="space-y-4">
           <div>
-            <h1 className="text-[var(--font-size-3xl)] font-bold text-[var(--color-text-primary)]">Dashboard</h1>
-            <p className="mt-1 text-sm text-[var(--color-text-tertiary)]">Resumen financiero y de marketing</p>
+            <h1 className="text-[var(--font-size-4xl)] font-bold leading-tight text-[var(--color-text-primary)]">Dashboard</h1>
+            <p className="mt-2 text-base text-[var(--color-text-tertiary)]">Resumen financiero y de marketing</p>
           </div>
           <DateRangePicker
             startDate={formatDateToISO(dateRange.start)}

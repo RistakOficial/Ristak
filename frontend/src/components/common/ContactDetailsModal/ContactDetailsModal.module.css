@@ -499,71 +499,8 @@
 }
 
 .paymentStatus {
-  display: inline-block;
+  display: inline-flex;
   margin-top: 0.25rem;
-  padding: 0.125rem 0.5rem;
-  font-size: 0.6875rem;
-  font-weight: 600;
-  border-radius: var(--radius-sm);
-  background-color: rgba(var(--color-primary-rgb), 0.1);
-  color: var(--color-primary);
-  text-transform: uppercase;
-  letter-spacing: 0.025em;
-}
-
-/* Estado: Pagado - Verde */
-.paymentStatus.paid {
-  background-color: rgba(16, 185, 129, 0.15);
-  color: #10b981;
-}
-
-[data-theme="dark"] .paymentStatus.paid {
-  background-color: rgba(16, 185, 129, 0.2);
-  color: #34d399;
-}
-
-/* Estado: Reservado/Cita - Amarillo */
-.paymentStatus.booked {
-  background-color: rgba(245, 158, 11, 0.15);
-  color: #f59e0b;
-}
-
-[data-theme="dark"] .paymentStatus.booked {
-  background-color: rgba(245, 158, 11, 0.2);
-  color: #fbbf24;
-}
-
-/* Estado: Pendiente - Gris/Neutro */
-.paymentStatus.pending {
-  background-color: rgba(100, 116, 139, 0.12);
-  color: #64748b;
-}
-
-[data-theme="dark"] .paymentStatus.pending {
-  background-color: rgba(148, 163, 184, 0.15);
-  color: #94a3b8;
-}
-
-/* Estado: Fallido/Cancelado - Rojo */
-.paymentStatus.failed {
-  background-color: rgba(239, 68, 68, 0.15);
-  color: #ef4444;
-}
-
-[data-theme="dark"] .paymentStatus.failed {
-  background-color: rgba(239, 68, 68, 0.2);
-  color: #f87171;
-}
-
-/* Estado: Reembolsado - Naranja */
-.paymentStatus.refunded {
-  background-color: rgba(249, 115, 22, 0.15);
-  color: #f97316;
-}
-
-[data-theme="dark"] .paymentStatus.refunded {
-  background-color: rgba(249, 115, 22, 0.2);
-  color: #fb923c;
 }
 
 .paymentDate {

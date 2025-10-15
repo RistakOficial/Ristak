@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
-import { KpiCard, Card, Button, Table, DateRangePicker, PageContainer, TabList } from '@/components/common'
-import type { Column } from '@/components/common'
+import { createPortal } from 'react-dom'
+import { KpiCard, Card, Button, Table, DateRangePicker, PageContainer, TabList, Badge } from '@/components/common'
+import type { Column, BadgeVariant } from '@/components/common'
 import {
   Plus,
   Info,
@@ -35,6 +36,7 @@ export const Contacts: React.FC = () => {
   const [deletingContact, setDeletingContact] = useState<Contact | null>(null)
   const [loading, setLoading] = useState(false)
   const [viewMode, setViewMode] = useState<'all' | 'by-date'>('all') // Por defecto 'all' (Todos)
+  const [isClient, setIsClient] = useState(false)
 
   const rangeStart = dateRange.start instanceof Date ? dateRange.start : new Date(dateRange.start)
   const rangeEnd = dateRange.end instanceof Date ? dateRange.end : new Date(dateRange.end)
@@ -44,6 +46,10 @@ export const Contacts: React.FC = () => {
   useEffect(() => {
     fetchData()
   }, [dateRange, viewMode])
+
+  useEffect(() => {
+    setIsClient(true)
+  }, [])
 
   const fetchData = async () => {
     setLoading(true)
@@ -88,18 +94,15 @@ export const Contacts: React.FC = () => {
     { label: labels.customers, value: 'customers' }
   ]
 
-  const getStatusBadge = (status: string) => {
-    const statusText = {
-      lead: labels.lead,
-      appointment: 'Agendó cita',
-      customer: labels.customer
-    }[status]
+  const statusConfig: Record<Contact['status'], { label: string; variant: BadgeVariant }> = {
+    lead: { label: labels.lead, variant: 'neutral' },
+    appointment: { label: 'Agendó cita', variant: 'success' },
+    customer: { label: labels.customer, variant: 'primary' }
+  }
 
-    return (
-      <span className={`${styles.statusBadge} ${styles[status]}`}>
-        {statusText}
-      </span>
-    )
+  const getStatusBadge = (status: Contact['status']) => {
+    const config = statusConfig[status] ?? { label: status, variant: 'neutral' as BadgeVariant }
+    return <Badge variant={config.variant}>{config.label}</Badge>
   }
 
   const columns: Column<Contact>[] = [
@@ -142,7 +145,7 @@ export const Contacts: React.FC = () => {
     {
       key: 'status',
       header: 'Estado',
-      render: (value) => getStatusBadge(value),
+      render: (value) => getStatusBadge(value as Contact['status']),
       sortable: true
     },
     {
@@ -200,7 +203,10 @@ export const Contacts: React.FC = () => {
     <PageContainer>
       <div className={styles.container}>
         <div className={styles.pageHeader}>
-          <h1 className={styles.pageTitle}>Contactos</h1>
+          <div>
+            <h1 className={styles.pageTitle}>Contactos</h1>
+            <p className={styles.pageSubtitle}>Visualiza tus contactos, clientes y su valor acumulado en el tiempo.</p>
+          </div>
           {viewMode === 'by-date' && (
             <div className={styles.datePickerInline}>
               <DateRangePicker
@@ -280,7 +286,7 @@ export const Contacts: React.FC = () => {
         />
       </Card>
 
-      {selectedContact && (
+      {isClient && selectedContact && createPortal(
         <div className={styles.modalOverlay} onClick={() => setSelectedContact(null)}>
           <div className={styles.modal} onClick={(e) => e.stopPropagation()}>
             <div className={styles.modalHeader}>
@@ -365,10 +371,11 @@ export const Contacts: React.FC = () => {
               )}
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
-      {showNewContactModal && (
+      {isClient && showNewContactModal && createPortal(
         <div className={styles.modalOverlay} onClick={() => setShowNewContactModal(false)}>
           <div className={styles.modal} onClick={(e) => e.stopPropagation()}>
             <h2>Nuevo Contacto</h2>
@@ -405,10 +412,11 @@ export const Contacts: React.FC = () => {
               </div>
             </form>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
-      {editingContact && (
+      {isClient && editingContact && createPortal(
         <div className={styles.modalOverlay} onClick={() => setEditingContact(null)}>
           <div className={styles.modal} onClick={(e) => e.stopPropagation()}>
             <div className={styles.modalHeader}>
@@ -482,10 +490,11 @@ export const Contacts: React.FC = () => {
               </div>
             </form>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
-      {deletingContact && (
+      {isClient && deletingContact && createPortal(
         <div className={styles.modalOverlay} onClick={() => setDeletingContact(null)}>
           <div className={styles.modal} onClick={(e) => e.stopPropagation()}>
             <div className={styles.modalHeader}>
@@ -522,7 +531,8 @@ export const Contacts: React.FC = () => {
               </Button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
       </div>
     </PageContainer>

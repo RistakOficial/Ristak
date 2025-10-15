@@ -27,6 +27,7 @@ interface AreaChartProps {
   showGrid?: boolean
   color?: string
   color2?: string
+  showPoints?: boolean
   formatValue?: (value: number) => string
   formatTooltipValue?: (value: number, key: string) => string
   showLegend?: boolean
@@ -85,6 +86,7 @@ export const AreaChart: React.FC<AreaChartProps> = ({
   showGrid = true,
   color = DEFAULT_COLOR_PRIMARY,
   color2 = DEFAULT_COLOR_SECONDARY,
+  showPoints = true,
   formatValue = defaultFormatAxis,
   formatTooltipValue = (value) => defaultFormatTooltip(value),
   showLegend = false,
@@ -191,13 +193,25 @@ export const AreaChart: React.FC<AreaChartProps> = ({
                 stroke={serie.color}
                 strokeWidth={2.5}
                 fill={`url(#gradient-${serie.key}-${isDarkMode ? 'dark' : 'light'})`}
-                dot={false}
-                activeDot={{
-                  r: 6,
-                  fill: serie.color,
-                  stroke: isDarkMode ? '#0a0b0d' : '#ffffff',
-                  strokeWidth: 2
-                }}
+                dot={
+                  showPoints
+                    ? {
+                        r: 3.5,
+                        fill: serie.color,
+                        strokeWidth: 0
+                      }
+                    : false
+                }
+                activeDot={
+                  showPoints
+                    ? {
+                        r: 5,
+                        fill: serie.color,
+                        stroke: isDarkMode ? '#0a0b0d' : '#ffffff',
+                        strokeWidth: 2
+                      }
+                    : false
+                }
               />
             ))}
           </RechartsAreaChart>

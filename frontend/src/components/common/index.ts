@@ -26,6 +26,8 @@ export { RecordPaymentModal } from './RecordPaymentModal'
 // Componentes de UI
 export { ViewSelector } from './ViewSelector'
 export { Icon } from './Icon'
+export { Badge } from './Badge'
+export type { BadgeProps, BadgeVariant } from './Badge'
 
 // Componentes de notificaciones
 export { Toast, ToastContainer } from './Toast'
