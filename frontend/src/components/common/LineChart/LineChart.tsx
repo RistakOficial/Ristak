@@ -191,9 +191,11 @@ export const LineChart: React.FC<LineChartProps> = ({
 
             <SmartRechartsTooltip
               content={<TooltipContent series={series} formatValue={tooltipFormatter} />}
-              cursor={{ stroke: 'var(--color-border-subtle)', strokeWidth: 1 }}
-              aboveOnly={true}
+              cursor={false}
               prefer="tr"
+              offset={{ x: 0, y: 60 }}
+              portalToBody
+              allowEscapeViewBox={{ x: true, y: true }}
             />
 
             {series.map((serie) => (

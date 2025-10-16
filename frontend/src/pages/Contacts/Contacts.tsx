@@ -16,7 +16,6 @@ import {
   MoreVertical,
   Eye,
   Mail,
-  Phone,
   Tag
 } from 'lucide-react'
 import { useDateRange } from '@/contexts/DateRangeContext'
@@ -176,14 +175,6 @@ export const Contacts: React.FC = () => {
                 <DropdownMenuItem onClick={() => window.location.href = `mailto:${item.email}`}>
                   <Mail size={16} />
                   <span style={{ marginLeft: '8px' }}>Enviar email</span>
-                </DropdownMenuItem>
-              )}
-
-              {/* Llamar (si tiene teléfono) */}
-              {item.phone && (
-                <DropdownMenuItem onClick={() => window.location.href = `tel:${item.phone}`}>
-                  <Phone size={16} />
-                  <span style={{ marginLeft: '8px' }}>Llamar</span>
                 </DropdownMenuItem>
               )}
 
