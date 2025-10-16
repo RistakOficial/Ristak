@@ -5,11 +5,11 @@ import {
   XAxis,
   YAxis,
   CartesianGrid,
-  ResponsiveContainer
+  ResponsiveContainer,
+  Tooltip
 } from 'recharts'
 import { formatCurrency } from '@/utils/format'
-import { Tooltip } from 'recharts'
-import { CustomTooltip } from '@/components/common/CustomTooltip'
+import { CustomTooltipWrapper } from './CustomTooltipWrapper'
 
 interface DataPoint {
   label: string
@@ -56,40 +56,6 @@ const defaultFormatAxis = (value: number): string => {
 
 const defaultFormatTooltip = (value: number): string => formatCurrency(value)
 
-const TooltipContent: React.FC<{ payload?: any[]; label?: string; series: SeriesDefinition[]; formatValue: (value: number, key: string) => string }> = ({ payload, label, series, formatValue }) => {
-  if (!payload || payload.length === 0) {
-    return null
-  }
-
-  const items = payload.map((entry) => {
-    const seriesInfo = series.find((serie) => serie.key === entry.dataKey)
-    if (!seriesInfo) return null
-
-    return (
-      <div key={seriesInfo.key} className="flex items-center gap-2 text-sm">
-        <span
-          className="h-2.5 w-2.5 rounded-full"
-          style={{ backgroundColor: seriesInfo.color }}
-        />
-        <span className="text-[var(--color-text-secondary)]">{seriesInfo.label}:</span>
-        <span className="font-medium text-[var(--color-text-primary)]">
-          {typeof entry.value === 'number' ? formatValue(entry.value, seriesInfo.key) : entry.value}
-        </span>
-      </div>
-    )
-  }).filter(Boolean)
-
-  if (items.length === 0) return null
-
-  return (
-    <div className="glass rounded-lg border border-[rgba(148,163,184,0.14)] px-4 py-3 dark:shadow-[0_18px_35px_-25px_rgba(15,23,42,0.6)]">
-      {label && <p className="mb-2 text-xs font-medium uppercase tracking-[0.18em] text-[var(--color-text-tertiary)]">{label}</p>}
-      <div className="space-y-1.5">
-        {items}
-      </div>
-    </div>
-  )
-}
 
 export const LineChart: React.FC<LineChartProps> = ({
   data,
@@ -191,11 +157,15 @@ export const LineChart: React.FC<LineChartProps> = ({
             />
 
             <Tooltip
-              content={<TooltipContent series={series} formatValue={tooltipFormatter} />}
+              content={(props: any) => (
+                <CustomTooltipWrapper
+                  {...props}
+                  series={series}
+                  formatValue={tooltipFormatter}
+                />
+              )}
               cursor={false}
               isAnimationActive={false}
-              offset={100}
-              wrapperClassName="custom-tooltip-above"
             />
 
             {series.map((serie) => (
