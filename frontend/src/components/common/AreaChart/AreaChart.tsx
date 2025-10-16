@@ -1,4 +1,4 @@
-import React, { useMemo, useRef } from 'react'
+import React, { useMemo } from 'react'
 import {
   AreaChart as RechartsAreaChart,
   Area,
@@ -8,7 +8,8 @@ import {
   ResponsiveContainer
 } from 'recharts'
 import { formatCurrency, formatNumber } from '@/utils/format'
-import { FloatingTooltip } from '../LineChart/FloatingTooltip'
+import { useChartHover } from '@/hooks/useChartHover'
+import { ChartTooltip } from '../ChartTooltip/ChartTooltip'
 
 interface DataPoint {
   label: string
@@ -68,7 +69,7 @@ export const AreaChart: React.FC<AreaChartProps> = ({
   showLegend = false,
   legendLabels = { label1: 'Serie 1', label2: 'Serie 2' }
 }) => {
-  const chartRef = useRef<HTMLDivElement>(null)
+  const { chartRef, mousePos, isHovering, activeIndex, activeData } = useChartHover({ data })
   const hasSecondSeries = data.some((d) => typeof d.value2 === 'number')
   const isDarkMode = document.body.classList.contains('dark')
 
@@ -171,23 +172,26 @@ export const AreaChart: React.FC<AreaChartProps> = ({
                 fill={`url(#gradient-${serie.key}-${isDarkMode ? 'dark' : 'light'})`}
                 dot={
                   showPoints
-                    ? {
-                        r: 3.5,
-                        fill: serie.color,
-                        strokeWidth: 0
+                    ? (props: any) => {
+                        const isActive = props.index === activeIndex
+                        return (
+                          <circle
+                            cx={props.cx}
+                            cy={props.cy}
+                            r={isActive ? 7 : 3.5}
+                            fill={isActive ? 'var(--color-background-primary)' : serie.color}
+                            stroke={isActive ? serie.color : 'none'}
+                            strokeWidth={isActive ? 3 : 0}
+                            style={{
+                              transition: 'all 150ms ease-out',
+                              filter: isActive ? 'drop-shadow(0 2px 4px rgba(0, 0, 0, 0.2))' : 'none'
+                            }}
+                          />
+                        )
                       }
                     : false
                 }
-                activeDot={
-                  showPoints
-                    ? {
-                        r: 5,
-                        fill: serie.color,
-                        stroke: 'var(--color-background-primary)',
-                        strokeWidth: 2
-                      }
-                    : false
-                }
+                activeDot={false}
                 animationDuration={0}
                 animationBegin={0}
                 isAnimationActive={false}
@@ -198,9 +202,10 @@ export const AreaChart: React.FC<AreaChartProps> = ({
       </div>
 
       {/* Nuestro tooltip flotante que sigue al cursor */}
-      <FloatingTooltip
-        chartRef={chartRef}
-        data={data}
+      <ChartTooltip
+        active={isHovering}
+        data={activeData}
+        mousePos={mousePos}
         series={series}
         formatValue={tooltipFormatter}
       />
