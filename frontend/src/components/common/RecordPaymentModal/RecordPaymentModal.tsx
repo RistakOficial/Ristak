@@ -690,27 +690,29 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
         <div className={styles.field}>
           <label className={styles.label}>Tipo de cobro</label>
-          <TabList
-            tabs={[
-              { value: 'direct', label: 'Cobro directo' },
-              { value: 'product', label: 'Productos guardados' }
-            ]}
-            activeTab={chargeType}
-            onTabChange={(value) => {
-              if (value === 'direct') {
-                setChargeType('direct')
-                setSelectedProduct(null)
-                setSelectedPrice(null)
-                setPrices([])
-                setCustomAmount('')
-                setCurrency('MXN')
-              } else {
-                setChargeType('product')
-                setAmount('')
-              }
-            }}
-            variant="compact"
-          />
+          <div style={{ marginTop: '4px' }}>
+            <TabList
+              tabs={[
+                { value: 'direct', label: 'Cobro directo' },
+                { value: 'product', label: 'Productos guardados' }
+              ]}
+              activeTab={chargeType}
+              onTabChange={(value) => {
+                if (value === 'direct') {
+                  setChargeType('direct')
+                  setSelectedProduct(null)
+                  setSelectedPrice(null)
+                  setPrices([])
+                  setCustomAmount('')
+                  setCurrency('MXN')
+                } else {
+                  setChargeType('product')
+                  setAmount('')
+                }
+              }}
+              variant="compact"
+            />
+          </div>
         </div>
 
         {chargeType === 'product' && (

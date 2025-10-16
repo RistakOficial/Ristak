@@ -474,6 +474,11 @@ export const Transactions: React.FC = () => {
           <Button
             variant="primary"
             onClick={() => setShowRecordPaymentModal(true)}
+            style={{
+              backgroundColor: '#0f172a',
+              color: 'white',
+              border: '1px solid rgba(30, 41, 59, 0.5)'
+            }}
           >
             <Plus size={16} />
             Registrar pago

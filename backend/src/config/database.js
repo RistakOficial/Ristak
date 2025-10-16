@@ -205,7 +205,6 @@ async function initTables() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_payments_contact ON payments(contact_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_payments_date ON payments(date)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_payments_status ON payments(status)')
-    await db.run('CREATE INDEX IF NOT EXISTS idx_payments_ghl_invoice ON payments(ghl_invoice_id)')
 
     // Tabla de citas
     await db.run(`
@@ -409,6 +408,15 @@ async function initTables() {
         await db.run('ALTER TABLE highlevel_config ADD COLUMN stripe_mode TEXT DEFAULT "test"')
       } catch (err) {
         if (!err.message.includes('duplicate column name') && !err.message.includes('already exists')) {
+          throw err
+        }
+      }
+
+      // Crear índice para ghl_invoice_id DESPUÉS de agregar la columna
+      try {
+        await db.run('CREATE INDEX IF NOT EXISTS idx_payments_ghl_invoice ON payments(ghl_invoice_id)')
+      } catch (err) {
+        if (!err.message.includes('already exists') && !err.message.includes('no such column')) {
           throw err
         }
       }
