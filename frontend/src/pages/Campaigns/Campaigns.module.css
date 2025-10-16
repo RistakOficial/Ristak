@@ -42,9 +42,7 @@
   gap: var(--spacing-lg);
 }
 
-.chartCard {
-  margin-top: var(--spacing-md);
-}
+/* .chartCard eliminado - no necesario ya que el container tiene gap */
 
 .chartTitle {
   font-size: var(--font-size-xl);

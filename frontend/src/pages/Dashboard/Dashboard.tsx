@@ -357,7 +357,7 @@ export const Dashboard: React.FC = () => {
 
   return (
     <PageContainer>
-      <div className="flex flex-col gap-5">
+      <div className="flex flex-col gap-6">
         <div className="flex flex-col items-start gap-2">
           <div>
             <h1 className="m-0 text-[24px] font-bold text-[var(--color-text-primary)]">Dashboard</h1>
