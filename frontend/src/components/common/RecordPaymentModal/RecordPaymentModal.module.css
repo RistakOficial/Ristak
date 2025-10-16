@@ -102,6 +102,42 @@
   margin-top: 6px;
 }
 
+/* Toggle buttons */
+.toggle {
+  display: flex;
+  gap: 8px;
+  padding: 4px;
+  background: var(--color-background);
+  border-radius: 10px;
+  border: 1px solid var(--color-border);
+}
+
+.toggleButton {
+  flex: 1;
+  padding: 10px 16px;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.18s ease;
+  text-align: center;
+}
+
+.toggleButton:hover {
+  color: var(--color-text-primary);
+  background: var(--color-surface);
+}
+
+.toggleButtonActive {
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
 /* Contact selection */
 .selectedContact {
   display: flex;
