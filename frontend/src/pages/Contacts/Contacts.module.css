@@ -10,11 +10,10 @@
   flex-direction: column;
   align-items: flex-start;
   gap: var(--spacing-xs);
-  margin-bottom: var(--spacing-2xl);
 }
 
 .pageTitle {
-  font-size: var(--font-size-3xl);
+  font-size: 24px;
   font-weight: var(--font-weight-bold);
   color: var(--color-text-primary);
   margin: 0;
@@ -26,16 +25,19 @@
   margin: 0;
 }
 
-.datePickerInline {
-  margin-top: var(--spacing-sm);
-}
-
 .controlsRow {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--spacing-md);
   flex-wrap: wrap;
+  margin-bottom: var(--spacing-md);
+}
+
+.dateFilters {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-md);
 }
 
 .kpiRow {
