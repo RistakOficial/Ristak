@@ -47,28 +47,14 @@ export function SmartRechartsTooltip({
 }: SmartRechartsTooltipProps) {
   return (
     <RechartsTooltip
-      content={({ active, payload, label }) => {
-        if (!active || !payload) return null
-
-        const tooltipContent = typeof content === 'function'
-          ? content({ active, payload, label })
-          : React.cloneElement(content as React.ReactElement, {
-              active,
-              payload,
-              label
-            })
-
-        return (
-          <CustomTooltipWrapper>
-            {tooltipContent}
-          </CustomTooltipWrapper>
-        )
-      }}
+      content={content}
       cursor={cursor}
       wrapperStyle={{
         outline: 'none',
+        pointerEvents: 'none',
         ...wrapperStyle
       }}
+      isAnimationActive={false}
       {...rest}
     />
   )

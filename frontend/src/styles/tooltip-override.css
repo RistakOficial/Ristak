@@ -1,0 +1,25 @@
+/* Forzar tooltip de Recharts a aparecer arriba del cursor */
+.recharts-tooltip-wrapper {
+  transform: translateY(-120px) !important;
+  pointer-events: none !important;
+}
+
+/* Asegurar que el tooltip sea visible y esté por encima */
+.recharts-default-tooltip {
+  transform: translateX(-50%) !important;
+  margin-top: 0 !important;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04) !important;
+}
+
+/* Para gráficos con active dot, posicionar relativo al punto */
+.recharts-active-dot ~ .recharts-tooltip-wrapper {
+  transform: translateY(-100px) translateX(-50%) !important;
+}
+
+/* Tooltip personalizado siempre arriba */
+.custom-tooltip-above {
+  position: fixed !important;
+  transform: translate(-50%, -120px) !important;
+  pointer-events: none !important;
+  z-index: 10000 !important;
+}

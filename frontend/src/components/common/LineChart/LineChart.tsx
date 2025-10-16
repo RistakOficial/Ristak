@@ -8,7 +8,8 @@ import {
   ResponsiveContainer
 } from 'recharts'
 import { formatCurrency } from '@/utils/format'
-import { SmartRechartsTooltip } from '@/components/common/SmartRechartsTooltip'
+import { Tooltip } from 'recharts'
+import { CustomTooltip } from '@/components/common/CustomTooltip'
 
 interface DataPoint {
   label: string
@@ -189,13 +190,12 @@ export const LineChart: React.FC<LineChartProps> = ({
               allowDecimals={false}
             />
 
-            <SmartRechartsTooltip
+            <Tooltip
               content={<TooltipContent series={series} formatValue={tooltipFormatter} />}
               cursor={false}
-              prefer="tr"
-              offset={{ x: 0, y: 60 }}
-              portalToBody
-              allowEscapeViewBox={{ x: true, y: true }}
+              isAnimationActive={false}
+              offset={100}
+              wrapperClassName="custom-tooltip-above"
             />
 
             {series.map((serie) => (

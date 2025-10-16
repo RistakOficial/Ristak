@@ -8,7 +8,7 @@ import {
   ResponsiveContainer
 } from 'recharts'
 import { formatCurrency, formatNumber } from '@/utils/format'
-import { SmartRechartsTooltip } from '@/components/common/SmartRechartsTooltip'
+import { Tooltip } from 'recharts'
 
 interface DataPoint {
   label: string
@@ -179,9 +179,12 @@ export const AreaChart: React.FC<AreaChartProps> = ({
               }}
             />
 
-            <SmartRechartsTooltip
+            <Tooltip
               content={<CustomTooltip />}
               cursor={false}
+              isAnimationActive={false}
+              offset={100}
+              wrapperClassName="custom-tooltip-above"
             />
 
             {series.map((serie) => (
