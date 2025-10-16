@@ -8,14 +8,13 @@
 .pageHeader {
   display: flex;
   flex-direction: column;
+  align-items: flex-start;
   gap: var(--spacing-xs);
   margin-bottom: var(--spacing-2xl);
-  padding-bottom: var(--spacing-xl);
-  border-bottom: 1px solid var(--color-border);
 }
 
 .pageTitle {
-  font-size: var(--font-size-2xl);
+  font-size: var(--font-size-3xl);
   font-weight: var(--font-weight-bold);
   color: var(--color-text-primary);
   margin: 0;
@@ -27,22 +26,8 @@
   margin: 0;
 }
 
-@media (min-width: 768px) {
-  .pageHeader {
-    flex-direction: row;
-    align-items: flex-end;
-    justify-content: space-between;
-  }
-}
-
 .datePickerInline {
-  width: fit-content;
-}
-
-@media (min-width: 768px) {
-  .datePickerInline {
-    align-self: flex-end;
-  }
+  margin-top: var(--spacing-sm);
 }
 
 .controlsRow {
@@ -57,7 +42,6 @@
   background: var(--color-primary-dark);
   color: var(--color-text-inverse);
   border: 1px solid rgba(var(--color-primary-rgb), 0.35);
-  box-shadow: 0 18px 36px -28px rgba(15, 23, 42, 0.55);
   transition: all var(--transition-fast);
 }
 
@@ -70,7 +54,6 @@
   background: rgba(var(--color-primary-rgb), 0.22);
   color: var(--color-text-primary);
   border-color: rgba(var(--color-primary-rgb), 0.32);
-  box-shadow: none;
 }
 
 [data-theme="dark"] .neutralPaymentButton:hover {

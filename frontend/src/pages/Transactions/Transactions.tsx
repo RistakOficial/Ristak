@@ -264,10 +264,8 @@ export const Transactions: React.FC = () => {
     <PageContainer>
       <div className={styles.container}>
         <div className={styles.pageHeader}>
-          <div>
-            <h1 className={styles.pageTitle}>Pagos</h1>
-            <p className={styles.pageSubtitle}>Monitorea ingresos, reembolsos y tickets promedio de tus operaciones.</p>
-          </div>
+          <h1 className={styles.pageTitle}>Pagos</h1>
+          <p className={styles.pageSubtitle}>Monitorea ingresos, reembolsos y tickets promedio de tus operaciones.</p>
           {viewMode === 'by-date' && (
             <div className={styles.datePickerInline}>
               <DateRangePicker

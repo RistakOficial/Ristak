@@ -329,6 +329,26 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   }
 
   const buildInvoicePayload = (preparedSubtotal: number, preparedTaxAmount: number, finalCurrency: string, contactName: string, items: any[]) => {
+    const businessDetails: Record<string, any> = {
+      name: businessName || 'Mi Negocio'
+    }
+
+    if (businessEmail) businessDetails.email = businessEmail
+    if (logoUrl) businessDetails.logoUrl = logoUrl
+    if (businessPhone) businessDetails.phone = businessPhone
+    if (businessWebsite) businessDetails.website = businessWebsite
+
+    const addressFields: Record<string, string> = {}
+    if (businessAddress) addressFields.line1 = businessAddress
+    if (businessCity) addressFields.city = businessCity
+    if (businessState) addressFields.state = businessState
+    if (businessCountry) addressFields.country = businessCountry
+    if (businessPostalCode) addressFields.postalCode = businessPostalCode
+
+    if (Object.keys(addressFields).length > 0) {
+      businessDetails.address = addressFields
+    }
+
     const dueDate = new Date(Date.now() + (invoiceDueDays || 7) * 24 * 60 * 60 * 1000)
       .toISOString()
       .split('T')[0]
@@ -337,18 +357,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       name: description || `Pago de ${contactName}`,
       title: invoiceTitle || 'PAGO',
       currency: finalCurrency,
-      businessDetails: {
-        name: businessName,
-        ...(businessEmail && { email: businessEmail }),
-        ...(logoUrl && { logoUrl }),
-        ...(businessPhone && { phone: businessPhone }),
-        ...(businessAddress && { address: businessAddress }),
-        ...(businessCity && { city: businessCity }),
-        ...(businessState && { state: businessState }),
-        ...(businessCountry && { country: businessCountry }),
-        ...(businessPostalCode && { postalCode: businessPostalCode }),
-        ...(businessWebsite && { website: businessWebsite })
-      },
+      businessDetails,
       contactDetails: {
         id: selectedContact?.id,
         name: contactName,
@@ -808,21 +817,38 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         </div>
 
         <div className={styles.field}>
-          <label className={styles.label}>IVA</label>
-          <div className={styles.switchRow}>
-            <button
-              type="button"
-              className={`${styles.switchButton} ${includeIVA ? styles.switchButtonActive : ''}`}
-              onClick={() => setIncludeIVA(!includeIVA)}
+          <span className={styles.label}>IVA</span>
+          <div className={styles.radioGroup}>
+            <label
+              className={`${styles.radioOption} ${!includeIVA ? styles.radioOptionActive : ''}`}
             >
-              {includeIVA ? 'Aplicando IVA 16%' : 'No aplicar IVA'}
-            </button>
-            <span className={styles.switchHint}>
-              {includeIVA
-                ? 'Se agregará IVA al total.'
-                : 'Activa para agregar IVA (16%) al monto.'}
-            </span>
+              <input
+                type="radio"
+                name="ivaOption"
+                value="sin"
+                checked={!includeIVA}
+                onChange={() => setIncludeIVA(false)}
+                className={styles.radioInput}
+              />
+              <span>Sin IVA</span>
+            </label>
+            <label
+              className={`${styles.radioOption} ${includeIVA ? styles.radioOptionActive : ''}`}
+            >
+              <input
+                type="radio"
+                name="ivaOption"
+                value="con"
+                checked={includeIVA}
+                onChange={() => setIncludeIVA(true)}
+                className={styles.radioInput}
+              />
+              <span>Aplicar IVA 16%</span>
+            </label>
           </div>
+          <p className={styles.radioHint}>
+            Define si el monto incluye IVA. Si eliges aplicarlo, la factura desglosa subtotal e impuesto.
+          </p>
         </div>
 
         <div className={styles.summaryCard}>

@@ -68,45 +68,38 @@
   margin: 0;
 }
 
-.switchRow {
+.radioGroup {
   display: flex;
-  align-items: center;
+  flex-wrap: wrap;
   gap: 12px;
 }
 
-.switchButton {
+.radioOption {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   padding: 8px 14px;
   border-radius: 8px;
   border: 1px solid var(--color-border);
-  background: var(--color-surface);
-  color: var(--color-text-secondary);
-  font-size: 13px;
-  font-weight: 500;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+  color: var(--color-text-secondary);
 }
 
-.switchButton:hover {
+.radioOptionActive {
   border-color: var(--color-primary);
+  background: rgba(var(--color-primary-rgb), 0.12);
   color: var(--color-text-primary);
 }
 
-.switchButtonActive {
-  background: var(--color-primary-dark);
-  color: var(--color-text-inverse);
-  border-color: rgba(var(--color-primary-rgb), 0.6);
-  box-shadow: 0 16px 32px -26px rgba(var(--color-primary-rgb), 0.6);
+.radioInput {
+  accent-color: var(--color-primary);
 }
 
-[data-theme="dark"] .switchButtonActive {
-  background: var(--color-primary);
-  color: var(--color-text-onAccent);
-}
-
-.switchHint {
+.radioHint {
   font-size: 12px;
   color: var(--color-text-tertiary);
-  flex: 1;
+  margin-top: 6px;
 }
 
 /* Contact selection */
@@ -206,7 +199,6 @@
   max-height: 300px;
   overflow-y: auto;
   z-index: 1000;
-  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
 }
 
 .dropdownItem {
@@ -248,41 +240,6 @@
   color: var(--color-text-tertiary);
 }
 
-/* Toggle buttons */
-.toggle {
-  display: flex;
-  gap: 8px;
-  padding: 4px;
-  background: var(--color-surface);
-  border-radius: 8px;
-  border: 1px solid var(--color-border);
-}
-
-.toggleButton {
-  flex: 1;
-  padding: 10px 16px;
-  background: transparent;
-  border: none;
-  border-radius: 6px;
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--color-text-tertiary);
-  cursor: pointer;
-  transition: all 0.15s ease;
-}
-
-.toggleButton:hover {
-  color: var(--color-text-primary);
-  background: var(--color-background);
-}
-
-.toggleButtonActive {
-  background: var(--color-background);
-  color: var(--color-text-primary);
-  font-weight: 600;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
-}
-
 /* Amount input */
 .amountInput {
   position: relative;
@@ -309,7 +266,6 @@
   border: 1px solid var(--color-border);
   border-radius: 12px;
   background: var(--color-surface);
-  box-shadow: 0 18px 36px -28px rgba(15, 23, 42, 0.25);
 }
 
 .summaryHeader {
@@ -459,13 +415,11 @@
 
 .optionButton:hover {
   border-color: var(--color-primary);
-  box-shadow: 0 18px 36px -28px rgba(var(--color-primary-rgb), 0.6);
 }
 
 .optionButtonActive {
   border-color: var(--color-primary);
   background: rgba(var(--color-primary-rgb), 0.12);
-  box-shadow: 0 20px 36px -24px rgba(var(--color-primary-rgb), 0.6);
 }
 
 .optionInfo {
@@ -537,7 +491,6 @@
 .cardButtonActive {
   border-color: var(--color-primary);
   background: rgba(var(--color-primary-rgb), 0.1);
-  box-shadow: 0 18px 32px -28px rgba(var(--color-primary-rgb), 0.45);
 }
 
 .cardEmpty,
@@ -642,11 +595,6 @@
 
   .footer {
     padding: 16px 20px;
-  }
-
-  .toggle {
-    flex-direction: column;
-    gap: 4px;
   }
 
   .optionsContent {
