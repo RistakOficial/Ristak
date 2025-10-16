@@ -90,25 +90,38 @@
 
 .radioGroup {
   display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
+  width: 100%;
+  gap: 8px;
+  padding: 4px;
+  background: rgba(148, 163, 184, 0.06);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 10px;
 }
 
 .radioOption {
-  display: inline-flex;
+  display: flex;
+  flex: 1;
   align-items: center;
+  justify-content: center;
   gap: 8px;
-  padding: 8px 14px;
+  padding: 10px 14px;
   border-radius: 8px;
-  border: 1px solid var(--color-border);
+  border: none;
   cursor: pointer;
-  transition: border-color 0.15s ease, background-color 0.15s ease;
-  color: var(--color-text-secondary);
+  transition: all 0.15s ease;
+  color: var(--color-text-tertiary);
+  background: transparent;
+  font-weight: 500;
 }
 
 .radioOptionActive {
-  border-color: var(--color-primary);
-  background: rgba(var(--color-primary-rgb), 0.12);
+  background: rgba(148, 163, 184, 0.16);
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
+
+.radioOption:hover:not(.radioOptionActive) {
+  background: rgba(148, 163, 184, 0.08);
   color: var(--color-text-primary);
 }
 
