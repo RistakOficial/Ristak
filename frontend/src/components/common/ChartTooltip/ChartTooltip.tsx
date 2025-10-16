@@ -25,7 +25,7 @@ export const ChartTooltip: React.FC<ChartTooltipProps> = ({
       style={{
         position: 'fixed',
         left: pointPos.x,
-        top: pointPos.y - 80, // 80px arriba del punto de datos
+        top: pointPos.y - 120, // 120px arriba del punto más alto (distancia segura)
         transform: 'translateX(-50%)',
         pointerEvents: 'none',
         zIndex: 2147483647, // Máximo z-index posible
