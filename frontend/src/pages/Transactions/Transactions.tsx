@@ -313,89 +313,118 @@ export const Transactions: React.FC = () => {
     {
       key: 'id',
       header: 'Acciones',
-      render: (value, item) => (
-        <div className={styles.actions}>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button className={styles.actionButton} title="Más acciones">
-                <MoreVertical size={16} />
+      render: (value, item) => {
+        // Contar acciones disponibles
+        const actions = []
+        if (item.status !== 'refunded') actions.push('copy')
+        if (item.status === 'paid') actions.push('view')
+        if (item.status === 'pending') actions.push('send')
+        if (item.status === 'pending') actions.push('edit')
+        if (item.status === 'pending' || item.status === 'failed') actions.push('mark-paid')
+        if (item.status === 'paid') actions.push('download')
+        if (item.status !== 'refunded' && item.status !== 'paid') actions.push('void')
+        actions.push('delete')
+
+        // Si solo hay una acción (eliminar), mostrar botón directo
+        if (actions.length === 1 && actions[0] === 'delete') {
+          return (
+            <div className={styles.actions}>
+              <button
+                className={`${styles.actionButton} ${styles.deleteButton}`}
+                onClick={() => handleDelete(item.id)}
+                title="Eliminar pago"
+              >
+                <Trash2 size={16} />
               </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              {/* Copiar enlace de pago (para todos excepto void y refunded) */}
-              {item.status !== 'refunded' && (
-                <DropdownMenuItem onClick={() => handleCopyPaymentLink(item)}>
-                  <Link2 size={16} />
-                  <span style={{ marginLeft: '8px' }}>Copiar enlace de pago</span>
-                </DropdownMenuItem>
-              )}
+            </div>
+          )
+        }
 
-              {/* Ver recibo (solo para pagados) */}
-              {item.status === 'paid' && (
-                <DropdownMenuItem onClick={() => handleViewReceipt(item)}>
-                  <Eye size={16} />
-                  <span style={{ marginLeft: '8px' }}>Ver recibo</span>
-                </DropdownMenuItem>
-              )}
+        // Si hay múltiples acciones, mostrar dropdown
+        return (
+          <div className={styles.actions}>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button className={styles.actionButton} title="Más acciones">
+                  <MoreVertical size={16} />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                {/* Copiar enlace de pago (para todos excepto void y refunded) */}
+                {item.status !== 'refunded' && (
+                  <DropdownMenuItem onClick={() => handleCopyPaymentLink(item)}>
+                    <Link2 size={16} />
+                    <span style={{ marginLeft: '8px' }}>Copiar enlace de pago</span>
+                  </DropdownMenuItem>
+                )}
 
-              {/* Enviar pago (solo para borradores/pendientes) */}
-              {(item.status === 'pending') && (
-                <DropdownMenuItem onClick={() => handleSendPayment(item.id)}>
-                  <Send size={16} />
-                  <span style={{ marginLeft: '8px' }}>Enviar pago</span>
-                </DropdownMenuItem>
-              )}
+                {/* Ver recibo (solo para pagados) */}
+                {item.status === 'paid' && (
+                  <DropdownMenuItem onClick={() => handleViewReceipt(item)}>
+                    <Eye size={16} />
+                    <span style={{ marginLeft: '8px' }}>Ver recibo</span>
+                  </DropdownMenuItem>
+                )}
 
-              {/* Editar (solo para borradores y pendientes) */}
-              {(item.status === 'pending') && (
-                <DropdownMenuItem onClick={() => handleEdit(item)}>
-                  <Edit size={16} />
-                  <span style={{ marginLeft: '8px' }}>Editar</span>
-                </DropdownMenuItem>
-              )}
+                {/* Enviar pago (solo para borradores/pendientes) */}
+                {(item.status === 'pending') && (
+                  <DropdownMenuItem onClick={() => handleSendPayment(item.id)}>
+                    <Send size={16} />
+                    <span style={{ marginLeft: '8px' }}>Enviar pago</span>
+                  </DropdownMenuItem>
+                )}
 
-              {/* Marcar como pagado (para pendientes y failed) */}
-              {(item.status === 'pending' || item.status === 'failed') && (
-                <DropdownMenuItem onClick={() => handleMarkAsPaid(item)}>
-                  <CheckCircle size={16} />
-                  <span style={{ marginLeft: '8px' }}>Marcar como pagado</span>
-                </DropdownMenuItem>
-              )}
+                {/* Editar (solo para borradores y pendientes) */}
+                {(item.status === 'pending') && (
+                  <DropdownMenuItem onClick={() => handleEdit(item)}>
+                    <Edit size={16} />
+                    <span style={{ marginLeft: '8px' }}>Editar</span>
+                  </DropdownMenuItem>
+                )}
 
-              {/* Descargar PDF (para pagados) */}
-              {item.status === 'paid' && (
-                <DropdownMenuItem onClick={() => handleDownloadPDF(item)}>
-                  <Download size={16} />
-                  <span style={{ marginLeft: '8px' }}>Descargar PDF</span>
-                </DropdownMenuItem>
-              )}
+                {/* Marcar como pagado (para pendientes y failed) */}
+                {(item.status === 'pending' || item.status === 'failed') && (
+                  <DropdownMenuItem onClick={() => handleMarkAsPaid(item)}>
+                    <CheckCircle size={16} />
+                    <span style={{ marginLeft: '8px' }}>Marcar como pagado</span>
+                  </DropdownMenuItem>
+                )}
 
-              {/* Separador antes de acciones destructivas */}
-              <DropdownMenuSeparator />
+                {/* Descargar PDF (para pagados) */}
+                {item.status === 'paid' && (
+                  <DropdownMenuItem onClick={() => handleDownloadPDF(item)}>
+                    <Download size={16} />
+                    <span style={{ marginLeft: '8px' }}>Descargar PDF</span>
+                  </DropdownMenuItem>
+                )}
 
-              {/* Anular pago (para todos excepto refunded y paid) */}
-              {item.status !== 'refunded' && item.status !== 'paid' && (
+                {/* Separador antes de acciones destructivas */}
+                <DropdownMenuSeparator />
+
+                {/* Anular pago (para todos excepto refunded y paid) */}
+                {item.status !== 'refunded' && item.status !== 'paid' && (
+                  <DropdownMenuItem
+                    onClick={() => handleVoidTransaction(item.id)}
+                    className={styles.destructive}
+                  >
+                    <Trash2 size={16} />
+                    <span style={{ marginLeft: '8px' }}>Anular pago</span>
+                  </DropdownMenuItem>
+                )}
+
+                {/* Eliminar pago (siempre disponible) */}
                 <DropdownMenuItem
-                  onClick={() => handleVoidTransaction(item.id)}
+                  onClick={() => handleDelete(item.id)}
                   className={styles.destructive}
                 >
                   <Trash2 size={16} />
-                  <span style={{ marginLeft: '8px' }}>Anular pago</span>
+                  <span style={{ marginLeft: '8px' }}>Eliminar pago</span>
                 </DropdownMenuItem>
-              )}
-
-              {/* Eliminar pago (siempre disponible) */}
-              <DropdownMenuItem
-                onClick={() => handleDelete(item.id)}
-                className={styles.destructive}
-              >
-                <Trash2 size={16} />
-                <span style={{ marginLeft: '8px' }}>Eliminar pago</span>
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-      ),
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        )
+      },
       sortable: false
     }
   ]

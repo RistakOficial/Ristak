@@ -115,9 +115,13 @@
   color: var(--color-text-primary);
 }
 
+.deleteButton {
+  color: var(--color-error);
+}
+
 .deleteButton:hover {
-  background-color: var(--color-error-light);
-  color: var(--color-error-dark);
+  background-color: rgba(239, 68, 68, 0.1);
+  color: var(--color-error);
 }
 
 .destructive {

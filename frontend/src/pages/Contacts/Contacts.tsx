@@ -155,50 +155,76 @@ export const Contacts: React.FC = () => {
     {
       key: 'id',
       header: 'Acciones',
-      render: (_, item) => (
-        <div className={styles.actions}>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button className={styles.actionButton} title="Más acciones">
-                <MoreVertical size={16} />
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              {/* Ver detalles */}
-              <DropdownMenuItem onClick={() => setSelectedContact(item)}>
-                <Eye size={16} />
-                <span style={{ marginLeft: '8px' }}>Ver detalles</span>
-              </DropdownMenuItem>
+      render: (_, item) => {
+        // Contar acciones disponibles
+        const actions = []
+        actions.push('view') // Ver detalles siempre disponible
+        if (item.email) actions.push('email') // Enviar email si tiene email
+        actions.push('edit') // Editar siempre disponible
+        actions.push('delete') // Eliminar siempre disponible
 
-              {/* Enviar email (si tiene email) */}
-              {item.email && (
-                <DropdownMenuItem onClick={() => window.location.href = `mailto:${item.email}`}>
-                  <Mail size={16} />
-                  <span style={{ marginLeft: '8px' }}>Enviar email</span>
-                </DropdownMenuItem>
-              )}
-
-              {/* Editar */}
-              <DropdownMenuItem onClick={() => setEditingContact(item)}>
-                <Pencil size={16} />
-                <span style={{ marginLeft: '8px' }}>Editar contacto</span>
-              </DropdownMenuItem>
-
-              {/* Separador antes de acción destructiva */}
-              <DropdownMenuSeparator />
-
-              {/* Eliminar */}
-              <DropdownMenuItem
+        // Si solo hay una acción (eliminar), mostrar botón directo
+        // Esto solo pasa si el contacto no tiene email y es la única acción
+        if (actions.length === 1 && actions[0] === 'delete') {
+          return (
+            <div className={styles.actions}>
+              <button
+                className={`${styles.actionButton} ${styles.deleteButton}`}
                 onClick={() => setDeletingContact(item)}
-                className={styles.destructive}
+                title="Eliminar contacto"
               >
                 <Trash2 size={16} />
-                <span style={{ marginLeft: '8px' }}>Eliminar contacto</span>
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-      ),
+              </button>
+            </div>
+          )
+        }
+
+        // Si hay múltiples acciones, mostrar dropdown
+        return (
+          <div className={styles.actions}>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button className={styles.actionButton} title="Más acciones">
+                  <MoreVertical size={16} />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                {/* Ver detalles */}
+                <DropdownMenuItem onClick={() => setSelectedContact(item)}>
+                  <Eye size={16} />
+                  <span style={{ marginLeft: '8px' }}>Ver detalles</span>
+                </DropdownMenuItem>
+
+                {/* Enviar email (si tiene email) */}
+                {item.email && (
+                  <DropdownMenuItem onClick={() => window.location.href = `mailto:${item.email}`}>
+                    <Mail size={16} />
+                    <span style={{ marginLeft: '8px' }}>Enviar email</span>
+                  </DropdownMenuItem>
+                )}
+
+                {/* Editar */}
+                <DropdownMenuItem onClick={() => setEditingContact(item)}>
+                  <Pencil size={16} />
+                  <span style={{ marginLeft: '8px' }}>Editar contacto</span>
+                </DropdownMenuItem>
+
+                {/* Separador antes de acción destructiva */}
+                <DropdownMenuSeparator />
+
+                {/* Eliminar */}
+                <DropdownMenuItem
+                  onClick={() => setDeletingContact(item)}
+                  className={styles.destructive}
+                >
+                  <Trash2 size={16} />
+                  <span style={{ marginLeft: '8px' }}>Eliminar contacto</span>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        )
+      },
       sortable: false
     }
   ]

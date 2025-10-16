@@ -107,6 +107,15 @@
   color: var(--color-error) !important;
 }
 
+.deleteButton {
+  color: var(--color-error);
+}
+
+.deleteButton:hover {
+  background-color: rgba(239, 68, 68, 0.1);
+  color: var(--color-error);
+}
+
 /* Modal */
 .modalOverlay {
   position: fixed;

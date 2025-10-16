@@ -1,15 +1,14 @@
-import React, { useMemo } from 'react'
+import React, { useMemo, useRef } from 'react'
 import {
   AreaChart as RechartsAreaChart,
   Area,
   XAxis,
   YAxis,
   CartesianGrid,
-  ResponsiveContainer,
-  Tooltip
+  ResponsiveContainer
 } from 'recharts'
 import { formatCurrency } from '@/utils/format'
-import { CustomTooltipWrapper } from './CustomTooltipWrapper'
+import { FloatingTooltip } from './FloatingTooltip'
 
 interface DataPoint {
   label: string
@@ -69,6 +68,7 @@ export const LineChart: React.FC<LineChartProps> = ({
   showLegend = false,
   legendLabels = { label1: 'Serie 1', label2: 'Serie 2' }
 }) => {
+  const chartRef = useRef<HTMLDivElement>(null)
   const hasSecondSeries = data.some((d) => typeof d.value2 === 'number')
   const isDarkMode = typeof document !== 'undefined' && document.body.classList.contains('dark')
 
@@ -117,6 +117,7 @@ export const LineChart: React.FC<LineChartProps> = ({
       )}
 
       <div
+        ref={chartRef}
         className="relative"
         style={{ minHeight: height, height }}
       >
@@ -156,17 +157,7 @@ export const LineChart: React.FC<LineChartProps> = ({
               allowDecimals={false}
             />
 
-            <Tooltip
-              content={(props: any) => (
-                <CustomTooltipWrapper
-                  {...props}
-                  series={series}
-                  formatValue={tooltipFormatter}
-                />
-              )}
-              cursor={false}
-              isAnimationActive={false}
-            />
+            {/* Tooltip de Recharts deshabilitado - usamos nuestro FloatingTooltip */}
 
             {series.map((serie) => (
               <Area
@@ -205,6 +196,14 @@ export const LineChart: React.FC<LineChartProps> = ({
           </RechartsAreaChart>
         </ResponsiveContainer>
       </div>
+
+      {/* Nuestro tooltip flotante independiente que sigue al cursor */}
+      <FloatingTooltip
+        chartRef={chartRef}
+        data={data}
+        series={series}
+        formatValue={tooltipFormatter}
+      />
     </div>
   )
 }
