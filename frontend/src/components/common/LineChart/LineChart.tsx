@@ -72,31 +72,18 @@ export const LineChart: React.FC<LineChartProps> = ({
   const { chartRef, pointPos, isHovering, activeIndex, activeData } = useChartHover({ data })
   const [actualPointPos, setActualPointPos] = useState<{ x: number; y: number } | null>(null)
   const activePointRef = useRef<{ [key: string]: { x: number; y: number } }>({})
+  const [, forceUpdate] = useState(0)
   const hasSecondSeries = data.some((d) => typeof d.value2 === 'number')
   const isDarkMode = typeof document !== 'undefined' && document.body.classList.contains('dark')
 
-  // Resetear la posición cuando no hay hover
+  // Resetear cuando cambia el índice o deja de hacer hover
   useEffect(() => {
     if (!isHovering) {
       setActualPointPos(null)
       activePointRef.current = {}
-    }
-  }, [isHovering])
-
-  // Calcular la posición del punto MÁS ALTO cuando cambia el índice activo
-  useEffect(() => {
-    if (isHovering && activeIndex >= 0) {
-      // Esperar a que todos los puntos se hayan registrado
-      setTimeout(() => {
-        const points = Object.values(activePointRef.current)
-        if (points.length > 0) {
-          // Encontrar el punto con la Y más pequeña (más arriba en pantalla)
-          const highestPoint = points.reduce((highest, current) =>
-            current.y < highest.y ? current : highest
-          )
-          setActualPointPos(highestPoint)
-        }
-      }, 10)
+    } else {
+      // Limpiar los puntos del índice anterior
+      activePointRef.current = {}
     }
   }, [isHovering, activeIndex])
 
@@ -209,6 +196,15 @@ export const LineChart: React.FC<LineChartProps> = ({
                             const pointY = rect.top + props.cy
                             // Guardar la posición de este punto
                             activePointRef.current[`${props.index}-${serie.key}`] = { x: pointX, y: pointY }
+
+                            // Actualizar inmediatamente el punto más alto
+                            const allPoints = Object.values(activePointRef.current)
+                            if (allPoints.length > 0) {
+                              const highestPoint = allPoints.reduce((highest, current) =>
+                                current.y < highest.y ? current : highest
+                              )
+                              setActualPointPos(highestPoint)
+                            }
                           }
                         }
 
