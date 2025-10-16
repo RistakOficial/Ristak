@@ -667,7 +667,6 @@ export const Campaigns: React.FC = () => {
         <div className={styles.pageHeader}>
           <div>
             <h1 className={styles.pageTitle}>Publicidad</h1>
-            <p className={styles.pageSubtitle}>Analiza el rendimiento de tus campañas y sus indicadores clave.</p>
           </div>
           <div className={styles.datePickerWrapper}>
             <DateRangePicker

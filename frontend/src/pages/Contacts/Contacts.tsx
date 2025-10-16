@@ -204,9 +204,20 @@ export const Contacts: React.FC = () => {
       <div className={styles.container}>
         <div className={styles.pageHeader}>
           <h1 className={styles.pageTitle}>Contactos</h1>
-          <p className={styles.pageSubtitle}>Visualiza tus contactos, clientes y su valor acumulado en el tiempo.</p>
-          {viewMode === 'by-date' && (
-            <div className={styles.datePickerInline}>
+        </div>
+
+        <div className={styles.controlsRow}>
+          <div className={styles.dateFilters}>
+            <TabList
+              tabs={[
+                { value: 'all', label: 'Todos' },
+                { value: 'by-date', label: 'Por fecha' }
+              ]}
+              activeTab={viewMode}
+              onTabChange={(value) => setViewMode(value as 'all' | 'by-date')}
+              variant="compact"
+            />
+            {viewMode === 'by-date' && (
               <DateRangePicker
                 startDate={formatDateToISO(dateRange.start)}
                 endDate={formatDateToISO(dateRange.end)}
@@ -216,20 +227,8 @@ export const Contacts: React.FC = () => {
                   preset: 'custom'
                 })}
               />
-            </div>
-          )}
-        </div>
-
-        <div className={styles.controlsRow}>
-          <TabList
-            tabs={[
-              { value: 'all', label: 'Todos' },
-              { value: 'by-date', label: 'Por fecha' }
-            ]}
-            activeTab={viewMode}
-            onTabChange={(value) => setViewMode(value as 'all' | 'by-date')}
-            variant="compact"
-          />
+            )}
+          </div>
         </div>
 
         <div className={styles.kpiRow}>

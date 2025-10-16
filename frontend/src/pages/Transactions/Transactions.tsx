@@ -265,9 +265,20 @@ export const Transactions: React.FC = () => {
       <div className={styles.container}>
         <div className={styles.pageHeader}>
           <h1 className={styles.pageTitle}>Pagos</h1>
-          <p className={styles.pageSubtitle}>Monitorea ingresos, reembolsos y tickets promedio de tus operaciones.</p>
-          {viewMode === 'by-date' && (
-            <div className={styles.datePickerInline}>
+        </div>
+
+        <div className={styles.controlsRow}>
+          <div className={styles.dateFilters}>
+            <TabList
+              tabs={[
+                { value: 'all', label: 'Todos' },
+                { value: 'by-date', label: 'Por fecha' }
+              ]}
+              activeTab={viewMode}
+              onTabChange={(value) => setViewMode(value as 'all' | 'by-date')}
+              variant="compact"
+            />
+            {viewMode === 'by-date' && (
               <DateRangePicker
                 startDate={formatDateToISO(dateRange.start)}
                 endDate={formatDateToISO(dateRange.end)}
@@ -277,20 +288,8 @@ export const Transactions: React.FC = () => {
                   preset: 'custom'
                 })}
               />
-            </div>
-          )}
-        </div>
-
-        <div className={styles.controlsRow}>
-          <TabList
-            tabs={[
-              { value: 'all', label: 'Todos' },
-              { value: 'by-date', label: 'Por fecha' }
-            ]}
-            activeTab={viewMode}
-            onTabChange={(value) => setViewMode(value as 'all' | 'by-date')}
-            variant="compact"
-          />
+            )}
+          </div>
           <Button
             variant="secondary"
             className={styles.neutralPaymentButton}
