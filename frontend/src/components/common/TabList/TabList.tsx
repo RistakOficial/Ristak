@@ -22,7 +22,7 @@ export const TabList: React.FC<TabListProps> = ({
   className
 }) => {
   const containerClasses = cn(
-    'flex w-full items-center rounded-xl border border-[rgba(148,163,184,0.18)] bg-[rgba(148,163,184,0.06)] backdrop-blur-xl dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]',
+    'inline-flex items-center rounded-xl border border-[rgba(148,163,184,0.18)] bg-[rgba(148,163,184,0.06)] backdrop-blur-xl dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]',
     variant === 'default' ? 'p-1' : 'p-0.5',
     className
   )

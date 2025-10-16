@@ -70,25 +70,28 @@ export const Modal: React.FC<ModalProps> = ({
   const modalContent = (
     <div className={styles.backdrop} onClick={handleBackdropClick}>
       <div className={`${styles.modal} ${styles[type]} ${styles[size]}`}>
-        <div className={styles.header}>
-          <div className={styles.titleWrapper}>
-            {type !== 'custom' && (
-              <div className={styles.iconWrapper}>
-                {icons[type]}
-              </div>
+        {/* Solo mostrar header si hay título o botón de cerrar */}
+        {(title || showCloseButton) && (
+          <div className={styles.header}>
+            <div className={styles.titleWrapper}>
+              {type !== 'custom' && (
+                <div className={styles.iconWrapper}>
+                  {icons[type]}
+                </div>
+              )}
+              {title && <h2 className={styles.title}>{title}</h2>}
+            </div>
+            {showCloseButton && (
+              <button
+                className={styles.closeButton}
+                onClick={onClose}
+                aria-label="Cerrar modal"
+              >
+                <X size={20} />
+              </button>
             )}
-            <h2 className={styles.title}>{title}</h2>
           </div>
-          {showCloseButton && (
-            <button
-              className={styles.closeButton}
-              onClick={onClose}
-              aria-label="Cerrar modal"
-            >
-              <X size={20} />
-            </button>
-          )}
-        </div>
+        )}
 
         {(message || children) && (
           <div className={styles.content}>
