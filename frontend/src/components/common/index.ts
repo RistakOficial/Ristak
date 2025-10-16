@@ -12,6 +12,7 @@ export { LineChart } from './LineChart'
 export { AreaChart } from './AreaChart'
 export { Table } from './Table'
 export type { Column } from './Table'
+export { SmartRechartsTooltip } from './SmartRechartsTooltip'
 
 // Componentes de fecha
 export { DateRangePicker } from './DateRangePicker'

@@ -172,6 +172,75 @@ class GHLClient {
     }
   }
 
+  async updateContact(contactId, data) {
+    // Separar nombre completo en firstName y lastName si se proporciona
+    const body = { ...data }
+
+    if (data.name) {
+      const nameParts = data.name.trim().split(' ')
+      body.firstName = nameParts[0] || ''
+      body.lastName = nameParts.slice(1).join(' ') || ''
+      body.name = data.name // GHL también acepta el campo 'name'
+      delete body.name // Opcional: eliminar si solo quieres usar firstName/lastName
+    }
+
+    logger.info(`Actualizando contacto: ${contactId}`)
+
+    const response = await this.request(`/contacts/${contactId}`, {
+      method: 'PUT',
+      body
+    })
+
+    // Agregar el campo 'name' completo para el frontend
+    const contactData = response.contact || response
+    const fullName = `${contactData.firstName || ''} ${contactData.lastName || ''}`.trim()
+
+    return {
+      contact: {
+        ...contactData,
+        name: fullName || contactData.email || contactData.phone || 'Sin nombre',
+      }
+    }
+  }
+
+  async deleteContact(contactId) {
+    logger.info(`Eliminando contacto: ${contactId}`)
+
+    return this.request(`/contacts/${contactId}`, {
+      method: 'DELETE'
+    })
+  }
+
+  async updateContactTags(contactId, tags) {
+    logger.info(`Actualizando tags del contacto: ${contactId}`)
+
+    return this.request(`/contacts/${contactId}`, {
+      method: 'PUT',
+      body: { tags }
+    })
+  }
+
+  async updateContactCustomFields(contactId, customFields) {
+    logger.info(`Actualizando custom fields del contacto: ${contactId}`)
+
+    return this.request(`/contacts/${contactId}`, {
+      method: 'PUT',
+      body: { customFields }
+    })
+  }
+
+  async updateContactDND(contactId, dnd, dndSettings = {}) {
+    logger.info(`Actualizando DND del contacto: ${contactId}`)
+
+    return this.request(`/contacts/${contactId}`, {
+      method: 'PUT',
+      body: {
+        dnd,
+        ...(Object.keys(dndSettings).length > 0 && { dndSettings })
+      }
+    })
+  }
+
   // ============================================
   // PRODUCTS & PRICES
   // ============================================

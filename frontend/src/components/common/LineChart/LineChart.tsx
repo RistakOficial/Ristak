@@ -5,10 +5,10 @@ import {
   XAxis,
   YAxis,
   CartesianGrid,
-  ResponsiveContainer,
-  Tooltip
+  ResponsiveContainer
 } from 'recharts'
 import { formatCurrency } from '@/utils/format'
+import { SmartRechartsTooltip } from '@/components/common/SmartRechartsTooltip'
 
 interface DataPoint {
   label: string
@@ -189,10 +189,11 @@ export const LineChart: React.FC<LineChartProps> = ({
               allowDecimals={false}
             />
 
-            <Tooltip
+            <SmartRechartsTooltip
               content={<TooltipContent series={series} formatValue={tooltipFormatter} />}
               cursor={{ stroke: 'var(--color-border-subtle)', strokeWidth: 1 }}
-              isAnimationActive={false}
+              aboveOnly={true}
+              prefer="tr"
             />
 
             {series.map((serie) => (

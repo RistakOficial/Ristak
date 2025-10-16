@@ -3,6 +3,7 @@ import { logger } from '../utils/logger.js'
 import { updateContactsStats } from '../utils/updateContactsStats.js'
 import { resolveDateRange } from '../utils/dateUtils.js'
 import { buildContactStats } from '../services/analyticsService.js'
+import { getGHLClient } from '../services/ghlClient.js'
 
 /**
  * Obtiene todos los contactos con paginación y filtros
@@ -446,11 +447,15 @@ export const updateContact = async (req, res) => {
       phone,
       source,
       attribution_ad_name,
-      attribution_ad_id
+      attribution_ad_id,
+      tags,
+      customFields,
+      dnd,
+      dndSettings
     } = req.body
 
     // Verificar que el contacto existe
-    const existing = await db.get('SELECT id FROM contacts WHERE id = ?', [id])
+    const existing = await db.get('SELECT id, ghl_contact_id FROM contacts WHERE id = ?', [id])
     if (!existing) {
       return res.status(404).json({
         success: false,
@@ -487,19 +492,49 @@ export const updateContact = async (req, res) => {
       params.push(attribution_ad_id)
     }
 
-    if (updates.length === 0) {
+    if (updates.length === 0 && !tags && !customFields && dnd === undefined) {
       return res.status(400).json({
         success: false,
         error: 'No hay campos para actualizar'
       })
     }
 
-    // Agregar updated_at
-    updates.push('updated_at = CURRENT_TIMESTAMP')
-    params.push(id)
+    // Actualizar en HighLevel si tiene ghl_contact_id
+    if (existing.ghl_contact_id) {
+      try {
+        const ghlClient = await getGHLClient()
+        const ghlUpdateData = {}
 
-    const query = `UPDATE contacts SET ${updates.join(', ')} WHERE id = ?`
-    await db.run(query, params)
+        if (full_name) ghlUpdateData.name = full_name
+        if (email) ghlUpdateData.email = email
+        if (phone) ghlUpdateData.phone = phone
+        if (source) ghlUpdateData.source = source
+        if (tags) ghlUpdateData.tags = tags
+        if (customFields) ghlUpdateData.customFields = customFields
+        if (dnd !== undefined) {
+          ghlUpdateData.dnd = dnd
+          if (dndSettings) ghlUpdateData.dndSettings = dndSettings
+        }
+
+        if (Object.keys(ghlUpdateData).length > 0) {
+          await ghlClient.updateContact(existing.ghl_contact_id, ghlUpdateData)
+          logger.info(`Contacto actualizado en HighLevel: ${existing.ghl_contact_id}`)
+        }
+      } catch (error) {
+        logger.warn(`No se pudo actualizar el contacto en HighLevel: ${error.message}`)
+        // Continuar con la actualización local aunque falle en GHL
+      }
+    }
+
+    // Actualizar en la base de datos local
+    if (updates.length > 0) {
+      // Agregar updated_at
+      updates.push('updated_at = CURRENT_TIMESTAMP')
+      params.push(id)
+
+      const query = `UPDATE contacts SET ${updates.join(', ')} WHERE id = ?`
+      await db.run(query, params)
+    }
 
     // Obtener el contacto actualizado
     const updated = await db.get(
@@ -531,12 +566,24 @@ export const deleteContact = async (req, res) => {
     const { id } = req.params
 
     // Verificar que el contacto existe
-    const existing = await db.get('SELECT id, full_name FROM contacts WHERE id = ?', [id])
+    const existing = await db.get('SELECT id, full_name, ghl_contact_id FROM contacts WHERE id = ?', [id])
     if (!existing) {
       return res.status(404).json({
         success: false,
         error: 'Contacto no encontrado'
       })
+    }
+
+    // Eliminar en HighLevel si tiene ghl_contact_id
+    if (existing.ghl_contact_id) {
+      try {
+        const ghlClient = await getGHLClient()
+        await ghlClient.deleteContact(existing.ghl_contact_id)
+        logger.info(`Contacto eliminado de HighLevel: ${existing.ghl_contact_id}`)
+      } catch (error) {
+        logger.warn(`No se pudo eliminar el contacto de HighLevel: ${error.message}`)
+        // Continuar con la eliminación local aunque falle en GHL
+      }
     }
 
     // Eliminar el contacto (las relaciones se eliminan automáticamente por CASCADE)
