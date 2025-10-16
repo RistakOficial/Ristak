@@ -395,6 +395,16 @@ export const Campaigns: React.FC = () => {
                   className={styles.campaignIcon}
                 />
               )}
+              {item.level === 'adset' && (
+                <span className={styles.levelBadge} data-level="adset">
+                  Adset
+                </span>
+              )}
+              {item.level === 'ad' && (
+                <span className={styles.levelBadge} data-level="ad">
+                  Ad
+                </span>
+              )}
               <strong className={`${styles.nameText} ${styles[item.level]}`}>
                 {value}
               </strong>

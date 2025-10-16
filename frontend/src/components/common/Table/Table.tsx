@@ -424,11 +424,12 @@ export function Table<T extends Record<string, any>>({
             ) : (
               paginatedData.map((item) => {
                 const rowStyle: React.CSSProperties = {
-                  backgroundColor: item.level === 'adset'
-                    ? 'rgba(var(--color-primary-rgb), 0.08)'
+                  // Borde lateral en lugar de fondo de color
+                  borderLeft: item.level === 'adset'
+                    ? '3px solid var(--color-primary)'
                     : item.level === 'ad'
-                    ? 'rgba(var(--color-primary-rgb), 0.12)'
-                    : undefined,
+                    ? '3px solid var(--color-text-tertiary)'
+                    : '3px solid transparent',
                   fontSize: item.level === 'campaign'
                     ? 'var(--font-size-base)'
                     : item.level === 'adset'
