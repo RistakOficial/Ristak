@@ -14,13 +14,13 @@ export const Settings: React.FC = () => {
 
       <div className={styles.tabs}>
         <NavLink
-          to="highlevel"
+          to="/settings/highlevel"
           className={({ isActive }) => `${styles.tab} ${isActive ? styles.tabActive : ''}`}
         >
           HighLevel
         </NavLink>
         <NavLink
-          to="stripe"
+          to="/settings/stripe"
           className={({ isActive }) => `${styles.tab} ${isActive ? styles.tabActive : ''}`}
         >
           Stripe
