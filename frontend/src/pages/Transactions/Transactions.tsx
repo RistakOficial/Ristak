@@ -230,10 +230,25 @@ export const Transactions: React.FC = () => {
   const getMethodIcon = (method: string) => {
     switch(method) {
       case 'card': return <CreditCard size={16} />
+      case 'bank_transfer':
       case 'transfer': return <RefreshCw size={16} />
       case 'cash': return <Banknote size={16} />
+      case 'check': return <Receipt size={16} />
       case 'paypal': return <DollarSign size={16} />
       default: return <DollarSign size={16} />
+    }
+  }
+
+  const getMethodLabel = (method: string) => {
+    switch(method) {
+      case 'card': return 'Tarjeta'
+      case 'bank_transfer':
+      case 'transfer': return 'Transferencia'
+      case 'cash': return 'Efectivo'
+      case 'check': return 'Cheque'
+      case 'paypal': return 'PayPal'
+      case 'other': return 'Otro'
+      default: return method.charAt(0).toUpperCase() + method.slice(1)
     }
   }
 
@@ -279,7 +294,7 @@ export const Transactions: React.FC = () => {
       render: (value) => (
         <div className={styles.methodCell}>
           {getMethodIcon(value)}
-          <span>{value.charAt(0).toUpperCase() + value.slice(1)}</span>
+          <span>{getMethodLabel(value)}</span>
         </div>
       ),
       sortable: true
@@ -356,9 +371,7 @@ export const Transactions: React.FC = () => {
               )}
 
               {/* Separador antes de acciones destructivas */}
-              {item.status !== 'refunded' && item.status !== 'paid' && (
-                <DropdownMenuSeparator />
-              )}
+              <DropdownMenuSeparator />
 
               {/* Anular pago (para todos excepto refunded y paid) */}
               {item.status !== 'refunded' && item.status !== 'paid' && (
@@ -370,6 +383,15 @@ export const Transactions: React.FC = () => {
                   <span style={{ marginLeft: '8px' }}>Anular pago</span>
                 </DropdownMenuItem>
               )}
+
+              {/* Eliminar pago (siempre disponible) */}
+              <DropdownMenuItem
+                onClick={() => handleDelete(item.id)}
+                className={styles.destructive}
+              >
+                <Trash2 size={16} />
+                <span style={{ marginLeft: '8px' }}>Eliminar pago</span>
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>

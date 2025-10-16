@@ -1032,8 +1032,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                   className={styles.select}
                 >
                   <option value="cash">Efectivo</option>
-                  <option value="transfer">Transferencia</option>
-                  <option value="card">Tarjeta (manual)</option>
+                  <option value="bank_transfer">Transferencia bancaria</option>
+                  <option value="card">Tarjeta</option>
                   <option value="check">Cheque</option>
                   <option value="other">Otro</option>
                 </select>
