@@ -81,6 +81,23 @@ export const transactionsService = {
     await apiClient.delete(`/transactions/${id}`)
   },
 
+  async voidTransaction(id: string): Promise<void> {
+    await apiClient.post(`/transactions/${id}/void`, {})
+  },
+
+  async recordPayment(id: string, data: { amount: number; paymentDate: string; paymentMethod: string }): Promise<void> {
+    await apiClient.post(`/transactions/${id}/record-payment`, data)
+  },
+
+  async sendTransaction(id: string): Promise<void> {
+    await apiClient.post(`/transactions/${id}/send`, {})
+  },
+
+  async getPaymentLink(id: string): Promise<string> {
+    const response = await apiClient.get<{ link: string }>(`/transactions/${id}/payment-link`)
+    return response.link
+  },
+
   calculateDelta(current: number, previous: number): number {
     if (previous === 0) return current > 0 ? 100 : 0
     return ((current - previous) / previous) * 100

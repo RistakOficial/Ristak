@@ -28,6 +28,23 @@ export { ViewSelector } from './ViewSelector'
 export { Icon } from './Icon'
 export { Badge } from './Badge'
 export type { BadgeProps, BadgeVariant } from './Badge'
+export {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuCheckboxItem,
+  DropdownMenuRadioItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuShortcut,
+  DropdownMenuGroup,
+  DropdownMenuPortal,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuRadioGroup,
+} from './DropdownMenu'
 
 // Componentes de notificaciones
 export { Toast, ToastContainer } from './Toast'

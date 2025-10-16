@@ -98,6 +98,15 @@
   color: var(--color-text-primary);
 }
 
+.destructive {
+  color: var(--color-error) !important;
+}
+
+.destructive:hover {
+  background: rgba(239, 68, 68, 0.1) !important;
+  color: var(--color-error) !important;
+}
+
 /* Modal */
 .modalOverlay {
   position: fixed;

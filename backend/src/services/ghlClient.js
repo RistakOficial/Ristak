@@ -303,6 +303,32 @@ class GHLClient {
 
     return this.request('/invoices/', { params })
   }
+
+  async voidInvoice(invoiceId) {
+    const body = {
+      altId: this.locationId,
+      altType: 'location',
+    }
+
+    logger.info(`Anulando invoice: ${invoiceId}`)
+
+    const response = await this.request(`/invoices/${invoiceId}/void`, {
+      method: 'POST',
+      body
+    })
+
+    logger.success(`Invoice anulado: ${invoiceId}`)
+
+    return response
+  }
+
+  async getInvoicePaymentLink(invoiceId, domain = null) {
+    // Si hay un domain configurado, usarlo; si no, usar el default de GHL
+    if (domain) {
+      return `https://${domain}/invoice/${invoiceId}`
+    }
+    return `https://payments.leadconnectorhq.com/invoice/${invoiceId}`
+  }
 }
 
 /**

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
-import { KpiCard, Card, Button, Table, DateRangePicker, ContactSearchInput, PageContainer, TabList, RecordPaymentModal, Badge } from '@/components/common'
+import { KpiCard, Card, Button, Table, DateRangePicker, ContactSearchInput, PageContainer, TabList, RecordPaymentModal, Badge, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from '@/components/common'
 import type { Column, BadgeVariant } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
 import { Contact } from '@/types'
@@ -14,7 +14,12 @@ import {
   DollarSign,
   CheckCircle,
   Receipt,
-  RotateCcw
+  RotateCcw,
+  MoreVertical,
+  Eye,
+  Download,
+  Link2,
+  Send
 } from 'lucide-react'
 import { useDateRange } from '@/contexts/DateRangeContext'
 import { formatCurrency, formatDate, formatDateToISO, formatNumber, parseLocalDateString } from '@/utils/format'
@@ -118,6 +123,72 @@ export const Transactions: React.FC = () => {
         }
       }
     )
+  }
+
+  const handleVoidTransaction = async (id: string) => {
+    showConfirm(
+      'Anular pago',
+      '¿Estás seguro de anular este pago? Esta acción no se puede deshacer.',
+      async () => {
+        try {
+          await transactionsService.voidTransaction(id)
+          showToast('success', 'Pago anulado correctamente', 'El pago ha sido anulado exitosamente')
+          fetchData()
+        } catch (error) {
+          showToast('error', 'No se pudo anular el pago', 'Hubo un problema al intentar anular el pago. Intenta nuevamente.')
+        }
+      }
+    )
+  }
+
+  const handleMarkAsPaid = async (transaction: Transaction) => {
+    showConfirm(
+      'Marcar como pagado',
+      `¿Confirmas que el pago de ${formatCurrency(transaction.amount)} fue recibido?`,
+      async () => {
+        try {
+          await transactionsService.recordPayment(transaction.id, {
+            amount: transaction.amount,
+            paymentDate: new Date().toISOString(),
+            paymentMethod: transaction.method,
+          })
+          showToast('success', 'Pago marcado como pagado', 'El pago ha sido registrado como completado')
+          fetchData()
+        } catch (error) {
+          showToast('error', 'No se pudo marcar el pago', 'Hubo un problema al actualizar el estado del pago.')
+        }
+      }
+    )
+  }
+
+  const handleCopyPaymentLink = async (transaction: Transaction) => {
+    try {
+      const link = await transactionsService.getPaymentLink(transaction.id)
+      await navigator.clipboard.writeText(link)
+      showToast('success', '¡Enlace copiado!', 'El enlace de pago se copió al portapapeles')
+    } catch (error) {
+      showToast('error', 'Error al copiar enlace', 'No se pudo obtener el enlace de pago')
+    }
+  }
+
+  const handleSendPayment = async (id: string) => {
+    try {
+      await transactionsService.sendTransaction(id)
+      showToast('success', 'Pago enviado', 'Se envió el pago al cliente correctamente')
+      fetchData()
+    } catch (error) {
+      showToast('error', 'Error al enviar pago', 'No se pudo enviar el pago al cliente')
+    }
+  }
+
+  const handleViewReceipt = (transaction: Transaction) => {
+    // TODO: Implement view receipt - open payment link in new tab
+    showToast('info', 'Ver recibo', 'Abriendo recibo en nueva pestaña...')
+  }
+
+  const handleDownloadPDF = (transaction: Transaction) => {
+    // TODO: Implement PDF download
+    showToast('info', 'Descargar PDF', 'Descargando comprobante...')
   }
 
   const handleSaveTransaction = async (formData: FormData) => {
@@ -229,20 +300,78 @@ export const Transactions: React.FC = () => {
       header: 'Acciones',
       render: (value, item) => (
         <div className={styles.actions}>
-          <button
-            className={styles.actionButton}
-            onClick={() => handleEdit(item)}
-            title="Editar"
-          >
-            <Edit size={16} />
-          </button>
-          <button
-            className={styles.actionButton}
-            onClick={() => handleDelete(value)}
-            title="Eliminar"
-          >
-            <Trash2 size={16} />
-          </button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button className={styles.actionButton} title="Más acciones">
+                <MoreVertical size={16} />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              {/* Copiar enlace de pago (para todos excepto void y refunded) */}
+              {item.status !== 'refunded' && (
+                <DropdownMenuItem onClick={() => handleCopyPaymentLink(item)}>
+                  <Link2 size={16} />
+                  <span style={{ marginLeft: '8px' }}>Copiar enlace de pago</span>
+                </DropdownMenuItem>
+              )}
+
+              {/* Ver recibo (solo para pagados) */}
+              {item.status === 'paid' && (
+                <DropdownMenuItem onClick={() => handleViewReceipt(item)}>
+                  <Eye size={16} />
+                  <span style={{ marginLeft: '8px' }}>Ver recibo</span>
+                </DropdownMenuItem>
+              )}
+
+              {/* Enviar pago (solo para borradores/pendientes) */}
+              {(item.status === 'pending') && (
+                <DropdownMenuItem onClick={() => handleSendPayment(item.id)}>
+                  <Send size={16} />
+                  <span style={{ marginLeft: '8px' }}>Enviar pago</span>
+                </DropdownMenuItem>
+              )}
+
+              {/* Editar (solo para borradores y pendientes) */}
+              {(item.status === 'pending') && (
+                <DropdownMenuItem onClick={() => handleEdit(item)}>
+                  <Edit size={16} />
+                  <span style={{ marginLeft: '8px' }}>Editar</span>
+                </DropdownMenuItem>
+              )}
+
+              {/* Marcar como pagado (para pendientes y failed) */}
+              {(item.status === 'pending' || item.status === 'failed') && (
+                <DropdownMenuItem onClick={() => handleMarkAsPaid(item)}>
+                  <CheckCircle size={16} />
+                  <span style={{ marginLeft: '8px' }}>Marcar como pagado</span>
+                </DropdownMenuItem>
+              )}
+
+              {/* Descargar PDF (para pagados) */}
+              {item.status === 'paid' && (
+                <DropdownMenuItem onClick={() => handleDownloadPDF(item)}>
+                  <Download size={16} />
+                  <span style={{ marginLeft: '8px' }}>Descargar PDF</span>
+                </DropdownMenuItem>
+              )}
+
+              {/* Separador antes de acciones destructivas */}
+              {item.status !== 'refunded' && item.status !== 'paid' && (
+                <DropdownMenuSeparator />
+              )}
+
+              {/* Anular pago (para todos excepto refunded y paid) */}
+              {item.status !== 'refunded' && item.status !== 'paid' && (
+                <DropdownMenuItem
+                  onClick={() => handleVoidTransaction(item.id)}
+                  className={styles.destructive}
+                >
+                  <Trash2 size={16} />
+                  <span style={{ marginLeft: '8px' }}>Anular pago</span>
+                </DropdownMenuItem>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       ),
       sortable: false

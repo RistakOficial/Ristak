@@ -2,6 +2,8 @@ import { db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 import { resolveDateRange } from '../utils/dateUtils.js'
 import { buildTransactionStats, buildTransactionSummary } from '../services/analyticsService.js'
+import { getGHLClient } from '../services/ghlClient.js'
+import { getHighLevelConfig } from '../config/database.js'
 
 /**
  * Obtiene todas las transacciones/pagos con paginación y filtros
@@ -290,6 +292,189 @@ export const deleteTransaction = async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Error eliminando transacción'
+    })
+  }
+}
+
+/**
+ * Anula un pago/invoice en HighLevel
+ */
+export const voidTransaction = async (req, res) => {
+  try {
+    const { id } = req.params
+
+    logger.info(`Anulando transacción: ${id}`)
+
+    // Obtener la transacción
+    const transaction = await db.get('SELECT * FROM payments WHERE id = ?', [id])
+
+    if (!transaction) {
+      return res.status(404).json({
+        success: false,
+        error: 'Transacción no encontrada'
+      })
+    }
+
+    // Anular en HighLevel si tiene invoice_id
+    if (transaction.invoice_id) {
+      const ghlClient = await getGHLClient()
+      await ghlClient.voidInvoice(transaction.invoice_id)
+    }
+
+    // Actualizar estado en BD
+    await db.run('UPDATE payments SET status = ? WHERE id = ?', ['void', id])
+
+    logger.success(`Transacción anulada: ${id}`)
+
+    res.json({
+      success: true,
+      message: 'Pago anulado correctamente'
+    })
+
+  } catch (error) {
+    logger.error(`Error anulando transacción: ${error.message}`)
+    res.status(500).json({
+      success: false,
+      error: 'Error anulando pago'
+    })
+  }
+}
+
+/**
+ * Registra un pago manual/marca como pagado
+ */
+export const recordPayment = async (req, res) => {
+  try {
+    const { id } = req.params
+    const { amount, paymentDate, paymentMethod } = req.body
+
+    logger.info(`Registrando pago manual para transacción: ${id}`)
+
+    // Obtener la transacción
+    const transaction = await db.get('SELECT * FROM payments WHERE id = ?', [id])
+
+    if (!transaction) {
+      return res.status(404).json({
+        success: false,
+        error: 'Transacción no encontrada'
+      })
+    }
+
+    // Marcar como pagado en HighLevel si tiene invoice_id
+    if (transaction.invoice_id) {
+      const ghlClient = await getGHLClient()
+      await ghlClient.recordPayment(transaction.invoice_id, {
+        amount: amount || transaction.amount,
+        currency: transaction.currency || 'MXN',
+        fulfilledAt: paymentDate || new Date().toISOString(),
+        mode: paymentMethod || 'cash',
+        note: 'Pago registrado manualmente'
+      })
+    }
+
+    // Actualizar estado en BD
+    await db.run('UPDATE payments SET status = ? WHERE id = ?', ['paid', id])
+
+    logger.success(`Pago registrado para transacción: ${id}`)
+
+    res.json({
+      success: true,
+      message: 'Pago registrado correctamente'
+    })
+
+  } catch (error) {
+    logger.error(`Error registrando pago: ${error.message}`)
+    res.status(500).json({
+      success: false,
+      error: 'Error registrando pago'
+    })
+  }
+}
+
+/**
+ * Envía un pago al cliente (email/SMS)
+ */
+export const sendTransaction = async (req, res) => {
+  try {
+    const { id } = req.params
+
+    logger.info(`Enviando pago: ${id}`)
+
+    // Obtener la transacción
+    const transaction = await db.get('SELECT * FROM payments WHERE id = ?', [id])
+
+    if (!transaction) {
+      return res.status(404).json({
+        success: false,
+        error: 'Transacción no encontrada'
+      })
+    }
+
+    // Enviar en HighLevel si tiene invoice_id
+    if (transaction.invoice_id) {
+      const ghlClient = await getGHLClient()
+      await ghlClient.sendInvoice(transaction.invoice_id)
+    } else {
+      throw new Error('No se puede enviar: el pago no tiene invoice asociado')
+    }
+
+    logger.success(`Pago enviado: ${id}`)
+
+    res.json({
+      success: true,
+      message: 'Pago enviado correctamente'
+    })
+
+  } catch (error) {
+    logger.error(`Error enviando pago: ${error.message}`)
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Error enviando pago'
+    })
+  }
+}
+
+/**
+ * Obtiene el enlace de pago
+ */
+export const getPaymentLink = async (req, res) => {
+  try {
+    const { id } = req.params
+
+    // Obtener la transacción
+    const transaction = await db.get('SELECT * FROM payments WHERE id = ?', [id])
+
+    if (!transaction) {
+      return res.status(404).json({
+        success: false,
+        error: 'Transacción no encontrada'
+      })
+    }
+
+    if (!transaction.invoice_id) {
+      return res.status(400).json({
+        success: false,
+        error: 'El pago no tiene enlace asociado'
+      })
+    }
+
+    // Obtener configuración para el domain
+    const config = await getHighLevelConfig()
+    const ghlClient = await getGHLClient()
+    const link = await ghlClient.getInvoicePaymentLink(transaction.invoice_id, config.domain)
+
+    res.json({
+      success: true,
+      data: {
+        link
+      }
+    })
+
+  } catch (error) {
+    logger.error(`Error obteniendo enlace de pago: ${error.message}`)
+    res.status(500).json({
+      success: false,
+      error: 'Error obteniendo enlace'
     })
   }
 }
