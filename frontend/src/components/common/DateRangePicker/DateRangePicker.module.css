@@ -10,7 +10,7 @@
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 14px;
+  padding: 6px 12px;
   background: color-mix(in srgb, var(--color-background-glass) 70%, transparent);
   border: 1px solid var(--color-border-subtle);
   border-radius: 0.75rem;
@@ -20,7 +20,7 @@
   transition: all var(--transition-fast);
   min-width: 220px;
   color: var(--color-text-primary);
-  line-height: 1;
+  line-height: 1.5;
 }
 
 body.dark .input {
