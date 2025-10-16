@@ -2,6 +2,7 @@ import React from 'react'
 import { Routes, Route, Navigate, NavLink } from 'react-router-dom'
 import { HighLevelIntegration } from './HighLevelIntegration'
 import { StripeIntegration } from './StripeIntegration'
+import { MetaAdsIntegration } from './MetaAdsIntegration'
 import styles from './Settings.module.css'
 
 export const Settings: React.FC = () => {
@@ -25,6 +26,12 @@ export const Settings: React.FC = () => {
         >
           Stripe
         </NavLink>
+        <NavLink
+          to="/settings/meta-ads"
+          className={({ isActive }) => `${styles.tab} ${isActive ? styles.tabActive : ''}`}
+        >
+          Meta Ads
+        </NavLink>
       </div>
 
       <div className={styles.mainContent}>
@@ -32,6 +39,7 @@ export const Settings: React.FC = () => {
           <Route index element={<Navigate to="highlevel" replace />} />
           <Route path="highlevel" element={<HighLevelIntegration />} />
           <Route path="stripe" element={<StripeIntegration />} />
+          <Route path="meta-ads" element={<MetaAdsIntegration />} />
         </Routes>
       </div>
     </div>
