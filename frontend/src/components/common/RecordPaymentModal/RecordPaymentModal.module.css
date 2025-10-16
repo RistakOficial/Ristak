@@ -138,6 +138,12 @@
 /* Toggle buttons - Reemplazado por TabList component */
 /* .toggle, .toggleButton, .toggleButtonActive - eliminados, ahora usa TabList */
 
+/* TabList de ancho completo para el modal */
+.fullWidthTabList {
+  width: 100%;
+  display: flex !important;
+}
+
 /* Contact selection */
 .selectedContact {
   display: flex;
