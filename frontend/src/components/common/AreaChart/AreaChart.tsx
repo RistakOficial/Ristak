@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react'
+import React, { useMemo, useRef } from 'react'
 import {
   AreaChart as RechartsAreaChart,
   Area,
@@ -8,7 +8,7 @@ import {
   ResponsiveContainer
 } from 'recharts'
 import { formatCurrency, formatNumber } from '@/utils/format'
-import { Tooltip } from 'recharts'
+import { FloatingTooltip } from '../LineChart/FloatingTooltip'
 
 interface DataPoint {
   label: string
@@ -55,30 +55,6 @@ const defaultFormatAxis = (value: number): string => {
 
 const defaultFormatTooltip = (value: number): string => formatCurrency(value)
 
-const CustomTooltip = ({ active, payload, label }: any) => {
-  if (active && payload && payload.length) {
-    return (
-      <div className="glass rounded-lg p-3 shadow-xl">
-        <p className="text-xs text-[var(--color-text-tertiary)] mb-2">{label}</p>
-        {payload.map((item: any, index: number) => (
-          <div key={index} className="flex items-center gap-2 text-sm">
-            <div
-              className="w-2 h-2 rounded-full"
-              style={{ backgroundColor: item.color }}
-            />
-            <span className="text-[var(--color-text-secondary)]">
-              {item.name}:
-            </span>
-            <span className="text-[var(--color-text-primary)] font-medium">
-              {typeof item.value === 'number' ? formatCurrency(item.value) : item.value}
-            </span>
-          </div>
-        ))}
-      </div>
-    )
-  }
-  return null
-}
 
 export const AreaChart: React.FC<AreaChartProps> = ({
   data,
@@ -92,6 +68,7 @@ export const AreaChart: React.FC<AreaChartProps> = ({
   showLegend = false,
   legendLabels = { label1: 'Serie 1', label2: 'Serie 2' }
 }) => {
+  const chartRef = useRef<HTMLDivElement>(null)
   const hasSecondSeries = data.some((d) => typeof d.value2 === 'number')
   const isDarkMode = document.body.classList.contains('dark')
 
@@ -119,6 +96,8 @@ export const AreaChart: React.FC<AreaChartProps> = ({
   const maxValue = numericValues.length > 0 ? Math.max(...numericValues) : 0
   const yDomain: [number, number] = [0, maxValue > 0 ? Math.ceil(maxValue * 1.4) : 1]
 
+  const tooltipFormatter = (value: number, key: string) => formatTooltipValue(value, key)
+
   return (
     <div className="space-y-3">
       {showLegend && (
@@ -135,7 +114,7 @@ export const AreaChart: React.FC<AreaChartProps> = ({
         </div>
       )}
 
-      <div className="relative" style={{ height }}>
+      <div ref={chartRef} className="relative" style={{ height }}>
         <ResponsiveContainer width="100%" height="100%">
           <RechartsAreaChart data={data} margin={{ top: 5, right: 5, left: 5, bottom: 5 }}>
             <defs>
@@ -179,13 +158,7 @@ export const AreaChart: React.FC<AreaChartProps> = ({
               }}
             />
 
-            <Tooltip
-              content={<CustomTooltip />}
-              cursor={false}
-              isAnimationActive={false}
-              offset={100}
-              wrapperClassName="custom-tooltip-above"
-            />
+            {/* Tooltip de Recharts deshabilitado - usamos FloatingTooltip */}
 
             {series.map((serie) => (
               <Area
@@ -223,6 +196,14 @@ export const AreaChart: React.FC<AreaChartProps> = ({
           </RechartsAreaChart>
         </ResponsiveContainer>
       </div>
+
+      {/* Nuestro tooltip flotante que sigue al cursor */}
+      <FloatingTooltip
+        chartRef={chartRef}
+        data={data}
+        series={series}
+        formatValue={tooltipFormatter}
+      />
     </div>
   )
 }
