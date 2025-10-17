@@ -391,7 +391,9 @@ async function initTables() {
       try {
         await db.run('ALTER TABLE highlevel_config ADD COLUMN stripe_test_secret_key_encrypted TEXT')
       } catch (err) {
-        if (!err.message.includes('duplicate column name') && !err.message.includes('already exists')) {
+        // SQLite: "duplicate column name"
+        // PostgreSQL: "column \"stripe_test_secret_key_encrypted\" of relation \"highlevel_config\" already exists"
+        if (!err.message.includes('duplicate column') && !err.message.includes('already exists')) {
           throw err
         }
       }
@@ -399,15 +401,15 @@ async function initTables() {
       try {
         await db.run('ALTER TABLE highlevel_config ADD COLUMN stripe_live_secret_key_encrypted TEXT')
       } catch (err) {
-        if (!err.message.includes('duplicate column name') && !err.message.includes('already exists')) {
+        if (!err.message.includes('duplicate column') && !err.message.includes('already exists')) {
           throw err
         }
       }
 
       try {
-        await db.run('ALTER TABLE highlevel_config ADD COLUMN stripe_mode TEXT DEFAULT "test"')
+        await db.run('ALTER TABLE highlevel_config ADD COLUMN stripe_mode TEXT DEFAULT \'test\'')
       } catch (err) {
-        if (!err.message.includes('duplicate column name') && !err.message.includes('already exists')) {
+        if (!err.message.includes('duplicate column') && !err.message.includes('already exists')) {
           throw err
         }
       }
