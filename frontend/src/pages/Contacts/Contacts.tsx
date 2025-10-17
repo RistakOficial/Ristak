@@ -130,10 +130,10 @@ export const Contacts: React.FC = () => {
       sortable: true
     },
     {
-      key: 'email',
-      header: 'Email',
-      sortable: true,
-      visible: false
+      key: 'status',
+      header: 'Estado',
+      render: (value) => getStatusBadge(value as Contact['status']),
+      sortable: true
     },
     {
       key: 'phone',
@@ -141,15 +141,15 @@ export const Contacts: React.FC = () => {
       sortable: true
     },
     {
+      key: 'email',
+      header: 'Email',
+      sortable: true,
+      visible: false
+    },
+    {
       key: 'ltv',
       header: 'Pagos totales',
       render: (value) => value > 0 ? formatCurrency(value) : '-',
-      sortable: true
-    },
-    {
-      key: 'status',
-      header: 'Estado',
-      render: (value) => getStatusBadge(value as Contact['status']),
       sortable: true
     },
     {
