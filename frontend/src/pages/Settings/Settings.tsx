@@ -23,18 +23,18 @@ export const Settings: React.FC = () => {
           <span>HighLevel</span>
         </NavLink>
         <NavLink
-          to="/settings/payments"
-          className={({ isActive }) => `${styles.tab} ${isActive ? styles.tabActive : ''}`}
-        >
-          <CreditCard size={18} />
-          <span>Configuración de Pagos</span>
-        </NavLink>
-        <NavLink
           to="/settings/meta-ads"
           className={({ isActive }) => `${styles.tab} ${isActive ? styles.tabActive : ''}`}
         >
           <Facebook size={18} />
           <span>Meta Ads</span>
+        </NavLink>
+        <NavLink
+          to="/settings/payments"
+          className={({ isActive }) => `${styles.tab} ${isActive ? styles.tabActive : ''}`}
+        >
+          <CreditCard size={18} />
+          <span>Configuración de Pagos</span>
         </NavLink>
       </div>
 
