@@ -237,7 +237,8 @@
 }
 
 [data-theme="dark"] .nameText.adset {
-  color: rgb(226, 232, 240);
+  color: rgb(241, 245, 249) !important;
+  font-weight: var(--font-weight-semibold) !important;
 }
 
 .nameText.ad {
@@ -247,7 +248,7 @@
 }
 
 [data-theme="dark"] .nameText.ad {
-  color: rgb(203, 213, 225);
+  color: rgb(226, 232, 240) !important;
 }
 
 /* Badges para identificar niveles */

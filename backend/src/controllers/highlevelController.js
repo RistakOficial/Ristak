@@ -741,52 +741,40 @@ export const createInvoice = async (req, res) => {
 
     logger.success(`Invoice creado en HighLevel: ${ghlInvoiceId}`);
 
-    // PASO 2: Guardar invoice en BD local INMEDIATAMENTE (solo si contacto existe)
+    // PASO 2: Guardar invoice en BD local INMEDIATAMENTE (sin validar contacto)
     const contactId = invoiceData.contactDetails?.id || createdInvoice.contactId;
 
     try {
-      // Verificar que el contacto existe en BD local
-      if (contactId) {
-        const contactExists = await db.get(
-          'SELECT id FROM contacts WHERE id = ?',
-          [contactId]
-        );
+      // Calcular monto total
+      const items = createdInvoice.items || [];
+      const subtotal = items.reduce((sum, item) => sum + (item.amount || 0) * (item.qty || 1), 0);
+      const taxAmount = createdInvoice.tax?.amount || 0;
+      const total = createdInvoice.total || createdInvoice.amount || (subtotal + taxAmount);
 
-        if (!contactExists) {
-          logger.warn(`⚠️  Contacto ${contactId} no existe en BD local. Invoice NO se guardará hasta que llegue el webhook o se sincronice.`);
-        } else {
-          // Calcular monto total
-          const items = createdInvoice.items || [];
-          const subtotal = items.reduce((sum, item) => sum + (item.amount || 0) * (item.qty || 1), 0);
-          const taxAmount = createdInvoice.tax?.amount || 0;
-          const total = createdInvoice.total || createdInvoice.amount || (subtotal + taxAmount);
+      await db.run(
+        `INSERT INTO payments (
+          id, contact_id, amount, currency, status, payment_method,
+          reference, description, date, ghl_invoice_id, invoice_number,
+          due_date, sent_at, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+        [
+          ghlInvoiceId,
+          contactId || null, // Guardar contactId aunque no exista en contacts table
+          total,
+          createdInvoice.currency || 'MXN',
+          'draft', // Inicialmente siempre es draft
+          null, // payment_method (se llena cuando se pague)
+          createdInvoice.invoiceNumber || null,
+          createdInvoice.name || createdInvoice.title || 'Pago',
+          createdInvoice.issueDate || createdInvoice.createdAt || new Date().toISOString(),
+          ghlInvoiceId,
+          createdInvoice.invoiceNumber || null,
+          createdInvoice.dueDate || null,
+          null // sent_at (se llena cuando se envíe)
+        ]
+      );
 
-          await db.run(
-            `INSERT INTO payments (
-              id, contact_id, amount, currency, status, payment_method,
-              reference, description, date, ghl_invoice_id, invoice_number,
-              due_date, sent_at, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
-            [
-              ghlInvoiceId,
-              contactId,
-              total,
-              createdInvoice.currency || 'MXN',
-              'draft', // Inicialmente siempre es draft
-              null, // payment_method (se llena cuando se pague)
-              createdInvoice.invoiceNumber || null,
-              createdInvoice.name || createdInvoice.title || 'Pago',
-              createdInvoice.issueDate || createdInvoice.createdAt || new Date().toISOString(),
-              ghlInvoiceId,
-              createdInvoice.invoiceNumber || null,
-              createdInvoice.dueDate || null,
-              null // sent_at (se llena cuando se envíe)
-            ]
-          );
-
-          logger.success(`✅ Invoice guardado en BD local: ${ghlInvoiceId}`);
-        }
-      }
+      logger.success(`✅ Invoice guardado en BD local: ${ghlInvoiceId}`);
     } catch (dbError) {
       logger.error(`Error guardando invoice en BD local: ${dbError.message}`);
       // No fallar, el invoice ya se creó en HighLevel

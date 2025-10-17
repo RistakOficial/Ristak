@@ -96,20 +96,7 @@ export async function syncInvoices({ limit = 100, offset = 0, contactId } = {}) 
             skipped++
           }
         } else {
-          // Verificar que el contacto existe en BD local
-          const contactExists = await db.get(
-            'SELECT id FROM contacts WHERE id = ?',
-            [invoiceData.contact_id]
-          )
-
-          if (!contactExists && invoiceData.contact_id) {
-            // El contacto NO existe en BD local - SALTAR este invoice
-            logger.warn(`⚠️  Contacto ${invoiceData.contact_id} no existe en BD. Saltando invoice ${ghlInvoiceId}`)
-            skipped++
-            continue
-          }
-
-          // Crear nuevo invoice en BD (solo si el contacto existe)
+          // Crear nuevo invoice en BD (sin validar si contacto existe)
           await db.run(
             `INSERT INTO payments (
               id, contact_id, amount, currency, status, payment_method,

@@ -72,7 +72,7 @@ export const LineChart: React.FC<LineChartProps> = ({
   const { chartRef, pointPos, isHovering, activeIndex, activeData } = useChartHover({ data })
   const [actualPointPos, setActualPointPos] = useState<{ x: number; y: number } | null>(null)
   const activePointRef = useRef<{ [key: string]: { x: number; y: number } }>({})
-  const [, forceUpdate] = useState(0)
+  const pendingUpdateRef = useRef<{ x: number; y: number } | null>(null)
   const hasSecondSeries = data.some((d) => typeof d.value2 === 'number')
   const isDarkMode = typeof document !== 'undefined' && document.body.classList.contains('dark')
 
@@ -81,11 +81,21 @@ export const LineChart: React.FC<LineChartProps> = ({
     if (!isHovering) {
       setActualPointPos(null)
       activePointRef.current = {}
+      pendingUpdateRef.current = null
     } else {
       // Limpiar los puntos del índice anterior
       activePointRef.current = {}
+      pendingUpdateRef.current = null
     }
   }, [isHovering, activeIndex])
+
+  // Actualizar posición después del render
+  useEffect(() => {
+    if (pendingUpdateRef.current) {
+      setActualPointPos(pendingUpdateRef.current)
+      pendingUpdateRef.current = null
+    }
+  })
 
   const series = useMemo<SeriesDefinition[]>(() => {
     const definitions: SeriesDefinition[] = [
@@ -197,13 +207,13 @@ export const LineChart: React.FC<LineChartProps> = ({
                             // Guardar la posición de este punto
                             activePointRef.current[`${props.index}-${serie.key}`] = { x: pointX, y: pointY }
 
-                            // Actualizar inmediatamente el punto más alto
+                            // Guardar para actualizar después del render
                             const allPoints = Object.values(activePointRef.current)
                             if (allPoints.length > 0) {
                               const highestPoint = allPoints.reduce((highest, current) =>
                                 current.y < highest.y ? current : highest
                               )
-                              setActualPointPos(highestPoint)
+                              pendingUpdateRef.current = highestPoint
                             }
                           }
                         }
