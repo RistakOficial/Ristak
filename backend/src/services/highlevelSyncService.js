@@ -783,6 +783,14 @@ async function syncHighLevelPayments(locationId, apiToken) {
   for (const { raw: payment, normalized } of allPayments) {
     try {
       const contactId = normalized.contactId
+
+      // SKIP: No guardar pagos sin contactId (son transacciones de nivel location)
+      if (!contactId || contactId === locationId) {
+        logger.warn(`⚠️  Pago ${normalized.id} sin contactId válido (contactId: ${contactId}), saltando...`)
+        saved++ // Contar como procesado para no romper el progreso
+        continue
+      }
+
       const createdContact = await ensureContactExists(contactId, apiToken, usePostgres)
       if (createdContact) {
         contactsCreated++
