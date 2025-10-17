@@ -539,12 +539,8 @@ body.dark .dropdownMenu {
 .toggleContainer {
   display: flex;
   align-items: center;
-  gap: var(--spacing-md);
-  justify-content: center;
-  padding: var(--spacing-lg);
-  background: var(--color-background-secondary);
-  border-radius: var(--radius-md);
-  margin-top: var(--spacing-md);
+  gap: var(--spacing-sm);
+  justify-content: flex-start;
 }
 
 .toggleLabel {
