@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { KpiCard, Card, Button, PageContainer, AppointmentModal } from '@/components/common';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { KpiCard, Card, Button, PageContainer, AppointmentModal, TabList } from '@/components/common';
 import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Plus, ChevronDown, Check } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useNotification } from '@/contexts/NotificationContext';
@@ -13,6 +13,12 @@ const MONTH_NAMES = [
 ];
 
 const DAYS_SHORT = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
+
+const viewTabs = [
+  { value: 'month', label: 'Mes' },
+  { value: 'week', label: 'Semana' },
+  { value: 'day', label: 'Día' }
+];
 
 type ViewMode = 'month' | 'week' | 'day';
 
@@ -59,6 +65,10 @@ export const Appointments: React.FC = () => {
   // Dropdowns de navegación
   const [isMonthDropdownOpen, setIsMonthDropdownOpen] = useState(false);
   const [isYearDropdownOpen, setIsYearDropdownOpen] = useState(false);
+
+  // Referencias para auto scroll
+  const weekGridRef = useRef<HTMLDivElement | null>(null);
+  const dayGridRef = useRef<HTMLDivElement | null>(null);
 
   // Cargar calendarios al montar
   useEffect(() => {
@@ -385,6 +395,23 @@ export const Appointments: React.FC = () => {
     );
   }
 
+  useEffect(() => {
+    if (!weekGridRef.current && !dayGridRef.current) return;
+
+    const now = new Date();
+    const currentHour = now.getHours() + now.getMinutes() / 60;
+    const target = Math.max(currentHour - 2, 0); // deja margen por encima
+    const scrollPosition = target * 60; // 60px por cada hora
+
+    if (viewMode === 'week' && weekGridRef.current) {
+      weekGridRef.current.scrollTop = scrollPosition;
+    }
+
+    if (viewMode === 'day' && dayGridRef.current) {
+      dayGridRef.current.scrollTop = scrollPosition;
+    }
+  }, [viewMode, currentDate]);
+
   return (
     <PageContainer>
       {/* Header */}
@@ -494,26 +521,12 @@ export const Appointments: React.FC = () => {
               Programar cita
             </Button>
 
-            <div className={styles.viewTabs}>
-              <button
-                className={viewMode === 'month' ? styles.viewTabActive : styles.viewTab}
-                onClick={() => setViewMode('month')}
-              >
-                Mes
-              </button>
-              <button
-                className={viewMode === 'week' ? styles.viewTabActive : styles.viewTab}
-                onClick={() => setViewMode('week')}
-              >
-                Semana
-              </button>
-              <button
-                className={viewMode === 'day' ? styles.viewTabActive : styles.viewTab}
-                onClick={() => setViewMode('day')}
-              >
-                Día
-              </button>
-            </div>
+            <TabList
+              tabs={viewTabs}
+              activeTab={viewMode}
+              onTabChange={(value) => setViewMode(value as ViewMode)}
+              variant="compact"
+            />
 
             <div className={styles.dateNav}>
               <Button variant="secondary" onClick={handleToday}>
@@ -672,7 +685,7 @@ export const Appointments: React.FC = () => {
               </div>
 
               {/* Grid de horarios */}
-              <div className={styles.weekGrid}>
+              <div className={styles.weekGrid} ref={weekGridRef}>
                 <div className={styles.timeColumn}>
                   {Array.from({ length: 24 }).map((_, hour) => (
                     <div key={hour} className={styles.timeSlot}>
@@ -776,7 +789,7 @@ export const Appointments: React.FC = () => {
               </div>
 
               {/* Grid de horarios del día */}
-              <div className={styles.dayGrid}>
+              <div className={styles.dayGrid} ref={dayGridRef}>
                 <div className={styles.timeColumn}>
                   {Array.from({ length: 24 }).map((_, hour) => (
                     <div key={hour} className={styles.timeSlot}>

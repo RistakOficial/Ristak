@@ -667,8 +667,8 @@
 }
 
 .weekDayHeaderToday {
-  background-color: var(--color-primary-100);
-  border: 2px solid var(--color-primary-400);
+  background-color: rgba(59, 130, 246, 0.12);
+  border: 2px solid rgba(59, 130, 246, 0.35);
 }
 
 .weekDayName {
@@ -693,9 +693,10 @@
 }
 
 .weekDayToday {
-  background-color: var(--color-primary-500);
+  background-color: var(--color-primary);
   color: white;
   font-weight: 700;
+  box-shadow: 0 0 0 2px rgba(15, 23, 42, 0.14);
 }
 
 .weekGrid {
@@ -731,7 +732,7 @@
 .timeColumn {
   display: flex;
   flex-direction: column;
-  border-right: 1px solid var(--color-border);
+  border-right: none;
   border-left: none;
   padding-right: 0.5rem;
   background-color: var(--color-background);
