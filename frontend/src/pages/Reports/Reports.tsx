@@ -28,7 +28,11 @@ import {
   UserCheck,
   DollarSign,
   Target,
-  Download
+  Download,
+  Layers,
+  MousePointerClick,
+  Table as TableIcon,
+  BarChart3
 } from 'lucide-react'
 
 const monthNames = [
@@ -72,8 +76,8 @@ type TableRow = {
 // "Todos" agrupa por la fecha en que sucedió cada evento.
 // "Última atribución" muestra todo usando la fecha de creación del contacto.
 const scopeTabs = [
-  { value: 'cashflow', label: 'Todos' },
-  { value: 'campaigns', label: 'Última atribución' }
+  { value: 'cashflow', label: 'Todos', icon: <Layers size={16} /> },
+  { value: 'campaigns', label: 'Última atribución', icon: <MousePointerClick size={16} /> }
 ]
 
 const viewTabs = [
@@ -83,8 +87,8 @@ const viewTabs = [
 ]
 
 const displayTabs = [
-  { value: 'table', label: 'Histórico' },
-  { value: 'metrics', label: 'Métricas' }
+  { value: 'table', label: 'Histórico', icon: <TableIcon size={16} /> },
+  { value: 'metrics', label: 'Métricas', icon: <BarChart3 size={16} /> }
 ]
 
 const monthRangeOptions = [
