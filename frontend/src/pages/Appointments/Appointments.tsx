@@ -306,26 +306,25 @@ export const Appointments: React.FC = () => {
         <KpiCard
           title="Citas pendientes"
           value={stats.pending}
-          icon={CalendarIcon}
-          variant="default"
+          icon={<CalendarIcon className="w-6 h-6" />}
         />
         <KpiCard
           title="Citas canceladas"
           value={stats.cancelled}
-          icon={CalendarIcon}
-          variant="error"
+          icon={<CalendarIcon className="w-6 h-6" />}
+          iconColorClassName="text-[var(--color-error-500)]"
         />
         <KpiCard
           title="Citas confirmadas"
           value={stats.confirmed}
-          icon={CalendarIcon}
-          variant="success"
+          icon={<CalendarIcon className="w-6 h-6" />}
+          iconColorClassName="text-[var(--color-success-500)]"
         />
         <KpiCard
           title="Reprogramadas"
           value={stats.rescheduled}
-          icon={CalendarIcon}
-          variant="warning"
+          icon={<CalendarIcon className="w-6 h-6" />}
+          iconColorClassName="text-[var(--color-warning-500)]"
         />
       </div>
 
