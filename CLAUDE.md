@@ -115,7 +115,8 @@ Backend:
 │       │   ├── metaController.js
 │       │   ├── reportsController.js
 │       │   ├── webhooksController.js
-│       │   └── calendarsController.js  # Controlador para Calendarios de HighLevel
+│       │   ├── calendarsController.js  # Controlador para Calendarios de HighLevel
+│       │   └── trackingController.js   # Controlador para Pixel de Tracking
 │       ├── jobs/
 │       │   └── metaSync.cron.js
 │       ├── routes/
@@ -124,11 +125,13 @@ Backend:
 │       │   ├── meta.routes.js
 │       │   ├── reports.routes.js
 │       │   ├── webhooks.routes.js
-│       │   └── calendars.routes.js    # Rutas para Calendarios API
+│       │   ├── calendars.routes.js    # Rutas para Calendarios API
+│       │   └── tracking.routes.js     # Rutas para Pixel de Tracking
 │       ├── services/
 │       │   ├── highlevelSyncService.js
 │       │   ├── metaAdsService.js
-│       │   └── highlevelCalendarService.js  # Servicio para API de Calendarios GHL
+│       │   ├── highlevelCalendarService.js  # Servicio para API de Calendarios GHL
+│       │   └── trackingService.js     # Servicio para gestión de sesiones de tracking
 │       ├── utils/
 │       │   ├── dateUtils.js
 │       │   └── logger.js      # Sistema de logging personalizado
@@ -164,6 +167,20 @@ Backend:
 - **Controlador**: `webhooksController.js`
 - **Funcionalidad**: Recepción de eventos externos
 
+### Pixel de Tracking
+- **Estado**: Implementado completamente
+- **Endpoints**: `/snip.js`, `/collect`, `/api/tracking/sessions`
+- **Servicios**: `trackingService.js`
+- **Funcionalidad**:
+  - Pixel JavaScript dinámico que captura visitas
+  - Same-Origin usando CNAME del cliente (ej. collect.sudominio.com)
+  - Captura UTMs, click IDs (gclid, fbclid, msclkid, ttclid, wbraid, gbraid)
+  - Cookies de Facebook (fbc, fbp)
+  - Información de dispositivo, navegador, idioma, timezone
+  - Gestión automática de sesiones (visitor_id + session_id)
+  - API para consultar sesiones capturadas
+- **Documentación**: Ver `TRACKING_PIXEL.md`
+
 ---
 
 ## 📊 MODELO DE DATOS
@@ -175,6 +192,7 @@ contacts: id, email, phone, name, tags, created_at, updated_at
 campaigns: id, name, platform, status, metrics, created_at
 transactions: id, contact_id, amount, type, date, metadata
 reports: id, type, data, generated_at
+sessions: session_id, visitor_id, contact_id, utm_*, gclid, fbclid, etc (ver TRACKING_PIXEL.md)
 ```
 
 ### API Endpoints
@@ -195,6 +213,12 @@ GET    /api/calendars/:id/free-slots    # Obtener slots disponibles
 POST   /api/calendars/appointments      # Crear nueva cita
 PUT    /api/calendars/appointments/:id  # Actualizar cita
 DELETE /api/calendars/events/:id        # Eliminar evento
+
+# Pixel de Tracking
+GET    /snip.js                         # Pixel JavaScript (dinámico por dominio)
+POST   /collect                         # Recibir eventos del pixel
+GET    /api/tracking/sessions           # Obtener sesiones capturadas
+GET    /api/tracking/sessions/:id       # Obtener sesión específica
 
 # Webhooks
 POST   /webhook/highlevel               # Webhook de HighLevel
@@ -346,6 +370,18 @@ cd frontend && npm run build
   - ⚠️ Nota: Requiere locationId y accessToken de HighLevel configurados
   - ⚠️ Vista semana/día en desarrollo (placeholder implementado)
 
+- ✓ **Pixel de Tracking implementado (2025-10-17)**:
+  - Sistema completo de tracking con pixel JavaScript dinámico
+  - Same-Origin usando CNAME (ej. collect.cliente.com)
+  - Captura UTMs, click IDs (gclid, fbclid, msclkid, ttclid, wbraid, gbraid)
+  - Cookies de Facebook (fbc, fbp), device info, referrer, IP
+  - Tabla `sessions` con 50+ campos de atribución
+  - Endpoints: GET /snip.js, POST /collect, GET /api/tracking/sessions
+  - Backend: trackingController.js, trackingService.js, tracking.routes.js
+  - Documentación completa en TRACKING_PIXEL.md
+  - Sin hardcodear dominios (detección dinámica por req.headers.host)
+  - Funciona con SQLite y PostgreSQL
+
 ### Resueltos
 - ✓ Lodash instalado como dependencia directa
 - ✓ 7 componentes huérfanos eliminados (Badge, Select, Input, DatePicker, SingleDatePicker, DateRangeInput, SyncProgressBanner)
@@ -380,14 +416,17 @@ cd frontend && npm run build
 ## 📅 ÚLTIMA ACTUALIZACIÓN
 
 **Fecha**: 2025-10-17
-**Versión**: 1.6.0
+**Versión**: 1.7.0
 **Último cambio estructural**:
-- Nueva página de Citas (Appointments) con integración completa a API de Calendarios de HighLevel
-- Backend: highlevelCalendarService.js, calendarsController.js, calendars.routes.js
-- Frontend: Appointments página, calendarsService.ts
-- Función formatTime12h() agregada a utils/format.ts
-- Ruta /appointments agregada a navegación principal
-- Endpoints de calendarios integrados en server.js
+- **Sistema de Pixel de Tracking implementado completamente**
+  - Tabla `sessions` creada en database.js con 50+ campos
+  - Backend: trackingController.js, trackingService.js, tracking.routes.js
+  - Endpoints: GET /snip.js, POST /collect, GET /api/tracking/sessions
+  - Documentación completa en TRACKING_PIXEL.md
+  - Same-Origin con detección dinámica de dominio (no hardcodeado)
+  - Captura UTMs, click IDs, cookies de Facebook, device info, referrer, IP
+  - Compatible con SQLite y PostgreSQL
+  - Probado localmente con éxito (sesiones creadas y actualizadas correctamente)
 
 ---
 

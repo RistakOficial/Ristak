@@ -705,9 +705,10 @@ export const Appointments: React.FC = () => {
                     date.setDate(startOfWeek.getDate() + dayIndex);
                     const dateStr = date.toISOString().split('T')[0];
                     const dayEvents = eventsByDate[dateStr] || [];
+                    const isToday = date.toDateString() === new Date().toDateString();
 
                     return (
-                      <div key={dayIndex} className={styles.dayColumn}>
+                      <div key={dayIndex} className={`${styles.dayColumn} ${isToday ? styles.dayColumnToday : ''}`}>
                         {/* Líneas de hora */}
                         {Array.from({ length: 24 }).map((_, hour) => (
                           <div key={hour} className={styles.hourLine}></div>
