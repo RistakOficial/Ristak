@@ -227,3 +227,20 @@ export const formatChartDate = (dateStr: string, rangeInDays: number, previousDa
 
   return yearChanged ? `${capitalize(shortMonth)} ${year}` : capitalize(shortMonth)
 }
+
+/**
+ * Formatea una fecha/hora ISO a formato 12 horas (ej: "02:30 PM")
+ */
+export const formatTime12h = (dateStr: string): string => {
+  if (!dateStr) return '—';
+
+  const date = new Date(dateStr);
+  if (Number.isNaN(date.getTime())) return '—';
+
+  const hours = date.getHours();
+  const minutes = date.getMinutes();
+  const ampm = hours >= 12 ? 'PM' : 'AM';
+  const hours12 = hours % 12 || 12;
+
+  return `${String(hours12).padStart(2, '0')}:${String(minutes).padStart(2, '0')} ${ampm}`;
+}

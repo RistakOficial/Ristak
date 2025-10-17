@@ -21,6 +21,7 @@ import integrationsRoutes from './routes/integrations.routes.js'
 import attributionRoutes from './routes/attribution.routes.js'
 import settingsRoutes from './routes/settings.routes.js'
 import paymentMethodsRoutes from './routes/paymentMethods.routes.js'
+import calendarsRoutes from './routes/calendars.routes.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -54,6 +55,7 @@ app.use('/api/integrations', integrationsRoutes)
 app.use('/api/attribution', attributionRoutes)
 app.use('/api/settings', settingsRoutes)
 app.use('/api/payment-methods', paymentMethodsRoutes)
+app.use('/api/calendars', calendarsRoutes)
 app.use('/webhook', webhooksRoutes)
 app.use('/webhooks', webhooksRoutes) // Alias para webhooks con 's'
 

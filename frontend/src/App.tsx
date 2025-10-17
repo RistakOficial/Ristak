@@ -13,6 +13,7 @@ import { Campaigns } from '@/pages/Campaigns'
 import { Transactions } from '@/pages/Transactions'
 import { Contacts } from '@/pages/Contacts'
 import { Settings } from '@/pages/Settings'
+import { Appointments } from '@/pages/Appointments'
 import { ToastContainer } from '@/components/common/Toast'
 import { Modal } from '@/components/common/Modal'
 import { StorageAlert } from '@/components/common/StorageAlert'
@@ -31,6 +32,7 @@ const AppWithNotifications: React.FC = () => {
             <Route path="campaigns" element={<Campaigns />} />
             <Route path="transactions" element={<Transactions />} />
             <Route path="contacts" element={<Contacts />} />
+            <Route path="appointments" element={<Appointments />} />
             <Route path="settings/*" element={<Settings />} />
           </Route>
         </Routes>

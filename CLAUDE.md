@@ -77,7 +77,8 @@ Backend:
 │   │   │   ├── Contacts/
 │   │   │   ├── Reports/
 │   │   │   ├── Settings/
-│   │   │   └── Transactions/
+│   │   │   ├── Transactions/
+│   │   │   └── Appointments/  # Gestión de calendarios y citas de HighLevel
 │   │   ├── services/          # Llamadas API
 │   │   │   ├── apiClient.ts
 │   │   │   ├── campaignsService.ts
@@ -85,7 +86,8 @@ Backend:
 │   │   │   ├── dashboardService.ts
 │   │   │   ├── highLevelService.ts
 │   │   │   ├── reportsService.ts
-│   │   │   └── transactionsService.ts
+│   │   │   ├── transactionsService.ts
+│   │   │   └── calendarsService.ts  # Servicio para Calendarios de HighLevel
 │   │   ├── styles/            # Estilos globales
 │   │   │   ├── index.css
 │   │   │   ├── theme.css
@@ -112,7 +114,8 @@ Backend:
 │       │   ├── highlevelController.js
 │       │   ├── metaController.js
 │       │   ├── reportsController.js
-│       │   └── webhooksController.js
+│       │   ├── webhooksController.js
+│       │   └── calendarsController.js  # Controlador para Calendarios de HighLevel
 │       ├── jobs/
 │       │   └── metaSync.cron.js
 │       ├── routes/
@@ -120,10 +123,12 @@ Backend:
 │       │   ├── highlevel.routes.js
 │       │   ├── meta.routes.js
 │       │   ├── reports.routes.js
-│       │   └── webhooks.routes.js
+│       │   ├── webhooks.routes.js
+│       │   └── calendars.routes.js    # Rutas para Calendarios API
 │       ├── services/
 │       │   ├── highlevelSyncService.js
-│       │   └── metaAdsService.js
+│       │   ├── metaAdsService.js
+│       │   └── highlevelCalendarService.js  # Servicio para API de Calendarios GHL
 │       ├── utils/
 │       │   ├── dateUtils.js
 │       │   └── logger.js      # Sistema de logging personalizado
@@ -137,10 +142,14 @@ Backend:
 ## 🔌 INTEGRACIONES ACTIVAS
 
 ### HighLevel
-- **Estado**: Pendiente implementación completa
-- **Endpoints**: `/api/highlevel/*`
-- **Servicios**: `highlevelSyncService.js`, `highLevelService.ts`
-- **Funcionalidad**: Sincronización de contactos y pipelines
+- **Estado**: Implementación parcial (contactos, pipelines, calendarios)
+- **Endpoints**: `/api/highlevel/*`, `/api/calendars/*`
+- **Servicios**: `highlevelSyncService.js`, `highLevelService.ts`, `highlevelCalendarService.js`, `calendarsService.ts`
+- **Funcionalidad**:
+  - Sincronización de contactos y pipelines
+  - Gestión de calendarios y citas
+  - Visualización de horarios disponibles
+  - Estadísticas de citas (pendientes, confirmadas, canceladas, reprogramadas)
 
 ### Meta Ads (Facebook)
 - **Estado**: Parcialmente implementado
@@ -170,15 +179,26 @@ reports: id, type, data, generated_at
 
 ### API Endpoints
 ```
-GET    /api/health                 # Health check
-GET    /api/dashboard/stats        # KPIs principales
-GET    /api/dashboard/chart        # Datos para gráficas
-GET    /api/contacts               # Lista de contactos
-GET    /api/campaigns              # Campañas activas
-GET    /api/transactions           # Transacciones
-GET    /api/reports                # Reportes generados
-POST   /webhook/highlevel          # Webhook de HighLevel
-POST   /webhook/meta               # Webhook de Meta
+GET    /api/health                      # Health check
+GET    /api/dashboard/stats             # KPIs principales
+GET    /api/dashboard/chart             # Datos para gráficas
+GET    /api/contacts                    # Lista de contactos
+GET    /api/campaigns                   # Campañas activas
+GET    /api/transactions                # Transacciones
+GET    /api/reports                     # Reportes generados
+
+# Calendarios (HighLevel)
+GET    /api/calendars                   # Obtener todos los calendarios
+GET    /api/calendars/:id               # Obtener calendario específico
+GET    /api/calendars/events            # Obtener eventos/citas de un rango
+GET    /api/calendars/:id/free-slots    # Obtener slots disponibles
+POST   /api/calendars/appointments      # Crear nueva cita
+PUT    /api/calendars/appointments/:id  # Actualizar cita
+DELETE /api/calendars/events/:id        # Eliminar evento
+
+# Webhooks
+POST   /webhook/highlevel               # Webhook de HighLevel
+POST   /webhook/meta                    # Webhook de Meta
 ```
 
 ---
@@ -313,6 +333,19 @@ cd frontend && npm run build
   - Integrado en página de Transactions con botón "+ Registrar pago"
   - ⚠️ Nota: Cargar productos requiere scope `products.readonly` en el token de HighLevel. El cobro directo funciona sin este scope.
 
+- ✓ Gestión de Calendarios y Citas (página Appointments):
+  - Visualización de calendarios de HighLevel con navegación entre calendarios
+  - Vista mensual de calendario con eventos agrupados por día
+  - KPIs de citas: pendientes, canceladas, confirmadas, reprogramadas
+  - Lista de próximas citas ordenadas cronológicamente
+  - Código de colores según estado de cita (confirmada, pendiente, cancelada, etc.)
+  - Integración completa con API de Calendarios de HighLevel
+  - Backend endpoints: GET /api/calendars, GET /api/calendars/:id, GET /api/calendars/events, GET /api/calendars/:id/free-slots
+  - Servicios: highlevelCalendarService.js (backend), calendarsService.ts (frontend)
+  - Ruta: /appointments
+  - ⚠️ Nota: Requiere locationId y accessToken de HighLevel configurados
+  - ⚠️ Vista semana/día en desarrollo (placeholder implementado)
+
 ### Resueltos
 - ✓ Lodash instalado como dependencia directa
 - ✓ 7 componentes huérfanos eliminados (Badge, Select, Input, DatePicker, SingleDatePicker, DateRangeInput, SyncProgressBanner)
@@ -346,13 +379,15 @@ cd frontend && npm run build
 
 ## 📅 ÚLTIMA ACTUALIZACIÓN
 
-**Fecha**: 2025-10-05
-**Versión**: 1.5.0
+**Fecha**: 2025-10-17
+**Versión**: 1.6.0
 **Último cambio estructural**:
-- Frontend usa rutas relativas en producción (no más localhost hardcodeado)
-- Progreso global de sincronización corregido
-- PostgreSQL placeholders fix ($1, $2 en vez de ?)
-- Repositorio principal movido a "Ristak - High Level" (con espacio)
+- Nueva página de Citas (Appointments) con integración completa a API de Calendarios de HighLevel
+- Backend: highlevelCalendarService.js, calendarsController.js, calendars.routes.js
+- Frontend: Appointments página, calendarsService.ts
+- Función formatTime12h() agregada a utils/format.ts
+- Ruta /appointments agregada a navegación principal
+- Endpoints de calendarios integrados en server.js
 
 ---
 

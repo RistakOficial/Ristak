@@ -6,6 +6,7 @@ import {
   Megaphone,
   Banknote,
   Users,
+  Calendar,
   Settings
 } from 'lucide-react'
 import { cn } from '@/utils/cn'
@@ -22,7 +23,8 @@ const navigation = [
   { name: 'Reportes', href: '/reports', icon: FileBarChart },
   { name: 'Publicidad', href: '/campaigns', icon: Megaphone },
   { name: 'Pagos', href: '/transactions', icon: Banknote },
-  { name: 'Contactos', href: '/contacts', icon: Users }
+  { name: 'Contactos', href: '/contacts', icon: Users },
+  { name: 'Citas', href: '/appointments', icon: Calendar }
 ]
 
 export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, locationName, locationLogo }) => {
