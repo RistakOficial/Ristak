@@ -29,7 +29,6 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   onSave,
   onDelete
 }) => {
-  const [isEditing, setIsEditing] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [formData, setFormData] = useState({
     title: '',
@@ -50,7 +49,6 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
         notes: event.notes || '',
         address: event.address || ''
       });
-      setIsEditing(true);
     }
   }, [event]);
 
@@ -70,7 +68,6 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
       };
 
       await onSave(event.id, updates);
-      setIsEditing(false);
       onClose();
     } catch (error) {
       console.error('Error al guardar cita:', error);
@@ -104,63 +101,11 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title={isEditing ? 'Editar Cita' : 'Detalles de la Cita'}
+      title="Editar Cita"
       size="lg"
     >
       <div className={styles.container}>
-        {/* Modo vista */}
-        {!isEditing ? (
-          <div className={styles.viewMode}>
-            <div className={styles.field}>
-              <label className={styles.label}>Título</label>
-              <p className={styles.value}>{event.title}</p>
-            </div>
-
-            <div className={styles.field}>
-              <label className={styles.label}>Estado</label>
-              <div className={styles.statusBadge} style={{ backgroundColor: `${currentStatus?.color}20`, color: currentStatus?.color }}>
-                {currentStatus?.label || event.appointmentStatus}
-              </div>
-            </div>
-
-            <div className={styles.fieldRow}>
-              <div className={styles.field}>
-                <label className={styles.label}>Fecha y hora de inicio</label>
-                <p className={styles.value}>
-                  {formatDate(new Date(event.startTime))} · {formatTime12h(event.startTime)}
-                </p>
-              </div>
-
-              <div className={styles.field}>
-                <label className={styles.label}>Fecha y hora de fin</label>
-                <p className={styles.value}>
-                  {formatDate(new Date(event.endTime))} · {formatTime12h(event.endTime)}
-                </p>
-              </div>
-            </div>
-
-            {event.address && (
-              <div className={styles.field}>
-                <label className={styles.label}>Ubicación</label>
-                <p className={styles.value}>{event.address}</p>
-              </div>
-            )}
-
-            {event.notes && (
-              <div className={styles.field}>
-                <label className={styles.label}>Notas</label>
-                <p className={styles.value}>{event.notes}</p>
-              </div>
-            )}
-
-            <div className={styles.metadata}>
-              <span className={styles.metaItem}>ID: {event.id}</span>
-              {event.contactId && <span className={styles.metaItem}>Contacto ID: {event.contactId}</span>}
-            </div>
-          </div>
-        ) : (
-          /* Modo edición */
-          <div className={styles.editMode}>
+        <div className={styles.editMode}>
             <div className={styles.field}>
               <label className={styles.label} htmlFor="title">
                 Título
@@ -248,36 +193,22 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
               />
             </div>
           </div>
-        )}
 
         {/* Botones de acción */}
         <div className={styles.actions}>
-          {!isEditing ? (
-            <>
-              <Button variant="secondary" onClick={onClose}>
-                Cerrar
+          <Button variant="secondary" onClick={onClose} disabled={isSaving}>
+            Cancelar
+          </Button>
+          <div className={styles.actionsRight}>
+            {onDelete && (
+              <Button variant="danger" onClick={handleDelete} disabled={isSaving}>
+                Eliminar
               </Button>
-              <div className={styles.actionsRight}>
-                {onDelete && (
-                  <Button variant="danger" onClick={handleDelete} disabled={isSaving}>
-                    Eliminar
-                  </Button>
-                )}
-                <Button variant="primary" onClick={() => setIsEditing(true)}>
-                  Editar
-                </Button>
-              </div>
-            </>
-          ) : (
-            <>
-              <Button variant="secondary" onClick={() => setIsEditing(false)} disabled={isSaving}>
-                Cancelar
-              </Button>
-              <Button variant="primary" onClick={handleSave} disabled={isSaving}>
-                {isSaving ? 'Guardando...' : 'Guardar cambios'}
-              </Button>
-            </>
-          )}
+            )}
+            <Button variant="primary" onClick={handleSave} disabled={isSaving}>
+              {isSaving ? 'Guardando...' : 'Guardar cambios'}
+            </Button>
+          </div>
         </div>
       </div>
     </Modal>
