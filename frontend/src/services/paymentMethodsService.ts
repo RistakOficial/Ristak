@@ -45,8 +45,8 @@ export interface ChargePaymentMethodResponse {
 export async function getContactPaymentMethods(
   contactId: string
 ): Promise<GetPaymentMethodsResponse> {
-  const response = await apiClient.get(`/payment-methods/contact/${contactId}`);
-  return response.data;
+  const response = await apiClient.get<GetPaymentMethodsResponse>(`/payment-methods/contact/${contactId}`);
+  return response;
 }
 
 /**
@@ -55,12 +55,12 @@ export async function getContactPaymentMethods(
 export async function chargePaymentMethod(
   data: ChargePaymentMethodData
 ): Promise<ChargePaymentMethodResponse> {
-  const response = await apiClient.post('/payment-methods/charge', data);
-  return response.data;
+  const response = await apiClient.post<ChargePaymentMethodResponse>('/payment-methods/charge', data);
+  return response;
 }
 
 /**
- * Guarda configuración de Stripe
+ * Guarda configuraciï¿½n de Stripe
  */
 export interface StripeConfig {
   testSecretKey?: string;
@@ -69,12 +69,12 @@ export interface StripeConfig {
 }
 
 export async function saveStripeConfig(config: StripeConfig): Promise<{ success: boolean; message?: string }> {
-  const response = await apiClient.post('/highlevel/stripe-config', config);
-  return response.data;
+  const response = await apiClient.post<{ success: boolean; message?: string }>('/highlevel/stripe-config', config);
+  return response;
 }
 
 /**
- * Obtiene la configuración actual de Stripe (sin mostrar claves)
+ * Obtiene la configuraciï¿½n actual de Stripe (sin mostrar claves)
  */
 export interface StripeConfigResponse {
   success: boolean;
@@ -85,6 +85,6 @@ export interface StripeConfigResponse {
 }
 
 export async function getStripeConfig(): Promise<StripeConfigResponse> {
-  const response = await apiClient.get('/highlevel/stripe-config');
-  return response.data;
+  const response = await apiClient.get<StripeConfigResponse>('/highlevel/stripe-config');
+  return response;
 }
