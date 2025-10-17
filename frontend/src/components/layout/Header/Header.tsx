@@ -54,7 +54,7 @@ export const Header: React.FC<HeaderProps> = ({ onLogout }) => {
           <input
             type="text"
             placeholder="Buscar"
-            className="flex-1 px-3 sm:px-4 py-2 rounded-xl glass border border-[rgba(148,163,184,0.18)] text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] bg-transparent focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] focus-visible:border-transparent text-sm sm:text-base"
+            className="flex-1 px-3 sm:px-4 py-2 rounded-xl glass border border-[rgba(148,163,184,0.18)] text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] bg-transparent focus:outline-none text-sm sm:text-base"
           />
           <button
             className="p-2 rounded-xl glass border border-[rgba(148,163,184,0.18)] text-[var(--color-text-primary)] hover:glass-hover transition-colors"
@@ -80,7 +80,7 @@ export const Header: React.FC<HeaderProps> = ({ onLogout }) => {
         <div className="relative" ref={menuRef}>
           <button
             onClick={() => setShowUserMenu(!showUserMenu)}
-            className="flex items-center gap-2 p-1.5 sm:p-2 rounded-lg hover:glass-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] transition-all"
+            className="flex items-center gap-2 p-1.5 sm:p-2 rounded-lg hover:glass-hover focus:outline-none transition-all"
           >
             <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-full glass border border-[rgba(148,163,184,0.2)] flex items-center justify-center">
               <span className="text-xs sm:text-sm font-medium text-[var(--color-text-tertiary)]">{initials}</span>

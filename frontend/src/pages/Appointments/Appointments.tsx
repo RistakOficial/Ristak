@@ -221,6 +221,9 @@ export const Appointments: React.FC = () => {
     };
   };
 
+  // Eventos agrupados por fecha para reutilizar en todas las vistas
+  const eventsByDate = useMemo(() => calendarsService.groupEventsByDate(events), [events]);
+
   // Generar celdas del calendario mensual (SIEMPRE 4 semanas = 28 días)
   const monthCells = useMemo((): DayCell[] => {
     const year = currentDate.getFullYear();
@@ -234,7 +237,6 @@ export const Appointments: React.FC = () => {
     startDay.setDate(firstDay.getDate() - dayOfWeek);
 
     const cells: DayCell[] = [];
-    const eventsByDate = calendarsService.groupEventsByDate(events);
 
     // Generar EXACTAMENTE 28 celdas (4 semanas)
     for (let i = 0; i < 28; i++) {
@@ -252,7 +254,7 @@ export const Appointments: React.FC = () => {
     }
 
     return cells;
-  }, [currentDate, events]);
+  }, [currentDate, eventsByDate]);
 
   // Próximas citas (siempre desde HOY, no del rango visible)
   const upcomingAppointments = useMemo(() => {
@@ -481,6 +483,7 @@ export const Appointments: React.FC = () => {
       <div className={styles.mainGrid}>
         {/* Calendario */}
         <Card className={styles.calendarCard}>
+          <div className={styles.calendarCardContent}>
           {/* Barra de vista */}
           <div className={styles.viewBar}>
             <Button
@@ -688,7 +691,7 @@ export const Appointments: React.FC = () => {
                     const date = new Date(startOfWeek);
                     date.setDate(startOfWeek.getDate() + dayIndex);
                     const dateStr = date.toISOString().split('T')[0];
-                    const dayEvents = calendarsService.groupEventsByDate(events)[dateStr] || [];
+                    const dayEvents = eventsByDate[dateStr] || [];
 
                     return (
                       <div key={dayIndex} className={styles.dayColumn}>
@@ -794,7 +797,7 @@ export const Appointments: React.FC = () => {
                   {/* Eventos del día */}
                   {(() => {
                     const dateStr = currentDate.toISOString().split('T')[0];
-                    const dayEvents = calendarsService.groupEventsByDate(events)[dateStr] || [];
+                    const dayEvents = eventsByDate[dateStr] || [];
 
                     return dayEvents.map((event) => {
                       const startDate = new Date(event.startTime);
@@ -846,6 +849,7 @@ export const Appointments: React.FC = () => {
               </div>
             </div>
           )}
+          </div>
         </Card>
 
         {/* Próximas citas */}

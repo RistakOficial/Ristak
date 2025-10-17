@@ -281,6 +281,13 @@
   overflow: hidden;
 }
 
+.calendarCardContent {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
 .viewBar {
   display: flex;
   align-items: center;
@@ -600,7 +607,8 @@
 }
 
 .weekDayHeaderToday {
-  background-color: var(--color-primary-50);
+  background-color: var(--color-primary-100);
+  border: 2px solid var(--color-primary-400);
 }
 
 .weekDayName {
@@ -638,7 +646,8 @@
   overflow-x: hidden;
   position: relative;
   min-height: 0;
-  height: calc(100vh - 400px);
+  height: clamp(480px, calc(100vh - 360px), 960px);
+  scrollbar-gutter: stable;
 }
 
 .weekGrid::-webkit-scrollbar {
@@ -701,20 +710,31 @@
 
 .hourLine {
   height: 60px;
-  border-bottom: 1px solid var(--color-gray-300);
+  border-bottom: 1px solid rgba(148, 163, 184, 0.35);
   position: relative;
   background: linear-gradient(
     to bottom,
-    transparent 0%,
-    transparent 50%,
-    var(--color-gray-300) 50%,
-    var(--color-gray-300) 51%,
-    transparent 51%
+    rgba(148, 163, 184, 0.14) 1px,
+    transparent 1px
   );
+}
+
+.hourLine::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  border-top: 1px dashed rgba(148, 163, 184, 0.35);
+  pointer-events: none;
 }
 
 .hourLine:last-child {
   border-bottom: none;
+}
+
+.hourLine:last-child::after {
+  display: none;
 }
 
 .weekEvent {
@@ -814,7 +834,8 @@
   overflow-x: hidden;
   position: relative;
   min-height: 0;
-  height: calc(100vh - 450px);
+  height: clamp(480px, calc(100vh - 360px), 960px);
+  scrollbar-gutter: stable;
 }
 
 .dayGrid::-webkit-scrollbar {

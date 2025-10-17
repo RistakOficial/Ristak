@@ -14,15 +14,15 @@ interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
 
 const variantClasses: Record<ButtonVariant, string> = {
   primary:
-    'bg-[var(--color-text-primary)] text-[var(--color-background-primary)] border border-[rgba(148,163,184,0.24)] dark:shadow-[0_14px_32px_-20px_rgba(15,23,42,0.6)] hover:bg-[color-mix(in_srgb,var(--color-text-primary) 90%,var(--color-background-primary) 10%)] focus-visible:ring-[rgba(148,163,184,0.35)]',
+    'bg-[var(--color-text-primary)] text-[var(--color-background-primary)] border border-[rgba(148,163,184,0.24)] dark:shadow-[0_14px_32px_-20px_rgba(15,23,42,0.6)] hover:bg-[color-mix(in_srgb,var(--color-text-primary) 90%,var(--color-background-primary) 10%)]',
   secondary:
-    'glass text-[var(--color-text-primary)] border border-[rgba(148,163,184,0.18)] hover:bg-[rgba(148,163,184,0.12)] focus-visible:ring-[rgba(148,163,184,0.3)]',
+    'glass text-[var(--color-text-primary)] border border-[rgba(148,163,184,0.18)] hover:bg-[rgba(148,163,184,0.12)]',
   ghost:
-    'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[rgba(148,163,184,0.08)] focus-visible:ring-[rgba(148,163,184,0.25)]',
+    'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[rgba(148,163,184,0.08)]',
   danger:
-    'bg-[var(--color-status-error)] text-white dark:shadow-[0_10px_28px_-16px_rgba(220,38,38,0.55)] hover:bg-[color-mix(in_srgb,var(--color-status-error) 90%,#000 10%)] focus-visible:ring-[rgba(220,38,38,0.35)]',
+    'bg-[var(--color-status-error)] text-white dark:shadow-[0_10px_28px_-16px_rgba(220,38,38,0.55)] hover:bg-[color-mix(in_srgb,var(--color-status-error) 90%,#000 10%)]',
   outline:
-    'border border-[rgba(148,163,184,0.28)] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[rgba(148,163,184,0.08)] focus-visible:ring-[rgba(148,163,184,0.25)]'
+    'border border-[rgba(148,163,184,0.28)] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[rgba(148,163,184,0.08)]'
 }
 
 const sizeClasses: Record<ButtonSize, string> = {
@@ -47,7 +47,7 @@ export const Button: React.FC<ButtonProps> = ({
   return (
     <button
       className={cn(
-        'relative inline-flex items-center justify-center rounded-xl font-medium transition-all duration-150 focus:outline-none focus-visible:ring-2 disabled:opacity-[var(--opacity-disabled)] disabled:cursor-not-allowed',
+        'relative inline-flex items-center justify-center rounded-xl font-medium transition-all duration-150 focus:outline-none disabled:opacity-[var(--opacity-disabled)] disabled:cursor-not-allowed',
         variantClasses[variant],
         sizeClasses[size],
         fullWidth ? 'w-full' : '',
