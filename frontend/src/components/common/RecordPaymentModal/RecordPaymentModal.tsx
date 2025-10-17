@@ -848,38 +848,19 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         </div>
 
         <div className={styles.field}>
-          <span className={styles.label}>IVA</span>
-          <div className={styles.radioGroup}>
-            <label
-              className={`${styles.radioOption} ${!includeIVA ? styles.radioOptionActive : ''}`}
-            >
-              <input
-                type="radio"
-                name="ivaOption"
-                value="sin"
-                checked={!includeIVA}
-                onChange={() => setIncludeIVA(false)}
-                className={styles.radioInput}
-              />
-              <span>Sin IVA</span>
-            </label>
-            <label
-              className={`${styles.radioOption} ${includeIVA ? styles.radioOptionActive : ''}`}
-            >
-              <input
-                type="radio"
-                name="ivaOption"
-                value="con"
-                checked={includeIVA}
-                onChange={() => setIncludeIVA(true)}
-                className={styles.radioInput}
-              />
-              <span>Aplicar IVA 16%</span>
-            </label>
+          <label className={styles.label}>IVA</label>
+          <div style={{ marginTop: '4px' }}>
+            <TabList
+              tabs={[
+                { value: 'sin', label: 'Sin IVA' },
+                { value: 'con', label: 'Aplicar IVA 16%' }
+              ]}
+              activeTab={includeIVA ? 'con' : 'sin'}
+              onTabChange={(value) => setIncludeIVA(value === 'con')}
+              variant="compact"
+              className={styles.fullWidthTabList}
+            />
           </div>
-          <p className={styles.radioHint}>
-            Define si el monto incluye IVA. Si eliges aplicarlo, la factura desglosa subtotal e impuesto.
-          </p>
         </div>
 
         <div className={styles.summaryCard}>
