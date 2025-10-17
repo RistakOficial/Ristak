@@ -951,23 +951,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           )}
         </div>
 
-        {!stripeConnected && !checkingStripe && (
-          <div className={styles.infoBox} style={{ marginBottom: '16px', backgroundColor: '#fef3c7', border: '1px solid #fbbf24' }}>
-            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
-              <AlertCircle size={16} style={{ color: '#f59e0b', marginTop: '2px', flexShrink: 0 }} />
-              <div>
-                <p style={{ margin: 0, fontSize: '14px', fontWeight: '500', color: '#92400e' }}>
-                  Stripe no está conectado
-                </p>
-                <p style={{ margin: '4px 0 0 0', fontSize: '13px', color: '#78350f' }}>
-                  Registrando pago manual. Para usar otras opciones de pago, configura Stripe en Settings.
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
-
         {stripeConnected && (
+          <>
         <div className={styles.paymentOptions}>
           <button
             type="button"
@@ -1063,6 +1048,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
             {paymentOption === 'manual' && <Check size={18} />}
           </button>
         </div>
+          </>
         )}
 
         {paymentOption === 'manual' && (
@@ -1203,7 +1189,11 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title={step === 'options' ? 'Elige cómo cobrar' : 'Registrar nuevo cobro'}
+      title={
+        step === 'options'
+          ? (stripeConnected ? 'Elige cómo cobrar' : 'Registrar pago manual')
+          : 'Registrar nuevo cobro'
+      }
       size="lg"
       type="custom"
       showCloseButton={step !== 'processing'}

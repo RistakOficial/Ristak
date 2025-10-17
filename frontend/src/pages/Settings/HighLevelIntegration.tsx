@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { Card, Button } from '@/components/common'
+import { Card, Button, Modal } from '@/components/common'
 import {
   Zap,
   CheckCircle,
@@ -48,6 +48,7 @@ export const HighLevelIntegration: React.FC = () => {
   const [ghlConfig, setGhlConfig] = useState<any>(null)
   const [isEditMode, setIsEditMode] = useState(false)
   const [copiedScopes, setCopiedScopes] = useState<Set<string>>(new Set())
+  const [showDisconnectModal, setShowDisconnectModal] = useState(false)
 
   // Estados para labels personalizados
   const [savingLabels, setSavingLabels] = useState(false)
@@ -167,10 +168,7 @@ export const HighLevelIntegration: React.FC = () => {
   }
 
   const handleDisconnect = async () => {
-    if (!confirm('¿Estás seguro de desconectar tu cuenta de HighLevel?')) {
-      return
-    }
-
+    setShowDisconnectModal(false)
     setLoading(true)
     try {
       const result = await highLevelService.disconnect()
@@ -326,7 +324,7 @@ export const HighLevelIntegration: React.FC = () => {
               <Button
                 variant="ghost"
                 size="small"
-                onClick={handleDisconnect}
+                onClick={() => setShowDisconnectModal(true)}
                 disabled={loading}
               >
                 <Trash2 size={16} />
@@ -656,6 +654,17 @@ export const HighLevelIntegration: React.FC = () => {
         </div>
         )}
       </Card>
+
+      <Modal
+        isOpen={showDisconnectModal}
+        onClose={() => setShowDisconnectModal(false)}
+        title="¿Desconectar HighLevel?"
+        message="Se eliminarán todas las configuraciones de HighLevel. Esta acción no se puede deshacer. ¿Estás seguro?"
+        type="confirm"
+        confirmText="Desconectar"
+        cancelText="Cancelar"
+        onConfirm={handleDisconnect}
+      />
     </div>
   )
 }

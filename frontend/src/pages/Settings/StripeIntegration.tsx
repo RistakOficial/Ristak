@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { Card, Button } from '@/components/common'
+import { Card, Button, Modal } from '@/components/common'
 import { Eye, EyeOff, Loader2, AlertCircle, CheckCircle, XCircle, ExternalLink } from 'lucide-react'
 import { useNotification } from '@/contexts/NotificationContext'
 import { getStripeConfig, saveStripeConfig } from '@/services/paymentMethodsService'
@@ -18,6 +18,7 @@ export const StripeIntegration: React.FC = () => {
   const [isConfigured, setIsConfigured] = useState(false)
   const [hasTestKey, setHasTestKey] = useState(false)
   const [hasLiveKey, setHasLiveKey] = useState(false)
+  const [showDisconnectModal, setShowDisconnectModal] = useState(false)
 
   useEffect(() => {
     loadStripeConfig()
@@ -101,10 +102,6 @@ export const StripeIntegration: React.FC = () => {
   }
 
   const handleDisconnect = async () => {
-    if (!confirm('¿Estás seguro de que deseas desconectar Stripe? Se eliminarán todas las configuraciones.')) {
-      return
-    }
-
     setLoadingStripe(true)
     try {
       await saveStripeConfig({
@@ -126,6 +123,7 @@ export const StripeIntegration: React.FC = () => {
       showToast('error', error.message || 'Error al desconectar Stripe')
     } finally {
       setLoadingStripe(false)
+      setShowDisconnectModal(false)
     }
   }
 
@@ -171,7 +169,7 @@ export const StripeIntegration: React.FC = () => {
                 <Button
                   variant="ghost"
                   size="small"
-                  onClick={handleDisconnect}
+                  onClick={() => setShowDisconnectModal(true)}
                   disabled={loadingStripe}
                 >
                   Desconectar
@@ -397,6 +395,18 @@ export const StripeIntegration: React.FC = () => {
           </>
         )}
       </Card>
+
+      {/* Modal de confirmación para desconectar */}
+      <Modal
+        isOpen={showDisconnectModal}
+        onClose={() => setShowDisconnectModal(false)}
+        title="¿Desconectar Stripe?"
+        message="Se eliminarán todas las configuraciones de Stripe. Tendrás que volver a ingresar tus Secret Keys si quieres reconectar."
+        type="confirm"
+        confirmText="Desconectar"
+        cancelText="Cancelar"
+        onConfirm={handleDisconnect}
+      />
     </div>
   )
 }

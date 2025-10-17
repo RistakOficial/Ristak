@@ -346,8 +346,9 @@
 }
 
 [data-theme="dark"] .summaryBadge {
-  background: rgba(var(--color-primary-rgb), 0.26);
-  color: var(--color-text-primary);
+  background: rgba(var(--color-primary-rgb), 0.35);
+  color: #ffffff;
+  font-weight: 700;
 }
 
 .summaryAmountBlock {
