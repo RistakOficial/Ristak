@@ -9,15 +9,20 @@
   *::before,
   *::after {
     --tw-ring-color: transparent !important;
-    --tw-ring-shadow: none !important;
+    --tw-ring-shadow: 0 0 #0000 !important;
+    --tw-ring-offset-shadow: 0 0 #0000 !important;
+    --tw-ring-offset-width: 0px !important;
   }
 
   *:focus,
   *:focus-visible,
   *:active {
     outline: none !important;
+    outline-width: 0 !important;
+    outline-offset: 0 !important;
     box-shadow: none !important;
-    --tw-ring-shadow: none !important;
+    --tw-ring-shadow: 0 0 #0000 !important;
+    --tw-ring-offset-shadow: 0 0 #0000 !important;
   }
 
   button:focus,
@@ -26,11 +31,26 @@
   a:focus,
   a:focus-visible,
   div[role="button"]:focus,
-  div[role="button"]:focus-visible {
+  div[role="button"]:focus-visible,
+  div:focus,
+  div:focus-visible {
     outline: none !important;
+    outline-width: 0 !important;
     box-shadow: none !important;
-    --tw-ring-shadow: none !important;
+    --tw-ring-shadow: 0 0 #0000 !important;
+    --tw-ring-offset-shadow: 0 0 #0000 !important;
   }
+}
+
+/* Regla adicional FUERA de @layer para mayor especificidad */
+*:focus,
+*:focus-visible,
+*:active,
+button:focus,
+div:focus,
+a:focus {
+  outline: none !important;
+  box-shadow: none !important;
 }
 
 :root {
