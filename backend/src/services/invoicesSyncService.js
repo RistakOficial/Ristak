@@ -55,11 +55,6 @@ export async function syncInvoices({ limit = 100, offset = 0, contactId } = {}) 
           [ghlInvoiceId]
         )
 
-        // DEBUG: Ver qué IDs trae el invoice
-        if (invoice.contactId && invoice.altId && invoice.contactId !== invoice.altId) {
-          logger.warn(`Invoice ${ghlInvoiceId} tiene IDs diferentes - contactId: ${invoice.contactId}, altId: ${invoice.altId}`)
-        }
-
         // Datos comunes del invoice
         const invoiceData = {
           contact_id: invoice.contactId || invoice.altId,
@@ -110,9 +105,6 @@ export async function syncInvoices({ limit = 100, offset = 0, contactId } = {}) 
           if (!contactExists && invoiceData.contact_id) {
             // El contacto NO existe en BD local/remota, necesitamos crearlo
             logger.warn(`Contacto ${invoiceData.contact_id} no existe en BD, obteniéndolo desde HighLevel...`)
-
-            // DEBUG: Loggear el invoice completo para diagnosticar
-            logger.info(`DEBUG Invoice completo: ${JSON.stringify(invoice, null, 2)}`)
 
             try {
               // Obtener datos del contacto desde HighLevel
