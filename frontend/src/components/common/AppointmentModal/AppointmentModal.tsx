@@ -105,6 +105,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
       isOpen={isOpen}
       onClose={onClose}
       title={isEditing ? 'Editar Cita' : 'Detalles de la Cita'}
+      size="lg"
     >
       <div className={styles.container}>
         {/* Modo vista */}
@@ -243,7 +244,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                 value={formData.notes}
                 onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
                 placeholder="Notas adicionales..."
-                rows={4}
+                rows={3}
               />
             </div>
           </div>

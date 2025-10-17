@@ -115,6 +115,19 @@ body.dark .modal {
   max-height: calc(90vh - 160px);
 }
 
+/* Modal size lg tiene más espacio sin scroll */
+.modal.lg .content {
+  max-height: calc(88vh - 140px);
+  overflow-y: visible;
+}
+
+/* Si el contenido es muy largo en lg, permitir scroll */
+@media (max-height: 800px) {
+  .modal.lg .content {
+    overflow-y: auto;
+  }
+}
+
 .message {
   font-size: 14px;
   color: var(--color-text-secondary);
