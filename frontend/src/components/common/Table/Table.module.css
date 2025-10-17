@@ -283,7 +283,7 @@
   display: flex;
   justify-content: center;
   align-items: center;
-  gap: var(--spacing-sm);
+  gap: 4px;
   background-color: var(--color-background);
   border-top: 1px solid rgba(148, 163, 184, 0.18);
 }
@@ -314,7 +314,7 @@
 
 .pageNumbers {
   display: flex;
-  gap: var(--spacing-xs);
+  gap: 2px;
 }
 
 .pageNumber {

@@ -484,16 +484,16 @@ export function Table<T extends Record<string, any>>({
           </button>
 
           <div className={styles.pageNumbers}>
-            {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+            {Array.from({ length: Math.min(9, totalPages) }, (_, i) => {
               let pageNum
-              if (totalPages <= 5) {
+              if (totalPages <= 9) {
                 pageNum = i + 1
-              } else if (currentPage <= 3) {
+              } else if (currentPage <= 5) {
                 pageNum = i + 1
-              } else if (currentPage >= totalPages - 2) {
-                pageNum = totalPages - 4 + i
+              } else if (currentPage >= totalPages - 4) {
+                pageNum = totalPages - 8 + i
               } else {
-                pageNum = currentPage - 2 + i
+                pageNum = currentPage - 4 + i
               }
 
               return (
