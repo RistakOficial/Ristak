@@ -288,15 +288,17 @@ export const Appointments: React.FC = () => {
   const getEventColor = (status: string) => {
     switch (status.toLowerCase()) {
       case 'confirmed':
-        return 'var(--color-success-500)';
+        return '#3b82f6'; // Azul para confirmadas
       case 'pending':
-        return 'var(--color-warning-500)';
+        return 'var(--color-warning-500)'; // Amarillo para pendientes
       case 'cancelled':
-        return 'var(--color-error-500)';
+        return 'var(--color-error-500)'; // Rojo para canceladas
       case 'showed':
-        return 'var(--color-info-500)';
+        return '#10b981'; // Verde para asistió
+      case 'noshow':
+        return 'var(--color-gray-500)'; // Gris para no asistió
       case 'rescheduled':
-        return 'var(--color-purple-500)';
+        return '#8b5cf6'; // Morado para reprogramadas
       default:
         return 'var(--color-gray-500)';
     }
