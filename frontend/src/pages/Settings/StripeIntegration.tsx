@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { Card, Button, Modal } from '@/components/common'
-import { Eye, EyeOff, Loader2, AlertCircle, CheckCircle, XCircle, ExternalLink } from 'lucide-react'
+import { Eye, EyeOff, Loader2, CheckCircle, XCircle, ExternalLink } from 'lucide-react'
 import { useNotification } from '@/contexts/NotificationContext'
 import { getStripeConfig, saveStripeConfig } from '@/services/paymentMethodsService'
 import styles from './HighLevelIntegration.module.css'
@@ -27,7 +27,6 @@ export const StripeIntegration: React.FC = () => {
   const loadStripeConfig = async () => {
     try {
       const config = await getStripeConfig()
-      console.log('🔍 Stripe config recibida:', config)
 
       if (config.configured) {
         setIsConfigured(true)
@@ -43,14 +42,13 @@ export const StripeIntegration: React.FC = () => {
           setStripeLiveKey('sk_live_************************************')
         }
       } else {
-        console.log('⚠️ Stripe NO está configurado según el backend')
         // Resetear estado si no está configurado
         setIsConfigured(false)
         setHasTestKey(false)
         setHasLiveKey(false)
       }
     } catch (error) {
-      console.error('❌ Error cargando configuración de Stripe:', error)
+      // Error silencioso
     }
   }
 
@@ -322,25 +320,6 @@ export const StripeIntegration: React.FC = () => {
                     </a>
                   </p>
                 </div>
-              </div>
-            </div>
-
-            {/* Info box */}
-            <div className={styles.infoBox}>
-              <div className={styles.infoBoxTitle}>
-                <AlertCircle size={16} />
-                <span>💳 ¿Para qué sirve esto?</span>
-              </div>
-              <div className={styles.infoBoxContent}>
-                <p className={styles.infoText}>
-                  Stripe te permite cobrar a tarjetas guardadas de tus clientes. Cuando un cliente
-                  pague un invoice por primera vez, su tarjeta se guardará automáticamente para futuros cobros.
-                </p>
-                <ul className={styles.infoList}>
-                  <li><strong>Test Key:</strong> Para pruebas con tarjetas de test (4242 4242 4242 4242)</li>
-                  <li><strong>Live Key:</strong> Para cobros reales a clientes</li>
-                  <li><strong>Seguridad:</strong> Las keys se guardan cifradas en la base de datos</li>
-                </ul>
               </div>
             </div>
 
