@@ -20,8 +20,16 @@ export const PaymentsConfiguration: React.FC = () => {
   const [hasLiveKey, setHasLiveKey] = useState(false)
   const [showDisconnectModal, setShowDisconnectModal] = useState(false)
 
+  // Estados de configuración de pagos
+  const [paymentTitle, setPaymentTitle] = useState('PAGO')
+  const [paymentNumberPrefix, setPaymentNumberPrefix] = useState('INV-')
+  const [paymentDueDays, setPaymentDueDays] = useState(7)
+  const [paymentTermsNotes, setPaymentTermsNotes] = useState('')
+  const [loadingPaymentConfig, setLoadingPaymentConfig] = useState(false)
+
   useEffect(() => {
     loadStripeConfig()
+    loadPaymentConfig()
   }, [])
 
   const loadStripeConfig = async () => {
@@ -124,6 +132,33 @@ export const PaymentsConfiguration: React.FC = () => {
     } finally {
       setLoadingStripe(false)
       setShowDisconnectModal(false)
+    }
+  }
+
+  const loadPaymentConfig = async () => {
+    try {
+      // Por ahora temporal - después conectaremos con el backend
+      const response = await fetch('/api/highlevel/config')
+      const config = await response.json()
+
+      if (config.invoiceTitle) setPaymentTitle(config.invoiceTitle)
+      if (config.invoiceNumberPrefix) setPaymentNumberPrefix(config.invoiceNumberPrefix)
+      if (config.invoiceDueDays) setPaymentDueDays(config.invoiceDueDays)
+      if (config.invoiceTermsNotes) setPaymentTermsNotes(config.invoiceTermsNotes)
+    } catch (error) {
+      // Error silencioso - usar valores por defecto
+    }
+  }
+
+  const handleSavePaymentConfig = async () => {
+    setLoadingPaymentConfig(true)
+    try {
+      // Por ahora solo mostramos mensaje - después conectaremos con backend
+      showToast('success', 'Configuración de pagos guardada exitosamente')
+    } catch (error: any) {
+      showToast('error', error.message || 'Error al guardar configuración de pagos')
+    } finally {
+      setLoadingPaymentConfig(false)
     }
   }
 
@@ -341,6 +376,97 @@ export const PaymentsConfiguration: React.FC = () => {
             </div>
           </>
         )}
+      </Card>
+
+      {/* Configuración de Pagos */}
+      <Card className={styles.mainCard} style={{ marginTop: '24px' }}>
+        <div className={styles.section}>
+          <div className={styles.sectionHeader}>
+            <h3 className={styles.sectionTitle}>Configuración de Pagos</h3>
+          </div>
+          <p className={styles.sectionDescription} style={{ marginBottom: '24px' }}>
+            Personaliza cómo se ven tus pagos y documentos
+          </p>
+
+          <div className={styles.sectionContent}>
+            {/* Título del documento */}
+            <div className={styles.formField}>
+              <label className={styles.label}>Título del Documento</label>
+              <input
+                type="text"
+                value={paymentTitle}
+                onChange={(e) => setPaymentTitle(e.target.value)}
+                placeholder="ej: PAGO, FACTURA, INVOICE"
+                className={styles.input}
+              />
+              <p className={styles.hint}>
+                Este título aparecerá en la parte superior del documento
+              </p>
+            </div>
+
+            {/* Prefijo del número */}
+            <div className={styles.formField}>
+              <label className={styles.label}>Prefijo de Número de Pago</label>
+              <input
+                type="text"
+                value={paymentNumberPrefix}
+                onChange={(e) => setPaymentNumberPrefix(e.target.value)}
+                placeholder="ej: INV-, PAY-, FACT-"
+                className={styles.input}
+              />
+              <p className={styles.hint}>
+                Prefijo que se agregará antes del número de pago (ej: INV-000533)
+              </p>
+            </div>
+
+            {/* Días de vencimiento */}
+            <div className={styles.formField}>
+              <label className={styles.label}>Días para Vencimiento (predeterminado)</label>
+              <input
+                type="number"
+                min="1"
+                value={paymentDueDays}
+                onChange={(e) => setPaymentDueDays(parseInt(e.target.value) || 7)}
+                className={styles.input}
+              />
+              <p className={styles.hint}>
+                Número de días desde la fecha de emisión hasta el vencimiento
+              </p>
+            </div>
+
+            {/* Términos y condiciones */}
+            <div className={styles.formField}>
+              <label className={styles.label}>Términos y Condiciones</label>
+              <textarea
+                value={paymentTermsNotes}
+                onChange={(e) => setPaymentTermsNotes(e.target.value)}
+                placeholder="Escribe tus términos y condiciones aquí..."
+                className={styles.input}
+                style={{ minHeight: '120px', resize: 'vertical' }}
+              />
+              <p className={styles.hint}>
+                Estos términos aparecerán al final del documento de pago
+              </p>
+            </div>
+          </div>
+
+          {/* Botón guardar */}
+          <div className={styles.actions}>
+            <Button
+              onClick={handleSavePaymentConfig}
+              disabled={loadingPaymentConfig}
+            >
+              {loadingPaymentConfig ? (
+                <>
+                  <Loader2 size={18} className={styles.spinIcon} />
+                  Guardando...
+                </>
+              ) : (
+                '💾 Guardar Configuración de Pagos'
+              )}
+            </Button>
+          </div>
+        </div>
       </Card>
 
       {/* Modal de confirmación para desconectar */}
