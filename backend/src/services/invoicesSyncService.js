@@ -55,6 +55,11 @@ export async function syncInvoices({ limit = 100, offset = 0, contactId } = {}) 
           [ghlInvoiceId]
         )
 
+        // DEBUG: Ver qué IDs trae el invoice
+        if (invoice.contactId && invoice.altId && invoice.contactId !== invoice.altId) {
+          logger.warn(`Invoice ${ghlInvoiceId} tiene IDs diferentes - contactId: ${invoice.contactId}, altId: ${invoice.altId}`)
+        }
+
         // Datos comunes del invoice
         const invoiceData = {
           contact_id: invoice.contactId || invoice.altId,
@@ -106,6 +111,9 @@ export async function syncInvoices({ limit = 100, offset = 0, contactId } = {}) 
             // El contacto NO existe en BD local/remota, necesitamos crearlo
             logger.warn(`Contacto ${invoiceData.contact_id} no existe en BD, obteniéndolo desde HighLevel...`)
 
+            // DEBUG: Loggear el invoice completo para diagnosticar
+            logger.info(`DEBUG Invoice completo: ${JSON.stringify(invoice, null, 2)}`)
+
             try {
               // Obtener datos del contacto desde HighLevel
               const ghlClient = await getGHLClient()
@@ -147,25 +155,19 @@ export async function syncInvoices({ limit = 100, offset = 0, contactId } = {}) 
                                  contactError.message?.includes('404')
 
               if (isNotFound) {
-                logger.warn(`Contacto ${invoiceData.contact_id} no existe en HighLevel, creando placeholder...`)
+                logger.warn(`Contacto ${invoiceData.contact_id} no existe en HighLevel, creando registro mínimo...`)
 
-                // Crear contacto placeholder para evitar reintentos
+                // Crear registro mínimo solo con ID para evitar reintentos
+                // full_name, email, phone pueden ser NULL
                 try {
                   await db.run(
-                    `INSERT INTO contacts (
-                      id, full_name, email, phone, source, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
-                    [
-                      invoiceData.contact_id,
-                      `[Contacto eliminado] ${invoiceData.contact_id}`,
-                      null,
-                      null,
-                      'highlevel_deleted' // Marcar como eliminado
-                    ]
+                    `INSERT INTO contacts (id, source, created_at, updated_at)
+                     VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+                    [invoiceData.contact_id, 'highlevel_deleted']
                   )
-                  logger.info(`Contacto placeholder creado para ${invoiceData.contact_id}`)
+                  logger.info(`Contacto mínimo creado para ${invoiceData.contact_id}`)
                 } catch (placeholderError) {
-                  logger.error(`Error creando placeholder para ${invoiceData.contact_id}:`, placeholderError)
+                  logger.error(`Error creando contacto mínimo para ${invoiceData.contact_id}:`, placeholderError)
                   skipped++
                   continue
                 }
