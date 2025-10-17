@@ -162,11 +162,12 @@ export const StripeIntegration: React.FC = () => {
         </div>
 
         {isConfigured ? (
-          /* VISTA CONFIGURADO: Solo toggle y botón desconectar */
+          /* VISTA CONFIGURADO: Información de la cuenta + toggle */
           <>
+            {/* Información de Keys Configuradas */}
             <div className={styles.section}>
               <div className={styles.sectionHeader}>
-                <h3 className={styles.sectionTitle}>Modo de Operación</h3>
+                <h3 className={styles.sectionTitle}>Configuración Actual</h3>
                 <Button
                   variant="ghost"
                   size="small"
@@ -175,6 +176,65 @@ export const StripeIntegration: React.FC = () => {
                 >
                   Desconectar
                 </Button>
+              </div>
+              <div className={styles.sectionContent}>
+                <div className={styles.infoGrid}>
+                  <div className={styles.infoItem}>
+                    <span className={styles.infoLabel}>Test Secret Key:</span>
+                    <span className={styles.infoValue}>
+                      {hasTestKey ? (
+                        <span className={styles.statusSuccess}>
+                          <CheckCircle size={14} />
+                          Configurada
+                        </span>
+                      ) : (
+                        <span className={styles.statusError}>
+                          <XCircle size={14} />
+                          No configurada
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                  <div className={styles.infoItem}>
+                    <span className={styles.infoLabel}>Live Secret Key:</span>
+                    <span className={styles.infoValue}>
+                      {hasLiveKey ? (
+                        <span className={styles.statusSuccess}>
+                          <CheckCircle size={14} />
+                          Configurada
+                        </span>
+                      ) : (
+                        <span className={styles.statusError}>
+                          <XCircle size={14} />
+                          No configurada
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                  <div className={styles.infoItem}>
+                    <span className={styles.infoLabel}>Dashboard:</span>
+                    <span className={styles.infoValue}>
+                      <a
+                        href={stripeMode === 'test'
+                          ? "https://dashboard.stripe.com/test/dashboard"
+                          : "https://dashboard.stripe.com/dashboard"
+                        }
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className={styles.link}
+                      >
+                        Ver en Stripe <ExternalLink size={12} />
+                      </a>
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Modo de Operación */}
+            <div className={styles.section}>
+              <div className={styles.sectionHeader}>
+                <h3 className={styles.sectionTitle}>Modo de Operación</h3>
               </div>
               <div className={styles.sectionContent}>
                 <div className={styles.infoBox}>
