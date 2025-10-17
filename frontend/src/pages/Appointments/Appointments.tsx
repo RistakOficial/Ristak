@@ -52,6 +52,9 @@ export const Appointments: React.FC = () => {
 
   // Dropdown de calendarios
   const [isCalendarDropdownOpen, setIsCalendarDropdownOpen] = useState(false);
+  const [defaultCalendarId, setDefaultCalendarId] = useState<string | null>(
+    localStorage.getItem('defaultCalendarId')
+  );
 
   // Cargar calendarios al montar
   useEffect(() => {
@@ -96,10 +99,19 @@ export const Appointments: React.FC = () => {
       const calendarsData = await calendarsService.getCalendars(locationId, accessToken);
       setCalendars(calendarsData);
 
-      // Seleccionar el primer calendario activo por defecto
-      const activeCalendar = calendarsData.find((cal) => cal.isActive);
-      if (activeCalendar) {
-        setSelectedCalendar(activeCalendar);
+      // Seleccionar calendario: predeterminado guardado > primer activo
+      let calendarToSelect: Calendar | undefined;
+
+      if (defaultCalendarId) {
+        calendarToSelect = calendarsData.find((cal) => cal.id === defaultCalendarId && cal.isActive);
+      }
+
+      if (!calendarToSelect) {
+        calendarToSelect = calendarsData.find((cal) => cal.isActive);
+      }
+
+      if (calendarToSelect) {
+        setSelectedCalendar(calendarToSelect);
       }
     } catch (error) {
       showToast('error', 'Error al cargar calendarios', 'No se pudieron obtener los calendarios.');
@@ -275,6 +287,14 @@ export const Appointments: React.FC = () => {
     setCurrentDate(new Date());
   };
 
+  const handleSetDefaultCalendar = () => {
+    if (!selectedCalendar) return;
+
+    localStorage.setItem('defaultCalendarId', selectedCalendar.id);
+    setDefaultCalendarId(selectedCalendar.id);
+    showToast('success', 'Calendario predeterminado', `"${selectedCalendar.name}" se estableció como predeterminado.`);
+  };
+
   // Manejar apertura del modal de cita
   const handleEventClick = (event: CalendarEvent) => {
     setSelectedEvent(event);
@@ -383,6 +403,16 @@ export const Appointments: React.FC = () => {
                 className={`${styles.dropdownIcon} ${isCalendarDropdownOpen ? styles.dropdownIconOpen : ''}`}
               />
             </button>
+
+            {selectedCalendar && (
+              <button
+                className={styles.setDefaultLink}
+                onClick={handleSetDefaultCalendar}
+                disabled={defaultCalendarId === selectedCalendar.id}
+              >
+                {defaultCalendarId === selectedCalendar.id ? 'Predeterminado' : 'Establecer predeterminado'}
+              </button>
+            )}
 
             {isCalendarDropdownOpen && (
               <>
@@ -659,9 +689,12 @@ export const Appointments: React.FC = () => {
                   {(() => {
                     const dayName = DAYS_SHORT[(currentDate.getDay() + 6) % 7];
                     const isToday = currentDate.toDateString() === new Date().toDateString();
+                    const monthYear = currentDate.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' });
                     return (
                       <>
-                        <span className={styles.dayHeaderName}>{dayName}</span>
+                        <span className={styles.dayHeaderName}>
+                          {dayName} {currentDate.getDate()} · {monthYear}
+                        </span>
                         <span className={`${styles.dayHeaderNumber} ${isToday ? styles.dayHeaderToday : ''}`}>
                           {currentDate.getDate()}
                         </span>
