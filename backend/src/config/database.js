@@ -467,6 +467,90 @@ async function initTables() {
       logger.warn('Error agregando columnas opcionales:', error.message)
     }
 
+    // Tabla de sesiones de tracking (pixel /snip.js)
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS sessions (
+        session_id TEXT PRIMARY KEY,
+        visitor_id TEXT NOT NULL,
+        contact_id TEXT,
+        event_name TEXT NOT NULL DEFAULT 'page_view',
+        started_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        last_event_at TIMESTAMP,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+        landing_url TEXT,
+        referrer_url TEXT,
+
+        utm_source TEXT,
+        utm_medium TEXT,
+        utm_campaign TEXT,
+        utm_term TEXT,
+        utm_content TEXT,
+        gclid TEXT,
+        fbclid TEXT,
+        fbc TEXT,
+        fbp TEXT,
+        wbraid TEXT,
+        gbraid TEXT,
+        msclkid TEXT,
+        ttclid TEXT,
+
+        channel TEXT,
+        source_platform TEXT,
+        campaign_id TEXT,
+        adset_id TEXT,
+        ad_group_id TEXT,
+        ad_id TEXT,
+        campaign_name TEXT,
+        adset_name TEXT,
+        ad_group_name TEXT,
+        ad_name TEXT,
+        placement TEXT,
+        site_source_name TEXT,
+        network TEXT,
+        match_type TEXT,
+        keyword TEXT,
+        search_query TEXT,
+        creative_id TEXT,
+        ad_position TEXT,
+
+        ip TEXT,
+        user_agent TEXT,
+        device_type TEXT,
+        os TEXT,
+        browser TEXT,
+        browser_version TEXT,
+        language TEXT,
+        timezone TEXT,
+
+        geo_country TEXT,
+        geo_region TEXT,
+        geo_city TEXT,
+
+        pageviews_count INTEGER DEFAULT 0,
+        events_count INTEGER DEFAULT 0,
+        is_bounce INTEGER DEFAULT 0,
+
+        orders_count INTEGER DEFAULT 0,
+        revenue_value REAL DEFAULT 0,
+        currency TEXT DEFAULT 'MXN',
+        last_order_id TEXT,
+
+        email TEXT,
+        phone_e164 TEXT,
+
+        FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE SET NULL
+      )
+    `)
+
+    await db.run('CREATE INDEX IF NOT EXISTS idx_sessions_visitor ON sessions(visitor_id)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_sessions_started_at ON sessions(started_at)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_sessions_utm ON sessions(utm_source, utm_medium, utm_campaign)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_sessions_ids ON sessions(gclid, fbclid, msclkid, ttclid)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_sessions_campaign ON sessions(campaign_id, adset_id, ad_group_id, ad_id)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_sessions_geo ON sessions(geo_country, geo_region, geo_city)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_sessions_contact ON sessions(contact_id)')
+
     logger.success('Todas las tablas inicializadas correctamente')
   } catch (error) {
     logger.error('Error inicializando tablas:', error)

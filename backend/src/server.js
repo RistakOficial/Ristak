@@ -22,6 +22,7 @@ import attributionRoutes from './routes/attribution.routes.js'
 import settingsRoutes from './routes/settings.routes.js'
 import paymentMethodsRoutes from './routes/paymentMethods.routes.js'
 import calendarsRoutes from './routes/calendars.routes.js'
+import trackingRoutes from './routes/tracking.routes.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -58,6 +59,10 @@ app.use('/api/payment-methods', paymentMethodsRoutes)
 app.use('/api/calendars', calendarsRoutes)
 app.use('/webhook', webhooksRoutes)
 app.use('/webhooks', webhooksRoutes) // Alias para webhooks con 's'
+
+// Tracking routes (pixel)
+app.use('/', trackingRoutes) // Maneja /snip.js y /collect
+app.use('/api/tracking', trackingRoutes) // Maneja /api/tracking/sessions
 
 // Servir frontend en producción
 if (process.env.NODE_ENV === 'production') {
