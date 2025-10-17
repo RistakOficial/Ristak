@@ -321,7 +321,7 @@ export const Contacts: React.FC = () => {
 
       <Card padding="none">
         <Table
-          key="contacts_table"
+          key="contacts_table_v2"
           initialColumns={columns}
           data={filteredContacts}
           keyExtractor={(item) => item.id}
@@ -336,7 +336,7 @@ export const Contacts: React.FC = () => {
           filters={filterOptions}
           activeFilter={filter}
           onFilterChange={setFilter}
-          tableId="contacts"
+          tableId="contacts_v2"
         />
       </Card>
 
