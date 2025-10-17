@@ -510,9 +510,8 @@ export const Transactions: React.FC = () => {
             )}
           </div>
           <Button
-            variant="primary"
+            variant="secondary"
             onClick={() => setShowRecordPaymentModal(true)}
-            className={styles.registerPaymentButton}
           >
             <Plus size={16} />
             Registrar pago
