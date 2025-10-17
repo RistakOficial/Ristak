@@ -770,19 +770,9 @@ export const Appointments: React.FC = () => {
                     </div>
                   </div>
                 </div>
-                <div className={styles.dayHeaderExtras}>
-                  <button className={styles.dayHeaderToday} onClick={handleToday}>
-                    Hoy
-                  </button>
-                  <div className={styles.dayHeaderNav}>
-                    <button className={styles.dayHeaderNavBtn} onClick={handlePrev} aria-label="Anterior">
-                      <ChevronLeft size={16} />
-                    </button>
-                    <button className={styles.dayHeaderNavBtn} onClick={handleNext} aria-label="Siguiente">
-                      <ChevronRight size={16} />
-                    </button>
-                  </div>
-                </div>
+                {currentDate.toDateString() === new Date().toDateString() && (
+                  <span className={styles.dayHeaderChip}>Hoy</span>
+                )}
               </div>
 
               {/* Grid de horarios del día */}
