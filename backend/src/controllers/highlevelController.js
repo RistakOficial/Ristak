@@ -5,6 +5,7 @@ import { logger } from '../utils/logger.js';
 import { API_URLS } from '../config/constants.js';
 import { getGHLClient } from '../services/ghlClient.js';
 import { encrypt } from '../utils/encryption.js';
+import { buildInvoicePaymentUrl } from '../utils/paymentUrl.js';
 import {
   chargePaymentMethod as stripeChargePaymentMethod,
   findCustomerByEmail as stripeFindCustomerByEmail,
@@ -829,6 +830,7 @@ export const sendInvoice = async (req, res) => {
     const business = locationData?.business || {};
     const fromName = business.name || locationData?.name || null;
     const fromEmail = business.email || locationData?.email || null;
+    const domain = locationData?.domain || null;
 
     if (!fromName || !fromEmail) {
       return res.status(400).json({
@@ -859,9 +861,13 @@ export const sendInvoice = async (req, res) => {
       // No fallar, el invoice ya se envió
     }
 
+    // Construir payment link usando el domain
+    const paymentLink = buildInvoicePaymentUrl(domain, invoiceId);
+
     res.json({
       success: true,
-      message: 'Enlace de pago enviado correctamente'
+      message: 'Enlace de pago enviado correctamente',
+      paymentLink
     });
   } catch (error) {
     logger.error(`Error en sendInvoice: ${error.message}`);
