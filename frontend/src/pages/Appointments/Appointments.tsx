@@ -552,7 +552,7 @@ export const Appointments: React.FC = () => {
                           key={event.id}
                           className={`${styles.eventChip} ${styles[`event${event.appointmentStatus.charAt(0).toUpperCase() + event.appointmentStatus.slice(1).toLowerCase()}`] || styles.eventDefault}`}
                           title={`${event.title || '(Sin título)'} - ${event.appointmentStatus}`}
-                          onDoubleClick={(e) => {
+                          onClick={(e) => {
                             e.stopPropagation();
                             handleEventClick(event);
                           }}
@@ -648,7 +648,7 @@ export const Appointments: React.FC = () => {
                                 backgroundColor: getEventColor(event.appointmentStatus),
                               }}
                               title={`${event.title} - ${formatTime12h(event.startTime)} a ${formatTime12h(event.endTime)}`}
-                              onDoubleClick={() => handleEventClick(event)}
+                              onClick={() => handleEventClick(event)}
                             >
                               <div className={styles.weekEventTime}>
                                 {formatTime12h(event.startTime)}
@@ -743,7 +743,7 @@ export const Appointments: React.FC = () => {
                             backgroundColor: getEventColor(event.appointmentStatus),
                           }}
                           title={`${event.title} - ${formatTime12h(event.startTime)} a ${formatTime12h(event.endTime)}`}
-                          onDoubleClick={() => handleEventClick(event)}
+                          onClick={() => handleEventClick(event)}
                         >
                           <div className={styles.dayEventTime}>
                             {formatTime12h(event.startTime)} - {formatTime12h(event.endTime)}

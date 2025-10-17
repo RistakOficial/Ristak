@@ -29,7 +29,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   onSave,
   onDelete
 }) => {
-  const [isEditing, setIsEditing] = useState(false);
+  const [isEditing, setIsEditing] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [formData, setFormData] = useState({
     title: '',

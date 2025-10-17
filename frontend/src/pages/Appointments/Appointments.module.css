@@ -432,10 +432,6 @@
   box-shadow: none;
 }
 
-.eventChip:hover {
-  opacity: 0.85;
-}
-
 /* Estilos por tipo de cita: borde + fondo semitransparente */
 .eventConfirmed {
   border-color: #3b82f6;
@@ -656,13 +652,6 @@
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
-.weekEvent:hover {
-  transform: translateX(2px) scale(1.02);
-  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.2);
-  z-index: 2;
-  border-left-width: 4px;
-}
-
 .weekEventTime {
   font-weight: 600;
   font-size: 0.625rem;
@@ -774,13 +763,6 @@
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
   transition: transform 0.15s ease, box-shadow 0.15s ease;
   z-index: 1;
-}
-
-.dayEvent:hover {
-  transform: translateX(3px) scale(1.01);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
-  z-index: 2;
-  border-left-width: 5px;
 }
 
 .dayEventTime {
