@@ -123,7 +123,7 @@ export async function syncInvoices({ limit = 100, offset = 0, contactId } = {}) 
                 // Insertar contacto en BD
                 await db.run(
                   `INSERT INTO contacts (
-                    id, name, email, phone, source, created_at, updated_at
+                    id, full_name, email, phone, source, created_at, updated_at
                   ) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
                   [
                     contact.id,
@@ -153,7 +153,7 @@ export async function syncInvoices({ limit = 100, offset = 0, contactId } = {}) 
                 try {
                   await db.run(
                     `INSERT INTO contacts (
-                      id, name, email, phone, source, created_at, updated_at
+                      id, full_name, email, phone, source, created_at, updated_at
                     ) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
                     [
                       invoiceData.contact_id,
