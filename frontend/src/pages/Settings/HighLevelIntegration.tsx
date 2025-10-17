@@ -439,6 +439,33 @@ export const HighLevelIntegration: React.FC = () => {
             </h3>
           </div>
 
+          {/* Scopes Requeridos - Visible siempre arriba */}
+          <div className={styles.infoBox} style={{ marginBottom: '24px' }}>
+            <div className={styles.infoBoxTitle}>
+              <Info size={16} />
+              <span>Scopes Requeridos para el API Token</span>
+            </div>
+            <p style={{ fontSize: '13px', color: 'var(--color-text-secondary)', marginBottom: '12px' }}>
+              Al crear tu API Token en HighLevel, asegúrate de seleccionar estos permisos:
+            </p>
+            <div className={styles.scopesGrid}>
+              {scopes.map((scope) => (
+                <div
+                  key={scope}
+                  className={`${styles.scopeItem} ${copiedScopes.has(scope) ? styles.scopeCopied : ''}`}
+                  onClick={() => copyScopeToClipboard(scope)}
+                >
+                  <span>{scope}</span>
+                  {copiedScopes.has(scope) ? (
+                    <Check size={14} />
+                  ) : (
+                    <Copy size={14} />
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+
           <div className={styles.setupSteps}>
             {/* Paso 1 */}
             <div className={styles.step}>
@@ -472,30 +499,8 @@ export const HighLevelIntegration: React.FC = () => {
               <div className={styles.stepContent}>
                 <h4 className={styles.stepTitle}>Crea un API Token</h4>
                 <p className={styles.stepDescription}>
-                  En HighLevel, ve a Settings {'>'} Integrations {'>'} API Key
+                  En HighLevel, ve a Settings {'>'} Integrations {'>'} API Key y selecciona los scopes listados arriba
                 </p>
-                <div className={styles.infoBox}>
-                  <div className={styles.infoBoxTitle}>
-                    <Info size={16} />
-                    <span>Scopes requeridos</span>
-                  </div>
-                  <div className={styles.scopesGrid}>
-                    {scopes.map((scope) => (
-                      <div
-                        key={scope}
-                        className={`${styles.scopeItem} ${copiedScopes.has(scope) ? styles.scopeCopied : ''}`}
-                        onClick={() => copyScopeToClipboard(scope)}
-                      >
-                        <span>{scope}</span>
-                        {copiedScopes.has(scope) ? (
-                          <Check size={14} />
-                        ) : (
-                          <Copy size={14} />
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
                 <div className={styles.stepBody}>
                   <div className={styles.formGroup}>
                     <label className={styles.formLabel}>API Token</label>
