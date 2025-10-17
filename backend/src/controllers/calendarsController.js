@@ -1,5 +1,5 @@
 import * as calendarService from '../services/highlevelCalendarService.js';
-import logger from '../utils/logger.js';
+import { logger } from '../utils/logger.js';
 
 /**
  * Controlador para endpoints de Calendarios de HighLevel

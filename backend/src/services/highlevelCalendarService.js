@@ -1,4 +1,4 @@
-import logger from '../utils/logger.js';
+import { logger } from '../utils/logger.js';
 
 /**
  * Servicio para interactuar con la API de Calendarios de HighLevel
