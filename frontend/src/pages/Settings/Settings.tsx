@@ -1,5 +1,6 @@
 import React from 'react'
 import { Routes, Route, Navigate, NavLink } from 'react-router-dom'
+import { Send, CreditCard, Facebook } from 'lucide-react'
 import { HighLevelIntegration } from './HighLevelIntegration'
 import { StripeIntegration } from './StripeIntegration'
 import { MetaAdsIntegration } from './MetaAdsIntegration'
@@ -18,19 +19,22 @@ export const Settings: React.FC = () => {
           to="/settings/highlevel"
           className={({ isActive }) => `${styles.tab} ${isActive ? styles.tabActive : ''}`}
         >
-          HighLevel
+          <Send size={18} />
+          <span>HighLevel</span>
         </NavLink>
         <NavLink
           to="/settings/stripe"
           className={({ isActive }) => `${styles.tab} ${isActive ? styles.tabActive : ''}`}
         >
-          Stripe
+          <CreditCard size={18} />
+          <span>Stripe</span>
         </NavLink>
         <NavLink
           to="/settings/meta-ads"
           className={({ isActive }) => `${styles.tab} ${isActive ? styles.tabActive : ''}`}
         >
-          Meta Ads
+          <Facebook size={18} />
+          <span>Meta Ads</span>
         </NavLink>
       </div>
 

@@ -15,16 +15,12 @@ const sizeClasses: Record<NonNullable<LogoProps['size']>, string> = {
 }
 
 export const Logo: React.FC<LogoProps> = ({ className = '', size = 'md' }) => {
-  const { theme } = useTheme()
-  const filterStyle = theme === 'dark' ? 'invert(1) brightness(1.8)' : 'invert(0)'
-
   return (
     <div className={`${sizeClasses[size]} ${className}`}>
       <img
         src="/logo.svg"
         alt="Ristak"
         className="w-full h-full object-contain"
-        style={{ filter: filterStyle }}
       />
     </div>
   )
