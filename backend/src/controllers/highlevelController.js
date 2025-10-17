@@ -1230,21 +1230,34 @@ export const saveStripeConfig = async (req, res) => {
       );
     } catch (updateError) {
       // Si falla porque las columnas no existen, agregarlas primero
+      logger.error(`Error en UPDATE de Stripe: ${updateError.message}`);
+
       if (updateError.message.includes('does not exist') || updateError.message.includes('no such column')) {
-        logger.warn('Columnas de Stripe no existen, agregándolas...');
+        logger.warn('🔧 Columnas de Stripe no existen, agregándolas...');
 
         // Agregar columnas
         try {
           await db.run('ALTER TABLE highlevel_config ADD COLUMN stripe_test_secret_key_encrypted TEXT');
-        } catch (e) { /* ignorar si ya existe */ }
+          logger.success('✅ Columna stripe_test_secret_key_encrypted agregada');
+        } catch (e) {
+          logger.warn(`Columna test key: ${e.message}`);
+        }
 
         try {
           await db.run('ALTER TABLE highlevel_config ADD COLUMN stripe_live_secret_key_encrypted TEXT');
-        } catch (e) { /* ignorar si ya existe */ }
+          logger.success('✅ Columna stripe_live_secret_key_encrypted agregada');
+        } catch (e) {
+          logger.warn(`Columna live key: ${e.message}`);
+        }
 
         try {
           await db.run('ALTER TABLE highlevel_config ADD COLUMN stripe_mode TEXT DEFAULT \'test\'');
-        } catch (e) { /* ignorar si ya existe */ }
+          logger.success('✅ Columna stripe_mode agregada');
+        } catch (e) {
+          logger.warn(`Columna mode: ${e.message}`);
+        }
+
+        logger.info('🔄 Reintentando UPDATE después de agregar columnas...');
 
         // Reintentar el UPDATE
         await db.run(
@@ -1260,6 +1273,8 @@ export const saveStripeConfig = async (req, res) => {
             config.location_id
           ]
         );
+
+        logger.success('✅ UPDATE exitoso después de agregar columnas');
       } else {
         throw updateError;
       }
