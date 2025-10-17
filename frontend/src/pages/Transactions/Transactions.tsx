@@ -561,9 +561,6 @@ export const Transactions: React.FC = () => {
           searchPlaceholder="Buscar pagos..."
           paginated={true}
           pageSize={20}
-          exportable={true}
-          onExport={() => {/* TODO: Implement export functionality */}}
-          tableId="transactions"
         />
       </Card>
 
