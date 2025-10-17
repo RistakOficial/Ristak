@@ -63,6 +63,7 @@
 .filtersRow {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: var(--spacing-md);
   flex-wrap: wrap;
   row-gap: var(--spacing-sm);
@@ -79,15 +80,16 @@
   align-items: center;
   gap: var(--spacing-md);
   flex-wrap: wrap;
-  /* Calcular padding izquierdo para alinear con la segunda KPI card */
-  /* El grid usa: repeat(auto-fit, minmax(220px, 1fr)) con gap de 16px */
-  /* Entonces: 1 tarjeta (220px mínimo) + 1 gap (16px) = 236px */
-  padding-left: calc(220px + var(--spacing-md));
+  margin-left: auto;
 }
 
 @media (max-width: 1024px) {
+  .filtersRow {
+    justify-content: flex-start;
+  }
+
   .tabsContainer {
-    padding-left: 0;
+    margin-left: 0;
   }
 }
 
