@@ -299,6 +299,7 @@
   flex-direction: column;
   min-height: 0;
   height: 100%;
+  flex: 1;
 }
 
 .calendarCardContent {
@@ -612,6 +613,7 @@
   display: flex;
   flex-direction: column;
   min-height: 0;
+  overflow: hidden;
 }
 
 .weekHeader {
@@ -678,6 +680,7 @@
   overflow-x: hidden;
   position: relative;
   min-height: 0;
+  height: 100%;
   scrollbar-gutter: stable both-edges;
 }
 
@@ -700,7 +703,8 @@
 }
 
 .timeColumn {
-  display: block;
+  display: flex;
+  flex-direction: column;
   border-right: 2px solid var(--color-border);
   padding-right: 0.5rem;
   background-color: var(--color-background);
@@ -807,6 +811,7 @@
   display: flex;
   flex-direction: column;
   min-height: 0;
+  overflow: hidden;
 }
 
 .dayHeader {
@@ -863,6 +868,7 @@
   overflow-x: hidden;
   position: relative;
   min-height: 0;
+  height: 100%;
   scrollbar-gutter: stable both-edges;
 }
 

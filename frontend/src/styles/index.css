@@ -32,6 +32,9 @@
   --color-status-warning: #f59e0b;
   --color-status-error: #dc2626;
   --color-status-info: #64748b;
+  --color-error-500: #ef4444;
+  --color-warning-500: #f59e0b;
+  --color-gray-500: #6b7280;
 
   --gradient-card-default: linear-gradient(135deg, rgba(100, 116, 139, 0.06) 0%, rgba(30, 41, 59, 0.05) 100%);
   --gradient-card-hover: linear-gradient(135deg, rgba(100, 116, 139, 0.1) 0%, rgba(30, 41, 59, 0.08) 100%);
@@ -70,6 +73,9 @@ body.light {
   --color-primary-dark: #1f2933;
   --color-primary-light: rgba(71, 85, 105, 0.18);
   --color-primary-alpha: rgba(71, 85, 105, 0.24);
+  --color-error-500: #dc2626;
+  --color-warning-500: #d97706;
+  --color-gray-500: #6b7280;
 
   --effect-glassMorphism-background: rgba(255, 255, 255, 0.7);
   --effect-glassMorphism-backdropFilter: blur(12px);
@@ -444,4 +450,53 @@ div:focus-visible,
   box-shadow: none !important;
   -webkit-box-shadow: none !important;
   -moz-box-shadow: none !important;
+}
+
+button::-moz-focus-inner,
+input::-moz-focus-inner,
+select::-moz-focus-inner,
+textarea::-moz-focus-inner {
+  border: 0 !important;
+}
+
+button:-moz-focusring,
+input:-moz-focusring,
+select:-moz-focusring,
+textarea:-moz-focusring {
+  outline: none !important;
+}
+
+button,
+a,
+[role="button"],
+[tabindex],
+input,
+select,
+textarea {
+  forced-color-adjust: none;
+}
+
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button:hover,
+button:focus,
+button:active,
+a:hover,
+a:focus,
+a:active,
+[role="button"]:hover,
+[role="button"]:focus,
+[role="button"]:active,
+[tabindex]:hover,
+[tabindex]:focus,
+[tabindex]:active,
+input:hover,
+input:focus,
+select:hover,
+select:focus,
+textarea:hover,
+textarea:focus {
+  box-shadow: none !important;
 }
