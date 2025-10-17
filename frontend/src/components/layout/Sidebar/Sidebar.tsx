@@ -22,9 +22,9 @@ const navigation = [
   { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
   { name: 'Reportes', href: '/reports', icon: FileBarChart },
   { name: 'Publicidad', href: '/campaigns', icon: Megaphone },
+  { name: 'Citas', href: '/appointments', icon: Calendar },
   { name: 'Pagos', href: '/transactions', icon: Banknote },
-  { name: 'Contactos', href: '/contacts', icon: Users },
-  { name: 'Citas', href: '/appointments', icon: Calendar }
+  { name: 'Contactos', href: '/contacts', icon: Users }
 ]
 
 export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, locationName, locationLogo }) => {
