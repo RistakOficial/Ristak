@@ -294,9 +294,17 @@
   overflow: hidden;
 }
 
+.calendarCard > div {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+
 .calendarCardContent {
   display: flex;
   flex-direction: column;
+  flex: 1;
   height: 100%;
   min-height: 0;
 }
@@ -604,8 +612,6 @@
   display: flex;
   flex-direction: column;
   min-height: 0;
-  overflow: visible;
-  height: 100%;
 }
 
 .weekHeader {
@@ -668,12 +674,11 @@
   flex: 1;
   display: grid;
   grid-template-columns: 60px repeat(7, 1fr);
-  overflow-y: scroll;
+  overflow-y: auto;
   overflow-x: hidden;
   position: relative;
   min-height: 0;
-  height: clamp(480px, calc(100vh - 360px), 960px);
-  scrollbar-gutter: stable;
+  scrollbar-gutter: stable both-edges;
 }
 
 .weekGrid::-webkit-scrollbar {
@@ -695,8 +700,7 @@
 }
 
 .timeColumn {
-  display: flex;
-  flex-direction: column;
+  display: block;
   border-right: 2px solid var(--color-border);
   padding-right: 0.5rem;
   background-color: var(--color-background);
@@ -709,6 +713,7 @@
   padding-top: 0;
   border-bottom: 1px solid var(--color-gray-300);
   position: relative;
+  flex: 0 0 60px;
 }
 
 .timeSlot:last-child {
@@ -802,8 +807,6 @@
   display: flex;
   flex-direction: column;
   min-height: 0;
-  overflow: visible;
-  height: 100%;
 }
 
 .dayHeader {
@@ -856,12 +859,11 @@
   flex: 1;
   display: grid;
   grid-template-columns: 60px 1fr;
-  overflow-y: scroll;
+  overflow-y: auto;
   overflow-x: hidden;
   position: relative;
   min-height: 0;
-  height: clamp(480px, calc(100vh - 360px), 960px);
-  scrollbar-gutter: stable;
+  scrollbar-gutter: stable both-edges;
 }
 
 .dayGrid::-webkit-scrollbar {
