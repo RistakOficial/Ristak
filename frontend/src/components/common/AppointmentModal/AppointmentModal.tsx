@@ -50,7 +50,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
         notes: event.notes || '',
         address: event.address || ''
       });
-      setIsEditing(false);
+      setIsEditing(true);
     }
   }, [event]);
 
