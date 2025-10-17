@@ -77,6 +77,11 @@ Backend:
 │   │   │   ├── Contacts/
 │   │   │   ├── Reports/
 │   │   │   ├── Settings/
+│   │   │   │   ├── Settings.tsx
+│   │   │   │   ├── HighLevelIntegration.tsx
+│   │   │   │   ├── MetaAdsIntegration.tsx
+│   │   │   │   ├── PaymentsConfiguration.tsx
+│   │   │   │   └── WebTracking.tsx    # Página de configuración del pixel de tracking
 │   │   │   ├── Transactions/
 │   │   │   └── Appointments/  # Gestión de calendarios y citas de HighLevel
 │   │   ├── services/          # Llamadas API
@@ -87,7 +92,8 @@ Backend:
 │   │   │   ├── highLevelService.ts
 │   │   │   ├── reportsService.ts
 │   │   │   ├── transactionsService.ts
-│   │   │   └── calendarsService.ts  # Servicio para Calendarios de HighLevel
+│   │   │   ├── calendarsService.ts  # Servicio para Calendarios de HighLevel
+│   │   │   └── trackingService.ts   # Servicio para Pixel de Tracking
 │   │   ├── styles/            # Estilos globales
 │   │   │   ├── index.css
 │   │   │   ├── theme.css
@@ -378,7 +384,10 @@ cd frontend && npm run build
   - Tabla `sessions` con 50+ campos de atribución
   - Endpoints: GET /snip.js, POST /collect, GET /api/tracking/sessions
   - Backend: trackingController.js, trackingService.js, tracking.routes.js
-  - Documentación completa en TRACKING_PIXEL.md
+  - Frontend: WebTracking.tsx (en Settings), trackingService.ts
+  - Página de configuración con snippet generator y stats en tiempo real
+  - Ruta: /settings/tracking
+  - Documentación completa en TRACKING_PIXEL.md y PIXEL_SETUP.md
   - Sin hardcodear dominios (detección dinámica por req.headers.host)
   - Funciona con SQLite y PostgreSQL
 
@@ -416,17 +425,18 @@ cd frontend && npm run build
 ## 📅 ÚLTIMA ACTUALIZACIÓN
 
 **Fecha**: 2025-10-17
-**Versión**: 1.7.0
+**Versión**: 1.7.1
 **Último cambio estructural**:
-- **Sistema de Pixel de Tracking implementado completamente**
-  - Tabla `sessions` creada en database.js con 50+ campos
-  - Backend: trackingController.js, trackingService.js, tracking.routes.js
-  - Endpoints: GET /snip.js, POST /collect, GET /api/tracking/sessions
-  - Documentación completa en TRACKING_PIXEL.md
-  - Same-Origin con detección dinámica de dominio (no hardcodeado)
-  - Captura UTMs, click IDs, cookies de Facebook, device info, referrer, IP
-  - Compatible con SQLite y PostgreSQL
-  - Probado localmente con éxito (sesiones creadas y actualizadas correctamente)
+- **Página de configuración de Pixel de Tracking agregada**
+  - Frontend: WebTracking.tsx en Settings con tab "Web Tracking"
+  - Servicio: trackingService.ts para comunicación con API
+  - Generador de snippet dinámico por dominio del cliente
+  - Vista de sesiones recientes capturadas (últimas 10)
+  - Estadísticas en tiempo real (total, con UTMs, gclid, fbclid)
+  - Tabla de sesiones con landing page, fuente, campaña, device, páginas vistas
+  - Links a documentación (TRACKING_PIXEL.md y PIXEL_SETUP.md)
+  - Ruta: /settings/tracking
+  - Integrado con el sistema de tabs de Settings
 
 ---
 

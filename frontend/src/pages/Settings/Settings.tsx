@@ -1,9 +1,10 @@
 import React from 'react'
 import { Routes, Route, Navigate, NavLink } from 'react-router-dom'
-import { Send, CreditCard, Facebook } from 'lucide-react'
+import { Send, CreditCard, Facebook, Activity } from 'lucide-react'
 import { HighLevelIntegration } from './HighLevelIntegration'
 import { PaymentsConfiguration } from './PaymentsConfiguration'
 import { MetaAdsIntegration } from './MetaAdsIntegration'
+import { WebTracking } from './WebTracking'
 import styles from './Settings.module.css'
 
 export const Settings: React.FC = () => {
@@ -36,6 +37,13 @@ export const Settings: React.FC = () => {
           <CreditCard size={18} />
           <span>Configuración de Pagos</span>
         </NavLink>
+        <NavLink
+          to="/settings/tracking"
+          className={({ isActive }) => `${styles.tab} ${isActive ? styles.tabActive : ''}`}
+        >
+          <Activity size={18} />
+          <span>Web Tracking</span>
+        </NavLink>
       </div>
 
       <div className={styles.mainContent}>
@@ -44,6 +52,7 @@ export const Settings: React.FC = () => {
           <Route path="highlevel" element={<HighLevelIntegration />} />
           <Route path="payments" element={<PaymentsConfiguration />} />
           <Route path="meta-ads" element={<MetaAdsIntegration />} />
+          <Route path="tracking" element={<WebTracking />} />
         </Routes>
       </div>
     </div>
