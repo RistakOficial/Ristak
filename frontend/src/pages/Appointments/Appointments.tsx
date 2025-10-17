@@ -156,8 +156,8 @@ export const Appointments: React.FC = () => {
     const cells: DayCell[] = [];
     const eventsByDate = calendarsService.groupEventsByDate(events);
 
-    // Generar 42 celdas (6 semanas)
-    for (let i = 0; i < 42; i++) {
+    // Generar 28 celdas (4 semanas)
+    for (let i = 0; i < 28; i++) {
       const date = new Date(startDay);
       date.setDate(startDay.getDate() + i);
 
@@ -208,13 +208,8 @@ export const Appointments: React.FC = () => {
     setCurrentDate(new Date());
   };
 
-  // Cambiar calendario activo
-  const handleCalendarChange = (index: number) => {
-    const calendar = calendars[index];
-    if (calendar) {
-      setSelectedCalendar(calendar);
-    }
-  };
+  // Esta función ya no se necesita porque cambiamos directo en el onChange del select
+  // Dejamos el código limpio sin funciones huérfanas
 
   // Renderizar label según vista
   const renderLabel = () => {
@@ -260,43 +255,37 @@ export const Appointments: React.FC = () => {
 
   return (
     <PageContainer>
-      {/* Header: Navegador de calendarios */}
+      {/* Header: Selector de calendario */}
       <div className={styles.header}>
         <div className={styles.calendarNav}>
-          <h1 className={styles.title}>
-            Calendario {selectedCalendar ? calendars.findIndex(c => c.id === selectedCalendar.id) + 1 : 1}
-          </h1>
+          <h1 className={styles.title}>Calendarios</h1>
 
-          <div className={styles.navButtons}>
-            <button
-              className={styles.navBtn}
-              onClick={() => {
-                const currentIndex = calendars.findIndex(c => c.id === selectedCalendar?.id);
-                if (currentIndex > 0) {
-                  handleCalendarChange(currentIndex - 1);
+          <div className={styles.calendarSelector}>
+            <label htmlFor="calendar-select" className={styles.selectorLabel}>
+              Calendario:
+            </label>
+            <select
+              id="calendar-select"
+              className={styles.calendarDropdown}
+              value={selectedCalendar?.id || ''}
+              onChange={(e) => {
+                const selected = calendars.find(c => c.id === e.target.value);
+                if (selected) {
+                  setSelectedCalendar(selected);
                 }
               }}
-              disabled={calendars.findIndex(c => c.id === selectedCalendar?.id) <= 0}
-              aria-label="Calendario anterior"
+              disabled={loading || calendars.length === 0}
             >
-              <ChevronLeft size={20} />
-            </button>
-            <button
-              className={styles.navBtn}
-              onClick={() => {
-                const currentIndex = calendars.findIndex(c => c.id === selectedCalendar?.id);
-                if (currentIndex < calendars.length - 1) {
-                  handleCalendarChange(currentIndex + 1);
-                }
-              }}
-              disabled={calendars.findIndex(c => c.id === selectedCalendar?.id) >= calendars.length - 1}
-              aria-label="Calendario siguiente"
-            >
-              <ChevronRight size={20} />
-            </button>
-            <span className={styles.calendarPos}>
-              {calendars.findIndex(c => c.id === selectedCalendar?.id) + 1} de {calendars.length}
-            </span>
+              {calendars.length === 0 ? (
+                <option value="">No hay calendarios disponibles</option>
+              ) : (
+                calendars.map((calendar) => (
+                  <option key={calendar.id} value={calendar.id}>
+                    {calendar.name}
+                  </option>
+                ))
+              )}
+            </select>
           </div>
         </div>
       </div>
