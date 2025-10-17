@@ -56,6 +56,10 @@ export const Appointments: React.FC = () => {
     localStorage.getItem('defaultCalendarId')
   );
 
+  // Dropdowns de navegación
+  const [isMonthDropdownOpen, setIsMonthDropdownOpen] = useState(false);
+  const [isYearDropdownOpen, setIsYearDropdownOpen] = useState(false);
+
   // Cargar calendarios al montar
   useEffect(() => {
     if (locationId && accessToken) {
@@ -384,68 +388,66 @@ export const Appointments: React.FC = () => {
 
   return (
     <PageContainer>
-      {/* Header: Selector de calendario */}
+      {/* Header */}
       <div className={styles.header}>
-        <div className={styles.calendarNav}>
-          <h1 className={styles.title}>Calendarios</h1>
+        <h1 className={styles.title}>Calendarios</h1>
 
-          <div className={styles.calendarSelector}>
+        <div className={styles.calendarSelector}>
+          <button
+            className={styles.calendarDropdownButton}
+            onClick={() => setIsCalendarDropdownOpen(!isCalendarDropdownOpen)}
+            disabled={loading || calendars.length === 0}
+          >
+            <span className={styles.dropdownButtonText}>
+              {selectedCalendar?.name || 'Selecciona un calendario'}
+            </span>
+            <ChevronDown
+              size={18}
+              className={`${styles.dropdownIcon} ${isCalendarDropdownOpen ? styles.dropdownIconOpen : ''}`}
+            />
+          </button>
+
+          {selectedCalendar && (
             <button
-              className={styles.calendarDropdownButton}
-              onClick={() => setIsCalendarDropdownOpen(!isCalendarDropdownOpen)}
-              disabled={loading || calendars.length === 0}
+              className={styles.setDefaultLink}
+              onClick={handleSetDefaultCalendar}
+              disabled={defaultCalendarId === selectedCalendar.id}
             >
-              <span className={styles.dropdownButtonText}>
-                {selectedCalendar?.name || 'Selecciona un calendario'}
-              </span>
-              <ChevronDown
-                size={18}
-                className={`${styles.dropdownIcon} ${isCalendarDropdownOpen ? styles.dropdownIconOpen : ''}`}
-              />
+              {defaultCalendarId === selectedCalendar.id ? 'Predeterminado' : 'Establecer predeterminado'}
             </button>
+          )}
 
-            {selectedCalendar && (
-              <button
-                className={styles.setDefaultLink}
-                onClick={handleSetDefaultCalendar}
-                disabled={defaultCalendarId === selectedCalendar.id}
-              >
-                {defaultCalendarId === selectedCalendar.id ? 'Predeterminado' : 'Establecer predeterminado'}
-              </button>
-            )}
-
-            {isCalendarDropdownOpen && (
-              <>
-                <div
-                  className={styles.dropdownOverlay}
-                  onClick={() => setIsCalendarDropdownOpen(false)}
-                />
-                <div className={styles.dropdownMenu}>
-                  {calendars.length === 0 ? (
-                    <div className={styles.dropdownEmpty}>
-                      No hay calendarios disponibles
-                    </div>
-                  ) : (
-                    calendars.map((calendar) => (
-                      <button
-                        key={calendar.id}
-                        className={`${styles.dropdownItem} ${selectedCalendar?.id === calendar.id ? styles.dropdownItemActive : ''}`}
-                        onClick={() => {
-                          setSelectedCalendar(calendar);
-                          setIsCalendarDropdownOpen(false);
-                        }}
-                      >
-                        <span className={styles.dropdownItemText}>{calendar.name}</span>
-                        {selectedCalendar?.id === calendar.id && (
-                          <Check size={16} className={styles.dropdownCheckIcon} />
-                        )}
-                      </button>
-                    ))
-                  )}
-                </div>
-              </>
-            )}
-          </div>
+          {isCalendarDropdownOpen && (
+            <>
+              <div
+                className={styles.dropdownOverlay}
+                onClick={() => setIsCalendarDropdownOpen(false)}
+              />
+              <div className={styles.dropdownMenu}>
+                {calendars.length === 0 ? (
+                  <div className={styles.dropdownEmpty}>
+                    No hay calendarios disponibles
+                  </div>
+                ) : (
+                  calendars.map((calendar) => (
+                    <button
+                      key={calendar.id}
+                      className={`${styles.dropdownItem} ${selectedCalendar?.id === calendar.id ? styles.dropdownItemActive : ''}`}
+                      onClick={() => {
+                        setSelectedCalendar(calendar);
+                        setIsCalendarDropdownOpen(false);
+                      }}
+                    >
+                      <span className={styles.dropdownItemText}>{calendar.name}</span>
+                      {selectedCalendar?.id === calendar.id && (
+                        <Check size={16} className={styles.dropdownCheckIcon} />
+                      )}
+                    </button>
+                  ))
+                )}
+              </div>
+            </>
+          )}
         </div>
       </div>
 
@@ -518,7 +520,74 @@ export const Appointments: React.FC = () => {
               <button className={styles.navBtn} onClick={handlePrev} aria-label="Anterior">
                 <ChevronLeft size={16} />
               </button>
-              <span className={styles.dateLabel}>{renderLabel()}</span>
+
+              {/* Dropdowns de mes y año */}
+              <div className={styles.dateSelectors}>
+                {/* Dropdown de mes */}
+                <div className={styles.dateSelectorWrapper}>
+                  <button
+                    className={styles.dateSelector}
+                    onClick={() => setIsMonthDropdownOpen(!isMonthDropdownOpen)}
+                  >
+                    <span>{MONTH_NAMES[currentDate.getMonth()]}</span>
+                    <ChevronDown size={14} className={`${styles.selectorIcon} ${isMonthDropdownOpen ? styles.selectorIconOpen : ''}`} />
+                  </button>
+                  {isMonthDropdownOpen && (
+                    <>
+                      <div className={styles.selectorOverlay} onClick={() => setIsMonthDropdownOpen(false)} />
+                      <div className={styles.selectorMenu}>
+                        {MONTH_NAMES.map((month, index) => (
+                          <button
+                            key={index}
+                            className={`${styles.selectorItem} ${currentDate.getMonth() === index ? styles.selectorItemActive : ''}`}
+                            onClick={() => {
+                              const newDate = new Date(currentDate);
+                              newDate.setMonth(index);
+                              setCurrentDate(newDate);
+                              setIsMonthDropdownOpen(false);
+                            }}
+                          >
+                            {month}
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                {/* Dropdown de año */}
+                <div className={styles.dateSelectorWrapper}>
+                  <button
+                    className={styles.dateSelector}
+                    onClick={() => setIsYearDropdownOpen(!isYearDropdownOpen)}
+                  >
+                    <span>{currentDate.getFullYear()}</span>
+                    <ChevronDown size={14} className={`${styles.selectorIcon} ${isYearDropdownOpen ? styles.selectorIconOpen : ''}`} />
+                  </button>
+                  {isYearDropdownOpen && (
+                    <>
+                      <div className={styles.selectorOverlay} onClick={() => setIsYearDropdownOpen(false)} />
+                      <div className={styles.selectorMenu}>
+                        {Array.from({ length: 11 }, (_, i) => currentDate.getFullYear() - 5 + i).map((year) => (
+                          <button
+                            key={year}
+                            className={`${styles.selectorItem} ${currentDate.getFullYear() === year ? styles.selectorItemActive : ''}`}
+                            onClick={() => {
+                              const newDate = new Date(currentDate);
+                              newDate.setFullYear(year);
+                              setCurrentDate(newDate);
+                              setIsYearDropdownOpen(false);
+                            }}
+                          >
+                            {year}
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+
               <button className={styles.navBtn} onClick={handleNext} aria-label="Siguiente">
                 <ChevronRight size={16} />
               </button>

@@ -3,6 +3,36 @@
 @tailwind utilities;
 @import './tooltip-override.css';
 
+/* Sobrescribir TODOS los outlines y rings de Tailwind */
+@layer base {
+  *,
+  *::before,
+  *::after {
+    --tw-ring-color: transparent !important;
+    --tw-ring-shadow: none !important;
+  }
+
+  *:focus,
+  *:focus-visible,
+  *:active {
+    outline: none !important;
+    box-shadow: none !important;
+    --tw-ring-shadow: none !important;
+  }
+
+  button:focus,
+  button:focus-visible,
+  button:active,
+  a:focus,
+  a:focus-visible,
+  div[role="button"]:focus,
+  div[role="button"]:focus-visible {
+    outline: none !important;
+    box-shadow: none !important;
+    --tw-ring-shadow: none !important;
+  }
+}
+
 :root {
   /* Layout */
   --header-height: 84px;
@@ -80,29 +110,6 @@ body.light {
 @layer base {
   * {
     @apply box-border;
-  }
-
-  /* Quitar outline por defecto de todos los elementos */
-  *:focus {
-    outline: none;
-  }
-
-  *:focus-visible {
-    outline: none;
-  }
-
-  /* Outline suave SOLO para inputs de texto y selects dentro de formularios */
-  input[type="text"]:focus-visible,
-  input[type="email"]:focus-visible,
-  input[type="password"]:focus-visible,
-  input[type="number"]:focus-visible,
-  input[type="search"]:focus-visible,
-  input[type="tel"]:focus-visible,
-  input[type="url"]:focus-visible,
-  select:focus-visible,
-  textarea:focus-visible {
-    outline: 2px solid rgba(100, 116, 139, 0.2);
-    outline-offset: 1px;
   }
 
   html {
