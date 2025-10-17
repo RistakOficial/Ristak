@@ -10,7 +10,7 @@ export interface Transaction {
   amount: number
   currency?: string
   method: 'card' | 'transfer' | 'cash' | 'paypal' | 'stripe' | 'other' | 'bank_transfer' | 'check'
-  status: 'paid' | 'pending' | 'failed' | 'refunded'
+  status: 'draft' | 'sent' | 'paid' | 'pending' | 'overdue' | 'partial' | 'void' | 'refunded' | 'failed' | 'deleted'
   reference?: string
   description?: string
   createdAt?: string

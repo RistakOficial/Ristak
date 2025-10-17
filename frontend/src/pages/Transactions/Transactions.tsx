@@ -252,14 +252,20 @@ export const Transactions: React.FC = () => {
     }
   }
 
-  const STATUS_BADGES: Record<Transaction['status'], { label: string; variant: BadgeVariant }> = {
+  const STATUS_BADGES: Record<string, { label: string; variant: BadgeVariant }> = {
+    draft: { label: 'Borrador', variant: 'neutral' },
+    sent: { label: 'Enviado', variant: 'info' },
     paid: { label: 'Pagado', variant: 'success' },
     pending: { label: 'Pendiente', variant: 'warning' },
+    overdue: { label: 'Vencido', variant: 'error' },
+    partial: { label: 'Pago parcial', variant: 'warning' },
+    void: { label: 'Anulado', variant: 'error' },
+    refunded: { label: 'Reembolsado', variant: 'error' },
     failed: { label: 'Fallido', variant: 'error' },
-    refunded: { label: 'Reembolsado', variant: 'error' }
+    deleted: { label: 'Eliminado', variant: 'neutral' }
   }
 
-  const getStatusBadge = (status: Transaction['status']) => {
+  const getStatusBadge = (status: string) => {
     const config = STATUS_BADGES[status] ?? { label: status, variant: 'neutral' as BadgeVariant }
     return <Badge variant={config.variant}>{config.label}</Badge>
   }
@@ -314,15 +320,45 @@ export const Transactions: React.FC = () => {
       key: 'id',
       header: 'Acciones',
       render: (value, item) => {
-        // Contar acciones disponibles
+        // Contar acciones disponibles según el estado
         const actions = []
-        if (item.status !== 'refunded') actions.push('copy')
-        if (item.status === 'paid') actions.push('view')
-        if (item.status === 'pending') actions.push('send')
-        if (item.status === 'pending') actions.push('edit')
-        if (item.status === 'pending' || item.status === 'failed') actions.push('mark-paid')
-        if (item.status === 'paid') actions.push('download')
-        if (item.status !== 'refunded' && item.status !== 'paid') actions.push('void')
+
+        // Copiar enlace - disponible para draft, sent, pending, overdue
+        if (['draft', 'sent', 'pending', 'overdue', 'partial'].includes(item.status)) {
+          actions.push('copy')
+        }
+
+        // Ver recibo - solo para pagados
+        if (item.status === 'paid') {
+          actions.push('view')
+        }
+
+        // Enviar - solo para draft y pending
+        if (['draft', 'pending'].includes(item.status)) {
+          actions.push('send')
+        }
+
+        // Editar - solo para draft
+        if (item.status === 'draft') {
+          actions.push('edit')
+        }
+
+        // Marcar como pagado - para draft, sent, pending, overdue, failed, partial
+        if (['draft', 'sent', 'pending', 'overdue', 'failed', 'partial'].includes(item.status)) {
+          actions.push('mark-paid')
+        }
+
+        // Descargar PDF - solo para pagados
+        if (item.status === 'paid') {
+          actions.push('download')
+        }
+
+        // Anular - para draft, sent, pending, overdue (no para paid, void, refunded)
+        if (['draft', 'sent', 'pending', 'overdue', 'partial'].includes(item.status)) {
+          actions.push('void')
+        }
+
+        // Eliminar siempre disponible
         actions.push('delete')
 
         // Si solo hay una acción (eliminar), mostrar botón directo
@@ -350,8 +386,8 @@ export const Transactions: React.FC = () => {
                 </button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                {/* Copiar enlace de pago (para todos excepto void y refunded) */}
-                {item.status !== 'refunded' && (
+                {/* Copiar enlace de pago */}
+                {actions.includes('copy') && (
                   <DropdownMenuItem onClick={() => handleCopyPaymentLink(item)}>
                     <Link2 size={16} />
                     <span style={{ marginLeft: '8px' }}>Copiar enlace de pago</span>
@@ -359,39 +395,39 @@ export const Transactions: React.FC = () => {
                 )}
 
                 {/* Ver recibo (solo para pagados) */}
-                {item.status === 'paid' && (
+                {actions.includes('view') && (
                   <DropdownMenuItem onClick={() => handleViewReceipt(item)}>
                     <Eye size={16} />
                     <span style={{ marginLeft: '8px' }}>Ver recibo</span>
                   </DropdownMenuItem>
                 )}
 
-                {/* Enviar pago (solo para borradores/pendientes) */}
-                {(item.status === 'pending') && (
+                {/* Enviar pago */}
+                {actions.includes('send') && (
                   <DropdownMenuItem onClick={() => handleSendPayment(item.id)}>
                     <Send size={16} />
                     <span style={{ marginLeft: '8px' }}>Enviar pago</span>
                   </DropdownMenuItem>
                 )}
 
-                {/* Editar (solo para borradores y pendientes) */}
-                {(item.status === 'pending') && (
+                {/* Editar */}
+                {actions.includes('edit') && (
                   <DropdownMenuItem onClick={() => handleEdit(item)}>
                     <Edit size={16} />
                     <span style={{ marginLeft: '8px' }}>Editar</span>
                   </DropdownMenuItem>
                 )}
 
-                {/* Marcar como pagado (para pendientes y failed) */}
-                {(item.status === 'pending' || item.status === 'failed') && (
+                {/* Marcar como pagado */}
+                {actions.includes('mark-paid') && (
                   <DropdownMenuItem onClick={() => handleMarkAsPaid(item)}>
                     <CheckCircle size={16} />
                     <span style={{ marginLeft: '8px' }}>Marcar como pagado</span>
                   </DropdownMenuItem>
                 )}
 
-                {/* Descargar PDF (para pagados) */}
-                {item.status === 'paid' && (
+                {/* Descargar PDF */}
+                {actions.includes('download') && (
                   <DropdownMenuItem onClick={() => handleDownloadPDF(item)}>
                     <Download size={16} />
                     <span style={{ marginLeft: '8px' }}>Descargar PDF</span>
@@ -399,10 +435,12 @@ export const Transactions: React.FC = () => {
                 )}
 
                 {/* Separador antes de acciones destructivas */}
-                <DropdownMenuSeparator />
+                {(actions.includes('void') || actions.includes('delete')) && (
+                  <DropdownMenuSeparator />
+                )}
 
-                {/* Anular pago (para todos excepto refunded y paid) */}
-                {item.status !== 'refunded' && item.status !== 'paid' && (
+                {/* Anular pago */}
+                {actions.includes('void') && (
                   <DropdownMenuItem
                     onClick={() => handleVoidTransaction(item.id)}
                     className={styles.destructive}
@@ -412,7 +450,7 @@ export const Transactions: React.FC = () => {
                   </DropdownMenuItem>
                 )}
 
-                {/* Eliminar pago (siempre disponible) */}
+                {/* Eliminar pago */}
                 <DropdownMenuItem
                   onClick={() => handleDelete(item.id)}
                   className={styles.destructive}
@@ -580,11 +618,16 @@ export const Transactions: React.FC = () => {
               </div>
               <div className={styles.formGroup}>
                 <label>Estado</label>
-                <select name="status" defaultValue={modal.transaction?.status || 'paid'}>
-                  <option value="paid">Pagado</option>
+                <select name="status" defaultValue={modal.transaction?.status || 'draft'}>
+                  <option value="draft">Borrador</option>
+                  <option value="sent">Enviado</option>
                   <option value="pending">Pendiente</option>
-                  <option value="failed">Fallido</option>
+                  <option value="paid">Pagado</option>
+                  <option value="partial">Pago parcial</option>
+                  <option value="overdue">Vencido</option>
+                  <option value="void">Anulado</option>
                   <option value="refunded">Reembolsado</option>
+                  <option value="failed">Fallido</option>
                 </select>
               </div>
               <div className={styles.formGroup}>
