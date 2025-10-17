@@ -834,114 +834,116 @@ export const Reports: React.FC = () => {
               </div>
             )}
           </div>
-          <div className={styles.filtersRow}>
-            {viewType === 'month' && (
-              <div className={styles.monthControls}>
-                <ViewSelector
-                  value={monthPreset}
-                  options={monthRangeOptions}
-                  onChange={handleMonthPresetChange}
-                />
-                {monthPreset === 'custom' && (
-                  <div className={styles.customMonthControls}>
-                    <label className={styles.customControl}>
-                      Año
-                      <input
-                        type="number"
-                        value={customMonthYear}
-                        onChange={(event) => setCustomMonthYear(Number(event.target.value))}
-                        className={styles.numberInput}
-                      />
+        </header>
+
+        {displayMode === 'table' && summary && (
+          <div className={styles.kpiRowWithTabs}>
+            <div className={styles.kpiRow}>
+              {summaryCards.map(card => (
+                <div key={card.label} className={styles.kpiStatic}>
+                  <KpiCard
+                    title={card.label}
+                    value={card.value}
+                    delta={card.delta}
+                    deltaLabel={card.deltaLabel}
+                    icon={card.icon}
+                  />
+                </div>
+              ))}
+            </div>
+            <div className={styles.filtersRow}>
+              {viewType === 'month' && (
+                <div className={styles.monthControls}>
+                  <ViewSelector
+                    value={monthPreset}
+                    options={monthRangeOptions}
+                    onChange={handleMonthPresetChange}
+                  />
+                  {monthPreset === 'custom' && (
+                    <div className={styles.customMonthControls}>
+                      <label className={styles.customControl}>
+                        Año
+                        <input
+                          type="number"
+                          value={customMonthYear}
+                          onChange={(event) => setCustomMonthYear(Number(event.target.value))}
+                          className={styles.numberInput}
+                        />
+                      </label>
+                      <label className={styles.customControl}>
+                        Inicio
+                        <select
+                          value={customMonthStart}
+                          onChange={(event) => handleCustomMonthChange('start', Number(event.target.value))}
+                        >
+                          {monthNames.map((name, index) => (
+                          <option key={name} value={index}>{name}</option>
+                        ))}
+                      </select>
                     </label>
                     <label className={styles.customControl}>
-                      Inicio
+                      Fin
                       <select
-                        value={customMonthStart}
-                        onChange={(event) => handleCustomMonthChange('start', Number(event.target.value))}
+                        value={customMonthEnd}
+                        onChange={(event) => handleCustomMonthChange('end', Number(event.target.value))}
                       >
                         {monthNames.map((name, index) => (
-                        <option key={name} value={index}>{name}</option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className={styles.customControl}>
-                    Fin
-                    <select
-                      value={customMonthEnd}
-                      onChange={(event) => handleCustomMonthChange('end', Number(event.target.value))}
-                    >
-                      {monthNames.map((name, index) => (
-                        <option key={name} value={index}>{name}</option>
-                      ))}
-                    </select>
-                  </label>
+                          <option key={name} value={index}>{name}</option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                )}
+              </div>
+            )}
+            {viewType === 'year' && (
+              <div className={styles.yearControls}>
+                <div className={styles.yearControlGroup}>
+                  <span>Inicio</span>
+                  <div className={styles.yearButtons}>
+                    <Button variant="ghost" onClick={() => handleYearRangeChange('start', -1)}>-</Button>
+                    <span>{yearRange.start}</span>
+                    <Button variant="ghost" onClick={() => handleYearRangeChange('start', 1)}>+</Button>
+                  </div>
                 </div>
-              )}
-            </div>
-          )}
-          {viewType === 'year' && (
-            <div className={styles.yearControls}>
-              <div className={styles.yearControlGroup}>
-                <span>Inicio</span>
-                <div className={styles.yearButtons}>
-                  <Button variant="ghost" onClick={() => handleYearRangeChange('start', -1)}>-</Button>
-                  <span>{yearRange.start}</span>
-                  <Button variant="ghost" onClick={() => handleYearRangeChange('start', 1)}>+</Button>
+                <div className={styles.yearControlGroup}>
+                  <span>Fin</span>
+                  <div className={styles.yearButtons}>
+                    <Button variant="ghost" onClick={() => handleYearRangeChange('end', -1)}>-</Button>
+                    <span>{yearRange.end}</span>
+                    <Button variant="ghost" onClick={() => handleYearRangeChange('end', 1)}>+</Button>
+                  </div>
                 </div>
               </div>
-              <div className={styles.yearControlGroup}>
-                <span>Fin</span>
-                <div className={styles.yearButtons}>
-                  <Button variant="ghost" onClick={() => handleYearRangeChange('end', -1)}>-</Button>
-                  <span>{yearRange.end}</span>
-                  <Button variant="ghost" onClick={() => handleYearRangeChange('end', 1)}>+</Button>
-                </div>
-              </div>
-            </div>
-          )}
-          <TabList
-            tabs={viewTabs}
-            activeTab={viewType}
-            onTabChange={(value) => setViewType(value as ViewType)}
-            variant="compact"
-          />
-          <TabList
-            tabs={scopeTabs}
-            activeTab={reportType}
-            onTabChange={(value) => setReportType(value as ReportType)}
-            variant="compact"
-          />
-          <TabList
-            tabs={displayTabs}
-            activeTab={displayMode}
-            onTabChange={(value) => setDisplayMode(value as DisplayMode)}
-            variant="compact"
-          />
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={handleExportCsv}
-            className={styles.exportButton}
-          >
-            <Download size={16} />
-            Exportar CSV
-          </Button>
-        </div>
-      </header>
-
-      {displayMode === 'table' && summary && (
-        <div className={styles.kpiRow}>
-          {summaryCards.map(card => (
-            <div key={card.label} className={styles.kpiStatic}>
-              <KpiCard
-                title={card.label}
-                value={card.value}
-                delta={card.delta}
-                deltaLabel={card.deltaLabel}
-                icon={card.icon}
-              />
-            </div>
-          ))}
+            )}
+            <TabList
+              tabs={viewTabs}
+              activeTab={viewType}
+              onTabChange={(value) => setViewType(value as ViewType)}
+              variant="compact"
+            />
+            <TabList
+              tabs={scopeTabs}
+              activeTab={reportType}
+              onTabChange={(value) => setReportType(value as ReportType)}
+              variant="compact"
+            />
+            <TabList
+              tabs={displayTabs}
+              activeTab={displayMode}
+              onTabChange={(value) => setDisplayMode(value as DisplayMode)}
+              variant="compact"
+            />
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={handleExportCsv}
+              className={styles.exportButton}
+            >
+              <Download size={16} />
+              Exportar CSV
+            </Button>
+          </div>
         </div>
       )}
 
