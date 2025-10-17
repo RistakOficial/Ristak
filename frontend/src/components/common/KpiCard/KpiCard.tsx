@@ -45,19 +45,19 @@ export const KpiCard: React.FC<KpiCardProps> = ({
   return (
     <Card
       variant="glass"
-      padding="md"
+      padding="sm"
       className={cn('overflow-hidden', className)}
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
-          <p className="mb-1.5 text-sm text-[var(--color-text-tertiary)]">
+          <p className="mb-1 text-sm text-[var(--color-text-tertiary)]">
             {title}
           </p>
           <p className="text-2xl font-bold text-[var(--color-text-primary)] truncate">
             {value}
           </p>
           {formattedDelta && (
-            <div className={cn('mt-1 flex items-center gap-2 text-xs', trendColor)}>
+            <div className={cn('mt-0.5 flex items-center gap-2 text-xs', trendColor)}>
               <span className="font-medium">{formattedDelta}</span>
               {deltaLabel && (
                 <span className="text-[var(--color-text-tertiary)]">{deltaLabel}</span>
