@@ -728,13 +728,103 @@ export const createInvoice = async (req, res) => {
   try {
     const invoiceData = req.body;
 
-    // Usar GHL Client
+    // PASO 1: Crear invoice en HighLevel
     const ghlClient = await getGHLClient();
     const data = await ghlClient.createInvoice(invoiceData);
 
+    const createdInvoice = data.invoice || data;
+    const ghlInvoiceId = createdInvoice.id || createdInvoice._id;
+
+    if (!ghlInvoiceId) {
+      throw new Error('No se pudo obtener el ID del invoice creado');
+    }
+
+    logger.success(`Invoice creado en HighLevel: ${ghlInvoiceId}`);
+
+    // PASO 2: Verificar que el contacto existe en BD local
+    const contactId = invoiceData.contactDetails?.id || createdInvoice.contactId;
+
+    if (contactId) {
+      const contactExists = await db.get(
+        'SELECT id FROM contacts WHERE id = ?',
+        [contactId]
+      );
+
+      if (!contactExists) {
+        logger.warn(`Contacto ${contactId} no existe en BD, creándolo...`);
+
+        try {
+          const contactResponse = await ghlClient.getContact(contactId);
+          const contact = contactResponse?.contact || contactResponse;
+
+          if (contact && contact.id) {
+            const contactName = contact.name ||
+              `${contact.firstName || ''} ${contact.lastName || ''}`.trim() ||
+              contact.email ||
+              contact.phone ||
+              'Sin nombre';
+
+            await db.run(
+              `INSERT INTO contacts (
+                id, name, email, phone, source, created_at, updated_at
+              ) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+              [
+                contact.id,
+                contactName,
+                contact.email || null,
+                contact.phone || null,
+                'highlevel'
+              ]
+            );
+            logger.success(`Contacto ${contact.id} creado en BD: ${contactName}`);
+          }
+        } catch (contactError) {
+          logger.error(`Error creando contacto ${contactId}:`, contactError);
+          // No fallar, continuar con el invoice
+        }
+      }
+    }
+
+    // PASO 3: Guardar invoice en BD local INMEDIATAMENTE
+    try {
+      // Calcular monto total
+      const items = createdInvoice.items || [];
+      const subtotal = items.reduce((sum, item) => sum + (item.amount || 0) * (item.qty || 1), 0);
+      const taxAmount = createdInvoice.tax?.amount || 0;
+      const total = createdInvoice.total || createdInvoice.amount || (subtotal + taxAmount);
+
+      await db.run(
+        `INSERT INTO payments (
+          id, contact_id, amount, currency, status, payment_method,
+          reference, description, date, ghl_invoice_id, invoice_number,
+          due_date, sent_at, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+        [
+          ghlInvoiceId,
+          contactId || null,
+          total,
+          createdInvoice.currency || 'MXN',
+          'draft', // Inicialmente siempre es draft
+          null, // payment_method (se llena cuando se pague)
+          createdInvoice.invoiceNumber || null,
+          createdInvoice.name || createdInvoice.title || 'Pago',
+          createdInvoice.issueDate || createdInvoice.createdAt || new Date().toISOString(),
+          ghlInvoiceId,
+          createdInvoice.invoiceNumber || null,
+          createdInvoice.dueDate || null,
+          null // sent_at (se llena cuando se envíe)
+        ]
+      );
+
+      logger.success(`Invoice guardado en BD local: ${ghlInvoiceId}`);
+    } catch (dbError) {
+      logger.error(`Error guardando invoice en BD local: ${dbError.message}`);
+      // No fallar, el invoice ya se creó en HighLevel
+    }
+
     res.json({
       success: true,
-      invoice: data.invoice || data
+      invoice: createdInvoice
     });
 
   } catch (error) {
@@ -787,6 +877,20 @@ export const sendInvoice = async (req, res) => {
         fromEmail
       }
     });
+
+    // Actualizar estado en BD local
+    try {
+      await db.run(
+        `UPDATE payments
+         SET status = 'sent', sent_at = ?
+         WHERE ghl_invoice_id = ?`,
+        [new Date().toISOString(), invoiceId]
+      );
+      logger.success(`Estado actualizado a 'sent' para invoice: ${invoiceId}`);
+    } catch (dbError) {
+      logger.error(`Error actualizando estado en BD: ${dbError.message}`);
+      // No fallar, el invoice ya se envió
+    }
 
     res.json({
       success: true,
@@ -866,6 +970,53 @@ export const recordPayment = async (req, res) => {
       note: noteParts.join('\n'),
       mode
     });
+
+    // Actualizar estado en BD local
+    try {
+      await db.run(
+        `UPDATE payments
+         SET status = 'paid', payment_method = ?, reference = ?
+         WHERE ghl_invoice_id = ?`,
+        [normalizedMethod, reference || null, invoiceId]
+      );
+      logger.success(`Estado actualizado a 'paid' para invoice: ${invoiceId}`);
+
+      // Actualizar estadísticas del contacto
+      const payment = await db.get(
+        'SELECT contact_id FROM payments WHERE ghl_invoice_id = ?',
+        [invoiceId]
+      );
+
+      if (payment && payment.contact_id) {
+        const stats = await db.get(
+          `SELECT
+            SUM(amount) as total_paid,
+            COUNT(*) as purchases_count,
+            MAX(date) as last_purchase_date
+           FROM payments
+           WHERE contact_id = ? AND status = 'paid'`,
+          [payment.contact_id]
+        );
+
+        if (stats) {
+          await db.run(
+            `UPDATE contacts
+             SET total_paid = ?, purchases_count = ?, last_purchase_date = ?, updated_at = CURRENT_TIMESTAMP
+             WHERE id = ?`,
+            [
+              stats.total_paid || 0,
+              stats.purchases_count || 0,
+              stats.last_purchase_date || null,
+              payment.contact_id
+            ]
+          );
+          logger.success(`Estadísticas actualizadas para contacto: ${payment.contact_id}`);
+        }
+      }
+    } catch (dbError) {
+      logger.error(`Error actualizando estado en BD: ${dbError.message}`);
+      // No fallar, el pago ya se registró
+    }
 
     res.json({
       success: true,

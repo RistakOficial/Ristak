@@ -335,6 +335,128 @@ export const handleRefundWebhook = async (req, res) => {
 };
 
 /**
+ * Procesa webhooks de invoices (InvoiceSent, InvoicePaid, InvoiceVoided, InvoiceRefunded)
+ */
+export const handleInvoiceWebhook = async (req, res) => {
+  try {
+    const data = req.body;
+    const eventType = data.type || data.eventType;
+
+    logger.info(`📥 Webhook de invoice recibido: ${eventType || 'sin tipo'}`);
+
+    // Obtener invoice ID
+    const invoiceId = data.id || data.invoiceId || data._id;
+
+    if (!invoiceId) {
+      logger.warn('Webhook de invoice sin ID, ignorando');
+      return res.status(200).json({ success: true, message: 'Webhook recibido' });
+    }
+
+    // Mapear el tipo de evento al estado
+    let newStatus = null;
+    let updateFields = {};
+
+    switch (eventType) {
+      case 'InvoiceSent':
+      case 'invoice.sent':
+        newStatus = 'sent';
+        updateFields.sent_at = new Date().toISOString();
+        logger.info(`Invoice ${invoiceId} fue enviado`);
+        break;
+
+      case 'InvoicePaid':
+      case 'invoice.paid':
+      case 'InvoiceFulfilled':
+        newStatus = 'paid';
+        updateFields.payment_method = data.paymentMode || data.payment_mode || 'online';
+        logger.info(`Invoice ${invoiceId} fue pagado`);
+        break;
+
+      case 'InvoiceVoided':
+      case 'invoice.voided':
+        newStatus = 'void';
+        logger.info(`Invoice ${invoiceId} fue anulado`);
+        break;
+
+      case 'InvoiceRefunded':
+      case 'invoice.refunded':
+        newStatus = 'refunded';
+        logger.info(`Invoice ${invoiceId} fue reembolsado`);
+        break;
+
+      case 'InvoiceDeleted':
+      case 'invoice.deleted':
+        // Eliminar de BD local
+        await db.run('DELETE FROM payments WHERE ghl_invoice_id = ?', [invoiceId]);
+        logger.info(`Invoice ${invoiceId} fue eliminado`);
+        return res.status(200).json({ success: true, message: 'Invoice eliminado' });
+
+      default:
+        logger.warn(`Tipo de evento de invoice no manejado: ${eventType}`);
+        return res.status(200).json({ success: true, message: 'Evento no manejado' });
+    }
+
+    if (newStatus) {
+      // Construir query de actualización
+      const setFields = [`status = ?`];
+      const values = [newStatus];
+
+      if (updateFields.sent_at) {
+        setFields.push('sent_at = ?');
+        values.push(updateFields.sent_at);
+      }
+
+      if (updateFields.payment_method) {
+        setFields.push('payment_method = ?');
+        values.push(updateFields.payment_method);
+      }
+
+      values.push(invoiceId);
+
+      await db.run(
+        `UPDATE payments SET ${setFields.join(', ')} WHERE ghl_invoice_id = ?`,
+        values
+      );
+
+      logger.success(`Estado actualizado a '${newStatus}' para invoice: ${invoiceId}`);
+
+      // Si fue pagado, actualizar estadísticas del contacto
+      if (newStatus === 'paid') {
+        const payment = await db.get(
+          'SELECT contact_id FROM payments WHERE ghl_invoice_id = ?',
+          [invoiceId]
+        );
+
+        if (payment && payment.contact_id) {
+          await updateSingleContactStats(payment.contact_id);
+          logger.success(`Estadísticas actualizadas para contacto: ${payment.contact_id}`);
+        }
+      }
+
+      // Si fue reembolsado, recalcular estadísticas
+      if (newStatus === 'refunded') {
+        const payment = await db.get(
+          'SELECT contact_id FROM payments WHERE ghl_invoice_id = ?',
+          [invoiceId]
+        );
+
+        if (payment && payment.contact_id) {
+          await updateSingleContactStats(payment.contact_id);
+          logger.success(`Estadísticas recalculadas tras reembolso para contacto: ${payment.contact_id}`);
+        }
+      }
+    }
+
+    res.status(200).json({ success: true, message: 'Invoice webhook procesado' });
+
+  } catch (error) {
+    logger.error(`Error en handleInvoiceWebhook: ${error.message}`);
+    // Siempre devolver 200 para que HighLevel no reintente
+    res.status(200).json({ success: true, message: 'Webhook recibido' });
+  }
+};
+
+/**
  * Procesa webhook de atribución de WhatsApp
  */
 export const handleWhatsAppAttributionWebhook = async (req, res) => {

@@ -18,24 +18,29 @@ export const ChartTooltip: React.FC<ChartTooltipProps> = ({
 }) => {
   const [isModalOpen, setIsModalOpen] = useState(false)
 
-  // Detectar si hay un modal abierto en el DOM
+  // Detectar si hay un modal abierto verificando overflow:hidden en body
   useEffect(() => {
     const checkModalOpen = () => {
-      // Buscar si existe algún elemento con backdrop de modal
-      const modalBackdrop = document.querySelector('[class*="backdrop"]')
-      setIsModalOpen(!!modalBackdrop)
+      // Los modales setean document.body.style.overflow = 'hidden'
+      const hasOverflowHidden = document.body.style.overflow === 'hidden'
+      setIsModalOpen(hasOverflowHidden)
     }
 
-    // Verificar al montar y cada vez que cambia el DOM
+    // Verificar al montar
     checkModalOpen()
 
-    // Observar cambios en el body para detectar cuando se abre/cierra un modal
-    const observer = new MutationObserver(checkModalOpen)
+    // Observar cambios en el atributo style del body
+    const observer = new MutationObserver((mutations) => {
+      mutations.forEach((mutation) => {
+        if (mutation.type === 'attributes' && mutation.attributeName === 'style') {
+          checkModalOpen()
+        }
+      })
+    })
+
     observer.observe(document.body, {
-      childList: true,
-      subtree: true,
       attributes: true,
-      attributeFilter: ['class']
+      attributeFilter: ['style']
     })
 
     return () => observer.disconnect()

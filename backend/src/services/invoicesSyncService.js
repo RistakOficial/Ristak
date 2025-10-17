@@ -207,15 +207,22 @@ export async function syncInvoices({ limit = 100, offset = 0, contactId } = {}) 
  * @returns {string} - Status interno
  */
 function mapInvoiceStatus(ghlStatus) {
+  // Mapeo directo 1:1 - mantenemos TODOS los estados de HighLevel
   const statusMap = {
-    'draft': 'pending',        // Borrador → Pendiente
-    'sent': 'pending',          // Enviado pero no pagado → Pendiente
-    'paid': 'paid',             // Pagado → Pagado
-    'void': 'refunded',         // Anulado → Reembolsado (o void si quieres crear ese estado)
-    'partially_paid': 'pending' // Parcialmente pagado → Pendiente
+    'draft': 'draft',                // Borrador
+    'sent': 'sent',                  // Enviado
+    'paid': 'paid',                  // Pagado
+    'void': 'void',                  // Anulado
+    'voided': 'void',                // Anulado (variante)
+    'refunded': 'refunded',          // Reembolsado
+    'partially_paid': 'partial',     // Parcialmente pagado
+    'partial': 'partial',            // Parcialmente pagado (variante)
+    'pending': 'pending',            // Pendiente
+    'overdue': 'overdue',            // Vencido
+    'deleted': 'deleted'             // Eliminado
   }
 
-  return statusMap[ghlStatus] || 'pending'
+  return statusMap[ghlStatus] || ghlStatus || 'pending'
 }
 
 /**

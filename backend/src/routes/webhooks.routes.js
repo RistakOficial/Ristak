@@ -4,7 +4,8 @@ import {
   handlePaymentWebhook,
   handleRefundWebhook,
   handleAppointmentWebhook,
-  handleWhatsAppAttributionWebhook
+  handleWhatsAppAttributionWebhook,
+  handleInvoiceWebhook
 } from '../controllers/webhooksController.js'
 
 const router = express.Router()
@@ -14,5 +15,6 @@ router.post('/payment', handlePaymentWebhook)
 router.post('/refund', handleRefundWebhook)
 router.post('/appointment', handleAppointmentWebhook)
 router.post('/whatsapp/attribution', handleWhatsAppAttributionWebhook)
+router.post('/invoice', handleInvoiceWebhook)
 
 export default router
