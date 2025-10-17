@@ -30,6 +30,7 @@ export const MetaAdsIntegration: React.FC = () => {
                   <Facebook size={36} color="white" />
                 </div>
               </div>
+              <h2 className={styles.pageTitle}>Meta Ads</h2>
               <p className={styles.pageSubtitle}>
                 Tutorial completo para conectar tus anuncios de Facebook con Ristak
               </p>

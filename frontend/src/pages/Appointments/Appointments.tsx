@@ -520,9 +520,8 @@ export const Appointments: React.FC = () => {
                       {cell.events.slice(0, 3).map((event) => (
                         <div
                           key={event.id}
-                          className={styles.eventChip}
-                          style={{ backgroundColor: getEventColor(event.appointmentStatus) }}
-                          title={`${event.title} - ${event.appointmentStatus}`}
+                          className={`${styles.eventChip} ${styles[`event${event.appointmentStatus.charAt(0).toUpperCase() + event.appointmentStatus.slice(1).toLowerCase()}`] || styles.eventDefault}`}
+                          title={`${event.title || '(Sin título)'} - ${event.appointmentStatus}`}
                           onDoubleClick={(e) => {
                             e.stopPropagation();
                             handleEventClick(event);
@@ -531,7 +530,7 @@ export const Appointments: React.FC = () => {
                           <span className={styles.eventTime}>
                             {formatTime12h(event.startTime)}
                           </span>{' '}
-                          {event.title}
+                          {event.title || '(Sin título)'}
                         </div>
                       ))}
                       {cell.events.length > 3 && (
