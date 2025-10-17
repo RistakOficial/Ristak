@@ -195,9 +195,18 @@ export const saveConfig = async (req, res) => {
  */
 export const getConfig = async (req, res) => {
   try {
-    const config = await db.get(
-      'SELECT location_id, api_token, location_data, created_at FROM highlevel_config LIMIT 1'
-    );
+    // Intentar obtener config con columnas de invoice
+    let config;
+    try {
+      config = await db.get(
+        'SELECT location_id, api_token, location_data, created_at, invoice_title, invoice_number_prefix, invoice_terms_notes, invoice_due_days FROM highlevel_config LIMIT 1'
+      );
+    } catch (selectError) {
+      // Si falla (columnas no existen), usar SELECT básico
+      config = await db.get(
+        'SELECT location_id, api_token, location_data, created_at FROM highlevel_config LIMIT 1'
+      );
+    }
 
     if (!config) {
       return res.json({
@@ -241,10 +250,10 @@ export const getConfig = async (req, res) => {
       companyLogoUrl: business.logoUrl || locationDataRaw?.logoUrl || null,
       companyWebsite: business.website || locationDataRaw?.website || null,
       domain: locationDataRaw?.domain || null,
-      invoiceTitle: 'PAGO',
-      invoiceNumberPrefix: 'INV-',
-      invoiceTermsNotes: null,
-      invoiceDueDays: 7
+      invoiceTitle: config.invoice_title || 'PAGO',
+      invoiceNumberPrefix: config.invoice_number_prefix || 'INV-',
+      invoiceTermsNotes: config.invoice_terms_notes || null,
+      invoiceDueDays: config.invoice_due_days || 7
     });
 
   } catch (error) {
@@ -1382,6 +1391,128 @@ export const getStripeConfig = async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Error obteniendo configuración de Stripe'
+    });
+  }
+};
+
+/**
+ * Guarda la configuración de pagos/invoices
+ * POST /api/highlevel/invoice-config
+ */
+export const saveInvoiceConfig = async (req, res) => {
+  try {
+    const { invoiceTitle, invoiceNumberPrefix, invoiceTermsNotes, invoiceDueDays } = req.body;
+
+    // Validaciones básicas
+    if (!invoiceTitle || !invoiceNumberPrefix) {
+      return res.status(400).json({
+        success: false,
+        error: 'Se requieren título y prefijo del documento'
+      });
+    }
+
+    if (!invoiceDueDays || invoiceDueDays < 1) {
+      return res.status(400).json({
+        success: false,
+        error: 'Los días de vencimiento deben ser al menos 1'
+      });
+    }
+
+    // Verificar que existe config de HighLevel
+    const config = await db.get('SELECT id, location_id FROM highlevel_config LIMIT 1');
+
+    if (!config || !config.location_id) {
+      return res.status(400).json({
+        success: false,
+        error: 'Primero debes configurar tu cuenta de HighLevel'
+      });
+    }
+
+    // Intentar UPDATE con las columnas de invoice
+    const updateSQL = `
+      UPDATE highlevel_config
+      SET invoice_title = ?,
+          invoice_number_prefix = ?,
+          invoice_terms_notes = ?,
+          invoice_due_days = ?
+      WHERE location_id = ?
+    `;
+
+    const values = [
+      invoiceTitle.trim(),
+      invoiceNumberPrefix.trim(),
+      invoiceTermsNotes?.trim() || null,
+      parseInt(invoiceDueDays),
+      config.location_id
+    ];
+
+    try {
+      await db.run(updateSQL, values);
+    } catch (updateError) {
+      // Si falla porque las columnas no existen, agregarlas primero
+      if (updateError.message.includes('no such column')) {
+        logger.warn('🔧 Columnas de invoice no existen, agregándolas...');
+
+        // Agregar columnas
+        try {
+          await db.run('ALTER TABLE highlevel_config ADD COLUMN invoice_title TEXT DEFAULT \'PAGO\'');
+          logger.success('✅ Columna invoice_title agregada');
+        } catch (e) {
+          if (!e.message.includes('duplicate column') && !e.message.includes('already exists')) {
+            throw e;
+          }
+        }
+
+        try {
+          await db.run('ALTER TABLE highlevel_config ADD COLUMN invoice_number_prefix TEXT DEFAULT \'INV-\'');
+          logger.success('✅ Columna invoice_number_prefix agregada');
+        } catch (e) {
+          if (!e.message.includes('duplicate column') && !e.message.includes('already exists')) {
+            throw e;
+          }
+        }
+
+        try {
+          await db.run('ALTER TABLE highlevel_config ADD COLUMN invoice_terms_notes TEXT');
+          logger.success('✅ Columna invoice_terms_notes agregada');
+        } catch (e) {
+          if (!e.message.includes('duplicate column') && !e.message.includes('already exists')) {
+            throw e;
+          }
+        }
+
+        try {
+          await db.run('ALTER TABLE highlevel_config ADD COLUMN invoice_due_days INTEGER DEFAULT 7');
+          logger.success('✅ Columna invoice_due_days agregada');
+        } catch (e) {
+          if (!e.message.includes('duplicate column') && !e.message.includes('already exists')) {
+            throw e;
+          }
+        }
+
+        logger.info('🔄 Reintentando UPDATE después de agregar columnas...');
+
+        // Reintentar el UPDATE
+        await db.run(updateSQL, values);
+
+        logger.success('✅ UPDATE exitoso después de agregar columnas');
+      } else {
+        throw updateError;
+      }
+    }
+
+    logger.info(`Configuración de pagos guardada para location ${config.location_id}`);
+
+    res.json({
+      success: true,
+      message: 'Configuración de pagos guardada exitosamente'
+    });
+
+  } catch (error) {
+    logger.error(`Error guardando configuración de pagos: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Error guardando configuración de pagos'
     });
   }
 };

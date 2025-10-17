@@ -153,8 +153,26 @@ export const PaymentsConfiguration: React.FC = () => {
   const handleSavePaymentConfig = async () => {
     setLoadingPaymentConfig(true)
     try {
-      // Por ahora solo mostramos mensaje - después conectaremos con backend
+      const response = await fetch('/api/highlevel/invoice-config', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          invoiceTitle: paymentTitle.trim(),
+          invoiceNumberPrefix: paymentNumberPrefix.trim(),
+          invoiceTermsNotes: paymentTermsNotes.trim() || null,
+          invoiceDueDays: paymentDueDays
+        })
+      })
+
+      if (!response.ok) {
+        const error = await response.json()
+        throw new Error(error.error || 'Error al guardar configuración')
+      }
+
       showToast('success', 'Configuración de pagos guardada exitosamente')
+      await loadPaymentConfig() // Recargar configuración
     } catch (error: any) {
       showToast('error', error.message || 'Error al guardar configuración de pagos')
     } finally {
