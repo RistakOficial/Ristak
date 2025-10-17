@@ -715,7 +715,7 @@ export const Appointments: React.FC = () => {
                           return (
                             <div
                               key={event.id}
-                              className={`${styles.weekEvent} ${statusClass}`}
+                              className={`${styles.weekEvent} ${styles.eventBlock} ${statusClass}`}
                               style={{
                                 top: `${top}%`,
                                 height: `${height}%`
@@ -810,7 +810,7 @@ export const Appointments: React.FC = () => {
                       return (
                         <div
                           key={event.id}
-                          className={`${styles.dayEvent} ${statusClass}`}
+                          className={`${styles.dayEvent} ${styles.eventBlock} ${statusClass}`}
                           style={{
                             top: `${top}%`,
                             height: `${height}%`
