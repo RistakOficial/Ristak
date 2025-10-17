@@ -953,7 +953,6 @@
 
 .upcomingItem:hover {
   background-color: var(--color-gray-50);
-  border-color: var(--color-primary-300);
 }
 
 .upcomingItem:focus,
