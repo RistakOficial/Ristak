@@ -208,7 +208,7 @@ export const Appointments: React.FC = () => {
     };
   };
 
-  // Generar celdas del calendario mensual
+  // Generar celdas del calendario mensual (SIEMPRE 4 semanas = 28 días)
   const monthCells = useMemo((): DayCell[] => {
     const year = currentDate.getFullYear();
     const month = currentDate.getMonth();
@@ -220,19 +220,11 @@ export const Appointments: React.FC = () => {
     const dayOfWeek = (firstDay.getDay() + 6) % 7; // 0 = lunes
     startDay.setDate(firstDay.getDate() - dayOfWeek);
 
-    // Calcular cuántas semanas necesitamos (5 o 6)
-    const lastDayOfMonth = new Date(year, month + 1, 0);
-    const lastDayOfWeek = (lastDayOfMonth.getDay() + 6) % 7;
-    const daysAfterMonth = 6 - lastDayOfWeek;
-    const totalDays = dayOfWeek + lastDayOfMonth.getDate() + daysAfterMonth;
-    const weeks = Math.ceil(totalDays / 7);
-    const cellCount = weeks * 7; // 35 o 42 celdas
-
     const cells: DayCell[] = [];
     const eventsByDate = calendarsService.groupEventsByDate(events);
 
-    // Generar todas las celdas necesarias
-    for (let i = 0; i < cellCount; i++) {
+    // Generar EXACTAMENTE 28 celdas (4 semanas)
+    for (let i = 0; i < 28; i++) {
       const date = new Date(startDay);
       date.setDate(startDay.getDate() + i);
 
@@ -529,7 +521,7 @@ export const Appointments: React.FC = () => {
                         <div
                           key={event.id}
                           className={styles.eventChip}
-                          style={{ borderColor: getEventColor(event.appointmentStatus) }}
+                          style={{ backgroundColor: getEventColor(event.appointmentStatus) }}
                           title={`${event.title} - ${event.appointmentStatus}`}
                           onDoubleClick={(e) => {
                             e.stopPropagation();
@@ -568,7 +560,7 @@ export const Appointments: React.FC = () => {
                     const isToday = date.toDateString() === new Date().toDateString();
 
                     return (
-                      <div key={i} className={styles.weekDayHeader}>
+                      <div key={i} className={`${styles.weekDayHeader} ${isToday ? styles.weekDayHeaderToday : ''}`}>
                         <div className={styles.weekDayName}>{DAYS_SHORT[i]}</div>
                         <div className={`${styles.weekDayNumber} ${isToday ? styles.weekDayToday : ''}`}>
                           {date.getDate()}
