@@ -717,32 +717,35 @@ export const Reports: React.FC = () => {
 
   const summaryCards = summary ? [
     {
-      label: 'Total Contactos',
-      value: formatNumber(summary.contacts.total),
-      delta: calcDelta(summary.contacts.total, summary.contacts.totalPrev),
-      deltaLabel: 'vs periodo anterior',
-      icon: <Users className="text-[var(--color-text-tertiary)]" />
-    },
-    {
-      label: labels.customers,
-      value: formatNumber(summary.contacts.customers),
-      delta: calcDelta(summary.contacts.customers, summary.contacts.customersPrev),
-      deltaLabel: 'vs periodo anterior',
-      icon: <UserCheck className="text-[var(--color-text-tertiary)]" />
-    },
-    {
       label: 'Ingresos',
       value: formatCurrency(summary.payments.totalRevenue),
       delta: calcDelta(summary.payments.totalRevenue, summary.payments.totalRevenuePrev),
-      deltaLabel: 'vs periodo anterior',
+      deltaLabel: 'vs anterior',
       icon: <DollarSign className="text-[var(--color-text-tertiary)]" />
     },
     {
-      label: 'Retorno de Inversión Campañas',
-      value: formatRoas(summary.campaigns.roas || 0),
-      delta: calcDelta(summary.campaigns.roas || 0, summary.campaigns.roasPrev || 0),
-      deltaLabel: 'vs periodo anterior',
+      label: 'Ganancia',
+      value: formatCurrency(summary.payments.totalRevenue - summary.campaigns.spend),
+      delta: calcDelta(
+        summary.payments.totalRevenue - summary.campaigns.spend,
+        summary.payments.totalRevenuePrev - summary.campaigns.spendPrev
+      ),
+      deltaLabel: 'vs anterior',
       icon: <Target className="text-[var(--color-text-tertiary)]" />
+    },
+    {
+      label: 'Clientes Nuevos',
+      value: formatNumber(summary.contacts.customers),
+      delta: calcDelta(summary.contacts.customers, summary.contacts.customersPrev),
+      deltaLabel: 'vs anterior',
+      icon: <UserCheck className="text-[var(--color-text-tertiary)]" />
+    },
+    {
+      label: 'Gastos',
+      value: formatCurrency(summary.campaigns.spend),
+      delta: calcDelta(summary.campaigns.spend, summary.campaigns.spendPrev),
+      deltaLabel: 'vs anterior',
+      icon: <Users className="text-[var(--color-text-tertiary)]" />
     }
   ] : []
 

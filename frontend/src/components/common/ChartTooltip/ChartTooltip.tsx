@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useEffect, useState } from 'react'
 import ReactDOM from 'react-dom'
 
 interface ChartTooltipProps {
@@ -16,7 +16,33 @@ export const ChartTooltip: React.FC<ChartTooltipProps> = ({
   series,
   formatValue
 }) => {
-  if (!active || !data || !pointPos) {
+  const [isModalOpen, setIsModalOpen] = useState(false)
+
+  // Detectar si hay un modal abierto en el DOM
+  useEffect(() => {
+    const checkModalOpen = () => {
+      // Buscar si existe algún elemento con backdrop de modal
+      const modalBackdrop = document.querySelector('[class*="backdrop"]')
+      setIsModalOpen(!!modalBackdrop)
+    }
+
+    // Verificar al montar y cada vez que cambia el DOM
+    checkModalOpen()
+
+    // Observar cambios en el body para detectar cuando se abre/cierra un modal
+    const observer = new MutationObserver(checkModalOpen)
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['class']
+    })
+
+    return () => observer.disconnect()
+  }, [])
+
+  // No mostrar tooltip si hay modal abierto
+  if (!active || !data || !pointPos || isModalOpen) {
     return null
   }
 
@@ -28,7 +54,7 @@ export const ChartTooltip: React.FC<ChartTooltipProps> = ({
         top: pointPos.y - 120, // 120px arriba del punto más alto (distancia segura)
         transform: 'translateX(-50%)',
         pointerEvents: 'none',
-        zIndex: 2147483647, // Máximo z-index posible
+        zIndex: 9998, // Justo debajo del modal (9999)
         transition: 'left 150ms ease-out, top 150ms ease-out', // Transición suave entre puntos
       }}
     >
