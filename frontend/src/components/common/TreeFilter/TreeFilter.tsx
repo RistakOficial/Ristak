@@ -459,7 +459,7 @@ export function TreeFilter({
                     return (
                       <div key={category.id} className="mb-3">
                         {/* Título de la categoría */}
-                        <div className="px-3 py-1.5 border-b border-[var(--color-border)] mb-1 flex items-center gap-2">
+                        <div className="px-3 py-1.5 mb-1 flex items-center gap-2" style={{ borderBottom: '1px solid var(--color-border-subtle)' }}>
                           {Icon && <Icon className="w-3.5 h-3.5 text-[var(--color-text-secondary)]" />}
                           <h3 className="text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider">
                             {category.label}
@@ -539,7 +539,7 @@ export function TreeFilter({
                   return (
                     <div key={category.id} className="py-2">
                       {/* Título de la categoría */}
-                      <div className="px-3 py-2 border-b border-[var(--color-border)] mb-1">
+                      <div className="px-3 py-2 mb-1" style={{ borderBottom: '1px solid var(--color-border-subtle)' }}>
                         <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">
                           {category.label}
                         </h3>
@@ -561,9 +561,9 @@ export function TreeFilter({
                               className={`
                                 flex items-center gap-2 px-3 py-2 cursor-pointer
                                 transition-all duration-150
-                                ${index > 0 ? 'border-t border-[var(--color-border-subtle)]' : ''}
+                                ${index % 2 === 1 ? 'bg-[var(--color-background-secondary)]' : ''}
                                 ${isSelected
-                                  ? 'bg-[var(--color-accent)]/20 text-[var(--color-accent)] hover:bg-[var(--color-accent)]/25'
+                                  ? 'bg-[var(--color-accent)]/20 text-[var(--color-accent)] hover:bg-[var(--color-accent)]/25 !important'
                                   : 'hover:bg-[var(--color-background-tertiary)] text-[var(--color-text-primary)]'
                                 }
                               `}

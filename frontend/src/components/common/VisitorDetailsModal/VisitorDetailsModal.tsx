@@ -125,6 +125,11 @@ export function VisitorDetailsModal({
     return 'purple'
   }
 
+  const getVisitorIdSuffix = (visitorId?: string) => {
+    if (!visitorId) return 'sin-id'
+    return visitorId.slice(-8)
+  }
+
   const getVisitorName = (visitor: VisitorDetail) => {
     if (visitor.contact?.name) return visitor.contact.name
     if (visitor.contact?.email) return visitor.contact.email
@@ -138,11 +143,6 @@ export function VisitorDetailsModal({
     if (visitor.utmCampaign) return visitor.utmCampaign
     if (visitor.utmSource) return `Desde ${visitor.utmSource}`
     return 'Visitante anónimo'
-  }
-
-  const getVisitorIdSuffix = (visitorId?: string) => {
-    if (!visitorId) return 'sin-id'
-    return visitorId.slice(-8)
   }
 
   return (
@@ -294,7 +294,7 @@ export function VisitorDetailsModal({
                   )}
                   {!selectedVisitor.contact?.id && (
                     <p className={styles.visitorHeaderAnonymous}>
-                      Visitante anónimo - ID: {selectedVisitor.visitorId.slice(-8)}
+                      Visitante anónimo - ID: {getVisitorIdSuffix(selectedVisitor.visitorId)}
                     </p>
                   )}
                 </div>
