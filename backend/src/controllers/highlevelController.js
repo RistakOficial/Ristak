@@ -1201,7 +1201,7 @@ export const getContactById = async (req, res) => {
     }
 
     const ghlClient = await getGHLClient();
-    const contact = await ghlClient.get(`/contacts/${id}`);
+    const contact = await ghlClient.request(`/contacts/${id}`);
 
     res.json({
       success: true,
