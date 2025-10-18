@@ -442,6 +442,21 @@ export async function collectEvent(req, res) {
 
     const { visitor_id, session_id, contact_id, event_name, ts, data } = req.body
 
+    // 🔍 DEBUG: Log datos entrantes
+    logger.info(`[TRACKING DEBUG] Datos recibidos:`, {
+      visitor_id,
+      session_id,
+      event_name,
+      utm_source: data?.utm_source,
+      utm_medium: data?.utm_medium,
+      fbclid: data?.fbclid,
+      gclid: data?.gclid,
+      campaign_id: data?.campaign_id,
+      adset_id: data?.adset_id,
+      ad_id: data?.ad_id,
+      referrer: data?.referrer
+    })
+
     // Validaciones básicas
     if (!visitor_id || !session_id || !event_name || !ts) {
       return res.status(400).json({ error: 'Missing required fields' })

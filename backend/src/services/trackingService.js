@@ -172,6 +172,14 @@ export async function createSession(sessionData) {
   const adsParams = extractAdsParams(data)
   const sourceInfo = deriveSourceInfo(data, utms, clickIds)
 
+  // 🔍 DEBUG: Log valores calculados
+  logger.info(`[TRACKING DEBUG] Valores extraídos:`, {
+    utms,
+    clickIds,
+    adsParams,
+    sourceInfo
+  })
+
   const startedAt = new Date(ts).toISOString()
 
   // Validar si el contact_id existe en la DB antes de insertarlo
