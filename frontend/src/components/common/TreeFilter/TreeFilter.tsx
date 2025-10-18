@@ -383,7 +383,7 @@ export function TreeFilter({
                   }
                 </div>
               ) : filterTree.length > 0 ? (
-                filterTree.map(category => {
+                filterTree.map((category, index) => {
                   const Icon = category.icon
                   const selectedCount = getSelectedCountForCategory(category)
                   const isHovered = hoveredCategory === category.id
@@ -397,6 +397,7 @@ export function TreeFilter({
                         transition-all duration-150
                         ${isHovered ? 'bg-[var(--color-background-tertiary)]' : 'hover:bg-[var(--color-background-secondary)]'}
                         ${selectedCount > 0 ? 'text-[var(--color-accent)]' : 'text-[var(--color-text-primary)]'}
+                        ${index > 0 ? 'border-t border-[var(--color-border-subtle)]' : ''}
                       `}
                     >
                       <div className="flex items-center gap-2">
@@ -482,7 +483,7 @@ export function TreeFilter({
                                 className={`
                                   flex items-center gap-2 px-3 py-2 cursor-pointer
                                   transition-all duration-150
-                                  ${index % 2 === 1 ? 'bg-[var(--color-background-secondary)]' : ''}
+                                  ${index > 0 ? 'border-t border-[var(--color-border-subtle)]' : ''}
                                   ${isSelected
                                     ? 'bg-[var(--color-accent)]/20 text-[var(--color-accent)] hover:bg-[var(--color-accent)]/25'
                                     : 'hover:bg-[var(--color-background-tertiary)] text-[var(--color-text-primary)]'
@@ -560,7 +561,7 @@ export function TreeFilter({
                               className={`
                                 flex items-center gap-2 px-3 py-2 cursor-pointer
                                 transition-all duration-150
-                                ${index % 2 === 1 ? 'bg-[var(--color-background-secondary)]' : ''}
+                                ${index > 0 ? 'border-t border-[var(--color-border-subtle)]' : ''}
                                 ${isSelected
                                   ? 'bg-[var(--color-accent)]/20 text-[var(--color-accent)] hover:bg-[var(--color-accent)]/25'
                                   : 'hover:bg-[var(--color-background-tertiary)] text-[var(--color-text-primary)]'
