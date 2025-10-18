@@ -136,84 +136,6 @@ export const Appointments: React.FC = () => {
   const weekGridRef = useRef<HTMLDivElement | null>(null);
   const dayGridRef = useRef<HTMLDivElement | null>(null);
 
-  // Cargar calendarios al montar
-  useEffect(() => {
-    console.log('🟡 useEffect loadCalendars triggered', { locationId, accessToken });
-    if (locationId && accessToken) {
-      loadCalendars();
-    }
-  }, [locationId, accessToken, loadCalendars]);
-
-  // Cargar eventos cuando cambie el calendario o la fecha
-  useEffect(() => {
-    console.log('🟢 useEffect loadEvents triggered', {
-      selectedCalendar: selectedCalendar?.id,
-      currentDate: currentDate.toISOString(),
-      viewMode
-    });
-    if (selectedCalendar && locationId && accessToken) {
-      loadEvents();
-    }
-  }, [selectedCalendar, currentDate, viewMode, locationId, accessToken, loadEvents]);
-
-  // Cargar próximas citas solo cuando cambie el calendario seleccionado
-  useEffect(() => {
-    console.log('🟣 useEffect loadUpcomingEvents triggered', { selectedCalendar: selectedCalendar?.id });
-    if (selectedCalendar && locationId && accessToken) {
-      loadUpcomingEvents();
-    }
-  }, [selectedCalendar, locationId, accessToken, loadUpcomingEvents]);
-
-  // Cerrar dropdown al presionar Escape
-  useEffect(() => {
-    const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        setIsCalendarDropdownOpen(false);
-      }
-    };
-
-    if (isCalendarDropdownOpen) {
-      document.addEventListener('keydown', handleEscape);
-      return () => document.removeEventListener('keydown', handleEscape);
-    }
-  }, [isCalendarDropdownOpen]);
-
-  const loadCalendars = useCallback(async () => {
-    console.log('📞 loadCalendars called');
-    if (!locationId || !accessToken) return;
-
-    try {
-      setLoading(true);
-      const calendarsData = await calendarsService.getCalendars(locationId, accessToken);
-      console.log('📅 Calendars loaded:', calendarsData.length);
-      setCalendars(calendarsData);
-
-      // Seleccionar calendario: predeterminado guardado > primer activo
-      let calendarToSelect: Calendar | undefined;
-
-      if (defaultCalendarId) {
-        calendarToSelect = calendarsData.find((cal) => cal.id === defaultCalendarId && cal.isActive);
-      }
-
-      if (!calendarToSelect) {
-        calendarToSelect = calendarsData.find((cal) => cal.isActive);
-      }
-
-      if (calendarToSelect) {
-        console.log('✅ Setting selected calendar:', calendarToSelect.id);
-        setSelectedCalendar(calendarToSelect);
-      } else {
-        console.log('⚠️ No calendar to select');
-      }
-    } catch (error) {
-      console.error('❌ Error loading calendars:', error);
-      showToast('error', 'Error al cargar calendarios', 'No se pudieron obtener los calendarios.');
-    } finally {
-      setLoading(false);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [locationId, accessToken, defaultCalendarId]);
-
   // Función para calcular rango de fechas (necesita estar antes de loadEvents)
   const getDateRange = useCallback((): { startTime: number; endTime: number } => {
     let start: Date;
@@ -265,6 +187,42 @@ export const Appointments: React.FC = () => {
       endTime: end.getTime()
     };
   }, [currentDate, viewMode]);
+
+  const loadCalendars = useCallback(async () => {
+    console.log('📞 loadCalendars called');
+    if (!locationId || !accessToken) return;
+
+    try {
+      setLoading(true);
+      const calendarsData = await calendarsService.getCalendars(locationId, accessToken);
+      console.log('📅 Calendars loaded:', calendarsData.length);
+      setCalendars(calendarsData);
+
+      // Seleccionar calendario: predeterminado guardado > primer activo
+      let calendarToSelect: Calendar | undefined;
+
+      if (defaultCalendarId) {
+        calendarToSelect = calendarsData.find((cal) => cal.id === defaultCalendarId && cal.isActive);
+      }
+
+      if (!calendarToSelect) {
+        calendarToSelect = calendarsData.find((cal) => cal.isActive);
+      }
+
+      if (calendarToSelect) {
+        console.log('✅ Setting selected calendar:', calendarToSelect.id);
+        setSelectedCalendar(calendarToSelect);
+      } else {
+        console.log('⚠️ No calendar to select');
+      }
+    } catch (error) {
+      console.error('❌ Error loading calendars:', error);
+      showToast('error', 'Error al cargar calendarios', 'No se pudieron obtener los calendarios.');
+    } finally {
+      setLoading(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [locationId, accessToken, defaultCalendarId]);
 
   const loadEvents = useCallback(async () => {
     console.log('📞 loadEvents called');
@@ -330,6 +288,49 @@ export const Appointments: React.FC = () => {
       // Error silencioso - no afecta funcionalidad principal
     }
   }, [locationId, accessToken, selectedCalendar]);
+
+  // useEffects - ejecutar después de declarar las funciones
+  // Cargar calendarios al montar
+  useEffect(() => {
+    console.log('🟡 useEffect loadCalendars triggered', { locationId, accessToken });
+    if (locationId && accessToken) {
+      loadCalendars();
+    }
+  }, [locationId, accessToken, loadCalendars]);
+
+  // Cargar eventos cuando cambie el calendario o la fecha
+  useEffect(() => {
+    console.log('🟢 useEffect loadEvents triggered', {
+      selectedCalendar: selectedCalendar?.id,
+      currentDate: currentDate.toISOString(),
+      viewMode
+    });
+    if (selectedCalendar && locationId && accessToken) {
+      loadEvents();
+    }
+  }, [selectedCalendar, currentDate, viewMode, locationId, accessToken, loadEvents]);
+
+  // Cargar próximas citas solo cuando cambie el calendario seleccionado
+  useEffect(() => {
+    console.log('🟣 useEffect loadUpcomingEvents triggered', { selectedCalendar: selectedCalendar?.id });
+    if (selectedCalendar && locationId && accessToken) {
+      loadUpcomingEvents();
+    }
+  }, [selectedCalendar, locationId, accessToken, loadUpcomingEvents]);
+
+  // Cerrar dropdown al presionar Escape
+  useEffect(() => {
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setIsCalendarDropdownOpen(false);
+      }
+    };
+
+    if (isCalendarDropdownOpen) {
+      document.addEventListener('keydown', handleEscape);
+      return () => document.removeEventListener('keydown', handleEscape);
+    }
+  }, [isCalendarDropdownOpen]);
 
   // Eventos agrupados por fecha para reutilizar en todas las vistas
   const eventsByDate = useMemo(() => calendarsService.groupEventsByDate(events), [events]);
