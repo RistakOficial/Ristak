@@ -4,6 +4,7 @@ import { Button } from '../Button';
 import { CalendarEvent } from '@/services/calendarsService';
 import { formatDate } from '@/utils/format';
 import styles from './AppointmentModal.module.css';
+import { Trash2 } from 'lucide-react';
 
 interface AppointmentModalProps {
   isOpen: boolean;
@@ -22,13 +23,32 @@ const STATUS_OPTIONS = [
   { value: 'rescheduled', label: 'Reprogramada', color: '#8b5cf6' }
 ];
 
+const ALL_TIMEZONES: string[] =
+  typeof (Intl as any).supportedValuesOf === 'function'
+    ? (Intl as any).supportedValuesOf('timeZone')
+    : [
+        'UTC',
+        'America/Mexico_City',
+        'America/Monterrey',
+        'America/Chihuahua',
+        'America/Tijuana',
+        'America/Bogota',
+        'America/Chicago',
+        'America/New_York',
+        'America/Los_Angeles',
+        'Europe/Madrid'
+      ];
+
+const DEFAULT_TIMEZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+
 const INITIAL_FORM_STATE = {
   title: '',
   appointmentStatus: 'pending' as CalendarEvent['appointmentStatus'],
   startTime: '',
   endTime: '',
   notes: '',
-  address: ''
+  address: '',
+  timeZone: DEFAULT_TIMEZONE
 };
 
 const toLocalInputValue = (value?: string | null): string => {
@@ -64,7 +84,12 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
         startTime: toLocalInputValue(event.startTime),
         endTime: toLocalInputValue(event.endTime),
         notes: event.notes || '',
-        address: event.address || ''
+        address: event.address || '',
+        timeZone:
+          event.timeZone ||
+          (event as any).timeZone ||
+          (event as any).timezone ||
+          DEFAULT_TIMEZONE
       });
     } else if (!isOpen) {
       setFormData(INITIAL_FORM_STATE);
@@ -83,6 +108,10 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
         notes: formData.notes,
         address: formData.address
       };
+
+      if (formData.timeZone) {
+        updates.timeZone = formData.timeZone;
+      }
 
       if (formData.startTime) {
         updates.startTime = new Date(formData.startTime).toISOString();
@@ -123,24 +152,31 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   const currentStatus = STATUS_OPTIONS.find((status) => status.value === formData.appointmentStatus);
   const startDate = parseDateSafe(formData.startTime) ?? parseDateSafe(event.startTime);
   const endDate = parseDateSafe(formData.endTime) ?? parseDateSafe(event.endTime);
+  const selectedTimeZone =
+    formData.timeZone ||
+    event.timeZone ||
+    (event as any).timeZone ||
+    (event as any).timezone ||
+    DEFAULT_TIMEZONE;
+
+  const timeFormatter = new Intl.DateTimeFormat('es-MX', {
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+    timeZone: selectedTimeZone
+  });
 
   const dateLabel = startDate ? formatDate(startDate, { includeYear: true }) : 'Sin fecha asignada';
   const timeLabel = startDate && endDate
-    ? `${startDate.toLocaleTimeString('es-MX', { hour: 'numeric', minute: '2-digit', hour12: true })} – ${endDate.toLocaleTimeString('es-MX', { hour: 'numeric', minute: '2-digit', hour12: true })}`
+    ? `${timeFormatter.format(startDate)} – ${timeFormatter.format(endDate)}`
     : 'Horario no definido';
 
-  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const timeZoneShort = new Intl.DateTimeFormat('es-MX', { timeZone, timeZoneName: 'short' })
+  const timeZoneShort = new Intl.DateTimeFormat('es-MX', { timeZone: selectedTimeZone, timeZoneName: 'short' })
     .formatToParts(startDate ?? new Date())
-    .find((part) => part.type === 'timeZoneName')?.value ?? timeZone;
+    .find((part) => part.type === 'timeZoneName')?.value ?? selectedTimeZone;
 
   return (
-    <Modal
-      isOpen={isOpen}
-      onClose={onClose}
-      title="Editar cita"
-      size="lg"
-    >
+    <Modal isOpen={isOpen} onClose={onClose} title="" size="lg">
       <div className={styles.container}>
         <div className={styles.summary}>
           <div className={styles.summaryBody}>
@@ -153,18 +189,30 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
               <span className={styles.timezoneBadge}>Zona horaria · {timeZoneShort}</span>
             </div>
           </div>
-          {currentStatus && (
-            <span
-              className={styles.statusChip}
-              style={{
-                color: currentStatus.color,
-                borderColor: currentStatus.color,
-                backgroundColor: `${currentStatus.color}1a`
-              }}
-            >
-              {currentStatus.label}
-            </span>
-          )}
+          <div className={styles.summaryActions}>
+            {currentStatus && (
+              <span
+                className={styles.statusChip}
+                style={{
+                  color: currentStatus.color,
+                  borderColor: currentStatus.color,
+                  backgroundColor: `${currentStatus.color}1a`
+                }}
+              >
+                {currentStatus.label}
+              </span>
+            )}
+            {onDelete && (
+              <button
+                className={styles.deleteButton}
+                onClick={handleDelete}
+                disabled={isSaving}
+                aria-label="Eliminar cita"
+              >
+                <Trash2 size={18} />
+              </button>
+            )}
+          </div>
         </div>
 
         <div className={styles.form}>
@@ -228,6 +276,24 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                 onChange={(e) => setFormData({ ...formData, endTime: e.target.value })}
               />
             </div>
+
+            <div className={styles.field}>
+              <label className={styles.label} htmlFor="timeZone">
+                Zona horaria
+              </label>
+              <select
+                id="timeZone"
+                className={styles.select}
+                value={formData.timeZone}
+                onChange={(e) => setFormData({ ...formData, timeZone: e.target.value })}
+              >
+                {ALL_TIMEZONES.map((tz) => (
+                  <option key={tz} value={tz}>
+                    {tz}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
 
           <div className={styles.field}>
@@ -260,22 +326,11 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
         </div>
 
         <div className={styles.actions}>
-          <div className={styles.actionsRight}>
-            <Button variant="secondary" onClick={onClose} disabled={isSaving}>
-              Cancelar
-            </Button>
-            {onDelete && (
-              <Button variant="danger" onClick={handleDelete} disabled={isSaving}>
-                Eliminar
-              </Button>
-            )}
-            <Button variant="primary" onClick={handleSave} disabled={isSaving}>
-              {isSaving ? 'Guardando...' : 'Guardar cambios'}
-            </Button>
-          </div>
+          <Button variant="primary" onClick={handleSave} disabled={isSaving}>
+            {isSaving ? 'Guardando...' : 'Guardar cambios'}
+          </Button>
         </div>
       </div>
     </Modal>
   );
 };
-

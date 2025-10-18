@@ -51,15 +51,15 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, locationName, loca
               className="max-w-full max-h-full object-contain"
             />
           </div>
-        ) : mounted && locationName ? (
-          // Si no hay logo pero sí nombre, mostrar el nombre como logo
+        ) : mounted && locationName && locationName !== 'Ristak' ? (
+          // Si no hay logo pero sí nombre de HighLevel (no es "Ristak"), mostrar el nombre
           <div className="w-full flex items-center justify-center px-2">
             <span className="text-lg font-bold text-[var(--color-text-primary)] truncate max-w-[180px] text-center">
               {locationName}
             </span>
           </div>
         ) : (
-          // Si no hay nada de HighLevel, mostrar logo de Ristak
+          // Si no hay HighLevel o es el nombre por defecto, mostrar logo de Ristak
           <Logo size="2xl" />
         )}
       </div>
