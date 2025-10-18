@@ -535,25 +535,49 @@ git log -1
   - Diseño adaptado al estilo de la app (mismo patrón que Dashboard y otras páginas)
   - Duración promedio estimada (events_count * 45 segundos) - No es tiempo real
 
-- ✓ **Toggle de Fuente de Visitantes (2025-10-18)** [LISTO PARA PRODUCCIÓN]:
+- ✓ **Sistema Híbrido de Configuración (2025-10-18)** [IMPLEMENTADO]:
+  - Sistema centralizado para TODA la configuración de la app (preferencias, columnas de tablas, etc)
+  - **Arquitectura híbrida**:
+    - **LocalStorage**: Cache de lectura rápida (0ms, funciona offline)
+    - **PostgreSQL**: Fuente de verdad (persistencia confiable, sync entre dispositivos)
+    - **Sincronización automática**: Al cargar la página, valida con DB y actualiza cache si difiere
+  - **Endpoints backend**:
+    - GET /api/config: Lee toda la configuración o keys específicas (?keys=key1,key2)
+    - POST /api/config: Guarda una o múltiples configs (body: {key, value} o {config: {...}})
+    - DELETE /api/config: Elimina configs (?keys=key1,key2)
+  - **Hooks frontend**:
+    - `useAppConfig(key, defaultValue)`: Config individual con cache + DB sync
+    - `useAppConfigs([keys])`: Múltiples configs a la vez
+    - `useTableConfig(tableId)`: Específico para configuración de tablas (columnas, orden, visibilidad)
+  - **Migración completada**:
+    - ✅ visitor_source preference (plataforma vs tracking interno)
+    - ✅ show_analytics preference (mostrar/ocultar Analytics en menú)
+    - ✅ Configuración de columnas de todas las tablas (orden, visibilidad, anchos)
+  - **Ventajas**:
+    - Lectura instantánea desde cache (no espera a DB)
+    - Persiste aunque borres cookies/localStorage (respaldo en DB)
+    - Consistente entre dispositivos (sincroniza desde DB)
+    - Resiliente: funciona offline con cache
+    - Centralizado: un solo sistema para toda la app
+  - **Archivos**:
+    - Backend: configController.js, config.routes.js
+    - Frontend: hooks/useAppConfig.ts, hooks/index.ts
+    - Modificados: WebTracking.tsx, Campaigns.tsx, Reports.tsx, Table.tsx
+  - **Deprecado**: utils/tableStorage.ts (reemplazado por useTableConfig hook)
+
+- ✓ **Toggle de Fuente de Visitantes (2025-10-18)** [USA SISTEMA HÍBRIDO]:
   - Opción en Settings/Web Tracking para elegir fuente de visitantes: "Plataforma de Anuncios" vs "Tracking Interno"
   - Afecta páginas de Campaigns y Reports mostrando visitantes de Meta/Google o del tracking interno
+  - **Ahora usa sistema híbrido de configuración** (useAppConfig hook)
   - **Páginas afectadas**:
     - **Campaigns**: Actualiza visitantes en ads cuando está en modo "Tracking Interno"
     - **Reports**: Actualiza columna de visitantes cuando está en modo "Tracking Interno"
-  - **Backend endpoints agregados**:
-    - POST /api/tracking/visitor-source-preference: Guarda preferencia en app_config
+  - **Backend endpoints**:
     - GET /api/tracking/visitors-by-ad: Obtiene visitantes únicos por ad_id desde sessions
     - GET /api/tracking/visitors-by-period: Obtiene visitantes agrupados por período (día/semana/mes/año)
-  - **Frontend modificado**:
-    - WebTracking.tsx: Toggle visual estilo iOS con animación suave
-    - Campaigns.tsx: Detecta preferencia y obtiene visitantes del tracking si está activo
-    - Reports.tsx: Detecta preferencia y obtiene visitantes por período si está activo
-  - **Sincronización**: Usa CustomEvent 'visitor-source-changed' para sincronizar entre componentes
-  - **Persistencia**: LocalStorage con key 'visitorSourcePreference' + PostgreSQL app_config
+  - **Persistencia**: Sistema híbrido (cache + PostgreSQL app_config)
   - **Detección de visitor**: Webhook /contacts SOLO acepta campo 'rkvi_id' (prohibido visitor_id o rstk_vid)
   - **Matching visitor-contacto**: 4 métodos (form submit, _ud cookie, link manual, rkvi_id en _ud)
-  - **Fix aplicado**: Renombrado linkVisitorToContact → linkVisitorToContactHandler para evitar conflicto de nombres
 
 ### Resueltos
 - ✓ Lodash instalado como dependencia directa
@@ -635,16 +659,17 @@ git log -1
 ## 📅 ÚLTIMA ACTUALIZACIÓN
 
 **Fecha**: 2025-10-18
-**Versión**: 1.13.0
+**Versión**: 1.14.0
 **Último cambio estructural**:
-- **UX: Modales de confirmación minimalistas y elegantes**
-  - Eliminadas barras de colores superiores en modales (`.modal::before`)
-  - Eliminados fondos de colores en iconos (círculos amarillos/rojos/azules)
-  - Iconos simplificados: 24x24px, color gris neutro, sin animaciones exageradas
-  - Diseño unificado para confirm, alert e info (todos usan el mismo estilo neutral)
-  - Resultado: modales limpios, minimalistas y profesionales
-  - Afecta a: eliminar pago, eliminar contacto, eliminar cita, showConfirm(), showAlert(), showInfo()
-  - Archivo modificado: Modal.module.css (líneas 41-157)
+- **Sistema Híbrido de Configuración (cache + DB)**
+  - Implementado sistema centralizado para toda la configuración de la app
+  - LocalStorage como cache (lectura instantánea) + PostgreSQL como fuente de verdad
+  - Hooks: useAppConfig(), useAppConfigs(), useTableConfig()
+  - Endpoints: GET/POST/DELETE /api/config
+  - Migradas todas las preferencias al nuevo sistema
+  - Ventajas: rápido, persistente, sincronizado entre dispositivos, resiliente
+  - Deprecado: utils/tableStorage.ts (usar useTableConfig hook)
+  - Archivos: configController.js, config.routes.js, hooks/useAppConfig.ts
 
 ---
 
