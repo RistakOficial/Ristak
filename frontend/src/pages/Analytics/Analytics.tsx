@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import React, { useState, useEffect } from 'react'
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip } from 'recharts'
 import { useDateRange } from '../../contexts/DateRangeContext'
 import {
@@ -53,7 +53,7 @@ interface Metrics {
   }
 }
 
-export default function Analytics() {
+const Analytics: React.FC = () => {
   const { dateRange } = useDateRange()
   const [loading, setLoading] = useState(false)
   const [sessions, setSessions] = useState<Session[]>([])
@@ -457,3 +457,5 @@ export default function Analytics() {
     </PageContainer>
   )
 }
+
+export default Analytics
