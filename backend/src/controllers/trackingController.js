@@ -939,6 +939,11 @@ export async function getVisitorsByAd(req, res) {
 
     const usePostgres = Boolean(process.env.DATABASE_URL)
 
+    // Asegurar que endDate incluya todo el día (hasta 23:59:59)
+    const endDateWithTime = endDate.includes('T') ? endDate : `${endDate} 23:59:59`
+
+    logger.info(`Obteniendo visitantes por ad - rango: ${startDate} -> ${endDateWithTime}`)
+
     // Query adaptado a PostgreSQL o SQLite
     const query = usePostgres
       ? `
@@ -964,7 +969,7 @@ export async function getVisitorsByAd(req, res) {
         GROUP BY ad_id
       `
 
-    const visitors = await db.all(query, [startDate, endDate])
+    const visitors = await db.all(query, [startDate, endDateWithTime])
 
     logger.info(`Visitantes por ad obtenidos: ${visitors.length} ads con visitas`)
 
@@ -994,6 +999,12 @@ export async function getVisitorsByPeriod(req, res) {
     }
 
     const usePostgres = Boolean(process.env.DATABASE_URL)
+
+    // Asegurar que endDate incluya todo el día (hasta 23:59:59)
+    const endDateWithTime = endDate.includes('T') ? endDate : `${endDate} 23:59:59`
+
+    logger.info(`Obteniendo visitantes por período - rango: ${startDate} -> ${endDateWithTime}, groupBy: ${groupBy}`)
+
     let query = ''
 
     // Definir el formato de agrupación según el tipo
@@ -1115,12 +1126,14 @@ export async function getVisitorsByPeriod(req, res) {
       }
     }
 
-    const rows = await db.all(query, [startDate, endDate])
+    const rows = await db.all(query, [startDate, endDateWithTime])
+
+    logger.info(`Visitantes por período obtenidos: ${rows.length} períodos con visitas`)
 
     // Convertir a objeto con período como clave
     const visitorsByPeriod = {}
     rows.forEach(row => {
-      visitorsByPeriod[row.period] = row.unique_visitors
+      visitorsByPeriod[row.period] = parseInt(row.unique_visitors) || 0
     })
 
     res.json({ success: true, data: visitorsByPeriod })
