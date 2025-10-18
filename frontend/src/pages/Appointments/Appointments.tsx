@@ -84,8 +84,6 @@ export const Appointments: React.FC = () => {
   const { showToast } = useNotification();
   const { theme } = useTheme();
 
-  console.log('🔵 Appointments render', { locationId, accessToken: accessToken ? 'exists' : 'null', theme });
-
   // Estado del calendario
   const [viewMode, setViewMode] = useState<ViewMode>('month');
   const [currentDate, setCurrentDate] = useState<Date>(new Date());
@@ -189,13 +187,11 @@ export const Appointments: React.FC = () => {
   }, [currentDate, viewMode]);
 
   const loadCalendars = useCallback(async () => {
-    console.log('📞 loadCalendars called');
     if (!locationId || !accessToken) return;
 
     try {
       setLoading(true);
       const calendarsData = await calendarsService.getCalendars(locationId, accessToken);
-      console.log('📅 Calendars loaded:', calendarsData.length);
       setCalendars(calendarsData);
 
       // Seleccionar calendario: predeterminado guardado > primer activo
@@ -210,13 +206,9 @@ export const Appointments: React.FC = () => {
       }
 
       if (calendarToSelect) {
-        console.log('✅ Setting selected calendar:', calendarToSelect.id);
         setSelectedCalendar(calendarToSelect);
-      } else {
-        console.log('⚠️ No calendar to select');
       }
     } catch (error) {
-      console.error('❌ Error loading calendars:', error);
       showToast('error', 'Error al cargar calendarios', 'No se pudieron obtener los calendarios.');
     } finally {
       setLoading(false);
@@ -225,7 +217,6 @@ export const Appointments: React.FC = () => {
   }, [locationId, accessToken, defaultCalendarId]);
 
   const loadEvents = useCallback(async () => {
-    console.log('📞 loadEvents called');
     if (!locationId || !accessToken || !selectedCalendar) return;
 
     try {
@@ -233,7 +224,6 @@ export const Appointments: React.FC = () => {
 
       // Calcular rango de fechas según la vista
       const { startTime, endTime } = getDateRange();
-      console.log('📆 Loading events from', new Date(startTime), 'to', new Date(endTime));
 
       const eventsData = await calendarsService.getEvents(
         locationId,
@@ -243,7 +233,6 @@ export const Appointments: React.FC = () => {
         selectedCalendar.id
       );
 
-      console.log('📋 Events loaded:', eventsData.length);
       setEvents(eventsData);
 
       // Calcular estadísticas del mes visible
@@ -272,7 +261,6 @@ export const Appointments: React.FC = () => {
 
   // Cargar eventos próximos desde HOY (independiente del calendario visible)
   const loadUpcomingEvents = useCallback(async () => {
-    console.log('📞 loadUpcomingEvents called');
     if (!locationId || !accessToken || !selectedCalendar) return;
 
     try {
@@ -282,7 +270,6 @@ export const Appointments: React.FC = () => {
         accessToken
       );
 
-      console.log('📅 Upcoming events loaded:', upcomingData.length);
       setUpcomingEvents(upcomingData);
     } catch (error) {
       // Error silencioso - no afecta funcionalidad principal
@@ -292,7 +279,6 @@ export const Appointments: React.FC = () => {
   // useEffects - ejecutar después de declarar las funciones
   // Cargar calendarios al montar
   useEffect(() => {
-    console.log('🟡 useEffect loadCalendars triggered', { locationId, accessToken });
     if (locationId && accessToken) {
       loadCalendars();
     }
@@ -300,11 +286,6 @@ export const Appointments: React.FC = () => {
 
   // Cargar eventos cuando cambie el calendario o la fecha
   useEffect(() => {
-    console.log('🟢 useEffect loadEvents triggered', {
-      selectedCalendar: selectedCalendar?.id,
-      currentDate: currentDate.toISOString(),
-      viewMode
-    });
     if (selectedCalendar && locationId && accessToken) {
       loadEvents();
     }
@@ -312,7 +293,6 @@ export const Appointments: React.FC = () => {
 
   // Cargar próximas citas solo cuando cambie el calendario seleccionado
   useEffect(() => {
-    console.log('🟣 useEffect loadUpcomingEvents triggered', { selectedCalendar: selectedCalendar?.id });
     if (selectedCalendar && locationId && accessToken) {
       loadUpcomingEvents();
     }

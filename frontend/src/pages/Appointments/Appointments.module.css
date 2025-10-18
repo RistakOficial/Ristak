@@ -584,8 +584,9 @@
 
 [data-theme="dark"] .eventConfirmed {
   border-color: #60a5fa;
-  background-color: rgba(59, 130, 246, 0.22);
-  color: #dbeafe;
+  background-color: rgba(96, 165, 250, 0.25);
+  color: #ffffff;
+  font-weight: 600;
 }
 
 .eventPending {
@@ -596,8 +597,9 @@
 
 [data-theme="dark"] .eventPending {
   border-color: #fbbf24;
-  background-color: rgba(245, 158, 11, 0.22);
-  color: #fef3c7;
+  background-color: rgba(251, 191, 36, 0.25);
+  color: #ffffff;
+  font-weight: 600;
 }
 
 .eventCancelled {
@@ -608,8 +610,9 @@
 
 [data-theme="dark"] .eventCancelled {
   border-color: #f87171;
-  background-color: rgba(239, 68, 68, 0.22);
-  color: #fecaca;
+  background-color: rgba(248, 113, 113, 0.25);
+  color: #ffffff;
+  font-weight: 600;
 }
 
 .eventShowed {
@@ -620,8 +623,9 @@
 
 [data-theme="dark"] .eventShowed {
   border-color: #34d399;
-  background-color: rgba(16, 185, 129, 0.22);
-  color: #d1fae5;
+  background-color: rgba(52, 211, 153, 0.25);
+  color: #ffffff;
+  font-weight: 600;
 }
 
 .eventNoshow {
@@ -632,8 +636,9 @@
 
 [data-theme="dark"] .eventNoshow {
   border-color: #9ca3af;
-  background-color: rgba(107, 114, 128, 0.22);
-  color: #e5e7eb;
+  background-color: rgba(156, 163, 175, 0.25);
+  color: #ffffff;
+  font-weight: 600;
 }
 
 .eventRescheduled {
@@ -644,8 +649,9 @@
 
 [data-theme="dark"] .eventRescheduled {
   border-color: #a78bfa;
-  background-color: rgba(139, 92, 246, 0.22);
-  color: #ede9fe;
+  background-color: rgba(167, 139, 250, 0.25);
+  color: #ffffff;
+  font-weight: 600;
 }
 
 .eventDefault {
@@ -656,8 +662,9 @@
 
 [data-theme="dark"] .eventDefault {
   border-color: #d1d5db;
-  background-color: rgba(156, 163, 175, 0.22);
-  color: #f3f4f6;
+  background-color: rgba(209, 213, 219, 0.25);
+  color: #ffffff;
+  font-weight: 600;
 }
 
 .eventTime {
@@ -1140,13 +1147,14 @@
   border-radius: var(--radius-full);
   white-space: nowrap;
   flex-shrink: 0;
+  color: var(--color-text-primary);
   /* El color de fondo se establece inline con getEventColor() */
-  /* Aseguramos que el texto sea visible en ambos modos */
 }
 
 /* Override para dark mode - hacer el texto más visible */
 [data-theme="dark"] .upcomingTime {
   font-weight: 700;
+  color: #ffffff;
 }
 
 .emptyText {
