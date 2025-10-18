@@ -945,15 +945,57 @@ body.dark .input:focus {
 }
 
 .warningBox {
-  border-color: #fbbf24;
-  background: #fef3c7;
   padding: var(--spacing-lg);
   border-radius: var(--radius-lg);
   border: 1px solid #fbbf24;
+  background: #fef3c7;
+  border-color: #fbbf24;
 }
 
 .warningBox svg {
   color: #d97706;
+}
+
+/* Contenedor del ejemplo de URL */
+.urlExampleBox {
+  background: rgba(0, 0, 0, 0.05);
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  margin: 12px 0;
+}
+
+.urlExampleText {
+  margin: 0;
+  font-family: monospace;
+  font-size: 14px;
+  color: var(--color-primary);
+  font-weight: 600;
+}
+
+/* Dark mode para warningBox */
+@media (prefers-color-scheme: dark) {
+  .warningBox {
+    background: rgba(245, 158, 11, 0.15);
+    border-color: rgba(245, 158, 11, 0.4);
+  }
+
+  .warningBox svg {
+    color: #fbbf24;
+  }
+
+  .warningBox .infoBoxText {
+    color: rgba(255, 255, 255, 0.9);
+  }
+
+  .urlExampleBox {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 255, 255, 0.15);
+  }
+
+  .urlExampleText {
+    color: #fbbf24;
+  }
 }
 
 .infoBox strong,
