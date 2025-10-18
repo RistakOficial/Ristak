@@ -434,7 +434,7 @@ export const Reports: React.FC = () => {
 
               // Actualizar las métricas con los visitantes del tracking
               const updatedMetrics = result.metrics.map((metric: ReportMetricRow) => {
-                const trackingVisitors = trackingData.data?.[metric.period] || 0
+                const trackingVisitors = trackingData.data?.[metric.date] || 0
                 return {
                   ...metric,
                   visitors: trackingVisitors
