@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { KpiCard, Card, DateRangePicker, Table, Icon, LineChart, ContactDetailsModal, PageContainer } from '@/components/common'
+import { KpiCard, Card, DateRangePicker, Table, Icon, LineChart, ContactDetailsModal, PageContainer, MetaConnect } from '@/components/common'
 import type { Column } from '@/components/common'
 import {
   RefreshCw,
@@ -86,7 +86,8 @@ export const Campaigns: React.FC = () => {
   // Estado para visitor source preference
   const [visitorSource, setVisitorSource] = useState<'platform' | 'tracking'>('platform')
 
-  // Estado para validación de token
+  // Estado para validación de token y configuración
+  const [isMetaConfigured, setIsMetaConfigured] = useState<boolean | null>(null) // null = cargando
   const [tokenStatus, setTokenStatus] = useState<{
     valid: boolean
     message: string
@@ -121,13 +122,23 @@ export const Campaigns: React.FC = () => {
       ]
 
       // Si se usa tracking interno, obtener visitantes desde sessions
+      console.log('🔍 currentVisitorSource:', currentVisitorSource)
       if (currentVisitorSource === 'tracking') {
+        console.log('📊 Fetching visitors from tracking, dates:', startDate, 'to', endDate)
         promises.push(
           fetch(`/api/tracking/visitors-by-ad?startDate=${startDate}&endDate=${endDate}`)
             .then(res => res.json())
-            .then(data => data.data || {})
-            .catch(() => ({}))
+            .then(data => {
+              console.log('✅ Visitors by ad received:', data.data)
+              return data.data || {}
+            })
+            .catch((error) => {
+              console.error('❌ Error fetching visitors:', error)
+              return {}
+            })
         )
+      } else {
+        console.log('📈 Using platform visitors (not tracking)')
       }
 
       const results = await Promise.all(promises)
@@ -139,20 +150,25 @@ export const Campaigns: React.FC = () => {
         let campaignVisitors = 0
 
         if (currentVisitorSource === 'tracking' && visitorsByAd) {
+          console.log('🎯 Processing campaign:', campaign.name, 'with visitorsByAd keys:', Object.keys(visitorsByAd || {}))
           // Sumar visitantes de todos los ads de esta campaña
           campaign.adsets?.forEach((adset: any) => {
             adset.ads?.forEach((ad: any) => {
+              console.log('🔍 Looking for ad.id:', ad.id, 'in visitorsByAd')
               const adVisitorData = visitorsByAd[ad.id]
               if (adVisitorData) {
+                console.log('✅ Found visitors for ad', ad.id, ':', adVisitorData.uniqueVisitors)
                 ad.visitors = adVisitorData.uniqueVisitors
                 campaignVisitors += adVisitorData.uniqueVisitors
               } else {
+                console.log('❌ No visitors found for ad', ad.id)
                 ad.visitors = 0
               }
             })
             // Calcular visitantes del adset sumando sus ads
             adset.visitors = adset.ads?.reduce((sum: number, ad: any) => sum + (ad.visitors || 0), 0) || 0
           })
+          console.log('📊 Total campaign visitors:', campaignVisitors)
         }
 
         return {
@@ -232,11 +248,15 @@ export const Campaigns: React.FC = () => {
     try {
       const result = await campaignsService.verifyToken()
 
+      // Actualizar si Meta está configurado
+      setIsMetaConfigured(result.configured)
+
       if (result.configured && result.tokenStatus) {
         setTokenStatus(result.tokenStatus)
       }
     } catch (error) {
-      // Silenciar errores
+      // Si hay error, asumir que no está configurado
+      setIsMetaConfigured(false)
     }
   }, [])
 
@@ -748,6 +768,56 @@ export const Campaigns: React.FC = () => {
       leads: calculateDelta(campaignSummary.leads, campaignSummary.leadsPrev)
     }
   }, [campaignSummary, calculateDelta])
+
+  // Empty state: Si no está configurado Meta, mostrar MetaConnect
+  if (isMetaConfigured === false) {
+    return (
+      <PageContainer>
+        <MetaConnect
+          onConnected={() => {
+            setIsMetaConfigured(true)
+            checkTokenStatus()
+            fetchCampaigns()
+          }}
+        />
+      </PageContainer>
+    )
+  }
+
+  // Loading state: Mientras verifica si está configurado
+  if (isMetaConfigured === null) {
+    return (
+      <PageContainer>
+        <div style={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '80px',
+          minHeight: '400px'
+        }}>
+          <div style={{
+            width: '48px',
+            height: '48px',
+            border: '4px solid var(--color-border)',
+            borderTopColor: 'var(--color-primary)',
+            borderRadius: '50%',
+            animation: 'spin 0.8s linear infinite'
+          }} />
+          <p style={{
+            marginTop: '24px',
+            color: 'var(--color-text-secondary)',
+            fontSize: '15px'
+          }}>
+            Verificando configuración de Meta...
+          </p>
+        </div>
+        <style>
+          {`@keyframes spin { to { transform: rotate(360deg); } }`}
+        </style>
+      </PageContainer>
+    )
+  }
 
   return (
     <PageContainer>

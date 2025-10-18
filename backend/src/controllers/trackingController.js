@@ -945,8 +945,8 @@ export async function getVisitorsByAd(req, res) {
         COUNT(*) as total_pageviews
       FROM sessions
       WHERE ad_id IS NOT NULL
-        AND started_at >= ?
-        AND started_at <= ?
+        AND created_at >= ?
+        AND created_at <= ?
       GROUP BY ad_id
     `
 

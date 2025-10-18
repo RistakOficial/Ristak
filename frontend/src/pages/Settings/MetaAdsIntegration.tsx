@@ -1,13 +1,21 @@
 import React, { useState } from 'react'
-import { Card, Button } from '@/components/common'
+import { Card, Button, MetaConnect } from '@/components/common'
 import { CheckCircle, ExternalLink, ChevronDown, ChevronUp, AlertCircle, Info, Facebook } from 'lucide-react'
+import { useNotification } from '@/contexts/NotificationContext'
 import styles from './HighLevelIntegration.module.css'
 
 export const MetaAdsIntegration: React.FC = () => {
   const [openSection, setOpenSection] = useState<number | null>(null)
+  const { showToast } = useNotification()
 
   const toggleSection = (section: number) => {
     setOpenSection(openSection === section ? null : section)
+  }
+
+  const handleConnected = () => {
+    showToast('success', 'Conectado', 'Meta Ads configurado correctamente')
+    // Recargar la página para actualizar el estado
+    setTimeout(() => window.location.reload(), 1500)
   }
 
   return (
@@ -35,6 +43,41 @@ export const MetaAdsIntegration: React.FC = () => {
                 Tutorial completo para conectar tus anuncios de Facebook con Ristak
               </p>
             </div>
+          </div>
+        </div>
+
+        {/* Conexión rápida con OAuth */}
+        <div className={styles.section} style={{ background: 'linear-gradient(135deg, #EEF2FF 0%, #E0E7FF 100%)', border: '2px solid #818CF8', borderRadius: '16px', padding: '32px' }}>
+          <div className={styles.sectionHeader} style={{ marginBottom: '24px' }}>
+            <h3 className={styles.sectionTitle} style={{ color: '#4F46E5', marginBottom: '8px' }}>
+              ⚡ Conexión rápida (Recomendado)
+            </h3>
+            <p className={styles.infoText} style={{ color: '#6366F1', fontSize: '14px', margin: 0 }}>
+              Conecta tu cuenta de Meta Ads en 1 clic. No necesitas copiar/pegar tokens manualmente.
+            </p>
+          </div>
+          <div className={styles.sectionContent}>
+            <MetaConnect
+              showLogo={false}
+              onConnected={handleConnected}
+            />
+            <div style={{ marginTop: '16px', padding: '12px 16px', background: 'rgba(255, 255, 255, 0.8)', borderRadius: '8px', border: '1px solid rgba(99, 102, 241, 0.2)' }}>
+              <p style={{ fontSize: '13px', color: '#6B7280', margin: 0, lineHeight: '1.5' }}>
+                <strong style={{ color: '#4F46E5' }}>Cómo funciona:</strong><br />
+                1. Haz clic en "Conectar con Meta"<br />
+                2. Autoriza la aplicación en Facebook<br />
+                3. Selecciona tu cuenta de anuncios<br />
+                4. ¡Listo! Tus campañas se sincronizarán automáticamente
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className={styles.section} style={{ padding: '24px 0' }}>
+          <div style={{ borderBottom: '2px dashed var(--color-border)', textAlign: 'center', position: 'relative', margin: '0 40px' }}>
+            <span style={{ background: 'var(--color-background)', padding: '8px 24px', position: 'relative', top: '12px', color: 'var(--color-text-secondary)', fontSize: '14px', fontWeight: 600 }}>
+              O configura manualmente (avanzado)
+            </span>
           </div>
         </div>
 
