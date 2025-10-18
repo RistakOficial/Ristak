@@ -400,9 +400,9 @@ export async function servePixel(req, res) {
       var params = currentURL.searchParams;
 
       // Solo agregar si no existe ya
-      if (!params.has('rstk_vid')) {
+      if (!params.has('visitor_id')) {
         var visitorId = getVisitorId();
-        params.set('rstk_vid', visitorId);
+        params.set('visitor_id', visitorId);
 
         // Actualizar URL sin recargar la página
         var newURL = currentURL.pathname + '?' + params.toString() + currentURL.hash;
@@ -725,7 +725,7 @@ export async function configureTracking(req, res) {
     }
 
     // Generar el snippet con versión para evitar cache
-    const SNIPPET_VERSION = '4' // Incrementar cuando cambies el código del snippet
+    const SNIPPET_VERSION = '5' // Incrementar cuando cambies el código del snippet
     const snippet = `<!-- Pixel de Tracking Ristak -->
 <script async src="https://${trackingDomain}/snip.js?v=${SNIPPET_VERSION}"></script>`
 

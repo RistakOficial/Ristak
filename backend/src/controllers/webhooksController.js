@@ -35,8 +35,8 @@ export const handleContactWebhook = async (req, res) => {
       || data.attributionSource
       || {};
 
-    // Extraer visitor_id (rstk_vid) del custom field
-    const visitorId = data.rstk_vid || null;
+    // Extraer visitor_id del custom field (acepta visitor_id o rstk_vid para compatibilidad)
+    const visitorId = data.visitor_id || data.rstk_vid || null;
 
     const usePostgres = process.env.DATABASE_URL ? true : false;
 
