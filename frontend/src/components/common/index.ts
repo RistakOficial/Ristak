@@ -17,6 +17,9 @@ export { ChartContainer } from './ChartContainer'
 // Componentes de fecha
 export { DateRangePicker } from './DateRangePicker'
 
+// Componentes de filtros
+export { TreeFilter } from './TreeFilter'
+
 // Componentes de contacto
 export { ContactDetailsModal } from './ContactDetailsModal'
 export { ContactSearchInput } from './ContactSearchInput/ContactSearchInput'
