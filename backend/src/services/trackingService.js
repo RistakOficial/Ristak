@@ -1,5 +1,6 @@
 import { db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
+import fetch from 'node-fetch'
 
 /**
  * Extrae parámetros UTM de un objeto de datos
@@ -41,6 +42,62 @@ function extractDeviceInfo(data) {
     browser_version: data.browser_version || null,
     language: data.language || null,
     timezone: data.timezone || null
+  }
+}
+
+/**
+ * Obtiene información geográfica basada en la IP usando ip-api.com
+ * API gratuita sin necesidad de registro
+ * Límite: 45 requests/minuto (suficiente para tracking normal)
+ */
+async function getGeoInfoFromIP(ip) {
+  // Validar IP
+  if (!ip || ip === '127.0.0.1' || ip === '::1' || ip.startsWith('192.168.') || ip.startsWith('10.')) {
+    logger.info('IP localhost o privada detectada, saltando geolocalización')
+    return {
+      geo_country: null,
+      geo_region: null,
+      geo_city: null
+    }
+  }
+
+  try {
+    // Llamar a ip-api.com (gratis, sin API key)
+    const response = await fetch(`http://ip-api.com/json/${ip}?fields=status,country,regionName,city`)
+
+    if (!response.ok) {
+      logger.warn(`Error en API de geolocalización: ${response.status}`)
+      return {
+        geo_country: null,
+        geo_region: null,
+        geo_city: null
+      }
+    }
+
+    const data = await response.json()
+
+    if (data.status === 'success') {
+      logger.info(`✅ Geolocalización obtenida para IP ${ip}: ${data.city}, ${data.regionName}, ${data.country}`)
+      return {
+        geo_country: data.country || null,
+        geo_region: data.regionName || null,
+        geo_city: data.city || null
+      }
+    } else {
+      logger.warn(`Geolocalización falló para IP ${ip}: ${data.message || 'unknown error'}`)
+      return {
+        geo_country: null,
+        geo_region: null,
+        geo_city: null
+      }
+    }
+  } catch (error) {
+    logger.error(`Error obteniendo geolocalización para IP ${ip}:`, error.message)
+    return {
+      geo_country: null,
+      geo_region: null,
+      geo_city: null
+    }
   }
 }
 
@@ -168,9 +225,11 @@ export async function createSession(sessionData) {
   const utms = extractUtmParams(data)
   const clickIds = extractClickIds(data)
   const deviceInfo = extractDeviceInfo(data)
-  const geoInfo = extractGeoInfo(data)
   const adsParams = extractAdsParams(data)
   const sourceInfo = deriveSourceInfo(data, utms, clickIds)
+
+  // Obtener geolocalización desde la IP del request (en vez de confiar en el cliente)
+  const geoInfo = await getGeoInfoFromIP(ip)
 
   const startedAt = new Date(ts).toISOString()
 

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { KpiCard, Card, Button, PageContainer, AppointmentModal, TabList } from '@/components/common';
 import { ChevronLeft, ChevronRight, Plus, ChevronDown, Check, Calendar as CalendarIcon, Search, X } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
