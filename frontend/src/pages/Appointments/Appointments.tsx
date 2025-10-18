@@ -971,7 +971,7 @@ export const Appointments: React.FC = () => {
                                 const rect = e.currentTarget.getBoundingClientRect();
                                 setHoveredEventId(event.id);
                                 setTooltipPosition({
-                                  top: rect.top - 10,
+                                  top: rect.top + window.scrollY - 8,
                                   left: rect.left + rect.width / 2
                                 });
                               }}
