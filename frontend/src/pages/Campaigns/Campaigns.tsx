@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { KpiCard, Card, DateRangePicker, Table, Icon, LineChart, ContactDetailsModal, PageContainer } from '@/components/common'
+import { KpiCard, Card, DateRangePicker, Table, Icon, LineChart, ContactDetailsModal, Modal, PageContainer } from '@/components/common'
 import type { Column } from '@/components/common'
 import {
   RefreshCw,
@@ -9,7 +9,8 @@ import {
   TrendingUp,
   Users,
   ChevronRight,
-  ChevronDown
+  ChevronDown,
+  Loader2
 } from 'lucide-react'
 import { useDateRange } from '@/contexts/DateRangeContext'
 import { useLabels } from '@/contexts/LabelsContext'
@@ -95,6 +96,12 @@ export const Campaigns: React.FC = () => {
   const [modalLoading, setModalLoading] = useState(false)
   const [modalTitle, setModalTitle] = useState('')
   const [selectedModalItem, setSelectedModalItem] = useState<any>(null)
+
+  // Estados para modal de visitantes
+  const [isVisitorsModalOpen, setIsVisitorsModalOpen] = useState(false)
+  const [modalVisitors, setModalVisitors] = useState<any[]>([])
+  const [visitorsModalLoading, setVisitorsModalLoading] = useState(false)
+  const [visitorsModalTitle, setVisitorsModalTitle] = useState('')
 
   const fetchCampaigns = useCallback(async () => {
     try {
@@ -292,6 +299,46 @@ export const Campaigns: React.FC = () => {
       handleOpenContactsModal(selectedModalItem, modalType)
     }
   }, [dateRange, isModalOpen, selectedModalItem, modalType, handleOpenContactsModal])
+
+  const handleOpenVisitorsModal = useCallback(async (item: any) => {
+    setVisitorsModalLoading(true)
+    setIsVisitorsModalOpen(true)
+    setVisitorsModalTitle(`Visitantes - ${item.name}`)
+    setModalVisitors([])
+
+    try {
+      const startDate = formatDateToISO(dateRange.start)
+      const endDate = formatEndDateToISO(dateRange.end)
+
+      const params: any = {
+        startDate,
+        endDate
+      }
+
+      if (item.level === 'campaign') {
+        params.campaign_id = item.id
+      } else if (item.level === 'adset') {
+        params.adset_id = item.id
+      } else if (item.level === 'ad') {
+        params.ad_id = item.id
+      }
+
+      const queryString = new URLSearchParams(params).toString()
+      const response = await fetch(`/api/tracking/visitors?${queryString}`)
+      const data = await response.json()
+
+      if (data.success) {
+        setModalVisitors(data.data || [])
+      } else {
+        setModalVisitors([])
+      }
+    } catch (error) {
+      console.error('Error cargando visitantes:', error)
+      setModalVisitors([])
+    } finally {
+      setVisitorsModalLoading(false)
+    }
+  }, [dateRange])
 
   const handleExport = () => {
     // TODO: Implementar exportación
@@ -582,9 +629,23 @@ export const Campaigns: React.FC = () => {
       key: 'visitors',
       header: 'Visitantes',
       visible: false,
-      render: (value, item) => item.showPlaceholder ?
-        <span className={styles.placeholderText}>—</span> :
-        (value || 0).toLocaleString(),
+      render: (value, item) => {
+        if (item.showPlaceholder) return <span className={styles.placeholderText}>—</span>
+        const hasVisitors = (value || 0) > 0 && visitorSource === 'tracking' // Solo clickeable si usa tracking
+        return (
+          <span
+            className={hasVisitors ? styles.clickableNumber : ''}
+            onClick={(e) => {
+              if (hasVisitors) {
+                e.stopPropagation()
+                handleOpenVisitorsModal(item)
+              }
+            }}
+          >
+            {(value || 0).toLocaleString()}
+          </span>
+        )
+      },
       sortable: true,
       width: '8%'
     },
@@ -877,6 +938,80 @@ export const Campaigns: React.FC = () => {
         loading={modalLoading}
         type={modalType}
       />
+
+      {/* Modal de visitantes */}
+      {isVisitorsModalOpen && (
+        <Modal
+          isOpen={isVisitorsModalOpen}
+          onClose={() => setIsVisitorsModalOpen(false)}
+          title={visitorsModalTitle}
+          size="lg"
+        >
+          <div className={styles.visitorsModal}>
+            {visitorsModalLoading ? (
+              <div className={styles.modalLoading}>
+                <Loader2 size={32} className={styles.spinIcon} />
+                <p>Cargando visitantes...</p>
+              </div>
+            ) : modalVisitors.length === 0 ? (
+              <div className={styles.emptyState}>
+                <Users size={48} />
+                <p>No hay visitantes en este período</p>
+              </div>
+            ) : (
+              <div className={styles.visitorsTable}>
+                <p className={styles.visitorsCount}>
+                  {modalVisitors.length} visitante{modalVisitors.length !== 1 ? 's' : ''} único{modalVisitors.length !== 1 ? 's' : ''}
+                </p>
+                <Table
+                  data={modalVisitors}
+                  columns={[
+                    {
+                      key: 'contact',
+                      header: 'Contacto',
+                      render: (_, visitor) => visitor.contact ? (
+                        <div className={styles.contactInfo}>
+                          <div className={styles.contactName}>{visitor.contact.name || 'Sin nombre'}</div>
+                          <div className={styles.contactEmail}>{visitor.contact.email || visitor.contact.phone || ''}</div>
+                        </div>
+                      ) : (
+                        <div className={styles.anonymousVisitor}>
+                          <span className={styles.visitorId}>Visitante {visitor.visitorId.slice(0, 8)}...</span>
+                        </div>
+                      )
+                    },
+                    {
+                      key: 'utmSource',
+                      header: 'Fuente',
+                      render: (value) => value || '—'
+                    },
+                    {
+                      key: 'deviceType',
+                      header: 'Dispositivo',
+                      render: (value) => value || '—'
+                    },
+                    {
+                      key: 'browser',
+                      header: 'Navegador',
+                      render: (value) => value || '—'
+                    },
+                    {
+                      key: 'createdAt',
+                      header: 'Primera visita',
+                      render: (value) => formatDate(value)
+                    }
+                  ]}
+                  keyExtractor={(visitor) => visitor.visitorId}
+                  searchable={false}
+                  paginated={true}
+                  pageSize={10}
+                  exportable={false}
+                />
+              </div>
+            )}
+          </div>
+        </Modal>
+      )}
       </div>
     </PageContainer>
   )

@@ -1144,3 +1144,152 @@ export async function getVisitorsByPeriod(req, res) {
     res.status(500).json({ error: 'Internal server error' })
   }
 }
+
+/**
+ * Obtener lista detallada de visitantes por ad/campaign/adset
+ * GET /api/tracking/visitors?startDate=&endDate=&ad_id=&campaign_id=&adset_id=
+ */
+export async function getVisitorsList(req, res) {
+  try {
+    const { startDate, endDate, ad_id, campaign_id, adset_id } = req.query
+
+    if (!startDate || !endDate) {
+      return res.status(400).json({ error: 'startDate y endDate son requeridos' })
+    }
+
+    const usePostgres = Boolean(process.env.DATABASE_URL)
+
+    // Asegurar que endDate incluya todo el día
+    const endDateWithTime = (endDate.includes('T') || endDate.includes(':')) ? endDate : `${endDate} 23:59:59`
+
+    logger.info(`Obteniendo lista de visitantes - rango: ${startDate} -> ${endDateWithTime}, ad_id: ${ad_id}, campaign_id: ${campaign_id}, adset_id: ${adset_id}`)
+
+    // Construir WHERE clause
+    const conditions = ['s.created_at >= $1', 's.created_at <= $2']
+    const params = [startDate, endDateWithTime]
+    let paramCount = 2
+
+    if (ad_id) {
+      paramCount++
+      conditions.push(`s.ad_id = $${paramCount}`)
+      params.push(ad_id)
+    } else if (adset_id) {
+      paramCount++
+      conditions.push(`s.adset_id = $${paramCount}`)
+      params.push(adset_id)
+    } else if (campaign_id) {
+      paramCount++
+      conditions.push(`s.campaign_id = $${paramCount}`)
+      params.push(campaign_id)
+    } else {
+      return res.status(400).json({ error: 'Se requiere ad_id, adset_id o campaign_id' })
+    }
+
+    // Query principal: obtener visitantes únicos con sus datos de sesión
+    const query = usePostgres
+      ? `
+        SELECT DISTINCT ON (s.visitor_id)
+          s.visitor_id,
+          s.session_id,
+          s.contact_id,
+          s.created_at,
+          s.page_url,
+          s.referrer_url,
+          s.utm_source,
+          s.utm_medium,
+          s.utm_campaign,
+          s.utm_term,
+          s.utm_content,
+          s.gclid,
+          s.fbclid,
+          s.device_type,
+          s.browser,
+          s.os,
+          s.language,
+          s.ad_id,
+          s.ad_name,
+          c.full_name as contact_name,
+          c.email as contact_email,
+          c.phone as contact_phone,
+          c.total_paid as contact_ltv,
+          c.purchases_count as contact_purchases
+        FROM sessions s
+        LEFT JOIN contacts c ON s.contact_id = c.id
+        WHERE ${conditions.join(' AND ')}
+        ORDER BY s.visitor_id, s.created_at DESC
+      `
+      : `
+        SELECT
+          s.visitor_id,
+          s.session_id,
+          s.contact_id,
+          s.created_at,
+          s.page_url,
+          s.referrer_url,
+          s.utm_source,
+          s.utm_medium,
+          s.utm_campaign,
+          s.utm_term,
+          s.utm_content,
+          s.gclid,
+          s.fbclid,
+          s.device_type,
+          s.browser,
+          s.os,
+          s.language,
+          s.ad_id,
+          s.ad_name,
+          c.full_name as contact_name,
+          c.email as contact_email,
+          c.phone as contact_phone,
+          c.total_paid as contact_ltv,
+          c.purchases_count as contact_purchases
+        FROM sessions s
+        LEFT JOIN contacts c ON s.contact_id = c.id
+        WHERE ${conditions.join(' AND ')}
+        GROUP BY s.visitor_id
+        ORDER BY s.created_at DESC
+      `
+
+    const visitors = await db.all(query, params)
+
+    logger.info(`Visitantes obtenidos: ${visitors.length} visitantes únicos`)
+
+    // Formatear datos
+    const formattedVisitors = visitors.map(v => ({
+      visitorId: v.visitor_id,
+      sessionId: v.session_id,
+      contactId: v.contact_id,
+      createdAt: v.created_at,
+      pageUrl: v.page_url,
+      referrerUrl: v.referrer_url,
+      utmSource: v.utm_source,
+      utmMedium: v.utm_medium,
+      utmCampaign: v.utm_campaign,
+      utmTerm: v.utm_term,
+      utmContent: v.utm_content,
+      gclid: v.gclid,
+      fbclid: v.fbclid,
+      deviceType: v.device_type,
+      browser: v.browser,
+      os: v.os,
+      language: v.language,
+      adId: v.ad_id,
+      adName: v.ad_name,
+      // Datos del contacto (si está identificado)
+      contact: v.contact_id ? {
+        id: v.contact_id,
+        name: v.contact_name,
+        email: v.contact_email,
+        phone: v.contact_phone,
+        ltv: parseFloat(v.contact_ltv) || 0,
+        purchases: parseInt(v.contact_purchases) || 0
+      } : null
+    }))
+
+    res.json({ success: true, data: formattedVisitors })
+  } catch (error) {
+    logger.error('Error obteniendo lista de visitantes:', error)
+    res.status(500).json({ error: 'Internal server error' })
+  }
+}

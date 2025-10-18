@@ -11,7 +11,8 @@ import {
   setAnalyticsPreference,
   setVisitorSourcePreference,
   getVisitorsByAd,
-  getVisitorsByPeriod
+  getVisitorsByPeriod,
+  getVisitorsList
 } from '../controllers/trackingController.js'
 
 const router = express.Router()
@@ -47,5 +48,8 @@ router.get('/visitors-by-ad', getVisitorsByAd)
 
 // Obtener visitantes agrupados por período (día/semana/mes/año)
 router.get('/visitors-by-period', getVisitorsByPeriod)
+
+// Obtener lista detallada de visitantes (para modal)
+router.get('/visitors', getVisitorsList)
 
 export default router

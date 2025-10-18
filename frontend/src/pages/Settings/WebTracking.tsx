@@ -1,31 +1,10 @@
 import React, { useState, useEffect } from 'react'
 import { Card, Button } from '@/components/common'
-import {
-  Activity,
-  Copy,
-  Check,
-  Info,
-  Globe,
-  Loader2,
-  RefreshCw
-} from 'lucide-react'
+import { Activity, Copy, Check, Info, Loader2, RefreshCw } from 'lucide-react'
 import { trackingService, TrackingSession } from '@/services/trackingService'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useAppConfig } from '@/hooks'
 import styles from './HighLevelIntegration.module.css'
-
-const ANALYTICS_PREF_STORAGE_KEY = 'showAnalyticsPreference'
-const VISITOR_SOURCE_STORAGE_KEY = 'visitorSourcePreference'
-
-const persistAnalyticsPreference = (value: boolean) => {
-  if (typeof window === 'undefined') return
-  window.localStorage.setItem(ANALYTICS_PREF_STORAGE_KEY, String(value))
-}
-
-const persistVisitorSourcePreference = (value: 'platform' | 'tracking') => {
-  if (typeof window === 'undefined') return
-  window.localStorage.setItem(VISITOR_SOURCE_STORAGE_KEY, value)
-}
 
 export const WebTracking: React.FC = () => {
   const { showToast } = useNotification()
@@ -55,14 +34,8 @@ export const WebTracking: React.FC = () => {
       setTrackingDomain(config.trackingDomain || '')
       setIsConfigured(config.isConfigured)
       setHasHighLevel(config.hasHighLevel)
-      const analyticsEnabled = !!config.showAnalytics
-      setShowAnalytics(analyticsEnabled)
-      persistAnalyticsPreference(analyticsEnabled)
-
-      // Cargar preferencia de fuente de visitantes
-      const visitorSourceValue = config.visitorSource || 'platform'
-      setVisitorSource(visitorSourceValue)
-      persistVisitorSourcePreference(visitorSourceValue)
+      // Las preferencias de analytics y visitor source se manejan vía useAppConfig
+      // y se sincronizan automáticamente; aquí solo usamos los valores para UI adicional si hace falta.
     } catch (error) {
       showToast('error', 'Error', 'No se pudo cargar la configuración del tracking')
     } finally {
@@ -138,7 +111,6 @@ export const WebTracking: React.FC = () => {
     try {
       const newValue = !showAnalytics
       await setShowAnalytics(newValue)
-      persistAnalyticsPreference(newValue)
 
       showToast(
         'success',
@@ -161,7 +133,6 @@ export const WebTracking: React.FC = () => {
     try {
       const newValue = visitorSource === 'platform' ? 'tracking' : 'platform'
       await setVisitorSource(newValue)
-      persistVisitorSourcePreference(newValue)
 
       showToast(
         'success',
