@@ -368,6 +368,13 @@ export const Reports: React.FC = () => {
   const [loadingMetrics, setLoadingMetrics] = useState(false)
   const [loadingSummary, setLoadingSummary] = useState(false)
 
+  // Estado para visitor source preference
+  const VISITOR_SOURCE_KEY = 'visitorSourcePreference'
+  const [visitorSource, setVisitorSource] = useState<'platform' | 'tracking'>(() => {
+    const stored = localStorage.getItem(VISITOR_SOURCE_KEY)
+    return (stored as 'platform' | 'tracking') || 'platform'
+  })
+
   const [modalState, setModalState] = useState<{
     open: boolean
     type: ModalType | null
@@ -403,6 +410,21 @@ export const Reports: React.FC = () => {
 
   const scopeParam = reportType === 'campaigns' ? 'campaigns' : 'all'
 
+  // Escuchar cambios en la preferencia de visitor source
+  useEffect(() => {
+    const handleVisitorSourceChange = (event: CustomEvent) => {
+      const newSource = event.detail.visitorSource
+      setVisitorSource(newSource)
+      localStorage.setItem(VISITOR_SOURCE_KEY, newSource)
+    }
+
+    window.addEventListener('visitor-source-changed', handleVisitorSourceChange as EventListener)
+
+    return () => {
+      window.removeEventListener('visitor-source-changed', handleVisitorSourceChange as EventListener)
+    }
+  }, [])
+
   useEffect(() => {
     const fetchMetrics = async () => {
       try {
@@ -413,7 +435,42 @@ export const Reports: React.FC = () => {
           groupBy: viewType,
           scope: scopeParam
         })
-        setMetrics(result.metrics)
+
+        // Si estamos en modo tracking y mostrando campañas, obtener visitantes del tracking
+        if (visitorSource === 'tracking' && scopeParam === 'campaigns') {
+          try {
+            const trackingResponse = await fetch(
+              `/api/tracking/visitors-by-period?` + new URLSearchParams({
+                startDate: apiRange.from,
+                endDate: apiRange.to,
+                groupBy: viewType
+              })
+            )
+
+            if (trackingResponse.ok) {
+              const trackingData = await trackingResponse.json()
+
+              // Actualizar las métricas con los visitantes del tracking
+              const updatedMetrics = result.metrics.map((metric: ReportMetricRow) => {
+                const trackingVisitors = trackingData.data?.[metric.period] || 0
+                return {
+                  ...metric,
+                  visitors: trackingVisitors
+                }
+              })
+
+              setMetrics(updatedMetrics)
+            } else {
+              setMetrics(result.metrics)
+            }
+          } catch (trackingError) {
+            // Si falla el tracking, usar métricas originales
+            setMetrics(result.metrics)
+          }
+        } else {
+          setMetrics(result.metrics)
+        }
+
         setMetricsRange(result.range)
       } catch (error) {
         setMetrics([])
@@ -424,7 +481,7 @@ export const Reports: React.FC = () => {
     }
 
     fetchMetrics()
-  }, [apiRange.from, apiRange.to, scopeParam, viewType, showToast, dateRange])
+  }, [apiRange.from, apiRange.to, scopeParam, viewType, showToast, dateRange, visitorSource])
 
   useEffect(() => {
     const fetchSummary = async () => {

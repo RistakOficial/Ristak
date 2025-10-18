@@ -83,6 +83,9 @@ export const Campaigns: React.FC = () => {
   const [timeSeriesData, setTimeSeriesData] = useState<any[]>([])
   const [campaignSummary, setCampaignSummary] = useState<CampaignsReport['summary'] | null>(null)
 
+  // Estado para visitor source preference
+  const [visitorSource, setVisitorSource] = useState<'platform' | 'tracking'>('platform')
+
   // Estado para validación de token
   const [tokenStatus, setTokenStatus] = useState<{
     valid: boolean
@@ -108,24 +111,62 @@ export const Campaigns: React.FC = () => {
         .getCampaignsReport({ from: startDate, to: endDate })
         .catch(() => null as CampaignsReport | null)
 
-      const [campaignsData, spendData, summaryReport] = await Promise.all([
+      // Cargar preferencia actual de visitor source
+      const currentVisitorSource = localStorage.getItem('visitorSourcePreference') || 'platform'
+
+      const promises = [
         campaignsService.getCampaigns(startDate, endDate),
         campaignsService.getSpendOverTime(startDate, endDate),
         summaryPromise
-      ])
+      ]
+
+      // Si se usa tracking interno, obtener visitantes desde sessions
+      if (currentVisitorSource === 'tracking') {
+        promises.push(
+          fetch(`/api/tracking/visitors-by-ad?startDate=${startDate}&endDate=${endDate}`)
+            .then(res => res.json())
+            .then(data => data.data || {})
+            .catch(() => ({}))
+        )
+      }
+
+      const results = await Promise.all(promises)
+      const [campaignsData, spendData, summaryReport, visitorsByAd] = results
 
       // Transform the data to match our interface
-      const transformedData = campaignsData.map(campaign => ({
-        ...campaign,
-        platform: 'Meta', // All campaigns from Meta
-        adSets: campaign.adsets, // Map adsets to adSets for compatibility
-        adsets: campaign.adsets, // Keep both for compatibility
-        visitors: campaign.clicks || 0, // Use clicks as visitors for now
-        revenue: campaign.revenue || 0,
-        sales: campaign.sales || 0,
-        leads: campaign.leads || 0,
-        roas: campaign.roas || (campaign.revenue && campaign.spend ? campaign.revenue / campaign.spend : 0)
-      }))
+      const transformedData = campaignsData.map(campaign => {
+        // Calcular visitantes para esta campaña y sus ads
+        let campaignVisitors = 0
+
+        if (currentVisitorSource === 'tracking' && visitorsByAd) {
+          // Sumar visitantes de todos los ads de esta campaña
+          campaign.adsets?.forEach((adset: any) => {
+            adset.ads?.forEach((ad: any) => {
+              const adVisitorData = visitorsByAd[ad.id]
+              if (adVisitorData) {
+                ad.visitors = adVisitorData.uniqueVisitors
+                campaignVisitors += adVisitorData.uniqueVisitors
+              } else {
+                ad.visitors = 0
+              }
+            })
+            // Calcular visitantes del adset sumando sus ads
+            adset.visitors = adset.ads?.reduce((sum: number, ad: any) => sum + (ad.visitors || 0), 0) || 0
+          })
+        }
+
+        return {
+          ...campaign,
+          platform: 'Meta', // All campaigns from Meta
+          adSets: campaign.adsets, // Map adsets to adSets for compatibility
+          adsets: campaign.adsets, // Keep both for compatibility
+          visitors: currentVisitorSource === 'tracking' ? campaignVisitors : (campaign.clicks || 0),
+          revenue: campaign.revenue || 0,
+          sales: campaign.sales || 0,
+          leads: campaign.leads || 0,
+          roas: campaign.roas || (campaign.revenue && campaign.spend ? campaign.revenue / campaign.spend : 0)
+        }
+      })
 
       // Ordenar campañas de más reciente a más vieja (por ID descendente)
       const sortedData = transformedData.sort((a, b) => {
@@ -162,6 +203,28 @@ export const Campaigns: React.FC = () => {
   // Fetch campaigns on mount and when date range changes
   useEffect(() => {
     fetchCampaigns()
+  }, [fetchCampaigns])
+
+  // Cargar preferencia de visitor source y escuchar cambios
+  useEffect(() => {
+    // Cargar preferencia inicial desde localStorage
+    const storedPreference = localStorage.getItem('visitorSourcePreference') as 'platform' | 'tracking' | null
+    if (storedPreference) {
+      setVisitorSource(storedPreference)
+    }
+
+    // Escuchar cambios en la preferencia
+    const handlePreferenceChange = (event: CustomEvent) => {
+      const newSource = event.detail.visitorSource as 'platform' | 'tracking'
+      setVisitorSource(newSource)
+      fetchCampaigns() // Recargar con nueva fuente
+    }
+
+    window.addEventListener('visitor-source-changed' as any, handlePreferenceChange)
+
+    return () => {
+      window.removeEventListener('visitor-source-changed' as any, handlePreferenceChange)
+    }
   }, [fetchCampaigns])
 
   // Verificar estado del token

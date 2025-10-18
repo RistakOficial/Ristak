@@ -528,6 +528,26 @@ git log -1
   - Diseño adaptado al estilo de la app (mismo patrón que Dashboard y otras páginas)
   - Duración promedio estimada (events_count * 45 segundos) - No es tiempo real
 
+- ✓ **Toggle de Fuente de Visitantes (2025-10-18)** [LISTO PARA PRODUCCIÓN]:
+  - Opción en Settings/Web Tracking para elegir fuente de visitantes: "Plataforma de Anuncios" vs "Tracking Interno"
+  - Afecta páginas de Campaigns y Reports mostrando visitantes de Meta/Google o del tracking interno
+  - **Páginas afectadas**:
+    - **Campaigns**: Actualiza visitantes en ads cuando está en modo "Tracking Interno"
+    - **Reports**: Actualiza columna de visitantes cuando está en modo "Tracking Interno"
+  - **Backend endpoints agregados**:
+    - POST /api/tracking/visitor-source-preference: Guarda preferencia en app_config
+    - GET /api/tracking/visitors-by-ad: Obtiene visitantes únicos por ad_id desde sessions
+    - GET /api/tracking/visitors-by-period: Obtiene visitantes agrupados por período (día/semana/mes/año)
+  - **Frontend modificado**:
+    - WebTracking.tsx: Toggle visual estilo iOS con animación suave
+    - Campaigns.tsx: Detecta preferencia y obtiene visitantes del tracking si está activo
+    - Reports.tsx: Detecta preferencia y obtiene visitantes por período si está activo
+  - **Sincronización**: Usa CustomEvent 'visitor-source-changed' para sincronizar entre componentes
+  - **Persistencia**: LocalStorage con key 'visitorSourcePreference' + PostgreSQL app_config
+  - **Detección de visitor**: Webhook /contacts SOLO acepta campo 'rkvi_id' (prohibido visitor_id o rstk_vid)
+  - **Matching visitor-contacto**: 4 métodos (form submit, _ud cookie, link manual, rkvi_id en _ud)
+  - **Fix aplicado**: Renombrado linkVisitorToContact → linkVisitorToContactHandler para evitar conflicto de nombres
+
 ### Resueltos
 - ✓ Lodash instalado como dependencia directa
 - ✓ 7 componentes huérfanos eliminados (Badge, Select, Input, DatePicker, SingleDatePicker, DateRangeInput, SyncProgressBanner)

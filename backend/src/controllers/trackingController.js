@@ -605,7 +605,7 @@ export async function syncVisitorToHighLevel(req, res) {
  * Vincula un visitor_id histórico a un contacto
  * POST /link-visitor
  */
-export async function linkVisitorToContact(req, res) {
+export async function linkVisitorToContactHandler(req, res) {
   try {
     const { visitor_id, contact_id, full_name } = req.body
 
@@ -729,11 +729,15 @@ export async function getTrackingConfig(req, res) {
     const showAnalyticsValue = await getAppConfig('show_analytics')
     const showAnalytics = showAnalyticsValue === '1' || showAnalyticsValue === 1 || showAnalyticsValue === true
 
+    // Leer preferencia de fuente de visitantes
+    const visitorSource = await getAppConfig('visitor_source') || 'platform'
+
     res.json({
       trackingDomain,
       isConfigured,
       hasHighLevel: !!(ghlConfig && ghlConfig.location_id && ghlConfig.api_token),
-      showAnalytics
+      showAnalytics,
+      visitorSource
     })
   } catch (error) {
     logger.error('Error obteniendo configuración de tracking:', error)
@@ -893,6 +897,158 @@ export async function setAnalyticsPreference(req, res) {
     res.json({ success: true, showAnalytics })
   } catch (error) {
     logger.error('Error guardando preferencia de Analytics:', error)
+    res.status(500).json({ error: 'Internal server error' })
+  }
+}
+
+/**
+ * Guardar preferencia de fuente de visitantes
+ * POST /api/tracking/visitor-source-preference
+ */
+export async function setVisitorSourcePreference(req, res) {
+  try {
+    const { visitorSource } = req.body
+
+    if (!['platform', 'tracking'].includes(visitorSource)) {
+      return res.status(400).json({ error: 'visitorSource debe ser "platform" o "tracking"' })
+    }
+
+    // Guardar en app_config
+    await setAppConfig('visitor_source', visitorSource)
+
+    logger.info(`Preferencia de fuente de visitantes actualizada a: ${visitorSource}`)
+
+    res.json({ success: true, visitorSource })
+  } catch (error) {
+    logger.error('Error guardando preferencia de visitor source:', error)
+    res.status(500).json({ error: 'Internal server error' })
+  }
+}
+
+/**
+ * Obtener visitantes únicos por ad_id desde sessions
+ * GET /api/tracking/visitors-by-ad?startDate=&endDate=
+ */
+export async function getVisitorsByAd(req, res) {
+  try {
+    const { startDate, endDate } = req.query
+
+    if (!startDate || !endDate) {
+      return res.status(400).json({ error: 'startDate y endDate son requeridos' })
+    }
+
+    // Query para obtener visitantes únicos agrupados por ad_id
+    const query = `
+      SELECT
+        ad_id,
+        COUNT(DISTINCT visitor_id) as unique_visitors,
+        COUNT(*) as total_pageviews
+      FROM sessions
+      WHERE ad_id IS NOT NULL
+        AND started_at >= ?
+        AND started_at <= ?
+      GROUP BY ad_id
+    `
+
+    const visitors = await db.all(query, [startDate, endDate])
+
+    // Crear un mapa de ad_id -> visitantes
+    const visitorsByAd = {}
+    visitors.forEach(row => {
+      visitorsByAd[row.ad_id] = {
+        uniqueVisitors: row.unique_visitors,
+        totalPageviews: row.total_pageviews
+      }
+    })
+
+    res.json({ success: true, data: visitorsByAd })
+  } catch (error) {
+    logger.error('Error obteniendo visitantes por ad:', error)
+    res.status(500).json({ error: 'Internal server error' })
+  }
+}
+
+// Obtener visitantes agrupados por período
+export async function getVisitorsByPeriod(req, res) {
+  try {
+    const { startDate, endDate, groupBy = 'day' } = req.query
+
+    if (!startDate || !endDate) {
+      return res.status(400).json({ error: 'startDate and endDate are required' })
+    }
+
+    const db = getDb()
+    let query = ''
+
+    // Definir el formato de agrupación según el tipo
+    switch (groupBy) {
+      case 'day':
+        query = `
+          SELECT
+            DATE(created_at) as period,
+            COUNT(DISTINCT visitor_id) as unique_visitors
+          FROM sessions
+          WHERE created_at >= ? AND created_at <= ?
+            AND ad_id IS NOT NULL
+          GROUP BY DATE(created_at)
+          ORDER BY period ASC
+        `
+        break
+
+      case 'week':
+        query = `
+          SELECT
+            strftime('%Y-W%W', created_at) as period,
+            COUNT(DISTINCT visitor_id) as unique_visitors
+          FROM sessions
+          WHERE created_at >= ? AND created_at <= ?
+            AND ad_id IS NOT NULL
+          GROUP BY strftime('%Y-W%W', created_at)
+          ORDER BY period ASC
+        `
+        break
+
+      case 'month':
+        query = `
+          SELECT
+            strftime('%Y-%m', created_at) as period,
+            COUNT(DISTINCT visitor_id) as unique_visitors
+          FROM sessions
+          WHERE created_at >= ? AND created_at <= ?
+            AND ad_id IS NOT NULL
+          GROUP BY strftime('%Y-%m', created_at)
+          ORDER BY period ASC
+        `
+        break
+
+      case 'year':
+        query = `
+          SELECT
+            strftime('%Y', created_at) as period,
+            COUNT(DISTINCT visitor_id) as unique_visitors
+          FROM sessions
+          WHERE created_at >= ? AND created_at <= ?
+            AND ad_id IS NOT NULL
+          GROUP BY strftime('%Y', created_at)
+          ORDER BY period ASC
+        `
+        break
+
+      default:
+        return res.status(400).json({ error: 'Invalid groupBy value' })
+    }
+
+    const rows = await db.all(query, [startDate, endDate])
+
+    // Convertir a objeto con período como clave
+    const visitorsByPeriod = {}
+    rows.forEach(row => {
+      visitorsByPeriod[row.period] = row.unique_visitors
+    })
+
+    res.json({ success: true, data: visitorsByPeriod })
+  } catch (error) {
+    logger.error('Error obteniendo visitantes por período:', error)
     res.status(500).json({ error: 'Internal server error' })
   }
 }

@@ -3,12 +3,15 @@ import {
   servePixel,
   collectEvent,
   syncVisitorToHighLevel,
-  linkVisitorToContact,
+  linkVisitorToContactHandler,
   getSessionsHandler,
   getSessionHandler,
   getTrackingConfig,
   configureTracking,
-  setAnalyticsPreference
+  setAnalyticsPreference,
+  setVisitorSourcePreference,
+  getVisitorsByAd,
+  getVisitorsByPeriod
 } from '../controllers/trackingController.js'
 
 const router = express.Router()
@@ -23,7 +26,7 @@ router.post('/collect', collectEvent)
 router.post('/sync-visitor', syncVisitorToHighLevel)
 
 // Vincular visitor_id histórico a contacto
-router.post('/link-visitor', linkVisitorToContact)
+router.post('/link-visitor', linkVisitorToContactHandler)
 
 // Obtener sesiones (dashboard)
 router.get('/sessions', getSessionsHandler)
@@ -35,5 +38,14 @@ router.post('/configure', configureTracking)
 
 // Preferencia de Analytics
 router.post('/analytics-preference', setAnalyticsPreference)
+
+// Preferencia de fuente de visitantes
+router.post('/visitor-source-preference', setVisitorSourcePreference)
+
+// Obtener visitantes por ad_id desde sessions
+router.get('/visitors-by-ad', getVisitorsByAd)
+
+// Obtener visitantes agrupados por período (día/semana/mes/año)
+router.get('/visitors-by-period', getVisitorsByPeriod)
 
 export default router
