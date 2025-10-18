@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import {
   LayoutDashboard,
@@ -29,10 +29,47 @@ const baseNavigation = [
   { name: 'Contactos', href: '/contacts', icon: Users }
 ]
 
+const SHOW_ANALYTICS_STORAGE_KEY = 'showAnalyticsPreference'
+
+const buildNavigation = (showAnalytics: boolean) => {
+  if (!showAnalytics) return baseNavigation
+
+  return [
+    baseNavigation[0], // Dashboard
+    baseNavigation[1], // Reportes
+    { name: 'Analíticas', href: '/analytics', icon: BarChart3 },
+    ...baseNavigation.slice(2)
+  ]
+}
+
+const getStoredAnalyticsPreference = () => {
+  if (typeof window === 'undefined') return null
+  const stored = window.localStorage.getItem(SHOW_ANALYTICS_STORAGE_KEY)
+  if (stored === 'true') return true
+  if (stored === 'false') return false
+  return null
+}
+
 export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, locationName, locationLogo }) => {
   const location = useLocation()
   const [mounted, setMounted] = useState(false)
-  const [navigation, setNavigation] = useState(baseNavigation)
+  const [navigation, setNavigation] = useState(() => {
+    const storedPreference = getStoredAnalyticsPreference()
+    if (storedPreference === true) {
+      return buildNavigation(true)
+    }
+    return baseNavigation
+  })
+
+  const persistPreference = useCallback((show: boolean) => {
+    if (typeof window === 'undefined') return
+    window.localStorage.setItem(SHOW_ANALYTICS_STORAGE_KEY, String(show))
+  }, [])
+
+  const updateNavigation = useCallback((showAnalytics: boolean) => {
+    setNavigation(buildNavigation(showAnalytics))
+    persistPreference(showAnalytics)
+  }, [persistPreference])
 
   useEffect(() => {
     setMounted(true)
@@ -45,48 +82,35 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, locationName, loca
         const status = await checkTrackingStatus()
         // Mostrar Analytics solo si el usuario activó el switch
         if (status.showAnalytics) {
-          // Insertar Analytics después de Reportes (posición 2)
-          const navWithAnalytics = [
-            baseNavigation[0], // Dashboard
-            baseNavigation[1], // Reportes
-            { name: 'Analíticas', href: '/analytics', icon: BarChart3 }, // Analytics aquí
-            ...baseNavigation.slice(2) // Resto: Publicidad, Citas, Pagos, Contactos
-          ]
-          setNavigation(navWithAnalytics)
+          updateNavigation(true)
         } else {
-          setNavigation(baseNavigation)
+          updateNavigation(false)
         }
       } catch (error) {
-        // Si falla, solo mostrar el menú base
-        setNavigation(baseNavigation)
+        // Si falla, mantener preferencia almacenada o default base
+        const stored = getStoredAnalyticsPreference()
+        if (stored !== null) {
+          updateNavigation(stored)
+        } else {
+          updateNavigation(false)
+        }
       }
     }
 
     checkTracking()
 
     // Escuchar cambios en la preferencia de Analytics
-    const handleAnalyticsChange = (event: CustomEvent) => {
-      const { showAnalytics } = event.detail
-      if (showAnalytics) {
-        // Insertar Analytics después de Reportes (posición 2)
-        const navWithAnalytics = [
-          baseNavigation[0], // Dashboard
-          baseNavigation[1], // Reportes
-          { name: 'Analíticas', href: '/analytics', icon: BarChart3 }, // Analytics aquí
-          ...baseNavigation.slice(2) // Resto: Publicidad, Citas, Pagos, Contactos
-        ]
-        setNavigation(navWithAnalytics)
-      } else {
-        setNavigation(baseNavigation)
-      }
+    const handleAnalyticsChange = (event: Event) => {
+      const customEvent = event as CustomEvent<{ showAnalytics?: boolean }>
+      updateNavigation(Boolean(customEvent.detail?.showAnalytics))
     }
 
-    window.addEventListener('analytics-preference-changed', handleAnalyticsChange as EventListener)
+    window.addEventListener('analytics-preference-changed', handleAnalyticsChange)
 
     return () => {
-      window.removeEventListener('analytics-preference-changed', handleAnalyticsChange as EventListener)
+      window.removeEventListener('analytics-preference-changed', handleAnalyticsChange)
     }
-  }, [])
+  }, [updateNavigation])
 
   const handleNavigate = () => {
     onNavigate?.()

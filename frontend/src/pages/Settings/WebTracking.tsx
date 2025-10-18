@@ -13,6 +13,13 @@ import { trackingService, TrackingSession } from '@/services/trackingService'
 import { useNotification } from '@/contexts/NotificationContext'
 import styles from './HighLevelIntegration.module.css'
 
+const SHOW_ANALYTICS_STORAGE_KEY = 'showAnalyticsPreference'
+
+const persistAnalyticsPreference = (value: boolean) => {
+  if (typeof window === 'undefined') return
+  window.localStorage.setItem(SHOW_ANALYTICS_STORAGE_KEY, String(value))
+}
+
 export const WebTracking: React.FC = () => {
   const { showToast } = useNotification()
   const [trackingDomain, setTrackingDomain] = useState('')
@@ -23,7 +30,14 @@ export const WebTracking: React.FC = () => {
   const [configuringTracking, setConfiguringTracking] = useState(false)
   const [isConfigured, setIsConfigured] = useState(false)
   const [hasHighLevel, setHasHighLevel] = useState(false)
-  const [showAnalytics, setShowAnalytics] = useState(true) // Por defecto visible
+  const [showAnalytics, setShowAnalytics] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const stored = window.localStorage.getItem(SHOW_ANALYTICS_STORAGE_KEY)
+      if (stored === 'true') return true
+      if (stored === 'false') return false
+    }
+    return true // visible por defecto
+  })
   const [savingAnalyticsPref, setSavingAnalyticsPref] = useState(false)
 
   useEffect(() => {
@@ -38,7 +52,9 @@ export const WebTracking: React.FC = () => {
       setTrackingDomain(config.trackingDomain || '')
       setIsConfigured(config.isConfigured)
       setHasHighLevel(config.hasHighLevel)
-      setShowAnalytics(config.showAnalytics || false)
+      const analyticsEnabled = !!config.showAnalytics
+      setShowAnalytics(analyticsEnabled)
+      persistAnalyticsPreference(analyticsEnabled)
     } catch (error) {
       showToast('error', 'Error', 'No se pudo cargar la configuración del tracking')
     } finally {
@@ -125,6 +141,7 @@ export const WebTracking: React.FC = () => {
       }
 
       setShowAnalytics(newValue)
+      persistAnalyticsPreference(newValue)
       showToast(
         'success',
         'Guardado',

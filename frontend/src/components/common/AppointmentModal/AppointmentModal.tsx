@@ -230,25 +230,54 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
 
         console.log('📡 Obteniendo usuarios Round Robin por IDs:', teamMemberIds);
 
-        const response = await fetch('/api/highlevel/users/by-ids', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ userIds: teamMemberIds })
-        });
+        try {
+          const response = await fetch('/api/highlevel/users/by-ids', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ userIds: teamMemberIds })
+          });
 
-        if (!response.ok) throw new Error('Error al cargar team members');
-        const data = await response.json();
-        const fetchedUsers = data.users || [];
+          if (!response.ok) {
+            console.warn('⚠️  No se pudieron obtener nombres de usuarios (falta scope users.readonly)');
+            console.warn('📋 Usando IDs como fallback');
 
-        console.log('✅ Round Robin - Usuarios obtenidos:', {
-          teamMemberIds,
-          fetchedCount: fetchedUsers.length,
-          fetchedUsers
-        });
+            // Fallback: crear objetos usuario solo con IDs
+            const fallbackUsers = teamMemberIds.map(userId => ({
+              id: userId,
+              name: `Usuario ${userId.substring(0, 8)}...`,
+              email: '',
+              firstName: '',
+              lastName: ''
+            }));
 
-        setUsers(fetchedUsers);
+            setUsers(fallbackUsers);
+            return;
+          }
+
+          const data = await response.json();
+          const fetchedUsers = data.users || [];
+
+          console.log('✅ Round Robin - Usuarios obtenidos:', {
+            teamMemberIds,
+            fetchedCount: fetchedUsers.length,
+            fetchedUsers
+          });
+
+          setUsers(fetchedUsers);
+        } catch (error) {
+          console.error('❌ Error al obtener usuarios, usando IDs:', error);
+          // Fallback en caso de error
+          const fallbackUsers = teamMemberIds.map(userId => ({
+            id: userId,
+            name: `Usuario ${userId.substring(0, 8)}...`,
+            email: '',
+            firstName: '',
+            lastName: ''
+          }));
+          setUsers(fallbackUsers);
+        }
       } else {
         // Para calendarios normales: cargar todos los usuarios del location
         console.log('📡 Obteniendo todos los usuarios del location');
