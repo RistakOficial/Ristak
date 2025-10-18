@@ -17,7 +17,12 @@
    - Los cambios se ven en Render (producción) directamente
    - PostgreSQL es la ÚNICA base de datos (no SQLite)
    - Render auto-deploya en cada push a main
-9. **❌ NUNCA usar alertas nativas del browser** (`alert()`, `confirm()`, `prompt()`) - SIEMPRE usar modales personalizados con Modal component y `createPortal` de React
+9. **❌ NUNCA usar alertas nativas del browser** - SIEMPRE usar modales personalizados
+   - ❌ Prohibido: `alert()`, `confirm()`, `prompt()`, `window.alert()`, `window.confirm()`, `window.prompt()`
+   - ✅ Usar: `showConfirm()`, `showAlert()`, `showInfo()` del NotificationContext
+   - ✅ Para modales personalizados: Modal component con `createPortal` de React
+   - ✅ Diseño minimalista: sin barras de colores, sin fondos en iconos, gris neutro
+   - 🎯 Objetivo: UX consistente, elegante y profesional en toda la app
 
 ### �� FILOSOFÍA DE CÓDIGO
 - **Limpio > Rápido**: Preferir código mantenible sobre optimizaciones prematuras
@@ -292,6 +297,96 @@ VITE_API_URL=http://localhost:3001
 # PRODUCCIÓN (Render): PostgreSQL con DATABASE_URL (esto es lo que importa)
 # DESARROLLO (local): SQLite (ristak.db) - se crea automáticamente (nos vale madres)
 ```
+
+---
+
+## 📝 SISTEMA DE NOTIFICACIONES Y MODALES ESTANDARIZADO
+
+### 🎯 Regla de Oro
+**NUNCA usar alertas/confirmaciones nativas del browser. SIEMPRE usar NotificationContext.**
+
+### ✅ Cómo Usar Notificaciones y Modales
+
+#### 1. Importar el hook
+```typescript
+import { useNotification } from '@/contexts/NotificationContext'
+
+const { showToast, showConfirm, showAlert, showInfo } = useNotification()
+```
+
+#### 2. Mostrar Toasts (notificaciones temporales)
+```typescript
+// Éxito
+showToast('success', 'Operación exitosa', 'El registro se guardó correctamente')
+
+// Error
+showToast('error', 'Error al guardar', 'No se pudo completar la operación')
+
+// Advertencia
+showToast('warning', 'Atención', 'Algunos campos no están completos')
+
+// Información
+showToast('info', 'Información', 'Esta acción puede tardar unos minutos')
+```
+
+#### 3. Mostrar Modales de Confirmación
+```typescript
+// Confirmación (con botones Cancelar y Aceptar)
+showConfirm(
+  'Eliminar pago',
+  '¿Estás seguro de eliminar este pago? Esta acción no se puede deshacer.',
+  async () => {
+    // Acción al confirmar
+    await deletePayment(id)
+    showToast('success', 'Pago eliminado')
+  },
+  'Eliminar',  // Texto del botón confirmar (opcional)
+  'Cancelar'   // Texto del botón cancelar (opcional)
+)
+
+// Alerta (solo botón Aceptar)
+showAlert(
+  'Error crítico',
+  'No se pudo conectar con el servidor. Intenta nuevamente.',
+  'Entendido'  // Texto del botón (opcional)
+)
+
+// Información (solo botón Aceptar, diseño neutral)
+showInfo(
+  'Actualización disponible',
+  'Hay una nueva versión de la aplicación disponible.',
+  'Aceptar'  // Texto del botón (opcional)
+)
+```
+
+#### 4. Modales Personalizados
+Para modales con contenido custom (formularios, etc):
+```typescript
+import { Modal } from '@/components/common'
+import { createPortal } from 'react-dom'
+
+const [isOpen, setIsOpen] = useState(false)
+
+return createPortal(
+  <Modal
+    isOpen={isOpen}
+    onClose={() => setIsOpen(false)}
+    title="Título del Modal"
+    size="md"  // sm | md | lg | xl
+    type="custom"
+  >
+    {/* Contenido custom aquí */}
+  </Modal>,
+  document.body
+)
+```
+
+### 🎨 Diseño de Modales Estandarizado
+- ✅ Sin barras de colores superiores
+- ✅ Iconos grises simples (24x24px)
+- ✅ Sin fondos de colores en iconos
+- ✅ Diseño minimalista y elegante
+- ✅ Consistente en toda la app
 
 ---
 
