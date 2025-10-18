@@ -449,20 +449,28 @@ cd frontend && npm run build
   - Ahora captura correctamente custom domains cuando el usuario accede vía CNAME
   - Aplicado en getTrackingConfig y configureTracking
   - Probado con curl -H "Host: ristak.midominio.com" → funciona correctamente
+- ✓ **Chips y badges invisibles en dark mode (2025-10-18)**:
+  - Bug crítico: Los estilos usaban `[data-theme="dark"]` pero el sistema usa `body.dark` y `body.light`
+  - Fix: Cambió TODOS los selectores de `[data-theme="dark"]` a `body.dark`
+  - Archivos afectados: Badge.module.css, Appointments.module.css
+  - Aumentada opacidad de fondos (0.2→0.3 en badges, 0.25→0.35 en appointments) para mejor contraste
+  - Texto blanco (#ffffff) con font-weight 600/700 en todos los chips en dark mode
+  - Afecta: Badges (success, warning, error, info, purple, default), Chips de citas (Confirmed, Pending, Cancelled, Showed, Noshow, Rescheduled), chip "Hoy", chip de hora en próximas citas
+  - El sistema de temas está en ThemeContext.tsx que aplica clases `body.dark` y `body.light` (líneas 98-99)
+  - Ahora todos los chips y badges son completamente legibles en dark mode
 
 ---
 
 ## 📅 ÚLTIMA ACTUALIZACIÓN
 
 **Fecha**: 2025-10-18
-**Versión**: 1.8.1
+**Versión**: 1.8.2
 **Último cambio estructural**:
-- **Fix crítico: PostgreSQL restaurado para producción**
-  - Dependencia 'pg' agregada de vuelta al package.json
-  - PRODUCCIÓN (Render): Usa PostgreSQL con DATABASE_URL - ESTO ES LO QUE IMPORTA
-  - DESARROLLO (local): Usa SQLite - nos vale madres, solo para testing local
-  - Componentes faltantes agregados: Layout, Badge
-  - Build en Render exitoso
+- **Fix crítico: Visibilidad de chips y badges en dark mode**
+  - Corregido selector CSS de `[data-theme="dark"]` a `body.dark` en toda la app
+  - Aumentado contraste de fondos y texto blanco en dark mode
+  - Archivos: Badge.module.css, Appointments.module.css
+  - Ahora todos los chips son legibles en modo oscuro
 
 ---
 
