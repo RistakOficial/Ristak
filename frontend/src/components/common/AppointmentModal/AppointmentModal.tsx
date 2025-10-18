@@ -352,16 +352,33 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
     setSearchQuery('');
   };
 
-  // Cargar usuarios al abrir el modal (tanto en modo crear como en modo view para Round Robin)
+  // Cargar usuarios SOLO cuando sea necesario (Round Robin)
   useEffect(() => {
     setIsClient(true);
   }, []);
 
   useEffect(() => {
-    if (isOpen) {
-      loadUsers(); // Cargar siempre que se abra el modal
+    if (!isOpen) return;
+
+    // Detectar si es Round Robin
+    const isRoundRobin =
+      calendar?.calendarType === 'round_robin' ||
+      calendar?.eventType?.includes('RoundRobin');
+
+    // Solo cargar usuarios si:
+    // 1. Es modo crear Y es Round Robin (necesita elegir usuario)
+    // 2. Es modo view Y es Round Robin Y tiene assignedUserId (para mostrar quién está asignado)
+    const shouldLoadUsers =
+      (isCreateMode && isRoundRobin) ||
+      (!isCreateMode && isRoundRobin && formData.assignedUserId);
+
+    if (shouldLoadUsers) {
+      loadUsers();
+    } else {
+      // Limpiar usuarios si no son necesarios
+      setUsers([]);
     }
-  }, [isOpen, calendar]);
+  }, [isOpen, calendar, isCreateMode, formData.assignedUserId]);
 
   // Búsqueda de contactos
   useEffect(() => {
