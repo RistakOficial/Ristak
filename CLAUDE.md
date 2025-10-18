@@ -183,7 +183,7 @@ Backend:
 - **Servicios**: `trackingService.js`
 - **Funcionalidad**:
   - Pixel JavaScript dinámico que captura visitas
-  - Same-Origin usando CNAME del cliente (ej. collect.sudominio.com)
+  - Same-Origin usando CNAME del cliente (ej. ristak.sudominio.com)
   - Captura UTMs, click IDs (gclid, fbclid, msclkid, ttclid, wbraid, gbraid)
   - Cookies de Facebook (fbc, fbp)
   - Información de dispositivo, navegador, idioma, timezone
@@ -384,7 +384,7 @@ cd frontend && npm run build
 
 - ✓ **Pixel de Tracking implementado (2025-10-17)**:
   - Sistema completo de tracking con pixel JavaScript dinámico
-  - Same-Origin usando CNAME (ej. collect.cliente.com)
+  - Same-Origin usando CNAME (ej. ristak.cliente.com)
   - Captura UTMs, click IDs (gclid, fbclid, msclkid, ttclid, wbraid, gbraid)
   - Cookies de Facebook (fbc, fbp), device info, referrer, IP
   - Tabla `sessions` con 50+ campos de atribución
@@ -444,11 +444,11 @@ cd frontend && npm run build
   - CSS mejorado para .recharts-tooltip-wrapper y .recharts-default-tooltip
   - Build exitoso sin errores de compilación
 - ✓ Tracking pixel: prioridad de detección de dominio corregida (2025-10-17):
-  - Bug: Detectaba ristak-app.onrender.com en vez de collect.midominio.com
+  - Bug: Detectaba ristak-app.onrender.com en vez de ristak.midominio.com
   - Fix: Cambió prioridad a TRACKING_DOMAIN env var > req.headers.host > RENDER_EXTERNAL_URL
   - Ahora captura correctamente custom domains cuando el usuario accede vía CNAME
   - Aplicado en getTrackingConfig y configureTracking
-  - Probado con curl -H "Host: collect.midominio.com" → funciona correctamente
+  - Probado con curl -H "Host: ristak.midominio.com" → funciona correctamente
 
 ---
 

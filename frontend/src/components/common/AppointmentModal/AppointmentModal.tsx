@@ -9,8 +9,13 @@ import { Trash2 } from 'lucide-react';
 interface AppointmentModalProps {
   isOpen: boolean;
   onClose: () => void;
-  event: CalendarEvent | null;
-  onSave: (eventId: string, updates: Partial<CalendarEvent>) => Promise<void>;
+  event?: CalendarEvent | null;
+  mode?: 'view' | 'create';
+  defaultStart?: string;
+  defaultEnd?: string;
+  defaultTimeZone?: string;
+  defaultTitle?: string;
+  onSave: (eventIdOrPayload: string | any, updates?: Partial<CalendarEvent>) => Promise<void>;
   onDelete?: (eventId: string) => Promise<void>;
 }
 
@@ -138,14 +143,21 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   isOpen,
   onClose,
   event,
+  mode = 'view',
+  defaultStart,
+  defaultEnd,
+  defaultTimeZone,
+  defaultTitle,
   onSave,
   onDelete
 }) => {
   const [isSaving, setIsSaving] = useState(false);
   const [formData, setFormData] = useState(INITIAL_FORM_STATE);
+  const isCreateMode = mode === 'create';
 
   useEffect(() => {
-    if (event) {
+    if (event && !isCreateMode) {
+      // Modo edición/vista: cargar datos del evento
       setFormData({
         title: event.title || '',
         appointmentStatus: event.appointmentStatus || 'pending',
@@ -159,36 +171,74 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
           (event as any)?.timezone ||
           DEFAULT_TIMEZONE
       });
+    } else if (isCreateMode && isOpen) {
+      // Modo crear: usar defaults
+      setFormData({
+        title: defaultTitle || '',
+        appointmentStatus: 'pending',
+        startTime: defaultStart ? toLocalInputValue(defaultStart, defaultTimeZone || DEFAULT_TIMEZONE) : '',
+        endTime: defaultEnd ? toLocalInputValue(defaultEnd, defaultTimeZone || DEFAULT_TIMEZONE) : '',
+        notes: '',
+        address: '',
+        timeZone: defaultTimeZone || DEFAULT_TIMEZONE
+      });
     } else if (!isOpen) {
       setFormData(INITIAL_FORM_STATE);
     }
-  }, [event, isOpen]);
+  }, [event, isOpen, isCreateMode, defaultStart, defaultEnd, defaultTimeZone, defaultTitle]);
 
   const handleSave = async () => {
-    if (!event) return;
-
     try {
       setIsSaving(true);
 
-      const updates: Partial<CalendarEvent> = {
-        title: formData.title.trim(),
-        appointmentStatus: formData.appointmentStatus,
-        notes: formData.notes,
-        address: formData.address,
-        timeZone: formData.timeZone
-      };
+      if (isCreateMode) {
+        // Modo crear: enviar payload completo
+        const payload = {
+          title: formData.title.trim(),
+          appointmentStatus: formData.appointmentStatus,
+          notes: formData.notes,
+          address: formData.address,
+          timeZone: formData.timeZone,
+          startTime: '',
+          endTime: ''
+        };
 
-      if (formData.startTime) {
-        const startIso = convertLocalInputToISO(formData.startTime, formData.timeZone);
-        if (startIso) updates.startTime = startIso;
+        if (formData.startTime) {
+          const startIso = convertLocalInputToISO(formData.startTime, formData.timeZone);
+          if (startIso) payload.startTime = startIso;
+        }
+
+        if (formData.endTime) {
+          const endIso = convertLocalInputToISO(formData.endTime, formData.timeZone);
+          if (endIso) payload.endTime = endIso;
+        }
+
+        await onSave(payload);
+      } else {
+        // Modo editar: enviar updates con eventId
+        if (!event) return;
+
+        const updates: Partial<CalendarEvent> = {
+          title: formData.title.trim(),
+          appointmentStatus: formData.appointmentStatus,
+          notes: formData.notes,
+          address: formData.address,
+          timeZone: formData.timeZone
+        };
+
+        if (formData.startTime) {
+          const startIso = convertLocalInputToISO(formData.startTime, formData.timeZone);
+          if (startIso) updates.startTime = startIso;
+        }
+
+        if (formData.endTime) {
+          const endIso = convertLocalInputToISO(formData.endTime, formData.timeZone);
+          if (endIso) updates.endTime = endIso;
+        }
+
+        await onSave(event.id, updates);
       }
 
-      if (formData.endTime) {
-        const endIso = convertLocalInputToISO(formData.endTime, formData.timeZone);
-        if (endIso) updates.endTime = endIso;
-      }
-
-      await onSave(event.id, updates);
       onClose();
     } catch (error) {
       // Error manejado en el componente padre
@@ -214,11 +264,9 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
     }
   };
 
-  if (!event) return null;
-
   const currentStatus = STATUS_OPTIONS.find((status) => status.value === formData.appointmentStatus);
-  const startDate = parseDateSafe(formData.startTime) ?? parseDateSafe(event.startTime);
-  const endDate = parseDateSafe(formData.endTime) ?? parseDateSafe(event.endTime);
+  const startDate = parseDateSafe(formData.startTime) ?? parseDateSafe(event?.startTime);
+  const endDate = parseDateSafe(formData.endTime) ?? parseDateSafe(event?.endTime);
   const selectedTimeZone =
     formData.timeZone ||
     event?.timeZone ||
@@ -269,7 +317,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                 {currentStatus.label}
               </span>
             )}
-            {onDelete && (
+            {!isCreateMode && onDelete && (
               <button
                 className={styles.deleteButton}
                 onClick={handleDelete}
@@ -411,7 +459,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
 
         <div className={styles.actions}>
           <Button variant="primary" onClick={handleSave} disabled={isSaving}>
-            {isSaving ? 'Guardando...' : 'Guardar cambios'}
+            {isSaving ? 'Guardando...' : isCreateMode ? 'Crear cita' : 'Guardar cambios'}
           </Button>
         </div>
       </div>

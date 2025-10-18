@@ -514,7 +514,7 @@ export async function getTrackingConfig(req, res) {
     if (process.env.TRACKING_DOMAIN) {
       trackingDomain = process.env.TRACKING_DOMAIN
     }
-    // PRIORIDAD 2: Host del request (captura custom domains como collect.midominio.com)
+    // PRIORIDAD 2: Host del request (captura custom domains como ristak.midominio.com)
     else if (req.headers.host) {
       trackingDomain = req.headers.host
     }
@@ -583,7 +583,7 @@ export async function configureTracking(req, res) {
     if (process.env.TRACKING_DOMAIN) {
       trackingDomain = process.env.TRACKING_DOMAIN
     }
-    // PRIORIDAD 2: Host del request (captura custom domains como collect.midominio.com)
+    // PRIORIDAD 2: Host del request (captura custom domains como ristak.midominio.com)
     else if (req.headers.host) {
       trackingDomain = req.headers.host
     }

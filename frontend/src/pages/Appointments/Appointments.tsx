@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { KpiCard, Card, Button, PageContainer, AppointmentModal, TabList } from '@/components/common';
 import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Plus, ChevronDown, Check } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useNotification } from '@/contexts/NotificationContext';
+import { useTheme } from '@/contexts/ThemeContext';
 import { calendarsService, type Calendar, type CalendarEvent, type AppointmentStats } from '@/services/calendarsService';
 import { formatTime12h, formatDate } from '@/utils/format';
 import styles from './Appointments.module.css';
@@ -81,6 +82,7 @@ const isSameDay = (a: Date, b: Date): boolean => {
 export const Appointments: React.FC = () => {
   const { locationId, accessToken } = useAuth();
   const { showToast } = useNotification();
+  const { theme } = useTheme();
 
   // Estado del calendario
   const [viewMode, setViewMode] = useState<ViewMode>('month');
@@ -137,21 +139,21 @@ export const Appointments: React.FC = () => {
     if (locationId && accessToken) {
       loadCalendars();
     }
-  }, [locationId, accessToken]);
+  }, [locationId, accessToken, loadCalendars]);
 
   // Cargar eventos cuando cambie el calendario o la fecha
   useEffect(() => {
     if (selectedCalendar && locationId && accessToken) {
       loadEvents();
     }
-  }, [selectedCalendar, currentDate, viewMode, locationId, accessToken]);
+  }, [selectedCalendar, currentDate, viewMode, locationId, accessToken, loadEvents]);
 
   // Cargar próximas citas solo cuando cambie el calendario seleccionado
   useEffect(() => {
     if (selectedCalendar && locationId && accessToken) {
       loadUpcomingEvents();
     }
-  }, [selectedCalendar, locationId, accessToken]);
+  }, [selectedCalendar, locationId, accessToken, loadUpcomingEvents]);
 
   // Cerrar dropdown al presionar Escape
   useEffect(() => {
@@ -167,7 +169,7 @@ export const Appointments: React.FC = () => {
     }
   }, [isCalendarDropdownOpen]);
 
-  const loadCalendars = async () => {
+  const loadCalendars = useCallback(async () => {
     if (!locationId || !accessToken) return;
 
     try {
@@ -194,68 +196,11 @@ export const Appointments: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [locationId, accessToken, defaultCalendarId]);
 
-  const loadEvents = async () => {
-    if (!locationId || !accessToken || !selectedCalendar) return;
-
-    try {
-      setLoading(true);
-
-      // Calcular rango de fechas según la vista
-      const { startTime, endTime } = getDateRange();
-
-      const eventsData = await calendarsService.getEvents(
-        locationId,
-        startTime,
-        endTime,
-        accessToken,
-        selectedCalendar.id
-      );
-
-      setEvents(eventsData);
-
-      // Calcular estadísticas del mes visible
-      const monthStart = new Date(currentDate);
-      monthStart.setDate(1);
-      monthStart.setHours(0, 0, 0, 0);
-      const monthEnd = new Date(monthStart);
-      monthEnd.setMonth(monthEnd.getMonth() + 1);
-
-      const monthlyData = await calendarsService.getEvents(
-        locationId,
-        monthStart.getTime(),
-        monthEnd.getTime(),
-        accessToken,
-        selectedCalendar.id
-      );
-
-      setStats(calendarsService.calculateStats(monthlyData));
-    } catch (error) {
-      showToast('error', 'Error al cargar citas', 'No se pudieron obtener las citas del calendario.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Cargar eventos próximos desde HOY (independiente del calendario visible)
-  const loadUpcomingEvents = async () => {
-    if (!locationId || !accessToken || !selectedCalendar) return;
-
-    try {
-      const upcomingData = await calendarsService.getFutureAppointments(
-        selectedCalendar.id,
-        locationId,
-        accessToken
-      );
-
-      setUpcomingEvents(upcomingData);
-    } catch (error) {
-      // Error silencioso - no afecta funcionalidad principal
-    }
-  };
-
-  const getDateRange = (): { startTime: number; endTime: number } => {
+  // Función para calcular rango de fechas (necesita estar antes de loadEvents)
+  const getDateRange = useCallback((): { startTime: number; endTime: number } => {
     let start: Date;
     let end: Date;
 
@@ -304,7 +249,67 @@ export const Appointments: React.FC = () => {
       startTime: start.getTime(),
       endTime: end.getTime()
     };
-  };
+  }, [currentDate, viewMode]);
+
+  const loadEvents = useCallback(async () => {
+    if (!locationId || !accessToken || !selectedCalendar) return;
+
+    try {
+      setLoading(true);
+
+      // Calcular rango de fechas según la vista
+      const { startTime, endTime } = getDateRange();
+
+      const eventsData = await calendarsService.getEvents(
+        locationId,
+        startTime,
+        endTime,
+        accessToken,
+        selectedCalendar.id
+      );
+
+      setEvents(eventsData);
+
+      // Calcular estadísticas del mes visible
+      const monthStart = new Date(currentDate);
+      monthStart.setDate(1);
+      monthStart.setHours(0, 0, 0, 0);
+      const monthEnd = new Date(monthStart);
+      monthEnd.setMonth(monthEnd.getMonth() + 1);
+
+      const monthlyData = await calendarsService.getEvents(
+        locationId,
+        monthStart.getTime(),
+        monthEnd.getTime(),
+        accessToken,
+        selectedCalendar.id
+      );
+
+      setStats(calendarsService.calculateStats(monthlyData));
+    } catch (error) {
+      showToast('error', 'Error al cargar citas', 'No se pudieron obtener las citas del calendario.');
+    } finally {
+      setLoading(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [locationId, accessToken, selectedCalendar, currentDate, getDateRange]);
+
+  // Cargar eventos próximos desde HOY (independiente del calendario visible)
+  const loadUpcomingEvents = useCallback(async () => {
+    if (!locationId || !accessToken || !selectedCalendar) return;
+
+    try {
+      const upcomingData = await calendarsService.getFutureAppointments(
+        selectedCalendar.id,
+        locationId,
+        accessToken
+      );
+
+      setUpcomingEvents(upcomingData);
+    } catch (error) {
+      // Error silencioso - no afecta funcionalidad principal
+    }
+  }, [locationId, accessToken, selectedCalendar]);
 
   // Eventos agrupados por fecha para reutilizar en todas las vistas
   const eventsByDate = useMemo(() => calendarsService.groupEventsByDate(events), [events]);
@@ -499,23 +504,25 @@ export const Appointments: React.FC = () => {
     }
   };
 
-  // Color del evento según estado
+  // Color del evento según estado (compatible con dark mode)
   const getEventColor = (status: string) => {
+    const isDark = theme === 'dark';
+
     switch (status.toLowerCase()) {
       case 'confirmed':
-        return '#3b82f6'; // Azul para confirmadas
+        return isDark ? 'rgba(96, 165, 250, 0.3)' : 'rgba(59, 130, 246, 0.2)';
       case 'pending':
-        return 'var(--color-warning-500)'; // Amarillo para pendientes
+        return isDark ? 'rgba(251, 191, 36, 0.3)' : 'rgba(245, 158, 11, 0.2)';
       case 'cancelled':
-        return 'var(--color-error-500)'; // Rojo para canceladas
+        return isDark ? 'rgba(248, 113, 113, 0.3)' : 'rgba(239, 68, 68, 0.2)';
       case 'showed':
-        return '#10b981'; // Verde para asistió
+        return isDark ? 'rgba(52, 211, 153, 0.3)' : 'rgba(16, 185, 129, 0.2)';
       case 'noshow':
-        return 'var(--color-gray-500)'; // Gris para no asistió
+        return isDark ? 'rgba(156, 163, 175, 0.3)' : 'rgba(107, 114, 128, 0.2)';
       case 'rescheduled':
-        return '#8b5cf6'; // Morado para reprogramadas
+        return isDark ? 'rgba(167, 139, 250, 0.3)' : 'rgba(139, 92, 246, 0.2)';
       default:
-        return 'var(--color-gray-500)';
+        return isDark ? 'rgba(209, 213, 219, 0.3)' : 'rgba(156, 163, 175, 0.2)';
     }
   };
 
@@ -1050,16 +1057,20 @@ export const Appointments: React.FC = () => {
         isOpen={isModalOpen}
         onClose={handleCloseModal}
         event={selectedEvent}
+        mode="view"
         onSave={handleSaveAppointment}
         onDelete={handleDeleteAppointment}
       />
+
+      {/* Modal de creación de cita */}
       <AppointmentModal
         isOpen={isCreateModalOpen}
         onClose={() => setIsCreateModalOpen(false)}
-        appointment={null}
         mode="create"
-        defaultCalendarId={createDefaults?.calendarId}
-        defaultDate={createDefaults?.date}
+        defaultStart={createDefaults.start}
+        defaultEnd={createDefaults.end}
+        defaultTimeZone={createDefaults.timeZone}
+        defaultTitle={createDefaults.title}
         onSave={handleCreateAppointment}
       />
     </PageContainer>

@@ -61,12 +61,12 @@ export const WebTracking: React.FC = () => {
       return
     }
 
-    // Validar que el dominio contenga "collect"
-    if (!trackingDomain.includes('collect')) {
+    // Validar que el dominio contenga "ristak"
+    if (!trackingDomain.includes('ristak')) {
       showToast(
         'error',
         'Dominio inválido',
-        'El dominio debe contener "collect" (ej: collect.tudominio.com). Configura el CNAME en tu DNS primero.'
+        'El dominio debe contener "ristak" (ej: ristak.tudominio.com). Configura el CNAME en tu DNS primero.'
       )
       return
     }
@@ -166,17 +166,17 @@ export const WebTracking: React.FC = () => {
                 Primero debes configurar tu integración con HighLevel
               </div>
             </div>
-          ) : !trackingDomain.includes('collect') ? (
+          ) : !trackingDomain.includes('ristak') ? (
             <div className={styles.warningBox}>
               <div className={styles.infoBoxTitle}>
                 <Info size={16} />
                 <span>Configuración requerida</span>
               </div>
               <div className={styles.infoBoxContent}>
-                Para configurar el tracking, accede usando el subdominio <code className={styles.codeInline}>collect.tudominio.com</code>
+                Para configurar el tracking, accede usando el subdominio <code className={styles.codeInline}>ristak.tudominio.com</code>
               </div>
               <div className={styles.infoBoxContent} style={{ marginTop: '8px' }}>
-                Configura un CNAME en tu DNS: <code className={styles.codeInline}>collect</code> → <code className={styles.codeInline}>ristak-app.onrender.com</code>
+                Configura un CNAME en tu DNS: <code className={styles.codeInline}>ristak</code> → <code className={styles.codeInline}>ristak-app.onrender.com</code>
               </div>
             </div>
           ) : (
