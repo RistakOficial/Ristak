@@ -1148,10 +1148,17 @@
   font-size: 0.688rem;
   font-weight: 600;
   color: var(--color-error-500);
-  background-color: white;
+  background-color: transparent;
   padding: 0.125rem 0.375rem;
-  border-radius: var(--radius-sm);
-  box-shadow: var(--shadow-xs);
+  border-radius: var(--radius-full);
+  border: 1.5px solid var(--color-error-500);
+  box-shadow: none;
+}
+
+:global(body.dark) .currentTimeLabel {
+  color: #ef4444;
+  border-color: #ef4444;
+  background-color: rgba(0, 0, 0, 0.3);
 }
 
 /* Upcoming Card */
