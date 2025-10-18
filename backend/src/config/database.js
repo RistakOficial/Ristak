@@ -36,6 +36,7 @@ if (usePostgres) {
         sql = sql.replace(/AUTOINCREMENT/g, 'GENERATED ALWAYS AS IDENTITY')
         sql = sql.replace(/INTEGER PRIMARY KEY AUTOINCREMENT/g, 'SERIAL PRIMARY KEY')
         sql = sql.replace(/DATETIME/g, 'TIMESTAMP')
+        // INSERT OR IGNORE se maneja específicamente donde se usa (ver app_config INSERT)
 
         // Convertir placeholders ? a $1, $2, etc.
         sql = convertPlaceholders(sql)
@@ -167,10 +168,12 @@ async function initTables() {
     `)
 
     // Insertar configuración por defecto de Analytics (visible por defecto)
+    // Usar INSERT con ON CONFLICT para compatibilidad SQLite/PostgreSQL
     try {
       await db.run(`
-        INSERT OR IGNORE INTO app_config (config_key, config_value)
+        INSERT INTO app_config (config_key, config_value)
         VALUES ('show_analytics', '1')
+        ON CONFLICT (config_key) DO NOTHING
       `)
     } catch (err) {
       // Ignore si ya existe

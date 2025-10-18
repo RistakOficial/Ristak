@@ -42,6 +42,7 @@ export interface TrackingConfig {
   trackingDomain: string | null
   isConfigured: boolean
   hasHighLevel: boolean
+  showAnalytics: boolean
 }
 
 /**
