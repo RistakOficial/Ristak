@@ -502,35 +502,35 @@ cd frontend && npm run build
   - Responsive: columnas se apilan verticalmente en pantallas <900px
   - Max-width del modal aumentado de 640px a 900px
 - ✓ **Soporte para calendarios Round Robin (2025-10-18)**:
+  - **Flujo correcto según API de HighLevel**:
+    1. GET /calendars/:id → obtiene teamMembers[] con userId
+    2. POST /api/highlevel/users/by-ids → obtiene datos completos de usuarios
   - Detección automática: calendarType === 'round_robin' o eventType.includes('RoundRobin')
-  - Función loadUsers() filtra usuarios según tipo de calendario:
-    - Round Robin: solo muestra team members del calendario (calendar.teamMembers)
-    - Calendarios normales: muestra todos los usuarios del location
+  - Backend: métodos getUserById(), getUsersByIds() en ghlClient.js
+  - Nuevo endpoint: POST /api/highlevel/users/by-ids (recibe array de userIds)
+  - Frontend: loadUsers() hace POST con teamMemberIds extraídos de calendar.teamMembers
+  - **Fallback inteligente**: Si falta scope `users.readonly`, muestra "Usuario {id}..." en selector
   - UI condicional: "Team member *" (obligatorio) para RR vs "Usuario asignado (opcional)" para normales
-  - Texto de ayuda explicando funcionalidad Round Robin
   - Validación obligatoria de assignedUserId para calendarios Round Robin
-  - Estilo .helpText agregado para mensajes informativos
-  - Archivos: AppointmentModal.tsx, AppointmentModal.module.css
+  - ⚠️ **Limitación actual**: Token sin scope `users.readonly` → solo muestra IDs truncados
+  - ✅ **Funcionalidad**: Asignación funciona perfectamente aunque falte el nombre pretty
+  - Archivos: ghlClient.js, highlevelController.js, highlevel.routes.js, AppointmentModal.tsx
+  - Script de prueba: test-round-robin.js para debugging
 
 ---
 
 ## 📅 ÚLTIMA ACTUALIZACIÓN
 
 **Fecha**: 2025-10-18
-**Versión**: 1.10.0
+**Versión**: 1.10.1
 **Último cambio estructural**:
-- **Feat: Implementación completa de calendarios Round Robin**
-  - Modal de creación de citas rediseñado con layout de 2 columnas
-  - Contacto obligatorio para todas las citas
-  - Soporte para calendarios Round Robin con filtrado de team members
-  - Selector de team member obligatorio para Round Robin
-  - Auto-fill de título con nombre de contacto
-  - Formato ahora genera correctamente: `2025-10-18T14:00:00-06:00` (comprobado con API de HighLevel)
-  - Eliminado `window.confirm()` y reemplazado con modal personalizado usando `createPortal`
-  - Nuevo package.json en raíz para builds automáticos en Render
-  - Nueva regla crítica: Nunca usar `alert()`, `confirm()` o `prompt()` del browser
-  - Patrón establecido: Usar Modal component + createPortal para todas las confirmaciones
-  - Archivos modificados: AppointmentModal.tsx, AppointmentModal.module.css, CLAUDE.md, package.json (raíz)
+- **Fix: Implementación correcta de Round Robin con fallback**
+  - Flujo correcto: GET calendarios → extraer userIds → GET usuarios por ID
+  - Endpoint correcto: GET /users/:userId (según documentación oficial GHL)
+  - Fallback cuando falta scope users.readonly en el token
+  - Selector de team members funciona con IDs si no hay nombres
+  - Investigación completa de API de HighLevel documentada
+  - Próximo paso: Usuario debe regenerar token con scope users.readonly
 
 ---
 
