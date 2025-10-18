@@ -282,6 +282,7 @@ export async function servePixel(req, res) {
 
       var userData = JSON.parse(udData);
       var contactId = userData.customer_id || userData.id;
+      var udVisitorId = userData.rkvi_id || null;
 
       if (contactId) {
         // Guardar en nuestra estructura ristak
@@ -295,8 +296,15 @@ export async function servePixel(req, res) {
           localData.contact_synced_at = new Date().toISOString();
           setLocalData(localData);
 
-          // Enviar visitor_id a HighLevel como custom field
+          // Enviar visitor_id actual a HighLevel como custom field
           sendVisitorIdToHighLevel(localData.visitor_id, contactId);
+        }
+
+        // Si el _ud tiene un rkvi_id diferente al visitor_id actual,
+        // significa que ese visitante se convirtió en contacto
+        // Notificar al backend para vincular el historial
+        if (udVisitorId && udVisitorId !== localData.visitor_id) {
+          linkHistoricalVisitor(udVisitorId, contactId, userData.full_name || userData.name || 'Sin nombre');
         }
 
         return contactId;
@@ -307,7 +315,7 @@ export async function servePixel(req, res) {
     return null;
   }
 
-  // Enviar visitor_id a HighLevel como custom field (rstk_vid)
+  // Enviar visitor_id a HighLevel como custom field (rkvi_id)
   function sendVisitorIdToHighLevel(visitorId, contactId) {
     if (!visitorId || !contactId) return;
 
@@ -316,6 +324,25 @@ export async function servePixel(req, res) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ visitor_id: visitorId, contact_id: contactId }),
+      keepalive: true
+    }).catch(function(err) {
+      // Silently fail
+    });
+  }
+
+  // Vincular historial de un visitor_id previo al contacto actual
+  function linkHistoricalVisitor(historicalVisitorId, contactId, fullName) {
+    if (!historicalVisitorId || !contactId) return;
+
+    // Enviar al backend para vincular TODAS las sesiones históricas
+    fetch(ENDPOINT.replace('/collect', '/link-visitor'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        visitor_id: historicalVisitorId,
+        contact_id: contactId,
+        full_name: fullName
+      }),
       keepalive: true
     }).catch(function(err) {
       // Silently fail
@@ -538,7 +565,7 @@ export async function syncVisitorToHighLevel(req, res) {
       return res.json({ ok: false, message: 'No HighLevel config' })
     }
 
-    // Actualizar custom field rstk_vid en HighLevel
+    // Actualizar custom field rkvi_id en HighLevel
     const response = await fetch(
       `https://services.leadconnectorhq.com/contacts/${contact_id}`,
       {
@@ -551,7 +578,7 @@ export async function syncVisitorToHighLevel(req, res) {
         body: JSON.stringify({
           customFields: [
             {
-              key: 'rstk_vid',
+              key: 'rkvi_id',
               field_value: visitor_id
             }
           ]
@@ -561,7 +588,7 @@ export async function syncVisitorToHighLevel(req, res) {
 
     if (!response.ok) {
       const errorText = await response.text()
-      logger.error(`Error actualizando rstk_vid en HighLevel: ${response.status} - ${errorText}`)
+      logger.error(`Error actualizando rkvi_id en HighLevel: ${response.status} - ${errorText}`)
       return res.json({ ok: false, message: 'HighLevel API error' })
     }
 
@@ -570,6 +597,33 @@ export async function syncVisitorToHighLevel(req, res) {
 
   } catch (error) {
     logger.error('Error en /sync-visitor:', error)
+    res.json({ ok: false, message: error.message })
+  }
+}
+
+/**
+ * Vincula un visitor_id histórico a un contacto
+ * POST /link-visitor
+ */
+export async function linkVisitorToContact(req, res) {
+  try {
+    const { visitor_id, contact_id, full_name } = req.body
+
+    if (!visitor_id || !contact_id) {
+      return res.status(400).json({ error: 'Missing visitor_id or contact_id' })
+    }
+
+    // Importar función de vinculación
+    const { linkVisitorToContact: linkFunction } = await import('../services/trackingService.js')
+
+    // Ejecutar vinculación
+    const result = await linkFunction(visitor_id, contact_id, full_name || 'Sin nombre')
+
+    logger.info(`✅ Vinculado visitor ${visitor_id} a contact ${contact_id} (${result.updated} registros actualizados)`)
+    res.json({ ok: true, updated: result.updated })
+
+  } catch (error) {
+    logger.error('Error en /link-visitor:', error)
     res.json({ ok: false, message: error.message })
   }
 }
@@ -725,7 +779,7 @@ export async function configureTracking(req, res) {
     }
 
     // Generar el snippet con versión para evitar cache
-    const SNIPPET_VERSION = '6' // Incrementar cuando cambies el código del snippet
+    const SNIPPET_VERSION = '7' // Incrementar cuando cambies el código del snippet
     const snippet = `<!-- Pixel de Tracking Ristak -->
 <script async src="https://${trackingDomain}/snip.js?v=${SNIPPET_VERSION}"></script>`
 

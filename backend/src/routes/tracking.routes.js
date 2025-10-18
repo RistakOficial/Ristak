@@ -3,6 +3,7 @@ import {
   servePixel,
   collectEvent,
   syncVisitorToHighLevel,
+  linkVisitorToContact,
   getSessionsHandler,
   getSessionHandler,
   getTrackingConfig,
@@ -20,6 +21,9 @@ router.post('/collect', collectEvent)
 
 // Sincronizar visitor_id con HighLevel
 router.post('/sync-visitor', syncVisitorToHighLevel)
+
+// Vincular visitor_id histórico a contacto
+router.post('/link-visitor', linkVisitorToContact)
 
 // Obtener sesiones (dashboard)
 router.get('/sessions', getSessionsHandler)
