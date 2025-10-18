@@ -22,6 +22,7 @@ import {
   type ReportRange
 } from '@/services/reportsService'
 import { formatCurrency, formatNumber, formatRoas, formatDate, formatDateToISO, parseLocalDateString } from '@/utils/format'
+import { useAppConfig } from '@/hooks'
 import styles from './Reports.module.css'
 import {
   Users,
@@ -348,6 +349,9 @@ export const Reports: React.FC = () => {
   const { showToast } = useNotification()
   const { labels } = useLabels()
 
+  // Sistema híbrido de configuración
+  const [visitorSource] = useAppConfig<'platform' | 'tracking'>('visitor_source', 'platform')
+
   const [reportType, setReportType] = useState<ReportType>('cashflow')
   const reportTypeRef = React.useRef<ReportType>(reportType)
 
@@ -367,13 +371,6 @@ export const Reports: React.FC = () => {
   const [summary, setSummary] = useState<ReportsSummary | null>(null)
   const [loadingMetrics, setLoadingMetrics] = useState(false)
   const [loadingSummary, setLoadingSummary] = useState(false)
-
-  // Estado para visitor source preference
-  const VISITOR_SOURCE_KEY = 'visitorSourcePreference'
-  const [visitorSource, setVisitorSource] = useState<'platform' | 'tracking'>(() => {
-    const stored = localStorage.getItem(VISITOR_SOURCE_KEY)
-    return (stored as 'platform' | 'tracking') || 'platform'
-  })
 
   const [modalState, setModalState] = useState<{
     open: boolean
@@ -409,21 +406,6 @@ export const Reports: React.FC = () => {
   )
 
   const scopeParam = reportType === 'campaigns' ? 'campaigns' : 'all'
-
-  // Escuchar cambios en la preferencia de visitor source
-  useEffect(() => {
-    const handleVisitorSourceChange = (event: CustomEvent) => {
-      const newSource = event.detail.visitorSource
-      setVisitorSource(newSource)
-      localStorage.setItem(VISITOR_SOURCE_KEY, newSource)
-    }
-
-    window.addEventListener('visitor-source-changed', handleVisitorSourceChange as EventListener)
-
-    return () => {
-      window.removeEventListener('visitor-source-changed', handleVisitorSourceChange as EventListener)
-    }
-  }, [])
 
   useEffect(() => {
     const fetchMetrics = async () => {

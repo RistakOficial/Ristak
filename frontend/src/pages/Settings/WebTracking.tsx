@@ -11,23 +11,16 @@ import {
 } from 'lucide-react'
 import { trackingService, TrackingSession } from '@/services/trackingService'
 import { useNotification } from '@/contexts/NotificationContext'
+import { useAppConfig } from '@/hooks'
 import styles from './HighLevelIntegration.module.css'
-
-const SHOW_ANALYTICS_STORAGE_KEY = 'showAnalyticsPreference'
-const VISITOR_SOURCE_KEY = 'visitorSourcePreference'
-
-const persistAnalyticsPreference = (value: boolean) => {
-  if (typeof window === 'undefined') return
-  window.localStorage.setItem(SHOW_ANALYTICS_STORAGE_KEY, String(value))
-}
-
-const persistVisitorSourcePreference = (value: 'platform' | 'tracking') => {
-  if (typeof window === 'undefined') return
-  window.localStorage.setItem(VISITOR_SOURCE_KEY, value)
-}
 
 export const WebTracking: React.FC = () => {
   const { showToast } = useNotification()
+
+  // Sistema híbrido de configuración (cache + DB)
+  const [showAnalytics, setShowAnalytics, savingAnalyticsPref] = useAppConfig('show_analytics', true)
+  const [visitorSource, setVisitorSource, savingVisitorPref] = useAppConfig<'platform' | 'tracking'>('visitor_source', 'platform')
+
   const [trackingDomain, setTrackingDomain] = useState('')
   const [copied, setCopied] = useState(false)
   const [recentSessions, setRecentSessions] = useState<TrackingSession[]>([])
@@ -36,23 +29,6 @@ export const WebTracking: React.FC = () => {
   const [configuringTracking, setConfiguringTracking] = useState(false)
   const [isConfigured, setIsConfigured] = useState(false)
   const [hasHighLevel, setHasHighLevel] = useState(false)
-  const [showAnalytics, setShowAnalytics] = useState(() => {
-    if (typeof window !== 'undefined') {
-      const stored = window.localStorage.getItem(SHOW_ANALYTICS_STORAGE_KEY)
-      if (stored === 'true') return true
-      if (stored === 'false') return false
-    }
-    return true // visible por defecto
-  })
-  const [savingAnalyticsPref, setSavingAnalyticsPref] = useState(false)
-  const [visitorSource, setVisitorSource] = useState<'platform' | 'tracking'>(() => {
-    if (typeof window !== 'undefined') {
-      const stored = window.localStorage.getItem(VISITOR_SOURCE_KEY) as 'platform' | 'tracking' | null
-      return stored || 'platform' // por defecto usa plataforma de anuncios
-    }
-    return 'platform'
-  })
-  const [savingVisitorPref, setSavingVisitorPref] = useState(false)
 
   useEffect(() => {
     loadTrackingConfig()
@@ -146,21 +122,10 @@ export const WebTracking: React.FC = () => {
   }
 
   const handleToggleAnalytics = async () => {
-    setSavingAnalyticsPref(true)
     try {
       const newValue = !showAnalytics
-      const response = await fetch('/api/tracking/analytics-preference', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ showAnalytics: newValue })
-      })
+      await setShowAnalytics(newValue)
 
-      if (!response.ok) {
-        throw new Error('Error al guardar preferencia')
-      }
-
-      setShowAnalytics(newValue)
-      persistAnalyticsPreference(newValue)
       showToast(
         'success',
         'Guardado',
@@ -175,27 +140,14 @@ export const WebTracking: React.FC = () => {
       }))
     } catch (error) {
       showToast('error', 'Error', 'No se pudo guardar la preferencia')
-    } finally {
-      setSavingAnalyticsPref(false)
     }
   }
 
   const handleToggleVisitorSource = async () => {
-    setSavingVisitorPref(true)
     try {
       const newValue = visitorSource === 'platform' ? 'tracking' : 'platform'
-      const response = await fetch('/api/tracking/visitor-source-preference', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ visitorSource: newValue })
-      })
+      await setVisitorSource(newValue)
 
-      if (!response.ok) {
-        throw new Error('Error al guardar preferencia')
-      }
-
-      setVisitorSource(newValue)
-      persistVisitorSourcePreference(newValue)
       showToast(
         'success',
         'Guardado',
@@ -210,8 +162,6 @@ export const WebTracking: React.FC = () => {
       }))
     } catch (error) {
       showToast('error', 'Error', 'No se pudo guardar la preferencia')
-    } finally {
-      setSavingVisitorPref(false)
     }
   }
 

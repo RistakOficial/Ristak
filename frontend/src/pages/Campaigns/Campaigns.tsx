@@ -16,6 +16,7 @@ import { useLabels } from '@/contexts/LabelsContext'
 import { formatCurrency, formatRoas, formatChartDate, formatDateToISO, parseLocalDateString } from '@/utils/format'
 import { campaignsService, type CampaignContact } from '@/services/campaignsService'
 import { reportsService, type CampaignsReport } from '@/services/reportsService'
+import { useAppConfig } from '@/hooks'
 import styles from './Campaigns.module.css'
 
 interface AdData {
@@ -75,6 +76,10 @@ interface CampaignData {
 export const Campaigns: React.FC = () => {
   const { dateRange, setDateRange } = useDateRange()
   const { labels } = useLabels()
+
+  // Sistema híbrido de configuración
+  const [visitorSource] = useAppConfig<'platform' | 'tracking'>('visitor_source', 'platform')
+
   const [campaigns, setCampaigns] = useState<CampaignData[]>([])
   const [loading, setLoading] = useState(true)
   const [syncStatus, setSyncStatus] = useState<any>(null)
@@ -82,9 +87,6 @@ export const Campaigns: React.FC = () => {
   const [expandedAdSets, setExpandedAdSets] = useState<Set<string>>(new Set())
   const [timeSeriesData, setTimeSeriesData] = useState<any[]>([])
   const [campaignSummary, setCampaignSummary] = useState<CampaignsReport['summary'] | null>(null)
-
-  // Estado para visitor source preference
-  const [visitorSource, setVisitorSource] = useState<'platform' | 'tracking'>('platform')
 
   // Estados para modal de contactos
   const [isModalOpen, setIsModalOpen] = useState(false)
@@ -104,9 +106,6 @@ export const Campaigns: React.FC = () => {
         .getCampaignsReport({ from: startDate, to: endDate })
         .catch(() => null as CampaignsReport | null)
 
-      // Cargar preferencia actual de visitor source
-      const currentVisitorSource = localStorage.getItem('visitorSourcePreference') || 'platform'
-
       const promises = [
         campaignsService.getCampaigns(startDate, endDate),
         campaignsService.getSpendOverTime(startDate, endDate),
@@ -114,8 +113,8 @@ export const Campaigns: React.FC = () => {
       ]
 
       // Si se usa tracking interno, obtener visitantes desde sessions
-      console.log('🔍 currentVisitorSource:', currentVisitorSource)
-      if (currentVisitorSource === 'tracking') {
+      console.log('🔍 visitorSource:', visitorSource)
+      if (visitorSource === 'tracking') {
         console.log('📊 Fetching visitors from tracking, dates:', startDate, 'to', endDate)
         promises.push(
           fetch(`/api/tracking/visitors-by-ad?startDate=${startDate}&endDate=${endDate}`)
@@ -141,7 +140,7 @@ export const Campaigns: React.FC = () => {
         // Calcular visitantes para esta campaña y sus ads
         let campaignVisitors = 0
 
-        if (currentVisitorSource === 'tracking' && visitorsByAd) {
+        if (visitorSource === 'tracking' && visitorsByAd) {
           console.log('🎯 Processing campaign:', campaign.name, 'with visitorsByAd keys:', Object.keys(visitorsByAd || {}))
           // Sumar visitantes de todos los ads de esta campaña
           campaign.adsets?.forEach((adset: any) => {
@@ -168,7 +167,7 @@ export const Campaigns: React.FC = () => {
           platform: 'Meta', // All campaigns from Meta
           adSets: campaign.adsets, // Map adsets to adSets for compatibility
           adsets: campaign.adsets, // Keep both for compatibility
-          visitors: currentVisitorSource === 'tracking' ? campaignVisitors : (campaign.clicks || 0),
+          visitors: visitorSource === 'tracking' ? campaignVisitors : (campaign.clicks || 0),
           revenue: campaign.revenue || 0,
           sales: campaign.sales || 0,
           leads: campaign.leads || 0,
@@ -208,32 +207,10 @@ export const Campaigns: React.FC = () => {
   }
   }, [dateRange.start, dateRange.end])
 
-  // Fetch campaigns on mount and when date range changes
+  // Fetch campaigns on mount and when date range or visitor source changes
   useEffect(() => {
     fetchCampaigns()
-  }, [fetchCampaigns])
-
-  // Cargar preferencia de visitor source y escuchar cambios
-  useEffect(() => {
-    // Cargar preferencia inicial desde localStorage
-    const storedPreference = localStorage.getItem('visitorSourcePreference') as 'platform' | 'tracking' | null
-    if (storedPreference) {
-      setVisitorSource(storedPreference)
-    }
-
-    // Escuchar cambios en la preferencia
-    const handlePreferenceChange = (event: CustomEvent) => {
-      const newSource = event.detail.visitorSource as 'platform' | 'tracking'
-      setVisitorSource(newSource)
-      fetchCampaigns() // Recargar con nueva fuente
-    }
-
-    window.addEventListener('visitor-source-changed' as any, handlePreferenceChange)
-
-    return () => {
-      window.removeEventListener('visitor-source-changed' as any, handlePreferenceChange)
-    }
-  }, [fetchCampaigns])
+  }, [fetchCampaigns, visitorSource])
 
   const checkSyncStatus = useCallback(async () => {
     try {

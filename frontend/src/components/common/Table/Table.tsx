@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react'
+import React, { useState, useMemo, useEffect } from 'react'
 import {
   Search,
   ChevronUp,
@@ -11,7 +11,7 @@ import {
   ChevronLeft,
   ChevronRight
 } from 'lucide-react'
-import { loadTableConfig, saveTableConfig } from '@/utils/tableStorage'
+import { useTableConfig } from '@/hooks'
 import styles from './Table.module.css'
 
 export interface Column<T> {
@@ -72,6 +72,9 @@ export function Table<T extends Record<string, any>>({
   initialSortBy,
   initialSortOrder = 'asc'
 }: TableProps<T>) {
+  // Sistema híbrido de configuración de tablas
+  const [savedTableConfig, updateTableConfig] = useTableConfig(tableId || 'default')
+
   const [searchTerm, setSearchTerm] = useState('')
   const [sortBy, setSortBy] = useState<string | null>(initialSortBy || null)
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>(initialSortOrder)
@@ -85,13 +88,7 @@ export function Table<T extends Record<string, any>>({
 
   // Inicializar columnas con config guardada SOLO UNA VEZ
   const [columns, setColumns] = useState(() => {
-    if (!tableId) {
-      return initialColumns
-    }
-
-    const savedConfig = loadTableConfig(tableId)
-
-    if (savedConfig.length === 0) {
+    if (!tableId || !savedTableConfig) {
       return initialColumns
     }
 
@@ -99,7 +96,7 @@ export function Table<T extends Record<string, any>>({
     const columnsMap = new Map(initialColumns.map(col => [col.key, col]))
     const orderedColumns: Column<T>[] = []
 
-    savedConfig.forEach(config => {
+    savedTableConfig.forEach((config: any) => {
       const col = columnsMap.get(config.id)
       if (col) {
         orderedColumns.push({
@@ -111,7 +108,7 @@ export function Table<T extends Record<string, any>>({
 
     // Agregar columnas nuevas que no están en la config
     initialColumns.forEach(col => {
-      if (!savedConfig.find(c => c.id === col.key)) {
+      if (!savedTableConfig.find((c: any) => c.id === col.key)) {
         orderedColumns.push(col)
       }
     })
@@ -119,8 +116,34 @@ export function Table<T extends Record<string, any>>({
     return orderedColumns
   })
 
-  // Función para guardar config
-  const saveColumnsConfig = (newColumns: Column<T>[]) => {
+  // Sincronizar columnas cuando cambie la config guardada
+  useEffect(() => {
+    if (!tableId || !savedTableConfig) return
+
+    const columnsMap = new Map(initialColumns.map(col => [col.key, col]))
+    const orderedColumns: Column<T>[] = []
+
+    savedTableConfig.forEach((config: any) => {
+      const col = columnsMap.get(config.id)
+      if (col) {
+        orderedColumns.push({
+          ...col,
+          visible: col.fixed ? true : config.visible
+        })
+      }
+    })
+
+    initialColumns.forEach(col => {
+      if (!savedTableConfig.find((c: any) => c.id === col.key)) {
+        orderedColumns.push(col)
+      }
+    })
+
+    setColumns(orderedColumns)
+  }, [savedTableConfig, tableId])
+
+  // Función para guardar config (ahora híbrida)
+  const saveColumnsConfig = async (newColumns: Column<T>[]) => {
     if (!tableId) return
 
     const config = newColumns.map((col, index) => ({
@@ -129,7 +152,11 @@ export function Table<T extends Record<string, any>>({
       order: index
     }))
 
-    saveTableConfig(tableId, config)
+    try {
+      await updateTableConfig(config)
+    } catch (error) {
+      console.error('Error guardando configuración de tabla:', error)
+    }
   }
 
   const handleDragStart = (e: React.DragEvent, columnKey: string) => {
