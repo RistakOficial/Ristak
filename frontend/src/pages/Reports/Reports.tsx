@@ -928,9 +928,11 @@ export const Reports: React.FC = () => {
       key: 'firstVisit',
       header: 'Primera visita',
       sortable: false,
-      render: (_: any, item: any) => (
-        <span>{formatDate(item.firstVisit)}</span>
-      )
+      render: (_: any, item: any) => {
+        if (!item.firstVisit) return <span>-</span>
+        const date = new Date(item.firstVisit)
+        return <span>{date.toLocaleDateString('es-MX', { year: 'numeric', month: 'short', day: 'numeric' })}</span>
+      }
     }
   ], [])
 
