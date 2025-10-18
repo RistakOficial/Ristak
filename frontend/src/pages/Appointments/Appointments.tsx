@@ -80,11 +80,11 @@ const isSameDay = (a: Date, b: Date): boolean => {
 };
 
 export const Appointments: React.FC = () => {
-  console.log('🔵 Appointments render');
-
   const { locationId, accessToken } = useAuth();
   const { showToast } = useNotification();
   const { theme } = useTheme();
+
+  console.log('🔵 Appointments render', { locationId, accessToken: accessToken ? 'exists' : 'null', theme });
 
   // Estado del calendario
   const [viewMode, setViewMode] = useState<ViewMode>('month');
@@ -332,6 +332,24 @@ export const Appointments: React.FC = () => {
     }
   }, [isCalendarDropdownOpen]);
 
+  // Auto-scroll en vistas de semana y día
+  useEffect(() => {
+    if (!weekGridRef.current && !dayGridRef.current) return;
+
+    const now = new Date();
+    const currentHour = now.getHours() + now.getMinutes() / 60;
+    const target = Math.max(currentHour - 2, 0); // deja margen por encima
+    const scrollPosition = target * 60; // 60px por cada hora
+
+    if (viewMode === 'week' && weekGridRef.current) {
+      weekGridRef.current.scrollTop = scrollPosition;
+    }
+
+    if (viewMode === 'day' && dayGridRef.current) {
+      dayGridRef.current.scrollTop = scrollPosition;
+    }
+  }, [viewMode, currentDate]);
+
   // Eventos agrupados por fecha para reutilizar en todas las vistas
   const eventsByDate = useMemo(() => calendarsService.groupEventsByDate(events), [events]);
 
@@ -558,23 +576,6 @@ export const Appointments: React.FC = () => {
       </PageContainer>
     );
   }
-
-  useEffect(() => {
-    if (!weekGridRef.current && !dayGridRef.current) return;
-
-    const now = new Date();
-    const currentHour = now.getHours() + now.getMinutes() / 60;
-    const target = Math.max(currentHour - 2, 0); // deja margen por encima
-    const scrollPosition = target * 60; // 60px por cada hora
-
-    if (viewMode === 'week' && weekGridRef.current) {
-      weekGridRef.current.scrollTop = scrollPosition;
-    }
-
-    if (viewMode === 'day' && dayGridRef.current) {
-      dayGridRef.current.scrollTop = scrollPosition;
-    }
-  }, [viewMode, currentDate]);
 
   return (
     <PageContainer>
