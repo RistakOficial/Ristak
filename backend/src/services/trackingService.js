@@ -443,64 +443,139 @@ export async function getRecentSessions(limit = 50) {
  */
 export async function getSessionsByDateRange(startDate, endDate) {
   try {
-    const sessions = await db.all(`
-      SELECT
-        session_id,
-        visitor_id,
-        contact_id,
-        full_name,
-        event_name,
-        started_at,
-        landing_url,
-        referrer_url,
-        utm_source,
-        utm_medium,
-        utm_campaign,
-        utm_content,
-        utm_term,
-        gclid,
-        fbclid,
-        fbc,
-        fbp,
-        wbraid,
-        gbraid,
-        msclkid,
-        ttclid,
-        channel,
-        source_platform,
-        campaign_id,
-        adset_id,
-        ad_group_id,
-        ad_id,
-        campaign_name,
-        adset_name,
-        ad_group_name,
-        ad_name,
-        placement,
-        site_source_name,
-        network,
-        match_type,
-        keyword,
-        search_query,
-        creative_id,
-        ad_position,
-        device_type,
-        os,
-        browser,
-        browser_version,
-        language,
-        timezone,
-        geo_country,
-        geo_region,
-        geo_city,
-        ip,
-        user_agent
-      FROM sessions
-      WHERE DATE(started_at) >= DATE(?)
-        AND DATE(started_at) <= DATE(?)
-      ORDER BY started_at DESC
-    `, [startDate, endDate])
+    const usePostgres = Boolean(process.env.DATABASE_URL)
 
+    let query, params
+
+    if (usePostgres) {
+      // PostgreSQL query
+      query = `
+        SELECT
+          session_id,
+          visitor_id,
+          contact_id,
+          full_name,
+          event_name,
+          started_at,
+          landing_url,
+          referrer_url,
+          utm_source,
+          utm_medium,
+          utm_campaign,
+          utm_content,
+          utm_term,
+          gclid,
+          fbclid,
+          fbc,
+          fbp,
+          wbraid,
+          gbraid,
+          msclkid,
+          ttclid,
+          channel,
+          source_platform,
+          campaign_id,
+          adset_id,
+          ad_group_id,
+          ad_id,
+          campaign_name,
+          adset_name,
+          ad_group_name,
+          ad_name,
+          placement,
+          site_source_name,
+          network,
+          match_type,
+          keyword,
+          search_query,
+          creative_id,
+          ad_position,
+          device_type,
+          os,
+          browser,
+          browser_version,
+          language,
+          timezone,
+          geo_country,
+          geo_region,
+          geo_city,
+          ip,
+          user_agent,
+          pageviews_count,
+          events_count,
+          is_bounce
+        FROM sessions
+        WHERE started_at::timestamp >= $1::timestamp
+          AND started_at::timestamp < ($2::timestamp + INTERVAL '1 day')
+        ORDER BY started_at DESC
+      `
+      params = [startDate, endDate]
+    } else {
+      // SQLite query
+      query = `
+        SELECT
+          session_id,
+          visitor_id,
+          contact_id,
+          full_name,
+          event_name,
+          started_at,
+          landing_url,
+          referrer_url,
+          utm_source,
+          utm_medium,
+          utm_campaign,
+          utm_content,
+          utm_term,
+          gclid,
+          fbclid,
+          fbc,
+          fbp,
+          wbraid,
+          gbraid,
+          msclkid,
+          ttclid,
+          channel,
+          source_platform,
+          campaign_id,
+          adset_id,
+          ad_group_id,
+          ad_id,
+          campaign_name,
+          adset_name,
+          ad_group_name,
+          ad_name,
+          placement,
+          site_source_name,
+          network,
+          match_type,
+          keyword,
+          search_query,
+          creative_id,
+          ad_position,
+          device_type,
+          os,
+          browser,
+          browser_version,
+          language,
+          timezone,
+          geo_country,
+          geo_region,
+          geo_city,
+          ip,
+          user_agent,
+          pageviews_count,
+          events_count,
+          is_bounce
+        FROM sessions
+        WHERE DATE(started_at) >= DATE(?)
+          AND DATE(started_at) <= DATE(?)
+        ORDER BY started_at DESC
+      `
+      params = [startDate, endDate]
+    }
+
+    const sessions = await db.all(query, params)
     return sessions
   } catch (error) {
     logger.error('Error obteniendo sesiones por rango:', error)
