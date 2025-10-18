@@ -192,7 +192,7 @@ const parseChartDateInput = (value: string): ParsedChartDate | null => {
 
 export const formatChartDate = (dateStr: string, rangeInDays: number, previousDateStr?: string): string => {
   const parsed = parseChartDateInput(dateStr)
-  if (!parsed) return dateStr
+  if (!parsed) return dateStr || ''
 
   const { date, hasMonth, hasDay, containsTime } = parsed
   const monthIndex = date.getMonth()
@@ -213,19 +213,22 @@ export const formatChartDate = (dateStr: string, rangeInDays: number, previousDa
   }
 
   if (!hasDay) {
-    return yearChanged ? `${capitalize(shortMonth)} ${year}` : capitalize(shortMonth)
+    const capitalizedMonth = capitalize(shortMonth)
+    return yearChanged ? `${capitalizedMonth} ${year}` : capitalizedMonth
   }
 
   if (containsTime && rangeInDays <= 1) {
-    return date.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })
+    return date.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' }) || ''
   }
 
   // Si tiene día específico, siempre mostrar día + mes
   if (hasDay) {
-    return yearChanged ? `${date.getDate()} ${shortMonth} ${year}` : `${date.getDate()} ${shortMonth}`
+    const day = date.getDate()
+    return yearChanged ? `${day} ${shortMonth} ${year}` : `${day} ${shortMonth}`
   }
 
-  return yearChanged ? `${capitalize(shortMonth)} ${year}` : capitalize(shortMonth)
+  const capitalizedMonth = capitalize(shortMonth)
+  return yearChanged ? `${capitalizedMonth} ${year}` : capitalizedMonth
 }
 
 /**
