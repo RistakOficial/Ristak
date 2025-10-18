@@ -42,6 +42,19 @@ const STATUS_PRIORITY: Record<Contact['status'], number> = {
   customer: 2
 }
 
+const PAYMENT_SUCCESS_STATUSES = new Set([
+  'succeeded',
+  'paid',
+  'completed',
+  'complete',
+  'fulfilled',
+  'success'
+])
+
+const PAYMENT_REFUND_STATUSES = new Set(['refunded', 'refund'])
+const PAYMENT_PENDING_STATUSES = new Set(['pending', 'processing'])
+const PAYMENT_FAILED_STATUSES = new Set(['failed', 'canceled', 'cancelled'])
+
 const mergeContactDetailRecords = (
   baseContact: Contact | null,
   detailContacts: Contact[],
@@ -232,6 +245,26 @@ export const Contacts: React.FC = () => {
     return { label: formatStatusText(normalized), variant: 'neutral' }
   }
 
+  const getPaymentStatusBadge = (status?: string | null): { label: string; variant: BadgeVariant } => {
+    if (!status) return { label: 'Pendiente', variant: 'warning' }
+    const normalized = status.toLowerCase()
+
+    if (PAYMENT_SUCCESS_STATUSES.has(normalized)) {
+      return { label: 'Pagado', variant: 'success' }
+    }
+    if (PAYMENT_REFUND_STATUSES.has(normalized)) {
+      return { label: 'Reembolsado', variant: 'error' }
+    }
+    if (PAYMENT_PENDING_STATUSES.has(normalized)) {
+      return { label: 'Pendiente', variant: 'warning' }
+    }
+    if (PAYMENT_FAILED_STATUSES.has(normalized)) {
+      return { label: 'Fallido', variant: 'error' }
+    }
+
+    return { label: formatStatusText(normalized), variant: 'neutral' }
+  }
+
   const openContactModal = (contact: Contact) => {
     setSelectedContact(contact)
     setSelectedContactDetails(null)
@@ -245,8 +278,6 @@ export const Contacts: React.FC = () => {
     setContactDetailsLoading(false)
     setSelectedContactDetails(null)
   }
-
-  const hasAppointmentsData = typeof selectedContactDetails?.appointments !== 'undefined'
 
   useEffect(() => {
     fetchData()
@@ -316,14 +347,26 @@ export const Contacts: React.FC = () => {
     }
   }, [selectedContactId, selectedContact, showToast])
 
+  const contactData = selectedContactDetails ?? selectedContact
+
+  const hasAppointmentsData = typeof contactData?.appointments !== 'undefined'
+  const hasPaymentsData = typeof contactData?.payments !== 'undefined'
+
   const contactAppointments = useMemo(() => {
-    if (!selectedContactDetails?.appointments) return []
-    return [...selectedContactDetails.appointments].sort((a, b) =>
+    if (!contactData?.appointments) return []
+    return [...contactData.appointments].sort((a, b) =>
       new Date(a.start_time).getTime() - new Date(b.start_time).getTime()
     )
-  }, [selectedContactDetails?.appointments])
+  }, [contactData?.appointments])
 
-  const contactData = selectedContactDetails ?? selectedContact
+  const contactPayments = useMemo(() => {
+    if (!contactData?.payments) return []
+    return [...contactData.payments].sort((a, b) => {
+      const dateA = a?.date ? Date.parse(a.date) : 0
+      const dateB = b?.date ? Date.parse(b.date) : 0
+      return dateB - dateA
+    })
+  }, [contactData?.payments])
 
   const nextAppointmentTimestamp = useMemo(() => {
     if (!contactData?.nextAppointmentDate) return null
@@ -333,6 +376,9 @@ export const Contacts: React.FC = () => {
     }
     return parsed.getTime()
   }, [contactData?.nextAppointmentDate])
+
+  const paymentsCount = contactPayments.length
+  const appointmentsCount = contactAppointments.length
 
   const fetchData = async () => {
     setLoading(true)
@@ -947,3 +993,5 @@ export const Contacts: React.FC = () => {
     </PageContainer>
   )
 }
+
+export default Contacts

@@ -9,7 +9,7 @@ import {
   TreeFilter,
   TrafficSourcesChart
 } from '../../components/common'
-import { Eye, Users, UserCheck, Target, RefreshCw, FileText, Smartphone, Monitor, Tablet, Globe } from 'lucide-react'
+import { Eye, Users, UserCheck, Target, Smartphone, Monitor, Tablet, Globe } from 'lucide-react'
 import { FaFacebook, FaGoogle, FaInstagram, FaTiktok, FaTwitter, FaLinkedin, FaMicrosoft, FaChrome, FaFirefox, FaSafari, FaEdge, FaOpera, FaApple, FaWindows, FaAndroid, FaLinux } from 'react-icons/fa'
 import { SiMacos, SiIos } from 'react-icons/si'
 import { getSessionsByDateRange } from '../../services/analyticsService'
@@ -604,10 +604,6 @@ const Analytics: React.FC = () => {
     return value > 0 ? 'up' : value < 0 ? 'down' : undefined
   }
 
-  const getTrendInverted = (value: number): 'up' | 'down' | undefined => {
-    return value < 0 ? 'up' : value > 0 ? 'down' : undefined
-  }
-
   const mainMetrics = [
     {
       label: 'Visualizaciones',
@@ -636,23 +632,6 @@ const Analytics: React.FC = () => {
       change: metrics.trends.conversionRate,
       trend: getTrend(metrics.trends.conversionRate),
       icon: Target
-    }
-  ]
-
-  const secondaryMetrics = [
-    {
-      label: 'Usuarios Recurrentes',
-      value: metrics.returningUsers.toString(),
-      change: metrics.trends.returningUsers,
-      trend: getTrend(metrics.trends.returningUsers),
-      icon: RefreshCw
-    },
-    {
-      label: 'Páginas/Sesión',
-      value: metrics.avgPagePerSession.toFixed(1),
-      change: metrics.trends.avgPagePerSession,
-      trend: getTrend(metrics.trends.avgPagePerSession),
-      icon: FileText
     }
   ]
 
@@ -687,21 +666,6 @@ const Analytics: React.FC = () => {
         {/* Métricas principales */}
         <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
           {mainMetrics.map((metric) => (
-            <KpiCard
-              key={metric.label}
-              title={metric.label}
-              value={metric.value}
-              change={metric.change}
-              trend={metric.trend}
-              icon={metric.icon}
-              className={loading ? 'animate-pulse' : ''}
-            />
-          ))}
-        </div>
-
-        {/* Métricas secundarias */}
-        <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-          {secondaryMetrics.map((metric) => (
             <KpiCard
               key={metric.label}
               title={metric.label}
