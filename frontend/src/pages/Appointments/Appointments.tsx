@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { KpiCard, Card, Button, PageContainer, AppointmentModal, TabList } from '@/components/common';
-import { ChevronLeft, ChevronRight, Plus, ChevronDown, Check, Calendar as CalendarIcon } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Plus, ChevronDown, Check, Calendar as CalendarIcon, Search, X } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useNotification } from '@/contexts/NotificationContext';
 import { useTheme } from '@/contexts/ThemeContext';
@@ -150,6 +150,11 @@ export const Appointments: React.FC = () => {
   // Dropdowns de navegación
   const [isMonthDropdownOpen, setIsMonthDropdownOpen] = useState(false);
   const [isYearDropdownOpen, setIsYearDropdownOpen] = useState(false);
+
+  // Buscador de citas
+  const [searchQuery, setSearchQuery] = useState('');
+  const [isSearchDropdownOpen, setIsSearchDropdownOpen] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
 
   // Referencias para auto scroll
   const weekGridRef = useRef<HTMLDivElement | null>(null);
@@ -435,6 +440,62 @@ export const Appointments: React.FC = () => {
     showToast('success', 'Calendario predeterminado', `"${selectedCalendar.name}" se estableció como predeterminado.`);
   };
 
+  // Búsqueda de citas
+  const searchResults = useMemo(() => {
+    if (!searchQuery.trim()) return [];
+
+    const query = searchQuery.toLowerCase().trim();
+    const allEvents = [...events, ...upcomingEvents];
+
+    // Eliminar duplicados por ID
+    const uniqueEvents = allEvents.filter((event, index, self) =>
+      index === self.findIndex((e) => e.id === event.id)
+    );
+
+    return uniqueEvents
+      .filter((event) => {
+        // Buscar por título (nombre del contacto)
+        if (event.title?.toLowerCase().includes(query)) return true;
+
+        // Buscar por estado de cita
+        if (event.appointmentStatus?.toLowerCase().includes(query)) return true;
+
+        // Buscar por fecha (formato: "15 enero", "15/01", "enero 2025", etc)
+        const eventDate = new Date(event.startTime);
+        const dateStr = formatDate(eventDate).toLowerCase();
+        const monthName = MONTH_NAMES[eventDate.getMonth()].toLowerCase();
+        const dayMonth = `${eventDate.getDate()} ${monthName}`;
+        const yearStr = eventDate.getFullYear().toString();
+
+        if (dateStr.includes(query)) return true;
+        if (monthName.includes(query)) return true;
+        if (dayMonth.includes(query)) return true;
+        if (yearStr.includes(query)) return true;
+
+        return false;
+      })
+      .sort((a, b) => a.startTime.localeCompare(b.startTime))
+      .slice(0, 10); // Limitar a 10 resultados
+  }, [searchQuery, events, upcomingEvents]);
+
+  const handleSelectSearchResult = (event: CalendarEvent) => {
+    // Navegar a la fecha de la cita
+    const eventDate = toDateInTimeZone(event.startTime, event.timeZone) ?? new Date(event.startTime);
+    setCurrentDate(eventDate);
+
+    // Cambiar a vista de día para mejor visualización
+    setViewMode('day');
+
+    // Cerrar dropdown y limpiar búsqueda
+    setIsSearchDropdownOpen(false);
+    setSearchQuery('');
+
+    // Abrir modal de la cita
+    setTimeout(() => {
+      handleEventClick(event);
+    }, 300);
+  };
+
   const openCreateModal = () => {
     if (!selectedCalendar) {
       showToast('warning', 'Selecciona un calendario', 'Debes elegir un calendario activo antes de programar una cita.');
@@ -591,7 +652,89 @@ export const Appointments: React.FC = () => {
       <div className={styles.header}>
         <h1 className={styles.title}>Calendarios</h1>
 
-        <div className={styles.calendarSelector}>
+        <div className={styles.headerControls}>
+          {/* Buscador de citas */}
+          <div className={styles.searchContainer}>
+            <div className={styles.searchInputWrapper}>
+              <Search size={18} className={styles.searchIcon} />
+              <input
+                ref={searchInputRef}
+                type="text"
+                className={styles.searchInput}
+                placeholder="Buscar citas por nombre, fecha o estado..."
+                value={searchQuery}
+                onChange={(e) => {
+                  setSearchQuery(e.target.value);
+                  setIsSearchDropdownOpen(e.target.value.trim().length > 0);
+                }}
+                onFocus={() => {
+                  if (searchQuery.trim().length > 0) {
+                    setIsSearchDropdownOpen(true);
+                  }
+                }}
+              />
+              {searchQuery && (
+                <button
+                  className={styles.searchClearButton}
+                  onClick={() => {
+                    setSearchQuery('');
+                    setIsSearchDropdownOpen(false);
+                  }}
+                  aria-label="Limpiar búsqueda"
+                >
+                  <X size={16} />
+                </button>
+              )}
+            </div>
+
+            {/* Dropdown de resultados */}
+            {isSearchDropdownOpen && searchResults.length > 0 && (
+              <>
+                <div
+                  className={styles.searchOverlay}
+                  onClick={() => setIsSearchDropdownOpen(false)}
+                />
+                <div className={styles.searchDropdown}>
+                  {searchResults.map((event) => {
+                    const eventDate = new Date(event.startTime);
+                    return (
+                      <button
+                        key={event.id}
+                        className={styles.searchResultItem}
+                        onClick={() => handleSelectSearchResult(event)}
+                      >
+                        <div className={styles.searchResultInfo}>
+                          <div className={styles.searchResultTitle}>
+                            {event.title || '(Sin título)'}
+                          </div>
+                          <div className={styles.searchResultMeta}>
+                            {formatDate(eventDate)} · {formatTime12h(event.startTime)} · {event.appointmentStatus}
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+
+            {/* Mensaje cuando no hay resultados */}
+            {isSearchDropdownOpen && searchQuery.trim().length > 0 && searchResults.length === 0 && (
+              <>
+                <div
+                  className={styles.searchOverlay}
+                  onClick={() => setIsSearchDropdownOpen(false)}
+                />
+                <div className={styles.searchDropdown}>
+                  <div className={styles.searchEmpty}>
+                    No se encontraron citas
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+
+          <div className={styles.calendarSelector}>
           <div className={styles.calendarSelectorRow}>
             <button
               className={styles.calendarDropdownButton}
@@ -649,6 +792,7 @@ export const Appointments: React.FC = () => {
               </div>
             </>
           )}
+        </div>
         </div>
       </div>
 
