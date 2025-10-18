@@ -425,7 +425,9 @@ export async function servePixel(req, res) {
 `.trim()
 
     res.setHeader('Content-Type', 'application/javascript')
-    res.setHeader('Cache-Control', 'public, max-age=3600')
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate') // Sin cache durante debugging
+    res.setHeader('Pragma', 'no-cache')
+    res.setHeader('Expires', '0')
     res.send(pixelCode)
   } catch (error) {
     logger.error('Error sirviendo pixel:', error)
