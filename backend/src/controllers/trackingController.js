@@ -425,9 +425,7 @@ export async function servePixel(req, res) {
 `.trim()
 
     res.setHeader('Content-Type', 'application/javascript')
-    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate') // Sin cache durante debugging
-    res.setHeader('Pragma', 'no-cache')
-    res.setHeader('Expires', '0')
+    res.setHeader('Cache-Control', 'public, max-age=3600') // Cache de 1 hora
     res.send(pixelCode)
   } catch (error) {
     logger.error('Error sirviendo pixel:', error)
@@ -450,21 +448,6 @@ export async function collectEvent(req, res) {
     }
 
     const { visitor_id, session_id, contact_id, event_name, ts, data } = req.body
-
-    // 🔍 DEBUG: Log datos entrantes
-    logger.info(`[TRACKING DEBUG] Datos recibidos:`, {
-      visitor_id,
-      session_id,
-      event_name,
-      utm_source: data?.utm_source,
-      utm_medium: data?.utm_medium,
-      fbclid: data?.fbclid,
-      gclid: data?.gclid,
-      campaign_id: data?.campaign_id,
-      adset_id: data?.adset_id,
-      ad_id: data?.ad_id,
-      referrer: data?.referrer
-    })
 
     // Validaciones básicas
     if (!visitor_id || !session_id || !event_name || !ts) {

@@ -172,14 +172,6 @@ export async function createSession(sessionData) {
   const adsParams = extractAdsParams(data)
   const sourceInfo = deriveSourceInfo(data, utms, clickIds)
 
-  // 🔍 DEBUG: Log valores calculados
-  logger.info(`[TRACKING DEBUG] Valores extraídos:`, {
-    utms,
-    clickIds,
-    adsParams,
-    sourceInfo
-  })
-
   const startedAt = new Date(ts).toISOString()
 
   // Validar si el contact_id existe en la DB antes de insertarlo
@@ -189,12 +181,12 @@ export async function createSession(sessionData) {
   if (contact_id) {
     try {
       const contact = await db.get(
-        'SELECT id, name FROM contacts WHERE id = ?',
+        'SELECT id, full_name FROM contacts WHERE id = ?',
         [contact_id]
       )
       if (contact) {
         validContactId = contact.id
-        validFullName = contact.name || full_name
+        validFullName = contact.full_name || full_name
       } else {
         logger.warn(`Contact ID ${contact_id} del localStorage no existe en DB - se guardará sin contact_id`)
       }
