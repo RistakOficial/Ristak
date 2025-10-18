@@ -4,7 +4,7 @@
   padding: 0.25rem 0.625rem;
   border-radius: 9999px;
   font-size: 0.75rem;
-  font-weight: 500;
+  font-weight: 600;
   line-height: 1.2;
   white-space: nowrap;
   transition: all 0.15s ease;
@@ -12,72 +12,48 @@
 
 /* Variant: default */
 .default {
-  background-color: var(--color-gray-100);
-  color: var(--color-gray-800);
-}
-
-:global(body.dark) .default {
-  background-color: rgba(156, 163, 175, 0.3);
-  color: #ffffff;
-  font-weight: 600;
+  background-color: var(--badge-default-bg, rgba(107, 114, 128, 0.15));
+  color: var(--badge-default-text, var(--color-text-secondary));
 }
 
 /* Variant: success */
 .success {
-  background-color: rgba(16, 185, 129, 0.12);
-  color: #064e3b;
-}
-
-:global(body.dark) .success {
-  background-color: rgba(16, 185, 129, 0.3);
-  color: #ffffff;
-  font-weight: 600;
+  background-color: var(--badge-success-bg, rgba(16, 185, 129, 0.12));
+  color: var(--badge-success-text, #064e3b);
 }
 
 /* Variant: warning */
 .warning {
-  background-color: rgba(245, 158, 11, 0.12);
-  color: #78350f;
-}
-
-:global(body.dark) .warning {
-  background-color: rgba(245, 158, 11, 0.3);
-  color: #ffffff;
-  font-weight: 600;
+  background-color: var(--badge-warning-bg, rgba(245, 158, 11, 0.12));
+  color: var(--badge-warning-text, #78350f);
 }
 
 /* Variant: error */
 .error {
-  background-color: rgba(239, 68, 68, 0.12);
-  color: #7f1d1d;
-}
-
-:global(body.dark) .error {
-  background-color: rgba(239, 68, 68, 0.3);
-  color: #ffffff;
-  font-weight: 600;
+  background-color: var(--badge-error-bg, rgba(239, 68, 68, 0.12));
+  color: var(--badge-error-text, #7f1d1d);
 }
 
 /* Variant: info */
 .info {
-  background-color: rgba(59, 130, 246, 0.12);
-  color: #1e3a8a;
-}
-
-:global(body.dark) .info {
-  background-color: rgba(59, 130, 246, 0.3);
-  color: #ffffff;
-  font-weight: 600;
+  background-color: var(--badge-info-bg, rgba(59, 130, 246, 0.12));
+  color: var(--badge-info-text, #1e3a8a);
 }
 
 /* Variant: purple */
 .purple {
-  background-color: rgba(139, 92, 246, 0.12);
-  color: #4c1d95;
+  background-color: var(--badge-purple-bg, rgba(139, 92, 246, 0.12));
+  color: var(--badge-purple-text, #4c1d95);
 }
 
-:global(body.dark) .purple {
-  background-color: rgba(139, 92, 246, 0.3);
-  color: #ffffff;
-  font-weight: 600;
+/* Variant: neutral (para leads) */
+.neutral {
+  background-color: var(--badge-neutral-bg, rgba(107, 114, 128, 0.15));
+  color: var(--badge-neutral-text, #374151);
+}
+
+/* Variant: primary (para customers) */
+.primary {
+  background-color: var(--badge-primary-bg, rgba(59, 130, 246, 0.15));
+  color: var(--badge-primary-text, #1e40af);
 }

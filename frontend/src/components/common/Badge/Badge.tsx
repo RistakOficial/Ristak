@@ -1,7 +1,7 @@
 import React from 'react'
 import styles from './Badge.module.css'
 
-export type BadgeVariant = 'default' | 'success' | 'warning' | 'error' | 'info' | 'purple'
+export type BadgeVariant = 'default' | 'success' | 'warning' | 'error' | 'info' | 'purple' | 'neutral' | 'primary'
 
 export interface BadgeProps {
   children: React.ReactNode

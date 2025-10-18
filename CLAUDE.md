@@ -11,11 +11,10 @@
 5. **SIEMPRE actualizar este archivo** cuando cambies la estructura o agregues features
 6. **SIEMPRE limpiar imports no usados** y dependencias fantasma
 7. **NUNCA commitear console.logs** de debug en producción
-8. **🔴 ENTORNO DE TRABAJO: TODO ES RENDER (PRODUCCIÓN) - NUNCA SE USA LOCALHOST**
-   - El usuario NO trabaja en localhost/desarrollo local
+8. **🔴 ENTORNO DE TRABAJO: TODO ES RENDER (PRODUCCIÓN)**
    - SIEMPRE commit + push después de cada cambio
-   - Los cambios se ven en Render (producción) directamente
-   - PostgreSQL es la ÚNICA base de datos (no SQLite)
+   - Los cambios se ven en Render directamente
+   - PostgreSQL es la ÚNICA base de datos
    - Render auto-deploya en cada push a main
 9. **❌ NUNCA usar alertas nativas del browser** - SIEMPRE usar modales personalizados
    - ❌ Prohibido: `alert()`, `confirm()`, `prompt()`, `window.alert()`, `window.confirm()`, `window.prompt()`
@@ -47,8 +46,7 @@ Frontend:
 Backend:
 ├── Node.js 20+ con ES Modules
 ├── Express 4.21.2
-├── PostgreSQL (pg 8.11.3) - PRODUCCIÓN en Render
-├── SQLite3 5.1.7 (desarrollo local - nos vale madres)
+├── PostgreSQL (pg 8.11.3)
 ├── Node-cron 3.0.3 (tareas programadas)
 └── CORS 2.8.5
 ```
@@ -129,7 +127,7 @@ Backend:
 │   └── src/
 │       ├── config/
 │       │   ├── constants.js
-│       │   └── database.js    # Conexión DB (SQLite/PostgreSQL)
+│       │   └── database.js    # Conexión DB PostgreSQL
 │       ├── controllers/
 │       │   ├── dashboardController.js
 │       │   ├── highlevelController.js
@@ -139,7 +137,8 @@ Backend:
 │       │   ├── calendarsController.js  # Controlador para Calendarios de HighLevel
 │       │   └── trackingController.js   # Controlador para Pixel de Tracking
 │       ├── jobs/
-│       │   └── metaSync.cron.js
+│       │   ├── metaSync.cron.js           # Cron: Sincroniza Meta Ads cada hora
+│       │   └── contactsSync.cron.js       # Cron: Sincroniza contactos de GHL cada hora (silencioso)
 │       ├── routes/
 │       │   ├── dashboard.routes.js
 │       │   ├── highlevel.routes.js
@@ -157,8 +156,6 @@ Backend:
 │       │   ├── dateUtils.js
 │       │   └── logger.js      # Sistema de logging personalizado
 │       └── server.js          # Entry point del backend
-│
-└── ristak.db                  # SQLite local (solo para desarrollo - nos vale madres)
 ```
 
 ---
@@ -179,8 +176,19 @@ Backend:
 - **Estado**: Parcialmente implementado
 - **Endpoints**: `/api/meta/*`
 - **Servicios**: `metaAdsService.js`, `campaignsService.ts`
-- **Cron Job**: Sincronización cada X minutos via `metaSync.cron.js`
+- **Cron Job**: Sincronización cada hora via `metaSync.cron.js`
 - **Funcionalidad**: Métricas de campañas publicitarias
+
+### Cron Jobs (Tareas Programadas)
+- **Estado**: Implementado y activo
+- **Archivos**: `backend/src/jobs/*.cron.js`
+- **Cron Jobs Activos**:
+  - `metaSync.cron.js`: Sincroniza anuncios de Meta cada hora (a las XX:00)
+  - `contactsSync.cron.js`: Sincroniza contactos, citas y pagos de HighLevel cada hora (a las XX:00)
+    - **Característica importante**: Este cron usa `triggerSource: 'cron'` para NO mostrar la barra lateral de progreso
+    - Solo las sincronizaciones manuales (desde Settings) muestran la barra lateral (`triggerSource: 'manual'`)
+    - Mantiene la base de datos actualizada automáticamente en caso de que se borren contactos externamente
+- **Configuración**: Se inician automáticamente al arrancar el servidor (`server.js`)
 
 ### Webhooks
 - **Estado**: Configurado
@@ -275,27 +283,17 @@ POST   /webhook/meta                    # Webhook de Meta
 
 ## 🔧 CONFIGURACIÓN DE ENTORNO
 
-### ⚠️ REGLA CRÍTICA - PUERTOS FIJOS
-**BACKEND SIEMPRE EN PUERTO 3001 - FRONTEND SIEMPRE EN PUERTO 3000**
-**NUNCA CAMBIAR ESTOS PUERTOS - ESTÁN HARDCODEADOS EN MÚLTIPLES LUGARES**
-
-### Variables Requeridas
+### Variables Requeridas en Render
 ```bash
-# ⚠️ DESARROLLO LOCAL - PUERTOS FIJOS ⚠️
-# Backend: PORT=3001 (NO CAMBIAR)
-# Frontend: puerto 3000 (configurado en vite.config.ts)
-# Frontend Proxy: apunta a http://localhost:3001 (FIJO en vite.config.ts)
+# Backend en Render:
+NODE_ENV=production
+DATABASE_URL=<postgres-connection-string>  # Auto-generado por Render
+HIGHLEVEL_CLIENT_ID=<tu-client-id>
+HIGHLEVEL_CLIENT_SECRET=<tu-client-secret>
+TRACKING_DOMAIN=<tu-dominio-personalizado>  # Opcional, ej: ristak.tudominio.com
 
-# Backend .env (desarrollo):
-PORT=3001
-NODE_ENV=development
-
-# Frontend .env (desarrollo):
-VITE_API_URL=http://localhost:3001
-
-# Base de datos:
-# PRODUCCIÓN (Render): PostgreSQL con DATABASE_URL (esto es lo que importa)
-# DESARROLLO (local): SQLite (ristak.db) - se crea automáticamente (nos vale madres)
+# Frontend en Render:
+VITE_API_URL=<url-backend-render>  # ej: https://ristak-api.onrender.com
 ```
 
 ---
@@ -405,49 +403,33 @@ return createPortal(
 
 ---
 
-## 🚀 CÓMO ARRANCAR LA APP
+## 🚀 CÓMO DEPLOYAR CAMBIOS
 
-### ⚠️ REGLA #1 INQUEBRANTABLE ⚠️
-**SIEMPRE USAR EL SCRIPT `start-local.sh` DESDE LA RAÍZ DEL PROYECTO**
-**NUNCA arrancar frontend o backend por separado con npm run dev**
+### Flujo de Trabajo en Render
+1. **Hacer cambios** en el código (en GitHub o con git)
+2. **Commit + Push** a la rama `main`:
+   ```bash
+   git add .
+   git commit -m "feat: descripción del cambio"
+   git push origin main
+   ```
+3. **Render auto-deploya** en ~3-5 minutos
+4. **Verificar** en la URL de producción
 
-### Comando Correcto (ÚNICO)
+### Comandos Git Útiles
 ```bash
-# Desde la raíz del proyecto /Users/raulgomez/Desktop/Ristak - High Level/
-bash start-local.sh
+# Ver estado de cambios
+git status
 
-# O con permisos de ejecución:
-./start-local.sh
-```
+# Hacer commit de todos los cambios
+git add .
+git commit -m "descripción del cambio"
 
-### ¿Por qué SIEMPRE usar start-local.sh?
-- ✅ Mata procesos viejos en puertos 3000 y 3001
-- ✅ Carga variables de entorno correctamente
-- ✅ Arranca backend primero y espera que esté listo
-- ✅ Arranca frontend después
-- ✅ Abre el navegador automáticamente
-- ✅ Usa SQLite en local (PostgreSQL es solo para Render/producción)
+# Subir a Render (trigger deploy automático)
+git push origin main
 
-### ❌ NUNCA hacer esto:
-```bash
-# ❌ NO hacer esto:
-cd backend && npm run dev
-cd frontend && npm run dev
-
-# ❌ NO cambiar puertos manualmente
-# ❌ NO editar vite.config.ts para cambiar el proxy
-# ❌ NO arrancar con DATABASE_URL en el .env del backend
-```
-
-## 🛑 COMANDOS ESENCIALES (Solo para casos especiales)
-
-```bash
-# Si necesitas detener todo manualmente:
-killall node
-lsof -ti:3000,3001 | xargs kill -9
-
-# Build de producción (solo cuando sea necesario):
-cd frontend && npm run build
+# Ver logs del último commit
+git log -1
 ```
 
 ---
@@ -526,7 +508,7 @@ cd frontend && npm run build
   - Ruta: /settings/tracking
   - Documentación completa en TRACKING_PIXEL.md y PIXEL_SETUP.md
   - Sin hardcodear dominios (detección dinámica por req.headers.host)
-  - Base de datos: PostgreSQL en producción (Render), SQLite en local
+  - Base de datos: PostgreSQL
 
 - ✓ **Página de Analíticas implementada (2025-10-18)**:
   - Página completa de analíticas basada en datos de la tabla `sessions`
@@ -551,7 +533,7 @@ cd frontend && npm run build
 - ✓ 7 componentes huérfanos eliminados (Badge, Select, Input, DatePicker, SingleDatePicker, DateRangeInput, SyncProgressBanner)
 - ✓ Imports no usados limpiados
 - ✓ Puerto sincronizado a 3001 en todo el proyecto (antes era inconsistente 3001 vs 3002)
-- ✓ Health check endpoint corregido en start-local.sh (/api/health)
+- ✓ Health check endpoint implementado (/api/health)
 - ✓ useEffect con dependencias incorrectas arreglado en Campaigns.tsx
 - ✓ URL hardcodeada eliminada en Campaigns.tsx (ahora usa campaignsService)
 - ✓ console.logs de producción eliminados (frontend y backend)
@@ -650,9 +632,8 @@ Antes de hacer CUALQUIER cambio, la IA debe:
 - [ ] Actualizar este archivo si cambia la estructura
 - [ ] Eliminar código muerto que genere
 - [ ] Verificar imports y dependencias
-- [ ] **VERIFICAR que los puertos sigan siendo 3000 (frontend) y 3001 (backend)**
-- [ ] **VERIFICAR que start-local.sh sigue siendo el método de inicio**
 - [ ] Hacer build para confirmar que compila
+- [ ] Hacer commit y push para deployar en Render
 
 ---
 
@@ -668,4 +649,3 @@ Antes de hacer CUALQUIER cambio, la IA debe:
 - Encuentres/resuelvas problemas
 
 NO agregues historial de cambios. ACTUALIZA la información existente para reflejar el estado ACTUAL.
-- Siempre se usa este archivo para correr la app @start-local.sh y las direcciones que vienen ahi

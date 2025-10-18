@@ -5,6 +5,7 @@ import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
 import { logger } from './utils/logger.js'
 import { startMetaSyncCron } from './jobs/metaSync.cron.js'
+import { startContactsSyncCron } from './jobs/contactsSync.cron.js'
 // import { startInvoicesReconciliation } from './jobs/invoicesReconciliation.cron.js' // DESACTIVADO: Solo usar webhooks
 import { verifyAndUpdateWebhooks } from './startup/webhookVerification.js'
 
@@ -97,6 +98,7 @@ app.listen(PORT, async () => {
 
   // Iniciar cron jobs
   startMetaSyncCron()
+  startContactsSyncCron() // Sincroniza contactos cada hora de manera silenciosa
   // startInvoicesReconciliation() // DESACTIVADO: Solo usar webhooks para sincronización en tiempo real
 })
 
