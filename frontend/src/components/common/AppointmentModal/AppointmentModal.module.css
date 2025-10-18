@@ -475,3 +475,12 @@
   gap: var(--spacing-md);
   justify-content: flex-end;
 }
+
+/* Texto de ayuda */
+.helpText {
+  font-size: 0.75rem;
+  color: var(--color-text-tertiary);
+  margin-top: 0.25rem;
+  margin-bottom: 0.5rem;
+  line-height: 1.4;
+}

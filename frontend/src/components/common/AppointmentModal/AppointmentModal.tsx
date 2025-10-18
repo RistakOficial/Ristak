@@ -211,10 +211,29 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   const loadUsers = async () => {
     setLoadingUsers(true);
     try {
-      const response = await fetch('/api/highlevel/users');
-      if (!response.ok) throw new Error('Error al cargar usuarios');
-      const data = await response.json();
-      setUsers(data.users || []);
+      // Detectar si es Round Robin y usar teamMembers del calendario
+      const isRoundRobin = calendar?.calendarType === 'round_robin' ||
+                          calendar?.eventType?.includes('RoundRobin');
+
+      if (isRoundRobin && calendar?.teamMembers && calendar.teamMembers.length > 0) {
+        // Para Round Robin: usar team members del calendario
+        const response = await fetch('/api/highlevel/users');
+        if (!response.ok) throw new Error('Error al cargar usuarios');
+        const data = await response.json();
+        const allUsers = data.users || [];
+
+        // Filtrar solo los usuarios que están en teamMembers del calendario
+        const teamMemberIds = calendar.teamMembers.map(tm => tm.userId);
+        const filteredUsers = allUsers.filter(user => teamMemberIds.includes(user.id));
+
+        setUsers(filteredUsers);
+      } else {
+        // Para calendarios normales: cargar todos los usuarios del location
+        const response = await fetch('/api/highlevel/users');
+        if (!response.ok) throw new Error('Error al cargar usuarios');
+        const data = await response.json();
+        setUsers(data.users || []);
+      }
     } catch (error) {
       setUsers([]);
     } finally {
@@ -385,6 +404,16 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
         // Validación: contacto es OBLIGATORIO en modo crear
         if (!formData.contactId || !selectedContact) {
           showToast('error', 'Contacto requerido', 'Debes seleccionar un contacto para crear la cita');
+          setIsSaving(false);
+          return;
+        }
+
+        // Validación: en Round Robin, team member es OBLIGATORIO
+        const isRoundRobin = calendar?.calendarType === 'round_robin' ||
+                            calendar?.eventType?.includes('RoundRobin');
+
+        if (isRoundRobin && !formData.assignedUserId) {
+          showToast('error', 'Team member requerido', 'Para calendarios Round Robin debes seleccionar un team member');
           setIsSaving(false);
           return;
         }
@@ -609,27 +638,45 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
             )}
 
             {/* Usuario asignado (solo en modo crear) */}
-            {isCreateMode && users.length > 0 && (
-              <div className={styles.sectionBlock}>
-                <label className={styles.label} htmlFor="assignedUser">
-                  Usuario asignado (opcional)
-                </label>
-                <select
-                  id="assignedUser"
-                  className={styles.select}
-                  value={formData.assignedUserId}
-                  onChange={(e) => setFormData({ ...formData, assignedUserId: e.target.value })}
-                  disabled={loadingUsers}
-                >
-                  <option value="">Sin asignar</option>
-                  {users.map((user) => (
-                    <option key={user.id} value={user.id}>
-                      {user.name || user.email || `${user.firstName} ${user.lastName}`.trim()}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
+            {isCreateMode && users.length > 0 && (() => {
+              const isRoundRobin = calendar?.calendarType === 'round_robin' ||
+                                  calendar?.eventType?.includes('RoundRobin');
+
+              return (
+                <div className={styles.sectionBlock}>
+                  <label className={styles.label} htmlFor="assignedUser">
+                    {isRoundRobin ? (
+                      <>
+                        Team member <span className={styles.required}>*</span>
+                      </>
+                    ) : (
+                      'Usuario asignado (opcional)'
+                    )}
+                  </label>
+
+                  {isRoundRobin && (
+                    <p className={styles.helpText}>
+                      Este calendario usa Round Robin. Selecciona el team member para esta cita.
+                    </p>
+                  )}
+
+                  <select
+                    id="assignedUser"
+                    className={styles.select}
+                    value={formData.assignedUserId}
+                    onChange={(e) => setFormData({ ...formData, assignedUserId: e.target.value })}
+                    disabled={loadingUsers}
+                  >
+                    <option value="">Seleccionar...</option>
+                    {users.map((user) => (
+                      <option key={user.id} value={user.id}>
+                        {user.name || user.email || `${user.firstName} ${user.lastName}`.trim()}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              );
+            })()}
           </div>
 
           {/* COLUMNA DERECHA: Configuración de la cita */}
