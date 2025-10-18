@@ -354,9 +354,9 @@ export function TreeFilter({
           onMouseLeave={handleCategoryLeave}
         >
           {/* Panel izquierdo: Categorías principales */}
-          <div className="w-48 border-r border-[var(--color-border)]">
+          <div className="w-48" style={{ borderRight: '1px solid var(--color-border-subtle)' }}>
             {/* Header con búsqueda */}
-            <div className="p-3 border-b border-[var(--color-border)]">
+            <div className="p-3" style={{ borderBottom: '1px solid var(--color-border-subtle)' }}>
               <div className="relative">
                 <Search className="absolute left-2.5 top-2.5 w-3.5 h-3.5 text-[var(--color-text-tertiary)]" />
                 <input
@@ -395,9 +395,9 @@ export function TreeFilter({
                       className={`
                         flex items-center justify-between px-3 py-2 cursor-pointer
                         transition-all duration-150
-                        ${isHovered ? 'bg-[var(--color-background-tertiary)]' : 'hover:bg-[var(--color-background-secondary)]'}
+                        ${index % 2 === 1 ? 'bg-[var(--color-background-secondary)]' : ''}
+                        ${isHovered ? 'bg-[var(--color-background-tertiary)] !important' : 'hover:bg-[var(--color-background-tertiary)]'}
                         ${selectedCount > 0 ? 'text-[var(--color-accent)]' : 'text-[var(--color-text-primary)]'}
-                        ${index > 0 ? 'border-t border-[var(--color-border-subtle)]' : ''}
                       `}
                     >
                       <div className="flex items-center gap-2">
@@ -483,9 +483,9 @@ export function TreeFilter({
                                 className={`
                                   flex items-center gap-2 px-3 py-2 cursor-pointer
                                   transition-all duration-150
-                                  ${index > 0 ? 'border-t border-[var(--color-border-subtle)]' : ''}
+                                  ${index % 2 === 1 ? 'bg-[var(--color-background-secondary)]' : ''}
                                   ${isSelected
-                                    ? 'bg-[var(--color-accent)]/20 text-[var(--color-accent)] hover:bg-[var(--color-accent)]/25'
+                                    ? 'bg-[var(--color-accent)]/20 text-[var(--color-accent)] hover:bg-[var(--color-accent)]/25 !important'
                                     : 'hover:bg-[var(--color-background-tertiary)] text-[var(--color-text-primary)]'
                                   }
                                 `}

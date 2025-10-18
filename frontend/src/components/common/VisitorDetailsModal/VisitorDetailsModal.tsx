@@ -49,7 +49,7 @@ interface VisitorDetailsModalProps {
   onClose: () => void
   title: string
   subtitle?: string
-  data: VisitorDetail[]
+  data: VisitorDetail[] | Record<string, VisitorDetail> | null | undefined
   loading: boolean
 }
 
@@ -64,22 +64,34 @@ export function VisitorDetailsModal({
   const [selectedVisitor, setSelectedVisitor] = useState<VisitorDetail | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
 
+  const normalizedData = useMemo<VisitorDetail[]>(() => {
+    if (Array.isArray(data)) {
+      return data
+    }
+
+    if (data && typeof data === 'object') {
+      return Object.values(data).filter(Boolean) as VisitorDetail[]
+    }
+
+    return []
+  }, [data])
+
   // Seleccionar automáticamente el primer visitante cuando se abre el modal
   useEffect(() => {
-    if (isOpen && data.length > 0) {
-      setSelectedVisitor(data[0])
+    if (isOpen && normalizedData.length > 0) {
+      setSelectedVisitor(normalizedData[0])
     } else if (!isOpen) {
       setSelectedVisitor(null)
       setSearchQuery('')
     }
-  }, [isOpen, data])
+  }, [isOpen, normalizedData])
 
   // Filtrar visitantes según búsqueda
   const filteredData = useMemo(() => {
-    if (!searchQuery) return data
+    if (!searchQuery) return normalizedData
 
     const query = searchQuery.toLowerCase()
-    return data.filter(visitor =>
+    return normalizedData.filter(visitor =>
       visitor.contact?.name?.toLowerCase().includes(query) ||
       visitor.contact?.email?.toLowerCase().includes(query) ||
       visitor.contact?.phone?.toLowerCase().includes(query) ||
@@ -87,7 +99,7 @@ export function VisitorDetailsModal({
       visitor.utmSource?.toLowerCase().includes(query) ||
       visitor.utmCampaign?.toLowerCase().includes(query)
     )
-  }, [data, searchQuery])
+  }, [normalizedData, searchQuery])
 
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat('es-MX', {
@@ -117,7 +129,7 @@ export function VisitorDetailsModal({
     if (visitor.contact?.name) return visitor.contact.name
     if (visitor.contact?.email) return visitor.contact.email
     if (visitor.contact?.phone) return visitor.contact.phone
-    return `Visitante ${visitor.visitorId.slice(-6)}`
+    return `Visitante ${getVisitorIdSuffix(visitor.visitorId)}`
   }
 
   const getVisitorDescription = (visitor: VisitorDetail) => {
@@ -126,6 +138,11 @@ export function VisitorDetailsModal({
     if (visitor.utmCampaign) return visitor.utmCampaign
     if (visitor.utmSource) return `Desde ${visitor.utmSource}`
     return 'Visitante anónimo'
+  }
+
+  const getVisitorIdSuffix = (visitorId?: string) => {
+    if (!visitorId) return 'sin-id'
+    return visitorId.slice(-8)
   }
 
   return (
@@ -152,10 +169,10 @@ export function VisitorDetailsModal({
           {/* Stats */}
           <div className={styles.stats}>
             <span className={styles.statItem}>
-              {data.length} {data.length === 1 ? 'visitante' : 'visitantes'}
+              {normalizedData.length} {normalizedData.length === 1 ? 'visitante' : 'visitantes'}
             </span>
             <span className={styles.statValue}>
-              {data.filter(d => d.contact?.id).length} identificados
+              {normalizedData.filter(d => d.contact?.id).length} identificados
             </span>
           </div>
         </div>
@@ -244,10 +261,10 @@ export function VisitorDetailsModal({
             </div>
 
             {/* Footer */}
-            {data.length > 0 && (
+            {normalizedData.length > 0 && (
               <div className={styles.footer}>
                 <span>
-                  Mostrando {filteredData.length} de {data.length}
+                  Mostrando {filteredData.length} de {normalizedData.length}
                 </span>
               </div>
             )}
