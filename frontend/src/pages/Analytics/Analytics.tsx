@@ -27,8 +27,6 @@ interface Metrics {
   uniqueVisitors: number
   registros: number
   conversionRate: number
-  avgSessionDuration: number
-  bounceRate: number
   returningUsers: number
   avgPagePerSession: number
   trends: {
@@ -36,8 +34,6 @@ interface Metrics {
     uniqueVisitors: number
     registros: number
     conversionRate: number
-    avgSessionDuration: number
-    bounceRate: number
     returningUsers: number
     avgPagePerSession: number
   }
@@ -75,8 +71,6 @@ const Analytics: React.FC = () => {
     uniqueVisitors: 0,
     registros: 0,
     conversionRate: 0,
-    avgSessionDuration: 0,
-    bounceRate: 0,
     returningUsers: 0,
     avgPagePerSession: 0,
     trends: {
@@ -84,8 +78,6 @@ const Analytics: React.FC = () => {
       uniqueVisitors: 0,
       registros: 0,
       conversionRate: 0,
-      avgSessionDuration: 0,
-      bounceRate: 0,
       returningUsers: 0,
       avgPagePerSession: 0
     }
@@ -143,8 +135,6 @@ const Analytics: React.FC = () => {
           ).size
 
           const conversionRate = uniqueVids > 0 ? ((registros / uniqueVids) * 100) : 0
-          // Sin datos de bounce, usar 0
-          const bounceRate = 0
 
           // Usuarios recurrentes
           const visitorCounts: { [key: string]: number } = {}
@@ -156,9 +146,6 @@ const Analytics: React.FC = () => {
           const avgPagePerSession = currentSessions.length > 0 ?
             (totalPageViews / currentSessions.length) : 0
 
-          // Duración promedio estimada (45 segundos por sesión)
-          const avgDuration = 45
-
           // Calcular métricas del período anterior para trends
           const prevUniqueVids = prevSessions.length > 0 ?
             new Set(prevSessions.map((s: Session) => s.visitor_id)).size : 0
@@ -166,7 +153,6 @@ const Analytics: React.FC = () => {
           const prevRegistros = prevSessions.length > 0 ?
             new Set(prevSessions.filter((s: Session) => s.contact_id).map((s: Session) => s.contact_id)).size : 0
           const prevConversionRate = prevUniqueVids > 0 ? ((prevRegistros / prevUniqueVids) * 100) : 0
-          const prevBounceRate = 0
 
           const prevVisitorCounts: { [key: string]: number } = {}
           prevSessions.forEach((s: Session) => {
@@ -175,7 +161,6 @@ const Analytics: React.FC = () => {
           const prevReturningUsers = Object.values(prevVisitorCounts).filter(count => count > 1).length
           const prevAvgPagePerSession = prevSessions.length > 0 ?
             (prevTotalPageViews / prevSessions.length) : 0
-          const prevAvgDuration = 45
 
           // Calcular trends
           const calculateTrend = (current: number, previous: number) => {
@@ -188,8 +173,6 @@ const Analytics: React.FC = () => {
             uniqueVisitors: uniqueVids,
             registros,
             conversionRate,
-            avgSessionDuration: avgDuration,
-            bounceRate,
             returningUsers,
             avgPagePerSession,
             trends: {
@@ -197,8 +180,6 @@ const Analytics: React.FC = () => {
               uniqueVisitors: calculateTrend(uniqueVids, prevUniqueVids),
               registros: calculateTrend(registros, prevRegistros),
               conversionRate: calculateTrend(conversionRate, prevConversionRate),
-              avgSessionDuration: calculateTrend(avgDuration, prevAvgDuration),
-              bounceRate: calculateTrend(bounceRate, prevBounceRate),
               returningUsers: calculateTrend(returningUsers, prevReturningUsers),
               avgPagePerSession: calculateTrend(avgPagePerSession, prevAvgPagePerSession)
             }
@@ -455,8 +436,6 @@ const Analytics: React.FC = () => {
             uniqueVisitors: 0,
             registros: 0,
             conversionRate: 0,
-            avgSessionDuration: 0,
-            bounceRate: 0,
             returningUsers: 0,
             avgPagePerSession: 0,
             trends: {
@@ -464,8 +443,6 @@ const Analytics: React.FC = () => {
               uniqueVisitors: 0,
               registros: 0,
               conversionRate: 0,
-              avgSessionDuration: 0,
-              bounceRate: 0,
               returningUsers: 0,
               avgPagePerSession: 0
             }
@@ -577,20 +554,6 @@ const Analytics: React.FC = () => {
   ]
 
   const secondaryMetrics = [
-    {
-      label: 'Tasa de Rebote',
-      value: `${metrics.bounceRate.toFixed(1)}%`,
-      change: metrics.trends.bounceRate,
-      trend: getTrendInverted(metrics.trends.bounceRate),
-      icon: Activity
-    },
-    {
-      label: 'Duración Promedio',
-      value: `${Math.floor(metrics.avgSessionDuration / 60)}:${(metrics.avgSessionDuration % 60).toString().padStart(2, '0')}`,
-      change: metrics.trends.avgSessionDuration,
-      trend: getTrend(metrics.trends.avgSessionDuration),
-      icon: Clock
-    },
     {
       label: 'Usuarios Recurrentes',
       value: metrics.returningUsers.toString(),
