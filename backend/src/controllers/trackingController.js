@@ -354,7 +354,7 @@ export async function getTrackingConfig(req, res) {
 
         if (response.ok) {
           const data = await response.json()
-          const trackingValue = data.customValues?.find(cv => cv.id === 'rstktrack')
+          const trackingValue = data.customValues?.find(cv => cv.name === 'rstktrack')
           isConfigured = !!trackingValue && trackingValue.value && trackingValue.value.includes('<script')
         }
       } catch (error) {
@@ -416,34 +416,74 @@ export async function configureTracking(req, res) {
 
     logger.info(`Configurando tracking en HighLevel para dominio: ${trackingDomain}`)
 
-    // Crear/actualizar custom value en HighLevel
+    // Primero verificar si el custom value ya existe
     try {
-      const response = await fetch(
+      // Obtener custom values existentes
+      const getResponse = await fetch(
         `https://services.leadconnectorhq.com/locations/${ghlConfig.location_id}/customValues`,
         {
-          method: 'POST',
           headers: {
             'Authorization': `Bearer ${ghlConfig.api_token}`,
-            'Content-Type': 'application/json',
             'Version': '2021-07-28'
-          },
-          body: JSON.stringify({
-            name: 'rstktrack',
-            value: snippet
-          })
+          }
         }
       )
 
+      let existingCustomValue = null
+      if (getResponse.ok) {
+        const data = await getResponse.json()
+        existingCustomValue = data.customValues?.find(cv => cv.name === 'rstktrack')
+      }
+
+      let response
+      if (existingCustomValue) {
+        // Ya existe - hacer PUT (actualizar)
+        logger.info(`Custom value 'rstktrack' ya existe (ID: ${existingCustomValue.id}), actualizando...`)
+        response = await fetch(
+          `https://services.leadconnectorhq.com/locations/${ghlConfig.location_id}/customValues/${existingCustomValue.id}`,
+          {
+            method: 'PUT',
+            headers: {
+              'Authorization': `Bearer ${ghlConfig.api_token}`,
+              'Content-Type': 'application/json',
+              'Version': '2021-07-28'
+            },
+            body: JSON.stringify({
+              name: 'rstktrack',
+              value: snippet
+            })
+          }
+        )
+      } else {
+        // No existe - hacer POST (crear)
+        logger.info(`Custom value 'rstktrack' no existe, creando...`)
+        response = await fetch(
+          `https://services.leadconnectorhq.com/locations/${ghlConfig.location_id}/customValues`,
+          {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${ghlConfig.api_token}`,
+              'Content-Type': 'application/json',
+              'Version': '2021-07-28'
+            },
+            body: JSON.stringify({
+              name: 'rstktrack',
+              value: snippet
+            })
+          }
+        )
+      }
+
       if (!response.ok) {
         const errorData = await response.json()
-        logger.error('Error creando custom value en HighLevel:', errorData)
+        logger.error('Error creando/actualizando custom value en HighLevel:', errorData)
         return res.status(500).json({
           error: 'No se pudo configurar el tracking en HighLevel',
           details: errorData
         })
       }
 
-      logger.success(`Custom value 'rstktrack' creado/actualizado en HighLevel`)
+      logger.success(`Custom value 'rstktrack' ${existingCustomValue ? 'actualizado' : 'creado'} en HighLevel`)
 
       res.json({
         success: true,
