@@ -23,9 +23,9 @@
 /* Buscador de citas */
 .searchContainer {
   position: relative;
-  flex: 0 1 auto;
-  min-width: 300px;
-  max-width: 450px;
+  flex: 1 1 auto;
+  min-width: 350px;
+  max-width: 600px;
 }
 
 .searchInputWrapper {
@@ -826,7 +826,8 @@
 /* Tooltip de eventos */
 .eventTooltip {
   position: fixed;
-  z-index: 999999 !important;
+  z-index: 2147483647 !important; /* Maximum z-index value */
+  isolation: isolate;
   background-color: #1a1a1a !important;
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: var(--radius-lg);
@@ -838,6 +839,7 @@
   animation: tooltipFadeIn 0.2s ease-out;
   opacity: 1 !important;
   backdrop-filter: none;
+  transform-style: preserve-3d;
 }
 
 :global(body.dark) .eventTooltip {

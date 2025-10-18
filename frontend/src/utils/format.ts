@@ -44,6 +44,8 @@ const formatCompoundWord = (word: string): string => {
  * Formatea parámetros UTM y de campaña que vienen de URLs
  * Convierte "Retargeting+-+Testimoniales" a "Retargeting Testimoniales"
  * Limpia caracteres de codificación URL como +, -, %20, etc.
+ * @param value - El parámetro URL a formatear
+ * @returns El parámetro formateado y limpio
  */
 export const formatUrlParameter = (value?: string | null): string => {
   if (!value) return ''
