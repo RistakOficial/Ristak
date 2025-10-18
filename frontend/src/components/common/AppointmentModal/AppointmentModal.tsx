@@ -215,6 +215,15 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
       const isRoundRobin = calendar?.calendarType === 'round_robin' ||
                           calendar?.eventType?.includes('RoundRobin');
 
+      console.log('🔍 DEBUG loadUsers:', {
+        hasCalendar: !!calendar,
+        calendarType: calendar?.calendarType,
+        eventType: calendar?.eventType,
+        isRoundRobin,
+        teamMembersCount: calendar?.teamMembers?.length || 0,
+        teamMembers: calendar?.teamMembers
+      });
+
       if (isRoundRobin && calendar?.teamMembers && calendar.teamMembers.length > 0) {
         // Para Round Robin: usar team members del calendario
         const response = await fetch('/api/highlevel/users');
@@ -226,15 +235,28 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
         const teamMemberIds = calendar.teamMembers.map(tm => tm.userId);
         const filteredUsers = allUsers.filter(user => teamMemberIds.includes(user.id));
 
+        console.log('✅ Round Robin - Usuarios filtrados:', {
+          totalUsers: allUsers.length,
+          teamMemberIds,
+          filteredCount: filteredUsers.length,
+          filteredUsers
+        });
+
         setUsers(filteredUsers);
       } else {
         // Para calendarios normales: cargar todos los usuarios del location
         const response = await fetch('/api/highlevel/users');
         if (!response.ok) throw new Error('Error al cargar usuarios');
         const data = await response.json();
+
+        console.log('✅ Calendario normal - Todos los usuarios:', {
+          usersCount: data.users?.length || 0
+        });
+
         setUsers(data.users || []);
       }
     } catch (error) {
+      console.error('❌ Error al cargar usuarios:', error);
       setUsers([]);
     } finally {
       setLoadingUsers(false);

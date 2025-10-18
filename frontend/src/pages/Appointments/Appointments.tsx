@@ -1059,6 +1059,7 @@ export const Appointments: React.FC = () => {
         isOpen={isModalOpen}
         onClose={handleCloseModal}
         event={selectedEvent}
+        calendar={selectedCalendar}
         mode="view"
         onSave={handleSaveAppointment}
         onDelete={handleDeleteAppointment}
@@ -1068,6 +1069,7 @@ export const Appointments: React.FC = () => {
       <AppointmentModal
         isOpen={isCreateModalOpen}
         onClose={() => setIsCreateModalOpen(false)}
+        calendar={selectedCalendar}
         mode="create"
         defaultStart={createDefaults.start}
         defaultEnd={createDefaults.end}
