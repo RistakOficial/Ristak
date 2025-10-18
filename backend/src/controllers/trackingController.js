@@ -187,37 +187,37 @@ export async function servePixel(req, res) {
     // Edge
     if (ua.indexOf('Edg/') > -1) {
       browser = 'Edge';
-      match = ua.match(/Edg\/([\d.]+)/);
+      match = ua.match(/Edg\\/([\\\d.]+)/);
       version = match ? match[1] : '';
     }
     // Chrome
     else if (ua.indexOf('Chrome/') > -1 && ua.indexOf('Edg/') === -1) {
       browser = 'Chrome';
-      match = ua.match(/Chrome\/([\d.]+)/);
+      match = ua.match(/Chrome\\/([\\\d.]+)/);
       version = match ? match[1] : '';
     }
     // Safari
     else if (ua.indexOf('Safari/') > -1 && ua.indexOf('Chrome') === -1) {
       browser = 'Safari';
-      match = ua.match(/Version\/([\d.]+)/);
+      match = ua.match(/Version\\/([\\\d.]+)/);
       version = match ? match[1] : '';
     }
     // Firefox
     else if (ua.indexOf('Firefox/') > -1) {
       browser = 'Firefox';
-      match = ua.match(/Firefox\/([\d.]+)/);
+      match = ua.match(/Firefox\\/([\\\d.]+)/);
       version = match ? match[1] : '';
     }
     // Opera
     else if (ua.indexOf('OPR/') > -1 || ua.indexOf('Opera/') > -1) {
       browser = 'Opera';
-      match = ua.match(/(?:OPR|Opera)\/([\d.]+)/);
+      match = ua.match(/(?:OPR|Opera)\\/([\\\d.]+)/);
       version = match ? match[1] : '';
     }
     // IE
     else if (ua.indexOf('MSIE') > -1 || ua.indexOf('Trident/') > -1) {
       browser = 'IE';
-      match = ua.match(/(?:MSIE |rv:)([\d.]+)/);
+      match = ua.match(/(?:MSIE |rv:)([\\\d.]+)/);
       version = match ? match[1] : '';
     }
 
@@ -719,7 +719,7 @@ export async function configureTracking(req, res) {
     }
 
     // Generar el snippet con versión para evitar cache
-    const SNIPPET_VERSION = '2' // Incrementar cuando cambies el código del snippet
+    const SNIPPET_VERSION = '3' // Incrementar cuando cambies el código del snippet
     const snippet = `<!-- Pixel de Tracking Ristak -->
 <script async src="https://${trackingDomain}/snip.js?v=${SNIPPET_VERSION}"></script>`
 
