@@ -38,15 +38,9 @@ body.dark .modal {
               0 0 0 1px rgba(0, 0, 0, 0.03);
 }
 
+/* Barra de color eliminada para diseño minimalista */
 .modal::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 4px;
-  background: var(--modal-accent-color, transparent);
-  opacity: 0.9;
+  content: none;
 }
 
 @keyframes modalSlideUp {
@@ -142,68 +136,24 @@ body.dark .modal {
   background: rgba(255, 255, 255, 0.01);
 }
 
-/* Icon wrapper */
+/* Icon wrapper - diseño minimalista sin fondos de colores */
 .iconWrapper {
-  width: 36px;
-  height: 36px;
-  border-radius: 10px;
+  width: 24px;
+  height: 24px;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  animation: iconZoom 0.4s cubic-bezier(0.68, -0.55, 0.265, 1.55) 0.1s backwards;
+  color: var(--color-text-secondary);
+  opacity: 0.8;
 }
 
-@keyframes iconZoom {
-  0% {
-    transform: scale(0) rotate(-180deg);
-    opacity: 0;
-  }
-  100% {
-    transform: scale(1) rotate(0);
-    opacity: 1;
-  }
-}
-
-/* Modal types con variables personalizadas */
-.modal.confirm {
-  --modal-accent-color: var(--color-warning);
-}
-
-.modal.confirm .iconWrapper {
-  background: rgba(245, 158, 11, 0.12);
-  color: var(--color-warning);
-}
-
-.modal.alert {
-  --modal-accent-color: var(--color-error);
-}
-
-.modal.alert .iconWrapper {
-  background: rgba(239, 68, 68, 0.12);
-  color: var(--color-error);
-}
-
-.modal.info {
-  --modal-accent-color: var(--color-primary);
-}
-
+/* No hay estilos específicos por tipo - todos usan el mismo diseño minimalista */
+.modal.confirm .iconWrapper,
+.modal.alert .iconWrapper,
 .modal.info .iconWrapper {
-  background: rgba(var(--color-primary-rgb), 0.18);
-  color: var(--color-primary);
-}
-
-/* Dark mode icon backgrounds */
-[data-theme="dark"] .modal.confirm .iconWrapper {
-  background: rgba(210, 153, 34, 0.15);
-}
-
-[data-theme="dark"] .modal.alert .iconWrapper {
-  background: rgba(224, 107, 107, 0.15);
-}
-
-[data-theme="dark"] .modal.info .iconWrapper {
-  background: rgba(88, 166, 255, 0.15);
+  background: none;
+  color: var(--color-text-secondary);
 }
 
 /* Modal sizes */

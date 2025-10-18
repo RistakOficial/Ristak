@@ -128,7 +128,7 @@ export async function servePixel(req, res) {
     });
   }
 
-  // Extraer parámetros UTM de la URL
+  // Extraer parámetros UTM y de plataformas de ads
   function extractUtmParams() {
     var params = {};
     var search = window.location.search.substring(1);
@@ -140,8 +140,25 @@ export async function servePixel(req, res) {
       var key = decodeURIComponent(pair[0]);
       var value = pair[1] ? decodeURIComponent(pair[1]) : '';
 
-      if (key.indexOf('utm_') === 0 || key === 'gclid' || key === 'fbclid' ||
-          key === 'msclkid' || key === 'ttclid' || key === 'wbraid' || key === 'gbraid') {
+      // UTMs básicos
+      if (key.indexOf('utm_') === 0) {
+        params[key] = value;
+      }
+      // Click IDs
+      else if (key === 'gclid' || key === 'fbclid' || key === 'msclkid' ||
+               key === 'ttclid' || key === 'wbraid' || key === 'gbraid') {
+        params[key] = value;
+      }
+      // Facebook Ads params
+      else if (key === 'campaign_id' || key === 'adset_id' || key === 'ad_id' ||
+               key === 'campaign_name' || key === 'adset_name' || key === 'ad_name' ||
+               key === 'placement' || key === 'site_source_name') {
+        params[key] = value;
+      }
+      // Google Ads params
+      else if (key === 'campaignid' || key === 'adgroupid' || key === 'creative' ||
+               key === 'keyword' || key === 'matchtype' || key === 'network' ||
+               key === 'device' || key === 'placement' || key === 'target') {
         params[key] = value;
       }
     }
@@ -158,6 +175,76 @@ export async function servePixel(req, res) {
       return 'mobile';
     }
     return 'desktop';
+  }
+
+  // Detectar browser y versión
+  function getBrowserInfo() {
+    var ua = navigator.userAgent;
+    var browser = 'Unknown';
+    var version = '';
+
+    // Edge
+    if (ua.indexOf('Edg/') > -1) {
+      browser = 'Edge';
+      version = ua.match(/Edg\/([\d.]+)/)?.[1] || '';
+    }
+    // Chrome
+    else if (ua.indexOf('Chrome/') > -1 && ua.indexOf('Edg/') === -1) {
+      browser = 'Chrome';
+      version = ua.match(/Chrome\/([\d.]+)/)?.[1] || '';
+    }
+    // Safari
+    else if (ua.indexOf('Safari/') > -1 && ua.indexOf('Chrome') === -1) {
+      browser = 'Safari';
+      version = ua.match(/Version\/([\d.]+)/)?.[1] || '';
+    }
+    // Firefox
+    else if (ua.indexOf('Firefox/') > -1) {
+      browser = 'Firefox';
+      version = ua.match(/Firefox\/([\d.]+)/)?.[1] || '';
+    }
+    // Opera
+    else if (ua.indexOf('OPR/') > -1 || ua.indexOf('Opera/') > -1) {
+      browser = 'Opera';
+      version = ua.match(/(?:OPR|Opera)\/([\d.]+)/)?.[1] || '';
+    }
+    // IE
+    else if (ua.indexOf('MSIE') > -1 || ua.indexOf('Trident/') > -1) {
+      browser = 'IE';
+      version = ua.match(/(?:MSIE |rv:)([\d.]+)/)?.[1] || '';
+    }
+
+    return { browser: browser, browser_version: version };
+  }
+
+  // Detectar sistema operativo
+  function getOS() {
+    var ua = navigator.userAgent;
+    var os = 'Unknown';
+
+    if (ua.indexOf('Windows NT 10.0') > -1) os = 'Windows 10';
+    else if (ua.indexOf('Windows NT 6.3') > -1) os = 'Windows 8.1';
+    else if (ua.indexOf('Windows NT 6.2') > -1) os = 'Windows 8';
+    else if (ua.indexOf('Windows NT 6.1') > -1) os = 'Windows 7';
+    else if (ua.indexOf('Windows NT 6.0') > -1) os = 'Windows Vista';
+    else if (ua.indexOf('Windows NT 5.1') > -1) os = 'Windows XP';
+    else if (ua.indexOf('Windows') > -1) os = 'Windows';
+    else if (ua.indexOf('Mac OS X') > -1) {
+      var match = ua.match(/Mac OS X ([\d_]+)/);
+      os = match ? 'macOS ' + match[1].replace(/_/g, '.') : 'macOS';
+    }
+    else if (ua.indexOf('Android') > -1) {
+      var match = ua.match(/Android ([\d.]+)/);
+      os = match ? 'Android ' + match[1] : 'Android';
+    }
+    else if (ua.indexOf('iPhone') > -1 || ua.indexOf('iPad') > -1) {
+      var match = ua.match(/OS ([\d_]+)/);
+      os = match ? 'iOS ' + match[1].replace(/_/g, '.') : 'iOS';
+    }
+    else if (ua.indexOf('Linux') > -1) os = 'Linux';
+    else if (ua.indexOf('CrOS') > -1) os = 'Chrome OS';
+
+    return os;
   }
 
   // Extraer cookies de Facebook si existen
@@ -244,6 +331,7 @@ export async function servePixel(req, res) {
     var sessionId = getSessionId();
     var utmParams = extractUtmParams();
     var fbCookies = getFacebookCookies();
+    var browserInfo = getBrowserInfo();
 
     // Sincronizar contact_id de HighLevel (_ud)
     var contactId = syncHighLevelContact();
@@ -256,6 +344,9 @@ export async function servePixel(req, res) {
       referrer: document.referrer || null,
       title: document.title || null,
       device_type: getDeviceType(),
+      browser: browserInfo.browser,
+      browser_version: browserInfo.browser_version,
+      os: getOS(),
       language: navigator.language || navigator.userLanguage || null,
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || null,
       user_agent: navigator.userAgent
