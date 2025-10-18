@@ -173,13 +173,12 @@ export const WebTracking: React.FC = () => {
                     <Info size={16} />
                     <span>Configuración requerida</span>
                   </div>
-                  <p className={styles.infoBoxText}>
-                    Para configurar el tracking, accede usando el subdominio{' '}
-                    <code className={styles.codeInline}>collect.tudominio.com</code>
-                  </p>
-                  <p className={styles.formHint} style={{ marginTop: '8px', marginBottom: 0 }}>
+                  <div className={styles.infoBoxContent}>
+                    Para configurar el tracking, accede usando el subdominio <code className={styles.codeInline}>collect.tudominio.com</code>
+                  </div>
+                  <div className={styles.infoBoxContent} style={{ marginTop: '8px' }}>
                     Configura un CNAME en tu DNS: <code className={styles.codeInline}>collect</code> → <code className={styles.codeInline}>ristak-app.onrender.com</code>
-                  </p>
+                  </div>
                 </div>
               )}
 
@@ -190,9 +189,9 @@ export const WebTracking: React.FC = () => {
                     <Globe size={16} />
                     <span>Dominio detectado</span>
                   </div>
-                  <p className={styles.infoBoxText}>
+                  <div className={styles.infoBoxContent}>
                     <code className={styles.codeInline}>{trackingDomain}</code>
-                  </p>
+                  </div>
                 </div>
               )}
 
@@ -203,13 +202,9 @@ export const WebTracking: React.FC = () => {
                     <Check size={16} />
                     <span>Tracking configurado</span>
                   </div>
-                  <p className={styles.infoBoxText}>
-                    Usa{' '}
-                    <code className={styles.codeInline}>{'{{ custom_values.rstktrack }}'}</code>
-                    {' '}en el{' '}
-                    <code className={styles.codeInline}>&lt;head&gt;</code>
-                    {' '}de tu sitio
-                  </p>
+                  <div className={styles.infoBoxContent}>
+                    Usa <code className={styles.codeInline}>{'{{ custom_values.rstktrack }}'}</code> en el <code className={styles.codeInline}>&lt;head&gt;</code> de tu sitio
+                  </div>
                 </div>
               ) : (
                 <div className={styles.infoBox} style={{ marginBottom: '16px' }}>
@@ -217,11 +212,9 @@ export const WebTracking: React.FC = () => {
                     <Info size={16} />
                     <span>Configuración pendiente</span>
                   </div>
-                  <p className={styles.infoBoxText}>
-                    Sincroniza para crear el custom value{' '}
-                    <code className={styles.codeInline}>rstktrack</code>
-                    {' '}en HighLevel
-                  </p>
+                  <div className={styles.infoBoxContent}>
+                    Sincroniza para crear el custom value <code className={styles.codeInline}>rstktrack</code> en HighLevel
+                  </div>
                 </div>
               )}
 

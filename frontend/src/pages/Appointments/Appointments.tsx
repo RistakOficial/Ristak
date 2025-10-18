@@ -753,7 +753,8 @@ export const Appointments: React.FC = () => {
                     const isToday = date.toDateString() === new Date().toDateString();
                     const dayEvents = events.filter((event) => {
                       const eventDate = toDateInTimeZone(event.startTime, event.timeZone) ?? new Date(event.startTime);
-                      return eventDate ? isSameDay(eventDate, date) : false;
+                      const columnDate = toDateInTimeZone(date.toISOString(), event.timeZone) ?? date;
+                      return eventDate ? isSameDay(eventDate, columnDate) : false;
                     });
 
                     return (
@@ -856,12 +857,17 @@ export const Appointments: React.FC = () => {
 
                   {/* Eventos del día */}
                   {(() => {
-                    const dateStr = currentDate.toISOString().split('T')[0];
-                    const dayEvents = eventsByDate[dateStr] || [];
+                    const currentDateZonedBase = currentDate.toISOString();
+                    const dayEvents = events.filter((event) => {
+                      const eventDate = toDateInTimeZone(event.startTime, event.timeZone) ?? new Date(event.startTime);
+                      const currentDateZoned =
+                        toDateInTimeZone(currentDateZonedBase, event.timeZone) ?? currentDate;
+                      return eventDate ? isSameDay(eventDate, currentDateZoned) : false;
+                    });
 
                     return dayEvents.map((event) => {
-                      const startDate = new Date(event.startTime);
-                      const endDate = new Date(event.endTime);
+                      const startDate = toDateInTimeZone(event.startTime, event.timeZone) ?? new Date(event.startTime);
+                      const endDate = toDateInTimeZone(event.endTime, event.timeZone) ?? new Date(event.endTime);
                       const startHour = startDate.getHours() + startDate.getMinutes() / 60;
                       const endHour = endDate.getHours() + endDate.getMinutes() / 60;
                       const top = (startHour / 24) * 100;
