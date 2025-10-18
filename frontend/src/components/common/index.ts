@@ -16,6 +16,7 @@ export { ChartContainer } from './ChartContainer'
 
 // Componentes de fecha
 export { DateRangePicker } from './DateRangePicker'
+export { DateTimePicker } from './DateTimePicker'
 
 // Componentes de filtros
 export { TreeFilter } from './TreeFilter'

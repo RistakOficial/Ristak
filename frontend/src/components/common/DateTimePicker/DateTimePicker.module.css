@@ -1,0 +1,335 @@
+.container {
+  position: relative;
+  width: 100%;
+}
+
+.label {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--color-text-primary);
+}
+
+.required {
+  color: var(--color-danger);
+}
+
+.trigger {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--color-background-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  color: var(--color-text-primary);
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.trigger:hover {
+  border-color: var(--color-primary);
+  background: var(--color-background-tertiary);
+}
+
+.trigger:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+}
+
+.trigger svg:first-child {
+  color: var(--color-text-secondary);
+  flex-shrink: 0;
+}
+
+.trigger span {
+  flex: 1;
+  text-align: left;
+}
+
+.clearButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  background: none;
+  border: none;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  border-radius: 4px;
+  transition: all 0.2s ease;
+}
+
+.clearButton:hover {
+  background: var(--color-background-tertiary);
+  color: var(--color-text-primary);
+}
+
+.dropdown {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 1000;
+  min-width: 320px;
+  background: var(--color-background-primary);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.15);
+  overflow: hidden;
+  animation: slideDown 0.2s ease;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Calendar */
+.calendar {
+  padding: 16px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.calendarHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.monthYear {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.navButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.navButton:hover {
+  background: var(--color-background-secondary);
+  color: var(--color-text-primary);
+}
+
+.weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.weekday {
+  text-align: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  padding: 4px;
+}
+
+.days {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+}
+
+.day {
+  aspect-ratio: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-primary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.day:hover:not(.disabled) {
+  background: var(--color-background-secondary);
+}
+
+.day.today {
+  color: var(--color-primary);
+  font-weight: 600;
+}
+
+.day.selected {
+  background: var(--color-primary);
+  color: white;
+  font-weight: 600;
+}
+
+.day.selected:hover {
+  background: var(--color-primary-hover);
+}
+
+.day.otherMonth {
+  color: var(--color-text-tertiary);
+  opacity: 0.4;
+}
+
+.day.disabled {
+  color: var(--color-text-tertiary);
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+/* Time Picker */
+.timePicker {
+  padding: 16px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.timeHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.timeHeader svg {
+  color: var(--color-text-secondary);
+}
+
+.timeSelectors {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 12px;
+}
+
+.timeColumn {
+  display: flex;
+  flex-direction: column;
+}
+
+.timeColumnLabel {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 8px;
+  text-align: center;
+}
+
+.timeScroll {
+  max-height: 180px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border) transparent;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 4px;
+}
+
+.timeScroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.timeScroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.timeScroll::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 3px;
+}
+
+.timeScroll::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-tertiary);
+}
+
+.timeOption {
+  width: 100%;
+  padding: 8px 12px;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--color-text-primary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-align: center;
+}
+
+.timeOption:hover {
+  background: var(--color-background-secondary);
+}
+
+.timeOptionSelected {
+  background: var(--color-primary);
+  color: white;
+  font-weight: 600;
+}
+
+.timeOptionSelected:hover {
+  background: var(--color-primary-hover);
+}
+
+/* Actions */
+.actions {
+  display: flex;
+  gap: 8px;
+  padding: 12px 16px;
+}
+
+.actionButton {
+  flex: 1;
+  padding: 8px 16px;
+  background: var(--color-background-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-primary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.actionButton:hover {
+  background: var(--color-background-tertiary);
+  border-color: var(--color-text-tertiary);
+}
+
+.actionButtonPrimary {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: white;
+}
+
+.actionButtonPrimary:hover {
+  background: var(--color-primary-hover);
+  border-color: var(--color-primary-hover);
+}
+
+/* Dark mode */
+body.dark .dropdown {
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+}

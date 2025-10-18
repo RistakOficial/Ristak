@@ -16,38 +16,44 @@ export const ChartTooltip: React.FC<ChartTooltipProps> = ({
   series,
   formatValue
 }) => {
-  const [isModalOpen, setIsModalOpen] = useState(false)
+  const [shouldHide, setShouldHide] = useState(false)
 
-  // Detectar si hay un modal abierto verificando overflow:hidden en body
+  // Detectar si hay un modal abierto o un date range picker activo observando el body
   useEffect(() => {
-    const checkModalOpen = () => {
-      // Los modales setean document.body.style.overflow = 'hidden'
-      const hasOverflowHidden = document.body.style.overflow === 'hidden'
-      setIsModalOpen(hasOverflowHidden)
+    if (typeof document === 'undefined') return
+
+    const checkBodyState = () => {
+      const body = document.body
+      const hasOverflowHidden = body.style.overflow === 'hidden'
+      const isDatePickerOpen = body.classList.contains('date-range-picker-open')
+      setShouldHide(hasOverflowHidden || isDatePickerOpen)
     }
 
     // Verificar al montar
-    checkModalOpen()
+    checkBodyState()
 
-    // Observar cambios en el atributo style del body
+    // Observar cambios en los atributos relevantes del body
     const observer = new MutationObserver((mutations) => {
       mutations.forEach((mutation) => {
-        if (mutation.type === 'attributes' && mutation.attributeName === 'style') {
-          checkModalOpen()
+        if (
+          mutation.type === 'attributes' &&
+          (mutation.attributeName === 'style' || mutation.attributeName === 'class')
+        ) {
+          checkBodyState()
         }
       })
     })
 
     observer.observe(document.body, {
       attributes: true,
-      attributeFilter: ['style']
+      attributeFilter: ['style', 'class']
     })
 
     return () => observer.disconnect()
   }, [])
 
-  // No mostrar tooltip si hay modal abierto
-  if (!active || !data || !pointPos || isModalOpen) {
+  // No mostrar tooltip si hay superposición activa que bloquearía la interacción
+  if (!active || !data || !pointPos || shouldHide) {
     return null
   }
 

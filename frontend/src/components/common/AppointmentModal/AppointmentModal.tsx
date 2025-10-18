@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Modal } from '../Modal';
 import { Button } from '../Button';
+import { DateTimePicker } from '../DateTimePicker';
 import { CalendarEvent, Calendar, calendarsService } from '@/services/calendarsService';
 import { formatDate } from '@/utils/format';
 import { useNotification } from '@/contexts/NotificationContext';
@@ -933,28 +934,19 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
 
             <div className={styles.fieldRow}>
               <div className={styles.field}>
-                <label className={styles.label} htmlFor="startTime">
-                  Inicio
-                </label>
-                <input
-                  id="startTime"
-                  type="datetime-local"
-                  className={styles.input}
+                <DateTimePicker
+                  label="Inicio"
                   value={formData.startTime}
-                  onChange={(e) => setFormData({ ...formData, startTime: e.target.value })}
+                  onChange={(value) => setFormData({ ...formData, startTime: value })}
                 />
               </div>
 
               <div className={styles.field}>
-                <label className={styles.label} htmlFor="endTime">
-                  Fin
-                </label>
-                <input
-                  id="endTime"
-                  type="datetime-local"
-                  className={styles.input}
+                <DateTimePicker
+                  label="Fin"
                   value={formData.endTime}
-                  onChange={(e) => setFormData({ ...formData, endTime: e.target.value })}
+                  onChange={(value) => setFormData({ ...formData, endTime: value })}
+                  minDate={formData.startTime}
                 />
               </div>
             </div>
