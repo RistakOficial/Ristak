@@ -810,8 +810,13 @@ const Analytics: React.FC = () => {
         <div className="space-y-4">
           <h1 className="text-2xl font-bold">Analíticas</h1>
 
-          {/* Selector de fechas y Filtro en árbol juntos */}
+          {/* Filtro en árbol y Selector de fechas juntos */}
           <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center">
+            <TreeFilter
+              availableData={availableFilterData}
+              selectedFilters={selectedFilters}
+              onFilterChange={setSelectedFilters}
+            />
             <DateRangePicker
               startDate={formatDateToISO(dateRange.start)}
               endDate={formatDateToISO(dateRange.end)}
@@ -822,11 +827,6 @@ const Analytics: React.FC = () => {
                   preset: 'custom'
                 })
               }
-            />
-            <TreeFilter
-              availableData={availableFilterData}
-              selectedFilters={selectedFilters}
-              onFilterChange={setSelectedFilters}
             />
           </div>
         </div>
