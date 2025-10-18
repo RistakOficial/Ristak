@@ -172,12 +172,49 @@ export async function getFreeSlots(calendarId, startDate, endDate, accessToken, 
 /**
  * Crear una nueva cita en el calendario
  * @param {Object} appointmentData - Datos de la cita
+ * @param {string} locationId - ID de la ubicación
  * @param {string} accessToken - Token de acceso OAuth
  * @returns {Promise<Object>} Cita creada
  */
-export async function createAppointment(appointmentData, accessToken) {
+export async function createAppointment(appointmentData, locationId, accessToken) {
   try {
     logger.info(`[HighLevel Calendar] Creando nueva cita para calendario: ${appointmentData.calendarId}`);
+
+    // Construir payload según documentación de HighLevel
+    const payload = {
+      calendarId: appointmentData.calendarId,
+      locationId: locationId,
+      // startTime y endTime ya vienen en formato ISO desde el frontend
+      startTime: appointmentData.startTime,
+      endTime: appointmentData.endTime
+    };
+
+    // Campos opcionales
+    if (appointmentData.contactId) {
+      payload.contactId = appointmentData.contactId;
+    }
+
+    if (appointmentData.assignedUserId) {
+      payload.assignedUserId = appointmentData.assignedUserId;
+    }
+
+    if (appointmentData.title) {
+      payload.title = appointmentData.title;
+    }
+
+    if (appointmentData.appointmentStatus) {
+      payload.appointmentStatus = appointmentData.appointmentStatus;
+    }
+
+    if (appointmentData.address) {
+      payload.address = appointmentData.address;
+    }
+
+    if (appointmentData.notes) {
+      payload.notes = appointmentData.notes;
+    }
+
+    logger.info(`[HighLevel Calendar] Payload de cita: ${JSON.stringify(payload, null, 2)}`);
 
     const response = await fetch(
       `${GHL_API_BASE}/calendars/events/appointments`,
@@ -189,14 +226,14 @@ export async function createAppointment(appointmentData, accessToken) {
           'Version': API_VERSION,
           'Authorization': `Bearer ${accessToken}`
         },
-        body: JSON.stringify(appointmentData)
+        body: JSON.stringify(payload)
       }
     );
 
     if (!response.ok) {
       const errorText = await response.text();
       logger.error(`[HighLevel Calendar] Error al crear cita: ${response.status} - ${errorText}`);
-      throw new Error(`Error al crear cita: ${response.status}`);
+      throw new Error(`Error al crear cita: ${response.status} - ${errorText}`);
     }
 
     const data = await response.json();

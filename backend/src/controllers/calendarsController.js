@@ -145,7 +145,7 @@ export async function getFreeSlots(req, res) {
  */
 export async function createAppointment(req, res) {
   try {
-    const { accessToken, ...appointmentData } = req.body;
+    const { accessToken, locationId, ...appointmentData } = req.body;
 
     if (!accessToken) {
       return res.status(400).json({
@@ -154,7 +154,14 @@ export async function createAppointment(req, res) {
       });
     }
 
-    const appointment = await calendarService.createAppointment(appointmentData, accessToken);
+    if (!locationId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Se requiere locationId'
+      });
+    }
+
+    const appointment = await calendarService.createAppointment(appointmentData, locationId, accessToken);
 
     res.status(201).json({
       success: true,

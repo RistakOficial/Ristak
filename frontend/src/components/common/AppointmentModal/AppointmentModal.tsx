@@ -141,21 +141,31 @@ const convertLocalInputToISO = (value: string, timeZone: string): string | null 
   const [year, month, day] = datePart.split('-').map(Number);
   const [hour, minute] = timePart.split(':').map(Number);
 
-  const baseUtc = new Date(Date.UTC(year, month - 1, day, hour, minute));
-  const offsetParts = getTimeZoneParts(baseUtc, timeZone);
-  const utcFromParts = Date.UTC(
-    offsetParts.year ?? year,
-    (offsetParts.month ?? month) - 1,
-    offsetParts.day ?? day,
-    offsetParts.hour ?? hour,
-    offsetParts.minute ?? minute,
-    offsetParts.second ?? 0
-  );
+  // Crear fecha en la timezone especificada
+  const date = new Date(year, month - 1, day, hour, minute, 0);
 
-  // Offset between timezone representation and UTC
-  const offset = utcFromParts - baseUtc.getTime();
-  const adjusted = new Date(baseUtc.getTime() - offset);
-  return adjusted.toISOString();
+  // Obtener el offset de timezone en minutos
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    timeZoneName: 'short'
+  });
+
+  // Calcular offset manualmente usando UTC
+  const utcDate = new Date(Date.UTC(year, month - 1, day, hour, minute, 0));
+  const tzDate = new Date(utcDate.toLocaleString('en-US', { timeZone }));
+  const offset = (utcDate.getTime() - tzDate.getTime()) / (1000 * 60);
+
+  // Formatear offset como +/-HH:MM
+  const offsetHours = Math.floor(Math.abs(offset) / 60);
+  const offsetMinutes = Math.abs(offset) % 60;
+  const offsetSign = offset <= 0 ? '+' : '-';
+  const offsetStr = `${offsetSign}${String(offsetHours).padStart(2, '0')}:${String(offsetMinutes).padStart(2, '0')}`;
+
+  // Formato: 2025-10-18T14:30:00-05:00
+  const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  const timeStr = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:00`;
+
+  return `${dateStr}T${timeStr}${offsetStr}`;
 };
 
 export const AppointmentModal: React.FC<AppointmentModalProps> = ({
@@ -173,9 +183,6 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   const [isSaving, setIsSaving] = useState(false);
   const [formData, setFormData] = useState(INITIAL_FORM_STATE);
   const isCreateMode = mode === 'create';
-
-  // DEBUG - Temporal
-  console.log('AppointmentModal - mode:', mode, 'isCreateMode:', isCreateMode, 'isOpen:', isOpen);
 
   // Contact search
   const [searchQuery, setSearchQuery] = useState('');
@@ -240,7 +247,6 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   // Cargar usuarios al abrir el modal en modo crear
   useEffect(() => {
     if (isOpen && isCreateMode) {
-      console.log('🔥 Cargando usuarios porque isOpen:', isOpen, 'isCreateMode:', isCreateMode);
       loadUsers();
     }
   }, [isOpen, isCreateMode]);

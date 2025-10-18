@@ -596,6 +596,15 @@ body.dark .dropdownMenu {
   transform: translateX(24px);
 }
 
+/* Dark mode: Más contraste para el toggle */
+body.dark .toggle {
+  background-color: rgba(148, 163, 184, 0.6);
+}
+
+body.dark .toggleActive {
+  background-color: var(--color-success);
+}
+
 /* Radio buttons */
 .radioGroup {
   display: flex;
