@@ -7,6 +7,7 @@ import {
   DateRangePicker,
   Button,
   ContactDetailsModal,
+  VisitorDetailsModal,
   ViewSelector,
   PageContainer
 } from '@/components/common'
@@ -1065,33 +1066,13 @@ export const Reports: React.FC = () => {
         />
 
         {/* Modal de Visitantes */}
-        <ContactDetailsModal
+        <VisitorDetailsModal
           isOpen={isVisitorsModalOpen}
           onClose={() => setIsVisitorsModalOpen(false)}
           title="Visitantes"
           subtitle={`Visitantes del ${visitorsModalDate}`}
-          data={visitorsData.map(visitor => ({
-            id: visitor.visitorId,
-            name: visitor.contact ? visitor.contact.name : `Visitante anónimo`,
-            email: visitor.contact ? visitor.contact.email : '',
-            phone: visitor.contact ? visitor.contact.phone : '',
-            created_at: visitor.firstVisit || visitor.createdAt,
-            ltv: visitor.contact ? visitor.contact.ltv : 0,
-            payments: 0,
-            appointments: 0,
-            source: visitor.utmSource || visitor.referrerUrl || 'Directo',
-            ad_name: visitor.adName || visitor.utmCampaign || '',
-            ad_id: visitor.adId || '',
-            // Datos adicionales del visitante
-            deviceType: visitor.deviceType,
-            browser: visitor.browser,
-            os: visitor.os,
-            language: visitor.language,
-            gclid: visitor.gclid,
-            fbclid: visitor.fbclid
-          }))}
+          data={visitorsData}
           loading={visitorsModalLoading}
-          type="visitors"
         />
       </div>
     </PageContainer>

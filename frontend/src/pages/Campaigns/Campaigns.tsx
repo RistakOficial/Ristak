@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { KpiCard, Card, DateRangePicker, Table, Icon, LineChart, ContactDetailsModal, PageContainer } from '@/components/common'
+import { KpiCard, Card, DateRangePicker, Table, Icon, LineChart, ContactDetailsModal, VisitorDetailsModal, PageContainer } from '@/components/common'
 import type { Column } from '@/components/common'
 import {
   RefreshCw,
@@ -940,33 +940,13 @@ export const Campaigns: React.FC = () => {
       />
 
       {/* Modal de visitantes */}
-      <ContactDetailsModal
+      <VisitorDetailsModal
         isOpen={isVisitorsModalOpen}
         onClose={() => setIsVisitorsModalOpen(false)}
         title="Visitantes"
         subtitle={visitorsModalTitle}
-        data={modalVisitors.map(visitor => ({
-          id: visitor.visitorId,
-          name: visitor.contact ? visitor.contact.name : `Visitante anónimo`,
-          email: visitor.contact ? visitor.contact.email : '',
-          phone: visitor.contact ? visitor.contact.phone : '',
-          created_at: visitor.firstVisit || visitor.createdAt,
-          ltv: visitor.contact ? visitor.contact.ltv : 0,
-          payments: 0,
-          appointments: 0,
-          source: visitor.utmSource || visitor.referrerUrl || 'Directo',
-          ad_name: visitor.adName || visitor.utmCampaign || '',
-          ad_id: visitor.adId || '',
-          // Datos adicionales del visitante
-          deviceType: visitor.deviceType,
-          browser: visitor.browser,
-          os: visitor.os,
-          language: visitor.language,
-          gclid: visitor.gclid,
-          fbclid: visitor.fbclid
-        }))}
+        data={modalVisitors}
         loading={visitorsModalLoading}
-        type="visitors"
       />
       </div>
     </PageContainer>

@@ -1,0 +1,519 @@
+import { useState, useMemo, useEffect } from 'react'
+import { Modal, Icon, Badge, type BadgeVariant } from '@/components/common'
+import { formatDate } from '@/utils/format'
+import styles from './VisitorDetailsModal.module.css'
+
+interface VisitorDetail {
+  visitorId: string
+  sessionId?: string
+  contact?: {
+    id?: string
+    name?: string
+    email?: string
+    phone?: string
+    ltv?: number
+  }
+  firstVisit?: string
+  createdAt?: string
+  landingUrl?: string
+  referrerUrl?: string
+  // UTM parameters
+  utmSource?: string
+  utmMedium?: string
+  utmCampaign?: string
+  utmContent?: string
+  utmTerm?: string
+  // Click IDs
+  gclid?: string
+  fbclid?: string
+  msclkid?: string
+  ttclid?: string
+  // Device info
+  deviceType?: string
+  browser?: string
+  os?: string
+  language?: string
+  timezone?: string
+  country?: string
+  city?: string
+  region?: string
+  // Ad info
+  adId?: string
+  adsetId?: string
+  campaignId?: string
+  adName?: string
+}
+
+interface VisitorDetailsModalProps {
+  isOpen: boolean
+  onClose: () => void
+  title: string
+  subtitle?: string
+  data: VisitorDetail[]
+  loading: boolean
+}
+
+export function VisitorDetailsModal({
+  isOpen,
+  onClose,
+  title,
+  subtitle,
+  data,
+  loading
+}: VisitorDetailsModalProps) {
+  const [selectedVisitor, setSelectedVisitor] = useState<VisitorDetail | null>(null)
+  const [searchQuery, setSearchQuery] = useState('')
+
+  // Seleccionar automáticamente el primer visitante cuando se abre el modal
+  useEffect(() => {
+    if (isOpen && data.length > 0) {
+      setSelectedVisitor(data[0])
+    } else if (!isOpen) {
+      setSelectedVisitor(null)
+      setSearchQuery('')
+    }
+  }, [isOpen, data])
+
+  // Filtrar visitantes según búsqueda
+  const filteredData = useMemo(() => {
+    if (!searchQuery) return data
+
+    const query = searchQuery.toLowerCase()
+    return data.filter(visitor =>
+      visitor.contact?.name?.toLowerCase().includes(query) ||
+      visitor.contact?.email?.toLowerCase().includes(query) ||
+      visitor.contact?.phone?.toLowerCase().includes(query) ||
+      visitor.visitorId?.toLowerCase().includes(query) ||
+      visitor.utmSource?.toLowerCase().includes(query) ||
+      visitor.utmCampaign?.toLowerCase().includes(query)
+    )
+  }, [data, searchQuery])
+
+  const formatCurrency = (value: number) => {
+    return new Intl.NumberFormat('es-MX', {
+      style: 'currency',
+      currency: 'MXN'
+    }).format(value)
+  }
+
+  const getDeviceIcon = (deviceType?: string) => {
+    if (!deviceType) return 'monitor'
+    const type = deviceType.toLowerCase()
+    if (type.includes('mobile') || type.includes('phone')) return 'smartphone'
+    if (type.includes('tablet') || type.includes('ipad')) return 'tablet'
+    return 'monitor'
+  }
+
+  const getSourceBadgeVariant = (source?: string): BadgeVariant => {
+    if (!source) return 'neutral'
+    const sourceLower = source.toLowerCase()
+    if (sourceLower.includes('google')) return 'success'
+    if (sourceLower.includes('facebook') || sourceLower.includes('meta')) return 'info'
+    if (sourceLower.includes('direct')) return 'neutral'
+    return 'purple'
+  }
+
+  const getVisitorName = (visitor: VisitorDetail) => {
+    if (visitor.contact?.name) return visitor.contact.name
+    if (visitor.contact?.email) return visitor.contact.email
+    if (visitor.contact?.phone) return visitor.contact.phone
+    return `Visitante ${visitor.visitorId.slice(-6)}`
+  }
+
+  const getVisitorDescription = (visitor: VisitorDetail) => {
+    if (visitor.contact?.email) return visitor.contact.email
+    if (visitor.contact?.phone) return visitor.contact.phone
+    if (visitor.utmCampaign) return visitor.utmCampaign
+    if (visitor.utmSource) return `Desde ${visitor.utmSource}`
+    return 'Visitante anónimo'
+  }
+
+  return (
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title=""
+      size="xl"
+      showCloseButton={false}
+    >
+      <div className={styles.modalContainer}>
+        {/* Header */}
+        <div className={styles.header}>
+          <div className={styles.headerContent}>
+            <div>
+              <h3 className={styles.title}>{title}</h3>
+              {subtitle && <p className={styles.subtitle}>{subtitle}</p>}
+            </div>
+            <button onClick={onClose} className={styles.closeButton}>
+              <Icon name="x" size={16} />
+            </button>
+          </div>
+
+          {/* Stats */}
+          <div className={styles.stats}>
+            <span className={styles.statItem}>
+              {data.length} {data.length === 1 ? 'visitante' : 'visitantes'}
+            </span>
+            <span className={styles.statValue}>
+              {data.filter(d => d.contact?.id).length} identificados
+            </span>
+          </div>
+        </div>
+
+        {/* Main content */}
+        <div className={styles.mainContent}>
+          {/* Left panel - Lista de visitantes */}
+          <div className={selectedVisitor ? styles.leftPanel : styles.leftPanelFull}>
+            {/* Search bar */}
+            <div className={styles.searchContainer}>
+              <div className={styles.searchInputWrapper}>
+                <Icon name="search" size={16} className={styles.searchIcon} />
+                <input
+                  type="text"
+                  placeholder="Buscar visitantes..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className={styles.searchInput}
+                />
+                {searchQuery && (
+                  <button
+                    onClick={() => setSearchQuery('')}
+                    className={styles.clearButton}
+                  >
+                    <Icon name="x" size={16} />
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Visitor list */}
+            <div className={styles.visitorList}>
+              {loading ? (
+                <div className={styles.emptyState}>
+                  <Icon name="refresh" size={24} className={styles.spinIcon} />
+                  <p>Cargando visitantes...</p>
+                </div>
+              ) : filteredData.length === 0 ? (
+                <div className={styles.emptyState}>
+                  <Icon name="users" size={24} />
+                  <p>{searchQuery ? 'No se encontraron resultados' : 'No hay visitantes para mostrar'}</p>
+                  {searchQuery && (
+                    <button
+                      onClick={() => setSearchQuery('')}
+                      className={styles.clearSearchButton}
+                    >
+                      Limpiar búsqueda
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <>
+                  {filteredData.map((visitor) => (
+                    <div
+                      key={visitor.visitorId}
+                      onClick={() => setSelectedVisitor(visitor)}
+                      className={`${styles.visitorItem} ${selectedVisitor?.visitorId === visitor.visitorId ? styles.visitorItemSelected : ''}`}
+                    >
+                      <div className={styles.visitorAvatar}>
+                        <Icon name={visitor.contact?.id ? 'user-check' : 'user'} size={16} />
+                      </div>
+
+                      <div className={styles.visitorInfo}>
+                        <p className={styles.visitorName}>
+                          {getVisitorName(visitor)}
+                        </p>
+                        <p className={styles.visitorDetail}>
+                          {getVisitorDescription(visitor)}
+                        </p>
+                      </div>
+
+                      <div className={styles.visitorIndicators}>
+                        {visitor.contact?.ltv && visitor.contact.ltv > 0 && (
+                          <span className={styles.ltvValue}>
+                            {formatCurrency(visitor.contact.ltv)}
+                          </span>
+                        )}
+                        {visitor.deviceType && (
+                          <Icon name={getDeviceIcon(visitor.deviceType)} size={14} className={styles.deviceIcon} />
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </>
+              )}
+            </div>
+
+            {/* Footer */}
+            {data.length > 0 && (
+              <div className={styles.footer}>
+                <span>
+                  Mostrando {filteredData.length} de {data.length}
+                </span>
+              </div>
+            )}
+          </div>
+
+          {/* Right panel - Detalles del visitante */}
+          {selectedVisitor && (
+            <div className={styles.rightPanel}>
+              {/* Visitor header */}
+              <div className={styles.visitorHeader}>
+                <div className={styles.visitorHeaderAvatar}>
+                  <Icon name={selectedVisitor.contact?.id ? 'user-check' : 'user'} size={20} />
+                </div>
+                <div className={styles.visitorHeaderInfo}>
+                  <h4 className={styles.visitorHeaderName}>
+                    {getVisitorName(selectedVisitor)}
+                  </h4>
+                  {selectedVisitor.contact?.email && (
+                    <p className={styles.visitorHeaderEmail}>
+                      {selectedVisitor.contact.email}
+                    </p>
+                  )}
+                  {selectedVisitor.contact?.phone && (
+                    <p className={styles.visitorHeaderPhone}>
+                      {selectedVisitor.contact.phone}
+                    </p>
+                  )}
+                  {!selectedVisitor.contact?.id && (
+                    <p className={styles.visitorHeaderAnonymous}>
+                      Visitante anónimo - ID: {selectedVisitor.visitorId.slice(-8)}
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {/* Visitor details */}
+              <div className={styles.visitorDetails}>
+                {/* Información de contacto (si está identificado) */}
+                {selectedVisitor.contact?.id && (
+                  <div className={styles.detailSection}>
+                    <h5 className={styles.detailSectionTitle}>
+                      Información de Contacto
+                    </h5>
+                    <div className={styles.detailSectionContent}>
+                      {selectedVisitor.contact.email && (
+                        <div className={styles.detailItem}>
+                          <Icon name="mail" size={16} />
+                          <span>{selectedVisitor.contact.email}</span>
+                        </div>
+                      )}
+                      {selectedVisitor.contact.phone && (
+                        <div className={styles.detailItem}>
+                          <Icon name="phone" size={16} />
+                          <span>{selectedVisitor.contact.phone}</span>
+                        </div>
+                      )}
+                      {selectedVisitor.contact.ltv && selectedVisitor.contact.ltv > 0 && (
+                        <div className={styles.detailItem}>
+                          <Icon name="dollar-sign" size={16} />
+                          <span>Valor: {formatCurrency(selectedVisitor.contact.ltv)}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Información de la visita */}
+                <div className={styles.detailSection}>
+                  <h5 className={styles.detailSectionTitle}>
+                    Información de la Visita
+                  </h5>
+                  <div className={styles.detailSectionContent}>
+                    <div className={styles.detailItem}>
+                      <Icon name="calendar" size={16} />
+                      <span>Primera visita: {formatDate(selectedVisitor.firstVisit || selectedVisitor.createdAt || '')}</span>
+                    </div>
+                    {selectedVisitor.landingUrl && (
+                      <div className={styles.detailItem}>
+                        <Icon name="link" size={16} />
+                        <div className={styles.urlWrapper}>
+                          <span className={styles.detailItemLabel}>Página de entrada:</span>
+                          <span className={styles.urlText}>{selectedVisitor.landingUrl}</span>
+                        </div>
+                      </div>
+                    )}
+                    {selectedVisitor.referrerUrl && selectedVisitor.referrerUrl !== 'direct' && (
+                      <div className={styles.detailItem}>
+                        <Icon name="arrow-left" size={16} />
+                        <div className={styles.urlWrapper}>
+                          <span className={styles.detailItemLabel}>Referido desde:</span>
+                          <span className={styles.urlText}>{selectedVisitor.referrerUrl}</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Atribución / UTM */}
+                {(selectedVisitor.utmSource || selectedVisitor.utmCampaign || selectedVisitor.adName) && (
+                  <div className={styles.detailSection}>
+                    <h5 className={styles.detailSectionTitle}>
+                      Origen del Tráfico
+                    </h5>
+                    <div className={styles.detailSectionContent}>
+                      {selectedVisitor.utmSource && (
+                        <div className={styles.detailItem}>
+                          <Icon name="tag" size={16} />
+                          <div>
+                            <span className={styles.detailItemLabel}>Fuente:</span>
+                            <Badge variant={getSourceBadgeVariant(selectedVisitor.utmSource)} className={styles.sourceBadge}>
+                              {selectedVisitor.utmSource}
+                            </Badge>
+                          </div>
+                        </div>
+                      )}
+                      {selectedVisitor.utmCampaign && (
+                        <div className={styles.detailItem}>
+                          <Icon name="megaphone" size={16} />
+                          <div>
+                            <span className={styles.detailItemLabel}>Campaña:</span>
+                            <span> {selectedVisitor.utmCampaign}</span>
+                          </div>
+                        </div>
+                      )}
+                      {selectedVisitor.adName && (
+                        <div className={styles.detailItem}>
+                          <Icon name="file-text" size={16} />
+                          <div>
+                            <span className={styles.detailItemLabel}>Anuncio:</span>
+                            <span> {selectedVisitor.adName}</span>
+                          </div>
+                        </div>
+                      )}
+                      {selectedVisitor.utmMedium && (
+                        <div className={styles.detailItem}>
+                          <Icon name="share-2" size={16} />
+                          <div>
+                            <span className={styles.detailItemLabel}>Medio:</span>
+                            <span> {selectedVisitor.utmMedium}</span>
+                          </div>
+                        </div>
+                      )}
+                      {selectedVisitor.adId && (
+                        <div className={styles.detailItem}>
+                          <Icon name="hash" size={16} />
+                          <div>
+                            <span className={styles.detailItemLabel}>ID del Anuncio:</span>
+                            <span className={styles.idText}> {selectedVisitor.adId}</span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Click IDs */}
+                {(selectedVisitor.gclid || selectedVisitor.fbclid || selectedVisitor.msclkid || selectedVisitor.ttclid) && (
+                  <div className={styles.detailSection}>
+                    <h5 className={styles.detailSectionTitle}>
+                      Identificadores de Click
+                    </h5>
+                    <div className={styles.detailSectionContent}>
+                      {selectedVisitor.gclid && (
+                        <div className={styles.detailItem}>
+                          <Icon name="link-2" size={16} />
+                          <div>
+                            <span className={styles.detailItemLabel}>Google Click ID:</span>
+                            <span className={styles.idText}> {selectedVisitor.gclid.slice(0, 20)}...</span>
+                          </div>
+                        </div>
+                      )}
+                      {selectedVisitor.fbclid && (
+                        <div className={styles.detailItem}>
+                          <Icon name="link-2" size={16} />
+                          <div>
+                            <span className={styles.detailItemLabel}>Facebook Click ID:</span>
+                            <span className={styles.idText}> {selectedVisitor.fbclid.slice(0, 20)}...</span>
+                          </div>
+                        </div>
+                      )}
+                      {selectedVisitor.msclkid && (
+                        <div className={styles.detailItem}>
+                          <Icon name="link-2" size={16} />
+                          <div>
+                            <span className={styles.detailItemLabel}>Microsoft Click ID:</span>
+                            <span className={styles.idText}> {selectedVisitor.msclkid.slice(0, 20)}...</span>
+                          </div>
+                        </div>
+                      )}
+                      {selectedVisitor.ttclid && (
+                        <div className={styles.detailItem}>
+                          <Icon name="link-2" size={16} />
+                          <div>
+                            <span className={styles.detailItemLabel}>TikTok Click ID:</span>
+                            <span className={styles.idText}> {selectedVisitor.ttclid.slice(0, 20)}...</span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Dispositivo e información técnica */}
+                <div className={styles.detailSection}>
+                  <h5 className={styles.detailSectionTitle}>
+                    Información del Dispositivo
+                  </h5>
+                  <div className={styles.detailSectionContent}>
+                    <div className={styles.deviceGrid}>
+                      {selectedVisitor.deviceType && (
+                        <div className={styles.deviceItem}>
+                          <Icon name={getDeviceIcon(selectedVisitor.deviceType)} size={16} />
+                          <span>{selectedVisitor.deviceType}</span>
+                        </div>
+                      )}
+                      {selectedVisitor.browser && (
+                        <div className={styles.deviceItem}>
+                          <Icon name="globe" size={16} />
+                          <span>{selectedVisitor.browser}</span>
+                        </div>
+                      )}
+                      {selectedVisitor.os && (
+                        <div className={styles.deviceItem}>
+                          <Icon name="monitor" size={16} />
+                          <span>{selectedVisitor.os}</span>
+                        </div>
+                      )}
+                      {selectedVisitor.language && (
+                        <div className={styles.deviceItem}>
+                          <Icon name="message-circle" size={16} />
+                          <span>{selectedVisitor.language}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Ubicación */}
+                {(selectedVisitor.country || selectedVisitor.city || selectedVisitor.region) && (
+                  <div className={styles.detailSection}>
+                    <h5 className={styles.detailSectionTitle}>
+                      Ubicación
+                    </h5>
+                    <div className={styles.detailSectionContent}>
+                      <div className={styles.detailItem}>
+                        <Icon name="map-pin" size={16} />
+                        <span>
+                          {[selectedVisitor.city, selectedVisitor.region, selectedVisitor.country]
+                            .filter(Boolean)
+                            .join(', ')}
+                        </span>
+                      </div>
+                      {selectedVisitor.timezone && (
+                        <div className={styles.detailItem}>
+                          <Icon name="clock" size={16} />
+                          <span>Zona horaria: {selectedVisitor.timezone}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </Modal>
+  )
+}

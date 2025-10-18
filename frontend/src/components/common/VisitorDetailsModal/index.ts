@@ -1,0 +1,1 @@
+export { VisitorDetailsModal } from './VisitorDetailsModal'
