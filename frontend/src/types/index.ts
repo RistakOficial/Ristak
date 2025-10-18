@@ -16,6 +16,8 @@ export interface Contact {
   normalizedPhone?: string | null
   duplicateCount?: number
   mergedContactIds?: string[]
+  firstAppointmentDate?: string | null
+  nextAppointmentDate?: string | null
 }
 
 // Transaction type

@@ -398,6 +398,30 @@ export const Contacts: React.FC = () => {
                 </div>
               </div>
 
+              {(selectedContact.firstAppointmentDate || selectedContact.nextAppointmentDate) && (
+                <div className={styles.infoSection}>
+                  <h3>Citas</h3>
+                  <div className={styles.infoGrid}>
+                    {selectedContact.firstAppointmentDate && (
+                      <div>
+                        <span className={styles.label}>Primera cita:</span>
+                        <span className={styles.value}>
+                          {formatDate(selectedContact.firstAppointmentDate, tableDateOptions)}
+                        </span>
+                      </div>
+                    )}
+                    {selectedContact.nextAppointmentDate && (
+                      <div>
+                        <span className={styles.label}>Próxima cita:</span>
+                        <span className={styles.value}>
+                          {formatDate(selectedContact.nextAppointmentDate, tableDateOptions)}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {(selectedContact.source || selectedContact.ad_name || selectedContact.ad_id) && (
                 <div className={styles.infoSection}>
                   <h3>De dónde llegó el contacto:</h3>

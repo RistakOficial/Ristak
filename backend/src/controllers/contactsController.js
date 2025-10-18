@@ -244,6 +244,33 @@ export const getContactById = async (req, res) => {
       [id]
     )
 
+    // Calcular primera cita y próxima cita
+    let firstAppointmentDate = null
+    let nextAppointmentDate = null
+
+    if (appointments.length > 0) {
+      // Ordenar por fecha (la más antigua primero)
+      const sortedAppointments = [...appointments].sort((a, b) =>
+        new Date(a.start_time).getTime() - new Date(b.start_time).getTime()
+      )
+
+      // Primera cita (la más antigua)
+      firstAppointmentDate = sortedAppointments[0].start_time
+
+      // Próxima cita (la más cercana en el futuro que no esté cancelada)
+      const now = new Date()
+      const futureAppointments = sortedAppointments.filter(apt => {
+        const aptDate = new Date(apt.start_time)
+        const isFuture = aptDate > now
+        const isNotCancelled = apt.appointment_status !== 'cancelled'
+        return isFuture && isNotCancelled
+      })
+
+      if (futureAppointments.length > 0) {
+        nextAppointmentDate = futureAppointments[0].start_time
+      }
+    }
+
     // Determinar status basado en la actividad del contacto
     let status = 'lead'
     if (contact.purchases_count > 0) {
@@ -268,7 +295,9 @@ export const getContactById = async (req, res) => {
       ad_id: contact.attribution_ad_id,
       notes: '',
       payments,
-      appointments
+      appointments,
+      firstAppointmentDate,
+      nextAppointmentDate
     }
 
     res.json({
