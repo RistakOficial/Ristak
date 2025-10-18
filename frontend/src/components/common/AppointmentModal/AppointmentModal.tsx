@@ -7,7 +7,7 @@ import { CalendarEvent, Calendar, calendarsService } from '@/services/calendarsS
 import { formatDate } from '@/utils/format';
 import { useNotification } from '@/contexts/NotificationContext';
 import styles from './AppointmentModal.module.css';
-import { Trash2, Search, Loader2, X, UserPlus, Check } from 'lucide-react';
+import { Trash2, Search, Loader2, X, UserPlus } from 'lucide-react';
 
 interface AppointmentModalProps {
   isOpen: boolean;
@@ -212,14 +212,12 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   const loadUsers = async () => {
     setLoadingUsers(true);
     try {
-      // Detectar si es Round Robin y usar teamMembers del calendario
-      const isRoundRobin = calendar?.calendarType === 'round_robin' ||
-                          calendar?.eventType?.includes('RoundRobin');
+      // Detectar si es Round Robin
+      const isRoundRobin = calendar?.calendarType === 'round_robin';
 
       console.log('🔍 DEBUG loadUsers:', {
         hasCalendar: !!calendar,
         calendarType: calendar?.calendarType,
-        eventType: calendar?.eventType,
         isRoundRobin,
         teamMembersCount: calendar?.teamMembers?.length || 0,
         teamMembers: calendar?.teamMembers
@@ -369,16 +367,14 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
     if (!isOpen) return;
 
     // Detectar si es Round Robin
-    const isRoundRobin =
-      calendar?.calendarType === 'round_robin' ||
-      calendar?.eventType?.includes('RoundRobin');
+    const isRoundRobin = calendar?.calendarType === 'round_robin';
 
     // Solo cargar usuarios si:
     // 1. Es modo crear Y es Round Robin (necesita elegir usuario)
-    // 2. Es modo view Y es Round Robin Y tiene assignedUserId (para mostrar quién está asignado)
+    // 2. Es modo view Y tiene assignedUserId (para mostrar quién está asignado)
     const shouldLoadUsers =
       (isCreateMode && isRoundRobin) ||
-      (!isCreateMode && isRoundRobin && formData.assignedUserId);
+      (!isCreateMode && formData.assignedUserId);
 
     if (shouldLoadUsers) {
       loadUsers();
@@ -567,8 +563,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
         }
 
         // Validación: en Round Robin, team member es OBLIGATORIO
-        const isRoundRobin = calendar?.calendarType === 'round_robin' ||
-                            calendar?.eventType?.includes('RoundRobin');
+        const isRoundRobin = calendar?.calendarType === 'round_robin';
 
         if (isRoundRobin && !formData.assignedUserId) {
           showToast('error', 'Team member requerido', 'Para calendarios Round Robin debes seleccionar un team member');
@@ -799,8 +794,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
 
             {/* Usuario asignado */}
             {(() => {
-              const isRoundRobin = calendar?.calendarType === 'round_robin' ||
-                                  calendar?.eventType?.includes('RoundRobin');
+              const isRoundRobin = calendar?.calendarType === 'round_robin';
 
               console.log('🔍 Renderizando selector de usuarios:', {
                 isCreateMode,
@@ -813,7 +807,6 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                   id: calendar.id,
                   name: calendar.name,
                   calendarType: calendar.calendarType,
-                  eventType: calendar.eventType,
                   teamMembersCount: calendar.teamMembers?.length
                 } : null
               });
@@ -838,9 +831,10 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                 }
               }
 
-              // En modo crear, mostrar selector
+              // En modo crear, mostrar selector solo si hay usuarios cargados
               if (isCreateMode) {
-                if (users.length === 0 && !loadingUsers) {
+                // Si es Round Robin y no hay usuarios, mostrar error
+                if (isRoundRobin && users.length === 0 && !loadingUsers) {
                   return (
                     <div className={styles.sectionBlock}>
                       <p className={styles.helpText}>
@@ -850,6 +844,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                   );
                 }
 
+                // Si no hay usuarios cargados (calendarios normales), no mostrar nada
                 if (users.length === 0) {
                   return null;
                 }

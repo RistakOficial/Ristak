@@ -19,7 +19,11 @@ export const API_URLS = {
   META_GRAPH: 'https://graph.facebook.com/v23.0',
   META_AD_INSIGHTS: (accountId) => `https://graph.facebook.com/v23.0/act_${accountId}/insights`,
   META_TOKEN_DEBUG: 'https://graph.facebook.com/debug_token',
-  META_TOKEN_REFRESH: 'https://graph.facebook.com/v23.0/oauth/access_token'
+  META_TOKEN_REFRESH: 'https://graph.facebook.com/v23.0/oauth/access_token',
+  META_OAUTH: 'https://www.facebook.com/v23.0/dialog/oauth',
+  META_OAUTH_TOKEN: 'https://graph.facebook.com/v23.0/oauth/access_token',
+  META_AD_ACCOUNTS: 'https://graph.facebook.com/v23.0/me/adaccounts',
+  META_BUSINESS_PORTFOLIOS: 'https://graph.facebook.com/v23.0/me/businesses'
 }
 
 export const CUSTOM_VALUE_KEYS = {
@@ -61,6 +65,14 @@ export const META_INSIGHTS_FIELDS = [
   'reach',
   'clicks',
   'cpc'
+].join(',')
+
+// Scopes necesarios para OAuth de Meta
+export const META_OAUTH_SCOPES = [
+  'ads_read',              // Leer datos de anuncios
+  'ads_management',        // Gestionar campañas (opcional pero recomendado)
+  'business_management',   // Acceso a Business Manager
+  'pages_read_engagement'  // Leer páginas de Facebook
 ].join(',')
 
 export const SYNC_STATUS = {

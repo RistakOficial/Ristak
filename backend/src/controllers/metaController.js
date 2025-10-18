@@ -9,6 +9,13 @@ import {
   getMetaConfig,
   verifyMetaToken
 } from '../services/metaAdsService.js';
+import {
+  getAuthUrl,
+  exchangeCodeForToken,
+  getAdAccounts,
+  saveOAuthConfig,
+  getMetaUserInfo
+} from '../services/metaOAuthService.js';
 import { resolveDateRange } from '../utils/dateUtils.js';
 
 /**
@@ -781,6 +788,155 @@ export const verifyToken = async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Error al verificar el token de Meta'
+    });
+  }
+};
+
+/**
+ * ============================================
+ * ENDPOINTS DE OAUTH
+ * ============================================
+ */
+
+/**
+ * Genera la URL de autorización de Meta OAuth
+ * El frontend abre esta URL en un popup
+ */
+export const getOAuthUrl = async (req, res) => {
+  try {
+    const authUrl = getAuthUrl();
+
+    res.json({
+      success: true,
+      authUrl
+    });
+  } catch (error) {
+    logger.error(`Error en getOAuthUrl: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+};
+
+/**
+ * Callback de OAuth - Meta redirige aquí después de autorizar
+ * Recibe el code y lo intercambia por un access_token
+ */
+export const oauthCallback = async (req, res) => {
+  try {
+    const { code, error, error_description } = req.query;
+
+    // Si Meta envió un error
+    if (error) {
+      logger.error(`Error de Meta OAuth: ${error} - ${error_description}`);
+
+      // Redirigir al frontend con el error
+      const frontendUrl = process.env.VITE_APP_URL || 'http://localhost:5173';
+      return res.redirect(`${frontendUrl}/settings?oauth=error&message=${encodeURIComponent(error_description || error)}`);
+    }
+
+    if (!code) {
+      return res.status(400).json({
+        success: false,
+        error: 'No se recibió código de autorización'
+      });
+    }
+
+    logger.info('Código de OAuth recibido, intercambiando por token...');
+
+    // Intercambiar code por token
+    const tokenData = await exchangeCodeForToken(code);
+
+    // Obtener info del usuario
+    const userInfo = await getMetaUserInfo(tokenData.access_token);
+
+    // Guardar token temporalmente en sesión o cookie para que el frontend lo use
+    // Por ahora, redirigir al frontend con el token en la URL (no es lo más seguro pero funciona)
+    const frontendUrl = process.env.VITE_APP_URL || 'http://localhost:5173';
+
+    // Codificar el token en base64 para pasarlo en la URL (temporal)
+    const encodedToken = Buffer.from(tokenData.access_token).toString('base64');
+
+    res.redirect(`${frontendUrl}/settings?oauth=success&token=${encodedToken}&expires_in=${tokenData.expires_in}&user=${encodeURIComponent(userInfo.name)}`);
+
+  } catch (error) {
+    logger.error(`Error en oauthCallback: ${error.message}`);
+    const frontendUrl = process.env.VITE_APP_URL || 'http://localhost:5173';
+    res.redirect(`${frontendUrl}/settings?oauth=error&message=${encodeURIComponent(error.message)}`);
+  }
+};
+
+/**
+ * Obtiene las cuentas de anuncios disponibles para el token
+ */
+export const getOAuthAdAccounts = async (req, res) => {
+  try {
+    const { token } = req.body;
+
+    if (!token) {
+      return res.status(400).json({
+        success: false,
+        error: 'Se requiere token de acceso'
+      });
+    }
+
+    // Decodificar si viene en base64
+    const accessToken = token.startsWith('EAAI') ? token : Buffer.from(token, 'base64').toString('utf-8');
+
+    logger.info('Obteniendo cuentas de anuncios...');
+    const accounts = await getAdAccounts(accessToken);
+
+    res.json({
+      success: true,
+      accounts
+    });
+
+  } catch (error) {
+    logger.error(`Error en getOAuthAdAccounts: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      error: 'Error al obtener cuentas de anuncios'
+    });
+  }
+};
+
+/**
+ * Guarda la cuenta de anuncios seleccionada
+ */
+export const saveOAuthAccount = async (req, res) => {
+  try {
+    const { token, adAccountId, accountName, currency, timezone } = req.body;
+
+    if (!token || !adAccountId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Se requieren token y adAccountId'
+      });
+    }
+
+    // Decodificar si viene en base64
+    const accessToken = token.startsWith('EAAI') ? token : Buffer.from(token, 'base64').toString('utf-8');
+
+    // Guardar en BD (encriptado)
+    await saveOAuthConfig(adAccountId, accessToken, {
+      name: accountName,
+      currency,
+      timezone
+    });
+
+    logger.success(`Cuenta de anuncios ${adAccountId} configurada correctamente`);
+
+    res.json({
+      success: true,
+      message: 'Configuración de Meta guardada exitosamente'
+    });
+
+  } catch (error) {
+    logger.error(`Error en saveOAuthAccount: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      error: 'Error al guardar la configuración'
     });
   }
 };

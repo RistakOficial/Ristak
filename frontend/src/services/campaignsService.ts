@@ -153,6 +153,48 @@ class CampaignsService {
       return { success: false, configured: false }
     }
   }
+
+  /**
+   * OAuth - Obtiene la URL de autorización de Meta
+   */
+  async getOAuthUrl(): Promise<{ success: boolean; authUrl?: string; error?: string }> {
+    try {
+      const data = await apiClient.get('/meta/oauth/url')
+      return data
+    } catch (error) {
+      return { success: false, error: 'Error al generar URL de OAuth' }
+    }
+  }
+
+  /**
+   * OAuth - Obtiene cuentas de anuncios disponibles
+   */
+  async getAdAccounts(token: string): Promise<{ success: boolean; accounts?: any[]; error?: string }> {
+    try {
+      const data = await apiClient.post('/meta/oauth/ad-accounts', { token })
+      return data
+    } catch (error) {
+      return { success: false, error: 'Error al obtener cuentas' }
+    }
+  }
+
+  /**
+   * OAuth - Guarda la cuenta de anuncios seleccionada
+   */
+  async saveAdAccount(token: string, accountId: string, accountName: string, currency: string, timezone: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      const data = await apiClient.post('/meta/oauth/save', {
+        token,
+        adAccountId: accountId,
+        accountName,
+        currency,
+        timezone
+      })
+      return data
+    } catch (error) {
+      return { success: false, error: 'Error al guardar cuenta' }
+    }
+  }
 }
 
 export const campaignsService = new CampaignsService()
