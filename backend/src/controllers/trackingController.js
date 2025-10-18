@@ -940,7 +940,8 @@ export async function getVisitorsByAd(req, res) {
     const usePostgres = Boolean(process.env.DATABASE_URL)
 
     // Asegurar que endDate incluya todo el día (hasta 23:59:59)
-    const endDateWithTime = endDate.includes('T') ? endDate : `${endDate} 23:59:59`
+    // Solo agregar si no tiene hora ya (ni 'T' ni ':')
+    const endDateWithTime = (endDate.includes('T') || endDate.includes(':')) ? endDate : `${endDate} 23:59:59`
 
     logger.info(`Obteniendo visitantes por ad - rango: ${startDate} -> ${endDateWithTime}`)
 
@@ -1001,7 +1002,8 @@ export async function getVisitorsByPeriod(req, res) {
     const usePostgres = Boolean(process.env.DATABASE_URL)
 
     // Asegurar que endDate incluya todo el día (hasta 23:59:59)
-    const endDateWithTime = endDate.includes('T') ? endDate : `${endDate} 23:59:59`
+    // Solo agregar si no tiene hora ya (ni 'T' ni ':')
+    const endDateWithTime = (endDate.includes('T') || endDate.includes(':')) ? endDate : `${endDate} 23:59:59`
 
     logger.info(`Obteniendo visitantes por período - rango: ${startDate} -> ${endDateWithTime}, groupBy: ${groupBy}`)
 
