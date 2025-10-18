@@ -22,6 +22,13 @@
    - ✅ Para modales personalizados: Modal component con `createPortal` de React
    - ✅ Diseño minimalista: sin barras de colores, sin fondos en iconos, gris neutro
    - 🎯 Objetivo: UX consistente, elegante y profesional en toda la app
+10. **🚫 NUNCA implementar OAuth centralizado para integraciones de terceros**
+   - ❌ PROHIBIDO: OAuth flows donde la app de Ristak actúa como intermediario
+   - ❌ Razón: Cada usuario tiene su propia app de Facebook/Meta/Google con credenciales únicas
+   - ❌ No se puede usar un App ID/Secret centralizado para todos los usuarios
+   - ✅ En su lugar: Configuración manual con tokens de acceso propios de cada usuario
+   - ✅ Documentación clara de cómo obtener sus propias credenciales
+   - 🎯 Aplica a: Meta Ads, Google Ads, TikTok Ads, cualquier plataforma de anuncios
 
 ### �� FILOSOFÍA DE CÓDIGO
 - **Limpio > Rápido**: Preferir código mantenible sobre optimizaciones prematuras

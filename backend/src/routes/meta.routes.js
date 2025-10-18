@@ -9,28 +9,15 @@ import {
   getSpendOverTime,
   getSyncStatus,
   getContactsByType,
-  verifyToken,
-  getOAuthUrl,
-  oauthCallback,
-  getOAuthAdAccounts,
-  saveOAuthAccount,
-  getApiVersion,
-  checkLatestVersion,
-  forceUpdateVersion
+  verifyToken
 } from '../controllers/metaController.js'
 
 const router = express.Router()
 
-// Configuración manual (legacy)
+// Configuración
 router.post('/config', saveConfig)
 router.get('/config', getConfig)
 router.get('/verify-token', verifyToken)
-
-// OAuth (nuevo flujo recomendado)
-router.get('/oauth/url', getOAuthUrl)                    // Generar URL de OAuth
-router.get('/oauth/callback', oauthCallback)             // Callback de Meta
-router.post('/oauth/ad-accounts', getOAuthAdAccounts)    // Listar cuentas
-router.post('/oauth/save', saveOAuthAccount)             // Guardar cuenta seleccionada
 
 // Sincronización
 router.post('/sync', syncAds)
@@ -42,10 +29,5 @@ router.post('/update-recent', updateRecent)
 router.get('/campaigns', getCampaigns)
 router.get('/spend-over-time', getSpendOverTime)
 router.get('/contacts', getContactsByType)
-
-// Versión de API (auto-actualización)
-router.get('/api-version', getApiVersion)               // Ver versión actual e historial
-router.get('/api-version/check', checkLatestVersion)    // Detectar si hay actualización
-router.post('/api-version/update', forceUpdateVersion)  // Forzar actualización manual
 
 export default router

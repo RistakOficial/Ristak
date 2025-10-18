@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { KpiCard, Card, DateRangePicker, Table, Icon, LineChart, ContactDetailsModal, PageContainer, MetaConnect } from '@/components/common'
+import { KpiCard, Card, DateRangePicker, Table, Icon, LineChart, ContactDetailsModal, PageContainer } from '@/components/common'
 import type { Column } from '@/components/common'
 import {
   RefreshCw,
@@ -85,14 +85,6 @@ export const Campaigns: React.FC = () => {
 
   // Estado para visitor source preference
   const [visitorSource, setVisitorSource] = useState<'platform' | 'tracking'>('platform')
-
-  // Estado para validación de token y configuración
-  const [isMetaConfigured, setIsMetaConfigured] = useState<boolean | null>(null) // null = cargando
-  const [tokenStatus, setTokenStatus] = useState<{
-    valid: boolean
-    message: string
-    daysUntilExpiry?: number
-  } | null>(null)
 
   // Estados para modal de contactos
   const [isModalOpen, setIsModalOpen] = useState(false)
@@ -243,23 +235,6 @@ export const Campaigns: React.FC = () => {
     }
   }, [fetchCampaigns])
 
-  // Verificar estado del token
-  const checkTokenStatus = useCallback(async () => {
-    try {
-      const result = await campaignsService.verifyToken()
-
-      // Actualizar si Meta está configurado
-      setIsMetaConfigured(result.configured)
-
-      if (result.configured && result.tokenStatus) {
-        setTokenStatus(result.tokenStatus)
-      }
-    } catch (error) {
-      // Si hay error, asumir que no está configurado
-      setIsMetaConfigured(false)
-    }
-  }, [])
-
   const checkSyncStatus = useCallback(async () => {
     try {
       const status = await campaignsService.getSyncStatus()
@@ -283,11 +258,6 @@ export const Campaigns: React.FC = () => {
       // Silenciar errores de polling
     }
   }, [fetchCampaigns])
-
-  // Verificar token al cargar la página
-  useEffect(() => {
-    checkTokenStatus()
-  }, [checkTokenStatus])
 
   // Poll sync status periodically
   useEffect(() => {
@@ -768,56 +738,6 @@ export const Campaigns: React.FC = () => {
       leads: calculateDelta(campaignSummary.leads, campaignSummary.leadsPrev)
     }
   }, [campaignSummary, calculateDelta])
-
-  // Empty state: Si no está configurado Meta, mostrar MetaConnect
-  if (isMetaConfigured === false) {
-    return (
-      <PageContainer>
-        <MetaConnect
-          onConnected={() => {
-            setIsMetaConfigured(true)
-            checkTokenStatus()
-            fetchCampaigns()
-          }}
-        />
-      </PageContainer>
-    )
-  }
-
-  // Loading state: Mientras verifica si está configurado
-  if (isMetaConfigured === null) {
-    return (
-      <PageContainer>
-        <div style={{
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          justifyContent: 'center',
-          padding: '80px',
-          minHeight: '400px'
-        }}>
-          <div style={{
-            width: '48px',
-            height: '48px',
-            border: '4px solid var(--color-border)',
-            borderTopColor: 'var(--color-primary)',
-            borderRadius: '50%',
-            animation: 'spin 0.8s linear infinite'
-          }} />
-          <p style={{
-            marginTop: '24px',
-            color: 'var(--color-text-secondary)',
-            fontSize: '15px'
-          }}>
-            Verificando configuración de Meta...
-          </p>
-        </div>
-        <style>
-          {`@keyframes spin { to { transform: rotate(360deg); } }`}
-        </style>
-      </PageContainer>
-    )
-  }
 
   return (
     <PageContainer>
