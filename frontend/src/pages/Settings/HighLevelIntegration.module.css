@@ -947,13 +947,12 @@ body.dark .input:focus {
 .warningBox {
   padding: var(--spacing-lg);
   border-radius: var(--radius-lg);
-  border: 1px solid #fbbf24;
-  background: #fef3c7;
-  border-color: #fbbf24;
+  border: 1px solid rgba(70, 130, 180, 0.4);
+  background: rgba(70, 130, 180, 0.08);
 }
 
 .warningBox svg {
-  color: #d97706;
+  color: rgba(70, 130, 180, 0.9);
 }
 
 /* Contenedor del ejemplo de URL */
