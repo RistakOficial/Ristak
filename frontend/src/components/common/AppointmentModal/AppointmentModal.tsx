@@ -68,7 +68,7 @@ const DEFAULT_TIMEZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UT
 
 const INITIAL_FORM_STATE = {
   title: '',
-  appointmentStatus: 'pending' as CalendarEvent['appointmentStatus'],
+  appointmentStatus: 'confirmed' as CalendarEvent['appointmentStatus'],
   startTime: '',
   endTime: '',
   notes: '',
@@ -735,7 +735,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                   <label className={styles.label} htmlFor="assignedUser">
                     {isRoundRobin ? (
                       <>
-                        Team member <span className={styles.required}>*</span>
+                        Elegir miembro del equipo <span className={styles.required}>*</span>
                       </>
                     ) : (
                       'Usuario asignado (opcional)'
@@ -744,7 +744,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
 
                   {isRoundRobin && (
                     <p className={styles.helpText}>
-                      Este calendario usa Round Robin. Selecciona el team member para esta cita.
+                      Este calendario usa Round Robin. Selecciona el miembro del equipo para esta cita.
                     </p>
                   )}
 
