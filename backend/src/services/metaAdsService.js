@@ -1,6 +1,7 @@
 import fetch from 'node-fetch'
 import { db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
+import { encrypt, decrypt, isEncrypted } from '../utils/encryption.js'
 import { API_URLS, META_INSIGHTS_FIELDS, PAGINATION } from '../config/constants.js'
 import { splitDateRangeIntoMonths, formatDate, daysAgo } from '../utils/dateUtils.js'
 
@@ -26,10 +27,52 @@ function updateProgress(updates) {
 
 /**
  * Obtiene la configuración de Meta desde la base de datos
+ * DESENCRIPTA el access_token antes de devolverlo
  */
 export async function getMetaConfig() {
   try {
     const config = await db.get('SELECT * FROM meta_config LIMIT 1')
+
+    if (!config) {
+      return null
+    }
+
+    // Desencriptar el access_token
+    if (config.access_token) {
+      try {
+        // Si está encriptado, desencriptarlo
+        if (isEncrypted(config.access_token)) {
+          config.access_token = decrypt(config.access_token)
+        } else {
+          // Si NO está encriptado (tokens viejos), encriptarlo ahora
+          logger.warn('⚠️ Token de Meta NO estaba encriptado. Encriptando ahora...')
+          const plainToken = config.access_token
+          const encryptedToken = encrypt(plainToken)
+
+          // Actualizar en BD con token encriptado
+          await db.run(
+            'UPDATE meta_config SET access_token = ? WHERE id = ?',
+            [encryptedToken, config.id]
+          )
+
+          // Devolver el token plano para usar
+          config.access_token = plainToken
+        }
+      } catch (error) {
+        logger.error('Error al desencriptar token de Meta:', error.message)
+        throw new Error('No se pudo desencriptar el token. Verifica ENCRYPTION_MASTER_KEY.')
+      }
+    }
+
+    // También desencriptar app_secret si existe
+    if (config.app_secret && isEncrypted(config.app_secret)) {
+      try {
+        config.app_secret = decrypt(config.app_secret)
+      } catch (error) {
+        logger.warn('No se pudo desencriptar app_secret:', error.message)
+      }
+    }
+
     return config
   } catch (error) {
     logger.error('Error obteniendo configuración de Meta:', error.message)
@@ -39,9 +82,21 @@ export async function getMetaConfig() {
 
 /**
  * Guarda la configuración de Meta en la base de datos
+ * ENCRIPTA el access_token y app_secret antes de guardar
  */
 export async function saveMetaConfig(adAccountId, accessToken, appId = null, appSecret = null) {
   try {
+    // Encriptar el access_token
+    const encryptedToken = encrypt(accessToken)
+    logger.info('Token de Meta encriptado correctamente')
+
+    // Encriptar app_secret si existe
+    let encryptedSecret = null
+    if (appSecret) {
+      encryptedSecret = encrypt(appSecret)
+      logger.info('App Secret de Meta encriptado correctamente')
+    }
+
     const existing = await db.get('SELECT id FROM meta_config WHERE ad_account_id = ?', [adAccountId])
 
     if (existing) {
@@ -49,15 +104,15 @@ export async function saveMetaConfig(adAccountId, accessToken, appId = null, app
         UPDATE meta_config
         SET access_token = ?, app_id = ?, app_secret = ?, updated_at = CURRENT_TIMESTAMP
         WHERE ad_account_id = ?
-      `, [accessToken, appId, appSecret, adAccountId])
+      `, [encryptedToken, appId, encryptedSecret, adAccountId])
     } else {
       await db.run(`
         INSERT INTO meta_config (ad_account_id, access_token, app_id, app_secret)
         VALUES (?, ?, ?, ?)
-      `, [adAccountId, accessToken, appId, appSecret])
+      `, [adAccountId, encryptedToken, appId, encryptedSecret])
     }
 
-    logger.success('Configuración de Meta guardada')
+    logger.success('Configuración de Meta guardada (encriptada)')
     return { success: true }
   } catch (error) {
     logger.error('Error guardando configuración de Meta:', error.message)
@@ -166,6 +221,28 @@ export async function syncMetaAds(startDate, onProgress = null) {
     }
 
     const { ad_account_id, access_token } = config
+
+    // ✅ VALIDAR TOKEN ANTES DE INICIAR SYNC
+    logger.info('Validando token de Meta antes de sincronizar...')
+    const tokenValidation = await verifyMetaToken(access_token)
+
+    if (!tokenValidation.valid) {
+      const errorMsg = tokenValidation.error || 'Token inválido o expirado'
+      logger.error(`❌ Token de Meta inválido: ${errorMsg}`)
+      throw new Error(`Token de Meta inválido: ${errorMsg}. Configura un nuevo token en Settings.`)
+    }
+
+    // Verificar si el token está cerca de expirar (menos de 7 días)
+    if (tokenValidation.expiresAt) {
+      const daysUntilExpiry = Math.ceil((tokenValidation.expiresAt - new Date()) / (1000 * 60 * 60 * 24))
+      if (daysUntilExpiry <= 7) {
+        logger.warn(`⚠️ Token de Meta expira en ${daysUntilExpiry} días. Considera renovarlo.`)
+      } else {
+        logger.info(`✅ Token válido (expira en ${daysUntilExpiry} días)`)
+      }
+    } else {
+      logger.info('✅ Token válido (sin fecha de expiración)')
+    }
 
     updateProgress({
       status: 'syncing',
@@ -301,6 +378,14 @@ export async function updateRecentAds() {
     }
 
     const { ad_account_id, access_token } = config
+
+    // ✅ VALIDAR TOKEN (silenciosamente en el cron)
+    const tokenValidation = await verifyMetaToken(access_token)
+
+    if (!tokenValidation.valid) {
+      logger.error(`❌ Token de Meta inválido en cron job: ${tokenValidation.error}`)
+      return { success: false, message: 'Token inválido', error: tokenValidation.error }
+    }
 
     // Últimos 7 días hasta hoy
     const startDate = daysAgo(7)

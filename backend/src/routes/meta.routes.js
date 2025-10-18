@@ -8,13 +8,15 @@ import {
   getCampaigns,
   getSpendOverTime,
   getSyncStatus,
-  getContactsByType
+  getContactsByType,
+  verifyToken
 } from '../controllers/metaController.js'
 
 const router = express.Router()
 
 router.post('/config', saveConfig)
 router.get('/config', getConfig)
+router.get('/verify-token', verifyToken)  // Nuevo endpoint para verificar token
 router.post('/sync', syncAds)
 router.get('/sync/progress', getSyncProgressEndpoint)
 router.get('/sync/status', getSyncStatus)

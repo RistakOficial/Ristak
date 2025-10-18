@@ -83,6 +83,13 @@ export const Campaigns: React.FC = () => {
   const [timeSeriesData, setTimeSeriesData] = useState<any[]>([])
   const [campaignSummary, setCampaignSummary] = useState<CampaignsReport['summary'] | null>(null)
 
+  // Estado para validación de token
+  const [tokenStatus, setTokenStatus] = useState<{
+    valid: boolean
+    message: string
+    daysUntilExpiry?: number
+  } | null>(null)
+
   // Estados para modal de contactos
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [modalType, setModalType] = useState<'interesados' | 'sales'>('interesados')
@@ -157,6 +164,19 @@ export const Campaigns: React.FC = () => {
     fetchCampaigns()
   }, [fetchCampaigns])
 
+  // Verificar estado del token
+  const checkTokenStatus = useCallback(async () => {
+    try {
+      const result = await campaignsService.verifyToken()
+
+      if (result.configured && result.tokenStatus) {
+        setTokenStatus(result.tokenStatus)
+      }
+    } catch (error) {
+      // Silenciar errores
+    }
+  }, [])
+
   const checkSyncStatus = useCallback(async () => {
     try {
       const status = await campaignsService.getSyncStatus()
@@ -180,6 +200,11 @@ export const Campaigns: React.FC = () => {
       // Silenciar errores de polling
     }
   }, [fetchCampaigns])
+
+  // Verificar token al cargar la página
+  useEffect(() => {
+    checkTokenStatus()
+  }, [checkTokenStatus])
 
   // Poll sync status periodically
   useEffect(() => {
@@ -680,6 +705,42 @@ export const Campaigns: React.FC = () => {
             />
           </div>
         </div>
+
+        {/* Token Status Banner - Advertencia si el token no es válido */}
+        {tokenStatus && !tokenStatus.valid && (
+          <div className={styles.syncBanner} style={{ backgroundColor: 'var(--color-error-bg)', borderColor: 'var(--color-error)' }}>
+            <div className={styles.syncHeader}>
+              <div className={styles.syncIconWrapper} style={{ backgroundColor: 'var(--color-error)' }}>
+                <Icon name="alert-circle" size={20} style={{ color: 'white' }} />
+              </div>
+              <div className={styles.syncTextWrapper}>
+                <div className={styles.syncTitle} style={{ color: 'var(--color-error)' }}>Token de Meta inválido o expirado</div>
+                <div className={styles.syncSubtitle} style={{ color: 'var(--color-text-secondary)' }}>
+                  {tokenStatus.message} - Ve a Settings para configurar un nuevo token.
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Token Warning Banner - Si el token expira pronto (menos de 7 días) */}
+        {tokenStatus && tokenStatus.valid && tokenStatus.daysUntilExpiry && tokenStatus.daysUntilExpiry <= 7 && (
+          <div className={styles.syncBanner} style={{ backgroundColor: 'var(--color-warning-bg)', borderColor: 'var(--color-warning)' }}>
+            <div className={styles.syncHeader}>
+              <div className={styles.syncIconWrapper} style={{ backgroundColor: 'var(--color-warning)' }}>
+                <Icon name="alert-triangle" size={20} style={{ color: 'white' }} />
+              </div>
+              <div className={styles.syncTextWrapper}>
+                <div className={styles.syncTitle} style={{ color: 'var(--color-warning)' }}>
+                  Token de Meta expira en {tokenStatus.daysUntilExpiry} día{tokenStatus.daysUntilExpiry !== 1 ? 's' : ''}
+                </div>
+                <div className={styles.syncSubtitle} style={{ color: 'var(--color-text-secondary)' }}>
+                  Considera renovar tu token en Settings para evitar interrupciones.
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Sync Status Banner - Rediseñado */}
         {syncStatus && syncStatus.running && (

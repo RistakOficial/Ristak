@@ -1,10 +1,13 @@
 import { db } from '../config/database.js';
 import { logger } from '../utils/logger.js';
+import { isEncrypted } from '../utils/encryption.js';
 import {
   saveMetaConfig,
   syncMetaAds,
   getMetaSyncProgress,
-  updateRecentAds
+  updateRecentAds,
+  getMetaConfig,
+  verifyMetaToken
 } from '../services/metaAdsService.js';
 import { resolveDateRange } from '../utils/dateUtils.js';
 
@@ -64,15 +67,21 @@ export const getConfig = async (req, res) => {
       });
     }
 
+    // Verificar si está encriptado
+    const tokenEncrypted = isEncrypted(config.access_token);
+    const secretEncrypted = config.app_secret ? isEncrypted(config.app_secret) : false;
+
     res.json({
       success: true,
       configured: true,
       config: {
         adAccountId: config.ad_account_id,
-        accessToken: config.access_token.substring(0, 10) + '...',
+        accessToken: '***' + config.access_token.substring(config.access_token.length - 8),
         appId: config.app_id,
-        appSecret: config.app_secret ? config.app_secret.substring(0, 10) + '...' : null,
-        updatedAt: config.updated_at
+        appSecret: config.app_secret ? '***' + config.app_secret.substring(config.app_secret.length - 8) : null,
+        updatedAt: config.updated_at,
+        isEncrypted: tokenEncrypted, // Mostrar si está encriptado
+        secretIsEncrypted: secretEncrypted
       }
     });
 
@@ -710,6 +719,68 @@ export const getContactsByType = async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Error al obtener contactos'
+    });
+  }
+};
+
+/**
+ * Verifica el estado del token de Meta (validez, expiración, scopes)
+ */
+export const verifyToken = async (req, res) => {
+  try {
+    const config = await getMetaConfig();
+
+    if (!config || !config.access_token) {
+      return res.json({
+        success: true,
+        configured: false,
+        tokenStatus: {
+          valid: false,
+          message: 'No hay token configurado'
+        }
+      });
+    }
+
+    logger.info('Verificando validez del token de Meta...');
+
+    const validation = await verifyMetaToken(config.access_token);
+
+    let message = '';
+    let daysUntilExpiry = null;
+
+    if (!validation.valid) {
+      message = validation.error || 'Token inválido o expirado';
+    } else if (validation.expiresAt) {
+      daysUntilExpiry = Math.ceil((validation.expiresAt - new Date()) / (1000 * 60 * 60 * 24));
+
+      if (daysUntilExpiry <= 0) {
+        message = 'Token expirado';
+      } else if (daysUntilExpiry <= 7) {
+        message = `Token válido pero expira en ${daysUntilExpiry} días. Considera renovarlo.`;
+      } else {
+        message = `Token válido (expira en ${daysUntilExpiry} días)`;
+      }
+    } else {
+      message = 'Token válido (sin fecha de expiración)';
+    }
+
+    res.json({
+      success: true,
+      configured: true,
+      tokenStatus: {
+        valid: validation.valid,
+        message,
+        expiresAt: validation.expiresAt,
+        daysUntilExpiry,
+        scopes: validation.scopes || []
+      }
+    });
+
+  } catch (error) {
+    logger.error(`Error en verifyToken: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      error: 'Error al verificar el token de Meta'
     });
   }
 };

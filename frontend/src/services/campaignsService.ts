@@ -134,6 +134,25 @@ class CampaignsService {
       return []
     }
   }
+
+  async verifyToken(): Promise<{
+    success: boolean
+    configured: boolean
+    tokenStatus?: {
+      valid: boolean
+      message: string
+      expiresAt?: string
+      daysUntilExpiry?: number
+      scopes?: string[]
+    }
+  }> {
+    try {
+      const data = await apiClient.get('/meta/verify-token')
+      return data
+    } catch (error) {
+      return { success: false, configured: false }
+    }
+  }
 }
 
 export const campaignsService = new CampaignsService()
