@@ -22,10 +22,149 @@ import { useDateRange } from '@/contexts/DateRangeContext'
 import { useLabels } from '@/contexts/LabelsContext'
 import { formatCurrency, formatDate, formatDateToISO, formatEndDateToISO, formatNumber, parseLocalDateString } from '@/utils/format'
 import { contactsService, type Contact, type ContactStats } from '@/services/contactsService'
+import type { ContactAppointment, ContactPayment } from '@/types'
 import { useNotification } from '@/contexts/NotificationContext'
 import styles from './Contacts.module.css'
 import { dedupeContacts } from '@/utils/contactDedup'
 
+const APPOINTMENT_CANCELED_STATUSES = new Set([
+  'cancelled',
+  'canceled',
+  'no_show',
+  'noshow',
+  'failed',
+  'missed'
+])
+
+const STATUS_PRIORITY: Record<Contact['status'], number> = {
+  lead: 0,
+  appointment: 1,
+  customer: 2
+}
+
+const mergeContactDetailRecords = (
+  baseContact: Contact | null,
+  detailContacts: Contact[],
+  primaryId: string | null
+): Contact => {
+  const allContacts = baseContact ? [baseContact, ...detailContacts] : [...detailContacts]
+  const template = allContacts[0]
+
+  const merged: Contact = {
+    ...(template ?? {} as Contact),
+    id: primaryId ?? template?.id ?? '',
+    firstAppointmentDate: template?.firstAppointmentDate ?? null,
+    nextAppointmentDate: template?.nextAppointmentDate ?? null,
+    purchases: template?.purchases ?? 0,
+    ltv: template?.ltv ?? 0,
+    appointments: template?.appointments ? [...template.appointments] : [],
+    payments: template?.payments ? [...template.payments] : undefined
+  }
+
+  const mergedIds = new Set<string>()
+  if (primaryId) mergedIds.add(primaryId)
+  if (baseContact?.mergedContactIds) {
+    baseContact.mergedContactIds.forEach(id => id && mergedIds.add(id))
+  }
+  if (template?.mergedContactIds) {
+    template.mergedContactIds.forEach(id => id && mergedIds.add(id))
+  }
+
+  let latestPurchaseTimestamp = merged.lastPurchase ? Date.parse(merged.lastPurchase) : Number.NEGATIVE_INFINITY
+
+  const paymentMap = new Map<string, ContactPayment>()
+  merged.payments?.forEach(payment => {
+    if (!payment) return
+    const key = payment.id ?? `${payment.date}-${payment.amount}-${payment.status ?? ''}`
+    paymentMap.set(key, payment)
+  })
+
+  const appointmentMap = new Map<string, ContactAppointment>()
+  merged.appointments?.forEach(appointment => {
+    if (!appointment) return
+    const key = appointment.id ?? `${appointment.start_time}-${appointment.title ?? ''}`
+    appointmentMap.set(key, appointment)
+  })
+
+  const getStatusPriority = (status?: Contact['status']) => status ? STATUS_PRIORITY[status] ?? 0 : 0
+
+  for (const contact of allContacts) {
+    if (!contact) continue
+
+    if (contact.id) mergedIds.add(contact.id)
+    contact.mergedContactIds?.forEach(id => id && mergedIds.add(id))
+
+    if (!merged.name && contact.name) merged.name = contact.name
+    if (!merged.email && contact.email) merged.email = contact.email
+    if (!merged.phone && contact.phone) merged.phone = contact.phone
+    if (!merged.source && contact.source) merged.source = contact.source
+    if (!merged.ad_name && contact.ad_name) merged.ad_name = contact.ad_name
+    if (!merged.ad_id && contact.ad_id) merged.ad_id = contact.ad_id
+
+    merged.purchases = Math.max(merged.purchases ?? 0, contact.purchases ?? 0)
+    merged.ltv = Math.max(merged.ltv ?? 0, contact.ltv ?? 0)
+
+    if (getStatusPriority(contact.status) > getStatusPriority(merged.status)) {
+      merged.status = contact.status ?? merged.status
+    }
+
+    if (contact.lastPurchase) {
+      const ts = Date.parse(contact.lastPurchase)
+      if (!Number.isNaN(ts) && ts > latestPurchaseTimestamp) {
+        latestPurchaseTimestamp = ts
+        merged.lastPurchase = contact.lastPurchase
+      }
+    }
+
+    contact.payments?.forEach(payment => {
+      if (!payment) return
+      const key = payment.id ?? `${payment.date}-${payment.amount}-${payment.status ?? ''}`
+      if (!paymentMap.has(key)) {
+        paymentMap.set(key, payment)
+      }
+    })
+
+    contact.appointments?.forEach(appointment => {
+      if (!appointment) return
+      const key = appointment.id ?? `${appointment.start_time}-${appointment.title ?? ''}`
+      if (!appointmentMap.has(key)) {
+        appointmentMap.set(key, appointment)
+      }
+    })
+  }
+
+  const appointments = Array.from(appointmentMap.values()).sort((a, b) =>
+    new Date(a.start_time).getTime() - new Date(b.start_time).getTime()
+  )
+
+  merged.appointments = appointments
+  if (appointments.length > 0) {
+    merged.firstAppointmentDate = appointments[0].start_time
+  } else {
+    merged.firstAppointmentDate = baseContact?.firstAppointmentDate ?? merged.firstAppointmentDate ?? null
+  }
+
+  const now = Date.now()
+  const upcomingAppointment = appointments.find(appointment => {
+    const start = Date.parse(appointment.start_time)
+    if (Number.isNaN(start) || start < now) {
+      return false
+    }
+    const statusValue = (appointment.appointment_status || appointment.status || '').toLowerCase()
+    return !APPOINTMENT_CANCELED_STATUSES.has(statusValue)
+  })
+
+  merged.nextAppointmentDate = upcomingAppointment
+    ? upcomingAppointment.start_time
+    : baseContact?.nextAppointmentDate ?? null
+
+  const payments = Array.from(paymentMap.values())
+  merged.payments = payments.length > 0 ? payments : undefined
+
+  merged.mergedContactIds = Array.from(mergedIds).filter(id => id && id !== merged.id)
+
+  return merged
+}
 
 export const Contacts: React.FC = () => {
   const { dateRange, setDateRange } = useDateRange()
@@ -122,16 +261,45 @@ export const Contacts: React.FC = () => {
 
     let isMounted = true
 
+    const targetIds = Array.from(
+      new Set(
+        [selectedContactId, ...(selectedContact?.mergedContactIds ?? [])].filter(
+          (id): id is string => Boolean(id)
+        )
+      )
+    )
+
     const loadContactDetails = async () => {
-      setContactDetailsLoading(true)
       try {
-        const details = await contactsService.getContactDetails(selectedContactId)
+        const results = await Promise.all(
+          targetIds.map(async (id) => {
+            try {
+              return await contactsService.getContactDetails(id)
+            } catch (error) {
+              if (id === selectedContactId) {
+                throw error
+              }
+              return null
+            }
+          })
+        )
+
         if (!isMounted) {
           return
         }
-        setSelectedContactDetails(details)
+
+        const validResults = results.filter((contact): contact is Contact => Boolean(contact))
+
+        if (validResults.length === 0) {
+          setSelectedContactDetails(selectedContact ?? null)
+          return
+        }
+
+        const mergedDetails = mergeContactDetailRecords(selectedContact ?? null, validResults, selectedContactId)
+        setSelectedContactDetails(mergedDetails)
       } catch (error) {
         if (isMounted) {
+          setSelectedContactDetails(selectedContact ?? null)
           showToast('error', 'No se pudieron cargar los detalles del contacto', 'Intenta nuevamente.')
         }
       } finally {
@@ -146,7 +314,7 @@ export const Contacts: React.FC = () => {
     return () => {
       isMounted = false
     }
-  }, [selectedContactId])
+  }, [selectedContactId, selectedContact, showToast])
 
   const contactAppointments = useMemo(() => {
     if (!selectedContactDetails?.appointments) return []

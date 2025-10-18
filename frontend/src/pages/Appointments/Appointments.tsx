@@ -156,6 +156,10 @@ export const Appointments: React.FC = () => {
   const [isSearchDropdownOpen, setIsSearchDropdownOpen] = useState(false);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
 
+  // Tooltip de eventos
+  const [hoveredEventId, setHoveredEventId] = useState<string | null>(null);
+  const [tooltipPosition, setTooltipPosition] = useState<{ top: number; left: number } | null>(null);
+
   // Referencias para auto scroll
   const weekGridRef = useRef<HTMLDivElement | null>(null);
   const dayGridRef = useRef<HTMLDivElement | null>(null);
@@ -959,16 +963,60 @@ export const Appointments: React.FC = () => {
                             <div
                               key={event.id}
                               className={`${styles.eventChip} ${styles[`event${event.appointmentStatus.charAt(0).toUpperCase() + event.appointmentStatus.slice(1).toLowerCase()}`] || styles.eventDefault}`}
-                              title={`${event.title || '(Sin título)'} - ${event.appointmentStatus}`}
                               onClick={(e) => {
                                 e.stopPropagation();
                                 handleEventClick(event);
+                              }}
+                              onMouseEnter={(e) => {
+                                const rect = e.currentTarget.getBoundingClientRect();
+                                setHoveredEventId(event.id);
+                                setTooltipPosition({
+                                  top: rect.top - 10,
+                                  left: rect.left + rect.width / 2
+                                });
+                              }}
+                              onMouseLeave={() => {
+                                setHoveredEventId(null);
+                                setTooltipPosition(null);
                               }}
                             >
                               <span className={styles.eventTime}>
                                 {formatTime12h(event.startTime)}
                               </span>{' '}
                               {event.title || '(Sin título)'}
+
+                              {/* Tooltip */}
+                              {hoveredEventId === event.id && tooltipPosition && (
+                                <div
+                                  className={styles.eventTooltip}
+                                  style={{
+                                    position: 'fixed',
+                                    top: `${tooltipPosition.top}px`,
+                                    left: `${tooltipPosition.left}px`,
+                                    transform: 'translate(-50%, -100%)'
+                                  }}
+                                >
+                                  <div className={styles.tooltipTitle}>
+                                    {event.title || '(Sin título)'}
+                                  </div>
+                                  <div className={styles.tooltipTime}>
+                                    {formatTime12h(event.startTime)} - {formatTime12h(event.endTime)}
+                                  </div>
+                                  <div className={styles.tooltipStatus}>
+                                    Estado: {event.appointmentStatus}
+                                  </div>
+                                  {event.address && (
+                                    <div className={styles.tooltipAddress}>
+                                      📍 {event.address}
+                                    </div>
+                                  )}
+                                  {event.notes && (
+                                    <div className={styles.tooltipNotes}>
+                                      {event.notes}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
                             </div>
                           ))}
                           {cell.events.length > 3 && (
