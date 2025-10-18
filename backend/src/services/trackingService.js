@@ -494,10 +494,7 @@ export async function getSessionsByDateRange(startDate, endDate) {
         geo_region,
         geo_city,
         ip,
-        user_agent,
-        pageviews_count,
-        events_count,
-        is_bounce
+        user_agent
       FROM sessions
       WHERE DATE(started_at) >= DATE(?)
         AND DATE(started_at) <= DATE(?)
