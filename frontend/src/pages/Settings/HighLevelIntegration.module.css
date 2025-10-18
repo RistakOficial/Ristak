@@ -944,8 +944,21 @@ body.dark .input:focus {
   color: var(--color-success-dark);
 }
 
+.warningBox {
+  border-color: #fbbf24;
+  background: #fef3c7;
+  padding: var(--spacing-lg);
+  border-radius: var(--radius-lg);
+  border: 1px solid #fbbf24;
+}
+
+.warningBox svg {
+  color: #d97706;
+}
+
 .infoBox strong,
-.successBox strong {
+.successBox strong,
+.warningBox strong {
   color: var(--color-text-primary);
   font-weight: var(--font-weight-semibold);
 }

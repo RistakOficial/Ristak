@@ -164,6 +164,37 @@ export const WebTracking: React.FC = () => {
             </div>
           ) : (
             <>
+              {/* Instrucción importante: Usar subdominio collect */}
+              {!trackingDomain.includes('collect') && (
+                <div className={styles.warningBox} style={{ marginBottom: '20px' }}>
+                  <div className={styles.infoBoxTitle}>
+                    <Info size={18} />
+                    <span style={{ fontWeight: 600 }}>Configuración requerida</span>
+                  </div>
+                  <p className={styles.infoBoxText} style={{ marginBottom: '12px' }}>
+                    Para configurar el tracking, debes acceder a esta página usando el subdominio <code className={styles.codeInline}>collect</code>:
+                  </p>
+                  <div style={{
+                    background: 'rgba(0,0,0,0.05)',
+                    padding: '12px',
+                    borderRadius: '8px',
+                    border: '1px solid rgba(0,0,0,0.1)'
+                  }}>
+                    <p style={{
+                      margin: 0,
+                      fontFamily: 'monospace',
+                      fontSize: '14px',
+                      color: 'var(--color-primary)'
+                    }}>
+                      https://collect.tudominio.com/settings/tracking
+                    </p>
+                  </div>
+                  <p className={styles.formHint} style={{ marginTop: '12px', marginBottom: 0 }}>
+                    💡 Configura un CNAME en tu DNS: <code>collect.tudominio.com</code> → <code>ristak-app.onrender.com</code>
+                  </p>
+                </div>
+              )}
+
               {/* Dominio detectado */}
               {trackingDomain && (
                 <div className={styles.infoBox} style={{ marginBottom: '16px' }}>
