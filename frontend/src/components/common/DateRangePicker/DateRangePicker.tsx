@@ -191,6 +191,22 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
     }
   }, [isOpen])
 
+  useEffect(() => {
+    if (typeof document === 'undefined') return
+
+    const className = 'date-range-picker-open'
+
+    if (isOpen) {
+      document.body.classList.add(className)
+    } else {
+      document.body.classList.remove(className)
+    }
+
+    return () => {
+      document.body.classList.remove(className)
+    }
+  }, [isOpen])
+
   // Update temp dates when props change
   useEffect(() => {
     if (startDate) {

@@ -405,12 +405,15 @@ class GHLClient {
 
   async getLocationUsers(locationId) {
     try {
-      logger.info(`[GHL Client] Obteniendo usuarios para locationId: ${locationId || this.locationId}`)
+      const locId = locationId || this.locationId
+      logger.info(`[GHL Client] Obteniendo usuarios para locationId: ${locId}`)
 
-      const data = await this.request('/users/', {
+      // API v2 de HighLevel: GET /users/search con query param locationId
+      const data = await this.request('/users/search', {
         params: {
-          locationId: locationId || this.locationId,
-          limit: 100 // Máximo permitido por la API
+          locationId: locId,
+          limit: 100, // Máximo permitido por la API
+          type: 'account' // Tipo de usuarios a obtener
         }
       })
 
@@ -420,6 +423,7 @@ class GHLClient {
       return users
     } catch (error) {
       logger.error(`[GHL Client] Error al obtener usuarios: ${error.message}`)
+      logger.error(`[GHL Client] Stack: ${error.stack}`)
       throw error
     }
   }

@@ -45,3 +45,8 @@
   overflow: visible !important;
   clip-path: none !important;
 }
+
+/* Ocultar tooltips de Recharts cuando el selector de fechas está abierto */
+body.date-range-picker-open .recharts-tooltip-wrapper {
+  display: none !important;
+}

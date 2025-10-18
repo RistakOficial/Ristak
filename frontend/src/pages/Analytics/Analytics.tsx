@@ -9,7 +9,7 @@ import {
 } from '../../components/common'
 import { Eye, Users, UserCheck, Target, Activity, Clock, RefreshCw, FileText } from 'lucide-react'
 import { getSessionsByDateRange } from '../../services/analyticsService'
-import { formatDate } from '../../utils/format'
+import { formatDate, formatDateToISO, parseLocalDateString } from '../../utils/format'
 
 // Custom Tooltip Component para Recharts
 const CustomTooltip: React.FC<TooltipProps<number, string>> = ({ active, payload, label }) => {
@@ -76,7 +76,7 @@ interface Metrics {
 }
 
 const Analytics: React.FC = () => {
-  const { dateRange } = useDateRange()
+  const { dateRange, setDateRange } = useDateRange()
   const [loading, setLoading] = useState(false)
   const [sessions, setSessions] = useState<Session[]>([])
   const [previousSessions, setPreviousSessions] = useState<Session[]>([])
@@ -348,7 +348,17 @@ const Analytics: React.FC = () => {
         {/* Header */}
         <div className="space-y-4">
           <h1 className="text-2xl font-bold">Analíticas</h1>
-          <DateRangePicker />
+          <DateRangePicker
+            startDate={formatDateToISO(dateRange.start)}
+            endDate={formatDateToISO(dateRange.end)}
+            onChange={(start, end) =>
+              setDateRange({
+                start: parseLocalDateString(start),
+                end: parseLocalDateString(end),
+                preset: 'custom'
+              })
+            }
+          />
         </div>
 
         {/* Métricas principales */}
