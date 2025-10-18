@@ -1144,21 +1144,23 @@
 .currentTimeLabel {
   position: absolute;
   left: 8px;
-  top: -10px;
+  top: 50%;
+  transform: translateY(-50%);
   font-size: 0.688rem;
   font-weight: 600;
   color: var(--color-error-500);
-  background-color: transparent;
-  padding: 0.125rem 0.375rem;
+  background-color: var(--color-background);
+  padding: 0.25rem 0.5rem;
   border-radius: var(--radius-full);
   border: 1.5px solid var(--color-error-500);
   box-shadow: none;
+  white-space: nowrap;
 }
 
 :global(body.dark) .currentTimeLabel {
   color: #ef4444;
   border-color: #ef4444;
-  background-color: rgba(0, 0, 0, 0.3);
+  background-color: rgba(24, 24, 27, 0.95);
 }
 
 /* Upcoming Card */
