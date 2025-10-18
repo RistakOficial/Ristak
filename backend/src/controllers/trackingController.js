@@ -1,6 +1,6 @@
 import { logger } from '../utils/logger.js'
 import { createSession, getRecentSessions, linkVisitorToContact, getSessionsByDateRange } from '../services/trackingService.js'
-import { getHighLevelConfig } from '../config/database.js'
+import { getHighLevelConfig, db } from '../config/database.js'
 import fetch from 'node-fetch'
 
 /**

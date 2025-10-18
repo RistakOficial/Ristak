@@ -140,6 +140,10 @@ export async function createSession(sessionData) {
         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?, ?, ?, ?, ?
       )
+      ON CONFLICT (session_id) DO UPDATE SET
+        last_event_at = EXCLUDED.last_event_at,
+        contact_id = COALESCE(EXCLUDED.contact_id, sessions.contact_id),
+        full_name = COALESCE(EXCLUDED.full_name, sessions.full_name)
     `, [
       session_id,
       visitor_id,
