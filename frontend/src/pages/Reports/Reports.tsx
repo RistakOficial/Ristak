@@ -855,17 +855,17 @@ export const Reports: React.FC = () => {
                 <div className={styles.yearControlGroup}>
                   <span>Inicio</span>
                   <div className={styles.yearButtons}>
-                    <Button variant="ghost" onClick={() => handleYearRangeChange('start', -1)}>-</Button>
+                    <Button variant="ghost" size="sm" onClick={() => handleYearRangeChange('start', -1)}>-</Button>
                     <span>{yearRange.start}</span>
-                    <Button variant="ghost" onClick={() => handleYearRangeChange('start', 1)}>+</Button>
+                    <Button variant="ghost" size="sm" onClick={() => handleYearRangeChange('start', 1)}>+</Button>
                   </div>
                 </div>
                 <div className={styles.yearControlGroup}>
                   <span>Fin</span>
                   <div className={styles.yearButtons}>
-                    <Button variant="ghost" onClick={() => handleYearRangeChange('end', -1)}>-</Button>
+                    <Button variant="ghost" size="sm" onClick={() => handleYearRangeChange('end', -1)}>-</Button>
                     <span>{yearRange.end}</span>
-                    <Button variant="ghost" onClick={() => handleYearRangeChange('end', 1)}>+</Button>
+                    <Button variant="ghost" size="sm" onClick={() => handleYearRangeChange('end', 1)}>+</Button>
                   </div>
                 </div>
               </div>

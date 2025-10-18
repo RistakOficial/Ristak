@@ -227,8 +227,14 @@
   gap: var(--spacing-xs);
   background-color: var(--color-surface);
   border-radius: var(--radius-md);
-  padding: 0.375rem 0.75rem;
+  padding: 0.125rem 0.5rem;
   border: 1px solid var(--color-border-subtle);
+}
+
+.yearButtons :global(button) {
+  height: 2rem;
+  padding: 0 0.5rem;
+  border-radius: var(--radius-sm);
 }
 
 .yearButtons span {
@@ -236,6 +242,8 @@
   color: var(--color-text-primary);
   min-width: 2.5rem;
   text-align: center;
+  font-size: var(--font-size-sm);
+  line-height: 1.25;
 }
 
 .monthControls {

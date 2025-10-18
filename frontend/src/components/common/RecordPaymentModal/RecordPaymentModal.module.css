@@ -581,6 +581,75 @@ body.dark .summaryBadge,
   gap: 8px;
 }
 
+.manualTransferInfo {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  border: 1px dashed var(--color-primary-alpha);
+  border-radius: 12px;
+  background: rgba(var(--color-primary-rgb), 0.05);
+}
+
+.manualTransferHeader {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.manualTransferIcon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: rgba(var(--color-primary-rgb), 0.14);
+  color: var(--color-primary);
+}
+
+.manualTransferText {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.manualTransferText p {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.manualTransferText span {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+}
+
+.manualTransferActions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.manualTransferUrl {
+  flex: 1 1 220px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  background: var(--color-background);
+  font-size: 13px;
+  color: var(--color-text-primary);
+  word-break: break-word;
+}
+
+.manualTransferHint {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  margin: 0;
+}
+
 .textArea {
   width: 100%;
   min-height: 80px;

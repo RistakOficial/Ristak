@@ -93,7 +93,7 @@ interface PaymentMethod {
 
 const defaultManualPaymentData = (): ManualPaymentData => ({
   paymentDate: new Date().toISOString().split('T')[0],
-  paymentMethod: 'cash',
+  paymentMethod: 'bank_transfer',
   reference: '',
   notes: ''
 })
@@ -154,6 +154,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<string | null>(null)
   const [customerId, setCustomerId] = useState<string | null>(null)
   const [manualPaymentData, setManualPaymentData] = useState<ManualPaymentData>(defaultManualPaymentData)
+  const [transferInfoUrl, setTransferInfoUrl] = useState<string | null>(null)
 
   // Stripe connection status
   const [stripeConnected, setStripeConnected] = useState(false)
@@ -213,6 +214,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       setInvoiceTitle(config.invoiceTitle || 'PAGO')
       setInvoiceTermsNotes(config.invoiceTermsNotes || null)
       setInvoiceDueDays(config.invoiceDueDays || 7)
+      setTransferInfoUrl(config.transferInfoUrl || null)
     } catch (error) {
     }
   }
@@ -334,6 +336,26 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       setPrices(data.prices || [])
     } catch (error) {
       showToast('error', 'No se pudieron cargar los precios')
+    }
+  }
+
+  const handleCopyTransferUrl = async () => {
+    if (!transferInfoUrl) return
+
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(transferInfoUrl)
+      } else {
+        const input = document.createElement('input')
+        input.value = transferInfoUrl
+        document.body.appendChild(input)
+        input.select()
+        document.execCommand('copy')
+        document.body.removeChild(input)
+      }
+      showToast('success', 'Enlace copiado al portapapeles')
+    } catch (error) {
+      showToast('error', 'No se pudo copiar el enlace')
     }
   }
 
@@ -1051,6 +1073,35 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                 </select>
               </div>
             </div>
+            {manualPaymentData.paymentMethod === 'bank_transfer' && (
+              <div className={styles.manualTransferInfo}>
+                <div className={styles.manualTransferHeader}>
+                  <div className={styles.manualTransferIcon}>
+                    <LinkIcon size={18} />
+                  </div>
+                  <div className={styles.manualTransferText}>
+                    <p>Enlace para transferencias</p>
+                    <span>Comparte este enlace con el cliente para completar el depósito.</span>
+                  </div>
+                </div>
+                {transferInfoUrl ? (
+                  <div className={styles.manualTransferActions}>
+                    <div className={styles.manualTransferUrl}>{transferInfoUrl}</div>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={handleCopyTransferUrl}
+                    >
+                      Copiar enlace
+                    </Button>
+                  </div>
+                ) : (
+                  <p className={styles.manualTransferHint}>
+                    Configura la URL en Ajustes &gt; Pagos para mostrarla aquí.
+                  </p>
+                )}
+              </div>
+            )}
             <div className={styles.manualGrid}>
               <div className={styles.manualField}>
                 <label>Referencia (opcional)</label>

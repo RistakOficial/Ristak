@@ -352,16 +352,16 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
     setSearchQuery('');
   };
 
-  // Cargar usuarios al abrir el modal en modo crear
+  // Cargar usuarios al abrir el modal (tanto en modo crear como en modo view para Round Robin)
   useEffect(() => {
     setIsClient(true);
   }, []);
 
   useEffect(() => {
-    if (isOpen && isCreateMode) {
-      loadUsers();
+    if (isOpen) {
+      loadUsers(); // Cargar siempre que se abra el modal
     }
-  }, [isOpen, isCreateMode]);
+  }, [isOpen, calendar]);
 
   // Búsqueda de contactos
   useEffect(() => {
