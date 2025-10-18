@@ -271,9 +271,6 @@ export async function getSessionsByDateRange(startDate, endDate) {
         geo_country,
         geo_region,
         geo_city,
-        pageviews_count,
-        events_count,
-        is_bounce,
         ip,
         user_agent
       FROM sessions

@@ -12,7 +12,6 @@ export { LineChart } from './LineChart'
 export { AreaChart } from './AreaChart'
 export { Table } from './Table'
 export type { Column } from './Table'
-export { SmartRechartsTooltip } from './SmartRechartsTooltip'
 
 // Componentes de fecha
 export { DateRangePicker } from './DateRangePicker'
@@ -30,8 +29,6 @@ export { AppointmentModal } from './AppointmentModal'
 // Componentes de UI
 export { ViewSelector } from './ViewSelector'
 export { Icon } from './Icon'
-export { Badge } from './Badge'
-export type { BadgeProps, BadgeVariant } from './Badge'
 export { CustomSelect } from './CustomSelect'
 export {
   DropdownMenu,
