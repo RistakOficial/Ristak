@@ -874,6 +874,66 @@ export const Reports: React.FC = () => {
   const metricsRangeLabel = formatRangeLabel(metricsRange)
   const closeModal = () => setModalState(prev => ({ ...prev, open: false }))
 
+  // Columnas para el modal de visitantes
+  const visitorsModalColumns = useMemo(() => [
+    {
+      key: 'contact',
+      header: 'Contacto',
+      sortable: false,
+      render: (_: any, item: any) => {
+        if (item.contact) {
+          return (
+            <div className={styles.contactInfo}>
+              <span className={styles.contactName}>{item.contact.name}</span>
+              <span className={styles.contactEmail}>{item.contact.email}</span>
+            </div>
+          )
+        }
+        return (
+          <div className={styles.anonymousVisitor}>
+            <Users size={14} />
+            <span>Visitante anónimo</span>
+            <span className={styles.visitorId}>
+              {item.visitorId?.substring(0, 8)}...
+            </span>
+          </div>
+        )
+      }
+    },
+    {
+      key: 'source',
+      header: 'Fuente',
+      sortable: false,
+      render: (_: any, item: any) => (
+        <span>{item.utmSource || '-'}</span>
+      )
+    },
+    {
+      key: 'device',
+      header: 'Dispositivo',
+      sortable: false,
+      render: (_: any, item: any) => (
+        <span>{item.deviceType || '-'}</span>
+      )
+    },
+    {
+      key: 'browser',
+      header: 'Navegador',
+      sortable: false,
+      render: (_: any, item: any) => (
+        <span>{item.browser || '-'}</span>
+      )
+    },
+    {
+      key: 'firstVisit',
+      header: 'Primera visita',
+      sortable: false,
+      render: (_: any, item: any) => (
+        <span>{formatDate(item.firstVisit)}</span>
+      )
+    }
+  ], [])
+
   return (
     <PageContainer>
       <div className={styles.container}>
@@ -1067,64 +1127,7 @@ export const Reports: React.FC = () => {
                 </p>
                 <div className={styles.visitorsTable}>
                   <Table
-                    initialColumns={[
-                      {
-                        key: 'contact',
-                        header: 'Contacto',
-                        sortable: false,
-                        render: (_: any, item: any) => {
-                          if (item.contact) {
-                            return (
-                              <div className={styles.contactInfo}>
-                                <span className={styles.contactName}>{item.contact.name}</span>
-                                <span className={styles.contactEmail}>{item.contact.email}</span>
-                              </div>
-                            )
-                          }
-                          return (
-                            <div className={styles.anonymousVisitor}>
-                              <Users size={14} />
-                              <span>Visitante anónimo</span>
-                              <span className={styles.visitorId}>
-                                {item.visitorId?.substring(0, 8)}...
-                              </span>
-                            </div>
-                          )
-                        }
-                      },
-                      {
-                        key: 'source',
-                        header: 'Fuente',
-                        sortable: false,
-                        render: (_: any, item: any) => (
-                          <span>{item.utmSource || '-'}</span>
-                        )
-                      },
-                      {
-                        key: 'device',
-                        header: 'Dispositivo',
-                        sortable: false,
-                        render: (_: any, item: any) => (
-                          <span>{item.deviceType || '-'}</span>
-                        )
-                      },
-                      {
-                        key: 'browser',
-                        header: 'Navegador',
-                        sortable: false,
-                        render: (_: any, item: any) => (
-                          <span>{item.browser || '-'}</span>
-                        )
-                      },
-                      {
-                        key: 'firstVisit',
-                        header: 'Primera visita',
-                        sortable: false,
-                        render: (_: any, item: any) => (
-                          <span>{formatDate(item.firstVisit)}</span>
-                        )
-                      }
-                    ]}
+                    initialColumns={visitorsModalColumns}
                     data={visitorsData}
                     keyExtractor={(item) => item.visitorId}
                     loading={false}

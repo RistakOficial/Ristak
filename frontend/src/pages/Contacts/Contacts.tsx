@@ -35,6 +35,7 @@ export const Contacts: React.FC = () => {
   const [stats, setStats] = useState<ContactStats | null>(null)
   const [filter, setFilter] = useState('all')
   const [selectedContact, setSelectedContact] = useState<Contact | null>(null)
+  const [selectedContactDetails, setSelectedContactDetails] = useState<Contact | null>(null)
   const [selectedContactId, setSelectedContactId] = useState<string | null>(null)
   const [contactDetailsLoading, setContactDetailsLoading] = useState(false)
   const [showNewContactModal, setShowNewContactModal] = useState(false)
@@ -94,16 +95,19 @@ export const Contacts: React.FC = () => {
 
   const openContactModal = (contact: Contact) => {
     setSelectedContact(contact)
+    setSelectedContactDetails(null)
     setSelectedContactId(contact.id)
+    setContactDetailsLoading(true)
   }
 
   const closeContactModal = () => {
     setSelectedContact(null)
     setSelectedContactId(null)
     setContactDetailsLoading(false)
+    setSelectedContactDetails(null)
   }
 
-  const hasAppointmentsData = typeof selectedContact?.appointments !== 'undefined'
+  const hasAppointmentsData = typeof selectedContactDetails?.appointments !== 'undefined'
 
   useEffect(() => {
     fetchData()
@@ -115,9 +119,6 @@ export const Contacts: React.FC = () => {
 
   useEffect(() => {
     if (!selectedContactId) return
-    if (selectedContact?.id === selectedContactId && hasAppointmentsData) {
-      return
-    }
 
     let isMounted = true
 
@@ -128,12 +129,7 @@ export const Contacts: React.FC = () => {
         if (!isMounted) {
           return
         }
-        setSelectedContact(prev => {
-          if (prev && prev.id === details.id) {
-            return { ...prev, ...details }
-          }
-          return details
-        })
+        setSelectedContactDetails(details)
       } catch (error) {
         if (isMounted) {
           showToast('error', 'No se pudieron cargar los detalles del contacto', 'Intenta nuevamente.')
@@ -150,23 +146,25 @@ export const Contacts: React.FC = () => {
     return () => {
       isMounted = false
     }
-  }, [selectedContactId, selectedContact, hasAppointmentsData])
+  }, [selectedContactId])
 
   const contactAppointments = useMemo(() => {
-    if (!hasAppointmentsData || !selectedContact?.appointments) return []
-    return [...selectedContact.appointments].sort((a, b) =>
+    if (!selectedContactDetails?.appointments) return []
+    return [...selectedContactDetails.appointments].sort((a, b) =>
       new Date(a.start_time).getTime() - new Date(b.start_time).getTime()
     )
-  }, [hasAppointmentsData, selectedContact?.appointments])
+  }, [selectedContactDetails?.appointments])
+
+  const contactData = selectedContactDetails ?? selectedContact
 
   const nextAppointmentTimestamp = useMemo(() => {
-    if (!selectedContact?.nextAppointmentDate) return null
-    const parsed = new Date(selectedContact.nextAppointmentDate)
+    if (!contactData?.nextAppointmentDate) return null
+    const parsed = new Date(contactData.nextAppointmentDate)
     if (Number.isNaN(parsed.getTime())) {
       return null
     }
     return parsed.getTime()
-  }, [selectedContact?.nextAppointmentDate])
+  }, [contactData?.nextAppointmentDate])
 
   const fetchData = async () => {
     setLoading(true)
@@ -472,19 +470,19 @@ export const Contacts: React.FC = () => {
                 <div className={styles.infoGrid}>
                   <div>
                     <span className={styles.label}>Nombre:</span>
-                    <span className={styles.value}>{selectedContact.name}</span>
+                    <span className={styles.value}>{contactData?.name ?? '—'}</span>
                   </div>
                   <div>
                     <span className={styles.label}>Email:</span>
-                    <span className={styles.value}>{selectedContact.email}</span>
+                    <span className={styles.value}>{contactData?.email ?? '—'}</span>
                   </div>
                   <div>
                     <span className={styles.label}>Teléfono:</span>
-                    <span className={styles.value}>{selectedContact.phone}</span>
+                    <span className={styles.value}>{contactData?.phone ?? '—'}</span>
                   </div>
                   <div>
                     <span className={styles.label}>Estado:</span>
-                    {getStatusBadge(selectedContact.status)}
+                    {getStatusBadge((contactData?.status ?? 'lead') as Contact['status'])}
                   </div>
                 </div>
               </div>
@@ -494,45 +492,45 @@ export const Contacts: React.FC = () => {
                 <div className={styles.infoGrid}>
                   <div>
                     <span className={styles.label}>Total de compras:</span>
-                    <span className={styles.value}>{selectedContact.purchases}</span>
+                    <span className={styles.value}>{contactData?.purchases ?? 0}</span>
                   </div>
                   <div>
                     <span className={styles.label}>Pagos totales:</span>
-                    <span className={styles.value}>{formatCurrency(selectedContact.ltv)}</span>
+                    <span className={styles.value}>{formatCurrency(contactData?.ltv ?? 0)}</span>
                   </div>
-                  {selectedContact.lastPurchase && (
+                  {contactData?.lastPurchase && (
                     <div>
                       <span className={styles.label}>Última compra:</span>
                       <span className={styles.value}>
-                        {formatDate(selectedContact.lastPurchase, tableDateOptions)}
+                        {formatDate(contactData.lastPurchase, tableDateOptions)}
                       </span>
                     </div>
                   )}
                 </div>
               </div>
 
-              {(selectedContact.firstAppointmentDate ||
-                selectedContact.nextAppointmentDate ||
+              {(contactData?.firstAppointmentDate ||
+                contactData?.nextAppointmentDate ||
                 hasAppointmentsData ||
                 contactAppointments.length > 0 ||
                 contactDetailsLoading) && (
                   <div className={styles.infoSection}>
                     <h3>Citas</h3>
-                    {(selectedContact.firstAppointmentDate || selectedContact.nextAppointmentDate) && (
+                    {(contactData?.firstAppointmentDate || contactData?.nextAppointmentDate) && (
                       <div className={styles.infoGrid}>
-                        {selectedContact.firstAppointmentDate && (
+                        {contactData?.firstAppointmentDate && (
                           <div>
                             <span className={styles.label}>Primera cita:</span>
                             <span className={styles.value}>
-                              {formatDate(selectedContact.firstAppointmentDate, tableDateOptions)}
+                              {formatDate(contactData.firstAppointmentDate, tableDateOptions)}
                             </span>
                           </div>
                         )}
-                        {selectedContact.nextAppointmentDate && (
+                        {contactData?.nextAppointmentDate && (
                           <div>
                             <span className={styles.label}>Próxima cita:</span>
                             <span className={styles.value}>
-                              {formatDate(selectedContact.nextAppointmentDate, tableDateOptions)}
+                              {formatDate(contactData.nextAppointmentDate, tableDateOptions)}
                             </span>
                           </div>
                         )}
@@ -587,26 +585,26 @@ export const Contacts: React.FC = () => {
                   </div>
                 )}
 
-              {(selectedContact.source || selectedContact.ad_name || selectedContact.ad_id) && (
+              {(contactData?.source || contactData?.ad_name || contactData?.ad_id) && (
                 <div className={styles.infoSection}>
                   <h3>De dónde llegó el contacto:</h3>
                   <div className={styles.infoGrid}>
-                    {selectedContact.source && (
+                    {contactData?.source && (
                       <div>
                         <span className={styles.label}>Fuente:</span>
-                        <span className={styles.value}>{selectedContact.source}</span>
+                        <span className={styles.value}>{contactData.source}</span>
                       </div>
                     )}
-                    {selectedContact.ad_name && (
+                    {contactData?.ad_name && (
                       <div>
                         <span className={styles.label}>Anuncio:</span>
-                        <span className={styles.value}>{selectedContact.ad_name}</span>
+                        <span className={styles.value}>{contactData.ad_name}</span>
                       </div>
                     )}
-                    {selectedContact.ad_id && (
+                    {contactData?.ad_id && (
                       <div>
                         <span className={styles.label}>ID del Anuncio:</span>
-                        <span className={styles.value}>{selectedContact.ad_id}</span>
+                        <span className={styles.value}>{contactData.ad_id}</span>
                       </div>
                     )}
                   </div>
