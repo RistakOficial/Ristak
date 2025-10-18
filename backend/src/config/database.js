@@ -189,6 +189,7 @@ async function initTables() {
         first_name TEXT,
         last_name TEXT,
         source TEXT,
+        visitor_id TEXT,
         attribution_url TEXT,
         attribution_session_source TEXT,
         attribution_medium TEXT,
@@ -497,6 +498,8 @@ async function initTables() {
         session_id TEXT PRIMARY KEY,
         visitor_id TEXT NOT NULL,
         contact_id TEXT,
+        full_name TEXT,
+        email TEXT,
         event_name TEXT NOT NULL DEFAULT 'page_view',
         started_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
         last_event_at TIMESTAMP,
@@ -551,18 +554,6 @@ async function initTables() {
         geo_region TEXT,
         geo_city TEXT,
 
-        pageviews_count INTEGER DEFAULT 0,
-        events_count INTEGER DEFAULT 0,
-        is_bounce INTEGER DEFAULT 0,
-
-        orders_count INTEGER DEFAULT 0,
-        revenue_value REAL DEFAULT 0,
-        currency TEXT DEFAULT 'MXN',
-        last_order_id TEXT,
-
-        email TEXT,
-        phone_e164 TEXT,
-
         FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE SET NULL
       )
     `)
@@ -577,18 +568,7 @@ async function initTables() {
 
     // MIGRACIONES PARA POSTGRESQL
     if (usePostgres) {
-      // Migración 1: Agregar columna full_name a sessions
-      try {
-        await db.run('ALTER TABLE sessions ADD COLUMN full_name TEXT')
-        logger.success('✅ Migración: Columna full_name agregada a sessions')
-      } catch (err) {
-        // Si falla es porque ya existe (código 42701 en PostgreSQL)
-        if (err.code !== '42701' && !err.message.includes('already exists')) {
-          logger.warn('Advertencia al agregar full_name a sessions:', err.message)
-        }
-      }
-
-      // Migración 2: Agregar columna contact_id a appointments si no existe
+      // Migración 1: Agregar columna contact_id a appointments si no existe
       try {
         await db.run('ALTER TABLE appointments ADD COLUMN contact_id TEXT REFERENCES contacts(id) ON DELETE CASCADE')
         logger.success('✅ Migración: Columna contact_id agregada a appointments')
