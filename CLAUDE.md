@@ -451,12 +451,14 @@ cd frontend && npm run build
   - Probado con curl -H "Host: ristak.midominio.com" → funciona correctamente
 - ✓ **Chips y badges invisibles en dark mode (2025-10-18)**:
   - Bug crítico: Los estilos usaban `[data-theme="dark"]` pero el sistema usa `body.dark` y `body.light`
-  - Fix: Cambió TODOS los selectores de `[data-theme="dark"]` a `body.dark`
+  - Primer intento fallido: Cambió selectores a `body.dark` pero CSS Modules hashea las clases (`.success` → `._success_mfnum_26`)
+  - **Fix definitivo**: Usar `:global(body.dark)` en CSS Modules para escapar el scope del hash
   - Archivos afectados: Badge.module.css, Appointments.module.css
   - Aumentada opacidad de fondos (0.2→0.3 en badges, 0.25→0.35 en appointments) para mejor contraste
   - Texto blanco (#ffffff) con font-weight 600/700 en todos los chips en dark mode
   - Afecta: Badges (success, warning, error, info, purple, default), Chips de citas (Confirmed, Pending, Cancelled, Showed, Noshow, Rescheduled), chip "Hoy", chip de hora en próximas citas
   - El sistema de temas está en ThemeContext.tsx que aplica clases `body.dark` y `body.light` (líneas 98-99)
+  - Solución: `:global(body.dark) .localClass` permite que CSS Modules encuentre la clase global body.dark
   - Ahora todos los chips y badges son completamente legibles en dark mode
 
 ---
@@ -464,10 +466,12 @@ cd frontend && npm run build
 ## 📅 ÚLTIMA ACTUALIZACIÓN
 
 **Fecha**: 2025-10-18
-**Versión**: 1.8.2
+**Versión**: 1.8.3
 **Último cambio estructural**:
-- **Fix crítico: Visibilidad de chips y badges en dark mode**
-  - Corregido selector CSS de `[data-theme="dark"]` a `body.dark` en toda la app
+- **Fix crítico: Visibilidad de chips y badges en dark mode con CSS Modules**
+  - Corregido selector CSS usando `:global(body.dark)` para funcionar con CSS Modules
+  - Los CSS Modules hashean las clases, por eso `body.dark .success` no funcionaba
+  - Ahora usa `:global(body.dark) .success` que compila a `body.dark ._success_hash`
   - Aumentado contraste de fondos y texto blanco en dark mode
   - Archivos: Badge.module.css, Appointments.module.css
   - Ahora todos los chips son legibles en modo oscuro
