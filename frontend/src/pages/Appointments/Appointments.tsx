@@ -398,9 +398,9 @@ export const Appointments: React.FC = () => {
       reference.setHours(9, 0, 0, 0);
     }
 
-    const startISO = reference.toISOString().slice(0, 16);
+    const startISO = reference.toISOString();
     const endRef = new Date(reference.getTime() + 60 * 60 * 1000);
-    const endISO = endRef.toISOString().slice(0, 16);
+    const endISO = endRef.toISOString();
 
     setCreateDefaults({
       start: startISO,
@@ -618,24 +618,24 @@ export const Appointments: React.FC = () => {
       {/* KPIs */}
       <div className={styles.statsGrid}>
         <KpiCard
-          title="Citas pendientes"
+          title="Citas pendientes · este mes"
           value={stats.pending}
           icon={<CalendarIcon className="w-6 h-6" />}
         />
         <KpiCard
-          title="Citas canceladas"
+          title="Citas canceladas · este mes"
           value={stats.cancelled}
           icon={<CalendarIcon className="w-6 h-6" />}
           iconColorClassName="text-[var(--color-error-500)]"
         />
         <KpiCard
-          title="Citas confirmadas"
+          title="Citas confirmadas · este mes"
           value={stats.confirmed}
           icon={<CalendarIcon className="w-6 h-6" />}
           iconColorClassName="text-[var(--color-success-500)]"
         />
         <KpiCard
-          title="Reprogramadas"
+          title="Citas reprogramadas · este mes"
           value={stats.rescheduled}
           icon={<CalendarIcon className="w-6 h-6" />}
           iconColorClassName="text-[var(--color-warning-500)]"

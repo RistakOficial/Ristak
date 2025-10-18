@@ -1,5 +1,5 @@
 import { logger } from '../utils/logger.js'
-import { createSession, updateSession, getRecentSessions, getSessionById } from '../services/trackingService.js'
+import { createSession, getRecentSessions, linkVisitorToContact } from '../services/trackingService.js'
 import { getHighLevelConfig } from '../config/database.js'
 import fetch from 'node-fetch'
 
@@ -324,7 +324,7 @@ export async function collectEvent(req, res) {
       return res.status(413).json({ error: 'Payload too large' })
     }
 
-    const { visitor_id, session_id, event_name, ts, data } = req.body
+    const { visitor_id, session_id, contact_id, event_name, ts, data } = req.body
 
     // Validaciones básicas
     if (!visitor_id || !session_id || !event_name || !ts) {
@@ -335,9 +335,17 @@ export async function collectEvent(req, res) {
     const ip = req.ip || req.headers['x-forwarded-for'] || req.connection.remoteAddress || null
     const user_agent = req.headers['user-agent'] || null
 
+    // Extraer full_name si viene en data.contact_name
+    let full_name = null
+    if (contact_id && data && data.contact_name) {
+      full_name = data.contact_name
+    }
+
     const sessionData = {
       session_id,
       visitor_id,
+      contact_id: contact_id || null,
+      full_name,
       event_name,
       ts,
       data: data || {},
@@ -345,16 +353,15 @@ export async function collectEvent(req, res) {
       user_agent
     }
 
-    // Verificar si la sesión ya existe
-    const { getSessionById } = await import('../services/trackingService.js')
-    const existingSession = await getSessionById(session_id)
+    // SIEMPRE crear un nuevo registro (cada visita es única)
+    await createSession(sessionData)
 
-    if (!existingSession) {
-      // Crear nueva sesión
-      await createSession(sessionData)
-    } else {
-      // Actualizar sesión existente
-      await updateSession(sessionData)
+    // Si hay contact_id, vincular visitor_id histórico con este contacto
+    if (contact_id && visitor_id && full_name) {
+      // No esperamos a que termine (async sin await) para responder rápido
+      linkVisitorToContact(visitor_id, contact_id, full_name).catch(err => {
+        logger.error('Error vinculando visitor a contact:', err)
+      })
     }
 
     // Responder rápido

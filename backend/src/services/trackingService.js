@@ -56,12 +56,14 @@ function extractGeoInfo(data) {
 }
 
 /**
- * Crea una nueva sesión de tracking
+ * Crea un nuevo registro de tracking (cada visita)
  */
 export async function createSession(sessionData) {
   const {
     session_id,
     visitor_id,
+    contact_id,
+    full_name,
     event_name,
     ts,
     data,
@@ -81,6 +83,8 @@ export async function createSession(sessionData) {
       INSERT INTO sessions (
         session_id,
         visitor_id,
+        contact_id,
+        full_name,
         event_name,
         started_at,
         last_event_at,
@@ -109,17 +113,17 @@ export async function createSession(sessionData) {
         timezone,
         geo_country,
         geo_region,
-        geo_city,
-        pageviews_count,
-        events_count
+        geo_city
       ) VALUES (
         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-        ?, ?, ?, ?, ?, ?, ?, ?, ?
+        ?, ?, ?, ?, ?, ?, ?, ?
       )
     `, [
       session_id,
       visitor_id,
+      contact_id || null,
+      full_name || null,
       event_name,
       startedAt,
       startedAt,
@@ -148,141 +152,51 @@ export async function createSession(sessionData) {
       deviceInfo.timezone,
       geoInfo.geo_country,
       geoInfo.geo_region,
-      geoInfo.geo_city,
-      event_name === 'page_view' ? 1 : 0,
-      1
+      geoInfo.geo_city
     ])
 
-    logger.info(`Nueva sesión creada: ${session_id}`)
+    logger.info(`Evento registrado: ${event_name} - visitor: ${visitor_id}`)
     return { success: true }
   } catch (error) {
-    logger.error('Error creando sesión:', error)
+    logger.error('Error creando registro de tracking:', error)
     throw error
   }
 }
 
 /**
- * Actualiza una sesión existente
+ * Vincula un visitor_id con un contact_id
+ * Actualiza TODOS los registros históricos de sessions y también la tabla contacts
  */
-export async function updateSession(sessionData) {
-  const {
-    session_id,
-    event_name,
-    ts,
-    data
-  } = sessionData
-
-  const lastEventAt = new Date(ts).toISOString()
-
+export async function linkVisitorToContact(visitor_id, contact_id, full_name) {
   try {
-    // Obtener la sesión actual para incrementar contadores
-    const session = await db.get('SELECT pageviews_count, events_count FROM sessions WHERE session_id = ?', [session_id])
-
-    if (!session) {
-      logger.warn(`Sesión no encontrada: ${session_id}`)
-      return { success: false, error: 'Session not found' }
-    }
-
-    const newPageviewsCount = event_name === 'page_view' ? session.pageviews_count + 1 : session.pageviews_count
-    const newEventsCount = session.events_count + 1
-
-    // Actualizar campos básicos
-    const updates = []
-    const params = []
-
-    updates.push('last_event_at = ?')
-    params.push(lastEventAt)
-
-    updates.push('pageviews_count = ?')
-    params.push(newPageviewsCount)
-
-    updates.push('events_count = ?')
-    params.push(newEventsCount)
-
-    // Actualizar UTMs solo si no estaban seteados y ahora llegan
-    const utms = extractUtmParams(data)
-    if (utms.utm_source) {
-      updates.push('utm_source = COALESCE(utm_source, ?)')
-      params.push(utms.utm_source)
-    }
-    if (utms.utm_medium) {
-      updates.push('utm_medium = COALESCE(utm_medium, ?)')
-      params.push(utms.utm_medium)
-    }
-    if (utms.utm_campaign) {
-      updates.push('utm_campaign = COALESCE(utm_campaign, ?)')
-      params.push(utms.utm_campaign)
-    }
-    if (utms.utm_term) {
-      updates.push('utm_term = COALESCE(utm_term, ?)')
-      params.push(utms.utm_term)
-    }
-    if (utms.utm_content) {
-      updates.push('utm_content = COALESCE(utm_content, ?)')
-      params.push(utms.utm_content)
-    }
-
-    // Actualizar click IDs solo si no estaban seteados
-    const clickIds = extractClickIds(data)
-    if (clickIds.gclid) {
-      updates.push('gclid = COALESCE(gclid, ?)')
-      params.push(clickIds.gclid)
-    }
-    if (clickIds.fbclid) {
-      updates.push('fbclid = COALESCE(fbclid, ?)')
-      params.push(clickIds.fbclid)
-    }
-    if (clickIds.fbc) {
-      updates.push('fbc = COALESCE(fbc, ?)')
-      params.push(clickIds.fbc)
-    }
-    if (clickIds.fbp) {
-      updates.push('fbp = COALESCE(fbp, ?)')
-      params.push(clickIds.fbp)
-    }
-    if (clickIds.wbraid) {
-      updates.push('wbraid = COALESCE(wbraid, ?)')
-      params.push(clickIds.wbraid)
-    }
-    if (clickIds.gbraid) {
-      updates.push('gbraid = COALESCE(gbraid, ?)')
-      params.push(clickIds.gbraid)
-    }
-    if (clickIds.msclkid) {
-      updates.push('msclkid = COALESCE(msclkid, ?)')
-      params.push(clickIds.msclkid)
-    }
-    if (clickIds.ttclid) {
-      updates.push('ttclid = COALESCE(ttclid, ?)')
-      params.push(clickIds.ttclid)
-    }
-
-    // Calcular is_bounce si es session_end
-    if (event_name === 'session_end') {
-      const duration = ts - new Date(session.started_at).getTime()
-      const isBounce = newPageviewsCount === 1 && duration < 30000 ? 1 : 0
-      updates.push('is_bounce = ?')
-      params.push(isBounce)
-    }
-
-    params.push(session_id)
-
-    await db.run(`
+    // 1. Actualizar TODOS los registros de sessions que tienen este visitor_id
+    // para agregarles el contact_id y full_name
+    const result = await db.run(`
       UPDATE sessions
-      SET ${updates.join(', ')}
-      WHERE session_id = ?
-    `, params)
+      SET contact_id = ?, full_name = ?
+      WHERE visitor_id = ? AND contact_id IS NULL
+    `, [contact_id, full_name, visitor_id])
 
-    logger.info(`Sesión actualizada: ${session_id} (${event_name})`)
-    return { success: true }
+    logger.info(`Vinculados ${result.changes} registros históricos de visitor ${visitor_id} a contact ${contact_id}`)
+
+    // 2. Actualizar la tabla contacts para guardar el visitor_id
+    await db.run(`
+      UPDATE contacts
+      SET visitor_id = ?
+      WHERE id = ? AND visitor_id IS NULL
+    `, [visitor_id, contact_id])
+
+    logger.info(`Guardado visitor_id ${visitor_id} en contacto ${contact_id}`)
+
+    return { success: true, updated: result.changes }
   } catch (error) {
-    logger.error('Error actualizando sesión:', error)
+    logger.error('Error vinculando visitor a contact:', error)
     throw error
   }
 }
 
 /**
- * Obtiene sesiones recientes
+ * Obtiene registros de tracking recientes
  */
 export async function getRecentSessions(limit = 50) {
   try {
@@ -291,6 +205,8 @@ export async function getRecentSessions(limit = 50) {
         session_id,
         visitor_id,
         contact_id,
+        full_name,
+        event_name,
         landing_url,
         referrer_url,
         utm_source,
@@ -301,32 +217,16 @@ export async function getRecentSessions(limit = 50) {
         msclkid,
         ttclid,
         device_type,
-        pageviews_count,
-        events_count,
-        is_bounce,
         started_at,
         last_event_at
       FROM sessions
-      ORDER BY last_event_at DESC
+      ORDER BY started_at DESC
       LIMIT ?
     `, [limit])
 
     return sessions
   } catch (error) {
     logger.error('Error obteniendo sesiones:', error)
-    throw error
-  }
-}
-
-/**
- * Obtiene una sesión específica por ID
- */
-export async function getSessionById(sessionId) {
-  try {
-    const session = await db.get('SELECT * FROM sessions WHERE session_id = ?', [sessionId])
-    return session
-  } catch (error) {
-    logger.error('Error obteniendo sesión:', error)
     throw error
   }
 }

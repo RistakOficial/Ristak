@@ -222,24 +222,13 @@ export const WebTracking: React.FC = () => {
               <div style={{ marginTop: '24px' }}>
                 <label className={styles.formLabel}>Código del pixel</label>
                 <div className={styles.codeBlockWrapper}>
-                  <Button
-                    variant="ghost"
-                    size="small"
+                  <button
                     onClick={handleCopySnippet}
-                    className={styles.copyButton}
+                    className={styles.copyIconButton}
+                    title={copied ? 'Copiado!' : 'Copiar código'}
                   >
-                    {copied ? (
-                      <>
-                        <Check size={14} />
-                        Copiado
-                      </>
-                    ) : (
-                      <>
-                        <Copy size={14} />
-                        Copiar
-                      </>
-                    )}
-                  </Button>
+                    {copied ? <Check size={16} /> : <Copy size={16} />}
+                  </button>
                   <div className={styles.codeBlock}>
                     <pre className={styles.codeContent}>
                       {trackingService.generateSnippet(trackingDomain)}
