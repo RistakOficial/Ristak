@@ -423,9 +423,9 @@ async function initTables() {
         }
       }
 
-      // Actualizar registros existentes a show_analytics = 1 si es NULL o 0
+      // Actualizar registros existentes a show_analytics = 1 SOLO si es NULL (no tocar los que ya tienen valor)
       try {
-        await db.run('UPDATE highlevel_config SET show_analytics = 1 WHERE show_analytics IS NULL OR show_analytics = 0')
+        await db.run('UPDATE highlevel_config SET show_analytics = 1 WHERE show_analytics IS NULL')
       } catch (err) {
         // Ignore si falla
       }
@@ -594,7 +594,7 @@ await initTables()
  * Obtiene la configuración de HighLevel desde la base de datos
  */
 export async function getHighLevelConfig() {
-  return await db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1')
+  return await db.get('SELECT * FROM highlevel_config LIMIT 1')
 }
 
 export { db }

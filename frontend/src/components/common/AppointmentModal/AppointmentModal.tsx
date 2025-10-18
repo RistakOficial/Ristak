@@ -2,15 +2,16 @@ import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Modal } from '../Modal';
 import { Button } from '../Button';
-import { CalendarEvent } from '@/services/calendarsService';
+import { CalendarEvent, Calendar } from '@/services/calendarsService';
 import { formatDate } from '@/utils/format';
 import styles from './AppointmentModal.module.css';
-import { Trash2, Search, Loader2, X } from 'lucide-react';
+import { Trash2, Search, Loader2, X, UserPlus, Check } from 'lucide-react';
 
 interface AppointmentModalProps {
   isOpen: boolean;
   onClose: () => void;
   event?: CalendarEvent | null;
+  calendar?: Calendar | null; // Nuevo: información del calendario
   mode?: 'view' | 'create';
   defaultStart?: string;
   defaultEnd?: string;
@@ -179,6 +180,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   isOpen,
   onClose,
   event,
+  calendar,
   mode = 'view',
   defaultStart,
   defaultEnd,
@@ -191,18 +193,22 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   const [formData, setFormData] = useState(INITIAL_FORM_STATE);
   const isCreateMode = mode === 'create';
 
-  // Contact search
+  // Contact search (ahora soporta múltiples)
   const [searchQuery, setSearchQuery] = useState('');
   const [searchingContact, setSearchingContact] = useState(false);
   const [contacts, setContacts] = useState<Contact[]>([]);
-  const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
+  const [selectedContacts, setSelectedContacts] = useState<Contact[]>([]); // Cambio: array en vez de single
   const [showContactDropdown, setShowContactDropdown] = useState(false);
 
-  // Users (assigned users)
+  // Users/Team Members (para Round Robin)
   const [users, setUsers] = useState<User[]>([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
+  const [selectedTeamMembers, setSelectedTeamMembers] = useState<string[]>([]); // IDs de team members seleccionados
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isClient, setIsClient] = useState(false);
+
+  // Detectar si el calendario es Round Robin
+  const isRoundRobin = calendar?.calendarType === 'round_robin' || calendar?.eventType?.includes('RoundRobin');
 
   const loadUsers = async () => {
     setLoadingUsers(true);
@@ -240,16 +246,23 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   };
 
   const handleSelectContact = (contact: Contact) => {
-    setSelectedContact(contact);
-    setFormData({ ...formData, contactId: contact.id });
+    // Verificar si ya está seleccionado
+    if (selectedContacts.find(c => c.id === contact.id)) {
+      return; // Ya está seleccionado
+    }
+
+    setSelectedContacts([...selectedContacts, contact]);
     setSearchQuery('');
     setShowContactDropdown(false);
     setContacts([]);
   };
 
-  const handleClearContact = () => {
-    setSelectedContact(null);
-    setFormData({ ...formData, contactId: '' });
+  const handleRemoveContact = (contactId: string) => {
+    setSelectedContacts(selectedContacts.filter(c => c.id !== contactId));
+  };
+
+  const handleClearAllContacts = () => {
+    setSelectedContacts([]);
     setSearchQuery('');
   };
 
