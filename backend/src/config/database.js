@@ -414,13 +414,20 @@ async function initTables() {
         }
       }
 
-      // Agregar preferencia para mostrar Analytics
+      // Agregar preferencia para mostrar Analytics (DEFAULT 1 = visible por defecto)
       try {
-        await db.run('ALTER TABLE highlevel_config ADD COLUMN show_analytics INTEGER DEFAULT 0')
+        await db.run('ALTER TABLE highlevel_config ADD COLUMN show_analytics INTEGER DEFAULT 1')
       } catch (err) {
         if (!err.message.includes('duplicate column') && !err.message.includes('already exists')) {
           throw err
         }
+      }
+
+      // Actualizar registros existentes a show_analytics = 1 si es NULL o 0
+      try {
+        await db.run('UPDATE highlevel_config SET show_analytics = 1 WHERE show_analytics IS NULL OR show_analytics = 0')
+      } catch (err) {
+        // Ignore si falla
       }
 
       // Agregar columnas de configuración de invoices/pagos

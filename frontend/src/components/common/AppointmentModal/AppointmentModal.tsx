@@ -136,36 +136,42 @@ const parseDateSafe = (value?: string | null): Date | null => {
 
 const convertLocalInputToISO = (value: string, timeZone: string): string | null => {
   if (!value) return null;
+
+  // El input viene como "2025-10-18T14:30" (formato datetime-local del navegador)
+  // Necesitamos convertirlo a "2025-10-18T14:30:00-06:00" (ISO 8601 con timezone offset de America/Mexico_City)
+
+  // Parsear el input del datetime-local
   const [datePart, timePart] = value.split('T');
   if (!timePart) return null;
-  const [year, month, day] = datePart.split('-').map(Number);
-  const [hour, minute] = timePart.split(':').map(Number);
 
-  // Crear fecha en la timezone especificada
-  const date = new Date(year, month - 1, day, hour, minute, 0);
+  // Extraer componentes
+  const [year, month, day] = datePart.split('-');
+  const [hour, minute] = timePart.split(':');
 
-  // Obtener el offset de timezone en minutos
-  const formatter = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    timeZoneName: 'short'
-  });
+  // Crear fecha en la timezone especificada para obtener el offset correcto
+  const dateInTz = new Date(`${year}-${month}-${day}T${hour}:${minute}:00`);
 
-  // Calcular offset manualmente usando UTC
-  const utcDate = new Date(Date.UTC(year, month - 1, day, hour, minute, 0));
-  const tzDate = new Date(utcDate.toLocaleString('en-US', { timeZone }));
-  const offset = (utcDate.getTime() - tzDate.getTime()) / (1000 * 60);
+  // Obtener el offset usando Intl.DateTimeFormat
+  const offsetMinutes = getTimezoneOffset(dateInTz, timeZone);
 
-  // Formatear offset como +/-HH:MM
-  const offsetHours = Math.floor(Math.abs(offset) / 60);
-  const offsetMinutes = Math.abs(offset) % 60;
-  const offsetSign = offset <= 0 ? '+' : '-';
-  const offsetStr = `${offsetSign}${String(offsetHours).padStart(2, '0')}:${String(offsetMinutes).padStart(2, '0')}`;
+  // Convertir offset a formato +/-HH:MM
+  const offsetHours = Math.floor(Math.abs(offsetMinutes) / 60);
+  const offsetMins = Math.abs(offsetMinutes) % 60;
+  const offsetSign = offsetMinutes <= 0 ? '+' : '-';
+  const offsetStr = `${offsetSign}${String(offsetHours).padStart(2, '0')}:${String(offsetMins).padStart(2, '0')}`;
 
-  // Formato: 2025-10-18T14:30:00-05:00
-  const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-  const timeStr = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:00`;
+  // Construir ISO 8601: 2025-10-18T14:30:00-06:00
+  return `${year}-${month}-${day}T${hour}:${minute}:00${offsetStr}`;
+};
 
-  return `${dateStr}T${timeStr}${offsetStr}`;
+// Helper para obtener el offset de timezone en minutos
+const getTimezoneOffset = (date: Date, timeZone: string): number => {
+  // Crear dos versiones de la fecha: una en UTC y otra en la timezone especificada
+  const utcDate = new Date(date.toLocaleString('en-US', { timeZone: 'UTC' }));
+  const tzDate = new Date(date.toLocaleString('en-US', { timeZone }));
+
+  // La diferencia en milisegundos nos da el offset
+  return (tzDate.getTime() - utcDate.getTime()) / (1000 * 60);
 };
 
 export const AppointmentModal: React.FC<AppointmentModalProps> = ({

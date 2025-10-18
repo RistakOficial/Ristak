@@ -49,6 +49,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, locationName, loca
             ...baseNavigation,
             { name: 'Analíticas', href: '/analytics', icon: BarChart3 }
           ])
+        } else {
+          setNavigation(baseNavigation)
         }
       } catch (error) {
         // Si falla, solo mostrar el menú base
@@ -57,6 +59,25 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, locationName, loca
     }
 
     checkTracking()
+
+    // Escuchar cambios en la preferencia de Analytics
+    const handleAnalyticsChange = (event: CustomEvent) => {
+      const { showAnalytics } = event.detail
+      if (showAnalytics) {
+        setNavigation([
+          ...baseNavigation,
+          { name: 'Analíticas', href: '/analytics', icon: BarChart3 }
+        ])
+      } else {
+        setNavigation(baseNavigation)
+      }
+    }
+
+    window.addEventListener('analytics-preference-changed', handleAnalyticsChange as EventListener)
+
+    return () => {
+      window.removeEventListener('analytics-preference-changed', handleAnalyticsChange as EventListener)
+    }
   }, [])
 
   const handleNavigate = () => {

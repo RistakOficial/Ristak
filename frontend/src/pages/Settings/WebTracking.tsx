@@ -23,7 +23,7 @@ export const WebTracking: React.FC = () => {
   const [configuringTracking, setConfiguringTracking] = useState(false)
   const [isConfigured, setIsConfigured] = useState(false)
   const [hasHighLevel, setHasHighLevel] = useState(false)
-  const [showAnalytics, setShowAnalytics] = useState(false)
+  const [showAnalytics, setShowAnalytics] = useState(true) // Por defecto visible
   const [savingAnalyticsPref, setSavingAnalyticsPref] = useState(false)
 
   useEffect(() => {
@@ -133,8 +133,10 @@ export const WebTracking: React.FC = () => {
           : 'La página de Analíticas se ha ocultado del menú'
       )
 
-      // Recargar la página para que el sidebar se actualice
-      setTimeout(() => window.location.reload(), 1000)
+      // Disparar evento personalizado para que el Sidebar se actualice
+      window.dispatchEvent(new CustomEvent('analytics-preference-changed', {
+        detail: { showAnalytics: newValue }
+      }))
     } catch (error) {
       showToast('error', 'Error', 'No se pudo guardar la preferencia')
     } finally {
