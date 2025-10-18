@@ -488,6 +488,10 @@
   background-color: var(--color-background-secondary);
 }
 
+:global(body.dark) .daysHeader {
+  background-color: rgba(15, 23, 42, 0.85);
+}
+
 .dayName {
   padding: 0.75rem 1rem;
   font-size: 0.75rem;
@@ -541,7 +545,7 @@
 }
 
 .dayCellOther {
-  background-color: color-mix(in srgb, var(--color-background) 88%, var(--color-border) 12%);
+  background-color: rgba(148, 163, 184, 0.16);
 }
 
 .dayCellOther .dayNumber {
@@ -561,8 +565,8 @@
 }
 
 .dayCellToday {
-  background-color: color-mix(in srgb, var(--color-primary) 18%, transparent);
-  box-shadow: inset 0 0 0 2px var(--color-primary);
+  background-color: rgba(59, 130, 246, 0.12);
+  box-shadow: inset 0 0 0 2px rgba(59, 130, 246, 0.35);
 }
 
 :global(body.dark) .dayCellToday {
@@ -626,6 +630,10 @@
   opacity: 0.75;
 }
 
+.eventChip:hover {
+  opacity: 0.9;
+}
+
 .eventChip:focus,
 .eventChip:focus-visible {
   outline: none !important;
@@ -658,81 +666,63 @@
 }
 
 .eventPending {
-  border-color: #f59e0b;
-  background-color: rgba(245, 158, 11, 0.14);
-  color: #78350f;
+  background-color: rgba(245, 158, 11, 0.12);
+  color: #d97706;
 }
 
 :global(body.dark) .eventPending {
-  border-color: #fbbf24;
-  background-color: rgba(245, 158, 11, 0.35);
-  color: #ffffff;
-  font-weight: 600;
+  background-color: rgba(245, 158, 11, 0.25);
+  color: #fde68a;
 }
 
 .eventCancelled {
-  border-color: #ef4444;
-  background-color: rgba(239, 68, 68, 0.14);
-  color: #7f1d1d;
+  background-color: rgba(239, 68, 68, 0.12);
+  color: #dc2626;
 }
 
 :global(body.dark) .eventCancelled {
-  border-color: #f87171;
-  background-color: rgba(239, 68, 68, 0.35);
-  color: #ffffff;
-  font-weight: 600;
+  background-color: rgba(239, 68, 68, 0.25);
+  color: #fecaca;
 }
 
 .eventShowed {
-  border-color: #10b981;
-  background-color: rgba(16, 185, 129, 0.14);
-  color: #064e3b;
+  background-color: rgba(16, 185, 129, 0.12);
+  color: #059669;
 }
 
 :global(body.dark) .eventShowed {
-  border-color: #34d399;
-  background-color: rgba(16, 185, 129, 0.35);
-  color: #ffffff;
-  font-weight: 600;
+  background-color: rgba(16, 185, 129, 0.25);
+  color: #bbf7d0;
 }
 
 .eventNoshow {
-  border-color: #6b7280;
-  background-color: rgba(107, 114, 128, 0.14);
-  color: #1f2937;
-}
-
-:global(body.dark) .eventNoshow {
-  border-color: #9ca3af;
-  background-color: rgba(107, 114, 128, 0.35);
-  color: #ffffff;
-  font-weight: 600;
-}
-
-.eventRescheduled {
-  border-color: #8b5cf6;
-  background-color: rgba(139, 92, 246, 0.14);
-  color: #4c1d95;
-}
-
-:global(body.dark) .eventRescheduled {
-  border-color: #a78bfa;
-  background-color: rgba(139, 92, 246, 0.35);
-  color: #ffffff;
-  font-weight: 600;
-}
-
-.eventDefault {
-  border-color: #9ca3af;
-  background-color: rgba(156, 163, 175, 0.14);
+  background-color: rgba(107, 114, 128, 0.12);
   color: #374151;
 }
 
+:global(body.dark) .eventNoshow {
+  background-color: rgba(107, 114, 128, 0.25);
+  color: #e5e7eb;
+}
+
+.eventRescheduled {
+  background-color: rgba(139, 92, 246, 0.12);
+  color: #6d28d9;
+}
+
+:global(body.dark) .eventRescheduled {
+  background-color: rgba(139, 92, 246, 0.25);
+  color: #ddd6fe;
+}
+
+.eventDefault {
+  background-color: rgba(148, 163, 184, 0.16);
+  color: #475569;
+}
+
 :global(body.dark) .eventDefault {
-  border-color: #d1d5db;
-  background-color: rgba(156, 163, 175, 0.35);
-  color: #ffffff;
-  font-weight: 600;
+  background-color: rgba(148, 163, 184, 0.28);
+  color: #e2e8f0;
 }
 
 .eventTime {

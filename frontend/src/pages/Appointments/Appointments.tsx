@@ -796,36 +796,52 @@ export const Appointments: React.FC = () => {
 
               {/* Grid de días */}
               <div className={styles.monthGrid}>
-                {monthCells.map((cell, index) => (
-                  <div
-                    key={index}
-                    className={`${styles.dayCell} ${!cell.isCurrentMonth ? styles.dayCellOther : ''}`}
-                    onClick={() => setSelectedDate(cell.date)}
-                  >
-                    <div className={styles.dayNumber}>{cell.date.getDate()}</div>
-                    <div className={styles.eventsContainer}>
-                      {cell.events.slice(0, 3).map((event) => (
-                        <div
-                          key={event.id}
-                          className={`${styles.eventChip} ${styles[`event${event.appointmentStatus.charAt(0).toUpperCase() + event.appointmentStatus.slice(1).toLowerCase()}`] || styles.eventDefault}`}
-                          title={`${event.title || '(Sin título)'} - ${event.appointmentStatus}`}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleEventClick(event);
-                          }}
-                        >
-                          <span className={styles.eventTime}>
-                            {formatTime12h(event.startTime)}
-                          </span>{' '}
-                          {event.title || '(Sin título)'}
+                {(() => {
+                  const todayString = new Date().toDateString();
+                  return monthCells.map((cell, index) => {
+                    const isToday = cell.date.toDateString() === todayString;
+                    const cellClasses = [
+                      styles.dayCell,
+                      !cell.isCurrentMonth ? styles.dayCellOther : '',
+                      isToday ? styles.dayCellToday : ''
+                    ].filter(Boolean).join(' ');
+                    const dayNumberClasses = [
+                      styles.dayNumber,
+                      isToday ? styles.dayNumberToday : ''
+                    ].filter(Boolean).join(' ');
+
+                    return (
+                      <div
+                        key={index}
+                        className={cellClasses}
+                        onClick={() => setSelectedDate(cell.date)}
+                      >
+                        <div className={dayNumberClasses}>{cell.date.getDate()}</div>
+                        <div className={styles.eventsContainer}>
+                          {cell.events.slice(0, 3).map((event) => (
+                            <div
+                              key={event.id}
+                              className={`${styles.eventChip} ${styles[`event${event.appointmentStatus.charAt(0).toUpperCase() + event.appointmentStatus.slice(1).toLowerCase()}`] || styles.eventDefault}`}
+                              title={`${event.title || '(Sin título)'} - ${event.appointmentStatus}`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleEventClick(event);
+                              }}
+                            >
+                              <span className={styles.eventTime}>
+                                {formatTime12h(event.startTime)}
+                              </span>{' '}
+                              {event.title || '(Sin título)'}
+                            </div>
+                          ))}
+                          {cell.events.length > 3 && (
+                            <div className={styles.eventMore}>+{cell.events.length - 3} más</div>
+                          )}
                         </div>
-                      ))}
-                      {cell.events.length > 3 && (
-                        <div className={styles.eventMore}>+{cell.events.length - 3} más</div>
-                      )}
-                    </div>
-                  </div>
-                ))}
+                      </div>
+                    );
+                  });
+                })()}
               </div>
             </div>
           )}

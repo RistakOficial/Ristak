@@ -326,6 +326,91 @@ const Analytics: React.FC = () => {
             .sort((a, b) => b.count - a.count)
 
           setAvailableFilterData(filterData)
+
+          // Calcular stats para las cards
+          const browsers: { [key: string]: number } = {}
+          currentSessions.forEach((session: Session) => {
+            const browser = session.browser || 'Desconocido'
+            browsers[browser] = (browsers[browser] || 0) + 1
+          })
+          const browserStats = Object.entries(browsers)
+            .map(([browser, count]) => ({
+              name: browser,
+              users: count,
+              percentage: ((count / currentSessions.length) * 100).toFixed(1)
+            }))
+            .sort((a, b) => b.users - a.users)
+            .slice(0, 5)
+          setBrowserData(browserStats)
+
+          const platforms: { [key: string]: number } = {}
+          currentSessions.forEach((session: Session) => {
+            const platform = session.source_platform || session.utm_source || 'Directo'
+            platforms[platform] = (platforms[platform] || 0) + 1
+          })
+          const platformStats = Object.entries(platforms)
+            .map(([platform, count]) => ({
+              name: platform,
+              users: count,
+              percentage: ((count / currentSessions.length) * 100).toFixed(1)
+            }))
+            .sort((a, b) => b.users - a.users)
+            .slice(0, 5)
+          setPlatformsData(platformStats)
+
+          const placements: { [key: string]: number } = {}
+          currentSessions.forEach((session: Session) => {
+            const placement = session.placement || 'Sin ubicación'
+            placements[placement] = (placements[placement] || 0) + 1
+          })
+          const placementStats = Object.entries(placements)
+            .map(([placement, count]) => ({
+              name: placement.replace(/_/g, ' '),
+              users: count,
+              percentage: ((count / currentSessions.length) * 100).toFixed(1)
+            }))
+            .sort((a, b) => b.users - a.users)
+            .slice(0, 5)
+          setPlacementsData(placementStats)
+
+          const devices: { [key: string]: number } = {}
+          currentSessions.forEach((session: Session) => {
+            const device = session.device_type || 'Desconocido'
+            devices[device] = (devices[device] || 0) + 1
+          })
+          const deviceStats = Object.entries(devices)
+            .map(([device, count]) => ({
+              name: device,
+              users: count,
+              percentage: ((count / currentSessions.length) * 100).toFixed(1)
+            }))
+            .sort((a, b) => b.users - a.users)
+            .slice(0, 5)
+          setDevicesData(deviceStats)
+
+          const operatingSystems: { [key: string]: number } = {}
+          currentSessions.forEach((session: Session) => {
+            const os = session.os || 'Desconocido'
+            operatingSystems[os] = (operatingSystems[os] || 0) + 1
+          })
+          const osStats = Object.entries(operatingSystems)
+            .map(([os, count]) => ({
+              name: os,
+              users: count,
+              percentage: ((count / currentSessions.length) * 100).toFixed(1)
+            }))
+            .sort((a, b) => b.users - a.users)
+            .slice(0, 5)
+          setOsData(osStats)
+
+          const topVisitorsList = Object.entries(visitorCounts)
+            .sort(([, a], [, b]) => b - a)
+            .slice(0, 5)
+            .map(([visitorId, count]) => ({
+              id: visitorId.substring(0, 24) + '...',
+              requests: count
+            }))
+          setTopVisitors(topVisitorsList)
         } else {
           // Reset si no hay datos
           setMetrics({
@@ -359,6 +444,60 @@ const Analytics: React.FC = () => {
 
     fetchAnalytics()
   }, [dateRange])
+
+  // Efecto para filtrar sesiones cuando cambian los filtros seleccionados
+  useEffect(() => {
+    if (Object.keys(selectedFilters).length === 0) {
+      setSessions(allSessions)
+    } else {
+      const filtered = allSessions.filter((session: Session) => {
+        for (const [field, values] of Object.entries(selectedFilters)) {
+          if (values.length === 0) continue
+
+          let fieldMatch = false
+
+          for (const value of values) {
+            switch (field) {
+              case 'landing_url':
+                if (session.landing_url) {
+                  const urlPath = session.landing_url.split('?')[0]
+                  const pageName = urlPath.split('/').pop() || 'home'
+                  if (pageName === value) fieldMatch = true
+                }
+                break
+              case 'utm_campaign':
+                if (session.utm_campaign === value) fieldMatch = true
+                break
+              case 'utm_content':
+                if (session.utm_content === value) fieldMatch = true
+                break
+              case 'utm_source':
+                if (session.utm_source === value) fieldMatch = true
+                break
+              case 'device_type':
+                if (session.device_type === value) fieldMatch = true
+                break
+              case 'browser':
+                if (session.browser === value) fieldMatch = true
+                break
+              case 'os':
+                if (session.os === value) fieldMatch = true
+                break
+              case 'placement':
+                if (session.placement === value) fieldMatch = true
+                break
+            }
+          }
+
+          if (!fieldMatch) return false
+        }
+
+        return true
+      })
+
+      setSessions(filtered)
+    }
+  }, [selectedFilters, allSessions])
 
   // Preparar métricas para KPICards
   const getTrend = (value: number): 'up' | 'down' | undefined => {
@@ -522,6 +661,156 @@ const Analytics: React.FC = () => {
             )}
           </div>
         </Card>
+
+        {/* Grid de stats cards */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Top Plataformas */}
+          <Card>
+            <div className="p-4 border-b border-[var(--color-border)]">
+              <h3 className="text-sm font-semibold">Top Plataformas</h3>
+            </div>
+            <div className="p-5 space-y-4">
+              {platformsData.map((platform, index) => (
+                <div key={index} className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Globe className="w-4 h-4 text-gray-500" />
+                      <span className="text-sm">{platform.name}</span>
+                    </div>
+                    <span className="text-sm font-semibold">{platform.users}</span>
+                  </div>
+                  <div className="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-gray-500 dark:bg-gray-400 opacity-60 transition-all duration-500"
+                      style={{ width: `${platform.percentage}%` }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Card>
+
+          {/* Top Ubicaciones */}
+          <Card>
+            <div className="p-4 border-b border-[var(--color-border)]">
+              <h3 className="text-sm font-semibold">Top Ubicaciones</h3>
+            </div>
+            <div className="p-5 space-y-4">
+              {placementsData.map((placement, index) => (
+                <div key={index} className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Target className="w-4 h-4 text-gray-500" />
+                      <span className="text-sm">{placement.name}</span>
+                    </div>
+                    <span className="text-sm font-semibold">{placement.users}</span>
+                  </div>
+                  <div className="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-gray-500 dark:bg-gray-400 opacity-60 transition-all duration-500"
+                      style={{ width: `${placement.percentage}%` }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Card>
+
+          {/* Top Dispositivos */}
+          <Card>
+            <div className="p-4 border-b border-[var(--color-border)]">
+              <h3 className="text-sm font-semibold">Top Dispositivos</h3>
+            </div>
+            <div className="p-5 space-y-4">
+              {devicesData.map((device, index) => (
+                <div key={index} className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Smartphone className="w-4 h-4 text-gray-500" />
+                      <span className="text-sm">{device.name}</span>
+                    </div>
+                    <span className="text-sm font-semibold">{device.users}</span>
+                  </div>
+                  <div className="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-gray-500 dark:bg-gray-400 opacity-60 transition-all duration-500"
+                      style={{ width: `${device.percentage}%` }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Card>
+
+          {/* Top Sistemas */}
+          <Card>
+            <div className="p-4 border-b border-[var(--color-border)]">
+              <h3 className="text-sm font-semibold">Top Sistemas</h3>
+            </div>
+            <div className="p-5 space-y-4">
+              {osData.map((os, index) => (
+                <div key={index} className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Monitor className="w-4 h-4 text-gray-500" />
+                      <span className="text-sm">{os.name}</span>
+                    </div>
+                    <span className="text-sm font-semibold">{os.users}</span>
+                  </div>
+                  <div className="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-gray-500 dark:bg-gray-400 opacity-60 transition-all duration-500"
+                      style={{ width: `${os.percentage}%` }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Card>
+
+          {/* Top Navegadores */}
+          <Card>
+            <div className="p-4 border-b border-[var(--color-border)]">
+              <h3 className="text-sm font-semibold">Top Navegadores</h3>
+            </div>
+            <div className="p-5 space-y-4">
+              {browserData.map((browser, index) => (
+                <div key={index} className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Globe className="w-4 h-4 text-gray-500" />
+                      <span className="text-sm">{browser.name}</span>
+                    </div>
+                    <span className="text-sm font-semibold">{browser.users}</span>
+                  </div>
+                  <div className="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-gray-500 dark:bg-gray-400 opacity-60 transition-all duration-500"
+                      style={{ width: `${browser.percentage}%` }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Card>
+
+          {/* Top Visitors */}
+          <Card>
+            <div className="p-4 border-b border-[var(--color-border)]">
+              <h3 className="text-sm font-semibold">Top Visitantes</h3>
+            </div>
+            <div className="p-5">
+              <div className="space-y-3">
+                {topVisitors.map((visitor, index) => (
+                  <div key={index} className="flex items-center justify-between">
+                    <span className="text-sm text-gray-600 dark:text-gray-400 font-mono">{visitor.id}</span>
+                    <span className="text-sm font-semibold">{visitor.requests} requests</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </Card>
+        </div>
       </div>
     </PageContainer>
   )
