@@ -726,7 +726,7 @@ export const Appointments: React.FC = () => {
                 ref={searchInputRef}
                 type="text"
                 className={styles.searchInput}
-                placeholder="Buscar citas por nombre, fecha o estado..."
+                placeholder="Buscar citas..."
                 value={searchQuery}
                 onChange={(e) => {
                   setSearchQuery(e.target.value);
@@ -798,66 +798,6 @@ export const Appointments: React.FC = () => {
               </>
             )}
           </div>
-
-          <div className={styles.calendarSelector}>
-          <div className={styles.calendarSelectorRow}>
-            <button
-              className={styles.calendarDropdownButton}
-              onClick={() => setIsCalendarDropdownOpen(!isCalendarDropdownOpen)}
-              disabled={loading || calendars.length === 0}
-            >
-              <span className={styles.dropdownButtonText}>
-                {selectedCalendar?.name || 'Selecciona un calendario'}
-              </span>
-              <ChevronDown
-                size={18}
-                className={`${styles.dropdownIcon} ${isCalendarDropdownOpen ? styles.dropdownIconOpen : ''}`}
-              />
-            </button>
-
-            {selectedCalendar && (
-              <button
-                className={styles.setDefaultLink}
-                onClick={handleSetDefaultCalendar}
-                disabled={defaultCalendarId === selectedCalendar.id}
-              >
-                {defaultCalendarId === selectedCalendar.id ? 'Predeterminado' : 'Establecer predeterminado'}
-              </button>
-            )}
-          </div>
-
-          {isCalendarDropdownOpen && (
-            <>
-              <div
-                className={styles.dropdownOverlay}
-                onClick={() => setIsCalendarDropdownOpen(false)}
-              />
-              <div className={styles.dropdownMenu}>
-                {calendars.length === 0 ? (
-                  <div className={styles.dropdownEmpty}>
-                    No hay calendarios disponibles
-                  </div>
-                ) : (
-                  calendars.map((calendar) => (
-                    <button
-                      key={calendar.id}
-                      className={`${styles.dropdownItem} ${selectedCalendar?.id === calendar.id ? styles.dropdownItemActive : ''}`}
-                      onClick={() => {
-                        selectCalendar(calendar);
-                        setIsCalendarDropdownOpen(false);
-                      }}
-                    >
-                      <span className={styles.dropdownItemText}>{calendar.name}</span>
-                      {selectedCalendar?.id === calendar.id && (
-                        <Check size={16} className={styles.dropdownCheckIcon} />
-                      )}
-                    </button>
-                  ))
-                )}
-              </div>
-            </>
-          )}
-        </div>
         </div>
       </div>
 

@@ -16,16 +16,16 @@
 .headerControls {
   display: flex;
   gap: 1rem;
-  flex-wrap: wrap;
   align-items: flex-start;
+  justify-content: space-between;
 }
 
 /* Buscador de citas */
 .searchContainer {
   position: relative;
-  flex: 1;
-  min-width: 280px;
-  max-width: 500px;
+  flex: 0 1 auto;
+  min-width: 240px;
+  max-width: 320px;
 }
 
 .searchInputWrapper {
@@ -176,8 +176,9 @@
 
 .calendarSelector {
   position: relative;
-  flex: 1;
+  flex: 1 1 auto;
   min-width: 280px;
+  max-width: 500px;
 }
 
 .calendarSelectorRow {
