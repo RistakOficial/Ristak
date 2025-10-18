@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { Modal } from '../Modal';
 import { Button } from '../Button';
 import { CalendarEvent } from '@/services/calendarsService';
@@ -200,6 +201,8 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   // Users (assigned users)
   const [users, setUsers] = useState<User[]>([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [isClient, setIsClient] = useState(false);
 
   const loadUsers = async () => {
     setLoadingUsers(true);
@@ -251,6 +254,10 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   };
 
   // Cargar usuarios al abrir el modal en modo crear
+  useEffect(() => {
+    setIsClient(true);
+  }, []);
+
   useEffect(() => {
     if (isOpen && isCreateMode) {
       loadUsers();
@@ -419,15 +426,17 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
     }
   };
 
-  const handleDelete = async () => {
-    if (!event || !onDelete) return;
+  const handleDeleteClick = () => {
+    setShowDeleteConfirm(true);
+  };
 
-    const confirmed = window.confirm('¿Estás seguro de que quieres eliminar esta cita?');
-    if (!confirmed) return;
+  const handleConfirmDelete = async () => {
+    if (!event || !onDelete) return;
 
     try {
       setIsSaving(true);
       await onDelete(event.id);
+      setShowDeleteConfirm(false);
       onClose();
     } catch (error) {
       // Error manejado en el componente padre
@@ -463,6 +472,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
     .find((part) => part.type === 'timeZoneName')?.value ?? selectedTimeZone;
 
   return (
+    <>
     <Modal isOpen={isOpen} onClose={onClose} title="" size="lg">
       <div className={styles.container}>
         <div className={styles.summary}>
@@ -492,7 +502,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
             {!isCreateMode && onDelete && (
               <button
                 className={styles.deleteButton}
-                onClick={handleDelete}
+                onClick={handleDeleteClick}
                 disabled={isSaving}
                 aria-label="Eliminar cita"
               >
@@ -721,5 +731,46 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
         </div>
       </div>
     </Modal>
+
+    {/* Modal de confirmación de eliminación */}
+    {isClient && showDeleteConfirm && createPortal(
+      <div className={styles.deleteModalOverlay} onClick={() => setShowDeleteConfirm(false)}>
+        <div className={styles.deleteModal} onClick={(e) => e.stopPropagation()}>
+          <div className={styles.deleteModalHeader}>
+            <h2>¿Estás seguro?</h2>
+            <button
+              className={styles.closeButton}
+              onClick={() => setShowDeleteConfirm(false)}
+              disabled={isSaving}
+            >
+              <X size={20} />
+            </button>
+          </div>
+          <p>
+            ¿Deseas eliminar la cita <strong>{formData.title || event?.title || 'Sin título'}</strong>?
+            Esta acción no se puede deshacer.
+          </p>
+          <div className={styles.deleteModalActions}>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => setShowDeleteConfirm(false)}
+              disabled={isSaving}
+            >
+              Cancelar
+            </Button>
+            <Button
+              variant="primary"
+              onClick={handleConfirmDelete}
+              disabled={isSaving}
+            >
+              {isSaving ? 'Eliminando...' : 'Eliminar'}
+            </Button>
+          </div>
+        </div>
+      </div>,
+      document.body
+    )}
+    </>
   );
 };

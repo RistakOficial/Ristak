@@ -12,6 +12,7 @@
 6. **SIEMPRE limpiar imports no usados** y dependencias fantasma
 7. **NUNCA commitear console.logs** de debug en producción
 8. **🔴 BASE DE DATOS: PRODUCCIÓN = PostgreSQL (Render) - DESARROLLO = SQLite (local nos vale madres)**
+9. **❌ NUNCA usar alertas nativas del browser** (`alert()`, `confirm()`, `prompt()`) - SIEMPRE usar modales personalizados con Modal component y `createPortal` de React
 
 ### �� FILOSOFÍA DE CÓDIGO
 - **Limpio > Rápido**: Preferir código mantenible sobre optimizaciones prematuras
@@ -471,26 +472,31 @@ cd frontend && npm run build
   - El sistema de temas está en ThemeContext.tsx que aplica clases `body.dark` y `body.light` (líneas 98-99)
   - Solución: `:global(body.dark) .localClass` permite que CSS Modules encuentre la clase global body.dark
   - Ahora todos los chips y badges son completamente legibles en dark mode
+- ✓ **Modal de confirmación para eliminar citas (2025-10-18)**:
+  - Bug: Usaba `window.confirm()` en vez de modal personalizado (violaba reglas del proyecto)
+  - Fix: Implementado modal de confirmación usando `createPortal` de React (patrón de Contacts.tsx)
+  - Estado `showDeleteConfirm` para controlar visibilidad del modal
+  - Modal con overlay, título, mensaje descriptivo y botones Cancelar/Eliminar
+  - Estilos: deleteModalOverlay, deleteModal, deleteModalHeader, deleteModalActions en AppointmentModal.module.css
+  - Botón eliminar ahora muestra "Eliminando..." durante la operación
+  - Archivo modificado: AppointmentModal.tsx, AppointmentModal.module.css
+  - Nueva regla añadida a MANDAMIENTOS INQUEBRANTABLES: Nunca usar alert(), confirm() o prompt()
 
 ---
 
 ## 📅 ÚLTIMA ACTUALIZACIÓN
 
 **Fecha**: 2025-10-18
-**Versión**: 1.9.0
+**Versión**: 1.9.1
 **Último cambio estructural**:
-- **Feature: Creación de citas con contacto y usuario asignado**
-  - Agregada búsqueda de contactos en AppointmentModal (igual que RecordPaymentModal)
-  - Agregado selector de usuario asignado al crear citas
-  - Nuevo endpoint GET /api/highlevel/users para obtener usuarios del location
-  - Nuevo endpoint GET /api/highlevel/contacts/:id para obtener contacto individual
-  - Backend: highlevelController.js (getLocationUsers, getContactById)
-  - Backend: ghlClient.js (método getLocationUsers en clase GHLClient)
-  - Backend: calendars.routes.js actualizado para aceptar contactId y assignedUserId
-  - Frontend: AppointmentModal.tsx con campos de búsqueda y selección
-  - Frontend: AppointmentModal.module.css con estilos de búsqueda y dropdown
-  - Ambos campos son opcionales (API de HighLevel permite crear citas sin contacto)
-  - Archivos modificados: AppointmentModal.tsx, AppointmentModal.module.css, highlevelController.js, highlevel.routes.js, ghlClient.js
+- **Fix: Timezone offset y modal de confirmación para eliminar citas**
+  - Corregido cálculo de timezone offset (UTC - TZ en vez de TZ - UTC) para formato ISO 8601 correcto
+  - Formato ahora genera correctamente: `2025-10-18T14:00:00-06:00` (comprobado con API de HighLevel)
+  - Eliminado `window.confirm()` y reemplazado con modal personalizado usando `createPortal`
+  - Nuevo package.json en raíz para builds automáticos en Render
+  - Nueva regla crítica: Nunca usar `alert()`, `confirm()` o `prompt()` del browser
+  - Patrón establecido: Usar Modal component + createPortal para todas las confirmaciones
+  - Archivos modificados: AppointmentModal.tsx, AppointmentModal.module.css, CLAUDE.md, package.json (raíz)
 
 ---
 
