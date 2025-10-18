@@ -514,151 +514,164 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
           </div>
         </div>
 
-        <div className={styles.form}>
-          {/* Búsqueda de contacto (solo en modo crear) */}
-          {isCreateMode && (
-            <div className={styles.field}>
-              <label className={styles.label}>Cliente (opcional)</label>
+        <div className={styles.twoColumnLayout}>
+          {/* COLUMNA IZQUIERDA: Selección de contacto y asignación */}
+          <div className={styles.leftColumn}>
+            <h4 className={styles.columnTitle}>
+              <UserPlus size={18} />
+              Asignación
+            </h4>
 
-              {selectedContact ? (
-                <div className={styles.selectedContact}>
-                  <div className={styles.contactInfo}>
-                    <p className={styles.contactName}>{selectedContact.name || 'Sin nombre'}</p>
-                    <p className={styles.contactDetail}>{selectedContact.email || selectedContact.phone}</p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={handleClearContact}
-                    className={styles.clearButton}
-                    title="Cambiar contacto"
-                  >
-                    <X size={16} />
-                  </button>
-                </div>
-              ) : (
-                <div className={styles.searchWrapper}>
-                  <div className={styles.searchInput}>
-                    <Search size={16} className={styles.searchIcon} />
-                    <input
-                      type="text"
-                      placeholder="Buscar por nombre, email o teléfono..."
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      className={styles.input}
-                    />
-                    {searchingContact && <Loader2 size={16} className={styles.loadingIcon} />}
-                  </div>
+            {/* Búsqueda de contacto (solo en modo crear) */}
+            {isCreateMode && (
+              <div className={styles.sectionBlock}>
+                <label className={styles.label}>Cliente (opcional)</label>
 
-                  {showContactDropdown && (
-                    <div className={styles.dropdown}>
-                      {contacts.length > 0 ? (
-                        contacts.map((contact) => (
-                          <button
-                            key={contact.id}
-                            type="button"
-                            className={styles.dropdownItem}
-                            onClick={() => handleSelectContact(contact)}
-                          >
-                            <p className={styles.dropdownName}>{contact.name || 'Sin nombre'}</p>
-                            <p className={styles.dropdownDetail}>
-                              {contact.email || contact.phone || 'Sin información de contacto'}
-                            </p>
-                          </button>
-                        ))
-                      ) : (
-                        <div className={styles.dropdownEmpty}>
-                          No se encontraron contactos
-                        </div>
-                      )}
+                {selectedContact ? (
+                  <div className={styles.selectedContact}>
+                    <div className={styles.contactInfo}>
+                      <p className={styles.contactName}>{selectedContact.name || 'Sin nombre'}</p>
+                      <p className={styles.contactDetail}>{selectedContact.email || selectedContact.phone}</p>
                     </div>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
+                    <button
+                      type="button"
+                      onClick={handleClearContact}
+                      className={styles.clearButton}
+                      title="Cambiar contacto"
+                    >
+                      <X size={16} />
+                    </button>
+                  </div>
+                ) : (
+                  <div className={styles.searchWrapper}>
+                    <div className={styles.searchInput}>
+                      <Search size={16} className={styles.searchIcon} />
+                      <input
+                        type="text"
+                        placeholder="Buscar por nombre, email o teléfono..."
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        className={styles.input}
+                      />
+                      {searchingContact && <Loader2 size={16} className={styles.loadingIcon} />}
+                    </div>
 
-          {/* Usuario asignado (solo en modo crear) */}
-          {isCreateMode && users.length > 0 && (
+                    {showContactDropdown && (
+                      <div className={styles.dropdown}>
+                        {contacts.length > 0 ? (
+                          contacts.map((contact) => (
+                            <button
+                              key={contact.id}
+                              type="button"
+                              className={styles.dropdownItem}
+                              onClick={() => handleSelectContact(contact)}
+                            >
+                              <p className={styles.dropdownName}>{contact.name || 'Sin nombre'}</p>
+                              <p className={styles.dropdownDetail}>
+                                {contact.email || contact.phone || 'Sin información de contacto'}
+                              </p>
+                            </button>
+                          ))
+                        ) : (
+                          <div className={styles.dropdownEmpty}>
+                            No se encontraron contactos
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Usuario asignado (solo en modo crear) */}
+            {isCreateMode && users.length > 0 && (
+              <div className={styles.sectionBlock}>
+                <label className={styles.label} htmlFor="assignedUser">
+                  Usuario asignado (opcional)
+                </label>
+                <select
+                  id="assignedUser"
+                  className={styles.select}
+                  value={formData.assignedUserId}
+                  onChange={(e) => setFormData({ ...formData, assignedUserId: e.target.value })}
+                  disabled={loadingUsers}
+                >
+                  <option value="">Sin asignar</option>
+                  {users.map((user) => (
+                    <option key={user.id} value={user.id}>
+                      {user.name || user.email || `${user.firstName} ${user.lastName}`.trim()}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </div>
+
+          {/* COLUMNA DERECHA: Configuración de la cita */}
+          <div className={styles.rightColumn}>
+            <h4 className={styles.columnTitle}>Configuración de la cita</h4>
+
             <div className={styles.field}>
-              <label className={styles.label} htmlFor="assignedUser">
-                Usuario asignado (opcional)
+              <label className={styles.label} htmlFor="title">
+                Título
+              </label>
+              <input
+                id="title"
+                type="text"
+                className={styles.input}
+                value={formData.title}
+                placeholder="Ej. Consulta inicial con cliente"
+                onChange={(e) => setFormData({ ...formData, title: e.target.value })}
+              />
+            </div>
+
+            <div className={styles.field}>
+              <label className={styles.label} htmlFor="status">
+                Estado
               </label>
               <select
-                id="assignedUser"
+                id="status"
                 className={styles.select}
-                value={formData.assignedUserId}
-                onChange={(e) => setFormData({ ...formData, assignedUserId: e.target.value })}
-                disabled={loadingUsers}
+                value={formData.appointmentStatus}
+                onChange={(e) =>
+                  setFormData({ ...formData, appointmentStatus: e.target.value as CalendarEvent['appointmentStatus'] })
+                }
               >
-                <option value="">Sin asignar</option>
-                {users.map((user) => (
-                  <option key={user.id} value={user.id}>
-                    {user.name || user.email || `${user.firstName} ${user.lastName}`.trim()}
+                {STATUS_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
                   </option>
                 ))}
               </select>
             </div>
-          )}
 
-          <div className={styles.field}>
-            <label className={styles.label} htmlFor="title">
-              Título de la cita
-            </label>
-            <input
-              id="title"
-              type="text"
-              className={styles.input}
-              value={formData.title}
-              placeholder="Ej. Consulta inicial con cliente"
-              onChange={(e) => setFormData({ ...formData, title: e.target.value })}
-            />
-          </div>
+            <div className={styles.fieldRow}>
+              <div className={styles.field}>
+                <label className={styles.label} htmlFor="startTime">
+                  Inicio
+                </label>
+                <input
+                  id="startTime"
+                  type="datetime-local"
+                  className={styles.input}
+                  value={formData.startTime}
+                  onChange={(e) => setFormData({ ...formData, startTime: e.target.value })}
+                />
+              </div>
 
-          <div className={styles.field}>
-            <label className={styles.label} htmlFor="status">
-              Estado de seguimiento
-            </label>
-            <select
-              id="status"
-              className={styles.select}
-              value={formData.appointmentStatus}
-              onChange={(e) =>
-                setFormData({ ...formData, appointmentStatus: e.target.value as CalendarEvent['appointmentStatus'] })
-              }
-            >
-              {STATUS_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className={styles.fieldRow}>
-            <div className={styles.field}>
-              <label className={styles.label} htmlFor="startTime">
-                Inicio
-              </label>
-              <input
-                id="startTime"
-                type="datetime-local"
-                className={styles.input}
-                value={formData.startTime}
-                onChange={(e) => setFormData({ ...formData, startTime: e.target.value })}
-              />
-            </div>
-
-            <div className={styles.field}>
-              <label className={styles.label} htmlFor="endTime">
-                Fin
-              </label>
-              <input
-                id="endTime"
-                type="datetime-local"
-                className={styles.input}
-                value={formData.endTime}
-                onChange={(e) => setFormData({ ...formData, endTime: e.target.value })}
-              />
+              <div className={styles.field}>
+                <label className={styles.label} htmlFor="endTime">
+                  Fin
+                </label>
+                <input
+                  id="endTime"
+                  type="datetime-local"
+                  className={styles.input}
+                  value={formData.endTime}
+                  onChange={(e) => setFormData({ ...formData, endTime: e.target.value })}
+                />
+              </div>
             </div>
 
             <div className={styles.field}>
@@ -695,34 +708,34 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                 ))}
               </select>
             </div>
-          </div>
 
-          <div className={styles.field}>
-            <label className={styles.label} htmlFor="address">
-              Ubicación
-            </label>
-            <input
-              id="address"
-              type="text"
-              className={styles.input}
-              value={formData.address}
-              onChange={(e) => setFormData({ ...formData, address: e.target.value })}
-              placeholder="Dirección física o enlace de videollamada"
-            />
-          </div>
+            <div className={styles.field}>
+              <label className={styles.label} htmlFor="address">
+                Ubicación
+              </label>
+              <input
+                id="address"
+                type="text"
+                className={styles.input}
+                value={formData.address}
+                onChange={(e) => setFormData({ ...formData, address: e.target.value })}
+                placeholder="Dirección física o enlace de videollamada"
+              />
+            </div>
 
-          <div className={styles.field}>
-            <label className={styles.label} htmlFor="notes">
-              Notas para el equipo
-            </label>
-            <textarea
-              id="notes"
-              className={styles.textarea}
-              value={formData.notes}
-              onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
-              placeholder="Añade instrucciones, acuerdos o detalles importantes..."
-              rows={3}
-            />
+            <div className={styles.field}>
+              <label className={styles.label} htmlFor="notes">
+                Notas
+              </label>
+              <textarea
+                id="notes"
+                className={styles.textarea}
+                value={formData.notes}
+                onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+                placeholder="Añade instrucciones, acuerdos o detalles importantes..."
+                rows={3}
+              />
+            </div>
           </div>
         </div>
 

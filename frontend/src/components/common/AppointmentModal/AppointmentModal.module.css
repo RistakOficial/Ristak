@@ -3,7 +3,7 @@
   flex-direction: column;
   gap: 1.75rem;
   width: 100%;
-  max-width: 640px;
+  max-width: 900px; /* Aumentado de 640px para acomodar 2 columnas */
   margin: 0 auto;
 }
 
@@ -100,10 +100,66 @@
   cursor: not-allowed;
 }
 
-.form {
+/* Layout de 2 columnas */
+.twoColumnLayout {
+  display: grid;
+  grid-template-columns: 300px 1fr;
+  gap: 2rem;
+  width: 100%;
+}
+
+.leftColumn {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  padding: 1.5rem;
+  background: var(--color-background-secondary);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border);
+}
+
+.rightColumn {
   display: flex;
   flex-direction: column;
   gap: 1.25rem;
+}
+
+.columnTitle {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0 0 0.75rem 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.columnTitle svg {
+  color: var(--color-primary);
+}
+
+.sectionBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+/* Responsive: En pantallas pequeñas, las columnas se apilan */
+@media (max-width: 900px) {
+  .twoColumnLayout {
+    grid-template-columns: 1fr;
+    gap: 1.5rem;
+  }
+
+  .leftColumn {
+    order: 2;
+  }
+
+  .rightColumn {
+    order: 1;
+  }
 }
 
 .field {
