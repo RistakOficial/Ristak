@@ -229,6 +229,9 @@ export async function createAppointment(appointmentData, locationId, accessToken
       payload.description = appointmentData.notes; // HighLevel usa 'description' no 'notes'
     }
 
+    // DEBUG TEMPORAL - Ver qué se está enviando
+    logger.info(`[HighLevel Calendar] 🔍 PAYLOAD COMPLETO:\n${JSON.stringify(payload, null, 2)}`);
+
     const response = await fetch(
       `${GHL_API_BASE}/calendars/events/appointments`,
       {
