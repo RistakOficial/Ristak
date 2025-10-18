@@ -271,25 +271,26 @@ export const WebTracking: React.FC = () => {
 
               {/* Switch para mostrar/ocultar Analytics */}
               <div className={styles.formGroup} style={{ marginTop: '32px', paddingTop: '24px', borderTop: '1px solid var(--color-border)' }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <div>
-                    <label className={styles.formLabel} style={{ marginBottom: '4px' }}>
-                      Mostrar página de Analíticas
-                    </label>
-                    <p className={styles.formHint} style={{ marginTop: '4px' }}>
-                      Controla si la página de Analíticas aparece en el menú lateral
-                    </p>
-                  </div>
-                  <label className={styles.switchContainer} style={{ marginLeft: '16px' }}>
-                    <input
-                      type="checkbox"
-                      checked={showAnalytics}
-                      onChange={handleToggleAnalytics}
-                      disabled={savingAnalyticsPref}
-                      className={styles.switchInput}
-                    />
-                    <span className={styles.switchSlider}></span>
-                  </label>
+                <label className={styles.formLabel} style={{ marginBottom: '8px' }}>
+                  Página de Analíticas
+                </label>
+                <p className={styles.formHint} style={{ marginBottom: '16px' }}>
+                  Controla si la página de Analíticas aparece en el menú lateral
+                </p>
+                <div className={styles.toggleContainer}>
+                  <span className={`${styles.toggleLabel} ${!showAnalytics ? styles.toggleLabelActive : ''}`}>
+                    Oculta
+                  </span>
+                  <button
+                    onClick={handleToggleAnalytics}
+                    className={`${styles.toggle} ${showAnalytics ? styles.toggleActive : ''}`}
+                    disabled={savingAnalyticsPref}
+                  >
+                    <span className={styles.toggleThumb} />
+                  </button>
+                  <span className={`${styles.toggleLabel} ${showAnalytics ? styles.toggleLabelActive : ''}`}>
+                    Visible
+                  </span>
                 </div>
               </div>
             </>
