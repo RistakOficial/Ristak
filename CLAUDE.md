@@ -531,20 +531,16 @@ cd frontend && npm run build
 ## 📅 ÚLTIMA ACTUALIZACIÓN
 
 **Fecha**: 2025-10-18
-**Versión**: 1.12.0
+**Versión**: 1.13.0
 **Último cambio estructural**:
-- **Feature: DateTimePicker personalizado para citas**
-  - Creado componente DateTimePicker para reemplazar input datetime-local nativo
-  - Calendario con vista mensual, navegación, resaltado de hoy y seleccionado
-  - Selector de hora con scroll (hora 1-12, minutos 00-55 cada 5min, AM/PM)
-  - Botones "Ahora" (establece fecha/hora actual) y "Listo" (cierra picker)
-  - Soporte para minDate (fecha fin no puede ser antes de fecha inicio)
-  - Botón clear (X) para borrar valor
-  - Diseño consistente con la app (dark mode incluido)
-  - Animación slideDown al abrir dropdown
-  - Reemplazado en AppointmentModal (fechas de inicio y fin)
-  - Archivos nuevos: DateTimePicker/ (tsx, css, index)
-  - Exportado desde components/common/index.ts
+- **UX: Modales de confirmación minimalistas y elegantes**
+  - Eliminadas barras de colores superiores en modales (`.modal::before`)
+  - Eliminados fondos de colores en iconos (círculos amarillos/rojos/azules)
+  - Iconos simplificados: 24x24px, color gris neutro, sin animaciones exageradas
+  - Diseño unificado para confirm, alert e info (todos usan el mismo estilo neutral)
+  - Resultado: modales limpios, minimalistas y profesionales
+  - Afecta a: eliminar pago, eliminar contacto, eliminar cita, showConfirm(), showAlert(), showInfo()
+  - Archivo modificado: Modal.module.css (líneas 41-157)
 
 ---
 
