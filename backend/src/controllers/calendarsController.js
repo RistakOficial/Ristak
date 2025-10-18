@@ -120,9 +120,13 @@ export async function getAppointment(req, res) {
     // porque ghlClient ya tiene el token configurado
     const response = await ghlClient.request(`/calendars/events/appointments/${eventId}`);
 
+    // HighLevel devuelve {appointment: {...}, traceId: ...}
+    // Extraer solo el appointment
+    const appointment = response.appointment || response;
+
     res.json({
       success: true,
-      data: response
+      data: appointment
     });
   } catch (error) {
     logger.error(`[Calendars Controller] Error en getAppointment: ${error.message}`);
