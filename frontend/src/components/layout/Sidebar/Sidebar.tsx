@@ -45,10 +45,14 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, locationName, loca
         const status = await checkTrackingStatus()
         // Mostrar Analytics solo si el usuario activó el switch
         if (status.showAnalytics) {
-          setNavigation([
-            ...baseNavigation,
-            { name: 'Analíticas', href: '/analytics', icon: BarChart3 }
-          ])
+          // Insertar Analytics después de Reportes (posición 2)
+          const navWithAnalytics = [
+            baseNavigation[0], // Dashboard
+            baseNavigation[1], // Reportes
+            { name: 'Analíticas', href: '/analytics', icon: BarChart3 }, // Analytics aquí
+            ...baseNavigation.slice(2) // Resto: Publicidad, Citas, Pagos, Contactos
+          ]
+          setNavigation(navWithAnalytics)
         } else {
           setNavigation(baseNavigation)
         }
@@ -64,10 +68,14 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, locationName, loca
     const handleAnalyticsChange = (event: CustomEvent) => {
       const { showAnalytics } = event.detail
       if (showAnalytics) {
-        setNavigation([
-          ...baseNavigation,
-          { name: 'Analíticas', href: '/analytics', icon: BarChart3 }
-        ])
+        // Insertar Analytics después de Reportes (posición 2)
+        const navWithAnalytics = [
+          baseNavigation[0], // Dashboard
+          baseNavigation[1], // Reportes
+          { name: 'Analíticas', href: '/analytics', icon: BarChart3 }, // Analytics aquí
+          ...baseNavigation.slice(2) // Resto: Publicidad, Citas, Pagos, Contactos
+        ]
+        setNavigation(navWithAnalytics)
       } else {
         setNavigation(baseNavigation)
       }
