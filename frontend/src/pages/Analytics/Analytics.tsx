@@ -234,6 +234,27 @@ const Analytics: React.FC = () => {
 
           setDailyTraffic(chartData)
 
+          // Gráfico de conversiones (sesiones con contact_id agrupadas por día)
+          const conversionStats: { [key: string]: Set<string> } = {}
+          currentSessions.forEach((session: Session) => {
+            if (session.contact_id) {
+              const date = session.started_at.split('T')[0]
+              if (!conversionStats[date]) {
+                conversionStats[date] = new Set()
+              }
+              conversionStats[date].add(session.contact_id)
+            }
+          })
+
+          const conversionChartData = Object.entries(conversionStats)
+            .sort(([a], [b]) => a.localeCompare(b))
+            .map(([date, contactIds]) => ({
+              label: formatDate(new Date(date + 'T00:00:00'), { padDay: false }),
+              value: contactIds.size
+            }))
+
+          setDailyConversions(conversionChartData)
+
           // Guardar todas las sesiones y sesiones filtradas
           setAllSessions(currentSessions)
           setSessions(currentSessions)
@@ -657,6 +678,38 @@ const Analytics: React.FC = () => {
             ) : (
               <div className="flex h-full items-center justify-center rounded-xl border border-[rgba(148,163,184,0.18)] bg-[color-mix(in_srgb,var(--color-background-glass) 82%, transparent)] text-sm text-[var(--color-text-tertiary)]">
                 Sin datos de tráfico disponibles
+              </div>
+            )}
+          </div>
+        </Card>
+
+        {/* Gráfica de Registros */}
+        <Card className="p-6">
+          <div className="mb-4">
+            <h3 className="text-lg font-semibold">Registros</h3>
+            <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+              Contactos identificados por día
+            </p>
+          </div>
+
+          <div className="h-[300px]">
+            {loading ? (
+              <div className="flex h-full items-center justify-center text-sm text-gray-500">
+                Cargando datos...
+              </div>
+            ) : dailyConversions.length > 0 ? (
+              <LineChart
+                data={dailyConversions}
+                height={300}
+                showGrid
+                color="#10b981"
+                showLegend={false}
+                formatValue={formatTrafficAxis}
+                formatTooltipValue={formatTrafficTooltip}
+              />
+            ) : (
+              <div className="flex h-full items-center justify-center rounded-xl border border-[rgba(148,163,184,0.18)] bg-[color-mix(in_srgb,var(--color-background-glass) 82%, transparent)] text-sm text-[var(--color-text-tertiary)]">
+                Sin datos de conversiones disponibles
               </div>
             )}
           </div>
