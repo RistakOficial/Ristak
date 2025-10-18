@@ -946,6 +946,8 @@ async function setupHighLevelWebhooks(locationId, apiToken, baseUrl) {
  * Obtiene custom values de Meta desde HighLevel y los guarda en meta_config
  */
 async function fetchAndSaveMetaConfig(locationId, apiToken) {
+  const { saveMetaConfig } = await import('./metaAdsService.js')
+
   try {
     logger.info('Buscando configuración de Meta en custom values de HighLevel...')
 
@@ -983,20 +985,9 @@ async function fetchAndSaveMetaConfig(locationId, apiToken) {
 
     // Si tiene al menos ad_account_id y access_token, guardar config
     if (fbAdAccountId && fbAccessToken) {
-      const usePostgres = process.env.DATABASE_URL ? true : false
-      const query = usePostgres
-        ? `INSERT INTO meta_config (ad_account_id, access_token, app_id, app_secret, updated_at)
-           VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)
-           ON CONFLICT (ad_account_id) DO UPDATE SET
-           access_token = EXCLUDED.access_token,
-           app_id = EXCLUDED.app_id,
-           app_secret = EXCLUDED.app_secret,
-           updated_at = CURRENT_TIMESTAMP`
-        : `INSERT OR REPLACE INTO meta_config (ad_account_id, access_token, app_id, app_secret, updated_at)
-           VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)`
-
-      await db.run(query, [fbAdAccountId, fbAccessToken, fbAppId, fbAppSecret])
-      logger.info('✅ Configuración de Meta obtenida desde HighLevel y guardada')
+      // Usar saveMetaConfig que encripta automáticamente
+      await saveMetaConfig(fbAdAccountId, fbAccessToken, fbAppId, fbAppSecret)
+      logger.info('✅ Configuración de Meta obtenida desde HighLevel y guardada (encriptada)')
     } else {
       logger.info('No se encontró configuración completa de Meta en custom values')
     }
