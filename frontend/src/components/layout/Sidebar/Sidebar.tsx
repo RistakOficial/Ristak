@@ -38,13 +38,13 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, locationName, loca
     setMounted(true)
   }, [])
 
-  // Verificar si el tracking está configurado para mostrar Analytics
+  // Verificar si tiene HighLevel conectado para mostrar Analytics
   useEffect(() => {
     const checkTracking = async () => {
       try {
         const status = await checkTrackingStatus()
-        if (status.isConfigured) {
-          // Agregar Analytics al menú si está configurado
+        // Mostrar Analytics si tiene HighLevel conectado (aunque no tenga el pixel configurado)
+        if (status.hasHighLevel) {
           setNavigation([
             ...baseNavigation,
             { name: 'Analíticas', href: '/analytics', icon: BarChart3 }
