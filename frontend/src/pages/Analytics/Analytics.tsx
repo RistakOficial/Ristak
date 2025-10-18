@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip } from 'recharts'
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip, TooltipProps } from 'recharts'
 import { useDateRange } from '../../contexts/DateRangeContext'
 import {
   PageContainer,
@@ -10,6 +10,28 @@ import {
 import { Eye, Users, UserCheck, Target, Activity, Clock, RefreshCw, FileText } from 'lucide-react'
 import { getSessionsByDateRange } from '../../services/analyticsService'
 import { formatDate } from '../../utils/format'
+
+// Custom Tooltip Component para Recharts
+const CustomTooltip: React.FC<TooltipProps<number, string>> = ({ active, payload, label }) => {
+  if (active && payload && payload.length) {
+    return (
+      <div className="bg-white dark:bg-gray-800 rounded-lg p-3 shadow-xl border border-gray-200 dark:border-gray-700">
+        <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">{label}</p>
+        {payload.map((item: any, index: number) => (
+          <div key={index} className="flex items-center gap-2 text-sm">
+            <div
+              className="w-2 h-2 rounded-full"
+              style={{ backgroundColor: item.color }}
+            />
+            <span className="font-medium">{item.name}:</span>
+            <span className="text-gray-700 dark:text-gray-300">{item.value}</span>
+          </div>
+        ))}
+      </div>
+    )
+  }
+  return null
+}
 
 interface Session {
   session_id: string
@@ -408,28 +430,7 @@ const Analytics: React.FC = () => {
                     domain={[0, (dataMax: number) => Math.ceil(dataMax * 1.4)]}
                   />
 
-                  <Tooltip
-                    content={({ active, payload, label }: any) => {
-                      if (active && payload && payload.length) {
-                        return (
-                          <div className="bg-white dark:bg-gray-800 rounded-lg p-3 shadow-xl border border-gray-200 dark:border-gray-700">
-                            <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">{label}</p>
-                            {payload.map((item: any, index: number) => (
-                              <div key={index} className="flex items-center gap-2 text-sm">
-                                <div
-                                  className="w-2 h-2 rounded-full"
-                                  style={{ backgroundColor: item.color }}
-                                />
-                                <span className="font-medium">{item.name}:</span>
-                                <span className="text-gray-700 dark:text-gray-300">{item.value}</span>
-                              </div>
-                            ))}
-                          </div>
-                        )
-                      }
-                      return null
-                    }}
-                  />
+                  <Tooltip content={<CustomTooltip />} />
 
                   <Area
                     type="monotone"
