@@ -393,6 +393,29 @@ export async function servePixel(req, res) {
     });
   }
 
+  // Inyectar visitor_id en URL si no está presente
+  function injectVisitorIdToURL() {
+    try {
+      var currentURL = new URL(window.location.href);
+      var params = currentURL.searchParams;
+
+      // Solo agregar si no existe ya
+      if (!params.has('rstk_vid')) {
+        var visitorId = getVisitorId();
+        params.set('rstk_vid', visitorId);
+
+        // Actualizar URL sin recargar la página
+        var newURL = currentURL.pathname + '?' + params.toString() + currentURL.hash;
+        window.history.replaceState({}, '', newURL);
+      }
+    } catch (e) {
+      // Ignore errors (navegadores viejos sin URL API)
+    }
+  }
+
+  // Inyectar visitor_id en URL al cargar
+  injectVisitorIdToURL();
+
   // Enviar page_view al cargar
   if (document.readyState === 'complete' || document.readyState === 'interactive') {
     setTimeout(function() {
@@ -702,7 +725,7 @@ export async function configureTracking(req, res) {
     }
 
     // Generar el snippet con versión para evitar cache
-    const SNIPPET_VERSION = '3' // Incrementar cuando cambies el código del snippet
+    const SNIPPET_VERSION = '4' // Incrementar cuando cambies el código del snippet
     const snippet = `<!-- Pixel de Tracking Ristak -->
 <script async src="https://${trackingDomain}/snip.js?v=${SNIPPET_VERSION}"></script>`
 
