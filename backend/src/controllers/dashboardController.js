@@ -737,7 +737,7 @@ export const getTrafficSources = async (req, res) => {
 
     const data = sources.map(source => ({
       name: source.name === 'directo' ? 'Directo' : source.name.charAt(0).toUpperCase() + source.name.slice(1),
-      value: source.value,
+      value: parseInt(source.value) || 0,
       color: colorMap[source.name.toLowerCase()] || '#6b7280'
     }))
 
@@ -830,10 +830,10 @@ export const getFunnelData = async (req, res) => {
     const customers = await db.get(customersQuery, params)
 
     const data = [
-      { stage: 'Visitantes', value: visitors.count || 0 },
-      { stage: 'Leads', value: leads.count || 0 },
-      { stage: 'Citas', value: appointments.count || 0 },
-      { stage: 'Clientes', value: customers.count || 0 }
+      { stage: 'Visitantes', value: parseInt(visitors.count) || 0 },
+      { stage: 'Leads', value: parseInt(leads.count) || 0 },
+      { stage: 'Citas', value: parseInt(appointments.count) || 0 },
+      { stage: 'Clientes', value: parseInt(customers.count) || 0 }
     ]
 
     res.json({ success: true, data })
