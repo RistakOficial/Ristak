@@ -7,10 +7,12 @@ import {
   Banknote,
   Users,
   Calendar,
-  Settings
+  Settings,
+  BarChart3
 } from 'lucide-react'
 import { cn } from '@/utils/cn'
 import { Logo } from '@/components/common'
+import { checkTrackingStatus } from '@/services/analyticsService'
 
 interface SidebarProps {
   onNavigate?: () => void
@@ -18,7 +20,7 @@ interface SidebarProps {
   locationLogo?: string | null
 }
 
-const navigation = [
+const baseNavigation = [
   { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
   { name: 'Reportes', href: '/reports', icon: FileBarChart },
   { name: 'Publicidad', href: '/campaigns', icon: Megaphone },
@@ -30,9 +32,31 @@ const navigation = [
 export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, locationName, locationLogo }) => {
   const location = useLocation()
   const [mounted, setMounted] = useState(false)
+  const [navigation, setNavigation] = useState(baseNavigation)
 
   useEffect(() => {
     setMounted(true)
+  }, [])
+
+  // Verificar si el tracking está configurado para mostrar Analytics
+  useEffect(() => {
+    const checkTracking = async () => {
+      try {
+        const status = await checkTrackingStatus()
+        if (status.isConfigured) {
+          // Agregar Analytics al menú si está configurado
+          setNavigation([
+            ...baseNavigation,
+            { name: 'Analíticas', href: '/analytics', icon: BarChart3 }
+          ])
+        }
+      } catch (error) {
+        // Si falla, solo mostrar el menú base
+        setNavigation(baseNavigation)
+      }
+    }
+
+    checkTracking()
   }, [])
 
   const handleNavigate = () => {

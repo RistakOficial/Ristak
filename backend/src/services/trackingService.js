@@ -230,3 +230,61 @@ export async function getRecentSessions(limit = 50) {
     throw error
   }
 }
+
+/**
+ * Obtiene sesiones filtradas por rango de fechas
+ * Para la página de Analytics
+ */
+export async function getSessionsByDateRange(startDate, endDate) {
+  try {
+    const sessions = await db.all(`
+      SELECT
+        session_id,
+        visitor_id,
+        contact_id,
+        full_name,
+        event_name,
+        started_at as created_at,
+        landing_url,
+        referrer_url,
+        utm_source,
+        utm_medium,
+        utm_campaign,
+        utm_content,
+        utm_term,
+        gclid,
+        fbclid,
+        fbc,
+        fbp,
+        wbraid,
+        gbraid,
+        msclkid,
+        ttclid,
+        placement,
+        source_platform,
+        device_type,
+        os,
+        browser,
+        browser_version,
+        language,
+        timezone,
+        geo_country,
+        geo_region,
+        geo_city,
+        pageviews_count,
+        events_count,
+        is_bounce,
+        ip,
+        user_agent
+      FROM sessions
+      WHERE DATE(started_at) >= DATE(?)
+        AND DATE(started_at) <= DATE(?)
+      ORDER BY started_at DESC
+    `, [startDate, endDate])
+
+    return sessions
+  } catch (error) {
+    logger.error('Error obteniendo sesiones por rango:', error)
+    throw error
+  }
+}

@@ -1,5 +1,5 @@
 import { logger } from '../utils/logger.js'
-import { createSession, getRecentSessions, linkVisitorToContact } from '../services/trackingService.js'
+import { createSession, getRecentSessions, linkVisitorToContact, getSessionsByDateRange } from '../services/trackingService.js'
 import { getHighLevelConfig } from '../config/database.js'
 import fetch from 'node-fetch'
 
@@ -460,11 +460,19 @@ export async function syncVisitorToHighLevel(req, res) {
 export async function getSessionsHandler(req, res) {
   try {
     const limit = parseInt(req.query.limit, 10) || 50
+    const { start, end } = req.query
 
     if (limit > 1000) {
       return res.status(400).json({ error: 'Limit too high (max 1000)' })
     }
 
+    // Si hay fechas, usar filtro de rango
+    if (start && end) {
+      const sessions = await getSessionsByDateRange(start, end)
+      return res.json(sessions)
+    }
+
+    // Sin fechas, usar límite simple
     const sessions = await getRecentSessions(limit)
     res.json({ sessions })
   } catch (error) {
