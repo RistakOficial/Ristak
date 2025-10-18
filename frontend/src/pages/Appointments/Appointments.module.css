@@ -484,7 +484,7 @@
   grid-template-columns: repeat(7, 1fr);
   flex-shrink: 0;
   border: 1px solid var(--color-border);
-  border-bottom: none;
+  border-bottom: 1px solid var(--color-border);
   background-color: var(--color-background-secondary);
 }
 
