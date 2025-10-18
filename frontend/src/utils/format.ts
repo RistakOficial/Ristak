@@ -2,7 +2,7 @@ const MONTHS_SHORT = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 's
 const MONTHS_LONG = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'] as const
 
 const capitalize = (value: string): string => {
-  if (!value) return value
+  if (!value) return ''
   return value.charAt(0).toUpperCase() + value.slice(1)
 }
 
