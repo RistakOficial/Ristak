@@ -306,10 +306,17 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
       if (!response.ok) throw new Error('Error al cargar contacto');
       const data = await response.json();
       const contact = data.contact;
+      console.log('[loadContactById] Contacto recibido:', contact);
       if (contact) {
+        // Construir nombre: prioridad name > firstName+lastName > email > phone
+        const fullName = contact.name ||
+                        (contact.firstName || contact.lastName
+                          ? `${contact.firstName || ''} ${contact.lastName || ''}`.trim()
+                          : contact.email || contact.phone || 'Sin nombre');
+
         setSelectedContact({
           id: contact.id,
-          name: contact.name || 'Sin nombre',
+          name: fullName,
           email: contact.email || '',
           phone: contact.phone || '',
           firstName: contact.firstName || '',
@@ -317,7 +324,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
         });
       }
     } catch (error) {
-      // Error silencioso
+      console.error('[loadContactById] Error:', error);
     }
   };
 
