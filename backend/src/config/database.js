@@ -575,16 +575,34 @@ async function initTables() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_sessions_geo ON sessions(geo_country, geo_region, geo_city)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_sessions_contact ON sessions(contact_id)')
 
-    // MIGRACIÓN: Agregar columna full_name en producción (PostgreSQL)
+    // MIGRACIONES PARA POSTGRESQL
     if (usePostgres) {
+      // Migración 1: Agregar columna full_name a sessions
       try {
         await db.run('ALTER TABLE sessions ADD COLUMN full_name TEXT')
-        logger.success('✅ Migración: Columna full_name agregada a sessions (PostgreSQL)')
+        logger.success('✅ Migración: Columna full_name agregada a sessions')
       } catch (err) {
         // Si falla es porque ya existe (código 42701 en PostgreSQL)
         if (err.code !== '42701' && !err.message.includes('already exists')) {
-          logger.warn('Advertencia al agregar full_name:', err.message)
+          logger.warn('Advertencia al agregar full_name a sessions:', err.message)
         }
+      }
+
+      // Migración 2: Agregar columna contact_id a appointments si no existe
+      try {
+        await db.run('ALTER TABLE appointments ADD COLUMN contact_id TEXT REFERENCES contacts(id) ON DELETE CASCADE')
+        logger.success('✅ Migración: Columna contact_id agregada a appointments')
+      } catch (err) {
+        if (err.code !== '42701' && !err.message.includes('already exists')) {
+          logger.warn('Advertencia al agregar contact_id a appointments:', err.message)
+        }
+      }
+
+      // Crear índice para contact_id en appointments
+      try {
+        await db.run('CREATE INDEX IF NOT EXISTS idx_appointments_contact ON appointments(contact_id)')
+      } catch (err) {
+        // Ignorar si ya existe
       }
     }
 

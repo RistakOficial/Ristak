@@ -182,36 +182,43 @@ export async function servePixel(req, res) {
     var ua = navigator.userAgent;
     var browser = 'Unknown';
     var version = '';
+    var match;
 
     // Edge
     if (ua.indexOf('Edg/') > -1) {
       browser = 'Edge';
-      version = ua.match(/Edg\/([\d.]+)/)?.[1] || '';
+      match = ua.match(/Edg\/([\d.]+)/);
+      version = match ? match[1] : '';
     }
     // Chrome
     else if (ua.indexOf('Chrome/') > -1 && ua.indexOf('Edg/') === -1) {
       browser = 'Chrome';
-      version = ua.match(/Chrome\/([\d.]+)/)?.[1] || '';
+      match = ua.match(/Chrome\/([\d.]+)/);
+      version = match ? match[1] : '';
     }
     // Safari
     else if (ua.indexOf('Safari/') > -1 && ua.indexOf('Chrome') === -1) {
       browser = 'Safari';
-      version = ua.match(/Version\/([\d.]+)/)?.[1] || '';
+      match = ua.match(/Version\/([\d.]+)/);
+      version = match ? match[1] : '';
     }
     // Firefox
     else if (ua.indexOf('Firefox/') > -1) {
       browser = 'Firefox';
-      version = ua.match(/Firefox\/([\d.]+)/)?.[1] || '';
+      match = ua.match(/Firefox\/([\d.]+)/);
+      version = match ? match[1] : '';
     }
     // Opera
     else if (ua.indexOf('OPR/') > -1 || ua.indexOf('Opera/') > -1) {
       browser = 'Opera';
-      version = ua.match(/(?:OPR|Opera)\/([\d.]+)/)?.[1] || '';
+      match = ua.match(/(?:OPR|Opera)\/([\d.]+)/);
+      version = match ? match[1] : '';
     }
     // IE
     else if (ua.indexOf('MSIE') > -1 || ua.indexOf('Trident/') > -1) {
       browser = 'IE';
-      version = ua.match(/(?:MSIE |rv:)([\d.]+)/)?.[1] || '';
+      match = ua.match(/(?:MSIE |rv:)([\d.]+)/);
+      version = match ? match[1] : '';
     }
 
     return { browser: browser, browser_version: version };
