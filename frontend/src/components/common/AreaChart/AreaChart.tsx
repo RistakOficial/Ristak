@@ -194,16 +194,23 @@ export const AreaChart: React.FC<AreaChartProps> = ({
                           if (rect) {
                             const pointX = rect.left + props.cx
                             const pointY = rect.top + props.cy
-                            // Guardar la posición de este punto
-                            activePointRef.current[`${props.index}-${serie.key}`] = { x: pointX, y: pointY }
+                            const pointKey = `${props.index}-${serie.key}`
 
-                            // Actualizar inmediatamente el punto más alto
-                            const allPoints = Object.values(activePointRef.current)
-                            if (allPoints.length > 0) {
-                              const highestPoint = allPoints.reduce((highest, current) =>
-                                current.y < highest.y ? current : highest
-                              )
-                              setActualPointPos(highestPoint)
+                            // Solo guardar si no existe o cambió
+                            const existing = activePointRef.current[pointKey]
+                            if (!existing || existing.x !== pointX || existing.y !== pointY) {
+                              activePointRef.current[pointKey] = { x: pointX, y: pointY }
+
+                              // Usar requestAnimationFrame para evitar setState durante render
+                              requestAnimationFrame(() => {
+                                const allPoints = Object.values(activePointRef.current)
+                                if (allPoints.length > 0) {
+                                  const highestPoint = allPoints.reduce((highest, current) =>
+                                    current.y < highest.y ? current : highest
+                                  )
+                                  setActualPointPos(highestPoint)
+                                }
+                              })
                             }
                           }
                         }

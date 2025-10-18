@@ -1,37 +1,15 @@
 import React, { useState, useEffect } from 'react'
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip, TooltipProps } from 'recharts'
 import { useDateRange } from '../../contexts/DateRangeContext'
 import {
   PageContainer,
   Card,
   KpiCard,
-  DateRangePicker
+  DateRangePicker,
+  LineChart
 } from '../../components/common'
 import { Eye, Users, UserCheck, Target, Activity, Clock, RefreshCw, FileText } from 'lucide-react'
 import { getSessionsByDateRange } from '../../services/analyticsService'
 import { formatDate, formatDateToISO, parseLocalDateString } from '../../utils/format'
-
-// Custom Tooltip Component para Recharts
-const CustomTooltip: React.FC<TooltipProps<number, string>> = ({ active, payload, label }) => {
-  if (active && payload && payload.length) {
-    return (
-      <div className="bg-white dark:bg-gray-800 rounded-lg p-3 shadow-xl border border-gray-200 dark:border-gray-700">
-        <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">{label}</p>
-        {payload.map((item: any, index: number) => (
-          <div key={index} className="flex items-center gap-2 text-sm">
-            <div
-              className="w-2 h-2 rounded-full"
-              style={{ backgroundColor: item.color }}
-            />
-            <span className="font-medium">{item.name}:</span>
-            <span className="text-gray-700 dark:text-gray-300">{item.value}</span>
-          </div>
-        ))}
-      </div>
-    )
-  }
-  return null
-}
 
 interface Session {
   session_id: string
@@ -75,12 +53,16 @@ interface Metrics {
   }
 }
 
+type TrafficPoint = {
+  label: string
+  value: number
+  value2: number
+}
+
 const Analytics: React.FC = () => {
   const { dateRange, setDateRange } = useDateRange()
   const [loading, setLoading] = useState(false)
-  const [sessions, setSessions] = useState<Session[]>([])
-  const [previousSessions, setPreviousSessions] = useState<Session[]>([])
-  const [dailyTraffic, setDailyTraffic] = useState<any[]>([])
+  const [dailyTraffic, setDailyTraffic] = useState<TrafficPoint[]>([])
   const [metrics, setMetrics] = useState<Metrics>({
     pageViews: 0,
     uniqueVisitors: 0,
@@ -101,6 +83,18 @@ const Analytics: React.FC = () => {
       avgPagePerSession: 0
     }
   })
+
+  const formatTrafficAxis = (value: number) => {
+    if (value >= 1000) {
+      const formatted = value / 1000
+      return `${formatted % 1 === 0 ? formatted.toFixed(0) : formatted.toFixed(1)}k`
+    }
+    return value.toString()
+  }
+
+  const formatTrafficTooltipValue = (value: number) => value.toLocaleString('es-MX')
+
+  const formatTrafficTooltip = (value: number, _key: string) => formatTrafficTooltipValue(value)
 
   // Cargar datos cuando cambie el rango de fechas
   useEffect(() => {
@@ -129,9 +123,6 @@ const Analytics: React.FC = () => {
           getSessionsByDateRange(startDate, endDate),
           getSessionsByDateRange(prevStartDate, prevEndDate)
         ])
-
-        setSessions(currentSessions)
-        setPreviousSessions(prevSessions)
 
         if (currentSessions.length > 0) {
           // Calcular métricas principales
@@ -231,9 +222,9 @@ const Analytics: React.FC = () => {
           const chartData = Object.entries(dailyStats)
             .sort(([a], [b]) => a.localeCompare(b))
             .map(([date, stats]) => ({
-              date: formatDate(new Date(date + 'T00:00:00'), { padDay: false }),
-              visitas: stats.totalVisits,
-              visitantesUnicos: stats.uniqueVisitors.size
+              label: formatDate(new Date(date + 'T00:00:00'), { padDay: false }),
+              value: stats.totalVisits,
+              value2: stats.uniqueVisitors.size
             }))
 
           setDailyTraffic(chartData)
@@ -401,66 +392,26 @@ const Analytics: React.FC = () => {
           </div>
 
           <div className="h-[300px]">
-            {loading || !dailyTraffic.length ? (
-              <div className="flex items-center justify-center h-full">
-                <div className="animate-pulse text-gray-500">Cargando datos...</div>
+            {loading ? (
+              <div className="flex h-full items-center justify-center text-sm text-gray-500">
+                Cargando datos...
               </div>
+            ) : dailyTraffic.length > 0 ? (
+              <LineChart
+                data={dailyTraffic}
+                height={300}
+                showGrid
+                color="#8b5cf6"
+                color2="#3b82f6"
+                showLegend
+                legendLabels={{ label1: 'Visitas Totales', label2: 'Visitantes Únicos' }}
+                formatValue={formatTrafficAxis}
+                formatTooltipValue={formatTrafficTooltip}
+              />
             ) : (
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={dailyTraffic} margin={{ top: 5, right: 5, left: 5, bottom: 5 }}>
-                  <defs>
-                    <linearGradient id="gradient-visitas" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#8b5cf6" stopOpacity={0.2} />
-                      <stop offset="50%" stopColor="#8b5cf6" stopOpacity={0.1} />
-                      <stop offset="100%" stopColor="#8b5cf6" stopOpacity={0.02} />
-                    </linearGradient>
-                    <linearGradient id="gradient-visitantes" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#3b82f6" stopOpacity={0.2} />
-                      <stop offset="50%" stopColor="#3b82f6" stopOpacity={0.1} />
-                      <stop offset="100%" stopColor="#3b82f6" stopOpacity={0.02} />
-                    </linearGradient>
-                  </defs>
-
-                  <CartesianGrid strokeDasharray="3 3" stroke="currentColor" opacity={0.1} />
-
-                  <XAxis
-                    dataKey="date"
-                    tick={{ fill: 'currentColor', opacity: 0.7, fontSize: 12 }}
-                    axisLine={{ stroke: 'currentColor', opacity: 0.2 }}
-                  />
-
-                  <YAxis
-                    tick={{ fill: 'currentColor', opacity: 0.7, fontSize: 12 }}
-                    axisLine={{ stroke: 'currentColor', opacity: 0.2 }}
-                    tickFormatter={(value, index) => {
-                      if (index === 0) return ''
-                      if (value >= 1000) return `${Math.round(value / 1000)}k`
-                      return Math.round(value).toString()
-                    }}
-                    domain={[0, (dataMax: number) => Math.ceil(dataMax * 1.4)]}
-                  />
-
-                  <Tooltip content={CustomTooltip} />
-
-                  <Area
-                    type="monotone"
-                    dataKey="visitantesUnicos"
-                    name="Visitantes Únicos"
-                    stroke="#3b82f6"
-                    strokeWidth={2}
-                    fill="url(#gradient-visitantes)"
-                  />
-
-                  <Area
-                    type="monotone"
-                    dataKey="visitas"
-                    name="Visitas Totales"
-                    stroke="#8b5cf6"
-                    strokeWidth={2}
-                    fill="url(#gradient-visitas)"
-                  />
-                </AreaChart>
-              </ResponsiveContainer>
+              <div className="flex h-full items-center justify-center rounded-xl border border-[rgba(148,163,184,0.18)] bg-[color-mix(in_srgb,var(--color-background-glass) 82%, transparent)] text-sm text-[var(--color-text-tertiary)]">
+                Sin datos de tráfico disponibles
+              </div>
             )}
           </div>
         </Card>
