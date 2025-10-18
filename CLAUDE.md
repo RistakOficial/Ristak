@@ -11,6 +11,7 @@
 5. **SIEMPRE actualizar este archivo** cuando cambies la estructura o agregues features
 6. **SIEMPRE limpiar imports no usados** y dependencias fantasma
 7. **NUNCA commitear console.logs** de debug en producción
+8. **🔴 BASE DE DATOS: PRODUCCIÓN = PostgreSQL (Render) - DESARROLLO = SQLite (local nos vale madres)**
 
 ### �� FILOSOFÍA DE CÓDIGO
 - **Limpio > Rápido**: Preferir código mantenible sobre optimizaciones prematuras
@@ -35,7 +36,8 @@ Frontend:
 Backend:
 ├── Node.js 20+ con ES Modules
 ├── Express 4.21.2
-├── SQLite3 5.1.7 (base de datos local)
+├── PostgreSQL (pg 8.11.3) - PRODUCCIÓN en Render
+├── SQLite3 5.1.7 (desarrollo local - nos vale madres)
 ├── Node-cron 3.0.3 (tareas programadas)
 └── CORS 2.8.5
 ```
@@ -145,7 +147,7 @@ Backend:
 │       │   └── logger.js      # Sistema de logging personalizado
 │       └── server.js          # Entry point del backend
 │
-└── ristak.db                  # Base de datos SQLite (desarrollo)
+└── ristak.db                  # SQLite local (solo para desarrollo - nos vale madres)
 ```
 
 ---
@@ -276,8 +278,8 @@ NODE_ENV=development
 VITE_API_URL=http://localhost:3001
 
 # Base de datos:
-# - SQLite local (ristak.db) - Se crea automáticamente
-# - NO necesitas configurar nada
+# PRODUCCIÓN (Render): PostgreSQL con DATABASE_URL (esto es lo que importa)
+# DESARROLLO (local): SQLite (ristak.db) - se crea automáticamente (nos vale madres)
 ```
 
 ---
@@ -318,7 +320,7 @@ bash start-local.sh
 - ✅ Arranca backend primero y espera que esté listo
 - ✅ Arranca frontend después
 - ✅ Abre el navegador automáticamente
-- ✅ Configura todo para usar SQLite local (no PostgreSQL)
+- ✅ Usa SQLite en local (PostgreSQL es solo para Render/producción)
 
 ### ❌ NUNCA hacer esto:
 ```bash
@@ -397,7 +399,7 @@ cd frontend && npm run build
   - Ruta: /settings/tracking
   - Documentación completa en TRACKING_PIXEL.md y PIXEL_SETUP.md
   - Sin hardcodear dominios (detección dinámica por req.headers.host)
-  - Funciona con SQLite y PostgreSQL
+  - Base de datos: PostgreSQL en producción (Render), SQLite en local
 
 - ✓ **Página de Analíticas implementada (2025-10-18)**:
   - Página completa de analíticas basada en datos de la tabla `sessions`
@@ -434,10 +436,6 @@ cd frontend && npm run build
 - ✓ Sincronización actualiza estadísticas de contactos automáticamente (total_paid, purchases_count, last_purchase_date)
 - ✓ Webhooks recalculan estadísticas en tiempo real al recibir pagos/reembolsos
 - ✓ appointment_date se actualiza correctamente al sincronizar/recibir citas
-- ✓ PostgreSQL/Neon completamente eliminado - Solo SQLite local
-- ✓ Dependencia 'pg' removida del package.json
-- ✓ database.js simplificado (solo SQLite, sin condicionales)
-- ✓ Archivo test-neon.js eliminado
 - ✓ Tooltips en gráficos corregidos (LineChart y AreaChart):
   - Reemplazado SmartRechartsTooltip roto (heredado de otra app)
   - Implementación simplificada que funciona correctamente con Recharts
@@ -457,17 +455,14 @@ cd frontend && npm run build
 ## 📅 ÚLTIMA ACTUALIZACIÓN
 
 **Fecha**: 2025-10-18
-**Versión**: 1.8.0
+**Versión**: 1.8.1
 **Último cambio estructural**:
-- **Página de Analíticas con visibilidad condicional**
-  - Nueva página /analytics basada en datos de tabla `sessions`
-  - Visibilidad condicional: Solo aparece en sidebar si tracking está configurado
-  - 8 KPIs con tendencias vs período anterior
-  - Gráfico de área dual para visitas y visitantes únicos
-  - Backend: getSessionsByDateRange() agregado a trackingService.js
-  - Frontend: Analytics.tsx, analyticsService.ts
-  - Sidebar.tsx modificado para detectar tracking automáticamente
-  - Compilado y probado exitosamente
+- **Fix crítico: PostgreSQL restaurado para producción**
+  - Dependencia 'pg' agregada de vuelta al package.json
+  - PRODUCCIÓN (Render): Usa PostgreSQL con DATABASE_URL - ESTO ES LO QUE IMPORTA
+  - DESARROLLO (local): Usa SQLite - nos vale madres, solo para testing local
+  - Componentes faltantes agregados: Layout, Badge
+  - Build en Render exitoso
 
 ---
 
