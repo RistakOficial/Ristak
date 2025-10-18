@@ -386,14 +386,20 @@ cd frontend && npm run build
   - KPIs de citas: pendientes, canceladas, confirmadas, reprogramadas
   - Lista de próximas citas ordenadas cronológicamente
   - Código de colores según estado de cita (confirmada, pendiente, cancelada, etc.)
-  - **Creación de citas con búsqueda de contacto y asignación de usuario**:
-    - Modal de creación con búsqueda en tiempo real de contactos (similar a RecordPaymentModal)
-    - Campo de búsqueda de contacto por nombre, email o teléfono
-    - Selector de usuario asignado (assignedUserId) - carga usuarios del location
-    - Ambos campos son opcionales (puedes crear citas sin contacto o sin asignar)
+  - **Creación/edición de citas con modal en 2 columnas**:
+    - Modal con layout responsivo: columna izquierda (asignación), columna derecha (configuración)
+    - Búsqueda en tiempo real de contactos por nombre, email o teléfono (OBLIGATORIO)
+    - Auto-fill del título con el nombre del contacto seleccionado
+    - **Soporte para calendarios Round Robin**:
+      - Detección automática de calendarios Round Robin (calendarType o eventType)
+      - Filtrado de usuarios: solo muestra team members del calendario Round Robin
+      - Selector de team member obligatorio para Round Robin
+      - Texto de ayuda explicando la funcionalidad
+    - Validaciones: contacto siempre requerido, team member requerido para Round Robin
+    - Modal de confirmación para eliminación (nunca usa alert() del browser)
     - Backend endpoints: GET /api/highlevel/contacts/:id, GET /api/highlevel/users
   - Integración completa con API de Calendarios de HighLevel
-  - Backend endpoints: GET /api/calendars, GET /api/calendars/:id, GET /api/calendars/events, GET /api/calendars/:id/free-slots, POST /api/calendars/appointments (con contactId y assignedUserId opcionales)
+  - Backend endpoints: GET /api/calendars, GET /api/calendars/:id, GET /api/calendars/events, GET /api/calendars/:id/free-slots, POST /api/calendars/appointments, PUT /api/calendars/appointments/:id, DELETE /api/calendars/events/:id
   - Servicios: highlevelCalendarService.js (backend), calendarsService.ts (frontend), ghlClient.js (método getLocationUsers)
   - Ruta: /appointments
   - ⚠️ Nota: Requiere locationId y accessToken de HighLevel configurados
@@ -486,16 +492,39 @@ cd frontend && npm run build
   - Botón eliminar ahora muestra "Eliminando..." durante la operación
   - Archivo modificado: AppointmentModal.tsx, AppointmentModal.module.css
   - Nueva regla añadida a MANDAMIENTOS INQUEBRANTABLES: Nunca usar alert(), confirm() o prompt()
+- ✓ **Modal de creación de citas rediseñado con 2 columnas (2025-10-18)**:
+  - Layout con grid responsivo: columna izquierda 300px (asignación), columna derecha flexible (configuración)
+  - Columna izquierda: búsqueda de contacto + selector de usuario/team member
+  - Columna derecha: título, estado, fechas, ubicación, notas
+  - Auto-fill del título con nombre del contacto seleccionado
+  - Contacto ahora es OBLIGATORIO para crear citas (antes era opcional)
+  - Validación con toast notifications en vez de alert()
+  - Responsive: columnas se apilan verticalmente en pantallas <900px
+  - Max-width del modal aumentado de 640px a 900px
+- ✓ **Soporte para calendarios Round Robin (2025-10-18)**:
+  - Detección automática: calendarType === 'round_robin' o eventType.includes('RoundRobin')
+  - Función loadUsers() filtra usuarios según tipo de calendario:
+    - Round Robin: solo muestra team members del calendario (calendar.teamMembers)
+    - Calendarios normales: muestra todos los usuarios del location
+  - UI condicional: "Team member *" (obligatorio) para RR vs "Usuario asignado (opcional)" para normales
+  - Texto de ayuda explicando funcionalidad Round Robin
+  - Validación obligatoria de assignedUserId para calendarios Round Robin
+  - Estilo .helpText agregado para mensajes informativos
+  - Archivos: AppointmentModal.tsx, AppointmentModal.module.css
 
 ---
 
 ## 📅 ÚLTIMA ACTUALIZACIÓN
 
 **Fecha**: 2025-10-18
-**Versión**: 1.9.1
+**Versión**: 1.10.0
 **Último cambio estructural**:
-- **Fix: Timezone offset y modal de confirmación para eliminar citas**
-  - Corregido cálculo de timezone offset (UTC - TZ en vez de TZ - UTC) para formato ISO 8601 correcto
+- **Feat: Implementación completa de calendarios Round Robin**
+  - Modal de creación de citas rediseñado con layout de 2 columnas
+  - Contacto obligatorio para todas las citas
+  - Soporte para calendarios Round Robin con filtrado de team members
+  - Selector de team member obligatorio para Round Robin
+  - Auto-fill de título con nombre de contacto
   - Formato ahora genera correctamente: `2025-10-18T14:00:00-06:00` (comprobado con API de HighLevel)
   - Eliminado `window.confirm()` y reemplazado con modal personalizado usando `createPortal`
   - Nuevo package.json en raíz para builds automáticos en Render
