@@ -56,6 +56,100 @@ function extractGeoInfo(data) {
 }
 
 /**
+ * Extrae parámetros de ads (Facebook, Google, etc.)
+ */
+function extractAdsParams(data) {
+  // Facebook Ads - parámetros directos de URL
+  const campaign_id = data.campaign_id || null
+  const adset_id = data.adset_id || null
+  const ad_id = data.ad_id || null
+  const campaign_name = data.campaign_name || data.utm_campaign || null
+  const adset_name = data.adset_name || null
+  const ad_name = data.ad_name || data.utm_content || null
+  const placement = data.placement || data.site_source_name || null
+
+  // Google Ads - parámetros con diferentes nombres
+  const ad_group_id = data.adgroupid || null
+  const ad_group_name = data.ad_group_name || null
+  const creative_id = data.creative || null
+  const keyword = data.keyword || data.utm_term || null
+  const match_type = data.matchtype || null
+  const network = data.network || null
+  const search_query = data.search_query || null
+  const ad_position = data.ad_position || null
+  const site_source_name = data.site_source_name || null
+
+  return {
+    campaign_id,
+    adset_id,
+    ad_group_id,
+    ad_id,
+    campaign_name,
+    adset_name,
+    ad_group_name,
+    ad_name,
+    placement,
+    site_source_name,
+    network,
+    match_type,
+    keyword,
+    search_query,
+    creative_id,
+    ad_position
+  }
+}
+
+/**
+ * Deriva source_platform y channel basado en los datos disponibles
+ */
+function deriveSourceInfo(data, utms, clickIds) {
+  let source_platform = null
+  let channel = null
+
+  // Determinar platform
+  if (clickIds.fbclid || clickIds.fbc || clickIds.fbp || data.campaign_id || data.adset_id) {
+    source_platform = 'facebook'
+  } else if (clickIds.gclid || clickIds.wbraid || clickIds.gbraid) {
+    source_platform = 'google'
+  } else if (clickIds.msclkid) {
+    source_platform = 'microsoft'
+  } else if (clickIds.ttclid) {
+    source_platform = 'tiktok'
+  } else if (utms.utm_source) {
+    source_platform = utms.utm_source.toLowerCase()
+  }
+
+  // Determinar channel
+  if (clickIds.fbclid || clickIds.gclid || clickIds.msclkid || clickIds.ttclid) {
+    channel = 'paid'
+  } else if (utms.utm_medium) {
+    const medium = utms.utm_medium.toLowerCase()
+    if (medium.includes('cpc') || medium.includes('ppc') || medium.includes('paid')) {
+      channel = 'paid'
+    } else if (medium.includes('organic') || medium === 'organic') {
+      channel = 'organic'
+    } else if (medium.includes('social')) {
+      channel = 'social'
+    } else if (medium.includes('email')) {
+      channel = 'email'
+    } else if (medium.includes('referral')) {
+      channel = 'referral'
+    } else {
+      channel = medium
+    }
+  } else if (data.referrer && data.referrer !== '') {
+    channel = 'referral'
+  } else {
+    channel = 'direct'
+  }
+
+  return {
+    source_platform,
+    channel
+  }
+}
+
+/**
  * Crea un nuevo registro de tracking (cada visita)
  */
 export async function createSession(sessionData) {
@@ -75,6 +169,8 @@ export async function createSession(sessionData) {
   const clickIds = extractClickIds(data)
   const deviceInfo = extractDeviceInfo(data)
   const geoInfo = extractGeoInfo(data)
+  const adsParams = extractAdsParams(data)
+  const sourceInfo = deriveSourceInfo(data, utms, clickIds)
 
   const startedAt = new Date(ts).toISOString()
 
@@ -124,6 +220,24 @@ export async function createSession(sessionData) {
         gbraid,
         msclkid,
         ttclid,
+        channel,
+        source_platform,
+        campaign_id,
+        adset_id,
+        ad_group_id,
+        ad_id,
+        campaign_name,
+        adset_name,
+        ad_group_name,
+        ad_name,
+        placement,
+        site_source_name,
+        network,
+        match_type,
+        keyword,
+        search_query,
+        creative_id,
+        ad_position,
         ip,
         user_agent,
         device_type,
@@ -138,7 +252,9 @@ export async function createSession(sessionData) {
       ) VALUES (
         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-        ?, ?, ?, ?, ?, ?, ?, ?, ?
+        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+        ?, ?, ?
       )
       ON CONFLICT (session_id) DO UPDATE SET
         last_event_at = EXCLUDED.last_event_at,
@@ -167,6 +283,24 @@ export async function createSession(sessionData) {
       clickIds.gbraid,
       clickIds.msclkid,
       clickIds.ttclid,
+      sourceInfo.channel,
+      sourceInfo.source_platform,
+      adsParams.campaign_id,
+      adsParams.adset_id,
+      adsParams.ad_group_id,
+      adsParams.ad_id,
+      adsParams.campaign_name,
+      adsParams.adset_name,
+      adsParams.ad_group_name,
+      adsParams.ad_name,
+      adsParams.placement,
+      adsParams.site_source_name,
+      adsParams.network,
+      adsParams.match_type,
+      adsParams.keyword,
+      adsParams.search_query,
+      adsParams.creative_id,
+      adsParams.ad_position,
       ip,
       user_agent,
       deviceInfo.device_type,
