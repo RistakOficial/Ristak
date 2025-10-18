@@ -427,6 +427,49 @@ class GHLClient {
       throw error
     }
   }
+
+  /**
+   * Obtener un usuario por su ID
+   * @param {string} userId - ID del usuario
+   * @returns {Promise<Object>} Usuario
+   */
+  async getUserById(userId) {
+    try {
+      logger.info(`[GHL Client] Obteniendo usuario con ID: ${userId}`)
+
+      // API v2 de HighLevel: GET /users/:userId
+      const data = await this.request(`/users/${userId}`)
+
+      logger.info(`[GHL Client] Usuario obtenido: ${data.name || data.email || userId}`)
+
+      return data
+    } catch (error) {
+      logger.error(`[GHL Client] Error al obtener usuario ${userId}: ${error.message}`)
+      throw error
+    }
+  }
+
+  /**
+   * Obtener múltiples usuarios por sus IDs (para Round Robin teamMembers)
+   * @param {string[]} userIds - Array de IDs de usuarios
+   * @returns {Promise<Object[]>} Array de usuarios
+   */
+  async getUsersByIds(userIds) {
+    try {
+      logger.info(`[GHL Client] Obteniendo ${userIds.length} usuarios por IDs`)
+
+      // Hacer requests en paralelo para todos los usuarios
+      const promises = userIds.map(userId => this.getUserById(userId))
+      const users = await Promise.all(promises)
+
+      logger.info(`[GHL Client] ${users.length} usuarios obtenidos exitosamente`)
+
+      return users
+    } catch (error) {
+      logger.error(`[GHL Client] Error al obtener usuarios por IDs: ${error.message}`)
+      throw error
+    }
+  }
 }
 
 /**
@@ -471,6 +514,16 @@ export async function recordPayment(invoiceId, paymentData) {
 export async function getLocationUsers(locationId) {
   const client = await getGHLClient()
   return await client.getLocationUsers(locationId)
+}
+
+export async function getUserById(userId) {
+  const client = await getGHLClient()
+  return await client.getUserById(userId)
+}
+
+export async function getUsersByIds(userIds) {
+  const client = await getGHLClient()
+  return await client.getUsersByIds(userIds)
 }
 
 export default GHLClient

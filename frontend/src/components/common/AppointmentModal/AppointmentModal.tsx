@@ -225,26 +225,34 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
       });
 
       if (isRoundRobin && calendar?.teamMembers && calendar.teamMembers.length > 0) {
-        // Para Round Robin: usar team members del calendario
-        const response = await fetch('/api/highlevel/users');
-        if (!response.ok) throw new Error('Error al cargar usuarios');
-        const data = await response.json();
-        const allUsers = data.users || [];
-
-        // Filtrar solo los usuarios que están en teamMembers del calendario
+        // Para Round Robin: obtener usuarios específicos por sus IDs
         const teamMemberIds = calendar.teamMembers.map(tm => tm.userId);
-        const filteredUsers = allUsers.filter(user => teamMemberIds.includes(user.id));
 
-        console.log('✅ Round Robin - Usuarios filtrados:', {
-          totalUsers: allUsers.length,
-          teamMemberIds,
-          filteredCount: filteredUsers.length,
-          filteredUsers
+        console.log('📡 Obteniendo usuarios Round Robin por IDs:', teamMemberIds);
+
+        const response = await fetch('/api/highlevel/users/by-ids', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ userIds: teamMemberIds })
         });
 
-        setUsers(filteredUsers);
+        if (!response.ok) throw new Error('Error al cargar team members');
+        const data = await response.json();
+        const fetchedUsers = data.users || [];
+
+        console.log('✅ Round Robin - Usuarios obtenidos:', {
+          teamMemberIds,
+          fetchedCount: fetchedUsers.length,
+          fetchedUsers
+        });
+
+        setUsers(fetchedUsers);
       } else {
         // Para calendarios normales: cargar todos los usuarios del location
+        console.log('📡 Obteniendo todos los usuarios del location');
+
         const response = await fetch('/api/highlevel/users');
         if (!response.ok) throw new Error('Error al cargar usuarios');
         const data = await response.json();

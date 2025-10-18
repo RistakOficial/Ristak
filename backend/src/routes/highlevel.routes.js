@@ -25,7 +25,8 @@ import {
   saveStripeConfig,
   getStripeConfig,
   saveInvoiceConfig,
-  getLocationUsers
+  getLocationUsers,
+  getUsersByIds
 } from '../controllers/highlevelController.js'
 
 const router = express.Router()
@@ -51,6 +52,7 @@ router.get('/contacts/:id', getContactById)
 
 // Users
 router.get('/users', getLocationUsers)
+router.post('/users/by-ids', getUsersByIds)
 
 // Stripe Configuration
 router.post('/stripe-config', saveStripeConfig)

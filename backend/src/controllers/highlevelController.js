@@ -1598,3 +1598,36 @@ export const getLocationUsers = async (req, res) => {
     });
   }
 };
+
+/**
+ * Obtener usuarios por IDs (para Round Robin teamMembers)
+ * POST /api/highlevel/users/by-ids
+ * Body: { userIds: ['id1', 'id2', 'id3'] }
+ */
+export const getUsersByIds = async (req, res) => {
+  try {
+    const { userIds } = req.body;
+
+    if (!userIds || !Array.isArray(userIds) || userIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Debes proporcionar un array de userIds'
+      });
+    }
+
+    const ghlClient = await getGHLClient();
+    const users = await ghlClient.getUsersByIds(userIds);
+
+    res.json({
+      success: true,
+      users: users || []
+    });
+
+  } catch (error) {
+    logger.error(`Error en getUsersByIds: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Error al obtener usuarios por IDs'
+    });
+  }
+};
