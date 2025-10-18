@@ -169,6 +169,8 @@
   overflow-y: auto;
 }
 
+/* Rename contactList to visitorList for consistency but keep exact same styles */
+
 .emptyState {
   display: flex;
   flex-direction: column;
