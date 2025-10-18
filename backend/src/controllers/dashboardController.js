@@ -683,20 +683,45 @@ export const getTrafficSources = async (req, res) => {
   try {
     const { startDate, endDate } = req.query
 
-    // Query para obtener fuentes de tráfico de sessions
-    const query = `
-      SELECT 
-        COALESCE(source_platform, 'Directo') as name,
-        COUNT(*) as value
-      FROM sessions
-      WHERE DATE(started_at) >= DATE(?)
-        AND DATE(started_at) <= DATE(?)
-      GROUP BY source_platform
-      ORDER BY value DESC
-      LIMIT 10
-    `
+    if (!startDate || !endDate) {
+      return res.status(400).json({ success: false, error: 'Se requieren startDate y endDate' })
+    }
 
-    const sources = await db.all(query, [startDate, endDate])
+    const usePostgres = Boolean(process.env.DATABASE_URL)
+
+    let query, params
+
+    if (usePostgres) {
+      // PostgreSQL query
+      query = `
+        SELECT
+          COALESCE(source_platform, 'directo') as name,
+          COUNT(*) as value
+        FROM sessions
+        WHERE started_at::timestamp >= $1::timestamp
+          AND started_at::timestamp < ($2::timestamp + INTERVAL '1 day')
+        GROUP BY source_platform
+        ORDER BY value DESC
+        LIMIT 10
+      `
+      params = [startDate, endDate]
+    } else {
+      // SQLite query
+      query = `
+        SELECT
+          COALESCE(source_platform, 'directo') as name,
+          COUNT(*) as value
+        FROM sessions
+        WHERE DATE(started_at) >= DATE(?)
+          AND DATE(started_at) <= DATE(?)
+        GROUP BY source_platform
+        ORDER BY value DESC
+        LIMIT 10
+      `
+      params = [startDate, endDate]
+    }
+
+    const sources = await db.all(query, params)
 
     // Mapear colores por plataforma
     const colorMap = {
@@ -707,11 +732,11 @@ export const getTrafficSources = async (req, res) => {
       'microsoft': '#00a4ef',
       'twitter': '#1da1f2',
       'linkedin': '#0a66c2',
-      'Directo': '#6b7280'
+      'directo': '#6b7280'
     }
 
     const data = sources.map(source => ({
-      name: source.name.charAt(0).toUpperCase() + source.name.slice(1),
+      name: source.name === 'directo' ? 'Directo' : source.name.charAt(0).toUpperCase() + source.name.slice(1),
       value: source.value,
       color: colorMap[source.name.toLowerCase()] || '#6b7280'
     }))
@@ -730,43 +755,79 @@ export const getFunnelData = async (req, res) => {
   try {
     const { startDate, endDate } = req.query
 
-    // Visitantes únicos (sessions)
-    const visitorsQuery = `
-      SELECT COUNT(DISTINCT visitor_id) as count
-      FROM sessions
-      WHERE DATE(started_at) >= DATE(?)
-        AND DATE(started_at) <= DATE(?)
-    `
-    const visitors = await db.get(visitorsQuery, [startDate, endDate])
+    if (!startDate || !endDate) {
+      return res.status(400).json({ success: false, error: 'Se requieren startDate y endDate' })
+    }
 
-    // Leads (contactos creados)
-    const leadsQuery = `
-      SELECT COUNT(*) as count
-      FROM contacts
-      WHERE DATE(created_at) >= DATE(?)
-        AND DATE(created_at) <= DATE(?)
-    `
-    const leads = await db.get(leadsQuery, [startDate, endDate])
+    const usePostgres = Boolean(process.env.DATABASE_URL)
 
-    // Citas (appointments) - usar COALESCE para manejar contact_id null
-    const appointmentsQuery = `
-      SELECT COUNT(DISTINCT COALESCE(contact_id, id)) as count
-      FROM appointments
-      WHERE DATE(start_time) >= DATE(?)
-        AND DATE(start_time) <= DATE(?)
-        AND contact_id IS NOT NULL
-    `
-    const appointments = await db.get(appointmentsQuery, [startDate, endDate])
+    let visitorsQuery, leadsQuery, appointmentsQuery, customersQuery
+    let params
 
-    // Clientes (contactos con compras)
-    const customersQuery = `
-      SELECT COUNT(DISTINCT id) as count
-      FROM contacts
-      WHERE purchases_count > 0
-        AND DATE(created_at) >= DATE(?)
-        AND DATE(created_at) <= DATE(?)
-    `
-    const customers = await db.get(customersQuery, [startDate, endDate])
+    if (usePostgres) {
+      // PostgreSQL queries
+      visitorsQuery = `
+        SELECT COUNT(DISTINCT visitor_id) as count
+        FROM sessions
+        WHERE started_at::timestamp >= $1::timestamp
+          AND started_at::timestamp < ($2::timestamp + INTERVAL '1 day')
+      `
+      leadsQuery = `
+        SELECT COUNT(*) as count
+        FROM contacts
+        WHERE created_at::timestamp >= $1::timestamp
+          AND created_at::timestamp < ($2::timestamp + INTERVAL '1 day')
+      `
+      appointmentsQuery = `
+        SELECT COUNT(DISTINCT COALESCE(contact_id, id)) as count
+        FROM appointments
+        WHERE start_time::timestamp >= $1::timestamp
+          AND start_time::timestamp < ($2::timestamp + INTERVAL '1 day')
+          AND contact_id IS NOT NULL
+      `
+      customersQuery = `
+        SELECT COUNT(DISTINCT id) as count
+        FROM contacts
+        WHERE purchases_count > 0
+          AND created_at::timestamp >= $1::timestamp
+          AND created_at::timestamp < ($2::timestamp + INTERVAL '1 day')
+      `
+      params = [startDate, endDate]
+    } else {
+      // SQLite queries
+      visitorsQuery = `
+        SELECT COUNT(DISTINCT visitor_id) as count
+        FROM sessions
+        WHERE DATE(started_at) >= DATE(?)
+          AND DATE(started_at) <= DATE(?)
+      `
+      leadsQuery = `
+        SELECT COUNT(*) as count
+        FROM contacts
+        WHERE DATE(created_at) >= DATE(?)
+          AND DATE(created_at) <= DATE(?)
+      `
+      appointmentsQuery = `
+        SELECT COUNT(DISTINCT COALESCE(contact_id, id)) as count
+        FROM appointments
+        WHERE DATE(start_time) >= DATE(?)
+          AND DATE(start_time) <= DATE(?)
+          AND contact_id IS NOT NULL
+      `
+      customersQuery = `
+        SELECT COUNT(DISTINCT id) as count
+        FROM contacts
+        WHERE purchases_count > 0
+          AND DATE(created_at) >= DATE(?)
+          AND DATE(created_at) <= DATE(?)
+      `
+      params = [startDate, endDate]
+    }
+
+    const visitors = await db.get(visitorsQuery, params)
+    const leads = await db.get(leadsQuery, params)
+    const appointments = await db.get(appointmentsQuery, params)
+    const customers = await db.get(customersQuery, params)
 
     const data = [
       { stage: 'Visitantes', value: visitors.count || 0 },
