@@ -215,33 +215,26 @@ export const getCampaigns = async (req, res) => {
     const adIdsWithContacts = contactsData.map(row => row.ad_id).filter(Boolean);
 
     // Query para obtener datos agregados por campaña, adset y ad
-    // Solo incluir gasto del período, pero asegurar que anuncios con contactos aparezcan
+    // SOLO incluir gasto del período (sin OR que incluya fechas fuera del rango)
     const aggregationQuery = `
       SELECT DISTINCT
         m.campaign_id, m.campaign_name,
         m.adset_id, m.adset_name,
         m.ad_id, m.ad_name,
-        COALESCE(SUM(CASE WHEN m.date BETWEEN ? AND ? THEN m.spend ELSE 0 END), 0) as spend,
-        COALESCE(SUM(CASE WHEN m.date BETWEEN ? AND ? THEN m.reach ELSE 0 END), 0) as reach,
-        COALESCE(SUM(CASE WHEN m.date BETWEEN ? AND ? THEN m.clicks ELSE 0 END), 0) as clicks,
-        AVG(CASE WHEN m.date BETWEEN ? AND ? THEN m.cpc ELSE NULL END) as cpc,
-        AVG(CASE WHEN m.date BETWEEN ? AND ? THEN m.cpm ELSE NULL END) as cpm
+        COALESCE(SUM(m.spend), 0) as spend,
+        COALESCE(SUM(m.reach), 0) as reach,
+        COALESCE(SUM(m.clicks), 0) as clicks,
+        AVG(m.cpc) as cpc,
+        AVG(m.cpm) as cpm
       FROM meta_ads m
-      WHERE (m.date BETWEEN ? AND ?)
-      ${adIdsWithContacts.length > 0 ? `OR m.ad_id IN (${adIdsWithContacts.map(() => '?').join(',')})` : ''}
+      WHERE m.date BETWEEN ? AND ?
       GROUP BY m.campaign_id, m.campaign_name, m.adset_id, m.adset_name, m.ad_id, m.ad_name
       ORDER BY m.campaign_id, m.adset_id, m.ad_id
     `;
 
-    // Parámetros: 5 veces el rango (para los CASE WHEN) + 1 vez el WHERE + los ad_ids
+    // Parámetros: solo el rango para el WHERE
     const aggregationParams = [
-      adsStart, adsEnd,  // CASE spend
-      adsStart, adsEnd,  // CASE reach
-      adsStart, adsEnd,  // CASE clicks
-      adsStart, adsEnd,  // CASE cpc
-      adsStart, adsEnd,  // CASE cpm
-      adsStart, adsEnd,  // WHERE
-      ...adIdsWithContacts
+      adsStart, adsEnd
     ];
 
     const rows = await db.all(aggregationQuery, aggregationParams);
