@@ -75,13 +75,25 @@ export const WebTracking: React.FC = () => {
       return
     }
 
+    // Validar que el dominio contenga "collect"
+    if (!trackingDomain.includes('collect')) {
+      showToast(
+        'error',
+        'Dominio inválido',
+        'El dominio debe contener "collect" (ej: collect.tudominio.com). Configura el CNAME en tu DNS primero.'
+      )
+      return
+    }
+
     setConfiguringTracking(true)
     try {
       const result = await trackingService.configureTracking()
 
       if (result.success) {
-        showToast('success', 'Configurado', 'Tracking listo para usar')
+        showToast('success', '¡Listo!', 'Custom value actualizado en HighLevel')
         setIsConfigured(true)
+        // Recargar config para actualizar estado
+        await loadTrackingConfig()
       } else {
         showToast('error', 'Error', result.error || 'No se pudo configurar')
       }
@@ -167,7 +179,7 @@ export const WebTracking: React.FC = () => {
 
               {/* Estado */}
               {isConfigured ? (
-                <div className={styles.successBox}>
+                <div className={styles.successBox} style={{ marginBottom: '16px' }}>
                   <div className={styles.infoBoxTitle}>
                     <Check size={16} />
                     <span>Tracking configurado</span>
@@ -177,40 +189,46 @@ export const WebTracking: React.FC = () => {
                   </p>
                 </div>
               ) : (
-                <>
-                  <div className={styles.infoBox} style={{ marginBottom: '16px' }}>
-                    <div className={styles.infoBoxTitle}>
-                      <Info size={16} />
-                      <span>Configuración requerida</span>
-                    </div>
-                    <p className={styles.infoBoxText}>
-                      Crea un custom value <code className={styles.codeInline}>rstktrack</code> en HighLevel
-                    </p>
+                <div className={styles.infoBox} style={{ marginBottom: '16px' }}>
+                  <div className={styles.infoBoxTitle}>
+                    <Info size={16} />
+                    <span>Configuración pendiente</span>
                   </div>
+                  <p className={styles.infoBoxText}>
+                    Sincroniza para crear/actualizar el custom value <code className={styles.codeInline}>rstktrack</code> en HighLevel
+                  </p>
+                </div>
+              )}
 
-                  <Button
-                    variant="primary"
-                    onClick={handleConfigureTracking}
-                    disabled={configuringTracking || !hasHighLevel}
-                  >
-                    {configuringTracking ? (
-                      <>
-                        <Activity size={16} className={styles.spinIcon} />
-                        Configurando...
-                      </>
-                    ) : (
-                      <>
-                        <Check size={16} />
-                        Configurar Tracking
-                      </>
-                    )}
-                  </Button>
-                  {!hasHighLevel && (
-                    <p className={styles.formHint} style={{ marginTop: '8px' }}>
-                      ⚠️ Primero configura HighLevel
-                    </p>
-                  )}
-                </>
+              {/* Botón de sincronización - SIEMPRE visible */}
+              <Button
+                variant="primary"
+                onClick={handleConfigureTracking}
+                disabled={configuringTracking || !hasHighLevel || !trackingDomain.includes('collect')}
+              >
+                {configuringTracking ? (
+                  <>
+                    <Activity size={16} className={styles.spinIcon} />
+                    Sincronizando...
+                  </>
+                ) : (
+                  <>
+                    <Check size={16} />
+                    {isConfigured ? 'Volver a sincronizar' : 'Sincronizar con HighLevel'}
+                  </>
+                )}
+              </Button>
+
+              {/* Mensajes de ayuda */}
+              {!hasHighLevel && (
+                <p className={styles.formHint} style={{ marginTop: '8px', color: 'var(--color-warning)' }}>
+                  ⚠️ Primero configura HighLevel en Settings
+                </p>
+              )}
+              {hasHighLevel && !trackingDomain.includes('collect') && (
+                <p className={styles.formHint} style={{ marginTop: '8px', color: 'var(--color-warning)' }}>
+                  ⚠️ El dominio debe contener "collect" (ej: collect.tudominio.com)
+                </p>
               )}
 
               {/* Código del pixel */}
