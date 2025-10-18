@@ -937,27 +937,43 @@ export async function getVisitorsByAd(req, res) {
       return res.status(400).json({ error: 'startDate y endDate son requeridos' })
     }
 
-    // Query para obtener visitantes únicos agrupados por ad_id
-    const query = `
-      SELECT
-        ad_id,
-        COUNT(DISTINCT visitor_id) as unique_visitors,
-        COUNT(*) as total_pageviews
-      FROM sessions
-      WHERE ad_id IS NOT NULL
-        AND created_at >= ?
-        AND created_at <= ?
-      GROUP BY ad_id
-    `
+    const usePostgres = Boolean(process.env.DATABASE_URL)
+
+    // Query adaptado a PostgreSQL o SQLite
+    const query = usePostgres
+      ? `
+        SELECT
+          ad_id,
+          COUNT(DISTINCT visitor_id) as unique_visitors,
+          COUNT(*) as total_pageviews
+        FROM sessions
+        WHERE ad_id IS NOT NULL
+          AND created_at >= $1
+          AND created_at <= $2
+        GROUP BY ad_id
+      `
+      : `
+        SELECT
+          ad_id,
+          COUNT(DISTINCT visitor_id) as unique_visitors,
+          COUNT(*) as total_pageviews
+        FROM sessions
+        WHERE ad_id IS NOT NULL
+          AND created_at >= ?
+          AND created_at <= ?
+        GROUP BY ad_id
+      `
 
     const visitors = await db.all(query, [startDate, endDate])
+
+    logger.info(`Visitantes por ad obtenidos: ${visitors.length} ads con visitas`)
 
     // Crear un mapa de ad_id -> visitantes
     const visitorsByAd = {}
     visitors.forEach(row => {
       visitorsByAd[row.ad_id] = {
-        uniqueVisitors: row.unique_visitors,
-        totalPageviews: row.total_pageviews
+        uniqueVisitors: parseInt(row.unique_visitors) || 0,
+        totalPageviews: parseInt(row.total_pageviews) || 0
       }
     })
 
@@ -977,65 +993,126 @@ export async function getVisitorsByPeriod(req, res) {
       return res.status(400).json({ error: 'startDate and endDate are required' })
     }
 
-    const db = getDb()
+    const usePostgres = Boolean(process.env.DATABASE_URL)
     let query = ''
 
     // Definir el formato de agrupación según el tipo
-    switch (groupBy) {
-      case 'day':
-        query = `
-          SELECT
-            DATE(created_at) as period,
-            COUNT(DISTINCT visitor_id) as unique_visitors
-          FROM sessions
-          WHERE created_at >= ? AND created_at <= ?
-            AND ad_id IS NOT NULL
-          GROUP BY DATE(created_at)
-          ORDER BY period ASC
-        `
-        break
+    if (usePostgres) {
+      // PostgreSQL queries
+      switch (groupBy) {
+        case 'day':
+          query = `
+            SELECT
+              TO_CHAR(created_at::date, 'YYYY-MM-DD') as period,
+              COUNT(DISTINCT visitor_id) as unique_visitors
+            FROM sessions
+            WHERE created_at >= $1 AND created_at <= $2
+              AND ad_id IS NOT NULL
+            GROUP BY TO_CHAR(created_at::date, 'YYYY-MM-DD')
+            ORDER BY period ASC
+          `
+          break
 
-      case 'week':
-        query = `
-          SELECT
-            strftime('%Y-W%W', created_at) as period,
-            COUNT(DISTINCT visitor_id) as unique_visitors
-          FROM sessions
-          WHERE created_at >= ? AND created_at <= ?
-            AND ad_id IS NOT NULL
-          GROUP BY strftime('%Y-W%W', created_at)
-          ORDER BY period ASC
-        `
-        break
+        case 'week':
+          query = `
+            SELECT
+              TO_CHAR(created_at, 'YYYY-"W"IW') as period,
+              COUNT(DISTINCT visitor_id) as unique_visitors
+            FROM sessions
+            WHERE created_at >= $1 AND created_at <= $2
+              AND ad_id IS NOT NULL
+            GROUP BY TO_CHAR(created_at, 'YYYY-"W"IW')
+            ORDER BY period ASC
+          `
+          break
 
-      case 'month':
-        query = `
-          SELECT
-            strftime('%Y-%m', created_at) as period,
-            COUNT(DISTINCT visitor_id) as unique_visitors
-          FROM sessions
-          WHERE created_at >= ? AND created_at <= ?
-            AND ad_id IS NOT NULL
-          GROUP BY strftime('%Y-%m', created_at)
-          ORDER BY period ASC
-        `
-        break
+        case 'month':
+          query = `
+            SELECT
+              TO_CHAR(created_at, 'YYYY-MM') as period,
+              COUNT(DISTINCT visitor_id) as unique_visitors
+            FROM sessions
+            WHERE created_at >= $1 AND created_at <= $2
+              AND ad_id IS NOT NULL
+            GROUP BY TO_CHAR(created_at, 'YYYY-MM')
+            ORDER BY period ASC
+          `
+          break
 
-      case 'year':
-        query = `
-          SELECT
-            strftime('%Y', created_at) as period,
-            COUNT(DISTINCT visitor_id) as unique_visitors
-          FROM sessions
-          WHERE created_at >= ? AND created_at <= ?
-            AND ad_id IS NOT NULL
-          GROUP BY strftime('%Y', created_at)
-          ORDER BY period ASC
-        `
-        break
+        case 'year':
+          query = `
+            SELECT
+              TO_CHAR(created_at, 'YYYY') as period,
+              COUNT(DISTINCT visitor_id) as unique_visitors
+            FROM sessions
+            WHERE created_at >= $1 AND created_at <= $2
+              AND ad_id IS NOT NULL
+            GROUP BY TO_CHAR(created_at, 'YYYY')
+            ORDER BY period ASC
+          `
+          break
 
-      default:
-        return res.status(400).json({ error: 'Invalid groupBy value' })
+        default:
+          return res.status(400).json({ error: 'Invalid groupBy value' })
+      }
+    } else {
+      // SQLite queries
+      switch (groupBy) {
+        case 'day':
+          query = `
+            SELECT
+              DATE(created_at) as period,
+              COUNT(DISTINCT visitor_id) as unique_visitors
+            FROM sessions
+            WHERE created_at >= ? AND created_at <= ?
+              AND ad_id IS NOT NULL
+            GROUP BY DATE(created_at)
+            ORDER BY period ASC
+          `
+          break
+
+        case 'week':
+          query = `
+            SELECT
+              strftime('%Y-W%W', created_at) as period,
+              COUNT(DISTINCT visitor_id) as unique_visitors
+            FROM sessions
+            WHERE created_at >= ? AND created_at <= ?
+              AND ad_id IS NOT NULL
+            GROUP BY strftime('%Y-W%W', created_at)
+            ORDER BY period ASC
+          `
+          break
+
+        case 'month':
+          query = `
+            SELECT
+              strftime('%Y-%m', created_at) as period,
+              COUNT(DISTINCT visitor_id) as unique_visitors
+            FROM sessions
+            WHERE created_at >= ? AND created_at <= ?
+              AND ad_id IS NOT NULL
+            GROUP BY strftime('%Y-%m', created_at)
+            ORDER BY period ASC
+          `
+          break
+
+        case 'year':
+          query = `
+            SELECT
+              strftime('%Y', created_at) as period,
+              COUNT(DISTINCT visitor_id) as unique_visitors
+            FROM sessions
+            WHERE created_at >= ? AND created_at <= ?
+              AND ad_id IS NOT NULL
+            GROUP BY strftime('%Y', created_at)
+            ORDER BY period ASC
+          `
+          break
+
+        default:
+          return res.status(400).json({ error: 'Invalid groupBy value' })
+      }
     }
 
     const rows = await db.all(query, [startDate, endDate])

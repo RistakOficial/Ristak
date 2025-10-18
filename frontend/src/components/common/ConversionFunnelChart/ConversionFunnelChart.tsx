@@ -6,7 +6,7 @@ import styles from './ConversionFunnelChart.module.css'
 interface FunnelStage {
   stage: string
   value: number
-  icon: React.ComponentType<any>
+  icon?: React.ComponentType<any>
 }
 
 interface ConversionFunnelChartProps {
@@ -25,9 +25,27 @@ export const ConversionFunnelChart: React.FC<ConversionFunnelChartProps> = ({
   data = DEFAULT_STAGES,
   loading = false
 }) => {
-  const maxValue = data.length > 0 ? Math.max(...data.map(d => d.value), 1) : 1
-  const totalConversion = data.length > 0 && data[0].value > 0
-    ? ((data[data.length - 1].value / data[0].value) * 100).toFixed(1)
+  const stageIconMap: Record<string, React.ComponentType<any>> = {
+    visitantes: Users,
+    leads: UserCheck,
+    citas: Calendar,
+    clientes: DollarSign
+  }
+
+  const getStageIcon = (stage: string, icon?: React.ComponentType<any>) => {
+    if (icon) return icon
+    const normalized = stage.trim().toLowerCase()
+    return stageIconMap[normalized] ?? Users
+  }
+
+  const safeData = (data.length > 0 ? data : DEFAULT_STAGES).map((item) => ({
+    ...item,
+    icon: getStageIcon(item.stage, item.icon)
+  }))
+
+  const maxValue = safeData.length > 0 ? Math.max(...safeData.map(d => d.value), 1) : 1
+  const totalConversion = safeData.length > 0 && safeData[0].value > 0
+    ? ((safeData[safeData.length - 1].value / safeData[0].value) * 100).toFixed(1)
     : '0'
 
   return (
@@ -52,12 +70,12 @@ export const ConversionFunnelChart: React.FC<ConversionFunnelChartProps> = ({
             ))}
           </div>
         ) : (
-          data.map((item, index) => {
+          safeData.map((item, index) => {
             const percentage = maxValue > 0 ? (item.value / maxValue) * 100 : 0
-            const conversionRate = index > 0 && data[index - 1].value > 0
-              ? ((item.value / data[index - 1].value) * 100).toFixed(1)
+            const conversionRate = index > 0 && safeData[index - 1].value > 0
+              ? ((item.value / safeData[index - 1].value) * 100).toFixed(1)
               : '100'
-            const Icon = item.icon
+            const Icon = item.icon ?? Users
 
             return (
               <div key={item.stage} className={styles.stageContainer}>
@@ -99,7 +117,7 @@ export const ConversionFunnelChart: React.FC<ConversionFunnelChartProps> = ({
         )}
       </div>
 
-      {!loading && data[0]?.value > 0 && (
+      {!loading && safeData[0]?.value > 0 && (
         <div className={styles.insights}>
           <div className={styles.insightItem}>
             <p className={styles.insightLabel}>Conversión total</p>
@@ -111,7 +129,7 @@ export const ConversionFunnelChart: React.FC<ConversionFunnelChartProps> = ({
             <p className={styles.insightLabel}>Leads → Citas</p>
             <p className={styles.insightValue}>
               <span className={styles.insightHighlight}>
-                {data[1]?.value > 0 ? ((data[2]?.value / data[1].value) * 100).toFixed(1) : '0'}%
+                {safeData[1]?.value > 0 ? ((safeData[2]?.value / safeData[1].value) * 100).toFixed(1) : '0'}%
               </span>
             </p>
           </div>
