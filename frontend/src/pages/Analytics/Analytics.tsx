@@ -16,6 +16,50 @@ import { getSessionsByDateRange } from '../../services/analyticsService'
 import { TrackingSession } from '../../services/trackingService'
 import { formatDate, formatDateToISO, parseLocalDateString } from '../../utils/format'
 
+// Helper para obtener icono de plataforma
+const getPlatformIcon = (platformName: string) => {
+  const name = platformName.toLowerCase()
+  if (name.includes('facebook')) return FaFacebook
+  if (name.includes('google')) return FaGoogle
+  if (name.includes('instagram')) return FaInstagram
+  if (name.includes('tiktok')) return FaTiktok
+  if (name.includes('twitter')) return FaTwitter
+  if (name.includes('linkedin')) return FaLinkedin
+  if (name.includes('microsoft')) return FaMicrosoft
+  return Globe
+}
+
+// Helper para obtener icono de navegador
+const getBrowserIcon = (browserName: string) => {
+  const name = browserName.toLowerCase()
+  if (name.includes('chrome')) return FaChrome
+  if (name.includes('firefox')) return FaFirefox
+  if (name.includes('safari')) return FaSafari
+  if (name.includes('edge')) return FaEdge
+  if (name.includes('opera')) return FaOpera
+  return Globe
+}
+
+// Helper para obtener icono de sistema operativo
+const getOSIcon = (osName: string) => {
+  const name = osName.toLowerCase()
+  if (name.includes('windows')) return FaWindows
+  if (name.includes('mac') || name.includes('macos')) return SiMacos
+  if (name.includes('ios') || name.includes('iphone') || name.includes('ipad')) return SiIos
+  if (name.includes('android')) return FaAndroid
+  if (name.includes('linux')) return FaLinux
+  return Monitor
+}
+
+// Helper para obtener icono de dispositivo
+const getDeviceIcon = (deviceName: string) => {
+  const name = deviceName.toLowerCase()
+  if (name.includes('mobile') || name.includes('phone')) return Smartphone
+  if (name.includes('tablet')) return Tablet
+  if (name.includes('desktop')) return Monitor
+  return Smartphone
+}
+
 // Usar TrackingSession directamente
 type Session = TrackingSession & {
   browser?: string
@@ -711,23 +755,26 @@ const Analytics: React.FC = () => {
               <h3 className="text-sm font-semibold">Top Plataformas</h3>
             </div>
             <div className="p-5 space-y-4">
-              {platformsData.map((platform, index) => (
-                <div key={index} className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Globe className="w-4 h-4 text-gray-500" />
-                      <span className="text-sm">{platform.name}</span>
+              {platformsData.map((platform, index) => {
+                const PlatformIcon = getPlatformIcon(platform.name)
+                return (
+                  <div key={index} className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <PlatformIcon className="w-4 h-4 text-gray-500" />
+                        <span className="text-sm">{platform.name}</span>
+                      </div>
+                      <span className="text-sm font-semibold">{platform.users}</span>
                     </div>
-                    <span className="text-sm font-semibold">{platform.users}</span>
+                    <div className="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-gray-500 dark:bg-gray-400 opacity-60 transition-all duration-500"
+                        style={{ width: `${platform.percentage}%` }}
+                      />
+                    </div>
                   </div>
-                  <div className="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
-                    <div
-                      className="h-full bg-gray-500 dark:bg-gray-400 opacity-60 transition-all duration-500"
-                      style={{ width: `${platform.percentage}%` }}
-                    />
-                  </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
           </Card>
 
@@ -763,23 +810,26 @@ const Analytics: React.FC = () => {
               <h3 className="text-sm font-semibold">Top Dispositivos</h3>
             </div>
             <div className="p-5 space-y-4">
-              {devicesData.map((device, index) => (
-                <div key={index} className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Smartphone className="w-4 h-4 text-gray-500" />
-                      <span className="text-sm">{device.name}</span>
+              {devicesData.map((device, index) => {
+                const DeviceIcon = getDeviceIcon(device.name)
+                return (
+                  <div key={index} className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <DeviceIcon className="w-4 h-4 text-gray-500" />
+                        <span className="text-sm">{device.name}</span>
+                      </div>
+                      <span className="text-sm font-semibold">{device.users}</span>
                     </div>
-                    <span className="text-sm font-semibold">{device.users}</span>
+                    <div className="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-gray-500 dark:bg-gray-400 opacity-60 transition-all duration-500"
+                        style={{ width: `${device.percentage}%` }}
+                      />
+                    </div>
                   </div>
-                  <div className="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
-                    <div
-                      className="h-full bg-gray-500 dark:bg-gray-400 opacity-60 transition-all duration-500"
-                      style={{ width: `${device.percentage}%` }}
-                    />
-                  </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
           </Card>
 
@@ -789,23 +839,26 @@ const Analytics: React.FC = () => {
               <h3 className="text-sm font-semibold">Top Sistemas</h3>
             </div>
             <div className="p-5 space-y-4">
-              {osData.map((os, index) => (
-                <div key={index} className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Monitor className="w-4 h-4 text-gray-500" />
-                      <span className="text-sm">{os.name}</span>
+              {osData.map((os, index) => {
+                const OSIcon = getOSIcon(os.name)
+                return (
+                  <div key={index} className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <OSIcon className="w-4 h-4 text-gray-500" />
+                        <span className="text-sm">{os.name}</span>
+                      </div>
+                      <span className="text-sm font-semibold">{os.users}</span>
                     </div>
-                    <span className="text-sm font-semibold">{os.users}</span>
+                    <div className="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-gray-500 dark:bg-gray-400 opacity-60 transition-all duration-500"
+                        style={{ width: `${os.percentage}%` }}
+                      />
+                    </div>
                   </div>
-                  <div className="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
-                    <div
-                      className="h-full bg-gray-500 dark:bg-gray-400 opacity-60 transition-all duration-500"
-                      style={{ width: `${os.percentage}%` }}
-                    />
-                  </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
           </Card>
 
@@ -815,23 +868,26 @@ const Analytics: React.FC = () => {
               <h3 className="text-sm font-semibold">Top Navegadores</h3>
             </div>
             <div className="p-5 space-y-4">
-              {browserData.map((browser, index) => (
-                <div key={index} className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Globe className="w-4 h-4 text-gray-500" />
-                      <span className="text-sm">{browser.name}</span>
+              {browserData.map((browser, index) => {
+                const BrowserIcon = getBrowserIcon(browser.name)
+                return (
+                  <div key={index} className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <BrowserIcon className="w-4 h-4 text-gray-500" />
+                        <span className="text-sm">{browser.name}</span>
+                      </div>
+                      <span className="text-sm font-semibold">{browser.users}</span>
                     </div>
-                    <span className="text-sm font-semibold">{browser.users}</span>
+                    <div className="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-gray-500 dark:bg-gray-400 opacity-60 transition-all duration-500"
+                        style={{ width: `${browser.percentage}%` }}
+                      />
+                    </div>
                   </div>
-                  <div className="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
-                    <div
-                      className="h-full bg-gray-500 dark:bg-gray-400 opacity-60 transition-all duration-500"
-                      style={{ width: `${browser.percentage}%` }}
-                    />
-                  </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
           </Card>
 
