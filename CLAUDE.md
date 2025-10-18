@@ -364,10 +364,19 @@ cd frontend && npm run build
 - Falta implementación completa de HighLevel API
 
 ### Funcionalidades Implementadas
-- ✓ Edición de contactos desde la tabla (modal con campos editables: nombre, email, teléfono, fuente, nombre del anuncio, ID del anuncio)
-- ✓ Eliminación de contactos con modal de confirmación
-- ✓ Endpoints backend PUT /api/contacts/:id y DELETE /api/contacts/:id
-- ✓ Protección contra eliminación accidental con confirmación explícita
+- ✓ **Página de Contactos (Contacts.tsx)**:
+  - Edición de contactos desde la tabla (modal con campos editables: nombre, email, teléfono, fuente, nombre del anuncio, ID del anuncio)
+  - Eliminación de contactos con modal de confirmación
+  - **Modal de detalles de contacto** con secciones:
+    - Información Personal (nombre, email, teléfono, estado)
+    - Historial de Compras (total de compras, pagos totales, última compra)
+    - **Citas** (primera cita histórica, próxima cita agendada)
+    - De dónde llegó el contacto (fuente, anuncio, ID del anuncio)
+  - Backend calcula fechas de citas desde tabla `appointments`:
+    - `firstAppointmentDate`: la cita más antigua del contacto
+    - `nextAppointmentDate`: la cita más cercana en el futuro que no esté cancelada
+  - Endpoints backend: PUT /api/contacts/:id, DELETE /api/contacts/:id, GET /api/contacts/:id
+  - Protección contra eliminación accidental con confirmación explícita
 - ✓ Registro de pagos offline (RecordPaymentModal):
   - Búsqueda de contactos en tiempo real
   - 2 tipos de cobro: directo (solo monto) o desde productos guardados
@@ -522,15 +531,16 @@ cd frontend && npm run build
 ## 📅 ÚLTIMA ACTUALIZACIÓN
 
 **Fecha**: 2025-10-18
-**Versión**: 1.10.1
+**Versión**: 1.11.0
 **Último cambio estructural**:
-- **Fix: Implementación correcta de Round Robin con fallback**
-  - Flujo correcto: GET calendarios → extraer userIds → GET usuarios por ID
-  - Endpoint correcto: GET /users/:userId (según documentación oficial GHL)
-  - Fallback cuando falta scope users.readonly en el token
-  - Selector de team members funciona con IDs si no hay nombres
-  - Investigación completa de API de HighLevel documentada
-  - Próximo paso: Usuario debe regenerar token con scope users.readonly
+- **Feature: Fechas de citas en modal de contactos**
+  - Agregados campos `firstAppointmentDate` y `nextAppointmentDate` al tipo Contact
+  - Backend calcula fechas desde tabla `appointments` de la BD local
+  - Primera cita: la más antigua del historial del contacto
+  - Próxima cita: la más cercana en el futuro que no esté cancelada
+  - Nueva sección "Citas" en modal de detalles de contacto (Contacts.tsx)
+  - Endpoint modificado: GET /api/contacts/:id (contactsController.js)
+  - Archivos: types/index.ts, Contacts.tsx, contactsController.js, highlevelController.js
 
 ---
 
