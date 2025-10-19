@@ -279,11 +279,26 @@ export const handleAppointmentWebhook = async (req, res) => {
           appointment_status, assigned_user_id, notes, address, start_time, end_time, date_added, date_updated)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
          ON CONFLICT (id) DO UPDATE SET
-          status = EXCLUDED.status, appointment_status = EXCLUDED.appointment_status,
-          start_time = EXCLUDED.start_time, date_updated = EXCLUDED.date_updated`
-      : `INSERT OR REPLACE INTO appointments (id, calendar_id, contact_id, location_id, title, status,
+          status = EXCLUDED.status,
+          appointment_status = EXCLUDED.appointment_status,
+          start_time = EXCLUDED.start_time,
+          end_time = EXCLUDED.end_time,
+          notes = COALESCE(EXCLUDED.notes, appointments.notes),
+          address = COALESCE(EXCLUDED.address, appointments.address),
+          date_added = COALESCE(appointments.date_added, EXCLUDED.date_added),
+          date_updated = EXCLUDED.date_updated`
+      : `INSERT INTO appointments (id, calendar_id, contact_id, location_id, title, status,
           appointment_status, assigned_user_id, notes, address, start_time, end_time, date_added, date_updated)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (id) DO UPDATE SET
+          status = EXCLUDED.status,
+          appointment_status = EXCLUDED.appointment_status,
+          start_time = EXCLUDED.start_time,
+          end_time = EXCLUDED.end_time,
+          notes = COALESCE(EXCLUDED.notes, appointments.notes),
+          address = COALESCE(EXCLUDED.address, appointments.address),
+          date_added = COALESCE(appointments.date_added, EXCLUDED.date_added),
+          date_updated = EXCLUDED.date_updated`;
 
     await db.run(query, [
       appointmentId,
