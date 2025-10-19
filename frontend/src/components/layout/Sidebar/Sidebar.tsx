@@ -9,8 +9,7 @@ import {
   Calendar,
   Settings,
   BarChart3,
-  GripVertical,
-  Sparkles
+  GripVertical
 } from 'lucide-react'
 import { cn } from '@/utils/cn'
 import { Logo } from '@/components/common'
@@ -281,16 +280,19 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, locationName, loca
     onNavigate?.()
   }
 
-  const handlePointerDown = (id: string) => (event: React.PointerEvent<HTMLAnchorElement>) => {
+  const handlePointerDown = (id: string) => (_event: React.PointerEvent<HTMLAnchorElement>) => {
     if (draggingId) return
 
     clearLongPressTimeout()
+    if (isEditing) {
+      setLongPressId(id)
+      return
+    }
+
     longPressTimeoutRef.current = window.setTimeout(() => {
       setLongPressId(id)
       setIsEditing(true)
     }, LONG_PRESS_DELAY)
-
-    event.currentTarget.setPointerCapture?.(event.pointerId)
   }
 
   const handlePointerUp = (id: string) => (event: React.PointerEvent<HTMLAnchorElement>) => {
@@ -306,24 +308,24 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, locationName, loca
     if (longPressActive) {
       event.preventDefault()
       event.stopPropagation()
-      setLongPressId(null)
-      setIsEditing(false)
     }
+
+    setLongPressId(null)
   }
 
   const handlePointerCancel = () => {
     clearLongPressTimeout()
-    setIsEditing(false)
+    setLongPressId(null)
   }
 
   const handlePointerLeave = () => {
     if (draggingId) return
     clearLongPressTimeout()
-    setIsEditing(false)
+    setLongPressId(null)
   }
 
   const handleDragStart = (id: string) => (event: React.DragEvent<HTMLAnchorElement>) => {
-    if (longPressId !== id) {
+    if (!isEditing && longPressId !== id) {
       event.preventDefault()
       return
     }
@@ -334,6 +336,29 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, locationName, loca
     setDraggingId(id)
     event.dataTransfer.effectAllowed = 'move'
     event.dataTransfer.setData('text/plain', id)
+
+    const node = navItemRefs.current.get(id)
+    if (node) {
+      const rect = node.getBoundingClientRect()
+      const dragImage = node.cloneNode(true) as HTMLElement
+      dragImage.style.width = `${rect.width}px`
+      dragImage.style.height = `${rect.height}px`
+      dragImage.style.position = 'absolute'
+      dragImage.style.top = '-9999px'
+      dragImage.style.left = '-9999px'
+      dragImage.style.pointerEvents = 'none'
+      dragImage.style.boxShadow = '0 12px 24px -12px rgba(15, 23, 42, 0.45)'
+      dragImage.style.opacity = '0.95'
+      document.body.appendChild(dragImage)
+
+      const offsetX = event.clientX - rect.left
+      const offsetY = event.clientY - rect.top
+      event.dataTransfer.setDragImage(dragImage, offsetX, offsetY)
+
+      requestAnimationFrame(() => {
+        document.body.removeChild(dragImage)
+      })
+    }
   }
 
   const handleDragEnd = () => {
@@ -445,10 +470,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, locationName, loca
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex flex-col items-center justify-center px-4 gap-2 border-b border-[rgba(148,163,184,0.12)]" style={{ height: 'var(--header-height)' }}>
+      <div className="flex items-center px-6 py-4 border-b border-[rgba(148,163,184,0.12)]">
         {mounted && locationLogo ? (
           // Si hay logo de HighLevel, mostrarlo
-          <div className="w-24 h-10 flex items-center justify-center">
+          <div className="w-28 h-12 flex items-center">
             <img
               src={locationLogo}
               alt={locationName || 'Logo'}
@@ -457,8 +482,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, locationName, loca
           </div>
         ) : mounted && locationName && locationName !== 'Ristak' ? (
           // Si no hay logo pero sí nombre de HighLevel (no es "Ristak"), mostrar el nombre
-          <div className="w-full flex items-center justify-center px-2">
-            <span className="text-lg font-bold text-[var(--color-text-primary)] truncate max-w-[180px] text-center">
+          <div className="flex items-center">
+            <span className="text-xl font-bold text-[var(--color-text-primary)] truncate">
               {locationName}
             </span>
           </div>
@@ -470,129 +495,137 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, locationName, loca
 
       <nav
         className={cn(
-          'flex-1 space-y-1 p-4 pt-3 transition-all duration-200 relative',
+          'relative flex-1 px-3 py-4 transition-all duration-200',
           isEditing
-            ? 'bg-white/[0.04] border border-dashed border-[rgba(148,163,184,0.28)] rounded-xl shadow-[0_12px_30px_-12px_rgba(15,23,42,0.45)]'
+            ? 'bg-white/[0.02] mx-2 rounded-lg ring-1 ring-[rgba(148,163,184,0.15)] shadow-sm'
             : ''
         )}
         onDragOver={(event) => {
           if (!draggingId) return
           event.preventDefault()
-
-          if (event.target === event.currentTarget) {
-            const bounds = event.currentTarget.getBoundingClientRect()
-            const threshold = 32
-
-            if (event.clientY >= bounds.bottom - threshold) {
-              setDropTargetId(null)
-              setNavigationAnimated(current => moveItemToEnd(current, draggingId))
-            }
-          }
         }}
         onDrop={handleContainerDrop}
       >
         {isEditing && (
-          <div className="mb-3 flex items-center justify-between gap-3 rounded-lg border border-dashed border-[rgba(148,163,184,0.35)] bg-white/[0.05] px-3 py-2 text-[11px] uppercase tracking-[0.18em] text-[var(--color-text-tertiary)]">
-            <div className="flex items-center gap-2">
-              <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-white/[0.08]">
-                <Sparkles className="h-3.5 w-3.5 text-[var(--color-text-secondary)] animate-pulse" />
+          <div className="pointer-events-none absolute inset-x-3 bottom-3 z-10 flex items-center justify-between gap-2 rounded-md border border-dashed border-[rgba(148,163,184,0.2)] bg-white/[0.04] px-3 py-1.5 text-[9px] font-medium tracking-wider text-[var(--color-text-tertiary)] uppercase">
+            <span className="flex items-center gap-1.5 text-[var(--color-text-secondary)]">
+              <span className="flex h-1.5 w-1.5 items-center justify-center">
+                <span className="h-1.5 w-1.5 rounded-full bg-[var(--color-accent-green)] animate-ping" />
               </span>
-              <span className="font-semibold text-[var(--color-text-secondary)]">Modo edición</span>
-            </div>
-            <span className="rounded-full bg-white/[0.06] px-2 py-1 text-[9px] font-medium text-[var(--color-text-tertiary)] tracking-[0.3em]">
+              Editando
+            </span>
+            <span className="hidden text-[var(--color-text-tertiary)] sm:inline">
               Arrastra para reordenar
             </span>
           </div>
         )}
-        {navigation.map((item) => {
-          const Icon = item.icon
-          const isActive = location.pathname.startsWith(item.href)
-          const isPreparing = longPressId === item.id && !draggingId
-          const isDragging = draggingId === item.id
-          const isDropTarget = dropTargetId === item.id && draggingId !== item.id
-          const isDimmed = Boolean(draggingId) && draggingId !== item.id
 
-          return (
-            <Link
-              key={item.id}
-              to={item.href}
-              draggable={isPreparing || isDragging}
-              onClick={handleItemClick(item.id)}
-              onPointerDown={handlePointerDown(item.id)}
-              onPointerUp={handlePointerUp(item.id)}
-              onPointerLeave={handlePointerLeave}
-              onPointerCancel={handlePointerCancel}
-              onDragStart={handleDragStart(item.id)}
-              onDragEnd={handleDragEnd}
-              onDragOver={handleDragOver(item.id)}
-              onDragEnter={handleDragEnter(item.id)}
-              onDragLeave={handleDragLeave(item.id)}
-              onDrop={handleDrop(item.id)}
-              ref={(node) => {
-                if (node) {
-                  navItemRefs.current.set(item.id, node)
-                } else {
-                  navItemRefs.current.delete(item.id)
-                }
-              }}
-              className={cn(
-                'group flex items-center gap-3 rounded-lg py-2.5 pl-3 pr-3 text-sm font-medium transition-all duration-200 ease-out select-none',
-                isEditing ? 'pl-6' : '',
-                isDragging
-                  ? 'z-10 cursor-grabbing scale-[1.05] bg-white/[0.08] shadow-xl'
-                  : isPreparing
-                    ? 'cursor-grab scale-[1.03] bg-white/[0.06] shadow-lg'
-                    : 'cursor-pointer',
-                isDropTarget
-                  ? 'ring-2 ring-offset-0 ring-[rgba(148,163,184,0.55)] bg-white/[0.08] backdrop-blur-sm'
-                  : '',
-                isDimmed ? 'opacity-60' : '',
-                isActive
-                  ? 'glass text-[var(--color-text-primary)]'
-                  : 'text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] glass-hover'
-              )}
-            >
-              <span
+        <div className="space-y-0.5">
+          {navigation.map((item) => {
+            const Icon = item.icon
+            const isActive = location.pathname.startsWith(item.href)
+            const isPreparing = longPressId === item.id && !draggingId
+            const isDragging = draggingId === item.id
+            const isDropTarget = dropTargetId === item.id && draggingId !== item.id
+            const isDimmed = Boolean(draggingId) && draggingId !== item.id
+
+            return (
+              <Link
+                key={item.id}
+                to={item.href}
+                draggable={isPreparing || isDragging}
+                onClick={handleItemClick(item.id)}
+                onPointerDown={handlePointerDown(item.id)}
+                onPointerUp={handlePointerUp(item.id)}
+                onPointerLeave={handlePointerLeave}
+                onPointerCancel={handlePointerCancel}
+                onDragStart={handleDragStart(item.id)}
+                onDragEnd={handleDragEnd}
+                onDragOver={handleDragOver(item.id)}
+                onDragEnter={handleDragEnter(item.id)}
+                onDragLeave={handleDragLeave(item.id)}
+                onDrop={handleDrop(item.id)}
+                ref={(node) => {
+                  if (node) {
+                    navItemRefs.current.set(item.id, node)
+                  } else {
+                    navItemRefs.current.delete(item.id)
+                  }
+                }}
                 className={cn(
-                  'flex h-5 w-5 items-center justify-center rounded-md border border-dashed border-transparent transition-all duration-200',
-                  isEditing ? 'border-[rgba(148,163,184,0.35)] bg-white/[0.04] opacity-100' : 'opacity-0'
+                  'group relative flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-all duration-150 select-none',
+                  isDragging
+                    ? 'z-10 cursor-grabbing scale-[1.02] bg-white/[0.06] shadow-lg'
+                    : isPreparing
+                      ? 'cursor-grab bg-white/[0.04] shadow-md'
+                      : 'cursor-pointer',
+                  isDropTarget
+                    ? 'ring-1 ring-[rgba(148,163,184,0.4)] bg-white/[0.05]'
+                    : '',
+                  isDimmed ? 'opacity-50' : '',
+                  isActive
+                    ? 'bg-white/[0.08] text-[var(--color-text-primary)] shadow-sm'
+                    : 'text-[var(--color-text-tertiary)] hover:bg-white/[0.04] hover:text-[var(--color-text-secondary)]'
                 )}
-                aria-hidden="true"
               >
-                <GripVertical className="h-3.5 w-3.5 text-[var(--color-text-secondary)]" />
-              </span>
-              <span className="flex items-center gap-3">
-                <Icon className="h-5 w-5" />
-                <span>{item.name}</span>
-              </span>
-              {isDragging && (
-                <span className="ml-auto flex items-center gap-1 text-[10px] font-semibold tracking-[0.2em] text-[var(--color-text-secondary)]">
-                  MOVIENDO
-                  <span className="flex items-center gap-[2px]">
-                    <span className="h-1 w-1 rounded-full bg-[var(--color-text-secondary)] animate-pulse" />
-                    <span className="h-1 w-1 rounded-full bg-[var(--color-text-secondary)] animate-pulse [animation-delay:120ms]" />
-                    <span className="h-1 w-1 rounded-full bg-[var(--color-text-secondary)] animate-pulse [animation-delay:240ms]" />
-                  </span>
+                {/* Grip handle para modo edición */}
+                <span
+                  className={cn(
+                    'pointer-events-none absolute -left-1 top-1/2 flex h-4 w-4 -translate-y-1/2 items-center justify-center rounded transition-all duration-200',
+                    isEditing
+                      ? 'opacity-40'
+                      : 'opacity-0'
+                  )}
+                  aria-hidden="true"
+                >
+                  <GripVertical className="h-3.5 w-3.5 text-[var(--color-text-tertiary)]" />
                 </span>
-              )}
-            </Link>
-          )
-        })}
+
+                {/* Icono y texto */}
+                <Icon className={cn(
+                  "h-5 w-5 flex-shrink-0 transition-colors",
+                  isActive ? "text-[var(--color-text-primary)]" : "",
+                  isEditing ? "ml-4" : ""
+                )} />
+                <span className="flex-1">{item.name}</span>
+
+                {/* Indicador activo */}
+                {isActive && !isEditing && (
+                  <span className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-5 bg-[var(--color-accent-blue)] rounded-r" />
+                )}
+
+                {/* Estado arrastrando */}
+                {isDragging && (
+                  <span className="ml-auto flex items-center gap-1">
+                    <span className="flex items-center gap-0.5">
+                      <span className="h-1 w-1 rounded-full bg-[var(--color-text-tertiary)] animate-pulse" />
+                      <span className="h-1 w-1 rounded-full bg-[var(--color-text-tertiary)] animate-pulse [animation-delay:100ms]" />
+                      <span className="h-1 w-1 rounded-full bg-[var(--color-text-tertiary)] animate-pulse [animation-delay:200ms]" />
+                    </span>
+                  </span>
+                )}
+              </Link>
+            )
+          })}
+        </div>
       </nav>
 
-      <div className="mt-auto p-4 border-t border-[rgba(148,163,184,0.12)]">
+      <div className="mt-auto px-3 py-4 border-t border-[rgba(148,163,184,0.12)]">
         <Link
           to="/settings"
           onClick={handleNavigate}
           className={cn(
-            'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors',
+            'relative flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-all duration-150',
             location.pathname.startsWith('/settings')
-              ? 'glass text-[var(--color-text-primary)]'
-              : 'text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] glass-hover'
+              ? 'bg-white/[0.08] text-[var(--color-text-primary)] shadow-sm'
+              : 'text-[var(--color-text-tertiary)] hover:bg-white/[0.04] hover:text-[var(--color-text-secondary)]'
           )}
         >
-          <Settings className="w-5 h-5" />
-          Configuración
+          <Settings className="w-5 h-5 flex-shrink-0" />
+          <span className="flex-1">Configuración</span>
+          {location.pathname.startsWith('/settings') && (
+            <span className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-5 bg-[var(--color-accent-blue)] rounded-r" />
+          )}
         </Link>
       </div>
     </div>

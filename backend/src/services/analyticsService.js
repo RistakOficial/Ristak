@@ -950,8 +950,11 @@ export async function buildReportMetrics ({ startDate, endDate, groupBy = 'day',
     }))
 
   // LOG CONSOLIDADO PARA DEBUGGING
+  const requestId = `REQ-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+  const timestamp = new Date().toISOString()
   const scopeLabel = scope === 'all' ? 'TODOS' : 'ÚLTIMA ATRIBUCIÓN'
-  logger.info(`\n========== REPORTS ${scopeLabel} - MÉTRICAS ==========`)
+  logger.info(`\n🔵 ========== [${requestId}] REPORTS ${scopeLabel} - MÉTRICAS ==========`)
+  logger.info(`⏰ Timestamp: ${timestamp}`)
   logger.info(`📅 Rango: ${range.startUtc} → ${range.endUtc}`)
   logger.info(`📊 Agrupación: ${groupBy}`)
   logger.info(`📈 Total períodos: ${metrics.length}`)
@@ -981,7 +984,7 @@ export async function buildReportMetrics ({ startDate, endDate, groupBy = 'day',
       logger.info(`   ${m.period}: Leads=${m.leads}, Citas=${m.appointments}, Visitantes=${m.visitors}, Ventas=${m.sales}`)
     })
   }
-  logger.info(`=================================================\n`)
+  logger.info(`🔵 ========== FIN [${requestId}] ==========\n`)
 
   return {
     range,
