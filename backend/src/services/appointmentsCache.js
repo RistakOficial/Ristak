@@ -122,13 +122,18 @@ export async function loadAllAppointments(locationId, apiToken) {
                 totalEvents++
 
                 // Guardar en DB (upsert)
+                // IMPORTANTE: Guardar date_added para poder filtrar citas por fecha de creación
+                const dateAdded = event.dateAdded || event.createdAt || event.createdOn || event.startTime || new Date().toISOString()
+                const dateUpdated = event.dateUpdated || event.updatedAt || event.updatedOn || dateAdded
+
                 await db.run(`
-                  INSERT INTO appointments (id, contact_id, calendar_id, location_id, title, status, start_time, end_time)
-                  VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                  INSERT INTO appointments (id, contact_id, calendar_id, location_id, title, status, start_time, end_time, date_added, date_updated)
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                   ON CONFLICT(id) DO UPDATE SET
                     status = excluded.status,
                     start_time = excluded.start_time,
-                    end_time = excluded.end_time
+                    end_time = excluded.end_time,
+                    date_updated = excluded.date_updated
                 `, [
                   event.id,
                   event.contactId,
@@ -137,7 +142,9 @@ export async function loadAllAppointments(locationId, apiToken) {
                   event.title || '',
                   event.status || 'scheduled',
                   event.startTime || '',
-                  event.endTime || ''
+                  event.endTime || '',
+                  dateAdded,
+                  dateUpdated
                 ]).catch(err => {
                   // Ignorar errores de inserción (puede ser que el evento ya exista)
                 })
