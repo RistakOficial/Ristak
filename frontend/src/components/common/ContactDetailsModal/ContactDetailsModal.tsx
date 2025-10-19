@@ -330,11 +330,6 @@ export function ContactDetailsModal({
                             </Badge>
                           ) : null
                         })()}
-                        {type === 'sales' && contact.ltv && (
-                          <span className={styles.ltvValue}>
-                            {formatCurrency(contact.ltv)}
-                          </span>
-                        )}
                       </div>
                     </div>
                   ))}
@@ -458,19 +453,11 @@ export function ContactDetailsModal({
                     <h5 className={styles.detailSectionTitle}>Métricas</h5>
                     <div className={styles.metricsGrid}>
                       <div className={styles.metricCard}>
-                        <p className={styles.metricLabel}>Valor</p>
+                        <p className={styles.metricLabel}>Valor Total</p>
                         <p className={styles.metricValue}>
                           {formatCurrency(selectedContact.ltv || 0)}
                         </p>
                       </div>
-                      {payments.length > 0 && (
-                        <div className={styles.metricCard}>
-                          <p className={styles.metricLabel}>Pagos</p>
-                          <p className={styles.metricValue}>
-                            {payments.length}
-                          </p>
-                        </div>
-                      )}
                     </div>
                   </div>
                 )}

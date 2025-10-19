@@ -278,11 +278,6 @@ export function VisitorDetailsModal({
                             <Badge variant={badge.variant}>{badge.label}</Badge>
                           ) : null
                         })()}
-                        {visitor.contact?.ltv && visitor.contact.ltv > 0 && (
-                          <span className={styles.ltvValue}>
-                            {formatCurrency(visitor.contact.ltv)}
-                          </span>
-                        )}
                         {visitor.deviceType && (
                           <Icon name={getDeviceIcon(visitor.deviceType)} size={14} className={styles.deviceIcon} />
                         )}
