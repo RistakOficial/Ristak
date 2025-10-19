@@ -64,35 +64,31 @@ const getEventDescription = (event: JourneyEvent): string => {
   const { type, data } = event
 
   if (type === 'page_visit') {
-    if (data.landing_page) {
-      return data.landing_page
-    }
-    if (data.campaign_name || data.utm_campaign) {
-      return data.campaign_name || data.utm_campaign
-    }
-    if (data.ad_name || data.utm_content) {
-      return data.ad_name || data.utm_content
-    }
+    // Solo mostrar la fuente/plataforma
     if (data.source_platform || data.site_source_name) {
       return data.source_platform || data.site_source_name
     }
-    return 'Visitó el sitio'
+    return 'Sitio web'
   }
 
   if (type === 'whatsapp_message') {
-    return data.referral_headline || 'Mensaje de WhatsApp'
+    return 'WhatsApp'
   }
 
   if (type === 'contact_created') {
-    return data.source || 'Se registró'
+    // Solo mostrar la fuente si es corta
+    const source = data.source || 'Registro'
+    return source.length > 15 ? 'Se registró' : source
   }
 
   if (type === 'appointment') {
-    return data.title || 'Agendó cita'
+    // NO mostrar el título largo, solo "Cita"
+    return 'Agendada'
   }
 
   if (type === 'payment') {
-    return data.amount ? formatCurrency(data.amount) : 'Realizó compra'
+    // Solo mostrar el monto
+    return data.amount ? formatCurrency(data.amount) : 'Compra'
   }
 
   return ''
