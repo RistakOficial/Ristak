@@ -4,7 +4,6 @@
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: var(--radius-lg);
   padding: 0.75rem 1rem;
-  box-shadow: 0 18px 45px rgba(0, 0, 0, 0.48);
   min-width: 220px;
   max-width: 320px;
   pointer-events: none;
@@ -16,7 +15,6 @@
 :global(body.dark) .tooltip {
   background-color: #1a1a1a;
   border-color: rgba(255, 255, 255, 0.12);
-  box-shadow: 0 18px 45px rgba(0, 0, 0, 0.6);
 }
 
 .tooltipLabel {

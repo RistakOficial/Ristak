@@ -124,7 +124,7 @@ export const LineChart: React.FC<LineChartProps> = ({
 
   const axisFormatter = (value: number) => formatValue(value)
   const tooltipFormatter = (value: number, key: string) => formatTooltipValue(value, key)
-  const tooltipAnchor = actualPointPos || pointPos
+  const tooltipAnchor = actualPointPos || pendingUpdateRef.current || pointPos
 
   const tooltipVerticalOffset = useMemo(() => {
     if (!tooltipAnchor || !chartRef.current) {

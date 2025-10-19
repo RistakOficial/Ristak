@@ -914,14 +914,14 @@ export const getContactJourney = async (req, res) => {
     // 4. TODAS las citas agendadas (filtradas por calendarios de atribución)
     // Obtener calendarios de atribución configurados
     const attributionConfig = await db.get(
-      'SELECT value FROM app_config WHERE key = ?',
+      'SELECT config_value FROM app_config WHERE config_key = ?',
       ['attribution_calendar_ids']
     )
 
     let appointments
-    if (attributionConfig && attributionConfig.value) {
+    if (attributionConfig && attributionConfig.config_value) {
       try {
-        const calendarIds = JSON.parse(attributionConfig.value)
+        const calendarIds = JSON.parse(attributionConfig.config_value)
         if (calendarIds.length > 0) {
           const placeholders = calendarIds.map(() => '?').join(',')
           appointments = await db.all(
