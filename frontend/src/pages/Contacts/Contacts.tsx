@@ -18,8 +18,10 @@ import { useDateRange } from '@/contexts/DateRangeContext'
 import { useLabels } from '@/contexts/LabelsContext'
 import { formatCurrency, formatDate, formatDateToISO, formatEndDateToISO, formatNumber, parseLocalDateString } from '@/utils/format'
 import { contactsService, type Contact, type ContactStats } from '@/services/contactsService'
+import { calendarsService, type CalendarEvent } from '@/services/calendarsService'
 import type { ContactAppointment, ContactPayment } from '@/types'
 import { useNotification } from '@/contexts/NotificationContext'
+import { useAuth } from '@/contexts/AuthContext'
 import styles from './Contacts.module.css'
 import { dedupeContacts } from '@/utils/contactDedup'
 
@@ -166,6 +168,7 @@ export const Contacts: React.FC = () => {
   const { dateRange, setDateRange } = useDateRange()
   const { showToast } = useNotification()
   const { labels } = useLabels()
+  const { locationId, accessToken } = useAuth()
   const [contacts, setContacts] = useState<Contact[]>([])
   const [stats, setStats] = useState<ContactStats | null>(null)
   const [filter, setFilter] = useState('all')
@@ -179,6 +182,7 @@ export const Contacts: React.FC = () => {
   const [loading, setLoading] = useState(false)
   const [viewMode, setViewMode] = useState<'all' | 'by-date'>('all') // Por defecto 'all' (Todos)
   const [isClient, setIsClient] = useState(false)
+  const [allEvents, setAllEvents] = useState<CalendarEvent[]>([]) // Eventos de calendarios
 
   const rangeStart = dateRange.start instanceof Date ? dateRange.start : new Date(dateRange.start)
   const rangeEnd = dateRange.end instanceof Date ? dateRange.end : new Date(dateRange.end)
@@ -206,6 +210,51 @@ export const Contacts: React.FC = () => {
   useEffect(() => {
     setIsClient(true)
   }, [])
+
+  // Cargar eventos de calendarios cuando se activa el filtro "Citados"
+  useEffect(() => {
+    if (filter !== 'appointments' || !locationId || !accessToken) {
+      setAllEvents([])
+      return
+    }
+
+    const loadAllEvents = async () => {
+      try {
+        // Obtener todos los calendarios
+        const calendars = await calendarsService.getCalendars(locationId, accessToken)
+
+        // Obtener eventos de TODOS los calendarios (sin filtro de fecha)
+        const now = new Date()
+        const past = new Date(now.getFullYear() - 10, 0, 1) // 10 años atrás
+        const future = new Date(now.getFullYear() + 10, 11, 31) // 10 años adelante
+
+        const allEventsData: CalendarEvent[] = []
+
+        for (const calendar of calendars) {
+          if (!calendar.isActive) continue
+
+          try {
+            const events = await calendarsService.getEvents(
+              locationId,
+              past.getTime(),
+              future.getTime(),
+              accessToken,
+              calendar.id
+            )
+            allEventsData.push(...events)
+          } catch (error) {
+            // Ignorar errores de calendarios individuales
+          }
+        }
+
+        setAllEvents(allEventsData)
+      } catch (error) {
+        // Error silencioso - el filtro seguirá funcionando con datos locales
+      }
+    }
+
+    loadAllEvents()
+  }, [filter, locationId, accessToken])
 
   useEffect(() => {
     if (!selectedContactId) return
@@ -371,17 +420,31 @@ export const Contacts: React.FC = () => {
 
       // Citados: Tienen cita pero NO son clientes
       if (filter === 'appointments') {
+        const isNotCustomer = contact.status !== 'customer'
+        if (!isNotCustomer) return false
+
+        // Buscar el contacto en los eventos de calendarios
+        const hasAppointmentInCalendar = allEvents.some(event => {
+          // Buscar por contactId del evento
+          return event.contactId === contact.id
+        })
+
+        // Si hay eventos de calendario, confiar en esa data
+        if (allEvents.length > 0) {
+          return hasAppointmentInCalendar
+        }
+
+        // Fallback: usar datos locales si no se cargaron eventos
         const hasAppointments =
           (contact.appointments && contact.appointments.length > 0) ||
           contact.firstAppointmentDate !== null && contact.firstAppointmentDate !== undefined
-        const isNotCustomer = contact.status !== 'customer'
 
-        return hasAppointments && isNotCustomer
+        return hasAppointments
       }
 
       return false
     })
-  }, [contacts, filter])
+  }, [contacts, filter, allEvents])
 
   const filterOptions = [
     { label: 'Todos', value: 'all' },
