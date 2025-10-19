@@ -75,10 +75,10 @@ type TableRow = {
 }
 
 // "Todos" agrupa por la fecha en que sucedió cada evento.
-// "Detectados de anuncios" muestra todo usando la fecha de creación del contacto.
+// "Última atribución" muestra todo usando la fecha de creación del contacto.
 const scopeTabs = [
   { value: 'cashflow', label: 'Todos', icon: <Layers size={16} /> },
-  { value: 'campaigns', label: 'Detectados de anuncios', icon: <MousePointerClick size={16} /> }
+  { value: 'campaigns', label: 'Última atribución', icon: <MousePointerClick size={16} /> }
 ]
 
 const viewTabs = [
