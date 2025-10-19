@@ -36,7 +36,6 @@ export const TabList: React.FC<TabListProps> = ({
         return (
           <button
             key={tab.value}
-            type="button"
             onClick={() => onTabChange(tab.value)}
             className={cn(
               'relative rounded-lg px-3 py-1.5 text-sm font-medium transition-colors whitespace-nowrap flex items-center gap-1.5',

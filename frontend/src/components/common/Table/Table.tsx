@@ -288,11 +288,11 @@ export function Table<T extends Record<string, any>>({
             </div>
           )}
 
-          {filters && (
+          {filters && onFilterChange && (
             <TabList
               tabs={filters}
               activeTab={activeFilter}
-              onChange={onFilterChange ?? (() => {})}
+              onTabChange={onFilterChange}
             />
           )}
         </div>

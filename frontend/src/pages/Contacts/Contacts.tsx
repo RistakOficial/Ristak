@@ -364,25 +364,13 @@ export const Contacts: React.FC = () => {
   }
 
   const filteredContacts = useMemo(() => {
-    console.log('Filtering contacts:', {
-      filter,
-      totalContacts: contacts.length,
-      statusDistribution: contacts.reduce((acc, c) => {
-        acc[c.status || 'undefined'] = (acc[c.status || 'undefined'] || 0) + 1
-        return acc
-      }, {} as Record<string, number>)
-    })
-
-    const filtered = contacts.filter(contact => {
+    return contacts.filter(contact => {
       if (filter === 'all') return true
       if (filter === 'leads') return contact.status === 'lead'
       if (filter === 'customers') return contact.status === 'customer'
       if (filter === 'appointments') return contact.status === 'appointment'
       return false
     })
-
-    console.log('Filtered result:', { filter, filteredCount: filtered.length })
-    return filtered
   }, [contacts, filter])
 
   const filterOptions = [
