@@ -123,6 +123,7 @@ export const Campaigns: React.FC = () => {
   const [modalVisitors, setModalVisitors] = useState<any[]>([])
   const [visitorsModalLoading, setVisitorsModalLoading] = useState(false)
   const [visitorsModalTitle, setVisitorsModalTitle] = useState('')
+  const [selectedVisitorItem, setSelectedVisitorItem] = useState<any>(null)
 
   const fetchCampaigns = useCallback(async () => {
     try {
@@ -344,18 +345,89 @@ export const Campaigns: React.FC = () => {
     }
   }, [dateRange, labels])
 
-  // Recargar datos del modal cuando cambian las fechas
+  // Limpiar datos del modal cuando cambian las fechas
   useEffect(() => {
-    if (isModalOpen && selectedModalItem) {
-      handleOpenContactsModal(selectedModalItem, modalType)
+    if (isModalOpen) {
+      setModalContacts([]) // Limpiar datos anteriores
+      // Si el modal está abierto, recargar los datos con las nuevas fechas
+      if (selectedModalItem) {
+        const loadModalData = async () => {
+          setModalLoading(true)
+          try {
+            const startDate = formatDateToISO(dateRange.start)
+            const endDate = formatEndDateToISO(dateRange.end)
+
+            const params: any = {
+              startDate,
+              endDate,
+              type: modalType
+            }
+
+            if (selectedModalItem.level === 'campaign') {
+              params.campaign_id = selectedModalItem.id
+            } else if (selectedModalItem.level === 'adset') {
+              params.adset_id = selectedModalItem.id
+            } else if (selectedModalItem.level === 'ad') {
+              params.ad_id = selectedModalItem.id
+            }
+
+            const contacts = await campaignsService.getContactsByType(params)
+            setModalContacts(contacts)
+          } catch (error) {
+            setModalContacts([])
+          } finally {
+            setModalLoading(false)
+          }
+        }
+        loadModalData()
+      }
     }
-  }, [dateRange, isModalOpen, selectedModalItem, modalType, handleOpenContactsModal])
+  }, [dateRange]) // Solo reaccionar a cambios de fecha
+
+  // Limpiar datos del modal de visitantes cuando cambian las fechas
+  useEffect(() => {
+    if (isVisitorsModalOpen) {
+      setModalVisitors([]) // Limpiar datos anteriores
+      // Si el modal está abierto, recargar los datos con las nuevas fechas
+      if (selectedVisitorItem) {
+        const loadVisitorsData = async () => {
+          setVisitorsModalLoading(true)
+          try {
+            const startDate = formatDateToISO(dateRange.start)
+            const endDate = formatEndDateToISO(dateRange.end)
+
+            const params: any = {
+              startDate,
+              endDate
+            }
+
+            if (selectedVisitorItem.level === 'campaign') {
+              params.campaign_id = selectedVisitorItem.id
+            } else if (selectedVisitorItem.level === 'adset') {
+              params.adset_id = selectedVisitorItem.id
+            } else if (selectedVisitorItem.level === 'ad') {
+              params.ad_id = selectedVisitorItem.id
+            }
+
+            const visitors = await campaignsService.getVisitorsList(params)
+            setModalVisitors(visitors)
+          } catch (error) {
+            setModalVisitors([])
+          } finally {
+            setVisitorsModalLoading(false)
+          }
+        }
+        loadVisitorsData()
+      }
+    }
+  }, [dateRange]) // Solo reaccionar a cambios de fecha
 
   const handleOpenVisitorsModal = useCallback(async (item: any) => {
     setVisitorsModalLoading(true)
     setIsVisitorsModalOpen(true)
     setVisitorsModalTitle(`Visitantes - ${item.name}`)
     setModalVisitors([])
+    setSelectedVisitorItem(item) // Guardar el item seleccionado
 
     try {
       const startDate = formatDateToISO(dateRange.start)

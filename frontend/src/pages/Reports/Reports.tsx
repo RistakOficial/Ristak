@@ -396,6 +396,7 @@ export const Reports: React.FC = () => {
   const [visitorsModalLoading, setVisitorsModalLoading] = useState(false)
   const [visitorsData, setVisitorsData] = useState<any[]>([])
   const [visitorsModalDate, setVisitorsModalDate] = useState('')
+  const [visitorsModalRawDate, setVisitorsModalRawDate] = useState('') // Para guardar la fecha original
 
   const baseRange = {
     start: dateRange.start instanceof Date ? dateRange.start : new Date(dateRange.start),
@@ -590,18 +591,45 @@ export const Reports: React.FC = () => {
     }
   }, [apiRange, labels, reportTypeRef, showToast])
 
-  // Recargar datos del modal cuando cambian las fechas
+  // Limpiar y recargar datos del modal cuando cambian las fechas
   useEffect(() => {
     if (modalState.open && modalState.type) {
-      handleOpenModal(modalState.type, modalState.range, modalState.titleOverride)
+      // Limpiar datos anteriores inmediatamente
+      setModalState(prev => ({ ...prev, contacts: [], loading: true }))
+
+      // Recargar con las nuevas fechas
+      const loadModalData = async () => {
+        const from = modalState.range?.from ?? apiRange.from
+        const to = modalState.range?.to ?? apiRange.to
+        const currentReportType = reportTypeRef.current
+        const currentScope = currentReportType === 'campaigns' ? 'campaigns' : 'all'
+
+        try {
+          const result = await reportsService.getContactsList({
+            from,
+            to,
+            type: modalState.type === 'customers' ? 'customers' : modalState.type,
+            scope: currentScope
+          })
+          setModalState(prev => ({
+            ...prev,
+            contacts: mapContactsToModalData(result.contacts),
+            loading: false
+          }))
+        } catch (error) {
+          setModalState(prev => ({ ...prev, contacts: [], loading: false }))
+        }
+      }
+
+      loadModalData()
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dateRange])
+  }, [dateRange, apiRange.from, apiRange.to]) // Reaccionar a cambios de fecha
 
   // Función para abrir modal de visitantes
   const handleOpenVisitorsModal = useCallback(async (date: string) => {
     setVisitorsModalLoading(true)
     setIsVisitorsModalOpen(true)
+    setVisitorsModalRawDate(date) // Guardar la fecha original para recargar si es necesario
 
     // Manejar diferentes formatos de fecha según viewType
     let startDate = date

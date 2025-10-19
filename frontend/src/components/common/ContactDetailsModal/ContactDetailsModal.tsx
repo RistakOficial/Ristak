@@ -163,6 +163,20 @@ export function ContactDetailsModal({
       const lifetimePurchases = contact.lifetimePurchases ?? (contact as any).purchasesLifetime ?? (contact as any).purchases_count ?? 0
       const lifetimeLtv = contact.lifetimeLtv ?? (contact as any).totalPaid ?? (contact as any).total_paid ?? 0
       const isCustomerFlag = contact.isCustomer ?? (contact as any).isCustomer ?? (contact as any).is_customer ?? contact.is_sale ?? (contact as any).isSale ?? false
+      const rawStatus = (contact as any).status ?? (contact as any).customerStatus ?? (contact as any).stage ?? (contact as any).lifecycleStage ?? ''
+      const normalizedStatus = typeof rawStatus === 'string' ? rawStatus.toLowerCase() : ''
+      const tagsRaw = (contact as any).tags ?? (contact as any).labels ?? (contact as any).tagList ?? (contact as any).contactTags
+      const normalizedTags: string[] = Array.isArray(tagsRaw)
+        ? (tagsRaw as unknown[]).filter((tag): tag is string => typeof tag === 'string')
+        : typeof tagsRaw === 'string'
+          ? tagsRaw.split(',').map(tag => tag.trim())
+          : []
+      const normalizeTag = (tag: string) => tag.toLowerCase()
+      const CUSTOMER_KEYWORDS = ['customer', 'cliente', 'sale', 'ventas', 'sold', 'converted', 'paid', 'pagó', 'compró', 'closed-won', 'won', 'compra', 'pago']
+      const APPOINTMENT_KEYWORDS = ['appointment', 'cita', 'agend', 'booked', 'scheduled', 'confirmado', 'reserva', 'reservo', 'calendar']
+      const statusMatches = (keywords: string[]) => keywords.some(keyword => normalizedStatus.includes(keyword))
+      const tagsMatch = (keywords: string[]) =>
+        normalizedTags.some(tag => keywords.some(keyword => normalizeTag(tag).includes(keyword)))
 
       const hasPurchases =
         isCustomerFlag ||
@@ -170,13 +184,17 @@ export function ContactDetailsModal({
         lifetimePurchases > 0 ||
         (contact.ltv ?? 0) > 0 ||
         lifetimeLtv > 0 ||
-        (contact.payments ?? []).some(payment => payment.amount > 0)
+        (contact.payments ?? []).some(payment => payment.amount > 0) ||
+        statusMatches(CUSTOMER_KEYWORDS) ||
+        tagsMatch(CUSTOMER_KEYWORDS)
 
       const hasAppointments =
         contact.hasAppointments ||
         (contact.appointments?.length ?? 0) > 0 ||
         Boolean(contact.nextAppointmentDate) ||
-        Boolean(contact.firstAppointmentDate)
+        Boolean(contact.firstAppointmentDate) ||
+        statusMatches(APPOINTMENT_KEYWORDS) ||
+        tagsMatch(APPOINTMENT_KEYWORDS)
 
       if (hasPurchases) {
         return { text: labels.customer, variant: 'success' }
