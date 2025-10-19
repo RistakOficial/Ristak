@@ -1083,16 +1083,16 @@ export async function buildContactsList ({ startDate, endDate, type = 'interesad
       contactIds = appointmentContacts.map(row => row.contact_id)
       appointmentsMap = await fetchAppointmentsForContacts(contactIds)
     } else {
-      // Vista "Todos": Filtrar por rango de fechas de la cita (start_time)
+      // Vista "Todos": Filtrar por fecha en que se agendó la cita (created_at)
       const appointmentParams = []
       const appointmentConditions = []
 
       if (range.startUtc) {
-        appointmentConditions.push('a.start_time >= ?')
+        appointmentConditions.push('a.created_at >= ?')
         appointmentParams.push(range.startUtc)
       }
       if (range.endUtc) {
-        appointmentConditions.push('a.start_time <= ?')
+        appointmentConditions.push('a.created_at <= ?')
         appointmentParams.push(range.endUtc)
       }
 
@@ -1114,7 +1114,7 @@ export async function buildContactsList ({ startDate, endDate, type = 'interesad
       contactIds = appointmentContacts.map(row => row.contact_id)
       appointmentsMap = await fetchAppointmentsForContacts(contactIds, range)
 
-      logger.info(`📊 ${contactIds.length} contactos con citas en el rango (vista Todos - Reports modal)`)
+      logger.info(`📊 ${contactIds.length} contactos con citas agendadas en el rango (vista Todos - Reports modal)`)
     }
   }
 
