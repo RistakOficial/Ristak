@@ -76,7 +76,7 @@ export const Dashboard: React.FC = () => {
     }))
   }, [chartData])
 
-  const currencyAxisFormatter = (value: number) => {
+  const currencyAxisFormatter = React.useCallback((value: number) => {
     if (Math.abs(value) >= 1_000_000) {
       return `$${(value / 1_000_000).toFixed(1)}M`
     }
@@ -84,7 +84,7 @@ export const Dashboard: React.FC = () => {
       return `$${(value / 1_000).toFixed(0)}k`
     }
     return `$${Math.round(value)}`
-  }
+  }, [])
 
   // Configuración del gráfico según la vista seleccionada
   const chartConfig = React.useMemo(() => {
