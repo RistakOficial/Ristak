@@ -69,7 +69,7 @@ export const AreaChart: React.FC<AreaChartProps> = ({
   showLegend = false,
   legendLabels = { label1: 'Serie 1', label2: 'Serie 2' }
 }) => {
-  const { chartRef, pointPos, isHovering, activeIndex, activeData } = useChartHover({ data })
+  const { chartRef, pointPos: _pointPos, isHovering, activeIndex, activeData } = useChartHover({ data })
   const [actualPointPos, setActualPointPos] = useState<{ x: number; y: number } | null>(null)
   const activePointRef = useRef<{ [key: string]: { x: number; y: number } }>({})
   const hasSecondSeries = data.some((d) => typeof d.value2 === 'number')
@@ -111,7 +111,8 @@ export const AreaChart: React.FC<AreaChartProps> = ({
   const yDomain: [number, number] = [0, maxValue > 0 ? Math.ceil(maxValue * 1.4) : 1]
 
   const tooltipFormatter = (value: number, key: string) => formatTooltipValue(value, key)
-  const tooltipAnchor = actualPointPos || pointPos
+  const resolvedPointPos = actualPointPos ?? null
+  const tooltipAnchor = resolvedPointPos
 
   const tooltipVerticalOffset = useMemo(() => {
     if (!tooltipAnchor || !chartRef.current) {
@@ -287,9 +288,9 @@ export const AreaChart: React.FC<AreaChartProps> = ({
 
       {/* Nuestro tooltip flotante que aparece sobre el punto */}
       <ChartTooltip
-        active={isHovering}
+        active={isHovering && Boolean(resolvedPointPos)}
         data={activeData}
-        pointPos={tooltipAnchor}
+        pointPos={resolvedPointPos}
         series={series}
         formatValue={tooltipFormatter}
         verticalOffset={tooltipVerticalOffset}

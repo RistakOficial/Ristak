@@ -69,7 +69,7 @@ export const LineChart: React.FC<LineChartProps> = ({
   showLegend = false,
   legendLabels = { label1: 'Serie 1', label2: 'Serie 2' }
 }) => {
-  const { chartRef, pointPos, isHovering, activeIndex, activeData } = useChartHover({ data })
+  const { chartRef, pointPos: _pointPos, isHovering, activeIndex, activeData } = useChartHover({ data })
   const [actualPointPos, setActualPointPos] = useState<{ x: number; y: number } | null>(null)
   const activePointRef = useRef<{ [key: string]: { x: number; y: number } }>({})
   const pendingUpdateRef = useRef<{ x: number; y: number } | null>(null)
@@ -124,7 +124,8 @@ export const LineChart: React.FC<LineChartProps> = ({
 
   const axisFormatter = (value: number) => formatValue(value)
   const tooltipFormatter = (value: number, key: string) => formatTooltipValue(value, key)
-  const tooltipAnchor = actualPointPos || pendingUpdateRef.current || pointPos
+  const resolvedPointPos = actualPointPos ?? pendingUpdateRef.current ?? null
+  const tooltipAnchor = resolvedPointPos
 
   const tooltipVerticalOffset = useMemo(() => {
     if (!tooltipAnchor || !chartRef.current) {
@@ -291,9 +292,9 @@ export const LineChart: React.FC<LineChartProps> = ({
 
       {/* Nuestro tooltip flotante que aparece sobre el punto */}
       <ChartTooltip
-        active={isHovering}
+        active={isHovering && Boolean(resolvedPointPos)}
         data={activeData}
-        pointPos={tooltipAnchor}
+        pointPos={resolvedPointPos}
         series={series}
         formatValue={tooltipFormatter}
         verticalOffset={tooltipVerticalOffset}

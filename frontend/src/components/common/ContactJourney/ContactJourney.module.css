@@ -232,7 +232,7 @@
   margin: 0;
 }
 
-/* Tooltips - siempre negro como los de los gráficos */
+/* Tooltips - siempre negro sin sombra */
 .eventTooltip {
   position: fixed;
   z-index: 2147483647 !important;
@@ -241,7 +241,7 @@
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: var(--radius-lg);
   padding: 12px 16px;
-  box-shadow: 0 18px 45px rgba(0, 0, 0, 0.6);
+  box-shadow: none;
   min-width: 220px;
   max-width: 320px;
   pointer-events: none;
@@ -251,13 +251,13 @@
 
 :global(body.dark) .eventTooltip {
   background-color: #1a1a1a;
-  box-shadow: 0 18px 45px rgba(0, 0, 0, 0.6);
+  box-shadow: none;
   border-color: rgba(255, 255, 255, 0.12);
 }
 
 :global(body.light) .eventTooltip {
   background-color: #1a1a1a;
-  box-shadow: 0 18px 45px rgba(0, 0, 0, 0.6);
+  box-shadow: none;
   border-color: rgba(255, 255, 255, 0.12);
 }
 

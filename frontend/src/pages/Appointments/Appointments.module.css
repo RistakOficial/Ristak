@@ -823,7 +823,7 @@
   box-shadow: none !important;
 }
 
-/* Tooltip de eventos */
+/* Tooltip de eventos - sin sombra */
 .eventTooltip {
   position: fixed;
   z-index: 2147483647 !important; /* Maximum z-index value */
@@ -832,7 +832,7 @@
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: var(--radius-lg);
   padding: 0.75rem 1rem;
-  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+  box-shadow: none;
   min-width: 220px;
   max-width: 320px;
   pointer-events: none;
@@ -844,7 +844,7 @@
 
 :global(body.dark) .eventTooltip {
   background-color: #1a1a1a !important;
-  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.7);
+  box-shadow: none;
   border-color: rgba(255, 255, 255, 0.1);
 }
 

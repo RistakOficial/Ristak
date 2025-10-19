@@ -10,11 +10,13 @@
   animation: chartTooltipFadeIn 0.18s ease-out;
   color: #f8fafc;
   backdrop-filter: none;
+  box-shadow: none !important;
 }
 
 :global(body.dark) .tooltip {
   background-color: #1a1a1a;
   border-color: rgba(255, 255, 255, 0.12);
+  box-shadow: none !important;
 }
 
 .tooltipLabel {

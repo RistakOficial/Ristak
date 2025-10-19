@@ -972,7 +972,7 @@ export const Appointments: React.FC = () => {
                                 const rect = e.currentTarget.getBoundingClientRect();
                                 setHoveredEventId(event.id);
                                 setTooltipPosition({
-                                  top: rect.top + window.scrollY - 8,
+                                  top: rect.top + window.scrollY - 20,
                                   left: rect.left + rect.width / 2
                                 });
                               }}
@@ -1119,7 +1119,7 @@ export const Appointments: React.FC = () => {
                                 const rect = e.currentTarget.getBoundingClientRect();
                                 setHoveredEventId(event.id);
                                 setTooltipPosition({
-                                  top: rect.top + window.scrollY - 8,
+                                  top: rect.top + window.scrollY - 20,
                                   left: rect.left + rect.width / 2
                                 });
                               }}

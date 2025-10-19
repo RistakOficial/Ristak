@@ -243,7 +243,7 @@ export const ContactJourney = ({ contactId }: ContactJourneyProps) => {
                   const rect = e.currentTarget.getBoundingClientRect()
                   setHoveredEventIndex(index)
                   setTooltipPosition({
-                    top: rect.top - 10,
+                    top: rect.top - 20,
                     left: rect.left + rect.width / 2
                   })
                 }}
