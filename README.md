@@ -2,6 +2,12 @@
 
 Dashboard de marketing que integra **HighLevel CRM** con **Meta Ads** para visualizar métricas financieras y rendimiento de campañas.
 
+## 🚀 Deploy Rápido
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/RAULG0MEZ/Ristak-HighLevel)
+
+**Haz click en el botón de arriba para deployar tu propia instancia en 5 minutos.**
+
 ---
 
 ## 📖 Documentación Completa
@@ -61,10 +67,23 @@ Este proyecto se deploya automáticamente en **Render**.
 
 ---
 
-## 📝 Licencia
+## 🔄 Actualizaciones Automáticas
 
-Privado - Solo para uso interno
+Si deployaste desde este repositorio público:
+- Tu app se actualiza automáticamente con cada nuevo commit
+- No necesitas hacer nada, Render detecta los cambios
+- Puedes ver el historial de cambios en [Commits](https://github.com/RAULG0MEZ/Ristak-HighLevel/commits/main)
 
 ---
 
-**Para cualquier duda técnica, consulta [CLAUDE.md](./CLAUDE.md)**
+## 📝 Licencia
+
+MIT License - Libre para uso comercial
+
+---
+
+## 🆘 Soporte
+
+- **Documentación completa**: [CLAUDE.md](./CLAUDE.md)
+- **Guía de deployment**: [DEPLOYMENT.md](./DEPLOYMENT.md)
+- **Issues**: [GitHub Issues](https://github.com/RAULG0MEZ/Ristak-HighLevel/issues)

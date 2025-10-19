@@ -1,33 +1,44 @@
 # 🚀 Guía de Deploy en Render
 
-Esta guía te explica cómo deployar tu propia instancia de Ristak en Render paso a paso.
+Esta guía te explica cómo deployar tu propia instancia de Ristak en Render en **menos de 5 minutos**.
 
 ## 📋 Requisitos Previos
 
-1. Una cuenta de GitHub (gratis)
-2. Una cuenta de Render (gratis o de pago)
-3. Acceso a este repositorio
+1. Una cuenta de Render (gratis o de pago) - [Crear cuenta aquí](https://render.com)
+2. Eso es todo 😎
 
 ---
 
-## 🔧 Paso 1: Fork del Repositorio
+## ⚡ Deploy en 1 Click
 
-1. Ve al repositorio en GitHub
-2. Click en el botón **"Fork"** (arriba a la derecha)
-3. Esto crea una copia del proyecto en TU cuenta de GitHub
+### Opción 1: Botón Deploy to Render (MÁS FÁCIL)
+
+1. **Haz click en este botón:**
+
+   [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/RAULG0MEZ/Ristak-HighLevel)
+
+2. **Render te va a pedir:**
+   - Conectar con tu cuenta (si no lo has hecho)
+   - Nombre para tu servicio (ej: "ristak-mi-negocio")
+   - Región (elige la más cercana a ti)
+
+3. **Click en "Apply"**
+
+4. **Espera 5-10 minutos** mientras Render:
+   - Crea tu base de datos PostgreSQL
+   - Deploya el backend + frontend
+   - Configura todo automáticamente
+
+5. **¡Listo!** Render te dará una URL como: `https://ristak-mi-negocio.onrender.com`
 
 ---
 
-## 🎯 Paso 2: Crear tu instancia en Render
-
-### A. Conectar con GitHub
+## 🎯 Opción 2: Deploy Manual (si prefieres más control)
 
 1. Ve a [Render Dashboard](https://dashboard.render.com)
 2. Click en **"New +"** → **"Blueprint"**
-3. Conecta tu cuenta de GitHub si aún no lo has hecho
-4. Busca tu fork del repositorio **"Ristak-HighLevel"** y selecciónalo
-
-### B. Configurar el Deploy
+3. En el campo **"Public Git Repository"**, pega: `https://github.com/RAULG0MEZ/Ristak-HighLevel`
+4. Click en **"Apply"**
 
 Render va a leer el archivo `render.yaml` y va a:
 
@@ -37,6 +48,28 @@ Render va a leer el archivo `render.yaml` y va a:
 - ✅ Hacer el primer deploy
 
 **IMPORTANTE**: El deploy tarda entre 5-10 minutos la primera vez.
+
+---
+
+## 🔄 Cómo Recibir Actualizaciones
+
+**IMPORTANTE**: Como usas el repositorio original (sin fork), necesitas configurar auto-updates:
+
+1. Ve a tu servicio en Render Dashboard
+2. **Settings** → **Build & Deploy**
+3. En **"Auto-Deploy"**, asegúrate que esté **ON** (activado)
+4. Branch: **main**
+
+**Ahora, cada vez que haya una actualización:**
+- Render detectará el nuevo commit automáticamente
+- Hará auto-deploy de la nueva versión (2-3 minutos)
+- Tu app se actualiza sin que hagas nada 🎉
+
+### Ver qué cambió:
+
+Puedes ver el historial de actualizaciones en:
+- GitHub: https://github.com/RAULG0MEZ/Ristak-HighLevel/commits/main
+- Render Dashboard → Events (verás cada deploy)
 
 ---
 
@@ -84,15 +117,18 @@ Esta clave se usa para proteger tus tokens de Meta Ads y otros datos sensibles.
 
 ## 🔗 Paso 4: Conectar HighLevel
 
-1. Ve a **Settings** en tu app
-2. En la sección **HighLevel Integration**:
-   - Pega tu **Access Token** de HighLevel
-   - Pega tu **Location ID**
-   - Click en **"Save"**
+1. Ve a **HighLevel** (app.gohighlevel.com) y obtén:
+   - Tu **Access Token** (Settings → Integrations → API Key)
+   - Tu **Location ID** (Settings → Company)
+
+2. En Ristak, ve a **Settings** → **HighLevel Integration**:
+   - Pega tu Access Token
+   - Pega tu Location ID
+   - Click en **"Guardar y Sincronizar"**
 
 3. La app va a:
-   - Encriptar y guardar tus credenciales de forma segura
-   - Empezar a sincronizar tus contactos automáticamente
+   - Guardar tus credenciales de forma segura (encriptadas)
+   - Sincronizar tus contactos, pagos y citas automáticamente
 
 ---
 
@@ -100,12 +136,27 @@ Esta clave se usa para proteger tus tokens de Meta Ads y otros datos sensibles.
 
 Si quieres trackear tus campañas de Facebook/Instagram:
 
-1. Ve a **Settings** → **Meta Ads Integration**
-2. Pega tu **Meta Access Token**
-3. Pega tu **Ad Account ID**
-4. Click en **"Save"**
+### EN HIGHLEVEL (no en Ristak):
 
-La app comenzará a sincronizar tus métricas de anuncios cada hora.
+1. Ve a **Settings → Meta Ads** en Ristak para ver el **tutorial completo paso a paso**
+2. Sigue las instrucciones para:
+   - Crear una App en Meta Developers
+   - Generar un System User Token (nunca caduca)
+   - Obtener tu Ad Account ID
+
+3. **Guarda estos 4 valores en HighLevel Custom Values:**
+   - `Facebook - Ad Account ID`
+   - `Facebook - App Access Token`
+   - `Facebook - App ID`
+   - `Facebook - App Secret`
+
+### EN RISTAK:
+
+4. Ve a **Settings → HighLevel** y haz clic en **"Sincronizar"**
+5. Ristak traerá automáticamente la configuración de Meta desde HighLevel
+6. Ve a **Publicidad** y haz clic en **"Sincronizar Meta Ads"**
+
+La app sincronizará automáticamente tus métricas de anuncios cada hora.
 
 ---
 
