@@ -1109,30 +1109,123 @@ export async function buildContactsList ({ startDate, endDate, type = 'interesad
       contactIds = appointmentContacts.map(row => row.contact_id)
       appointmentsMap = await fetchAppointmentsForContacts(contactIds)
     } else {
-      const appointmentConditions = []
-      const appointmentParams = []
+      // Vista "Todos": Usar lógica híbrida (DB + API) para appointments
+      logger.info(`[CITAS REPORTS TODOS] Buscando citas con lógica híbrida (DB + API)...`)
+
+      // PASO 1: Obtener contactos en el rango de fechas
+      const contactConditionsTemp = []
+      const contactParamsTemp = []
       if (range.startUtc) {
-        appointmentConditions.push('start_time >= ?')
-        appointmentParams.push(range.startUtc)
+        contactConditionsTemp.push('created_at >= ?')
+        contactParamsTemp.push(range.startUtc)
       }
       if (range.endUtc) {
-        appointmentConditions.push('start_time <= ?')
-        appointmentParams.push(range.endUtc)
+        contactConditionsTemp.push('created_at <= ?')
+        contactParamsTemp.push(range.endUtc)
       }
-      if (scopeAttributed) {
-        appointmentConditions.push(`contact_id IN (
-          SELECT c.id FROM contacts c
-          WHERE ${attributionMatchCondition('c')}
-        )`)
-      }
-      const appointmentWhere = appointmentConditions.length ? `WHERE ${appointmentConditions.join(' AND ')}` : ''
-      const appointmentsQuery = `
-        SELECT DISTINCT contact_id
-        FROM appointments
-        ${appointmentWhere}
+      const contactWhereTemp = contactConditionsTemp.length ? `WHERE ${contactConditionsTemp.join(' AND ')}` : ''
+
+      const contactsQuery = `
+        SELECT DISTINCT
+          c.id,
+          CASE WHEN a.contact_id IS NOT NULL THEN 1 ELSE 0 END as has_appointment_db
+        FROM contacts c
+        LEFT JOIN (
+          SELECT DISTINCT contact_id
+          FROM appointments
+          WHERE contact_id IS NOT NULL
+        ) a ON a.contact_id = c.id
+        ${contactWhereTemp}
       `
-      const appointmentContacts = await db.all(appointmentsQuery, appointmentParams)
-      contactIds = appointmentContacts.map(row => row.contact_id)
+      const contactsRaw = await db.all(contactsQuery, contactParamsTemp)
+
+      logger.info(`[CITAS REPORTS TODOS] Total contactos en período: ${contactsRaw.length}`)
+      logger.info(`[CITAS REPORTS TODOS] Contactos CON citas en DB: ${contactsRaw.filter(c => c.has_appointment_db === 1).length}`)
+      logger.info(`[CITAS REPORTS TODOS] Contactos SIN citas en DB: ${contactsRaw.filter(c => c.has_appointment_db === 0).length}`)
+
+      // PASO 2: Lógica híbrida (DB + API)
+      const config = await db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1')
+      const contactsWithAppointments = new Set()
+
+      // Agregar los que ya tienen citas en DB
+      contactsRaw.forEach(c => {
+        if (c.has_appointment_db === 1) {
+          contactsWithAppointments.add(c.id)
+        }
+      })
+
+      // Verificar contactos sin citas en DB usando API
+      const contactsToCheck = contactsRaw.filter(c => c.has_appointment_db === 0)
+
+      if (config && config.api_token && contactsToCheck.length > 0) {
+        const batchSize = 50
+        logger.info(`[CITAS REPORTS TODOS] Verificando ${contactsToCheck.length} contactos sin citas en DB...`)
+
+        for (let i = 0; i < contactsToCheck.length; i += batchSize) {
+          const batch = contactsToCheck.slice(i, i + batchSize)
+
+          const appointmentChecks = await Promise.all(
+            batch.map(async (contact) => {
+              try {
+                const response = await fetch(
+                  `https://services.leadconnectorhq.com/contacts/${contact.id}/appointments`,
+                  {
+                    headers: {
+                      'Authorization': `Bearer ${config.api_token}`,
+                      'Version': '2021-07-28'
+                    }
+                  }
+                )
+
+                if (response.ok) {
+                  const data = await response.json()
+                  if (data.events && data.events.length > 0) {
+                    logger.info(`[CITAS REPORTS TODOS] Contacto ${contact.id} tiene ${data.events.length} citas en HighLevel`)
+
+                    // Guardar en DB para cache futuro
+                    for (const event of data.events) {
+                      await db.run(`
+                        INSERT INTO appointments (id, contact_id, calendar_id, location_id, title, status, start_time, end_time)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(id) DO UPDATE SET
+                          status = excluded.status,
+                          start_time = excluded.start_time,
+                          end_time = excluded.end_time
+                      `, [
+                        event.id,
+                        contact.id,
+                        event.calendarId || '',
+                        event.locationId || config.location_id,
+                        event.title || '',
+                        event.status || 'scheduled',
+                        event.startTime || '',
+                        event.endTime || ''
+                      ]).catch(err => {
+                        logger.error(`Error guardando cita ${event.id}:`, err)
+                      })
+                    }
+
+                    return { contactId: contact.id, hasAppointments: true }
+                  }
+                }
+                return { contactId: contact.id, hasAppointments: false }
+              } catch (error) {
+                logger.error(`Error verificando citas para contacto ${contact.id}:`, error)
+                return { contactId: contact.id, hasAppointments: false }
+              }
+            })
+          )
+
+          appointmentChecks.forEach(result => {
+            if (result.hasAppointments) {
+              contactsWithAppointments.add(result.contactId)
+            }
+          })
+        }
+      }
+
+      contactIds = Array.from(contactsWithAppointments)
+      logger.info(`[CITAS REPORTS TODOS] Total contactos con citas (DB + API): ${contactIds.length}`)
       appointmentsMap = await fetchAppointmentsForContacts(contactIds, range)
     }
   }
