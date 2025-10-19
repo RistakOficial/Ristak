@@ -1,6 +1,6 @@
 import crypto from 'crypto'
 import { logger } from './logger.js'
-import { query } from '../config/database.js'
+import { db } from '../config/database.js'
 
 // Algoritmo de encriptación (AES-256-GCM es el más seguro)
 const ALGORITHM = 'aes-256-gcm'
@@ -32,13 +32,13 @@ async function getMasterKey() {
 
   // 2. Intentar desde base de datos
   try {
-    const result = await query(
-      'SELECT value FROM app_config WHERE key = $1',
+    const result = await db.get(
+      'SELECT config_value FROM app_config WHERE config_key = ?',
       ['encryption_master_key']
     )
 
-    if (result.rows.length > 0) {
-      cachedMasterKey = Buffer.from(result.rows[0].value, 'hex')
+    if (result && result.config_value) {
+      cachedMasterKey = Buffer.from(result.config_value, 'hex')
       logger.info('✅ ENCRYPTION_MASTER_KEY cargada desde base de datos')
       return cachedMasterKey
     }
@@ -52,10 +52,12 @@ async function getMasterKey() {
   const newKeyHex = newKey.toString('hex')
 
   try {
-    await query(
-      `INSERT INTO app_config (key, value)
-       VALUES ($1, $2)
-       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+    await db.run(
+      `INSERT INTO app_config (config_key, config_value, updated_at)
+       VALUES (?, ?, CURRENT_TIMESTAMP)
+       ON CONFLICT (config_key) DO UPDATE SET
+         config_value = excluded.config_value,
+         updated_at = CURRENT_TIMESTAMP`,
       ['encryption_master_key', newKeyHex]
     )
     logger.info('✅ Nueva ENCRYPTION_MASTER_KEY generada y guardada en DB')
