@@ -69,10 +69,22 @@ Este proyecto se deploya automáticamente en **Render**.
 
 ## 🔄 Actualizaciones Automáticas
 
-Si deployaste desde este repositorio público:
-- Tu app se actualiza automáticamente con cada nuevo commit
-- No necesitas hacer nada, Render detecta los cambios
-- Puedes ver el historial de cambios en [Commits](https://github.com/RAULG0MEZ/Ristak-HighLevel/commits/main)
+**¿Dónde se crea mi base de datos?**
+- ✅ En **TU cuenta de Render** (no la mía)
+- ✅ Solo tú tienes acceso a tus datos
+- ✅ Tú pagas tu propia cuenta de Render (~$14/mes)
+- ✅ Datos 100% privados e aislados
+
+**¿Recibiré actualizaciones?**
+- ✅ **SÍ** - Tu app se actualiza automáticamente con cada mejora
+- ✅ Fixes de bugs y nuevas features sin hacer nada
+- ✅ Render detecta los cambios y deploya automáticamente
+- ✅ Ver historial de cambios en [Commits](https://github.com/RAULG0MEZ/Ristak-HighLevel/commits/main)
+
+**¿Quién tiene acceso a mis datos?**
+- ✅ **Solo tú** - Cada instalación es completamente independiente
+- ❌ El desarrollador NO tiene acceso a tu base de datos
+- ❌ Otros usuarios NO pueden ver tus datos
 
 ---
 
