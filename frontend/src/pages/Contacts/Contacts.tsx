@@ -180,6 +180,7 @@ export const Contacts: React.FC = () => {
   const [editingContact, setEditingContact] = useState<Contact | null>(null)
   const [deletingContact, setDeletingContact] = useState<Contact | null>(null)
   const [loading, setLoading] = useState(false)
+  const [loadingEvents, setLoadingEvents] = useState(false) // Loading específico para eventos de calendarios
   const [viewMode, setViewMode] = useState<'all' | 'by-date'>('all') // Por defecto 'all' (Todos)
   const [isClient, setIsClient] = useState(false)
   const [allEvents, setAllEvents] = useState<CalendarEvent[]>([]) // Eventos de calendarios
@@ -215,10 +216,12 @@ export const Contacts: React.FC = () => {
   useEffect(() => {
     if (filter !== 'appointments' || !locationId || !accessToken) {
       setAllEvents([])
+      setLoadingEvents(false)
       return
     }
 
     const loadAllEvents = async () => {
+      setLoadingEvents(true)
       try {
         // Obtener todos los calendarios
         const calendars = await calendarsService.getCalendars(locationId, accessToken)
@@ -250,6 +253,8 @@ export const Contacts: React.FC = () => {
         setAllEvents(allEventsData)
       } catch (error) {
         // Error silencioso - el filtro seguirá funcionando con datos locales
+      } finally {
+        setLoadingEvents(false)
       }
     }
 
@@ -681,7 +686,7 @@ export const Contacts: React.FC = () => {
           data={filteredContacts}
           keyExtractor={(item) => item.id}
           emptyMessage="No hay contactos disponibles"
-          loading={loading}
+          loading={loading || loadingEvents}
           searchable={true}
           searchPlaceholder="Buscar contactos..."
           paginated={true}
