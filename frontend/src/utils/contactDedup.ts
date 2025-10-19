@@ -392,9 +392,22 @@ export function dedupeContacts<T extends ContactLike>(contacts: T[]): Array<With
   const uniques: Array<{ index: number; item: WithMetadata<T> }> = []
 
   contacts.forEach((contact, index) => {
+    // Prioridad 1: Email (normalizado)
+    const email = contact?.email?.toLowerCase().trim()
+    const hasValidEmail = email && email.includes('@')
+
+    // Prioridad 2: Teléfono (normalizado)
     const normalizedPhone = normalizePhone(extractPhone(contact))
 
-    if (!normalizedPhone) {
+    // Crear key única: prioriza email > teléfono
+    const dedupKey = hasValidEmail
+      ? `email::${email}`
+      : normalizedPhone
+        ? `phone::${normalizedPhone}`
+        : null
+
+    if (!dedupKey) {
+      // Sin email ni teléfono → no deduplicar
       const cloned: WithMetadata<T> = {
         ...(contact ? { ...contact } : ({} as T)),
         normalizedPhone: null,
@@ -406,15 +419,17 @@ export function dedupeContacts<T extends ContactLike>(contacts: T[]): Array<With
       return
     }
 
-    const group = groups.get(normalizedPhone)
+    const group = groups.get(dedupKey)
     if (group) {
       group.items.push(contact)
     } else {
-      groups.set(normalizedPhone, { items: [contact], firstIndex: index })
+      groups.set(dedupKey, { items: [contact], firstIndex: index })
     }
   })
 
-  groups.forEach(({ items, firstIndex }, normalizedPhone) => {
+  groups.forEach(({ items, firstIndex }, dedupKey) => {
+    // Extraer normalizedPhone del primero para mantener compatibilidad
+    const normalizedPhone = normalizePhone(extractPhone(items[0]))
     const aggregated = aggregateGroup(items, normalizedPhone)
     uniques.push({ index: firstIndex, item: aggregated })
   })

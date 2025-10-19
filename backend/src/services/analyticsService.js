@@ -26,6 +26,15 @@ const DEFAULT_NUMBER = {
   avg_ltv: 0
 }
 
+const SUCCESS_PAYMENT_STATUSES = [
+  'succeeded',
+  'paid',
+  'completed',
+  'complete',
+  'fulfilled',
+  'success'
+]
+
 function normalizePhoneValue(phone) {
   if (!phone) {
     return null
@@ -61,6 +70,46 @@ function buildContactKey(contact) {
   return null
 }
 
+/**
+ * Genera expresión SQL para deduplicación por email O teléfono
+ * Prioriza email sobre teléfono, usa ID como fallback
+ *
+ * @param {string} tableAlias - Alias de la tabla (ej: 'c', 'contacts')
+ * @returns {string} - Expresión SQL CASE
+ */
+function buildDedupExpression(tableAlias = '') {
+  const prefix = tableAlias ? `${tableAlias}.` : ''
+
+  if (isPostgres) {
+    return `CASE
+      WHEN ${prefix}email IS NOT NULL AND ${prefix}email LIKE '%@%'
+        THEN CONCAT('email::', LOWER(TRIM(${prefix}email)))
+      WHEN ${prefix}phone IS NOT NULL AND LENGTH(${prefix}phone) >= 10
+        THEN CONCAT('phone::', SUBSTRING(${prefix}phone FROM '.{10}$'))
+      ELSE CONCAT('id::', ${prefix}id::text)
+    END`
+  } else {
+    // SQLite
+    return `CASE
+      WHEN ${prefix}email IS NOT NULL AND ${prefix}email LIKE '%@%'
+        THEN 'email::' || LOWER(TRIM(${prefix}email))
+      WHEN ${prefix}phone IS NOT NULL AND LENGTH(${prefix}phone) >= 10
+        THEN 'phone::' || SUBSTR(${prefix}phone, -10)
+      ELSE 'id::' || ${prefix}id
+    END`
+  }
+}
+
+function applySuccessStatusFilter(conditions, params, alias = 'p') {
+  if (!Array.isArray(conditions) || !Array.isArray(params) || SUCCESS_PAYMENT_STATUSES.length === 0) {
+    return
+  }
+
+  const placeholders = SUCCESS_PAYMENT_STATUSES.map(() => '?').join(',')
+  conditions.push(`LOWER(${alias}.status) IN (${placeholders})`)
+  params.push(...SUCCESS_PAYMENT_STATUSES)
+}
+
 async function fetchPreviousRange(range, fallbackStrategy) {
   if (range.startZoned && range.endZoned && range.providedStart) {
     const spanDays = Math.max(Math.round(range.endZoned.diff(range.startZoned, 'days').days) + 1, 1)
@@ -93,24 +142,16 @@ export async function buildContactStats ({ startDate, endDate, scope = 'all' } =
   const range = resolveDateRange({ startDate, endDate })
   const scopeAttributed = scope === 'campaigns' || scope === 'attributed'
 
+  const dedupExpr = buildDedupExpression('')
+
   const selectClause = `
     SELECT
+      COUNT(DISTINCT ${dedupExpr}) as total,
       COUNT(DISTINCT CASE
-        WHEN phone IS NOT NULL AND LENGTH(phone) >= 10
-        THEN SUBSTR(phone, -10)
-        ELSE id
-      END) as total,
-      COUNT(DISTINCT CASE
-        WHEN purchases_count > 0 AND phone IS NOT NULL AND LENGTH(phone) >= 10
-        THEN SUBSTR(phone, -10)
-        WHEN purchases_count > 0
-        THEN id
+        WHEN purchases_count > 0 THEN ${dedupExpr}
       END) as customers,
       COUNT(DISTINCT CASE
-        WHEN appointment_date IS NOT NULL AND phone IS NOT NULL AND LENGTH(phone) >= 10
-        THEN SUBSTR(phone, -10)
-        WHEN appointment_date IS NOT NULL
-        THEN id
+        WHEN appointment_date IS NOT NULL THEN ${dedupExpr}
       END) as with_appointments,
       COALESCE(SUM(total_paid), 0) as ltv_total,
       COALESCE(AVG(total_paid), 0) as avg_ltv
@@ -217,16 +258,9 @@ export async function buildContactTimeline ({ startDate, endDate, scope = 'all' 
   const timelineQuery = `
     SELECT
       ${dateExpression} as period,
+      COUNT(DISTINCT ${dedupExpr}) as contacts,
       COUNT(DISTINCT CASE
-        WHEN phone IS NOT NULL AND LENGTH(phone) >= 10
-        THEN SUBSTR(phone, -10)
-        ELSE id
-      END) as contacts,
-      COUNT(DISTINCT CASE
-        WHEN purchases_count > 0 AND phone IS NOT NULL AND LENGTH(phone) >= 10
-        THEN SUBSTR(phone, -10)
-        WHEN purchases_count > 0
-        THEN id
+        WHEN purchases_count > 0 THEN ${dedupExpr}
       END) as customers
     FROM contacts
     ${whereClause}
@@ -438,6 +472,7 @@ export async function buildCampaignSummary ({ startDate, endDate } = {}) {
   const range = resolveDateRange({ startDate, endDate })
 
   const hasRange = Boolean(range.startZoned && range.endZoned)
+  const dedupExpr = buildDedupExpression('')
 
   let adsTotals
   let contactsTotals
@@ -460,16 +495,9 @@ export async function buildCampaignSummary ({ startDate, endDate } = {}) {
 
     contactsTotals = await db.get(
       `SELECT
+        COUNT(DISTINCT ${dedupExpr}) as leads,
         COUNT(DISTINCT CASE
-          WHEN phone IS NOT NULL AND LENGTH(phone) >= 10
-          THEN SUBSTR(phone, -10)
-          ELSE id
-        END) as leads,
-        COUNT(DISTINCT CASE
-          WHEN purchases_count > 0 AND phone IS NOT NULL AND LENGTH(phone) >= 10
-          THEN SUBSTR(phone, -10)
-          WHEN purchases_count > 0
-          THEN id
+          WHEN purchases_count > 0 THEN ${dedupExpr}
         END) as sales,
         COALESCE(SUM(total_paid), 0) as revenue
       FROM contacts
@@ -500,16 +528,9 @@ export async function buildCampaignSummary ({ startDate, endDate } = {}) {
 
       contactsTotalsPrev = await db.get(
         `SELECT
+          COUNT(DISTINCT ${dedupExpr}) as leads,
           COUNT(DISTINCT CASE
-            WHEN phone IS NOT NULL AND LENGTH(phone) >= 10
-            THEN SUBSTR(phone, -10)
-            ELSE id
-          END) as leads,
-          COUNT(DISTINCT CASE
-            WHEN purchases_count > 0 AND phone IS NOT NULL AND LENGTH(phone) >= 10
-            THEN SUBSTR(phone, -10)
-            WHEN purchases_count > 0
-            THEN id
+            WHEN purchases_count > 0 THEN ${dedupExpr}
           END) as sales,
           COALESCE(SUM(total_paid), 0) as revenue
         FROM contacts
@@ -530,16 +551,9 @@ export async function buildCampaignSummary ({ startDate, endDate } = {}) {
 
     contactsTotals = await db.get(
       `SELECT
+        COUNT(DISTINCT ${dedupExpr}) as leads,
         COUNT(DISTINCT CASE
-          WHEN phone IS NOT NULL AND LENGTH(phone) >= 10
-          THEN SUBSTR(phone, -10)
-          ELSE id
-        END) as leads,
-        COUNT(DISTINCT CASE
-          WHEN purchases_count > 0 AND phone IS NOT NULL AND LENGTH(phone) >= 10
-          THEN SUBSTR(phone, -10)
-          WHEN purchases_count > 0
-          THEN id
+          WHEN purchases_count > 0 THEN ${dedupExpr}
         END) as sales,
         COALESCE(SUM(total_paid), 0) as revenue
       FROM contacts
@@ -567,16 +581,9 @@ export async function buildCampaignSummary ({ startDate, endDate } = {}) {
 
       contactsTotalsPrev = await db.get(
         `SELECT
+          COUNT(DISTINCT ${dedupExpr}) as leads,
           COUNT(DISTINCT CASE
-            WHEN phone IS NOT NULL AND LENGTH(phone) >= 10
-            THEN SUBSTR(phone, -10)
-            ELSE id
-          END) as leads,
-          COUNT(DISTINCT CASE
-            WHEN purchases_count > 0 AND phone IS NOT NULL AND LENGTH(phone) >= 10
-            THEN SUBSTR(phone, -10)
-            WHEN purchases_count > 0
-            THEN id
+            WHEN purchases_count > 0 THEN ${dedupExpr}
           END) as sales,
           COALESCE(SUM(total_paid), 0) as revenue
         FROM contacts
@@ -844,16 +851,13 @@ export async function buildReportMetrics ({ startDate, endDate, groupBy = 'day',
   })
 
 
+  const contactDedupExpr = buildDedupExpression('c')
+
   if (!useContactAttribution) {
     const paymentParams = []
-    const paymentConditions = buildRangeConditions('date', range, paymentParams)
+    const paymentConditions = buildRangeConditions('p.date', range, paymentParams)
 
-    if (isAttributed) {
-      paymentConditions.push(`contact_id IN (
-        SELECT c.id FROM contacts c
-        WHERE ${attributionMatchCondition('c')}
-      )`)
-    }
+    applySuccessStatusFilter(paymentConditions, paymentParams, 'p')
 
     const paymentWhere = paymentConditions.length ? `WHERE ${paymentConditions.join(' AND ')}` : ''
     const paymentGroupExpr = getGroupExpression('p.date', groupBy)
@@ -861,15 +865,11 @@ export async function buildReportMetrics ({ startDate, endDate, groupBy = 'day',
     const paymentsQuery = `
       SELECT
         ${paymentGroupExpr} as period,
-        COUNT(DISTINCT CASE
-          WHEN c.phone IS NOT NULL AND LENGTH(c.phone) >= 10
-          THEN SUBSTR(c.phone, -10)
-          ELSE p.contact_id
-        END) as unique_sales,
+        COUNT(DISTINCT ${contactDedupExpr}) as unique_sales,
         COALESCE(SUM(p.amount), 0) as revenue
       FROM payments p
       LEFT JOIN contacts c ON c.id = p.contact_id
-      ${paymentWhere.replace('date', 'p.date')}
+      ${paymentWhere}
       GROUP BY period
       ORDER BY period
     `
@@ -890,6 +890,8 @@ export async function buildReportMetrics ({ startDate, endDate, groupBy = 'day',
       paymentConditions.push(attributionMatchCondition('c'))
     }
 
+    applySuccessStatusFilter(paymentConditions, paymentParams, 'p')
+
     const paymentWhere = paymentConditions.length ? `WHERE ${paymentConditions.join(' AND ')}` : ''
     const paymentGroupExpr = getGroupExpression('c.created_at', groupBy)
 
@@ -897,10 +899,7 @@ export async function buildReportMetrics ({ startDate, endDate, groupBy = 'day',
       SELECT
         ${paymentGroupExpr} as period,
         COUNT(DISTINCT CASE
-          WHEN p.id IS NOT NULL AND c.phone IS NOT NULL AND LENGTH(c.phone) >= 10
-          THEN SUBSTR(c.phone, -10)
-          WHEN p.id IS NOT NULL
-          THEN c.id
+          WHEN p.id IS NOT NULL THEN ${contactDedupExpr}
         END) as unique_sales,
         COALESCE(SUM(p.amount), 0) as revenue
       FROM contacts c
