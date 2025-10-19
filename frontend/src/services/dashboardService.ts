@@ -62,8 +62,8 @@ class DashboardService {
         endDate: formatDateToISO(params.end)
       });
 
-      // Usar el endpoint de Meta que sabemos que funciona correctamente
-      const response = await fetch(`${API_URL}/api/meta/spend-over-time?${queryParams}`);
+      // Usar el nuevo endpoint de dashboard que muestra TODOS los ingresos y gastos
+      const response = await fetch(`${API_URL}/api/dashboard/financial-overview?${queryParams}`);
 
       if (!response.ok) {
         return [];
@@ -71,7 +71,7 @@ class DashboardService {
 
       const result = await response.json();
 
-      // El endpoint de Meta retorna { success: true, data: [...] }
+      // El endpoint retorna { success: true, data: [...] }
       // Extraer el array de data y transformar al formato esperado
       const rawData = result?.data || [];
 

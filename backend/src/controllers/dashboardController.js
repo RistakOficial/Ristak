@@ -880,6 +880,125 @@ export const getTrafficSources = async (req, res) => {
 }
 
 /**
+ * Obtiene TODOS los ingresos y gastos (no solo atribuidos)
+ * Para el gráfico principal del Dashboard
+ */
+export const getFinancialOverview = async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+
+    if (!startDate || !endDate) {
+      return res.status(400).json({
+        success: false,
+        error: 'Se requieren startDate y endDate'
+      });
+    }
+
+    const usePostgres = Boolean(process.env.DATABASE_URL);
+
+    // Query para TODOS los ingresos (payments con status succeeded)
+    const revenueQuery = usePostgres
+      ? `
+        SELECT
+          TO_CHAR(date::date, 'YYYY-MM-DD') as day,
+          SUM(amount) as revenue
+        FROM payments
+        WHERE status = 'succeeded'
+          AND date::date >= $1::date
+          AND date::date < ($2::date + INTERVAL '1 day')
+        GROUP BY day
+        ORDER BY day ASC
+      `
+      : `
+        SELECT
+          strftime('%Y-%m-%d', date) as day,
+          SUM(amount) as revenue
+        FROM payments
+        WHERE status = 'succeeded'
+          AND date >= ?
+          AND date < DATE(?, '+1 day')
+        GROUP BY day
+        ORDER BY day ASC
+      `;
+
+    // Query para TODOS los gastos de publicidad
+    const spendQuery = usePostgres
+      ? `
+        SELECT
+          TO_CHAR(date::date, 'YYYY-MM-DD') as day,
+          SUM(spend) as spend
+        FROM meta_ads
+        WHERE date::date >= $1::date
+          AND date::date < ($2::date + INTERVAL '1 day')
+        GROUP BY day
+        ORDER BY day ASC
+      `
+      : `
+        SELECT
+          strftime('%Y-%m-%d', date) as day,
+          SUM(spend) as spend
+        FROM meta_ads
+        WHERE date >= ?
+          AND date < DATE(?, '+1 day')
+        GROUP BY day
+        ORDER BY day ASC
+      `;
+
+    const params = [startDate, endDate];
+
+    const [revenueData, spendData] = await Promise.all([
+      db.all(revenueQuery, params),
+      db.all(spendQuery, params)
+    ]);
+
+    logger.info(`Ingresos totales encontrados: ${revenueData.length} días con pagos`);
+    logger.info(`Gastos encontrados: ${spendData.length} días con gastos publicitarios`);
+
+    // Si no hay datos, retornar vacío
+    if (revenueData.length === 0 && spendData.length === 0) {
+      return res.json({
+        success: true,
+        data: []
+      });
+    }
+
+    // Crear mapas por fecha
+    const revenueMap = new Map();
+    revenueData.forEach(row => {
+      revenueMap.set(row.day, parseFloat(row.revenue || 0));
+    });
+
+    const spendMap = new Map();
+    spendData.forEach(row => {
+      spendMap.set(row.day, parseFloat(row.spend || 0));
+    });
+
+    // Combinar todas las fechas únicas
+    const allDates = new Set([...revenueMap.keys(), ...spendMap.keys()]);
+    const sortedDates = Array.from(allDates).sort();
+
+    // Mapear al formato esperado: { label, value (ingresos), value2 (gastos) }
+    const mappedData = sortedDates.map(date => ({
+      label: date,
+      value: revenueMap.get(date) || 0,  // Ingresos totales
+      value2: spendMap.get(date) || 0     // Gastos de publicidad
+    }));
+
+    res.json({
+      success: true,
+      data: mappedData
+    });
+
+  } catch (error) {
+    logger.error(`Error en getFinancialOverview: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      error: 'Error al obtener panorama financiero'
+    });
+  }
+};
+
+/**
  * Obtiene datos del funnel de conversión
  */
 export const getFunnelData = async (req, res) => {
