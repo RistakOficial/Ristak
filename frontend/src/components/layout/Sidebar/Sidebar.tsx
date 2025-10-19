@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import {
   LayoutDashboard,
@@ -20,27 +20,35 @@ interface SidebarProps {
   locationLogo?: string | null
 }
 
-const baseNavigation = [
-  { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
-  { name: 'Reportes', href: '/reports', icon: FileBarChart },
-  { name: 'Publicidad', href: '/campaigns', icon: Megaphone },
-  { name: 'Citas', href: '/appointments', icon: Calendar },
-  { name: 'Pagos', href: '/transactions', icon: Banknote },
-  { name: 'Contactos', href: '/contacts', icon: Users }
+type IconType = React.ComponentType<React.SVGProps<SVGSVGElement>>
+
+interface NavItem {
+  id: string
+  name: string
+  href: string
+  icon: IconType
+}
+
+const LONG_PRESS_DELAY = 2000
+const SIDEBAR_ORDER_CONFIG_KEY = 'sidebar_navigation_order'
+
+const baseNavigation: NavItem[] = [
+  { id: 'dashboard', name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
+  { id: 'reports', name: 'Reportes', href: '/reports', icon: FileBarChart },
+  { id: 'campaigns', name: 'Publicidad', href: '/campaigns', icon: Megaphone },
+  { id: 'appointments', name: 'Citas', href: '/appointments', icon: Calendar },
+  { id: 'transactions', name: 'Pagos', href: '/transactions', icon: Banknote },
+  { id: 'contacts', name: 'Contactos', href: '/contacts', icon: Users }
 ]
 
-const SHOW_ANALYTICS_STORAGE_KEY = 'showAnalyticsPreference'
-
-const buildNavigation = (showAnalytics: boolean) => {
-  if (!showAnalytics) return baseNavigation
-
-  return [
-    baseNavigation[0], // Dashboard
-    baseNavigation[1], // Reportes
-    { name: 'Analíticas', href: '/analytics', icon: BarChart3 },
-    ...baseNavigation.slice(2)
-  ]
+const analyticsNavigation: NavItem = {
+  id: 'analytics',
+  name: 'Analíticas',
+  href: '/analytics',
+  icon: BarChart3
 }
+
+const SHOW_ANALYTICS_STORAGE_KEY = 'showAnalyticsPreference'
 
 const getStoredAnalyticsPreference = () => {
   if (typeof window === 'undefined') return null
@@ -50,41 +58,105 @@ const getStoredAnalyticsPreference = () => {
   return null
 }
 
+const getNavigationItems = (showAnalytics: boolean): NavItem[] => {
+  if (!showAnalytics) return baseNavigation
+
+  return [
+    baseNavigation[0],
+    baseNavigation[1],
+    analyticsNavigation,
+    ...baseNavigation.slice(2)
+  ]
+}
+
+const applyOrder = (items: NavItem[], order: string[]): NavItem[] => {
+  if (!order.length) return items
+
+  const itemsById = new Map(items.map(item => [item.id, item]))
+  const orderedItems: NavItem[] = []
+
+  order.forEach(id => {
+    const item = itemsById.get(id)
+    if (item) {
+      orderedItems.push(item)
+      itemsById.delete(id)
+    }
+  })
+
+  // Append any items that were not in the stored order (new entries, disabled analytics, etc.)
+  itemsById.forEach(item => {
+    orderedItems.push(item)
+  })
+
+  return orderedItems
+}
+
 export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, locationName, locationLogo }) => {
   const location = useLocation()
   const [mounted, setMounted] = useState(false)
-  const [navigation, setNavigation] = useState(() => {
-    const storedPreference = getStoredAnalyticsPreference()
-    if (storedPreference === true) {
-      return buildNavigation(true)
-    }
-    return baseNavigation
-  })
+  const storedAnalyticsPreference = getStoredAnalyticsPreference()
+  const [sidebarOrder, setSidebarOrder] = useAppConfig<string[]>(SIDEBAR_ORDER_CONFIG_KEY, [])
   const [analyticsEnabled] = useAppConfig<boolean>('show_analytics', false)
+  const [navigation, setNavigation] = useState<NavItem[]>(() => {
+    const initialShowAnalytics = storedAnalyticsPreference ?? false
+    return applyOrder(getNavigationItems(initialShowAnalytics), sidebarOrder)
+  })
+  const [longPressId, setLongPressId] = useState<string | null>(null)
+  const [draggingId, setDraggingId] = useState<string | null>(null)
+  const [dropTargetId, setDropTargetId] = useState<string | null>(null)
+  const longPressTimeoutRef = useRef<number | null>(null)
 
   const persistPreference = useCallback((show: boolean) => {
     if (typeof window === 'undefined') return
     window.localStorage.setItem(SHOW_ANALYTICS_STORAGE_KEY, String(show))
   }, [])
 
-  const updateNavigation = useCallback((showAnalytics: boolean) => {
-    setNavigation(buildNavigation(showAnalytics))
-    persistPreference(showAnalytics)
-  }, [persistPreference])
+  const buildNavigationWithPreferences = useCallback((showAnalytics: boolean) => {
+    return applyOrder(getNavigationItems(showAnalytics), sidebarOrder)
+  }, [sidebarOrder])
+
+  const persistOrder = useCallback(async (items: NavItem[]) => {
+    const newOrder = items.map(item => item.id)
+
+    if (JSON.stringify(newOrder) === JSON.stringify(sidebarOrder)) {
+      return
+    }
+
+    try {
+      await setSidebarOrder(newOrder)
+    } catch (error) {
+      console.error('Error guardando el orden del menú:', error)
+    }
+  }, [setSidebarOrder, sidebarOrder])
+
+  const clearLongPressTimeout = useCallback(() => {
+    if (longPressTimeoutRef.current) {
+      window.clearTimeout(longPressTimeoutRef.current)
+      longPressTimeoutRef.current = null
+    }
+  }, [])
 
   useEffect(() => {
     setMounted(true)
   }, [])
 
   useEffect(() => {
-    updateNavigation(Boolean(analyticsEnabled))
-  }, [analyticsEnabled, updateNavigation])
+    const showAnalytics = Boolean(analyticsEnabled)
+    setNavigation(buildNavigationWithPreferences(showAnalytics))
+    persistPreference(showAnalytics)
+    clearLongPressTimeout()
+    setLongPressId(null)
+    setDraggingId(null)
+    setDropTargetId(null)
+  }, [analyticsEnabled, buildNavigationWithPreferences, persistPreference, clearLongPressTimeout])
 
   useEffect(() => {
     const handleAnalyticsChange = (event: Event) => {
       const customEvent = event as CustomEvent<{ showAnalytics?: boolean }>
       if (typeof customEvent.detail?.showAnalytics === 'boolean') {
-        updateNavigation(customEvent.detail.showAnalytics)
+        const showAnalytics = customEvent.detail.showAnalytics
+        setNavigation(buildNavigationWithPreferences(showAnalytics))
+        persistPreference(showAnalytics)
       }
     }
 
@@ -93,10 +165,172 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, locationName, loca
     return () => {
       window.removeEventListener('analytics-preference-changed', handleAnalyticsChange)
     }
-  }, [updateNavigation])
+  }, [buildNavigationWithPreferences, persistPreference])
+
+  useEffect(() => {
+    return () => {
+      clearLongPressTimeout()
+    }
+  }, [clearLongPressTimeout])
 
   const handleNavigate = () => {
     onNavigate?.()
+  }
+
+  const handlePointerDown = (id: string) => (event: React.PointerEvent<HTMLAnchorElement>) => {
+    if (draggingId) return
+
+    clearLongPressTimeout()
+    longPressTimeoutRef.current = window.setTimeout(() => {
+      setLongPressId(id)
+    }, LONG_PRESS_DELAY)
+
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+  }
+
+  const handlePointerUp = (id: string) => (event: React.PointerEvent<HTMLAnchorElement>) => {
+    if (draggingId) {
+      event.preventDefault()
+      event.stopPropagation()
+      return
+    }
+
+    const longPressActive = longPressId === id
+    clearLongPressTimeout()
+
+    if (longPressActive) {
+      event.preventDefault()
+      event.stopPropagation()
+      setLongPressId(null)
+    }
+  }
+
+  const handlePointerCancel = () => {
+    clearLongPressTimeout()
+  }
+
+  const handlePointerLeave = () => {
+    if (draggingId) return
+    clearLongPressTimeout()
+  }
+
+  const handleDragStart = (id: string) => (event: React.DragEvent<HTMLAnchorElement>) => {
+    if (longPressId !== id) {
+      event.preventDefault()
+      return
+    }
+
+    setDraggingId(id)
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData('text/plain', id)
+  }
+
+  const handleDragEnd = () => {
+    clearLongPressTimeout()
+    setDraggingId(null)
+    setDropTargetId(null)
+    setLongPressId(null)
+  }
+
+  const handleDragOver = (id: string) => (event: React.DragEvent<HTMLAnchorElement>) => {
+    if (!draggingId || draggingId === id) return
+    event.preventDefault()
+    setDropTargetId(id)
+  }
+
+  const handleDragEnter = (id: string) => (event: React.DragEvent<HTMLAnchorElement>) => {
+    if (!draggingId || draggingId === id) return
+    event.preventDefault()
+    setDropTargetId(id)
+  }
+
+  const handleDragLeave = (id: string) => () => {
+    if (dropTargetId === id) {
+      setDropTargetId(null)
+    }
+  }
+
+  const handleDrop = (targetId: string) => async (event: React.DragEvent<HTMLAnchorElement>) => {
+    event.preventDefault()
+    event.stopPropagation()
+
+    if (!draggingId || draggingId === targetId) {
+      handleDragEnd()
+      return
+    }
+
+    let updatedNavigation: NavItem[] | null = null
+
+    setNavigation(current => {
+      // Rebuild list inserting the dragged entry before the drop target
+      const next = current.reduce<NavItem[]>((acc, item) => {
+        if (item.id === draggingId) {
+          return acc
+        }
+        if (item.id === targetId) {
+          const draggingItem = current.find(navItem => navItem.id === draggingId)
+          if (draggingItem) acc.push(draggingItem)
+        }
+        acc.push(item)
+        return acc
+      }, [])
+
+      const draggingItem = current.find(item => item.id === draggingId)
+
+      if (draggingItem && !next.find(item => item.id === draggingId)) {
+        next.push(draggingItem)
+      }
+
+      updatedNavigation = next
+      return next
+    })
+
+    if (updatedNavigation) {
+      await persistOrder(updatedNavigation)
+    }
+
+    handleDragEnd()
+  }
+
+  const handleContainerDrop = async (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    event.stopPropagation()
+
+    if (!draggingId) {
+      handleDragEnd()
+      return
+    }
+
+    let updatedNavigation: NavItem[] | null = null
+
+    setNavigation(current => {
+      // Move dragged entry to the bottom when dropping outside any item
+      const draggingItem = current.find(item => item.id === draggingId)
+      if (!draggingItem) {
+        return current
+      }
+
+      const filtered = current.filter(item => item.id !== draggingId)
+      const next = [...filtered, draggingItem]
+      updatedNavigation = next
+      return next
+    })
+
+    if (updatedNavigation) {
+      await persistOrder(updatedNavigation)
+    }
+
+    handleDragEnd()
+  }
+
+  const handleItemClick = (id: string) => (event: React.MouseEvent<HTMLAnchorElement>) => {
+    if (draggingId || longPressId === id) {
+      event.preventDefault()
+      event.stopPropagation()
+      return
+    }
+
+    handleNavigate()
   }
 
   return (
@@ -124,18 +358,41 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, locationName, loca
         )}
       </div>
 
-      <nav className="flex-1 space-y-1 p-4 pt-3">
+      <nav
+        className="flex-1 space-y-1 p-4 pt-3"
+        onDragOver={(event) => {
+          if (!draggingId) return
+          event.preventDefault()
+        }}
+        onDrop={handleContainerDrop}
+      >
         {navigation.map((item) => {
           const Icon = item.icon
           const isActive = location.pathname.startsWith(item.href)
+          const isPreparing = longPressId === item.id && !draggingId
+          const isDragging = draggingId === item.id
+          const isDropTarget = dropTargetId === item.id && draggingId !== item.id
 
           return (
             <Link
               key={item.name}
               to={item.href}
-              onClick={handleNavigate}
+              draggable={isPreparing || isDragging}
+              onClick={handleItemClick(item.id)}
+              onPointerDown={handlePointerDown(item.id)}
+              onPointerUp={handlePointerUp(item.id)}
+              onPointerLeave={handlePointerLeave}
+              onPointerCancel={handlePointerCancel}
+              onDragStart={handleDragStart(item.id)}
+              onDragEnd={handleDragEnd}
+              onDragOver={handleDragOver(item.id)}
+              onDragEnter={handleDragEnter(item.id)}
+              onDragLeave={handleDragLeave(item.id)}
+              onDrop={handleDrop(item.id)}
               className={cn(
-                'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors',
+                'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150 select-none',
+                isPreparing || isDragging ? 'scale-[1.03] shadow-lg cursor-grabbing' : 'cursor-pointer',
+                isDropTarget ? 'ring-2 ring-offset-0 ring-[rgba(148,163,184,0.45)]' : '',
                 isActive
                   ? 'glass text-[var(--color-text-primary)]'
                   : 'text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] glass-hover'

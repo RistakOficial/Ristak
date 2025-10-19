@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { KpiCard, Card, DateRangePicker, Table, Icon, LineChart, ContactDetailsModal, VisitorDetailsModal, PageContainer } from '@/components/common'
+import { KpiCard, Card, DateRangePicker, Table, Icon, LineChart, ContactDetailsModal, VisitorDetailsModal, PageContainer, ViewSelector, AreaChart } from '@/components/common'
 import type { Column } from '@/components/common'
 import {
   RefreshCw,
@@ -74,6 +74,20 @@ interface CampaignData {
   isExpanded?: boolean
 }
 
+type ChartView = 'revenue' | 'leads' | 'appointments' | 'visitors'
+
+interface ChartConfig {
+  title: string
+  subtitle: string
+  data: Array<{ label: string; value: number; value2?: number }>
+  color: string
+  color2?: string
+  showLegend: boolean
+  legendLabels?: { label1: string; label2?: string }
+  formatValue: (value: number) => string
+  emptyMessage: string
+}
+
 export const Campaigns: React.FC = () => {
   const { dateRange, setDateRange } = useDateRange()
   const { labels } = useLabels()
@@ -86,8 +100,14 @@ export const Campaigns: React.FC = () => {
   const [syncStatus, setSyncStatus] = useState<any>(null)
   const [expandedCampaigns, setExpandedCampaigns] = useState<Set<string>>(new Set())
   const [expandedAdSets, setExpandedAdSets] = useState<Set<string>>(new Set())
-  const [timeSeriesData, setTimeSeriesData] = useState<any[]>([])
   const [campaignSummary, setCampaignSummary] = useState<CampaignsReport['summary'] | null>(null)
+  const [selectedChart, setSelectedChart] = useState<ChartView>('revenue')
+
+  // Datos para diferentes gráficos
+  const [revenueData, setRevenueData] = useState<any[]>([])
+  const [leadsData, setLeadsData] = useState<any[]>([])
+  const [appointmentsData, setAppointmentsData] = useState<any[]>([])
+  const [visitorsData, setVisitorsData] = useState<any[]>([])
 
   // Estados para modal de contactos
   const [isModalOpen, setIsModalOpen] = useState(false)

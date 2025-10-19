@@ -280,54 +280,28 @@ export const getContactById = async (req, res) => {
         'SELECT location_id, api_token FROM highlevel_config LIMIT 1'
       )
 
-      if (config && config.api_token && config.location_id) {
+      if (config && config.api_token) {
         logger.info(`Obteniendo citas de HighLevel para contacto ${id}`)
 
-        // Obtener calendarios primero
-        const ghlClient = getGHLClient()
-        const calendarsResponse = await ghlClient.getCalendars(config.location_id, config.api_token)
-
-        if (calendarsResponse.calendars && calendarsResponse.calendars.length > 0) {
-          const allHighLevelAppointments = []
-
-          // Obtener citas de cada calendario
-          for (const calendar of calendarsResponse.calendars) {
-            try {
-              const now = new Date()
-              const startTime = new Date(now.getFullYear() - 2, 0, 1).toISOString() // 2 años atrás
-              const endTime = new Date(now.getFullYear() + 1, 11, 31).toISOString() // 1 año adelante
-
-              const eventsResponse = await fetch(
-                `https://services.leadconnectorhq.com/calendars/events?calendarId=${calendar.id}&locationId=${config.location_id}&startTime=${startTime}&endTime=${endTime}`,
-                {
-                  headers: {
-                    'Authorization': `Bearer ${config.api_token}`,
-                    'Version': '2021-07-28'
-                  }
-                }
-              )
-
-              if (eventsResponse.ok) {
-                const eventsData = await eventsResponse.json()
-                if (eventsData.events) {
-                  // Filtrar solo las citas de este contacto
-                  const contactAppointments = eventsData.events.filter(
-                    event => event.contactId === id
-                  )
-                  allHighLevelAppointments.push(...contactAppointments)
-                }
-              }
-            } catch (calendarError) {
-              logger.warn(`Error obteniendo citas del calendario ${calendar.id}: ${calendarError.message}`)
+        // Usar el endpoint correcto: /contacts/{contactId}/appointments
+        const eventsResponse = await fetch(
+          `https://services.leadconnectorhq.com/contacts/${id}/appointments`,
+          {
+            headers: {
+              'Authorization': `Bearer ${config.api_token}`,
+              'Version': '2021-07-28'
             }
           }
+        )
 
-          // Si encontramos citas en HighLevel, guardarlas en la DB y usarlas
-          if (allHighLevelAppointments.length > 0) {
-            logger.info(`Encontradas ${allHighLevelAppointments.length} citas en HighLevel para contacto ${id}`)
+        if (eventsResponse.ok) {
+          const eventsData = await eventsResponse.json()
+
+          if (eventsData.events && eventsData.events.length > 0) {
+            logger.info(`Encontradas ${eventsData.events.length} citas en HighLevel para contacto ${id}`)
 
             // Guardar las citas en la DB para cache
-            for (const appointment of allHighLevelAppointments) {
+            for (const appointment of eventsData.events) {
               await db.run(`
                 INSERT INTO appointments (
                   id, calendar_id, contact_id, location_id, title,
@@ -345,11 +319,11 @@ export const getContactById = async (req, res) => {
                 appointment.id,
                 appointment.calendarId,
                 appointment.contactId,
-                config.location_id,
+                appointment.locationId || config.location_id,
                 appointment.title || '(Sin título)',
                 appointment.status,
                 appointment.appointmentStatus,
-                appointment.assignedUserId || appointment.userId,
+                appointment.assignedUserId,
                 appointment.notes,
                 appointment.address,
                 appointment.startTime ? new Date(appointment.startTime) : null,
@@ -361,24 +335,31 @@ export const getContactById = async (req, res) => {
 
             // Combinar con las citas locales (evitando duplicados)
             const appointmentIds = new Set(appointments.map(a => a.id))
-            for (const hlAppointment of allHighLevelAppointments) {
-              if (!appointmentIds.has(hlAppointment.id)) {
+            for (const appointment of eventsData.events) {
+              if (!appointmentIds.has(appointment.id)) {
                 appointments.push({
-                  id: hlAppointment.id,
-                  calendar_id: hlAppointment.calendarId,
-                  contact_id: hlAppointment.contactId,
-                  title: hlAppointment.title,
-                  status: hlAppointment.status,
-                  appointment_status: hlAppointment.appointmentStatus,
-                  assigned_user_id: hlAppointment.assignedUserId || hlAppointment.userId,
-                  notes: hlAppointment.notes,
-                  address: hlAppointment.address,
-                  start_time: hlAppointment.startTime,
-                  end_time: hlAppointment.endTime
+                  id: appointment.id,
+                  calendar_id: appointment.calendarId,
+                  contact_id: appointment.contactId,
+                  title: appointment.title,
+                  status: appointment.status,
+                  appointment_status: appointment.appointmentStatus,
+                  assigned_user_id: appointment.assignedUserId,
+                  notes: appointment.notes,
+                  address: appointment.address,
+                  start_time: appointment.startTime,
+                  end_time: appointment.endTime
                 })
               }
             }
+
+            logger.info(`Total de citas después de combinar: ${appointments.length}`)
+          } else {
+            logger.info(`No se encontraron citas en HighLevel para contacto ${id}`)
           }
+        } else {
+          const errorText = await eventsResponse.text()
+          logger.warn(`Error obteniendo citas de HighLevel: ${eventsResponse.status} - ${errorText.substring(0, 100)}`)
         }
       }
     } catch (error) {
