@@ -1365,8 +1365,11 @@ export async function buildContactsList ({ startDate, endDate, type = 'interesad
   })
 
   // LOG CONSOLIDADO PARA MODAL
+  const requestId = `MODAL-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+  const timestamp = new Date().toISOString()
   const scopeLabel = scope === 'all' ? 'TODOS' : 'ÚLTIMA ATRIBUCIÓN'
-  logger.info(`\n========== MODAL ${type.toUpperCase()} - ${scopeLabel} ==========`)
+  logger.info(`\n🟢 ========== [${requestId}] MODAL ${type.toUpperCase()} - ${scopeLabel} ==========`)
+  logger.info(`⏰ Timestamp: ${timestamp}`)
   logger.info(`📅 Rango: ${range.startUtc} → ${range.endUtc}`)
   logger.info(`📊 Total contactos: ${result.length}`)
 
@@ -1387,7 +1390,7 @@ export async function buildContactsList ({ startDate, endDate, type = 'interesad
       logger.info(`   ${idx + 1}. ${c.name} (${c.email}) - Citas: ${apptCount}, Pagos: ${paymentCount}`)
     })
   }
-  logger.info(`=================================================\n`)
+  logger.info(`🟢 ========== FIN [${requestId}] ==========\n`)
 
   return {
     range,

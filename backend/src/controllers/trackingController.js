@@ -1354,9 +1354,12 @@ export async function getVisitorsList(req, res) {
     }))
 
     // LOG CONSOLIDADO PARA MODAL DE VISITANTES
+    const requestId = `VMODAL-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+    const timestamp = new Date().toISOString()
     const levelLabel = ad_id ? 'AD' : adset_id ? 'ADSET' : campaign_id ? 'CAMPAIGN' : 'ALL'
     const idLabel = ad_id || adset_id || campaign_id || 'N/A'
-    logger.info(`\n========== MODAL VISITANTES ==========`)
+    logger.info(`\n🔴 ========== [${requestId}] MODAL VISITANTES ==========`)
+    logger.info(`⏰ Timestamp: ${timestamp}`)
     logger.info(`📅 Rango: ${startDate} → ${endDateWithTime}`)
     logger.info(`🎯 Filtro: ${levelLabel} (${idLabel})`)
     logger.info(`📊 Total visitantes únicos: ${formattedVisitors.length}`)
@@ -1375,7 +1378,7 @@ export async function getVisitorsList(req, res) {
         logger.info(`   ${idx + 1}. ${contactInfo} - Citas: ${apptCount}, Ad: ${v.adId || 'N/A'}`)
       })
     }
-    logger.info(`======================================\n`)
+    logger.info(`🔴 ========== FIN [${requestId}] ==========\n`)
 
     res.json({ success: true, data: formattedVisitors })
   } catch (error) {

@@ -538,7 +538,10 @@ export const getCampaigns = async (req, res) => {
     });
 
     // LOG CONSOLIDADO PARA CAMPAIGNS
-    logger.info(`\n========== CAMPAIGNS - MÉTRICAS ==========`)
+    const requestId = `CAMP-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+    const timestamp = new Date().toISOString()
+    logger.info(`\n🟡 ========== [${requestId}] CAMPAIGNS - MÉTRICAS ==========`)
+    logger.info(`⏰ Timestamp: ${timestamp}`)
     logger.info(`📅 Rango: ${adsStart} → ${adsEnd}`)
     logger.info(`📊 Total campañas: ${campaignsArray.length}`)
 
@@ -565,7 +568,7 @@ export const getCampaigns = async (req, res) => {
         logger.info(`   ${c.name}: Leads=${c.interesados}, Citas=${c.citas}, Visitantes=${c.visitors}, Ventas=${c.ventas}`)
       })
     }
-    logger.info(`===========================================\n`)
+    logger.info(`🟡 ========== FIN [${requestId}] ==========\n`)
 
     res.json({
       success: true,
@@ -1022,9 +1025,12 @@ export const getContactsByType = async (req, res) => {
     );
 
     // LOG CONSOLIDADO PARA MODAL DE CAMPAIGNS
+    const requestId = `CMODAL-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+    const timestamp = new Date().toISOString()
     const levelLabel = ad_id ? 'AD' : adset_id ? 'ADSET' : campaign_id ? 'CAMPAIGN' : 'UNKNOWN'
     const idLabel = ad_id || adset_id || campaign_id
-    logger.info(`\n========== MODAL CAMPAIGNS ${type.toUpperCase()} ==========`)
+    logger.info(`\n🟠 ========== [${requestId}] MODAL CAMPAIGNS ${type.toUpperCase()} ==========`)
+    logger.info(`⏰ Timestamp: ${timestamp}`)
     logger.info(`📅 Rango: ${adsStart} → ${adsEnd}`)
     logger.info(`🎯 Nivel: ${levelLabel} (${idLabel})`)
     logger.info(`📊 Total contactos: ${mappedContacts.length}`)
@@ -1043,7 +1049,7 @@ export const getContactsByType = async (req, res) => {
         logger.info(`   ${idx + 1}. ${c.name} (${c.email}) - LTV: $${c.ltv}, Pagos: ${paymentCount}`)
       })
     }
-    logger.info(`===========================================\n`)
+    logger.info(`🟠 ========== FIN [${requestId}] ==========\n`)
 
     res.json({
       success: true,
