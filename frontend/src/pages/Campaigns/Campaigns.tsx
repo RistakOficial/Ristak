@@ -899,7 +899,10 @@ export const Campaigns: React.FC = () => {
               />
             ) : (
               <div className="flex h-full items-center justify-center rounded-xl border border-[rgba(148,163,184,0.18)] bg-[color-mix(in_srgb,var(--color-background-glass) 82%, transparent)] text-sm text-[var(--color-text-tertiary)]">
-                Sin datos de campañas disponibles
+                <div className="text-center">
+                  <p>No hay datos de campañas para este período</p>
+                  <p className="text-xs mt-2 opacity-75">Sincroniza tus campañas de Meta Ads para ver el gráfico</p>
+                </div>
               </div>
             )}
           </div>

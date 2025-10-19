@@ -476,6 +476,18 @@ export const getSpendOverTime = async (req, res) => {
       db.all(revenueQuery, revenueParams)
     ]);
 
+    logger.info(`Gastos encontrados: ${spendData.length} días con datos`);
+    logger.info(`Ingresos atribuidos encontrados: ${revenueData.length} días con datos`);
+
+    // Si no hay datos de ningún tipo, retornar vacío
+    if (spendData.length === 0 && revenueData.length === 0) {
+      logger.info('No hay datos de publicidad ni ingresos atribuidos para el período solicitado');
+      return res.json({
+        success: true,
+        data: []
+      });
+    }
+
     // Crear un mapa de ingresos por fecha
     const revenueMap = new Map();
     revenueData.forEach(row => {

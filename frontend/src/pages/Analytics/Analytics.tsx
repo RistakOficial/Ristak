@@ -73,6 +73,45 @@ const getPlacementIcon = (placementName: string) => {
   return Target
 }
 
+// Helper para normalizar nombres de plataformas (expandir abreviaciones)
+const normalizePlatformName = (rawName: string): string => {
+  if (!rawName) return 'Directo'
+
+  const name = rawName.toLowerCase().trim()
+
+  // Mapeo de abreviaciones comunes
+  const platformMap: { [key: string]: string } = {
+    'fb': 'Facebook',
+    'ig': 'Instagram',
+    'facebook': 'Facebook',
+    'instagram': 'Instagram',
+    'google': 'Google',
+    'tiktok': 'TikTok',
+    'twitter': 'Twitter',
+    'linkedin': 'LinkedIn',
+    'microsoft': 'Microsoft',
+    'bing': 'Microsoft',
+    'youtube': 'YouTube',
+    'messenger': 'Messenger',
+    'whatsapp': 'WhatsApp'
+  }
+
+  // Buscar coincidencia exacta
+  if (platformMap[name]) {
+    return platformMap[name]
+  }
+
+  // Buscar si contiene alguna palabra clave
+  for (const [key, value] of Object.entries(platformMap)) {
+    if (name.includes(key)) {
+      return value
+    }
+  }
+
+  // Si no hay match, capitalizar primera letra
+  return rawName.charAt(0).toUpperCase() + rawName.slice(1)
+}
+
 // Usar TrackingSession directamente
 type Session = TrackingSession & {
   browser?: string
