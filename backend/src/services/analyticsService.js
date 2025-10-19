@@ -634,7 +634,7 @@ export async function buildReportMetrics ({ startDate, endDate, groupBy = 'day',
   }
 
   const contactWhere = contactConditions.length ? `WHERE ${contactConditions.join(' AND ')}` : ''
-  const contactGroupExpr = getGroupExpression('created_at', groupBy)
+  const contactGroupExpr = getGroupExpression('contacts.created_at', groupBy)
 
   // IMPORTANTE: Columna "appointments" cuenta contactos con AL MENOS 1 cita (métrica de atribución)
   // Se agrupa por FECHA DE CREACIÓN DEL CONTACTO, no por fecha de cita:
@@ -836,7 +836,7 @@ export async function buildReportMetrics ({ startDate, endDate, groupBy = 'day',
     }
 
     const paymentWhere = paymentConditions.length ? `WHERE ${paymentConditions.join(' AND ')}` : ''
-    const paymentGroupExpr = getGroupExpression('date', groupBy)
+    const paymentGroupExpr = getGroupExpression('p.date', groupBy)
 
     const paymentsQuery = `
       SELECT
@@ -903,7 +903,7 @@ export async function buildReportMetrics ({ startDate, endDate, groupBy = 'day',
   const spendParams = []
   const spendConditions = buildRangeConditions('date', range, spendParams)
   const spendWhere = spendConditions.length ? `WHERE ${spendConditions.join(' AND ')}` : ''
-  const spendGroupExpr = getGroupExpression('date', groupBy)
+  const spendGroupExpr = getGroupExpression('meta_ads.date', groupBy)
 
   const spendQuery = `
       SELECT
