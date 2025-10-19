@@ -266,6 +266,7 @@ export function Table<T extends Record<string, any>>({
   if (loading) {
     return (
       <div className={styles.loadingContainer}>
+        <div className={styles.spinner}></div>
         <div className={styles.loadingText}>Cargando...</div>
       </div>
     )

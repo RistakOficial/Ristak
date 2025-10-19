@@ -240,10 +240,28 @@
 .loadingContainer {
   padding: var(--spacing-2xl);
   display: flex;
+  flex-direction: column;
   justify-content: center;
   align-items: center;
+  gap: var(--spacing-md);
   background-color: var(--color-surface);
   border-radius: var(--radius-lg);
+  min-height: 300px;
+}
+
+.spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid var(--color-border-subtle);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .loadingText {
