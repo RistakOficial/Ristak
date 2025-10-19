@@ -507,6 +507,8 @@ export const getLeadsData = async (req, res) => {
 
 /**
  * Obtiene datos de citas programadas por periodo
+ * IMPORTANTE: Cuenta contactos ÚNICOS con cita, agrupados por fecha de creación del contacto
+ * Esto permite atribución correcta de marketing (qué día se creó el contacto que agendó cita)
  */
 export const getAppointmentsData = async (req, res) => {
   try {
@@ -525,11 +527,11 @@ export const getAppointmentsData = async (req, res) => {
       const dateFormat = groupBy === 'day' ? 'YYYY-MM-DD' : 'YYYY-MM';
       query = `
         SELECT
-          TO_CHAR(appointment_date::timestamp, '${dateFormat}') as periodo,
-          COUNT(*) as total
+          TO_CHAR(created_at::timestamp, '${dateFormat}') as periodo,
+          COUNT(DISTINCT id) as total
         FROM contacts
         WHERE appointment_date IS NOT NULL
-        AND appointment_date::timestamp >= $1::timestamp AND appointment_date::timestamp < ($2::timestamp + INTERVAL '1 day')
+        AND created_at::timestamp >= $1::timestamp AND created_at::timestamp < ($2::timestamp + INTERVAL '1 day')
         GROUP BY periodo
         ORDER BY periodo
       `;
@@ -538,11 +540,11 @@ export const getAppointmentsData = async (req, res) => {
       const dateFormat = groupBy === 'day' ? '%Y-%m-%d' : '%Y-%m';
       query = `
         SELECT
-          strftime(?, appointment_date) as periodo,
-          COUNT(*) as total
+          strftime(?, created_at) as periodo,
+          COUNT(DISTINCT id) as total
         FROM contacts
         WHERE appointment_date IS NOT NULL
-        AND appointment_date >= ? AND appointment_date < DATE(?, '+1 day')
+        AND created_at >= ? AND created_at < DATE(?, '+1 day')
         GROUP BY periodo
         ORDER BY periodo
       `;
