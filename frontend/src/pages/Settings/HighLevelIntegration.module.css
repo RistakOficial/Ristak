@@ -313,7 +313,8 @@ body.dark .formInput:focus {
 }
 
 /* Loading spinner */
-.spinIcon {
+.spinIcon,
+.spinning {
   animation: spin 1s linear infinite;
 }
 

@@ -13,7 +13,8 @@ import {
   getLeadsOverTime,
   getAppointmentsOverTime,
   getVisitorsOverTime,
-  getFunnelMetrics
+  getFunnelMetrics,
+  syncFromHighLevel
 } from '../controllers/metaController.js'
 
 const router = express.Router()
@@ -25,6 +26,7 @@ router.get('/verify-token', verifyToken)
 
 // Sincronización
 router.post('/sync', syncAds)
+router.post('/sync-from-highlevel', syncFromHighLevel)
 router.get('/sync/progress', getSyncProgressEndpoint)
 router.get('/sync/status', getSyncStatus)
 router.post('/update-recent', updateRecent)

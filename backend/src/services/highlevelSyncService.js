@@ -901,7 +901,7 @@ async function setupHighLevelWebhooks(locationId, apiToken, baseUrl) {
 /**
  * Obtiene custom values de Meta desde HighLevel y los guarda en meta_config
  */
-async function fetchAndSaveMetaConfig(locationId, apiToken) {
+export async function fetchAndSaveMetaConfig(locationId, apiToken) {
   const { saveMetaConfig } = await import('./metaAdsService.js')
 
   try {

@@ -1,15 +1,41 @@
 import React, { useState } from 'react'
 import { Card, Button } from '@/components/common'
-import { CheckCircle, ExternalLink, ChevronDown, ChevronUp, AlertCircle, Info, Facebook } from 'lucide-react'
+import { CheckCircle, ExternalLink, ChevronDown, ChevronUp, AlertCircle, Info, Facebook, RefreshCw } from 'lucide-react'
 import { useNotification } from '@/contexts/NotificationContext'
 import styles from './HighLevelIntegration.module.css'
 
 export const MetaAdsIntegration: React.FC = () => {
   const [openSection, setOpenSection] = useState<number | null>(null)
+  const [isSyncing, setIsSyncing] = useState(false)
   const { showToast } = useNotification()
 
   const toggleSection = (section: number) => {
     setOpenSection(openSection === section ? null : section)
+  }
+
+  const handleSyncFromHighLevel = async () => {
+    setIsSyncing(true)
+
+    try {
+      const response = await fetch('/api/meta/sync-from-highlevel', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      })
+
+      const data = await response.json()
+
+      if (data.success) {
+        showToast('success', 'Sincronización exitosa', data.message)
+      } else {
+        showToast('error', 'Error al sincronizar', data.error)
+      }
+    } catch (error) {
+      showToast('error', 'Error', 'No se pudo conectar con el servidor')
+    } finally {
+      setIsSyncing(false)
+    }
   }
 
   return (
@@ -520,6 +546,54 @@ export const MetaAdsIntegration: React.FC = () => {
                   Primero verifica que los 4 Custom Values estén escritos EXACTAMENTE como se indica arriba (revisa mayúsculas, espacios y guiones).
                   Si el error persiste, revisa que tu System User tenga permisos de administrador en tu cuenta de anuncios.
                 </p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Botón de sincronización manual */}
+        <div className={styles.section}>
+          <div className={styles.sectionHeader}>
+            <h3 className={styles.sectionTitle}>Sincronizar Configuración</h3>
+          </div>
+          <div className={styles.sectionContent}>
+            <p className={styles.infoText}>
+              Si ya configuraste los 4 Custom Values en HighLevel, haz clic en el botón de abajo para sincronizar automáticamente tu configuración de Meta con Ristak.
+            </p>
+            <div style={{ marginTop: '20px' }}>
+              <Button
+                onClick={handleSyncFromHighLevel}
+                disabled={isSyncing}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  padding: '12px 24px',
+                  fontSize: '16px',
+                  backgroundColor: '#0866FF',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '8px',
+                  cursor: isSyncing ? 'not-allowed' : 'pointer',
+                  opacity: isSyncing ? 0.6 : 1
+                }}
+              >
+                <RefreshCw size={18} className={isSyncing ? styles.spinning : ''} />
+                {isSyncing ? 'Sincronizando...' : 'Sincronizar desde HighLevel'}
+              </Button>
+            </div>
+            <div className={styles.infoBox} style={{ marginTop: '16px' }}>
+              <Info size={18} />
+              <div>
+                <strong>¿Qué hace este botón?</strong>
+                <br />
+                1. Busca los 4 Custom Values de Meta en tu cuenta de HighLevel
+                <br />
+                2. Guarda las credenciales en Ristak
+                <br />
+                3. Valida que las credenciales funcionen correctamente
+                <br />
+                4. Inicia automáticamente la sincronización de tus anuncios de Meta
               </div>
             </div>
           </div>

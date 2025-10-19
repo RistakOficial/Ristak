@@ -11,6 +11,7 @@ import {
 } from '../services/metaAdsService.js';
 import { resolveDateRange } from '../utils/dateUtils.js';
 import { getContactsWithAppointmentsHybrid } from '../services/appointmentsMerge.js';
+import { fetchAndSaveMetaConfig } from '../services/highlevelSyncService.js';
 
 /**
  * Obtiene los calendarios configurados para atribución
@@ -1633,6 +1634,85 @@ export const getFunnelMetrics = async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Error al obtener métricas del funnel'
+    });
+  }
+};
+
+/**
+ * Sincroniza configuración de Meta desde HighLevel custom values
+ * Busca los custom values de Meta en HighLevel, los guarda en meta_config,
+ * valida que funcionen y luego inicia sincronización de anuncios
+ */
+export const syncFromHighLevel = async (req, res) => {
+  try {
+    logger.info('Iniciando sincronización de Meta desde HighLevel custom values...');
+
+    // 1. Obtener configuración de HighLevel
+    const hlConfig = await db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1');
+
+    if (!hlConfig || !hlConfig.location_id || !hlConfig.api_token) {
+      return res.status(400).json({
+        success: false,
+        error: 'No hay configuración de HighLevel. Primero debes conectar HighLevel en Settings.'
+      });
+    }
+
+    // 2. Buscar y guardar custom values de Meta
+    logger.info('Buscando custom values de Meta en HighLevel...');
+    await fetchAndSaveMetaConfig(hlConfig.location_id, hlConfig.api_token);
+
+    // 3. Verificar si se guardaron las credenciales
+    const metaConfig = await getMetaConfig();
+
+    if (!metaConfig || !metaConfig.access_token || !metaConfig.ad_account_id) {
+      return res.status(404).json({
+        success: false,
+        error: 'No se encontraron custom values de Meta en HighLevel. Verifica que hayas creado los 4 custom values con los nombres exactos.'
+      });
+    }
+
+    logger.info('Credenciales de Meta encontradas y guardadas exitosamente');
+
+    // 4. Validar que las credenciales funcionen
+    logger.info('Validando credenciales de Meta...');
+    const validation = await verifyMetaToken(metaConfig.access_token);
+
+    if (!validation.valid) {
+      return res.status(400).json({
+        success: false,
+        error: `Credenciales de Meta inválidas: ${validation.error || 'Token inválido o expirado'}`
+      });
+    }
+
+    logger.info('Credenciales de Meta validadas exitosamente');
+
+    // 5. Iniciar sincronización de anuncios (últimos 7 días)
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - 7);
+    const startDateStr = startDate.toISOString().split('T')[0];
+
+    logger.info(`Iniciando sincronización de anuncios desde: ${startDateStr}`);
+
+    // No esperar a que termine la sincronización (es async)
+    syncMetaAds(startDateStr).catch(error => {
+      logger.error(`Error en sincronización de Meta Ads: ${error.message}`);
+    });
+
+    res.json({
+      success: true,
+      message: 'Configuración de Meta sincronizada exitosamente. Sincronización de anuncios iniciada.',
+      data: {
+        adAccountId: metaConfig.ad_account_id,
+        tokenValid: validation.valid,
+        syncStarted: true
+      }
+    });
+
+  } catch (error) {
+    logger.error(`Error en syncFromHighLevel: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      error: 'Error al sincronizar configuración de Meta desde HighLevel'
     });
   }
 };
