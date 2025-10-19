@@ -73,27 +73,38 @@ const getPlacementIcon = (placementName: string) => {
   return Target
 }
 
-// Helper para extraer el tipo de ubicación del placement (Feed, Reels, Stories, etc.)
-const extractPlacementType = (placement: string): string => {
-  if (!placement) return 'Desconocido'
+// Helper para formatear placement de manera legible (Facebook Feed, Instagram Reels, etc.)
+const formatPlacementName = (placement: string): string => {
+  if (!placement || placement === 'Sin ubicación') return 'Sin ubicación'
 
   const cleaned = placement.toLowerCase().trim()
 
-  // Extraer el tipo de ubicación del formato: "Instagram_Feed", "Facebook_Mobile_Reels", etc.
-  if (cleaned.includes('feed')) return 'Feed'
-  if (cleaned.includes('reel')) return 'Reels'
-  if (cleaned.includes('story') || cleaned.includes('stories')) return 'Stories'
-  if (cleaned.includes('right_column') || cleaned.includes('rightcolumn')) return 'Columna Derecha'
-  if (cleaned.includes('marketplace')) return 'Marketplace'
-  if (cleaned.includes('search')) return 'Búsqueda'
-  if (cleaned.includes('video')) return 'Video'
-  if (cleaned.includes('messenger')) return 'Messenger'
-  if (cleaned.includes('audience_network') || cleaned.includes('audiencenetwork')) return 'Audience Network'
-  if (cleaned.includes('instant_article')) return 'Artículo Instantáneo'
-  if (cleaned.includes('instream')) return 'In-Stream'
-  if (cleaned.includes('explore')) return 'Explorar'
+  // Mapeo de formatos conocidos a nombres legibles
+  if (cleaned.includes('facebook') && cleaned.includes('feed')) return 'Facebook Feed'
+  if (cleaned.includes('facebook') && cleaned.includes('reel')) return 'Facebook Reels'
+  if (cleaned.includes('facebook') && cleaned.includes('story')) return 'Facebook Stories'
+  if (cleaned.includes('facebook') && cleaned.includes('right_column')) return 'Facebook Columna Derecha'
+  if (cleaned.includes('facebook') && cleaned.includes('video')) return 'Facebook Video'
+  if (cleaned.includes('facebook') && cleaned.includes('marketplace')) return 'Facebook Marketplace'
+  if (cleaned.includes('facebook') && cleaned.includes('search')) return 'Facebook Búsqueda'
 
-  // Si no hay match, capitalizar
+  if (cleaned.includes('instagram') && cleaned.includes('feed')) return 'Instagram Feed'
+  if (cleaned.includes('instagram') && cleaned.includes('reel')) return 'Instagram Reels'
+  if (cleaned.includes('instagram') && cleaned.includes('story')) return 'Instagram Stories'
+  if (cleaned.includes('instagram') && cleaned.includes('explore')) return 'Instagram Explorar'
+  if (cleaned.includes('instagram') && cleaned.includes('profile')) return 'Instagram Perfil'
+  if (cleaned.includes('instagram') && cleaned.includes('search')) return 'Instagram Búsqueda'
+
+  if (cleaned.includes('messenger')) return 'Messenger'
+  if (cleaned.includes('audience_network')) return 'Audience Network'
+  if (cleaned.includes('instant_article')) return 'Artículo Instantáneo'
+  if (cleaned.includes('instream')) return 'In-Stream Video'
+
+  // Para placements solo con "fb" o "ig"
+  if (cleaned === 'fb') return 'Facebook'
+  if (cleaned === 'ig') return 'Instagram'
+
+  // Si no hay match, limpiar y capitalizar
   return placement.replace(/_/g, ' ').split(' ').map(word =>
     word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()
   ).join(' ')
@@ -530,8 +541,8 @@ const Analytics: React.FC = () => {
               osMap[session.os] = (osMap[session.os] || 0) + 1
             }
             if (session.placement) {
-              const normalized = normalizePlatformName(session.placement)
-              placementsMap[normalized] = (placementsMap[normalized] || 0) + 1
+              const formatted = formatPlacementName(session.placement)
+              placementsMap[formatted] = (placementsMap[formatted] || 0) + 1
             }
           })
 
@@ -597,11 +608,11 @@ const Analytics: React.FC = () => {
             .slice(0, 5)
           setPlatformsData(platformStats)
 
-          // Calcular placements PRIMERO (para usarlo en la dona)
+          // Calcular placements para "Top de ubicaciones" (Facebook Feed, Instagram Reels, etc.)
           const placements: { [key: string]: number } = {}
           currentSessions.forEach((session: Session) => {
             const rawPlacement = session.placement || 'Sin ubicación'
-            const placement = normalizePlatformName(rawPlacement)
+            const placement = formatPlacementName(rawPlacement)
             placements[placement] = (placements[placement] || 0) + 1
           })
           const placementStats = Object.entries(placements)
@@ -614,7 +625,14 @@ const Analytics: React.FC = () => {
             .slice(0, 5)
           setPlacementsData(placementStats)
 
-          // Preparar datos para la dona de fuentes de tráfico (usando placements)
+          // Preparar datos para la dona de fuentes de tráfico (usando site_source_name)
+          const trafficSources: { [key: string]: number } = {}
+          currentSessions.forEach((session: Session) => {
+            const rawSource = session.site_source_name || session.source_platform || session.utm_source || 'Directo'
+            const source = normalizePlatformName(rawSource)
+            trafficSources[source] = (trafficSources[source] || 0) + 1
+          })
+
           const trafficColorMap: { [key: string]: string } = {
             'Facebook': '#1877f2',
             'Google': '#4285f4',
@@ -633,11 +651,12 @@ const Analytics: React.FC = () => {
             'Directo': '#6b7280',
             'Orgánico': '#10b981'
           }
-          const trafficSourcesData = Object.entries(placements)
-            .map(([placement, count]) => ({
-              name: placement,
+
+          const trafficSourcesData = Object.entries(trafficSources)
+            .map(([source, count]) => ({
+              name: source,
               value: count,
-              color: trafficColorMap[placement] || '#6b7280'
+              color: trafficColorMap[source] || '#6b7280'
             }))
             .sort((a, b) => b.value - a.value)
             .slice(0, 10)
@@ -750,7 +769,7 @@ const Analytics: React.FC = () => {
                 if (session.os === value) fieldMatch = true
                 break
               case 'placement':
-                if (normalizePlatformName(session.placement || '') === value) fieldMatch = true
+                if (formatPlacementName(session.placement || '') === value) fieldMatch = true
                 break
             }
           }
@@ -862,11 +881,11 @@ const Analytics: React.FC = () => {
       .slice(0, 5)
     setPlatformsData(platformStats)
 
-    // Calcular placements PRIMERO (para usarlo en la dona)
+    // Calcular placements para "Top de ubicaciones" (Facebook Feed, Instagram Reels, etc.)
     const placements: { [key: string]: number } = {}
     sessions.forEach((session: Session) => {
       const rawPlacement = session.placement || 'Sin ubicación'
-      const placement = normalizePlatformName(rawPlacement)
+      const placement = formatPlacementName(rawPlacement)
       placements[placement] = (placements[placement] || 0) + 1
     })
     const placementStats = Object.entries(placements)
@@ -879,7 +898,14 @@ const Analytics: React.FC = () => {
       .slice(0, 5)
     setPlacementsData(placementStats)
 
-    // Preparar datos para la dona de fuentes de tráfico (usando placements)
+    // Preparar datos para la dona de fuentes de tráfico (usando site_source_name)
+    const trafficSources: { [key: string]: number } = {}
+    sessions.forEach((session: Session) => {
+      const rawSource = session.site_source_name || session.source_platform || session.utm_source || 'Directo'
+      const source = normalizePlatformName(rawSource)
+      trafficSources[source] = (trafficSources[source] || 0) + 1
+    })
+
     const trafficColorMap: { [key: string]: string } = {
       'Facebook': '#1877f2',
       'Google': '#4285f4',
@@ -898,11 +924,12 @@ const Analytics: React.FC = () => {
       'Directo': '#6b7280',
       'Orgánico': '#10b981'
     }
-    const trafficSourcesData = Object.entries(placements)
-      .map(([placement, count]) => ({
-        name: placement,
+
+    const trafficSourcesData = Object.entries(trafficSources)
+      .map(([source, count]) => ({
+        name: source,
         value: count,
-        color: trafficColorMap[placement] || '#6b7280'
+        color: trafficColorMap[source] || '#6b7280'
       }))
       .sort((a, b) => b.value - a.value)
       .slice(0, 10)
