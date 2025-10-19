@@ -8,7 +8,9 @@ import {
   Users,
   Calendar,
   Settings,
-  BarChart3
+  BarChart3,
+  GripVertical,
+  Sparkles
 } from 'lucide-react'
 import { cn } from '@/utils/cn'
 import { Logo } from '@/components/common'
@@ -147,9 +149,63 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, locationName, loca
   const [longPressId, setLongPressId] = useState<string | null>(null)
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [dropTargetId, setDropTargetId] = useState<string | null>(null)
+  const [isEditing, setIsEditing] = useState(false)
+  const navItemRefs = useRef<Map<string, HTMLAnchorElement>>(new Map())
   const longPressTimeoutRef = useRef<number | null>(null)
   const dragStartOrderRef = useRef<NavItem[] | null>(null)
   const dropCompletedRef = useRef(false)
+
+  const setNavigationAnimated = useCallback((updater: (current: NavItem[]) => NavItem[]) => {
+    const resultRef: { value: NavItem[] | null } = { value: null }
+
+    setNavigation(current => {
+      const previousOrder = current
+      const previousRects = new Map<string, DOMRect>()
+
+      previousOrder.forEach(item => {
+        const node = navItemRefs.current.get(item.id)
+        if (node) {
+          previousRects.set(item.id, node.getBoundingClientRect())
+        }
+      })
+
+      const next = updater(current)
+      resultRef.value = next
+
+      if (areOrdersEqual(previousOrder, next)) {
+        resultRef.value = previousOrder
+        return previousOrder
+      }
+
+      requestAnimationFrame(() => {
+        next.forEach(item => {
+          const node = navItemRefs.current.get(item.id)
+          const previousRect = previousRects.get(item.id)
+          if (!node || !previousRect) return
+
+          const nextRect = node.getBoundingClientRect()
+          const deltaX = previousRect.left - nextRect.left
+          const deltaY = previousRect.top - nextRect.top
+
+          if (deltaX === 0 && deltaY === 0) {
+            return
+          }
+
+          node.style.transition = 'none'
+          node.style.transform = `translate(${deltaX}px, ${deltaY}px)`
+
+          requestAnimationFrame(() => {
+            node.style.transition = 'transform 220ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 180ms ease, background 180ms ease'
+            node.style.transform = ''
+          })
+        })
+      })
+
+      return next
+    })
+
+    return resultRef.value ?? []
+  }, [])
 
   const persistPreference = useCallback((show: boolean) => {
     if (typeof window === 'undefined') return
@@ -193,6 +249,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, locationName, loca
     setLongPressId(null)
     setDraggingId(null)
     setDropTargetId(null)
+    setIsEditing(false)
     dragStartOrderRef.current = null
     dropCompletedRef.current = false
   }, [analyticsEnabled, buildNavigationWithPreferences, persistPreference, clearLongPressTimeout])
@@ -230,6 +287,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, locationName, loca
     clearLongPressTimeout()
     longPressTimeoutRef.current = window.setTimeout(() => {
       setLongPressId(id)
+      setIsEditing(true)
     }, LONG_PRESS_DELAY)
 
     event.currentTarget.setPointerCapture?.(event.pointerId)
@@ -249,16 +307,19 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, locationName, loca
       event.preventDefault()
       event.stopPropagation()
       setLongPressId(null)
+      setIsEditing(false)
     }
   }
 
   const handlePointerCancel = () => {
     clearLongPressTimeout()
+    setIsEditing(false)
   }
 
   const handlePointerLeave = () => {
     if (draggingId) return
     clearLongPressTimeout()
+    setIsEditing(false)
   }
 
   const handleDragStart = (id: string) => (event: React.DragEvent<HTMLAnchorElement>) => {
@@ -269,6 +330,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, locationName, loca
 
     dragStartOrderRef.current = navigation.slice()
     dropCompletedRef.current = false
+    setIsEditing(true)
     setDraggingId(id)
     event.dataTransfer.effectAllowed = 'move'
     event.dataTransfer.setData('text/plain', id)
@@ -286,20 +348,21 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, locationName, loca
     setDraggingId(null)
     setDropTargetId(null)
     setLongPressId(null)
+    setIsEditing(false)
   }
 
   const handleDragOver = (id: string) => (event: React.DragEvent<HTMLAnchorElement>) => {
     if (!draggingId || draggingId === id) return
     event.preventDefault()
     setDropTargetId(id)
-    setNavigation(current => reorderNavigationItems(current, draggingId, id))
+    setNavigationAnimated(current => reorderNavigationItems(current, draggingId, id))
   }
 
   const handleDragEnter = (id: string) => (event: React.DragEvent<HTMLAnchorElement>) => {
     if (!draggingId || draggingId === id) return
     event.preventDefault()
     setDropTargetId(id)
-    setNavigation(current => reorderNavigationItems(current, draggingId, id))
+    setNavigationAnimated(current => reorderNavigationItems(current, draggingId, id))
   }
 
   const handleDragLeave = (id: string) => () => {
@@ -314,16 +377,11 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, locationName, loca
 
     if (!draggingId) {
       dropCompletedRef.current = false
+      setIsEditing(false)
       return
     }
 
-    let finalNavigation: NavItem[] | null = null
-
-    setNavigation(current => {
-      const next = reorderNavigationItems(current, draggingId, targetId)
-      finalNavigation = next
-      return next
-    })
+    const finalNavigation = setNavigationAnimated(current => reorderNavigationItems(current, draggingId, targetId))
 
     const orderToPersist =
       finalNavigation &&
@@ -332,11 +390,15 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, locationName, loca
         ? finalNavigation
         : null
 
-    if (orderToPersist) {
-      dropCompletedRef.current = true
-      await persistOrder(orderToPersist)
-    } else {
-      dropCompletedRef.current = false
+    try {
+      if (orderToPersist) {
+        dropCompletedRef.current = true
+        await persistOrder(orderToPersist)
+      } else {
+        dropCompletedRef.current = false
+      }
+    } finally {
+      handleDragEnd()
     }
   }
 
@@ -346,16 +408,11 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, locationName, loca
 
     if (!draggingId) {
       dropCompletedRef.current = false
+      setIsEditing(false)
       return
     }
 
-    let finalNavigation: NavItem[] | null = null
-
-    setNavigation(current => {
-      const next = moveItemToEnd(current, draggingId)
-      finalNavigation = next
-      return next
-    })
+    const finalNavigation = setNavigationAnimated(current => moveItemToEnd(current, draggingId))
 
     const orderToPersist =
       finalNavigation &&
@@ -364,11 +421,15 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, locationName, loca
         ? finalNavigation
         : null
 
-    if (orderToPersist) {
-      dropCompletedRef.current = true
-      await persistOrder(orderToPersist)
-    } else {
-      dropCompletedRef.current = false
+    try {
+      if (orderToPersist) {
+        dropCompletedRef.current = true
+        await persistOrder(orderToPersist)
+      } else {
+        dropCompletedRef.current = false
+      }
+    } finally {
+      handleDragEnd()
     }
   }
 
@@ -408,7 +469,12 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, locationName, loca
       </div>
 
       <nav
-        className="flex-1 space-y-1 p-4 pt-3"
+        className={cn(
+          'flex-1 space-y-1 p-4 pt-3 transition-all duration-200 relative',
+          isEditing
+            ? 'bg-white/[0.04] border border-dashed border-[rgba(148,163,184,0.28)] rounded-xl shadow-[0_12px_30px_-12px_rgba(15,23,42,0.45)]'
+            : ''
+        )}
         onDragOver={(event) => {
           if (!draggingId) return
           event.preventDefault()
@@ -419,12 +485,25 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, locationName, loca
 
             if (event.clientY >= bounds.bottom - threshold) {
               setDropTargetId(null)
-              setNavigation(current => moveItemToEnd(current, draggingId))
+              setNavigationAnimated(current => moveItemToEnd(current, draggingId))
             }
           }
         }}
         onDrop={handleContainerDrop}
       >
+        {isEditing && (
+          <div className="mb-3 flex items-center justify-between gap-3 rounded-lg border border-dashed border-[rgba(148,163,184,0.35)] bg-white/[0.05] px-3 py-2 text-[11px] uppercase tracking-[0.18em] text-[var(--color-text-tertiary)]">
+            <div className="flex items-center gap-2">
+              <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-white/[0.08]">
+                <Sparkles className="h-3.5 w-3.5 text-[var(--color-text-secondary)] animate-pulse" />
+              </span>
+              <span className="font-semibold text-[var(--color-text-secondary)]">Modo edición</span>
+            </div>
+            <span className="rounded-full bg-white/[0.06] px-2 py-1 text-[9px] font-medium text-[var(--color-text-tertiary)] tracking-[0.3em]">
+              Arrastra para reordenar
+            </span>
+          </div>
+        )}
         {navigation.map((item) => {
           const Icon = item.icon
           const isActive = location.pathname.startsWith(item.href)
@@ -434,38 +513,74 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, locationName, loca
           const isDimmed = Boolean(draggingId) && draggingId !== item.id
 
           return (
-            <Link
-              key={item.name}
-              to={item.href}
-              draggable={isPreparing || isDragging}
-              onClick={handleItemClick(item.id)}
-              onPointerDown={handlePointerDown(item.id)}
-              onPointerUp={handlePointerUp(item.id)}
+            <React.Fragment key={item.id}>
+              {isEditing && isDropTarget && (
+                <div className="relative flex h-3 items-center">
+                  <div className="h-[2px] w-full rounded-full bg-gradient-to-r from-transparent via-[rgba(148,163,184,0.8)] to-transparent animate-pulse" />
+                </div>
+              )}
+              <Link
+                to={item.href}
+                draggable={isPreparing || isDragging}
+                onClick={handleItemClick(item.id)}
+                onPointerDown={handlePointerDown(item.id)}
+                onPointerUp={handlePointerUp(item.id)}
               onPointerLeave={handlePointerLeave}
               onPointerCancel={handlePointerCancel}
               onDragStart={handleDragStart(item.id)}
               onDragEnd={handleDragEnd}
               onDragOver={handleDragOver(item.id)}
-              onDragEnter={handleDragEnter(item.id)}
-              onDragLeave={handleDragLeave(item.id)}
-              onDrop={handleDrop(item.id)}
-              className={cn(
-                'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 ease-out select-none',
-                isDragging
-                  ? 'scale-[1.05] shadow-xl cursor-grabbing z-10 opacity-100'
-                  : isPreparing
-                    ? 'scale-[1.03] shadow-lg cursor-grab opacity-95'
-                    : 'cursor-pointer',
-                isDropTarget ? 'ring-2 ring-offset-0 ring-[rgba(148,163,184,0.55)] bg-white/5 backdrop-blur-sm' : '',
-                isDimmed ? 'opacity-60' : '',
-                isActive
-                  ? 'glass text-[var(--color-text-primary)]'
-                  : 'text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] glass-hover'
-              )}
-            >
-              <Icon className="w-5 h-5" />
-              {item.name}
-            </Link>
+                onDragEnter={handleDragEnter(item.id)}
+                onDragLeave={handleDragLeave(item.id)}
+                onDrop={handleDrop(item.id)}
+                ref={(node) => {
+                  if (node) {
+                    navItemRefs.current.set(item.id, node)
+                  } else {
+                    navItemRefs.current.delete(item.id)
+                  }
+                }}
+                className={cn(
+                  'group flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all duration-200 ease-out select-none',
+                  isDragging
+                    ? 'z-10 cursor-grabbing scale-[1.05] bg-white/[0.08] shadow-xl'
+                    : isPreparing
+                      ? 'cursor-grab scale-[1.03] bg-white/[0.06] shadow-lg'
+                      : 'cursor-pointer',
+                  isDropTarget
+                    ? 'ring-2 ring-offset-0 ring-[rgba(148,163,184,0.55)] bg-white/[0.08] backdrop-blur-sm'
+                    : '',
+                  isDimmed ? 'opacity-60' : '',
+                  isActive
+                    ? 'glass text-[var(--color-text-primary)]'
+                    : 'text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] glass-hover'
+                )}
+              >
+                <span
+                  className={cn(
+                    'flex h-8 w-6 items-center justify-center rounded-md border border-dashed border-transparent transition-all duration-200',
+                    isEditing ? 'border-[rgba(148,163,184,0.35)] bg-white/[0.04] opacity-100' : 'opacity-0'
+                  )}
+                  aria-hidden="true"
+                >
+                  <GripVertical className="h-4 w-4 text-[var(--color-text-secondary)]" />
+                </span>
+                <span className="flex items-center gap-3">
+                  <Icon className="h-5 w-5" />
+                  <span>{item.name}</span>
+                </span>
+                {isDragging && (
+                  <span className="ml-auto flex items-center gap-1 text-[10px] font-semibold tracking-[0.2em] text-[var(--color-text-secondary)]">
+                    MOVIENDO
+                    <span className="flex items-center gap-[2px]">
+                      <span className="h-1 w-1 rounded-full bg-[var(--color-text-secondary)] animate-pulse" />
+                      <span className="h-1 w-1 rounded-full bg-[var(--color-text-secondary)] animate-pulse [animation-delay:120ms]" />
+                      <span className="h-1 w-1 rounded-full bg-[var(--color-text-secondary)] animate-pulse [animation-delay:240ms]" />
+                    </span>
+                  </span>
+                )}
+              </Link>
+            </React.Fragment>
           )
         })}
       </nav>

@@ -232,6 +232,10 @@ export const getCampaigns = async (req, res) => {
       range.endUtc
     ]);
 
+    logger.info(`[CITAS] Total contactos con ad_id en período: ${contactsRaw.length}`);
+    logger.info(`[CITAS] Contactos CON citas en DB: ${contactsRaw.filter(c => c.has_appointment_db === 1).length}`);
+    logger.info(`[CITAS] Contactos SIN citas en DB: ${contactsRaw.filter(c => c.has_appointment_db === 0).length}`);
+
     // PASO 2: Para contactos sin citas en DB, verificar en HighLevel API (fallback)
     // Solo hacer esto si tenemos configuración de HighLevel
     const config = await db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1');
@@ -318,6 +322,14 @@ export const getCampaigns = async (req, res) => {
             contactsWithAppointments.add(result.contactId);
           }
         });
+
+        logger.info(`[CITAS] Batch ${Math.floor(i/batchSize) + 1} completado. Total con citas hasta ahora: ${contactsWithAppointments.size}`);
+      }
+
+      logger.info(`[CITAS] Fallback completado. Total contactos con citas (DB + API): ${contactsWithAppointments.size}`);
+    } else {
+      if (contactsToCheck.length > 0) {
+        logger.info(`[CITAS] No se puede hacer fallback: ${!config ? 'Sin config de HighLevel' : 'Sin API token'}`);
       }
     }
 

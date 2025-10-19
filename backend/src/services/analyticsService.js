@@ -661,6 +661,10 @@ export async function buildReportMetrics ({ startDate, endDate, groupBy = 'day',
 
   const contactsRaw = await db.all(contactsRawQuery, contactParams)
 
+  logger.info(`[CITAS REPORTS] Total contactos en período: ${contactsRaw.length}`)
+  logger.info(`[CITAS REPORTS] Contactos CON citas en DB: ${contactsRaw.filter(c => c.has_appointment_db === 1).length}`)
+  logger.info(`[CITAS REPORTS] Contactos SIN citas en DB: ${contactsRaw.filter(c => c.has_appointment_db === 0).length}`)
+
   // PASO 2: Fallback a HighLevel API para contactos sin citas en DB
   const config = await db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1')
   const contactsWithAppointments = new Set()
@@ -744,6 +748,14 @@ export async function buildReportMetrics ({ startDate, endDate, groupBy = 'day',
           contactsWithAppointments.add(result.contactId)
         }
       })
+
+      logger.info(`[CITAS REPORTS] Batch ${Math.floor(i/batchSize) + 1} completado. Total con citas hasta ahora: ${contactsWithAppointments.size}`)
+    }
+
+    logger.info(`[CITAS REPORTS] Fallback completado. Total contactos con citas (DB + API): ${contactsWithAppointments.size}`)
+  } else {
+    if (contactsToCheck.length > 0) {
+      logger.info(`[CITAS REPORTS] No se puede hacer fallback: ${!config ? 'Sin config de HighLevel' : 'Sin API token'}`)
     }
   }
 
