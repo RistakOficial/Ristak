@@ -114,7 +114,6 @@ export interface ContactAppointmentDetail {
 export interface ContactFirstSessionDetail {
   started_at: string
   landing_url?: string
-  landing_page?: string
   referrer_url?: string
   utm_source?: string
   utm_medium?: string

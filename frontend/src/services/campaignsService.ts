@@ -66,7 +66,6 @@ export interface CampaignContactAppointment {
 export interface CampaignContactFirstSession {
   started_at: string
   landing_url?: string
-  landing_page?: string
   referrer_url?: string
   utm_source?: string
   utm_medium?: string
@@ -238,7 +237,6 @@ class CampaignsService {
       })
       return Array.isArray(data) ? data : []
     } catch (error) {
-      console.error('Error fetching funnel metrics:', error)
       return []
     }
   }

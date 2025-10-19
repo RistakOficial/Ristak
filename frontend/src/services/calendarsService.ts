@@ -181,12 +181,9 @@ export const calendarsService = {
    */
   async getAppointment(eventId: string): Promise<CalendarEvent | null> {
     try {
-      console.log('[calendarsService] Llamando GET /calendars/events/' + eventId);
       const data = await apiClient.get<CalendarEvent>(`/calendars/events/${eventId}`);
-      console.log('[calendarsService] Respuesta recibida:', data);
       return data;
     } catch (error) {
-      console.error('[calendarsService] Error al obtener detalles de cita:', error);
       return null;
     }
   },
