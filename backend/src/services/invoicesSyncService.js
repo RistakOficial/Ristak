@@ -204,14 +204,16 @@ function mapInvoiceStatus(ghlStatus) {
  */
 async function updateContactStats(contactId) {
   try {
-    // Calcular estadísticas desde los pagos
+    // Calcular estadísticas desde los pagos (SOLO pagos exitosos, NO refunded/cancelled)
     const stats = await db.get(
       `SELECT
         SUM(amount) as total_paid,
         COUNT(*) as purchases_count,
         MAX(date) as last_purchase_date
        FROM payments
-       WHERE contact_id = ? AND status = 'paid'`,
+       WHERE contact_id = ?
+       AND amount > 0
+       AND LOWER(status) IN ('succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success')`,
       [contactId]
     )
 
