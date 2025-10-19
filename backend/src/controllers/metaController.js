@@ -691,7 +691,7 @@ export const getContactsByType = async (req, res) => {
       });
     }
 
-    // Construir query de contactos
+    // Construir query de contactos (sin JOIN de appointments, ahora usamos método optimizado)
     const placeholders = adIdsList.map(() => '?').join(',');
     let contactsQuery = `
       SELECT DISTINCT
@@ -703,14 +703,8 @@ export const getContactsByType = async (req, res) => {
         c.attribution_ad_name,
         c.total_paid,
         c.purchases_count,
-        c.created_at,
-        CASE WHEN a.contact_id IS NOT NULL THEN 1 ELSE 0 END as has_appointment_db
+        c.created_at
       FROM contacts c
-      LEFT JOIN (
-        SELECT DISTINCT contact_id
-        FROM appointments
-        WHERE contact_id IS NOT NULL
-      ) a ON a.contact_id = c.id
       WHERE c.attribution_ad_id IN (${placeholders})
       AND c.created_at >= ?
       AND c.created_at <= ?
