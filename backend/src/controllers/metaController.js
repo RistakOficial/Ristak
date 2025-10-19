@@ -440,32 +440,30 @@ export const getSpendOverTime = async (req, res) => {
       `;
     const spendParams = [start, end];
 
-    // Query de ingresos ATRIBUIDOS (solo contactos con attribution_ad_id)
-    // Necesitamos hacer JOIN con contacts para verificar que tienen attribution_ad_id
+    // Query de ingresos ATRIBUIDOS basado en fecha de CREACIÓN del contacto y su LTV total
+    // Usamos la fecha cuando el contacto llegó (created_at) y sumamos su valor total acumulado (total_paid)
     const revenueQuery = usePostgres
       ? `
         SELECT
-          TO_CHAR(p.date::date, 'YYYY-MM-DD') as day,
-          SUM(p.amount) as revenue
-        FROM payments p
-        INNER JOIN contacts c ON p.contact_id = c.id
-        WHERE p.status = 'succeeded'
-          AND c.attribution_ad_id IS NOT NULL
-          AND c.attribution_ad_id != ''
-          AND p.date::date >= $1::date AND p.date::date < ($2::date + INTERVAL '1 day')
+          TO_CHAR(created_at::date, 'YYYY-MM-DD') as day,
+          SUM(total_paid) as revenue
+        FROM contacts
+        WHERE attribution_ad_id IS NOT NULL
+          AND attribution_ad_id != ''
+          AND created_at::date >= $1::date
+          AND created_at::date < ($2::date + INTERVAL '1 day')
         GROUP BY day
         ORDER BY day ASC
       `
       : `
         SELECT
-          strftime('%Y-%m-%d', p.date) as day,
-          SUM(p.amount) as revenue
-        FROM payments p
-        INNER JOIN contacts c ON p.contact_id = c.id
-        WHERE p.status = 'succeeded'
-          AND c.attribution_ad_id IS NOT NULL
-          AND c.attribution_ad_id != ''
-          AND p.date >= ? AND p.date < DATE(?, '+1 day')
+          strftime('%Y-%m-%d', created_at) as day,
+          SUM(total_paid) as revenue
+        FROM contacts
+        WHERE attribution_ad_id IS NOT NULL
+          AND attribution_ad_id != ''
+          AND date(created_at) >= date(?)
+          AND date(created_at) < date(?, '+1 day')
         GROUP BY day
         ORDER BY day ASC
       `;
@@ -477,7 +475,7 @@ export const getSpendOverTime = async (req, res) => {
     ]);
 
     logger.info(`Gastos encontrados: ${spendData.length} días con datos`);
-    logger.info(`Ingresos atribuidos encontrados: ${revenueData.length} días con datos`);
+    logger.info(`Contactos atribuidos con LTV encontrados: ${revenueData.length} días con nuevos contactos que han generado ingresos`);
 
     // Si no hay datos de ningún tipo, retornar vacío
     if (spendData.length === 0 && revenueData.length === 0) {
