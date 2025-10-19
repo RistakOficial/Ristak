@@ -267,6 +267,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, locationName, loca
       return
     }
 
+    dragStartOrderRef.current = navigation.slice()
+    dropCompletedRef.current = false
     setDraggingId(id)
     event.dataTransfer.effectAllowed = 'move'
     event.dataTransfer.setData('text/plain', id)
@@ -274,6 +276,13 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, locationName, loca
 
   const handleDragEnd = () => {
     clearLongPressTimeout()
+
+    if (!dropCompletedRef.current && dragStartOrderRef.current) {
+      setNavigation(dragStartOrderRef.current)
+    }
+
+    dragStartOrderRef.current = null
+    dropCompletedRef.current = false
     setDraggingId(null)
     setDropTargetId(null)
     setLongPressId(null)
@@ -283,12 +292,14 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, locationName, loca
     if (!draggingId || draggingId === id) return
     event.preventDefault()
     setDropTargetId(id)
+    setNavigation(current => reorderNavigationItems(current, draggingId, id))
   }
 
   const handleDragEnter = (id: string) => (event: React.DragEvent<HTMLAnchorElement>) => {
     if (!draggingId || draggingId === id) return
     event.preventDefault()
     setDropTargetId(id)
+    setNavigation(current => reorderNavigationItems(current, draggingId, id))
   }
 
   const handleDragLeave = (id: string) => () => {
@@ -301,42 +312,32 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, locationName, loca
     event.preventDefault()
     event.stopPropagation()
 
-    if (!draggingId || draggingId === targetId) {
-      handleDragEnd()
+    if (!draggingId) {
+      dropCompletedRef.current = false
       return
     }
 
-    let updatedNavigation: NavItem[] | null = null
+    let finalNavigation: NavItem[] | null = null
 
     setNavigation(current => {
-      // Rebuild list inserting the dragged entry before the drop target
-      const next = current.reduce<NavItem[]>((acc, item) => {
-        if (item.id === draggingId) {
-          return acc
-        }
-        if (item.id === targetId) {
-          const draggingItem = current.find(navItem => navItem.id === draggingId)
-          if (draggingItem) acc.push(draggingItem)
-        }
-        acc.push(item)
-        return acc
-      }, [])
-
-      const draggingItem = current.find(item => item.id === draggingId)
-
-      if (draggingItem && !next.find(item => item.id === draggingId)) {
-        next.push(draggingItem)
-      }
-
-      updatedNavigation = next
+      const next = reorderNavigationItems(current, draggingId, targetId)
+      finalNavigation = next
       return next
     })
 
-    if (updatedNavigation) {
-      await persistOrder(updatedNavigation)
-    }
+    const orderToPersist =
+      finalNavigation &&
+      dragStartOrderRef.current &&
+      !areOrdersEqual(finalNavigation, dragStartOrderRef.current)
+        ? finalNavigation
+        : null
 
-    handleDragEnd()
+    if (orderToPersist) {
+      dropCompletedRef.current = true
+      await persistOrder(orderToPersist)
+    } else {
+      dropCompletedRef.current = false
+    }
   }
 
   const handleContainerDrop = async (event: React.DragEvent<HTMLDivElement>) => {
@@ -344,30 +345,31 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, locationName, loca
     event.stopPropagation()
 
     if (!draggingId) {
-      handleDragEnd()
+      dropCompletedRef.current = false
       return
     }
 
-    let updatedNavigation: NavItem[] | null = null
+    let finalNavigation: NavItem[] | null = null
 
     setNavigation(current => {
-      // Move dragged entry to the bottom when dropping outside any item
-      const draggingItem = current.find(item => item.id === draggingId)
-      if (!draggingItem) {
-        return current
-      }
-
-      const filtered = current.filter(item => item.id !== draggingId)
-      const next = [...filtered, draggingItem]
-      updatedNavigation = next
+      const next = moveItemToEnd(current, draggingId)
+      finalNavigation = next
       return next
     })
 
-    if (updatedNavigation) {
-      await persistOrder(updatedNavigation)
-    }
+    const orderToPersist =
+      finalNavigation &&
+      dragStartOrderRef.current &&
+      !areOrdersEqual(finalNavigation, dragStartOrderRef.current)
+        ? finalNavigation
+        : null
 
-    handleDragEnd()
+    if (orderToPersist) {
+      dropCompletedRef.current = true
+      await persistOrder(orderToPersist)
+    } else {
+      dropCompletedRef.current = false
+    }
   }
 
   const handleItemClick = (id: string) => (event: React.MouseEvent<HTMLAnchorElement>) => {
@@ -410,6 +412,16 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, locationName, loca
         onDragOver={(event) => {
           if (!draggingId) return
           event.preventDefault()
+
+          if (event.target === event.currentTarget) {
+            const bounds = event.currentTarget.getBoundingClientRect()
+            const threshold = 32
+
+            if (event.clientY >= bounds.bottom - threshold) {
+              setDropTargetId(null)
+              setNavigation(current => moveItemToEnd(current, draggingId))
+            }
+          }
         }}
         onDrop={handleContainerDrop}
       >
@@ -419,6 +431,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, locationName, loca
           const isPreparing = longPressId === item.id && !draggingId
           const isDragging = draggingId === item.id
           const isDropTarget = dropTargetId === item.id && draggingId !== item.id
+          const isDimmed = Boolean(draggingId) && draggingId !== item.id
 
           return (
             <Link
@@ -437,9 +450,14 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, locationName, loca
               onDragLeave={handleDragLeave(item.id)}
               onDrop={handleDrop(item.id)}
               className={cn(
-                'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150 select-none',
-                isPreparing || isDragging ? 'scale-[1.03] shadow-lg cursor-grabbing' : 'cursor-pointer',
-                isDropTarget ? 'ring-2 ring-offset-0 ring-[rgba(148,163,184,0.45)]' : '',
+                'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 ease-out select-none',
+                isDragging
+                  ? 'scale-[1.05] shadow-xl cursor-grabbing z-10 opacity-100'
+                  : isPreparing
+                    ? 'scale-[1.03] shadow-lg cursor-grab opacity-95'
+                    : 'cursor-pointer',
+                isDropTarget ? 'ring-2 ring-offset-0 ring-[rgba(148,163,184,0.55)] bg-white/5 backdrop-blur-sm' : '',
+                isDimmed ? 'opacity-60' : '',
                 isActive
                   ? 'glass text-[var(--color-text-primary)]'
                   : 'text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] glass-hover'

@@ -22,6 +22,30 @@ export interface TrackingSession {
   is_bounce: number
   started_at: string
   last_event_at: string
+  // Campos de plataforma
+  source_platform?: string | null
+  site_source_name?: string | null
+  channel?: string | null
+  // Campos de anuncios
+  campaign_id?: string | null
+  adset_id?: string | null
+  ad_id?: string | null
+  campaign_name?: string | null
+  adset_name?: string | null
+  ad_name?: string | null
+  placement?: string | null
+  // Campos de navegador/OS
+  browser?: string | null
+  browser_version?: string | null
+  os?: string | null
+  language?: string | null
+  timezone?: string | null
+  // Campos de geolocalización
+  geo_country?: string | null
+  geo_region?: string | null
+  geo_city?: string | null
+  ip?: string | null
+  user_agent?: string | null
 }
 
 export interface TrackingStats {

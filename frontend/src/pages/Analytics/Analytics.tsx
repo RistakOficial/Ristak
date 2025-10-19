@@ -191,14 +191,8 @@ const normalizePlatformName = (rawName: string): string => {
   return cleaned.charAt(0).toUpperCase() + cleaned.slice(1)
 }
 
-// Usar TrackingSession directamente
-type Session = TrackingSession & {
-  browser?: string
-  os?: string
-  placement?: string
-  source_platform?: string
-  contact_created_at?: string | null
-}
+// Usar TrackingSession directamente (ya incluye todos los campos necesarios)
+type Session = TrackingSession
 
 interface Metrics {
   pageViews: number
