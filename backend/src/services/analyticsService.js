@@ -761,7 +761,7 @@ export async function buildReportMetrics ({ startDate, endDate, groupBy = 'day',
   // - Mide el impacto de las campañas en generar leads que agendan citas
   // - Si un contacto creado en enero agenda cita en febrero, se atribuye a enero
   // Vista "Todos": Agrupa por FECHA EN QUE SE AGENDÓ LA CITA
-  // - Se agrupa por appointments.created_at (cuando el contacto agendó)
+  // - Se agrupa por appointments.date_added (cuando se creó la cita en HighLevel)
   // - Refleja el flujo real de citas día a día
 
   if (useContactAttribution) {
@@ -783,7 +783,7 @@ export async function buildReportMetrics ({ startDate, endDate, groupBy = 'day',
   } else {
     // Vista "Todos": Agrupar por fecha en que se agendó la cita
     const appointmentParams = []
-    const appointmentConditions = buildRangeConditions('a.created_at', range, appointmentParams)
+    const appointmentConditions = buildRangeConditions('a.date_added', range, appointmentParams)
 
     // Filtrar por calendarios de atribución configurados
     const attributionCalendarIds = await getAttributionCalendarIds()
@@ -794,7 +794,7 @@ export async function buildReportMetrics ({ startDate, endDate, groupBy = 'day',
     }
 
     const appointmentWhere = appointmentConditions.length ? `WHERE ${appointmentConditions.join(' AND ')}` : ''
-    const appointmentGroupExpr = getGroupExpression('a.created_at', groupBy)
+    const appointmentGroupExpr = getGroupExpression('a.date_added', groupBy)
     const contactDedupExpr = buildDedupExpression('c')
 
     const appointmentsQuery = `
@@ -1129,16 +1129,16 @@ export async function buildContactsList ({ startDate, endDate, type = 'interesad
       contactIds = appointmentContacts.map(row => row.contact_id)
       appointmentsMap = await fetchAppointmentsForContacts(contactIds)
     } else {
-      // Vista "Todos": Filtrar por fecha en que se agendó la cita (created_at)
+      // Vista "Todos": Filtrar por fecha en que se agendó la cita (date_added)
       const appointmentParams = []
       const appointmentConditions = []
 
       if (range.startUtc) {
-        appointmentConditions.push('a.created_at >= ?')
+        appointmentConditions.push('a.date_added >= ?')
         appointmentParams.push(range.startUtc)
       }
       if (range.endUtc) {
-        appointmentConditions.push('a.created_at <= ?')
+        appointmentConditions.push('a.date_added <= ?')
         appointmentParams.push(range.endUtc)
       }
 
