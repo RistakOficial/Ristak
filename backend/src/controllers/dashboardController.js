@@ -1,6 +1,7 @@
 import { db } from '../config/database.js';
 import { logger } from '../utils/logger.js';
 import { resolveDateRange } from '../utils/dateUtils.js';
+import { normalizePlatformName } from '../utils/platformNormalizer.js';
 import { DateTime } from 'luxon';
 
 const calculateDelta = (current, previous) => {
@@ -678,6 +679,7 @@ export const getStorageStatus = async (req, res) => {
 
 /**
  * Obtiene datos de fuentes de tráfico para el gráfico de dona
+ * Usa la misma lógica que Analytics: site_source_name → source_platform → utm_source
  */
 export const getTrafficSources = async (req, res) => {
   try {
@@ -692,54 +694,73 @@ export const getTrafficSources = async (req, res) => {
     let query, params
 
     if (usePostgres) {
-      // PostgreSQL query
+      // PostgreSQL query - Prioridad: site_source_name > source_platform > utm_source
       query = `
         SELECT
-          COALESCE(source_platform, 'directo') as name,
+          COALESCE(site_source_name, source_platform, utm_source, 'directo') as raw_source,
           COUNT(*) as value
         FROM sessions
         WHERE started_at::timestamp >= $1::timestamp
           AND started_at::timestamp < ($2::timestamp + INTERVAL '1 day')
-        GROUP BY source_platform
+        GROUP BY raw_source
         ORDER BY value DESC
-        LIMIT 10
       `
       params = [startDate, endDate]
     } else {
-      // SQLite query
+      // SQLite query - Prioridad: site_source_name > source_platform > utm_source
       query = `
         SELECT
-          COALESCE(source_platform, 'directo') as name,
+          COALESCE(site_source_name, source_platform, utm_source, 'directo') as raw_source,
           COUNT(*) as value
         FROM sessions
         WHERE DATE(started_at) >= DATE(?)
           AND DATE(started_at) <= DATE(?)
-        GROUP BY source_platform
+        GROUP BY raw_source
         ORDER BY value DESC
-        LIMIT 10
       `
       params = [startDate, endDate]
     }
 
     const sources = await db.all(query, params)
 
+    // Normalizar nombres y agrupar por plataforma normalizada
+    const sourcesMap = new Map()
+
+    sources.forEach(source => {
+      const normalizedName = normalizePlatformName(source.raw_source)
+      const currentValue = sourcesMap.get(normalizedName) || 0
+      sourcesMap.set(normalizedName, currentValue + parseInt(source.value))
+    })
+
     // Mapear colores por plataforma
     const colorMap = {
-      'facebook': '#1877f2',
-      'google': '#4285f4',
-      'instagram': '#c32aa3',
-      'tiktok': '#ee1d52',
-      'microsoft': '#00a4ef',
-      'twitter': '#1da1f2',
-      'linkedin': '#0a66c2',
-      'directo': '#6b7280'
+      'Facebook': '#1877f2',
+      'Google': '#4285f4',
+      'Instagram': '#c32aa3',
+      'TikTok': '#ee1d52',
+      'Microsoft': '#00a4ef',
+      'Twitter': '#1da1f2',
+      'LinkedIn': '#0a66c2',
+      'YouTube': '#ff0000',
+      'Messenger': '#0084ff',
+      'WhatsApp': '#25d366',
+      'Snapchat': '#fffc00',
+      'Pinterest': '#e60023',
+      'Reddit': '#ff4500',
+      'Email': '#ea4335',
+      'Directo': '#6b7280',
+      'Orgánico': '#10b981'
     }
 
-    const data = sources.map(source => ({
-      name: source.name === 'directo' ? 'Directo' : source.name.charAt(0).toUpperCase() + source.name.slice(1),
-      value: parseInt(source.value) || 0,
-      color: colorMap[source.name.toLowerCase()] || '#6b7280'
-    }))
+    // Convertir Map a array y ordenar por valor
+    const data = Array.from(sourcesMap.entries())
+      .map(([name, value]) => ({
+        name,
+        value,
+        color: colorMap[name] || '#6b7280'
+      }))
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 10) // Top 10 fuentes
 
     res.json({ success: true, data })
   } catch (error) {

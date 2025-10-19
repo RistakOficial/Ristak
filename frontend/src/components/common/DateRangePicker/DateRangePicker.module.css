@@ -114,6 +114,10 @@
   color: var(--color-primary) !important;
 }
 
+:global(body.dark) .presetActive {
+  color: var(--color-text-onAccent) !important;
+}
+
 .presetIcon {
   display: flex;
   align-items: center;
