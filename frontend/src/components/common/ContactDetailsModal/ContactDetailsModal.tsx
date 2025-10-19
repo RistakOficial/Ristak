@@ -27,6 +27,8 @@ interface ContactDetail {
   purchases?: number
   payments?: ContactPaymentDetail[]
   appointments?: ContactAppointmentDetail[]
+  firstAppointmentDate?: string | null
+  nextAppointmentDate?: string | null
   source?: string
   ad_name?: string
   ad_id?: string
@@ -389,6 +391,33 @@ export function ContactDetailsModal({
                           <p className={styles.metricValue}>
                             {payments.length}
                           </p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Información de Citas */}
+                {(selectedContact.firstAppointmentDate || selectedContact.nextAppointmentDate) && (
+                  <div className={styles.detailSection}>
+                    <h5 className={styles.detailSectionTitle}>Información de Citas</h5>
+                    <div className={styles.detailSectionContent}>
+                      {selectedContact.firstAppointmentDate && (
+                        <div className={styles.detailItem}>
+                          <Icon name="calendar" size={16} />
+                          <div>
+                            <span className={styles.detailItemLabel}>Primera cita:</span>
+                            <span>{formatDate(new Date(selectedContact.firstAppointmentDate))}</span>
+                          </div>
+                        </div>
+                      )}
+                      {selectedContact.nextAppointmentDate && (
+                        <div className={styles.detailItem}>
+                          <Icon name="clock" size={16} />
+                          <div>
+                            <span className={styles.detailItemLabel}>Próxima cita:</span>
+                            <span>{formatDate(new Date(selectedContact.nextAppointmentDate))}</span>
+                          </div>
                         </div>
                       )}
                     </div>
