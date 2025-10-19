@@ -278,6 +278,12 @@ POST   /webhook/meta                    # Webhook de Meta
 - **Services Layer** para todas las llamadas API
 - **Custom Hooks** cuando se reutiliza lógica
 - **Barrel exports** en carpetas de componentes (`index.ts`)
+- **Componente Table con re-cómputo reactivo** (`Table.tsx:89`):
+  - Las columnas se recomputan automáticamente cuando cambian las dependencias (ej: dateRange, viewType)
+  - Los render callbacks de cada columna se sincronizan con el estado actual sin recargar la página
+  - Evita callbacks obsoletos (stale closures) que causaban que los modales mostraran datos de rangos anteriores
+  - useEffect observa: `[columns, savedLayout]` → recomputa `processedColumns` → sincroniza con `internalColumns`
+  - ⚠️ **Crítico**: Sin este patrón, la tabla cache los primeros callbacks y los modales consultan fechas viejas
 
 ### Backend
 - **MVC Pattern** (Model-View-Controller)

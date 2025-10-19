@@ -94,7 +94,6 @@ const SortableItem: React.FC<SortableItemProps> = ({ item, isActive, isDragging,
     isDragging: isSortableDragging
   } = useSortable({ id: item.id })
 
-  const location = useLocation()
   const Icon = item.icon
 
   const style = {
@@ -150,6 +149,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, locationName, loca
   const [activeId, setActiveId] = useState<string | null>(null)
   const [isEditMode, setIsEditMode] = useState(false)
   const longPressTimerRef = React.useRef<number | null>(null)
+  const longPressStartPos = React.useRef<{ x: number; y: number } | null>(null)
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -162,17 +162,34 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, locationName, loca
     })
   )
 
-  const startLongPress = () => {
+  const startLongPress = (e: React.PointerEvent) => {
+    // Guardar posición inicial
+    longPressStartPos.current = { x: e.clientX, y: e.clientY }
+
     longPressTimerRef.current = window.setTimeout(() => {
       setIsEditMode(true)
+      longPressTimerRef.current = null
     }, 800) // 800ms para activar modo edición
   }
 
-  const cancelLongPress = () => {
+  const cancelLongPress = (e?: React.PointerEvent) => {
+    // Si se movió más de 10px, cancelar
+    if (e && longPressStartPos.current) {
+      const deltaX = Math.abs(e.clientX - longPressStartPos.current.x)
+      const deltaY = Math.abs(e.clientY - longPressStartPos.current.y)
+      if (deltaX > 10 || deltaY > 10) {
+        if (longPressTimerRef.current) {
+          clearTimeout(longPressTimerRef.current)
+          longPressTimerRef.current = null
+        }
+      }
+    }
+
     if (longPressTimerRef.current) {
       clearTimeout(longPressTimerRef.current)
       longPressTimerRef.current = null
     }
+    longPressStartPos.current = null
   }
 
   // Limpiar timer cuando se desmonta
@@ -316,9 +333,19 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, locationName, loca
             <div
               className="space-y-1"
               onPointerDown={startLongPress}
-              onPointerUp={cancelLongPress}
-              onPointerCancel={cancelLongPress}
-              onPointerLeave={cancelLongPress}
+              onPointerMove={(e) => {
+                // Cancelar si se mueve durante el long press
+                if (longPressTimerRef.current && longPressStartPos.current) {
+                  const deltaX = Math.abs(e.clientX - longPressStartPos.current.x)
+                  const deltaY = Math.abs(e.clientY - longPressStartPos.current.y)
+                  if (deltaX > 10 || deltaY > 10) {
+                    cancelLongPress(e)
+                  }
+                }
+              }}
+              onPointerUp={(e) => cancelLongPress(e)}
+              onPointerCancel={(e) => cancelLongPress(e)}
+              onPointerLeave={(e) => cancelLongPress(e)}
             >
               {navigation.map((item) => {
                 const isActive = location.pathname.startsWith(item.href)
