@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { KpiCard, Card, DateRangePicker, AreaChart, PageContainer, TrafficSourcesChart, ConversionFunnelChart } from '@/components/common'
+import { KpiCard, Card, DateRangePicker, AreaChart, PageContainer, TrafficSourcesChart, ConversionFunnelChart, ViewSelector } from '@/components/common'
 import {
   DollarSign,
   Megaphone,
@@ -416,17 +416,11 @@ export const Dashboard: React.FC = () => {
               </h2>
               <p className="text-sm text-[var(--color-text-secondary)] mt-0.5">Últimos 12 meses</p>
             </div>
-            <select
+            <ViewSelector
+              options={chartViewOptions}
               value={selectedChartView}
-              onChange={(e) => setSelectedChartView(e.target.value as any)}
-              className="px-3 py-2 rounded-lg text-sm font-medium bg-[rgba(148,163,184,0.06)] border border-[rgba(148,163,184,0.18)] text-[var(--color-text-primary)] hover:bg-[rgba(148,163,184,0.12)] transition-colors cursor-pointer"
-            >
-              {chartViewOptions.map(option => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
+              onChange={(value) => setSelectedChartView(value as any)}
+            />
           </div>
           <div className="relative w-full" style={{ minHeight: chartHeight, height: chartHeight }}>
             {hasChartData ? (

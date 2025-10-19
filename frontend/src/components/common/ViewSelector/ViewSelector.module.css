@@ -98,6 +98,16 @@
   font-weight: var(--font-weight-semibold);
 }
 
+/* Dark mode: hacer el background más visible */
+:global(body.dark) .optionActive {
+  background-color: rgba(100, 116, 139, 0.35);
+  color: #94a3b8;
+}
+
 .optionActive:hover {
   background-color: var(--color-primary-alpha);
+}
+
+:global(body.dark) .optionActive:hover {
+  background-color: rgba(100, 116, 139, 0.42);
 }
