@@ -365,6 +365,7 @@ export const Contacts: React.FC = () => {
 
   const filteredContacts = contacts.filter(contact => {
     if (filter === 'all') return true
+    if (filter === 'leads') return contact.status === 'lead'
     if (filter === 'customers') return contact.status === 'customer'
     if (filter === 'appointments') return contact.status === 'appointment'
     return true
@@ -372,6 +373,8 @@ export const Contacts: React.FC = () => {
 
   const filterOptions = [
     { label: 'Todos', value: 'all' },
+    { label: labels.leads, value: 'leads' },
+    { label: 'Citados', value: 'appointments' },
     { label: labels.customers, value: 'customers' }
   ]
 
