@@ -232,9 +232,6 @@ export const getCampaigns = async (req, res) => {
       range.endUtc
     ]);
 
-    logger.info(`[CITAS] Total contactos con ad_id en período: ${contactsRaw.length}`);
-    logger.info(`[CITAS] Contactos CON citas en DB: ${contactsRaw.filter(c => c.has_appointment_db === 1).length}`);
-    logger.info(`[CITAS] Contactos SIN citas en DB: ${contactsRaw.filter(c => c.has_appointment_db === 0).length}`);
 
     // PASO 2: Para contactos sin citas en DB, verificar en HighLevel API (fallback)
     // Solo hacer esto si tenemos configuración de HighLevel
@@ -255,13 +252,9 @@ export const getCampaigns = async (req, res) => {
       // Batch de 50 contactos simultáneos (HighLevel permite 200k requests/día)
       // Con 50 paralelas, podemos verificar 3000 contactos por minuto sin problemas
       const batchSize = 50;
-      logger.info(`[CITAS] Verificando ${contactsToCheck.length} contactos sin citas en DB...`);
 
       for (let i = 0; i < contactsToCheck.length; i += batchSize) {
         const batch = contactsToCheck.slice(i, i + batchSize);
-        const progress = Math.min(i + batchSize, contactsToCheck.length);
-        logger.info(`[CITAS] Procesando batch ${Math.floor(i/batchSize) + 1}: ${progress}/${contactsToCheck.length} contactos...`);
-
         // Hacer llamadas en paralelo para este batch
         const appointmentChecks = await Promise.all(
           batch.map(async (contact) => {
@@ -280,8 +273,6 @@ export const getCampaigns = async (req, res) => {
                 const data = await response.json();
                 if (data.events && data.events.length > 0) {
                   // Este contacto SÍ tiene citas en HighLevel
-                  logger.info(`[CITAS] Contacto ${contact.contact_id} tiene ${data.events.length} citas en HighLevel (no en DB)`);
-
                   // Opcionalmente guardar en DB para cache futuro
                   for (const event of data.events) {
                     await db.run(`
@@ -322,14 +313,6 @@ export const getCampaigns = async (req, res) => {
             contactsWithAppointments.add(result.contactId);
           }
         });
-
-        logger.info(`[CITAS] Batch ${Math.floor(i/batchSize) + 1} completado. Total con citas hasta ahora: ${contactsWithAppointments.size}`);
-      }
-
-      logger.info(`[CITAS] Fallback completado. Total contactos con citas (DB + API): ${contactsWithAppointments.size}`);
-    } else {
-      if (contactsToCheck.length > 0) {
-        logger.info(`[CITAS] No se puede hacer fallback: ${!config ? 'Sin config de HighLevel' : 'Sin API token'}`);
       }
     }
 
@@ -366,16 +349,6 @@ export const getCampaigns = async (req, res) => {
       citas: metricsMap[ad_id].citas.size,
       revenue: metricsMap[ad_id].revenue
     }));
-
-    logger.info(`[CITAS RESUMEN] Total contactos con citas: ${contactsWithAppointments.size}/${contactsRaw.length} (${Math.round(contactsWithAppointments.size * 100 / Math.max(contactsRaw.length, 1))}%)`);
-
-    // Log desglose por ad_id con citas
-    const adsWithAppointments = contactsData.filter(ad => ad.citas > 0);
-    if (adsWithAppointments.length > 0) {
-      logger.info(`[CITAS RESUMEN] ${adsWithAppointments.length} ads con citas:`,
-        adsWithAppointments.map(ad => `Ad ${ad.ad_id}: ${ad.citas} contactos con citas`).join(', ')
-      );
-    }
 
     // Obtener todos los ad_ids que tienen contactos en el período
     const adIdsWithContacts = contactsData.map(row => row.ad_id).filter(Boolean);
@@ -538,39 +511,6 @@ export const getCampaigns = async (req, res) => {
         adsets
       };
     });
-
-    // LOG CONSOLIDADO PARA CAMPAIGNS
-    const requestId = `CAMP-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
-    const timestamp = new Date().toISOString()
-    logger.info(`\n🟡 ========== [${requestId}] CAMPAIGNS - MÉTRICAS ==========`)
-    logger.info(`⏰ Timestamp: ${timestamp}`)
-    logger.info(`📅 Rango: ${adsStart} → ${adsEnd}`)
-    logger.info(`📊 Total campañas: ${campaignsArray.length}`)
-
-    const totals = campaignsArray.reduce((sum, c) => ({
-      spend: sum.spend + c.spend,
-      leads: sum.leads + c.leads,
-      appointments: sum.appointments + c.appointments,
-      sales: sum.sales + c.sales,
-      visitors: sum.visitors + (c.visitors || 0),
-      revenue: sum.revenue + c.revenue
-    }), { spend: 0, leads: 0, appointments: 0, sales: 0, visitors: 0, revenue: 0 })
-
-    logger.info(`\n💰 TOTALES GENERALES:`)
-    logger.info(`   Gasto: $${totals.spend.toFixed(2)}`)
-    logger.info(`   Leads: ${totals.leads}`)
-    logger.info(`   Citas: ${totals.appointments}`)
-    logger.info(`   Visitantes: ${totals.visitors}`)
-    logger.info(`   Ventas: ${totals.sales}`)
-    logger.info(`   Ingresos: $${totals.revenue.toFixed(2)}`)
-
-    if (campaignsArray.length <= 10) {
-      logger.info(`\n📋 DETALLE POR CAMPAÑA:`)
-      campaignsArray.forEach(c => {
-        logger.info(`   ${c.name}: Leads=${c.leads}, Citas=${c.appointments}, Visitantes=${c.visitors || 0}, Ventas=${c.sales}`)
-      })
-    }
-    logger.info(`🟡 ========== FIN [${requestId}] ==========\n`)
 
     res.json({
       success: true,
@@ -882,8 +822,6 @@ export const getContactsByType = async (req, res) => {
       const contactsToCheck = contacts.filter(c => c.has_appointment_db === 0);
 
       if (config && config.api_token && contactsToCheck.length > 0) {
-        logger.info(`[CITAS MODAL] Verificando ${contactsToCheck.length} contactos sin citas en DB...`);
-
         // Batch de 50 contactos simultáneos
         const batchSize = 50;
 
@@ -907,8 +845,6 @@ export const getContactsByType = async (req, res) => {
                 if (response.ok) {
                   const data = await response.json();
                   if (data.events && data.events.length > 0) {
-                    logger.info(`[CITAS MODAL] Contacto ${contact.id} tiene ${data.events.length} citas en HighLevel`);
-
                     // Guardar en DB para cache futuro
                     for (const event of data.events) {
                       await db.run(`
@@ -954,7 +890,6 @@ export const getContactsByType = async (req, res) => {
 
       // Filtrar solo contactos con citas (confirmadas por DB o API)
       contacts = contacts.filter(c => contactsWithAppointments.has(c.id));
-      logger.info(`[CITAS MODAL] Total de contactos con citas después de verificación: ${contacts.length}`);
     }
 
     const contactIds = contacts.map(contact => contact.id).filter(Boolean);
@@ -1021,37 +956,6 @@ export const getContactsByType = async (req, res) => {
         payments: payments
       };
     });
-
-    logger.debug(
-      `Contactos Meta ${type} (${adsStart} -> ${adsEnd}) -> ${mappedContacts.length} coincidencias`
-    );
-
-    // LOG CONSOLIDADO PARA MODAL DE CAMPAIGNS
-    const requestId = `CMODAL-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
-    const timestamp = new Date().toISOString()
-    const levelLabel = ad_id ? 'AD' : adset_id ? 'ADSET' : campaign_id ? 'CAMPAIGN' : 'UNKNOWN'
-    const idLabel = ad_id || adset_id || campaign_id
-    logger.info(`\n🟠 ========== [${requestId}] MODAL CAMPAIGNS ${type.toUpperCase()} ==========`)
-    logger.info(`⏰ Timestamp: ${timestamp}`)
-    logger.info(`📅 Rango: ${adsStart} → ${adsEnd}`)
-    logger.info(`🎯 Nivel: ${levelLabel} (${idLabel})`)
-    logger.info(`📊 Total contactos: ${mappedContacts.length}`)
-
-    if (type === 'appointments') {
-      logger.info(`   (Todos tienen citas - filtrado por lógica híbrida)`)
-    } else if (type === 'sales') {
-      const withPurchases = mappedContacts.filter(c => c.is_sale).length
-      logger.info(`   Contactos con compras: ${withPurchases}`)
-    }
-
-    if (mappedContacts.length <= 20) {
-      logger.info(`\n📋 LISTA DE CONTACTOS:`)
-      mappedContacts.forEach((c, idx) => {
-        const paymentCount = c.payments?.length || 0
-        logger.info(`   ${idx + 1}. ${c.name} (${c.email}) - LTV: $${c.ltv}, Pagos: ${paymentCount}`)
-      })
-    }
-    logger.info(`🟠 ========== FIN [${requestId}] ==========\n`)
 
     res.json({
       success: true,

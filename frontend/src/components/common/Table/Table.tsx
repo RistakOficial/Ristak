@@ -86,13 +86,12 @@ export function Table<T extends Record<string, any>>({
   // Determinar columnas iniciales (propColumns o propInitialColumns)
   const initialColumns = propInitialColumns || propColumns || []
 
-  // Inicializar columnas con config guardada SOLO UNA VEZ
-  const [columns, setColumns] = useState(() => {
+  // Recalcular columnas base cuando cambian la definición o la config guardada
+  const resolvedInitialColumns = useMemo(() => {
     if (!tableId || !savedTableConfig) {
       return initialColumns
     }
 
-    // Aplicar configuración guardada
     const columnsMap = new Map(initialColumns.map(col => [col.key, col]))
     const orderedColumns: Column<T>[] = []
 
@@ -106,7 +105,6 @@ export function Table<T extends Record<string, any>>({
       }
     })
 
-    // Agregar columnas nuevas que no están en la config
     initialColumns.forEach(col => {
       if (!savedTableConfig.find((c: any) => c.id === col.key)) {
         orderedColumns.push(col)
@@ -114,33 +112,13 @@ export function Table<T extends Record<string, any>>({
     })
 
     return orderedColumns
-  })
+  }, [initialColumns, savedTableConfig, tableId])
 
-  // Sincronizar columnas cuando cambie la config guardada
+  const [columns, setColumns] = useState<Column<T>[]>(resolvedInitialColumns)
+
   useEffect(() => {
-    if (!tableId || !savedTableConfig) return
-
-    const columnsMap = new Map(initialColumns.map(col => [col.key, col]))
-    const orderedColumns: Column<T>[] = []
-
-    savedTableConfig.forEach((config: any) => {
-      const col = columnsMap.get(config.id)
-      if (col) {
-        orderedColumns.push({
-          ...col,
-          visible: col.fixed ? true : config.visible
-        })
-      }
-    })
-
-    initialColumns.forEach(col => {
-      if (!savedTableConfig.find((c: any) => c.id === col.key)) {
-        orderedColumns.push(col)
-      }
-    })
-
-    setColumns(orderedColumns)
-  }, [savedTableConfig, tableId])
+    setColumns(resolvedInitialColumns)
+  }, [resolvedInitialColumns])
 
   // Función para guardar config (ahora híbrida)
   const saveColumnsConfig = async (newColumns: Column<T>[]) => {

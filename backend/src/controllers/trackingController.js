@@ -1353,33 +1353,6 @@ export async function getVisitorsList(req, res) {
       } : null
     }))
 
-    // LOG CONSOLIDADO PARA MODAL DE VISITANTES
-    const requestId = `VMODAL-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
-    const timestamp = new Date().toISOString()
-    const levelLabel = ad_id ? 'AD' : adset_id ? 'ADSET' : campaign_id ? 'CAMPAIGN' : 'ALL'
-    const idLabel = ad_id || adset_id || campaign_id || 'N/A'
-    logger.info(`\n🔴 ========== [${requestId}] MODAL VISITANTES ==========`)
-    logger.info(`⏰ Timestamp: ${timestamp}`)
-    logger.info(`📅 Rango: ${startDate} → ${endDateWithTime}`)
-    logger.info(`🎯 Filtro: ${levelLabel} (${idLabel})`)
-    logger.info(`📊 Total visitantes únicos: ${formattedVisitors.length}`)
-
-    const withContact = formattedVisitors.filter(v => v.contact).length
-    const withAppts = formattedVisitors.filter(v => v.contact && v.contact.appointments.length > 0).length
-    logger.info(`   Visitantes identificados: ${withContact}`)
-    logger.info(`   Visitantes con citas: ${withAppts}`)
-    logger.info(`   Visitantes anónimos: ${formattedVisitors.length - withContact}`)
-
-    if (formattedVisitors.length <= 20) {
-      logger.info(`\n📋 LISTA DE VISITANTES:`)
-      formattedVisitors.forEach((v, idx) => {
-        const contactInfo = v.contact ? `${v.contact.name} (${v.contact.email})` : 'Anónimo'
-        const apptCount = v.contact?.appointments?.length || 0
-        logger.info(`   ${idx + 1}. ${contactInfo} - Citas: ${apptCount}, Ad: ${v.adId || 'N/A'}`)
-      })
-    }
-    logger.info(`🔴 ========== FIN [${requestId}] ==========\n`)
-
     res.json({ success: true, data: formattedVisitors })
   } catch (error) {
     logger.error('Error obteniendo lista de visitantes:', error)

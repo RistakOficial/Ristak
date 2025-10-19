@@ -662,9 +662,6 @@ export async function buildReportMetrics ({ startDate, endDate, groupBy = 'day',
 
   const contactsRaw = await db.all(contactsRawQuery, contactParams)
 
-  logger.info(`[CITAS REPORTS] Total contactos en período: ${contactsRaw.length}`)
-  logger.info(`[CITAS REPORTS] Contactos CON citas en DB: ${contactsRaw.filter(c => c.has_appointment_db === 1).length}`)
-  logger.info(`[CITAS REPORTS] Contactos SIN citas en DB: ${contactsRaw.filter(c => c.has_appointment_db === 0).length}`)
 
   // PASO 2: Fallback a HighLevel API para contactos sin citas en DB
   const config = await db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1')
@@ -683,12 +680,10 @@ export async function buildReportMetrics ({ startDate, endDate, groupBy = 'day',
   if (config && config.api_token && contactsToCheck.length > 0) {
     // Batch de 50 contactos simultáneos (HighLevel permite 200k requests/día)
     const batchSize = 50
-    logger.info(`[CITAS REPORTS] Verificando ${contactsToCheck.length} contactos sin citas en DB...`)
 
     for (let i = 0; i < contactsToCheck.length; i += batchSize) {
       const batch = contactsToCheck.slice(i, i + batchSize)
       const progress = Math.min(i + batchSize, contactsToCheck.length)
-      logger.info(`[CITAS REPORTS] Procesando batch ${Math.floor(i/batchSize) + 1}: ${progress}/${contactsToCheck.length} contactos...`)
 
       // Hacer llamadas en paralelo para este batch
       const appointmentChecks = await Promise.all(
@@ -707,7 +702,6 @@ export async function buildReportMetrics ({ startDate, endDate, groupBy = 'day',
             if (response.ok) {
               const data = await response.json()
               if (data.events && data.events.length > 0) {
-                logger.info(`[CITAS REPORTS] Contacto ${contact.contact_id} tiene ${data.events.length} citas en HighLevel`)
 
                 // Guardar en DB para cache futuro
                 for (const event of data.events) {
@@ -750,13 +744,10 @@ export async function buildReportMetrics ({ startDate, endDate, groupBy = 'day',
         }
       })
 
-      logger.info(`[CITAS REPORTS] Batch ${Math.floor(i/batchSize) + 1} completado. Total con citas hasta ahora: ${contactsWithAppointments.size}`)
     }
 
-    logger.info(`[CITAS REPORTS] Fallback completado. Total contactos con citas (DB + API): ${contactsWithAppointments.size}`)
   } else {
     if (contactsToCheck.length > 0) {
-      logger.info(`[CITAS REPORTS] No se puede hacer fallback: ${!config ? 'Sin config de HighLevel' : 'Sin API token'}`)
     }
   }
 
@@ -822,7 +813,6 @@ export async function buildReportMetrics ({ startDate, endDate, groupBy = 'day',
     delete bucket.appointmentsSet
   })
 
-  logger.info(`[CITAS REPORTS] Total contactos con citas: ${contactsWithAppointments.size}/${contactsRaw.length} (${Math.round(contactsWithAppointments.size * 100 / Math.max(contactsRaw.length, 1))}%)`)
 
   if (!useContactAttribution) {
     const paymentParams = []
@@ -1111,7 +1101,6 @@ export async function buildContactsList ({ startDate, endDate, type = 'interesad
       appointmentsMap = await fetchAppointmentsForContacts(contactIds)
     } else {
       // Vista "Todos": Usar lógica híbrida (DB + API) para appointments
-      logger.info(`[CITAS REPORTS TODOS] Buscando citas con lógica híbrida (DB + API)...`)
 
       // PASO 1: Obtener contactos en el rango de fechas
       const contactConditionsTemp = []
@@ -1140,9 +1129,6 @@ export async function buildContactsList ({ startDate, endDate, type = 'interesad
       `
       const contactsRaw = await db.all(contactsQuery, contactParamsTemp)
 
-      logger.info(`[CITAS REPORTS TODOS] Total contactos en período: ${contactsRaw.length}`)
-      logger.info(`[CITAS REPORTS TODOS] Contactos CON citas en DB: ${contactsRaw.filter(c => c.has_appointment_db === 1).length}`)
-      logger.info(`[CITAS REPORTS TODOS] Contactos SIN citas en DB: ${contactsRaw.filter(c => c.has_appointment_db === 0).length}`)
 
       // PASO 2: Lógica híbrida (DB + API)
       const config = await db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1')
@@ -1160,7 +1146,6 @@ export async function buildContactsList ({ startDate, endDate, type = 'interesad
 
       if (config && config.api_token && contactsToCheck.length > 0) {
         const batchSize = 50
-        logger.info(`[CITAS REPORTS TODOS] Verificando ${contactsToCheck.length} contactos sin citas en DB...`)
 
         for (let i = 0; i < contactsToCheck.length; i += batchSize) {
           const batch = contactsToCheck.slice(i, i + batchSize)
@@ -1181,7 +1166,6 @@ export async function buildContactsList ({ startDate, endDate, type = 'interesad
                 if (response.ok) {
                   const data = await response.json()
                   if (data.events && data.events.length > 0) {
-                    logger.info(`[CITAS REPORTS TODOS] Contacto ${contact.id} tiene ${data.events.length} citas en HighLevel`)
 
                     // Guardar en DB para cache futuro
                     for (const event of data.events) {
@@ -1226,7 +1210,6 @@ export async function buildContactsList ({ startDate, endDate, type = 'interesad
       }
 
       contactIds = Array.from(contactsWithAppointments)
-      logger.info(`[CITAS REPORTS TODOS] Total contactos con citas (DB + API): ${contactIds.length}`)
       appointmentsMap = await fetchAppointmentsForContacts(contactIds, range)
     }
   }
@@ -1336,33 +1319,6 @@ export async function buildContactsList ({ startDate, endDate, type = 'interesad
     }
   })
 
-  // LOG CONSOLIDADO PARA MODAL
-  const requestId = `MODAL-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
-  const timestamp = new Date().toISOString()
-  const scopeLabel = scope === 'all' ? 'TODOS' : 'ÚLTIMA ATRIBUCIÓN'
-  logger.info(`\n🟢 ========== [${requestId}] MODAL ${type.toUpperCase()} - ${scopeLabel} ==========`)
-  logger.info(`⏰ Timestamp: ${timestamp}`)
-  logger.info(`📅 Rango: ${range.startUtc} → ${range.endUtc}`)
-  logger.info(`📊 Total contactos: ${result.length}`)
-
-  if (type === 'appointments') {
-    const withAppts = result.filter(c => c.appointments && c.appointments.length > 0).length
-    logger.info(`   Contactos con citas: ${withAppts}`)
-    logger.info(`   Contactos sin citas: ${result.length - withAppts}`)
-  } else if (type === 'sales') {
-    const withPayments = result.filter(c => c.payments && c.payments.length > 0).length
-    logger.info(`   Contactos con pagos: ${withPayments}`)
-  }
-
-  if (result.length <= 20) {
-    logger.info(`\n📋 LISTA DE CONTACTOS:`)
-    result.forEach((c, idx) => {
-      const apptCount = c.appointments?.length || 0
-      const paymentCount = c.payments?.length || 0
-      logger.info(`   ${idx + 1}. ${c.name} (${c.email}) - Citas: ${apptCount}, Pagos: ${paymentCount}`)
-    })
-  }
-  logger.info(`🟢 ========== FIN [${requestId}] ==========\n`)
 
   return {
     range,
