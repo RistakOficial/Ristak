@@ -804,9 +804,14 @@ export const getContactsByType = async (req, res) => {
         c.attribution_ad_name,
         c.total_paid,
         c.purchases_count,
-        c.created_at
+        c.created_at,
+        CASE WHEN a.contact_id IS NOT NULL THEN 1 ELSE 0 END as has_appointment_db
       FROM contacts c
-      ${type === 'appointments' ? 'INNER JOIN appointments a ON a.contact_id = c.id' : ''}
+      LEFT JOIN (
+        SELECT DISTINCT contact_id
+        FROM appointments
+        WHERE contact_id IS NOT NULL
+      ) a ON a.contact_id = c.id
       WHERE c.attribution_ad_id IN (${placeholders})
       AND c.created_at >= ?
       AND c.created_at <= ?
@@ -819,7 +824,98 @@ export const getContactsByType = async (req, res) => {
     contactsQuery += ' ORDER BY c.created_at DESC';
 
     const contactsParams = [...adIdsList, range.startUtc, range.endUtc];
-    const contacts = await db.all(contactsQuery, contactsParams);
+    let contacts = await db.all(contactsQuery, contactsParams);
+
+    // Si type === 'appointments', necesitamos filtrar usando lógica híbrida (DB + API)
+    if (type === 'appointments') {
+      const config = await db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1');
+      const contactsWithAppointments = new Set();
+
+      // Primero agregar los que ya tienen citas en DB
+      contacts.forEach(c => {
+        if (c.has_appointment_db === 1) {
+          contactsWithAppointments.add(c.id);
+        }
+      });
+
+      // Obtener contactos que NO tienen citas en DB para verificar en HighLevel
+      const contactsToCheck = contacts.filter(c => c.has_appointment_db === 0);
+
+      if (config && config.api_token && contactsToCheck.length > 0) {
+        logger.info(`[CITAS MODAL] Verificando ${contactsToCheck.length} contactos sin citas en DB...`);
+
+        // Batch de 50 contactos simultáneos
+        const batchSize = 50;
+
+        for (let i = 0; i < contactsToCheck.length; i += batchSize) {
+          const batch = contactsToCheck.slice(i, i + batchSize);
+
+          // Hacer llamadas en paralelo para este batch
+          const appointmentChecks = await Promise.all(
+            batch.map(async (contact) => {
+              try {
+                const response = await fetch(
+                  `https://services.leadconnectorhq.com/contacts/${contact.id}/appointments`,
+                  {
+                    headers: {
+                      'Authorization': `Bearer ${config.api_token}`,
+                      'Version': '2021-07-28'
+                    }
+                  }
+                );
+
+                if (response.ok) {
+                  const data = await response.json();
+                  if (data.events && data.events.length > 0) {
+                    logger.info(`[CITAS MODAL] Contacto ${contact.id} tiene ${data.events.length} citas en HighLevel`);
+
+                    // Guardar en DB para cache futuro
+                    for (const event of data.events) {
+                      await db.run(`
+                        INSERT INTO appointments (id, contact_id, calendar_id, location_id, title, status, start_time, end_time)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(id) DO UPDATE SET
+                          status = excluded.status,
+                          start_time = excluded.start_time,
+                          end_time = excluded.end_time
+                      `, [
+                        event.id,
+                        contact.id,
+                        event.calendarId || '',
+                        event.locationId || config.location_id,
+                        event.title || '',
+                        event.status || 'scheduled',
+                        event.startTime || '',
+                        event.endTime || ''
+                      ]).catch(err => {
+                        logger.error(`Error guardando cita ${event.id}:`, err);
+                      });
+                    }
+
+                    return { contactId: contact.id, hasAppointments: true };
+                  }
+                }
+                return { contactId: contact.id, hasAppointments: false };
+              } catch (error) {
+                logger.error(`Error verificando citas para contacto ${contact.id}:`, error);
+                return { contactId: contact.id, hasAppointments: false };
+              }
+            })
+          );
+
+          // Actualizar el set con los contactos que tienen citas
+          appointmentChecks.forEach(result => {
+            if (result.hasAppointments) {
+              contactsWithAppointments.add(result.contactId);
+            }
+          });
+        }
+      }
+
+      // Filtrar solo contactos con citas (confirmadas por DB o API)
+      contacts = contacts.filter(c => contactsWithAppointments.has(c.id));
+      logger.info(`[CITAS MODAL] Total de contactos con citas después de verificación: ${contacts.length}`);
+    }
 
     const contactIds = contacts.map(contact => contact.id).filter(Boolean);
 

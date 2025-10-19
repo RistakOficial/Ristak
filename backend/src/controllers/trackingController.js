@@ -1230,9 +1230,15 @@ export async function getVisitorsList(req, res) {
           c.email as contact_email,
           c.phone as contact_phone,
           c.total_paid as contact_ltv,
-          c.purchases_count as contact_purchases
+          c.purchases_count as contact_purchases,
+          CASE WHEN a.contact_id IS NOT NULL THEN 1 ELSE 0 END as has_appointment_db
         FROM sessions s
         LEFT JOIN contacts c ON s.contact_id = c.id
+        LEFT JOIN (
+          SELECT DISTINCT contact_id
+          FROM appointments
+          WHERE contact_id IS NOT NULL
+        ) a ON a.contact_id = c.id
         WHERE ${conditions.join(' AND ')}
         ORDER BY s.visitor_id, s.created_at DESC
       `
@@ -1261,15 +1267,111 @@ export async function getVisitorsList(req, res) {
           c.email as contact_email,
           c.phone as contact_phone,
           c.total_paid as contact_ltv,
-          c.purchases_count as contact_purchases
+          c.purchases_count as contact_purchases,
+          CASE WHEN a.contact_id IS NOT NULL THEN 1 ELSE 0 END as has_appointment_db
         FROM sessions s
         LEFT JOIN contacts c ON s.contact_id = c.id
+        LEFT JOIN (
+          SELECT DISTINCT contact_id
+          FROM appointments
+          WHERE contact_id IS NOT NULL
+        ) a ON a.contact_id = c.id
         WHERE ${conditions.join(' AND ')}
         GROUP BY s.visitor_id
         ORDER BY s.created_at DESC
       `
 
     const visitors = await db.all(query, params)
+
+    // Verificar citas usando lógica híbrida (DB + API) para contactos sin citas en DB
+    const config = await db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1')
+    const contactsWithAppointments = new Set()
+
+    // Agregar contactos que ya tienen citas en DB
+    visitors.forEach(v => {
+      if (v.contact_id && v.has_appointment_db === 1) {
+        contactsWithAppointments.add(v.contact_id)
+      }
+    })
+
+    // Verificar contactos sin citas en DB usando API de HighLevel
+    const contactsToCheck = visitors
+      .filter(v => v.contact_id && v.has_appointment_db === 0)
+      .map(v => ({ id: v.contact_id }))
+      // Remover duplicados
+      .filter((contact, index, self) =>
+        index === self.findIndex(c => c.id === contact.id)
+      )
+
+    if (config && config.api_token && contactsToCheck.length > 0) {
+      logger.info(`[VISITANTES MODAL] Verificando ${contactsToCheck.length} contactos sin citas en DB...`)
+
+      // Batch de 50 contactos simultáneos
+      const batchSize = 50
+
+      for (let i = 0; i < contactsToCheck.length; i += batchSize) {
+        const batch = contactsToCheck.slice(i, i + batchSize)
+
+        const appointmentChecks = await Promise.all(
+          batch.map(async (contact) => {
+            try {
+              const response = await fetch(
+                `https://services.leadconnectorhq.com/contacts/${contact.id}/appointments`,
+                {
+                  headers: {
+                    'Authorization': `Bearer ${config.api_token}`,
+                    'Version': '2021-07-28'
+                  }
+                }
+              )
+
+              if (response.ok) {
+                const data = await response.json()
+                if (data.events && data.events.length > 0) {
+                  logger.info(`[VISITANTES MODAL] Contacto ${contact.id} tiene ${data.events.length} citas en HighLevel`)
+
+                  // Guardar en DB para cache futuro
+                  for (const event of data.events) {
+                    await db.run(`
+                      INSERT INTO appointments (id, contact_id, calendar_id, location_id, title, status, start_time, end_time)
+                      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                      ON CONFLICT(id) DO UPDATE SET
+                        status = excluded.status,
+                        start_time = excluded.start_time,
+                        end_time = excluded.end_time
+                    `, [
+                      event.id,
+                      contact.id,
+                      event.calendarId || '',
+                      event.locationId || config.location_id,
+                      event.title || '',
+                      event.status || 'scheduled',
+                      event.startTime || '',
+                      event.endTime || ''
+                    ]).catch(err => {
+                      logger.error(`Error guardando cita ${event.id}:`, err)
+                    })
+                  }
+
+                  return { contactId: contact.id, hasAppointments: true }
+                }
+              }
+              return { contactId: contact.id, hasAppointments: false }
+            } catch (error) {
+              logger.error(`Error verificando citas para contacto ${contact.id}:`, error)
+              return { contactId: contact.id, hasAppointments: false }
+            }
+          })
+        )
+
+        // Actualizar el set con los contactos que tienen citas
+        appointmentChecks.forEach(result => {
+          if (result.hasAppointments) {
+            contactsWithAppointments.add(result.contactId)
+          }
+        })
+      }
+    }
 
     logger.info(`Visitantes obtenidos: ${visitors.length} visitantes únicos`)
 
@@ -1302,7 +1404,8 @@ export async function getVisitorsList(req, res) {
         email: v.contact_email,
         phone: v.contact_phone,
         ltv: parseFloat(v.contact_ltv) || 0,
-        purchases: parseInt(v.contact_purchases) || 0
+        purchases: parseInt(v.contact_purchases) || 0,
+        appointments: contactsWithAppointments.has(v.contact_id) ? [{ dummy: true }] : []
       } : null
     }))
 
