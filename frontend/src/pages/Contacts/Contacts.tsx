@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react'
-import { createPortal } from 'react-dom'
-import { KpiCard, Card, Button, Table, DateRangePicker, PageContainer, TabList, Badge, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from '@/components/common'
+import { KpiCard, Card, Button, Table, DateRangePicker, PageContainer, TabList, Badge, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, ContactDetailsModal } from '@/components/common'
 import type { Column, BadgeVariant } from '@/components/common'
 import {
   Plus,
@@ -41,19 +40,6 @@ const STATUS_PRIORITY: Record<Contact['status'], number> = {
   appointment: 1,
   customer: 2
 }
-
-const PAYMENT_SUCCESS_STATUSES = new Set([
-  'succeeded',
-  'paid',
-  'completed',
-  'complete',
-  'fulfilled',
-  'success'
-])
-
-const PAYMENT_REFUND_STATUSES = new Set(['refunded', 'refund'])
-const PAYMENT_PENDING_STATUSES = new Set(['pending', 'processing'])
-const PAYMENT_FAILED_STATUSES = new Set(['failed', 'canceled', 'cancelled'])
 
 const mergeContactDetailRecords = (
   baseContact: Contact | null,
@@ -197,73 +183,10 @@ export const Contacts: React.FC = () => {
   const [viewMode, setViewMode] = useState<'all' | 'by-date'>('all') // Por defecto 'all' (Todos)
   const [isClient, setIsClient] = useState(false)
 
-  const appointmentDateFormatter = useMemo(() => new Intl.DateTimeFormat('es-MX', {
-    dateStyle: 'medium',
-    timeStyle: 'short'
-  }), [])
-
   const rangeStart = dateRange.start instanceof Date ? dateRange.start : new Date(dateRange.start)
   const rangeEnd = dateRange.end instanceof Date ? dateRange.end : new Date(dateRange.end)
   const spansMultipleYears = rangeStart.getFullYear() !== rangeEnd.getFullYear()
   const tableDateOptions = { includeYear: spansMultipleYears, referenceDate: rangeEnd }
-
-  const formatAppointmentDateTime = (value: string) => {
-    if (!value) return '—'
-    const parsed = new Date(value)
-    if (Number.isNaN(parsed.getTime())) return '—'
-    return appointmentDateFormatter.format(parsed)
-  }
-
-  const formatStatusText = (value: string) => {
-    return value
-      .toLowerCase()
-      .split(/[\s_]+/)
-      .filter(Boolean)
-      .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-      .join(' ')
-  }
-
-  const getAppointmentStatusBadge = (status?: string | null): { label: string; variant: BadgeVariant } => {
-    if (!status) return { label: 'Reservado', variant: 'warning' }
-    const normalized = status.toLowerCase()
-
-    if (['confirmed', 'booked', 'scheduled'].includes(normalized)) {
-      return { label: 'Reservado', variant: 'warning' }
-    }
-    if (['completed', 'showed', 'attended', 'complete'].includes(normalized)) {
-      return { label: 'Asistió', variant: 'success' }
-    }
-    if (['cancelled', 'canceled', 'no_show', 'noshow', 'failed', 'missed'].includes(normalized)) {
-      return { label: 'Cancelado', variant: 'error' }
-    }
-    if (['pending', 'unconfirmed'].includes(normalized)) {
-      return { label: 'Pendiente', variant: 'warning' }
-    }
-    if (normalized === 'rescheduled') {
-      return { label: 'Reagendada', variant: 'info' }
-    }
-    return { label: formatStatusText(normalized), variant: 'neutral' }
-  }
-
-  const getPaymentStatusBadge = (status?: string | null): { label: string; variant: BadgeVariant } => {
-    if (!status) return { label: 'Pendiente', variant: 'warning' }
-    const normalized = status.toLowerCase()
-
-    if (PAYMENT_SUCCESS_STATUSES.has(normalized)) {
-      return { label: 'Pagado', variant: 'success' }
-    }
-    if (PAYMENT_REFUND_STATUSES.has(normalized)) {
-      return { label: 'Reembolsado', variant: 'error' }
-    }
-    if (PAYMENT_PENDING_STATUSES.has(normalized)) {
-      return { label: 'Pendiente', variant: 'warning' }
-    }
-    if (PAYMENT_FAILED_STATUSES.has(normalized)) {
-      return { label: 'Fallido', variant: 'error' }
-    }
-
-    return { label: formatStatusText(normalized), variant: 'neutral' }
-  }
 
   const openContactModal = (contact: Contact) => {
     setSelectedContact(contact)
@@ -349,9 +272,6 @@ export const Contacts: React.FC = () => {
 
   const contactData = selectedContactDetails ?? selectedContact
 
-  const hasAppointmentsData = typeof contactData?.appointments !== 'undefined'
-  const hasPaymentsData = typeof contactData?.payments !== 'undefined'
-
   const contactAppointments = useMemo(() => {
     if (!contactData?.appointments) return []
     return [...contactData.appointments].sort((a, b) =>
@@ -368,17 +288,44 @@ export const Contacts: React.FC = () => {
     })
   }, [contactData?.payments])
 
-  const nextAppointmentTimestamp = useMemo(() => {
-    if (!contactData?.nextAppointmentDate) return null
-    const parsed = new Date(contactData.nextAppointmentDate)
-    if (Number.isNaN(parsed.getTime())) {
-      return null
-    }
-    return parsed.getTime()
-  }, [contactData?.nextAppointmentDate])
+  const modalSubtitle = useMemo(() => {
+    if (!contactData) return undefined
+    const parts: string[] = []
+    if (contactData.email) parts.push(contactData.email)
+    if (contactData.phone) parts.push(contactData.phone)
+    return parts.length > 0 ? parts.join(' · ') : undefined
+  }, [contactData?.email, contactData?.phone])
 
-  const paymentsCount = contactPayments.length
-  const appointmentsCount = contactAppointments.length
+  const modalData = useMemo(() => {
+    if (!contactData) return []
+
+    const createdAt = contactData.createdAt ?? new Date().toISOString()
+
+    return [{
+      id: contactData.id,
+      name: contactData.name,
+      email: contactData.email,
+      phone: contactData.phone,
+      created_at: createdAt,
+      ltv: contactData.ltv,
+      purchases: contactData.purchases,
+      payments: contactPayments.map((payment, index) => ({
+        id: String(payment.id ?? `${contactData.id}-payment-${index}`),
+        amount: Number(payment.amount ?? 0),
+        status: payment.status ?? undefined,
+        date: payment.date ?? createdAt
+      })),
+      appointments: contactAppointments.map((appointment, index) => ({
+        id: String(appointment.id ?? `${contactData.id}-appointment-${index}`),
+        title: appointment.title ?? null,
+        status: appointment.appointment_status ?? appointment.status ?? null,
+        start_time: appointment.start_time
+      })),
+      source: contactData.source,
+      ad_name: contactData.ad_name,
+      ad_id: contactData.ad_id
+    }]
+  }, [contactAppointments, contactData, contactPayments])
 
   const fetchData = async () => {
     setLoading(true)
@@ -665,227 +612,16 @@ export const Contacts: React.FC = () => {
         />
       </Card>
 
-      {isClient && selectedContact && createPortal(
-        <div className={styles.modalOverlay} onClick={closeContactModal}>
-          <div className={styles.modal} onClick={(e) => e.stopPropagation()}>
-            <div className={styles.modalHeader}>
-              <h2>Ficha de Contacto</h2>
-              <button
-                className={styles.closeButton}
-                onClick={closeContactModal}
-              >
-                <X size={20} />
-              </button>
-            </div>
-
-            <div className={styles.contactInfo}>
-              <div className={styles.infoSection}>
-                <h3>Información Personal</h3>
-                <div className={styles.infoGrid}>
-                  <div>
-                    <span className={styles.label}>Nombre:</span>
-                    <span className={styles.value}>{contactData?.name ?? '—'}</span>
-                  </div>
-                  <div>
-                    <span className={styles.label}>Email:</span>
-                    <span className={styles.value}>{contactData?.email ?? '—'}</span>
-                  </div>
-                  <div>
-                    <span className={styles.label}>Teléfono:</span>
-                    <span className={styles.value}>{contactData?.phone ?? '—'}</span>
-                  </div>
-                  <div>
-                    <span className={styles.label}>Estado:</span>
-                    {getStatusBadge((contactData?.status ?? 'lead') as Contact['status'])}
-                  </div>
-                </div>
-              </div>
-
-              <div className={styles.infoSection}>
-                <h3>
-                  Historial de Compras
-                  {hasPaymentsData && (
-                    <span className={styles.sectionCount}>
-                      {paymentsCount} {paymentsCount === 1 ? 'pago' : 'pagos'}
-                    </span>
-                  )}
-                </h3>
-                <div className={styles.infoGrid}>
-                  <div>
-                    <span className={styles.label}>Total de compras:</span>
-                    <span className={styles.value}>{contactData?.purchases ?? 0}</span>
-                  </div>
-                  <div>
-                    <span className={styles.label}>Pagos totales:</span>
-                    <span className={styles.value}>{formatCurrency(contactData?.ltv ?? 0)}</span>
-                  </div>
-                  {hasPaymentsData && (
-                    <div>
-                      <span className={styles.label}>Pagos registrados:</span>
-                      <span className={styles.value}>{paymentsCount}</span>
-                    </div>
-                  )}
-                  {contactData?.lastPurchase && (
-                    <div>
-                      <span className={styles.label}>Última compra:</span>
-                      <span className={styles.value}>
-                        {formatDate(contactData.lastPurchase, tableDateOptions)}
-                      </span>
-                    </div>
-                  )}
-                </div>
-
-                {contactDetailsLoading && !hasPaymentsData && (
-                  <p className={styles.loadingState}>Cargando historial de pagos...</p>
-                )}
-
-                {!contactDetailsLoading && hasPaymentsData && paymentsCount === 0 && (
-                  <p className={styles.emptyState}>Este contacto no tiene pagos registrados.</p>
-                )}
-
-                {paymentsCount > 0 && (
-                  <ul className={styles.paymentsList}>
-                    {contactPayments.map(payment => {
-                      const statusInfo = getPaymentStatusBadge(payment.status)
-                      const paymentId = payment.id ?? `${payment.date || 'sin-fecha'}-${payment.amount ?? 0}`
-                      const amountValue = Number(payment.amount ?? 0)
-
-                      return (
-                        <li key={paymentId} className={styles.paymentItem}>
-                          <div className={styles.paymentInfo}>
-                            <span className={styles.paymentAmount}>{formatCurrency(amountValue)}</span>
-                            <span className={styles.paymentDate}>
-                              {formatAppointmentDateTime(payment.date)}
-                            </span>
-                          </div>
-                          <div className={styles.paymentBadges}>
-                            <Badge variant={statusInfo.variant}>{statusInfo.label}</Badge>
-                          </div>
-                        </li>
-                      )
-                    })}
-                  </ul>
-                )}
-              </div>
-
-              {(contactData?.firstAppointmentDate ||
-                contactData?.nextAppointmentDate ||
-                hasAppointmentsData ||
-                contactAppointments.length > 0 ||
-                contactDetailsLoading) && (
-                  <div className={styles.infoSection}>
-                    <h3>
-                      Citas
-                      {hasAppointmentsData && (
-                        <span className={styles.sectionCount}>
-                          {appointmentsCount} {appointmentsCount === 1 ? 'cita' : 'citas'}
-                        </span>
-                      )}
-                    </h3>
-                    {(contactData?.firstAppointmentDate || contactData?.nextAppointmentDate || hasAppointmentsData) && (
-                      <div className={styles.infoGrid}>
-                        {hasAppointmentsData && (
-                          <div>
-                            <span className={styles.label}>Citas registradas:</span>
-                            <span className={styles.value}>{appointmentsCount}</span>
-                          </div>
-                        )}
-                        {contactData?.firstAppointmentDate && (
-                          <div>
-                            <span className={styles.label}>Primera cita:</span>
-                            <span className={styles.value}>
-                              {formatDate(contactData.firstAppointmentDate, tableDateOptions)}
-                            </span>
-                          </div>
-                        )}
-                        {contactData?.nextAppointmentDate && (
-                          <div>
-                            <span className={styles.label}>Próxima cita:</span>
-                            <span className={styles.value}>
-                              {formatDate(contactData.nextAppointmentDate, tableDateOptions)}
-                            </span>
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {contactDetailsLoading && (
-                      <p className={styles.loadingState}>Cargando historial de citas...</p>
-                    )}
-
-                    {!contactDetailsLoading && hasAppointmentsData && contactAppointments.length === 0 && (
-                      <p className={styles.emptyState}>Este contacto no tiene citas registradas.</p>
-                    )}
-
-                    {contactAppointments.length > 0 && (
-                      <ul className={styles.appointmentsList}>
-                        {contactAppointments.map(appointment => {
-                          const statusValue = appointment.appointment_status || appointment.status
-                          const statusInfo = getAppointmentStatusBadge(statusValue)
-                          const appointmentDate = new Date(appointment.start_time)
-                          const normalizedStatus = statusValue ? statusValue.toLowerCase() : ''
-                          const isCancelled = ['cancelled', 'canceled', 'no_show', 'noshow', 'missed', 'failed'].includes(normalizedStatus)
-                          const appointmentTime = appointmentDate.getTime()
-                          const showUpcomingBadge = nextAppointmentTimestamp !== null
-                            ? appointmentTime === nextAppointmentTimestamp
-                            : appointmentTime >= Date.now() && !isCancelled
-
-                          return (
-                            <li key={appointment.id} className={styles.appointmentItem}>
-                              <div className={styles.appointmentInfo}>
-                                <span className={styles.appointmentDate}>
-                                  {formatAppointmentDateTime(appointment.start_time)}
-                                </span>
-                                {appointment.title && (
-                                  <span className={styles.appointmentTitle}>{appointment.title}</span>
-                                )}
-                                {appointment.notes && (
-                                  <span className={styles.appointmentNotes}>{appointment.notes}</span>
-                                )}
-                              </div>
-                              <div className={styles.appointmentBadges}>
-                                {showUpcomingBadge && (
-                                  <Badge variant="primary">Próxima</Badge>
-                                )}
-                                <Badge variant={statusInfo.variant}>{statusInfo.label}</Badge>
-                              </div>
-                            </li>
-                          )
-                        })}
-                      </ul>
-                    )}
-                  </div>
-                )}
-
-              {(contactData?.source || contactData?.ad_name || contactData?.ad_id) && (
-                <div className={styles.infoSection}>
-                  <h3>De dónde llegó el contacto:</h3>
-                  <div className={styles.infoGrid}>
-                    {contactData?.source && (
-                      <div>
-                        <span className={styles.label}>Fuente:</span>
-                        <span className={styles.value}>{contactData.source}</span>
-                      </div>
-                    )}
-                    {contactData?.ad_name && (
-                      <div>
-                        <span className={styles.label}>Anuncio:</span>
-                        <span className={styles.value}>{contactData.ad_name}</span>
-                      </div>
-                    )}
-                    {contactData?.ad_id && (
-                      <div>
-                        <span className={styles.label}>ID del Anuncio:</span>
-                        <span className={styles.value}>{contactData.ad_id}</span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>,
-        document.body
+      {isClient && (
+        <ContactDetailsModal
+          isOpen={Boolean(selectedContact)}
+          onClose={closeContactModal}
+          title="Ficha de Contacto"
+          subtitle={modalSubtitle}
+          data={modalData}
+          loading={contactDetailsLoading}
+          type={null}
+        />
       )}
 
       {isClient && showNewContactModal && createPortal(

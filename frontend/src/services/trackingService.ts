@@ -4,6 +4,7 @@ export interface TrackingSession {
   session_id: string
   visitor_id: string
   contact_id: string | null
+  contact_created_at?: string | null
   landing_url: string
   referrer_url: string
   utm_source: string | null

@@ -79,6 +79,7 @@ type Session = TrackingSession & {
   os?: string
   placement?: string
   source_platform?: string
+  contact_created_at?: string | null
 }
 
 interface Metrics {
@@ -188,9 +189,16 @@ const Analytics: React.FC = () => {
           // Usar 1 sesión = 1 page view (simplificado)
           const totalPageViews = currentSessions.length
 
-          // Registros = sesiones con contact_id
+          // Registros = contactos únicos que se convirtieron EN o DESPUÉS de su created_at
+          // Solo contar la sesión si started_at >= contact_created_at
           const registros = new Set(
-            currentSessions.filter((s: Session) => s.contact_id).map((s: Session) => s.contact_id)
+            currentSessions
+              .filter((s: Session) => {
+                if (!s.contact_id || !s.contact_created_at) return false
+                // Solo contar si la sesión ocurrió en o después de la creación del contacto
+                return new Date(s.started_at) >= new Date(s.contact_created_at)
+              })
+              .map((s: Session) => s.contact_id)
           ).size
 
           const conversionRate = uniqueVids > 0 ? ((registros / uniqueVids) * 100) : 0
@@ -210,7 +218,14 @@ const Analytics: React.FC = () => {
             new Set(prevSessions.map((s: Session) => s.visitor_id)).size : 0
           const prevTotalPageViews = prevSessions.length
           const prevRegistros = prevSessions.length > 0 ?
-            new Set(prevSessions.filter((s: Session) => s.contact_id).map((s: Session) => s.contact_id)).size : 0
+            new Set(
+              prevSessions
+                .filter((s: Session) => {
+                  if (!s.contact_id || !s.contact_created_at) return false
+                  return new Date(s.started_at) >= new Date(s.contact_created_at)
+                })
+                .map((s: Session) => s.contact_id)
+            ).size : 0
           const prevConversionRate = prevUniqueVids > 0 ? ((prevRegistros / prevUniqueVids) * 100) : 0
 
           const prevVisitorCounts: { [key: string]: number } = {}
@@ -629,7 +644,12 @@ const Analytics: React.FC = () => {
 
     // Registros = sesiones con contact_id
     const registros = new Set(
-      sessions.filter((s: Session) => s.contact_id).map((s: Session) => s.contact_id)
+      sessions
+        .filter((s: Session) => {
+          if (!s.contact_id || !s.contact_created_at) return false
+          return new Date(s.started_at) >= new Date(s.contact_created_at)
+        })
+        .map((s: Session) => s.contact_id)
     ).size
 
     const conversionRate = uniqueVids > 0 ? ((registros / uniqueVids) * 100) : 0
