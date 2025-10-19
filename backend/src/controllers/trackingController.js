@@ -955,38 +955,23 @@ export async function getVisitorsByAd(req, res) {
       return res.status(400).json({ error: 'startDate y endDate son requeridos' })
     }
 
-    const usePostgres = Boolean(process.env.DATABASE_URL)
-
     // Asegurar que endDate incluya todo el día (hasta 23:59:59)
-    // Solo agregar si no tiene hora ya (ni 'T' ni ':')
     const endDateWithTime = (endDate.includes('T') || endDate.includes(':')) ? endDate : `${endDate} 23:59:59`
 
     logger.info(`Obteniendo visitantes por ad - rango: ${startDate} -> ${endDateWithTime}`)
 
-    // Query adaptado a PostgreSQL o SQLite
-    const query = usePostgres
-      ? `
-        SELECT
-          ad_id,
-          COUNT(DISTINCT visitor_id) as unique_visitors,
-          COUNT(*) as total_pageviews
-        FROM sessions
-        WHERE ad_id IS NOT NULL
-          AND created_at >= $1
-          AND created_at <= $2
-        GROUP BY ad_id
-      `
-      : `
-        SELECT
-          ad_id,
-          COUNT(DISTINCT visitor_id) as unique_visitors,
-          COUNT(*) as total_pageviews
-        FROM sessions
-        WHERE ad_id IS NOT NULL
-          AND created_at >= ?
-          AND created_at <= ?
-        GROUP BY ad_id
-      `
+    // Query PostgreSQL
+    const query = `
+      SELECT
+        ad_id,
+        COUNT(DISTINCT visitor_id) as unique_visitors,
+        COUNT(*) as total_pageviews
+      FROM sessions
+      WHERE ad_id IS NOT NULL
+        AND created_at >= $1
+        AND created_at <= $2
+      GROUP BY ad_id
+    `
 
     const visitors = await db.all(query, [startDate, endDateWithTime])
 
@@ -1175,8 +1160,6 @@ export async function getVisitorsList(req, res) {
       return res.status(400).json({ error: 'startDate y endDate son requeridos' })
     }
 
-    const usePostgres = Boolean(process.env.DATABASE_URL)
-
     // Asegurar que endDate incluya todo el día
     const endDateWithTime = (endDate.includes('T') || endDate.includes(':')) ? endDate : `${endDate} 23:59:59`
 
@@ -1203,83 +1186,44 @@ export async function getVisitorsList(req, res) {
     }
     // Si no se proveen filtros de campaña, se devuelven todos los visitantes del período
 
-    // Query principal: obtener visitantes únicos con sus datos de sesión
-    const query = usePostgres
-      ? `
-        SELECT DISTINCT ON (s.visitor_id)
-          s.visitor_id,
-          s.session_id,
-          s.contact_id,
-          s.created_at,
-          s.landing_url,
-          s.referrer_url,
-          s.utm_source,
-          s.utm_medium,
-          s.utm_campaign,
-          s.utm_term,
-          s.utm_content,
-          s.gclid,
-          s.fbclid,
-          s.device_type,
-          s.browser,
-          s.os,
-          s.language,
-          s.ad_id,
-          s.ad_name,
-          c.full_name as contact_name,
-          c.email as contact_email,
-          c.phone as contact_phone,
-          c.total_paid as contact_ltv,
-          c.purchases_count as contact_purchases,
-          CASE WHEN a.contact_id IS NOT NULL THEN 1 ELSE 0 END as has_appointment_db
-        FROM sessions s
-        LEFT JOIN contacts c ON s.contact_id = c.id
-        LEFT JOIN (
-          SELECT DISTINCT contact_id
-          FROM appointments
-          WHERE contact_id IS NOT NULL
-        ) a ON a.contact_id = c.id
-        WHERE ${conditions.join(' AND ')}
-        ORDER BY s.visitor_id, s.created_at DESC
-      `
-      : `
-        SELECT
-          s.visitor_id,
-          s.session_id,
-          s.contact_id,
-          s.created_at,
-          s.landing_url,
-          s.referrer_url,
-          s.utm_source,
-          s.utm_medium,
-          s.utm_campaign,
-          s.utm_term,
-          s.utm_content,
-          s.gclid,
-          s.fbclid,
-          s.device_type,
-          s.browser,
-          s.os,
-          s.language,
-          s.ad_id,
-          s.ad_name,
-          c.full_name as contact_name,
-          c.email as contact_email,
-          c.phone as contact_phone,
-          c.total_paid as contact_ltv,
-          c.purchases_count as contact_purchases,
-          CASE WHEN a.contact_id IS NOT NULL THEN 1 ELSE 0 END as has_appointment_db
-        FROM sessions s
-        LEFT JOIN contacts c ON s.contact_id = c.id
-        LEFT JOIN (
-          SELECT DISTINCT contact_id
-          FROM appointments
-          WHERE contact_id IS NOT NULL
-        ) a ON a.contact_id = c.id
-        WHERE ${conditions.join(' AND ')}
-        GROUP BY s.visitor_id
-        ORDER BY s.created_at DESC
-      `
+    // Query PostgreSQL: obtener visitantes únicos con sus datos de sesión
+    const query = `
+      SELECT DISTINCT ON (s.visitor_id)
+        s.visitor_id,
+        s.session_id,
+        s.contact_id,
+        s.created_at,
+        s.landing_url,
+        s.referrer_url,
+        s.utm_source,
+        s.utm_medium,
+        s.utm_campaign,
+        s.utm_term,
+        s.utm_content,
+        s.gclid,
+        s.fbclid,
+        s.device_type,
+        s.browser,
+        s.os,
+        s.language,
+        s.ad_id,
+        s.ad_name,
+        c.full_name as contact_name,
+        c.email as contact_email,
+        c.phone as contact_phone,
+        c.total_paid as contact_ltv,
+        c.purchases_count as contact_purchases,
+        CASE WHEN a.contact_id IS NOT NULL THEN 1 ELSE 0 END as has_appointment_db
+      FROM sessions s
+      LEFT JOIN contacts c ON s.contact_id = c.id
+      LEFT JOIN (
+        SELECT DISTINCT contact_id
+        FROM appointments
+        WHERE contact_id IS NOT NULL
+      ) a ON a.contact_id = c.id
+      WHERE ${conditions.join(' AND ')}
+      ORDER BY s.visitor_id, s.created_at DESC
+    `
 
     const visitors = await db.all(query, params)
 
