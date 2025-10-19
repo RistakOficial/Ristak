@@ -4,6 +4,7 @@ import { updateContactsStats } from '../utils/updateContactsStats.js'
 import { resolveDateRange } from '../utils/dateUtils.js'
 import { buildContactStats } from '../services/analyticsService.js'
 import { getGHLClient } from '../services/ghlClient.js'
+import fetch from 'node-fetch'
 
 const normalizePhone = (phone) => {
   if (!phone) return null
@@ -264,13 +265,126 @@ export const getContactById = async (req, res) => {
       [id]
     )
 
-    // Obtener citas del contacto
+    // Obtener citas del contacto - primero de la DB local
     let appointments = await db.all(
       `SELECT * FROM appointments
        WHERE contact_id = ?
        ORDER BY start_time DESC`,
       [id]
     )
+
+    // Intentar obtener citas de HighLevel en tiempo real
+    try {
+      // Obtener configuración de HighLevel
+      const config = await db.get(
+        'SELECT location_id, api_token FROM highlevel_config LIMIT 1'
+      )
+
+      if (config && config.api_token && config.location_id) {
+        logger.info(`Obteniendo citas de HighLevel para contacto ${id}`)
+
+        // Obtener calendarios primero
+        const ghlClient = getGHLClient()
+        const calendarsResponse = await ghlClient.getCalendars(config.location_id, config.api_token)
+
+        if (calendarsResponse.calendars && calendarsResponse.calendars.length > 0) {
+          const allHighLevelAppointments = []
+
+          // Obtener citas de cada calendario
+          for (const calendar of calendarsResponse.calendars) {
+            try {
+              const now = new Date()
+              const startTime = new Date(now.getFullYear() - 2, 0, 1).toISOString() // 2 años atrás
+              const endTime = new Date(now.getFullYear() + 1, 11, 31).toISOString() // 1 año adelante
+
+              const eventsResponse = await fetch(
+                `https://services.leadconnectorhq.com/calendars/events?calendarId=${calendar.id}&locationId=${config.location_id}&startTime=${startTime}&endTime=${endTime}`,
+                {
+                  headers: {
+                    'Authorization': `Bearer ${config.api_token}`,
+                    'Version': '2021-07-28'
+                  }
+                }
+              )
+
+              if (eventsResponse.ok) {
+                const eventsData = await eventsResponse.json()
+                if (eventsData.events) {
+                  // Filtrar solo las citas de este contacto
+                  const contactAppointments = eventsData.events.filter(
+                    event => event.contactId === id
+                  )
+                  allHighLevelAppointments.push(...contactAppointments)
+                }
+              }
+            } catch (calendarError) {
+              logger.warn(`Error obteniendo citas del calendario ${calendar.id}: ${calendarError.message}`)
+            }
+          }
+
+          // Si encontramos citas en HighLevel, guardarlas en la DB y usarlas
+          if (allHighLevelAppointments.length > 0) {
+            logger.info(`Encontradas ${allHighLevelAppointments.length} citas en HighLevel para contacto ${id}`)
+
+            // Guardar las citas en la DB para cache
+            for (const appointment of allHighLevelAppointments) {
+              await db.run(`
+                INSERT INTO appointments (
+                  id, calendar_id, contact_id, location_id, title,
+                  status, appointment_status, assigned_user_id, notes,
+                  address, start_time, end_time, date_added, date_updated
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (id) DO UPDATE SET
+                  title = excluded.title,
+                  status = excluded.status,
+                  appointment_status = excluded.appointment_status,
+                  start_time = excluded.start_time,
+                  end_time = excluded.end_time,
+                  date_updated = excluded.date_updated
+              `, [
+                appointment.id,
+                appointment.calendarId,
+                appointment.contactId,
+                config.location_id,
+                appointment.title || '(Sin título)',
+                appointment.status,
+                appointment.appointmentStatus,
+                appointment.assignedUserId || appointment.userId,
+                appointment.notes,
+                appointment.address,
+                appointment.startTime ? new Date(appointment.startTime) : null,
+                appointment.endTime ? new Date(appointment.endTime) : null,
+                appointment.dateAdded ? new Date(appointment.dateAdded) : new Date(),
+                new Date()
+              ])
+            }
+
+            // Combinar con las citas locales (evitando duplicados)
+            const appointmentIds = new Set(appointments.map(a => a.id))
+            for (const hlAppointment of allHighLevelAppointments) {
+              if (!appointmentIds.has(hlAppointment.id)) {
+                appointments.push({
+                  id: hlAppointment.id,
+                  calendar_id: hlAppointment.calendarId,
+                  contact_id: hlAppointment.contactId,
+                  title: hlAppointment.title,
+                  status: hlAppointment.status,
+                  appointment_status: hlAppointment.appointmentStatus,
+                  assigned_user_id: hlAppointment.assignedUserId || hlAppointment.userId,
+                  notes: hlAppointment.notes,
+                  address: hlAppointment.address,
+                  start_time: hlAppointment.startTime,
+                  end_time: hlAppointment.endTime
+                })
+              }
+            }
+          }
+        }
+      }
+    } catch (error) {
+      logger.warn(`No se pudieron obtener citas de HighLevel para contacto ${id}: ${error.message}`)
+      // Continuar con las citas locales si falla HighLevel
+    }
 
     const normalizedPhone = normalizePhone(contact.phone)
     let relatedContactIds = []

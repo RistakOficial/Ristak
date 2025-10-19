@@ -34,11 +34,15 @@ export const useChartHover = ({ data, enabled = true }: UseChartHoverProps) => {
 
         if (chartRef.current && data.length > 0) {
           const rect = chartRef.current.getBoundingClientRect()
-          const isInChart =
+          const hoveredElement = document.elementFromPoint(e.clientX, e.clientY)
+          const isTopMostChartElement =
+            hoveredElement !== null && chartRef.current.contains(hoveredElement)
+          const isPointerWithinBounds =
             e.clientX >= rect.left &&
             e.clientX <= rect.right &&
             e.clientY >= rect.top &&
             e.clientY <= rect.bottom
+          const isInChart = isPointerWithinBounds && isTopMostChartElement
 
           if (isInChart) {
             // Calcular el índice del punto más cercano
