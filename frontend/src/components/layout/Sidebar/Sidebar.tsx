@@ -100,7 +100,7 @@ const NavigationItem: React.FC<NavigationItemProps> = ({ item, isActive, onNavig
         onNavigate?.()
       }}
       className={cn(
-        'flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all duration-200',
+        'flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium',
         isActive
           ? 'glass text-[var(--color-text-primary)]'
           : 'text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] glass-hover'
@@ -141,7 +141,7 @@ const SortableItem: React.FC<SortableItemProps> = ({ item, isActive, isDragging,
           onNavigate?.()
         }}
         className={cn(
-          'flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all duration-200',
+          'flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium',
           isSortableDragging && 'opacity-50',
           isActive
             ? 'glass text-[var(--color-text-primary)]'
@@ -438,7 +438,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, locationName, loca
           to="/settings"
           onClick={handleNavigate}
           className={cn(
-            'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors',
+            'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium',
             location.pathname.startsWith('/settings')
               ? 'glass text-[var(--color-text-primary)]'
               : 'text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] glass-hover'
