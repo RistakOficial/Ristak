@@ -11,6 +11,8 @@ import { initializeVersion } from './services/metaVersionService.js'
 // import { startInvoicesReconciliation } from './jobs/invoicesReconciliation.cron.js' // DESACTIVADO: Solo usar webhooks
 import { verifyAndUpdateWebhooks } from './startup/webhookVerification.js'
 
+// Force redeploy to ensure latest logs are active
+
 // Routes
 import highlevelRoutes from './routes/highlevel.routes.js'
 import metaRoutes from './routes/meta.routes.js'
