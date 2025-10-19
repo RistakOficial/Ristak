@@ -1240,8 +1240,11 @@ export async function getVisitorsList(req, res) {
       paramCount++
       conditions.push(`s.campaign_id = $${paramCount}`)
       params.push(campaign_id)
+    } else {
+      // Si no se proveen filtros específicos, filtrar por ad_id IS NOT NULL
+      // para ser consistente con el endpoint visitors-by-period
+      conditions.push('s.ad_id IS NOT NULL')
     }
-    // Si no se proveen filtros de campaña, se devuelven todos los visitantes del período
 
     // Query PostgreSQL: obtener visitantes únicos con sus datos de sesión
     const query = `
