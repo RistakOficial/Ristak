@@ -124,6 +124,35 @@ export const LineChart: React.FC<LineChartProps> = ({
 
   const axisFormatter = (value: number) => formatValue(value)
   const tooltipFormatter = (value: number, key: string) => formatTooltipValue(value, key)
+  const tooltipAnchor = actualPointPos || pointPos
+
+  const tooltipVerticalOffset = useMemo(() => {
+    if (!tooltipAnchor || !chartRef.current) {
+      return 22
+    }
+
+    const rect = chartRef.current.getBoundingClientRect()
+    const distanceFromTop = Math.max(0, tooltipAnchor.y - rect.top)
+    const normalized = rect.height > 0 ? Math.min(Math.max(distanceFromTop / rect.height, 0), 1) : 0.5
+
+    const IDEAL_MIN_GAP = 18
+    const IDEAL_MAX_GAP = 54
+    const TOP_CLEARANCE = 4
+
+    const availableGap = Math.max(distanceFromTop - TOP_CLEARANCE, 0)
+
+    if (availableGap <= IDEAL_MIN_GAP) {
+      return availableGap
+    }
+
+    const idealGap = IDEAL_MIN_GAP + normalized * (IDEAL_MAX_GAP - IDEAL_MIN_GAP)
+    const boundedGap = Math.min(
+      Math.max(IDEAL_MIN_GAP, idealGap),
+      Math.min(availableGap, IDEAL_MAX_GAP)
+    )
+
+    return boundedGap
+  }, [tooltipAnchor, chartRef])
 
   return (
     <div className="space-y-3">
@@ -264,9 +293,10 @@ export const LineChart: React.FC<LineChartProps> = ({
       <ChartTooltip
         active={isHovering}
         data={activeData}
-        pointPos={actualPointPos || pointPos}
+        pointPos={tooltipAnchor}
         series={series}
         formatValue={tooltipFormatter}
+        verticalOffset={tooltipVerticalOffset}
       />
     </div>
   )
