@@ -253,7 +253,7 @@ export const ContactJourney = ({ contactId }: ContactJourneyProps) => {
                 }}
               >
                 <div className={`${styles.eventDot} ${styles[color]}`}>
-                  <Icon name={iconName as any} size={20} />
+                  <Icon name={iconName as any} size={24} />
                 </div>
                 <div className={styles.eventContent}>
                   <span className={styles.eventTitle}>{getEventTitle(event.type)}</span>
@@ -288,7 +288,7 @@ export const ContactJourney = ({ contactId }: ContactJourneyProps) => {
 
               {!isLast && (
                 <div className={styles.connector}>
-                  <Icon name="arrow-right" size={16} />
+                  <Icon name="arrow-right" size={20} />
                 </div>
               )}
             </div>

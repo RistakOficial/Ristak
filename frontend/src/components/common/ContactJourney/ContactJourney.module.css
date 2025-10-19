@@ -57,84 +57,91 @@
   transition: all 0.2s ease;
 }
 
-/* Colores sutiles al estilo de la app */
+/* Iconos dentro del círculo - mayor tamaño para visibilidad */
+.eventDot svg {
+  width: 24px;
+  height: 24px;
+}
+
+/* Colores sutiles al estilo de la app con BUEN CONTRASTE */
 .eventDot.blue {
-  background-color: rgba(59, 130, 246, 0.15);
-  color: #3b82f6;
+  background-color: rgba(59, 130, 246, 0.12);
+  color: #2563eb;
 }
 
 :global(body.dark) .eventDot.blue {
-  background-color: rgba(59, 130, 246, 0.2);
+  background-color: rgba(59, 130, 246, 0.15);
   color: #60a5fa;
 }
 
 .eventDot.green {
-  background-color: rgba(16, 185, 129, 0.15);
-  color: #10b981;
+  background-color: rgba(16, 185, 129, 0.12);
+  color: #059669;
 }
 
 :global(body.dark) .eventDot.green {
-  background-color: rgba(16, 185, 129, 0.2);
+  background-color: rgba(16, 185, 129, 0.15);
   color: #34d399;
 }
 
 .eventDot.purple {
-  background-color: rgba(139, 92, 246, 0.15);
-  color: #8b5cf6;
+  background-color: rgba(139, 92, 246, 0.12);
+  color: #7c3aed;
 }
 
 :global(body.dark) .eventDot.purple {
-  background-color: rgba(139, 92, 246, 0.2);
+  background-color: rgba(139, 92, 246, 0.15);
   color: #a78bfa;
 }
 
 .eventDot.orange {
-  background-color: rgba(245, 158, 11, 0.15);
-  color: #f59e0b;
+  background-color: rgba(245, 158, 11, 0.12);
+  color: #d97706;
 }
 
 :global(body.dark) .eventDot.orange {
-  background-color: rgba(245, 158, 11, 0.2);
+  background-color: rgba(245, 158, 11, 0.15);
   color: #fbbf24;
 }
 
 .eventDot.success {
-  background-color: rgba(16, 185, 129, 0.15);
-  color: #10b981;
+  background-color: rgba(16, 185, 129, 0.12);
+  color: #059669;
 }
 
 :global(body.dark) .eventDot.success {
-  background-color: rgba(16, 185, 129, 0.2);
+  background-color: rgba(16, 185, 129, 0.15);
   color: #34d399;
 }
 
 .eventDot.gray {
-  background-color: rgba(107, 114, 128, 0.15);
-  color: #6b7280;
+  background-color: rgba(107, 114, 128, 0.12);
+  color: #4b5563;
 }
 
 :global(body.dark) .eventDot.gray {
-  background-color: rgba(107, 114, 128, 0.2);
+  background-color: rgba(107, 114, 128, 0.15);
   color: #9ca3af;
 }
 
-/* Conector entre eventos - flecha */
+/* Conector entre eventos - flecha VISIBLE */
 .connector {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: center;
-  margin-top: -92px;
-  color: rgba(148, 163, 184, 0.35);
-  padding: 0 8px;
+  align-self: flex-start;
+  margin-top: 16px;
+  color: rgba(148, 163, 184, 0.5);
+  padding: 0 12px;
 }
 
 :global(body.light) .connector {
-  color: rgba(148, 163, 184, 0.3);
+  color: rgba(148, 163, 184, 0.45);
 }
 
 :global(body.dark) .connector {
-  color: rgba(148, 163, 184, 0.4);
+  color: rgba(148, 163, 184, 0.5);
 }
 
 /* Contenido del evento (textos) */
