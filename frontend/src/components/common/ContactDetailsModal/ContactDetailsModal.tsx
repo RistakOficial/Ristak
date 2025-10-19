@@ -593,40 +593,50 @@ export function ContactDetailsModal({
                 {/* Pagos */}
                 {payments.length > 0 && (
                   <div className={styles.detailSection}>
-                    <h5 className={styles.detailSectionTitle}>
-                      Pagos ({payments.length}) · {formatCurrency(payments.reduce((sum, payment) => sum + payment.amount, 0))}
-                    </h5>
+                    <button
+                      type="button"
+                      className={styles.toggleButton}
+                      onClick={() => setPaymentsExpanded(prev => !prev)}
+                    >
+                      <div className={styles.toggleLabel}>
+                        <Icon name={paymentsExpanded ? 'chevron-down' : 'chevron-right'} size={16} />
+                        <span>Pagos ({payments.length})</span>
+                      </div>
+                      <span className={styles.toggleValue}>
+                        {formatCurrency(payments.reduce((sum, payment) => sum + payment.amount, 0))}
+                      </span>
+                    </button>
 
-                    {/* Mostrar primeros 4 pagos siempre visibles */}
-                    <ul className={styles.paymentList}>
-                      {payments.slice(0, paymentsExpanded ? payments.length : 4).map(payment => {
-                        const statusInfo = getStatusLabel(payment.status)
-                        return (
-                          <li key={payment.id} className={styles.paymentItem}>
-                            <div>
-                              <p className={styles.paymentAmount}>{formatCurrency(payment.amount)}</p>
-                              {payment.status && statusInfo.text && (
-                                <Badge variant={statusInfo.variant} className={styles.paymentStatus}>
-                                  {statusInfo.text}
-                                </Badge>
-                              )}
-                            </div>
-                            <span className={styles.paymentDate}>{formatDate(payment.date)}</span>
-                          </li>
-                        )
-                      })}
-                    </ul>
-
-                    {/* Botón "Ver todos" solo si hay más de 4 */}
-                    {payments.length > 4 && (
-                      <button
-                        type="button"
-                        className={styles.showMoreButton}
-                        onClick={() => setPaymentsExpanded(prev => !prev)}
-                      >
-                        <Icon name={paymentsExpanded ? 'chevron-up' : 'chevron-down'} size={14} />
-                        {paymentsExpanded ? 'Ver menos' : `Ver todos los ${payments.length} pagos`}
-                      </button>
+                    {paymentsExpanded && (
+                      <ul className={styles.paymentList}>
+                        {payments.map(payment => {
+                          const statusInfo = getStatusLabel(payment.status)
+                          return (
+                            <li key={payment.id} className={styles.paymentItem}>
+                              <div className={styles.paymentItemContent}>
+                                <div className={styles.paymentItemHeader}>
+                                  <p className={styles.paymentAmount}>{formatCurrency(payment.amount)}</p>
+                                  {payment.status && statusInfo.text && (
+                                    <Badge variant={statusInfo.variant} className={styles.paymentStatus}>
+                                      {statusInfo.text}
+                                    </Badge>
+                                  )}
+                                </div>
+                                <div className={styles.paymentItemDetails}>
+                                  <span className={styles.paymentDetailItem}>
+                                    <Icon name="calendar" size={12} />
+                                    {formatDate(payment.date)}
+                                  </span>
+                                  <span className={styles.paymentDetailItem}>
+                                    <Icon name="hash" size={12} />
+                                    ID: {payment.id.substring(0, 8)}...
+                                  </span>
+                                </div>
+                              </div>
+                            </li>
+                          )
+                        })}
+                      </ul>
                     )}
                   </div>
                 )}
@@ -674,38 +684,52 @@ export function ContactDetailsModal({
                 {/* Citas */}
                 {selectedContact.appointments && selectedContact.appointments.length > 0 && (
                   <div className={styles.detailSection}>
-                    <h5 className={styles.detailSectionTitle}>
-                      Citas ({selectedContact.appointments.length})
-                    </h5>
+                    <button
+                      type="button"
+                      className={styles.toggleButton}
+                      onClick={() => setAppointmentsExpanded(prev => !prev)}
+                    >
+                      <div className={styles.toggleLabel}>
+                        <Icon name={appointmentsExpanded ? 'chevron-down' : 'chevron-right'} size={16} />
+                        <span>Citas ({selectedContact.appointments.length})</span>
+                      </div>
+                    </button>
 
-                    {/* Mostrar primeras 3 citas siempre visibles */}
-                    <ul className={styles.paymentList}>
-                      {selectedContact.appointments.slice(0, appointmentsExpanded ? selectedContact.appointments.length : 3).map(appointment => {
-                        const statusInfo = getAppointmentStatusLabel(appointment.status)
-                        return (
-                          <li key={appointment.id} className={styles.paymentItem}>
-                            <div>
-                              <p className={styles.paymentAmount}>{appointment.title || 'Cita'}</p>
-                              <Badge variant={statusInfo.variant} className={styles.paymentStatus}>
-                                {statusInfo.text}
-                              </Badge>
-                            </div>
-                            <span className={styles.paymentDate}>{formatDate(appointment.start_time)}</span>
-                          </li>
-                        )
-                      })}
-                    </ul>
+                    {appointmentsExpanded && (
+                      <ul className={styles.paymentList}>
+                        {selectedContact.appointments.map(appointment => {
+                          const statusInfo = getAppointmentStatusLabel(appointment.status)
+                          const appointmentDate = new Date(appointment.start_time)
+                          const timeStr = appointmentDate.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit', hour12: true })
 
-                    {/* Botón "Ver todos" solo si hay más de 3 */}
-                    {selectedContact.appointments.length > 3 && (
-                      <button
-                        type="button"
-                        className={styles.showMoreButton}
-                        onClick={() => setAppointmentsExpanded(prev => !prev)}
-                      >
-                        <Icon name={appointmentsExpanded ? 'chevron-up' : 'chevron-down'} size={14} />
-                        {appointmentsExpanded ? 'Ver menos' : `Ver todas las ${selectedContact.appointments.length} citas`}
-                      </button>
+                          return (
+                            <li key={appointment.id} className={styles.paymentItem}>
+                              <div className={styles.paymentItemContent}>
+                                <div className={styles.paymentItemHeader}>
+                                  <p className={styles.paymentAmount}>{appointment.title || 'Cita'}</p>
+                                  <Badge variant={statusInfo.variant} className={styles.paymentStatus}>
+                                    {statusInfo.text}
+                                  </Badge>
+                                </div>
+                                <div className={styles.paymentItemDetails}>
+                                  <span className={styles.paymentDetailItem}>
+                                    <Icon name="calendar" size={12} />
+                                    {formatDate(appointment.start_time)}
+                                  </span>
+                                  <span className={styles.paymentDetailItem}>
+                                    <Icon name="clock" size={12} />
+                                    {timeStr}
+                                  </span>
+                                  <span className={styles.paymentDetailItem}>
+                                    <Icon name="hash" size={12} />
+                                    ID: {appointment.id.substring(0, 8)}...
+                                  </span>
+                                </div>
+                              </div>
+                            </li>
+                          )
+                        })}
+                      </ul>
                     )}
                   </div>
                 )}
