@@ -1,6 +1,7 @@
 import { db } from '../config/database.js'
 import { DateTime } from 'luxon'
 import { resolveDateRange } from '../utils/dateUtils.js'
+import { logger } from '../utils/logger.js'
 
 const isPostgres = Boolean(process.env.DATABASE_URL)
 

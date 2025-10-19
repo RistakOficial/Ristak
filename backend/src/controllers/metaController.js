@@ -336,8 +336,8 @@ export const getCampaigns = async (req, res) => {
     // PASO 3: Agrupar métricas por ad_id
     const metricsMap = {};
     contactsRaw.forEach(c => {
-      if (!metricsMap[c.attribution_ad_id]) {
-        metricsMap[c.attribution_ad_id] = {
+      if (!metricsMap[c.ad_id]) {
+        metricsMap[c.ad_id] = {
           interesados: new Set(),
           ventas: new Set(),
           citas: new Set(),
@@ -345,17 +345,17 @@ export const getCampaigns = async (req, res) => {
         };
       }
 
-      metricsMap[c.attribution_ad_id].interesados.add(c.contact_id);
+      metricsMap[c.ad_id].interesados.add(c.contact_id);
 
       if (c.purchases_count > 0) {
-        metricsMap[c.attribution_ad_id].ventas.add(c.contact_id);
+        metricsMap[c.ad_id].ventas.add(c.contact_id);
       }
 
       if (contactsWithAppointments.has(c.contact_id)) {
-        metricsMap[c.attribution_ad_id].citas.add(c.contact_id);
+        metricsMap[c.ad_id].citas.add(c.contact_id);
       }
 
-      metricsMap[c.attribution_ad_id].revenue += parseFloat(c.total_paid || 0);
+      metricsMap[c.ad_id].revenue += parseFloat(c.total_paid || 0);
     });
 
     // Convertir a formato esperado
