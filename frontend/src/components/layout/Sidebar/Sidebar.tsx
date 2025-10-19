@@ -106,23 +106,20 @@ const reorderNavigationItems = (list: NavItem[], movingId: string, targetId: str
 
   if (sourceIndex === -1 || targetIndex === -1) return list
 
-  const next = [...list]
-  const [movingItem] = next.splice(sourceIndex, 1)
+  const result = [...list]
+  const [removed] = result.splice(sourceIndex, 1)
 
-  let insertionIndex = next.findIndex(item => item.id === targetId)
-  if (insertionIndex === -1) return list
-
+  // Insertar en la posición correcta
+  const newTargetIndex = result.findIndex(item => item.id === targetId)
   if (sourceIndex < targetIndex) {
-    insertionIndex += 1
+    // Moviendo hacia abajo - insertar después del target
+    result.splice(newTargetIndex + 1, 0, removed)
+  } else {
+    // Moviendo hacia arriba - insertar antes del target
+    result.splice(newTargetIndex, 0, removed)
   }
 
-  next.splice(insertionIndex, 0, movingItem)
-
-  if (areOrdersEqual(next, list)) {
-    return list
-  }
-
-  return next
+  return result
 }
 
 const moveItemToEnd = (list: NavItem[], movingId: string) => {
@@ -154,57 +151,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, locationName, loca
   const dragStartOrderRef = useRef<NavItem[] | null>(null)
   const dropCompletedRef = useRef(false)
 
-  const setNavigationAnimated = useCallback((updater: (current: NavItem[]) => NavItem[]) => {
-    const resultRef: { value: NavItem[] | null } = { value: null }
-
-    setNavigation(current => {
-      const previousOrder = current
-      const previousRects = new Map<string, DOMRect>()
-
-      previousOrder.forEach(item => {
-        const node = navItemRefs.current.get(item.id)
-        if (node) {
-          previousRects.set(item.id, node.getBoundingClientRect())
-        }
-      })
-
-      const next = updater(current)
-      resultRef.value = next
-
-      if (areOrdersEqual(previousOrder, next)) {
-        resultRef.value = previousOrder
-        return previousOrder
-      }
-
-      requestAnimationFrame(() => {
-        next.forEach(item => {
-          const node = navItemRefs.current.get(item.id)
-          const previousRect = previousRects.get(item.id)
-          if (!node || !previousRect) return
-
-          const nextRect = node.getBoundingClientRect()
-          const deltaX = previousRect.left - nextRect.left
-          const deltaY = previousRect.top - nextRect.top
-
-          if (deltaX === 0 && deltaY === 0) {
-            return
-          }
-
-          node.style.transition = 'none'
-          node.style.transform = `translate(${deltaX}px, ${deltaY}px)`
-
-          requestAnimationFrame(() => {
-            node.style.transition = 'transform 220ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 180ms ease, background 180ms ease'
-            node.style.transform = ''
-          })
-        })
-      })
-
-      return next
-    })
-
-    return resultRef.value ?? []
-  }, [])
 
   const persistPreference = useCallback((show: boolean) => {
     if (typeof window === 'undefined') return
@@ -337,28 +283,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, locationName, loca
     event.dataTransfer.effectAllowed = 'move'
     event.dataTransfer.setData('text/plain', id)
 
-    const node = navItemRefs.current.get(id)
-    if (node) {
-      const rect = node.getBoundingClientRect()
-      const dragImage = node.cloneNode(true) as HTMLElement
-      dragImage.style.width = `${rect.width}px`
-      dragImage.style.height = `${rect.height}px`
-      dragImage.style.position = 'absolute'
-      dragImage.style.top = '-9999px'
-      dragImage.style.left = '-9999px'
-      dragImage.style.pointerEvents = 'none'
-      dragImage.style.boxShadow = '0 12px 24px -12px rgba(15, 23, 42, 0.45)'
-      dragImage.style.opacity = '0.95'
-      document.body.appendChild(dragImage)
-
-      const offsetX = event.clientX - rect.left
-      const offsetY = event.clientY - rect.top
-      event.dataTransfer.setDragImage(dragImage, offsetX, offsetY)
-
-      requestAnimationFrame(() => {
-        document.body.removeChild(dragImage)
-      })
-    }
+    // Usar una imagen de drag más simple
+    const dragImage = new Image()
+    dragImage.src = 'data:image/gif;base64,R0lGODlhAQABAIAAAAUEBAAAACwAAAAAAQABAAACAkQBADs='
+    event.dataTransfer.setDragImage(dragImage, 0, 0)
   }
 
   const handleDragEnd = () => {
@@ -379,15 +307,18 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, locationName, loca
   const handleDragOver = (id: string) => (event: React.DragEvent<HTMLAnchorElement>) => {
     if (!draggingId || draggingId === id) return
     event.preventDefault()
-    setDropTargetId(id)
-    setNavigationAnimated(current => reorderNavigationItems(current, draggingId, id))
+
+    // Solo actualizar si cambia el target
+    if (dropTargetId !== id) {
+      setDropTargetId(id)
+      setNavigation(current => reorderNavigationItems(current, draggingId, id))
+    }
   }
 
   const handleDragEnter = (id: string) => (event: React.DragEvent<HTMLAnchorElement>) => {
     if (!draggingId || draggingId === id) return
     event.preventDefault()
     setDropTargetId(id)
-    setNavigationAnimated(current => reorderNavigationItems(current, draggingId, id))
   }
 
   const handleDragLeave = (id: string) => () => {
@@ -401,30 +332,21 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, locationName, loca
     event.stopPropagation()
 
     if (!draggingId) {
-      dropCompletedRef.current = false
       setIsEditing(false)
       return
     }
 
-    const finalNavigation = setNavigationAnimated(current => reorderNavigationItems(current, draggingId, targetId))
+    // Aplicar el orden final
+    const finalOrder = reorderNavigationItems(navigation, draggingId, targetId)
+    setNavigation(finalOrder)
 
-    const orderToPersist =
-      finalNavigation &&
-      dragStartOrderRef.current &&
-      !areOrdersEqual(finalNavigation, dragStartOrderRef.current)
-        ? finalNavigation
-        : null
-
-    try {
-      if (orderToPersist) {
-        dropCompletedRef.current = true
-        await persistOrder(orderToPersist)
-      } else {
-        dropCompletedRef.current = false
-      }
-    } finally {
-      handleDragEnd()
+    // Persistir si hubo cambios
+    if (!areOrdersEqual(finalOrder, dragStartOrderRef.current)) {
+      dropCompletedRef.current = true
+      await persistOrder(finalOrder)
     }
+
+    handleDragEnd()
   }
 
   const handleContainerDrop = async (event: React.DragEvent<HTMLDivElement>) => {
@@ -432,30 +354,21 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, locationName, loca
     event.stopPropagation()
 
     if (!draggingId) {
-      dropCompletedRef.current = false
       setIsEditing(false)
       return
     }
 
-    const finalNavigation = setNavigationAnimated(current => moveItemToEnd(current, draggingId))
+    // Mover al final
+    const finalOrder = moveItemToEnd(navigation, draggingId)
+    setNavigation(finalOrder)
 
-    const orderToPersist =
-      finalNavigation &&
-      dragStartOrderRef.current &&
-      !areOrdersEqual(finalNavigation, dragStartOrderRef.current)
-        ? finalNavigation
-        : null
-
-    try {
-      if (orderToPersist) {
-        dropCompletedRef.current = true
-        await persistOrder(orderToPersist)
-      } else {
-        dropCompletedRef.current = false
-      }
-    } finally {
-      handleDragEnd()
+    // Persistir si hubo cambios
+    if (!areOrdersEqual(finalOrder, dragStartOrderRef.current)) {
+      dropCompletedRef.current = true
+      await persistOrder(finalOrder)
     }
+
+    handleDragEnd()
   }
 
   const handleItemClick = (id: string) => (event: React.MouseEvent<HTMLAnchorElement>) => {
@@ -553,16 +466,17 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, locationName, loca
                   }
                 }}
                 className={cn(
-                  'group relative flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm font-medium transition-all duration-200 ease-out select-none',
+                  'group relative flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm font-medium select-none',
+                  'transition-[transform,opacity,background-color] duration-200 ease-out',
                   isDragging
-                    ? 'z-10 cursor-grabbing scale-[1.05] bg-white/[0.08] shadow-xl'
+                    ? 'z-10 cursor-grabbing opacity-90 scale-[1.02] bg-white/[0.1] shadow-lg'
                     : isPreparing
-                      ? 'cursor-grab scale-[1.03] bg-white/[0.06] shadow-lg'
+                      ? 'cursor-grab bg-white/[0.05]'
                       : 'cursor-pointer',
-                  isDropTarget
-                    ? 'ring-2 ring-offset-0 ring-[rgba(148,163,184,0.55)] bg-white/[0.08] backdrop-blur-sm'
+                  isDropTarget && !isDragging
+                    ? 'bg-white/[0.06] scale-[0.98]'
                     : '',
-                  isDimmed ? 'opacity-60' : '',
+                  isDimmed ? 'opacity-40' : '',
                   isActive
                     ? 'glass text-[var(--color-text-primary)]'
                     : 'text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] glass-hover'
