@@ -418,7 +418,8 @@ const Analytics: React.FC = () => {
               adsMap[session.utm_content] = (adsMap[session.utm_content] || 0) + 1
             }
             if (session.utm_source) {
-              sourcesMap[session.utm_source] = (sourcesMap[session.utm_source] || 0) + 1
+              const normalized = normalizePlatformName(session.utm_source)
+              sourcesMap[normalized] = (sourcesMap[normalized] || 0) + 1
             }
             if (session.device_type) {
               devicesMap[session.device_type] = (devicesMap[session.device_type] || 0) + 1
@@ -430,7 +431,8 @@ const Analytics: React.FC = () => {
               osMap[session.os] = (osMap[session.os] || 0) + 1
             }
             if (session.placement) {
-              placementsMap[session.placement] = (placementsMap[session.placement] || 0) + 1
+              const normalized = normalizePlatformName(session.placement)
+              placementsMap[normalized] = (placementsMap[normalized] || 0) + 1
             }
           })
 
@@ -443,7 +445,7 @@ const Analytics: React.FC = () => {
             .sort((a, b) => b.count - a.count)
 
           filterData.sources = Object.entries(sourcesMap)
-            .map(([name, count]) => ({ name: formatUrlParameter(name), count }))
+            .map(([name, count]) => ({ name, count }))
             .sort((a, b) => b.count - a.count)
 
           filterData.devices = Object.entries(devicesMap)
@@ -459,7 +461,7 @@ const Analytics: React.FC = () => {
             .sort((a, b) => b.count - a.count)
 
           filterData.placements = Object.entries(placementsMap)
-            .map(([name, count]) => ({ name: formatUrlParameter(name), count }))
+            .map(([name, count]) => ({ name, count }))
             .sort((a, b) => b.count - a.count)
 
           setAvailableFilterData(filterData)
@@ -483,7 +485,7 @@ const Analytics: React.FC = () => {
           const platforms: { [key: string]: number } = {}
           currentSessions.forEach((session: Session) => {
             const rawPlatform = session.source_site_name || session.source_platform || session.utm_source || 'Directo'
-            const platform = formatUrlParameter(rawPlatform)
+            const platform = normalizePlatformName(rawPlatform)
             platforms[platform] = (platforms[platform] || 0) + 1
           })
           const platformStats = Object.entries(platforms)
@@ -498,20 +500,23 @@ const Analytics: React.FC = () => {
 
           // Preparar datos para la dona de fuentes de tráfico
           const colorMap: { [key: string]: string } = {
-            'facebook': '#1877f2',
-            'google': '#4285f4',
-            'instagram': '#c32aa3',
-            'tiktok': '#ee1d52',
-            'microsoft': '#00a4ef',
-            'twitter': '#1da1f2',
-            'linkedin': '#0a66c2',
-            'directo': '#6b7280'
+            'Facebook': '#1877f2',
+            'Google': '#4285f4',
+            'Instagram': '#c32aa3',
+            'TikTok': '#ee1d52',
+            'Microsoft': '#00a4ef',
+            'Twitter': '#1da1f2',
+            'LinkedIn': '#0a66c2',
+            'YouTube': '#ff0000',
+            'Messenger': '#0084ff',
+            'WhatsApp': '#25d366',
+            'Directo': '#6b7280'
           }
           const trafficSourcesData = Object.entries(platforms)
             .map(([platform, count]) => ({
-              name: platform.charAt(0).toUpperCase() + platform.slice(1),
+              name: platform,
               value: count,
-              color: colorMap[platform.toLowerCase()] || '#6b7280'
+              color: colorMap[platform] || '#6b7280'
             }))
             .sort((a, b) => b.value - a.value)
             .slice(0, 10)
@@ -519,12 +524,13 @@ const Analytics: React.FC = () => {
 
           const placements: { [key: string]: number } = {}
           currentSessions.forEach((session: Session) => {
-            const placement = session.placement || 'Sin ubicación'
+            const rawPlacement = session.placement || 'Sin ubicación'
+            const placement = normalizePlatformName(rawPlacement)
             placements[placement] = (placements[placement] || 0) + 1
           })
           const placementStats = Object.entries(placements)
             .map(([placement, count]) => ({
-              name: placement.replace(/_/g, ' '),
+              name: placement,
               users: count,
               percentage: ((count / currentSessions.length) * 100).toFixed(1)
             }))
@@ -627,7 +633,7 @@ const Analytics: React.FC = () => {
                 if (session.utm_content === value) fieldMatch = true
                 break
               case 'utm_source':
-                if (session.utm_source === value) fieldMatch = true
+                if (normalizePlatformName(session.utm_source || '') === value) fieldMatch = true
                 break
               case 'device_type':
                 if (session.device_type === value) fieldMatch = true
@@ -639,7 +645,7 @@ const Analytics: React.FC = () => {
                 if (session.os === value) fieldMatch = true
                 break
               case 'placement':
-                if (session.placement === value) fieldMatch = true
+                if (normalizePlatformName(session.placement || '') === value) fieldMatch = true
                 break
             }
           }
@@ -733,7 +739,7 @@ const Analytics: React.FC = () => {
     const platforms: { [key: string]: number } = {}
     sessions.forEach((session: Session) => {
       const rawPlatform = session.source_site_name || session.source_platform || session.utm_source || 'Directo'
-      const platform = formatUrlParameter(rawPlatform)
+      const platform = normalizePlatformName(rawPlatform)
       platforms[platform] = (platforms[platform] || 0) + 1
     })
     const platformStats = Object.entries(platforms)
@@ -748,20 +754,23 @@ const Analytics: React.FC = () => {
 
     // Preparar datos para la dona de fuentes de tráfico
     const colorMap: { [key: string]: string } = {
-      'facebook': '#1877f2',
-      'google': '#4285f4',
-      'instagram': '#c32aa3',
-      'tiktok': '#ee1d52',
-      'microsoft': '#00a4ef',
-      'twitter': '#1da1f2',
-      'linkedin': '#0a66c2',
-      'directo': '#6b7280'
+      'Facebook': '#1877f2',
+      'Google': '#4285f4',
+      'Instagram': '#c32aa3',
+      'TikTok': '#ee1d52',
+      'Microsoft': '#00a4ef',
+      'Twitter': '#1da1f2',
+      'LinkedIn': '#0a66c2',
+      'YouTube': '#ff0000',
+      'Messenger': '#0084ff',
+      'WhatsApp': '#25d366',
+      'Directo': '#6b7280'
     }
     const trafficSourcesData = Object.entries(platforms)
       .map(([platform, count]) => ({
-        name: platform.charAt(0).toUpperCase() + platform.slice(1),
+        name: platform,
         value: count,
-        color: colorMap[platform.toLowerCase()] || '#6b7280'
+        color: colorMap[platform] || '#6b7280'
       }))
       .sort((a, b) => b.value - a.value)
       .slice(0, 10)
@@ -769,12 +778,13 @@ const Analytics: React.FC = () => {
 
     const placements: { [key: string]: number } = {}
     sessions.forEach((session: Session) => {
-      const placement = session.placement || 'Sin ubicación'
+      const rawPlacement = session.placement || 'Sin ubicación'
+      const placement = normalizePlatformName(rawPlacement)
       placements[placement] = (placements[placement] || 0) + 1
     })
     const placementStats = Object.entries(placements)
       .map(([placement, count]) => ({
-        name: placement.replace(/_/g, ' '),
+        name: placement,
         users: count,
         percentage: ((count / sessions.length) * 100).toFixed(1)
       }))
