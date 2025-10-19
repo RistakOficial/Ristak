@@ -291,11 +291,6 @@ export const CalendarsConfiguration: React.FC = () => {
                         <div style={{ fontWeight: 500, color: 'var(--color-text-primary)' }}>
                           {calendar.name}
                         </div>
-                        {calendar.description && (
-                          <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)', marginTop: '2px' }}>
-                            {calendar.description}
-                          </div>
-                        )}
                       </div>
                     </label>
                   )
