@@ -641,26 +641,15 @@ export async function buildReportMetrics ({ startDate, endDate, groupBy = 'day',
   // - Si un contacto creado en enero agenda cita en febrero, se atribuye a enero
   // - Un contacto con múltiples citas cuenta como 1 (métrica binaria: tiene o no tiene cita)
   // - Se maneja deduplicación por teléfono para evitar contar el mismo contacto múltiples veces
-  const contactsQuery = `
+
+  // PASO 1: Obtener contactos individuales con su período y estado de citas en DB
+  const contactsRawQuery = `
     SELECT
       ${contactGroupExpr} as period,
-      COUNT(DISTINCT CASE
-        WHEN contacts.phone IS NOT NULL AND LENGTH(contacts.phone) >= 10
-        THEN SUBSTR(contacts.phone, -10)
-        ELSE contacts.id
-      END) as leads,
-      COUNT(DISTINCT CASE
-        WHEN contacts.purchases_count > 0 AND contacts.phone IS NOT NULL AND LENGTH(contacts.phone) >= 10
-        THEN SUBSTR(contacts.phone, -10)
-        WHEN contacts.purchases_count > 0
-        THEN contacts.id
-      END) as customers,
-      COUNT(DISTINCT CASE
-        WHEN a.contact_id IS NOT NULL AND contacts.phone IS NOT NULL AND LENGTH(contacts.phone) >= 10
-        THEN SUBSTR(contacts.phone, -10)
-        WHEN a.contact_id IS NOT NULL
-        THEN contacts.id
-      END) as appointments
+      contacts.id as contact_id,
+      contacts.phone,
+      contacts.purchases_count,
+      CASE WHEN a.contact_id IS NOT NULL THEN 1 ELSE 0 END as has_appointment_db
     FROM contacts
     LEFT JOIN (
       SELECT DISTINCT contact_id
@@ -668,10 +657,97 @@ export async function buildReportMetrics ({ startDate, endDate, groupBy = 'day',
       WHERE contact_id IS NOT NULL
     ) a ON a.contact_id = contacts.id
     ${contactWhere}
-    GROUP BY period
-    ORDER BY period
   `
 
+  const contactsRaw = await db.all(contactsRawQuery, contactParams)
+
+  // PASO 2: Fallback a HighLevel API para contactos sin citas en DB
+  const config = await db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1')
+  const contactsWithAppointments = new Set()
+
+  // Primero agregar los que ya tienen citas en DB
+  contactsRaw.forEach(c => {
+    if (c.has_appointment_db === 1) {
+      contactsWithAppointments.add(c.contact_id)
+    }
+  })
+
+  // Obtener contactos que NO tienen citas en DB para verificar en HighLevel
+  const contactsToCheck = contactsRaw.filter(c => c.has_appointment_db === 0)
+
+  if (config && config.api_token && contactsToCheck.length > 0) {
+    // Batch de 50 contactos simultáneos (HighLevel permite 200k requests/día)
+    const batchSize = 50
+    logger.info(`[CITAS REPORTS] Verificando ${contactsToCheck.length} contactos sin citas en DB...`)
+
+    for (let i = 0; i < contactsToCheck.length; i += batchSize) {
+      const batch = contactsToCheck.slice(i, i + batchSize)
+      const progress = Math.min(i + batchSize, contactsToCheck.length)
+      logger.info(`[CITAS REPORTS] Procesando batch ${Math.floor(i/batchSize) + 1}: ${progress}/${contactsToCheck.length} contactos...`)
+
+      // Hacer llamadas en paralelo para este batch
+      const appointmentChecks = await Promise.all(
+        batch.map(async (contact) => {
+          try {
+            const response = await fetch(
+              `https://services.leadconnectorhq.com/contacts/${contact.contact_id}/appointments`,
+              {
+                headers: {
+                  'Authorization': `Bearer ${config.api_token}`,
+                  'Version': '2021-07-28'
+                }
+              }
+            )
+
+            if (response.ok) {
+              const data = await response.json()
+              if (data.events && data.events.length > 0) {
+                logger.info(`[CITAS REPORTS] Contacto ${contact.contact_id} tiene ${data.events.length} citas en HighLevel`)
+
+                // Guardar en DB para cache futuro
+                for (const event of data.events) {
+                  await db.run(`
+                    INSERT INTO appointments (id, contact_id, calendar_id, location_id, title, status, start_time, end_time)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET
+                      status = excluded.status,
+                      start_time = excluded.start_time,
+                      end_time = excluded.end_time
+                  `, [
+                    event.id,
+                    contact.contact_id,
+                    event.calendarId || '',
+                    event.locationId || config.location_id,
+                    event.title || '',
+                    event.status || 'scheduled',
+                    event.startTime || '',
+                    event.endTime || ''
+                  ]).catch(err => {
+                    logger.error(`Error guardando cita ${event.id}:`, err)
+                  })
+                }
+
+                return { contactId: contact.contact_id, hasAppointments: true }
+              }
+            }
+            return { contactId: contact.contact_id, hasAppointments: false }
+          } catch (error) {
+            logger.error(`Error verificando citas para contacto ${contact.contact_id}:`, error)
+            return { contactId: contact.contact_id, hasAppointments: false }
+          }
+        })
+      )
+
+      // Actualizar el set con los contactos que tienen citas
+      appointmentChecks.forEach(result => {
+        if (result.hasAppointments) {
+          contactsWithAppointments.add(result.contactId)
+        }
+      })
+    }
+  }
+
+  // PASO 3: Agrupar por período con deduplicación
   const ensureBucket = (period) => {
     if (!periodMap.has(period)) {
       periodMap.set(period, {
@@ -685,22 +761,55 @@ export async function buildReportMetrics ({ startDate, endDate, groupBy = 'day',
         visitors: 0,
         revenue: 0,
         sales: 0,
-        new_customers: 0
+        new_customers: 0,
+        leadsSet: new Set(),
+        customersSet: new Set(),
+        appointmentsSet: new Set()
       })
     }
     return periodMap.get(period)
   }
 
-  const contactRows = await db.all(contactsQuery, contactParams)
+  // Procesar contactos con deduplicación por teléfono
+  contactsRaw.forEach(contact => {
+    const bucket = ensureBucket(contact.period)
 
-  contactRows.forEach(row => {
-    const period = row.period
-    const bucket = ensureBucket(period)
-    bucket.leads += Number(row.leads || 0)
-    bucket.customers += Number(row.customers || 0)
-    bucket.appointments += Number(row.appointments || 0)
-    bucket.new_customers += Number(row.customers || 0)
+    // Deduplicar leads
+    const leadKey = (contact.phone && contact.phone.length >= 10)
+      ? contact.phone.slice(-10)
+      : contact.contact_id
+    bucket.leadsSet.add(leadKey)
+
+    // Deduplicar customers
+    if (contact.purchases_count > 0) {
+      const customerKey = (contact.phone && contact.phone.length >= 10)
+        ? contact.phone.slice(-10)
+        : contact.contact_id
+      bucket.customersSet.add(customerKey)
+    }
+
+    // Deduplicar appointments
+    if (contactsWithAppointments.has(contact.contact_id)) {
+      const apptKey = (contact.phone && contact.phone.length >= 10)
+        ? contact.phone.slice(-10)
+        : contact.contact_id
+      bucket.appointmentsSet.add(apptKey)
+    }
   })
+
+  // Convertir sets a conteos
+  periodMap.forEach((bucket) => {
+    bucket.leads = bucket.leadsSet.size
+    bucket.customers = bucket.customersSet.size
+    bucket.appointments = bucket.appointmentsSet.size
+    bucket.new_customers = bucket.customersSet.size
+    // Limpiar sets temporales
+    delete bucket.leadsSet
+    delete bucket.customersSet
+    delete bucket.appointmentsSet
+  })
+
+  logger.info(`[CITAS REPORTS] Total contactos con citas: ${contactsWithAppointments.size}/${contactsRaw.length} (${Math.round(contactsWithAppointments.size * 100 / Math.max(contactsRaw.length, 1))}%)`)
 
   if (!useContactAttribution) {
     const paymentParams = []

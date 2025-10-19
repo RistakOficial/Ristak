@@ -1287,7 +1287,7 @@ export const getFunnelMetrics = async (req, res) => {
     const startUtc = range.startZoned.toISODate();
     const endUtc = range.endZoned.toISODate();
 
-    // Query para visitantes únicos
+    // Query para visitantes únicos (SIN filtro de attribution_ad_id)
     const visitorsQuery = usePostgres
       ? `SELECT
           TO_CHAR(created_at::date, 'YYYY-MM-DD') as day,
@@ -1304,7 +1304,7 @@ export const getFunnelMetrics = async (req, res) => {
            AND DATE(created_at) <= DATE(?)
          GROUP BY day`;
 
-    // Query para leads (todos los contactos)
+    // Query para leads (todos los contactos SIN filtro de attribution_ad_id)
     const leadsQuery = usePostgres
       ? `SELECT
           TO_CHAR(created_at::date, 'YYYY-MM-DD') as day,
@@ -1321,7 +1321,7 @@ export const getFunnelMetrics = async (req, res) => {
            AND DATE(created_at) <= DATE(?)
          GROUP BY day`;
 
-    // Query para contactos con citas
+    // Query para contactos con citas (SIN filtro de attribution_ad_id)
     const appointmentsQuery = usePostgres
       ? `SELECT
           TO_CHAR(c.created_at::date, 'YYYY-MM-DD') as day,
@@ -1340,7 +1340,7 @@ export const getFunnelMetrics = async (req, res) => {
            AND DATE(c.created_at) <= DATE(?)
          GROUP BY day`;
 
-    // Query para ventas
+    // Query para ventas (SIN filtro de attribution_ad_id)
     const salesQuery = usePostgres
       ? `SELECT
           TO_CHAR(created_at::date, 'YYYY-MM-DD') as day,

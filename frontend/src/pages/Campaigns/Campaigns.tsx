@@ -85,6 +85,7 @@ interface ChartConfig {
   showLegend: boolean
   legendLabels?: { label1: string; label2?: string }
   formatValue: (value: number) => string
+  formatTooltipValue?: (value: number) => string
   emptyMessage: string
 }
 
@@ -846,6 +847,7 @@ export const Campaigns: React.FC = () => {
         showLegend: true,
         legendLabels: { label1: 'Visitantes', label2: labels.leads },
         formatValue: (v) => v < 1000 ? v.toString() : `${(v / 1000).toFixed(1)}k`,
+        formatTooltipValue: (v: number) => v.toString(),
         emptyMessage: 'No hay datos de visitantes para este período'
       },
       leads: {
@@ -857,6 +859,7 @@ export const Campaigns: React.FC = () => {
         showLegend: true,
         legendLabels: { label1: labels.leads, label2: 'Citas' },
         formatValue: (v) => v < 1000 ? v.toString() : `${(v / 1000).toFixed(1)}k`,
+        formatTooltipValue: (v: number) => v.toString(),
         emptyMessage: 'No hay datos de leads para este período'
       },
       appointments: {
@@ -868,6 +871,7 @@ export const Campaigns: React.FC = () => {
         showLegend: true,
         legendLabels: { label1: 'Citas', label2: 'Ventas' },
         formatValue: (v) => v < 1000 ? v.toString() : `${(v / 1000).toFixed(1)}k`,
+        formatTooltipValue: (v: number) => v.toString(),
         emptyMessage: 'No hay datos de citas para este período'
       }
     }
@@ -1038,6 +1042,7 @@ export const Campaigns: React.FC = () => {
                 color={selectedConfig.color}
                 color2={selectedConfig.color2}
                 formatValue={selectedConfig.formatValue}
+                formatTooltipValue={selectedConfig.formatTooltipValue || selectedConfig.formatValue}
                 showLegend={selectedConfig.showLegend}
                 legendLabels={selectedConfig.legendLabels}
               />
