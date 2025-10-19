@@ -140,7 +140,7 @@ export const ContactJourney = ({ contactId }: ContactJourneyProps) => {
             <div key={index} className={styles.eventWrapper}>
               <div className={styles.event}>
                 <div className={`${styles.eventDot} ${styles[color]}`}>
-                  <Icon name={iconName as any} size={18} />
+                  <Icon name={iconName as any} size={22} />
                 </div>
                 <div className={styles.eventContent}>
                   <span className={styles.eventTitle}>{getEventTitle(event.type)}</span>
