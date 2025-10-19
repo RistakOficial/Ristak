@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect } from 'react'
 import { Modal, Icon, Badge, type BadgeVariant } from '@/components/common'
 import { formatDate, formatUrlParameter } from '@/utils/format'
+import { useLabels } from '@/contexts/LabelsContext'
 import styles from './VisitorDetailsModal.module.css'
 
 interface VisitorDetail {
@@ -12,6 +13,8 @@ interface VisitorDetail {
     email?: string
     phone?: string
     ltv?: number
+    purchases?: number
+    appointments?: any[]
   }
   firstVisit?: string
   createdAt?: string
@@ -63,6 +66,28 @@ export function VisitorDetailsModal({
 }: VisitorDetailsModalProps) {
   const [selectedVisitor, setSelectedVisitor] = useState<VisitorDetail | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
+  const { labels } = useLabels()
+
+  // Función para determinar el badge de prioridad del contacto
+  const getContactBadge = (visitor: VisitorDetail): { label: string, variant: BadgeVariant } | null => {
+    if (!visitor.contact) return null
+
+    const hasPurchases = (visitor.contact.purchases || 0) > 0
+    const hasAppointments = visitor.contact.appointments && visitor.contact.appointments.length > 0
+
+    // Prioridad 1: Cliente (tiene compras)
+    if (hasPurchases) {
+      return { label: labels.customer, variant: 'success' }
+    }
+
+    // Prioridad 2: Agendó cita (tiene citas pero no es cliente)
+    if (hasAppointments) {
+      return { label: 'Agendó cita', variant: 'purple' }
+    }
+
+    // Prioridad 3: Lead (solo contacto, sin citas ni compras)
+    return { label: labels.lead, variant: 'default' }
+  }
 
   const normalizedData = useMemo<VisitorDetail[]>(() => {
     if (Array.isArray(data)) {
@@ -247,6 +272,12 @@ export function VisitorDetailsModal({
                       </div>
 
                       <div className={styles.visitorIndicators}>
+                        {(() => {
+                          const badge = getContactBadge(visitor)
+                          return badge ? (
+                            <Badge variant={badge.variant}>{badge.label}</Badge>
+                          ) : null
+                        })()}
                         {visitor.contact?.ltv && visitor.contact.ltv > 0 && (
                           <span className={styles.ltvValue}>
                             {formatCurrency(visitor.contact.ltv)}
