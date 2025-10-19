@@ -1,6 +1,7 @@
 import React from 'react'
 import { Card } from '../Card'
 import { Users, UserCheck, Calendar, DollarSign } from 'lucide-react'
+import { useLabels } from '@/contexts/LabelsContext'
 import styles from './ConversionFunnelChart.module.css'
 
 interface FunnelStage {
@@ -14,17 +15,18 @@ interface ConversionFunnelChartProps {
   loading?: boolean
 }
 
-const DEFAULT_STAGES: FunnelStage[] = [
-  { stage: 'Visitantes', value: 0, icon: Users },
-  { stage: 'Leads', value: 0, icon: UserCheck },
-  { stage: 'Citas', value: 0, icon: Calendar },
-  { stage: 'Clientes', value: 0, icon: DollarSign },
-]
-
 export const ConversionFunnelChart: React.FC<ConversionFunnelChartProps> = ({
-  data = DEFAULT_STAGES,
+  data = [],
   loading = false
 }) => {
+  const { labels } = useLabels()
+
+  const DEFAULT_STAGES: FunnelStage[] = [
+    { stage: 'Visitantes', value: 0, icon: Users },
+    { stage: labels.leads, value: 0, icon: UserCheck },
+    { stage: 'Citas', value: 0, icon: Calendar },
+    { stage: labels.customers, value: 0, icon: DollarSign },
+  ]
   const stageIconMap: Record<string, React.ComponentType<any>> = {
     visitantes: Users,
     leads: UserCheck,
@@ -126,7 +128,7 @@ export const ConversionFunnelChart: React.FC<ConversionFunnelChartProps> = ({
             </p>
           </div>
           <div className={styles.insightItem}>
-            <p className={styles.insightLabel}>Leads → Citas</p>
+            <p className={styles.insightLabel}>{labels.leads} → Citas</p>
             <p className={styles.insightValue}>
               <span className={styles.insightHighlight}>
                 {safeData[1]?.value > 0 ? ((safeData[2]?.value / safeData[1].value) * 100).toFixed(1) : '0'}%

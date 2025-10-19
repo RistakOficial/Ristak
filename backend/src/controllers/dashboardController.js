@@ -1000,6 +1000,7 @@ export const getFinancialOverview = async (req, res) => {
 
 /**
  * Obtiene datos del funnel de conversión
+ * Usa labels personalizados del usuario
  */
 export const getFunnelData = async (req, res) => {
   try {
@@ -1010,6 +1011,25 @@ export const getFunnelData = async (req, res) => {
     }
 
     const usePostgres = Boolean(process.env.DATABASE_URL)
+
+    // Obtener labels personalizados del usuario
+    const config = await db.get('SELECT custom_labels FROM highlevel_config LIMIT 1')
+    const defaultLabels = {
+      customer: 'Cliente',
+      customers: 'Clientes',
+      lead: 'Interesado',
+      leads: 'Interesados'
+    }
+
+    let labels = defaultLabels
+    if (config && config.custom_labels) {
+      try {
+        const parsed = JSON.parse(config.custom_labels)
+        labels = { ...defaultLabels, ...parsed }
+      } catch (error) {
+        logger.warn('Error parsing custom_labels, usando valores por defecto')
+      }
+    }
 
     let visitorsQuery, leadsQuery, appointmentsQuery, customersQuery
     let params
@@ -1075,15 +1095,16 @@ export const getFunnelData = async (req, res) => {
     }
 
     const visitors = await db.get(visitorsQuery, params)
-    const leads = await db.get(leadsQuery, params)
+    const leadsData = await db.get(leadsQuery, params)
     const appointments = await db.get(appointmentsQuery, params)
-    const customers = await db.get(customersQuery, params)
+    const customersData = await db.get(customersQuery, params)
 
+    // Usar labels personalizados en la respuesta
     const data = [
       { stage: 'Visitantes', value: parseInt(visitors.count) || 0 },
-      { stage: 'Leads', value: parseInt(leads.count) || 0 },
+      { stage: labels.leads, value: parseInt(leadsData.count) || 0 },
       { stage: 'Citas', value: parseInt(appointments.count) || 0 },
-      { stage: 'Clientes', value: parseInt(customers.count) || 0 }
+      { stage: labels.customers, value: parseInt(customersData.count) || 0 }
     ]
 
     res.json({ success: true, data })
