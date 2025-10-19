@@ -1083,16 +1083,38 @@ export async function buildContactsList ({ startDate, endDate, type = 'interesad
       contactIds = appointmentContacts.map(row => row.contact_id)
       appointmentsMap = await fetchAppointmentsForContacts(contactIds)
     } else {
-      // Vista "Todos": Usar método optimizado (carga masiva de eventos)
-      const config = await db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1')
-      const contactsWithAppointments = config && config.api_token
-        ? await getContactsWithAppointments(config.location_id, config.api_token)
-        : new Set()
+      // Vista "Todos": Filtrar por rango de fechas de la cita (start_time)
+      const appointmentParams = []
+      const appointmentConditions = []
 
-      logger.info(`📊 ${contactsWithAppointments.size} contactos con citas (método optimizado - Reports modal)`)
+      if (range.startUtc) {
+        appointmentConditions.push('a.start_time >= ?')
+        appointmentParams.push(range.startUtc)
+      }
+      if (range.endUtc) {
+        appointmentConditions.push('a.start_time <= ?')
+        appointmentParams.push(range.endUtc)
+      }
 
-      contactIds = Array.from(contactsWithAppointments)
+      // Filtrar por calendarios de atribución configurados
+      const attributionCalendarIds = await getAttributionCalendarIds()
+      if (attributionCalendarIds && attributionCalendarIds.length > 0) {
+        const calendarPlaceholders = attributionCalendarIds.map(() => '?').join(',')
+        appointmentConditions.push(`a.calendar_id IN (${calendarPlaceholders})`)
+        appointmentParams.push(...attributionCalendarIds)
+      }
+
+      const appointmentWhere = appointmentConditions.length ? `WHERE ${appointmentConditions.join(' AND ')}` : ''
+      const appointmentsQuery = `
+        SELECT DISTINCT a.contact_id
+        FROM appointments a
+        ${appointmentWhere}
+      `
+      const appointmentContacts = await db.all(appointmentsQuery, appointmentParams)
+      contactIds = appointmentContacts.map(row => row.contact_id)
       appointmentsMap = await fetchAppointmentsForContacts(contactIds, range)
+
+      logger.info(`📊 ${contactIds.length} contactos con citas en el rango (vista Todos - Reports modal)`)
     }
   }
 
