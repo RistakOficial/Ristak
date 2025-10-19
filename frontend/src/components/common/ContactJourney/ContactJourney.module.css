@@ -1,52 +1,55 @@
 .journey {
-  padding: 24px 0;
+  padding: 0;
 }
 
 .title {
-  font-size: 18px;
+  font-size: 15px;
   font-weight: 600;
-  margin-bottom: 24px;
+  margin-bottom: 16px;
   color: var(--text-primary);
 }
 
 .timeline {
   display: flex;
-  flex-direction: column;
+  align-items: flex-start;
   gap: 0;
+  overflow-x: auto;
+  padding: 12px 0;
 }
 
-.event {
+.eventWrapper {
   display: flex;
-  gap: 16px;
-  position: relative;
-}
-
-.eventLine {
-  display: flex;
-  flex-direction: column;
   align-items: center;
   flex-shrink: 0;
 }
 
+.event {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  min-width: 120px;
+  max-width: 140px;
+}
+
 .eventDot {
-  width: 40px;
-  height: 40px;
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
   color: white;
-  z-index: 1;
   flex-shrink: 0;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
 .eventDot.blue {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
 }
 
 .eventDot.green {
-  background: linear-gradient(135deg, #25D366 0%, #128C7E 100%);
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
 }
 
 .eventDot.purple {
@@ -66,88 +69,57 @@
 }
 
 .connector {
-  width: 2px;
-  flex: 1;
-  min-height: 60px;
+  width: 40px;
+  height: 2px;
   background: var(--border-light);
-  margin-top: 4px;
-  margin-bottom: 4px;
+  flex-shrink: 0;
 }
 
 .eventContent {
-  flex: 1;
-  padding-bottom: 32px;
-}
-
-.eventHeader {
   display: flex;
-  justify-content: space-between;
+  flex-direction: column;
   align-items: center;
-  margin-bottom: 12px;
+  text-align: center;
+  gap: 4px;
 }
 
 .eventTitle {
-  font-size: 16px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--text-primary);
-  margin: 0;
+  white-space: nowrap;
+}
+
+.eventDescription {
+  font-size: 12px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
 }
 
 .eventDate {
-  font-size: 13px;
-  color: var(--text-secondary);
-}
-
-.eventDetails {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 12px;
-  background: var(--bg-secondary);
-  border-radius: 8px;
-  border: 1px solid var(--border-light);
-}
-
-.detailRow {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 14px;
-  color: var(--text-secondary);
-}
-
-.detailRow svg {
-  flex-shrink: 0;
+  font-size: 11px;
   color: var(--text-tertiary);
-}
-
-.detailLabel {
-  font-weight: 500;
-  color: var(--text-secondary);
-}
-
-.detailValue {
-  color: var(--text-primary);
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 /* Loading state */
 .loading {
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 48px 24px;
-  gap: 16px;
+  padding: 24px;
+  gap: 12px;
   color: var(--text-secondary);
+  font-size: 14px;
 }
 
 .spinner {
-  width: 32px;
-  height: 32px;
-  border: 3px solid var(--border-light);
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--border-light);
   border-top-color: var(--primary);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
@@ -162,12 +134,12 @@
 /* Empty state */
 .empty {
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 48px 24px;
-  gap: 16px;
+  padding: 24px;
+  gap: 8px;
   color: var(--text-secondary);
+  font-size: 13px;
 }
 
 .empty svg {
@@ -177,5 +149,4 @@
 
 .empty p {
   margin: 0;
-  font-size: 14px;
 }
