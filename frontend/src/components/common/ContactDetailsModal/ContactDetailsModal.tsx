@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect, useCallback } from 'react'
 import { Modal, Icon, Badge, type BadgeVariant } from '@/components/common'
 import { ContactJourney } from '@/components/common/ContactJourney'
 import { formatDate } from '@/utils/format'
+import { normalizeTrafficSource } from '@/utils/trafficSourceNormalizer'
 import { useLabels } from '@/contexts/LabelsContext'
 import styles from './ContactDetailsModal.module.css'
 
@@ -17,6 +18,28 @@ interface ContactAppointmentDetail {
   title?: string | null
   status?: string | null
   start_time: string
+}
+
+interface ContactFirstSession {
+  started_at: string
+  landing_url?: string
+  landing_page?: string
+  referrer_url?: string
+  utm_source?: string
+  utm_medium?: string
+  utm_campaign?: string
+  utm_content?: string
+  utm_term?: string
+  source_platform?: string
+  site_source_name?: string
+  campaign_name?: string
+  ad_name?: string
+  ad_id?: string
+  device_type?: string
+  browser?: string
+  geo_city?: string
+  geo_region?: string
+  geo_country?: string
 }
 
 interface ContactDetail {
@@ -39,6 +62,7 @@ interface ContactDetail {
   isCustomer?: boolean
   hasAppointments?: boolean
   is_sale?: boolean
+  firstSession?: ContactFirstSession | null
 }
 
 interface ContactDetailsModalProps {

@@ -443,6 +443,46 @@ export const getContactById = async (req, res) => {
       status = 'appointment'
     }
 
+    // Obtener primera sesión (primera atribución/primer toque) del contacto
+    let firstSession = null
+    try {
+      // Buscar por contact_id, visitor_id o email
+      let sessionQuery = `
+        SELECT *
+        FROM sessions
+        WHERE contact_id = ?
+        ORDER BY started_at ASC
+        LIMIT 1
+      `
+      firstSession = await db.get(sessionQuery, [id])
+
+      // Fallback: buscar por visitor_id si existe
+      if (!firstSession && contact.visitor_id) {
+        sessionQuery = `
+          SELECT *
+          FROM sessions
+          WHERE visitor_id = ?
+          ORDER BY started_at ASC
+          LIMIT 1
+        `
+        firstSession = await db.get(sessionQuery, [contact.visitor_id])
+      }
+
+      // Fallback: buscar por email si existe
+      if (!firstSession && contact.email) {
+        sessionQuery = `
+          SELECT *
+          FROM sessions
+          WHERE email = ?
+          ORDER BY started_at ASC
+          LIMIT 1
+        `
+        firstSession = await db.get(sessionQuery, [contact.email])
+      }
+    } catch (error) {
+      logger.warn(`No se pudo obtener primera sesión para contacto ${id}: ${error.message}`)
+    }
+
     // Mapear campos de base de datos a nombres esperados por frontend
     const mappedContact = {
       id: contact.id,
@@ -461,7 +501,28 @@ export const getContactById = async (req, res) => {
       payments,
       appointments: appointmentsOrdered,
       firstAppointmentDate,
-      nextAppointmentDate
+      nextAppointmentDate,
+      firstSession: firstSession ? {
+        started_at: firstSession.started_at,
+        landing_url: firstSession.landing_url,
+        landing_page: firstSession.landing_page,
+        referrer_url: firstSession.referrer_url,
+        utm_source: firstSession.utm_source,
+        utm_medium: firstSession.utm_medium,
+        utm_campaign: firstSession.utm_campaign,
+        utm_content: firstSession.utm_content,
+        utm_term: firstSession.utm_term,
+        source_platform: firstSession.source_platform,
+        site_source_name: firstSession.site_source_name,
+        campaign_name: firstSession.campaign_name,
+        ad_name: firstSession.ad_name,
+        ad_id: firstSession.ad_id,
+        device_type: firstSession.device_type,
+        browser: firstSession.browser,
+        geo_city: firstSession.geo_city,
+        geo_region: firstSession.geo_region,
+        geo_country: firstSession.geo_country
+      } : null
     }
 
     res.json({
