@@ -15,16 +15,16 @@ import { logger } from '../utils/logger.js'
 async function getAttributionCalendarIds() {
   try {
     const config = await db.get(
-      'SELECT value FROM app_config WHERE key = ?',
+      'SELECT config_value FROM app_config WHERE config_key = ?',
       ['attribution_calendar_ids']
     )
 
-    if (!config || !config.value) {
+    if (!config || !config.config_value) {
       logger.info('No hay calendarios de atribución configurados - se usarán TODOS los calendarios')
       return null // null = usar todos
     }
 
-    const calendarIds = JSON.parse(config.value)
+    const calendarIds = JSON.parse(config.config_value)
     logger.info(`Calendarios de atribución configurados: ${calendarIds.length}`)
     return calendarIds
   } catch (error) {

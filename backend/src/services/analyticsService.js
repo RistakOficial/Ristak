@@ -13,18 +13,18 @@ const isPostgres = Boolean(process.env.DATABASE_URL)
 async function getAttributionCalendarIds() {
   try {
     const config = await db.get(
-      'SELECT value FROM app_config WHERE key = ?',
+      'SELECT config_value FROM app_config WHERE config_key = ?',
       ['attribution_calendar_ids']
     )
 
-    if (!config || !config.value) {
+    if (!config || !config.config_value) {
       return null // null = usar todos los calendarios
     }
 
-    const calendarIds = JSON.parse(config.value)
+    const calendarIds = JSON.parse(config.config_value)
     return calendarIds.length > 0 ? calendarIds : null
   } catch (error) {
-    logger.warn(`Error al leer calendarios de atribución: ${error.message}`)
+    logger.warn(`Error al leer calendarios de atribución: ${error.message} - usando TODOS`)
     return null
   }
 }
