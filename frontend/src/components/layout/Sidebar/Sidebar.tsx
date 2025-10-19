@@ -14,6 +14,7 @@ import {
 import { cn } from '@/utils/cn'
 import { Logo } from '@/components/common'
 import { useAppConfig } from '@/hooks'
+import type { SensorDescriptor } from '@dnd-kit/core'
 import {
   DndContext,
   closestCenter,
@@ -162,7 +163,13 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, locationName, loca
     })
   )
 
+  const disabledSensors = React.useMemo<SensorDescriptor<any>[]>(() => [], [])
+  const activeSensors = isEditMode ? sensors : disabledSensors
+
   const startLongPress = (e: React.PointerEvent) => {
+    if (isEditMode) {
+      return
+    }
     // Guardar posición inicial
     longPressStartPos.current = { x: e.clientX, y: e.clientY }
 
@@ -253,10 +260,17 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, locationName, loca
   }, [sidebarOrder])
 
   const handleDragStart = (event: DragStartEvent) => {
+    if (!isEditMode) {
+      return
+    }
     setActiveId(event.active.id as string)
   }
 
   const handleDragEnd = (event: DragEndEvent) => {
+    if (!isEditMode) {
+      setActiveId(null)
+      return
+    }
     const { active, over } = event
 
     if (over && active.id !== over.id) {
@@ -279,6 +293,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, locationName, loca
   }
 
   const handleNavigate = () => {
+    cancelLongPress()
+    setIsEditMode(false)
     onNavigate?.()
   }
 
@@ -324,10 +340,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, locationName, loca
           </div>
         )}
         <DndContext
-          sensors={sensors}
-          collisionDetection={closestCenter}
-          onDragStart={handleDragStart}
-          onDragEnd={handleDragEnd}
+          sensors={activeSensors}
+          collisionDetection={isEditMode ? closestCenter : undefined}
+          onDragStart={isEditMode ? handleDragStart : undefined}
+          onDragEnd={isEditMode ? handleDragEnd : undefined}
         >
           <SortableContext items={navigation.map(item => item.id)} strategy={verticalListSortingStrategy}>
             <div
@@ -364,15 +380,17 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, locationName, loca
           </SortableContext>
 
           {/* Drag Overlay - Item que se muestra mientras arrastras */}
-          <DragOverlay>
-            {activeItem ? (
-              <div className="glass rounded-lg px-3 py-2.5 flex items-center gap-3 shadow-lg">
-                <GripVertical className="h-4 w-4 text-[var(--color-text-tertiary)]" />
-                <activeItem.icon className="h-5 w-5 flex-shrink-0" />
-                <span className="text-sm font-medium">{activeItem.name}</span>
-              </div>
-            ) : null}
-          </DragOverlay>
+          {isEditMode && (
+            <DragOverlay>
+              {activeItem ? (
+                <div className="glass rounded-lg px-3 py-2.5 flex items-center gap-3 shadow-lg">
+                  <GripVertical className="h-4 w-4 text-[var(--color-text-tertiary)]" />
+                  <activeItem.icon className="h-5 w-5 flex-shrink-0" />
+                  <span className="text-sm font-medium">{activeItem.name}</span>
+                </div>
+              ) : null}
+            </DragOverlay>
+          )}
         </DndContext>
       </nav>
 

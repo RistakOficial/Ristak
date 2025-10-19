@@ -37,8 +37,8 @@
 }
 
 .eventDot {
-  width: 50px;
-  height: 50px;
+  width: 44px;
+  height: 44px;
   border-radius: 50%;
   display: flex;
   align-items: center;
@@ -46,58 +46,81 @@
   flex-shrink: 0;
   position: relative;
   z-index: 2;
-  background: transparent;
-  border: 3px solid;
+  transition: all 0.15s ease;
 }
 
 .eventDot.blue {
-  border-color: #3b82f6;
+  background-color: rgba(59, 130, 246, 0.12);
   color: #3b82f6;
-  box-shadow: 0 0 12px rgba(59, 130, 246, 0.4);
+}
+
+:global(body.dark) .eventDot.blue {
+  background-color: rgba(59, 130, 246, 0.15);
+  color: #60a5fa;
 }
 
 .eventDot.green {
-  border-color: #10b981;
+  background-color: rgba(16, 185, 129, 0.12);
   color: #10b981;
-  box-shadow: 0 0 12px rgba(16, 185, 129, 0.4);
+}
+
+:global(body.dark) .eventDot.green {
+  background-color: rgba(16, 185, 129, 0.15);
+  color: #34d399;
 }
 
 .eventDot.purple {
-  border-color: #a855f7;
-  color: #a855f7;
-  box-shadow: 0 0 12px rgba(168, 85, 247, 0.4);
+  background-color: rgba(139, 92, 246, 0.12);
+  color: #8b5cf6;
+}
+
+:global(body.dark) .eventDot.purple {
+  background-color: rgba(139, 92, 246, 0.15);
+  color: #a78bfa;
 }
 
 .eventDot.orange {
-  border-color: #f59e0b;
+  background-color: rgba(245, 158, 11, 0.12);
   color: #f59e0b;
-  box-shadow: 0 0 12px rgba(245, 158, 11, 0.4);
+}
+
+:global(body.dark) .eventDot.orange {
+  background-color: rgba(245, 158, 11, 0.15);
+  color: #fbbf24;
 }
 
 .eventDot.success {
-  border-color: #10b981;
+  background-color: rgba(16, 185, 129, 0.12);
   color: #10b981;
-  box-shadow: 0 0 12px rgba(16, 185, 129, 0.4);
+}
+
+:global(body.dark) .eventDot.success {
+  background-color: rgba(16, 185, 129, 0.15);
+  color: #34d399;
 }
 
 .eventDot.gray {
-  border-color: #6b7280;
+  background-color: rgba(107, 114, 128, 0.12);
   color: #6b7280;
-  box-shadow: 0 0 12px rgba(107, 114, 128, 0.4);
+}
+
+:global(body.dark) .eventDot.gray {
+  background-color: rgba(107, 114, 128, 0.15);
+  color: #9ca3af;
 }
 
 .connector {
   width: 40px;
-  height: 3px;
-  background: #94a3b8;
+  height: 2px;
+  background: var(--color-border);
   flex-shrink: 0;
   position: relative;
   z-index: 1;
-  margin-top: 25px;
+  margin-top: 22px;
 }
 
 :global(body.dark) .connector {
-  background: #475569;
+  background: var(--color-border);
 }
 
 .eventContent {
