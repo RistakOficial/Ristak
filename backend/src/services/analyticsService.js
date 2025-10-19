@@ -949,44 +949,6 @@ export async function buildReportMetrics ({ startDate, endDate, groupBy = 'day',
       profit: item.revenue - item.spend
     }))
 
-  // LOG CONSOLIDADO PARA DEBUGGING
-  const requestId = `REQ-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
-  const timestamp = new Date().toISOString()
-  const scopeLabel = scope === 'all' ? 'TODOS' : 'ÚLTIMA ATRIBUCIÓN'
-  logger.info(`\n🔵 ========== [${requestId}] REPORTS ${scopeLabel} - MÉTRICAS ==========`)
-  logger.info(`⏰ Timestamp: ${timestamp}`)
-  logger.info(`📅 Rango: ${range.startUtc} → ${range.endUtc}`)
-  logger.info(`📊 Agrupación: ${groupBy}`)
-  logger.info(`📈 Total períodos: ${metrics.length}`)
-
-  const totals = metrics.reduce((sum, m) => ({
-    leads: sum.leads + m.leads,
-    appointments: sum.appointments + m.appointments,
-    sales: sum.sales + m.sales,
-    visitors: sum.visitors + m.visitors,
-    customers: sum.customers + m.customers,
-    spend: sum.spend + m.spend,
-    revenue: sum.revenue + m.revenue
-  }), { leads: 0, appointments: 0, sales: 0, visitors: 0, customers: 0, spend: 0, revenue: 0 })
-
-  logger.info(`\n💰 TOTALES GENERALES:`)
-  logger.info(`   Leads: ${totals.leads}`)
-  logger.info(`   Citas: ${totals.appointments}`)
-  logger.info(`   Visitantes: ${totals.visitors}`)
-  logger.info(`   Ventas: ${totals.sales}`)
-  logger.info(`   Clientes: ${totals.customers}`)
-  logger.info(`   Gasto: $${totals.spend.toFixed(2)}`)
-  logger.info(`   Ingresos: $${totals.revenue.toFixed(2)}`)
-
-  if (metrics.length <= 100) {
-    logger.info(`\n📋 DETALLE POR PERÍODO:`)
-    metrics.forEach(m => {
-      logger.info(`   ${m.period}: Leads=${m.leads}, Citas=${m.appointments}, Visitantes=${m.visitors}, Ventas=${m.sales}`)
-    })
-  } else {
-    logger.info(`\n⚠️ Demasiados períodos (${metrics.length}), no se muestra detalle`)
-  }
-  logger.info(`🔵 ========== FIN [${requestId}] ==========\n`)
 
   return {
     range,
