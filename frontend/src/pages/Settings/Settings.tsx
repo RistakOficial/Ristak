@@ -1,10 +1,11 @@
 import React from 'react'
 import { Routes, Route, Navigate, NavLink } from 'react-router-dom'
-import { Send, CreditCard, Facebook, Activity } from 'lucide-react'
+import { Send, CreditCard, Facebook, Activity, Calendar } from 'lucide-react'
 import { HighLevelIntegration } from './HighLevelIntegration'
 import { PaymentsConfiguration } from './PaymentsConfiguration'
 import { MetaAdsIntegration } from './MetaAdsIntegration'
 import { WebTracking } from './WebTracking'
+import { CalendarsConfiguration } from './CalendarsConfiguration'
 import styles from './Settings.module.css'
 
 export const Settings: React.FC = () => {
@@ -31,6 +32,13 @@ export const Settings: React.FC = () => {
           <span>Meta Ads</span>
         </NavLink>
         <NavLink
+          to="/settings/calendars"
+          className={({ isActive }) => `${styles.tab} ${isActive ? styles.tabActive : ''}`}
+        >
+          <Calendar size={18} />
+          <span>Calendarios</span>
+        </NavLink>
+        <NavLink
           to="/settings/tracking"
           className={({ isActive }) => `${styles.tab} ${isActive ? styles.tabActive : ''}`}
         >
@@ -52,6 +60,7 @@ export const Settings: React.FC = () => {
           <Route path="highlevel" element={<HighLevelIntegration />} />
           <Route path="payments" element={<PaymentsConfiguration />} />
           <Route path="meta-ads" element={<MetaAdsIntegration />} />
+          <Route path="calendars" element={<CalendarsConfiguration />} />
           <Route path="tracking" element={<WebTracking />} />
         </Routes>
       </div>

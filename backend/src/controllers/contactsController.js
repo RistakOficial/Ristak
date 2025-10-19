@@ -911,13 +911,54 @@ export const getContactJourney = async (req, res) => {
       }
     })
 
-    // 4. TODAS las citas agendadas
-    const appointments = await db.all(
-      `SELECT * FROM appointments
-       WHERE contact_id = ?
-       ORDER BY date_added ASC`,
-      [id]
+    // 4. TODAS las citas agendadas (filtradas por calendarios de atribución)
+    // Obtener calendarios de atribución configurados
+    const attributionConfig = await db.get(
+      'SELECT value FROM app_config WHERE key = ?',
+      ['attribution_calendar_ids']
     )
+
+    let appointments
+    if (attributionConfig && attributionConfig.value) {
+      try {
+        const calendarIds = JSON.parse(attributionConfig.value)
+        if (calendarIds.length > 0) {
+          const placeholders = calendarIds.map(() => '?').join(',')
+          appointments = await db.all(
+            `SELECT * FROM appointments
+             WHERE contact_id = ?
+               AND calendar_id IN (${placeholders})
+             ORDER BY date_added ASC`,
+            [id, ...calendarIds]
+          )
+        } else {
+          // Sin calendarios configurados, usar todos
+          appointments = await db.all(
+            `SELECT * FROM appointments
+             WHERE contact_id = ?
+             ORDER BY date_added ASC`,
+            [id]
+          )
+        }
+      } catch (error) {
+        logger.warn(`Error parseando calendarios de atribución: ${error.message}`)
+        // Fallback: usar todos los calendarios
+        appointments = await db.all(
+          `SELECT * FROM appointments
+           WHERE contact_id = ?
+           ORDER BY date_added ASC`,
+          [id]
+        )
+      }
+    } else {
+      // Sin configuración, usar todos los calendarios
+      appointments = await db.all(
+        `SELECT * FROM appointments
+         WHERE contact_id = ?
+         ORDER BY date_added ASC`,
+        [id]
+      )
+    }
 
     appointments.forEach(appointment => {
       journey.push({

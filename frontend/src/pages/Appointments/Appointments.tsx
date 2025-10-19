@@ -5,6 +5,7 @@ import { ChevronLeft, ChevronRight, Plus, ChevronDown, Check, Calendar as Calend
 import { useAuth } from '@/contexts/AuthContext';
 import { useNotification } from '@/contexts/NotificationContext';
 import { useTheme } from '@/contexts/ThemeContext';
+import { useAppConfig } from '@/hooks';
 import { calendarsService, type Calendar, type CalendarEvent, type AppointmentStats } from '@/services/calendarsService';
 import { formatTime12h, formatDate } from '@/utils/format';
 import styles from './Appointments.module.css';
@@ -130,9 +131,7 @@ export const Appointments: React.FC = () => {
 
   // Dropdown de calendarios
   const [isCalendarDropdownOpen, setIsCalendarDropdownOpen] = useState(false);
-  const [defaultCalendarId, setDefaultCalendarId] = useState<string | null>(
-    localStorage.getItem('defaultCalendarId')
-  );
+  const [defaultCalendarId] = useAppConfig<string>('default_calendar_id', '');
 
   const persistLastSelectedCalendar = useCallback((calendarId: string | null) => {
     if (typeof window === 'undefined') return;
@@ -225,7 +224,7 @@ export const Appointments: React.FC = () => {
       const calendarsData = await calendarsService.getCalendars(locationId, accessToken);
       setCalendars(calendarsData);
 
-      // Seleccionar calendario: último usado en esta sesión > predeterminado > primer activo
+      // Seleccionar calendario: último usado en esta sesión > predeterminado (configuración) > primer activo
       let calendarToSelect: Calendar | undefined;
 
       const lastSelectedId = getStoredLastCalendarId();
@@ -233,8 +232,8 @@ export const Appointments: React.FC = () => {
         calendarToSelect = calendarsData.find((cal) => cal.id === lastSelectedId && cal.isActive);
       }
 
-      if (defaultCalendarId) {
-        calendarToSelect = calendarToSelect ?? calendarsData.find((cal) => cal.id === defaultCalendarId && cal.isActive);
+      if (!calendarToSelect && defaultCalendarId) {
+        calendarToSelect = calendarsData.find((cal) => cal.id === defaultCalendarId && cal.isActive);
       }
 
       if (!calendarToSelect) {
@@ -315,12 +314,12 @@ export const Appointments: React.FC = () => {
   }, [locationId, accessToken, selectedCalendar]);
 
   // useEffects - ejecutar después de declarar las funciones
-  // Cargar calendarios al montar
+  // Cargar calendarios al montar (incluye defaultCalendarId para reaccionar a cambios de configuración)
   useEffect(() => {
     if (locationId && accessToken) {
       loadCalendars();
     }
-  }, [locationId, accessToken, loadCalendars]);
+  }, [locationId, accessToken, defaultCalendarId, loadCalendars]);
 
   // Cargar eventos cuando cambie el calendario o la fecha
   useEffect(() => {

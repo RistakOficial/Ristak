@@ -601,6 +601,35 @@ git log -1
   - **Detección de visitor**: Webhook /contacts SOLO acepta campo 'rkvi_id' (prohibido visitor_id o rstk_vid)
   - **Matching visitor-contacto**: 4 métodos (form submit, _ud cookie, link manual, rkvi_id en _ud)
 
+- ✓ **Configuración de Calendarios (2025-10-19)** [USA SISTEMA HÍBRIDO]:
+  - Nueva sección en Settings para configurar calendarios
+  - **Funcionalidades**:
+    - **Calendario Predeterminado**: Se selecciona automáticamente al abrir página de Appointments
+    - **Calendarios de Atribución**: Elegir qué calendarios cuentan para métricas de marketing
+  - **Impacto**:
+    - Citas de calendarios NO seleccionados NO aparecen en:
+      - Columna "Citas" en Reports y Campaigns
+      - Timeline del Viaje del Cliente (Customer Journey)
+      - Métricas de atribución de campañas
+      - Dashboard de métricas generales
+  - **Sistema híbrido** (useAppConfig):
+    - `default_calendar_id`: Calendario que se selecciona automáticamente
+    - `attribution_calendar_ids`: Array de IDs de calendarios para atribución
+  - **Backend modificado**:
+    - appointmentsCache.js: Filtra eventos por calendarios de atribución
+    - analyticsService.js: Filtra queries de appointments con calendar_id IN (...)
+    - metaController.js: Filtra queries de funnel charts con calendar_id IN (...)
+    - contactsController.js: Filtra citas del journey con calendar_id IN (...)
+  - **Frontend modificado**:
+    - CalendarsConfiguration.tsx: Nueva página de configuración
+    - Settings.tsx: Agregado menú "Calendarios" (entre Meta Ads y Web Tracking)
+    - Appointments.tsx: Lee calendario predeterminado con useAppConfig
+  - **Fallback**: Si no hay calendarios configurados, usa TODOS los calendarios disponibles
+  - **Ruta**: /settings/calendars
+  - **Archivos**:
+    - Frontend: CalendarsConfiguration.tsx, Settings.tsx, Appointments.tsx
+    - Backend: appointmentsCache.js, analyticsService.js, metaController.js, contactsController.js
+
 ### Resueltos
 - ✓ Lodash instalado como dependencia directa
 - ✓ 7 componentes huérfanos eliminados (Badge, Select, Input, DatePicker, SingleDatePicker, DateRangeInput, SyncProgressBanner)
@@ -732,8 +761,28 @@ git log -1
 ## 📅 ÚLTIMA ACTUALIZACIÓN
 
 **Fecha**: 2025-10-19
-**Versión**: 1.18.0
+**Versión**: 1.19.0
 **Últimos cambios críticos**:
+- **Feature: Configuración de Calendarios para Atribución (2025-10-19)**
+  - **Nueva funcionalidad**: Página de configuración en Settings para gestionar calendarios
+  - **Calendario Predeterminado**: Se selecciona automáticamente al abrir Appointments
+  - **Calendarios de Atribución**: Define qué calendarios cuentan para métricas de marketing
+    - Solo las citas de calendarios seleccionados aparecen en:
+      - Reports y Campaigns (columna "Citas")
+      - Customer Journey (timeline)
+      - Dashboard (métricas generales)
+      - Gráficos de funnel en Campaigns
+  - **Sistema híbrido**: useAppConfig para persistencia (cache + PostgreSQL)
+  - **Filtrado en backend**:
+    - appointmentsCache.js: Filtra eventos al cargar desde API
+    - analyticsService.js: Filtra queries SQL con calendar_id IN (...)
+    - metaController.js: Filtra queries de funnel charts
+    - contactsController.js: Filtra citas del journey
+  - **Fallback inteligente**: Sin configuración = usa TODOS los calendarios
+  - **Ruta**: /settings/calendars (entre Meta Ads y Web Tracking)
+  - **Archivos nuevos**: CalendarsConfiguration.tsx
+  - **Archivos modificados**: 7 archivos (Settings.tsx, Appointments.tsx, appointmentsCache.js, analyticsService.js, metaController.js, contactsController.js, CLAUDE.md)
+
 - **Performance: Optimización masiva de verificación de citas (2025-10-19)**
   - **Problema**: Dashboard, Campaigns y Reports hacían verificación híbrida (DB + API contacto por contacto)
     - Dashboard: Verificaba 12 meses de contactos = potencialmente 1000+ llamadas API

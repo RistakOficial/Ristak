@@ -63,7 +63,7 @@ export const ChartTooltip: React.FC<ChartTooltipProps> = ({
   type TooltipStyle = React.CSSProperties & { '--tooltip-gap'?: string }
 
   const clampedOffset = Number.isFinite(verticalOffset)
-    ? Math.max(4, verticalOffset)
+    ? Math.max(0, verticalOffset)
     : 12
 
   const tooltipStyle: TooltipStyle = {

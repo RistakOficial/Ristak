@@ -6,6 +6,29 @@ import { getContactsWithAppointments } from './appointmentsCache.js'
 
 const isPostgres = Boolean(process.env.DATABASE_URL)
 
+/**
+ * Obtiene los calendarios configurados para atribución
+ * @returns {Promise<string[]|null>} Array de calendar IDs o null si no están configurados
+ */
+async function getAttributionCalendarIds() {
+  try {
+    const config = await db.get(
+      'SELECT value FROM app_config WHERE key = ?',
+      ['attribution_calendar_ids']
+    )
+
+    if (!config || !config.value) {
+      return null // null = usar todos los calendarios
+    }
+
+    const calendarIds = JSON.parse(config.value)
+    return calendarIds.length > 0 ? calendarIds : null
+  } catch (error) {
+    logger.warn(`Error al leer calendarios de atribución: ${error.message}`)
+    return null
+  }
+}
+
 function attributionMatchCondition(alias = 'contacts', dateColumn = 'created_at') {
   const prefix = alias ? `${alias}.` : ''
   const contactDateExpr = isPostgres
@@ -949,6 +972,14 @@ async function fetchAppointmentsForContacts(contactIds, range = {}) {
     params.push(range.endUtc)
   }
 
+  // Filtrar por calendarios de atribución configurados
+  const attributionCalendarIds = await getAttributionCalendarIds()
+  if (attributionCalendarIds && attributionCalendarIds.length > 0) {
+    const calendarPlaceholders = attributionCalendarIds.map(() => '?').join(',')
+    conditions.push(`calendar_id IN (${calendarPlaceholders})`)
+    params.push(...attributionCalendarIds)
+  }
+
   const appointmentsQuery = `
     SELECT id, contact_id, title, status, start_time
     FROM appointments
@@ -1032,6 +1063,15 @@ export async function buildContactsList ({ startDate, endDate, type = 'interesad
       if (scopeAttributed) {
         appointmentConditions.push(attributionMatchCondition('c'))
       }
+
+      // Filtrar por calendarios de atribución configurados
+      const attributionCalendarIds = await getAttributionCalendarIds()
+      if (attributionCalendarIds && attributionCalendarIds.length > 0) {
+        const calendarPlaceholders = attributionCalendarIds.map(() => '?').join(',')
+        appointmentConditions.push(`a.calendar_id IN (${calendarPlaceholders})`)
+        appointmentParams.push(...attributionCalendarIds)
+      }
+
       const appointmentWhere = appointmentConditions.length ? `WHERE ${appointmentConditions.join(' AND ')}` : ''
       const appointmentsQuery = `
         SELECT DISTINCT c.id as contact_id

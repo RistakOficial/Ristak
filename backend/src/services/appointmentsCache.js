@@ -1,13 +1,40 @@
 /**
  * Servicio centralizado para cargar y cachear eventos de calendarios
  * Usado por Dashboard, Campaigns y Reports para mejorar performance
+ *
+ * ATRIBUCIÓN: Solo carga eventos de los calendarios configurados para atribución
  */
 
 import { db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 
 /**
- * Carga TODOS los eventos de TODOS los calendarios de HighLevel
+ * Obtiene los calendarios configurados para atribución
+ * @returns {Promise<string[]>} Array de calendar IDs
+ */
+async function getAttributionCalendarIds() {
+  try {
+    const config = await db.get(
+      'SELECT value FROM app_config WHERE key = ?',
+      ['attribution_calendar_ids']
+    )
+
+    if (!config || !config.value) {
+      logger.info('No hay calendarios de atribución configurados - se usarán TODOS los calendarios')
+      return null // null = usar todos
+    }
+
+    const calendarIds = JSON.parse(config.value)
+    logger.info(`Calendarios de atribución configurados: ${calendarIds.length}`)
+    return calendarIds
+  } catch (error) {
+    logger.warn(`Error al leer calendarios de atribución: ${error.message} - usando TODOS`)
+    return null
+  }
+}
+
+/**
+ * Carga eventos de calendarios de atribución configurados
  * Este método es MUCHO más eficiente que verificar contacto por contacto
  *
  * @param {string} locationId - ID del location de HighLevel
@@ -21,7 +48,10 @@ export async function loadAllAppointments(locationId, apiToken) {
       return new Set()
     }
 
-    // PASO 1: Obtener todos los calendarios
+    // PASO 1: Obtener calendarios de atribución configurados
+    const attributionCalendarIds = await getAttributionCalendarIds()
+
+    // PASO 2: Obtener todos los calendarios de HighLevel
     const calendarsResponse = await fetch(
       `https://services.leadconnectorhq.com/calendars/?locationId=${locationId}`,
       {
@@ -38,10 +68,17 @@ export async function loadAllAppointments(locationId, apiToken) {
     }
 
     const calendarsData = await calendarsResponse.json()
-    const calendars = calendarsData.calendars || []
+    let calendars = calendarsData.calendars || []
+
+    // PASO 3: Filtrar por calendarios de atribución (si están configurados)
+    if (attributionCalendarIds && attributionCalendarIds.length > 0) {
+      const before = calendars.length
+      calendars = calendars.filter(cal => attributionCalendarIds.includes(cal.id))
+      logger.info(`Filtrando calendarios: ${before} → ${calendars.length} (solo atribución)`)
+    }
 
     if (calendars.length === 0) {
-      logger.info('No se encontraron calendarios activos')
+      logger.info('No se encontraron calendarios activos para atribución')
       return new Set()
     }
 
@@ -132,6 +169,7 @@ export async function loadAllAppointments(locationId, apiToken) {
 /**
  * Obtiene contact_ids con citas desde DB local + API de HighLevel
  * Usa DB como cache y carga eventos frescos de API
+ * FILTRA por calendarios de atribución configurados
  *
  * @param {string} locationId - ID del location de HighLevel
  * @param {string} apiToken - Token de acceso de HighLevel
@@ -139,18 +177,33 @@ export async function loadAllAppointments(locationId, apiToken) {
  */
 export async function getContactsWithAppointments(locationId, apiToken) {
   try {
-    // PASO 1: Obtener contactos con citas desde DB (cache)
-    const dbContacts = await db.all(`
-      SELECT DISTINCT contact_id
-      FROM appointments
-      WHERE contact_id IS NOT NULL
-    `)
+    // PASO 1: Obtener calendarios de atribución configurados
+    const attributionCalendarIds = await getAttributionCalendarIds()
+
+    // PASO 2: Obtener contactos con citas desde DB (cache) filtrados por calendarios de atribución
+    let dbContacts
+    if (attributionCalendarIds && attributionCalendarIds.length > 0) {
+      const placeholders = attributionCalendarIds.map(() => '?').join(',')
+      dbContacts = await db.all(`
+        SELECT DISTINCT contact_id
+        FROM appointments
+        WHERE contact_id IS NOT NULL
+          AND calendar_id IN (${placeholders})
+      `, attributionCalendarIds)
+    } else {
+      // Si no hay calendarios configurados, usar todos
+      dbContacts = await db.all(`
+        SELECT DISTINCT contact_id
+        FROM appointments
+        WHERE contact_id IS NOT NULL
+      `)
+    }
 
     const contactsWithAppointments = new Set(
       dbContacts.map(row => row.contact_id)
     )
 
-    logger.info(`📊 Cache DB: ${contactsWithAppointments.size} contactos con citas`)
+    logger.info(`📊 Cache DB (filtrado por atribución): ${contactsWithAppointments.size} contactos con citas`)
 
     // PASO 2: Actualizar cache con datos frescos de API
     const freshAppointments = await loadAllAppointments(locationId, apiToken)
