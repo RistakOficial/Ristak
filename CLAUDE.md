@@ -687,25 +687,34 @@ git log -1
   - Badges ahora solo muestran texto: "Cliente", "Agendó cita", "Lead"
   - Únicos números permitidos: monto en pesos del cliente en sección de métricas/detalles
 
+- ✓ **Unificación de lógica de fuentes de tráfico (2025-10-18)**:
+  - Problema: Dashboard y Analytics usaban lógicas diferentes para el gráfico de fuentes
+  - **Dashboard antes**: Solo usaba `source_platform`, sin normalizar ("fb", "ig")
+  - **Analytics**: Usaba cascada `site_source_name` → `source_platform` → `utm_source` + normalización
+  - **Fix**: Dashboard ahora usa la MISMA lógica que Analytics
+  - Creada función `normalizePlatformName` en backend (utils/platformNormalizer.js)
+  - Endpoint `/api/dashboard/traffic-sources` actualizado:
+    - Prioridad: `site_source_name` → `source_platform` → `utm_source`
+    - Normaliza: "fb" → "Facebook", "ig" → "Instagram", etc.
+    - Agrupa por plataforma normalizada antes de ordenar
+  - Ahora ambos gráficos muestran datos consistentes y legibles
+  - Archivos: backend/src/utils/platformNormalizer.js, dashboardController.js
+
 ---
 
 ## 📅 ÚLTIMA ACTUALIZACIÓN
 
 **Fecha**: 2025-10-18
-**Versión**: 1.15.0
+**Versión**: 1.16.0
 **Últimos cambios críticos**:
-- **Fix: Modales con datos obsoletos al cambiar fechas**
-  - Problema: Table.tsx cacheaba render callbacks (stale closures)
-  - Solución: useEffect recomputa columnas cuando cambian dependencias
-  - Archivos: Table.tsx:89, Campaigns.tsx, Reports.tsx
-  - Impacto: Modales ahora muestran datos correctos sin reload
-- **Cleanup: Logs de debugging eliminados**
-  - Removidos ~190 líneas de logs con emojis y prefijos debug
-  - Archivos: analyticsService.js, metaController.js, trackingController.js
-- **UX: Badges sin números en modales**
-  - Regla: Solo mostrar monto total pagado en clientes
-  - Eliminado LTV y contadores de badges
-  - Archivos: ContactDetailsModal.tsx, VisitorDetailsModal.tsx
+- **Fix: Unificación de fuentes de tráfico Dashboard vs Analytics**
+  - Problema: Dashboard y Analytics mostraban datos diferentes para el mismo gráfico
+  - Dashboard usaba solo `source_platform` sin normalizar (mostraba "fb", "ig")
+  - Analytics usaba cascada completa + normalización (mostraba "Facebook", "Instagram")
+  - Solución: Dashboard ahora usa la MISMA lógica que Analytics
+  - Nueva función: normalizePlatformName en backend (utils/platformNormalizer.js)
+  - Endpoint actualizado: /api/dashboard/traffic-sources con prioridad site_source_name → source_platform → utm_source
+  - Impacto: Ambos gráficos ahora muestran datos consistentes y nombres legibles
 
 ---
 
