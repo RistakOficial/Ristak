@@ -848,25 +848,31 @@ export async function buildReportMetrics ({ startDate, endDate, groupBy = 'day',
 
   if (!useContactAttribution) {
     // Vista "Todos": Agrupar por fecha del PRIMER PAGO
-    const firstPaymentsParams = []
+    // Subquery para obtener la fecha del primer pago de cada contacto
+    const firstPaymentSubquery = `
+      SELECT contact_id, MIN(date) as first_payment_date
+      FROM payments
+      WHERE LOWER(status) IN (${SUCCESS_PAYMENT_STATUSES.map(() => '?').join(',')})
+      GROUP BY contact_id
+    `
+
+    const firstPaymentsParams = [...SUCCESS_PAYMENT_STATUSES]
     const firstPaymentsConditions = []
 
     if (range.startUtc) {
-      firstPaymentsConditions.push('first_payment_date >= ?')
+      firstPaymentsConditions.push('first_p.first_payment_date >= ?')
       firstPaymentsParams.push(range.startUtc)
     }
 
     if (range.endUtc) {
-      firstPaymentsConditions.push('first_payment_date <= ?')
+      firstPaymentsConditions.push('first_p.first_payment_date <= ?')
       firstPaymentsParams.push(range.endUtc)
     }
 
-    applySuccessStatusFilter(firstPaymentsConditions, firstPaymentsParams, 'p')
-
     const firstPaymentsWhere = firstPaymentsConditions.length ? `WHERE ${firstPaymentsConditions.join(' AND ')}` : ''
-    const firstPaymentGroupExpr = getGroupExpression('first_payment_date', groupBy)
+    const firstPaymentGroupExpr = getGroupExpression('first_p.first_payment_date', groupBy)
 
-    // Subquery: obtener la fecha del primer pago de cada contacto
+    // Query principal: obtener contactos con su fecha de primer pago
     const firstPaymentsQuery = `
       SELECT
         ${firstPaymentGroupExpr} as period,
@@ -874,12 +880,7 @@ export async function buildReportMetrics ({ startDate, endDate, groupBy = 'day',
         c.email,
         c.phone
       FROM contacts c
-      INNER JOIN (
-        SELECT contact_id, MIN(date) as first_payment_date
-        FROM payments p
-        ${firstPaymentsWhere.replace('first_payment_date', 'p.date')}
-        GROUP BY contact_id
-      ) first_p ON first_p.contact_id = c.id
+      INNER JOIN (${firstPaymentSubquery}) first_p ON first_p.contact_id = c.id
       ${firstPaymentsWhere}
     `
 
