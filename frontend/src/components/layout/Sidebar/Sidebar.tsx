@@ -29,7 +29,7 @@ interface NavItem {
   icon: IconType
 }
 
-const LONG_PRESS_DELAY = 2000
+const LONG_PRESS_DELAY = 1000
 const SIDEBAR_ORDER_CONFIG_KEY = 'sidebar_navigation_order'
 
 const baseNavigation: NavItem[] = [
@@ -91,6 +91,49 @@ const applyOrder = (items: NavItem[], order: string[]): NavItem[] => {
   return orderedItems
 }
 
+const areOrdersEqual = (a: NavItem[] | null, b: NavItem[] | null) => {
+  if (!a || !b) return false
+  if (a.length !== b.length) return false
+  return a.every((item, index) => item.id === b[index]?.id)
+}
+
+const reorderNavigationItems = (list: NavItem[], movingId: string, targetId: string) => {
+  if (movingId === targetId) return list
+
+  const sourceIndex = list.findIndex(item => item.id === movingId)
+  const targetIndex = list.findIndex(item => item.id === targetId)
+
+  if (sourceIndex === -1 || targetIndex === -1) return list
+
+  const next = [...list]
+  const [movingItem] = next.splice(sourceIndex, 1)
+
+  let insertionIndex = next.findIndex(item => item.id === targetId)
+  if (insertionIndex === -1) return list
+
+  if (sourceIndex < targetIndex) {
+    insertionIndex += 1
+  }
+
+  next.splice(insertionIndex, 0, movingItem)
+
+  if (areOrdersEqual(next, list)) {
+    return list
+  }
+
+  return next
+}
+
+const moveItemToEnd = (list: NavItem[], movingId: string) => {
+  const sourceIndex = list.findIndex(item => item.id === movingId)
+  if (sourceIndex === -1 || sourceIndex === list.length - 1) return list
+
+  const next = [...list]
+  const [movingItem] = next.splice(sourceIndex, 1)
+  next.push(movingItem)
+  return next
+}
+
 export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, locationName, locationLogo }) => {
   const location = useLocation()
   const [mounted, setMounted] = useState(false)
@@ -105,6 +148,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, locationName, loca
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [dropTargetId, setDropTargetId] = useState<string | null>(null)
   const longPressTimeoutRef = useRef<number | null>(null)
+  const dragStartOrderRef = useRef<NavItem[] | null>(null)
+  const dropCompletedRef = useRef(false)
 
   const persistPreference = useCallback((show: boolean) => {
     if (typeof window === 'undefined') return
@@ -148,6 +193,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, locationName, loca
     setLongPressId(null)
     setDraggingId(null)
     setDropTargetId(null)
+    dragStartOrderRef.current = null
+    dropCompletedRef.current = false
   }, [analyticsEnabled, buildNavigationWithPreferences, persistPreference, clearLongPressTimeout])
 
   useEffect(() => {

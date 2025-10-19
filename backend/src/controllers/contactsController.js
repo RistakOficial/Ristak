@@ -265,7 +265,11 @@ export const getContactById = async (req, res) => {
       [id]
     )
 
-    // Obtener citas del contacto - primero de la DB local
+    // IMPORTANTE: Estrategia de obtención de citas (DB first, API as fallback)
+    // 1. Primero consultamos la DB local (tabla appointments) - respuesta inmediata
+    // 2. Si hay configuración de HighLevel, hacemos fallback a API en tiempo real
+    // 3. Las citas nuevas de la API se guardan en DB para cache futuro
+    // Esto garantiza mejor performance y resiliencia (funciona offline)
     let appointments = await db.all(
       `SELECT * FROM appointments
        WHERE contact_id = ?
@@ -273,7 +277,8 @@ export const getContactById = async (req, res) => {
       [id]
     )
 
-    // Intentar obtener citas de HighLevel en tiempo real
+    // Fallback: Intentar obtener citas de HighLevel API en tiempo real
+    // Solo si no tenemos citas localmente o queremos actualizar con datos frescos
     try {
       // Obtener configuración de HighLevel
       const config = await db.get(

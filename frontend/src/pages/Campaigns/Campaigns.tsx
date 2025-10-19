@@ -724,7 +724,12 @@ export const Campaigns: React.FC = () => {
     },
     {
       key: 'appointments',
-      header: 'Citas',
+      header: (
+        <div style={{ textAlign: 'center', lineHeight: '1.2' }}>
+          <div>Cita</div>
+          <div style={{ fontSize: '0.75em', opacity: 0.7 }}>(Primera)</div>
+        </div>
+      ),
       visible: false,
       render: (value, item) => {
         if (item.showPlaceholder) return <span className={styles.placeholderText}>—</span>
@@ -747,7 +752,12 @@ export const Campaigns: React.FC = () => {
     },
     {
       key: 'leadsToApptsRate',
-      header: `${labels.leads} → Citas %`,
+      header: (
+        <div style={{ textAlign: 'center', lineHeight: '1.2' }}>
+          <div>{`${labels.leads} → Cita %`}</div>
+          <div style={{ fontSize: '0.75em', opacity: 0.7 }}>(Primera)</div>
+        </div>
+      ),
       visible: false,
       render: (value, item) => {
         if (item.showPlaceholder) return <span className={styles.placeholderText}>—</span>
@@ -760,7 +770,12 @@ export const Campaigns: React.FC = () => {
     },
     {
       key: 'apptsToSalesRate',
-      header: `Citas → ${labels.customers} %`,
+      header: (
+        <div style={{ textAlign: 'center', lineHeight: '1.2' }}>
+          <div>{`Cita → ${labels.customers} %`}</div>
+          <div style={{ fontSize: '0.75em', opacity: 0.7 }}>(Primera)</div>
+        </div>
+      ),
       visible: false,
       render: (value, item) => {
         if (item.showPlaceholder) return <span className={styles.placeholderText}>—</span>
@@ -833,7 +848,7 @@ export const Campaigns: React.FC = () => {
       },
       leads: {
         title: `${labels.leads} vs Citas`,
-        subtitle: 'Comparación de contactos registrados y citas agendadas',
+        subtitle: 'Comparación de contactos registrados y primeras citas agendadas',
         data: leadsData,
         color: '#3b82f6',
         color2: '#8b5cf6',
@@ -844,7 +859,7 @@ export const Campaigns: React.FC = () => {
       },
       appointments: {
         title: 'Citas vs Ventas',
-        subtitle: 'Comparación de citas agendadas y conversiones a venta',
+        subtitle: 'Comparación de primeras citas agendadas y conversiones a venta',
         data: appointmentsData,
         color: '#8b5cf6',
         color2: '#10b981',

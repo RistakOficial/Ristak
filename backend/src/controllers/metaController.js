@@ -202,6 +202,11 @@ export const getCampaigns = async (req, res) => {
     logger.info(`Obteniendo campañas Meta - rango: ${adsStart} -> ${adsEnd}`);
 
     // Primero obtener interesados, ventas y citas por ad_id
+    // IMPORTANTE: La columna "citas" cuenta contactos con AL MENOS 1 cita (no el total de citas)
+    // Se basa en la FECHA DE CREACIÓN DEL CONTACTO para medir atribución de marketing correctamente:
+    // - Si un contacto se creó el 1-enero y agendó cita el 15-febrero, se atribuye al 1-enero
+    // - Esto mide el impacto real de las campañas en generar citas (atribución correcta)
+    // - Un contacto con 1000 citas cuenta como 1 solo contacto (métrica binaria: tiene o no tiene cita)
     const contactsQuery = `
       SELECT
         c.attribution_ad_id as ad_id,

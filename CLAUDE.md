@@ -459,6 +459,12 @@ git log -1
   - Backend calcula fechas de citas desde tabla `appointments`:
     - `firstAppointmentDate`: la cita más antigua del contacto
     - `nextAppointmentDate`: la cita más cercana en el futuro que no esté cancelada
+    - **🎯 ATRIBUCIÓN**: Para métricas de campañas, las citas se cuentan basándose en la **fecha de creación del contacto**, NO en la fecha de la cita. Esto es crítico para medir correctamente la atribución de marketing:
+      - Si un contacto se creó el 1 de enero y agenda su primera cita el 15 de febrero, la cita se atribuye a las campañas del 1 de enero
+      - Esto permite medir el verdadero impacto de las campañas publicitarias en la generación de citas
+      - Un contacto con múltiples citas cuenta como 1 solo contacto con cita (métrica binaria: tiene o no tiene cita)
+      - La lógica está implementada en `metaController.js` y `analyticsService.js`
+  - Datos de citas: Se obtienen primero de la DB local (tabla `appointments`), y si no existen, se hace fallback a HighLevel API en tiempo real
   - Endpoints backend: PUT /api/contacts/:id, DELETE /api/contacts/:id, GET /api/contacts/:id
   - Protección contra eliminación accidental con confirmación explícita
 - ✓ Registro de pagos offline (RecordPaymentModal):

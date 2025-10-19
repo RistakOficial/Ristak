@@ -635,6 +635,12 @@ export async function buildReportMetrics ({ startDate, endDate, groupBy = 'day',
   const contactWhere = contactConditions.length ? `WHERE ${contactConditions.join(' AND ')}` : ''
   const contactGroupExpr = getGroupExpression('created_at', groupBy)
 
+  // IMPORTANTE: Columna "appointments" cuenta contactos con AL MENOS 1 cita (métrica de atribución)
+  // Se agrupa por FECHA DE CREACIÓN DEL CONTACTO, no por fecha de cita:
+  // - Esto mide el impacto real de las campañas en generar leads que agendan citas
+  // - Si un contacto creado en enero agenda cita en febrero, se atribuye a enero
+  // - Un contacto con múltiples citas cuenta como 1 (métrica binaria: tiene o no tiene cita)
+  // - Se maneja deduplicación por teléfono para evitar contar el mismo contacto múltiples veces
   const contactsQuery = `
     SELECT
       ${contactGroupExpr} as period,

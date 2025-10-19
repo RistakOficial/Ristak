@@ -565,6 +565,12 @@ const Analytics: React.FC = () => {
           currentSessions.forEach((session: Session) => {
             const rawPlatform = session.source_site_name || session.source_platform || session.utm_source || 'Directo'
             const platform = normalizePlatformName(rawPlatform)
+
+            // Debug temporal
+            if (rawPlatform === 'fb' || rawPlatform === 'ig') {
+              console.log(`🔍 Raw: "${rawPlatform}" → Normalized: "${platform}"`)
+            }
+
             platforms[platform] = (platforms[platform] || 0) + 1
           })
           const platformStats = Object.entries(platforms)
@@ -604,6 +610,10 @@ const Analytics: React.FC = () => {
             }))
             .sort((a, b) => b.value - a.value)
             .slice(0, 10)
+
+          // Debug: ver qué plataformas se están mostrando
+          console.log('📊 Traffic Sources Data:', trafficSourcesData)
+
           setTrafficSources(trafficSourcesData)
 
           const placements: { [key: string]: number } = {}
@@ -824,6 +834,12 @@ const Analytics: React.FC = () => {
     sessions.forEach((session: Session) => {
       const rawPlatform = session.source_site_name || session.source_platform || session.utm_source || 'Directo'
       const platform = normalizePlatformName(rawPlatform)
+
+      // Debug temporal
+      if (rawPlatform === 'fb' || rawPlatform === 'ig') {
+        console.log(`🔍 [Filtros] Raw: "${rawPlatform}" → Normalized: "${platform}"`)
+      }
+
       platforms[platform] = (platforms[platform] || 0) + 1
     })
     const platformStats = Object.entries(platforms)

@@ -284,10 +284,10 @@ const MetricsGrid: React.FC<MetricsGridProps> = ({ metrics, loading, reportType 
         { label: labels.leads, value: formatNumber(totals.leads) },
         { label: `Costo por ${labels.lead}`, value: formatCurrency(cpl) },
         { label: 'EPA', value: formatCurrency(epl) },
-        { label: 'Citas', value: formatNumber(totals.appointments) },
-        { label: `${labels.leads}→Citas %`, value: `${interesadoToAppt.toFixed(1)}%` },
+        { label: 'Cita (Primera)', value: formatNumber(totals.appointments) },
+        { label: `${labels.leads}→Cita %`, value: `${interesadoToAppt.toFixed(1)}%` },
         { label: reportType === 'campaigns' ? 'Ventas' : 'Transacciones', value: formatNumber(totals.sales) },
-        { label: 'Citas→Ventas %', value: `${apptToSale.toFixed(1)}%` }
+        { label: 'Cita→Ventas %', value: `${apptToSale.toFixed(1)}%` }
       ]
     },
     {
@@ -562,7 +562,7 @@ export const Reports: React.FC = () => {
           : type === 'sales'
             ? (currentReportType === 'campaigns' ? 'Ventas' : 'Transacciones')
             : type === 'appointments'
-              ? 'Citas'
+              ? 'Cita (Primera)'
               : labels.customers),
       subtitle: `${formatPeriodLabel(from, 'day', { includeYear: true })} – ${formatPeriodLabel(to, 'day', { includeYear: true })}`,
       contacts: [],
@@ -730,7 +730,12 @@ export const Reports: React.FC = () => {
       },
       {
         key: 'appointments',
-        header: 'Citas',
+        header: (
+          <div style={{ textAlign: 'center', lineHeight: '1.2' }}>
+            <div>Cita</div>
+            <div style={{ fontSize: '0.75em', opacity: 0.7 }}>(Primera)</div>
+          </div>
+        ),
         sortable: true,
         visible: false,
         render: (value: number, row) => {
@@ -814,14 +819,24 @@ export const Reports: React.FC = () => {
       },
       {
         key: 'interesadosToApptsRate',
-        header: `${labels.leads}→Citas %`,
+        header: (
+          <div style={{ textAlign: 'center', lineHeight: '1.2' }}>
+            <div>{`${labels.leads}→Cita %`}</div>
+            <div style={{ fontSize: '0.75em', opacity: 0.7 }}>(Primera)</div>
+          </div>
+        ),
         sortable: true,
         visible: false,
         render: (value: number) => <span>{value.toFixed(1)}%</span>
       },
       {
         key: 'apptsToSalesRate',
-        header: 'Citas→Ventas %',
+        header: (
+          <div style={{ textAlign: 'center', lineHeight: '1.2' }}>
+            <div>Cita→Ventas %</div>
+            <div style={{ fontSize: '0.75em', opacity: 0.7 }}>(Primera)</div>
+          </div>
+        ),
         sortable: true,
         visible: false,
         render: (value: number) => <span>{value.toFixed(1)}%</span>
