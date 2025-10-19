@@ -800,17 +800,29 @@ export async function buildReportMetrics ({ startDate, endDate, groupBy = 'day',
         : []
     ])
 
+    logger.info(`📊 Reports - DB appointments: ${dbAppointments.length}, API appointments: ${apiAppointments.length}`)
+    logger.info(`📊 Reports - Rango: ${range.startUtc} -> ${range.endUtc}`)
+
     // Combinar con deduplicación (tomar dateAdded más antiguo)
     const allAppointments = mergeAppointments(dbAppointments, apiAppointments, 'oldest_date')
+    logger.info(`📊 Reports - Total merged: ${allAppointments.length}`)
 
     // Filtrar por rango de fechas de dateAdded
     const appointmentsInRange = allAppointments.filter(apt => {
-      if (!apt.dateAdded) return false
+      if (!apt.dateAdded) {
+        logger.warn(`⚠️  Cita sin dateAdded: ${apt.id}`)
+        return false
+      }
       const dateAdded = new Date(apt.dateAdded)
       const start = new Date(range.startUtc)
       const end = new Date(range.endUtc)
       return dateAdded >= start && dateAdded <= end
     })
+
+    logger.info(`📊 Reports - En rango: ${appointmentsInRange.length}`)
+    if (appointmentsInRange.length > 0) {
+      logger.info(`📊 Reports - Ejemplo de cita: ${JSON.stringify(appointmentsInRange[0])}`)
+    }
 
     // Agrupar por período y deduplicar contactos
     appointmentsInRange.forEach(apt => {
