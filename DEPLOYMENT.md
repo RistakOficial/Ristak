@@ -91,6 +91,21 @@ Esta clave se usa para proteger tus tokens de Meta Ads y otros datos sensibles.
    ```
 4. Guarda el valor generado
 
+### URL del Backend (AUTOMÁTICA)
+
+**NO necesitas configurar nada**. Durante el build en Render:
+
+1. El script detecta automáticamente la URL de tu servicio usando `$RENDER_EXTERNAL_HOSTNAME`
+2. Crea el archivo `frontend/.env.production` con tu URL específica
+3. El frontend se conectará SOLO a TU propio backend
+
+**Ejemplo**: Si tu servicio se llama `mi-ristak`, la URL será:
+```
+VITE_API_URL=https://mi-ristak.onrender.com
+```
+
+**⚠️ IMPORTANTE**: NUNCA uses la URL de otra persona. Cada instalación tiene su propia base de datos y backend.
+
 ---
 
 ## ✅ Paso 3: Verificar que Funciona

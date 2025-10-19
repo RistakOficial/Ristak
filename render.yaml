@@ -13,8 +13,12 @@ services:
     runtime: node
     region: oregon
     plan: starter  # Plan de pago básico ($7/mes) - Mejor uptime y rendimiento que free tier
-    buildCommand: npm install --prefix backend && npm install --include=dev --prefix frontend && NODE_ENV=production npm run build --prefix frontend
-    # Force rebuild: 2025-10-18-fix-formatDate
+    buildCommand: |
+      npm install --prefix backend &&
+      npm install --include=dev --prefix frontend &&
+      echo "VITE_API_URL=https://$RENDER_EXTERNAL_HOSTNAME" > frontend/.env.production &&
+      NODE_ENV=production npm run build --prefix frontend
+    # Force rebuild: 2025-10-19-fix-env-production
     startCommand: npm start --prefix backend
     envVars:
       - key: NODE_ENV
