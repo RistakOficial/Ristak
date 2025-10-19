@@ -514,6 +514,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  min-height: 4.5rem;
 }
 
 .summaryTitle {
@@ -528,13 +529,15 @@
   font-weight: 700;
   color: var(--color-primary);
   margin: 0;
+  line-height: 1.2;
 }
 
 .summaryAmount {
-  font-size: 1.25rem;
+  font-size: 1.5rem;
   font-weight: 700;
   color: var(--color-success);
   margin: 0;
+  line-height: 1.2;
 }
 
 .paymentList {
