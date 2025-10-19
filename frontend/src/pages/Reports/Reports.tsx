@@ -105,6 +105,18 @@ const defaultYearRange = { start: currentYear - 2, end: currentYear }
 // Usar formatDateToISO en vez de toIsoDate para evitar problemas de zona horaria
 const toIsoDate = formatDateToISO
 
+const parseAnalyticsFlag = (value: unknown) => {
+  if (value === null || value === undefined) return false
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase()
+    return normalized === '1' || normalized === 'true' || normalized === 'yes'
+  }
+  if (typeof value === 'number') {
+    return value === 1
+  }
+  return Boolean(value)
+}
+
 const startOfMonth = (year: number, monthIndex: number) => new Date(year, monthIndex, 1, 0, 0, 0)
 const endOfMonth = (year: number, monthIndex: number) => new Date(year, monthIndex + 1, 0, 23, 59, 59)
 const startOfYear = (year: number) => new Date(year, 0, 1, 0, 0, 0)
@@ -360,8 +372,8 @@ export const Reports: React.FC = () => {
 
   // Sistema híbrido de configuración
   const [visitorSource] = useAppConfig<'platform' | 'tracking'>('visitor_source', 'platform')
-  const [showAnalyticsConfig] = useAppConfig<boolean>('show_analytics', true)
-  const analyticsEnabled = Boolean(showAnalyticsConfig)
+  const [showAnalyticsConfig] = useAppConfig<string | number | boolean>('show_analytics', '1')
+  const analyticsEnabled = parseAnalyticsFlag(showAnalyticsConfig)
 
   const [reportType, setReportType] = useState<ReportType>('cashflow')
   const reportTypeRef = React.useRef<ReportType>(reportType)

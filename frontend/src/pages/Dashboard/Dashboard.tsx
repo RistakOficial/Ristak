@@ -17,12 +17,24 @@ import { useAppConfig } from '@/hooks'
 import { dashboardService, type DashboardMetrics, type ChartData } from '@/services/dashboardService'
 import { formatCurrency, formatRoas, formatChartDate, formatDateToISO, parseLocalDateString } from '@/utils/format'
 
+const parseAnalyticsFlag = (value: unknown) => {
+  if (value === null || value === undefined) return false
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase()
+    return normalized === '1' || normalized === 'true' || normalized === 'yes'
+  }
+  if (typeof value === 'number') {
+    return value === 1
+  }
+  return Boolean(value)
+}
+
 export const Dashboard: React.FC = () => {
   const { dateRange, setDateRange } = useDateRange()
   const { user } = useAuth()
   const { labels } = useLabels()
-  const [showAnalyticsConfig] = useAppConfig<boolean>('show_analytics', true)
-  const analyticsEnabled = Boolean(showAnalyticsConfig)
+  const [showAnalyticsConfig] = useAppConfig<string | number | boolean>('show_analytics', '1')
+  const analyticsEnabled = parseAnalyticsFlag(showAnalyticsConfig)
 
   const [metrics, setMetrics] = useState<DashboardMetrics | null>(null)
   const [chartData, setChartData] = useState<ChartData[]>([])

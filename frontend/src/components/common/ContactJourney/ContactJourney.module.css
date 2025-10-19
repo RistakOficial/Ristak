@@ -9,7 +9,7 @@
   color: var(--text-primary);
 }
 
-/* Timeline container con línea continua */
+/* Timeline container */
 .timeline {
   display: flex;
   flex-wrap: wrap;
@@ -20,26 +20,12 @@
   width: 100%;
 }
 
-/* Línea horizontal continua que atraviesa todo el timeline */
-.timeline::before {
-  content: '';
-  position: absolute;
-  top: 50%;
-  left: 0;
-  right: 0;
-  height: 2px;
-  background: var(--color-border);
-  transform: translateY(-50%);
-  z-index: 1;
-}
-
 /* Wrapper de cada evento */
 .eventWrapper {
   display: flex;
   align-items: center;
   flex-shrink: 0;
   position: relative;
-  z-index: 2;
 }
 
 /* Contenedor del evento individual */
@@ -58,7 +44,7 @@
   transform: scale(1.08);
 }
 
-/* Círculo del icono con anillo blanco exterior */
+/* Círculo del icono */
 .eventDot {
   width: 48px;
   height: 48px;
@@ -68,18 +54,16 @@
   justify-content: center;
   flex-shrink: 0;
   position: relative;
-  z-index: 3;
   transition: all 0.2s ease;
-  /* Anillo blanco de 5px AFUERA del círculo */
-  box-shadow: 0 0 0 5px var(--color-background-primary);
+  border: 3px solid var(--color-background-primary);
 }
 
 :global(body.light) .eventDot {
-  box-shadow: 0 0 0 5px #ffffff;
+  border-color: #ffffff;
 }
 
 :global(body.dark) .eventDot {
-  box-shadow: 0 0 0 5px var(--color-background-primary);
+  border-color: var(--color-background-primary);
 }
 
 /* Colores de los dots con gradientes */
@@ -113,9 +97,13 @@
   color: #ffffff;
 }
 
-/* Conector no se usa - la línea es continua */
+/* Conector entre eventos - línea que toca los círculos */
 .connector {
-  display: none;
+  flex: 0 0 auto;
+  width: 40px;
+  height: 2px;
+  background: var(--color-border);
+  margin: 0;
 }
 
 /* Contenido del evento (textos) */

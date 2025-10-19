@@ -89,14 +89,26 @@ interface ChartConfig {
   emptyMessage: string
 }
 
+const parseAnalyticsFlag = (value: unknown) => {
+  if (value === null || value === undefined) return false
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase()
+    return normalized === '1' || normalized === 'true' || normalized === 'yes'
+  }
+  if (typeof value === 'number') {
+    return value === 1
+  }
+  return Boolean(value)
+}
+
 export const Campaigns: React.FC = () => {
   const { dateRange, setDateRange } = useDateRange()
   const { labels } = useLabels()
 
   // Sistema híbrido de configuración
   const [visitorSource] = useAppConfig<'platform' | 'tracking'>('visitor_source', 'platform')
-  const [showAnalyticsConfig] = useAppConfig<boolean>('show_analytics', true)
-  const analyticsEnabled = Boolean(showAnalyticsConfig)
+  const [showAnalyticsConfig] = useAppConfig<string | number | boolean>('show_analytics', '1')
+  const analyticsEnabled = parseAnalyticsFlag(showAnalyticsConfig)
 
   const [campaigns, setCampaigns] = useState<CampaignData[]>([])
   const [loading, setLoading] = useState(true)
