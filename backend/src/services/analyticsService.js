@@ -2,7 +2,7 @@ import { db } from '../config/database.js'
 import { DateTime } from 'luxon'
 import { resolveDateRange } from '../utils/dateUtils.js'
 import { logger } from '../utils/logger.js'
-import { getContactsWithAppointments } from './appointmentsCache.js'
+import { getContactsWithAppointments, getContactsWithAppointmentsByDateRange } from './appointmentsCache.js'
 
 const isPostgres = Boolean(process.env.DATABASE_URL)
 
@@ -781,7 +781,15 @@ export async function buildReportMetrics ({ startDate, endDate, groupBy = 'day',
       }
     })
   } else {
-    // Vista "Todos": Agrupar por fecha en que se agendó la cita
+    // Vista "Todos": Cargar desde API + DB filtrado por dateAdded
+    // PASO 1: Disparar carga de API para actualizar cache de DB
+    const config = await db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1')
+    if (config && config.api_token) {
+      // Esto carga desde API y actualiza la DB automáticamente
+      await getContactsWithAppointments(config.location_id, config.api_token)
+    }
+
+    // PASO 2: Consultar appointments de DB (ahora actualizada) filtrados por dateAdded
     const appointmentParams = []
     const appointmentConditions = buildRangeConditions('a.date_added', range, appointmentParams)
 
@@ -797,6 +805,7 @@ export async function buildReportMetrics ({ startDate, endDate, groupBy = 'day',
     const appointmentGroupExpr = getGroupExpression('a.date_added', groupBy)
     const contactDedupExpr = buildDedupExpression('c')
 
+    // Query a la DB (que se mantiene actualizada con sincronización + cache de API)
     const appointmentsQuery = `
       SELECT
         ${appointmentGroupExpr} as period,
@@ -815,7 +824,7 @@ export async function buildReportMetrics ({ startDate, endDate, groupBy = 'day',
       bucket.appointments += Number(row.unique_appointments || 0)
     })
 
-    logger.info(`📊 Appointments agrupados por fecha de agenda (vista Todos - Reports tabla)`)
+    logger.info(`📊 Appointments agrupados por dateAdded (vista Todos - Reports tabla)`)
   }
 
   // Convertir sets a conteos
@@ -1129,7 +1138,15 @@ export async function buildContactsList ({ startDate, endDate, type = 'interesad
       contactIds = appointmentContacts.map(row => row.contact_id)
       appointmentsMap = await fetchAppointmentsForContacts(contactIds)
     } else {
-      // Vista "Todos": Filtrar por fecha en que se agendó la cita (date_added)
+      // Vista "Todos": Cargar desde API + DB filtrado por dateAdded
+      // PASO 1: Disparar carga de API para actualizar cache de DB
+      const config = await db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1')
+      if (config && config.api_token) {
+        // Esto carga desde API y actualiza la DB automáticamente
+        await getContactsWithAppointments(config.location_id, config.api_token)
+      }
+
+      // PASO 2: Consultar appointments de DB (ahora actualizada) filtrados por dateAdded
       const appointmentParams = []
       const appointmentConditions = []
 

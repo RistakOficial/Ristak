@@ -174,6 +174,165 @@ export async function loadAllAppointments(locationId, apiToken) {
 }
 
 /**
+ * Obtiene contact_ids con citas filtradas por rango de fechas de creación (dateAdded)
+ * Usa DB + API de HighLevel para obtener todas las citas y luego filtra por dateAdded
+ * FILTRA por calendarios de atribución configurados
+ *
+ * @param {string} locationId - ID del location de HighLevel
+ * @param {string} apiToken - Token de acceso de HighLevel
+ * @param {string} startDate - Fecha inicio ISO (opcional)
+ * @param {string} endDate - Fecha fin ISO (opcional)
+ * @returns {Promise<Set<string>>} Set de contact_ids que tienen citas en el rango
+ */
+export async function getContactsWithAppointmentsByDateRange(locationId, apiToken, startDate = null, endDate = null) {
+  try {
+    if (!locationId || !apiToken) {
+      logger.warn('No se proporcionó locationId o apiToken para cargar citas')
+      return new Set()
+    }
+
+    // PASO 1: Obtener calendarios de atribución configurados
+    const attributionCalendarIds = await getAttributionCalendarIds()
+
+    // PASO 2: Si hay rango de fechas, filtrar desde la DB primero
+    const contactsWithAppointments = new Set()
+
+    if (startDate || endDate) {
+      // Filtrar por date_added en la DB
+      const conditions = ['contact_id IS NOT NULL']
+      const params = []
+
+      if (attributionCalendarIds && attributionCalendarIds.length > 0) {
+        const placeholders = attributionCalendarIds.map(() => '?').join(',')
+        conditions.push(`calendar_id IN (${placeholders})`)
+        params.push(...attributionCalendarIds)
+      }
+
+      if (startDate) {
+        conditions.push('date_added >= ?')
+        params.push(startDate)
+      }
+
+      if (endDate) {
+        conditions.push('date_added <= ?')
+        params.push(endDate)
+      }
+
+      const dbContacts = await db.all(`
+        SELECT DISTINCT contact_id
+        FROM appointments
+        WHERE ${conditions.join(' AND ')}
+      `, params)
+
+      dbContacts.forEach(row => contactsWithAppointments.add(row.contact_id))
+
+      logger.info(`📊 DB filtrada por dateAdded (${startDate} - ${endDate}): ${contactsWithAppointments.size} contactos`)
+    }
+
+    // PASO 3: Cargar eventos frescos de API y filtrar por dateAdded
+    const calendarsResponse = await fetch(
+      `https://services.leadconnectorhq.com/calendars/?locationId=${locationId}`,
+      {
+        headers: {
+          'Authorization': `Bearer ${apiToken}`,
+          'Version': '2021-07-28'
+        }
+      }
+    )
+
+    if (!calendarsResponse.ok) {
+      logger.error('Error al obtener calendarios de HighLevel')
+      return contactsWithAppointments // Devolver solo DB si API falla
+    }
+
+    const calendarsData = await calendarsResponse.json()
+    let calendars = calendarsData.calendars || []
+
+    // Filtrar por calendarios de atribución
+    if (attributionCalendarIds && attributionCalendarIds.length > 0) {
+      calendars = calendars.filter(cal => attributionCalendarIds.includes(cal.id))
+    }
+
+    // PASO 4: Cargar eventos de cada calendario y filtrar por dateAdded
+    const now = new Date()
+    const past = new Date(now.getFullYear() - 10, 0, 1)
+    const future = new Date(now.getFullYear() + 10, 11, 31)
+
+    for (const calendar of calendars.filter(cal => cal.isActive)) {
+      try {
+        const eventsResponse = await fetch(
+          `https://services.leadconnectorhq.com/calendars/events?` +
+          `locationId=${locationId}` +
+          `&startTime=${past.getTime()}` +
+          `&endTime=${future.getTime()}` +
+          `&calendarId=${calendar.id}`,
+          {
+            headers: {
+              'Authorization': `Bearer ${apiToken}`,
+              'Version': '2021-07-28'
+            }
+          }
+        )
+
+        if (eventsResponse.ok) {
+          const eventsData = await eventsResponse.json()
+          const events = eventsData.events || []
+
+          // Filtrar por dateAdded si hay rango
+          for (const event of events) {
+            if (!event.contactId) continue
+
+            const eventDateAdded = event.dateAdded || event.createdAt || event.createdOn || event.startTime
+
+            // Filtrar por rango de fechas si está especificado
+            if (startDate && eventDateAdded < startDate) continue
+            if (endDate && eventDateAdded > endDate) continue
+
+            contactsWithAppointments.add(event.contactId)
+
+            // Guardar en DB (cache)
+            const dateAdded = event.dateAdded || event.createdAt || event.createdOn || event.startTime || new Date().toISOString()
+            const dateUpdated = event.dateUpdated || event.updatedAt || event.updatedOn || dateAdded
+
+            await db.run(`
+              INSERT INTO appointments (id, contact_id, calendar_id, location_id, title, status, start_time, end_time, date_added, date_updated)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              ON CONFLICT(id) DO UPDATE SET
+                status = excluded.status,
+                start_time = excluded.start_time,
+                end_time = excluded.end_time,
+                date_updated = excluded.date_updated,
+                date_added = COALESCE(appointments.date_added, excluded.date_added)
+            `, [
+              event.id,
+              event.contactId,
+              event.calendarId || calendar.id,
+              event.locationId || locationId,
+              event.title || '',
+              event.status || 'scheduled',
+              event.startTime || '',
+              event.endTime || '',
+              dateAdded,
+              dateUpdated
+            ]).catch(() => {})
+          }
+        }
+      } catch (error) {
+        logger.warn(`Error cargando eventos del calendario ${calendar.id}: ${error.message}`)
+      }
+    }
+
+    logger.info(`📊 Total con filtro dateAdded (DB + API): ${contactsWithAppointments.size} contactos`)
+
+    return contactsWithAppointments
+
+  } catch (error) {
+    logger.error(`Error en getContactsWithAppointmentsByDateRange: ${error.message}`)
+    return new Set()
+  }
+}
+
+/**
  * Obtiene contact_ids con citas desde DB local + API de HighLevel
  * Usa DB como cache y carga eventos frescos de API
  * FILTRA por calendarios de atribución configurados
