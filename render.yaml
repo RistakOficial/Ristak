@@ -29,7 +29,6 @@ services:
         value: https://ristak-app.onrender.com
       - key: RENDER_EXTERNAL_URL
         value: https://ristak-app.onrender.com
-      - key: ENCRYPTION_MASTER_KEY
-        sync: false  # SECRETO - Configurar manualmente en Render Dashboard
+      # ENCRYPTION_MASTER_KEY se auto-genera y guarda en la DB al primer deploy (ver encryption.js)
     healthCheckPath: /api/health
     autoDeploy: true

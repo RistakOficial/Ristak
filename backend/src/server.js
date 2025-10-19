@@ -4,6 +4,7 @@ import cors from 'cors'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
 import { logger } from './utils/logger.js'
+import { initializeMasterKey } from './utils/encryption.js'
 import { startMetaSyncCron } from './jobs/metaSync.cron.js'
 import { startContactsSyncCron } from './jobs/contactsSync.cron.js'
 import { startMetaVersionCron } from './jobs/metaVersionCron.js'
@@ -36,6 +37,9 @@ const __dirname = dirname(__filename)
 
 const app = express()
 const PORT = process.env.PORT || 3001
+
+// Render y la mayoría de despliegues están detrás de un proxy que envía X-Forwarded-For con la IP real
+app.set('trust proxy', true)
 
 // Middlewares
 app.use(cors())
@@ -100,6 +104,9 @@ app.use((err, req, res, next) => {
 app.listen(PORT, async () => {
   logger.success(`🚀 Servidor corriendo en puerto ${PORT}`)
   logger.info(`Entorno: ${process.env.NODE_ENV || 'development'}`)
+
+  // Inicializar clave maestra de encriptación (DEBE ser lo primero)
+  await initializeMasterKey()
 
   // Inicializar versión de Meta API desde BD
   await initializeVersion()

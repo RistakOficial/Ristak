@@ -546,7 +546,23 @@ export async function collectEvent(req, res) {
     }
 
     // Extraer IP y User-Agent del request
-    let ip = req.ip || req.headers['x-forwarded-for'] || req.connection.remoteAddress || null
+    let ip = null
+    const xForwardedFor = req.headers['x-forwarded-for']
+    if (typeof xForwardedFor === 'string' && xForwardedFor.length > 0) {
+      ip = xForwardedFor.split(',')[0].trim()
+    } else if (Array.isArray(xForwardedFor) && xForwardedFor.length > 0) {
+      ip = xForwardedFor[0].trim()
+    } else if (typeof req.headers['cf-connecting-ip'] === 'string') {
+      ip = req.headers['cf-connecting-ip']
+    }
+
+    if (!ip) {
+      ip =
+        req.ip ||
+        req.socket?.remoteAddress ||
+        req.connection?.remoteAddress ||
+        null
+    }
 
     // Limpiar prefijo IPv6 (::ffff:) de IPs mapeadas
     if (ip && ip.startsWith('::ffff:')) {

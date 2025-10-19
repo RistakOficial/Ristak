@@ -1,5 +1,6 @@
 import crypto from 'crypto'
 import { logger } from './logger.js'
+import { query } from '../config/database.js'
 
 // Algoritmo de encriptación (AES-256-GCM es el más seguro)
 const ALGORITHM = 'aes-256-gcm'
@@ -8,25 +9,84 @@ const IV_LENGTH = 16  // 128 bits
 const SALT_LENGTH = 64
 const TAG_LENGTH = 16
 
-/**
- * Obtiene la clave maestra de encriptación desde variables de entorno
- * Si no existe, genera una temporal (solo para desarrollo)
- */
-function getMasterKey() {
-  const envKey = process.env.ENCRYPTION_MASTER_KEY
+// Cache de la master key en memoria
+let cachedMasterKey = null
 
-  if (envKey) {
-    return Buffer.from(envKey, 'hex')
+/**
+ * Obtiene o genera la clave maestra de encriptación
+ * Prioridad: 1) Variable de entorno, 2) Base de datos, 3) Generar nueva
+ */
+async function getMasterKey() {
+  // Si ya está en cache, retornarla
+  if (cachedMasterKey) {
+    return cachedMasterKey
   }
 
-  // En desarrollo, generar una clave temporal
-  logger.warn('⚠️  ENCRYPTION_MASTER_KEY no encontrada. Generando clave temporal (solo desarrollo)')
-  logger.warn('   Para producción, agrega ENCRYPTION_MASTER_KEY en tu .env')
+  // 1. Intentar desde variable de entorno
+  const envKey = process.env.ENCRYPTION_MASTER_KEY
+  if (envKey) {
+    cachedMasterKey = Buffer.from(envKey, 'hex')
+    logger.info('✅ ENCRYPTION_MASTER_KEY cargada desde variables de entorno')
+    return cachedMasterKey
+  }
 
-  const tempKey = crypto.randomBytes(KEY_LENGTH)
-  logger.info('   Clave temporal generada:', tempKey.toString('hex'))
+  // 2. Intentar desde base de datos
+  try {
+    const result = await query(
+      'SELECT value FROM app_config WHERE key = $1',
+      ['encryption_master_key']
+    )
 
-  return tempKey
+    if (result.rows.length > 0) {
+      cachedMasterKey = Buffer.from(result.rows[0].value, 'hex')
+      logger.info('✅ ENCRYPTION_MASTER_KEY cargada desde base de datos')
+      return cachedMasterKey
+    }
+  } catch (error) {
+    logger.warn('⚠️  No se pudo leer ENCRYPTION_MASTER_KEY de la DB:', error.message)
+  }
+
+  // 3. Generar nueva clave y guardarla en DB
+  logger.warn('⚠️  ENCRYPTION_MASTER_KEY no encontrada. Generando nueva clave...')
+  const newKey = crypto.randomBytes(KEY_LENGTH)
+  const newKeyHex = newKey.toString('hex')
+
+  try {
+    await query(
+      `INSERT INTO app_config (key, value)
+       VALUES ($1, $2)
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+      ['encryption_master_key', newKeyHex]
+    )
+    logger.info('✅ Nueva ENCRYPTION_MASTER_KEY generada y guardada en DB')
+    logger.info('   Clave generada:', newKeyHex)
+    logger.info('   💡 IMPORTANTE: Guarda esta clave en un lugar seguro como respaldo')
+  } catch (error) {
+    logger.error('❌ Error guardando ENCRYPTION_MASTER_KEY en DB:', error.message)
+    logger.warn('⚠️  Usando clave temporal en memoria (se perderá al reiniciar)')
+  }
+
+  cachedMasterKey = newKey
+  return cachedMasterKey
+}
+
+/**
+ * Versión sincrónica de getMasterKey (para compatibilidad con código existente)
+ * SOLO usar si ya se inicializó la clave previamente
+ */
+function getMasterKeySync() {
+  if (!cachedMasterKey) {
+    throw new Error('Master key no inicializada. Llama a initializeMasterKey() primero')
+  }
+  return cachedMasterKey
+}
+
+/**
+ * Inicializa la master key al arrancar el servidor
+ * DEBE llamarse antes de cualquier operación de encriptación
+ */
+export async function initializeMasterKey() {
+  await getMasterKey()
 }
 
 /**
@@ -47,7 +107,7 @@ export function encrypt(text) {
   }
 
   try {
-    const masterKey = getMasterKey()
+    const masterKey = getMasterKeySync()
 
     // Generar salt, IV y derivar clave
     const salt = crypto.randomBytes(SALT_LENGTH)
@@ -87,7 +147,7 @@ export function decrypt(encryptedData) {
   }
 
   try {
-    const masterKey = getMasterKey()
+    const masterKey = getMasterKeySync()
 
     // Separar componentes del texto encriptado
     const parts = encryptedData.split(':')
