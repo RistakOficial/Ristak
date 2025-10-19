@@ -586,18 +586,21 @@ export function ContactDetailsModal({
                   {/* COLUMNA IZQUIERDA: Citas */}
                   {selectedContact.appointments && selectedContact.appointments.length > 0 && (
                     <div className={styles.detailSection}>
-                      <div className={styles.summaryCard}>
-                        <h5 className={styles.summaryTitle}>Citas</h5>
-                        <p className={styles.summaryCount}>{selectedContact.appointments.length}</p>
-                      </div>
                       <button
                         type="button"
-                        className={styles.toggleButton}
+                        className={styles.summaryCardButton}
                         onClick={() => setAppointmentsExpanded(prev => !prev)}
                       >
-                        <div className={styles.toggleLabel}>
-                          <Icon name={appointmentsExpanded ? 'chevron-down' : 'chevron-right'} size={16} />
-                          <span>Ver detalle</span>
+                        <div className={styles.summaryCardContent}>
+                          <div>
+                            <h5 className={styles.summaryTitle}>Citas</h5>
+                            <p className={styles.summaryCount}>{selectedContact.appointments.length}</p>
+                          </div>
+                          <Icon
+                            name={appointmentsExpanded ? 'chevron-down' : 'chevron-right'}
+                            size={20}
+                            className={styles.summaryCardChevron}
+                          />
                         </div>
                       </button>
 
@@ -643,18 +646,21 @@ export function ContactDetailsModal({
                   {/* COLUMNA DERECHA: Pagos */}
                   {payments.length > 0 && (
                     <div className={styles.detailSection}>
-                      <div className={styles.summaryCard}>
-                        <h5 className={styles.summaryTitle}>Pagos</h5>
-                        <p className={styles.summaryAmount}>{formatCurrency(payments.reduce((sum, payment) => sum + payment.amount, 0))}</p>
-                      </div>
                       <button
                         type="button"
-                        className={styles.toggleButton}
+                        className={styles.summaryCardButton}
                         onClick={() => setPaymentsExpanded(prev => !prev)}
                       >
-                        <div className={styles.toggleLabel}>
-                          <Icon name={paymentsExpanded ? 'chevron-down' : 'chevron-right'} size={16} />
-                          <span>Ver {payments.length} {payments.length === 1 ? 'pago' : 'pagos'}</span>
+                        <div className={styles.summaryCardContent}>
+                          <div>
+                            <h5 className={styles.summaryTitle}>Pagos</h5>
+                            <p className={styles.summaryAmount}>{formatCurrency(payments.reduce((sum, payment) => sum + payment.amount, 0))}</p>
+                          </div>
+                          <Icon
+                            name={paymentsExpanded ? 'chevron-down' : 'chevron-right'}
+                            size={20}
+                            className={styles.summaryCardChevron}
+                          />
                         </div>
                       </button>
 

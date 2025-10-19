@@ -517,6 +517,37 @@
   min-height: 4.5rem;
 }
 
+.summaryCardButton {
+  width: 100%;
+  background: color-mix(in srgb, var(--color-background-glass) 50%, transparent);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: var(--radius-sm);
+  padding: 1rem;
+  margin-bottom: 0.75rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-align: left;
+}
+
+.summaryCardButton:hover {
+  border-color: rgba(var(--color-primary-rgb), 0.3);
+  background: color-mix(in srgb, var(--color-background-glass) 70%, rgba(71, 85, 105, 0.05));
+}
+
+.summaryCardContent {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  min-height: 3rem;
+}
+
+.summaryCardChevron {
+  color: var(--color-text-tertiary);
+  transition: transform 0.2s ease;
+  flex-shrink: 0;
+}
+
 .summaryTitle {
   font-size: 0.875rem;
   font-weight: 600;
