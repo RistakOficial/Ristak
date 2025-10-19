@@ -12,6 +12,7 @@ import {
   ChevronRight
 } from 'lucide-react'
 import { useTableConfig } from '@/hooks'
+import { TabList } from '../TabList'
 import styles from './Table.module.css'
 
 export interface Column<T> {
@@ -288,17 +289,11 @@ export function Table<T extends Record<string, any>>({
           )}
 
           {filters && (
-            <div className={styles.filterContainer}>
-              {filters.map(filter => (
-                <button
-                  key={filter.value}
-                  className={`${styles.filterButton} ${activeFilter === filter.value ? styles.active : ''}`}
-                  onClick={() => onFilterChange?.(filter.value)}
-                >
-                  {filter.label}
-                </button>
-              ))}
-            </div>
+            <TabList
+              tabs={filters}
+              activeTab={activeFilter}
+              onChange={onFilterChange ?? (() => {})}
+            />
           )}
         </div>
 

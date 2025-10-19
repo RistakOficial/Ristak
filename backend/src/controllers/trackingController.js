@@ -956,7 +956,7 @@ export async function getVisitorsByAd(req, res) {
     }
 
     // Asegurar que endDate incluya todo el día (hasta 23:59:59)
-    const endDateWithTime = (endDate.includes('T') || endDate.includes(':')) ? endDate : `${endDate} 23:59:59`
+    const endDateWithTime = (endDate.includes('T') || endDate.includes(':')) ? endDate : `${endDate}T23:59:59`
 
     logger.info(`Obteniendo visitantes por ad - rango: ${startDate} -> ${endDateWithTime}`)
 
@@ -1006,7 +1006,7 @@ export async function getVisitorsByPeriod(req, res) {
 
     // Asegurar que endDate incluya todo el día (hasta 23:59:59)
     // Solo agregar si no tiene hora ya (ni 'T' ni ':')
-    const endDateWithTime = (endDate.includes('T') || endDate.includes(':')) ? endDate : `${endDate} 23:59:59`
+    const endDateWithTime = (endDate.includes('T') || endDate.includes(':')) ? endDate : `${endDate}T23:59:59`
 
     logger.info(`Obteniendo visitantes por período - rango: ${startDate} -> ${endDateWithTime}, groupBy: ${groupBy}`)
 
@@ -1161,7 +1161,7 @@ export async function getVisitorsList(req, res) {
     }
 
     // Asegurar que endDate incluya todo el día
-    const endDateWithTime = (endDate.includes('T') || endDate.includes(':')) ? endDate : `${endDate} 23:59:59`
+    const endDateWithTime = (endDate.includes('T') || endDate.includes(':')) ? endDate : `${endDate}T23:59:59`
 
     logger.info(`Obteniendo lista de visitantes - rango: ${startDate} -> ${endDateWithTime}, ad_id: ${ad_id}, campaign_id: ${campaign_id}, adset_id: ${adset_id}`)
 

@@ -137,14 +137,14 @@ export const formatDateToISO = (date: Date): string => {
 }
 
 /**
- * Formatea una fecha de fin para incluir TODO el día (hasta 23:59:59)
+ * Formatea una fecha de fin para incluir TODO el día (hasta 23:59:59) en formato ISO
  * Usa esto para endDate en queries que necesitan ser inclusivos
  */
 export const formatEndDateToISO = (date: Date): string => {
   const year = date.getFullYear()
   const month = String(date.getMonth() + 1).padStart(2, '0')
   const day = String(date.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day} 23:59:59`
+  return `${year}-${month}-${day}T23:59:59`
 }
 
 export const formatCurrency = (value: number): string => {
