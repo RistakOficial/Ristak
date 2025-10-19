@@ -694,7 +694,12 @@ export const Campaigns: React.FC = () => {
     },
     {
       key: 'sales',
-      header: `Nuevo ${labels.customer}`,
+      header: (
+        <div style={{ textAlign: 'center', lineHeight: '1.2' }}>
+          <div>{labels.customer}</div>
+          <div style={{ fontSize: '0.75em', opacity: 0.7 }}>(Nuevos)</div>
+        </div>
+      ),
       visible: true,
       render: (value, item) => {
         if (item.showPlaceholder) return <span className={styles.placeholderText}>—</span>
