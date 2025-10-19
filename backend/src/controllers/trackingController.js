@@ -1207,11 +1207,11 @@ export async function getVisitorsByPeriod(req, res) {
 
 /**
  * Obtener lista detallada de visitantes por ad/campaign/adset
- * GET /api/tracking/visitors?startDate=&endDate=&ad_id=&campaign_id=&adset_id=
+ * GET /api/tracking/visitors?startDate=&endDate=&ad_id=&campaign_id=&adset_id=&scope=
  */
 export async function getVisitorsList(req, res) {
   try {
-    const { startDate, endDate, ad_id, campaign_id, adset_id } = req.query
+    const { startDate, endDate, ad_id, campaign_id, adset_id, scope } = req.query
 
     if (!startDate || !endDate) {
       return res.status(400).json({ error: 'startDate y endDate son requeridos' })
@@ -1220,7 +1220,7 @@ export async function getVisitorsList(req, res) {
     // Asegurar que endDate incluya todo el día
     const endDateWithTime = (endDate.includes('T') || endDate.includes(':')) ? endDate : `${endDate}T23:59:59`
 
-    logger.info(`Obteniendo lista de visitantes - rango: ${startDate} -> ${endDateWithTime}, ad_id: ${ad_id}, campaign_id: ${campaign_id}, adset_id: ${adset_id}`)
+    logger.info(`Obteniendo lista de visitantes - rango: ${startDate} -> ${endDateWithTime}, scope: ${scope}, ad_id: ${ad_id}, campaign_id: ${campaign_id}, adset_id: ${adset_id}`)
 
     // Construir WHERE clause
     const conditions = ['s.created_at >= $1', 's.created_at <= $2']
@@ -1240,11 +1240,11 @@ export async function getVisitorsList(req, res) {
       paramCount++
       conditions.push(`s.campaign_id = $${paramCount}`)
       params.push(campaign_id)
-    } else {
-      // Si no se proveen filtros específicos, filtrar por ad_id IS NOT NULL
-      // para ser consistente con el endpoint visitors-by-period
+    } else if (scope === 'campaigns') {
+      // Vista "Última atribución": Solo visitantes que matchearon con anuncios
       conditions.push('s.ad_id IS NOT NULL')
     }
+    // Vista "Todos" (scope === 'all'): No filtrar, mostrar TODOS los visitantes
 
     // Query PostgreSQL: obtener visitantes únicos con sus datos de sesión
     const query = `

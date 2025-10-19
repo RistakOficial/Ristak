@@ -3,7 +3,7 @@ import { logger } from '../utils/logger.js';
 import { resolveDateRange } from '../utils/dateUtils.js';
 import { normalizeTrafficSource } from '../utils/trafficSourceNormalizer.js';
 import { DateTime } from 'luxon';
-import { getContactsWithAppointments } from '../services/appointmentsCache.js';
+import { getContactsWithAppointmentsHybrid } from '../services/appointmentsMerge.js';
 
 const calculateDelta = (current, previous) => {
   if (previous === 0) {
@@ -529,12 +529,12 @@ export const getAppointmentsData = async (req, res) => {
     // PASO 1: Obtener configuración de HighLevel
     const config = await db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1');
 
-    // PASO 2: Cargar TODOS los eventos de calendarios (método eficiente)
+    // PASO 2: Cargar TODOS los eventos de calendarios (híbrido DB + API)
     const contactsWithAppointments = config && config.api_token
-      ? await getContactsWithAppointments(config.location_id, config.api_token)
+      ? await getContactsWithAppointmentsHybrid(config.location_id, config.api_token)
       : new Set();
 
-    logger.info(`📊 ${contactsWithAppointments.size} contactos con citas (método optimizado)`);
+    logger.info(`📊 ${contactsWithAppointments.size} contactos con citas (híbrido DB + API)`);
 
     // PASO 3: Obtener contactos del rango de fechas
     const contactsQuery = usePostgres

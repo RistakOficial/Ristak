@@ -2,7 +2,7 @@ import { db } from '../config/database.js'
 import { DateTime } from 'luxon'
 import { resolveDateRange } from '../utils/dateUtils.js'
 import { logger } from '../utils/logger.js'
-import { getContactsWithAppointments, getContactsWithAppointmentsByDateRange } from './appointmentsCache.js'
+import { getContactsWithAppointmentsHybrid, loadAppointmentsFromDB, loadAppointmentsFromAPI, mergeAppointments } from './appointmentsMerge.js'
 
 const isPostgres = Boolean(process.env.DATABASE_URL)
 
@@ -766,12 +766,15 @@ export async function buildReportMetrics ({ startDate, endDate, groupBy = 'day',
 
   if (useContactAttribution) {
     // Vista "Última atribución": Usar fecha de creación del contacto
+    // Solo necesitamos saber SI el contacto tiene cita (híbrido DB + API)
     const config = await db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1')
+    const attributionCalendarIds = await getAttributionCalendarIds()
+
     const contactsWithAppointments = config && config.api_token
-      ? await getContactsWithAppointments(config.location_id, config.api_token)
+      ? await getContactsWithAppointmentsHybrid(config.location_id, config.api_token, attributionCalendarIds)
       : new Set()
 
-    logger.info(`📊 ${contactsWithAppointments.size} contactos con citas (método optimizado - Reports atribución)`)
+    logger.info(`📊 ${contactsWithAppointments.size} contactos con citas (híbrido DB + API - Reports atribución)`)
 
     contactsRaw.forEach(contact => {
       if (contactsWithAppointments.has(contact.contact_id)) {
@@ -781,50 +784,58 @@ export async function buildReportMetrics ({ startDate, endDate, groupBy = 'day',
       }
     })
   } else {
-    // Vista "Todos": Cargar desde API + DB filtrado por dateAdded
-    // PASO 1: Disparar carga de API para actualizar cache de DB
+    // Vista "Todos": Agrupar por dateAdded (híbrido DB + API)
     const config = await db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1')
-    if (config && config.api_token) {
-      // Esto carga desde API y actualiza la DB automáticamente
-      await getContactsWithAppointments(config.location_id, config.api_token)
-    }
-
-    // PASO 2: Consultar appointments de DB (ahora actualizada) filtrados por dateAdded
-    const appointmentParams = []
-    const appointmentConditions = buildRangeConditions('a.date_added', range, appointmentParams)
-
-    // Filtrar por calendarios de atribución configurados
     const attributionCalendarIds = await getAttributionCalendarIds()
-    if (attributionCalendarIds && attributionCalendarIds.length > 0) {
-      const calendarPlaceholders = attributionCalendarIds.map(() => '?').join(',')
-      appointmentConditions.push(`a.calendar_id IN (${calendarPlaceholders})`)
-      appointmentParams.push(...attributionCalendarIds)
-    }
 
-    const appointmentWhere = appointmentConditions.length ? `WHERE ${appointmentConditions.join(' AND ')}` : ''
-    const appointmentGroupExpr = getGroupExpression('a.date_added', groupBy)
-    const contactDedupExpr = buildDedupExpression('c')
+    // Cargar de ambas fuentes en paralelo
+    const [dbAppointments, apiAppointments] = await Promise.all([
+      loadAppointmentsFromDB({
+        calendarIds: attributionCalendarIds,
+        startDate: range.startUtc,
+        endDate: range.endUtc
+      }),
+      config && config.api_token
+        ? loadAppointmentsFromAPI(config.location_id, config.api_token, attributionCalendarIds)
+        : []
+    ])
 
-    // Query a la DB (que se mantiene actualizada con sincronización + cache de API)
-    const appointmentsQuery = `
-      SELECT
-        ${appointmentGroupExpr} as period,
-        COUNT(DISTINCT ${contactDedupExpr}) as unique_appointments
-      FROM appointments a
-      LEFT JOIN contacts c ON c.id = a.contact_id
-      ${appointmentWhere}
-      GROUP BY period
-      ORDER BY period
-    `
+    // Combinar con deduplicación (tomar dateAdded más antiguo)
+    const allAppointments = mergeAppointments(dbAppointments, apiAppointments, 'oldest_date')
 
-    const appointmentRows = await db.all(appointmentsQuery, appointmentParams)
-
-    appointmentRows.forEach(row => {
-      const bucket = ensureBucket(row.period)
-      bucket.appointments += Number(row.unique_appointments || 0)
+    // Filtrar por rango de fechas de dateAdded
+    const appointmentsInRange = allAppointments.filter(apt => {
+      if (!apt.dateAdded) return false
+      const dateAdded = new Date(apt.dateAdded)
+      const start = new Date(range.startUtc)
+      const end = new Date(range.endUtc)
+      return dateAdded >= start && dateAdded <= end
     })
 
-    logger.info(`📊 Appointments agrupados por dateAdded (vista Todos - Reports tabla)`)
+    // Agrupar por período y deduplicar contactos
+    appointmentsInRange.forEach(apt => {
+      const dateAdded = new Date(apt.dateAdded)
+      let periodKey
+
+      if (groupBy === 'month') {
+        periodKey = `${dateAdded.getFullYear()}-${String(dateAdded.getMonth() + 1).padStart(2, '0')}`
+      } else if (groupBy === 'year') {
+        periodKey = `${dateAdded.getFullYear()}`
+      } else {
+        periodKey = `${dateAdded.getFullYear()}-${String(dateAdded.getMonth() + 1).padStart(2, '0')}-${String(dateAdded.getDate()).padStart(2, '0')}`
+      }
+
+      const bucket = ensureBucket(periodKey)
+
+      // Buscar contacto para deduplicar
+      const contact = contactsRaw.find(c => c.contact_id === apt.contactId)
+      if (contact) {
+        const baseKey = buildContactKey(contact) ?? `contact-${contactKeyFallback++}`
+        bucket.appointmentsSet.add(baseKey)
+      }
+    })
+
+    logger.info(`📊 Appointments agrupados por dateAdded (híbrido DB + API - vista Todos - Reports tabla)`)
   }
 
   // Convertir sets a conteos
@@ -1138,46 +1149,41 @@ export async function buildContactsList ({ startDate, endDate, type = 'interesad
       contactIds = appointmentContacts.map(row => row.contact_id)
       appointmentsMap = await fetchAppointmentsForContacts(contactIds)
     } else {
-      // Vista "Todos": Cargar desde API + DB filtrado por dateAdded
-      // PASO 1: Disparar carga de API para actualizar cache de DB
+      // Vista "Todos": Híbrido DB + API filtrado por dateAdded
       const config = await db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1')
-      if (config && config.api_token) {
-        // Esto carga desde API y actualiza la DB automáticamente
-        await getContactsWithAppointments(config.location_id, config.api_token)
-      }
-
-      // PASO 2: Consultar appointments de DB (ahora actualizada) filtrados por dateAdded
-      const appointmentParams = []
-      const appointmentConditions = []
-
-      if (range.startUtc) {
-        appointmentConditions.push('a.date_added >= ?')
-        appointmentParams.push(range.startUtc)
-      }
-      if (range.endUtc) {
-        appointmentConditions.push('a.date_added <= ?')
-        appointmentParams.push(range.endUtc)
-      }
-
-      // Filtrar por calendarios de atribución configurados
       const attributionCalendarIds = await getAttributionCalendarIds()
-      if (attributionCalendarIds && attributionCalendarIds.length > 0) {
-        const calendarPlaceholders = attributionCalendarIds.map(() => '?').join(',')
-        appointmentConditions.push(`a.calendar_id IN (${calendarPlaceholders})`)
-        appointmentParams.push(...attributionCalendarIds)
-      }
 
-      const appointmentWhere = appointmentConditions.length ? `WHERE ${appointmentConditions.join(' AND ')}` : ''
-      const appointmentsQuery = `
-        SELECT DISTINCT a.contact_id
-        FROM appointments a
-        ${appointmentWhere}
-      `
-      const appointmentContacts = await db.all(appointmentsQuery, appointmentParams)
-      contactIds = appointmentContacts.map(row => row.contact_id)
+      // Cargar de ambas fuentes en paralelo
+      const [dbAppointments, apiAppointments] = await Promise.all([
+        loadAppointmentsFromDB({
+          calendarIds: attributionCalendarIds
+        }),
+        config && config.api_token
+          ? loadAppointmentsFromAPI(config.location_id, config.api_token, attributionCalendarIds)
+          : []
+      ])
+
+      // Combinar con deduplicación (tomar dateAdded más antiguo)
+      const allAppointments = mergeAppointments(dbAppointments, apiAppointments, 'oldest_date')
+
+      // Filtrar por rango de fechas de dateAdded
+      const appointmentsInRange = allAppointments.filter(apt => {
+        if (!apt.dateAdded) return false
+        const dateAdded = new Date(apt.dateAdded)
+        const start = range.startUtc ? new Date(range.startUtc) : null
+        const end = range.endUtc ? new Date(range.endUtc) : null
+
+        if (start && dateAdded < start) return false
+        if (end && dateAdded > end) return false
+        return true
+      })
+
+      // Extraer contact_ids únicos
+      const contactIdsSet = new Set(appointmentsInRange.map(apt => apt.contactId))
+      contactIds = Array.from(contactIdsSet)
       appointmentsMap = await fetchAppointmentsForContacts(contactIds, range)
 
-      logger.info(`📊 ${contactIds.length} contactos con citas agendadas en el rango (vista Todos - Reports modal)`)
+      logger.info(`📊 ${contactIds.length} contactos con citas agendadas en el rango (híbrido DB + API - Reports modal)`)
     }
   }
 

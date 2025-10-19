@@ -10,7 +10,7 @@ import {
   verifyMetaToken
 } from '../services/metaAdsService.js';
 import { resolveDateRange } from '../utils/dateUtils.js';
-import { getContactsWithAppointments } from '../services/appointmentsCache.js';
+import { getContactsWithAppointmentsHybrid } from '../services/appointmentsMerge.js';
 
 /**
  * Obtiene los calendarios configurados para atribución
@@ -19,15 +19,15 @@ import { getContactsWithAppointments } from '../services/appointmentsCache.js';
 async function getAttributionCalendarIds() {
   try {
     const config = await db.get(
-      'SELECT value FROM app_config WHERE key = ?',
+      'SELECT config_value FROM app_config WHERE config_key = ?',
       ['attribution_calendar_ids']
     );
 
-    if (!config || !config.value) {
+    if (!config || !config.config_value) {
       return null; // null = usar todos los calendarios
     }
 
-    const calendarIds = JSON.parse(config.value);
+    const calendarIds = JSON.parse(config.config_value);
     return calendarIds.length > 0 ? calendarIds : null;
   } catch (error) {
     logger.warn(`Error al leer calendarios de atribución: ${error.message}`);
@@ -232,13 +232,13 @@ export const getCampaigns = async (req, res) => {
     // - Esto mide el impacto real de las campañas en generar citas (atribución correcta)
     // - Un contacto con 1000 citas cuenta como 1 solo contacto (métrica binaria: tiene o no tiene cita)
 
-    // PASO 1: Obtener configuración de HighLevel y cargar TODOS los eventos (método optimizado)
+    // PASO 1: Obtener configuración de HighLevel y cargar TODOS los eventos (híbrido DB + API)
     const config = await db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1');
     const contactsWithAppointments = config && config.api_token
-      ? await getContactsWithAppointments(config.location_id, config.api_token)
+      ? await getContactsWithAppointmentsHybrid(config.location_id, config.api_token)
       : new Set();
 
-    logger.info(`📊 ${contactsWithAppointments.size} contactos con citas (método optimizado - Campaigns)`);
+    logger.info(`📊 ${contactsWithAppointments.size} contactos con citas (híbrido DB + API - Campaigns)`);
 
     // PASO 2: Obtener métricas básicas de contactos CON validación de match en meta_ads
     // IMPORTANTE: Solo contar contactos cuyo attribution_ad_id tenga registro en meta_ads en la misma fecha
@@ -754,14 +754,14 @@ export const getContactsByType = async (req, res) => {
     const contactsParams = [...adIdsList, range.startUtc, range.endUtc];
     let contacts = await db.all(contactsQuery, contactsParams);
 
-    // Si type === 'appointments', filtrar usando método optimizado
+    // Si type === 'appointments', filtrar usando híbrido DB + API
     if (type === 'appointments') {
       const config = await db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1');
       const contactsWithAppointments = config && config.api_token
-        ? await getContactsWithAppointments(config.location_id, config.api_token)
+        ? await getContactsWithAppointmentsHybrid(config.location_id, config.api_token)
         : new Set();
 
-      logger.info(`📊 Filtrando ${contacts.length} contactos por citas (${contactsWithAppointments.size} con citas)`);
+      logger.info(`📊 Filtrando ${contacts.length} contactos por citas (${contactsWithAppointments.size} con citas - híbrido DB + API)`);
 
       // Filtrar solo contactos con citas
       contacts = contacts.filter(c => contactsWithAppointments.has(c.id));

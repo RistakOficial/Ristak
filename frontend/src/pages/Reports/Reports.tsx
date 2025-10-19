@@ -681,10 +681,12 @@ export const Reports: React.FC = () => {
     setVisitorsModalDate(displayDate)
 
     try {
+      const currentScope = reportTypeRef.current === 'campaigns' ? 'campaigns' : 'all'
       const response = await fetch(
         `/api/tracking/visitors?` + new URLSearchParams({
           startDate: startDate,
-          endDate: endDate
+          endDate: endDate,
+          scope: currentScope
         })
       )
 
@@ -701,7 +703,7 @@ export const Reports: React.FC = () => {
     } finally {
       setVisitorsModalLoading(false)
     }
-  }, [analyticsEnabled, showToast])
+  }, [analyticsEnabled, showToast, reportTypeRef])
 
   const initialColumns: Column<TableRow>[] = useMemo(() => {
     const salesLabel = reportType === 'campaigns' ? 'Ventas' : 'Transacciones'
