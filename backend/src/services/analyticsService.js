@@ -841,11 +841,71 @@ export async function buildReportMetrics ({ startDate, endDate, groupBy = 'day',
     })
   }
 
+  // PASO 5: Contar clientes nuevos según el scope
+  // Vista "Última atribución": Cliente nuevo = fecha de creación del contacto
+  // Vista "Todos": Cliente nuevo = fecha del PRIMER PAGO
+  const newCustomersMap = new Map() // period -> Set de customer keys
+
+  if (!useContactAttribution) {
+    // Vista "Todos": Agrupar por fecha del PRIMER PAGO
+    const firstPaymentsParams = []
+    const firstPaymentsConditions = []
+
+    if (range.startUtc) {
+      firstPaymentsConditions.push('first_payment_date >= ?')
+      firstPaymentsParams.push(range.startUtc)
+    }
+
+    if (range.endUtc) {
+      firstPaymentsConditions.push('first_payment_date <= ?')
+      firstPaymentsParams.push(range.endUtc)
+    }
+
+    applySuccessStatusFilter(firstPaymentsConditions, firstPaymentsParams, 'p')
+
+    const firstPaymentsWhere = firstPaymentsConditions.length ? `WHERE ${firstPaymentsConditions.join(' AND ')}` : ''
+    const firstPaymentGroupExpr = getGroupExpression('first_payment_date', groupBy)
+
+    // Subquery: obtener la fecha del primer pago de cada contacto
+    const firstPaymentsQuery = `
+      SELECT
+        ${firstPaymentGroupExpr} as period,
+        c.id as contact_id,
+        c.email,
+        c.phone
+      FROM contacts c
+      INNER JOIN (
+        SELECT contact_id, MIN(date) as first_payment_date
+        FROM payments p
+        ${firstPaymentsWhere.replace('first_payment_date', 'p.date')}
+        GROUP BY contact_id
+      ) first_p ON first_p.contact_id = c.id
+      ${firstPaymentsWhere}
+    `
+
+    const firstPaymentsRaw = await db.all(firstPaymentsQuery, firstPaymentsParams)
+
+    // Agrupar por período con deduplicación
+    firstPaymentsRaw.forEach(row => {
+      const period = row.period
+      if (!newCustomersMap.has(period)) {
+        newCustomersMap.set(period, new Set())
+      }
+      const customerSet = newCustomersMap.get(period)
+      const baseKey = buildContactKey(row) ?? `contact-${row.contact_id}`
+      customerSet.add(baseKey)
+    })
+  }
+
   // Convertir sets a conteos
   periodMap.forEach((bucket) => {
     bucket.leads = bucket.leadsSet.size
     bucket.customers = bucket.customersSet.size
-    bucket.new_customers = bucket.customersSet.size
+    // Vista "Última atribución": usar customersSet (fecha creación contacto)
+    // Vista "Todos": usar newCustomersMap (fecha primer pago)
+    bucket.new_customers = useContactAttribution
+      ? bucket.customersSet.size
+      : (newCustomersMap.has(bucket.period) ? newCustomersMap.get(bucket.period).size : 0)
     bucket.appointments = bucket.appointmentsSet.size  // ✅ Siempre convertir appointments
     // Limpiar sets temporales
     delete bucket.leadsSet
