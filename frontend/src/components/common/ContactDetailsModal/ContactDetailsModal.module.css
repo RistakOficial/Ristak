@@ -468,7 +468,7 @@
   padding: 0.625rem 0.875rem;
   background: color-mix(in srgb, var(--color-background-glass) 60%, transparent);
   border: 1px solid rgba(148, 163, 184, 0.18);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-sm);
   cursor: pointer;
   font-size: 0.8125rem;
   color: var(--color-text-primary);
@@ -490,6 +490,51 @@
 .toggleValue {
   font-weight: 600;
   color: var(--color-primary);
+}
+
+.twoColumnGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+@media (max-width: 900px) {
+  .twoColumnGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.summaryCard {
+  background: color-mix(in srgb, var(--color-background-glass) 50%, transparent);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: var(--radius-sm);
+  padding: 1rem;
+  margin-bottom: 0.75rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.summaryTitle {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  margin: 0;
+}
+
+.summaryCount {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--color-primary);
+  margin: 0;
+}
+
+.summaryAmount {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--color-success);
+  margin: 0;
 }
 
 .paymentList {

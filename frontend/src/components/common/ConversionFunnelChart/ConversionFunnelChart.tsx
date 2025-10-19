@@ -147,6 +147,21 @@ export const ConversionFunnelChart: React.FC<ConversionFunnelChartProps> = ({
               </span>
             </p>
           </div>
+          <div className={styles.insightItem}>
+            <p className={styles.insightLabel}>Citas → {labels.customers}</p>
+            <p className={styles.insightValue}>
+              <span className={styles.insightHighlight}>
+                {safeData[2]?.value > 0 ? ((safeData[3]?.value / safeData[2].value) * 100).toFixed(1) : '0'}%
+              </span>
+            </p>
+          </div>
+          <div className={styles.insightItem}>
+            <p className={styles.insightLabel}>Oportunidades perdidas</p>
+            <p className={styles.insightValue}>
+              {safeData[1]?.value > 0 ? (safeData[1].value - (safeData[2]?.value || 0)).toLocaleString() : '0'}
+              <span className={styles.insightSubtext}> {labels.leads} sin cita</span>
+            </p>
+          </div>
         </div>
       )}
     </Card>

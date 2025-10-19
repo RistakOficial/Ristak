@@ -126,13 +126,6 @@ export function VisitorDetailsModal({
     )
   }, [normalizedData, searchQuery])
 
-  const formatCurrency = (value: number) => {
-    return new Intl.NumberFormat('es-MX', {
-      style: 'currency',
-      currency: 'MXN'
-    }).format(value)
-  }
-
   const getDeviceIcon = (deviceType?: string) => {
     if (!deviceType) return 'monitor'
     const type = deviceType.toLowerCase()
@@ -259,7 +252,7 @@ export function VisitorDetailsModal({
                       className={`${styles.visitorItem} ${selectedVisitor?.visitorId === visitor.visitorId ? styles.visitorItemSelected : ''}`}
                     >
                       <div className={styles.visitorAvatar}>
-                        <Icon name={visitor.contact?.id ? 'user-check' : 'user'} size={16} />
+                        <Icon name="user" size={16} />
                       </div>
 
                       <div className={styles.visitorInfo}>
@@ -304,7 +297,7 @@ export function VisitorDetailsModal({
               {/* Visitor header */}
               <div className={styles.visitorHeader}>
                 <div className={styles.visitorHeaderAvatar}>
-                  <Icon name={selectedVisitor.contact?.id ? 'user-check' : 'user'} size={20} />
+                  <Icon name="user" size={20} />
                 </div>
                 <div className={styles.visitorHeaderInfo}>
                   <h4 className={styles.visitorHeaderName}>
@@ -347,12 +340,6 @@ export function VisitorDetailsModal({
                         <div className={styles.detailItem}>
                           <Icon name="phone" size={16} />
                           <span>{selectedVisitor.contact.phone}</span>
-                        </div>
-                      )}
-                      {selectedVisitor.contact.ltv && selectedVisitor.contact.ltv > 0 && (
-                        <div className={styles.detailItem}>
-                          <Icon name="dollar-sign" size={16} />
-                          <span>Valor: {formatCurrency(selectedVisitor.contact.ltv)}</span>
                         </div>
                       )}
                     </div>

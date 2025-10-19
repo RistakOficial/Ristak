@@ -590,56 +590,117 @@ export function ContactDetailsModal({
                   </div>
                 )}
 
-                {/* Pagos */}
-                {payments.length > 0 && (
-                  <div className={styles.detailSection}>
-                    <button
-                      type="button"
-                      className={styles.toggleButton}
-                      onClick={() => setPaymentsExpanded(prev => !prev)}
-                    >
-                      <div className={styles.toggleLabel}>
-                        <Icon name={paymentsExpanded ? 'chevron-down' : 'chevron-right'} size={16} />
-                        <span>Pagos ({payments.length})</span>
+                {/* Grid de 2 columnas: Citas y Pagos */}
+                <div className={styles.twoColumnGrid}>
+                  {/* COLUMNA IZQUIERDA: Citas */}
+                  {selectedContact.appointments && selectedContact.appointments.length > 0 && (
+                    <div className={styles.detailSection}>
+                      <div className={styles.summaryCard}>
+                        <h5 className={styles.summaryTitle}>Citas</h5>
+                        <p className={styles.summaryCount}>{selectedContact.appointments.length}</p>
                       </div>
-                      <span className={styles.toggleValue}>
-                        {formatCurrency(payments.reduce((sum, payment) => sum + payment.amount, 0))}
-                      </span>
-                    </button>
+                      <button
+                        type="button"
+                        className={styles.toggleButton}
+                        onClick={() => setAppointmentsExpanded(prev => !prev)}
+                      >
+                        <div className={styles.toggleLabel}>
+                          <Icon name={appointmentsExpanded ? 'chevron-down' : 'chevron-right'} size={16} />
+                          <span>Ver detalle</span>
+                        </div>
+                      </button>
 
-                    {paymentsExpanded && (
-                      <ul className={styles.paymentList}>
-                        {payments.map(payment => {
-                          const statusInfo = getStatusLabel(payment.status)
-                          return (
-                            <li key={payment.id} className={styles.paymentItem}>
-                              <div className={styles.paymentItemContent}>
-                                <div className={styles.paymentItemHeader}>
-                                  <p className={styles.paymentAmount}>{formatCurrency(payment.amount)}</p>
-                                  {payment.status && statusInfo.text && (
+                      {appointmentsExpanded && (
+                        <ul className={styles.paymentList}>
+                          {selectedContact.appointments.map(appointment => {
+                            const statusInfo = getAppointmentStatusLabel(appointment.status)
+                            const appointmentDate = new Date(appointment.start_time)
+                            const timeStr = appointmentDate.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit', hour12: true })
+
+                            return (
+                              <li key={appointment.id} className={styles.paymentItem}>
+                                <div className={styles.paymentItemContent}>
+                                  <div className={styles.paymentItemHeader}>
+                                    <p className={styles.paymentAmount}>{appointment.title || 'Cita'}</p>
                                     <Badge variant={statusInfo.variant} className={styles.paymentStatus}>
                                       {statusInfo.text}
                                     </Badge>
-                                  )}
+                                  </div>
+                                  <div className={styles.paymentItemDetails}>
+                                    <span className={styles.paymentDetailItem}>
+                                      <Icon name="calendar" size={12} />
+                                      {formatDate(appointment.start_time)}
+                                    </span>
+                                    <span className={styles.paymentDetailItem}>
+                                      <Icon name="clock" size={12} />
+                                      {timeStr}
+                                    </span>
+                                    <span className={styles.paymentDetailItem}>
+                                      <Icon name="hash" size={12} />
+                                      ID: {appointment.id.substring(0, 8)}...
+                                    </span>
+                                  </div>
                                 </div>
-                                <div className={styles.paymentItemDetails}>
-                                  <span className={styles.paymentDetailItem}>
-                                    <Icon name="calendar" size={12} />
-                                    {formatDate(payment.date)}
-                                  </span>
-                                  <span className={styles.paymentDetailItem}>
-                                    <Icon name="hash" size={12} />
-                                    ID: {payment.id.substring(0, 8)}...
-                                  </span>
+                              </li>
+                            )
+                          })}
+                        </ul>
+                      )}
+                    </div>
+                  )}
+
+                  {/* COLUMNA DERECHA: Pagos */}
+                  {payments.length > 0 && (
+                    <div className={styles.detailSection}>
+                      <div className={styles.summaryCard}>
+                        <h5 className={styles.summaryTitle}>Pagos</h5>
+                        <p className={styles.summaryAmount}>{formatCurrency(payments.reduce((sum, payment) => sum + payment.amount, 0))}</p>
+                      </div>
+                      <button
+                        type="button"
+                        className={styles.toggleButton}
+                        onClick={() => setPaymentsExpanded(prev => !prev)}
+                      >
+                        <div className={styles.toggleLabel}>
+                          <Icon name={paymentsExpanded ? 'chevron-down' : 'chevron-right'} size={16} />
+                          <span>Ver {payments.length} {payments.length === 1 ? 'pago' : 'pagos'}</span>
+                        </div>
+                      </button>
+
+                      {paymentsExpanded && (
+                        <ul className={styles.paymentList}>
+                          {payments.map(payment => {
+                            const statusInfo = getStatusLabel(payment.status)
+                            return (
+                              <li key={payment.id} className={styles.paymentItem}>
+                                <div className={styles.paymentItemContent}>
+                                  <div className={styles.paymentItemHeader}>
+                                    <p className={styles.paymentAmount}>{formatCurrency(payment.amount)}</p>
+                                    {payment.status && statusInfo.text && (
+                                      <Badge variant={statusInfo.variant} className={styles.paymentStatus}>
+                                        {statusInfo.text}
+                                      </Badge>
+                                    )}
+                                  </div>
+                                  <div className={styles.paymentItemDetails}>
+                                    <span className={styles.paymentDetailItem}>
+                                      <Icon name="calendar" size={12} />
+                                      {formatDate(payment.date)}
+                                    </span>
+                                    <span className={styles.paymentDetailItem}>
+                                      <Icon name="hash" size={12} />
+                                      ID: {payment.id.substring(0, 8)}...
+                                    </span>
+                                  </div>
                                 </div>
-                              </div>
-                            </li>
-                          )
-                        })}
-                      </ul>
-                    )}
-                  </div>
-                )}
+                              </li>
+                            )
+                          })}
+                        </ul>
+                      )}
+                    </div>
+                  )}
+                </div>
 
                 {/* Reembolsos */}
                 {refunds.length > 0 && (
@@ -673,59 +734,6 @@ export function ContactDetailsModal({
                                 )}
                               </div>
                               <span className={styles.paymentDate}>{formatDate(refund.date)}</span>
-                            </li>
-                          )
-                        })}
-                      </ul>
-                    )}
-                  </div>
-                )}
-
-                {/* Citas */}
-                {selectedContact.appointments && selectedContact.appointments.length > 0 && (
-                  <div className={styles.detailSection}>
-                    <button
-                      type="button"
-                      className={styles.toggleButton}
-                      onClick={() => setAppointmentsExpanded(prev => !prev)}
-                    >
-                      <div className={styles.toggleLabel}>
-                        <Icon name={appointmentsExpanded ? 'chevron-down' : 'chevron-right'} size={16} />
-                        <span>Citas ({selectedContact.appointments.length})</span>
-                      </div>
-                    </button>
-
-                    {appointmentsExpanded && (
-                      <ul className={styles.paymentList}>
-                        {selectedContact.appointments.map(appointment => {
-                          const statusInfo = getAppointmentStatusLabel(appointment.status)
-                          const appointmentDate = new Date(appointment.start_time)
-                          const timeStr = appointmentDate.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit', hour12: true })
-
-                          return (
-                            <li key={appointment.id} className={styles.paymentItem}>
-                              <div className={styles.paymentItemContent}>
-                                <div className={styles.paymentItemHeader}>
-                                  <p className={styles.paymentAmount}>{appointment.title || 'Cita'}</p>
-                                  <Badge variant={statusInfo.variant} className={styles.paymentStatus}>
-                                    {statusInfo.text}
-                                  </Badge>
-                                </div>
-                                <div className={styles.paymentItemDetails}>
-                                  <span className={styles.paymentDetailItem}>
-                                    <Icon name="calendar" size={12} />
-                                    {formatDate(appointment.start_time)}
-                                  </span>
-                                  <span className={styles.paymentDetailItem}>
-                                    <Icon name="clock" size={12} />
-                                    {timeStr}
-                                  </span>
-                                  <span className={styles.paymentDetailItem}>
-                                    <Icon name="hash" size={12} />
-                                    ID: {appointment.id.substring(0, 8)}...
-                                  </span>
-                                </div>
-                              </div>
                             </li>
                           )
                         })}
