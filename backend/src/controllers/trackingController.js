@@ -1379,6 +1379,15 @@ export async function getVisitorsList(req, res) {
 
     logger.info(`Visitantes obtenidos: ${visitors.length} visitantes únicos`)
 
+    // Función helper para capitalizar nombres
+    const capitalizeName = (name) => {
+      if (!name) return name
+      return name
+        .split(' ')
+        .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+        .join(' ')
+    }
+
     // Formatear datos
     const formattedVisitors = visitors.map(v => ({
       visitorId: v.visitor_id,
@@ -1404,7 +1413,7 @@ export async function getVisitorsList(req, res) {
       // Datos del contacto (si está identificado)
       contact: v.contact_id ? {
         id: v.contact_id,
-        name: v.contact_name,
+        name: capitalizeName(v.contact_name),
         email: v.contact_email,
         phone: v.contact_phone,
         ltv: parseFloat(v.contact_ltv) || 0,
