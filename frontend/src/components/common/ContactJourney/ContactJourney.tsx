@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { Icon } from '@/components/common'
 import { contactsService, type JourneyEvent } from '@/services/contactsService'
 import { formatCurrency, formatDate } from '@/utils/format'
+import { normalizeTrafficSource } from '@/utils/trafficSourceNormalizer'
 import styles from './ContactJourney.module.css'
 
 interface ContactJourneyProps {
@@ -64,18 +65,8 @@ const getEventDescription = (event: JourneyEvent): string => {
   const { type, data } = event
 
   if (type === 'page_visit') {
-    // Priorizar site_source_name (normalizado) sobre source_platform (crudo)
-    // Ejemplo: site_source_name="Facebook" vs source_platform="fb"
-    if (data.site_source_name) {
-      return data.site_source_name
-    }
-    if (data.source_platform) {
-      return data.source_platform
-    }
-    if (data.utm_source) {
-      return data.utm_source
-    }
-    return 'Web'
+    // Usar normalizador con prioridad: referrer_url → site_source_name → utm_source → source_platform
+    return normalizeTrafficSource(data)
   }
 
   if (type === 'whatsapp_message') {
@@ -110,8 +101,10 @@ const getTooltipContent = (event: JourneyEvent) => {
     if (data.landing_page) {
       items.push({ label: 'Página', value: data.landing_page })
     }
-    if (data.site_source_name || data.source_platform) {
-      items.push({ label: 'Fuente', value: data.site_source_name || data.source_platform })
+    // Usar normalizador para mostrar fuente consistente
+    const source = normalizeTrafficSource(data)
+    if (source && source !== 'Desconocido') {
+      items.push({ label: 'Fuente', value: source })
     }
     if (data.campaign_name || data.utm_campaign) {
       items.push({ label: 'Campaña', value: data.campaign_name || data.utm_campaign })

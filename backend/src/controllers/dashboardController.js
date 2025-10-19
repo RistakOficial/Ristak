@@ -1,7 +1,7 @@
 import { db } from '../config/database.js';
 import { logger } from '../utils/logger.js';
 import { resolveDateRange } from '../utils/dateUtils.js';
-import { normalizePlatformName } from '../utils/platformNormalizer.js';
+import { normalizeTrafficSource } from '../utils/trafficSourceNormalizer.js';
 import { DateTime } from 'luxon';
 import { getContactsWithAppointments } from '../services/appointmentsCache.js';
 
@@ -720,28 +720,34 @@ export const getTrafficSources = async (req, res) => {
     let query, params
 
     if (usePostgres) {
-      // PostgreSQL query - Prioridad: site_source_name > source_platform > utm_source
+      // PostgreSQL query - Obtener todos los campos para normalización con prioridad 1-4
       query = `
         SELECT
-          COALESCE(site_source_name, source_platform, utm_source, 'directo') as raw_source,
+          referrer_url,
+          site_source_name,
+          utm_source,
+          source_platform,
           COUNT(*) as value
         FROM sessions
         WHERE started_at::timestamp >= $1::timestamp
           AND started_at::timestamp < ($2::timestamp + INTERVAL '1 day')
-        GROUP BY raw_source
+        GROUP BY referrer_url, site_source_name, utm_source, source_platform
         ORDER BY value DESC
       `
       params = [startDate, endDate]
     } else {
-      // SQLite query - Prioridad: site_source_name > source_platform > utm_source
+      // SQLite query - Obtener todos los campos para normalización con prioridad 1-4
       query = `
         SELECT
-          COALESCE(site_source_name, source_platform, utm_source, 'directo') as raw_source,
+          referrer_url,
+          site_source_name,
+          utm_source,
+          source_platform,
           COUNT(*) as value
         FROM sessions
         WHERE DATE(started_at) >= DATE(?)
           AND DATE(started_at) <= DATE(?)
-        GROUP BY raw_source
+        GROUP BY referrer_url, site_source_name, utm_source, source_platform
         ORDER BY value DESC
       `
       params = [startDate, endDate]
@@ -749,11 +755,17 @@ export const getTrafficSources = async (req, res) => {
 
     const sources = await db.all(query, params)
 
-    // Normalizar nombres y agrupar por plataforma normalizada
+    // Normalizar nombres usando prioridad 1-4 y agrupar por plataforma normalizada
     const sourcesMap = new Map()
 
     sources.forEach(source => {
-      const normalizedName = normalizePlatformName(source.raw_source)
+      // Usar normalizador con prioridad: referrer_url → site_source_name → utm_source → source_platform
+      const normalizedName = normalizeTrafficSource({
+        referrer_url: source.referrer_url,
+        site_source_name: source.site_source_name,
+        utm_source: source.utm_source,
+        source_platform: source.source_platform
+      })
       const currentValue = sourcesMap.get(normalizedName) || 0
       sourcesMap.set(normalizedName, currentValue + parseInt(source.value))
     })
@@ -764,6 +776,7 @@ export const getTrafficSources = async (req, res) => {
       'Google': '#4285f4',
       'Instagram': '#c32aa3',
       'TikTok': '#ee1d52',
+      'Bing': '#00a4ef',
       'Microsoft': '#00a4ef',
       'Twitter': '#1da1f2',
       'LinkedIn': '#0a66c2',
@@ -773,9 +786,15 @@ export const getTrafficSources = async (req, res) => {
       'Snapchat': '#fffc00',
       'Pinterest': '#e60023',
       'Reddit': '#ff4500',
+      'Telegram': '#0088cc',
       'Email': '#ea4335',
       'Directo': '#6b7280',
-      'Orgánico': '#10b981'
+      'Orgánico': '#10b981',
+      'Referencia': '#8b5cf6',
+      'Yahoo': '#7b0099',
+      'DuckDuckGo': '#de5833',
+      'Otro': '#94a3b8',
+      'Desconocido': '#64748b'
     }
 
     // Convertir Map a array y ordenar por valor

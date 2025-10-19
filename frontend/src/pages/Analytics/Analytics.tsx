@@ -15,6 +15,7 @@ import { SiMacos, SiIos } from 'react-icons/si'
 import { getSessionsByDateRange } from '../../services/analyticsService'
 import { TrackingSession } from '../../services/trackingService'
 import { formatDate, formatDateToISO, parseLocalDateString, formatUrlParameter } from '../../utils/format'
+import { normalizeTrafficSource } from '../../utils/trafficSourceNormalizer'
 
 // Helper para obtener icono de plataforma
 const getPlatformIcon = (platformName: string) => {
@@ -108,124 +109,6 @@ const formatPlacementName = (placement: string): string => {
   return placement.replace(/_/g, ' ').split(' ').map(word =>
     word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()
   ).join(' ')
-}
-
-// Helper para normalizar nombres de plataformas (expandir abreviaciones y variantes)
-const normalizePlatformName = (rawName: string): string => {
-  if (!rawName) return 'Directo'
-
-  // Limpiar el nombre: lowercase, sin espacios extra, sin guiones/underscores
-  const name = rawName.toLowerCase().trim().replace(/[-_]/g, '')
-
-  // Mapeo exhaustivo de variantes de plataformas
-  const platformMap: { [key: string]: string } = {
-    // Facebook variantes
-    'fb': 'Facebook',
-    'facebook': 'Facebook',
-    'face book': 'Facebook',
-    'facebook.com': 'Facebook',
-    'fbig': 'Facebook',
-
-    // Instagram variantes
-    'ig': 'Instagram',
-    'instagram': 'Instagram',
-    'insta': 'Instagram',
-    'instagram.com': 'Instagram',
-
-    // Google variantes
-    'google': 'Google',
-    'google.com': 'Google',
-    'google ads': 'Google',
-    'googleads': 'Google',
-    'adwords': 'Google',
-    'gdn': 'Google',
-    'search': 'Google',
-
-    // TikTok variantes
-    'tiktok': 'TikTok',
-    'tik tok': 'TikTok',
-    'tt': 'TikTok',
-    'tiktok.com': 'TikTok',
-
-    // Twitter/X variantes
-    'twitter': 'Twitter',
-    'x.com': 'Twitter',
-    'x': 'Twitter',
-    'twitter.com': 'Twitter',
-
-    // LinkedIn variantes
-    'linkedin': 'LinkedIn',
-    'linked in': 'LinkedIn',
-    'linkedin.com': 'LinkedIn',
-    'li': 'LinkedIn',
-
-    // Microsoft/Bing variantes
-    'microsoft': 'Microsoft',
-    'bing': 'Microsoft',
-    'bing.com': 'Microsoft',
-    'msn': 'Microsoft',
-
-    // YouTube variantes
-    'youtube': 'YouTube',
-    'you tube': 'YouTube',
-    'youtube.com': 'YouTube',
-    'yt': 'YouTube',
-
-    // Messenger variantes
-    'messenger': 'Messenger',
-    'fb messenger': 'Messenger',
-    'facebook messenger': 'Messenger',
-    'm.me': 'Messenger',
-
-    // WhatsApp variantes
-    'whatsapp': 'WhatsApp',
-    'whats app': 'WhatsApp',
-    'wa': 'WhatsApp',
-    'whatsapp.com': 'WhatsApp',
-
-    // Snapchat variantes
-    'snapchat': 'Snapchat',
-    'snap': 'Snapchat',
-    'snapchat.com': 'Snapchat',
-
-    // Pinterest variantes
-    'pinterest': 'Pinterest',
-    'pin': 'Pinterest',
-    'pinterest.com': 'Pinterest',
-
-    // Reddit variantes
-    'reddit': 'Reddit',
-    'reddit.com': 'Reddit',
-
-    // Email variantes
-    'email': 'Email',
-    'correo': 'Email',
-    'newsletter': 'Email',
-
-    // Directo/Orgánico
-    'direct': 'Directo',
-    'directo': 'Directo',
-    'organic': 'Orgánico',
-    'organico': 'Orgánico',
-    '(none)': 'Directo',
-    'none': 'Directo'
-  }
-
-  // Buscar coincidencia exacta
-  if (platformMap[name]) {
-    return platformMap[name]
-  }
-
-  // Buscar si contiene alguna palabra clave
-  for (const [key, value] of Object.entries(platformMap)) {
-    if (name.includes(key)) {
-      return value
-    }
-  }
-
-  // Si no hay match, capitalizar primera letra y limpiar
-  const cleaned = rawName.trim().replace(/[-_]/g, ' ')
-  return cleaned.charAt(0).toUpperCase() + cleaned.slice(1)
 }
 
 // Usar TrackingSession directamente (ya incluye todos los campos necesarios)
@@ -527,8 +410,14 @@ const Analytics: React.FC = () => {
             if (session.utm_content) {
               adsMap[session.utm_content] = (adsMap[session.utm_content] || 0) + 1
             }
-            if (session.utm_source) {
-              const normalized = normalizePlatformName(session.utm_source)
+            // Normalizar fuente con prioridad: referrer_url → site_source_name → utm_source → source_platform
+            const normalized = normalizeTrafficSource({
+              referrer_url: session.referrer_url,
+              site_source_name: session.site_source_name,
+              utm_source: session.utm_source,
+              source_platform: session.source_platform
+            })
+            if (normalized && normalized !== 'Desconocido' && normalized !== 'Otro') {
               sourcesMap[normalized] = (sourcesMap[normalized] || 0) + 1
             }
             if (session.device_type) {
@@ -594,8 +483,13 @@ const Analytics: React.FC = () => {
 
           const platforms: { [key: string]: number } = {}
           currentSessions.forEach((session: Session) => {
-            const rawPlatform = session.source_site_name || session.source_platform || session.utm_source || 'Directo'
-            const platform = normalizePlatformName(rawPlatform)
+            // Usar normalizador con prioridad: referrer_url → site_source_name → utm_source → source_platform
+            const platform = normalizeTrafficSource({
+              referrer_url: session.referrer_url,
+              site_source_name: session.site_source_name,
+              utm_source: session.utm_source,
+              source_platform: session.source_platform
+            })
             platforms[platform] = (platforms[platform] || 0) + 1
           })
           const platformStats = Object.entries(platforms)
@@ -625,11 +519,15 @@ const Analytics: React.FC = () => {
             .slice(0, 5)
           setPlacementsData(placementStats)
 
-          // Preparar datos para la dona de fuentes de tráfico (usando site_source_name)
+          // Preparar datos para la dona de fuentes de tráfico con prioridad: referrer_url → site_source_name → utm_source → source_platform
           const trafficSources: { [key: string]: number } = {}
           currentSessions.forEach((session: Session) => {
-            const rawSource = session.site_source_name || session.source_platform || session.utm_source || 'Directo'
-            const source = normalizePlatformName(rawSource)
+            const source = normalizeTrafficSource({
+              referrer_url: session.referrer_url,
+              site_source_name: session.site_source_name,
+              utm_source: session.utm_source,
+              source_platform: session.source_platform
+            })
             trafficSources[source] = (trafficSources[source] || 0) + 1
           })
 
@@ -757,7 +655,14 @@ const Analytics: React.FC = () => {
                 if (session.utm_content === value) fieldMatch = true
                 break
               case 'utm_source':
-                if (normalizePlatformName(session.utm_source || '') === value) fieldMatch = true
+                // Normalizar fuente con todas las prioridades para match correcto
+                const normalizedSource = normalizeTrafficSource({
+                  referrer_url: session.referrer_url,
+                  site_source_name: session.site_source_name,
+                  utm_source: session.utm_source,
+                  source_platform: session.source_platform
+                })
+                if (normalizedSource === value) fieldMatch = true
                 break
               case 'device_type':
                 if (session.device_type === value) fieldMatch = true
@@ -862,12 +767,13 @@ const Analytics: React.FC = () => {
 
     const platforms: { [key: string]: number } = {}
     sessions.forEach((session: Session) => {
-      const rawPlatform = session.source_site_name || session.source_platform || session.utm_source || 'Directo'
-      const platform = normalizePlatformName(rawPlatform)
-
-      // Debug temporal
-      if (rawPlatform === 'fb' || rawPlatform === 'ig') {
-      }
+      // Usar normalizador con prioridad: referrer_url → site_source_name → utm_source → source_platform
+      const platform = normalizeTrafficSource({
+        referrer_url: session.referrer_url,
+        site_source_name: session.site_source_name,
+        utm_source: session.utm_source,
+        source_platform: session.source_platform
+      })
 
       platforms[platform] = (platforms[platform] || 0) + 1
     })
@@ -898,11 +804,15 @@ const Analytics: React.FC = () => {
       .slice(0, 5)
     setPlacementsData(placementStats)
 
-    // Preparar datos para la dona de fuentes de tráfico (usando site_source_name)
+    // Preparar datos para la dona de fuentes de tráfico con prioridad: referrer_url → site_source_name → utm_source → source_platform
     const trafficSources: { [key: string]: number } = {}
     sessions.forEach((session: Session) => {
-      const rawSource = session.site_source_name || session.source_platform || session.utm_source || 'Directo'
-      const source = normalizePlatformName(rawSource)
+      const source = normalizeTrafficSource({
+        referrer_url: session.referrer_url,
+        site_source_name: session.site_source_name,
+        utm_source: session.utm_source,
+        source_platform: session.source_platform
+      })
       trafficSources[source] = (trafficSources[source] || 0) + 1
     })
 
