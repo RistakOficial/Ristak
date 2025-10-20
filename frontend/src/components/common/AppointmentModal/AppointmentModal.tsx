@@ -649,7 +649,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
     timeZone: selectedTimeZone
   });
 
-  const dateLabel = startDate ? formatDate(startDate, { includeYear: true }) : 'Sin fecha asignada';
+  const dateLabel = startDate ? formatLocalDateShort(startDate) : 'Sin fecha asignada';
   const timeLabel = startDate && endDate
     ? `${timeFormatter.format(startDate)} – ${timeFormatter.format(endDate)}`
     : 'Horario no definido';
