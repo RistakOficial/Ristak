@@ -46,7 +46,7 @@ const monthNamesShort = [
 ]
 
 type ViewType = 'day' | 'month' | 'year'
-type ReportType = 'cashflow' | 'campaigns'
+type ReportType = 'cashflow' | 'attribution' | 'campaigns'
 type DisplayMode = 'table' | 'metrics'
 type ModalType = 'interesados' | 'sales' | 'appointments' | 'customers'
 
@@ -75,9 +75,11 @@ type TableRow = {
 }
 
 // "Todos" agrupa por la fecha en que sucedió cada evento.
-// "Último toque desde anuncio" muestra todo usando la fecha de creación del contacto.
+// "Último toque" agrupa todo por fecha de creación del contacto (sin filtro de anuncios).
+// "Último toque desde anuncio" agrupa por fecha de creación + filtra solo contactos con ad_id.
 const scopeTabs = [
   { value: 'cashflow', label: 'Todos', icon: <Layers size={16} /> },
+  { value: 'attribution', label: 'Último toque', icon: <Target size={16} /> },
   { value: 'campaigns', label: 'Último toque desde anuncio', icon: <MousePointerClick size={16} /> }
 ]
 
@@ -306,7 +308,7 @@ const MetricsGrid: React.FC<MetricsGridProps> = ({ metrics, loading, reportType,
         { label: 'EPA', value: formatCurrency(epl) },
         { label: 'Citas (Primera)', value: formatNumber(totals.appointments) },
         { label: `${labels.leads}→Citas %`, value: `${interesadoToAppt.toFixed(1)}%` },
-        { label: reportType === 'campaigns' ? 'Ventas' : 'Transacciones', value: formatNumber(totals.sales) },
+        { label: reportType === 'cashflow' ? 'Transacciones' : 'Ventas', value: formatNumber(totals.sales) },
         { label: 'Citas→Ventas %', value: `${apptToSale.toFixed(1)}%` }
       ]
     },
@@ -435,7 +437,10 @@ export const Reports: React.FC = () => {
     yearRange
   )
 
-  const scopeParam = reportType === 'campaigns' ? 'campaigns' : 'all'
+  // 'all' = agrupa por fecha del evento
+  // 'attribution' = agrupa por fecha de creación del contacto (todos los contactos)
+  // 'campaigns' = agrupa por fecha de creación del contacto (solo con ad_id)
+  const scopeParam = reportType === 'campaigns' ? 'campaigns' : reportType === 'attribution' ? 'attribution' : 'all'
 
   useEffect(() => {
     const fetchMetrics = async () => {
@@ -705,7 +710,7 @@ export const Reports: React.FC = () => {
   }, [analyticsEnabled, showToast, reportTypeRef])
 
   const initialColumns: Column<TableRow>[] = useMemo(() => {
-    const salesLabel = reportType === 'campaigns' ? 'Ventas' : 'Transacciones'
+    const salesLabel = reportType === 'cashflow' ? 'Transacciones' : 'Ventas'
 
     const columns: Column<TableRow>[] = [
       {

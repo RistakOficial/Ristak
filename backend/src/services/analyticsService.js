@@ -685,10 +685,13 @@ function buildRangeConditions(column, range, params) {
 
 export async function buildReportMetrics ({ startDate, endDate, groupBy = 'day', scope = 'all' } = {}) {
   const range = resolveDateRange({ startDate, endDate })
+  // scope = 'all' → agrupa por fecha del evento (pagos, citas reales)
+  // scope = 'attribution' → agrupa por fecha creación contacto (todos los contactos)
+  // scope = 'campaigns' → agrupa por fecha creación contacto + filtro ad_id
   const isAttributed = scope === 'campaigns' || scope === 'attributed'
-  const useContactAttribution = scope === 'campaigns' || scope === 'attributed'
+  const useContactAttribution = scope === 'campaigns' || scope === 'attributed' || scope === 'attribution'
   // "Todos" usa la fecha real del evento (pagos, citas, etc.).
-  // "Última atribución" reasigna todas las métricas al día en que se creó el contacto.
+  // "Último toque" / "Último toque desde anuncio" reasigna todas las métricas al día en que se creó el contacto.
 
   const periodMap = new Map()
 
@@ -1117,7 +1120,7 @@ async function fetchAppointmentsForContacts(contactIds, range = {}) {
 export async function buildContactsList ({ startDate, endDate, type = 'interesados', scope = 'all' } = {}) {
   const range = resolveDateRange({ startDate, endDate })
   const scopeAttributed = scope === 'campaigns' || scope === 'attributed'
-  const useContactAttribution = scope === 'campaigns' || scope === 'attributed'
+  const useContactAttribution = scope === 'campaigns' || scope === 'attributed' || scope === 'attribution'
   let contacts = []
   let contactIds = []
 
