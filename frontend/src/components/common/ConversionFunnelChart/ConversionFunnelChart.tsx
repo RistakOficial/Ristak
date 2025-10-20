@@ -1,6 +1,6 @@
 import React from 'react'
 import { Card } from '../Card'
-import { Users, UserCheck, Calendar, DollarSign } from 'lucide-react'
+import { Users, UserCheck, Calendar, DollarSign, Layers, Target, MousePointerClick } from 'lucide-react'
 import { useLabels } from '@/contexts/LabelsContext'
 import styles from './ConversionFunnelChart.module.css'
 
@@ -30,10 +30,10 @@ export const ConversionFunnelChart: React.FC<ConversionFunnelChartProps> = ({
   const { labels } = useLabels()
 
   const scopeOptions = [
-    { value: 'all', label: 'Todos' },
-    { value: 'attribution', label: 'Último toque' },
-    { value: 'campaigns', label: 'Desde anuncio' }
-  ] as const
+    { value: 'all' as const, label: 'Todos', icon: Layers },
+    { value: 'attribution' as const, label: 'Último toque', icon: Target },
+    { value: 'campaigns' as const, label: 'Desde anuncio', icon: MousePointerClick }
+  ]
 
   const DEFAULT_STAGES: FunnelStage[] = [
     { stage: 'Visitantes', value: 0, icon: Users },
@@ -80,16 +80,20 @@ export const ConversionFunnelChart: React.FC<ConversionFunnelChartProps> = ({
         <h3 className={styles.title}>Conversiones</h3>
         {onScopeChange && (
           <div className={styles.scopeSelector}>
-            {scopeOptions.map((option) => (
-              <button
-                key={option.value}
-                className={`${styles.scopeButton} ${scope === option.value ? styles.scopeButtonActive : ''}`}
-                onClick={() => onScopeChange(option.value)}
-                disabled={loading}
-              >
-                {option.label}
-              </button>
-            ))}
+            {scopeOptions.map((option) => {
+              const Icon = option.icon
+              return (
+                <button
+                  key={option.value}
+                  className={`${styles.scopeButton} ${scope === option.value ? styles.scopeButtonActive : ''}`}
+                  onClick={() => onScopeChange(option.value)}
+                  disabled={loading}
+                >
+                  <Icon size={14} />
+                  <span>{option.label}</span>
+                </button>
+              )
+            })}
           </div>
         )}
       </div>
