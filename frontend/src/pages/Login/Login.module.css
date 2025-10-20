@@ -166,6 +166,191 @@ body.light .error {
   font-weight: 600;
 }
 
+/* Link de recuperación */
+.forgotLink {
+  width: 100%;
+  text-align: center;
+  padding: 0.75rem;
+  background: none;
+  border: none;
+  color: var(--color-text-tertiary);
+  font-size: 0.875rem;
+  cursor: pointer;
+  transition: color 150ms ease;
+  margin-top: 0.5rem;
+}
+
+.forgotLink:hover {
+  color: var(--color-text-primary);
+}
+
+/* Sección de recuperación */
+.recoverySection {
+  margin-top: 1.5rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid rgba(148, 163, 184, 0.18);
+  animation: fadeInDown 300ms ease;
+}
+
+.recoveryHeader {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+  color: var(--color-text-primary);
+}
+
+.recoveryHeader h3 {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0;
+}
+
+.recoveryContent {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.recoveryIntro {
+  font-size: 0.875rem;
+  color: var(--color-text-secondary);
+  margin: 0;
+}
+
+.recoverySteps {
+  list-style: decimal;
+  padding-left: 1.5rem;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.recoverySteps li {
+  font-size: 0.875rem;
+  color: var(--color-text-secondary);
+  line-height: 1.6;
+}
+
+.recoverySteps strong {
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
+
+.externalLink {
+  color: var(--color-primary);
+  text-decoration: none;
+  font-family: 'Courier New', monospace;
+  font-size: 0.8125rem;
+  transition: opacity 150ms ease;
+}
+
+.externalLink:hover {
+  opacity: 0.8;
+  text-decoration: underline;
+}
+
+.codeBlock {
+  position: relative;
+  margin-top: 0.5rem;
+  padding: 0.875rem 3rem 0.875rem 1rem;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 0.5rem;
+  overflow-x: auto;
+}
+
+body.light .codeBlock {
+  background: rgba(0, 0, 0, 0.04);
+  border-color: rgba(0, 0, 0, 0.1);
+}
+
+.codeBlock code {
+  font-family: 'Courier New', monospace;
+  font-size: 0.75rem;
+  color: var(--color-text-primary);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.copyButton {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  padding: 0.5rem;
+  background: rgba(148, 163, 184, 0.15);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 0.375rem;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all 150ms ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.copyButton:hover {
+  background: rgba(148, 163, 184, 0.25);
+  color: var(--color-text-primary);
+}
+
+.successMessage {
+  margin-top: 0.5rem;
+  padding: 0.75rem 1rem;
+  background: rgba(16, 185, 129, 0.12);
+  border: 1px solid rgba(16, 185, 129, 0.25);
+  border-radius: 0.5rem;
+  color: #6ee7b7;
+  font-family: 'Courier New', monospace;
+  font-size: 0.8125rem;
+  font-weight: 500;
+}
+
+body.light .successMessage {
+  background: rgba(16, 185, 129, 0.08);
+  color: #059669;
+}
+
+.credentialsBox {
+  margin-top: 0.5rem;
+  padding: 0.875rem 1rem;
+  background: rgba(100, 116, 139, 0.08);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 0.5rem;
+}
+
+.credentialsBox p {
+  margin: 0.25rem 0;
+  font-size: 0.875rem;
+  color: var(--color-text-secondary);
+}
+
+.credentialsBox strong {
+  color: var(--color-text-primary);
+}
+
+.warningBox {
+  padding: 0.875rem 1rem;
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.25);
+  border-radius: 0.5rem;
+  color: #fbbf24;
+  font-size: 0.875rem;
+  line-height: 1.6;
+}
+
+body.light .warningBox {
+  background: rgba(245, 158, 11, 0.08);
+  border-color: rgba(245, 158, 11, 0.2);
+  color: #d97706;
+}
+
+.warningBox strong {
+  font-weight: 600;
+}
+
 /* Animación de entrada suave */
 @keyframes fadeInUp {
   from {
@@ -175,6 +360,17 @@ body.light .error {
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+@keyframes fadeInDown {
+  from {
+    opacity: 0;
+    max-height: 0;
+  }
+  to {
+    opacity: 1;
+    max-height: 1000px;
   }
 }
 
