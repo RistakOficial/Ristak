@@ -44,23 +44,21 @@ export const MetaAdsIntegration: React.FC = () => {
         {/* Header */}
         <div className={styles.pageHeader}>
           <div className={styles.headerContent}>
-            <div className={styles.headerLeft}>
-              <div className={styles.logoContainer}>
-                <img
-                  src="https://img.icons8.com/fluency/96/meta.png"
-                  alt="Meta"
-                  style={{
-                    width: '60px',
-                    height: '60px',
-                    borderRadius: '12px'
-                  }}
-                />
-              </div>
-              <h2 className={styles.pageTitle}>Meta Ads</h2>
-              <p className={styles.pageSubtitle}>
-                Tutorial completo para conectar tus anuncios de Facebook con Ristak
-              </p>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '8px' }}>
+              <img
+                src="https://img.icons8.com/fluency/96/meta.png"
+                alt="Meta"
+                style={{
+                  width: '60px',
+                  height: '60px',
+                  borderRadius: '12px'
+                }}
+              />
+              <h2 className={styles.pageTitle} style={{ margin: 0 }}>Meta Ads</h2>
             </div>
+            <p className={styles.pageSubtitle}>
+              Tutorial completo para conectar tus anuncios de Facebook con Ristak
+            </p>
           </div>
         </div>
 

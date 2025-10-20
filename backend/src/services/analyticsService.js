@@ -1134,6 +1134,9 @@ export async function buildContactsList ({ startDate, endDate, type = 'interesad
       if (scopeAttributed) {
         paymentConditions.push(attributionMatchCondition('c'))
       }
+      // CRÍTICO: Filtrar solo pagos exitosos (consistente con la tabla)
+      applySuccessStatusFilter(paymentConditions, paymentParams, 'p')
+
       const paymentWhere = paymentConditions.length ? `WHERE ${paymentConditions.join(' AND ')}` : ''
       const paymentsQuery = `
         SELECT DISTINCT c.id as contact_id
@@ -1160,6 +1163,8 @@ export async function buildContactsList ({ startDate, endDate, type = 'interesad
           WHERE ${attributionMatchCondition('c')}
         )`)
       }
+      // CRÍTICO: Filtrar solo pagos exitosos (consistente con la tabla)
+      applySuccessStatusFilter(paymentConditions, paymentParams, 'payments')
 
       const paymentWhere = paymentConditions.length ? `WHERE ${paymentConditions.join(' AND ')}` : ''
       const paymentsQuery = `
