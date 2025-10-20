@@ -1315,8 +1315,8 @@ export const getVisitorsOverTime = async (req, res) => {
           TO_CHAR(created_at::date, 'YYYY-MM-DD') as day,
           COUNT(DISTINCT visitor_id) as visitors
          FROM sessions
-         WHERE attribution_ad_id IS NOT NULL
-           AND attribution_ad_id != ''
+         WHERE ad_id IS NOT NULL
+           AND ad_id != ''
            AND created_at::date >= $1::date
            AND created_at::date < ($2::date + INTERVAL '1 day')
          GROUP BY day
@@ -1325,8 +1325,8 @@ export const getVisitorsOverTime = async (req, res) => {
           DATE(created_at) as day,
           COUNT(DISTINCT visitor_id) as visitors
          FROM sessions
-         WHERE attribution_ad_id IS NOT NULL
-           AND attribution_ad_id != ''
+         WHERE ad_id IS NOT NULL
+           AND ad_id != ''
            AND DATE(created_at) >= DATE(?)
            AND DATE(created_at) <= DATE(?)
          GROUP BY day
