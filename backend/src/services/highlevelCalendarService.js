@@ -260,6 +260,36 @@ export async function createAppointment(appointmentData, locationId, accessToken
   try {
     logger.info(`[HighLevel Calendar] Creando nueva cita para calendario: ${appointmentData.calendarId}`);
 
+    // Validaciones previas para detectar problemas antes de enviar a GHL
+    const startDate = new Date(appointmentData.startTime);
+    const endDate = new Date(appointmentData.endTime);
+    const now = new Date();
+
+    // Log de diagnóstico
+    logger.info(`[HighLevel Calendar] Validando fechas - Start: ${appointmentData.startTime}, End: ${appointmentData.endTime}`);
+
+    // Validar que las fechas sean válidas
+    if (isNaN(startDate.getTime())) {
+      throw new Error(`Fecha de inicio inválida: ${appointmentData.startTime}`);
+    }
+    if (isNaN(endDate.getTime())) {
+      throw new Error(`Fecha de fin inválida: ${appointmentData.endTime}`);
+    }
+
+    // Validar que endTime sea después de startTime
+    if (endDate <= startDate) {
+      throw new Error(`La fecha de fin (${appointmentData.endTime}) debe ser posterior a la fecha de inicio (${appointmentData.startTime})`);
+    }
+
+    // Advertencia si la cita es en el pasado
+    if (startDate < now) {
+      logger.warn(`[HighLevel Calendar] ⚠️ Advertencia: Intentando agendar cita en el pasado (${appointmentData.startTime})`);
+    }
+
+    // Calcular duración en minutos
+    const durationMinutes = (endDate - startDate) / (1000 * 60);
+    logger.info(`[HighLevel Calendar] Duración de la cita: ${durationMinutes} minutos`);
+
     // Construir payload según documentación de HighLevel
     const payload = {
       calendarId: appointmentData.calendarId,
@@ -267,7 +297,7 @@ export async function createAppointment(appointmentData, locationId, accessToken
       startTime: appointmentData.startTime,
       endTime: appointmentData.endTime,
       // Campos requeridos por la API
-      ignoreFreeSlotValidation: true, // Evita error "Invalid slot range"
+      ignoreFreeSlotValidation: true, // Permite agendar incluso en horarios no disponibles
       toNotify: false, // No enviar notificaciones automáticas
       meetingLocationType: appointmentData.address ? 'custom' : 'zoom',
       title: appointmentData.title || 'Nueva cita',
@@ -292,6 +322,9 @@ export async function createAppointment(appointmentData, locationId, accessToken
       payload.description = appointmentData.notes; // HighLevel usa 'description' no 'notes'
     }
 
+    // Log del payload completo para debugging
+    logger.info(`[HighLevel Calendar] Payload a enviar: ${JSON.stringify(payload, null, 2)}`);
+
     const response = await fetchWithTimeout(
       `${GHL_API_BASE}/calendars/events/appointments`,
       {
@@ -309,6 +342,7 @@ export async function createAppointment(appointmentData, locationId, accessToken
     if (!response.ok) {
       const errorText = await response.text();
       logger.error(`[HighLevel Calendar] Error al crear cita: ${response.status} - ${errorText}`);
+      logger.error(`[HighLevel Calendar] Payload que causó el error: ${JSON.stringify(payload, null, 2)}`);
       throw new Error(`Error al crear cita: ${response.status} - ${errorText}`);
     }
 
