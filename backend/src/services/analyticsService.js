@@ -241,6 +241,7 @@ export async function buildContactStats ({ startDate, endDate, scope = 'all' } =
 export async function buildContactTimeline ({ startDate, endDate, scope = 'all' } = {}, groupBy = 'day') {
   const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate })
   const scopeAttributed = scope === 'campaigns'
+  const timezone = range.appliedTimezone
 
   const params = []
   const filters = []
@@ -261,23 +262,8 @@ export async function buildContactTimeline ({ startDate, endDate, scope = 'all' 
 
   const whereClause = filters.length ? `WHERE ${filters.join(' AND ')}` : ''
 
-  let dateExpression = 'DATE(created_at)'
-  if (groupBy === 'month') {
-    dateExpression = "strftime('%Y-%m', created_at)"
-  } else if (groupBy === 'year') {
-    dateExpression = "strftime('%Y', created_at)"
-  }
-
-  // Ajuste para Postgres
-  if (isPostgres) {
-    if (groupBy === 'month') {
-      dateExpression = "TO_CHAR(created_at AT TIME ZONE 'UTC', 'YYYY-MM')"
-    } else if (groupBy === 'year') {
-      dateExpression = "TO_CHAR(created_at AT TIME ZONE 'UTC', 'YYYY')"
-    } else {
-      dateExpression = "TO_CHAR(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD')"
-    }
-  }
+  // Usar getGroupExpression para timezone dinámico
+  const dateExpression = getGroupExpression('created_at', groupBy, timezone)
 
   const timelineQuery = `
     SELECT
