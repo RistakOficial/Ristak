@@ -229,3 +229,44 @@ export function monthsAgo(months) {
   date.setMonth(date.getMonth() - months)
   return date
 }
+
+/**
+ * Convierte una fecha del timezone de Meta Ads a UTC
+ * @param {string|Date} date - Fecha en el timezone de Meta
+ * @param {number} timezoneOffsetHours - Offset en horas desde UTC (ej: -8 para PST, -6 para CST México)
+ * @returns {Date} Fecha convertida a UTC
+ */
+export function convertMetaDateToUTC(date, timezoneOffsetHours) {
+  // Si no hay offset, asumir que ya está en UTC
+  if (timezoneOffsetHours === null || timezoneOffsetHours === undefined) {
+    return new Date(date)
+  }
+
+  // Parsear la fecha (Meta envía formato YYYY-MM-DD)
+  const dateObj = typeof date === 'string' ? new Date(date) : date
+
+  // Meta da fechas en el timezone de la cuenta (ej: "2025-01-15" en PST)
+  // Necesitamos ajustar al offset correcto
+  // Si offset es -8 (PST), significa que la fecha Meta está 8 horas ATRÁS de UTC
+  // Entonces sumamos 8 horas para llegar a UTC
+  const utcDate = new Date(dateObj.getTime() - (timezoneOffsetHours * 60 * 60 * 1000))
+
+  return utcDate
+}
+
+/**
+ * Convierte una fecha UTC al timezone de Meta Ads
+ * @param {string|Date} utcDate - Fecha en UTC
+ * @param {number} timezoneOffsetHours - Offset en horas desde UTC
+ * @returns {Date} Fecha convertida al timezone de Meta
+ */
+export function convertUTCToMetaDate(utcDate, timezoneOffsetHours) {
+  if (timezoneOffsetHours === null || timezoneOffsetHours === undefined) {
+    return new Date(utcDate)
+  }
+
+  const dateObj = typeof utcDate === 'string' ? new Date(utcDate) : utcDate
+  const metaDate = new Date(dateObj.getTime() + (timezoneOffsetHours * 60 * 60 * 1000))
+
+  return metaDate
+}

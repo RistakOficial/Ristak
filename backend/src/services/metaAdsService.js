@@ -81,6 +81,33 @@ export async function getMetaConfig() {
 }
 
 /**
+ * Obtiene información de timezone de la cuenta de Meta Ads
+ */
+async function getAdAccountTimezone(adAccountId, accessToken) {
+  try {
+    const accountIdClean = adAccountId.replace('act_', '')
+    const url = `${API_URLS.META_GRAPH}/act_${accountIdClean}?fields=timezone_id,timezone_name,timezone_offset_hours_utc&access_token=${accessToken}`
+
+    const response = await fetch(url)
+    const data = await response.json()
+
+    if (data.error) {
+      logger.warn('No se pudo obtener timezone de Meta:', data.error.message)
+      return null
+    }
+
+    return {
+      timezone_id: data.timezone_id || null,
+      timezone_name: data.timezone_name || null,
+      timezone_offset_hours_utc: data.timezone_offset_hours_utc || null
+    }
+  } catch (error) {
+    logger.warn('Error obteniendo timezone de cuenta Meta:', error.message)
+    return null
+  }
+}
+
+/**
  * Guarda la configuración de Meta en la base de datos
  * ENCRIPTA el access_token y app_secret antes de guardar
  */
@@ -97,22 +124,48 @@ export async function saveMetaConfig(adAccountId, accessToken, appId = null, app
       logger.info('App Secret de Meta encriptado correctamente')
     }
 
+    // Obtener timezone de la cuenta de Meta
+    logger.info('Obteniendo timezone de la cuenta de Meta...')
+    const timezoneData = await getAdAccountTimezone(adAccountId, accessToken)
+
+    if (timezoneData) {
+      logger.info(`Timezone detectado: ${timezoneData.timezone_name} (ID: ${timezoneData.timezone_id}, Offset: ${timezoneData.timezone_offset_hours_utc}h)`)
+    }
+
     const existing = await db.get('SELECT id FROM meta_config WHERE ad_account_id = ?', [adAccountId])
 
     if (existing) {
       await db.run(`
         UPDATE meta_config
-        SET access_token = ?, app_id = ?, app_secret = ?, updated_at = CURRENT_TIMESTAMP
+        SET access_token = ?, app_id = ?, app_secret = ?,
+            timezone_id = ?, timezone_name = ?, timezone_offset_hours_utc = ?,
+            updated_at = CURRENT_TIMESTAMP
         WHERE ad_account_id = ?
-      `, [encryptedToken, appId, encryptedSecret, adAccountId])
+      `, [
+        encryptedToken,
+        appId,
+        encryptedSecret,
+        timezoneData?.timezone_id,
+        timezoneData?.timezone_name,
+        timezoneData?.timezone_offset_hours_utc,
+        adAccountId
+      ])
     } else {
       await db.run(`
-        INSERT INTO meta_config (ad_account_id, access_token, app_id, app_secret)
-        VALUES (?, ?, ?, ?)
-      `, [adAccountId, encryptedToken, appId, encryptedSecret])
+        INSERT INTO meta_config (ad_account_id, access_token, app_id, app_secret, timezone_id, timezone_name, timezone_offset_hours_utc)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `, [
+        adAccountId,
+        encryptedToken,
+        appId,
+        encryptedSecret,
+        timezoneData?.timezone_id,
+        timezoneData?.timezone_name,
+        timezoneData?.timezone_offset_hours_utc
+      ])
     }
 
-    logger.success('Configuración de Meta guardada (encriptada)')
+    logger.success('Configuración de Meta guardada (encriptada con timezone)')
     return { success: true }
   } catch (error) {
     logger.error('Error guardando configuración de Meta:', error.message)
@@ -161,6 +214,9 @@ async function fetchMetaAdsInsights(accountId, accessToken, sinceDate, untilDate
 
 /**
  * Guarda ads en la base de datos
+ * NOTA IMPORTANTE: Las fechas de Meta vienen en el timezone de la cuenta (timezone_name de meta_config).
+ * Las guardamos TAL CUAL porque representan "el día" en el timezone del anunciante.
+ * El frontend debe mostrarlas en el timezone del usuario de HighLevel (no se convierten).
  */
 async function saveAdsToDatabase(ads, accountId) {
   try {
@@ -169,6 +225,8 @@ async function saveAdsToDatabase(ads, accountId) {
       const cpm = ad.reach > 0 ? (ad.spend / ad.reach) * 1000 : 0
       const ctr = ad.reach > 0 ? (ad.clicks / ad.reach) * 100 : 0
 
+      // ad.date_start viene como "YYYY-MM-DD" en el timezone de la cuenta de Meta
+      // Lo guardamos directo sin conversión (representa el "día" en el timezone del anunciante)
       await db.run(`
         INSERT INTO meta_ads (
           date, ad_account_id, campaign_id, campaign_name, adset_id, adset_name,

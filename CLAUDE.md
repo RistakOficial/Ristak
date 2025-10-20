@@ -199,6 +199,12 @@ Backend:
 - **Servicios**: `metaAdsService.js`, `campaignsService.ts`
 - **Cron Job**: Sincronización cada hora via `metaSync.cron.js`
 - **Funcionalidad**: Métricas de campañas publicitarias
+- **Timezone**:
+  - Al conectar cuenta de Meta, se obtiene automáticamente `timezone_id`, `timezone_name`, `timezone_offset_hours_utc`
+  - Ejemplo: timezone_name = "America/Los_Angeles", timezone_offset_hours_utc = -8
+  - Las fechas de Meta se guardan TAL CUAL (representan el "día" en el timezone del anunciante)
+  - **Importante**: Las fechas de Meta NO se convierten a UTC (se guardan como vienen: YYYY-MM-DD)
+  - Utilidades en `dateUtils.js`: `convertMetaDateToUTC()`, `convertUTCToMetaDate()` (disponibles si se necesitan)
 
 ### Cron Jobs (Tareas Programadas)
 - **Estado**: Implementado y activo
@@ -249,6 +255,8 @@ Backend:
 ```sql
 -- Estructura actual en uso
 contacts: id, email, phone, name, tags, created_at, updated_at
+meta_config: id, ad_account_id, access_token, timezone_id, timezone_name, timezone_offset_hours_utc
+meta_ads: id, date, ad_account_id, campaign_id, ad_id, spend, reach, clicks, cpc, cpm, ctr
 campaigns: id, name, platform, status, metrics, created_at
 transactions: id, contact_id, amount, type, date, metadata
 reports: id, type, data, generated_at
@@ -775,8 +783,44 @@ git log -1
 ## 📅 ÚLTIMA ACTUALIZACIÓN
 
 **Fecha**: 2025-10-19
-**Versión**: 1.21.0
+**Versión**: 1.22.0
 **Últimos cambios críticos**:
+- **Feature: Sistema de Timezone para Meta Ads (2025-10-19)**
+  - **Nueva funcionalidad**: Al conectar cuenta de Meta, se obtiene automáticamente el timezone configurado
+  - **Campos agregados a meta_config**:
+    - `timezone_id`: ID numérico del timezone (ej: 47 para Ciudad de México, 1 para Los Ángeles)
+    - `timezone_name`: Nombre IANA del timezone (ej: "America/Mexico_City", "America/Los_Angeles")
+    - `timezone_offset_hours_utc`: Offset en horas desde UTC (ej: -6 para CDMX, -8 para LA)
+  - **Cómo funciona**:
+    - Al guardar configuración de Meta, se hace llamada automática a Meta API: `GET /act_{id}?fields=timezone_id,timezone_name,timezone_offset_hours_utc`
+    - Los datos se guardan en la tabla `meta_config` junto con el access_token
+    - Logs informativos muestran el timezone detectado (ej: "America/Los_Angeles (ID: 1, Offset: -8h)")
+  - **Comportamiento de fechas**:
+    - Las fechas de Meta vienen como "YYYY-MM-DD" en el timezone de la cuenta
+    - Se guardan TAL CUAL en la base de datos (representan el "día" en el timezone del anunciante)
+    - **NO se convierten a UTC** (esto es intencional para preservar el "día" del anunciante)
+    - El frontend muestra las fechas en el timezone del usuario de HighLevel
+  - **Utilidades creadas**:
+    - `convertMetaDateToUTC(date, timezoneOffsetHours)` en `dateUtils.js`
+    - `convertUTCToMetaDate(utcDate, timezoneOffsetHours)` en `dateUtils.js`
+    - Disponibles para uso futuro si se necesita conversión explícita
+  - **Migración automática**:
+    - Las columnas se agregan automáticamente al iniciar el servidor (ALTER TABLE con try/catch)
+    - Compatible con PostgreSQL (Render) y SQLite (local)
+  - **Archivos modificados**:
+    - `backend/src/config/database.js`: Agregadas columnas con ALTER TABLE
+    - `backend/src/services/metaAdsService.js`:
+      - Nueva función `getAdAccountTimezone()`
+      - Modificado `saveMetaConfig()` para obtener y guardar timezone
+      - Agregados comentarios explicativos en `saveAdsToDatabase()`
+    - `backend/src/utils/dateUtils.js`: Agregadas funciones de conversión
+    - `CLAUDE.md`: Documentación actualizada
+  - **Próximos pasos sugeridos**:
+    - Frontend puede usar timezone_name para mostrar fechas correctamente
+    - Posible integración con TimezoneContext del frontend
+    - Detección de discrepancias entre timezone de Meta y timezone de HighLevel
+
+
 - **Fix: Formato de fechas limpio en toda la app (2025-10-19)**
   - **Problema**: Fechas se mostraban con formato feo "14/10/2025, 11:02 p.m." (slashes, punto, lowercase)
   - **Solución**: Implementadas 2 nuevas funciones en TimezoneContext:

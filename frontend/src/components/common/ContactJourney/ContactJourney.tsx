@@ -4,6 +4,7 @@ import { Icon } from '@/components/common'
 import { contactsService, type JourneyEvent } from '@/services/contactsService'
 import { formatCurrency, formatDate } from '@/utils/format'
 import { normalizeTrafficSource } from '@/utils/trafficSourceNormalizer'
+import { useTimezone } from '@/contexts/TimezoneContext'
 import styles from './ContactJourney.module.css'
 
 interface ContactJourneyProps {
@@ -200,6 +201,7 @@ const getTooltipContent = (event?: JourneyEvent | null) => {
 }
 
 export const ContactJourney = ({ contactId }: ContactJourneyProps) => {
+  const { formatLocalDateShort, formatLocalDateTime } = useTimezone()
   const [journey, setJourney] = useState<JourneyEvent[]>([])
   const [loading, setLoading] = useState(true)
   const [hoveredEventIndex, setHoveredEventIndex] = useState<number | null>(null)
@@ -278,7 +280,7 @@ export const ContactJourney = ({ contactId }: ContactJourneyProps) => {
                 <div className={styles.eventContent}>
                   <span className={styles.eventTitle}>{getEventTitle(eventType)}</span>
                   <span className={styles.eventDescription}>{getEventDescription(event)}</span>
-                  <span className={styles.eventDate}>{formatDate(event.date, 'short')}</span>
+                  <span className={styles.eventDate}>{formatLocalDateShort(event.date)}</span>
                 </div>
               </div>
 
@@ -295,7 +297,7 @@ export const ContactJourney = ({ contactId }: ContactJourneyProps) => {
                   }}
                 >
                   <div className={styles.tooltipTitle}>{getEventTitle(eventType)}</div>
-                  <div className={styles.tooltipDate}>{formatDate(event.date, 'long')}</div>
+                  <div className={styles.tooltipDate}>{formatLocalDateTime(event.date)}</div>
                   {tooltipItems.map((item, idx) => (
                     <div key={idx} className={styles.tooltipItem}>
                       <span className={styles.tooltipLabel}>{item.label}:</span>

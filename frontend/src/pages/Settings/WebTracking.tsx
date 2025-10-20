@@ -3,11 +3,13 @@ import { Card, Button } from '@/components/common'
 import { Activity, Copy, Check, Info, Loader2, RefreshCw } from 'lucide-react'
 import { trackingService, TrackingSession } from '@/services/trackingService'
 import { useNotification } from '@/contexts/NotificationContext'
+import { useTimezone } from '@/contexts/TimezoneContext'
 import { useAppConfig } from '@/hooks'
 import styles from './HighLevelIntegration.module.css'
 
 export const WebTracking: React.FC = () => {
   const { showToast } = useNotification()
+  const { formatLocalDateTime } = useTimezone()
 
   // Sistema híbrido de configuración (cache + DB)
   const [showAnalytics, setShowAnalytics, savingAnalyticsPref] = useAppConfig('show_analytics', true)
@@ -445,9 +447,9 @@ export const WebTracking: React.FC = () => {
                         </td>
                         <td style={cellStyle} title={session.full_name}>{session.full_name || '-'}</td>
                         <td style={cellStyle} title={session.event_name}>{session.event_name || '-'}</td>
-                        <td style={cellStyle}>{formatDate(session.started_at)}</td>
-                        <td style={cellStyle}>{session.last_event_at ? formatDate(session.last_event_at) : '-'}</td>
-                        <td style={cellStyle}>{session.created_at ? formatDate(session.created_at) : '-'}</td>
+                        <td style={cellStyle}>{formatLocalDateTime(session.started_at)}</td>
+                        <td style={cellStyle}>{session.last_event_at ? formatLocalDateTime(session.last_event_at) : '-'}</td>
+                        <td style={cellStyle}>{session.created_at ? formatLocalDateTime(session.created_at) : '-'}</td>
 
                         {/* URLs */}
                         <td style={cellStyle} title={session.landing_url}>

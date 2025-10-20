@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect } from 'react'
 import { Modal, Icon, Badge, type BadgeVariant } from '@/components/common'
 import { formatDate, formatUrlParameter } from '@/utils/format'
 import { useLabels } from '@/contexts/LabelsContext'
+import { useTimezone } from '@/contexts/TimezoneContext'
 import styles from './VisitorDetailsModal.module.css'
 
 interface VisitorDetail {
@@ -68,6 +69,7 @@ export function VisitorDetailsModal({
   const [searchQuery, setSearchQuery] = useState('')
   const [appointmentsExpanded, setAppointmentsExpanded] = useState(false)
   const { labels } = useLabels()
+  const { formatLocalDateTime } = useTimezone()
 
   // Helper para formatear texto de estado
   const formatStatusText = (text: string): string => {
@@ -411,7 +413,7 @@ export function VisitorDetailsModal({
                                   <div className={styles.paymentItemDetails}>
                                     <span className={styles.paymentDetailItem}>
                                       <Icon name="calendar" size={12} />
-                                      {formatDate(appointment.start_time)}
+                                      {formatLocalDateTime(appointment.start_time)}
                                     </span>
                                     <span className={styles.paymentDetailItem}>
                                       <Icon name="clock" size={12} />
@@ -439,7 +441,7 @@ export function VisitorDetailsModal({
                   <div className={styles.detailSectionContent}>
                     <div className={styles.detailItem}>
                       <Icon name="calendar" size={16} />
-                      <span>Primera visita: {formatDate(selectedVisitor.firstVisit || selectedVisitor.createdAt || '')}</span>
+                      <span>Primera visita: {formatLocalDateTime(selectedVisitor.firstVisit || selectedVisitor.createdAt || '')}</span>
                     </div>
                     {selectedVisitor.landingUrl && (
                       <div className={styles.detailItem}>

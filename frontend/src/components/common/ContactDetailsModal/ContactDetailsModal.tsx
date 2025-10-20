@@ -4,6 +4,7 @@ import { ContactJourney } from '@/components/common/ContactJourney'
 import { formatDate } from '@/utils/format'
 import { normalizeTrafficSource } from '@/utils/trafficSourceNormalizer'
 import { useLabels } from '@/contexts/LabelsContext'
+import { useTimezone } from '@/contexts/TimezoneContext'
 import styles from './ContactDetailsModal.module.css'
 
 interface ContactPaymentDetail {
@@ -90,6 +91,7 @@ export function ContactDetailsModal({
   const [refundsExpanded, setRefundsExpanded] = useState(false)
   const [appointmentsExpanded, setAppointmentsExpanded] = useState(false)
   const { labels } = useLabels()
+  const { formatLocalDateShort, formatLocalDateTime } = useTimezone()
 
   // Seleccionar automáticamente el primer contacto cuando se abre el modal
   useEffect(() => {
@@ -435,7 +437,7 @@ export function ContactDetailsModal({
                     )}
                     <div className={styles.detailItem}>
                       <Icon name="calendar" size={16} />
-                      <span>{formatDate(selectedContact.created_at)}</span>
+                      <span>{formatLocalDateShort(selectedContact.created_at)}</span>
                     </div>
                   </div>
                 </div>
@@ -451,7 +453,7 @@ export function ContactDetailsModal({
                         <Icon name="calendar" size={16} />
                         <div>
                           <span className={styles.detailItemLabel}>Primera visita:</span>
-                          <span> {formatDate(selectedContact.firstSession.started_at)}</span>
+                          <span> {formatLocalDateTime(selectedContact.firstSession.started_at)}</span>
                         </div>
                       </div>
 
@@ -564,7 +566,7 @@ export function ContactDetailsModal({
                           <Icon name="calendar" size={16} />
                           <div>
                             <span className={styles.detailItemLabel}>Primera cita:</span>
-                            <span>{formatDate(new Date(selectedContact.firstAppointmentDate))}</span>
+                            <span>{formatLocalDateTime(selectedContact.firstAppointmentDate)}</span>
                           </div>
                         </div>
                       )}
@@ -573,7 +575,7 @@ export function ContactDetailsModal({
                           <Icon name="clock" size={16} />
                           <div>
                             <span className={styles.detailItemLabel}>Próxima cita:</span>
-                            <span>{formatDate(new Date(selectedContact.nextAppointmentDate))}</span>
+                            <span>{formatLocalDateTime(selectedContact.nextAppointmentDate)}</span>
                           </div>
                         </div>
                       )}
@@ -623,7 +625,7 @@ export function ContactDetailsModal({
                                   <div className={styles.paymentItemDetails}>
                                     <span className={styles.paymentDetailItem}>
                                       <Icon name="calendar" size={12} />
-                                      {formatDate(appointment.start_time)}
+                                      {formatLocalDateTime(appointment.start_time)}
                                     </span>
                                     <span className={styles.paymentDetailItem}>
                                       <Icon name="clock" size={12} />
@@ -682,7 +684,7 @@ export function ContactDetailsModal({
                                   <div className={styles.paymentItemDetails}>
                                     <span className={styles.paymentDetailItem}>
                                       <Icon name="calendar" size={12} />
-                                      {formatDate(payment.date)}
+                                      {formatLocalDateShort(payment.date)}
                                     </span>
                                     <span className={styles.paymentDetailItem}>
                                       <Icon name="hash" size={12} />
@@ -730,7 +732,7 @@ export function ContactDetailsModal({
                                   </Badge>
                                 )}
                               </div>
-                              <span className={styles.paymentDate}>{formatDate(refund.date)}</span>
+                              <span className={styles.paymentDate}>{formatLocalDateShort(refund.date)}</span>
                             </li>
                           )
                         })}

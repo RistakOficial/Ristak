@@ -6,6 +6,7 @@ import { DateTimePicker } from '../DateTimePicker';
 import { CalendarEvent, Calendar, calendarsService } from '@/services/calendarsService';
 import { formatDate } from '@/utils/format';
 import { useNotification } from '@/contexts/NotificationContext';
+import { useTimezone } from '@/contexts/TimezoneContext';
 import styles from './AppointmentModal.module.css';
 import { Trash2, Search, Loader2, X, UserPlus } from 'lucide-react';
 
@@ -192,6 +193,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   onDelete
 }) => {
   const { showToast } = useNotification();
+  const { formatLocalDateShort } = useTimezone();
   const [isSaving, setIsSaving] = useState(false);
   const [formData, setFormData] = useState(INITIAL_FORM_STATE);
   const isCreateMode = mode === 'create';
