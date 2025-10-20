@@ -169,7 +169,7 @@ export const Contacts: React.FC = () => {
   const { dateRange, setDateRange } = useDateRange()
   const { showToast } = useNotification()
   const { labels } = useLabels()
-  const { formatLocalDate } = useTimezone()
+  const { formatLocalDateShort } = useTimezone()
   const { locationId, accessToken } = useAuth()
   const [contacts, setContacts] = useState<Contact[]>([])
   const [stats, setStats] = useState<ContactStats | null>(null)
@@ -475,7 +475,7 @@ export const Contacts: React.FC = () => {
     {
       key: 'createdAt',
       header: 'Fecha de creación',
-      render: (value) => formatLocalDate(value),
+      render: (value) => formatLocalDateShort(value),
       sortable: true
     },
     {
