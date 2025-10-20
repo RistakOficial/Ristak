@@ -1,6 +1,6 @@
 import React from 'react'
 import { Routes, Route, Navigate, NavLink } from 'react-router-dom'
-import { Send, CreditCard, Facebook, Activity, Calendar } from 'lucide-react'
+import { Send, CreditCard, Activity, Calendar } from 'lucide-react'
 import { HighLevelIntegration } from './HighLevelIntegration'
 import { PaymentsConfiguration } from './PaymentsConfiguration'
 import { MetaAdsIntegration } from './MetaAdsIntegration'
@@ -28,7 +28,11 @@ export const Settings: React.FC = () => {
           to="/settings/meta-ads"
           className={({ isActive }) => `${styles.tab} ${isActive ? styles.tabActive : ''}`}
         >
-          <Facebook size={18} />
+          <img
+            src="https://img.icons8.com/ios-filled/150/meta.png"
+            alt="Meta"
+            style={{ width: '18px', height: '18px' }}
+          />
           <span>Meta Ads</span>
         </NavLink>
         <NavLink
