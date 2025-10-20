@@ -242,6 +242,7 @@ export async function buildContactTimeline ({ startDate, endDate, scope = 'all' 
   const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate })
   const scopeAttributed = scope === 'campaigns'
   const timezone = range.appliedTimezone
+  const dedupExpr = buildDedupExpression('')
 
   const params = []
   const filters = []
