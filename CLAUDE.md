@@ -841,6 +841,40 @@ git log -1
   - **Funcionalidad intacta**: Los datos siguen siendo exactamente los mismos, solo 100x más rápido
   - **Cache inteligente**: Eventos se guardan en DB para consultas futuras más rápidas
 
+- **Feature: 3 Modos de Atribución en Gráfico de Conversiones (Dashboard) (2025-10-19)**
+  - **Nueva funcionalidad**: Gráfico de Conversiones ahora tiene 3 vistas de atribución (como Reports)
+  - **TabList con 3 opciones**:
+    1. **"Todos"**: Agrupa cada métrica por **fecha del evento real**
+       - Citas → por `date_added` (cuando se agendó la cita)
+       - Clientes nuevos → por fecha del **PRIMER pago** (MIN(date) FROM payments)
+       - Refleja el flujo real día a día
+    2. **"Último toque"**: Agrupa TODO por **fecha de creación del contacto**
+       - Todos los contactos del rango (sin filtrar por ad_id)
+       - Si un contacto se creó el 1 de enero y pagó el 15 de febrero, TODO se atribuye al 1 de enero
+       - Citas: Contactos que TIENEN al menos 1 cita (cualquier fecha)
+       - Clientes: Contactos con `purchases_count > 0`
+    3. **"Último toque desde anuncio"**: Igual que "Último toque" + solo contactos con `ad_id`
+       - Filtra: `attribution_ad_id IS NOT NULL AND EXISTS (SELECT 1 FROM meta_ads...)`
+       - Mide el impacto directo de las campañas publicitarias
+
+  - **Lógica por métrica** (copiada de `analyticsService.js`):
+    - **Visitantes**: Siempre de sessions (no cambia con scope)
+    - **Leads**: `COUNT(*) FROM contacts WHERE created_at BETWEEN...` + filtro de ad_id si aplica
+    - **Citas**:
+      - scope='all': Híbrido DB+API filtrado por `date_added`
+      - scope='attribution'|'campaigns': `getContactsWithAppointmentsHybrid()` agrupado por `created_at`
+    - **Clientes nuevos**:
+      - scope='all': Subquery `MIN(date) FROM payments` para obtener primer pago
+      - scope='attribution'|'campaigns': `WHERE purchases_count > 0 AND created_at BETWEEN...`
+
+  - **Implementación**:
+    - Backend: `dashboardController.js` - Función `getFunnelData()` completamente reescrita
+    - Frontend: `ConversionFunnelChart.tsx` - Agregado TabList + props `scope` y `onScopeChange`
+    - Frontend: `Dashboard.tsx` - Estado `funnelScope` + recarga al cambiar
+    - Frontend: `dashboardService.ts` - Parámetro `scope` en `getFunnelData()`
+  - **Respeta configuración**: Filtra por calendarios de atribución (igual que Reports)
+  - **Archivos modificados**: 5 archivos (dashboardController.js, ConversionFunnelChart.tsx, Dashboard.tsx, dashboardService.ts, CLAUDE.md)
+
 ---
 
 ## ⚡ CHECKLIST ANTES DE MODIFICAR
