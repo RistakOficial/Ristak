@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { useDateRange } from '../../contexts/DateRangeContext'
+import { useTimezone } from '../../contexts/TimezoneContext'
 import {
   PageContainer,
   Card,
@@ -139,6 +140,7 @@ type TrafficPoint = {
 
 const Analytics: React.FC = () => {
   const { dateRange, setDateRange } = useDateRange()
+  const { formatLocalDateShort } = useTimezone()
   const [loading, setLoading] = useState(false)
 
   // Estado para filtros
@@ -317,7 +319,7 @@ const Analytics: React.FC = () => {
           const chartData = Object.entries(dailyStats)
             .sort(([a], [b]) => a.localeCompare(b))
             .map(([date, stats]) => ({
-              label: formatDate(new Date(date + 'T00:00:00'), { padDay: false }),
+              label: formatLocalDateShort(date),
               value: stats.totalVisits,
               value2: stats.uniqueVisitors.size
             }))
@@ -352,7 +354,7 @@ const Analytics: React.FC = () => {
           const conversionChartData = Object.entries(conversionStats)
             .sort(([a], [b]) => a.localeCompare(b))
             .map(([date, contactIds]) => ({
-              label: formatDate(new Date(date + 'T00:00:00'), { padDay: false }),
+              label: formatLocalDateShort(date),
               value: contactIds.size
             }))
 

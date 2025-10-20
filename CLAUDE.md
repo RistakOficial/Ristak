@@ -775,8 +775,23 @@ git log -1
 ## 📅 ÚLTIMA ACTUALIZACIÓN
 
 **Fecha**: 2025-10-19
-**Versión**: 1.20.0
+**Versión**: 1.21.0
 **Últimos cambios críticos**:
+- **Fix: Formato de fechas limpio en toda la app (2025-10-19)**
+  - **Problema**: Fechas se mostraban con formato feo "14/10/2025, 11:02 p.m." (slashes, punto, lowercase)
+  - **Solución**: Implementadas 2 nuevas funciones en TimezoneContext:
+    - `formatLocalDateShort(date)` → "16 oct" o "16 oct 2025" (sin hora, sin slashes)
+    - `formatLocalDateTime(date)` → "16 oct, 11:02 PM" o "16 oct 2025, 11:02 PM"
+  - **Archivos actualizados**:
+    - ✅ `TimezoneContext.tsx`: Agregadas nuevas funciones de formato
+    - ✅ `Contacts.tsx`: Columna "Fecha de creación" usa formatLocalDateShort
+    - ✅ `Transactions.tsx`: Columna "Fecha" usa formatLocalDateShort
+    - ✅ `Appointments.tsx`: Búsqueda y lista de próximas citas usan formatLocalDateShort
+  - **Formato nuevo**: Español, sin año si es año actual, sin hora en tablas
+  - **Archivos NO modificados**: Dashboard, Campaigns, Reports, Analytics, WebTracking (ya usaban formatos correctos)
+  - **Backend**: Ya estaba correcto - todos los endpoints usan `resolveDateRangeWithGHLTimezone()`
+  - **Timezone de HighLevel**: America/Mexico_City (configurado por usuario en GHL)
+  - **Resultado**: Todas las fechas ahora son consistentes, limpias y legibles
 - **Fix CRÍTICO: Pagos reembolsados/cancelados se sumaban como ingresos (2025-10-19)**
   - **Bug crítico detectado**: Toda la app sumaba pagos sin filtrar por status
   - **Problema**: Reembolsos y cancelaciones se contaban como ingresos, inflando métricas
