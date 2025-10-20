@@ -2,12 +2,14 @@ import React, { useState } from 'react'
 import { Card, Button } from '@/components/common'
 import { CheckCircle, ExternalLink, ChevronDown, ChevronUp, AlertCircle, Info, RefreshCw } from 'lucide-react'
 import { useNotification } from '@/contexts/NotificationContext'
+import { useTheme } from '@/contexts/ThemeContext'
 import styles from './HighLevelIntegration.module.css'
 
 export const MetaAdsIntegration: React.FC = () => {
   const [openSection, setOpenSection] = useState<number | null>(null)
   const [isSyncing, setIsSyncing] = useState(false)
   const { showToast } = useNotification()
+  const { theme } = useTheme()
 
   const toggleSection = (section: number) => {
     setOpenSection(openSection === section ? null : section)
@@ -46,7 +48,10 @@ export const MetaAdsIntegration: React.FC = () => {
           <div className={styles.headerContent}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '8px' }}>
               <img
-                src="https://img.icons8.com/ios-filled/150/meta.png"
+                src={theme === 'light'
+                  ? 'https://img.icons8.com/fluency/96/meta.png'
+                  : 'https://img.icons8.com/ios-filled/150/FFFFFF/meta.png'
+                }
                 alt="Meta"
                 style={{
                   width: '60px',

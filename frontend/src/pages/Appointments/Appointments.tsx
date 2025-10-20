@@ -32,6 +32,18 @@ const viewTabs = [
 
 type ViewMode = 'month' | 'week' | 'day';
 
+const STATUS_LABELS: Record<CalendarEvent['appointmentStatus'], string> = {
+  confirmed: 'Confirmada',
+  pending: 'Pendiente',
+  cancelled: 'Cancelada',
+  showed: 'Asistió',
+  noshow: 'No asistió',
+  rescheduled: 'Reprogramada'
+};
+
+const getStatusLabel = (status: CalendarEvent['appointmentStatus']): string =>
+  STATUS_LABELS[status] ?? status;
+
 interface DayCell {
   date: Date;
   isCurrentMonth: boolean;
@@ -463,6 +475,7 @@ export const Appointments: React.FC = () => {
 
         // Buscar por estado de cita
         if (event.appointmentStatus?.toLowerCase().includes(query)) return true;
+        if (getStatusLabel(event.appointmentStatus).toLowerCase().includes(query)) return true;
 
         // Buscar por fecha (formato: "15 enero", "15/01", "enero 2025", etc)
         const eventDate = new Date(event.startTime);
@@ -773,7 +786,7 @@ export const Appointments: React.FC = () => {
                             {event.title || '(Sin título)'}
                           </div>
                           <div className={styles.searchResultMeta}>
-                            {formatDate(eventDate)} · {formatTime12h(event.startTime)} · {event.appointmentStatus}
+                            {formatDate(eventDate)} · {formatTime12h(event.startTime)} · {getStatusLabel(event.appointmentStatus)}
                           </div>
                         </div>
                       </button>
@@ -1005,7 +1018,7 @@ export const Appointments: React.FC = () => {
                                     {formatTime12h(event.startTime)} - {formatTime12h(event.endTime)}
                                   </div>
                                   <div className={styles.tooltipStatus}>
-                                    Estado: {event.appointmentStatus}
+                                    Estado: {getStatusLabel(event.appointmentStatus)}
                                   </div>
                                   {event.address && (
                                     <div className={styles.tooltipAddress}>
@@ -1152,7 +1165,7 @@ export const Appointments: React.FC = () => {
                                     {formatTime12h(event.startTime)} - {formatTime12h(event.endTime)}
                                   </div>
                                   <div className={styles.tooltipStatus}>
-                                    Estado: {event.appointmentStatus}
+                                    Estado: {getStatusLabel(event.appointmentStatus)}
                                   </div>
                                   {event.address && (
                                     <div className={styles.tooltipAddress}>
@@ -1251,6 +1264,12 @@ export const Appointments: React.FC = () => {
                       const statusClass =
                         styles[`event${event.appointmentStatus.charAt(0).toUpperCase() + event.appointmentStatus.slice(1).toLowerCase()}`] ||
                         styles.eventDefault;
+                      const rawTitle = event.title?.trim();
+                      const rawDescription = (event.description?.trim() || event.notes?.trim()) ?? '';
+                      const displayTitle = rawTitle || rawDescription || '(Sin título)';
+                      const displayDescription =
+                        rawDescription && rawDescription !== displayTitle ? rawDescription : '';
+                      const statusLabel = getStatusLabel(event.appointmentStatus);
 
                       return (
                         <div
@@ -1260,14 +1279,17 @@ export const Appointments: React.FC = () => {
                             top: `${top}%`,
                             height: `${height}%`
                           }}
-                          title={`${event.title} - ${formatTime12h(event.startTime)} a ${formatTime12h(event.endTime)}`}
+                          title={`${displayTitle} - ${formatTime12h(event.startTime)} a ${formatTime12h(event.endTime)}`}
                           onClick={() => handleEventClick(event)}
                         >
                           <div className={styles.dayEventTime}>
                             {formatTime12h(event.startTime)} - {formatTime12h(event.endTime)}
                           </div>
-                          <div className={styles.dayEventTitle}>{event.title}</div>
-                          <div className={styles.dayEventStatus}>{event.appointmentStatus}</div>
+                          <div className={styles.dayEventTitle}>{displayTitle}</div>
+                          {displayDescription && (
+                            <div className={styles.dayEventDescription}>{displayDescription}</div>
+                          )}
+                          <div className={styles.dayEventStatus}>{statusLabel}</div>
                         </div>
                       );
                     });
@@ -1316,7 +1338,7 @@ export const Appointments: React.FC = () => {
                   <div className={styles.upcomingInfo}>
                     <div className={styles.upcomingTitle}>{event.title}</div>
                     <div className={styles.upcomingDetails}>
-                      {formatDate(new Date(event.startTime))} · {event.appointmentStatus}
+                      {formatDate(new Date(event.startTime))} · {getStatusLabel(event.appointmentStatus)}
                     </div>
                   </div>
                   <div
