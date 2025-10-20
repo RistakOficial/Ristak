@@ -63,7 +63,7 @@ export const TrafficSourcesChart: React.FC<TrafficSourcesChartProps> = ({ data, 
   }
 
   return (
-    <Card className={styles.container}>
+    <Card variant="glass" className={styles.container}>
       <div className={styles.header}>
         <div>
           <h3 className={styles.title}>Fuentes de Tráfico</h3>
