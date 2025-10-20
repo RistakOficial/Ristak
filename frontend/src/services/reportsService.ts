@@ -157,7 +157,7 @@ export interface ContactListItem {
 }
 
 class ReportsService {
-  async getMetrics(params: { from?: string; to?: string; groupBy?: GroupBy; scope?: 'all' | 'campaigns' | 'attributed' }): Promise<{ metrics: ReportMetricRow[]; range: ReportRange }> {
+  async getMetrics(params: { from?: string; to?: string; groupBy?: GroupBy; scope?: 'all' | 'attribution' | 'campaigns' | 'attributed' }): Promise<{ metrics: ReportMetricRow[]; range: ReportRange }> {
     const query: Record<string, string> = {}
     if (params.from) query.from = params.from
     if (params.to) query.to = params.to
@@ -176,7 +176,7 @@ class ReportsService {
     return apiClient.get<ContactsReport>('/reports/contacts', { params: query })
   }
 
-  async getContactsList(params: { from?: string; to?: string; type?: 'interesados' | 'customers' | 'sales' | 'appointments'; scope?: 'all' | 'campaigns' | 'attributed' }): Promise<{ contacts: ContactListItem[]; range: ReportRange }> {
+  async getContactsList(params: { from?: string; to?: string; type?: 'interesados' | 'customers' | 'sales' | 'appointments'; scope?: 'all' | 'attribution' | 'campaigns' | 'attributed' }): Promise<{ contacts: ContactListItem[]; range: ReportRange }> {
     const query: Record<string, string> = {}
     if (params.from) query.from = params.from
     if (params.to) query.to = params.to
@@ -211,7 +211,7 @@ class ReportsService {
     return apiClient.get<CampaignsReport>('/reports/campaigns', { params: query })
   }
 
-  async getSummary(params: { from?: string; to?: string; scope?: 'all' | 'campaigns' | 'attributed' }): Promise<ReportsSummary> {
+  async getSummary(params: { from?: string; to?: string; scope?: 'all' | 'attribution' | 'campaigns' | 'attributed' }): Promise<ReportsSummary> {
     const query: Record<string, string> = {}
     if (params.from) query.from = params.from
     if (params.to) query.to = params.to
