@@ -991,21 +991,43 @@ export const getFinancialOverview = async (req, res) => {
 };
 
 /**
- * Obtiene datos del funnel de conversión
- * Usa labels personalizados del usuario
+ * Obtiene datos del funnel de conversión con 3 modos de atribución
+ *
+ * @param {string} scope - Modo de atribución:
+ *   - 'all': Agrupa cada métrica por fecha del evento (pagos reales, citas agendadas, etc.)
+ *   - 'attribution': Agrupa TODO por fecha de creación del contacto (todos los contactos)
+ *   - 'campaigns': Agrupa por fecha de creación + solo contactos con ad_id
+ *
+ * LÓGICA POR MÉTRICA:
+ *
+ * 1. VISITANTES: Siempre de sessions (no cambia con scope)
+ *
+ * 2. LEADS:
+ *    - all/attribution: COUNT(*) FROM contacts WHERE created_at BETWEEN start AND end
+ *    - campaigns: Igual + filtro attribution_ad_id IS NOT NULL
+ *
+ * 3. CITAS:
+ *    - all: Híbrido DB+API filtrado por date_added (cuando se agendó)
+ *    - attribution/campaigns: getContactsWithAppointmentsHybrid() agrupado por created_at del contacto
+ *
+ * 4. CLIENTES NUEVOS:
+ *    - all: Contactos cuyo PRIMER pago está en el rango (MIN(date) FROM payments)
+ *    - attribution/campaigns: COUNT(DISTINCT) WHERE created_at BETWEEN start AND end AND purchases_count > 0
  */
 export const getFunnelData = async (req, res) => {
   try {
-    const { startDate, endDate } = req.query
+    const { startDate, endDate, scope = 'all' } = req.query
 
     if (!startDate || !endDate) {
       return res.status(400).json({ success: false, error: 'Se requieren startDate y endDate' })
     }
 
     const usePostgres = Boolean(process.env.DATABASE_URL)
+    const isAttributed = scope === 'campaigns' || scope === 'attributed'
+    const useContactAttribution = scope === 'campaigns' || scope === 'attributed' || scope === 'attribution'
 
     // Obtener labels personalizados del usuario
-    const config = await db.get('SELECT custom_labels FROM highlevel_config LIMIT 1')
+    const hlConfig = await db.get('SELECT custom_labels, location_id, api_token FROM highlevel_config LIMIT 1')
     const defaultLabels = {
       customer: 'Cliente',
       customers: 'Clientes',
@@ -1014,94 +1036,265 @@ export const getFunnelData = async (req, res) => {
     }
 
     let labels = defaultLabels
-    if (config && config.custom_labels) {
+    if (hlConfig && hlConfig.custom_labels) {
       try {
-        const parsed = JSON.parse(config.custom_labels)
+        const parsed = JSON.parse(hlConfig.custom_labels)
         labels = { ...defaultLabels, ...parsed }
       } catch (error) {
         logger.warn('Error parsing custom_labels, usando valores por defecto')
       }
     }
 
-    let visitorsQuery, leadsQuery, appointmentsQuery, customersQuery
-    let params
+    // ========================================
+    // 1. VISITANTES (no cambia con scope)
+    // ========================================
+    let visitorsQuery, visitorsParams
 
     if (usePostgres) {
-      // PostgreSQL queries
       visitorsQuery = `
         SELECT COUNT(DISTINCT visitor_id) as count
         FROM sessions
         WHERE started_at::timestamp >= $1::timestamp
           AND started_at::timestamp < ($2::timestamp + INTERVAL '1 day')
       `
-      leadsQuery = `
-        SELECT COUNT(*) as count
-        FROM contacts
-        WHERE created_at::timestamp >= $1::timestamp
-          AND created_at::timestamp < ($2::timestamp + INTERVAL '1 day')
-      `
-      appointmentsQuery = `
-        SELECT COUNT(DISTINCT COALESCE(contact_id, id)) as count
-        FROM appointments
-        WHERE start_time::timestamp >= $1::timestamp
-          AND start_time::timestamp < ($2::timestamp + INTERVAL '1 day')
-          AND contact_id IS NOT NULL
-      `
-      customersQuery = `
-        SELECT COUNT(DISTINCT id) as count
-        FROM contacts
-        WHERE purchases_count > 0
-          AND created_at::timestamp >= $1::timestamp
-          AND created_at::timestamp < ($2::timestamp + INTERVAL '1 day')
-      `
-      params = [startDate, endDate]
+      visitorsParams = [startDate, endDate]
     } else {
-      // SQLite queries
       visitorsQuery = `
         SELECT COUNT(DISTINCT visitor_id) as count
         FROM sessions
         WHERE DATE(started_at) >= DATE(?)
           AND DATE(started_at) <= DATE(?)
       `
+      visitorsParams = [startDate, endDate]
+    }
+
+    const visitors = await db.get(visitorsQuery, visitorsParams)
+
+    // ========================================
+    // 2. LEADS (según scope)
+    // ========================================
+    let leadsQuery, leadsParams
+
+    if (usePostgres) {
+      leadsQuery = `
+        SELECT COUNT(*) as count
+        FROM contacts
+        WHERE created_at::timestamp >= $1::timestamp
+          AND created_at::timestamp < ($2::timestamp + INTERVAL '1 day')
+          ${isAttributed ? `AND attribution_ad_id IS NOT NULL AND EXISTS (
+            SELECT 1 FROM meta_ads ma
+            WHERE ma.ad_id = contacts.attribution_ad_id
+              AND (ma.date)::date = (contacts.created_at)::date
+          )` : ''}
+      `
+      leadsParams = [startDate, endDate]
+    } else {
       leadsQuery = `
         SELECT COUNT(*) as count
         FROM contacts
         WHERE DATE(created_at) >= DATE(?)
           AND DATE(created_at) <= DATE(?)
+          ${isAttributed ? `AND attribution_ad_id IS NOT NULL AND EXISTS (
+            SELECT 1 FROM meta_ads ma
+            WHERE ma.ad_id = contacts.attribution_ad_id
+              AND DATE(ma.date) = DATE(contacts.created_at)
+          )` : ''}
       `
-      appointmentsQuery = `
-        SELECT COUNT(DISTINCT COALESCE(contact_id, id)) as count
-        FROM appointments
-        WHERE DATE(start_time) >= DATE(?)
-          AND DATE(start_time) <= DATE(?)
-          AND contact_id IS NOT NULL
-      `
-      customersQuery = `
-        SELECT COUNT(DISTINCT id) as count
-        FROM contacts
-        WHERE purchases_count > 0
-          AND DATE(created_at) >= DATE(?)
-          AND DATE(created_at) <= DATE(?)
-      `
-      params = [startDate, endDate]
+      leadsParams = [startDate, endDate]
     }
 
-    const visitors = await db.get(visitorsQuery, params)
-    const leadsData = await db.get(leadsQuery, params)
-    const appointments = await db.get(appointmentsQuery, params)
-    const customersData = await db.get(customersQuery, params)
+    const leadsData = await db.get(leadsQuery, leadsParams)
 
-    // Usar labels personalizados en la respuesta
+    // ========================================
+    // 3. CITAS (según scope)
+    // ========================================
+    let appointmentsCount = 0
+
+    // Obtener calendarios de atribución configurados
+    const attributionCalendarIds = await getAttributionCalendarIds()
+
+    if (useContactAttribution) {
+      // Vista "Último toque": Contar contactos creados en el rango que TIENEN cita (cualquier fecha)
+      const contactsWithAppointments = hlConfig && hlConfig.api_token
+        ? await getContactsWithAppointmentsHybrid(hlConfig.location_id, hlConfig.api_token, attributionCalendarIds)
+        : new Set()
+
+      // Contar cuántos contactos del rango tienen cita
+      if (usePostgres) {
+        const contactsQuery = `
+          SELECT id
+          FROM contacts
+          WHERE created_at::timestamp >= $1::timestamp
+            AND created_at::timestamp < ($2::timestamp + INTERVAL '1 day')
+            ${isAttributed ? `AND attribution_ad_id IS NOT NULL AND EXISTS (
+              SELECT 1 FROM meta_ads ma
+              WHERE ma.ad_id = contacts.attribution_ad_id
+                AND (ma.date)::date = (contacts.created_at)::date
+            )` : ''}
+        `
+        const contactsRaw = await db.all(contactsQuery, [startDate, endDate])
+        appointmentsCount = contactsRaw.filter(c => contactsWithAppointments.has(c.id)).length
+      } else {
+        const contactsQuery = `
+          SELECT id
+          FROM contacts
+          WHERE DATE(created_at) >= DATE(?)
+            AND DATE(created_at) <= DATE(?)
+            ${isAttributed ? `AND attribution_ad_id IS NOT NULL AND EXISTS (
+              SELECT 1 FROM meta_ads ma
+              WHERE ma.ad_id = contacts.attribution_ad_id
+                AND DATE(ma.date) = DATE(contacts.created_at)
+            )` : ''}
+        `
+        const contactsRaw = await db.all(contactsQuery, [startDate, endDate])
+        appointmentsCount = contactsRaw.filter(c => contactsWithAppointments.has(c.id)).length
+      }
+    } else {
+      // Vista "Todos": Híbrido DB+API filtrado por date_added
+      const { loadAppointmentsFromDB, loadAppointmentsFromAPI, mergeAppointments } = await import('../services/appointmentsMerge.js')
+
+      const [dbAppointments, apiAppointments] = await Promise.all([
+        loadAppointmentsFromDB({
+          calendarIds: attributionCalendarIds,
+          startDate: startDate,
+          endDate: endDate
+        }),
+        hlConfig && hlConfig.api_token
+          ? loadAppointmentsFromAPI(hlConfig.location_id, hlConfig.api_token, attributionCalendarIds)
+          : []
+      ])
+
+      const allAppointments = mergeAppointments(dbAppointments, apiAppointments, 'oldest_date')
+
+      // Filtrar por rango de dateAdded
+      const appointmentsInRange = allAppointments.filter(apt => {
+        if (!apt.dateAdded) return false
+        const dateAdded = new Date(apt.dateAdded)
+        const start = new Date(startDate)
+        const end = new Date(endDate)
+        return dateAdded >= start && dateAdded <= end
+      })
+
+      // Contar contactos únicos
+      const uniqueContactIds = new Set(appointmentsInRange.map(apt => apt.contactId).filter(Boolean))
+      appointmentsCount = uniqueContactIds.size
+    }
+
+    // ========================================
+    // 4. CLIENTES NUEVOS (según scope)
+    // ========================================
+    let customersCount = 0
+
+    if (useContactAttribution) {
+      // Vista "Último toque": Contactos creados en el rango con purchases_count > 0
+      if (usePostgres) {
+        const customersQuery = `
+          SELECT COUNT(DISTINCT id) as count
+          FROM contacts
+          WHERE purchases_count > 0
+            AND created_at::timestamp >= $1::timestamp
+            AND created_at::timestamp < ($2::timestamp + INTERVAL '1 day')
+            ${isAttributed ? `AND attribution_ad_id IS NOT NULL AND EXISTS (
+              SELECT 1 FROM meta_ads ma
+              WHERE ma.ad_id = contacts.attribution_ad_id
+                AND (ma.date)::date = (contacts.created_at)::date
+            )` : ''}
+        `
+        const customersData = await db.get(customersQuery, [startDate, endDate])
+        customersCount = parseInt(customersData?.count || 0)
+      } else {
+        const customersQuery = `
+          SELECT COUNT(DISTINCT id) as count
+          FROM contacts
+          WHERE purchases_count > 0
+            AND DATE(created_at) >= DATE(?)
+            AND DATE(created_at) <= DATE(?)
+            ${isAttributed ? `AND attribution_ad_id IS NOT NULL AND EXISTS (
+              SELECT 1 FROM meta_ads ma
+              WHERE ma.ad_id = contacts.attribution_ad_id
+                AND DATE(ma.date) = DATE(contacts.created_at)
+            )` : ''}
+        `
+        const customersData = await db.get(customersQuery, [startDate, endDate])
+        customersCount = parseInt(customersData?.count || 0)
+      }
+    } else {
+      // Vista "Todos": Contactos cuyo PRIMER pago está en el rango
+      const SUCCESS_PAYMENT_STATUSES = ['succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success']
+      const statusPlaceholders = SUCCESS_PAYMENT_STATUSES.map(() => '?').join(',')
+
+      if (usePostgres) {
+        const firstPaymentQuery = `
+          SELECT COUNT(DISTINCT c.id) as count
+          FROM contacts c
+          INNER JOIN (
+            SELECT contact_id, MIN(date) as first_payment_date
+            FROM payments
+            WHERE LOWER(status) IN (${statusPlaceholders})
+            GROUP BY contact_id
+          ) first_p ON first_p.contact_id = c.id
+          WHERE first_p.first_payment_date::timestamp >= $${SUCCESS_PAYMENT_STATUSES.length + 1}::timestamp
+            AND first_p.first_payment_date::timestamp < ($${SUCCESS_PAYMENT_STATUSES.length + 2}::timestamp + INTERVAL '1 day')
+        `
+        const firstPaymentParams = [...SUCCESS_PAYMENT_STATUSES, startDate, endDate]
+        const customersData = await db.get(firstPaymentQuery, firstPaymentParams)
+        customersCount = parseInt(customersData?.count || 0)
+      } else {
+        const firstPaymentQuery = `
+          SELECT COUNT(DISTINCT c.id) as count
+          FROM contacts c
+          INNER JOIN (
+            SELECT contact_id, MIN(date) as first_payment_date
+            FROM payments
+            WHERE LOWER(status) IN (${statusPlaceholders})
+            GROUP BY contact_id
+          ) first_p ON first_p.contact_id = c.id
+          WHERE DATE(first_p.first_payment_date) >= DATE(?)
+            AND DATE(first_p.first_payment_date) <= DATE(?)
+        `
+        const firstPaymentParams = [...SUCCESS_PAYMENT_STATUSES, startDate, endDate]
+        const customersData = await db.get(firstPaymentQuery, firstPaymentParams)
+        customersCount = parseInt(customersData?.count || 0)
+      }
+    }
+
+    // ========================================
+    // 5. RESPUESTA
+    // ========================================
     const data = [
-      { stage: 'Visitantes', value: parseInt(visitors.count) || 0 },
-      { stage: labels.leads, value: parseInt(leadsData.count) || 0 },
-      { stage: 'Citas', value: parseInt(appointments.count) || 0 },
-      { stage: labels.customers, value: parseInt(customersData.count) || 0 }
+      { stage: 'Visitantes', value: parseInt(visitors?.count || 0) },
+      { stage: labels.leads, value: parseInt(leadsData?.count || 0) },
+      { stage: 'Citas', value: appointmentsCount },
+      { stage: labels.customers, value: customersCount }
     ]
 
     res.json({ success: true, data })
   } catch (error) {
     logger.error(`Error en getFunnelData: ${error.message}`)
+    logger.error(error.stack)
     res.status(500).json({ success: false, error: 'Error al obtener datos del funnel' })
+  }
+}
+
+/**
+ * Obtiene los calendarios configurados para atribución
+ * @returns {Promise<string[]|null>} Array de calendar IDs o null si no están configurados
+ */
+async function getAttributionCalendarIds() {
+  try {
+    const config = await db.get(
+      'SELECT config_value FROM app_config WHERE config_key = ?',
+      ['attribution_calendar_ids']
+    )
+
+    if (!config || !config.config_value) {
+      return null // null = usar todos los calendarios
+    }
+
+    const calendarIds = JSON.parse(config.config_value)
+    return calendarIds.length > 0 ? calendarIds : null
+  } catch (error) {
+    logger.warn(`Error al leer calendarios de atribución: ${error.message} - usando TODOS`)
+    return null
   }
 }

@@ -261,11 +261,13 @@ class DashboardService {
   async getFunnelData(params: {
     start: Date;
     end: Date;
+    scope?: 'all' | 'attribution' | 'campaigns';
   }): Promise<{ stage: string; value: number }[]> {
     try {
       const queryParams = new URLSearchParams({
         startDate: formatDateToISO(params.start),
-        endDate: formatDateToISO(params.end)
+        endDate: formatDateToISO(params.end),
+        scope: params.scope || 'all'
       });
 
       const response = await fetch(`${API_URL}/api/dashboard/funnel?${queryParams}`);

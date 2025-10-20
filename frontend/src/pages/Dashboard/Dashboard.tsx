@@ -43,6 +43,7 @@ export const Dashboard: React.FC = () => {
   const [appointmentsSalesData, setAppointmentsSalesData] = useState<{ label: string; value: number; value2: number }[]>([])
   const [trafficSources, setTrafficSources] = useState<{ name: string; value: number; color: string }[]>([])
   const [funnelData, setFunnelData] = useState<{ stage: string; value: number }[]>([])
+  const [funnelScope, setFunnelScope] = useState<'all' | 'attribution' | 'campaigns'>('all')
   const [loading, setLoading] = useState(true)
   const [selectedChartView, setSelectedChartView] = useState<'revenue-spend' | 'visitors-leads' | 'leads-appointments' | 'appointments-sales'>('revenue-spend')
 
@@ -299,7 +300,8 @@ export const Dashboard: React.FC = () => {
           trafficPromise,
           dashboardService.getFunnelData({
             start: dateRange.start,
-            end: dateRange.end
+            end: dateRange.end,
+            scope: funnelScope
           })
         ])
 
@@ -317,7 +319,7 @@ export const Dashboard: React.FC = () => {
     }
 
     loadData()
-  }, [analyticsEnabled, dateRange, user, formatChartDataForView])
+  }, [analyticsEnabled, dateRange, user, formatChartDataForView, funnelScope])
 
   if (loading || !metrics) {
     return null
@@ -441,6 +443,8 @@ export const Dashboard: React.FC = () => {
             data={funnelChartData}
             loading={loading}
             showVisitors={analyticsEnabled}
+            scope={funnelScope}
+            onScopeChange={setFunnelScope}
           />
           {analyticsEnabled && (
             <TrafficSourcesChart

@@ -1358,12 +1358,12 @@
   right: 4px;
   z-index: 2;
   pointer-events: all;
-  padding: 0.55rem 0.75rem 0.55rem 1.35rem;
+  padding: 0.45rem 0.65rem 0.5rem 1.2rem;
   border-radius: 8px;
   font-size: 0.8125rem;
   box-shadow: 0 1px 3px rgba(15, 23, 42, 0.12);
   transition: transform 0.15s ease, box-shadow 0.15s ease;
-  gap: 0.35rem;
+  gap: 0.3rem;
 }
 
 .dayEvent::before {
@@ -1401,12 +1401,14 @@
   color: var(--event-chip-color, var(--color-text-primary));
   text-transform: uppercase;
   letter-spacing: 0.04em;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .dayEventTitle {
   font-weight: 500;
   font-size: 0.875rem;
-  line-height: 1.3;
+  line-height: 1.25;
   color: inherit;
   overflow: hidden;
   display: -webkit-box;
@@ -1417,10 +1419,10 @@
 
 .dayEventDescription {
   font-size: 0.75rem;
-  line-height: 1.35;
+  line-height: 1.3;
   color: var(--color-text-secondary);
   display: -webkit-box;
-  -webkit-line-clamp: 3;
+  -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
   word-break: break-word;
@@ -1431,24 +1433,31 @@
 }
 
 .dayEventStatus {
-  margin-top: auto;
-  align-self: flex-start;
   font-size: 0.6875rem;
-  font-weight: 600;
+  font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--event-chip-color, var(--color-text-secondary));
-  opacity: 0.9;
-  padding: 0.2rem 0.55rem;
+  opacity: 0.92;
+  padding: 0.18rem 0.55rem;
   border-radius: 999px;
-  background-color: rgba(255, 255, 255, 0.75);
-  box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.25);
+  background-color: rgba(248, 250, 252, 0.65);
+  box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.2);
+  flex-shrink: 0;
 }
 
 :global(body.dark) .dayEventStatus {
-  background-color: rgba(15, 23, 42, 0.6);
-  box-shadow: inset 0 0 0 1px rgba(30, 64, 175, 0.4);
-  color: var(--event-chip-color, rgba(191, 219, 254, 0.9));
+  background-color: rgba(15, 23, 42, 0.45);
+  box-shadow: inset 0 0 0 1px rgba(30, 64, 175, 0.35);
+  color: var(--event-chip-color, rgba(191, 219, 254, 0.92));
+}
+
+.dayEventHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  width: 100%;
 }
 
 /* Current Time Indicator */

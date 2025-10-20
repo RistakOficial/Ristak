@@ -1,6 +1,7 @@
 import React from 'react'
 import { Card } from '../Card'
-import { Users, UserCheck, Calendar, DollarSign } from 'lucide-react'
+import { TabList } from '../TabList'
+import { Users, UserCheck, Calendar, DollarSign, Layers, Target, MousePointerClick } from 'lucide-react'
 import { useLabels } from '@/contexts/LabelsContext'
 import styles from './ConversionFunnelChart.module.css'
 
@@ -10,18 +11,30 @@ interface FunnelStage {
   icon?: React.ComponentType<any>
 }
 
+type ScopeType = 'all' | 'attribution' | 'campaigns'
+
 interface ConversionFunnelChartProps {
   data: FunnelStage[]
   loading?: boolean
   showVisitors?: boolean
+  scope?: ScopeType
+  onScopeChange?: (scope: ScopeType) => void
 }
 
 export const ConversionFunnelChart: React.FC<ConversionFunnelChartProps> = ({
   data = [],
   loading = false,
-  showVisitors = true
+  showVisitors = true,
+  scope = 'all',
+  onScopeChange
 }) => {
   const { labels } = useLabels()
+
+  const scopeTabs = [
+    { value: 'all', label: 'Todos', icon: <Layers size={14} /> },
+    { value: 'attribution', label: 'Último toque', icon: <Target size={14} /> },
+    { value: 'campaigns', label: 'Último toque desde anuncio', icon: <MousePointerClick size={14} /> }
+  ]
 
   const DEFAULT_STAGES: FunnelStage[] = [
     { stage: 'Visitantes', value: 0, icon: Users },
@@ -68,6 +81,14 @@ export const ConversionFunnelChart: React.FC<ConversionFunnelChartProps> = ({
         <div>
           <h3 className={styles.title}>Conversiones</h3>
         </div>
+        {onScopeChange && (
+          <TabList
+            tabs={scopeTabs}
+            activeTab={scope}
+            onTabChange={(value) => onScopeChange(value as ScopeType)}
+            variant="compact"
+          />
+        )}
       </div>
 
       <div className={styles.funnelContainer}>

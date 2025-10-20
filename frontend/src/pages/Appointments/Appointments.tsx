@@ -1298,14 +1298,16 @@ export const Appointments: React.FC = () => {
                           title={tooltipText}
                           onClick={() => handleEventClick(event)}
                         >
-                          <div className={styles.dayEventTime}>
-                            {formatTime12h(event.startTime)} - {formatTime12h(event.endTime)}
+                          <div className={styles.dayEventHeader}>
+                            <span className={styles.dayEventTime}>
+                              {formatTime12h(event.startTime)} - {formatTime12h(event.endTime)}
+                            </span>
+                            <span className={styles.dayEventStatus}>{statusLabel}</span>
                           </div>
                           <div className={styles.dayEventTitle}>{displayTitle}</div>
                           {displayDescription && (
                             <div className={styles.dayEventDescription}>{displayDescription}</div>
                           )}
-                          <div className={styles.dayEventStatus}>{statusLabel}</div>
                         </div>
                       );
                     });
