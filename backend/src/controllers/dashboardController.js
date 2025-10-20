@@ -1046,29 +1046,72 @@ export const getFunnelData = async (req, res) => {
     }
 
     // ========================================
-    // 1. VISITANTES (no cambia con scope)
+    // 1. VISITANTES (según scope)
     // ========================================
-    let visitorsQuery, visitorsParams
+    let visitorsCount = 0
 
-    if (usePostgres) {
-      visitorsQuery = `
-        SELECT COUNT(DISTINCT visitor_id) as count
-        FROM sessions
-        WHERE started_at::timestamp >= $1::timestamp
-          AND started_at::timestamp < ($2::timestamp + INTERVAL '1 day')
-      `
-      visitorsParams = [startDate, endDate]
+    if (!useContactAttribution) {
+      // Vista "Todos": Todos los visitantes en el rango de fechas
+      let visitorsQuery, visitorsParams
+
+      if (usePostgres) {
+        visitorsQuery = `
+          SELECT COUNT(DISTINCT visitor_id) as count
+          FROM sessions
+          WHERE started_at::timestamp >= $1::timestamp
+            AND started_at::timestamp < ($2::timestamp + INTERVAL '1 day')
+        `
+        visitorsParams = [startDate, endDate]
+      } else {
+        visitorsQuery = `
+          SELECT COUNT(DISTINCT visitor_id) as count
+          FROM sessions
+          WHERE DATE(started_at) >= DATE(?)
+            AND DATE(started_at) <= DATE(?)
+        `
+        visitorsParams = [startDate, endDate]
+      }
+
+      const visitorsResult = await db.get(visitorsQuery, visitorsParams)
+      visitorsCount = parseInt(visitorsResult?.count || 0)
     } else {
-      visitorsQuery = `
-        SELECT COUNT(DISTINCT visitor_id) as count
-        FROM sessions
-        WHERE DATE(started_at) >= DATE(?)
-          AND DATE(started_at) <= DATE(?)
-      `
-      visitorsParams = [startDate, endDate]
-    }
+      // Vista "Último toque": Solo visitantes que SE CONVIRTIERON en contacto
+      // Agrupa por fecha de creación del contacto
+      let visitorsQuery, visitorsParams
 
-    const visitors = await db.get(visitorsQuery, visitorsParams)
+      if (usePostgres) {
+        visitorsQuery = `
+          SELECT COUNT(DISTINCT s.visitor_id) as count
+          FROM sessions s
+          INNER JOIN contacts c ON c.id = s.contact_id
+          WHERE c.created_at::timestamp >= $1::timestamp
+            AND c.created_at::timestamp < ($2::timestamp + INTERVAL '1 day')
+            ${isAttributed ? `AND c.attribution_ad_id IS NOT NULL AND EXISTS (
+              SELECT 1 FROM meta_ads ma
+              WHERE ma.ad_id = c.attribution_ad_id
+                AND (ma.date)::date = (c.created_at)::date
+            )` : ''}
+        `
+        visitorsParams = [startDate, endDate]
+      } else {
+        visitorsQuery = `
+          SELECT COUNT(DISTINCT s.visitor_id) as count
+          FROM sessions s
+          INNER JOIN contacts c ON c.id = s.contact_id
+          WHERE DATE(c.created_at) >= DATE(?)
+            AND DATE(c.created_at) <= DATE(?)
+            ${isAttributed ? `AND c.attribution_ad_id IS NOT NULL AND EXISTS (
+              SELECT 1 FROM meta_ads ma
+              WHERE ma.ad_id = c.attribution_ad_id
+                AND DATE(ma.date) = DATE(c.created_at)
+            )` : ''}
+        `
+        visitorsParams = [startDate, endDate]
+      }
+
+      const visitorsResult = await db.get(visitorsQuery, visitorsParams)
+      visitorsCount = parseInt(visitorsResult?.count || 0)
+    }
 
     // ========================================
     // 2. LEADS (según scope)
@@ -1262,7 +1305,7 @@ export const getFunnelData = async (req, res) => {
     // 5. RESPUESTA
     // ========================================
     const data = [
-      { stage: 'Visitantes', value: parseInt(visitors?.count || 0) },
+      { stage: 'Visitantes', value: visitorsCount },
       { stage: labels.leads, value: parseInt(leadsData?.count || 0) },
       { stage: 'Citas', value: appointmentsCount },
       { stage: labels.customers, value: customersCount }

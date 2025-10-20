@@ -1222,29 +1222,51 @@ export async function getVisitorsList(req, res) {
 
     logger.info(`Obteniendo lista de visitantes - rango: ${startDate} -> ${endDateWithTime}, scope: ${scope}, ad_id: ${ad_id}, campaign_id: ${campaign_id}, adset_id: ${adset_id}`)
 
-    // Construir WHERE clause
-    const conditions = ['s.created_at >= $1', 's.created_at <= $2']
-    const params = [startDate, endDateWithTime]
-    let paramCount = 2
+    // Determinar lógica de atribución
+    const useContactAttribution = scope === 'campaigns' || scope === 'attributed' || scope === 'attribution'
+    const isAttributed = scope === 'campaigns' || scope === 'attributed'
 
-    // Filtros opcionales por campaña/adset/ad
-    if (ad_id) {
-      paramCount++
-      conditions.push(`s.ad_id = $${paramCount}`)
-      params.push(ad_id)
-    } else if (adset_id) {
-      paramCount++
-      conditions.push(`s.adset_id = $${paramCount}`)
-      params.push(adset_id)
-    } else if (campaign_id) {
-      paramCount++
-      conditions.push(`s.campaign_id = $${paramCount}`)
-      params.push(campaign_id)
-    } else if (scope === 'campaigns') {
-      // Vista "Última atribución": Solo visitantes que matchearon con anuncios
-      conditions.push('s.ad_id IS NOT NULL')
+    // Construir WHERE clause
+    let conditions, params, paramCount
+
+    if (useContactAttribution) {
+      // Vista "Último toque": Filtrar por fecha de creación del contacto
+      conditions = ['c.created_at >= $1', 'c.created_at <= $2', 's.contact_id IS NOT NULL']
+      params = [startDate, endDateWithTime]
+      paramCount = 2
+
+      // Si es "campaigns", filtrar por ad_id
+      if (isAttributed) {
+        conditions.push('c.attribution_ad_id IS NOT NULL')
+        conditions.push(`EXISTS (
+          SELECT 1 FROM meta_ads ma
+          WHERE ma.ad_id = c.attribution_ad_id
+            AND (ma.date)::date = (c.created_at)::date
+        )`)
+      }
+    } else {
+      // Vista "Todos": Filtrar por fecha de la sesión
+      conditions = ['s.started_at >= $1', 's.started_at <= $2']
+      params = [startDate, endDateWithTime]
+      paramCount = 2
     }
-    // Vista "Todos" (scope === 'all'): No filtrar, mostrar TODOS los visitantes
+
+    // Filtros opcionales por campaña/adset/ad (solo para vista "Todos")
+    if (!useContactAttribution) {
+      if (ad_id) {
+        paramCount++
+        conditions.push(`s.ad_id = $${paramCount}`)
+        params.push(ad_id)
+      } else if (adset_id) {
+        paramCount++
+        conditions.push(`s.adset_id = $${paramCount}`)
+        params.push(adset_id)
+      } else if (campaign_id) {
+        paramCount++
+        conditions.push(`s.campaign_id = $${paramCount}`)
+        params.push(campaign_id)
+      }
+    }
 
     // Query PostgreSQL: obtener visitantes únicos con sus datos de sesión
     const query = `

@@ -1011,8 +1011,67 @@ export async function buildReportMetrics ({ startDate, endDate, groupBy = 'day',
     bucket.spend += Number(row.spend || 0)
     bucket.clicks += Number(row.clicks || 0)
     bucket.reach += Number(row.reach || 0)
-    bucket.visitors += Number(row.clicks || 0)
   })
+
+  // PASO 6: Procesar VISITANTES según el scope
+  // Vista "Todos": Agrupa por fecha de la sesión (started_at)
+  // Vista "Última atribución": Agrupa por fecha de creación del contacto (created_at)
+  if (!useContactAttribution) {
+    // Vista "Todos": visitantes por fecha de sesión
+    const visitorsParams = []
+    const visitorsConditions = buildRangeConditions('started_at', range, visitorsParams)
+    const visitorsWhere = visitorsConditions.length ? `WHERE ${visitorsConditions.join(' AND ')}` : ''
+    const visitorsGroupExpr = getGroupExpression('started_at', groupBy)
+
+    const visitorsQuery = `
+      SELECT
+        ${visitorsGroupExpr} as period,
+        COUNT(DISTINCT visitor_id) as visitors
+      FROM sessions
+      ${visitorsWhere}
+      GROUP BY period
+      ORDER BY period
+    `
+
+    const visitorsRows = await db.all(visitorsQuery, visitorsParams)
+
+    visitorsRows.forEach(row => {
+      const period = row.period
+      const bucket = ensureBucket(period)
+      bucket.visitors += Number(row.visitors || 0)
+    })
+  } else {
+    // Vista "Última atribución": visitantes que SE CONVIRTIERON en contacto
+    // Agrupa por fecha de creación del contacto
+    const visitorsParams = []
+    const visitorsConditions = buildRangeConditions('c.created_at', range, visitorsParams)
+
+    if (isAttributed) {
+      visitorsConditions.push(attributionMatchCondition('c'))
+    }
+
+    const visitorsWhere = visitorsConditions.length ? `WHERE ${visitorsConditions.join(' AND ')}` : ''
+    const visitorsGroupExpr = getGroupExpression('c.created_at', groupBy)
+
+    const visitorsQuery = `
+      SELECT
+        ${visitorsGroupExpr} as period,
+        COUNT(DISTINCT s.visitor_id) as visitors
+      FROM sessions s
+      INNER JOIN contacts c ON c.id = s.contact_id
+      ${visitorsWhere}
+      GROUP BY period
+      ORDER BY period
+    `
+
+    const visitorsRows = await db.all(visitorsQuery, visitorsParams)
+
+    visitorsRows.forEach(row => {
+      const period = row.period
+      const bucket = ensureBucket(period)
+      bucket.visitors += Number(row.visitors || 0)
+    })
+  }
 
   // Las citas ahora se cuentan basadas en la fecha de creación del contacto,
   // no en la fecha de la cita, y ya se incluyen en el query de contactos arriba
