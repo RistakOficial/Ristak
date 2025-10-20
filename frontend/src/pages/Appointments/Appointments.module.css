@@ -17,7 +17,7 @@
   display: flex;
   gap: 1rem;
   align-items: flex-start;
-  justify-content: flex-end;
+  justify-content: flex-start;
 }
 
 /* Buscador de citas */
