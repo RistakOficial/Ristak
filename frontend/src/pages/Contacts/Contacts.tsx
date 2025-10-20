@@ -15,6 +15,7 @@ import {
   Mail
 } from 'lucide-react'
 import { useDateRange } from '@/contexts/DateRangeContext'
+import { useTimezone } from '@/contexts/TimezoneContext'
 import { useLabels } from '@/contexts/LabelsContext'
 import { formatCurrency, formatDate, formatDateToISO, formatEndDateToISO, formatNumber, parseLocalDateString } from '@/utils/format'
 import { contactsService, type Contact, type ContactStats } from '@/services/contactsService'
@@ -168,6 +169,7 @@ export const Contacts: React.FC = () => {
   const { dateRange, setDateRange } = useDateRange()
   const { showToast } = useNotification()
   const { labels } = useLabels()
+  const { formatLocalDate } = useTimezone()
   const { locationId, accessToken } = useAuth()
   const [contacts, setContacts] = useState<Contact[]>([])
   const [stats, setStats] = useState<ContactStats | null>(null)
@@ -473,7 +475,7 @@ export const Contacts: React.FC = () => {
     {
       key: 'createdAt',
       header: 'Fecha de creación',
-      render: (value) => formatDate(value, tableDateOptions),
+      render: (value) => formatLocalDate(value),
       sortable: true
     },
     {
