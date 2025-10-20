@@ -21,7 +21,8 @@ import {
   Send
 } from 'lucide-react'
 import { useDateRange } from '@/contexts/DateRangeContext'
-import { formatCurrency, formatDate, formatDateToISO, formatEndDateToISO, formatNumber, parseLocalDateString } from '@/utils/format'
+import { useTimezone } from '@/contexts/TimezoneContext'
+import { formatCurrency, formatDateToISO, formatEndDateToISO, formatNumber, parseLocalDateString } from '@/utils/format'
 import { transactionsService, type Transaction, type TransactionSummary } from '@/services/transactionsService'
 import styles from './Transactions.module.css'
 
@@ -34,6 +35,7 @@ interface ModalData {
 
 export const Transactions: React.FC = () => {
   const { dateRange, setDateRange } = useDateRange()
+  const { formatLocalDateShort } = useTimezone()
   const { showConfirm, showToast } = useNotification()
   const [transactions, setTransactions] = useState<Transaction[]>([])
   const [summary, setSummary] = useState<TransactionSummary | null>(null)
@@ -268,7 +270,7 @@ export const Transactions: React.FC = () => {
     {
       key: 'date',
       header: 'Fecha',
-      render: (value) => formatDate(value, tableDateOptions),
+      render: (value) => formatLocalDateShort(value),
       sortable: true
     },
     {

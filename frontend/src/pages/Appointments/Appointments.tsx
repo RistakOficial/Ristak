@@ -7,7 +7,8 @@ import { useNotification } from '@/contexts/NotificationContext';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useAppConfig } from '@/hooks';
 import { calendarsService, type Calendar, type CalendarEvent, type AppointmentStats } from '@/services/calendarsService';
-import { formatTime12h, formatDate } from '@/utils/format';
+import { formatTime12h } from '@/utils/format'
+import { useTimezone } from '@/contexts/TimezoneContext';
 import styles from './Appointments.module.css';
 
 const LAST_SELECTED_CALENDAR_KEY = 'lastSelectedCalendarId';
@@ -106,6 +107,7 @@ export const Appointments: React.FC = () => {
   const { locationId, accessToken } = useAuth();
   const { showToast } = useNotification();
   const { theme } = useTheme();
+  const { formatLocalDateShort } = useTimezone();
 
   // Estado del calendario
   const [viewMode, setViewMode] = useState<ViewMode>('month');
@@ -481,7 +483,7 @@ export const Appointments: React.FC = () => {
 
         // Buscar por fecha (formato: "15 enero", "15/01", "enero 2025", etc)
         const eventDate = new Date(event.startTime);
-        const dateStr = formatDate(eventDate).toLowerCase();
+        const dateStr = formatLocalDateShort(eventDate).toLowerCase();
         const monthName = MONTH_NAMES[eventDate.getMonth()].toLowerCase();
         const dayMonth = `${eventDate.getDate()} ${monthName}`;
         const yearStr = eventDate.getFullYear().toString();
@@ -788,7 +790,7 @@ export const Appointments: React.FC = () => {
                             {event.title || '(Sin título)'}
                           </div>
                           <div className={styles.searchResultMeta}>
-                            {formatDate(eventDate)} · {formatTime12h(event.startTime)} · {getStatusLabel(event.appointmentStatus)}
+                            {formatLocalDateShort(eventDate)} · {formatTime12h(event.startTime)} · {getStatusLabel(event.appointmentStatus)}
                           </div>
                         </div>
                       </button>
@@ -1356,7 +1358,7 @@ export const Appointments: React.FC = () => {
                   <div className={styles.upcomingInfo}>
                     <div className={styles.upcomingTitle}>{event.title}</div>
                     <div className={styles.upcomingDetails}>
-                      {formatDate(new Date(event.startTime))} · {getStatusLabel(event.appointmentStatus)}
+                      {formatLocalDateShort(new Date(event.startTime))} · {getStatusLabel(event.appointmentStatus)}
                     </div>
                   </div>
                   <div
