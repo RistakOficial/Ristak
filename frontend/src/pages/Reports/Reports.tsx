@@ -460,7 +460,8 @@ export const Reports: React.FC = () => {
               `/api/tracking/visitors-by-period?` + new URLSearchParams({
                 startDate: apiRange.from,
                 endDate: apiRange.to,
-                groupBy: viewType
+                groupBy: viewType,
+                scope: scopeParam // Pasar el scope actual para que respete la vista
               })
             )
 
