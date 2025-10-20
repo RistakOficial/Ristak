@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import { Card, Button } from '@/components/common'
-import { CheckCircle, ExternalLink, ChevronDown, ChevronUp, AlertCircle, Info, Facebook, RefreshCw } from 'lucide-react'
+import { CheckCircle, ExternalLink, ChevronDown, ChevronUp, AlertCircle, Info, RefreshCw } from 'lucide-react'
 import { useNotification } from '@/contexts/NotificationContext'
 import styles from './HighLevelIntegration.module.css'
 
@@ -46,17 +46,15 @@ export const MetaAdsIntegration: React.FC = () => {
           <div className={styles.headerContent}>
             <div className={styles.headerLeft}>
               <div className={styles.logoContainer}>
-                <div className={styles.iconWrapper} style={{
-                  backgroundColor: '#0866FF',
-                  borderRadius: '12px',
-                  width: '60px',
-                  height: '60px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center'
-                }}>
-                  <Facebook size={36} color="white" />
-                </div>
+                <img
+                  src="https://img.icons8.com/fluency/96/meta.png"
+                  alt="Meta"
+                  style={{
+                    width: '60px',
+                    height: '60px',
+                    borderRadius: '12px'
+                  }}
+                />
               </div>
               <h2 className={styles.pageTitle}>Meta Ads</h2>
               <p className={styles.pageSubtitle}>
