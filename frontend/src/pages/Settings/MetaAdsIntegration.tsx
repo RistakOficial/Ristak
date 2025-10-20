@@ -46,7 +46,7 @@ export const MetaAdsIntegration: React.FC = () => {
           <div className={styles.headerContent}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '8px' }}>
               <img
-                src="https://img.icons8.com/fluency/96/meta.png"
+                src="https://img.icons8.com/ios-filled/150/meta.png"
                 alt="Meta"
                 style={{
                   width: '60px',
