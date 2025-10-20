@@ -66,7 +66,7 @@ export const ConversionFunnelChart: React.FC<ConversionFunnelChartProps> = ({
     <Card className={styles.container}>
       <div className={styles.header}>
         <div>
-          <h3 className={styles.title}>Funnel de Conversión</h3>
+          <h3 className={styles.title}>Conversiones</h3>
         </div>
       </div>
 
