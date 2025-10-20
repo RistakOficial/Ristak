@@ -7,6 +7,30 @@ import { logger } from '../utils/logger.js';
 
 const GHL_API_BASE = 'https://services.leadconnectorhq.com';
 const API_VERSION = '2021-04-15';
+const REQUEST_TIMEOUT = 15000; // 15 segundos timeout
+
+/**
+ * Fetch con timeout automático
+ */
+async function fetchWithTimeout(url, options = {}, timeout = REQUEST_TIMEOUT) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeout);
+
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
+    return response;
+  } catch (error) {
+    clearTimeout(timeoutId);
+    if (error.name === 'AbortError') {
+      throw new Error(`Request timeout después de ${timeout}ms`);
+    }
+    throw error;
+  }
+}
 
 /**
  * Mapear estado de cita del frontend al formato de HighLevel
@@ -35,7 +59,7 @@ export async function getCalendars(locationId, accessToken) {
   try {
     logger.info(`[HighLevel Calendar] Obteniendo calendarios para locationId: ${locationId}`);
 
-    const response = await fetch(
+    const response = await fetchWithTimeout(
       `${GHL_API_BASE}/calendars/?locationId=${locationId}`,
       {
         method: 'GET',
@@ -73,7 +97,7 @@ export async function getCalendar(calendarId, accessToken) {
   try {
     logger.info(`[HighLevel Calendar] Obteniendo calendario: ${calendarId}`);
 
-    const response = await fetch(
+    const response = await fetchWithTimeout(
       `${GHL_API_BASE}/calendars/${calendarId}`,
       {
         method: 'GET',
@@ -120,7 +144,7 @@ export async function getCalendarEvents(locationId, startTime, endTime, accessTo
       url += `&calendarId=${calendarId}`;
     }
 
-    const response = await fetch(url, {
+    const response = await fetchWithTimeout(url, {
       method: 'GET',
       headers: {
         'Accept': 'application/json',
@@ -156,7 +180,7 @@ export async function getAppointment(eventId, accessToken) {
   try {
     logger.info(`[HighLevel Calendar] Obteniendo detalles de cita: ${eventId}`);
 
-    const response = await fetch(
+    const response = await fetchWithTimeout(
       `${GHL_API_BASE}/calendars/events/appointments/${eventId}`,
       {
         method: 'GET',
@@ -197,7 +221,7 @@ export async function getFreeSlots(calendarId, startDate, endDate, accessToken, 
   try {
     logger.info(`[HighLevel Calendar] Obteniendo slots disponibles para calendario: ${calendarId}`);
 
-    const response = await fetch(
+    const response = await fetchWithTimeout(
       `${GHL_API_BASE}/calendars/${calendarId}/free-slots?startDate=${startDate}&endDate=${endDate}&timezone=${timezone}`,
       {
         method: 'GET',
@@ -268,7 +292,7 @@ export async function createAppointment(appointmentData, locationId, accessToken
       payload.description = appointmentData.notes; // HighLevel usa 'description' no 'notes'
     }
 
-    const response = await fetch(
+    const response = await fetchWithTimeout(
       `${GHL_API_BASE}/calendars/events/appointments`,
       {
         method: 'POST',
@@ -309,7 +333,7 @@ export async function updateAppointment(eventId, updateData, accessToken) {
   try {
     logger.info(`[HighLevel Calendar] Actualizando cita: ${eventId}`);
 
-    const response = await fetch(
+    const response = await fetchWithTimeout(
       `${GHL_API_BASE}/calendars/events/appointments/${eventId}`,
       {
         method: 'PUT',
@@ -349,7 +373,7 @@ export async function deleteEvent(eventId, accessToken) {
   try {
     logger.info(`[HighLevel Calendar] Eliminando evento: ${eventId}`);
 
-    const response = await fetch(
+    const response = await fetchWithTimeout(
       `${GHL_API_BASE}/calendars/events/${eventId}`,
       {
         method: 'DELETE',
