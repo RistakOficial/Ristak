@@ -638,22 +638,31 @@ export function getGroupExpression(column, groupBy, timezone = 'America/Mexico_C
   // Por ahora usamos el offset de Mexico City como default
   const tzOffset = '-6 hours' // TODO: calcular dinámicamente desde timezone IANA
 
+  if (!isPostgres) {
+    if (groupBy === 'year') {
+      return `strftime('%Y', datetime(${column}, '${tzOffset}'))`
+    }
+
+    if (groupBy === 'month') {
+      return `strftime('%Y-%m', datetime(${column}, '${tzOffset}'))`
+    }
+
+    return `strftime('%Y-%m-%d', datetime(${column}, '${tzOffset}'))`
+  }
+
+  const safeTimezone = (timezone || 'UTC').replace(/'/g, "''")
+  const columnExpr = `((${column})::timestamptz AT TIME ZONE 'UTC' AT TIME ZONE '${safeTimezone}')`
+
   if (groupBy === 'year') {
-    return isPostgres
-      ? `TO_CHAR(${column} AT TIME ZONE 'UTC' AT TIME ZONE '${timezone}', 'YYYY')`
-      : `strftime('%Y', datetime(${column}, '${tzOffset}'))`
+    return `TO_CHAR(${columnExpr}, 'YYYY')`
   }
 
   if (groupBy === 'month') {
-    return isPostgres
-      ? `TO_CHAR(${column} AT TIME ZONE 'UTC' AT TIME ZONE '${timezone}', 'YYYY-MM')`
-      : `strftime('%Y-%m', datetime(${column}, '${tzOffset}'))`
+    return `TO_CHAR(${columnExpr}, 'YYYY-MM')`
   }
 
   // day
-  return isPostgres
-    ? `TO_CHAR(${column} AT TIME ZONE 'UTC' AT TIME ZONE '${timezone}', 'YYYY-MM-DD')`
-    : `strftime('%Y-%m-%d', datetime(${column}, '${tzOffset}'))`
+  return `TO_CHAR(${columnExpr}, 'YYYY-MM-DD')`
 }
 
 function buildRangeConditions(column, range, params) {
