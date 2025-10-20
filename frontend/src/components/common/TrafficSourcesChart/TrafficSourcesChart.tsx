@@ -1,8 +1,7 @@
-import React, { useMemo } from 'react'
+import React, { useMemo, useState, useCallback } from 'react'
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts'
 import { Card } from '../Card'
 import { Globe } from 'lucide-react'
-import { useChartHover } from '@/hooks/useChartHover'
 import { ChartTooltip } from '../ChartTooltip/ChartTooltip'
 import styles from './TrafficSourcesChart.module.css'
 
@@ -29,8 +28,6 @@ const DEFAULT_COLORS = [
 ]
 
 export const TrafficSourcesChart: React.FC<TrafficSourcesChartProps> = ({ data, loading = false }) => {
-  const { activePoint, pointPos, handleMouseMove, handleMouseLeave } = useChartHover()
-
   const chartData = useMemo(() => {
     return data.map((item, index) => ({
       ...item,
@@ -39,6 +36,25 @@ export const TrafficSourcesChart: React.FC<TrafficSourcesChartProps> = ({ data, 
   }, [data])
 
   const totalVisits = chartData.reduce((sum, item) => sum + item.value, 0)
+  const [activeIndex, setActiveIndex] = useState<number | null>(null)
+  const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null)
+
+  const handleMouseMove = useCallback((state: any, event: React.MouseEvent) => {
+    const index = typeof state?.activeTooltipIndex === 'number' ? state.activeTooltipIndex : null
+
+    if (index !== null) {
+      setActiveIndex(index)
+      setTooltipPos({ x: event.clientX, y: event.clientY })
+    } else {
+      setActiveIndex(null)
+      setTooltipPos(null)
+    }
+  }, [])
+
+  const handleMouseLeave = useCallback(() => {
+    setActiveIndex(null)
+    setTooltipPos(null)
+  }, [])
 
   // Formatear tooltip
   const formatTooltipValue = (value: number) => {
@@ -97,10 +113,16 @@ export const TrafficSourcesChart: React.FC<TrafficSourcesChartProps> = ({ data, 
             </ResponsiveContainer>
 
             <ChartTooltip
-              active={activePoint !== null}
-              data={activePoint !== null ? { ...chartData[activePoint.dataIndex], label: chartData[activePoint.dataIndex].name } : null}
-              pointPos={pointPos}
-              series={[{ key: 'value', label: 'Visitantes', color: chartData[activePoint?.dataIndex ?? 0]?.color ?? '#3b82f6' }]}
+              active={activeIndex !== null}
+              data={activeIndex !== null ? { ...chartData[activeIndex], label: chartData[activeIndex].name } : null}
+              pointPos={tooltipPos}
+              series={[
+                {
+                  key: 'value',
+                  label: 'Visitantes',
+                  color: chartData[activeIndex ?? 0]?.color ?? '#3b82f6'
+                }
+              ]}
               formatValue={formatTooltipValue}
             />
 

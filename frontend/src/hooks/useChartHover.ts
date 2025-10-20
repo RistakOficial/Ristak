@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 
 interface UseChartHoverProps {
-  data: any[]
+  data?: any[]
   enabled?: boolean
 }
 
@@ -13,7 +13,9 @@ interface ChartHoverState {
   activeData: any
 }
 
-export const useChartHover = ({ data, enabled = true }: UseChartHoverProps) => {
+export const useChartHover = (props: UseChartHoverProps = {}) => {
+  const { data: maybeData = [], enabled = true } = props
+  const data = Array.isArray(maybeData) ? maybeData : []
   const chartRef = useRef<HTMLDivElement>(null)
   const pointPositionsRef = useRef<Array<number | undefined>>([])
   const dataLength = data.length
