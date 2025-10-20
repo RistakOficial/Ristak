@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { Card, Button } from '@/components/common'
-import { Activity, Copy, Check, Info, Loader2, RefreshCw, Maximize2, Minimize2, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Activity, Copy, Check, Info, Loader2, RefreshCw, Maximize2, Minimize2, ChevronLeft, ChevronRight, Search } from 'lucide-react'
 import { trackingService, TrackingSession } from '@/services/trackingService'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
@@ -28,7 +28,10 @@ export const WebTracking: React.FC = () => {
   // Estados para paginación y vista expandida
   const [currentPage, setCurrentPage] = useState(1)
   const [isExpanded, setIsExpanded] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [columnWidths, setColumnWidths] = useState<Record<string, number>>({})
   const ITEMS_PER_PAGE = 10
+  const DEFAULT_COLUMN_WIDTH = 150 // Ancho uniforme inicial
 
   useEffect(() => {
     loadTrackingConfig()
@@ -169,7 +172,34 @@ export const WebTracking: React.FC = () => {
     })
   }
 
-  // Calcular sesiones paginadas
+  // Filtrar sesiones por búsqueda
+  const filteredSessions = useMemo(() => {
+    if (!searchQuery.trim()) return recentSessions
+
+    const query = searchQuery.toLowerCase()
+    return recentSessions.filter((session: any) => {
+      return (
+        session.session_id?.toLowerCase().includes(query) ||
+        session.visitor_id?.toLowerCase().includes(query) ||
+        session.contact_id?.toLowerCase().includes(query) ||
+        session.full_name?.toLowerCase().includes(query) ||
+        session.email?.toLowerCase().includes(query) ||
+        session.utm_source?.toLowerCase().includes(query) ||
+        session.utm_medium?.toLowerCase().includes(query) ||
+        session.utm_campaign?.toLowerCase().includes(query) ||
+        session.landing_url?.toLowerCase().includes(query) ||
+        session.referrer_url?.toLowerCase().includes(query) ||
+        session.ip?.toLowerCase().includes(query) ||
+        session.device_type?.toLowerCase().includes(query) ||
+        session.browser?.toLowerCase().includes(query) ||
+        session.os?.toLowerCase().includes(query) ||
+        session.geo_country?.toLowerCase().includes(query) ||
+        session.geo_city?.toLowerCase().includes(query)
+      )
+    })
+  }, [recentSessions, searchQuery])
+
+  // Calcular sesiones paginadas (solo para vista normal)
   const paginatedSessions = useMemo(() => {
     const startIndex = (currentPage - 1) * ITEMS_PER_PAGE
     const endIndex = startIndex + ITEMS_PER_PAGE
@@ -188,7 +218,162 @@ export const WebTracking: React.FC = () => {
 
   const handleToggleExpanded = () => {
     setIsExpanded(prev => !prev)
+    if (!isExpanded) {
+      // Al abrir, resetear búsqueda
+      setSearchQuery('')
+    }
   }
+
+  const handleColumnResize = (columnKey: string, newWidth: number) => {
+    setColumnWidths(prev => ({
+      ...prev,
+      [columnKey]: Math.max(80, newWidth) // Mínimo 80px
+    }))
+  }
+
+  const getColumnWidth = (columnKey: string) => {
+    return columnWidths[columnKey] || DEFAULT_COLUMN_WIDTH
+  }
+
+  // Componente para header resizable
+  const ResizableHeader: React.FC<{
+    columnKey: string
+    label: string
+    width: number
+    onResize: (key: string, width: number) => void
+  }> = ({ columnKey, label, width, onResize }) => {
+    const [isResizing, setIsResizing] = useState(false)
+    const [startX, setStartX] = useState(0)
+    const [startWidth, setStartWidth] = useState(0)
+
+    const handleMouseDown = (e: React.MouseEvent) => {
+      e.preventDefault()
+      setIsResizing(true)
+      setStartX(e.clientX)
+      setStartWidth(width)
+    }
+
+    useEffect(() => {
+      if (!isResizing) return
+
+      const handleMouseMove = (e: MouseEvent) => {
+        const diff = e.clientX - startX
+        const newWidth = startWidth + diff
+        onResize(columnKey, newWidth)
+      }
+
+      const handleMouseUp = () => {
+        setIsResizing(false)
+      }
+
+      document.addEventListener('mousemove', handleMouseMove)
+      document.addEventListener('mouseup', handleMouseUp)
+
+      return () => {
+        document.removeEventListener('mousemove', handleMouseMove)
+        document.removeEventListener('mouseup', handleMouseUp)
+      }
+    }, [isResizing, startX, startWidth, columnKey, onResize])
+
+    return (
+      <th
+        style={{
+          padding: '12px 8px',
+          textAlign: 'left',
+          fontWeight: 600,
+          borderBottom: '2px solid var(--color-border)',
+          width: `${width}px`,
+          minWidth: `${width}px`,
+          maxWidth: `${width}px`,
+          position: 'relative',
+          userSelect: 'none'
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {label}
+          </span>
+          <div
+            onMouseDown={handleMouseDown}
+            style={{
+              width: '4px',
+              height: '100%',
+              position: 'absolute',
+              right: 0,
+              top: 0,
+              cursor: 'col-resize',
+              backgroundColor: isResizing ? 'var(--color-primary)' : 'transparent',
+              transition: 'background-color 0.2s'
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.backgroundColor = 'var(--color-border)'
+            }}
+            onMouseLeave={(e) => {
+              if (!isResizing) {
+                e.currentTarget.style.backgroundColor = 'transparent'
+              }
+            }}
+          />
+        </div>
+      </th>
+    )
+  }
+
+  // Definir las columnas una sola vez
+  const columns = [
+    { key: 'session_id', label: 'Session ID' },
+    { key: 'visitor_id', label: 'Visitor ID' },
+    { key: 'contact_id', label: 'Contact ID' },
+    { key: 'full_name', label: 'Full Name' },
+    { key: 'event_name', label: 'Event Name' },
+    { key: 'started_at', label: 'Started At' },
+    { key: 'last_event_at', label: 'Last Event At' },
+    { key: 'created_at', label: 'Created At' },
+    { key: 'landing_url', label: 'Landing URL' },
+    { key: 'referrer_url', label: 'Referrer URL' },
+    { key: 'utm_source', label: 'UTM Source' },
+    { key: 'utm_medium', label: 'UTM Medium' },
+    { key: 'utm_campaign', label: 'UTM Campaign' },
+    { key: 'utm_term', label: 'UTM Term' },
+    { key: 'utm_content', label: 'UTM Content' },
+    { key: 'gclid', label: 'GCLID' },
+    { key: 'fbclid', label: 'FBCLID' },
+    { key: 'fbc', label: 'FBC' },
+    { key: 'fbp', label: 'FBP' },
+    { key: 'wbraid', label: 'WBRAID' },
+    { key: 'gbraid', label: 'GBRAID' },
+    { key: 'msclkid', label: 'MSCLKID' },
+    { key: 'ttclid', label: 'TTCLID' },
+    { key: 'channel', label: 'Channel' },
+    { key: 'source_platform', label: 'Source Platform' },
+    { key: 'campaign_id', label: 'Campaign ID' },
+    { key: 'adset_id', label: 'Adset ID' },
+    { key: 'ad_group_id', label: 'Ad Group ID' },
+    { key: 'ad_id', label: 'Ad ID' },
+    { key: 'campaign_name', label: 'Campaign Name' },
+    { key: 'adset_name', label: 'Adset Name' },
+    { key: 'ad_group_name', label: 'Ad Group Name' },
+    { key: 'ad_name', label: 'Ad Name' },
+    { key: 'placement', label: 'Placement' },
+    { key: 'site_source_name', label: 'Site Source Name' },
+    { key: 'network', label: 'Network' },
+    { key: 'match_type', label: 'Match Type' },
+    { key: 'keyword', label: 'Keyword' },
+    { key: 'search_query', label: 'Search Query' },
+    { key: 'creative_id', label: 'Creative ID' },
+    { key: 'ad_position', label: 'Ad Position' },
+    { key: 'ip', label: 'IP' },
+    { key: 'user_agent', label: 'User Agent' },
+    { key: 'device_type', label: 'Device Type' },
+    { key: 'os', label: 'OS' },
+    { key: 'browser', label: 'Browser' },
+    { key: 'browser_version', label: 'Browser Version' },
+    { key: 'language', label: 'Language' },
+    { key: 'timezone', label: 'Timezone' },
+    { key: 'geo_country', label: 'Country' },
+    { key: 'geo_region', label: 'Region' },
+    { key: 'geo_city', label: 'City' }
+  ]
 
   return (
     <div className={styles.integrationContainer}>
@@ -646,59 +831,64 @@ export const WebTracking: React.FC = () => {
             </Button>
           </div>
 
-          {/* Controles de paginación superiores */}
+          {/* Buscador */}
           <div style={{
             padding: '16px 24px',
             display: 'flex',
             justifyContent: 'space-between',
             alignItems: 'center',
             borderBottom: '1px solid var(--color-border)',
-            backgroundColor: 'var(--color-surface)'
+            backgroundColor: 'var(--color-surface)',
+            gap: '16px'
           }}>
-            <span style={{ fontSize: '0.875rem', color: 'var(--color-text-secondary)' }}>
-              Mostrando {((currentPage - 1) * ITEMS_PER_PAGE) + 1} - {Math.min(currentPage * ITEMS_PER_PAGE, recentSessions.length)} de {recentSessions.length} sesiones
-            </span>
-            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-              <Button
-                variant="ghost"
-                size="small"
-                onClick={handlePreviousPage}
-                disabled={currentPage === 1}
-              >
-                <ChevronLeft size={16} />
-                Anterior
-              </Button>
-              <span style={{ padding: '0 8px', fontSize: '0.875rem' }}>
-                Página {currentPage} de {totalPages}
-              </span>
-              <Button
-                variant="ghost"
-                size="small"
-                onClick={handleNextPage}
-                disabled={currentPage === totalPages}
-              >
-                Siguiente
-                <ChevronRight size={16} />
-              </Button>
+            <div style={{ position: 'relative', flex: 1, maxWidth: '400px' }}>
+              <Search
+                size={18}
+                style={{
+                  position: 'absolute',
+                  left: '12px',
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  color: 'var(--color-text-secondary)'
+                }}
+              />
+              <input
+                type="text"
+                placeholder="Buscar en todas las columnas..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                style={{
+                  width: '100%',
+                  padding: '8px 12px 8px 40px',
+                  border: '1px solid var(--color-border)',
+                  borderRadius: '6px',
+                  fontSize: '0.875rem',
+                  backgroundColor: 'var(--color-background)',
+                  color: 'var(--color-text)',
+                  outline: 'none'
+                }}
+              />
             </div>
+            <span style={{ fontSize: '0.875rem', color: 'var(--color-text-secondary)' }}>
+              {filteredSessions.length} {filteredSessions.length === 1 ? 'sesión' : 'sesiones'} {searchQuery.trim() && `(filtradas de ${recentSessions.length})`}
+            </span>
           </div>
 
           {/* Tabla expandida con scroll */}
           <div style={{
             flex: 1,
             overflow: 'auto',
-            padding: '24px'
+            padding: '0'
           }}>
             <div style={{
+              height: '100%',
               overflowX: 'auto',
-              backgroundColor: 'var(--color-surface)',
-              borderRadius: '8px',
-              border: '1px solid var(--color-border)'
+              overflowY: 'auto'
             }}>
               <table style={{
-                width: '100%',
                 borderCollapse: 'collapse',
-                fontSize: '0.875rem'
+                fontSize: '0.875rem',
+                backgroundColor: 'var(--color-surface)'
               }}>
                 <thead style={{
                   backgroundColor: 'var(--color-gray-50)',
@@ -707,165 +897,76 @@ export const WebTracking: React.FC = () => {
                   zIndex: 10
                 }}>
                   <tr>
-                    {/* IDs y Timestamps */}
-                    <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 600, borderBottom: '2px solid var(--color-border)', minWidth: '200px' }}>Session ID</th>
-                    <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 600, borderBottom: '2px solid var(--color-border)', minWidth: '200px' }}>Visitor ID</th>
-                    <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 600, borderBottom: '2px solid var(--color-border)', minWidth: '200px' }}>Contact ID</th>
-                    <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 600, borderBottom: '2px solid var(--color-border)', minWidth: '150px' }}>Full Name</th>
-                    <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 600, borderBottom: '2px solid var(--color-border)', minWidth: '120px' }}>Event Name</th>
-                    <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 600, borderBottom: '2px solid var(--color-border)', minWidth: '180px' }}>Started At</th>
-                    <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 600, borderBottom: '2px solid var(--color-border)', minWidth: '180px' }}>Last Event At</th>
-                    <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 600, borderBottom: '2px solid var(--color-border)', minWidth: '180px' }}>Created At</th>
-
-                    {/* URLs */}
-                    <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 600, borderBottom: '2px solid var(--color-border)', minWidth: '300px' }}>Landing URL</th>
-                    <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 600, borderBottom: '2px solid var(--color-border)', minWidth: '300px' }}>Referrer URL</th>
-
-                    {/* UTMs */}
-                    <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 600, borderBottom: '2px solid var(--color-border)', minWidth: '150px' }}>UTM Source</th>
-                    <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 600, borderBottom: '2px solid var(--color-border)', minWidth: '150px' }}>UTM Medium</th>
-                    <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 600, borderBottom: '2px solid var(--color-border)', minWidth: '200px' }}>UTM Campaign</th>
-                    <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 600, borderBottom: '2px solid var(--color-border)', minWidth: '150px' }}>UTM Term</th>
-                    <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 600, borderBottom: '2px solid var(--color-border)', minWidth: '150px' }}>UTM Content</th>
-
-                    {/* Click IDs */}
-                    <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 600, borderBottom: '2px solid var(--color-border)', minWidth: '200px' }}>GCLID</th>
-                    <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 600, borderBottom: '2px solid var(--color-border)', minWidth: '200px' }}>FBCLID</th>
-                    <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 600, borderBottom: '2px solid var(--color-border)', minWidth: '200px' }}>FBC</th>
-                    <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 600, borderBottom: '2px solid var(--color-border)', minWidth: '200px' }}>FBP</th>
-                    <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 600, borderBottom: '2px solid var(--color-border)', minWidth: '150px' }}>WBRAID</th>
-                    <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 600, borderBottom: '2px solid var(--color-border)', minWidth: '150px' }}>GBRAID</th>
-                    <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 600, borderBottom: '2px solid var(--color-border)', minWidth: '150px' }}>MSCLKID</th>
-                    <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 600, borderBottom: '2px solid var(--color-border)', minWidth: '150px' }}>TTCLID</th>
-
-                    {/* Campaign Details */}
-                    <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 600, borderBottom: '2px solid var(--color-border)', minWidth: '120px' }}>Channel</th>
-                    <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 600, borderBottom: '2px solid var(--color-border)', minWidth: '150px' }}>Source Platform</th>
-                    <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 600, borderBottom: '2px solid var(--color-border)', minWidth: '180px' }}>Campaign ID</th>
-                    <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 600, borderBottom: '2px solid var(--color-border)', minWidth: '180px' }}>Adset ID</th>
-                    <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 600, borderBottom: '2px solid var(--color-border)', minWidth: '180px' }}>Ad Group ID</th>
-                    <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 600, borderBottom: '2px solid var(--color-border)', minWidth: '180px' }}>Ad ID</th>
-                    <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 600, borderBottom: '2px solid var(--color-border)', minWidth: '200px' }}>Campaign Name</th>
-                    <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 600, borderBottom: '2px solid var(--color-border)', minWidth: '200px' }}>Adset Name</th>
-                    <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 600, borderBottom: '2px solid var(--color-border)', minWidth: '200px' }}>Ad Group Name</th>
-                    <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 600, borderBottom: '2px solid var(--color-border)', minWidth: '200px' }}>Ad Name</th>
-                    <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 600, borderBottom: '2px solid var(--color-border)', minWidth: '150px' }}>Placement</th>
-                    <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 600, borderBottom: '2px solid var(--color-border)', minWidth: '180px' }}>Site Source Name</th>
-                    <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 600, borderBottom: '2px solid var(--color-border)', minWidth: '120px' }}>Network</th>
-                    <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 600, borderBottom: '2px solid var(--color-border)', minWidth: '120px' }}>Match Type</th>
-                    <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 600, borderBottom: '2px solid var(--color-border)', minWidth: '150px' }}>Keyword</th>
-                    <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 600, borderBottom: '2px solid var(--color-border)', minWidth: '200px' }}>Search Query</th>
-                    <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 600, borderBottom: '2px solid var(--color-border)', minWidth: '150px' }}>Creative ID</th>
-                    <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 600, borderBottom: '2px solid var(--color-border)', minWidth: '120px' }}>Ad Position</th>
-
-                    {/* Device & Browser */}
-                    <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 600, borderBottom: '2px solid var(--color-border)', minWidth: '150px' }}>IP</th>
-                    <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 600, borderBottom: '2px solid var(--color-border)', minWidth: '350px' }}>User Agent</th>
-                    <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 600, borderBottom: '2px solid var(--color-border)', minWidth: '120px' }}>Device Type</th>
-                    <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 600, borderBottom: '2px solid var(--color-border)', minWidth: '120px' }}>OS</th>
-                    <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 600, borderBottom: '2px solid var(--color-border)', minWidth: '120px' }}>Browser</th>
-                    <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 600, borderBottom: '2px solid var(--color-border)', minWidth: '150px' }}>Browser Version</th>
-                    <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 600, borderBottom: '2px solid var(--color-border)', minWidth: '100px' }}>Language</th>
-                    <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 600, borderBottom: '2px solid var(--color-border)', minWidth: '180px' }}>Timezone</th>
-
-                    {/* Geo */}
-                    <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 600, borderBottom: '2px solid var(--color-border)', minWidth: '120px' }}>Country</th>
-                    <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 600, borderBottom: '2px solid var(--color-border)', minWidth: '150px' }}>Region</th>
-                    <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 600, borderBottom: '2px solid var(--color-border)', minWidth: '150px' }}>City</th>
+                    {columns.map(col => (
+                      <ResizableHeader
+                        key={col.key}
+                        columnKey={col.key}
+                        label={col.label}
+                        width={getColumnWidth(col.key)}
+                        onResize={handleColumnResize}
+                      />
+                    ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {paginatedSessions.map((session: any) => (
-                    <tr key={session.session_id} style={{ borderBottom: '1px solid var(--color-border)' }}>
-                      {/* IDs y Timestamps */}
-                      <td style={{ padding: '12px 16px' }}>
-                        <code style={{ fontSize: '0.75rem', backgroundColor: 'var(--color-gray-50)', padding: '2px 6px', borderRadius: '4px' }}>
-                          {session.session_id || '-'}
-                        </code>
-                      </td>
-                      <td style={{ padding: '12px 16px' }}>
-                        <code style={{ fontSize: '0.75rem', backgroundColor: 'var(--color-gray-50)', padding: '2px 6px', borderRadius: '4px' }}>
-                          {session.visitor_id || '-'}
-                        </code>
-                      </td>
-                      <td style={{ padding: '12px 16px' }}>
-                        {session.contact_id ? (
+                  {filteredSessions.map((session: any) => {
+                    const getCellValue = (key: string) => {
+                      const value = session[key]
+                      if (!value) return '-'
+
+                      // Formatear fechas
+                      if (key === 'started_at' || key === 'last_event_at' || key === 'created_at') {
+                        return formatLocalDateTime(value)
+                      }
+
+                      // Formato de código para IDs y click IDs
+                      if (['session_id', 'visitor_id', 'contact_id', 'gclid', 'fbclid'].includes(key)) {
+                        return (
                           <code style={{ fontSize: '0.75rem', backgroundColor: 'var(--color-gray-50)', padding: '2px 6px', borderRadius: '4px' }}>
-                            {session.contact_id}
+                            {value}
                           </code>
-                        ) : '-'}
-                      </td>
-                      <td style={{ padding: '12px 16px' }}>{session.full_name || '-'}</td>
-                      <td style={{ padding: '12px 16px' }}>{session.event_name || '-'}</td>
-                      <td style={{ padding: '12px 16px' }}>{formatLocalDateTime(session.started_at)}</td>
-                      <td style={{ padding: '12px 16px' }}>{session.last_event_at ? formatLocalDateTime(session.last_event_at) : '-'}</td>
-                      <td style={{ padding: '12px 16px' }}>{session.created_at ? formatLocalDateTime(session.created_at) : '-'}</td>
+                        )
+                      }
 
-                      {/* URLs */}
-                      <td style={{ padding: '12px 16px' }}>
-                        <a href={session.landing_url} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--color-primary)', textDecoration: 'none' }}>
-                          {session.landing_url || '-'}
-                        </a>
-                      </td>
-                      <td style={{ padding: '12px 16px', fontSize: '0.8rem' }}>{session.referrer_url || '-'}</td>
+                      // Link para landing_url
+                      if (key === 'landing_url') {
+                        return (
+                          <a href={value} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--color-primary)', textDecoration: 'none' }}>
+                            {value}
+                          </a>
+                        )
+                      }
 
-                      {/* UTMs */}
-                      <td style={{ padding: '12px 16px' }}>{session.utm_source || '-'}</td>
-                      <td style={{ padding: '12px 16px' }}>{session.utm_medium || '-'}</td>
-                      <td style={{ padding: '12px 16px' }}>{session.utm_campaign || '-'}</td>
-                      <td style={{ padding: '12px 16px' }}>{session.utm_term || '-'}</td>
-                      <td style={{ padding: '12px 16px' }}>{session.utm_content || '-'}</td>
+                      return value
+                    }
 
-                      {/* Click IDs */}
-                      <td style={{ padding: '12px 16px' }}>
-                        {session.gclid ? <code style={{ fontSize: '0.75rem' }}>{session.gclid}</code> : '-'}
-                      </td>
-                      <td style={{ padding: '12px 16px' }}>
-                        {session.fbclid ? <code style={{ fontSize: '0.75rem' }}>{session.fbclid}</code> : '-'}
-                      </td>
-                      <td style={{ padding: '12px 16px' }}>{session.fbc || '-'}</td>
-                      <td style={{ padding: '12px 16px' }}>{session.fbp || '-'}</td>
-                      <td style={{ padding: '12px 16px' }}>{session.wbraid || '-'}</td>
-                      <td style={{ padding: '12px 16px' }}>{session.gbraid || '-'}</td>
-                      <td style={{ padding: '12px 16px' }}>{session.msclkid || '-'}</td>
-                      <td style={{ padding: '12px 16px' }}>{session.ttclid || '-'}</td>
-
-                      {/* Campaign Details */}
-                      <td style={{ padding: '12px 16px' }}>{session.channel || '-'}</td>
-                      <td style={{ padding: '12px 16px' }}>{session.source_platform || '-'}</td>
-                      <td style={{ padding: '12px 16px' }}>{session.campaign_id || '-'}</td>
-                      <td style={{ padding: '12px 16px' }}>{session.adset_id || '-'}</td>
-                      <td style={{ padding: '12px 16px' }}>{session.ad_group_id || '-'}</td>
-                      <td style={{ padding: '12px 16px' }}>{session.ad_id || '-'}</td>
-                      <td style={{ padding: '12px 16px' }}>{session.campaign_name || '-'}</td>
-                      <td style={{ padding: '12px 16px' }}>{session.adset_name || '-'}</td>
-                      <td style={{ padding: '12px 16px' }}>{session.ad_group_name || '-'}</td>
-                      <td style={{ padding: '12px 16px' }}>{session.ad_name || '-'}</td>
-                      <td style={{ padding: '12px 16px' }}>{session.placement || '-'}</td>
-                      <td style={{ padding: '12px 16px' }}>{session.site_source_name || '-'}</td>
-                      <td style={{ padding: '12px 16px' }}>{session.network || '-'}</td>
-                      <td style={{ padding: '12px 16px' }}>{session.match_type || '-'}</td>
-                      <td style={{ padding: '12px 16px' }}>{session.keyword || '-'}</td>
-                      <td style={{ padding: '12px 16px' }}>{session.search_query || '-'}</td>
-                      <td style={{ padding: '12px 16px' }}>{session.creative_id || '-'}</td>
-                      <td style={{ padding: '12px 16px' }}>{session.ad_position || '-'}</td>
-
-                      {/* Device & Browser */}
-                      <td style={{ padding: '12px 16px', fontSize: '0.8rem' }}>{session.ip || '-'}</td>
-                      <td style={{ padding: '12px 16px', fontSize: '0.75rem' }}>{session.user_agent || '-'}</td>
-                      <td style={{ padding: '12px 16px', textTransform: 'capitalize' }}>{session.device_type || '-'}</td>
-                      <td style={{ padding: '12px 16px' }}>{session.os || '-'}</td>
-                      <td style={{ padding: '12px 16px' }}>{session.browser || '-'}</td>
-                      <td style={{ padding: '12px 16px' }}>{session.browser_version || '-'}</td>
-                      <td style={{ padding: '12px 16px' }}>{session.language || '-'}</td>
-                      <td style={{ padding: '12px 16px' }}>{session.timezone || '-'}</td>
-
-                      {/* Geo */}
-                      <td style={{ padding: '12px 16px' }}>{session.geo_country || '-'}</td>
-                      <td style={{ padding: '12px 16px' }}>{session.geo_region || '-'}</td>
-                      <td style={{ padding: '12px 16px' }}>{session.geo_city || '-'}</td>
-                    </tr>
-                  ))}
+                    return (
+                      <tr key={session.session_id} style={{ borderBottom: '1px solid var(--color-border)' }}>
+                        {columns.map(col => {
+                          const width = getColumnWidth(col.key)
+                          return (
+                            <td
+                              key={col.key}
+                              style={{
+                                padding: '8px',
+                                width: `${width}px`,
+                                minWidth: `${width}px`,
+                                maxWidth: `${width}px`,
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap',
+                                textTransform: col.key === 'device_type' ? 'capitalize' : 'none',
+                                fontSize: ['user_agent', 'ip', 'referrer_url'].includes(col.key) ? '0.75rem' : '0.875rem'
+                              }}
+                              title={String(session[col.key] || '-')}
+                            >
+                              {getCellValue(col.key)}
+                            </td>
+                          )
+                        })}
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
             </div>
