@@ -5,6 +5,7 @@ import { buildTransactionStats, buildTransactionSummary } from '../services/anal
 import { getGHLClient } from '../services/ghlClient.js'
 import { getHighLevelConfig } from '../config/database.js'
 import { syncInvoices, syncAllInvoices, getInvoicesFromDB } from '../services/invoicesSyncService.js'
+import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js'
 
 /**
  * Obtiene todas las transacciones/pagos con paginación y filtros
@@ -47,6 +48,10 @@ export const getTransactions = async (req, res) => {
       }
     }
 
+    // Obtener filtro de contactos ocultos
+    const hiddenFilters = await getHiddenContactFilters()
+    const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false)
+
     const filters = []
     const params = []
 
@@ -63,6 +68,11 @@ export const getTransactions = async (req, res) => {
     if (range.endUtc) {
       filters.push('p.date <= ?')
       params.push(range.endUtc)
+    }
+
+    // Filtrar pagos de contactos ocultos
+    if (hiddenCondition) {
+      filters.push(`p.contact_id IN (SELECT c.id FROM contacts c WHERE ${hiddenCondition})`)
     }
 
     const whereClause = filters.length ? `WHERE ${filters.join(' AND ')}` : ''
@@ -164,6 +174,15 @@ export const getTransactionById = async (req, res) => {
   try {
     const { id } = req.params
 
+    // Obtener filtro de contactos ocultos
+    const hiddenFilters = await getHiddenContactFilters()
+    const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false)
+
+    const conditions = ['p.id = ?']
+    if (hiddenCondition) {
+      conditions.push(hiddenCondition)
+    }
+
     const transaction = await db.get(
       `SELECT
         p.*,
@@ -175,7 +194,7 @@ export const getTransactionById = async (req, res) => {
         c.attribution_ad_id
       FROM payments p
       LEFT JOIN contacts c ON p.contact_id = c.id
-      WHERE p.id = ?`,
+      WHERE ${conditions.join(' AND ')}`,
       [id]
     )
 

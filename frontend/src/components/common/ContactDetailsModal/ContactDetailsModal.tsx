@@ -58,6 +58,10 @@ interface ContactDetail {
   source?: string
   ad_name?: string
   ad_id?: string
+  campaign_id?: string | null
+  campaign_name?: string | null
+  adset_id?: string | null
+  adset_name?: string | null
   lifetimeLtv?: number
   lifetimePurchases?: number
   isCustomer?: boolean
@@ -519,7 +523,7 @@ export function ContactDetailsModal({
                 )}
 
                 {/* Atribución (solo si NO hay firstSession) */}
-                {!selectedContact.firstSession && (selectedContact.source || selectedContact.ad_name || selectedContact.ad_id) && (
+                {!selectedContact.firstSession && (selectedContact.source || selectedContact.campaign_name || selectedContact.adset_name || selectedContact.ad_name || selectedContact.ad_id) && (
                   <div className={styles.detailSection}>
                     <h5 className={styles.detailSectionTitle}>
                       De dónde llegó el contacto:
@@ -534,9 +538,27 @@ export function ContactDetailsModal({
                           </div>
                         </div>
                       )}
-                      {selectedContact.ad_name && (
+                      {selectedContact.campaign_name && (
                         <div className={styles.detailItem}>
                           <Icon name="megaphone" size={16} />
+                          <div>
+                            <span className={styles.detailItemLabel}>Campaña:</span>
+                            <span> {selectedContact.campaign_name}</span>
+                          </div>
+                        </div>
+                      )}
+                      {selectedContact.adset_name && (
+                        <div className={styles.detailItem}>
+                          <Icon name="layers" size={16} />
+                          <div>
+                            <span className={styles.detailItemLabel}>Conjunto de anuncios:</span>
+                            <span> {selectedContact.adset_name}</span>
+                          </div>
+                        </div>
+                      )}
+                      {selectedContact.ad_name && (
+                        <div className={styles.detailItem}>
+                          <Icon name="file-text" size={16} />
                           <div>
                             <span className={styles.detailItemLabel}>Anuncio:</span>
                             <span> {selectedContact.ad_name}</span>

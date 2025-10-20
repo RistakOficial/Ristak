@@ -46,6 +46,8 @@ interface VisitorDetail {
   adsetId?: string
   campaignId?: string
   adName?: string
+  campaignName?: string
+  adsetName?: string
 }
 
 interface VisitorDetailsModalProps {
@@ -465,7 +467,7 @@ export function VisitorDetailsModal({
                 </div>
 
                 {/* Atribución / UTM */}
-                {(selectedVisitor.utmSource || selectedVisitor.utmCampaign || selectedVisitor.adName) && (
+                {(selectedVisitor.utmSource || selectedVisitor.utmCampaign || selectedVisitor.campaignName || selectedVisitor.adsetName || selectedVisitor.adName) && (
                   <div className={styles.detailSection}>
                     <h5 className={styles.detailSectionTitle}>
                       Origen del Tráfico
@@ -482,12 +484,21 @@ export function VisitorDetailsModal({
                           </div>
                         </div>
                       )}
-                      {selectedVisitor.utmCampaign && (
+                      {(selectedVisitor.campaignName || selectedVisitor.utmCampaign) && (
                         <div className={styles.detailItem}>
                           <Icon name="megaphone" size={16} />
                           <div>
                             <span className={styles.detailItemLabel}>Campaña:</span>
-                            <span> {formatUrlParameter(selectedVisitor.utmCampaign)}</span>
+                            <span> {selectedVisitor.campaignName || formatUrlParameter(selectedVisitor.utmCampaign || '')}</span>
+                          </div>
+                        </div>
+                      )}
+                      {selectedVisitor.adsetName && (
+                        <div className={styles.detailItem}>
+                          <Icon name="layers" size={16} />
+                          <div>
+                            <span className={styles.detailItemLabel}>Conjunto de anuncios:</span>
+                            <span> {selectedVisitor.adsetName}</span>
                           </div>
                         </div>
                       )}

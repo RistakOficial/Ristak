@@ -902,8 +902,18 @@ export const getContactJourney = async (req, res) => {
   try {
     const { id } = req.params
 
-    // Verificar que el contacto existe
-    const contact = await db.get('SELECT * FROM contacts WHERE id = ?', [id])
+    // Verificar que el contacto existe y obtener info de atribución completa
+    const contact = await db.get(`
+      SELECT
+        contacts.*,
+        meta_ads.campaign_name,
+        meta_ads.adset_name,
+        meta_ads.ad_name as meta_ad_name
+      FROM contacts
+      LEFT JOIN meta_ads ON meta_ads.ad_id = contacts.attribution_ad_id
+      WHERE contacts.id = ?
+      LIMIT 1
+    `, [id])
     if (!contact) {
       return res.status(404).json({
         success: false,
@@ -1002,8 +1012,10 @@ export const getContactJourney = async (req, res) => {
         email: contact.email,
         phone: contact.phone,
         source: contact.source,
-        attribution_ad_name: contact.attribution_ad_name,
-        attribution_ad_id: contact.attribution_ad_id
+        attribution_ad_name: contact.attribution_ad_name || contact.meta_ad_name,
+        attribution_ad_id: contact.attribution_ad_id,
+        campaign_name: contact.campaign_name,
+        adset_name: contact.adset_name
       }
     })
 

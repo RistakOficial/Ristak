@@ -120,6 +120,9 @@ const getTooltipContent = (event?: JourneyEvent | null) => {
     if (data.campaign_name || data.utm_campaign) {
       items.push({ label: 'Campaña', value: formatUrlParameter(data.campaign_name || data.utm_campaign) })
     }
+    if (data.adset_name) {
+      items.push({ label: 'Conjunto de anuncios', value: data.adset_name })
+    }
     if (data.ad_name || data.utm_content) {
       items.push({ label: 'Anuncio', value: formatUrlParameter(data.ad_name || data.utm_content) })
     }
@@ -153,6 +156,12 @@ const getTooltipContent = (event?: JourneyEvent | null) => {
   if (type === 'contact_created') {
     if (data.source) {
       items.push({ label: 'Fuente', value: data.source })
+    }
+    if (data.campaign_name) {
+      items.push({ label: 'Campaña', value: data.campaign_name })
+    }
+    if (data.adset_name) {
+      items.push({ label: 'Conjunto de anuncios', value: data.adset_name })
     }
     if (data.attribution_ad_name) {
       items.push({ label: 'Anuncio', value: formatUrlParameter(data.attribution_ad_name) })

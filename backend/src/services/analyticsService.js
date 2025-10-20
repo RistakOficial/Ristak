@@ -1489,19 +1489,40 @@ export async function buildContactsList ({ startDate, endDate, type = 'interesad
 
     const contactsQuery = `
       SELECT
-        id,
-        full_name,
-        email,
-        phone,
-        created_at,
-        total_paid,
-        purchases_count,
-        attribution_ad_id,
-        attribution_ad_name,
-        source
+        contacts.id,
+        contacts.full_name,
+        contacts.email,
+        contacts.phone,
+        contacts.created_at,
+        contacts.total_paid,
+        contacts.purchases_count,
+        contacts.attribution_ad_id,
+        contacts.attribution_ad_name,
+        contacts.source,
+        meta_ads.campaign_id,
+        meta_ads.campaign_name,
+        meta_ads.adset_id,
+        meta_ads.adset_name,
+        meta_ads.ad_name as meta_ad_name
       FROM contacts
-      WHERE id IN (${placeholders})${additionalWhere}
-      ORDER BY created_at DESC
+      LEFT JOIN meta_ads ON meta_ads.ad_id = contacts.attribution_ad_id
+      WHERE contacts.id IN (${placeholders})${additionalWhere}
+      GROUP BY contacts.id,
+               contacts.full_name,
+               contacts.email,
+               contacts.phone,
+               contacts.created_at,
+               contacts.total_paid,
+               contacts.purchases_count,
+               contacts.attribution_ad_id,
+               contacts.attribution_ad_name,
+               contacts.source,
+               meta_ads.campaign_id,
+               meta_ads.campaign_name,
+               meta_ads.adset_id,
+               meta_ads.adset_name,
+               meta_ads.ad_name
+      ORDER BY contacts.created_at DESC
     `
     contacts = await db.all(contactsQuery, contactIds)
   } else {
@@ -1614,8 +1635,12 @@ export async function buildContactsList ({ startDate, endDate, type = 'interesad
       appointments,
       firstSession,
       source: contact.source || null,
-      ad_name: contact.attribution_ad_name || null,
+      ad_name: contact.attribution_ad_name || contact.meta_ad_name || null,
       ad_id: contact.attribution_ad_id || null,
+      campaign_id: contact.campaign_id || null,
+      campaign_name: contact.campaign_name || null,
+      adset_id: contact.adset_id || null,
+      adset_name: contact.adset_name || null,
       lifetimeLtv,
       lifetimePurchases,
       isCustomer,

@@ -1,6 +1,7 @@
 import { logger } from '../utils/logger.js'
 import { createSession, getRecentSessions, linkVisitorToContact, getSessionsByDateRange } from '../services/trackingService.js'
 import { getHighLevelConfig, getAppConfig, setAppConfig, db } from '../config/database.js'
+import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js'
 import fetch from 'node-fetch'
 
 /**
@@ -1070,6 +1071,10 @@ export async function getVisitorsByPeriod(req, res) {
     const useContactAttribution = scope === 'campaigns' || scope === 'attributed' || scope === 'attribution'
     const isAttributed = scope === 'campaigns' || scope === 'attributed'
 
+    // Obtener filtro de contactos ocultos (solo necesario para vistas con atribución)
+    const hiddenFilters = await getHiddenContactFilters()
+    const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false)
+
     let query = ''
 
     // Definir el formato de agrupación según el tipo
@@ -1141,6 +1146,8 @@ export async function getVisitorsByPeriod(req, res) {
              )`
           : ''
 
+        const hiddenFilter = hiddenCondition ? `AND ${hiddenCondition}` : ''
+
         switch (groupBy) {
           case 'day':
             query = `
@@ -1151,6 +1158,7 @@ export async function getVisitorsByPeriod(req, res) {
               INNER JOIN contacts c ON c.id = s.contact_id
               WHERE c.created_at >= $1 AND c.created_at <= $2
                 ${attributionFilter}
+                ${hiddenFilter}
               GROUP BY TO_CHAR(c.created_at::date, 'YYYY-MM-DD')
               ORDER BY period ASC
             `
@@ -1165,6 +1173,7 @@ export async function getVisitorsByPeriod(req, res) {
               INNER JOIN contacts c ON c.id = s.contact_id
               WHERE c.created_at >= $1 AND c.created_at <= $2
                 ${attributionFilter}
+                ${hiddenFilter}
               GROUP BY TO_CHAR(c.created_at, 'YYYY-"W"IW')
               ORDER BY period ASC
             `
@@ -1179,6 +1188,7 @@ export async function getVisitorsByPeriod(req, res) {
               INNER JOIN contacts c ON c.id = s.contact_id
               WHERE c.created_at >= $1 AND c.created_at <= $2
                 ${attributionFilter}
+                ${hiddenFilter}
               GROUP BY TO_CHAR(c.created_at, 'YYYY-MM')
               ORDER BY period ASC
             `
@@ -1193,6 +1203,7 @@ export async function getVisitorsByPeriod(req, res) {
               INNER JOIN contacts c ON c.id = s.contact_id
               WHERE c.created_at >= $1 AND c.created_at <= $2
                 ${attributionFilter}
+                ${hiddenFilter}
               GROUP BY TO_CHAR(c.created_at, 'YYYY')
               ORDER BY period ASC
             `
@@ -1269,6 +1280,8 @@ export async function getVisitorsByPeriod(req, res) {
              )`
           : ''
 
+        const hiddenFilter = hiddenCondition ? `AND ${hiddenCondition}` : ''
+
         switch (groupBy) {
           case 'day':
             query = `
@@ -1279,6 +1292,7 @@ export async function getVisitorsByPeriod(req, res) {
               INNER JOIN contacts c ON c.id = s.contact_id
               WHERE c.created_at >= ? AND c.created_at <= ?
                 ${attributionFilter}
+                ${hiddenFilter}
               GROUP BY DATE(c.created_at)
               ORDER BY period ASC
             `
@@ -1293,6 +1307,7 @@ export async function getVisitorsByPeriod(req, res) {
               INNER JOIN contacts c ON c.id = s.contact_id
               WHERE c.created_at >= ? AND c.created_at <= ?
                 ${attributionFilter}
+                ${hiddenFilter}
               GROUP BY strftime('%Y-W%W', c.created_at)
               ORDER BY period ASC
             `
@@ -1307,6 +1322,7 @@ export async function getVisitorsByPeriod(req, res) {
               INNER JOIN contacts c ON c.id = s.contact_id
               WHERE c.created_at >= ? AND c.created_at <= ?
                 ${attributionFilter}
+                ${hiddenFilter}
               GROUP BY strftime('%Y-%m', c.created_at)
               ORDER BY period ASC
             `
@@ -1321,6 +1337,7 @@ export async function getVisitorsByPeriod(req, res) {
               INNER JOIN contacts c ON c.id = s.contact_id
               WHERE c.created_at >= ? AND c.created_at <= ?
                 ${attributionFilter}
+                ${hiddenFilter}
               GROUP BY strftime('%Y', c.created_at)
               ORDER BY period ASC
             `
@@ -1370,6 +1387,10 @@ export async function getVisitorsList(req, res) {
     const useContactAttribution = scope === 'campaigns' || scope === 'attributed' || scope === 'attribution'
     const isAttributed = scope === 'campaigns' || scope === 'attributed'
 
+    // Obtener filtro de contactos ocultos
+    const hiddenFilters = await getHiddenContactFilters()
+    const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false)
+
     // Construir WHERE clause
     let conditions, params, paramCount
 
@@ -1379,6 +1400,11 @@ export async function getVisitorsList(req, res) {
       conditions = ['c.created_at >= $1', 'c.created_at <= $2', 's.contact_id IS NOT NULL']
       params = [startDate, endDateWithTime]
       paramCount = 2
+
+      // Filtrar contactos ocultos
+      if (hiddenCondition) {
+        conditions.push(hiddenCondition)
+      }
 
       // Si es "campaigns", filtrar por ad_id (último toque desde anuncio)
       if (isAttributed) {

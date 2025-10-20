@@ -57,11 +57,20 @@ const buildContactFilters = async (range) => {
 };
 
 const computeFinancialSnapshot = async (range) => {
+  // Obtener filtro de contactos ocultos
+  const hiddenFilters = await getHiddenContactFilters();
+  const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false);
+
   const paymentsFilters = ['status = ?'];
   const paymentsParams = ['succeeded'];
   const { filters: dateFilters, params: dateParams } = buildDateFilters(range);
   paymentsFilters.push(...dateFilters);
   paymentsParams.push(...dateParams);
+
+  // Filtrar payments de contactos ocultos
+  if (hiddenCondition) {
+    paymentsFilters.push(`contact_id IN (SELECT c.id FROM contacts c WHERE ${hiddenCondition})`);
+  }
 
   const ingresosQuery = `SELECT COALESCE(SUM(amount), 0) as total FROM payments WHERE ${paymentsFilters.join(' AND ')}`;
   const ingresosRow = await db.get(ingresosQuery, paymentsParams);
@@ -85,6 +94,11 @@ const computeFinancialSnapshot = async (range) => {
   const { filters: refundDateFilters, params: refundDateParams } = buildDateFilters(range);
   refundsFilters.push(...refundDateFilters);
   refundsParams.push(...refundDateParams);
+
+  // Filtrar refunds de contactos ocultos
+  if (hiddenCondition) {
+    refundsFilters.push(`contact_id IN (SELECT c.id FROM contacts c WHERE ${hiddenCondition})`);
+  }
 
   const refundsQuery = `SELECT COALESCE(SUM(amount), 0) as total FROM payments WHERE ${refundsFilters.join(' AND ')}`;
   const refundsRow = await db.get(refundsQuery, refundsParams);
@@ -235,6 +249,10 @@ export const getChartData = async (req, res) => {
     const timezone = range.appliedTimezone;
     const usePostgres = Boolean(process.env.DATABASE_URL);
 
+    // Obtener filtro de contactos ocultos
+    const hiddenFilters = await getHiddenContactFilters();
+    const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false);
+
     // Usar getGroupExpression() con timezone dinámico
     const dateExpression = getGroupExpression('date', groupBy, timezone);
 
@@ -248,6 +266,7 @@ export const getChartData = async (req, res) => {
        FROM payments
        WHERE status = 'succeeded'
        AND date >= $1 AND date <= $2
+       ${hiddenCondition ? `AND contact_id IN (SELECT c.id FROM contacts c WHERE ${hiddenCondition})` : ''}
        GROUP BY periodo
        ORDER BY periodo`;
       ingresosParams = [range.startUtc, range.endUtc];
@@ -267,6 +286,7 @@ export const getChartData = async (req, res) => {
        FROM payments
        WHERE status = 'succeeded'
        AND date >= ? AND date <= ?
+       ${hiddenCondition ? `AND contact_id IN (SELECT c.id FROM contacts c WHERE ${hiddenCondition})` : ''}
        GROUP BY periodo
        ORDER BY periodo`;
       ingresosParams = [range.startUtc, range.endUtc];
@@ -350,6 +370,10 @@ export const getRoasData = async (req, res) => {
     const timezone = range.appliedTimezone;
     const usePostgres = Boolean(process.env.DATABASE_URL);
 
+    // Obtener filtro de contactos ocultos
+    const hiddenFilters = await getHiddenContactFilters();
+    const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false);
+
     // Agrupar por mes con timezone dinámico
     const monthExpression = getGroupExpression('date', 'month', timezone);
 
@@ -363,6 +387,7 @@ export const getRoasData = async (req, res) => {
           COALESCE(SUM(g.spend), 0) as gastos
         FROM (
           SELECT date, amount FROM payments WHERE status = 'succeeded' AND date >= $1 AND date <= $2
+          ${hiddenCondition ? `AND contact_id IN (SELECT c.id FROM contacts c WHERE ${hiddenCondition})` : ''}
         ) i
         LEFT JOIN (
           SELECT date, spend FROM meta_ads WHERE date >= $3 AND date <= $4
@@ -379,6 +404,7 @@ export const getRoasData = async (req, res) => {
           COALESCE(SUM(g.spend), 0) as gastos
         FROM (
           SELECT date, amount FROM payments WHERE status = 'succeeded' AND date >= ? AND date <= ?
+          ${hiddenCondition ? `AND contact_id IN (SELECT c.id FROM contacts c WHERE ${hiddenCondition})` : ''}
         ) i
         LEFT JOIN (
           SELECT date, spend FROM meta_ads WHERE date >= ? AND date <= ?
@@ -712,6 +738,10 @@ export const getSalesData = async (req, res) => {
     const timezone = range.appliedTimezone;
     const usePostgres = Boolean(process.env.DATABASE_URL);
 
+    // Obtener filtro de contactos ocultos
+    const hiddenFilters = await getHiddenContactFilters();
+    const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false);
+
     // Usar getGroupExpression() con timezone dinámico
     const dateExpression = getGroupExpression('date', groupBy, timezone);
 
@@ -726,6 +756,7 @@ export const getSalesData = async (req, res) => {
         FROM payments
         WHERE status = 'succeeded'
         AND date >= $1 AND date <= $2
+        ${hiddenCondition ? `AND contact_id IN (SELECT c.id FROM contacts c WHERE ${hiddenCondition})` : ''}
         GROUP BY periodo
         ORDER BY periodo
       `;
@@ -738,6 +769,7 @@ export const getSalesData = async (req, res) => {
         FROM payments
         WHERE status = 'succeeded'
         AND date >= ? AND date <= ?
+        ${hiddenCondition ? `AND contact_id IN (SELECT c.id FROM contacts c WHERE ${hiddenCondition})` : ''}
         GROUP BY periodo
         ORDER BY periodo
       `;
@@ -944,6 +976,10 @@ export const getFinancialOverview = async (req, res) => {
     const timezone = range.appliedTimezone;
     const usePostgres = Boolean(process.env.DATABASE_URL);
 
+    // Obtener filtro de contactos ocultos
+    const hiddenFilters = await getHiddenContactFilters();
+    const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false);
+
     // Usar getGroupExpression() con timezone dinámico
     const dayExpression = getGroupExpression('date', 'day', timezone);
 
@@ -956,6 +992,7 @@ export const getFinancialOverview = async (req, res) => {
         FROM payments
         WHERE status = 'succeeded'
           AND date >= $1 AND date <= $2
+          ${hiddenCondition ? `AND contact_id IN (SELECT c.id FROM contacts c WHERE ${hiddenCondition})` : ''}
         GROUP BY day
         ORDER BY day ASC
       `
@@ -966,6 +1003,7 @@ export const getFinancialOverview = async (req, res) => {
         FROM payments
         WHERE status = 'succeeded'
           AND date >= ? AND date <= ?
+          ${hiddenCondition ? `AND contact_id IN (SELECT c.id FROM contacts c WHERE ${hiddenCondition})` : ''}
         GROUP BY day
         ORDER BY day ASC
       `;
@@ -1345,6 +1383,12 @@ export const getFunnelData = async (req, res) => {
       const statusPlaceholders = SUCCESS_PAYMENT_STATUSES.map(() => '?').join(',')
 
       if (usePostgres) {
+        const conditions = ['first_p.first_payment_date >= $' + (SUCCESS_PAYMENT_STATUSES.length + 1),
+                           'first_p.first_payment_date <= $' + (SUCCESS_PAYMENT_STATUSES.length + 2)]
+        if (hiddenCondition) {
+          conditions.push(hiddenCondition.replace(/contacts\./g, 'c.'))
+        }
+
         const firstPaymentQuery = `
           SELECT COUNT(DISTINCT c.id) as count
           FROM contacts c
@@ -1354,13 +1398,17 @@ export const getFunnelData = async (req, res) => {
             WHERE LOWER(status) IN (${statusPlaceholders})
             GROUP BY contact_id
           ) first_p ON first_p.contact_id = c.id
-          WHERE first_p.first_payment_date >= $${SUCCESS_PAYMENT_STATUSES.length + 1}
-            AND first_p.first_payment_date <= $${SUCCESS_PAYMENT_STATUSES.length + 2}
+          WHERE ${conditions.join(' AND ')}
         `
         const firstPaymentParams = [...SUCCESS_PAYMENT_STATUSES, range.startUtc, range.endUtc]
         const customersData = await db.get(firstPaymentQuery, firstPaymentParams)
         customersCount = parseInt(customersData?.count || 0)
       } else {
+        const conditions = ['first_p.first_payment_date >= ?', 'first_p.first_payment_date <= ?']
+        if (hiddenCondition) {
+          conditions.push(hiddenCondition.replace(/contacts\./g, 'c.'))
+        }
+
         const firstPaymentQuery = `
           SELECT COUNT(DISTINCT c.id) as count
           FROM contacts c
@@ -1370,8 +1418,7 @@ export const getFunnelData = async (req, res) => {
             WHERE LOWER(status) IN (${statusPlaceholders})
             GROUP BY contact_id
           ) first_p ON first_p.contact_id = c.id
-          WHERE first_p.first_payment_date >= ?
-            AND first_p.first_payment_date <= ?
+          WHERE ${conditions.join(' AND ')}
         `
         const firstPaymentParams = [...SUCCESS_PAYMENT_STATUSES, range.startUtc, range.endUtc]
         const customersData = await db.get(firstPaymentQuery, firstPaymentParams)
