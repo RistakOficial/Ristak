@@ -151,15 +151,16 @@ export const handlePaymentWebhook = async (req, res) => {
     }
 
     const query = usePostgres
-      ? `INSERT INTO payments (id, contact_id, amount, currency, status, payment_method, reference, date, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      ? `INSERT INTO payments (id, contact_id, amount, currency, status, payment_method, reference, description, date, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
          ON CONFLICT (id) DO UPDATE SET
            amount = EXCLUDED.amount,
            status = EXCLUDED.status,
            payment_method = EXCLUDED.payment_method,
-           reference = EXCLUDED.reference`
-      : `INSERT OR REPLACE INTO payments (id, contact_id, amount, currency, status, payment_method, reference, date, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+           reference = EXCLUDED.reference,
+           description = EXCLUDED.description`
+      : `INSERT OR REPLACE INTO payments (id, contact_id, amount, currency, status, payment_method, reference, description, date, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 
     // Extraer método de pago
     const paymentMethod = payment.method || payment.gateway || payment.payment_method || 'manual';
@@ -167,8 +168,17 @@ export const handlePaymentWebhook = async (req, res) => {
     // Crear referencia con el número de factura
     const invoiceNumber = payment.invoice?.number || payment.entitySourceMeta?.invoiceNumber || '';
     const reference = invoiceNumber
-      ? `Invoice ${invoiceNumber}`
+      ? `Invoice #${invoiceNumber}`
       : payment.reference || paymentId;
+
+    // Extraer descripción del pago (título del invoice, nombre del producto, etc)
+    const description = payment.invoice?.title
+      || payment.invoice?.name
+      || payment.entitySourceMeta?.name
+      || payment.title
+      || payment.name
+      || payment.description
+      || null;
 
     await db.run(query, [
       paymentId,
@@ -178,6 +188,7 @@ export const handlePaymentWebhook = async (req, res) => {
       payment.payment_status || payment.status || 'succeeded',
       paymentMethod,
       reference,
+      description,
       payment.created_at || payment.fulfilledAt || payment.date || payment.createdAt || new Date().toISOString(),
       payment.created_at || payment.createdAt || new Date().toISOString()
     ]);
