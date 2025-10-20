@@ -875,6 +875,36 @@ git log -1
   - **Respeta configuración**: Filtra por calendarios de atribución (igual que Reports)
   - **Archivos modificados**: 5 archivos (dashboardController.js, ConversionFunnelChart.tsx, Dashboard.tsx, dashboardService.ts, CLAUDE.md)
 
+- **Fix CRÍTICO: Visitantes mostraban mismos valores en las 3 vistas (2025-10-19)**
+  - **Bug detectado**: Los visitantes mostraban los mismos números en "Todos", "Último toque" y "Último toque desde anuncio"
+  - **Causa**: Código usaba `clicks` de Meta Ads en vez de `visitor_id` de sessions
+  - **Impacto**: Métricas incorrectas en Reports, Dashboard y modales de visitantes
+
+  - **Lógica correcta implementada**:
+    1. **Vista "Todos"** (`scope='all'`):
+       - Todos los visitantes que entraron al sitio en el rango de fechas
+       - Query: `COUNT(DISTINCT visitor_id) FROM sessions WHERE started_at BETWEEN...`
+       - Filtra por fecha de la sesión (`started_at`)
+
+    2. **Vista "Último toque"** (`scope='attribution'`):
+       - Solo visitantes que SE CONVIRTIERON en contacto
+       - Query: `COUNT(DISTINCT visitor_id) FROM sessions s INNER JOIN contacts c WHERE c.created_at BETWEEN...`
+       - Filtra por fecha de creación del contacto (NO por fecha de sesión)
+       - Si un visitor_id visitó el 1 de enero pero se registró el 15, se cuenta en el 15
+
+    3. **Vista "Último toque desde anuncio"** (`scope='campaigns'`):
+       - Solo visitantes que se convirtieron en contacto CON `ad_id`
+       - Query adicional: `+ WHERE c.attribution_ad_id IS NOT NULL AND EXISTS (SELECT 1 FROM meta_ads...)`
+       - Mismo criterio de atribución que Leads/Citas/Clientes
+
+  - **Cambios aplicados**:
+    - `analyticsService.js`: Agregado PASO 6 con query separado para visitantes según scope
+    - `dashboardController.js`: Visitantes ahora cambian según scope (antes decía "no cambia")
+    - `trackingController.js`: Modales de visitantes filtran correctamente por scope
+  - **Antes**: `visitors = clicks` de Meta Ads (INCORRECTO)
+  - **Ahora**: `visitors = visitor_id` únicos de sessions (CORRECTO)
+  - **Archivos modificados**: 3 archivos (analyticsService.js, dashboardController.js, trackingController.js)
+
 ---
 
 ## ⚡ CHECKLIST ANTES DE MODIFICAR
