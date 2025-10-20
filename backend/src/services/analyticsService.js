@@ -164,7 +164,7 @@ async function fetchPreviousRange(range, fallbackStrategy) {
 
 export async function buildContactStats ({ startDate, endDate, scope = 'all' } = {}) {
   const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate })
-  const scopeAttributed = scope === 'campaigns' || scope === 'attributed'
+  const scopeAttributed = scope === 'campaigns'
 
   const dedupExpr = buildDedupExpression('')
 
@@ -240,7 +240,7 @@ export async function buildContactStats ({ startDate, endDate, scope = 'all' } =
 
 export async function buildContactTimeline ({ startDate, endDate, scope = 'all' } = {}, groupBy = 'day') {
   const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate })
-  const scopeAttributed = scope === 'campaigns' || scope === 'attributed'
+  const scopeAttributed = scope === 'campaigns'
 
   const params = []
   const filters = []
@@ -306,7 +306,7 @@ export async function buildContactTimeline ({ startDate, endDate, scope = 'all' 
 
 export async function buildTransactionStats ({ startDate, endDate, scope = 'all' } = {}) {
   const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate })
-  const scopeAttributed = scope === 'campaigns' || scope === 'attributed'
+  const scopeAttributed = scope === 'campaigns'
 
   const baseFilters = ['status = ?']
   const baseParams = ['succeeded']
@@ -390,7 +390,7 @@ export async function buildTransactionStats ({ startDate, endDate, scope = 'all'
 
 export async function buildTransactionSummary ({ startDate, endDate, scope = 'all' } = {}) {
   const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate })
-  const scopeAttributed = scope === 'campaigns' || scope === 'attributed'
+  const scopeAttributed = scope === 'campaigns'
 
   const successFilters = ['status = ?']
   const successParams = ['succeeded']
@@ -688,8 +688,13 @@ export async function buildReportMetrics ({ startDate, endDate, groupBy = 'day',
   // scope = 'all' → agrupa por fecha del evento (pagos, citas reales)
   // scope = 'attribution' → agrupa por fecha creación contacto (todos los contactos)
   // scope = 'campaigns' → agrupa por fecha creación contacto + filtro ad_id
-  const isAttributed = scope === 'campaigns' || scope === 'attributed'
-  const useContactAttribution = scope === 'campaigns' || scope === 'attributed' || scope === 'attribution'
+
+  // useContactAttribution: TRUE para ambas vistas de atribución (attribution y campaigns)
+  const useContactAttribution = scope === 'attribution' || scope === 'campaigns'
+
+  // isAttributed: TRUE solo para campaigns (último toque desde anuncio con filtro de ad_id)
+  const isAttributed = scope === 'campaigns'
+
   // "Todos" usa la fecha real del evento (pagos, citas, etc.).
   // "Último toque" / "Último toque desde anuncio" reasigna todas las métricas al día en que se creó el contacto.
 
@@ -1191,8 +1196,8 @@ async function fetchAppointmentsForContacts(contactIds, range = {}) {
 
 export async function buildContactsList ({ startDate, endDate, type = 'interesados', scope = 'all' } = {}) {
   const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate })
-  const scopeAttributed = scope === 'campaigns' || scope === 'attributed'
-  const useContactAttribution = scope === 'campaigns' || scope === 'attributed' || scope === 'attribution'
+  const useContactAttribution = scope === 'attribution' || scope === 'campaigns'
+  const scopeAttributed = scope === 'campaigns'
   let contacts = []
   let contactIds = []
 
