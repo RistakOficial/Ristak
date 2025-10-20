@@ -151,7 +151,6 @@ export const CalendarsConfiguration: React.FC = () => {
   }
 
   const allSelected = tempAttributionCalendars.length === calendars.length
-  const someSelected = tempAttributionCalendars.length > 0 && tempAttributionCalendars.length < calendars.length
 
   return (
     <div className={styles.integrationContainer}>
@@ -163,9 +162,12 @@ export const CalendarsConfiguration: React.FC = () => {
               <div className={styles.logoContainer}>
                 <Calendar size={32} style={{ color: 'var(--color-primary)' }} />
               </div>
-              <p className={styles.pageSubtitle}>
-                Configura qué calendarios usar y cómo
-              </p>
+              <div>
+                <h2 className={styles.pageTitle}>Configuración de Calendarios</h2>
+                <p className={styles.pageSubtitle}>
+                  Configura qué calendarios usar y cómo
+                </p>
+              </div>
             </div>
             <div className={styles.headerRight}>
               {defaultCalendarId || attributionCalendarIds.length > 0 ? (

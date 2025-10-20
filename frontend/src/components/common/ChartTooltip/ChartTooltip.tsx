@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState, useLayoutEffect } from 'react'
 import ReactDOM from 'react-dom'
 import styles from './ChartTooltip.module.css'
 
@@ -20,6 +20,8 @@ export const ChartTooltip: React.FC<ChartTooltipProps> = ({
   verticalOffset = 12
 }) => {
   const [shouldHide, setShouldHide] = useState(false)
+  const [renderPoint, setRenderPoint] = useState<{ x: number; y: number } | null>(null)
+  const lastValidPointRef = useRef<{ x: number; y: number } | null>(null)
 
   // Detectar si hay un modal abierto o un date range picker activo observando el body
   useEffect(() => {
@@ -55,8 +57,39 @@ export const ChartTooltip: React.FC<ChartTooltipProps> = ({
     return () => observer.disconnect()
   }, [])
 
+  useLayoutEffect(() => {
+    if (!active) {
+      setRenderPoint(null)
+      lastValidPointRef.current = null
+      return
+    }
+
+    if (!pointPos) {
+      return
+    }
+
+    const { x, y } = pointPos
+    const hasFiniteCoords = Number.isFinite(x) && Number.isFinite(y)
+    const isOrigin = x === 0 && y === 0
+
+    if (!hasFiniteCoords || isOrigin) {
+      return
+    }
+
+    lastValidPointRef.current = pointPos
+
+    setRenderPoint(prev => {
+      if (prev && prev.x === pointPos.x && prev.y === pointPos.y) {
+        return prev
+      }
+      return pointPos
+    })
+  }, [active, pointPos?.x, pointPos?.y, pointPos])
+
+  const effectivePoint = renderPoint ?? lastValidPointRef.current
+
   // No mostrar tooltip si hay superposición activa que bloquearía la interacción
-  if (!active || !data || !pointPos || shouldHide) {
+  if (!active || !data || !effectivePoint || shouldHide) {
     return null
   }
 
@@ -68,8 +101,8 @@ export const ChartTooltip: React.FC<ChartTooltipProps> = ({
 
   const tooltipStyle: TooltipStyle = {
     position: 'fixed',
-    left: pointPos.x,
-    top: pointPos.y,
+    left: effectivePoint.x,
+    top: effectivePoint.y,
     transform: 'translate(-50%, calc(-100% - var(--tooltip-gap)))',
     pointerEvents: 'none',
     zIndex: 9998,

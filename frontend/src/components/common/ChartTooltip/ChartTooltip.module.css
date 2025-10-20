@@ -7,10 +7,10 @@
   min-width: 220px;
   max-width: 320px;
   pointer-events: none;
-  animation: chartTooltipFadeIn 0.18s ease-out;
   color: #f8fafc;
   backdrop-filter: none;
   box-shadow: none !important;
+  will-change: transform, opacity;
 }
 
 :global(body.dark) .tooltip {
@@ -57,15 +57,4 @@
 .seriesValue {
   color: #ffffff;
   font-weight: 600;
-}
-
-@keyframes chartTooltipFadeIn {
-  from {
-    opacity: 0;
-    transform: translate(-50%, calc(-100% - var(--tooltip-gap))) translateY(8px);
-  }
-  to {
-    opacity: 1;
-    transform: translate(-50%, calc(-100% - var(--tooltip-gap))) translateY(0);
-  }
 }
