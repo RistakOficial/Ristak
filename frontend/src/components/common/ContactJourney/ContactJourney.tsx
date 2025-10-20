@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Icon } from '@/components/common'
 import { contactsService, type JourneyEvent } from '@/services/contactsService'
-import { formatCurrency, formatDate } from '@/utils/format'
+import { formatCurrency, formatUrlParameter } from '@/utils/format'
 import { normalizeTrafficSource } from '@/utils/trafficSourceNormalizer'
 import { useTimezone } from '@/contexts/TimezoneContext'
 import styles from './ContactJourney.module.css'
@@ -118,10 +118,10 @@ const getTooltipContent = (event?: JourneyEvent | null) => {
       items.push({ label: 'Fuente', value: source })
     }
     if (data.campaign_name || data.utm_campaign) {
-      items.push({ label: 'Campaña', value: data.campaign_name || data.utm_campaign })
+      items.push({ label: 'Campaña', value: formatUrlParameter(data.campaign_name || data.utm_campaign) })
     }
     if (data.ad_name || data.utm_content) {
-      items.push({ label: 'Anuncio', value: data.ad_name || data.utm_content })
+      items.push({ label: 'Anuncio', value: formatUrlParameter(data.ad_name || data.utm_content) })
     }
     if (data.ad_id) {
       items.push({ label: 'ID Anuncio', value: data.ad_id })
@@ -155,7 +155,7 @@ const getTooltipContent = (event?: JourneyEvent | null) => {
       items.push({ label: 'Fuente', value: data.source })
     }
     if (data.attribution_ad_name) {
-      items.push({ label: 'Anuncio', value: data.attribution_ad_name })
+      items.push({ label: 'Anuncio', value: formatUrlParameter(data.attribution_ad_name) })
     }
     if (data.attribution_ad_id) {
       items.push({ label: 'ID Anuncio', value: data.attribution_ad_id })

@@ -3,6 +3,7 @@ import { DateTime } from 'luxon'
 import { resolveDateRange, resolveDateRangeWithGHLTimezone } from '../utils/dateUtils.js'
 import { logger } from '../utils/logger.js'
 import { getContactsWithAppointmentsHybrid, loadAppointmentsFromDB, loadAppointmentsFromAPI, mergeAppointments } from './appointmentsMerge.js'
+import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js'
 
 const isPostgres = Boolean(process.env.DATABASE_URL)
 
@@ -199,6 +200,13 @@ export async function buildContactStats ({ startDate, endDate, scope = 'all' } =
     filters.push(attributionMatchCondition('contacts'))
   }
 
+  // Aplicar filtro de contactos ocultos
+  const hiddenFilters = await getHiddenContactFilters()
+  const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'contacts', false)
+  if (hiddenCondition) {
+    filters.push(hiddenCondition)
+  }
+
   const whereClause = filters.length ? `WHERE ${filters.join(' AND ')}` : ''
 
   const currentResult = await db.get(`${selectClause} ${whereClause}`, params)
@@ -212,6 +220,9 @@ export async function buildContactStats ({ startDate, endDate, scope = 'all' } =
     const previousParams = [previousRange.startUtc, previousRange.endUtc]
     if (scopeAttributed) {
       previousFilters.push(attributionMatchCondition('contacts'))
+    }
+    if (hiddenCondition) {
+      previousFilters.push(hiddenCondition)
     }
     previousResult = await db.get(
       `${selectClause} WHERE ${previousFilters.join(' AND ')}`,
@@ -259,6 +270,13 @@ export async function buildContactTimeline ({ startDate, endDate, scope = 'all' 
 
   if (scopeAttributed) {
     filters.push(attributionMatchCondition('contacts'))
+  }
+
+  // Aplicar filtro de contactos ocultos
+  const hiddenFilters = await getHiddenContactFilters()
+  const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'contacts', false)
+  if (hiddenCondition) {
+    filters.push(hiddenCondition)
   }
 
   const whereClause = filters.length ? `WHERE ${filters.join(' AND ')}` : ''
@@ -488,6 +506,10 @@ export async function buildCampaignSummary ({ startDate, endDate } = {}) {
   const hasRange = Boolean(range.startZoned && range.endZoned)
   const dedupExpr = buildDedupExpression('')
 
+  // Aplicar filtro de contactos ocultos
+  const hiddenFilters = await getHiddenContactFilters()
+  const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'contacts', false)
+
   let adsTotals
   let contactsTotals
   let adsTotalsPrev = { spend: 0, clicks: 0, reach: 0 }
@@ -507,6 +529,9 @@ export async function buildCampaignSummary ({ startDate, endDate } = {}) {
       [adsStart, adsEnd]
     ) || { spend: 0, clicks: 0, reach: 0 }
 
+    const contactConditions = [attributionMatchCondition('contacts'), 'created_at >= ?', 'created_at <= ?']
+    if (hiddenCondition) contactConditions.push(hiddenCondition)
+
     contactsTotals = await db.get(
       `SELECT
         COUNT(DISTINCT ${dedupExpr}) as leads,
@@ -515,9 +540,7 @@ export async function buildCampaignSummary ({ startDate, endDate } = {}) {
         END) as sales,
         COALESCE(SUM(total_paid), 0) as revenue
       FROM contacts
-      WHERE ${attributionMatchCondition('contacts')}
-      AND created_at >= ?
-      AND created_at <= ?`,
+      WHERE ${contactConditions.join(' AND ')}`,
       [range.startUtc, range.endUtc]
     ) || { leads: 0, sales: 0, revenue: 0 }
 
@@ -540,6 +563,9 @@ export async function buildCampaignSummary ({ startDate, endDate } = {}) {
         [adsPrevStart, adsPrevEnd]
       ) || { spend: 0, clicks: 0, reach: 0 }
 
+      const prevContactConditions = [attributionMatchCondition('contacts'), 'created_at >= ?', 'created_at <= ?']
+      if (hiddenCondition) prevContactConditions.push(hiddenCondition)
+
       contactsTotalsPrev = await db.get(
         `SELECT
           COUNT(DISTINCT ${dedupExpr}) as leads,
@@ -548,9 +574,7 @@ export async function buildCampaignSummary ({ startDate, endDate } = {}) {
           END) as sales,
           COALESCE(SUM(total_paid), 0) as revenue
         FROM contacts
-        WHERE ${attributionMatchCondition('contacts')}
-        AND created_at >= ?
-        AND created_at <= ?`,
+        WHERE ${prevContactConditions.join(' AND ')}`,
         [previousRange.startUtc, previousRange.endUtc]
       ) || { leads: 0, sales: 0, revenue: 0 }
     }
@@ -563,6 +587,9 @@ export async function buildCampaignSummary ({ startDate, endDate } = {}) {
       FROM meta_ads`
     ) || { spend: 0, clicks: 0, reach: 0 }
 
+    const allContactConditions = [attributionMatchCondition('contacts')]
+    if (hiddenCondition) allContactConditions.push(hiddenCondition)
+
     contactsTotals = await db.get(
       `SELECT
         COUNT(DISTINCT ${dedupExpr}) as leads,
@@ -571,7 +598,7 @@ export async function buildCampaignSummary ({ startDate, endDate } = {}) {
         END) as sales,
         COALESCE(SUM(total_paid), 0) as revenue
       FROM contacts
-      WHERE ${attributionMatchCondition('contacts')}`
+      WHERE ${allContactConditions.join(' AND ')}`
     ) || { leads: 0, sales: 0, revenue: 0 }
 
     const rangeForFallback = await fetchPreviousRange(range, 'month')
@@ -593,6 +620,9 @@ export async function buildCampaignSummary ({ startDate, endDate } = {}) {
         [adsPrevStart, adsPrevEnd]
       ) || { spend: 0, clicks: 0, reach: 0 }
 
+      const fallbackContactConditions = [attributionMatchCondition('contacts'), 'created_at >= ?', 'created_at <= ?']
+      if (hiddenCondition) fallbackContactConditions.push(hiddenCondition)
+
       contactsTotalsPrev = await db.get(
         `SELECT
           COUNT(DISTINCT ${dedupExpr}) as leads,
@@ -601,9 +631,7 @@ export async function buildCampaignSummary ({ startDate, endDate } = {}) {
           END) as sales,
           COALESCE(SUM(total_paid), 0) as revenue
         FROM contacts
-        WHERE ${attributionMatchCondition('contacts')}
-        AND created_at >= ?
-        AND created_at <= ?`,
+        WHERE ${fallbackContactConditions.join(' AND ')}`,
         [rangeForFallback.startUtc, rangeForFallback.endUtc]
       ) || { leads: 0, sales: 0, revenue: 0 }
     }
@@ -709,6 +737,13 @@ export async function buildReportMetrics ({ startDate, endDate, groupBy = 'day',
 
   if (isAttributed) {
     contactConditions.push(attributionMatchCondition('contacts'))
+  }
+
+  // Aplicar filtro de contactos ocultos
+  const hiddenFilters = await getHiddenContactFilters()
+  const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'contacts', false)
+  if (hiddenCondition) {
+    contactConditions.push(hiddenCondition)
   }
 
   const contactWhere = contactConditions.length ? `WHERE ${contactConditions.join(' AND ')}` : ''
@@ -881,10 +916,17 @@ export async function buildReportMetrics ({ startDate, endDate, groupBy = 'day',
       firstPaymentsParams.push(range.endUtc)
     }
 
-    const firstPaymentsWhere = firstPaymentsConditions.length ? `WHERE ${firstPaymentsConditions.join(' AND ')}` : ''
     const firstPaymentGroupExpr = getGroupExpression('first_p.first_payment_date', groupBy, timezone)
 
     // Query principal: obtener contactos con su fecha de primer pago
+    // Aplicar filtro de contactos ocultos
+    const hiddenConditionC = buildHiddenContactsCondition(hiddenFilters, 'c', false)
+    if (hiddenConditionC) {
+      firstPaymentsConditions.push(hiddenConditionC)
+    }
+
+    const firstPaymentsWhere = firstPaymentsConditions.length ? `WHERE ${firstPaymentsConditions.join(' AND ')}` : ''
+
     const firstPaymentsQuery = `
       SELECT
         ${firstPaymentGroupExpr} as period,
@@ -1205,6 +1247,11 @@ export async function buildContactsList ({ startDate, endDate, type = 'interesad
   let contacts = []
   let contactIds = []
 
+  // Aplicar filtro de contactos ocultos (para usar en todas las queries)
+  const hiddenFilters = await getHiddenContactFilters()
+  const hiddenConditionC = buildHiddenContactsCondition(hiddenFilters, 'c', false)
+  const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'contacts', false)
+
   // ========================================
   // PASO 1: Obtener contactIds según el tipo de filtro
   // ========================================
@@ -1217,6 +1264,9 @@ export async function buildContactsList ({ startDate, endDate, type = 'interesad
       }
       // CRÍTICO: Filtrar solo pagos exitosos (consistente con la tabla)
       applySuccessStatusFilter(paymentConditions, paymentParams, 'p')
+      if (hiddenConditionC) {
+        paymentConditions.push(hiddenConditionC)
+      }
 
       const paymentWhere = paymentConditions.length ? `WHERE ${paymentConditions.join(' AND ')}` : ''
       const paymentsQuery = `
@@ -1246,6 +1296,9 @@ export async function buildContactsList ({ startDate, endDate, type = 'interesad
       }
       // CRÍTICO: Filtrar solo pagos exitosos (consistente con la tabla)
       applySuccessStatusFilter(paymentConditions, paymentParams, 'payments')
+      if (hiddenCondition) {
+        paymentConditions.push(`contact_id IN (SELECT id FROM contacts WHERE ${hiddenCondition})`)
+      }
 
       const paymentWhere = paymentConditions.length ? `WHERE ${paymentConditions.join(' AND ')}` : ''
       const paymentsQuery = `
@@ -1262,6 +1315,9 @@ export async function buildContactsList ({ startDate, endDate, type = 'interesad
       const appointmentConditions = buildRangeConditions('c.created_at', range, appointmentParams)
       if (scopeAttributed) {
         appointmentConditions.push(attributionMatchCondition('c'))
+      }
+      if (hiddenConditionC) {
+        appointmentConditions.push(hiddenConditionC)
       }
 
       // Filtrar por calendarios de atribución configurados
@@ -1338,6 +1394,11 @@ export async function buildContactsList ({ startDate, endDate, type = 'interesad
         firstPaymentsParams.push(range.endUtc)
       }
 
+      // Aplicar filtro de contactos ocultos
+      if (hiddenConditionC) {
+        firstPaymentsConditions.push(hiddenConditionC)
+      }
+
       const firstPaymentsWhere = firstPaymentsConditions.length ? `WHERE ${firstPaymentsConditions.join(' AND ')}` : ''
 
       const firstPaymentsQuery = `
@@ -1367,6 +1428,9 @@ export async function buildContactsList ({ startDate, endDate, type = 'interesad
       if (scopeAttributed) {
         contactConditions.push(attributionMatchCondition('contacts'))
       }
+      if (hiddenCondition) {
+        contactConditions.push(hiddenCondition)
+      }
 
       const contactWhere = contactConditions.length ? `WHERE ${contactConditions.join(' AND ')}` : ''
       const contactsQuery = `
@@ -1385,6 +1449,15 @@ export async function buildContactsList ({ startDate, endDate, type = 'interesad
   // ========================================
   if (contactIds.length > 0) {
     const placeholders = contactIds.map(() => '?').join(',')
+    const additionalConditions = []
+    if (scopeAttributed) {
+      additionalConditions.push(attributionMatchCondition('contacts'))
+    }
+    if (hiddenCondition) {
+      additionalConditions.push(hiddenCondition)
+    }
+    const additionalWhere = additionalConditions.length ? ` AND ${additionalConditions.join(' AND ')}` : ''
+
     const contactsQuery = `
       SELECT
         id,
@@ -1398,8 +1471,7 @@ export async function buildContactsList ({ startDate, endDate, type = 'interesad
         attribution_ad_name,
         source
       FROM contacts
-      WHERE id IN (${placeholders})
-      ${scopeAttributed ? `AND ${attributionMatchCondition('contacts')}` : ''}
+      WHERE id IN (${placeholders})${additionalWhere}
       ORDER BY created_at DESC
     `
     contacts = await db.all(contactsQuery, contactIds)

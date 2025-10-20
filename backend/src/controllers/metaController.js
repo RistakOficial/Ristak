@@ -12,6 +12,7 @@ import {
 import { resolveDateRange, resolveDateRangeWithGHLTimezone } from '../utils/dateUtils.js';
 import { getContactsWithAppointmentsHybrid } from '../services/appointmentsMerge.js';
 import { fetchAndSaveMetaConfig } from '../services/highlevelSyncService.js';
+import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js';
 
 /**
  * Obtiene los calendarios configurados para atribución
@@ -247,6 +248,9 @@ export const getCampaigns = async (req, res) => {
 
     // PASO 2: Obtener métricas básicas de contactos CON validación de match en meta_ads
     // IMPORTANTE: Solo contar contactos cuyo attribution_ad_id tenga registro en meta_ads en la misma fecha
+    const hiddenFilters = await getHiddenContactFilters();
+    const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false);
+
     const contactsQuery = `
       SELECT
         c.attribution_ad_id as ad_id,
@@ -262,6 +266,7 @@ export const getCampaigns = async (req, res) => {
         WHERE ma.ad_id = c.attribution_ad_id
           AND ma.date::date = c.created_at::date
       )
+      ${hiddenCondition ? `AND ${hiddenCondition}` : ''}
     `;
 
     const contactsRaw = await db.all(contactsQuery, [
@@ -534,6 +539,9 @@ export const getSpendOverTime = async (req, res) => {
     // Query de ingresos ATRIBUIDOS basado en fecha de CREACIÓN del contacto y su LTV total
     // Usamos la fecha cuando el contacto llegó (created_at) y sumamos su valor total acumulado (total_paid)
     // VALIDACIÓN: Solo cuenta si el anuncio EXISTIÓ en Meta ese mismo día
+    const hiddenFilters = await getHiddenContactFilters();
+    const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false);
+
     const revenueQuery = usePostgres
       ? `
         SELECT
@@ -549,6 +557,7 @@ export const getSpendOverTime = async (req, res) => {
             WHERE ma.ad_id = c.attribution_ad_id
               AND ma.date::date = c.created_at::date
           )
+          ${hiddenCondition ? `AND ${hiddenCondition}` : ''}
         GROUP BY day
         ORDER BY day ASC
       `
@@ -566,6 +575,7 @@ export const getSpendOverTime = async (req, res) => {
             WHERE ma.ad_id = c.attribution_ad_id
               AND DATE(ma.date) = DATE(c.created_at)
           )
+          ${hiddenCondition ? `AND ${hiddenCondition}` : ''}
         GROUP BY day
         ORDER BY day ASC
       `;
@@ -738,6 +748,9 @@ export const getContactsByType = async (req, res) => {
 
     // Construir query de contactos (sin JOIN de appointments, ahora usamos método optimizado)
     // IMPORTANTE: Validar que attribution_ad_id exista en meta_ads con fecha coincidente
+    const hiddenFilters = await getHiddenContactFilters();
+    const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false);
+
     const placeholders = adIdsList.map(() => '?').join(',');
     let contactsQuery = `
       SELECT DISTINCT
@@ -759,6 +772,7 @@ export const getContactsByType = async (req, res) => {
         WHERE ma.ad_id = c.attribution_ad_id
           AND ma.date::date = c.created_at::date
       )
+      ${hiddenCondition ? `AND ${hiddenCondition}` : ''}
     `;
 
     if (type === 'sales') {
@@ -1027,6 +1041,11 @@ export const getLeadsOverTime = async (req, res) => {
     const startUtc = range.startZoned.toISODate();
     const endUtc = range.endZoned.toISODate();
 
+    // Aplicar filtro de contactos ocultos
+    const hiddenFilters = await getHiddenContactFilters();
+    const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'contacts', false);
+    const hiddenConditionC = buildHiddenContactsCondition(hiddenFilters, 'c', false);
+
     // Query para obtener leads (contactos únicos) por fecha de creación
     const leadsQuery = usePostgres
       ? `SELECT
@@ -1037,6 +1056,7 @@ export const getLeadsOverTime = async (req, res) => {
            AND attribution_ad_id != ''
            AND created_at::date >= $1::date
            AND created_at::date < ($2::date + INTERVAL '1 day')
+           ${hiddenCondition ? `AND ${hiddenCondition}` : ''}
          GROUP BY day
          ORDER BY day`
       : `SELECT
@@ -1047,6 +1067,7 @@ export const getLeadsOverTime = async (req, res) => {
            AND attribution_ad_id != ''
            AND DATE(created_at) >= DATE(?)
            AND DATE(created_at) <= DATE(?)
+           ${hiddenCondition ? `AND ${hiddenCondition}` : ''}
          GROUP BY day
          ORDER BY day`;
 
@@ -1069,6 +1090,7 @@ export const getLeadsOverTime = async (req, res) => {
              AND c.created_at::date >= $1::date
              AND c.created_at::date < ($2::date + INTERVAL '1 day')
              AND a.calendar_id IN (${calendarPlaceholders})
+             ${hiddenConditionC ? `AND ${hiddenConditionC}` : ''}
            GROUP BY day
            ORDER BY day`
         : `SELECT
@@ -1081,6 +1103,7 @@ export const getLeadsOverTime = async (req, res) => {
              AND DATE(c.created_at) >= DATE(?)
              AND DATE(c.created_at) <= DATE(?)
              AND a.calendar_id IN (${calendarPlaceholders})
+             ${hiddenConditionC ? `AND ${hiddenConditionC}` : ''}
            GROUP BY day
            ORDER BY day`;
       appointmentsParams = [...appointmentsParams, ...attributionCalendarIds];
@@ -1096,6 +1119,7 @@ export const getLeadsOverTime = async (req, res) => {
              AND c.attribution_ad_id != ''
              AND c.created_at::date >= $1::date
              AND c.created_at::date < ($2::date + INTERVAL '1 day')
+             ${hiddenConditionC ? `AND ${hiddenConditionC}` : ''}
            GROUP BY day
            ORDER BY day`
         : `SELECT
@@ -1107,6 +1131,7 @@ export const getLeadsOverTime = async (req, res) => {
              AND c.attribution_ad_id != ''
              AND DATE(c.created_at) >= DATE(?)
              AND DATE(c.created_at) <= DATE(?)
+             ${hiddenConditionC ? `AND ${hiddenConditionC}` : ''}
            GROUP BY day
            ORDER BY day`;
     }
@@ -1169,6 +1194,11 @@ export const getAppointmentsOverTime = async (req, res) => {
     const startUtc = range.startZoned.toISODate();
     const endUtc = range.endZoned.toISODate();
 
+    // Aplicar filtro de contactos ocultos
+    const hiddenFilters = await getHiddenContactFilters();
+    const hiddenConditionC = buildHiddenContactsCondition(hiddenFilters, 'c', false);
+    const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'contacts', false);
+
     // Query para obtener contactos únicos con citas por fecha de creación
     // Filtrar por calendarios de atribución configurados
     const attributionCalendarIds = await getAttributionCalendarIds();
@@ -1188,6 +1218,7 @@ export const getAppointmentsOverTime = async (req, res) => {
              AND c.created_at::date >= $1::date
              AND c.created_at::date < ($2::date + INTERVAL '1 day')
              AND a.calendar_id IN (${calendarPlaceholders})
+             ${hiddenConditionC ? `AND ${hiddenConditionC}` : ''}
            GROUP BY day
            ORDER BY day`
         : `SELECT
@@ -1200,6 +1231,7 @@ export const getAppointmentsOverTime = async (req, res) => {
              AND DATE(c.created_at) >= DATE(?)
              AND DATE(c.created_at) <= DATE(?)
              AND a.calendar_id IN (${calendarPlaceholders})
+             ${hiddenConditionC ? `AND ${hiddenConditionC}` : ''}
            GROUP BY day
            ORDER BY day`;
       appointmentsParams = [...appointmentsParams, ...attributionCalendarIds];
@@ -1215,6 +1247,7 @@ export const getAppointmentsOverTime = async (req, res) => {
              AND c.attribution_ad_id != ''
              AND c.created_at::date >= $1::date
              AND c.created_at::date < ($2::date + INTERVAL '1 day')
+             ${hiddenConditionC ? `AND ${hiddenConditionC}` : ''}
            GROUP BY day
            ORDER BY day`
         : `SELECT
@@ -1226,6 +1259,7 @@ export const getAppointmentsOverTime = async (req, res) => {
              AND c.attribution_ad_id != ''
              AND DATE(c.created_at) >= DATE(?)
              AND DATE(c.created_at) <= DATE(?)
+             ${hiddenConditionC ? `AND ${hiddenConditionC}` : ''}
            GROUP BY day
            ORDER BY day`;
     }
@@ -1241,6 +1275,7 @@ export const getAppointmentsOverTime = async (req, res) => {
            AND purchases_count > 0
            AND created_at::date >= $1::date
            AND created_at::date < ($2::date + INTERVAL '1 day')
+           ${hiddenCondition ? `AND ${hiddenCondition}` : ''}
          GROUP BY day
          ORDER BY day`
       : `SELECT
@@ -1252,6 +1287,7 @@ export const getAppointmentsOverTime = async (req, res) => {
            AND purchases_count > 0
            AND DATE(created_at) >= DATE(?)
            AND DATE(created_at) <= DATE(?)
+           ${hiddenCondition ? `AND ${hiddenCondition}` : ''}
          GROUP BY day
          ORDER BY day`;
 
@@ -1313,6 +1349,10 @@ export const getVisitorsOverTime = async (req, res) => {
     const startUtc = range.startZoned.toISODate();
     const endUtc = range.endZoned.toISODate();
 
+    // Aplicar filtro de contactos ocultos
+    const hiddenFilters = await getHiddenContactFilters();
+    const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'contacts', false);
+
     // Query para obtener visitantes únicos por fecha desde sessions
     const visitorsQuery = usePostgres
       ? `SELECT
@@ -1346,6 +1386,7 @@ export const getVisitorsOverTime = async (req, res) => {
            AND attribution_ad_id != ''
            AND created_at::date >= $1::date
            AND created_at::date < ($2::date + INTERVAL '1 day')
+           ${hiddenCondition ? `AND ${hiddenCondition}` : ''}
          GROUP BY day
          ORDER BY day`
       : `SELECT
@@ -1356,6 +1397,7 @@ export const getVisitorsOverTime = async (req, res) => {
            AND attribution_ad_id != ''
            AND DATE(created_at) >= DATE(?)
            AND DATE(created_at) <= DATE(?)
+           ${hiddenCondition ? `AND ${hiddenCondition}` : ''}
          GROUP BY day
          ORDER BY day`;
 
@@ -1417,6 +1459,10 @@ export const getFunnelMetrics = async (req, res) => {
     const startUtc = range.startZoned.toISODate();
     const endUtc = range.endZoned.toISODate();
 
+    // Aplicar filtro de contactos ocultos
+    const hiddenFilters = await getHiddenContactFilters();
+    const hiddenConditionC = buildHiddenContactsCondition(hiddenFilters, 'c', false);
+
     // Query para visitantes únicos CON ad_id (columna correcta en sessions)
     const visitorsQuery = usePostgres
       ? `SELECT
@@ -1453,6 +1499,7 @@ export const getFunnelMetrics = async (req, res) => {
              WHERE ma.ad_id = c.attribution_ad_id
                AND ma.date::date = c.created_at::date
            )
+           ${hiddenConditionC ? `AND ${hiddenConditionC}` : ''}
          GROUP BY day`
       : `SELECT
           DATE(c.created_at) as day,
@@ -1467,6 +1514,7 @@ export const getFunnelMetrics = async (req, res) => {
              WHERE ma.ad_id = c.attribution_ad_id
                AND DATE(ma.date) = DATE(c.created_at)
            )
+           ${hiddenConditionC ? `AND ${hiddenConditionC}` : ''}
          GROUP BY day`;
 
     // Query para contactos con citas CON attribution_ad_id validando que el anuncio existiera ese día
@@ -1493,6 +1541,7 @@ export const getFunnelMetrics = async (req, res) => {
                WHERE ma.ad_id = c.attribution_ad_id
                  AND ma.date::date = c.created_at::date
              )
+             ${hiddenConditionC ? `AND ${hiddenConditionC}` : ''}
            GROUP BY day`
         : `SELECT
             DATE(c.created_at) as day,
@@ -1509,6 +1558,7 @@ export const getFunnelMetrics = async (req, res) => {
                WHERE ma.ad_id = c.attribution_ad_id
                  AND DATE(ma.date) = DATE(c.created_at)
              )
+             ${hiddenConditionC ? `AND ${hiddenConditionC}` : ''}
            GROUP BY day`;
       appointmentsParams = [...appointmentsParams, ...attributionCalendarIds];
     } else {
@@ -1528,6 +1578,7 @@ export const getFunnelMetrics = async (req, res) => {
                WHERE ma.ad_id = c.attribution_ad_id
                  AND ma.date::date = c.created_at::date
              )
+             ${hiddenConditionC ? `AND ${hiddenConditionC}` : ''}
            GROUP BY day`
         : `SELECT
             DATE(c.created_at) as day,
@@ -1543,6 +1594,7 @@ export const getFunnelMetrics = async (req, res) => {
                WHERE ma.ad_id = c.attribution_ad_id
                  AND DATE(ma.date) = DATE(c.created_at)
              )
+             ${hiddenConditionC ? `AND ${hiddenConditionC}` : ''}
            GROUP BY day`;
     }
 
@@ -1562,6 +1614,7 @@ export const getFunnelMetrics = async (req, res) => {
              WHERE ma.ad_id = c.attribution_ad_id
                AND ma.date::date = c.created_at::date
            )
+           ${hiddenConditionC ? `AND ${hiddenConditionC}` : ''}
          GROUP BY day`
       : `SELECT
           DATE(c.created_at) as day,
@@ -1577,6 +1630,7 @@ export const getFunnelMetrics = async (req, res) => {
              WHERE ma.ad_id = c.attribution_ad_id
                AND DATE(ma.date) = DATE(c.created_at)
            )
+           ${hiddenConditionC ? `AND ${hiddenConditionC}` : ''}
          GROUP BY day`;
 
     const params = [startUtc, endUtc];

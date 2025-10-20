@@ -20,9 +20,10 @@ export async function getHiddenContactFilters() {
  * Construye la condición SQL para excluir contactos ocultos
  * @param {string[]} filters - Array de textos de filtro
  * @param {string} tableAlias - Alias de la tabla de contactos (ej: 'c', 'contacts')
+ * @param {boolean} includeAND - Si true, incluye "AND" al inicio de la condición
  * @returns {string} Condición SQL para agregar al WHERE
  */
-export function buildHiddenContactsCondition(filters, tableAlias = 'c') {
+export function buildHiddenContactsCondition(filters, tableAlias = 'c', includeAND = true) {
   if (!Array.isArray(filters) || filters.length === 0) {
     return ''
   }
@@ -42,7 +43,8 @@ export function buildHiddenContactsCondition(filters, tableAlias = 'c') {
   })
 
   // NOT (...) para excluir los que coincidan
-  return `AND NOT (${conditions.join(' OR ')})`
+  const condition = `NOT (${conditions.join(' OR ')})`
+  return includeAND ? `AND ${condition}` : condition
 }
 
 /**

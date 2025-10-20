@@ -5,6 +5,7 @@ import { normalizeTrafficSource } from '../utils/trafficSourceNormalizer.js';
 import { getGroupExpression } from '../services/analyticsService.js';
 import { DateTime } from 'luxon';
 import { getContactsWithAppointmentsHybrid } from '../services/appointmentsMerge.js';
+import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js';
 
 const calculateDelta = (current, previous) => {
   if (previous === 0) {
@@ -31,7 +32,7 @@ const buildDateFilters = (range) => {
   return { filters, params };
 };
 
-const buildContactFilters = (range) => {
+const buildContactFilters = async (range) => {
   const filters = ['total_paid > 0'];
   const params = [];
 
@@ -43,6 +44,13 @@ const buildContactFilters = (range) => {
   if (range.endUtc) {
     filters.push('created_at <= ?');
     params.push(range.endUtc);
+  }
+
+  // Aplicar filtro de contactos ocultos
+  const hiddenFilters = await getHiddenContactFilters();
+  const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'contacts', false);
+  if (hiddenCondition) {
+    filters.push(hiddenCondition);
   }
 
   return { filters, params };
@@ -82,7 +90,7 @@ const computeFinancialSnapshot = async (range) => {
   const refundsRow = await db.get(refundsQuery, refundsParams);
   const reembolsos = parseFloat(refundsRow?.total || 0);
 
-  const { filters: contactFilters, params: contactParams } = buildContactFilters(range);
+  const { filters: contactFilters, params: contactParams } = await buildContactFilters(range);
   const contactsWhere = contactFilters.length ? `WHERE ${contactFilters.join(' AND ')}` : '';
   const ltvQuery = `SELECT COALESCE(AVG(total_paid), 0) as avg_ltv FROM contacts ${contactsWhere}`;
   const ltvRow = await db.get(ltvQuery, contactParams);
@@ -415,29 +423,37 @@ export const getNewCustomersData = async (req, res) => {
     // Usar getGroupExpression() con timezone dinámico
     const dateExpression = getGroupExpression('created_at', groupBy, timezone);
 
+    // Aplicar filtro de contactos ocultos
+    const hiddenFilters = await getHiddenContactFilters();
+    const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'contacts', false);
+
     let query;
     let params;
 
     if (usePostgres) {
+      const conditions = ['total_paid > 0', 'created_at >= $1', 'created_at <= $2'];
+      if (hiddenCondition) conditions.push(hiddenCondition);
+
       query = `
         SELECT
           ${dateExpression} as periodo,
           COUNT(*) as total
         FROM contacts
-        WHERE total_paid > 0
-        AND created_at >= $1 AND created_at <= $2
+        WHERE ${conditions.join(' AND ')}
         GROUP BY periodo
         ORDER BY periodo
       `;
       params = [range.startUtc, range.endUtc];
     } else {
+      const conditions = ['total_paid > 0', 'created_at >= ?', 'created_at <= ?'];
+      if (hiddenCondition) conditions.push(hiddenCondition);
+
       query = `
         SELECT
           ${dateExpression} as periodo,
           COUNT(*) as total
         FROM contacts
-        WHERE total_paid > 0
-        AND created_at >= ? AND created_at <= ?
+        WHERE ${conditions.join(' AND ')}
         GROUP BY periodo
         ORDER BY periodo
       `;
@@ -539,27 +555,37 @@ export const getLeadsData = async (req, res) => {
     // Usar getGroupExpression() con timezone dinámico
     const dateExpression = getGroupExpression('created_at', groupBy, timezone);
 
+    // Aplicar filtro de contactos ocultos
+    const hiddenFilters = await getHiddenContactFilters();
+    const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'contacts', false);
+
     let query;
     let params;
 
     if (usePostgres) {
+      const conditions = ['created_at >= $1', 'created_at <= $2'];
+      if (hiddenCondition) conditions.push(hiddenCondition);
+
       query = `
         SELECT
           ${dateExpression} as periodo,
           COUNT(*) as total
         FROM contacts
-        WHERE created_at >= $1 AND created_at <= $2
+        WHERE ${conditions.join(' AND ')}
         GROUP BY periodo
         ORDER BY periodo
       `;
       params = [range.startUtc, range.endUtc];
     } else {
+      const conditions = ['created_at >= ?', 'created_at <= ?'];
+      if (hiddenCondition) conditions.push(hiddenCondition);
+
       query = `
         SELECT
           ${dateExpression} as periodo,
           COUNT(*) as total
         FROM contacts
-        WHERE created_at >= ? AND created_at <= ?
+        WHERE ${conditions.join(' AND ')}
         GROUP BY periodo
         ORDER BY periodo
       `;
@@ -614,16 +640,21 @@ export const getAppointmentsData = async (req, res) => {
     logger.info(`📊 ${contactsWithAppointments.size} contactos con citas (híbrido DB + API)`);
 
     // PASO 3: Obtener contactos del rango de fechas
+    const hiddenFilters = await getHiddenContactFilters();
+    const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'contacts', false);
+
     const contactsQuery = usePostgres
       ? `
         SELECT id as contact_id, created_at
         FROM contacts
         WHERE created_at >= $1 AND created_at <= $2
+          ${hiddenCondition ? `AND ${hiddenCondition}` : ''}
       `
       : `
         SELECT id as contact_id, created_at
         FROM contacts
         WHERE created_at >= ? AND created_at <= ?
+          ${hiddenCondition ? `AND ${hiddenCondition}` : ''}
       `;
 
     const contactsRaw = await db.all(contactsQuery, [range.startUtc, range.endUtc]);
@@ -1138,32 +1169,45 @@ export const getFunnelData = async (req, res) => {
     // ========================================
     // 2. LEADS (según scope)
     // ========================================
+    const hiddenFilters = await getHiddenContactFilters();
+    const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'contacts', false);
+
     let leadsQuery, leadsParams
 
     if (usePostgres) {
+      const conditions = ['created_at >= $1', 'created_at <= $2'];
+      if (isAttributed) {
+        conditions.push(`attribution_ad_id IS NOT NULL AND EXISTS (
+          SELECT 1 FROM meta_ads ma
+          WHERE ma.ad_id = contacts.attribution_ad_id
+            AND DATE(ma.date) = DATE(contacts.created_at)
+        )`);
+      }
+      if (hiddenCondition) conditions.push(hiddenCondition);
+
       leadsQuery = `
         SELECT COUNT(*) as count
         FROM contacts
-        WHERE created_at >= $1 AND created_at <= $2
-          ${isAttributed ? `AND attribution_ad_id IS NOT NULL AND EXISTS (
-            SELECT 1 FROM meta_ads ma
-            WHERE ma.ad_id = contacts.attribution_ad_id
-              AND DATE(ma.date) = DATE(contacts.created_at)
-          )` : ''}
-      `
-      leadsParams = [range.startUtc, range.endUtc]
+        WHERE ${conditions.join(' AND ')}
+      `;
+      leadsParams = [range.startUtc, range.endUtc];
     } else {
+      const conditions = ['created_at >= ?', 'created_at <= ?'];
+      if (isAttributed) {
+        conditions.push(`attribution_ad_id IS NOT NULL AND EXISTS (
+          SELECT 1 FROM meta_ads ma
+          WHERE ma.ad_id = contacts.attribution_ad_id
+            AND DATE(ma.date) = DATE(contacts.created_at)
+        )`);
+      }
+      if (hiddenCondition) conditions.push(hiddenCondition);
+
       leadsQuery = `
         SELECT COUNT(*) as count
         FROM contacts
-        WHERE created_at >= ? AND created_at <= ?
-          ${isAttributed ? `AND attribution_ad_id IS NOT NULL AND EXISTS (
-            SELECT 1 FROM meta_ads ma
-            WHERE ma.ad_id = contacts.attribution_ad_id
-              AND DATE(ma.date) = DATE(contacts.created_at)
-          )` : ''}
-      `
-      leadsParams = [range.startUtc, range.endUtc]
+        WHERE ${conditions.join(' AND ')}
+      `;
+      leadsParams = [range.startUtc, range.endUtc];
     }
 
     const leadsData = await db.get(leadsQuery, leadsParams)
@@ -1184,31 +1228,41 @@ export const getFunnelData = async (req, res) => {
 
       // Contar cuántos contactos del rango tienen cita
       if (usePostgres) {
+        const conditions = ['created_at >= $1', 'created_at <= $2'];
+        if (isAttributed) {
+          conditions.push(`attribution_ad_id IS NOT NULL AND EXISTS (
+            SELECT 1 FROM meta_ads ma
+            WHERE ma.ad_id = contacts.attribution_ad_id
+              AND DATE(ma.date) = DATE(contacts.created_at)
+          )`);
+        }
+        if (hiddenCondition) conditions.push(hiddenCondition);
+
         const contactsQuery = `
           SELECT id
           FROM contacts
-          WHERE created_at >= $1 AND created_at <= $2
-            ${isAttributed ? `AND attribution_ad_id IS NOT NULL AND EXISTS (
-              SELECT 1 FROM meta_ads ma
-              WHERE ma.ad_id = contacts.attribution_ad_id
-                AND DATE(ma.date) = DATE(contacts.created_at)
-            )` : ''}
-        `
-        const contactsRaw = await db.all(contactsQuery, [range.startUtc, range.endUtc])
-        appointmentsCount = contactsRaw.filter(c => contactsWithAppointments.has(c.id)).length
+          WHERE ${conditions.join(' AND ')}
+        `;
+        const contactsRaw = await db.all(contactsQuery, [range.startUtc, range.endUtc]);
+        appointmentsCount = contactsRaw.filter(c => contactsWithAppointments.has(c.id)).length;
       } else {
+        const conditions = ['created_at >= ?', 'created_at <= ?'];
+        if (isAttributed) {
+          conditions.push(`attribution_ad_id IS NOT NULL AND EXISTS (
+            SELECT 1 FROM meta_ads ma
+            WHERE ma.ad_id = contacts.attribution_ad_id
+              AND DATE(ma.date) = DATE(contacts.created_at)
+          )`);
+        }
+        if (hiddenCondition) conditions.push(hiddenCondition);
+
         const contactsQuery = `
           SELECT id
           FROM contacts
-          WHERE created_at >= ? AND created_at <= ?
-            ${isAttributed ? `AND attribution_ad_id IS NOT NULL AND EXISTS (
-              SELECT 1 FROM meta_ads ma
-              WHERE ma.ad_id = contacts.attribution_ad_id
-                AND DATE(ma.date) = DATE(contacts.created_at)
-            )` : ''}
-        `
-        const contactsRaw = await db.all(contactsQuery, [range.startUtc, range.endUtc])
-        appointmentsCount = contactsRaw.filter(c => contactsWithAppointments.has(c.id)).length
+          WHERE ${conditions.join(' AND ')}
+        `;
+        const contactsRaw = await db.all(contactsQuery, [range.startUtc, range.endUtc]);
+        appointmentsCount = contactsRaw.filter(c => contactsWithAppointments.has(c.id)).length;
       }
     } else {
       // Vista "Todos": Híbrido DB+API filtrado por date_added
@@ -1249,33 +1303,41 @@ export const getFunnelData = async (req, res) => {
     if (useContactAttribution) {
       // Vista "Último toque": Contactos creados en el rango con purchases_count > 0
       if (usePostgres) {
+        const conditions = ['purchases_count > 0', 'created_at >= $1', 'created_at <= $2'];
+        if (isAttributed) {
+          conditions.push(`attribution_ad_id IS NOT NULL AND EXISTS (
+            SELECT 1 FROM meta_ads ma
+            WHERE ma.ad_id = contacts.attribution_ad_id
+              AND DATE(ma.date) = DATE(contacts.created_at)
+          )`);
+        }
+        if (hiddenCondition) conditions.push(hiddenCondition);
+
         const customersQuery = `
           SELECT COUNT(DISTINCT id) as count
           FROM contacts
-          WHERE purchases_count > 0
-            AND created_at >= $1 AND created_at <= $2
-            ${isAttributed ? `AND attribution_ad_id IS NOT NULL AND EXISTS (
-              SELECT 1 FROM meta_ads ma
-              WHERE ma.ad_id = contacts.attribution_ad_id
-                AND DATE(ma.date) = DATE(contacts.created_at)
-            )` : ''}
-        `
-        const customersData = await db.get(customersQuery, [range.startUtc, range.endUtc])
-        customersCount = parseInt(customersData?.count || 0)
+          WHERE ${conditions.join(' AND ')}
+        `;
+        const customersData = await db.get(customersQuery, [range.startUtc, range.endUtc]);
+        customersCount = parseInt(customersData?.count || 0);
       } else {
+        const conditions = ['purchases_count > 0', 'created_at >= ?', 'created_at <= ?'];
+        if (isAttributed) {
+          conditions.push(`attribution_ad_id IS NOT NULL AND EXISTS (
+            SELECT 1 FROM meta_ads ma
+            WHERE ma.ad_id = contacts.attribution_ad_id
+              AND DATE(ma.date) = DATE(contacts.created_at)
+          )`);
+        }
+        if (hiddenCondition) conditions.push(hiddenCondition);
+
         const customersQuery = `
           SELECT COUNT(DISTINCT id) as count
           FROM contacts
-          WHERE purchases_count > 0
-            AND created_at >= ? AND created_at <= ?
-            ${isAttributed ? `AND attribution_ad_id IS NOT NULL AND EXISTS (
-              SELECT 1 FROM meta_ads ma
-              WHERE ma.ad_id = contacts.attribution_ad_id
-                AND DATE(ma.date) = DATE(contacts.created_at)
-            )` : ''}
-        `
-        const customersData = await db.get(customersQuery, [range.startUtc, range.endUtc])
-        customersCount = parseInt(customersData?.count || 0)
+          WHERE ${conditions.join(' AND ')}
+        `;
+        const customersData = await db.get(customersQuery, [range.startUtc, range.endUtc]);
+        customersCount = parseInt(customersData?.count || 0);
       }
     } else {
       // Vista "Todos": Contactos cuyo PRIMER pago está en el rango
