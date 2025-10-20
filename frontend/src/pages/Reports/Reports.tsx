@@ -579,7 +579,7 @@ export const Reports: React.FC = () => {
     const from = range?.from ?? apiRange.from
     const to = range?.to ?? apiRange.to
     const currentReportType = reportTypeRef.current
-    const currentScope = currentReportType === 'campaigns' ? 'campaigns' : 'all'
+    const currentScope = currentReportType === 'campaigns' ? 'campaigns' : currentReportType === 'attribution' ? 'attribution' : 'all'
 
     setModalState({
       open: true,
@@ -628,7 +628,7 @@ export const Reports: React.FC = () => {
         const from = modalState.range?.from ?? apiRange.from
         const to = modalState.range?.to ?? apiRange.to
         const currentReportType = reportTypeRef.current
-        const currentScope = currentReportType === 'campaigns' ? 'campaigns' : 'all'
+        const currentScope = currentReportType === 'campaigns' ? 'campaigns' : currentReportType === 'attribution' ? 'attribution' : 'all'
 
         try {
           const result = await reportsService.getContactsList({
@@ -685,7 +685,7 @@ export const Reports: React.FC = () => {
     setVisitorsModalDate(displayDate)
 
     try {
-      const currentScope = reportTypeRef.current === 'campaigns' ? 'campaigns' : 'all'
+      const currentScope = reportTypeRef.current === 'campaigns' ? 'campaigns' : reportTypeRef.current === 'attribution' ? 'attribution' : 'all'
       const response = await fetch(
         `/api/tracking/visitors?` + new URLSearchParams({
           startDate: startDate,
