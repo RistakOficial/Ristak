@@ -313,6 +313,11 @@ export async function buildTransactionStats ({ startDate, endDate, scope = 'all'
   const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate })
   const scopeAttributed = scope === 'campaigns'
 
+  // Obtener filtro de contactos ocultos
+  const { getHiddenContactFilters, buildHiddenContactsCondition } = await import('../utils/hiddenContactsFilter.js')
+  const hiddenFilters = await getHiddenContactFilters()
+  const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', true)
+
   const baseFilters = ['status = ?']
   const baseParams = ['succeeded']
 
@@ -326,10 +331,19 @@ export async function buildTransactionStats ({ startDate, endDate, scope = 'all'
     baseParams.push(range.endUtc)
   }
 
+  // Filtrar por contactos (ocultos + atribución si aplica)
+  const contactConditions = []
+  if (hiddenCondition) {
+    contactConditions.push(hiddenCondition.replace('AND ', ''))
+  }
   if (scopeAttributed) {
+    contactConditions.push(attributionMatchCondition('c'))
+  }
+
+  if (contactConditions.length > 0) {
     baseFilters.push(`contact_id IN (
       SELECT c.id FROM contacts c
-      WHERE ${attributionMatchCondition('c')}
+      WHERE ${contactConditions.join(' AND ')}
     )`)
   }
 
@@ -358,10 +372,11 @@ export async function buildTransactionStats ({ startDate, endDate, scope = 'all'
     statusParams.push(range.endUtc)
   }
 
-  if (scopeAttributed) {
+  // Aplicar mismo filtro de contactos para stats por status
+  if (contactConditions.length > 0) {
     statusFilters.push(`contact_id IN (
       SELECT c.id FROM contacts c
-      WHERE ${attributionMatchCondition('c')}
+      WHERE ${contactConditions.join(' AND ')}
     )`)
   }
 
@@ -397,6 +412,20 @@ export async function buildTransactionSummary ({ startDate, endDate, scope = 'al
   const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate })
   const scopeAttributed = scope === 'campaigns'
 
+  // Obtener filtro de contactos ocultos
+  const { getHiddenContactFilters, buildHiddenContactsCondition } = await import('../utils/hiddenContactsFilter.js')
+  const hiddenFilters = await getHiddenContactFilters()
+  const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', true)
+
+  // Construir condiciones de contacto (ocultos + atribución)
+  const contactConditions = []
+  if (hiddenCondition) {
+    contactConditions.push(hiddenCondition.replace('AND ', ''))
+  }
+  if (scopeAttributed) {
+    contactConditions.push(attributionMatchCondition('c'))
+  }
+
   // Usar TODOS los status válidos de pago (no solo 'succeeded')
   const statusPlaceholders = SUCCESS_PAYMENT_STATUSES.map(() => '?').join(', ')
   const successFilters = [`status IN (${statusPlaceholders})`]
@@ -412,10 +441,10 @@ export async function buildTransactionSummary ({ startDate, endDate, scope = 'al
     successParams.push(range.endUtc)
   }
 
-  if (scopeAttributed) {
+  if (contactConditions.length > 0) {
     successFilters.push(`contact_id IN (
       SELECT c.id FROM contacts c
-      WHERE ${attributionMatchCondition('c')}
+      WHERE ${contactConditions.join(' AND ')}
     )`)
   }
 
@@ -438,10 +467,10 @@ export async function buildTransactionSummary ({ startDate, endDate, scope = 'al
     refundsParams.push(range.endUtc)
   }
 
-  if (scopeAttributed) {
+  if (contactConditions.length > 0) {
     refundsFilters.push(`contact_id IN (
       SELECT c.id FROM contacts c
-      WHERE ${attributionMatchCondition('c')}
+      WHERE ${contactConditions.join(' AND ')}
     )`)
   }
 
@@ -460,10 +489,10 @@ export async function buildTransactionSummary ({ startDate, endDate, scope = 'al
     const prevStatusPlaceholders = SUCCESS_PAYMENT_STATUSES.map(() => '?').join(', ')
     const prevSuccessFilters = [`status IN (${prevStatusPlaceholders})`, 'date BETWEEN ? AND ?']
     const prevSuccessParams = [...SUCCESS_PAYMENT_STATUSES, previousRange.startUtc, previousRange.endUtc]
-    if (scopeAttributed) {
+    if (contactConditions.length > 0) {
       prevSuccessFilters.push(`contact_id IN (
         SELECT c.id FROM contacts c
-        WHERE ${attributionMatchCondition('c')}
+        WHERE ${contactConditions.join(' AND ')}
       )`)
     }
     previousResult = await db.get(
@@ -473,10 +502,10 @@ export async function buildTransactionSummary ({ startDate, endDate, scope = 'al
 
     const prevRefundFilters = ['status = ?', 'date BETWEEN ? AND ?']
     const prevRefundParams = ['refunded', previousRange.startUtc, previousRange.endUtc]
-    if (scopeAttributed) {
+    if (contactConditions.length > 0) {
       prevRefundFilters.push(`contact_id IN (
         SELECT c.id FROM contacts c
-        WHERE ${attributionMatchCondition('c')}
+        WHERE ${contactConditions.join(' AND ')}
       )`)
     }
     refundsPrevResult = await db.get(
