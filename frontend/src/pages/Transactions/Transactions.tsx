@@ -79,16 +79,6 @@ export const Transactions: React.FC = () => {
         transactionsService.getSummary(startDate, endDate)
       ])
 
-      console.log('🔍 DEBUG Transactions:', {
-        total: transactionsData.length,
-        startDate,
-        endDate,
-        viewMode,
-        succeeded: transactionsData.filter(t => t.status === 'paid' || t.status === 'succeeded').length,
-        refunded: transactionsData.filter(t => t.status === 'refunded').length,
-        data: transactionsData
-      })
-
       setTransactions(transactionsData)
       setSummary(summaryData)
     } catch (error) {

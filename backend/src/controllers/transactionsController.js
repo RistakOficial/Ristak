@@ -105,9 +105,7 @@ export const getTransactions = async (req, res) => {
       LIMIT ? OFFSET ?
     `
 
-    logger.info(`🔍 DEBUG Query params:`, { params, limitNumber, offset, whereClause })
     const transactions = await db.all(transactionsQuery, [...params, limitNumber, offset])
-    logger.info(`🔍 DEBUG Results: ${transactions.length} registros obtenidos`)
 
     // Mapear campos de base de datos a nombres esperados por frontend
     const mappedTransactions = transactions.map(t => ({
@@ -137,7 +135,7 @@ export const getTransactions = async (req, res) => {
       `Transacciones obtenidas (${rangeLabel}) -> ${transactions.length} registros en esta página, ${totalTransactions} total`
     )
 
-    const response = {
+    res.json({
       success: true,
       data: mappedTransactions,
       pagination: {
@@ -148,10 +146,7 @@ export const getTransactions = async (req, res) => {
         hasNext: pageNumber < totalPages,
         hasPrev: pageNumber > 1
       }
-    }
-
-    logger.info(`🔍 DEBUG Response: ${mappedTransactions.length} transactions in data field`)
-    res.json(response)
+    })
 
   } catch (error) {
     logger.error(`Error obteniendo transacciones: ${error.message}`)
