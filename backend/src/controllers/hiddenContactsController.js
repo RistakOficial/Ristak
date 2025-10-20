@@ -65,15 +65,26 @@ export const addHiddenFilter = async (req, res) => {
     }
 
     // Insertar nuevo filtro
-    const result = await db.run(
-      'INSERT INTO hidden_contact_filters (filter_text, match_type) VALUES (?, ?)',
-      [trimmedFilter, matchType]
-    )
+    const usePostgres = Boolean(process.env.DATABASE_URL)
 
-    const newFilter = await db.get(
-      'SELECT id, filter_text, match_type, created_at FROM hidden_contact_filters WHERE id = ?',
-      [result.lastID]
-    )
+    let newFilter
+    if (usePostgres) {
+      // PostgreSQL: usar RETURNING
+      newFilter = await db.get(
+        'INSERT INTO hidden_contact_filters (filter_text, match_type) VALUES ($1, $2) RETURNING id, filter_text, match_type, created_at',
+        [trimmedFilter, matchType]
+      )
+    } else {
+      // SQLite: usar lastID
+      const result = await db.run(
+        'INSERT INTO hidden_contact_filters (filter_text, match_type) VALUES (?, ?)',
+        [trimmedFilter, matchType]
+      )
+      newFilter = await db.get(
+        'SELECT id, filter_text, match_type, created_at FROM hidden_contact_filters WHERE id = ?',
+        [result.lastID]
+      )
+    }
 
     logger.info(`Filtro de contacto oculto agregado: "${trimmedFilter}" (${matchType})`)
 

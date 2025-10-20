@@ -90,7 +90,7 @@ export const getContacts = async (req, res) => {
 
     // Aplicar filtro de contactos ocultos
     const hiddenFilters = await getHiddenContactFilters()
-    const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false)
+    const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'contacts', false)
     if (hiddenCondition) {
       conditions.push(hiddenCondition)
     }
