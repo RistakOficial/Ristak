@@ -298,6 +298,7 @@ export async function createAppointment(appointmentData, locationId, accessToken
       endTime: appointmentData.endTime,
       // Campos requeridos por la API
       ignoreFreeSlotValidation: true, // Permite agendar incluso en horarios no disponibles
+      ignoreDateRange: true, // Intenta bypasear restricción TOOFAR (fecha fuera de rango)
       toNotify: false, // No enviar notificaciones automáticas
       meetingLocationType: appointmentData.address ? 'custom' : 'zoom',
       title: appointmentData.title || 'Nueva cita',
