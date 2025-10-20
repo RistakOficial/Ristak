@@ -175,9 +175,8 @@
 
 .calendarSelector {
   position: relative;
-  flex: 1 1 auto;
-  min-width: 280px;
-  max-width: 500px;
+  flex: 0 0 auto;
+  width: 280px;
 }
 
 /* Botón del dropdown */
