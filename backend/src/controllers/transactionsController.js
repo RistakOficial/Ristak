@@ -105,7 +105,9 @@ export const getTransactions = async (req, res) => {
       LIMIT ? OFFSET ?
     `
 
+    logger.info(`🔍 DEBUG Query params:`, { params, limitNumber, offset, whereClause })
     const transactions = await db.all(transactionsQuery, [...params, limitNumber, offset])
+    logger.info(`🔍 DEBUG Results: ${transactions.length} registros obtenidos`)
 
     // Mapear campos de base de datos a nombres esperados por frontend
     const mappedTransactions = transactions.map(t => ({
