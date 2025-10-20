@@ -22,7 +22,7 @@ import {
 } from 'lucide-react'
 import { useDateRange } from '@/contexts/DateRangeContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
-import { formatCurrency, formatDateToISO, formatEndDateToISO, formatNumber, parseLocalDateString } from '@/utils/format'
+import { formatCurrency, formatDateToISO, formatEndDateToISO, formatNumber, parseLocalDateString, formatName } from '@/utils/format'
 import { transactionsService, type Transaction, type TransactionSummary } from '@/services/transactionsService'
 import styles from './Transactions.module.css'
 
@@ -306,20 +306,21 @@ export const Transactions: React.FC = () => {
       sortable: true
     },
     {
-      key: 'contactName',
-      header: 'Contacto',
+      key: 'status',
+      header: 'Estado',
+      render: (value) => getStatusBadge(value as Transaction['status']),
       sortable: true
-    },
-    {
-      key: 'email',
-      header: 'Email',
-      sortable: true,
-      visible: false
     },
     {
       key: 'amount',
       header: 'Monto',
       render: (value) => formatCurrency(value),
+      sortable: true
+    },
+    {
+      key: 'contactName',
+      header: 'Contacto',
+      render: (value) => formatName(value),
       sortable: true
     },
     {
@@ -334,15 +335,16 @@ export const Transactions: React.FC = () => {
       sortable: true
     },
     {
-      key: 'status',
-      header: 'Estado',
-      render: (value) => getStatusBadge(value as Transaction['status']),
-      sortable: true
-    },
-    {
       key: 'description',
       header: 'Descripción',
-      sortable: false
+      sortable: false,
+      visible: true
+    },
+    {
+      key: 'email',
+      header: 'Email',
+      sortable: true,
+      visible: false
     },
     {
       key: 'id',
