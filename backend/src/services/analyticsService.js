@@ -379,8 +379,10 @@ export async function buildTransactionSummary ({ startDate, endDate, scope = 'al
   const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate })
   const scopeAttributed = scope === 'campaigns'
 
-  const successFilters = ['status = ?']
-  const successParams = ['succeeded']
+  // Usar TODOS los status válidos de pago (no solo 'succeeded')
+  const statusPlaceholders = SUCCESS_PAYMENT_STATUSES.map(() => '?').join(', ')
+  const successFilters = [`status IN (${statusPlaceholders})`]
+  const successParams = [...SUCCESS_PAYMENT_STATUSES]
 
   if (range.startUtc) {
     successFilters.push('date >= ?')
@@ -437,8 +439,9 @@ export async function buildTransactionSummary ({ startDate, endDate, scope = 'al
   const previousRange = await fetchPreviousRange(range, range.isFiltered ? null : 'month')
 
   if (previousRange) {
-    const prevSuccessFilters = ['status = ?', 'date BETWEEN ? AND ?']
-    const prevSuccessParams = ['succeeded', previousRange.startUtc, previousRange.endUtc]
+    const prevStatusPlaceholders = SUCCESS_PAYMENT_STATUSES.map(() => '?').join(', ')
+    const prevSuccessFilters = [`status IN (${prevStatusPlaceholders})`, 'date BETWEEN ? AND ?']
+    const prevSuccessParams = [...SUCCESS_PAYMENT_STATUSES, previousRange.startUtc, previousRange.endUtc]
     if (scopeAttributed) {
       prevSuccessFilters.push(`contact_id IN (
         SELECT c.id FROM contacts c
