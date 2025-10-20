@@ -19,13 +19,6 @@ export const Settings: React.FC = () => {
 
       <div className={styles.tabs}>
         <NavLink
-          to="/settings/account"
-          className={({ isActive }) => `${styles.tab} ${isActive ? styles.tabActive : ''}`}
-        >
-          <UserCircle size={18} />
-          <span>Cuenta</span>
-        </NavLink>
-        <NavLink
           to="/settings/highlevel"
           className={({ isActive }) => `${styles.tab} ${isActive ? styles.tabActive : ''}`}
         >
@@ -64,17 +57,24 @@ export const Settings: React.FC = () => {
           <CreditCard size={18} />
           <span>Configuración de Pagos</span>
         </NavLink>
+        <NavLink
+          to="/settings/account"
+          className={({ isActive }) => `${styles.tab} ${isActive ? styles.tabActive : ''}`}
+        >
+          <UserCircle size={18} />
+          <span>Cuenta</span>
+        </NavLink>
       </div>
 
       <div className={styles.mainContent}>
         <Routes>
-          <Route index element={<Navigate to="account" replace />} />
-          <Route path="account" element={<AccountSettings />} />
+          <Route index element={<Navigate to="highlevel" replace />} />
           <Route path="highlevel" element={<HighLevelIntegration />} />
-          <Route path="payments" element={<PaymentsConfiguration />} />
           <Route path="meta-ads" element={<MetaAdsIntegration />} />
           <Route path="calendars" element={<CalendarsConfiguration />} />
           <Route path="tracking" element={<WebTracking />} />
+          <Route path="payments" element={<PaymentsConfiguration />} />
+          <Route path="account" element={<AccountSettings />} />
         </Routes>
       </div>
     </div>
