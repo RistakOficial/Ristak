@@ -74,13 +74,15 @@
   top: calc(100% + 8px);
   left: 0;
   z-index: 1000;
-  min-width: 280px;
+  width: 520px;
   background: var(--color-background-primary);
   border: 1px solid var(--color-border);
   border-radius: 12px;
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.15);
   overflow: hidden;
   animation: slideDown 0.2s ease;
+  display: flex;
+  flex-direction: column;
 }
 
 @keyframes slideDown {
@@ -94,21 +96,28 @@
   }
 }
 
+/* Main content grid */
+.dropdownContent {
+  display: grid;
+  grid-template-columns: 1fr 180px;
+  border-bottom: 1px solid var(--color-border);
+}
+
 /* Calendar */
 .calendar {
   padding: 12px;
-  border-bottom: 1px solid var(--color-border);
+  border-right: 1px solid var(--color-border);
 }
 
 .calendarHeader {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 10px;
+  margin-bottom: 8px;
 }
 
 .monthYear {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--color-text-primary);
 }
@@ -117,11 +126,11 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
   background: none;
   border: none;
-  border-radius: 6px;
+  border-radius: 4px;
   color: var(--color-text-secondary);
   cursor: pointer;
   transition: all 0.2s ease;
@@ -141,7 +150,7 @@
 
 .weekday {
   text-align: center;
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 600;
   color: var(--color-text-secondary);
   padding: 2px;
@@ -161,12 +170,12 @@
   background: none;
   border: none;
   border-radius: 4px;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 500;
   color: var(--color-text-primary);
   cursor: pointer;
   transition: all 0.2s ease;
-  min-height: 28px;
+  min-height: 24px;
 }
 
 .day:hover:not(.disabled) {
@@ -202,15 +211,16 @@
 /* Time Picker */
 .timePicker {
   padding: 12px;
-  border-bottom: 1px solid var(--color-border);
+  display: flex;
+  flex-direction: column;
 }
 
 .timeHeader {
   display: flex;
   align-items: center;
   gap: 4px;
-  margin-bottom: 8px;
-  font-size: 12px;
+  margin-bottom: 10px;
+  font-size: 11px;
   font-weight: 600;
   color: var(--color-text-primary);
 }
@@ -220,9 +230,10 @@
 }
 
 .timeSelectors {
-  display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
-  gap: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1;
 }
 
 .timeColumn {
@@ -231,17 +242,17 @@
 }
 
 .timeColumnLabel {
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 600;
   color: var(--color-text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.3px;
-  margin-bottom: 4px;
-  text-align: center;
+  margin-bottom: 6px;
+  text-align: left;
 }
 
 .timeScroll {
-  max-height: 120px;
+  max-height: 80px;
   overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-color: var(--color-border) transparent;
@@ -303,11 +314,11 @@
 
 .actionButton {
   flex: 1;
-  padding: 6px 12px;
+  padding: 7px 12px;
   background: var(--color-background-secondary);
   border: 1px solid var(--color-border);
   border-radius: 6px;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 500;
   color: var(--color-text-primary);
   cursor: pointer;

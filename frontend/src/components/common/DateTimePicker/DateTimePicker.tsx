@@ -171,15 +171,16 @@ export function DateTimePicker({ value, onChange, label, required, minDate }: Da
 
       {isOpen && (
         <div className={styles.dropdown}>
-          {/* Calendar */}
-          <div className={styles.calendar}>
+          <div className={styles.dropdownContent}>
+            {/* Calendar */}
+            <div className={styles.calendar}>
             <div className={styles.calendarHeader}>
               <button
                 type="button"
                 className={styles.navButton}
                 onClick={() => changeMonth(-1)}
               >
-                <ChevronLeft size={16} />
+                <ChevronLeft size={14} />
               </button>
               <span className={styles.monthYear}>
                 {MONTHS[viewDate.getMonth()]} {viewDate.getFullYear()}
@@ -189,7 +190,7 @@ export function DateTimePicker({ value, onChange, label, required, minDate }: Da
                 className={styles.navButton}
                 onClick={() => changeMonth(1)}
               >
-                <ChevronRight size={16} />
+                <ChevronRight size={14} />
               </button>
             </div>
 
@@ -225,7 +226,7 @@ export function DateTimePicker({ value, onChange, label, required, minDate }: Da
           {/* Time Picker */}
           <div className={styles.timePicker}>
             <div className={styles.timeHeader}>
-              <Clock size={14} />
+              <Clock size={12} />
               <span>Hora</span>
             </div>
 
@@ -305,6 +306,7 @@ export function DateTimePicker({ value, onChange, label, required, minDate }: Da
                 </div>
               </div>
             </div>
+          </div>
           </div>
 
           {/* Actions */}
