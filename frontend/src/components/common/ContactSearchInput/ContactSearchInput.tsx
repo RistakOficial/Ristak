@@ -4,6 +4,7 @@ import styles from './ContactSearchInput.module.css';
 import { Icon } from '../Icon/Icon';
 import { Contact } from '@/types';
 import { contactsService } from '@/services/contactsService';
+import { normalizeSearchText } from '@/utils/format';
 
 interface ContactSearchInputProps {
   value: Contact | null;
@@ -70,7 +71,24 @@ export const ContactSearchInput: React.FC<ContactSearchInputProps> = ({
       setIsLoading(true);
       try {
         const results = await contactsService.searchContacts(term);
-        setSuggestions(results);
+
+        // Normalizar query para búsqueda insensible a acentos
+        const normalizedQuery = normalizeSearchText(term);
+
+        // Filtrar localmente con búsqueda normalizada
+        const filteredResults = results.filter((contact) => {
+          const normalizedName = normalizeSearchText(contact.name || '');
+          const normalizedEmail = normalizeSearchText(contact.email || '');
+          const normalizedPhone = normalizeSearchText(contact.phone || '');
+
+          return (
+            normalizedName.includes(normalizedQuery) ||
+            normalizedEmail.includes(normalizedQuery) ||
+            normalizedPhone.includes(normalizedQuery)
+          );
+        });
+
+        setSuggestions(filteredResults);
       } catch (error) {
         // TODO: Implement proper logging service
         setSuggestions([]);

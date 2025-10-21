@@ -180,9 +180,18 @@ export async function getFreeSlots(req, res) {
  */
 export async function createAppointment(req, res) {
   try {
+    logger.info('========================================');
+    logger.info('[Calendars Controller] 🔵 INICIO - createAppointment');
+    logger.info(`[Calendars Controller] 📦 Body completo recibido: ${JSON.stringify(req.body, null, 2)}`);
+
     const { accessToken, locationId, ...appointmentData } = req.body;
 
+    logger.info(`[Calendars Controller] 🔑 accessToken presente: ${accessToken ? 'SÍ' : 'NO'}`);
+    logger.info(`[Calendars Controller] 📍 locationId: ${locationId || 'NO PRESENTE'}`);
+    logger.info(`[Calendars Controller] 📅 appointmentData: ${JSON.stringify(appointmentData, null, 2)}`);
+
     if (!accessToken) {
+      logger.error('[Calendars Controller] ❌ ERROR: Falta accessToken');
       return res.status(400).json({
         success: false,
         error: 'Se requiere accessToken'
@@ -190,20 +199,31 @@ export async function createAppointment(req, res) {
     }
 
     if (!locationId) {
+      logger.error('[Calendars Controller] ❌ ERROR: Falta locationId');
       return res.status(400).json({
         success: false,
         error: 'Se requiere locationId'
       });
     }
 
+    logger.info('[Calendars Controller] ✅ Validaciones pasadas, llamando a calendarService.createAppointment...');
+
     const appointment = await calendarService.createAppointment(appointmentData, locationId, accessToken);
+
+    logger.info(`[Calendars Controller] ✅ Cita creada exitosamente: ${JSON.stringify(appointment, null, 2)}`);
+    logger.info('[Calendars Controller] 🔵 FIN - createAppointment');
+    logger.info('========================================');
 
     res.status(201).json({
       success: true,
       data: appointment
     });
   } catch (error) {
-    logger.error(`[Calendars Controller] Error en createAppointment: ${error.message}`);
+    logger.error('========================================');
+    logger.error(`[Calendars Controller] ❌ ERROR FATAL en createAppointment:`);
+    logger.error(`[Calendars Controller] 💥 Error message: ${error.message}`);
+    logger.error(`[Calendars Controller] 📚 Error stack: ${error.stack}`);
+    logger.error('========================================');
     res.status(500).json({
       success: false,
       error: error.message

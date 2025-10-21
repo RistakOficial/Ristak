@@ -6,6 +6,7 @@ import { DateTimePicker } from '../DateTimePicker';
 import { CalendarEvent, Calendar, calendarsService } from '@/services/calendarsService';
 import { useNotification } from '@/contexts/NotificationContext';
 import { useTimezone } from '@/contexts/TimezoneContext';
+import { normalizeSearchText } from '@/utils/format';
 import styles from './AppointmentModal.module.css';
 import { Trash2, Search, Loader2, X, UserPlus } from 'lucide-react';
 
@@ -404,14 +405,31 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
         }
         const data = await response.json();
 
-        const formattedContacts = (data.contacts || []).map((contact: any) => ({
-          id: contact.id,
-          name: contact.name || 'Sin nombre',
-          email: contact.email || '',
-          phone: contact.phone || '',
-          firstName: contact.firstName || '',
-          lastName: contact.lastName || ''
-        }));
+        // Normalizar query para búsqueda insensible a acentos
+        const normalizedQuery = normalizeSearchText(searchQuery);
+
+        // Filtrar contactos localmente con búsqueda normalizada
+        const formattedContacts = (data.contacts || [])
+          .map((contact: any) => ({
+            id: contact.id,
+            name: contact.name || 'Sin nombre',
+            email: contact.email || '',
+            phone: contact.phone || '',
+            firstName: contact.firstName || '',
+            lastName: contact.lastName || ''
+          }))
+          .filter((contact: Contact) => {
+            // Buscar en nombre, email y teléfono (ignorando acentos)
+            const normalizedName = normalizeSearchText(contact.name);
+            const normalizedEmail = normalizeSearchText(contact.email);
+            const normalizedPhone = normalizeSearchText(contact.phone);
+
+            return (
+              normalizedName.includes(normalizedQuery) ||
+              normalizedEmail.includes(normalizedQuery) ||
+              normalizedPhone.includes(normalizedQuery)
+            );
+          });
 
         setContacts(formattedContacts);
         setShowContactDropdown(true);

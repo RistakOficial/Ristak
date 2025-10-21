@@ -15,7 +15,7 @@ import {
 } from 'lucide-react'
 import styles from './RecordPaymentModal.module.css'
 import { useNotification } from '@/contexts/NotificationContext'
-import { formatCurrency } from '@/utils/format'
+import { formatCurrency, normalizeSearchText } from '@/utils/format'
 
 const IVA_RATE = 0.16
 
@@ -273,14 +273,31 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         }
         const data = await response.json()
 
-        const formattedContacts = (data.contacts || []).map((contact: any) => ({
-          id: contact.id,
-          name: contact.name || 'Sin nombre',
-          email: contact.email || '',
-          phone: contact.phone || '',
-          firstName: contact.firstName || '',
-          lastName: contact.lastName || ''
-        }))
+        // Normalizar query para búsqueda insensible a acentos
+        const normalizedQuery = normalizeSearchText(searchQuery)
+
+        // Filtrar contactos localmente con búsqueda normalizada
+        const formattedContacts = (data.contacts || [])
+          .map((contact: any) => ({
+            id: contact.id,
+            name: contact.name || 'Sin nombre',
+            email: contact.email || '',
+            phone: contact.phone || '',
+            firstName: contact.firstName || '',
+            lastName: contact.lastName || ''
+          }))
+          .filter((contact: Contact) => {
+            // Buscar en nombre, email y teléfono (ignorando acentos)
+            const normalizedName = normalizeSearchText(contact.name)
+            const normalizedEmail = normalizeSearchText(contact.email)
+            const normalizedPhone = normalizeSearchText(contact.phone)
+
+            return (
+              normalizedName.includes(normalizedQuery) ||
+              normalizedEmail.includes(normalizedQuery) ||
+              normalizedPhone.includes(normalizedQuery)
+            )
+          })
 
         setContacts(formattedContacts)
         setShowContactDropdown(true)
