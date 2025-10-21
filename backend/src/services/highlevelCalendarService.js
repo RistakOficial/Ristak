@@ -221,8 +221,15 @@ export async function getFreeSlots(calendarId, startDate, endDate, accessToken, 
   try {
     logger.info(`[HighLevel Calendar] Obteniendo slots disponibles para calendario: ${calendarId}`);
 
+    // Convertir fechas string a timestamps en milisegundos
+    // startDate y endDate vienen como "YYYY-MM-DD" del frontend
+    const startTimestamp = new Date(startDate).getTime();
+    const endTimestamp = new Date(endDate).getTime();
+
+    logger.info(`[HighLevel Calendar] Fechas convertidas: ${startDate} (${startTimestamp}) - ${endDate} (${endTimestamp})`);
+
     const response = await fetchWithTimeout(
-      `${GHL_API_BASE}/calendars/${calendarId}/free-slots?startDate=${startDate}&endDate=${endDate}&timezone=${timezone}`,
+      `${GHL_API_BASE}/calendars/${calendarId}/free-slots?startDate=${startTimestamp}&endDate=${endTimestamp}&timezone=${timezone}`,
       {
         method: 'GET',
         headers: {
