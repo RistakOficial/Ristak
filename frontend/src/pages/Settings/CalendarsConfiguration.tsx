@@ -389,12 +389,6 @@ export const CalendarsConfiguration: React.FC = () => {
                         type="checkbox"
                         checked={isSelected}
                         onChange={() => handleAttributionToggle(calendar.id)}
-                        style={{
-                          width: '18px',
-                          height: '18px',
-                          cursor: 'pointer',
-                          accentColor: 'var(--color-primary)'
-                        }}
                       />
                       <div style={{ flex: 1 }}>
                         <div style={{ fontWeight: 500, color: 'var(--color-text-primary)' }}>
@@ -640,7 +634,6 @@ export const CalendarsConfiguration: React.FC = () => {
                         LookBusyPercentage: selectedCalendar.lookBusyConfig?.LookBusyPercentage || 0
                       }
                     })}
-                    style={{ width: '18px', height: '18px', cursor: 'pointer', accentColor: 'var(--color-primary)' }}
                   />
                   <label htmlFor="lookBusyEnabled" style={{ fontWeight: 500, cursor: 'pointer', fontSize: '14px' }}>
                     Parecer ocupado

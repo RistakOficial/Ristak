@@ -533,3 +533,112 @@ textarea:hover,
 textarea:focus {
   box-shadow: none !important;
 }
+
+/* ============================================
+   ESTILOS GLOBALES PARA CHECKBOX Y RADIO
+   ============================================ */
+
+/* Checkbox personalizado */
+input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--color-border);
+  border-radius: 4px;
+  background-color: var(--color-background-secondary);
+  cursor: pointer;
+  position: relative;
+  transition: all var(--transition-base);
+  flex-shrink: 0;
+}
+
+input[type="checkbox"]:hover:not(:disabled) {
+  border-color: var(--color-primary);
+  background-color: var(--color-surface);
+}
+
+input[type="checkbox"]:checked {
+  background-color: var(--color-primary);
+  border-color: var(--color-primary);
+}
+
+input[type="checkbox"]:checked::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%) rotate(45deg);
+  width: 5px;
+  height: 9px;
+  border: solid var(--color-text-onAccent);
+  border-width: 0 2px 2px 0;
+}
+
+input[type="checkbox"]:disabled {
+  opacity: var(--opacity-disabled);
+  cursor: not-allowed;
+}
+
+input[type="checkbox"]:focus-visible {
+  box-shadow: 0 0 0 3px var(--color-primary-light);
+}
+
+/* Radio button personalizado */
+input[type="radio"] {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--color-border);
+  border-radius: 50%;
+  background-color: var(--color-background-secondary);
+  cursor: pointer;
+  position: relative;
+  transition: all var(--transition-base);
+  flex-shrink: 0;
+}
+
+input[type="radio"]:hover:not(:disabled) {
+  border-color: var(--color-primary);
+  background-color: var(--color-surface);
+}
+
+input[type="radio"]:checked {
+  background-color: var(--color-background-secondary);
+  border-color: var(--color-primary);
+  border-width: 2px;
+}
+
+input[type="radio"]:checked::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: var(--color-primary);
+}
+
+input[type="radio"]:disabled {
+  opacity: var(--opacity-disabled);
+  cursor: not-allowed;
+}
+
+input[type="radio"]:focus-visible {
+  box-shadow: 0 0 0 3px var(--color-primary-light);
+}
+
+/* Estilos para labels asociados a checkbox/radio */
+label:has(> input[type="checkbox"]),
+label:has(> input[type="radio"]) {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+  user-select: none;
+}

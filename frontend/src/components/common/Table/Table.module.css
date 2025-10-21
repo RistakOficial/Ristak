@@ -146,10 +146,6 @@
   background-color: var(--color-surface);
 }
 
-.columnOption input[type="checkbox"] {
-  cursor: pointer;
-}
-
 .tableWrapper {
   overflow-x: auto;
   background-color: var(--color-background);
