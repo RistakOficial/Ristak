@@ -270,9 +270,9 @@ export const MetaAdsIntegration: React.FC = () => {
                   <label className={styles.formLabel}>
                     App Access Token <span style={{ color: 'var(--color-error)' }}>*</span>
                   </label>
-                  {credentials.accessToken ? (
+                  {credentials.accessToken && credentials.accessToken.startsWith('***') ? (
                     <div className={styles.filterChip}>
-                      <span className={styles.chipText}>{'*'.repeat(20)}...{credentials.accessToken.slice(-8)}</span>
+                      <span className={styles.chipText}>{credentials.accessToken}</span>
                       <button
                         onClick={() => handleRemoveCredential('accessToken')}
                         className={styles.chipDeleteButton}
@@ -420,9 +420,9 @@ export const MetaAdsIntegration: React.FC = () => {
                   <label className={styles.formLabel}>
                     Pixel API Token <span className={styles.formHint}>(opcional)</span>
                   </label>
-                  {credentials.pixelApiToken ? (
+                  {credentials.pixelApiToken && credentials.pixelApiToken.startsWith('***') ? (
                     <div className={styles.filterChip}>
-                      <span className={styles.chipText}>{'*'.repeat(20)}...{credentials.pixelApiToken.slice(-8)}</span>
+                      <span className={styles.chipText}>{credentials.pixelApiToken}</span>
                       <button
                         onClick={() => handleRemoveCredential('pixelApiToken')}
                         className={styles.chipDeleteButton}
