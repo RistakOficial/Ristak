@@ -538,7 +538,7 @@ textarea:focus {
    ESTILOS GLOBALES PARA CHECKBOX Y RADIO
    ============================================ */
 
-/* Checkbox personalizado */
+/* Checkbox personalizado - Base */
 input[type="checkbox"] {
   appearance: none;
   -webkit-appearance: none;
@@ -585,7 +585,55 @@ input[type="checkbox"]:focus-visible {
   box-shadow: 0 0 0 3px var(--color-primary-light);
 }
 
-/* Radio button personalizado */
+/* Checkbox - Estilos específicos para Dark Mode */
+body.dark input[type="checkbox"] {
+  border-color: rgba(148, 163, 184, 0.32);
+  background-color: #141518;
+}
+
+body.dark input[type="checkbox"]:hover:not(:disabled) {
+  border-color: #64748b;
+  background-color: #1a1b1f;
+}
+
+body.dark input[type="checkbox"]:checked {
+  background-color: #64748b;
+  border-color: #64748b;
+}
+
+body.dark input[type="checkbox"]:checked::after {
+  border-color: #ffffff;
+}
+
+body.dark input[type="checkbox"]:focus-visible {
+  box-shadow: 0 0 0 3px rgba(100, 116, 139, 0.2);
+}
+
+/* Checkbox - Estilos específicos para Light Mode */
+body.light input[type="checkbox"] {
+  border-color: rgba(203, 213, 225, 0.8);
+  background-color: #ffffff;
+}
+
+body.light input[type="checkbox"]:hover:not(:disabled) {
+  border-color: #475569;
+  background-color: #f9fafb;
+}
+
+body.light input[type="checkbox"]:checked {
+  background-color: #475569;
+  border-color: #475569;
+}
+
+body.light input[type="checkbox"]:checked::after {
+  border-color: #ffffff;
+}
+
+body.light input[type="checkbox"]:focus-visible {
+  box-shadow: 0 0 0 3px rgba(71, 85, 105, 0.18);
+}
+
+/* Radio button personalizado - Base */
 input[type="radio"] {
   appearance: none;
   -webkit-appearance: none;
@@ -631,6 +679,54 @@ input[type="radio"]:disabled {
 
 input[type="radio"]:focus-visible {
   box-shadow: 0 0 0 3px var(--color-primary-light);
+}
+
+/* Radio - Estilos específicos para Dark Mode */
+body.dark input[type="radio"] {
+  border-color: rgba(148, 163, 184, 0.32);
+  background-color: #141518;
+}
+
+body.dark input[type="radio"]:hover:not(:disabled) {
+  border-color: #64748b;
+  background-color: #1a1b1f;
+}
+
+body.dark input[type="radio"]:checked {
+  background-color: #141518;
+  border-color: #64748b;
+}
+
+body.dark input[type="radio"]:checked::after {
+  background-color: #64748b;
+}
+
+body.dark input[type="radio"]:focus-visible {
+  box-shadow: 0 0 0 3px rgba(100, 116, 139, 0.2);
+}
+
+/* Radio - Estilos específicos para Light Mode */
+body.light input[type="radio"] {
+  border-color: rgba(203, 213, 225, 0.8);
+  background-color: #ffffff;
+}
+
+body.light input[type="radio"]:hover:not(:disabled) {
+  border-color: #475569;
+  background-color: #f9fafb;
+}
+
+body.light input[type="radio"]:checked {
+  background-color: #ffffff;
+  border-color: #475569;
+}
+
+body.light input[type="radio"]:checked::after {
+  background-color: #475569;
+}
+
+body.light input[type="radio"]:focus-visible {
+  box-shadow: 0 0 0 3px rgba(71, 85, 105, 0.18);
 }
 
 /* Estilos para labels asociados a checkbox/radio */

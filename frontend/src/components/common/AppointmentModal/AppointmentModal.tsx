@@ -2,10 +2,12 @@ import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Modal } from '../Modal';
 import { Button } from '../Button';
+import { TabList } from '../TabList';
 import { DateTimePicker } from '../DateTimePicker';
-import { CalendarEvent, Calendar, calendarsService } from '@/services/calendarsService';
+import { CalendarEvent, Calendar, calendarsService, FreeSlot } from '@/services/calendarsService';
 import { useNotification } from '@/contexts/NotificationContext';
 import { useTimezone } from '@/contexts/TimezoneContext';
+import { normalizeSearchText } from '@/utils/format';
 import styles from './AppointmentModal.module.css';
 import { Trash2, Search, Loader2, X, UserPlus } from 'lucide-react';
 
@@ -13,12 +15,14 @@ interface AppointmentModalProps {
   isOpen: boolean;
   onClose: () => void;
   event?: CalendarEvent | null;
-  calendar?: Calendar | null; // Nuevo: información del calendario
+  calendar?: Calendar | null; // Información del calendario
   mode?: 'view' | 'create';
   defaultStart?: string;
   defaultEnd?: string;
   defaultTimeZone?: string;
   defaultTitle?: string;
+  accessToken?: string; // Token para cargar slots disponibles
+  locationId?: string; // Location ID para consultas
   onSave: (eventIdOrPayload: string | any, updates?: Partial<CalendarEvent>) => Promise<void>;
   onDelete?: (eventId: string) => Promise<void>;
 }
@@ -210,8 +214,15 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isClient, setIsClient] = useState(false);
 
-  // Validación de slots DESHABILITADA: Como admin, puedes agendar en cualquier horario
-  // La validación de slots solo aplica cuando clientes agendan vía formulario público
+  // Modo de selección de horario: 'default' = solo slots disponibles, 'custom' = libre
+  const [scheduleMode, setScheduleMode] = useState<'default' | 'custom'>('default');
+  const [freeSlots, setFreeSlots] = useState<FreeSlot[]>([]);
+  const [loadingSlots, setLoadingSlots] = useState(false);
+  const [selectedDate, setSelectedDate] = useState<string>('');
+  const [selectedSlot, setSelectedSlot] = useState<string>('');
+
+  // Validación de slots DESHABILITADA en modo custom: Como admin, puedes agendar en cualquier horario
+  // En modo default: Solo permite seleccionar de los slots disponibles según configuración del calendario
 
   const loadUsers = async () => {
     setLoadingUsers(true);
