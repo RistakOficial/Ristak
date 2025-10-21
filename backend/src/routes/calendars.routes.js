@@ -32,4 +32,7 @@ router.get('/:id/free-slots', calendarsController.getFreeSlots);
 // Obtener un calendario específico
 router.get('/:id', calendarsController.getCalendar);
 
+// Actualizar configuración de un calendario
+router.put('/:id', calendarsController.updateCalendar);
+
 export default router;

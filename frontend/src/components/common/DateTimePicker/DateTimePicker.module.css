@@ -73,8 +73,9 @@
   position: absolute;
   top: calc(100% + 8px);
   left: 0;
+  right: 0;
   z-index: 1000;
-  width: 520px;
+  max-width: 480px;
   background: var(--color-background-primary);
   border: 1px solid var(--color-border);
   border-radius: 12px;
@@ -99,14 +100,15 @@
 /* Main content grid */
 .dropdownContent {
   display: grid;
-  grid-template-columns: 1fr 180px;
+  grid-template-columns: 1fr 160px;
   border-bottom: 1px solid var(--color-border);
 }
 
 /* Calendar */
 .calendar {
-  padding: 12px;
+  padding: 10px;
   border-right: 1px solid var(--color-border);
+  min-width: 0;
 }
 
 .calendarHeader {
@@ -210,9 +212,10 @@
 
 /* Time Picker */
 .timePicker {
-  padding: 12px;
+  padding: 10px 8px;
   display: flex;
   flex-direction: column;
+  min-width: 0;
 }
 
 .timeHeader {

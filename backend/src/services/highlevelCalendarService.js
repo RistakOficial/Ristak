@@ -434,6 +434,48 @@ export async function deleteEvent(eventId, accessToken) {
   }
 }
 
+/**
+ * Actualizar configuración de un calendario
+ * @param {string} calendarId - ID del calendario
+ * @param {Object} updateData - Datos de configuración a actualizar
+ * @param {string} accessToken - Token de acceso OAuth
+ * @returns {Promise<Object>} Calendario actualizado
+ */
+export async function updateCalendar(calendarId, updateData, accessToken) {
+  try {
+    logger.info(`[HighLevel Calendar] Actualizando configuración de calendario: ${calendarId}`);
+    logger.info(`[HighLevel Calendar] Datos a actualizar: ${JSON.stringify(updateData, null, 2)}`);
+
+    const response = await fetchWithTimeout(
+      `${GHL_API_BASE}/calendars/${calendarId}`,
+      {
+        method: 'PUT',
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+          'Version': API_VERSION,
+          'Authorization': `Bearer ${accessToken}`
+        },
+        body: JSON.stringify(updateData)
+      }
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      logger.error(`[HighLevel Calendar] Error al actualizar calendario: ${response.status} - ${errorText}`);
+      throw new Error(`Error al actualizar calendario: ${response.status} - ${errorText}`);
+    }
+
+    const data = await response.json();
+    logger.info(`[HighLevel Calendar] Calendario actualizado exitosamente: ${calendarId}`);
+
+    return data;
+  } catch (error) {
+    logger.error(`[HighLevel Calendar] Error en updateCalendar: ${error.message}`);
+    throw error;
+  }
+}
+
 export default {
   getCalendars,
   getCalendar,
@@ -442,5 +484,6 @@ export default {
   getFreeSlots,
   createAppointment,
   updateAppointment,
+  updateCalendar,
   deleteEvent
 };

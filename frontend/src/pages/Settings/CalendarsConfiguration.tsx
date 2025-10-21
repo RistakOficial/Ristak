@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
-import { Card, Button } from '@/components/common'
-import { Calendar, Loader2, CheckCircle, XCircle, Info } from 'lucide-react'
+import { createPortal } from 'react-dom'
+import { Card, Button, Modal } from '@/components/common'
+import { Calendar, Loader2, CheckCircle, XCircle, Info, Settings } from 'lucide-react'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useAppConfig } from '@/hooks'
 import { useAuth } from '@/contexts/AuthContext'
@@ -24,6 +25,11 @@ export const CalendarsConfiguration: React.FC = () => {
   // Estados temporales para edición (antes de guardar)
   const [tempDefaultCalendar, setTempDefaultCalendar] = useState<string>('')
   const [tempAttributionCalendars, setTempAttributionCalendars] = useState<string[]>([])
+
+  // Estados del modal de configuración
+  const [showConfigModal, setShowConfigModal] = useState(false)
+  const [selectedCalendar, setSelectedCalendar] = useState<CalendarType | null>(null)
+  const [savingConfig, setSavingConfig] = useState(false)
 
   // Cargar calendarios al montar
   useEffect(() => {
@@ -100,6 +106,51 @@ export const CalendarsConfiguration: React.FC = () => {
     setTempDefaultCalendar(defaultCalendarId)
     setTempAttributionCalendars(attributionCalendarIds)
     setHasChanges(false)
+  }
+
+  const handleOpenConfigModal = (calendar: CalendarType) => {
+    setSelectedCalendar(calendar)
+    setShowConfigModal(true)
+  }
+
+  const handleCloseConfigModal = () => {
+    setShowConfigModal(false)
+    setSelectedCalendar(null)
+  }
+
+  const handleSaveCalendarConfig = async () => {
+    if (!selectedCalendar || !accessToken) return
+
+    setSavingConfig(true)
+    try {
+      // Construir payload con solo los campos editables
+      const updateData = {
+        slotDuration: selectedCalendar.slotDuration,
+        slotDurationUnit: selectedCalendar.slotDurationUnit,
+        slotInterval: selectedCalendar.slotInterval,
+        slotIntervalUnit: selectedCalendar.slotIntervalUnit,
+        preBuffer: selectedCalendar.preBuffer || 0,
+        preBufferUnit: selectedCalendar.preBufferUnit || 'mins',
+        slotBuffer: selectedCalendar.slotBuffer || 0,
+        slotBufferUnit: selectedCalendar.slotBufferUnit || 'mins',
+        allowBookingAfter: selectedCalendar.allowBookingAfter || 0,
+        allowBookingAfterUnit: selectedCalendar.allowBookingAfterUnit || 'hours',
+        allowBookingFor: selectedCalendar.allowBookingFor || 30,
+        allowBookingForUnit: selectedCalendar.allowBookingForUnit || 'days',
+        appoinmentPerSlot: selectedCalendar.appoinmentPerSlot,
+        appoinmentPerDay: selectedCalendar.appoinmentPerDay
+      }
+
+      await calendarsService.updateCalendar(selectedCalendar.id, updateData, accessToken)
+
+      showToast('success', 'Configuración de calendario actualizada', `Los cambios se guardaron en ${selectedCalendar.name}`)
+      handleCloseConfigModal()
+      loadCalendars() // Recargar calendarios para ver cambios
+    } catch (error: any) {
+      showToast('error', 'Error al actualizar calendario', error.message)
+    } finally {
+      setSavingConfig(false)
+    }
   }
 
   if (loadingCalendars) {

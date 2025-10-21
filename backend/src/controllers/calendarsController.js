@@ -243,6 +243,37 @@ export async function updateAppointment(req, res) {
 }
 
 /**
+ * PUT /api/calendars/:id
+ * Actualizar configuración de un calendario
+ */
+export async function updateCalendar(req, res) {
+  try {
+    const { id } = req.params;
+    const { accessToken, ...updateData } = req.body;
+
+    if (!accessToken) {
+      return res.status(400).json({
+        success: false,
+        error: 'Se requiere accessToken'
+      });
+    }
+
+    const calendar = await calendarService.updateCalendar(id, updateData, accessToken);
+
+    res.json({
+      success: true,
+      data: calendar
+    });
+  } catch (error) {
+    logger.error(`[Calendars Controller] Error en updateCalendar: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+}
+
+/**
  * DELETE /api/calendars/events/:id
  * Eliminar un evento del calendario
  */
@@ -281,5 +312,6 @@ export default {
   getFreeSlots,
   createAppointment,
   updateAppointment,
+  updateCalendar,
   deleteEvent
 };

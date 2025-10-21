@@ -257,6 +257,25 @@ export const calendarsService = {
   },
 
   /**
+   * Actualizar configuración de un calendario
+   */
+  async updateCalendar(
+    calendarId: string,
+    updateData: Partial<Calendar>,
+    accessToken: string
+  ): Promise<Calendar | null> {
+    try {
+      const data = await apiClient.put<Calendar>(`/calendars/${calendarId}`, {
+        ...updateData,
+        accessToken
+      });
+      return data;
+    } catch (error) {
+      throw error;
+    }
+  },
+
+  /**
    * Calcular estadísticas de citas
    */
   calculateStats(events: CalendarEvent[]): AppointmentStats {
