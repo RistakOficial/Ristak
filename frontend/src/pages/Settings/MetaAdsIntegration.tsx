@@ -282,7 +282,7 @@ export const MetaAdsIntegration: React.FC = () => {
                     </div>
                   ) : (
                     <input
-                      type="password"
+                      type="text"
                       value={credentials.accessToken}
                       onChange={(e) => handleInputChange('accessToken', e.target.value)}
                       onBlur={(e) => {
@@ -432,7 +432,7 @@ export const MetaAdsIntegration: React.FC = () => {
                     </div>
                   ) : (
                     <input
-                      type="password"
+                      type="text"
                       value={credentials.pixelApiToken}
                       onChange={(e) => handleInputChange('pixelApiToken', e.target.value)}
                       placeholder="EAA..."

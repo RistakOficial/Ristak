@@ -926,11 +926,12 @@ export async function saveMetaCustomValues(locationId, apiToken, metaCredentials
     const data = await getResponse.json()
     const existingCustomValues = data.customValues || []
 
-    // Mapeo de campos (System User - solo necesita Access Token + Ad Account + Pixel)
+    // Mapeo de campos (System User - solo necesita Access Token + Ad Account + Pixel + Pixel API Token)
     const fieldsToSave = [
       { key: 'adAccountId', name: 'Facebook - Ad Account ID', value: metaCredentials.adAccountId },
       { key: 'accessToken', name: 'Facebook - App Access Token', value: metaCredentials.accessToken },
-      { key: 'pixelId', name: 'Facebook - Pixel ID', value: metaCredentials.pixelId }
+      { key: 'pixelId', name: 'Facebook - Pixel ID', value: metaCredentials.pixelId },
+      { key: 'pixelApiToken', name: 'Facebook - Pixel API Token', value: metaCredentials.pixelApiToken }
     ]
 
     const results = []
@@ -960,14 +961,15 @@ export async function saveMetaCustomValues(locationId, apiToken, metaCredentials
             body: JSON.stringify({ name: field.name, value: field.value })
           })
 
-          await updateResponse.json()
+          const updateData = await updateResponse.json()
 
           if (!updateResponse.ok) {
-            throw new Error(`Error actualizando ${field.name}: ${updateResponse.status}`)
+            logger.error(`Error HTTP ${updateResponse.status} actualizando ${field.name}:`, updateData)
+            throw new Error(`Error actualizando ${field.name}: ${updateResponse.status} - ${JSON.stringify(updateData)}`)
           }
 
           results.push({ field: field.key, action: 'updated', success: true })
-          logger.info(`✅ ${field.name} actualizado`)
+          logger.info(`✅ ${field.name} actualizado exitosamente`)
         } else {
           // Crear nuevo con POST
           logger.info(`Creando ${field.name}...`)
@@ -982,14 +984,15 @@ export async function saveMetaCustomValues(locationId, apiToken, metaCredentials
             body: JSON.stringify({ name: field.name, value: field.value })
           })
 
-          await createResponse.json()
+          const createData = await createResponse.json()
 
           if (!createResponse.ok) {
-            throw new Error(`Error creando ${field.name}: ${createResponse.status}`)
+            logger.error(`Error HTTP ${createResponse.status} creando ${field.name}:`, createData)
+            throw new Error(`Error creando ${field.name}: ${createResponse.status} - ${JSON.stringify(createData)}`)
           }
 
           results.push({ field: field.key, action: 'created', success: true })
-          logger.info(`✅ ${field.name} creado`)
+          logger.info(`✅ ${field.name} creado exitosamente`)
         }
       } catch (err) {
         logger.error(`❌ Error con ${field.name}: ${err.message}`)
