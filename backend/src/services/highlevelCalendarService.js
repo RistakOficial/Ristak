@@ -301,10 +301,10 @@ export async function createAppointment(appointmentData, locationId, accessToken
     } else {
       // Obtener el calendario para extraer el primer team member
       try {
-        const calendar = await getCalendar(appointmentData.calendarId, accessToken);
+        const response = await getCalendar(appointmentData.calendarId, accessToken);
 
-        // Debug: Log completo del calendario para ver qué campos tiene
-        logger.info(`[HighLevel Calendar] Calendario completo: ${JSON.stringify(calendar)}`);
+        // La API de HighLevel devuelve { calendar: {...} }
+        const calendar = response.calendar || response;
 
         if (calendar && calendar.teamMembers && calendar.teamMembers.length > 0) {
           // Usar el primer team member disponible
@@ -312,7 +312,6 @@ export async function createAppointment(appointmentData, locationId, accessToken
           logger.info(`[HighLevel Calendar] assignedUserId no proporcionado, usando primer team member: ${payload.assignedUserId}`);
         } else {
           logger.warn(`[HighLevel Calendar] No se encontraron team members en el calendario ${appointmentData.calendarId}`);
-          logger.warn(`[HighLevel Calendar] teamMembers: ${JSON.stringify(calendar?.teamMembers)}`);
         }
       } catch (error) {
         logger.warn(`[HighLevel Calendar] No se pudo obtener team members del calendario: ${error.message}`);
