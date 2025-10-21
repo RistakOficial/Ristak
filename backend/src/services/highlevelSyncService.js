@@ -899,11 +899,124 @@ async function setupHighLevelWebhooks(locationId, apiToken, baseUrl) {
 }
 
 /**
- * Obtiene custom values de Meta desde HighLevel y los guarda en meta_config
+ * Guarda o actualiza los Custom Values de Meta en HighLevel
+ * @param {string} locationId - ID del location de HighLevel
+ * @param {string} apiToken - Token de API de HighLevel
+ * @param {Object} metaCredentials - { adAccountId, accessToken, appId, appSecret }
+ * @returns {Promise<Object>} - { success: boolean, message: string }
+ */
+export async function saveMetaCustomValues(locationId, apiToken, metaCredentials) {
+  try {
+    logger.info('Guardando credenciales de Meta en HighLevel custom values...')
+
+    // Primero obtener los custom values existentes
+    const getUrl = `https://services.leadconnectorhq.com/locations/${locationId}/customValues`
+    const getResponse = await fetch(getUrl, {
+      headers: {
+        'Authorization': `Bearer ${apiToken}`,
+        'Version': '2021-07-28'
+      }
+    })
+
+    if (!getResponse.ok) {
+      throw new Error('No se pudieron obtener custom values de HighLevel')
+    }
+
+    const data = await getResponse.json()
+    const existingCustomValues = data.customValues || []
+
+    // Mapeo de campos
+    const fieldsToSave = [
+      { key: 'adAccountId', name: 'Facebook - Ad Account ID', value: metaCredentials.adAccountId },
+      { key: 'accessToken', name: 'Facebook - App Access Token', value: metaCredentials.accessToken },
+      { key: 'appId', name: 'Facebook - App ID', value: metaCredentials.appId },
+      { key: 'appSecret', name: 'Facebook - App Secret', value: metaCredentials.appSecret }
+    ]
+
+    const results = []
+
+    for (const field of fieldsToSave) {
+      // Si el valor está vacío o es null, saltar (no guardar)
+      if (!field.value || field.value.trim() === '') {
+        logger.info(`Saltando ${field.name} (vacío)`)
+        continue
+      }
+
+      try {
+        // Buscar si ya existe
+        const existing = existingCustomValues.find(cv => cv.name === field.name)
+
+        if (existing) {
+          // Actualizar existente con PUT
+          logger.info(`Actualizando ${field.name}...`)
+          const updateUrl = `https://services.leadconnectorhq.com/locations/${locationId}/customValues/${existing.id}`
+          const updateResponse = await fetch(updateUrl, {
+            method: 'PUT',
+            headers: {
+              'Authorization': `Bearer ${apiToken}`,
+              'Version': '2021-07-28',
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ name: field.name, value: field.value })
+          })
+
+          await updateResponse.json()
+
+          if (!updateResponse.ok) {
+            throw new Error(`Error actualizando ${field.name}: ${updateResponse.status}`)
+          }
+
+          results.push({ field: field.key, action: 'updated', success: true })
+          logger.info(`✅ ${field.name} actualizado`)
+        } else {
+          // Crear nuevo con POST
+          logger.info(`Creando ${field.name}...`)
+          const createUrl = `https://services.leadconnectorhq.com/locations/${locationId}/customValues`
+          const createResponse = await fetch(createUrl, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${apiToken}`,
+              'Version': '2021-07-28',
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ name: field.name, value: field.value })
+          })
+
+          await createResponse.json()
+
+          if (!createResponse.ok) {
+            throw new Error(`Error creando ${field.name}: ${createResponse.status}`)
+          }
+
+          results.push({ field: field.key, action: 'created', success: true })
+          logger.info(`✅ ${field.name} creado`)
+        }
+      } catch (err) {
+        logger.error(`❌ Error con ${field.name}: ${err.message}`)
+        results.push({ field: field.key, action: 'error', success: false, error: err.message })
+      }
+    }
+
+    const successCount = results.filter(r => r.success).length
+    const totalCount = results.length
+
+    logger.info(`Credenciales guardadas en HighLevel: ${successCount}/${totalCount}`)
+
+    return {
+      success: successCount > 0,
+      message: `${successCount}/${totalCount} credenciales guardadas en HighLevel`,
+      results
+    }
+  } catch (error) {
+    logger.error('Error guardando credenciales de Meta en HighLevel:', error.message)
+    throw error
+  }
+}
+
+/**
+ * Obtiene custom values de Meta desde HighLevel y los devuelve
  */
 export async function fetchAndSaveMetaConfig(locationId, apiToken) {
-  const { saveMetaConfig } = await import('./metaAdsService.js')
-
   try {
     logger.info('Buscando configuración de Meta en custom values de HighLevel...')
 
@@ -918,7 +1031,7 @@ export async function fetchAndSaveMetaConfig(locationId, apiToken) {
 
     if (!response.ok) {
       logger.warn('No se pudieron obtener custom values de HighLevel')
-      return
+      return null
     }
 
     const data = await response.json()
@@ -939,15 +1052,16 @@ export async function fetchAndSaveMetaConfig(locationId, apiToken) {
     // Debug: Ver qué valores se encontraron
     logger.info(`Valores encontrados - AdAccountId: ${fbAdAccountId ? 'SÍ' : 'NO'}, AccessToken: ${fbAccessToken ? 'SÍ' : 'NO'}, AppId: ${fbAppId ? 'SÍ' : 'NO'}, AppSecret: ${fbAppSecret ? 'SÍ' : 'NO'}`)
 
-    // Si tiene al menos ad_account_id y access_token, guardar config
-    if (fbAdAccountId && fbAccessToken) {
-      // Usar saveMetaConfig que encripta automáticamente
-      await saveMetaConfig(fbAdAccountId, fbAccessToken, fbAppId, fbAppSecret)
-    } else {
-      logger.info('No se encontró configuración completa de Meta en custom values')
+    // Devolver los valores encontrados (sin guardar todavía)
+    return {
+      adAccountId: fbAdAccountId || '',
+      accessToken: fbAccessToken || '',
+      appId: fbAppId || '',
+      appSecret: fbAppSecret || ''
     }
   } catch (error) {
     logger.error('Error obteniendo config de Meta desde HighLevel:', error.message)
+    return null
   }
 }
 

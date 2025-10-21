@@ -283,7 +283,7 @@
 
 .timeSelect:hover {
   border-color: var(--color-primary);
-  background: var(--color-background-tertiary);
+  background-color: var(--color-background-tertiary);
 }
 
 .timeSelect:focus {

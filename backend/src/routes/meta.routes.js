@@ -14,7 +14,9 @@ import {
   getAppointmentsOverTime,
   getVisitorsOverTime,
   getFunnelMetrics,
-  syncFromHighLevel
+  syncFromHighLevel,
+  getMetaCustomValues,
+  saveAndSyncMeta
 } from '../controllers/metaController.js'
 
 const router = express.Router()
@@ -23,6 +25,10 @@ const router = express.Router()
 router.post('/config', saveConfig)
 router.get('/config', getConfig)
 router.get('/verify-token', verifyToken)
+
+// Custom Values de HighLevel
+router.get('/custom-values', getMetaCustomValues)
+router.post('/save-and-sync', saveAndSyncMeta)
 
 // Sincronización
 router.post('/sync', syncAds)

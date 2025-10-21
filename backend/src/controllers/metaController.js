@@ -1697,6 +1697,154 @@ export const getFunnelMetrics = async (req, res) => {
 };
 
 /**
+ * Obtiene los Custom Values de Meta desde HighLevel
+ */
+export const getMetaCustomValues = async (req, res) => {
+  try {
+    logger.info('Obteniendo custom values de Meta desde HighLevel...');
+
+    // 1. Obtener configuración de HighLevel
+    const hlConfig = await db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1');
+
+    if (!hlConfig || !hlConfig.location_id || !hlConfig.api_token) {
+      return res.status(400).json({
+        success: false,
+        error: 'No hay configuración de HighLevel. Primero debes conectar HighLevel en Settings.'
+      });
+    }
+
+    // 2. Buscar custom values de Meta en HighLevel
+    const metaCustomValues = await fetchAndSaveMetaConfig(hlConfig.location_id, hlConfig.api_token);
+
+    if (!metaCustomValues) {
+      return res.json({
+        success: true,
+        data: {
+          adAccountId: '',
+          accessToken: '',
+          appId: '',
+          appSecret: ''
+        }
+      });
+    }
+
+    res.json({
+      success: true,
+      data: metaCustomValues
+    });
+
+  } catch (error) {
+    logger.error(`Error en getMetaCustomValues: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      error: 'Error al obtener custom values de Meta desde HighLevel'
+    });
+  }
+};
+
+/**
+ * Guarda credenciales de Meta en HighLevel y luego sincroniza
+ */
+export const saveAndSyncMeta = async (req, res) => {
+  try {
+    const { adAccountId, accessToken, appId, appSecret } = req.body;
+
+    logger.info('Guardando credenciales de Meta en HighLevel...');
+
+    // 1. Validar que al menos tengamos ad_account_id y access_token
+    if (!adAccountId || !accessToken) {
+      return res.status(400).json({
+        success: false,
+        error: 'Se requieren al menos Ad Account ID y Access Token'
+      });
+    }
+
+    // 2. Obtener configuración de HighLevel
+    const hlConfig = await db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1');
+
+    if (!hlConfig || !hlConfig.location_id || !hlConfig.api_token) {
+      return res.status(400).json({
+        success: false,
+        error: 'No hay configuración de HighLevel. Primero debes conectar HighLevel en Settings.'
+      });
+    }
+
+    // 3. Importar función de guardado
+    const { saveMetaCustomValues } = await import('../services/highlevelSyncService.js');
+
+    // 4. Guardar en HighLevel Custom Values
+    const saveResult = await saveMetaCustomValues(hlConfig.location_id, hlConfig.api_token, {
+      adAccountId,
+      accessToken,
+      appId: appId || '',
+      appSecret: appSecret || ''
+    });
+
+    if (!saveResult.success) {
+      return res.status(500).json({
+        success: false,
+        error: 'Error al guardar credenciales en HighLevel'
+      });
+    }
+
+    logger.info('Credenciales guardadas en HighLevel exitosamente');
+
+    // 5. Guardar en meta_config local (encriptado)
+    await saveMetaConfig({
+      ad_account_id: adAccountId,
+      access_token: accessToken,
+      app_id: appId || null,
+      app_secret: appSecret || null
+    });
+
+    logger.info('Credenciales guardadas en base de datos local');
+
+    // 6. Validar que las credenciales funcionen
+    logger.info('Validando credenciales de Meta...');
+    const validation = await verifyMetaToken(accessToken);
+
+    if (!validation.valid) {
+      return res.status(400).json({
+        success: false,
+        error: `Credenciales de Meta inválidas: ${validation.error || 'Token inválido o expirado'}`
+      });
+    }
+
+    logger.info('Credenciales de Meta validadas exitosamente');
+
+    // 7. Iniciar sincronización de anuncios (últimos 7 días)
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - 7);
+    const startDateStr = startDate.toISOString().split('T')[0];
+
+    logger.info(`Iniciando sincronización de anuncios desde: ${startDateStr}`);
+
+    // No esperar a que termine la sincronización (es async)
+    syncMetaAds(startDateStr).catch(error => {
+      logger.error(`Error en sincronización de Meta Ads: ${error.message}`);
+    });
+
+    res.json({
+      success: true,
+      message: 'Credenciales guardadas y sincronización iniciada exitosamente',
+      data: {
+        savedInHighLevel: saveResult.success,
+        adAccountId: adAccountId,
+        tokenValid: validation.valid,
+        syncStarted: true
+      }
+    });
+
+  } catch (error) {
+    logger.error(`Error en saveAndSyncMeta: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      error: 'Error al guardar y sincronizar credenciales de Meta'
+    });
+  }
+};
+
+/**
  * Sincroniza configuración de Meta desde HighLevel custom values
  * Busca los custom values de Meta en HighLevel, los guarda en meta_config,
  * valida que funcionen y luego inicia sincronización de anuncios
