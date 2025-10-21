@@ -177,11 +177,6 @@
   gap: 0.4rem;
 }
 
-/* Centrar TabList cuando está dentro de .field */
-.field > :global(.inline-flex) {
-  align-self: center;
-}
-
 .fieldRow {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -568,7 +563,34 @@
   color: #fb923c;
 }
 
-/* Estilos para modo de slots disponibles */
+/* Contenedor visual de sección de Fecha y Hora */
+.dateTimeSection {
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 12px;
+  background: rgba(148, 163, 184, 0.03);
+  padding: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+/* Wrapper del TabList centrado */
+.tabListWrapper {
+  display: flex;
+  justify-content: center;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+/* Contenido de slots (tanto para modo default como custom) */
+.slotsContent {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding-top: 0.25rem;
+}
+
+/* Estilos para modo de slots disponibles (DEPRECADO - ya no se usa) */
 .slotsSection {
   display: flex;
   flex-direction: column;
