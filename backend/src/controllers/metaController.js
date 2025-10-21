@@ -1726,6 +1726,7 @@ export const getMetaCustomValues = async (req, res) => {
         data: {
           adAccountId: '',
           accessToken: '',
+          pixelId: '',
           appId: '',
           appSecret: ''
         }

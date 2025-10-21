@@ -929,6 +929,7 @@ export async function saveMetaCustomValues(locationId, apiToken, metaCredentials
     const fieldsToSave = [
       { key: 'adAccountId', name: 'Facebook - Ad Account ID', value: metaCredentials.adAccountId },
       { key: 'accessToken', name: 'Facebook - App Access Token', value: metaCredentials.accessToken },
+      { key: 'pixelId', name: 'pixel_id', value: metaCredentials.pixelId },
       { key: 'appId', name: 'Facebook - App ID', value: metaCredentials.appId },
       { key: 'appSecret', name: 'Facebook - App Secret', value: metaCredentials.appSecret }
     ]
@@ -1046,16 +1047,18 @@ export async function fetchAndSaveMetaConfig(locationId, apiToken) {
     // Buscar los custom values de Facebook (con los nombres reales de HighLevel)
     const fbAdAccountId = customValues.find(cv => cv.name === 'Facebook - Ad Account ID')?.value
     const fbAccessToken = customValues.find(cv => cv.name === 'Facebook - App Access Token')?.value
+    const fbPixelId = customValues.find(cv => cv.name === 'pixel_id')?.value
     const fbAppId = customValues.find(cv => cv.name === 'Facebook - App ID')?.value
     const fbAppSecret = customValues.find(cv => cv.name === 'Facebook - App Secret')?.value
 
     // Debug: Ver qué valores se encontraron
-    logger.info(`Valores encontrados - AdAccountId: ${fbAdAccountId ? 'SÍ' : 'NO'}, AccessToken: ${fbAccessToken ? 'SÍ' : 'NO'}, AppId: ${fbAppId ? 'SÍ' : 'NO'}, AppSecret: ${fbAppSecret ? 'SÍ' : 'NO'}`)
+    logger.info(`Valores encontrados - AdAccountId: ${fbAdAccountId ? 'SÍ' : 'NO'}, AccessToken: ${fbAccessToken ? 'SÍ' : 'NO'}, PixelId: ${fbPixelId ? 'SÍ' : 'NO'}, AppId: ${fbAppId ? 'SÍ' : 'NO'}, AppSecret: ${fbAppSecret ? 'SÍ' : 'NO'}`)
 
     // Devolver los valores encontrados (sin guardar todavía)
     return {
       adAccountId: fbAdAccountId || '',
       accessToken: fbAccessToken || '',
+      pixelId: fbPixelId || '',
       appId: fbAppId || '',
       appSecret: fbAppSecret || ''
     }
