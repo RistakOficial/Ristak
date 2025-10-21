@@ -234,76 +234,68 @@ export function DateTimePicker({ value, onChange, label, required, minDate }: Da
               {/* Hours */}
               <div className={styles.timeColumn}>
                 <div className={styles.timeColumnLabel}>Hora</div>
-                <div className={styles.timeScroll}>
+                <select
+                  className={styles.timeSelect}
+                  value={currentHour}
+                  onChange={(e) => {
+                    const hour = parseInt(e.target.value)
+                    const hour24 = currentPeriod === 'pm' && hour !== 12
+                      ? hour + 12
+                      : currentPeriod === 'am' && hour === 12
+                      ? 0
+                      : hour
+                    handleTimeChange(hour24, currentMinute)
+                  }}
+                >
                   {hours.map((hour) => (
-                    <button
-                      key={hour}
-                      type="button"
-                      className={`${styles.timeOption} ${currentHour === hour ? styles.timeOptionSelected : ''}`}
-                      onClick={() => {
-                        const hour24 = currentPeriod === 'pm' && hour !== 12
-                          ? hour + 12
-                          : currentPeriod === 'am' && hour === 12
-                          ? 0
-                          : hour
-                        handleTimeChange(hour24, currentMinute)
-                      }}
-                    >
+                    <option key={hour} value={hour}>
                       {hour.toString().padStart(2, '0')}
-                    </button>
+                    </option>
                   ))}
-                </div>
+                </select>
               </div>
 
               {/* Minutes */}
               <div className={styles.timeColumn}>
                 <div className={styles.timeColumnLabel}>Min</div>
-                <div className={styles.timeScroll}>
+                <select
+                  className={styles.timeSelect}
+                  value={currentMinute}
+                  onChange={(e) => {
+                    const minute = parseInt(e.target.value)
+                    const hour24 = currentPeriod === 'pm' && currentHour !== 12
+                      ? currentHour + 12
+                      : currentPeriod === 'am' && currentHour === 12
+                      ? 0
+                      : currentHour
+                    handleTimeChange(hour24, minute)
+                  }}
+                >
                   {minutes.filter(m => m % 5 === 0).map((minute) => (
-                    <button
-                      key={minute}
-                      type="button"
-                      className={`${styles.timeOption} ${currentMinute === minute ? styles.timeOptionSelected : ''}`}
-                      onClick={() => {
-                        const hour24 = currentPeriod === 'pm' && currentHour !== 12
-                          ? currentHour + 12
-                          : currentPeriod === 'am' && currentHour === 12
-                          ? 0
-                          : currentHour
-                        handleTimeChange(hour24, minute)
-                      }}
-                    >
+                    <option key={minute} value={minute}>
                       {minute.toString().padStart(2, '0')}
-                    </button>
+                    </option>
                   ))}
-                </div>
+                </select>
               </div>
 
               {/* AM/PM */}
               <div className={styles.timeColumn}>
                 <div className={styles.timeColumnLabel}>Periodo</div>
-                <div className={styles.timeScroll}>
-                  <button
-                    type="button"
-                    className={`${styles.timeOption} ${currentPeriod === 'am' ? styles.timeOptionSelected : ''}`}
-                    onClick={() => {
-                      const hour24 = currentHour === 12 ? 0 : currentHour
-                      handleTimeChange(hour24, currentMinute)
-                    }}
-                  >
-                    a.m.
-                  </button>
-                  <button
-                    type="button"
-                    className={`${styles.timeOption} ${currentPeriod === 'pm' ? styles.timeOptionSelected : ''}`}
-                    onClick={() => {
-                      const hour24 = currentHour === 12 ? 12 : currentHour + 12
-                      handleTimeChange(hour24, currentMinute)
-                    }}
-                  >
-                    p.m.
-                  </button>
-                </div>
+                <select
+                  className={styles.timeSelect}
+                  value={currentPeriod}
+                  onChange={(e) => {
+                    const period = e.target.value
+                    const hour24 = period === 'pm'
+                      ? (currentHour === 12 ? 12 : currentHour + 12)
+                      : (currentHour === 12 ? 0 : currentHour)
+                    handleTimeChange(hour24, currentMinute)
+                  }}
+                >
+                  <option value="am">a.m.</option>
+                  <option value="pm">p.m.</option>
+                </select>
               </div>
             </div>
           </div>
