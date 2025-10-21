@@ -547,11 +547,9 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
           return;
         }
 
-        // Validación: en Round Robin, team member es OBLIGATORIO
-        const isRoundRobin = calendar?.calendarType === 'round_robin';
-
-        if (isRoundRobin && !formData.assignedUserId) {
-          showToast('error', 'Team member requerido', 'Para calendarios Round Robin debes seleccionar un team member');
+        // Validación: Usuario asignado es OBLIGATORIO (requerido por HighLevel API)
+        if (!formData.assignedUserId) {
+          showToast('error', 'Usuario requerido', 'Debes seleccionar un usuario asignado para la cita');
           setIsSaving(false);
           return;
         }
@@ -824,13 +822,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                 return (
                   <div className={styles.sectionBlock}>
                     <label className={styles.label} htmlFor="assignedUser">
-                      {isRoundRobin ? (
-                        <>
-                          Elegir miembro del equipo <span className={styles.required}>*</span>
-                        </>
-                      ) : (
-                        'Usuario asignado (opcional)'
-                      )}
+                      Usuario asignado <span className={styles.required}>*</span>
                     </label>
 
                     {isRoundRobin && (
