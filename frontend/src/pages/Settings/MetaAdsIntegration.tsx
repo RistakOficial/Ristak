@@ -136,33 +136,17 @@ export const MetaAdsIntegration: React.FC = () => {
             ) : (
               <div style={{ marginTop: '24px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
                 {/* Ad Account ID */}
-                <div>
-                  <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500, fontSize: '14px' }}>
-                    Ad Account ID <span style={{ color: '#ef4444' }}>*</span>
+                <div className={styles.formField}>
+                  <label className={styles.formLabel}>
+                    Ad Account ID <span style={{ color: 'var(--color-error)' }}>*</span>
                   </label>
                   {credentials.adAccountId ? (
-                    <div style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: '8px',
-                      padding: '8px 12px',
-                      backgroundColor: 'var(--background-secondary)',
-                      border: '1px solid var(--border-color)',
-                      borderRadius: '6px',
-                      fontSize: '14px'
-                    }}>
-                      <span>{credentials.adAccountId}</span>
+                    <div className={styles.filterChip}>
+                      <span className={styles.chipText}>{credentials.adAccountId}</span>
                       <button
                         onClick={() => handleRemoveCredential('adAccountId')}
-                        style={{
-                          background: 'none',
-                          border: 'none',
-                          cursor: 'pointer',
-                          padding: '2px',
-                          display: 'flex',
-                          alignItems: 'center',
-                          color: 'var(--text-secondary)'
-                        }}
+                        className={styles.chipDeleteButton}
+                        type="button"
                       >
                         <X size={16} />
                       </button>
@@ -173,47 +157,23 @@ export const MetaAdsIntegration: React.FC = () => {
                       value={credentials.adAccountId}
                       onChange={(e) => handleInputChange('adAccountId', e.target.value)}
                       placeholder="123456789012345"
-                      style={{
-                        width: '100%',
-                        padding: '10px 12px',
-                        border: '1px solid var(--border-color)',
-                        borderRadius: '6px',
-                        fontSize: '14px',
-                        backgroundColor: 'var(--background-primary)',
-                        color: 'var(--text-primary)'
-                      }}
+                      className={styles.formInput}
                     />
                   )}
                 </div>
 
                 {/* Access Token */}
-                <div>
-                  <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500, fontSize: '14px' }}>
-                    App Access Token <span style={{ color: '#ef4444' }}>*</span>
+                <div className={styles.formField}>
+                  <label className={styles.formLabel}>
+                    App Access Token <span style={{ color: 'var(--color-error)' }}>*</span>
                   </label>
                   {credentials.accessToken ? (
-                    <div style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: '8px',
-                      padding: '8px 12px',
-                      backgroundColor: 'var(--background-secondary)',
-                      border: '1px solid var(--border-color)',
-                      borderRadius: '6px',
-                      fontSize: '14px'
-                    }}>
-                      <span>{'*'.repeat(20)}...{credentials.accessToken.slice(-8)}</span>
+                    <div className={styles.filterChip}>
+                      <span className={styles.chipText}>{'*'.repeat(20)}...{credentials.accessToken.slice(-8)}</span>
                       <button
                         onClick={() => handleRemoveCredential('accessToken')}
-                        style={{
-                          background: 'none',
-                          border: 'none',
-                          cursor: 'pointer',
-                          padding: '2px',
-                          display: 'flex',
-                          alignItems: 'center',
-                          color: 'var(--text-secondary)'
-                        }}
+                        className={styles.chipDeleteButton}
+                        type="button"
                       >
                         <X size={16} />
                       </button>
@@ -224,47 +184,23 @@ export const MetaAdsIntegration: React.FC = () => {
                       value={credentials.accessToken}
                       onChange={(e) => handleInputChange('accessToken', e.target.value)}
                       placeholder="EAAabcdef..."
-                      style={{
-                        width: '100%',
-                        padding: '10px 12px',
-                        border: '1px solid var(--border-color)',
-                        borderRadius: '6px',
-                        fontSize: '14px',
-                        backgroundColor: 'var(--background-primary)',
-                        color: 'var(--text-primary)'
-                      }}
+                      className={styles.formInput}
                     />
                   )}
                 </div>
 
                 {/* App ID */}
-                <div>
-                  <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500, fontSize: '14px' }}>
-                    App ID <span style={{ color: 'var(--text-tertiary)', fontSize: '12px' }}>(opcional)</span>
+                <div className={styles.formField}>
+                  <label className={styles.formLabel}>
+                    App ID <span className={styles.formHint}>(opcional)</span>
                   </label>
                   {credentials.appId ? (
-                    <div style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: '8px',
-                      padding: '8px 12px',
-                      backgroundColor: 'var(--background-secondary)',
-                      border: '1px solid var(--border-color)',
-                      borderRadius: '6px',
-                      fontSize: '14px'
-                    }}>
-                      <span>{credentials.appId}</span>
+                    <div className={styles.filterChip}>
+                      <span className={styles.chipText}>{credentials.appId}</span>
                       <button
                         onClick={() => handleRemoveCredential('appId')}
-                        style={{
-                          background: 'none',
-                          border: 'none',
-                          cursor: 'pointer',
-                          padding: '2px',
-                          display: 'flex',
-                          alignItems: 'center',
-                          color: 'var(--text-secondary)'
-                        }}
+                        className={styles.chipDeleteButton}
+                        type="button"
                       >
                         <X size={16} />
                       </button>
@@ -275,47 +211,23 @@ export const MetaAdsIntegration: React.FC = () => {
                       value={credentials.appId}
                       onChange={(e) => handleInputChange('appId', e.target.value)}
                       placeholder="1234567890123456"
-                      style={{
-                        width: '100%',
-                        padding: '10px 12px',
-                        border: '1px solid var(--border-color)',
-                        borderRadius: '6px',
-                        fontSize: '14px',
-                        backgroundColor: 'var(--background-primary)',
-                        color: 'var(--text-primary)'
-                      }}
+                      className={styles.formInput}
                     />
                   )}
                 </div>
 
                 {/* App Secret */}
-                <div>
-                  <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500, fontSize: '14px' }}>
-                    App Secret <span style={{ color: 'var(--text-tertiary)', fontSize: '12px' }}>(opcional)</span>
+                <div className={styles.formField}>
+                  <label className={styles.formLabel}>
+                    App Secret <span className={styles.formHint}>(opcional)</span>
                   </label>
                   {credentials.appSecret ? (
-                    <div style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: '8px',
-                      padding: '8px 12px',
-                      backgroundColor: 'var(--background-secondary)',
-                      border: '1px solid var(--border-color)',
-                      borderRadius: '6px',
-                      fontSize: '14px'
-                    }}>
-                      <span>{'*'.repeat(20)}...{credentials.appSecret.slice(-8)}</span>
+                    <div className={styles.filterChip}>
+                      <span className={styles.chipText}>{'*'.repeat(20)}...{credentials.appSecret.slice(-8)}</span>
                       <button
                         onClick={() => handleRemoveCredential('appSecret')}
-                        style={{
-                          background: 'none',
-                          border: 'none',
-                          cursor: 'pointer',
-                          padding: '2px',
-                          display: 'flex',
-                          alignItems: 'center',
-                          color: 'var(--text-secondary)'
-                        }}
+                        className={styles.chipDeleteButton}
+                        type="button"
                       >
                         <X size={16} />
                       </button>
@@ -326,15 +238,7 @@ export const MetaAdsIntegration: React.FC = () => {
                       value={credentials.appSecret}
                       onChange={(e) => handleInputChange('appSecret', e.target.value)}
                       placeholder="abc123def456..."
-                      style={{
-                        width: '100%',
-                        padding: '10px 12px',
-                        border: '1px solid var(--border-color)',
-                        borderRadius: '6px',
-                        fontSize: '14px',
-                        backgroundColor: 'var(--background-primary)',
-                        color: 'var(--text-primary)'
-                      }}
+                      className={styles.formInput}
                     />
                   )}
                 </div>
