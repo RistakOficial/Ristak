@@ -13,6 +13,8 @@ import { resolveDateRange, resolveDateRangeWithGHLTimezone } from '../utils/date
 import { getContactsWithAppointmentsHybrid } from '../services/appointmentsMerge.js';
 import { fetchAndSaveMetaConfig } from '../services/highlevelSyncService.js';
 import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js';
+import { API_URLS } from '../config/constants.js';
+import fetch from 'node-fetch';
 
 /**
  * Obtiene los calendarios configurados para atribución
@@ -42,7 +44,7 @@ async function getAttributionCalendarIds() {
  */
 export const saveConfig = async (req, res) => {
   try {
-    const { ad_account_id, access_token, app_id, app_secret } = req.body;
+    const { ad_account_id, access_token, pixel_id, app_id, app_secret } = req.body;
 
     if (!ad_account_id || !access_token) {
       return res.status(400).json({
@@ -51,14 +53,15 @@ export const saveConfig = async (req, res) => {
       });
     }
 
-    logger.info(`Guardando configuración de Meta para account: ${ad_account_id}`);
+    logger.info(`Guardando configuración de Meta para account: ${ad_account_id}${pixel_id ? ` con pixel: ${pixel_id}` : ''}`);
 
-    await saveMetaConfig({
+    await saveMetaConfig(
       ad_account_id,
       access_token,
-      app_id: app_id || null,
-      app_secret: app_secret || null
-    });
+      pixel_id || null,
+      app_id || null,
+      app_secret || null
+    );
 
     logger.info('Configuración de Meta guardada exitosamente');
 
@@ -82,7 +85,7 @@ export const saveConfig = async (req, res) => {
 export const getConfig = async (req, res) => {
   try {
     const config = await db.get(
-      'SELECT ad_account_id, access_token, app_id, app_secret, timezone_id, timezone_name, timezone_offset_hours_utc, updated_at FROM meta_config LIMIT 1'
+      'SELECT ad_account_id, access_token, pixel_id, app_id, app_secret, timezone_id, timezone_name, timezone_offset_hours_utc, updated_at FROM meta_config LIMIT 1'
     );
 
     if (!config) {
@@ -103,6 +106,7 @@ export const getConfig = async (req, res) => {
       config: {
         adAccountId: config.ad_account_id,
         accessToken: '***' + config.access_token.substring(config.access_token.length - 8),
+        pixelId: config.pixel_id || null,
         appId: config.app_id,
         appSecret: config.app_secret ? '***' + config.app_secret.substring(config.app_secret.length - 8) : null,
         updatedAt: config.updated_at,
@@ -1747,7 +1751,7 @@ export const getMetaCustomValues = async (req, res) => {
  */
 export const saveAndSyncMeta = async (req, res) => {
   try {
-    const { adAccountId, accessToken, appId, appSecret } = req.body;
+    const { adAccountId, accessToken, pixelId, appId, appSecret } = req.body;
 
     logger.info('Guardando credenciales de Meta en HighLevel...');
 
@@ -1776,6 +1780,7 @@ export const saveAndSyncMeta = async (req, res) => {
     const saveResult = await saveMetaCustomValues(hlConfig.location_id, hlConfig.api_token, {
       adAccountId,
       accessToken,
+      pixelId: pixelId || '',
       appId: appId || '',
       appSecret: appSecret || ''
     });
@@ -1790,12 +1795,13 @@ export const saveAndSyncMeta = async (req, res) => {
     logger.info('Credenciales guardadas en HighLevel exitosamente');
 
     // 5. Guardar en meta_config local (encriptado)
-    await saveMetaConfig({
-      ad_account_id: adAccountId,
-      access_token: accessToken,
-      app_id: appId || null,
-      app_secret: appSecret || null
-    });
+    await saveMetaConfig(
+      adAccountId,
+      accessToken,
+      pixelId || null,
+      appId || null,
+      appSecret || null
+    );
 
     logger.info('Credenciales guardadas en base de datos local');
 
@@ -1919,6 +1925,102 @@ export const syncFromHighLevel = async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Error al sincronizar configuración de Meta desde HighLevel'
+    });
+  }
+};
+
+/**
+ * Obtiene las cuentas de anuncios del usuario de Meta
+ * GET /api/meta/ad-accounts?accessToken=xxx
+ */
+export const getAdAccounts = async (req, res) => {
+  try {
+    const { accessToken } = req.query;
+
+    if (!accessToken) {
+      return res.status(400).json({
+        success: false,
+        error: 'Se requiere accessToken'
+      });
+    }
+
+    logger.info('Obteniendo cuentas de anuncios de Meta...');
+
+    // Llamar a Meta Graph API para obtener ad accounts
+    const url = `${API_URLS.META_GRAPH}/me/adaccounts?fields=id,account_id,name,currency,timezone_name,account_status&access_token=${accessToken}`;
+
+    const response = await fetch(url);
+    const data = await response.json();
+
+    if (data.error) {
+      logger.error('Error de Meta API:', data.error.message);
+      return res.status(400).json({
+        success: false,
+        error: data.error.message || 'Error obteniendo cuentas de anuncios'
+      });
+    }
+
+    const adAccounts = data.data || [];
+    logger.info(`✅ Encontradas ${adAccounts.length} cuentas de anuncios`);
+
+    res.json({
+      success: true,
+      adAccounts: adAccounts
+    });
+
+  } catch (error) {
+    logger.error(`Error en getAdAccounts: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      error: 'Error al obtener cuentas de anuncios'
+    });
+  }
+};
+
+/**
+ * Obtiene los pixeles de Meta de una cuenta de anuncios
+ * GET /api/meta/pixels?adAccountId=act_123&accessToken=xxx
+ */
+export const getPixels = async (req, res) => {
+  try {
+    const { adAccountId, accessToken } = req.query;
+
+    if (!adAccountId || !accessToken) {
+      return res.status(400).json({
+        success: false,
+        error: 'Se requieren adAccountId y accessToken'
+      });
+    }
+
+    logger.info(`Obteniendo pixeles para cuenta: ${adAccountId}`);
+
+    // Llamar a Meta Graph API para obtener pixels
+    const url = `${API_URLS.META_GRAPH}/${adAccountId}/adspixels?fields=id,name,code,creation_time,last_fired_time&access_token=${accessToken}`;
+
+    const response = await fetch(url);
+    const data = await response.json();
+
+    if (data.error) {
+      logger.error('Error de Meta API:', data.error.message);
+      return res.status(400).json({
+        success: false,
+        error: data.error.message || 'Error obteniendo pixeles'
+      });
+    }
+
+    const pixels = data.data || [];
+    logger.info(`✅ Encontrados ${pixels.length} pixeles`);
+
+    res.json({
+      success: true,
+      pixels: pixels
+    });
+
+  } catch (error) {
+    logger.error(`Error en getPixels: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      error: 'Error al obtener pixeles'
     });
   }
 };

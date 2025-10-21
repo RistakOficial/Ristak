@@ -246,6 +246,7 @@ class CampaignsService {
     configured: boolean
     config: {
       adAccountId: string
+      pixelId: string | null
       timezoneId: number | null
       timezoneName: string | null
       timezoneOffsetHoursUtc: number | null
@@ -256,6 +257,46 @@ class CampaignsService {
       return data
     } catch (error) {
       return { success: false, configured: false, config: null }
+    }
+  }
+
+  async fetchAdAccounts(accessToken: string): Promise<{
+    success: boolean
+    adAccounts: {
+      id: string
+      account_id: string
+      name: string
+      currency: string
+      timezone_name: string
+      account_status: number
+    }[]
+  }> {
+    try {
+      const data = await apiClient.get('/meta/ad-accounts', {
+        params: { accessToken }
+      })
+      return data
+    } catch (error) {
+      return { success: false, adAccounts: [] }
+    }
+  }
+
+  async fetchPixels(adAccountId: string, accessToken: string): Promise<{
+    success: boolean
+    pixels: {
+      id: string
+      name: string
+      creation_time: string
+      last_fired_time: string
+    }[]
+  }> {
+    try {
+      const data = await apiClient.get('/meta/pixels', {
+        params: { adAccountId, accessToken }
+      })
+      return data
+    } catch (error) {
+      return { success: false, pixels: [] }
     }
   }
 }

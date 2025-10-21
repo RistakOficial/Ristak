@@ -16,7 +16,9 @@ import {
   getFunnelMetrics,
   syncFromHighLevel,
   getMetaCustomValues,
-  saveAndSyncMeta
+  saveAndSyncMeta,
+  getAdAccounts,
+  getPixels
 } from '../controllers/metaController.js'
 
 const router = express.Router()
@@ -25,6 +27,10 @@ const router = express.Router()
 router.post('/config', saveConfig)
 router.get('/config', getConfig)
 router.get('/verify-token', verifyToken)
+
+// Obtener datos de Meta para dropdowns
+router.get('/ad-accounts', getAdAccounts)
+router.get('/pixels', getPixels)
 
 // Custom Values de HighLevel
 router.get('/custom-values', getMetaCustomValues)

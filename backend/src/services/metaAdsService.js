@@ -110,7 +110,7 @@ async function getAdAccountTimezone(adAccountId, accessToken) {
 /**
  * Sincroniza custom values de Meta en HighLevel
  */
-async function syncMetaCustomValues(adAccountId, accessToken, appId, appSecret) {
+async function syncMetaCustomValues(adAccountId, accessToken, pixelId, appId, appSecret) {
   try {
     // Obtener configuración de HighLevel
     const ghlConfig = await db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1')
@@ -126,6 +126,7 @@ async function syncMetaCustomValues(adAccountId, accessToken, appId, appSecret) 
     const customValues = {
       'Facebook - Ad Account ID': adAccountId,
       'Facebook - App Access Token': accessToken,
+      'Facebook - Pixel ID': pixelId || '',
       'Facebook - App ID': appId || '',
       'Facebook - App Secret': appSecret || ''
     }
@@ -224,7 +225,7 @@ async function syncMetaCustomValues(adAccountId, accessToken, appId, appSecret) 
  * ENCRIPTA el access_token y app_secret antes de guardar
  * CREA/ACTUALIZA custom values en HighLevel automáticamente
  */
-export async function saveMetaConfig(adAccountId, accessToken, appId = null, appSecret = null) {
+export async function saveMetaConfig(adAccountId, accessToken, pixelId = null, appId = null, appSecret = null) {
   try {
     // Encriptar el access_token
     const encryptedToken = encrypt(accessToken)
@@ -250,12 +251,13 @@ export async function saveMetaConfig(adAccountId, accessToken, appId = null, app
     if (existing) {
       await db.run(`
         UPDATE meta_config
-        SET access_token = ?, app_id = ?, app_secret = ?,
+        SET access_token = ?, pixel_id = ?, app_id = ?, app_secret = ?,
             timezone_id = ?, timezone_name = ?, timezone_offset_hours_utc = ?,
             updated_at = CURRENT_TIMESTAMP
         WHERE ad_account_id = ?
       `, [
         encryptedToken,
+        pixelId,
         appId,
         encryptedSecret,
         timezoneData?.timezone_id,
@@ -265,11 +267,12 @@ export async function saveMetaConfig(adAccountId, accessToken, appId = null, app
       ])
     } else {
       await db.run(`
-        INSERT INTO meta_config (ad_account_id, access_token, app_id, app_secret, timezone_id, timezone_name, timezone_offset_hours_utc)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO meta_config (ad_account_id, access_token, pixel_id, app_id, app_secret, timezone_id, timezone_name, timezone_offset_hours_utc)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `, [
         adAccountId,
         encryptedToken,
+        pixelId,
         appId,
         encryptedSecret,
         timezoneData?.timezone_id,
@@ -278,10 +281,10 @@ export async function saveMetaConfig(adAccountId, accessToken, appId = null, app
       ])
     }
 
-    logger.success('Configuración de Meta guardada en BD local (encriptada con timezone)')
+    logger.success('Configuración de Meta guardada en BD local (encriptada con timezone y pixel)')
 
     // Sincronizar custom values en HighLevel (no bloquear si falla)
-    syncMetaCustomValues(adAccountId, accessToken, appId, appSecret).catch(err => {
+    syncMetaCustomValues(adAccountId, accessToken, pixelId, appId, appSecret).catch(err => {
       logger.warn('No se pudieron sincronizar custom values de Meta en HighLevel:', err.message)
     })
 
