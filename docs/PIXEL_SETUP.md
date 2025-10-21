@@ -1,57 +1,89 @@
-# 🎯 GUÍA RÁPIDA - PIXEL DE TRACKING
+# 🎯 TUTORIAL SIMPLE - PIXEL DE TRACKING
 
-## Para el cliente (instrucciones simples)
+## ¿Qué hace esto?
+Este pixel es como una cámara invisible en tu sitio web. Cada vez que alguien entra, guarda de dónde viene (Facebook, Google, Instagram, etc.) y qué hace en tu sitio. Así sabes qué anuncios están jalando gente.
 
-### 1. Configurar CNAME en su DNS
+---
 
-**Cloudflare / GoDaddy / Squarespace / Cualquier proveedor:**
+## PASO 1: Configurar el subdominio (DNS)
+
+**¿Qué carajos es esto?**
+Básicamente vas a crear una "puerta trasera" en tu dominio para que el pixel funcione. Es un paso técnico pero súper simple.
+
+**Entra a donde controlas tu dominio** (Cloudflare, GoDaddy, etc.) y agrega esto:
 
 ```
 Tipo: CNAME
 Nombre: collect
-Destino: tu-app.onrender.com (o tu dominio de servidor)
-TTL: Automático (o 3600)
+Apunta a: ristak-app.onrender.com
 ```
 
-Esto creará: `https://collect.su-dominio.com`
+**Ejemplo:**
+- Tu sitio: `mitienda.com`
+- Vas a crear: `collect.mitienda.com`
+- Ese collect.mitienda.com va a apuntar a donde está la app de Ristak
 
-**Ejemplo real:**
-- Si su sitio es `https://zapatosdeportivos.com`
-- El CNAME será `https://collect.zapatosdeportivos.com`
+**Espera 5-10 minutos** para que se active. Listo.
 
-### 2. Insertar el script en su sitio
+---
 
-**Pegar esto ANTES de `</body>` en TODAS las páginas:**
+## PASO 2: Poner el código en tu sitio
+
+**Copia y pega este código en tu sitio web:**
 
 ```html
-<script async src="https://collect.su-dominio.com/snip.js"></script>
+<script async src="https://collect.tudominio.com/snip.js"></script>
 ```
 
-**En WordPress:**
-- Ir a: Apariencia → Editor de temas → footer.php
-- Pegar el script antes de `</body>`
-- Guardar
+**¿Dónde lo pego?**
 
-**En Shopify:**
-- Ir a: Configuración → Checkout → Scripts adicionales
-- Pegar el script
-- Guardar
+### WordPress:
+1. Ve a **Apariencia → Editor de temas**
+2. Abre el archivo `footer.php`
+3. Busca `</body>` (está casi al final)
+4. Pega el código ARRIBA de `</body>`
+5. Dale **Guardar**
 
-**En HTML estático:**
-- Editar `index.html` o el template principal
-- Pegar antes de `</body>`
+### HighLevel (tu landing page):
+1. En el builder, ve a **Settings → Tracking Code**
+2. Pega el código en "Footer Scripts"
+3. Guarda
 
-### 3. Verificar que funciona
+### Shopify:
+1. Ve a **Configuración → Checkout**
+2. Busca "Scripts adicionales"
+3. Pega el código
+4. Guarda
 
-1. **Abrir su sitio** en el navegador
-2. **Abrir DevTools** (F12 o clic derecho → Inspeccionar)
-3. **Ir a la pestaña Network**
-4. **Recargar la página** (F5)
-5. **Buscar:** `snip.js` y `/collect`
-   - `snip.js` debe aparecer con status **200 OK**
-   - `/collect` debe aparecer con status **200 OK**
+---
 
-Si ves ambos con 200, ¡funciona! 🎉
+## PASO 3: Revisar si jala
+
+1. **Abre tu sitio** (el sitio donde pusiste el código)
+2. **Dale F12** en tu teclado (o clic derecho → Inspeccionar)
+3. Ve a la pestaña **Network** (Red)
+4. **Recarga la página** (F5)
+5. **Busca** en la lista algo que diga `snip.js` y algo que diga `collect`
+
+**Si ves ambos con un "200" al lado → ¡ESTÁ JALANDO! 🎉**
+
+Si no aparecen o dice "404":
+- Verifica que configuraste bien el CNAME en el paso 1
+- Espera otros 10 minutos (a veces el DNS tarda)
+- Revisa que pegaste bien el código en tu sitio
+
+---
+
+## ¿Y ahora qué?
+
+Una vez que funcione, el pixel empezará a guardar automáticamente:
+- Quién entra a tu sitio
+- De dónde viene (Facebook, Google, Instagram, TikTok)
+- Qué anuncio clickeó
+- Cuánto tiempo estuvo
+- Si se registró o compró algo
+
+Todo eso lo vas a ver en la página de **Analíticas** dentro de Ristak.
 
 ---
 

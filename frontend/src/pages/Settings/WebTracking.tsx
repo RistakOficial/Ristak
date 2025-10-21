@@ -421,44 +421,60 @@ export const WebTracking: React.FC = () => {
         {/* Configuración */}
         <div className={styles.section}>
           <div className={styles.sectionHeader}>
-            <h3 className={styles.sectionTitle}>Configuración</h3>
+            <h3 className={styles.sectionTitle}>Configuración Rápida</h3>
+            <p className={styles.sectionSubtitle} style={{ marginTop: '4px', fontSize: '0.875rem', color: 'var(--color-text-secondary)' }}>
+              Sigue 3 pasos simples para activar el tracking
+            </p>
           </div>
 
           {!hasHighLevel ? (
             <div className={styles.infoBox}>
               <div className={styles.infoBoxTitle}>
                 <Info size={16} />
-                <span>HighLevel requerido</span>
+                <span>Primero configura HighLevel</span>
               </div>
               <div className={styles.infoBoxContent}>
-                Primero debes configurar tu integración con HighLevel
+                Ve a la sección de HighLevel en Settings y conéctalo primero
               </div>
             </div>
           ) : !trackingDomain.trim() ? (
             <div className={styles.warningBox}>
               <div className={styles.infoBoxTitle}>
                 <Info size={16} />
-                <span>Configuración requerida</span>
+                <span>Paso 1: Configurar CNAME</span>
               </div>
               <div className={styles.infoBoxContent}>
-                Para configurar el tracking, accede usando un subdominio personalizado (ej: <code className={styles.codeInline}>track.tudominio.com</code>)
+                Ve a tu proveedor de DNS (Cloudflare, GoDaddy, etc.) y crea un CNAME:
               </div>
-              <div className={styles.infoBoxContent} style={{ marginTop: '8px' }}>
-                Configura un CNAME en tu DNS apuntando a la URL de tu app en Render
+              <div className={styles.codeBlock} style={{ marginTop: '12px', padding: '12px', fontSize: '0.875rem' }}>
+                <div><strong>Tipo:</strong> CNAME</div>
+                <div><strong>Nombre:</strong> collect</div>
+                <div><strong>Apunta a:</strong> ristak-app.onrender.com</div>
+              </div>
+              <div className={styles.infoBoxContent} style={{ marginTop: '12px' }}>
+                Luego accede a esta página usando <code className={styles.codeInline}>collect.tudominio.com</code>
               </div>
             </div>
           ) : (
             <>
-              {/* Dominio detectado */}
+              {/* Paso 1: Dominio detectado */}
               <div className={styles.formGroup}>
-                <label className={styles.formLabel}>Dominio de tracking</label>
-                <div className={styles.formInput} style={{ background: 'var(--color-gray-50)', cursor: 'default' }}>
+                <label className={styles.formLabel}>
+                  ✅ Paso 1: Dominio configurado
+                </label>
+                <div className={styles.formInput} style={{ background: 'var(--color-success-bg)', border: '1px solid var(--color-success)', cursor: 'default', color: 'var(--color-success)', fontWeight: 600 }}>
                   {trackingDomain}
                 </div>
               </div>
 
-              {/* Botón de sincronización */}
-              <div style={{ marginTop: '16px' }}>
+              {/* Paso 2: Sincronizar */}
+              <div className={styles.formGroup} style={{ marginTop: '24px' }}>
+                <label className={styles.formLabel}>
+                  {isConfigured ? '✅' : '2️⃣'} Paso 2: Sincronizar con HighLevel
+                </label>
+                <p className={styles.formHint} style={{ marginBottom: '12px' }}>
+                  Esto guarda el código del pixel en HighLevel automáticamente
+                </p>
                 <Button
                   variant="primary"
                   onClick={handleConfigureTracking}
@@ -472,20 +488,25 @@ export const WebTracking: React.FC = () => {
                   ) : (
                     <>
                       <RefreshCw size={16} />
-                      {isConfigured ? 'Volver a sincronizar' : 'Sincronizar con HighLevel'}
+                      {isConfigured ? 'Volver a sincronizar' : 'Sincronizar ahora'}
                     </>
                   )}
                 </Button>
                 {isConfigured && (
-                  <p className={styles.formHint} style={{ marginTop: '8px' }}>
-                    El custom value <code className={styles.codeInline}>rstktrack</code> está configurado en HighLevel
-                  </p>
+                  <div style={{ marginTop: '12px', padding: '12px', background: 'var(--color-success-bg)', border: '1px solid var(--color-success)', borderRadius: '6px', fontSize: '0.875rem', color: 'var(--color-success)' }}>
+                    ✅ Ya está sincronizado. El código está guardado como <code className={styles.codeInline}>rstktrack</code> en HighLevel
+                  </div>
                 )}
               </div>
 
-              {/* Código del pixel */}
+              {/* Paso 3: Código del pixel */}
               <div className={styles.formGroup} style={{ marginTop: '24px' }}>
-                <label className={styles.formLabel}>Código del pixel</label>
+                <label className={styles.formLabel}>
+                  3️⃣ Paso 3: Instalar en tu sitio
+                </label>
+                <p className={styles.formHint} style={{ marginBottom: '12px' }}>
+                  Copia este código y pégalo en tu sitio web (ver tutorial abajo)
+                </p>
                 <div className={styles.codeBlockWrapper}>
                   <button
                     onClick={handleCopySnippet}
@@ -499,6 +520,14 @@ export const WebTracking: React.FC = () => {
                       {trackingService.generateSnippet(trackingDomain)}
                     </pre>
                   </div>
+                </div>
+                <div style={{ marginTop: '12px', padding: '12px', background: 'var(--color-gray-50)', borderRadius: '6px', fontSize: '0.875rem' }}>
+                  <strong>¿Dónde lo pego?</strong>
+                  <ul style={{ marginTop: '8px', marginLeft: '20px', lineHeight: '1.8' }}>
+                    <li><strong>WordPress:</strong> Apariencia → Editor de temas → footer.php (antes de &lt;/body&gt;)</li>
+                    <li><strong>HighLevel:</strong> En tu landing page → Settings → Footer Scripts</li>
+                    <li><strong>Shopify:</strong> Configuración → Checkout → Scripts adicionales</li>
+                  </ul>
                 </div>
               </div>
 
