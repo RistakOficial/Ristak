@@ -1162,84 +1162,19 @@ export const chargeSavedPaymentMethod = async (req, res) => {
 };
 
 /**
- * Normaliza texto para búsqueda: quita acentos, lowercase, trim
- * Ejemplo: "Raúl Gómez" → "raul gomez"
- */
-const normalizeSearchText = (text) => {
-  if (!text) return '';
-  return text
-    .toLowerCase()
-    .trim()
-    .normalize('NFD') // Descompone caracteres con acento (á → a + ´)
-    .replace(/[\u0300-\u036f]/g, ''); // Elimina los diacríticos (acentos)
-};
-
-/**
- * Busca contactos en la DB local (más rápido y permite búsqueda sin acentos)
+ * Busca contactos en HighLevel
  */
 export const searchContacts = async (req, res) => {
   try {
     const { query, email, phone, limit = 20 } = req.body;
 
-    // Si no hay query, devolver vacío
-    if (!query && !email && !phone) {
-      return res.json({
-        success: true,
-        contacts: []
-      });
-    }
-
-    // Buscar en la DB local (tabla contacts)
-    let sqlQuery = 'SELECT id, name, email, phone, first_name, last_name FROM contacts WHERE 1=1';
-    const params = [];
-    let paramIndex = 1;
-
-    // Agregar filtros
-    if (email) {
-      sqlQuery += ` AND LOWER(email) LIKE LOWER($${paramIndex})`;
-      params.push(`%${email}%`);
-      paramIndex++;
-    }
-
-    if (phone) {
-      sqlQuery += ` AND phone LIKE $${paramIndex}`;
-      params.push(`%${phone}%`);
-      paramIndex++;
-    }
-
-    // Límite
-    sqlQuery += ` LIMIT $${paramIndex}`;
-    params.push(Number(limit));
-
-    const result = await db.query(sqlQuery, params);
-    let contacts = result.rows.map(row => ({
-      id: row.id,
-      name: row.name || `${row.first_name || ''} ${row.last_name || ''}`.trim() || 'Sin nombre',
-      email: row.email || '',
-      phone: row.phone || '',
-      firstName: row.first_name || '',
-      lastName: row.last_name || ''
-    }));
-
-    // Si hay query de texto, filtrar localmente con normalización (sin acentos)
-    if (query) {
-      const normalizedQuery = normalizeSearchText(query);
-      contacts = contacts.filter(contact => {
-        const normalizedName = normalizeSearchText(contact.name);
-        const normalizedEmail = normalizeSearchText(contact.email);
-        const normalizedPhone = normalizeSearchText(contact.phone);
-
-        return (
-          normalizedName.includes(normalizedQuery) ||
-          normalizedEmail.includes(normalizedQuery) ||
-          normalizedPhone.includes(normalizedQuery)
-        );
-      });
-    }
+    // Usar GHL Client
+    const ghlClient = await getGHLClient();
+    const data = await ghlClient.searchContacts({ query, email, phone, limit: Number(limit) });
 
     res.json({
       success: true,
-      contacts
+      contacts: data.contacts || []
     });
 
   } catch (error) {

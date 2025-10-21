@@ -350,17 +350,3 @@ export const formatChartCurrency = (value: number): string => {
 
   return formatCurrency(value)
 }
-
-/**
- * Normaliza texto para búsquedas: quita acentos, lowercase, trim
- * Ejemplo: "Raúl Gómez" → "raul gomez"
- */
-export const normalizeSearchText = (text: string): string => {
-  if (!text) return ''
-
-  return text
-    .toLowerCase()
-    .trim()
-    .normalize('NFD') // Descompone caracteres con acento (á → a + ´)
-    .replace(/[\u0300-\u036f]/g, '') // Elimina los diacríticos (acentos)
-}
