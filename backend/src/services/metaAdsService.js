@@ -224,7 +224,7 @@ async function syncMetaCustomValues(adAccountId, accessToken, pixelId) {
  * USA System User Token (no requiere App ID ni App Secret)
  * CREA/ACTUALIZA custom values en HighLevel automáticamente
  */
-export async function saveMetaConfig(adAccountId, accessToken, pixelId = null, pixelApiToken = null) {
+export async function saveMetaConfig(adAccountId, accessToken, pixelId = null, pixelApiToken = null, pageId = null) {
   try {
     // Encriptar el access_token
     const encryptedToken = encrypt(accessToken)
@@ -256,13 +256,14 @@ export async function saveMetaConfig(adAccountId, accessToken, pixelId = null, p
 
     // Insertar la nueva configuración (System User - solo necesita access_token + ad_account_id)
     await db.run(`
-      INSERT INTO meta_config (ad_account_id, access_token, pixel_id, pixel_api_token, timezone_id, timezone_name, timezone_offset_hours_utc)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO meta_config (ad_account_id, access_token, pixel_id, pixel_api_token, page_id, timezone_id, timezone_name, timezone_offset_hours_utc)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       adAccountId,
       encryptedToken,
       pixelId,
       encryptedPixelApiToken,
+      pageId,
       timezoneData?.timezone_id,
       timezoneData?.timezone_name,
       timezoneData?.timezone_offset_hours_utc

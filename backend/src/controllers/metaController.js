@@ -45,7 +45,7 @@ async function getAttributionCalendarIds() {
  */
 export const saveConfig = async (req, res) => {
   try {
-    const { ad_account_id, access_token, pixel_id, pixel_api_token } = req.body;
+    const { ad_account_id, access_token, pixel_id, pixel_api_token, page_id } = req.body;
 
     if (!ad_account_id || !access_token) {
       return res.status(400).json({
@@ -54,13 +54,14 @@ export const saveConfig = async (req, res) => {
       });
     }
 
-    logger.info(`Guardando configuración de Meta para account: ${ad_account_id}${pixel_id ? ` con pixel: ${pixel_id}` : ''}${pixel_api_token ? ' (con Pixel API Token para Conversions API)' : ''}`);
+    logger.info(`Guardando configuración de Meta para account: ${ad_account_id}${pixel_id ? ` con pixel: ${pixel_id}` : ''}${page_id ? ` con page: ${page_id}` : ''}${pixel_api_token ? ' (con Pixel API Token para Conversions API)' : ''}`);
 
     await saveMetaConfig(
       ad_account_id,
       access_token,
       pixel_id || null,
-      pixel_api_token || null
+      pixel_api_token || null,
+      page_id || null
     );
 
     logger.info('Configuración de Meta guardada exitosamente');
@@ -85,7 +86,7 @@ export const saveConfig = async (req, res) => {
 export const getConfig = async (req, res) => {
   try {
     const config = await db.get(
-      'SELECT ad_account_id, access_token, pixel_id, pixel_api_token, timezone_id, timezone_name, timezone_offset_hours_utc, updated_at FROM meta_config LIMIT 1'
+      'SELECT ad_account_id, access_token, pixel_id, pixel_api_token, page_id, timezone_id, timezone_name, timezone_offset_hours_utc, updated_at FROM meta_config LIMIT 1'
     );
 
     if (!config) {
@@ -107,6 +108,7 @@ export const getConfig = async (req, res) => {
         adAccountId: config.ad_account_id,
         accessToken: '***' + config.access_token.substring(config.access_token.length - 8),
         pixelId: config.pixel_id || null,
+        pageId: config.page_id || null,
         pixelApiToken: config.pixel_api_token ? '***' + config.pixel_api_token.substring(config.pixel_api_token.length - 8) : null,
         updatedAt: config.updated_at,
         isEncrypted: tokenEncrypted, // Mostrar si está encriptado
@@ -1800,7 +1802,8 @@ export const saveAndSyncMeta = async (req, res) => {
       adAccountId,
       accessToken,
       pixelId || null,
-      pixelApiToken || null
+      pixelApiToken || null,
+      pageId || null
     );
 
     logger.info('Credenciales guardadas en base de datos local');
@@ -1869,11 +1872,51 @@ export const syncFromHighLevel = async (req, res) => {
       });
     }
 
-    // 2. Buscar y guardar custom values de Meta
+    // 2. Buscar custom values de Meta en HighLevel
     logger.info('Buscando custom values de Meta en HighLevel...');
-    await fetchAndSaveMetaConfig(hlConfig.location_id, hlConfig.api_token);
+    const metaCustomValues = await fetchAndSaveMetaConfig(hlConfig.location_id, hlConfig.api_token);
 
-    // 3. Verificar si se guardaron las credenciales
+    if (!metaCustomValues || !metaCustomValues.adAccountId || !metaCustomValues.accessToken.startsWith('***')) {
+      return res.status(404).json({
+        success: false,
+        error: 'No se encontraron custom values de Meta en HighLevel. Verifica que hayas creado los custom values con los nombres exactos.'
+      });
+    }
+
+    // 3. Guardar en base de datos local (necesitamos tokens SIN enmascarar)
+    // Volver a obtener los valores SIN enmascarar desde HighLevel
+    const response = await fetch(
+      `https://services.leadconnectorhq.com/locations/${hlConfig.location_id}/customValues`,
+      {
+        headers: {
+          'Authorization': `Bearer ${hlConfig.api_token}`,
+          'Version': '2021-07-28'
+        }
+      }
+    );
+
+    const data = await response.json();
+    const customValues = data.customValues || [];
+
+    const fbAdAccountId = customValues.find(cv => cv.name === 'Facebook - Ad Account ID')?.value;
+    const fbAccessToken = customValues.find(cv => cv.name === 'Facebook - App Access Token')?.value;
+    const fbPixelId = customValues.find(cv => cv.name === 'Facebook - Pixel ID')?.value;
+    const fbPageId = customValues.find(cv => cv.name === 'Facebook - Page ID')?.value;
+    const fbPixelApiToken = customValues.find(cv => cv.name === 'Facebook - Pixel API Token')?.value;
+
+    // Guardar en DB local (tokens SIN enmascarar)
+    if (fbAdAccountId && fbAccessToken) {
+      await saveMetaConfig(
+        fbAdAccountId,
+        fbAccessToken,
+        fbPixelId || null,
+        fbPixelApiToken || null,
+        fbPageId || null
+      );
+      logger.info('Credenciales de Meta guardadas en base de datos local');
+    }
+
+    // 4. Verificar si se guardaron las credenciales
     const metaConfig = await getMetaConfig();
 
     if (!metaConfig || !metaConfig.access_token || !metaConfig.ad_account_id) {

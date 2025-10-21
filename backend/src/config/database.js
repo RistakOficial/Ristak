@@ -464,6 +464,15 @@ async function initTables() {
         }
       }
 
+      // Agregar columna page_id a meta_config
+      try {
+        await db.run('ALTER TABLE meta_config ADD COLUMN page_id TEXT')
+      } catch (err) {
+        if (!err.message.includes('duplicate column name') && !err.message.includes('already exists')) {
+          throw err
+        }
+      }
+
       // Agregar columnas de Stripe a highlevel_config
       try {
         await db.run('ALTER TABLE highlevel_config ADD COLUMN stripe_test_secret_key_encrypted TEXT')
