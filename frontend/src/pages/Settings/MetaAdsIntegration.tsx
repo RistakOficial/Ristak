@@ -302,61 +302,7 @@ export const MetaAdsIntegration: React.FC = () => {
                   )}
                 </div>
 
-                {/* 2. App ID */}
-                <div className={styles.formField}>
-                  <label className={styles.formLabel}>
-                    App ID <span className={styles.formHint}>(opcional)</span>
-                  </label>
-                  {credentials.appId ? (
-                    <div className={styles.filterChip}>
-                      <span className={styles.chipText}>{credentials.appId}</span>
-                      <button
-                        onClick={() => handleRemoveCredential('appId')}
-                        className={styles.chipDeleteButton}
-                        type="button"
-                      >
-                        <X size={16} />
-                      </button>
-                    </div>
-                  ) : (
-                    <input
-                      type="text"
-                      value={credentials.appId}
-                      onChange={(e) => handleInputChange('appId', e.target.value)}
-                      placeholder="1234567890123456"
-                      className={styles.formInput}
-                    />
-                  )}
-                </div>
-
-                {/* 3. App Secret */}
-                <div className={styles.formField}>
-                  <label className={styles.formLabel}>
-                    App Secret <span className={styles.formHint}>(opcional)</span>
-                  </label>
-                  {credentials.appSecret ? (
-                    <div className={styles.filterChip}>
-                      <span className={styles.chipText}>{'*'.repeat(20)}...{credentials.appSecret.slice(-8)}</span>
-                      <button
-                        onClick={() => handleRemoveCredential('appSecret')}
-                        className={styles.chipDeleteButton}
-                        type="button"
-                      >
-                        <X size={16} />
-                      </button>
-                    </div>
-                  ) : (
-                    <input
-                      type="password"
-                      value={credentials.appSecret}
-                      onChange={(e) => handleInputChange('appSecret', e.target.value)}
-                      placeholder="abc123def456..."
-                      className={styles.formInput}
-                    />
-                  )}
-                </div>
-
-                {/* 4. Cuenta de Anuncios - CON DROPDOWN SI HAY CUENTAS CARGADAS */}
+                {/* 2. Cuenta de Anuncios - CON DROPDOWN SI HAY CUENTAS CARGADAS */}
                 <div className={styles.formField}>
                   <label className={styles.formLabel}>
                     Cuenta de Anuncios <span style={{ color: 'var(--color-error)' }}>*</span>
@@ -413,7 +359,7 @@ export const MetaAdsIntegration: React.FC = () => {
                   )}
                 </div>
 
-                {/* 5. Pixel de Meta - CON DROPDOWN SI HAY PIXELES CARGADOS */}
+                {/* 3. Pixel de Meta - CON DROPDOWN SI HAY PIXELES CARGADOS */}
                 <div className={styles.formField}>
                   <label className={styles.formLabel}>
                     Pixel de Meta <span className={styles.formHint}>(opcional)</span>
@@ -466,6 +412,42 @@ export const MetaAdsIntegration: React.FC = () => {
                       className={styles.formInput}
                     />
                   )}
+                </div>
+
+                {/* 4. Pixel API Token (Conversions API) */}
+                <div className={styles.formField}>
+                  <label className={styles.formLabel}>
+                    Pixel API Token <span className={styles.formHint}>(opcional)</span>
+                  </label>
+                  {credentials.pixelApiToken ? (
+                    <div className={styles.filterChip}>
+                      <span className={styles.chipText}>{'*'.repeat(20)}...{credentials.pixelApiToken.slice(-8)}</span>
+                      <button
+                        onClick={() => handleRemoveCredential('pixelApiToken')}
+                        className={styles.chipDeleteButton}
+                        type="button"
+                      >
+                        <X size={16} />
+                      </button>
+                    </div>
+                  ) : (
+                    <input
+                      type="password"
+                      value={credentials.pixelApiToken}
+                      onChange={(e) => handleInputChange('pixelApiToken', e.target.value)}
+                      placeholder="EAA..."
+                      className={styles.formInput}
+                    />
+                  )}
+                  <div style={{ marginTop: '8px', fontSize: '13px', color: 'var(--text-secondary)' }}>
+                    💡 <strong>Cómo obtener tu Pixel API Token:</strong>
+                    <br />
+                    1. Ve a <strong>Events Manager</strong> → Selecciona tu Pixel
+                    <br />
+                    2. Ve a <strong>Settings</strong> → <strong>Conversions API</strong>
+                    <br />
+                    3. Haz clic en <strong>Generate Access Token</strong> → Copia el token
+                  </div>
                 </div>
 
                 {/* Botón de Guardar y Sincronizar */}
@@ -592,7 +574,7 @@ export const MetaAdsIntegration: React.FC = () => {
                 <div className={styles.stepNumber}>1</div>
                 <div className={styles.stepInfo}>
                   <h4 className={styles.stepTitle}>Crear una App en Meta Developers</h4>
-                  <p className={styles.stepSubtitle}>Necesitas una App para conectarte a la API de Meta</p>
+                  <p className={styles.stepSubtitle}>Necesitas una App para generar el System User Token (Paso 2)</p>
                 </div>
                 {openSection === 1 ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
               </div>
@@ -634,22 +616,13 @@ export const MetaAdsIntegration: React.FC = () => {
                         <li>Acepta los términos si te los pide</li>
                       </ul>
                     </li>
-                    <li>
-                      <strong>Obtén tu App ID y App Secret:</strong>
-                      <ul>
-                        <li>Ve a <strong>"Configuración" → "Básica"</strong> (en el menú lateral)</li>
-                        <li>Copia el <strong>"App ID"</strong> (un número largo tipo: 1234567890123456)</li>
-                        <li>Copia el <strong>"App Secret"</strong> (haz clic en "Mostrar" y cópialo)</li>
-                        <li className={styles.warningText}>⚠️ GUARDA ESTOS VALORES - Los necesitarás en el Paso 4</li>
-                      </ul>
-                    </li>
                   </ol>
 
                   <div className={styles.infoBox}>
                     <Info size={18} />
                     <div>
-                      <strong>Tip:</strong> No te preocupes si ves advertencias de "App no revisada" o similar.
-                      Para uso interno no necesitas enviar la App a revisión de Meta.
+                      <strong>Importante:</strong> Solo necesitas crear la App para poder generar el System User Token en el Paso 2.
+                      NO necesitas copiar el App ID ni el App Secret - Ristak usa System User Token que no requiere esas credenciales.
                     </div>
                   </div>
                 </div>
@@ -847,19 +820,11 @@ export const MetaAdsIntegration: React.FC = () => {
                           </div>
                         </div>
                         <div className={styles.tableRow}>
-                          <div className={styles.tableCell}><code>Facebook - App ID</code></div>
+                          <div className={styles.tableCell}><code>Facebook - Pixel ID</code></div>
                           <div className={styles.tableCell}>
-                            El App ID de Meta Developers (Paso 1)
+                            El ID de tu Pixel (opcional)
                             <br />
                             <span className={styles.hint}>Ejemplo: 1234567890123456</span>
-                          </div>
-                        </div>
-                        <div className={styles.tableRow}>
-                          <div className={styles.tableCell}><code>Facebook - App Secret</code></div>
-                          <div className={styles.tableCell}>
-                            El App Secret de Meta Developers (Paso 1)
-                            <br />
-                            <span className={styles.hint}>Ejemplo: abc123def456...</span>
                           </div>
                         </div>
                       </div>

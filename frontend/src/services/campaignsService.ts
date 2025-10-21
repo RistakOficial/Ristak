@@ -247,6 +247,7 @@ class CampaignsService {
     config: {
       adAccountId: string
       pixelId: string | null
+      pixelApiToken: string | null
       timezoneId: number | null
       timezoneName: string | null
       timezoneOffsetHoursUtc: number | null

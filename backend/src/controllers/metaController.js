@@ -41,10 +41,11 @@ async function getAttributionCalendarIds() {
 
 /**
  * Guarda la configuración de Meta Ads
+ * USA System User Token (no requiere App ID ni App Secret)
  */
 export const saveConfig = async (req, res) => {
   try {
-    const { ad_account_id, access_token, pixel_id, app_id, app_secret } = req.body;
+    const { ad_account_id, access_token, pixel_id, pixel_api_token } = req.body;
 
     if (!ad_account_id || !access_token) {
       return res.status(400).json({
@@ -53,14 +54,13 @@ export const saveConfig = async (req, res) => {
       });
     }
 
-    logger.info(`Guardando configuración de Meta para account: ${ad_account_id}${pixel_id ? ` con pixel: ${pixel_id}` : ''}`);
+    logger.info(`Guardando configuración de Meta para account: ${ad_account_id}${pixel_id ? ` con pixel: ${pixel_id}` : ''}${pixel_api_token ? ' (con Pixel API Token para Conversions API)' : ''}`);
 
     await saveMetaConfig(
       ad_account_id,
       access_token,
       pixel_id || null,
-      app_id || null,
-      app_secret || null
+      pixel_api_token || null
     );
 
     logger.info('Configuración de Meta guardada exitosamente');
@@ -85,7 +85,7 @@ export const saveConfig = async (req, res) => {
 export const getConfig = async (req, res) => {
   try {
     const config = await db.get(
-      'SELECT ad_account_id, access_token, pixel_id, app_id, app_secret, timezone_id, timezone_name, timezone_offset_hours_utc, updated_at FROM meta_config LIMIT 1'
+      'SELECT ad_account_id, access_token, pixel_id, pixel_api_token, timezone_id, timezone_name, timezone_offset_hours_utc, updated_at FROM meta_config LIMIT 1'
     );
 
     if (!config) {
@@ -98,7 +98,7 @@ export const getConfig = async (req, res) => {
 
     // Verificar si está encriptado
     const tokenEncrypted = isEncrypted(config.access_token);
-    const secretEncrypted = config.app_secret ? isEncrypted(config.app_secret) : false;
+    const pixelApiTokenEncrypted = config.pixel_api_token ? isEncrypted(config.pixel_api_token) : false;
 
     res.json({
       success: true,
@@ -107,11 +107,10 @@ export const getConfig = async (req, res) => {
         adAccountId: config.ad_account_id,
         accessToken: '***' + config.access_token.substring(config.access_token.length - 8),
         pixelId: config.pixel_id || null,
-        appId: config.app_id,
-        appSecret: config.app_secret ? '***' + config.app_secret.substring(config.app_secret.length - 8) : null,
+        pixelApiToken: config.pixel_api_token ? '***' + config.pixel_api_token.substring(config.pixel_api_token.length - 8) : null,
         updatedAt: config.updated_at,
         isEncrypted: tokenEncrypted, // Mostrar si está encriptado
-        secretIsEncrypted: secretEncrypted,
+        pixelApiTokenIsEncrypted: pixelApiTokenEncrypted,
         // Timezone info
         timezoneId: config.timezone_id,
         timezoneName: config.timezone_name,
@@ -1749,10 +1748,11 @@ export const getMetaCustomValues = async (req, res) => {
 
 /**
  * Guarda credenciales de Meta en HighLevel y luego sincroniza
+ * USA System User Token (no requiere App ID ni App Secret)
  */
 export const saveAndSyncMeta = async (req, res) => {
   try {
-    const { adAccountId, accessToken, pixelId, appId, appSecret } = req.body;
+    const { adAccountId, accessToken, pixelId, pixelApiToken } = req.body;
 
     logger.info('Guardando credenciales de Meta en HighLevel...');
 
@@ -1777,13 +1777,11 @@ export const saveAndSyncMeta = async (req, res) => {
     // 3. Importar función de guardado
     const { saveMetaCustomValues } = await import('../services/highlevelSyncService.js');
 
-    // 4. Guardar en HighLevel Custom Values
+    // 4. Guardar en HighLevel Custom Values (System User - solo necesita Access Token + Ad Account + Pixel)
     const saveResult = await saveMetaCustomValues(hlConfig.location_id, hlConfig.api_token, {
       adAccountId,
       accessToken,
-      pixelId: pixelId || '',
-      appId: appId || '',
-      appSecret: appSecret || ''
+      pixelId: pixelId || ''
     });
 
     if (!saveResult.success) {
@@ -1800,8 +1798,7 @@ export const saveAndSyncMeta = async (req, res) => {
       adAccountId,
       accessToken,
       pixelId || null,
-      appId || null,
-      appSecret || null
+      pixelApiToken || null
     );
 
     logger.info('Credenciales guardadas en base de datos local');
