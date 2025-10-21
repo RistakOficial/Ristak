@@ -228,13 +228,32 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
 
   // Cargar slots disponibles desde la API de HighLevel
   const loadFreeSlots = async () => {
-    if (!calendar?.id || !accessToken || scheduleMode !== 'default') return;
+    if (!calendar?.id || !accessToken || scheduleMode !== 'default') {
+      console.log('❌ loadFreeSlots: Skipped', {
+        hasCalendar: !!calendar?.id,
+        hasToken: !!accessToken,
+        scheduleMode
+      });
+      return;
+    }
+
+    console.log('🔵 loadFreeSlots: Starting', {
+      calendarId: calendar.id,
+      calendarName: calendar.name,
+      scheduleMode,
+      timezone: formData.timeZone || DEFAULT_TIMEZONE
+    });
 
     setLoadingSlots(true);
     try {
       // Cargar slots para los próximos 30 días
       const today = new Date();
       const endDate = new Date(today.getTime() + 30 * 24 * 60 * 60 * 1000);
+
+      console.log('🔵 loadFreeSlots: Fetching slots', {
+        startDate: today.toISOString().split('T')[0],
+        endDate: endDate.toISOString().split('T')[0]
+      });
 
       const slots = await calendarsService.getFreeSlots(
         calendar.id,
@@ -244,8 +263,14 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
         formData.timeZone || DEFAULT_TIMEZONE
       );
 
+      console.log('✅ loadFreeSlots: Slots loaded', {
+        slotsCount: slots.length,
+        slots: slots.slice(0, 3) // Mostrar primeros 3 para debug
+      });
+
       setFreeSlots(slots);
     } catch (error) {
+      console.error('❌ loadFreeSlots: Error', error);
       showToast('error', 'Error al cargar horarios', 'No se pudieron cargar los horarios disponibles');
       setFreeSlots([]);
     } finally {
@@ -414,6 +439,14 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
 
   // Cargar slots disponibles cuando se abre el modal en modo crear y scheduleMode es 'default'
   useEffect(() => {
+    console.log('🔵 useEffect loadFreeSlots triggered', {
+      isOpen,
+      isCreateMode,
+      scheduleMode,
+      calendarId: calendar?.id,
+      hasToken: !!accessToken
+    });
+
     if (isOpen && isCreateMode && scheduleMode === 'default') {
       loadFreeSlots();
     }
@@ -946,20 +979,22 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
               </select>
             </div>
 
-            {/* TabList para seleccionar modo de agendamiento */}
-            <div className={styles.field}>
-              <TabList
-                tabs={[
-                  { id: 'default', label: 'Por defecto' },
-                  { id: 'custom', label: 'Personalizado' }
-                ]}
-                activeTab={scheduleMode}
-                onChange={(id) => setScheduleMode(id as 'default' | 'custom')}
-              />
-            </div>
+            {/* TabList para seleccionar modo de agendamiento (solo en modo crear) */}
+            {isCreateMode && (
+              <div className={styles.field}>
+                <TabList
+                  tabs={[
+                    { id: 'default', label: 'Por defecto' },
+                    { id: 'custom', label: 'Personalizado' }
+                  ]}
+                  activeTab={scheduleMode}
+                  onChange={(id) => setScheduleMode(id as 'default' | 'custom')}
+                />
+              </div>
+            )}
 
             {/* Modo Por defecto: Selector de slots disponibles */}
-            {scheduleMode === 'default' ? (
+            {isCreateMode && scheduleMode === 'default' ? (
               <div className={styles.slotsSection}>
                 {loadingSlots ? (
                   <div className={styles.loadingSlots}>
@@ -1046,7 +1081,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                   </>
                 )}
               </div>
-            ) : (
+            ) : isCreateMode && scheduleMode === 'custom' ? (
               /* Modo Personalizado: DateTimePicker libre */
               <div className={styles.fieldRow}>
                 <div className={styles.field}>
@@ -1081,7 +1116,39 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                   />
                 </div>
               </div>
-            )}
+            ) : !isCreateMode ? (
+              /* Modo View: mostrar campos de fecha/hora normales */
+              <div className={styles.fieldRow}>
+                <div className={styles.field}>
+                  <DateTimePicker
+                    label="Inicio"
+                    value={formData.startTime}
+                    onChange={(value) => {
+                      const duration = calendar?.slotDuration || 60;
+                      const startDate = new Date(value);
+                      const endDate = new Date(startDate.getTime() + duration * 60 * 1000);
+
+                      setFormData({
+                        ...formData,
+                        startTime: value,
+                        endTime: endDate.toISOString()
+                      });
+                    }}
+                  />
+                </div>
+
+                <div className={styles.field}>
+                  <DateTimePicker
+                    label="Fin"
+                    value={formData.endTime}
+                    onChange={(value) => {
+                      setFormData({ ...formData, endTime: value });
+                    }}
+                    minDate={formData.startTime}
+                  />
+                </div>
+              </div>
+            ) : null}
 
             {/* Validación de slots ELIMINADA - Como admin, puedes agendar en cualquier horario */}
 
