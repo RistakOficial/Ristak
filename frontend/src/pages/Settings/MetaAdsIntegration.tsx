@@ -42,8 +42,7 @@ export const MetaAdsIntegration: React.FC = () => {
     appSecret: ''
   })
 
-  // Nuevos estados para dropdowns
-  const [tempAccessToken, setTempAccessToken] = useState('')
+  // Estados para dropdowns
   const [adAccounts, setAdAccounts] = useState<AdAccount[]>([])
   const [pixels, setPixels] = useState<Pixel[]>([])
   const [isLoadingAccounts, setIsLoadingAccounts] = useState(false)
@@ -71,7 +70,6 @@ export const MetaAdsIntegration: React.FC = () => {
         setCredentials(data.data)
         // Si ya hay un access token guardado, cargar cuentas automáticamente
         if (data.data.accessToken) {
-          setTempAccessToken(data.data.accessToken)
           await fetchAdAccounts(data.data.accessToken)
         }
       }
@@ -131,9 +129,11 @@ export const MetaAdsIntegration: React.FC = () => {
   }
 
   const handleSelectAdAccount = (account: AdAccount) => {
-    setCredentials(prev => ({ ...prev, adAccountId: account.id, accessToken: tempAccessToken }))
+    setCredentials(prev => ({ ...prev, adAccountId: account.id }))
     // Auto-cargar pixeles al seleccionar cuenta
-    fetchPixels(account.id, tempAccessToken)
+    if (credentials.accessToken) {
+      fetchPixels(account.id, credentials.accessToken)
+    }
   }
 
   const handleSelectPixel = (pixel: Pixel) => {
@@ -224,153 +224,56 @@ export const MetaAdsIntegration: React.FC = () => {
                 Cargando credenciales...
               </div>
             ) : (
-              <div style={{ marginTop: '24px', display: 'flex', flexDirection: 'column', gap: '24px' }}>
-                {/* SECCIÓN NUEVA: Selección Rápida con Dropdowns */}
-                <div style={{ backgroundColor: 'var(--card-secondary)', padding: '20px', borderRadius: '12px', border: '1px solid var(--border-color)' }}>
-                  <h4 style={{ margin: '0 0 16px 0', fontSize: '15px', fontWeight: 600, color: 'var(--text-primary)' }}>
-                    ✨ Selección Rápida (Recomendado)
-                  </h4>
-                  <p style={{ margin: '0 0 16px 0', fontSize: '13px', color: 'var(--text-secondary)' }}>
-                    Ingresa tu Access Token y selecciona tu cuenta y pixel de los dropdowns. Es más rápido y sin errores.
-                  </p>
-
-                  {/* Access Token Temporal */}
-                  <div className={styles.formField} style={{ marginBottom: '12px' }}>
-                    <label className={styles.formLabel}>Access Token</label>
-                    <div style={{ display: 'flex', gap: '8px' }}>
-                      <input
-                        type="password"
-                        value={tempAccessToken}
-                        onChange={(e) => setTempAccessToken(e.target.value)}
-                        placeholder="EAAabcdef..."
-                        className={styles.formInput}
-                        style={{ flex: 1 }}
-                      />
+              <div style={{ marginTop: '24px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                {/* 1. App Access Token - CON BOTÓN PARA CARGAR CUENTAS */}
+                <div className={styles.formField}>
+                  <label className={styles.formLabel}>
+                    App Access Token <span style={{ color: 'var(--color-error)' }}>*</span>
+                  </label>
+                  {credentials.accessToken ? (
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                      <div className={styles.filterChip} style={{ flex: 1 }}>
+                        <span className={styles.chipText}>{'*'.repeat(20)}...{credentials.accessToken.slice(-8)}</span>
+                        <button
+                          onClick={() => handleRemoveCredential('accessToken')}
+                          className={styles.chipDeleteButton}
+                          type="button"
+                        >
+                          <X size={16} />
+                        </button>
+                      </div>
                       <Button
-                        onClick={() => fetchAdAccounts(tempAccessToken)}
-                        disabled={!tempAccessToken || isLoadingAccounts}
+                        onClick={() => fetchAdAccounts(credentials.accessToken)}
+                        disabled={isLoadingAccounts}
                         variant="secondary"
                         style={{ minWidth: '140px' }}
                       >
                         {isLoadingAccounts ? 'Cargando...' : 'Cargar Cuentas'}
                       </Button>
                     </div>
-                  </div>
-
-                  {/* Dropdown de Cuentas */}
-                  {adAccounts.length > 0 && (
-                    <div className={styles.formField} style={{ marginBottom: '12px' }}>
-                      <label className={styles.formLabel}>Cuenta de Anuncios</label>
-                      <select
+                  ) : (
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <input
+                        type="password"
+                        value={credentials.accessToken}
+                        onChange={(e) => handleInputChange('accessToken', e.target.value)}
+                        placeholder="EAAabcdef..."
                         className={styles.formInput}
-                        onChange={(e) => {
-                          const account = adAccounts.find(a => a.id === e.target.value)
-                          if (account) handleSelectAdAccount(account)
-                        }}
-                        value={credentials.adAccountId || ''}
+                        style={{ flex: 1 }}
+                      />
+                      <Button
+                        onClick={() => fetchAdAccounts(credentials.accessToken)}
+                        disabled={!credentials.accessToken || isLoadingAccounts}
+                        variant="secondary"
+                        style={{ minWidth: '140px' }}
                       >
-                        <option value="">-- Selecciona una cuenta --</option>
-                        {adAccounts.map((account) => (
-                          <option key={account.id} value={account.id}>
-                            {account.name} ({account.id}) - {account.currency}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
-
-                  {/* Dropdown de Pixeles */}
-                  {pixels.length > 0 && (
-                    <div className={styles.formField}>
-                      <label className={styles.formLabel}>Pixel de Meta (Opcional)</label>
-                      {isLoadingPixels ? (
-                        <div style={{ padding: '12px', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '13px' }}>
-                          Cargando pixeles...
-                        </div>
-                      ) : (
-                        <select
-                          className={styles.formInput}
-                          onChange={(e) => {
-                            const pixel = pixels.find(p => p.id === e.target.value)
-                            if (pixel) handleSelectPixel(pixel)
-                          }}
-                          value={credentials.pixelId || ''}
-                        >
-                          <option value="">-- Sin pixel (opcional) --</option>
-                          {pixels.map((pixel) => (
-                            <option key={pixel.id} value={pixel.id}>
-                              {pixel.name} ({pixel.id})
-                            </option>
-                          ))}
-                        </select>
-                      )}
+                        {isLoadingAccounts ? 'Cargando...' : 'Cargar Cuentas'}
+                      </Button>
                     </div>
                   )}
                 </div>
 
-                {/* Divider */}
-                <div style={{ borderBottom: '1px dashed var(--border-color)', margin: '8px 0' }}></div>
-
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                  <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-secondary)', fontStyle: 'italic' }}>
-                    O ingresa manualmente los datos:
-                  </p>
-
-                  {/* Ad Account ID */}
-                  <div className={styles.formField}>
-                  <label className={styles.formLabel}>
-                    Ad Account ID <span style={{ color: 'var(--color-error)' }}>*</span>
-                  </label>
-                  {credentials.adAccountId ? (
-                    <div className={styles.filterChip}>
-                      <span className={styles.chipText}>{credentials.adAccountId}</span>
-                      <button
-                        onClick={() => handleRemoveCredential('adAccountId')}
-                        className={styles.chipDeleteButton}
-                        type="button"
-                      >
-                        <X size={16} />
-                      </button>
-                    </div>
-                  ) : (
-                    <input
-                      type="text"
-                      value={credentials.adAccountId}
-                      onChange={(e) => handleInputChange('adAccountId', e.target.value)}
-                      placeholder="123456789012345"
-                      className={styles.formInput}
-                    />
-                  )}
-                </div>
-
-                {/* Access Token */}
-                <div className={styles.formField}>
-                  <label className={styles.formLabel}>
-                    App Access Token <span style={{ color: 'var(--color-error)' }}>*</span>
-                  </label>
-                  {credentials.accessToken ? (
-                    <div className={styles.filterChip}>
-                      <span className={styles.chipText}>{'*'.repeat(20)}...{credentials.accessToken.slice(-8)}</span>
-                      <button
-                        onClick={() => handleRemoveCredential('accessToken')}
-                        className={styles.chipDeleteButton}
-                        type="button"
-                      >
-                        <X size={16} />
-                      </button>
-                    </div>
-                  ) : (
-                    <input
-                      type="password"
-                      value={credentials.accessToken}
-                      onChange={(e) => handleInputChange('accessToken', e.target.value)}
-                      placeholder="EAAabcdef..."
-                      className={styles.formInput}
-                    />
-                  )}
-                </div>
-
-                {/* App ID */}
+                {/* 2. App ID */}
                 <div className={styles.formField}>
                   <label className={styles.formLabel}>
                     App ID <span className={styles.formHint}>(opcional)</span>
@@ -397,7 +300,7 @@ export const MetaAdsIntegration: React.FC = () => {
                   )}
                 </div>
 
-                {/* App Secret */}
+                {/* 3. App Secret */}
                 <div className={styles.formField}>
                   <label className={styles.formLabel}>
                     App Secret <span className={styles.formHint}>(opcional)</span>
@@ -419,6 +322,99 @@ export const MetaAdsIntegration: React.FC = () => {
                       value={credentials.appSecret}
                       onChange={(e) => handleInputChange('appSecret', e.target.value)}
                       placeholder="abc123def456..."
+                      className={styles.formInput}
+                    />
+                  )}
+                </div>
+
+                {/* 4. Cuenta de Anuncios - CON DROPDOWN SI HAY CUENTAS CARGADAS */}
+                <div className={styles.formField}>
+                  <label className={styles.formLabel}>
+                    Cuenta de Anuncios <span style={{ color: 'var(--color-error)' }}>*</span>
+                  </label>
+                  {credentials.adAccountId ? (
+                    <div className={styles.filterChip}>
+                      <span className={styles.chipText}>{credentials.adAccountId}</span>
+                      <button
+                        onClick={() => {
+                          handleRemoveCredential('adAccountId')
+                          setPixels([]) // Limpiar pixeles al quitar cuenta
+                        }}
+                        className={styles.chipDeleteButton}
+                        type="button"
+                      >
+                        <X size={16} />
+                      </button>
+                    </div>
+                  ) : adAccounts.length > 0 ? (
+                    <select
+                      className={styles.formInput}
+                      onChange={(e) => {
+                        const account = adAccounts.find(a => a.id === e.target.value)
+                        if (account) handleSelectAdAccount(account)
+                      }}
+                      value={credentials.adAccountId || ''}
+                    >
+                      <option value="">-- Selecciona una cuenta --</option>
+                      {adAccounts.map((account) => (
+                        <option key={account.id} value={account.id}>
+                          {account.name} ({account.id}) - {account.currency}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      type="text"
+                      value={credentials.adAccountId}
+                      onChange={(e) => handleInputChange('adAccountId', e.target.value)}
+                      placeholder="act_123456789012345"
+                      className={styles.formInput}
+                    />
+                  )}
+                </div>
+
+                {/* 5. Pixel de Meta - CON DROPDOWN SI HAY PIXELES CARGADOS */}
+                <div className={styles.formField}>
+                  <label className={styles.formLabel}>
+                    Pixel de Meta <span className={styles.formHint}>(opcional)</span>
+                  </label>
+                  {credentials.pixelId ? (
+                    <div className={styles.filterChip}>
+                      <span className={styles.chipText}>{credentials.pixelId}</span>
+                      <button
+                        onClick={() => handleRemoveCredential('pixelId')}
+                        className={styles.chipDeleteButton}
+                        type="button"
+                      >
+                        <X size={16} />
+                      </button>
+                    </div>
+                  ) : isLoadingPixels ? (
+                    <div style={{ padding: '12px', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '13px' }}>
+                      Cargando pixeles...
+                    </div>
+                  ) : pixels.length > 0 ? (
+                    <select
+                      className={styles.formInput}
+                      onChange={(e) => {
+                        const pixel = pixels.find(p => p.id === e.target.value)
+                        if (pixel) handleSelectPixel(pixel)
+                      }}
+                      value={credentials.pixelId || ''}
+                    >
+                      <option value="">-- Sin pixel (opcional) --</option>
+                      {pixels.map((pixel) => (
+                        <option key={pixel.id} value={pixel.id}>
+                          {pixel.name} ({pixel.id})
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      type="text"
+                      value={credentials.pixelId}
+                      onChange={(e) => handleInputChange('pixelId', e.target.value)}
+                      placeholder="1234567890123456"
                       className={styles.formInput}
                     />
                   )}
@@ -462,7 +458,6 @@ export const MetaAdsIntegration: React.FC = () => {
                     4. Inicia automáticamente la sincronización de tus anuncios de Meta
                   </div>
                 </div>
-                </div>  {/* Cierre del div "O ingresa manualmente" */}
               </div>
             )}
           </div>
