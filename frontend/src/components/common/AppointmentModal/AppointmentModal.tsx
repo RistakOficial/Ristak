@@ -4,6 +4,7 @@ import { Modal } from '../Modal';
 import { Button } from '../Button';
 import { TabList } from '../TabList';
 import { DateTimePicker } from '../DateTimePicker';
+import { CustomSelect } from '../CustomSelect';
 import { CalendarEvent, Calendar, calendarsService, FreeSlot } from '@/services/calendarsService';
 import { useNotification } from '@/contexts/NotificationContext';
 import { useTimezone } from '@/contexts/TimezoneContext';
@@ -70,6 +71,42 @@ const ALL_TIMEZONES: string[] =
       ];
 
 const DEFAULT_TIMEZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+
+/**
+ * Formatea hora ISO a formato 12 horas con AM/PM
+ * Ej: "2025-10-22T15:30:00-06:00" → "3:30 PM"
+ */
+const formatTimeTo12Hour = (isoTime: string): string => {
+  const date = new Date(isoTime);
+  return date.toLocaleTimeString('es-MX', {
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true
+  }).toUpperCase();
+};
+
+/**
+ * Formatea slot completo con duración
+ * Ej: "2025-10-22T15:30:00-06:00" con 60min → "3:30 PM - 4:30 PM"
+ */
+const formatSlotWithDuration = (isoTime: string, durationMinutes: number): string => {
+  const startDate = new Date(isoTime);
+  const endDate = new Date(startDate.getTime() + durationMinutes * 60 * 1000);
+
+  const startTime = startDate.toLocaleTimeString('es-MX', {
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true
+  }).toUpperCase();
+
+  const endTime = endDate.toLocaleTimeString('es-MX', {
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true
+  }).toUpperCase();
+
+  return `${startTime} - ${endTime}`;
+};
 
 const INITIAL_FORM_STATE = {
   title: '',
@@ -977,78 +1014,76 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                     <p className={styles.helpText}>Intenta con el modo Personalizado.</p>
                   </div>
                 ) : (
-                  <>
+                  /* Grid de 2 columnas: Fecha | Horario */
+                  <div className={styles.fieldRow}>
                     {/* Selector de fecha */}
                     <div className={styles.field}>
-                      <label className={styles.label} htmlFor="slotDate">
+                      <label className={styles.label}>
                         Fecha <span className={styles.required}>*</span>
                       </label>
-                      <select
-                        id="slotDate"
-                        className={styles.select}
-                        value={selectedDate}
-                        onChange={(e) => {
-                          setSelectedDate(e.target.value);
-                          setSelectedSlot(''); // Reset slot cuando cambia la fecha
-                        }}
-                      >
-                        <option value="">Seleccionar fecha...</option>
-                        {freeSlots.map((slot) => (
-                          <option key={slot.date} value={slot.date}>
-                            {new Date(slot.date).toLocaleDateString('es-MX', {
+                      <CustomSelect
+                        options={[
+                          { value: '', label: 'Seleccionar fecha...' },
+                          ...freeSlots.map((slot) => ({
+                            value: slot.date,
+                            label: new Date(slot.date).toLocaleDateString('es-MX', {
                               weekday: 'long',
                               year: 'numeric',
                               month: 'long',
                               day: 'numeric'
-                            })}
-                          </option>
-                        ))}
-                      </select>
+                            })
+                          }))
+                        ]}
+                        value={selectedDate}
+                        onChange={(value) => {
+                          setSelectedDate(value);
+                          setSelectedSlot(''); // Reset slot cuando cambia la fecha
+                        }}
+                        placeholder="Seleccionar fecha..."
+                      />
                     </div>
 
-                    {/* Selector de horario (solo se muestra si hay fecha seleccionada) */}
-                    {selectedDate && (
-                      <div className={styles.field}>
-                        <label className={styles.label} htmlFor="slotTime">
-                          Horario <span className={styles.required}>*</span>
-                        </label>
-                        <select
-                          id="slotTime"
-                          className={styles.select}
-                          value={selectedSlot}
-                          onChange={(e) => {
-                            const slot = e.target.value;
-                            setSelectedSlot(slot);
+                    {/* Selector de horario */}
+                    <div className={styles.field}>
+                      <label className={styles.label}>
+                        Horario <span className={styles.required}>*</span>
+                      </label>
+                      <CustomSelect
+                        options={
+                          selectedDate
+                            ? [
+                                { value: '', label: 'Seleccionar horario...' },
+                                ...(freeSlots
+                                  .find((s) => s.date === selectedDate)
+                                  ?.slots.map((timeSlot) => ({
+                                    value: timeSlot,
+                                    label: formatSlotWithDuration(timeSlot, calendar?.slotDuration || 60)
+                                  })) || [])
+                              ]
+                            : [{ value: '', label: 'Primero selecciona una fecha' }]
+                        }
+                        value={selectedSlot}
+                        onChange={(value) => {
+                          setSelectedSlot(value);
 
-                            // Construir startTime y endTime en ISO format
-                            if (slot) {
-                              const [hours, minutes] = slot.split(':');
-                              const startDate = new Date(selectedDate);
-                              startDate.setHours(parseInt(hours), parseInt(minutes), 0, 0);
+                          // Construir startTime y endTime en ISO format
+                          if (value) {
+                            const startDate = new Date(value);
+                            const duration = calendar?.slotDuration || 60;
+                            const endDate = new Date(startDate.getTime() + duration * 60 * 1000);
 
-                              const duration = calendar?.slotDuration || 60;
-                              const endDate = new Date(startDate.getTime() + duration * 60 * 1000);
-
-                              setFormData({
-                                ...formData,
-                                startTime: startDate.toISOString(),
-                                endTime: endDate.toISOString()
-                              });
-                            }
-                          }}
-                        >
-                          <option value="">Seleccionar horario...</option>
-                          {freeSlots
-                            .find((s) => s.date === selectedDate)
-                            ?.slots.map((timeSlot) => (
-                              <option key={timeSlot} value={timeSlot}>
-                                {timeSlot}
-                              </option>
-                            ))}
-                        </select>
-                      </div>
-                    )}
-                  </>
+                            setFormData({
+                              ...formData,
+                              startTime: startDate.toISOString(),
+                              endTime: endDate.toISOString()
+                            });
+                          }
+                        }}
+                        disabled={!selectedDate}
+                        placeholder={!selectedDate ? 'Primero selecciona una fecha' : 'Seleccionar horario...'}
+                      />
+                    </div>
+                  </div>
                 )}
               </div>
             ) : isCreateMode && scheduleMode === 'custom' ? (
