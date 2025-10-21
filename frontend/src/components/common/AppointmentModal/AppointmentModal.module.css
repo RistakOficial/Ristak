@@ -562,3 +562,48 @@
   background: rgba(249, 115, 22, 0.2);
   color: #fb923c;
 }
+
+/* Estilos para modo de slots disponibles */
+.slotsSection {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.loadingSlots {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  padding: 2rem;
+  color: var(--color-text-secondary);
+  font-size: 0.875rem;
+}
+
+.spinner {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.noSlots {
+  padding: 2rem;
+  text-align: center;
+  color: var(--color-text-secondary);
+}
+
+.noSlots p {
+  margin: 0.5rem 0;
+}
+
+.noSlots .helpText {
+  font-size: 0.875rem;
+  color: var(--color-text-tertiary);
+}

@@ -1373,6 +1373,8 @@ export const Appointments: React.FC = () => {
         event={selectedEvent}
         calendar={selectedCalendar}
         mode="view"
+        accessToken={accessToken}
+        locationId={locationId}
         onSave={handleSaveAppointment}
         onDelete={handleDeleteAppointment}
       />
@@ -1387,6 +1389,8 @@ export const Appointments: React.FC = () => {
         defaultEnd={createDefaults.end}
         defaultTimeZone={createDefaults.timeZone}
         defaultTitle={createDefaults.title}
+        accessToken={accessToken}
+        locationId={locationId}
         onSave={handleCreateAppointment}
       />
     </PageContainer>

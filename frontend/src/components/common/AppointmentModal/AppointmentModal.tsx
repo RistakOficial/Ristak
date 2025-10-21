@@ -192,6 +192,8 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   defaultEnd,
   defaultTimeZone,
   defaultTitle,
+  accessToken,
+  locationId,
   onSave,
   onDelete
 }) => {
@@ -223,6 +225,33 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
 
   // Validación de slots DESHABILITADA en modo custom: Como admin, puedes agendar en cualquier horario
   // En modo default: Solo permite seleccionar de los slots disponibles según configuración del calendario
+
+  // Cargar slots disponibles desde la API de HighLevel
+  const loadFreeSlots = async () => {
+    if (!calendar?.id || !accessToken || scheduleMode !== 'default') return;
+
+    setLoadingSlots(true);
+    try {
+      // Cargar slots para los próximos 30 días
+      const today = new Date();
+      const endDate = new Date(today.getTime() + 30 * 24 * 60 * 60 * 1000);
+
+      const slots = await calendarsService.getFreeSlots(
+        calendar.id,
+        today.toISOString().split('T')[0],
+        endDate.toISOString().split('T')[0],
+        accessToken,
+        formData.timeZone || DEFAULT_TIMEZONE
+      );
+
+      setFreeSlots(slots);
+    } catch (error) {
+      showToast('error', 'Error al cargar horarios', 'No se pudieron cargar los horarios disponibles');
+      setFreeSlots([]);
+    } finally {
+      setLoadingSlots(false);
+    }
+  };
 
   const loadUsers = async () => {
     setLoadingUsers(true);
@@ -382,6 +411,13 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
       setUsers([]);
     }
   }, [isOpen, calendar, isCreateMode, formData.assignedUserId]);
+
+  // Cargar slots disponibles cuando se abre el modal en modo crear y scheduleMode es 'default'
+  useEffect(() => {
+    if (isOpen && isCreateMode && scheduleMode === 'default') {
+      loadFreeSlots();
+    }
+  }, [isOpen, isCreateMode, scheduleMode, calendar?.id, accessToken]);
 
   // Búsqueda de contactos
   useEffect(() => {
@@ -910,39 +946,142 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
               </select>
             </div>
 
-            <div className={styles.fieldRow}>
-              <div className={styles.field}>
-                <DateTimePicker
-                  label="Inicio"
-                  value={formData.startTime}
-                  onChange={(value) => {
-                    // Cuando cambia el startTime, actualizar automáticamente el endTime
-                    // según la duración configurada del calendario (slotDuration)
-                    const duration = calendar?.slotDuration || 60; // Default 60 minutos
-                    const startDate = new Date(value);
-                    const endDate = new Date(startDate.getTime() + duration * 60 * 1000);
-
-                    setFormData({
-                      ...formData,
-                      startTime: value,
-                      endTime: endDate.toISOString()
-                    });
-                  }}
-                />
-              </div>
-
-              <div className={styles.field}>
-                <DateTimePicker
-                  label="Fin"
-                  value={formData.endTime}
-                  onChange={(value) => {
-                    // Cuando el usuario cambia manualmente el endTime, NO tocamos startTime
-                    setFormData({ ...formData, endTime: value });
-                  }}
-                  minDate={formData.startTime}
-                />
-              </div>
+            {/* TabList para seleccionar modo de agendamiento */}
+            <div className={styles.field}>
+              <TabList
+                tabs={[
+                  { id: 'default', label: 'Por defecto' },
+                  { id: 'custom', label: 'Personalizado' }
+                ]}
+                activeTab={scheduleMode}
+                onChange={(id) => setScheduleMode(id as 'default' | 'custom')}
+              />
             </div>
+
+            {/* Modo Por defecto: Selector de slots disponibles */}
+            {scheduleMode === 'default' ? (
+              <div className={styles.slotsSection}>
+                {loadingSlots ? (
+                  <div className={styles.loadingSlots}>
+                    <Loader2 size={20} className={styles.spinner} />
+                    <span>Cargando horarios disponibles...</span>
+                  </div>
+                ) : freeSlots.length === 0 ? (
+                  <div className={styles.noSlots}>
+                    <p>No hay horarios disponibles en los próximos 30 días.</p>
+                    <p className={styles.helpText}>Intenta con el modo Personalizado.</p>
+                  </div>
+                ) : (
+                  <>
+                    {/* Selector de fecha */}
+                    <div className={styles.field}>
+                      <label className={styles.label} htmlFor="slotDate">
+                        Fecha <span className={styles.required}>*</span>
+                      </label>
+                      <select
+                        id="slotDate"
+                        className={styles.select}
+                        value={selectedDate}
+                        onChange={(e) => {
+                          setSelectedDate(e.target.value);
+                          setSelectedSlot(''); // Reset slot cuando cambia la fecha
+                        }}
+                      >
+                        <option value="">Seleccionar fecha...</option>
+                        {freeSlots.map((slot) => (
+                          <option key={slot.date} value={slot.date}>
+                            {new Date(slot.date).toLocaleDateString('es-MX', {
+                              weekday: 'long',
+                              year: 'numeric',
+                              month: 'long',
+                              day: 'numeric'
+                            })}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Selector de horario (solo se muestra si hay fecha seleccionada) */}
+                    {selectedDate && (
+                      <div className={styles.field}>
+                        <label className={styles.label} htmlFor="slotTime">
+                          Horario <span className={styles.required}>*</span>
+                        </label>
+                        <select
+                          id="slotTime"
+                          className={styles.select}
+                          value={selectedSlot}
+                          onChange={(e) => {
+                            const slot = e.target.value;
+                            setSelectedSlot(slot);
+
+                            // Construir startTime y endTime en ISO format
+                            if (slot) {
+                              const [hours, minutes] = slot.split(':');
+                              const startDate = new Date(selectedDate);
+                              startDate.setHours(parseInt(hours), parseInt(minutes), 0, 0);
+
+                              const duration = calendar?.slotDuration || 60;
+                              const endDate = new Date(startDate.getTime() + duration * 60 * 1000);
+
+                              setFormData({
+                                ...formData,
+                                startTime: startDate.toISOString(),
+                                endTime: endDate.toISOString()
+                              });
+                            }
+                          }}
+                        >
+                          <option value="">Seleccionar horario...</option>
+                          {freeSlots
+                            .find((s) => s.date === selectedDate)
+                            ?.slots.map((timeSlot) => (
+                              <option key={timeSlot} value={timeSlot}>
+                                {timeSlot}
+                              </option>
+                            ))}
+                        </select>
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            ) : (
+              /* Modo Personalizado: DateTimePicker libre */
+              <div className={styles.fieldRow}>
+                <div className={styles.field}>
+                  <DateTimePicker
+                    label="Inicio"
+                    value={formData.startTime}
+                    onChange={(value) => {
+                      // Cuando cambia el startTime, actualizar automáticamente el endTime
+                      // según la duración configurada del calendario (slotDuration)
+                      const duration = calendar?.slotDuration || 60; // Default 60 minutos
+                      const startDate = new Date(value);
+                      const endDate = new Date(startDate.getTime() + duration * 60 * 1000);
+
+                      setFormData({
+                        ...formData,
+                        startTime: value,
+                        endTime: endDate.toISOString()
+                      });
+                    }}
+                  />
+                </div>
+
+                <div className={styles.field}>
+                  <DateTimePicker
+                    label="Fin"
+                    value={formData.endTime}
+                    onChange={(value) => {
+                      // Cuando el usuario cambia manualmente el endTime, NO tocamos startTime
+                      setFormData({ ...formData, endTime: value });
+                    }}
+                    minDate={formData.startTime}
+                  />
+                </div>
+              </div>
+            )}
 
             {/* Validación de slots ELIMINADA - Como admin, puedes agendar en cualquier horario */}
 

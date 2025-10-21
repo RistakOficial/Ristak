@@ -125,9 +125,9 @@ export const AccountSettings: React.FC = () => {
           Gestiona tu nombre de usuario y contraseña
         </p>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', marginTop: '1.5rem' }}>
+        <Card variant="glass" padding="lg" style={{ marginTop: '1.5rem' }}>
           {/* Información actual */}
-          <Card variant="glass" padding="lg">
+          <div style={{ marginBottom: '2rem' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1rem' }}>
               <div style={{
                 width: '48px',
@@ -174,10 +174,17 @@ export const AccountSettings: React.FC = () => {
                 <strong>Rol:</strong> Administrador
               </p>
             </div>
-          </Card>
+          </div>
+
+          {/* Separador */}
+          <div style={{
+            height: '1px',
+            background: 'linear-gradient(90deg, transparent, rgba(148, 163, 184, 0.2), transparent)',
+            margin: '2rem 0'
+          }} />
 
           {/* Cambiar nombre de usuario */}
-          <Card variant="glass" padding="lg">
+          <div style={{ marginBottom: '2rem' }}>
             <div style={{ marginBottom: '1.25rem' }}>
               <h3 style={{
                 fontSize: '1rem',
@@ -242,10 +249,17 @@ export const AccountSettings: React.FC = () => {
                 Guardar cambios
               </Button>
             </div>
-          </Card>
+          </div>
+
+          {/* Separador */}
+          <div style={{
+            height: '1px',
+            background: 'linear-gradient(90deg, transparent, rgba(148, 163, 184, 0.2), transparent)',
+            margin: '2rem 0'
+          }} />
 
           {/* Cambiar contraseña */}
-          <Card variant="glass" padding="lg">
+          <div>
             <div style={{ marginBottom: '1.25rem' }}>
               <h3 style={{
                 fontSize: '1rem',
@@ -373,8 +387,8 @@ export const AccountSettings: React.FC = () => {
                 Cambiar contraseña
               </Button>
             </div>
-          </Card>
-        </div>
+          </div>
+        </Card>
       </div>
     </div>
   )
