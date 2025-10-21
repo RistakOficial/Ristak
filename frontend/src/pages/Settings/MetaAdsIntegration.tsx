@@ -68,9 +68,18 @@ export const MetaAdsIntegration: React.FC = () => {
 
       if (data.success && data.data) {
         setCredentials(data.data)
-        // Si ya hay un access token guardado, cargar cuentas automáticamente
+        // Si ya hay un access token guardado, cargar cuentas y pixeles automáticamente
         if (data.data.accessToken) {
-          await fetchAdAccounts(data.data.accessToken)
+          await fetchAdAccounts(data.data.accessToken, data.data.adAccountId)
+
+          // Si hay adAccountId, cargar pixeles también
+          if (data.data.adAccountId) {
+            // Agregar "act_" si no lo tiene para llamar a Meta API
+            const accountIdWithPrefix = data.data.adAccountId.startsWith('act_')
+              ? data.data.adAccountId
+              : `act_${data.data.adAccountId}`
+            await fetchPixels(accountIdWithPrefix, data.data.accessToken, data.data.pixelId)
+          }
         }
       }
     } catch (error) {
@@ -80,7 +89,7 @@ export const MetaAdsIntegration: React.FC = () => {
     }
   }
 
-  const fetchAdAccounts = async (token: string) => {
+  const fetchAdAccounts = async (token: string, savedAdAccountId?: string) => {
     if (!token) {
       showToast('error', 'Token requerido', 'Primero ingresa tu Access Token')
       return
@@ -91,6 +100,23 @@ export const MetaAdsIntegration: React.FC = () => {
       const result = await campaignsService.fetchAdAccounts(token)
       if (result.success && result.adAccounts.length > 0) {
         setAdAccounts(result.adAccounts)
+
+        // Si hay un ID guardado, buscar coincidencia (sin el prefijo "act_")
+        if (savedAdAccountId) {
+          const normalizedSavedId = savedAdAccountId.replace(/^act_/, '')
+          const matchingAccount = result.adAccounts.find(acc =>
+            acc.id.replace(/^act_/, '') === normalizedSavedId
+          )
+
+          if (matchingAccount) {
+            // Actualizar credentials con el ID sin prefijo pero guardar el objeto completo
+            setCredentials(prev => ({
+              ...prev,
+              adAccountId: matchingAccount.id.replace(/^act_/, '')
+            }))
+          }
+        }
+
         showToast('success', 'Cuentas cargadas', `Se encontraron ${result.adAccounts.length} cuentas de anuncios`)
       } else {
         showToast('warning', 'Sin cuentas', 'No se encontraron cuentas de anuncios')
@@ -104,7 +130,7 @@ export const MetaAdsIntegration: React.FC = () => {
     }
   }
 
-  const fetchPixels = async (adAccountId: string, token: string) => {
+  const fetchPixels = async (adAccountId: string, token: string, savedPixelId?: string) => {
     if (!adAccountId || !token) {
       showToast('error', 'Datos requeridos', 'Primero selecciona una cuenta de anuncios')
       return
@@ -115,6 +141,19 @@ export const MetaAdsIntegration: React.FC = () => {
       const result = await campaignsService.fetchPixels(adAccountId, token)
       if (result.success && result.pixels.length > 0) {
         setPixels(result.pixels)
+
+        // Si hay un pixel ID guardado, buscar coincidencia
+        if (savedPixelId) {
+          const matchingPixel = result.pixels.find(p => p.id === savedPixelId)
+          if (matchingPixel) {
+            // Actualizar credentials para mantener el pixel seleccionado
+            setCredentials(prev => ({
+              ...prev,
+              pixelId: matchingPixel.id
+            }))
+          }
+        }
+
         showToast('success', 'Pixeles cargados', `Se encontraron ${result.pixels.length} pixeles`)
       } else {
         showToast('info', 'Sin pixeles', 'No se encontraron pixeles para esta cuenta')
@@ -326,7 +365,18 @@ export const MetaAdsIntegration: React.FC = () => {
                   </label>
                   {credentials.adAccountId ? (
                     <div className={styles.filterChip}>
-                      <span className={styles.chipText}>{credentials.adAccountId}</span>
+                      <span className={styles.chipText}>
+                        {(() => {
+                          // Buscar coincidencia para mostrar nombre bonito
+                          const normalizedId = credentials.adAccountId.replace(/^act_/, '')
+                          const matchingAccount = adAccounts.find(acc =>
+                            acc.id.replace(/^act_/, '') === normalizedId
+                          )
+                          return matchingAccount
+                            ? `${matchingAccount.name} (${normalizedId})`
+                            : normalizedId
+                        })()}
+                      </span>
                       <button
                         onClick={() => {
                           handleRemoveCredential('adAccountId')
@@ -372,7 +422,15 @@ export const MetaAdsIntegration: React.FC = () => {
                   </label>
                   {credentials.pixelId ? (
                     <div className={styles.filterChip}>
-                      <span className={styles.chipText}>{credentials.pixelId}</span>
+                      <span className={styles.chipText}>
+                        {(() => {
+                          // Buscar coincidencia para mostrar nombre bonito
+                          const matchingPixel = pixels.find(p => p.id === credentials.pixelId)
+                          return matchingPixel
+                            ? `${matchingPixel.name} (${credentials.pixelId})`
+                            : credentials.pixelId
+                        })()}
+                      </span>
                       <button
                         onClick={() => handleRemoveCredential('pixelId')}
                         className={styles.chipDeleteButton}
