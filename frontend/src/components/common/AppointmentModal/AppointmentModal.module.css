@@ -177,6 +177,11 @@
   gap: 0.4rem;
 }
 
+/* Centrar TabList cuando está dentro de .field */
+.field > :global(.inline-flex) {
+  align-self: center;
+}
+
 .fieldRow {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));

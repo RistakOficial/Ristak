@@ -249,7 +249,27 @@ export async function getFreeSlots(calendarId, startDate, endDate, accessToken, 
     const data = await response.json();
     logger.info(`[HighLevel Calendar] Slots disponibles obtenidos exitosamente`);
 
-    return data;
+    // Transformar respuesta de objeto a array
+    // API devuelve: { "2025-10-22": { "slots": [...] }, "2025-10-23": { "slots": [...] } }
+    // Necesitamos: [{ date: "2025-10-22", slots: [...] }, { date: "2025-10-23", slots: [...] }]
+    const slotsArray = [];
+
+    for (const [date, dateData] of Object.entries(data)) {
+      // Ignorar traceId y otros campos que no sean fechas
+      if (date === 'traceId' || !dateData.slots) continue;
+
+      slotsArray.push({
+        date,
+        slots: dateData.slots
+      });
+    }
+
+    // Ordenar por fecha (más reciente primero)
+    slotsArray.sort((a, b) => new Date(a.date) - new Date(b.date));
+
+    logger.info(`[HighLevel Calendar] ${slotsArray.length} días con slots disponibles`);
+
+    return slotsArray;
   } catch (error) {
     logger.error(`[HighLevel Calendar] Error en getFreeSlots: ${error.message}`);
     throw error;
