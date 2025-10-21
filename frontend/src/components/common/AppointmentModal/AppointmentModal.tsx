@@ -904,7 +904,19 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                 <DateTimePicker
                   label="Inicio"
                   value={formData.startTime}
-                  onChange={(value) => setFormData({ ...formData, startTime: value })}
+                  onChange={(value) => {
+                    // Cuando cambia el startTime, actualizar automáticamente el endTime
+                    // según la duración configurada del calendario (slotDuration)
+                    const duration = calendar?.slotDuration || 60; // Default 60 minutos
+                    const startDate = new Date(value);
+                    const endDate = new Date(startDate.getTime() + duration * 60 * 1000);
+
+                    setFormData({
+                      ...formData,
+                      startTime: value,
+                      endTime: endDate.toISOString()
+                    });
+                  }}
                 />
               </div>
 
@@ -912,7 +924,10 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                 <DateTimePicker
                   label="Fin"
                   value={formData.endTime}
-                  onChange={(value) => setFormData({ ...formData, endTime: value })}
+                  onChange={(value) => {
+                    // Cuando el usuario cambia manualmente el endTime, NO tocamos startTime
+                    setFormData({ ...formData, endTime: value });
+                  }}
                   minDate={formData.startTime}
                 />
               </div>
