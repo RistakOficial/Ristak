@@ -1,13 +1,27 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { Card, Button } from '@/components/common'
-import { CheckCircle, ExternalLink, ChevronDown, ChevronUp, AlertCircle, Info, RefreshCw } from 'lucide-react'
+import { CheckCircle, ExternalLink, ChevronDown, ChevronUp, AlertCircle, Info, RefreshCw, X } from 'lucide-react'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useTheme } from '@/contexts/ThemeContext'
 import styles from './HighLevelIntegration.module.css'
 
+interface MetaCredentials {
+  adAccountId: string
+  accessToken: string
+  appId: string
+  appSecret: string
+}
+
 export const MetaAdsIntegration: React.FC = () => {
   const [openSection, setOpenSection] = useState<number | null>(null)
   const [isSyncing, setIsSyncing] = useState(false)
+  const [isLoading, setIsLoading] = useState(true)
+  const [credentials, setCredentials] = useState<MetaCredentials>({
+    adAccountId: '',
+    accessToken: '',
+    appId: '',
+    appSecret: ''
+  })
   const { showToast } = useNotification()
   const { theme } = useTheme()
 
@@ -15,23 +29,61 @@ export const MetaAdsIntegration: React.FC = () => {
     setOpenSection(openSection === section ? null : section)
   }
 
-  const handleSyncFromHighLevel = async () => {
+  // Cargar credenciales al montar el componente
+  useEffect(() => {
+    loadCredentials()
+  }, [])
+
+  const loadCredentials = async () => {
+    setIsLoading(true)
+    try {
+      const response = await fetch('/api/meta/custom-values')
+      const data = await response.json()
+
+      if (data.success && data.data) {
+        setCredentials(data.data)
+      }
+    } catch (error) {
+      console.error('Error cargando credenciales:', error)
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const handleRemoveCredential = (field: keyof MetaCredentials) => {
+    setCredentials(prev => ({ ...prev, [field]: '' }))
+  }
+
+  const handleInputChange = (field: keyof MetaCredentials, value: string) => {
+    setCredentials(prev => ({ ...prev, [field]: value }))
+  }
+
+  const handleSaveAndSync = async () => {
+    // Validar que al menos tengamos Ad Account ID y Access Token
+    if (!credentials.adAccountId.trim() || !credentials.accessToken.trim()) {
+      showToast('error', 'Campos requeridos', 'Ad Account ID y Access Token son obligatorios')
+      return
+    }
+
     setIsSyncing(true)
 
     try {
-      const response = await fetch('/api/meta/sync-from-highlevel', {
+      const response = await fetch('/api/meta/save-and-sync', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
-        }
+        },
+        body: JSON.stringify(credentials)
       })
 
       const data = await response.json()
 
       if (data.success) {
-        showToast('success', 'Sincronización exitosa', data.message)
+        showToast('success', 'Credenciales guardadas', data.message)
+        // Recargar credenciales para confirmar
+        await loadCredentials()
       } else {
-        showToast('error', 'Error al sincronizar', data.error)
+        showToast('error', 'Error al guardar', data.error)
       }
     } catch (error) {
       showToast('error', 'Error', 'No se pudo conectar con el servidor')
@@ -67,51 +119,266 @@ export const MetaAdsIntegration: React.FC = () => {
           </div>
         </div>
 
-        {/* Botón de sincronización manual - ARRIBA */}
+        {/* Configuración de Credenciales - ARRIBA */}
         <div className={styles.section}>
           <div className={styles.sectionHeader}>
-            <h3 className={styles.sectionTitle}>Sincronizar Configuración</h3>
+            <h3 className={styles.sectionTitle}>Configurar Credenciales</h3>
           </div>
           <div className={styles.sectionContent}>
             <p className={styles.infoText}>
-              Si ya configuraste los 4 Custom Values en HighLevel, haz clic en el botón de abajo para sincronizar automáticamente tu configuración de Meta con Ristak.
+              Configura tus credenciales de Meta directamente aquí. Se guardarán en HighLevel automáticamente cuando hagas clic en "Guardar y Sincronizar".
             </p>
-            <div style={{ marginTop: '20px' }}>
-              <Button
-                onClick={handleSyncFromHighLevel}
-                disabled={isSyncing}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '8px',
-                  padding: '12px 24px',
-                  fontSize: '16px',
-                  backgroundColor: '#0866FF',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '8px',
-                  cursor: isSyncing ? 'not-allowed' : 'pointer',
-                  opacity: isSyncing ? 0.6 : 1
-                }}
-              >
-                <RefreshCw size={18} className={isSyncing ? styles.spinning : ''} />
-                {isSyncing ? 'Sincronizando...' : 'Sincronizar desde HighLevel'}
-              </Button>
-            </div>
-            <div className={styles.infoBox} style={{ marginTop: '16px' }}>
-              <Info size={18} />
-              <div>
-                <strong>¿Qué hace este botón?</strong>
-                <br />
-                1. Busca los 4 Custom Values de Meta en tu cuenta de HighLevel
-                <br />
-                2. Guarda las credenciales en Ristak
-                <br />
-                3. Valida que las credenciales funcionen correctamente
-                <br />
-                4. Inicia automáticamente la sincronización de tus anuncios de Meta
+
+            {isLoading ? (
+              <div style={{ padding: '40px', textAlign: 'center', color: 'var(--text-secondary)' }}>
+                Cargando credenciales...
               </div>
-            </div>
+            ) : (
+              <div style={{ marginTop: '24px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                {/* Ad Account ID */}
+                <div>
+                  <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500, fontSize: '14px' }}>
+                    Ad Account ID <span style={{ color: '#ef4444' }}>*</span>
+                  </label>
+                  {credentials.adAccountId ? (
+                    <div style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      padding: '8px 12px',
+                      backgroundColor: 'var(--background-secondary)',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: '6px',
+                      fontSize: '14px'
+                    }}>
+                      <span>{credentials.adAccountId}</span>
+                      <button
+                        onClick={() => handleRemoveCredential('adAccountId')}
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          cursor: 'pointer',
+                          padding: '2px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          color: 'var(--text-secondary)'
+                        }}
+                      >
+                        <X size={16} />
+                      </button>
+                    </div>
+                  ) : (
+                    <input
+                      type="text"
+                      value={credentials.adAccountId}
+                      onChange={(e) => handleInputChange('adAccountId', e.target.value)}
+                      placeholder="123456789012345"
+                      style={{
+                        width: '100%',
+                        padding: '10px 12px',
+                        border: '1px solid var(--border-color)',
+                        borderRadius: '6px',
+                        fontSize: '14px',
+                        backgroundColor: 'var(--background-primary)',
+                        color: 'var(--text-primary)'
+                      }}
+                    />
+                  )}
+                </div>
+
+                {/* Access Token */}
+                <div>
+                  <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500, fontSize: '14px' }}>
+                    App Access Token <span style={{ color: '#ef4444' }}>*</span>
+                  </label>
+                  {credentials.accessToken ? (
+                    <div style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      padding: '8px 12px',
+                      backgroundColor: 'var(--background-secondary)',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: '6px',
+                      fontSize: '14px'
+                    }}>
+                      <span>{'*'.repeat(20)}...{credentials.accessToken.slice(-8)}</span>
+                      <button
+                        onClick={() => handleRemoveCredential('accessToken')}
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          cursor: 'pointer',
+                          padding: '2px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          color: 'var(--text-secondary)'
+                        }}
+                      >
+                        <X size={16} />
+                      </button>
+                    </div>
+                  ) : (
+                    <input
+                      type="password"
+                      value={credentials.accessToken}
+                      onChange={(e) => handleInputChange('accessToken', e.target.value)}
+                      placeholder="EAAabcdef..."
+                      style={{
+                        width: '100%',
+                        padding: '10px 12px',
+                        border: '1px solid var(--border-color)',
+                        borderRadius: '6px',
+                        fontSize: '14px',
+                        backgroundColor: 'var(--background-primary)',
+                        color: 'var(--text-primary)'
+                      }}
+                    />
+                  )}
+                </div>
+
+                {/* App ID */}
+                <div>
+                  <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500, fontSize: '14px' }}>
+                    App ID <span style={{ color: 'var(--text-tertiary)', fontSize: '12px' }}>(opcional)</span>
+                  </label>
+                  {credentials.appId ? (
+                    <div style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      padding: '8px 12px',
+                      backgroundColor: 'var(--background-secondary)',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: '6px',
+                      fontSize: '14px'
+                    }}>
+                      <span>{credentials.appId}</span>
+                      <button
+                        onClick={() => handleRemoveCredential('appId')}
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          cursor: 'pointer',
+                          padding: '2px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          color: 'var(--text-secondary)'
+                        }}
+                      >
+                        <X size={16} />
+                      </button>
+                    </div>
+                  ) : (
+                    <input
+                      type="text"
+                      value={credentials.appId}
+                      onChange={(e) => handleInputChange('appId', e.target.value)}
+                      placeholder="1234567890123456"
+                      style={{
+                        width: '100%',
+                        padding: '10px 12px',
+                        border: '1px solid var(--border-color)',
+                        borderRadius: '6px',
+                        fontSize: '14px',
+                        backgroundColor: 'var(--background-primary)',
+                        color: 'var(--text-primary)'
+                      }}
+                    />
+                  )}
+                </div>
+
+                {/* App Secret */}
+                <div>
+                  <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500, fontSize: '14px' }}>
+                    App Secret <span style={{ color: 'var(--text-tertiary)', fontSize: '12px' }}>(opcional)</span>
+                  </label>
+                  {credentials.appSecret ? (
+                    <div style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      padding: '8px 12px',
+                      backgroundColor: 'var(--background-secondary)',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: '6px',
+                      fontSize: '14px'
+                    }}>
+                      <span>{'*'.repeat(20)}...{credentials.appSecret.slice(-8)}</span>
+                      <button
+                        onClick={() => handleRemoveCredential('appSecret')}
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          cursor: 'pointer',
+                          padding: '2px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          color: 'var(--text-secondary)'
+                        }}
+                      >
+                        <X size={16} />
+                      </button>
+                    </div>
+                  ) : (
+                    <input
+                      type="password"
+                      value={credentials.appSecret}
+                      onChange={(e) => handleInputChange('appSecret', e.target.value)}
+                      placeholder="abc123def456..."
+                      style={{
+                        width: '100%',
+                        padding: '10px 12px',
+                        border: '1px solid var(--border-color)',
+                        borderRadius: '6px',
+                        fontSize: '14px',
+                        backgroundColor: 'var(--background-primary)',
+                        color: 'var(--text-primary)'
+                      }}
+                    />
+                  )}
+                </div>
+
+                {/* Botón de Guardar y Sincronizar */}
+                <div style={{ marginTop: '8px' }}>
+                  <Button
+                    onClick={handleSaveAndSync}
+                    disabled={isSyncing}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      padding: '12px 24px',
+                      fontSize: '16px',
+                      backgroundColor: '#0866FF',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '8px',
+                      cursor: isSyncing ? 'not-allowed' : 'pointer',
+                      opacity: isSyncing ? 0.6 : 1
+                    }}
+                  >
+                    <RefreshCw size={18} className={isSyncing ? styles.spinning : ''} />
+                    {isSyncing ? 'Guardando y sincronizando...' : 'Guardar y Sincronizar'}
+                  </Button>
+                </div>
+
+                <div className={styles.infoBox} style={{ marginTop: '8px' }}>
+                  <Info size={18} />
+                  <div>
+                    <strong>¿Qué hace este botón?</strong>
+                    <br />
+                    1. Guarda las credenciales en HighLevel Custom Values
+                    <br />
+                    2. Guarda las credenciales en Ristak (encriptadas)
+                    <br />
+                    3. Valida que las credenciales funcionen correctamente
+                    <br />
+                    4. Inicia automáticamente la sincronización de tus anuncios de Meta
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
