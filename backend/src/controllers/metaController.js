@@ -130,6 +130,35 @@ export const getConfig = async (req, res) => {
 };
 
 /**
+ * Revela el access token completo (desencriptado) para uso interno del frontend
+ * Solo se usa cuando el frontend necesita hacer llamadas a Meta API
+ */
+export const revealMetaToken = async (req, res) => {
+  try {
+    const metaConfig = await getMetaConfig();
+
+    if (!metaConfig) {
+      return res.status(404).json({
+        success: false,
+        error: 'No hay configuración de Meta guardada'
+      });
+    }
+
+    res.json({
+      success: true,
+      accessToken: metaConfig.access_token // Ya viene desencriptado de getMetaConfig()
+    });
+
+  } catch (error) {
+    logger.error(`Error en revealMetaToken: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      error: 'Error al revelar el token de Meta'
+    });
+  }
+};
+
+/**
  * Sincroniza anuncios de Meta desde una fecha específica
  */
 export const syncAds = async (req, res) => {

@@ -68,18 +68,37 @@ export const MetaAdsIntegration: React.FC = () => {
 
       if (data.success && data.data) {
         setCredentials(data.data)
-        // Si ya hay un access token guardado Y NO está enmascarado, cargar cuentas y pixeles automáticamente
-        // Tokens enmascarados empiezan con "***" (ej: "***...abcdef12")
-        if (data.data.accessToken && !data.data.accessToken.startsWith('***')) {
-          await fetchAdAccounts(data.data.accessToken, data.data.adAccountId)
+
+        // Si hay access token guardado, cargar cuentas y pixeles
+        if (data.data.accessToken) {
+          let tokenToUse = data.data.accessToken
+
+          // Si está enmascarado, obtener el token real desde el backend
+          if (data.data.accessToken.startsWith('***')) {
+            try {
+              const revealResponse = await fetch('/api/meta/config/reveal/access_token')
+              const revealData = await revealResponse.json()
+
+              if (revealData.success && revealData.accessToken) {
+                tokenToUse = revealData.accessToken
+              }
+            } catch (error) {
+              console.error('Error revelando token:', error)
+              // Si falla, no hacer nada más (no cargar cuentas)
+              setIsLoading(false)
+              return
+            }
+          }
+
+          // Cargar cuentas de anuncios
+          await fetchAdAccounts(tokenToUse, data.data.adAccountId)
 
           // Si hay adAccountId, cargar pixeles también
           if (data.data.adAccountId) {
-            // Agregar "act_" si no lo tiene para llamar a Meta API
             const accountIdWithPrefix = data.data.adAccountId.startsWith('act_')
               ? data.data.adAccountId
               : `act_${data.data.adAccountId}`
-            await fetchPixels(accountIdWithPrefix, data.data.accessToken, data.data.pixelId)
+            await fetchPixels(accountIdWithPrefix, tokenToUse, data.data.pixelId)
           }
         }
       }

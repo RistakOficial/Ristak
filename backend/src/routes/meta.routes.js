@@ -2,6 +2,7 @@ import express from 'express'
 import {
   saveConfig,
   getConfig,
+  revealMetaToken,
   syncAds,
   getSyncProgressEndpoint,
   updateRecent,
@@ -26,6 +27,7 @@ const router = express.Router()
 // Configuración
 router.post('/config', saveConfig)
 router.get('/config', getConfig)
+router.get('/config/reveal/access_token', revealMetaToken)
 router.get('/verify-token', verifyToken)
 
 // Obtener datos de Meta para dropdowns
