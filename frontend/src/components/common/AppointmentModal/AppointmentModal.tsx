@@ -236,9 +236,6 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
           });
 
           if (!response.ok) {
-            console.warn('⚠️  No se pudieron obtener nombres de usuarios (falta scope users.readonly)');
-            console.warn('📋 Usando IDs como fallback');
-
             // Fallback: crear objetos usuario solo con IDs
             const fallbackUsers = teamMemberIds.map(userId => ({
               id: userId,
@@ -259,7 +256,6 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
 
           setUsers(fetchedUsers);
         } catch (error) {
-          console.error('❌ Error al obtener usuarios, usando IDs:', error);
           // Fallback en caso de error
           const fallbackUsers = teamMemberIds.map(userId => ({
             id: userId,
@@ -282,7 +278,6 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
         setUsers(data.users || []);
       }
     } catch (error) {
-      console.error('❌ Error al cargar usuarios:', error);
       setUsers([]);
     } finally {
       setLoadingUsers(false);
@@ -312,7 +307,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
         });
       }
     } catch (error) {
-      console.error('[loadContactById] Error:', error);
+      // Error loading contact
     }
   };
 
@@ -326,7 +321,6 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
 
     // SIEMPRE debe tener un nombre válido
     if (!contactName) {
-      console.error('Contacto sin nombre válido:', contact);
       return;
     }
 
@@ -499,7 +493,6 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
             });
           }
         } catch (error) {
-          console.error('Error al cargar detalles de la cita:', error);
           // Fallback: usar datos básicos
           setFormData({
             title: event.title || '',

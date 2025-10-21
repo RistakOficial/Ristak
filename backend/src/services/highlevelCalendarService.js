@@ -258,55 +258,20 @@ export async function getFreeSlots(calendarId, startDate, endDate, accessToken, 
  */
 export async function createAppointment(appointmentData, locationId, accessToken) {
   try {
-    logger.info('========================================');
-    logger.info('[HighLevel Calendar] 🟢 INICIO - createAppointment');
-    logger.info(`[HighLevel Calendar] 📅 calendarId: ${appointmentData.calendarId}`);
-    logger.info(`[HighLevel Calendar] 📍 locationId: ${locationId}`);
-    logger.info(`[HighLevel Calendar] 🔑 accessToken length: ${accessToken?.length || 0} chars`);
-    logger.info(`[HighLevel Calendar] 📦 appointmentData completo: ${JSON.stringify(appointmentData, null, 2)}`);
-
-    // Validaciones previas para detectar problemas antes de enviar a GHL
+    // Validaciones previas
     const startDate = new Date(appointmentData.startTime);
     const endDate = new Date(appointmentData.endTime);
-    const now = new Date();
 
-    // Log de diagnóstico
-    logger.info(`[HighLevel Calendar] 🕒 Validando fechas...`);
-    logger.info(`[HighLevel Calendar]    ⏰ startTime: ${appointmentData.startTime} → Date: ${startDate.toISOString()}`);
-    logger.info(`[HighLevel Calendar]    ⏰ endTime: ${appointmentData.endTime} → Date: ${endDate.toISOString()}`);
-
-    // Validar que las fechas sean válidas
     if (isNaN(startDate.getTime())) {
-      logger.error(`[HighLevel Calendar] ❌ Fecha de inicio INVÁLIDA: ${appointmentData.startTime}`);
       throw new Error(`Fecha de inicio inválida: ${appointmentData.startTime}`);
     }
     if (isNaN(endDate.getTime())) {
-      logger.error(`[HighLevel Calendar] ❌ Fecha de fin INVÁLIDA: ${appointmentData.endTime}`);
       throw new Error(`Fecha de fin inválida: ${appointmentData.endTime}`);
     }
 
-    logger.info(`[HighLevel Calendar] ✅ Fechas válidas parseadas correctamente`);
-
-    // Validar que endTime sea después de startTime
     if (endDate <= startDate) {
-      logger.error(`[HighLevel Calendar] ❌ ERROR: endTime debe ser DESPUÉS de startTime`);
-      logger.error(`[HighLevel Calendar]    startTime: ${startDate.toISOString()}`);
-      logger.error(`[HighLevel Calendar]    endTime: ${endDate.toISOString()}`);
-      throw new Error(`La fecha de fin (${appointmentData.endTime}) debe ser posterior a la fecha de inicio (${appointmentData.startTime})`);
+      throw new Error(`La fecha de fin debe ser posterior a la fecha de inicio`);
     }
-
-    logger.info(`[HighLevel Calendar] ✅ Validación de orden de fechas: OK`);
-
-    // Advertencia si la cita es en el pasado
-    if (startDate < now) {
-      logger.warn(`[HighLevel Calendar] ⚠️ Advertencia: Intentando agendar cita en el pasado`);
-      logger.warn(`[HighLevel Calendar]    Ahora: ${now.toISOString()}`);
-      logger.warn(`[HighLevel Calendar]    Cita: ${startDate.toISOString()}`);
-    }
-
-    // Calcular duración en minutos
-    const durationMinutes = (endDate - startDate) / (1000 * 60);
-    logger.info(`[HighLevel Calendar] ⏱️  Duración de la cita: ${durationMinutes} minutos`);
 
     // Construir payload según documentación de HighLevel
     const payload = {
@@ -341,18 +306,8 @@ export async function createAppointment(appointmentData, locationId, accessToken
       payload.description = appointmentData.notes; // HighLevel usa 'description' no 'notes'
     }
 
-    // Log del payload completo para debugging
-    logger.info(`[HighLevel Calendar] 📤 Payload FINAL a enviar a HighLevel:`);
-    logger.info(JSON.stringify(payload, null, 2));
-
-    const url = `${GHL_API_BASE}/calendars/events/appointments`;
-    logger.info(`[HighLevel Calendar] 🌐 URL del request: ${url}`);
-    logger.info(`[HighLevel Calendar] 🔑 Token truncado: ${accessToken?.substring(0, 10)}...${accessToken?.substring(accessToken.length - 10)}`);
-
-    logger.info(`[HighLevel Calendar] 🚀 Enviando request a HighLevel API...`);
-
     const response = await fetchWithTimeout(
-      url,
+      `${GHL_API_BASE}/calendars/events/appointments`,
       {
         method: 'POST',
         headers: {
@@ -365,38 +320,18 @@ export async function createAppointment(appointmentData, locationId, accessToken
       }
     );
 
-    logger.info(`[HighLevel Calendar] 📨 Response recibido - Status: ${response.status} ${response.statusText}`);
-
     if (!response.ok) {
       const errorText = await response.text();
-      logger.error('========================================');
-      logger.error(`[HighLevel Calendar] ❌ ERROR DE HIGHLEVEL API`);
-      logger.error(`[HighLevel Calendar] 🔴 Status: ${response.status} ${response.statusText}`);
-      logger.error(`[HighLevel Calendar] 💬 Response body:`);
-      logger.error(errorText);
-      logger.error(`[HighLevel Calendar] 📦 Payload que causó el error:`);
-      logger.error(JSON.stringify(payload, null, 2));
-      logger.error('========================================');
+      logger.error(`[HighLevel Calendar] Error al crear cita: ${response.status} - ${errorText}`);
       throw new Error(`Error al crear cita: ${response.status} - ${errorText}`);
     }
 
     const data = await response.json();
-    logger.info(`[HighLevel Calendar] ✅ CITA CREADA EXITOSAMENTE`);
-    logger.info(`[HighLevel Calendar] 🆔 ID de la cita: ${data.id || 'NO ID EN RESPONSE'}`);
-    logger.info(`[HighLevel Calendar] 📦 Response completo:`);
-    logger.info(JSON.stringify(data, null, 2));
-    logger.info('[HighLevel Calendar] 🟢 FIN - createAppointment');
-    logger.info('========================================');
+    logger.info(`[HighLevel Calendar] Cita creada exitosamente: ${data.id}`);
 
     return data;
   } catch (error) {
-    logger.error('========================================');
-    logger.error(`[HighLevel Calendar] ❌ EXCEPCIÓN CAPTURADA`);
-    logger.error(`[HighLevel Calendar] 💥 Error type: ${error.constructor.name}`);
-    logger.error(`[HighLevel Calendar] 💥 Error message: ${error.message}`);
-    logger.error(`[HighLevel Calendar] 📚 Stack trace:`);
-    logger.error(error.stack);
-    logger.error('========================================');
+    logger.error(`[HighLevel Calendar] Error en createAppointment: ${error.message}`);
     throw error;
   }
 }

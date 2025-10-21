@@ -219,15 +219,6 @@ export const Campaigns: React.FC = () => {
       setCampaigns(sortedData)
       setCampaignSummary(summaryReport?.summary ?? null)
 
-      // DEBUG: Ver datos de citas en campañas
-      console.log('[CITAS DEBUG] Campaigns data:', sortedData.map(c => ({
-        name: c.name,
-        appointments: c.appointments,
-        leads: c.leads,
-        sales: c.sales
-      })))
-      console.log('[CITAS DEBUG] Summary:', summaryReport?.summary)
-
       // Calcular rango en días
       const rangeInDays = Math.ceil((dateRange.end.getTime() - dateRange.start.getTime()) / (1000 * 60 * 60 * 24))
 
