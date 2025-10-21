@@ -342,6 +342,12 @@ async function fetchMetaAdsInsights(accountId, accessToken, sinceDate, untilDate
  */
 async function saveAdsToDatabase(ads, accountId) {
   try {
+    // IMPORTANTE: accountId se guarda SIN el prefijo "act_" para consistencia
+    // - Meta Config guarda: "123456789" (sin "act_")
+    // - Meta Ads guarda: "123456789" (sin "act_")
+    // - Esto evita duplicados al cambiar entre formatos
+    // - fetchMetaAdsInsights ya hace .replace('act_', '') antes de llamar aquí
+
     for (const ad of ads) {
       // Calcular CPM y CTR
       const cpm = ad.reach > 0 ? (ad.spend / ad.reach) * 1000 : 0
