@@ -3,13 +3,31 @@ import { Card, Button } from '@/components/common'
 import { CheckCircle, ExternalLink, ChevronDown, ChevronUp, AlertCircle, Info, RefreshCw, X } from 'lucide-react'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useTheme } from '@/contexts/ThemeContext'
+import { campaignsService } from '@/services/campaignsService'
 import styles from './HighLevelIntegration.module.css'
 
 interface MetaCredentials {
   adAccountId: string
   accessToken: string
+  pixelId: string
   appId: string
   appSecret: string
+}
+
+interface AdAccount {
+  id: string
+  account_id: string
+  name: string
+  currency: string
+  timezone_name: string
+  account_status: number
+}
+
+interface Pixel {
+  id: string
+  name: string
+  creation_time: string
+  last_fired_time: string
 }
 
 export const MetaAdsIntegration: React.FC = () => {

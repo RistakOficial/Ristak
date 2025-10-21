@@ -301,7 +301,7 @@ export async function createAppointment(appointmentData, locationId, accessToken
     } else {
       // Obtener el calendario para extraer el primer team member
       try {
-        const calendar = await getCalendar(appointmentData.calendarId, locationId, accessToken);
+        const calendar = await getCalendar(appointmentData.calendarId, accessToken);
         if (calendar && calendar.teamMembers && calendar.teamMembers.length > 0) {
           // Usar el primer team member disponible
           payload.assignedUserId = calendar.teamMembers[0].userId;
