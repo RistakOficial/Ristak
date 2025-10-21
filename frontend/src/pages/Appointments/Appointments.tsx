@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
+import { useNavigate } from 'react-router-dom';
 import { KpiCard, Card, Button, PageContainer, AppointmentModal, TabList } from '@/components/common';
-import { ChevronLeft, ChevronRight, Plus, ChevronDown, Check, Calendar as CalendarIcon, Search, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Plus, ChevronDown, Check, Calendar as CalendarIcon, Search, X, Settings } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useNotification } from '@/contexts/NotificationContext';
 import { useTheme } from '@/contexts/ThemeContext';
@@ -108,6 +109,7 @@ export const Appointments: React.FC = () => {
   const { showToast } = useNotification();
   const { theme } = useTheme();
   const { formatLocalDateShort } = useTimezone();
+  const navigate = useNavigate();
 
   // Estado del calendario
   const [viewMode, setViewMode] = useState<ViewMode>('month');
@@ -666,6 +668,16 @@ export const Appointments: React.FC = () => {
         <h1 className={styles.title}>Calendarios</h1>
 
         <div className={styles.headerControls}>
+          {/* Botón de Configuración */}
+          <button
+            className={styles.settingsButton}
+            onClick={() => navigate('/settings/calendars')}
+            title="Configurar calendarios"
+          >
+            <Settings size={18} />
+            <span>Configuración</span>
+          </button>
+
           {/* Selector de calendarios */}
           <div className={styles.calendarSelector}>
             <button

@@ -20,6 +20,42 @@
   justify-content: flex-start;
 }
 
+/* Botón de Configuración */
+.settingsButton {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.625rem 1rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  background-color: var(--color-white);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.settingsButton:hover {
+  background-color: var(--color-gray-50);
+  color: var(--color-text-primary);
+  border-color: var(--color-primary-300);
+}
+
+.settingsButton svg {
+  flex-shrink: 0;
+}
+
+:global(body.dark) .settingsButton {
+  background-color: rgba(24, 24, 27, 0.7);
+  border-color: rgba(148, 163, 184, 0.18);
+}
+
+:global(body.dark) .settingsButton:hover {
+  background-color: rgba(30, 30, 32, 0.85);
+  border-color: var(--color-primary-300);
+}
+
 /* Buscador de citas */
 .searchContainer {
   position: relative;

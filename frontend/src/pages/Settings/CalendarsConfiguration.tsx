@@ -454,7 +454,7 @@ export const CalendarsConfiguration: React.FC = () => {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
               {/* Duración de cita */}
               <div>
-                <label className={styles.label}>Duración de cita</label>
+                <label className={styles.label}>¿Cuánto dura cada cita?</label>
                 <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '8px' }}>
                   <input
                     type="number"
@@ -467,16 +467,18 @@ export const CalendarsConfiguration: React.FC = () => {
                     className={styles.input}
                     value={selectedCalendar.slotDurationUnit}
                     onChange={(e) => setSelectedCalendar({...selectedCalendar, slotDurationUnit: e.target.value})}
+                    style={{ paddingRight: '32px' }}
                   >
                     <option value="mins">Minutos</option>
                     <option value="hours">Horas</option>
                   </select>
                 </div>
+                <p className={styles.hint}>Ej: 30 minutos, 1 hora, etc.</p>
               </div>
 
               {/* Intervalo entre slots */}
               <div>
-                <label className={styles.label}>Intervalo entre slots</label>
+                <label className={styles.label}>¿Cada cuánto mostrar horarios disponibles?</label>
                 <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '8px' }}>
                   <input
                     type="number"
@@ -489,16 +491,18 @@ export const CalendarsConfiguration: React.FC = () => {
                     className={styles.input}
                     value={selectedCalendar.slotIntervalUnit}
                     onChange={(e) => setSelectedCalendar({...selectedCalendar, slotIntervalUnit: e.target.value})}
+                    style={{ paddingRight: '32px' }}
                   >
                     <option value="mins">Minutos</option>
                     <option value="hours">Horas</option>
                   </select>
                 </div>
+                <p className={styles.hint}>Si pones 30 min, los horarios serán: 9:00, 9:30, 10:00...</p>
               </div>
 
               {/* Pre-Buffer */}
               <div>
-                <label className={styles.label}>Pre-Buffer (antes)</label>
+                <label className={styles.label}>Tiempo libre antes de cada cita</label>
                 <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '8px' }}>
                   <input
                     type="number"
@@ -511,16 +515,18 @@ export const CalendarsConfiguration: React.FC = () => {
                     className={styles.input}
                     value={selectedCalendar.preBufferUnit || 'mins'}
                     onChange={(e) => setSelectedCalendar({...selectedCalendar, preBufferUnit: e.target.value})}
+                    style={{ paddingRight: '32px' }}
                   >
                     <option value="mins">Minutos</option>
                     <option value="hours">Horas</option>
                   </select>
                 </div>
+                <p className={styles.hint}>Para prepararte antes de atender (revisar expediente, tomar café, etc.)</p>
               </div>
 
               {/* Slot Buffer */}
               <div>
-                <label className={styles.label}>Slot Buffer (después)</label>
+                <label className={styles.label}>Tiempo libre después de cada cita</label>
                 <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '8px' }}>
                   <input
                     type="number"
@@ -533,16 +539,18 @@ export const CalendarsConfiguration: React.FC = () => {
                     className={styles.input}
                     value={selectedCalendar.slotBufferUnit || 'mins'}
                     onChange={(e) => setSelectedCalendar({...selectedCalendar, slotBufferUnit: e.target.value})}
+                    style={{ paddingRight: '32px' }}
                   >
                     <option value="mins">Minutos</option>
                     <option value="hours">Horas</option>
                   </select>
                 </div>
+                <p className={styles.hint}>Para cerrar la cita sin apuros (hacer notas, responder dudas, etc.)</p>
               </div>
 
               {/* Citas por slot */}
               <div>
-                <label className={styles.label}>Citas por slot</label>
+                <label className={styles.label}>¿Cuántas personas por horario?</label>
                 <input
                   type="number"
                   className={styles.input}
@@ -550,11 +558,12 @@ export const CalendarsConfiguration: React.FC = () => {
                   onChange={(e) => setSelectedCalendar({...selectedCalendar, appoinmentPerSlot: parseInt(e.target.value) || 1})}
                   min="1"
                 />
+                <p className={styles.hint}>Para citas grupales (ej: 5 personas a las 10:00am)</p>
               </div>
 
               {/* Citas por día */}
               <div>
-                <label className={styles.label}>Citas por día (0 = sin límite)</label>
+                <label className={styles.label}>Límite de citas por día</label>
                 <input
                   type="number"
                   className={styles.input}
@@ -562,6 +571,7 @@ export const CalendarsConfiguration: React.FC = () => {
                   onChange={(e) => setSelectedCalendar({...selectedCalendar, appoinmentPerDay: parseInt(e.target.value) || 0})}
                   min="0"
                 />
+                <p className={styles.hint}>0 = sin límite. Ej: 10 citas máximo por día</p>
               </div>
             </div>
 
