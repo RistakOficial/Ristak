@@ -129,8 +129,10 @@ export const MetaAdsIntegration: React.FC = () => {
   }
 
   const handleSelectAdAccount = (account: AdAccount) => {
-    setCredentials(prev => ({ ...prev, adAccountId: account.id }))
-    // Auto-cargar pixeles al seleccionar cuenta
+    // Guardar sin el prefijo "act_" (para GHL custom values)
+    const accountIdWithoutPrefix = account.id.replace(/^act_/, '')
+    setCredentials(prev => ({ ...prev, adAccountId: accountIdWithoutPrefix }))
+    // Auto-cargar pixeles al seleccionar cuenta (Meta API necesita el "act_")
     if (credentials.accessToken) {
       fetchPixels(account.id, credentials.accessToken)
     }
