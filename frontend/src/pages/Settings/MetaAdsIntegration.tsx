@@ -66,8 +66,9 @@ export const MetaAdsIntegration: React.FC = () => {
 
       if (data.success && data.data) {
         setCredentials(data.data)
-        // Si ya hay un access token guardado, cargar cuentas y pixeles automáticamente
-        if (data.data.accessToken) {
+        // Si ya hay un access token guardado Y NO está enmascarado, cargar cuentas y pixeles automáticamente
+        // Tokens enmascarados empiezan con "***" (ej: "***...abcdef12")
+        if (data.data.accessToken && !data.data.accessToken.startsWith('***')) {
           await fetchAdAccounts(data.data.accessToken, data.data.adAccountId)
 
           // Si hay adAccountId, cargar pixeles también

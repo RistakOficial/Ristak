@@ -1047,21 +1047,24 @@ export async function fetchAndSaveMetaConfig(locationId, apiToken) {
     }
 
     // Buscar los custom values de Facebook (con los nombres reales de HighLevel)
-    // System User - solo necesita Access Token + Ad Account ID + Pixel ID
+    // System User - solo necesita Access Token + Ad Account ID + Pixel ID + Pixel API Token
     const fbAdAccountId = customValues.find(cv => cv.name === 'Facebook - Ad Account ID')?.value
     const fbAccessToken = customValues.find(cv => cv.name === 'Facebook - App Access Token')?.value
     // Soportar ambos nombres para pixel (nuevo: "Facebook - Pixel ID", legacy: "pixel_id")
     const fbPixelId = customValues.find(cv => cv.name === 'Facebook - Pixel ID')?.value ||
                       customValues.find(cv => cv.name === 'pixel_id')?.value
+    const fbPixelApiToken = customValues.find(cv => cv.name === 'Facebook - Pixel API Token')?.value
 
     // Debug: Ver qué valores se encontraron
-    logger.info(`Valores encontrados - AdAccountId: ${fbAdAccountId ? 'SÍ' : 'NO'}, AccessToken: ${fbAccessToken ? 'SÍ' : 'NO'}, PixelId: ${fbPixelId ? 'SÍ' : 'NO'}`)
+    logger.info(`Valores encontrados - AdAccountId: ${fbAdAccountId ? 'SÍ' : 'NO'}, AccessToken: ${fbAccessToken ? 'SÍ' : 'NO'}, PixelId: ${fbPixelId ? 'SÍ' : 'NO'}, PixelApiToken: ${fbPixelApiToken ? 'SÍ' : 'NO'}`)
 
-    // Devolver los valores encontrados (sin guardar todavía)
+    // Devolver los valores encontrados (enmascarar tokens para seguridad)
+    // Solo se muestran los últimos 8 caracteres, el resto se oculta con ***
     return {
       adAccountId: fbAdAccountId || '',
-      accessToken: fbAccessToken || '',
-      pixelId: fbPixelId || ''
+      accessToken: fbAccessToken ? '***' + fbAccessToken.slice(-8) : '',
+      pixelId: fbPixelId || '',
+      pixelApiToken: fbPixelApiToken ? '***' + fbPixelApiToken.slice(-8) : ''
     }
   } catch (error) {
     logger.error('Error obteniendo config de Meta desde HighLevel:', error.message)
