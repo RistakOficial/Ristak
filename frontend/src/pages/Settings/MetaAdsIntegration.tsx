@@ -164,13 +164,10 @@ export const MetaAdsIntegration: React.FC = () => {
 
     setIsLoadingPixels(true)
     try {
-      console.log('🔵 Fetching pixels for account:', adAccountId)
       const result = await campaignsService.fetchPixels(adAccountId, token)
-      console.log('🔵 Pixels result:', result)
 
       if (result.success && result.pixels.length > 0) {
         setPixels(result.pixels)
-        console.log('🟢 Pixels cargados en estado:', result.pixels.length)
 
         // Si hay un pixel ID guardado, buscar coincidencia
         if (savedPixelId) {
@@ -186,7 +183,6 @@ export const MetaAdsIntegration: React.FC = () => {
 
         showToast('success', 'Pixeles cargados', `Se encontraron ${result.pixels.length} pixeles`)
       } else {
-        console.log('🟡 No se encontraron pixeles')
         showToast('info', 'Sin pixeles', 'No se encontraron pixeles para esta cuenta')
         setPixels([])
       }
@@ -403,14 +399,6 @@ export const MetaAdsIntegration: React.FC = () => {
                     <label className={styles.formLabel}>
                       Pixel de Meta <span className={styles.formHint}>(opcional)</span>
                     </label>
-                    {(() => {
-                      console.log('🔵 Renderizando Pixel:', {
-                        hasPixelId: !!credentials.pixelId,
-                        isLoadingPixels,
-                        pixelsLength: pixels.length
-                      })
-                      return null
-                    })()}
                     {credentials.pixelId ? (
                       <div className={styles.filterChip}>
                         <span className={styles.chipText}>
