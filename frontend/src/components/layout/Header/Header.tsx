@@ -4,6 +4,7 @@ import { cn } from '@/utils/cn'
 import { useTheme } from '@/contexts/ThemeContext'
 import { useAuth } from '@/contexts/AuthContext'
 import { Link } from 'react-router-dom'
+import { useScrollDirection } from '@/hooks/useScrollDirection'
 
 interface HeaderProps {
   onLogout: () => void
@@ -28,6 +29,17 @@ export const Header: React.FC<HeaderProps> = ({ onLogout }) => {
   const { user } = useAuth()
   const [showUserMenu, setShowUserMenu] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
+  const scrollDirection = useScrollDirection()
+  const [scrollY, setScrollY] = useState(0)
+
+  // Track scroll position
+  useEffect(() => {
+    const handleScroll = () => {
+      setScrollY(window.scrollY)
+    }
+    window.addEventListener('scroll', handleScroll, { passive: true })
+    return () => window.removeEventListener('scroll', handleScroll)
+  }, [])
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -47,9 +59,16 @@ export const Header: React.FC<HeaderProps> = ({ onLogout }) => {
 
   const initials = getInitials(user?.name, user?.email)
 
+  // Determinar si el header debe estar oculto
+  const shouldHide = scrollDirection === 'down' && scrollY > 50
+
   return (
     <header
-      className="glass border-b border-[rgba(148,163,184,0.12)] px-4 sm:px-6 flex items-center justify-between sticky top-0 z-[var(--z-index-header)]"
+      className={cn(
+        "glass border-b border-[rgba(148,163,184,0.12)] px-4 sm:px-6 flex items-center justify-between sticky top-0",
+        "transition-transform duration-300 ease-in-out",
+        shouldHide ? '-translate-y-full' : 'translate-y-0'
+      )}
       style={{ height: 'var(--header-height)', zIndex: 'var(--z-index-header)' }}
     >
       <div className="flex items-center gap-2 sm:gap-4 flex-1 max-w-xl ml-12 lg:ml-0">
