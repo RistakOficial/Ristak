@@ -36,6 +36,7 @@ export const WebTracking: React.FC = () => {
   const [currentPage, setCurrentPage] = useState(1)
   const [isExpanded, setIsExpanded] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
+  const [searchColumn, setSearchColumn] = useState<string>('all') // 'all' o key de columna específica
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>({})
   const ITEMS_PER_PAGE = 10
   const DEFAULT_COLUMN_WIDTH = 150 // Ancho uniforme inicial
@@ -219,7 +220,15 @@ export const WebTracking: React.FC = () => {
     if (!searchQuery.trim()) return recentSessions
 
     const query = searchQuery.toLowerCase()
+
     return recentSessions.filter((session: any) => {
+      // Si busca en columna específica
+      if (searchColumn !== 'all') {
+        const value = session[searchColumn]
+        return value ? String(value).toLowerCase().includes(query) : false
+      }
+
+      // Si busca en todas las columnas
       return (
         session.session_id?.toLowerCase().includes(query) ||
         session.visitor_id?.toLowerCase().includes(query) ||
@@ -239,7 +248,7 @@ export const WebTracking: React.FC = () => {
         session.geo_city?.toLowerCase().includes(query)
       )
     })
-  }, [recentSessions, searchQuery])
+  }, [recentSessions, searchQuery, searchColumn])
 
   // Calcular sesiones paginadas (solo para vista normal)
   const paginatedSessions = useMemo(() => {
@@ -263,6 +272,7 @@ export const WebTracking: React.FC = () => {
     if (!isExpanded) {
       // Al abrir, resetear búsqueda
       setSearchQuery('')
+      setSearchColumn('all')
     }
   }
 
@@ -335,7 +345,9 @@ export const WebTracking: React.FC = () => {
           minWidth: `${displayWidth}px`,
           maxWidth: `${displayWidth}px`,
           position: 'relative',
-          userSelect: 'none'
+          userSelect: 'none',
+          backgroundColor: 'var(--color-surface)', // Background fijo para header sticky
+          backgroundImage: 'linear-gradient(to bottom, var(--color-gray-50), var(--color-surface))' // Degradado sutil
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -1044,7 +1056,7 @@ export const WebTracking: React.FC = () => {
             </Button>
           </div>
 
-          {/* Buscador */}
+          {/* Buscador con filtros */}
           <div style={{
             padding: '16px 24px',
             display: 'flex',
@@ -1054,44 +1066,106 @@ export const WebTracking: React.FC = () => {
             backgroundColor: 'var(--color-surface)',
             gap: '16px'
           }}>
-            <div style={{ position: 'relative', flex: 1, maxWidth: '400px' }}>
-              <Search
-                size={18}
+            <div style={{ display: 'flex', gap: '12px', flex: 1, maxWidth: '700px' }}>
+              {/* Dropdown de columnas */}
+              <select
+                value={searchColumn}
+                onChange={(e) => setSearchColumn(e.target.value)}
                 style={{
-                  position: 'absolute',
-                  left: '12px',
-                  top: '50%',
-                  transform: 'translateY(-50%)',
-                  color: 'var(--color-text-secondary)'
-                }}
-              />
-              <input
-                type="text"
-                placeholder="Buscar en todas las columnas..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                style={{
-                  width: '100%',
-                  padding: '8px 12px 8px 40px',
+                  padding: '8px 12px',
                   border: '1px solid var(--color-border)',
                   borderRadius: '6px',
                   fontSize: '0.875rem',
                   backgroundColor: 'var(--color-background)',
                   color: 'var(--color-text)',
-                  outline: 'none'
+                  outline: 'none',
+                  cursor: 'pointer',
+                  minWidth: '180px'
                 }}
-              />
+              >
+                <option value="all">Todas las columnas</option>
+                <optgroup label="IDs y Timestamps">
+                  <option value="session_id">Session ID</option>
+                  <option value="visitor_id">Visitor ID</option>
+                  <option value="contact_id">Contact ID</option>
+                  <option value="full_name">Full Name</option>
+                  <option value="event_name">Event Name</option>
+                </optgroup>
+                <optgroup label="URLs">
+                  <option value="landing_url">Landing URL</option>
+                  <option value="referrer_url">Referrer URL</option>
+                </optgroup>
+                <optgroup label="UTMs">
+                  <option value="utm_source">UTM Source</option>
+                  <option value="utm_medium">UTM Medium</option>
+                  <option value="utm_campaign">UTM Campaign</option>
+                  <option value="utm_term">UTM Term</option>
+                  <option value="utm_content">UTM Content</option>
+                </optgroup>
+                <optgroup label="Click IDs">
+                  <option value="gclid">GCLID</option>
+                  <option value="fbclid">FBCLID</option>
+                  <option value="fbc">FBC</option>
+                  <option value="fbp">FBP</option>
+                </optgroup>
+                <optgroup label="Campaña">
+                  <option value="source_platform">Source Platform</option>
+                  <option value="campaign_name">Campaign Name</option>
+                  <option value="ad_name">Ad Name</option>
+                  <option value="channel">Channel</option>
+                </optgroup>
+                <optgroup label="Device & Browser">
+                  <option value="ip">IP</option>
+                  <option value="device_type">Device Type</option>
+                  <option value="os">OS</option>
+                  <option value="browser">Browser</option>
+                </optgroup>
+                <optgroup label="Geo">
+                  <option value="geo_country">Country</option>
+                  <option value="geo_city">City</option>
+                </optgroup>
+              </select>
+
+              {/* Input de búsqueda */}
+              <div style={{ position: 'relative', flex: 1 }}>
+                <Search
+                  size={18}
+                  style={{
+                    position: 'absolute',
+                    left: '12px',
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                    color: 'var(--color-text-secondary)'
+                  }}
+                />
+                <input
+                  type="text"
+                  placeholder={searchColumn === 'all' ? 'Buscar en todas las columnas...' : `Buscar en ${columns.find(c => c.key === searchColumn)?.label || searchColumn}...`}
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '8px 12px 8px 40px',
+                    border: '1px solid var(--color-border)',
+                    borderRadius: '6px',
+                    fontSize: '0.875rem',
+                    backgroundColor: 'var(--color-background)',
+                    color: 'var(--color-text)',
+                    outline: 'none'
+                  }}
+                />
+              </div>
             </div>
-            <span style={{ fontSize: '0.875rem', color: 'var(--color-text-secondary)' }}>
+            <span style={{ fontSize: '0.875rem', color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}>
               {filteredSessions.length} {filteredSessions.length === 1 ? 'sesión' : 'sesiones'} {searchQuery.trim() && `(filtradas de ${recentSessions.length})`}
             </span>
           </div>
 
-          {/* Tabla expandida con scroll */}
+          {/* Tabla expandida con scroll y padding */}
           <div style={{
             flex: 1,
             overflow: 'auto',
-            padding: '0'
+            padding: '0 40px 20px 40px' // Padding horizontal para no ocupar todo el ancho
           }}>
             <div style={{
               height: '100%',
@@ -1101,10 +1175,10 @@ export const WebTracking: React.FC = () => {
               <table style={{
                 borderCollapse: 'collapse',
                 fontSize: '0.875rem',
-                backgroundColor: 'var(--color-surface)'
+                backgroundColor: 'var(--color-surface)',
+                width: '100%'
               }}>
                 <thead style={{
-                  backgroundColor: 'var(--color-gray-50)',
                   position: 'sticky',
                   top: 0,
                   zIndex: 10
