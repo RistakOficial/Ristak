@@ -217,6 +217,8 @@ const Analytics: React.FC = () => {
         console.log('📊 DEBUG Analytics - tipo:', Array.isArray(currentSessions) ? 'Array' : typeof currentSessions)
         console.log('📊 DEBUG Analytics - length:', currentSessions?.length || 'N/A')
         console.log('📊 DEBUG Analytics - primer elemento:', currentSessions?.[0])
+        console.log('📊 DEBUG Analytics - contactsData:', contactsData)
+        console.log('📊 DEBUG Analytics - prevContactsData:', prevContactsData)
 
         if (currentSessions.length > 0) {
           // Calcular métricas principales
@@ -228,8 +230,8 @@ const Analytics: React.FC = () => {
           // Contar sesiones únicas (por session_id)
           const uniqueSessionIds = new Set(currentSessions.map((s: Session) => s.session_id)).size
 
-          // Registros = contactos con visitor_id creados en el período
-          const registros = contactsData.reduce((sum, item) => sum + item.count, 0)
+          // Registros = contactos con visitor_id creados en el período (con fallback a array vacío)
+          const registros = (contactsData || []).reduce((sum, item) => sum + item.count, 0)
 
           const conversionRate = uniqueVids > 0 ? ((registros / uniqueVids) * 100) : 0
 
@@ -253,7 +255,7 @@ const Analytics: React.FC = () => {
           const prevTotalPageViews = prevSessions.length
           const prevUniqueSessionIds = prevSessions.length > 0 ?
             new Set(prevSessions.map((s: Session) => s.session_id)).size : 0
-          const prevRegistros = prevContactsData.reduce((sum, item) => sum + item.count, 0)
+          const prevRegistros = (prevContactsData || []).reduce((sum, item) => sum + item.count, 0)
           const prevConversionRate = prevUniqueVids > 0 ? ((prevRegistros / prevUniqueVids) * 100) : 0
 
           // Usuarios recurrentes del período anterior
