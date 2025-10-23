@@ -1665,3 +1665,61 @@ export async function getVisitorsList(req, res) {
     res.status(500).json({ error: 'Internal server error' })
   }
 }
+
+/**
+ * Obtiene conteo de contactos con visitor_id por fecha de creación
+ * GET /api/tracking/contacts-by-date
+ * Query params: start (YYYY-MM-DD), end (YYYY-MM-DD)
+ */
+export async function getContactsByDate(req, res) {
+  try {
+    const { start, end } = req.query
+
+    if (!start || !end) {
+      return res.status(400).json({ error: 'Se requieren parámetros start y end' })
+    }
+
+    logger.info(`Obteniendo contactos por fecha: ${start} a ${end}`)
+
+    // Query para obtener contactos con visitor_id agrupados por fecha
+    const query = `
+      SELECT 
+        DATE(created_at) as date,
+        COUNT(*) as count
+      FROM contacts
+      WHERE 
+        visitor_id IS NOT NULL 
+        AND visitor_id != ''
+        AND DATE(created_at) >= DATE(?)
+        AND DATE(created_at) <= DATE(?)
+      GROUP BY DATE(created_at)
+      ORDER BY date ASC
+    `
+
+    const contactsByDate = await db.all(query, [start, end])
+
+    // Crear un mapa con los resultados
+    const dataMap = {}
+    contactsByDate.forEach(row => {
+      dataMap[row.date] = row.count
+    })
+
+    // Generar todas las fechas del rango (rellenar con 0 los días sin contactos)
+    const result = []
+    const startDate = new Date(start)
+    const endDate = new Date(end)
+
+    for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
+      const dateStr = d.toISOString().split('T')[0]
+      result.push({
+        date: dateStr,
+        count: dataMap[dateStr] || 0
+      })
+    }
+
+    res.json({ success: true, data: result })
+  } catch (error) {
+    logger.error('Error obteniendo contactos por fecha:', error)
+    res.status(500).json({ error: 'Internal server error' })
+  }
+}

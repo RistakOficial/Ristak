@@ -12,7 +12,8 @@ import {
   setVisitorSourcePreference,
   getVisitorsByAd,
   getVisitorsByPeriod,
-  getVisitorsList
+  getVisitorsList,
+  getContactsByDate
 } from '../controllers/trackingController.js'
 
 const router = express.Router()
@@ -51,5 +52,8 @@ router.get('/visitors-by-period', getVisitorsByPeriod)
 
 // Obtener lista detallada de visitantes (para modal)
 router.get('/visitors', getVisitorsList)
+
+// Obtener contactos con visitor_id por fecha (para gráfico de registros)
+router.get('/contacts-by-date', getContactsByDate)
 
 export default router

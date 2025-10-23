@@ -30,6 +30,7 @@ import paymentMethodsRoutes from './routes/paymentMethods.routes.js'
 import calendarsRoutes from './routes/calendars.routes.js'
 import trackingRoutes from './routes/tracking.routes.js'
 import configRoutes from './routes/config.routes.js'
+import costsRoutes from './routes/costs.routes.js'
 import maintenanceRoutes from './routes/maintenance.routes.js'
 import authRoutes from './routes/auth.routes.js'
 import hiddenContactsRoutes from './routes/hiddenContacts.routes.js'
@@ -72,6 +73,7 @@ app.use('/api/settings', settingsRoutes)
 app.use('/api/payment-methods', paymentMethodsRoutes)
 app.use('/api/calendars', calendarsRoutes)
 app.use('/api/config', configRoutes)
+app.use('/api', costsRoutes)
 app.use('/api/maintenance', maintenanceRoutes)
 app.use('/api/hidden-contacts', hiddenContactsRoutes)
 app.use('/webhook', webhooksRoutes)

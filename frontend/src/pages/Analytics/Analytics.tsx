@@ -14,7 +14,7 @@ import {
 import { Eye, Users, UserCheck, Target, Smartphone, Monitor, Tablet, Globe } from 'lucide-react'
 import { FaFacebook, FaGoogle, FaInstagram, FaTiktok, FaTwitter, FaLinkedin, FaMicrosoft, FaChrome, FaFirefox, FaSafari, FaEdge, FaOpera, FaApple, FaWindows, FaAndroid, FaLinux } from 'react-icons/fa'
 import { SiMacos, SiIos } from 'react-icons/si'
-import { getSessionsByDateRange } from '../../services/analyticsService'
+import { getSessionsByDateRange, getContactsByDate } from '../../services/analyticsService'
 import { TrackingSession } from '../../services/trackingService'
 import { formatDate, formatDateToISO, parseLocalDateString, formatUrlParameter, formatChartNumber } from '../../utils/format'
 import { normalizeTrafficSource } from '../../utils/trafficSourceNormalizer'

@@ -412,7 +412,11 @@ const MetricsGrid: React.FC<MetricsGridProps> = ({ metrics, loading, reportType,
             <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border-subtle)" />
             <XAxis dataKey="date" tick={{ fontSize: 11 }} stroke="var(--color-text-tertiary)" />
             <YAxis tick={{ fontSize: 11 }} stroke="var(--color-text-tertiary)" />
-            <Tooltip content={<CustomTooltip formatter={formatNumber} />} />
+            <Tooltip
+              content={<CustomTooltip formatter={formatNumber} />}
+              cursor={{ stroke: 'var(--color-border)', strokeWidth: 1 }}
+              wrapperStyle={{ zIndex: 1000 }}
+            />
             <Legend wrapperStyle={{ fontSize: '12px' }} />
             <Line type="monotone" dataKey="clicks" stroke="#3b82f6" name="Clicks" strokeWidth={2} dot={{ r: 3 }} />
             {showVisitors && (
@@ -440,7 +444,11 @@ const MetricsGrid: React.FC<MetricsGridProps> = ({ metrics, loading, reportType,
             <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border-subtle)" />
             <XAxis dataKey="date" tick={{ fontSize: 11 }} stroke="var(--color-text-tertiary)" />
             <YAxis tick={{ fontSize: 11 }} stroke="var(--color-text-tertiary)" />
-            <Tooltip content={<CustomTooltip formatter={formatNumber} />} />
+            <Tooltip
+              content={<CustomTooltip formatter={formatNumber} />}
+              cursor={{ stroke: 'var(--color-border)', strokeWidth: 1 }}
+              wrapperStyle={{ zIndex: 1000 }}
+            />
             <Legend wrapperStyle={{ fontSize: '12px' }} />
             <Line type="monotone" dataKey="leads" stroke="#10b981" name={labels.leads} strokeWidth={2} dot={{ r: 3 }} />
             <Line type="monotone" dataKey="appointments" stroke="#f59e0b" name="Citas" strokeWidth={2} dot={{ r: 3 }} />
@@ -465,7 +473,11 @@ const MetricsGrid: React.FC<MetricsGridProps> = ({ metrics, loading, reportType,
             <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border-subtle)" />
             <XAxis dataKey="date" tick={{ fontSize: 11 }} stroke="var(--color-text-tertiary)" />
             <YAxis tick={{ fontSize: 11 }} stroke="var(--color-text-tertiary)" />
-            <Tooltip content={<CustomTooltip formatter={formatNumber} />} />
+            <Tooltip
+              content={<CustomTooltip formatter={formatNumber} />}
+              cursor={{ fill: 'rgba(0, 0, 0, 0.05)' }}
+              wrapperStyle={{ zIndex: 1000 }}
+            />
             <Legend wrapperStyle={{ fontSize: '12px' }} />
             <Bar dataKey="new_customers" fill="#06b6d4" name="Clientes Nuevos" radius={[4, 4, 0, 0]} />
           </BarChart>
@@ -488,7 +500,11 @@ const MetricsGrid: React.FC<MetricsGridProps> = ({ metrics, loading, reportType,
             <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border-subtle)" />
             <XAxis dataKey="date" tick={{ fontSize: 11 }} stroke="var(--color-text-tertiary)" />
             <YAxis tick={{ fontSize: 11 }} stroke="var(--color-text-tertiary)" />
-            <Tooltip content={<CustomTooltip formatter={formatCurrency} />} />
+            <Tooltip
+              content={<CustomTooltip formatter={formatCurrency} />}
+              cursor={{ stroke: 'var(--color-border)', strokeWidth: 1 }}
+              wrapperStyle={{ zIndex: 1000 }}
+            />
             <Legend wrapperStyle={{ fontSize: '12px' }} />
             <Area type="monotone" dataKey="revenue" stroke="#10b981" fill="#10b981" fillOpacity={0.3} name="Ingresos" />
             <Area type="monotone" dataKey="spend" stroke="#ef4444" fill="#ef4444" fillOpacity={0.3} name="Gastos" />

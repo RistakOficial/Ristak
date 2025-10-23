@@ -698,6 +698,24 @@ async function initTables() {
       }
     }
 
+    // Tabla de costos (impuestos, comisiones, gastos fijos, etc.)
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS costs (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        type TEXT NOT NULL,
+        calculation_type TEXT NOT NULL,
+        value REAL NOT NULL,
+        applies_to TEXT,
+        is_active INTEGER DEFAULT 1,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+
+    await db.run('CREATE INDEX IF NOT EXISTS idx_costs_type ON costs(type)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_costs_active ON costs(is_active)')
+
     logger.success('Todas las tablas inicializadas correctamente')
   } catch (error) {
     logger.error('Error inicializando tablas:', error)

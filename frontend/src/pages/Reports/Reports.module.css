@@ -290,6 +290,7 @@
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr));
   gap: var(--spacing-lg);
   width: 100%;
+  overflow: visible;
 }
 
 .metricsCategoryCard {
@@ -300,6 +301,8 @@
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   padding: var(--spacing-lg);
+  overflow: visible;
+  position: relative;
 }
 
 .metricsCategoryHeader {
@@ -411,6 +414,14 @@
   margin-top: var(--spacing-md);
   padding-top: var(--spacing-md);
   border-top: 1px solid var(--color-border-subtle);
+  overflow: visible;
+  position: relative;
+}
+
+/* Asegurar que el tooltip sea visible */
+:global(.recharts-tooltip-wrapper) {
+  z-index: 1000 !important;
+  pointer-events: none !important;
 }
 
 .metricsEmpty {
