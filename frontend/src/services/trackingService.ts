@@ -5,7 +5,7 @@ export interface TrackingSession {
   visitor_id: string
   contact_id: string | null
   contact_created_at?: string | null
-  landing_url: string
+  page_url: string
   referrer_url: string
   utm_source: string | null
   utm_medium: string | null
@@ -21,7 +21,6 @@ export interface TrackingSession {
   events_count: number
   is_bounce: number
   started_at: string
-  last_event_at: string
   // Campos de plataforma
   source_platform?: string | null
   site_source_name?: string | null

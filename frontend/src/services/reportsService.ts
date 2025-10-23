@@ -113,7 +113,7 @@ export interface ContactAppointmentDetail {
 
 export interface ContactFirstSessionDetail {
   started_at: string
-  landing_url?: string
+  page_url?: string
   referrer_url?: string
   utm_source?: string
   utm_medium?: string

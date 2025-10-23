@@ -538,7 +538,7 @@ export const getContactById = async (req, res) => {
       nextAppointmentDate,
       firstSession: firstSession ? {
         started_at: firstSession.started_at,
-        landing_url: firstSession.landing_url,
+        page_url: firstSession.page_url,
         landing_page: firstSession.landing_page,
         referrer_url: firstSession.referrer_url,
         utm_source: firstSession.utm_source,
@@ -959,7 +959,7 @@ export const getContactJourney = async (req, res) => {
         type: 'page_visit',
         date: session.started_at,
         data: {
-          landing_url: session.landing_url,
+          page_url: session.page_url,
           landing_page: session.landing_page,
           referrer_url: session.referrer_url,
           utm_source: session.utm_source,

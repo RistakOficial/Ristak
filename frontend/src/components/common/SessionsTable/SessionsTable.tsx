@@ -64,7 +64,7 @@ export const SessionsTable: React.FC<SessionsTableProps> = ({ className }) => {
         session.utm_source?.toLowerCase().includes(query) ||
         session.utm_medium?.toLowerCase().includes(query) ||
         session.utm_campaign?.toLowerCase().includes(query) ||
-        session.landing_url?.toLowerCase().includes(query) ||
+        session.page_url?.toLowerCase().includes(query) ||
         session.referrer_url?.toLowerCase().includes(query) ||
         session.ip?.toLowerCase().includes(query) ||
         session.device_type?.toLowerCase().includes(query) ||
@@ -216,9 +216,7 @@ export const SessionsTable: React.FC<SessionsTableProps> = ({ className }) => {
     { key: 'full_name', label: 'Full Name' },
     { key: 'event_name', label: 'Event Name' },
     { key: 'started_at', label: 'Started At' },
-    { key: 'last_event_at', label: 'Last Event At' },
-    { key: 'created_at', label: 'Created At' },
-    { key: 'landing_url', label: 'Landing URL' },
+    { key: 'page_url', label: 'Page URL' },
     { key: 'referrer_url', label: 'Referrer URL' },
     { key: 'utm_source', label: 'UTM Source' },
     { key: 'utm_medium', label: 'UTM Medium' },
@@ -364,9 +362,9 @@ export const SessionsTable: React.FC<SessionsTableProps> = ({ className }) => {
                         </td>
                         <td style={cellStyle} title={session.full_name}>{session.full_name || '-'}</td>
                         <td style={cellStyle}>{formatLocalDateTime(session.started_at)}</td>
-                        <td style={cellStyle} title={session.landing_url}>
-                          <a href={session.landing_url} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--color-primary)' }}>
-                            {session.landing_url || '-'}
+                        <td style={cellStyle} title={session.page_url}>
+                          <a href={session.page_url} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--color-primary)' }}>
+                            {session.page_url || '-'}
                           </a>
                         </td>
                         <td style={cellStyle} title={session.utm_source}>{session.utm_source || '-'}</td>
@@ -463,7 +461,7 @@ export const SessionsTable: React.FC<SessionsTableProps> = ({ className }) => {
                   <option value="event_name">Event Name</option>
                 </optgroup>
                 <optgroup label="URLs">
-                  <option value="landing_url">Landing URL</option>
+                  <option value="page_url">Landing URL</option>
                   <option value="referrer_url">Referrer URL</option>
                 </optgroup>
                 <optgroup label="UTMs">
@@ -573,7 +571,7 @@ export const SessionsTable: React.FC<SessionsTableProps> = ({ className }) => {
                       if (!value) return '-'
 
                       // Formatear fechas
-                      if (key === 'started_at' || key === 'last_event_at' || key === 'created_at') {
+                      if (key === 'started_at') {
                         return formatLocalDateTime(value)
                       }
 
@@ -586,8 +584,8 @@ export const SessionsTable: React.FC<SessionsTableProps> = ({ className }) => {
                         )
                       }
 
-                      // Link para landing_url
-                      if (key === 'landing_url') {
+                      // Link para page_url
+                      if (key === 'page_url') {
                         return (
                           <a href={value} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--color-primary)', textDecoration: 'none' }}>
                             {value}

@@ -23,7 +23,7 @@ interface ContactAppointmentDetail {
 
 interface ContactFirstSession {
   started_at: string
-  landing_url?: string
+  page_url?: string
   landing_page?: string
   referrer_url?: string
   utm_source?: string

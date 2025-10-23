@@ -343,8 +343,8 @@ const Analytics: React.FC = () => {
           // Páginas
           const pageMap: { [key: string]: number } = {}
           currentSessions.forEach((session: Session) => {
-            if (session.landing_url) {
-              const urlPath = session.landing_url.split('?')[0]
+            if (session.page_url) {
+              const urlPath = session.page_url.split('?')[0]
               const pageName = urlPath.split('/').pop() || 'home'
               pageMap[pageName] = (pageMap[pageName] || 0) + 1
             }
@@ -601,9 +601,9 @@ const Analytics: React.FC = () => {
 
           for (const value of values) {
             switch (field) {
-              case 'landing_url':
-                if (session.landing_url) {
-                  const urlPath = session.landing_url.split('?')[0]
+              case 'page_url':
+                if (session.page_url) {
+                  const urlPath = session.page_url.split('?')[0]
                   const pageName = urlPath.split('/').pop() || 'home'
                   if (pageName === value) fieldMatch = true
                 }

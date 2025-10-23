@@ -1549,7 +1549,7 @@ export async function buildContactsList ({ startDate, endDate, type = 'interesad
       SELECT
         s1.contact_id,
         s1.started_at,
-        s1.landing_url,
+        s1.page_url,
         s1.referrer_url,
         s1.utm_source,
         s1.utm_medium,
@@ -1580,7 +1580,7 @@ export async function buildContactsList ({ startDate, endDate, type = 'interesad
     firstSessionMap = firstSessionRows.reduce((map, session) => {
       map.set(session.contact_id, {
         started_at: session.started_at,
-        landing_url: session.landing_url,
+        page_url: session.page_url,
         referrer_url: session.referrer_url,
         utm_source: session.utm_source,
         utm_medium: session.utm_medium,
