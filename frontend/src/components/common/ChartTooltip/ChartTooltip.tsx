@@ -89,15 +89,22 @@ export const ChartTooltip: React.FC<ChartTooltipProps> = ({
   const effectivePoint = renderPoint ?? lastValidPointRef.current
 
   // No mostrar tooltip si hay superposición activa que bloquearía la interacción
-  if (!active || !data || !effectivePoint || shouldHide) {
-    return null
-  }
+  const shouldRender = active && data && effectivePoint && !shouldHide
+
+  // IMPORTANTE: NO usar early return después de hooks para evitar error React #185
+  // Todos los hooks YA fueron llamados arriba, ahora calculamos el contenido
 
   type TooltipStyle = React.CSSProperties & { '--tooltip-gap'?: string }
 
   const clampedOffset = Number.isFinite(verticalOffset)
     ? Math.max(0, verticalOffset)
     : 12
+
+  // Renderizar condicionalmente SIN early return
+  if (!shouldRender || !effectivePoint) {
+    // Retornar null directamente - NO hay early return antes de este punto
+    return null
+  }
 
   const tooltipStyle: TooltipStyle = {
     position: 'fixed',
