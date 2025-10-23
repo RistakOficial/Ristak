@@ -3,8 +3,7 @@
   flex-direction: column;
   gap: 20px;
   padding: 24px;
-  max-height: calc(90vh - 200px);
-  overflow-y: auto;
+  /* Scroll removido - Modal.content maneja el scroll ahora */
 }
 
 .field {
@@ -440,8 +439,7 @@ body.dark .summaryBadge,
   flex-direction: column;
   gap: 20px;
   padding: 24px;
-  max-height: calc(90vh - 200px);
-  overflow-y: auto;
+  /* Scroll removido - Modal.content maneja el scroll ahora */
 }
 
 .paymentOptions {

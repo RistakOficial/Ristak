@@ -115,6 +115,14 @@ body.dark .modal {
   overflow-y: auto; /* Siempre permitir scroll */
 }
 
+/* Para modales custom: sin scroll en .content, el contenido interno maneja su propio scroll */
+.modal.custom .content {
+  overflow-y: visible;
+  overflow: visible;
+  max-height: none;
+  padding: 0; /* Los modales custom manejan su propio padding */
+}
+
 .message {
   font-size: 14px;
   color: var(--color-text-secondary);

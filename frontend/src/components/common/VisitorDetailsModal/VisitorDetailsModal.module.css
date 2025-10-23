@@ -4,7 +4,7 @@
   height: 85vh;
   max-height: 900px;
   min-height: 600px;
-  margin: -1.5rem;
+  /* Margin negativo removido - Modal.custom ya no tiene padding */
 }
 
 .header {
