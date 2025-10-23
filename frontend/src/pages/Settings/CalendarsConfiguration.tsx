@@ -40,19 +40,9 @@ export const CalendarsConfiguration: React.FC = () => {
 
   // Sincronizar estados temporales con los valores guardados
   useEffect(() => {
-    console.log('🔵 [CalendarsConfig] Sincronizando estados temporales...')
-    console.log('  - defaultCalendarId desde hook:', defaultCalendarId)
-    console.log('  - attributionCalendarIds desde hook:', attributionCalendarIds)
-    console.log('  - tempDefaultCalendar ANTES:', tempDefaultCalendar)
-    console.log('  - tempAttributionCalendars ANTES:', tempAttributionCalendars)
-
     setTempDefaultCalendar(defaultCalendarId)
     setTempAttributionCalendars(attributionCalendarIds)
     setHasChanges(false)
-
-    console.log('✅ [CalendarsConfig] Estados temporales actualizados')
-    console.log('  - tempDefaultCalendar DESPUÉS:', defaultCalendarId)
-    console.log('  - tempAttributionCalendars DESPUÉS:', attributionCalendarIds)
   }, [defaultCalendarId, attributionCalendarIds])
 
   const loadCalendars = async () => {
@@ -97,27 +87,15 @@ export const CalendarsConfiguration: React.FC = () => {
   }
 
   const handleSave = async () => {
-    console.log('🔵 [DEBUG] Intentando guardar configuración...')
-    console.log('🔵 [DEBUG] Calendario predeterminado:', tempDefaultCalendar)
-    console.log('🔵 [DEBUG] Calendarios de atribución:', tempAttributionCalendars)
-
     setSaving(true)
     try {
       // Guardar ambas configuraciones
-      console.log('🟡 [DEBUG] Guardando calendario predeterminado...')
       await setDefaultCalendarId(tempDefaultCalendar)
-      console.log('✅ [DEBUG] Calendario predeterminado guardado')
-
-      console.log('🟡 [DEBUG] Guardando calendarios de atribución...')
       await setAttributionCalendarIds(tempAttributionCalendars)
-      console.log('✅ [DEBUG] Calendarios de atribución guardados')
 
       showToast('success', 'Configuración de calendarios guardada exitosamente')
       setHasChanges(false)
-
-      console.log('🟢 [DEBUG] Todo guardado exitosamente')
     } catch (error: any) {
-      console.error('❌ [DEBUG] Error al guardar:', error)
       showToast('error', 'Error al guardar configuración', error.message)
     } finally {
       setSaving(false)
@@ -237,12 +215,6 @@ export const CalendarsConfiguration: React.FC = () => {
   }
 
   const allSelected = tempAttributionCalendars.length === calendars.length
-
-  // Log antes de renderizar para ver el valor del dropdown
-  console.log('🟣 [Render] Renderizando CalendarsConfiguration')
-  console.log('  - tempDefaultCalendar:', tempDefaultCalendar)
-  console.log('  - defaultCalendarId:', defaultCalendarId)
-  console.log('  - Calendarios disponibles:', calendars.length)
 
   return (
     <div className={styles.integrationContainer}>

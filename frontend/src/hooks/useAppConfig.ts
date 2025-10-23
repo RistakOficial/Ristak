@@ -55,52 +55,31 @@ export function useAppConfig<T = string>(
   useEffect(() => {
     mountedRef.current = true
 
-    if (!syncOnMount) {
-      console.log(`🔵 [useAppConfig] ${key}: syncOnMount=false, saltando sync`)
-      return
-    }
+    if (!syncOnMount) return
 
     const syncFromDB = async () => {
       try {
-        console.log(`🔵 [useAppConfig] ${key}: Sincronizando desde DB...`)
         const response = await fetch(`/api/config?keys=${key}`)
-
-        if (!response.ok) {
-          console.error(`❌ [useAppConfig] ${key}: Error HTTP ${response.status}`)
-          throw new Error('Failed to fetch config')
-        }
+        if (!response.ok) throw new Error('Failed to fetch config')
 
         const data = await response.json()
-        console.log(`🟡 [useAppConfig] ${key}: Respuesta de DB:`, data)
-
         const dbValue = data.config?.[key]
-        console.log(`🟡 [useAppConfig] ${key}: Valor en DB:`, dbValue === null ? 'null' : dbValue)
 
         if (dbValue !== undefined && dbValue !== null && mountedRef.current) {
           const parsed = typeof defaultValue === 'string' ? dbValue : JSON.parse(dbValue)
-          console.log(`🟡 [useAppConfig] ${key}: Valor parseado:`, parsed)
 
           // Solo actualizar si es diferente del cache
           setValue((current) => {
-            const currentStr = JSON.stringify(current)
-            const parsedStr = JSON.stringify(parsed)
-            console.log(`🟡 [useAppConfig] ${key}: Cache=${currentStr}, DB=${parsedStr}`)
-
-            if (currentStr !== parsedStr) {
-              console.log(`✅ [useAppConfig] ${key}: DB diferente del cache, actualizando...`)
+            if (JSON.stringify(current) !== JSON.stringify(parsed)) {
               // Sincronizar cache con DB
               localStorage.setItem(`${CONFIG_PREFIX}${key}`, JSON.stringify(parsed))
               return parsed
-            } else {
-              console.log(`✅ [useAppConfig] ${key}: DB igual al cache, no actualizar`)
             }
             return current
           })
-        } else {
-          console.log(`⚠️ [useAppConfig] ${key}: No hay valor en DB (usando cache/default)`)
         }
       } catch (error) {
-        console.warn(`❌ [useAppConfig] ${key}: No se pudo sincronizar desde DB, usando cache:`, error)
+        console.warn(`No se pudo sincronizar ${key} desde DB, usando cache:`, error)
       }
     }
 
@@ -126,49 +105,37 @@ export function useAppConfig<T = string>(
 
   // Función para actualizar el valor
   const updateValue = useCallback(async (newValue: T) => {
-    console.log(`🔵 [useAppConfig] Guardando ${key}:`, newValue)
     setSyncing(true)
 
     try {
       // 1. Guardar en DB (source of truth)
-      const payload = {
-        key,
-        value: typeof newValue === 'string' ? newValue : JSON.stringify(newValue)
-      }
-      console.log(`🟡 [useAppConfig] Payload para ${key}:`, payload)
-
       const response = await fetch('/api/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+        body: JSON.stringify({
+          key,
+          value: typeof newValue === 'string' ? newValue : JSON.stringify(newValue)
+        })
       })
 
       if (!response.ok) {
-        const errorText = await response.text()
-        console.error(`❌ [useAppConfig] Error HTTP ${response.status} para ${key}:`, errorText)
-        throw new Error(`Failed to save config: ${response.status} ${errorText}`)
+        throw new Error('Failed to save config')
       }
-
-      const result = await response.json()
-      console.log(`✅ [useAppConfig] Respuesta del servidor para ${key}:`, result)
 
       // 2. Actualizar cache local
       localStorage.setItem(`${CONFIG_PREFIX}${key}`, JSON.stringify(newValue))
-      console.log(`💾 [useAppConfig] Cache actualizado para ${key}`)
 
       // 3. Actualizar estado local
       if (mountedRef.current) {
         setValue(newValue)
-        console.log(`🔄 [useAppConfig] Estado local actualizado para ${key}`)
       }
 
       // 4. Notificar a otros componentes
       window.dispatchEvent(new CustomEvent(SYNC_EVENT, {
         detail: { key, value: newValue }
       }))
-      console.log(`📢 [useAppConfig] Evento de sync emitido para ${key}`)
     } catch (error) {
-      console.error(`❌ [useAppConfig] Error guardando configuración ${key}:`, error)
+      console.error(`Error guardando configuración ${key}:`, error)
       throw error
     } finally {
       if (mountedRef.current) {

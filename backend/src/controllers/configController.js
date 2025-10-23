@@ -8,24 +8,18 @@ import { logger } from '../utils/logger.js'
  */
 export async function getConfig(req, res) {
   try {
-    console.log('🔵 [DEBUG Backend] GET /api/config recibido')
-    console.log('🔵 [DEBUG Backend] Query params:', req.query)
-
     const { keys } = req.query
 
     // Si se especifican keys, obtener solo esas
     if (keys) {
       const keyArray = keys.split(',').map(k => k.trim())
-      console.log(`🟡 [DEBUG Backend] Buscando keys específicas:`, keyArray)
       const config = {}
 
       for (const key of keyArray) {
         const value = await getAppConfig(key)
-        console.log(`  - ${key} = ${value === null ? 'null' : value}`)
         config[key] = value
       }
 
-      console.log(`✅ [DEBUG Backend] Config obtenido:`, config)
       return res.json({
         success: true,
         config
@@ -33,23 +27,18 @@ export async function getConfig(req, res) {
     }
 
     // Si no se especifican keys, obtener TODA la configuración
-    console.log(`🟡 [DEBUG Backend] Obteniendo TODA la configuración`)
     const rows = await db.all('SELECT config_key, config_value FROM app_config')
-    console.log(`🟡 [DEBUG Backend] Filas en DB:`, rows.length)
 
     const config = {}
     rows.forEach(row => {
-      console.log(`  - ${row.config_key} = ${row.config_value}`)
       config[row.config_key] = row.config_value
     })
 
-    console.log(`✅ [DEBUG Backend] Config completo:`, config)
     res.json({
       success: true,
       config
     })
   } catch (error) {
-    console.error('❌ [DEBUG Backend] Error obteniendo configuración:', error)
     logger.error('Error obteniendo configuración:', error)
     res.status(500).json({
       success: false,
@@ -66,16 +55,11 @@ export async function getConfig(req, res) {
  */
 export async function saveConfig(req, res) {
   try {
-    console.log('🔵 [DEBUG Backend] POST /api/config recibido')
-    console.log('🔵 [DEBUG Backend] Body:', req.body)
-
     const { key, value, config } = req.body
 
     // Modo 1: Guardar una sola key
     if (key && value !== undefined) {
-      console.log(`🟡 [DEBUG Backend] Guardando key="${key}", value="${value}" (tipo: ${typeof value})`)
       await setAppConfig(key, value)
-      console.log(`✅ [DEBUG Backend] Guardado exitosamente: ${key} = ${value}`)
       logger.info(`Configuración guardada: ${key} = ${value}`)
 
       return res.json({
@@ -86,9 +70,7 @@ export async function saveConfig(req, res) {
 
     // Modo 2: Guardar múltiples keys
     if (config && typeof config === 'object') {
-      console.log(`🟡 [DEBUG Backend] Guardando ${Object.keys(config).length} configuraciones`)
       for (const [k, v] of Object.entries(config)) {
-        console.log(`  - ${k} = ${v}`)
         await setAppConfig(k, v)
       }
 
@@ -100,13 +82,11 @@ export async function saveConfig(req, res) {
       })
     }
 
-    console.error('❌ [DEBUG Backend] Falta "key" y "value", o "config"')
     return res.status(400).json({
       success: false,
       error: 'Se requiere "key" y "value", o "config" con un objeto'
     })
   } catch (error) {
-    console.error('❌ [DEBUG Backend] Error guardando configuración:', error)
     logger.error('Error guardando configuración:', error)
     res.status(500).json({
       success: false,
