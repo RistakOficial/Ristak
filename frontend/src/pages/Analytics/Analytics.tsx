@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { useDateRange } from '../../contexts/DateRangeContext'
 import { useTimezone } from '../../contexts/TimezoneContext'
 import {
@@ -177,11 +177,12 @@ const Analytics: React.FC = () => {
     }
   })
 
-  const formatTrafficAxis = (value: number) => formatChartNumber(value)
+  // Memoizar funciones de formato para evitar re-renders infinitos
+  const formatTrafficAxis = useCallback((value: number) => formatChartNumber(value), [])
 
-  const formatTrafficTooltipValue = (value: number) => value.toLocaleString('es-MX')
+  const formatTrafficTooltipValue = useCallback((value: number) => value.toLocaleString('es-MX'), [])
 
-  const formatTrafficTooltip = (value: number, _key: string) => formatTrafficTooltipValue(value)
+  const formatTrafficTooltip = useCallback((value: number, _key: string) => formatTrafficTooltipValue(value), [formatTrafficTooltipValue])
 
   // Cargar datos cuando cambie el rango de fechas
   useEffect(() => {
