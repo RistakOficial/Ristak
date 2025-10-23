@@ -1,7 +1,8 @@
 import React from 'react'
 import { Routes, Route, Navigate, NavLink } from 'react-router-dom'
-import { Send, CreditCard, Activity, Calendar, UserCircle } from 'lucide-react'
+import { Send, CreditCard, Activity, Calendar, UserCircle, TrendingDown } from 'lucide-react'
 import { HighLevelIntegration } from './HighLevelIntegration'
+import { Costs } from './Costs'
 import { PaymentsConfiguration } from './PaymentsConfiguration'
 import { MetaAdsIntegration } from './MetaAdsIntegration'
 import { WebTracking } from './WebTracking'
@@ -26,6 +27,13 @@ export const Settings: React.FC = () => {
         >
           <Send size={18} />
           <span>HighLevel</span>
+        </NavLink>
+        <NavLink
+          to="/settings/costs"
+          className={({ isActive }) => `${styles.tab} ${isActive ? styles.tabActive : ''}`}
+        >
+          <TrendingDown size={18} />
+          <span>Costos</span>
         </NavLink>
         <NavLink
           to="/settings/meta-ads"
@@ -75,6 +83,7 @@ export const Settings: React.FC = () => {
         <Routes>
           <Route index element={<Navigate to="highlevel" replace />} />
           <Route path="highlevel" element={<HighLevelIntegration />} />
+          <Route path="costs" element={<Costs />} />
           <Route path="meta-ads" element={<MetaAdsIntegration />} />
           <Route path="calendars" element={<CalendarsConfiguration />} />
           <Route path="tracking" element={<WebTracking />} />

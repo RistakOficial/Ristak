@@ -206,9 +206,11 @@ const Analytics: React.FC = () => {
         const prevEndDate = previousEnd.toISOString().split('T')[0]
 
         // Fetch datos del período actual y anterior
-        const [currentSessions, prevSessions] = await Promise.all([
+        const [currentSessions, prevSessions, contactsData, prevContactsData] = await Promise.all([
           getSessionsByDateRange(startDate, endDate),
-          getSessionsByDateRange(prevStartDate, prevEndDate)
+          getSessionsByDateRange(prevStartDate, prevEndDate),
+          getContactsByDate(startDate, endDate),
+          getContactsByDate(prevStartDate, prevEndDate)
         ])
 
         if (currentSessions.length > 0) {
@@ -217,17 +219,8 @@ const Analytics: React.FC = () => {
           // Usar 1 sesión = 1 page view (simplificado)
           const totalPageViews = currentSessions.length
 
-          // Registros = contactos únicos que se convirtieron EN o DESPUÉS de su created_at
-          // Solo contar la sesión si started_at >= contact_created_at
-          const registros = new Set(
-            currentSessions
-              .filter((s: Session) => {
-                if (!s.contact_id || !s.contact_created_at) return false
-                // Solo contar si la sesión ocurrió en o después de la creación del contacto
-                return new Date(s.started_at) >= new Date(s.contact_created_at)
-              })
-              .map((s: Session) => s.contact_id)
-          ).size
+          // Registros = contactos con visitor_id creados en el período
+          const registros = contactsData.reduce((sum, item) => sum + item.count, 0)
 
           const conversionRate = uniqueVids > 0 ? ((registros / uniqueVids) * 100) : 0
 
@@ -245,15 +238,7 @@ const Analytics: React.FC = () => {
           const prevUniqueVids = prevSessions.length > 0 ?
             new Set(prevSessions.map((s: Session) => s.visitor_id)).size : 0
           const prevTotalPageViews = prevSessions.length
-          const prevRegistros = prevSessions.length > 0 ?
-            new Set(
-              prevSessions
-                .filter((s: Session) => {
-                  if (!s.contact_id || !s.contact_created_at) return false
-                  return new Date(s.started_at) >= new Date(s.contact_created_at)
-                })
-                .map((s: Session) => s.contact_id)
-            ).size : 0
+          const prevRegistros = prevContactsData.reduce((sum, item) => sum + item.count, 0)
           const prevConversionRate = prevUniqueVids > 0 ? ((prevRegistros / prevUniqueVids) * 100) : 0
 
           const prevVisitorCounts: { [key: string]: number } = {}
@@ -326,36 +311,15 @@ const Analytics: React.FC = () => {
 
           setDailyTraffic(chartData)
 
-          // Gráfico de conversiones (sesiones con contact_id agrupadas por día, incluyendo período anterior)
-          const conversionStats: { [key: string]: Set<string> } = {}
+          // Gráfico de conversiones (registros reales de contactos por fecha de creación)
+          // Combinar período actual y anterior para contexto visual
+          const allContactsData = [...prevContactsData, ...contactsData]
 
-          // Incluir conversiones del período anterior para contexto visual
-          prevSessions.forEach((session: Session) => {
-            if (session.contact_id) {
-              const date = session.started_at.split('T')[0]
-              if (!conversionStats[date]) {
-                conversionStats[date] = new Set()
-              }
-              conversionStats[date].add(session.contact_id)
-            }
-          })
-
-          // Incluir conversiones del período actual
-          currentSessions.forEach((session: Session) => {
-            if (session.contact_id) {
-              const date = session.started_at.split('T')[0]
-              if (!conversionStats[date]) {
-                conversionStats[date] = new Set()
-              }
-              conversionStats[date].add(session.contact_id)
-            }
-          })
-
-          const conversionChartData = Object.entries(conversionStats)
-            .sort(([a], [b]) => a.localeCompare(b))
-            .map(([date, contactIds]) => ({
-              label: formatLocalDateShort(date),
-              value: contactIds.size
+          const conversionChartData = allContactsData
+            .sort((a, b) => a.date.localeCompare(b.date))
+            .map(item => ({
+              label: formatLocalDateShort(item.date),
+              value: item.count
             }))
 
           setDailyConversions(conversionChartData)
@@ -1021,7 +985,7 @@ const Analytics: React.FC = () => {
                   color="#10b981"
                   showLegend={false}
                   formatValue={formatTrafficAxis}
-                  formatTooltipValue={formatTrafficTooltip}
+                  formatTooltipValue={(value) => `${value} Registros`}
                 />
               ) : (
                 <div className="flex h-full items-center justify-center rounded-xl border border-[rgba(148,163,184,0.18)] bg-[color-mix(in_srgb,var(--color-background-glass) 82%, transparent)] text-sm text-[var(--color-text-tertiary)]">
