@@ -1007,7 +1007,7 @@ const Analytics: React.FC = () => {
               </p>
             </div>
 
-            <div className="h-[240px]">
+            <div style={{ height: '240px', width: '100%' }}>
               {loading ? (
                 <div className="flex h-full items-center justify-center text-sm text-gray-500">
                   Cargando datos...
