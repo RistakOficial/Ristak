@@ -204,7 +204,7 @@ export function VisitorDetailsModal({
       isOpen={isOpen}
       onClose={onClose}
       title=""
-      size="xl"
+      size="lg"
       showCloseButton={false}
     >
       <div className={styles.modalContainer}>
