@@ -593,12 +593,20 @@ export async function collectEvent(req, res) {
     // SIEMPRE crear un nuevo registro (cada visita es única)
     await createSession(sessionData)
 
-    // Si hay contact_id, vincular visitor_id histórico con este contacto
+    // Si hay contact_id, vincular visitor_id histórico con este contacto y unificar
     if (contact_id && visitor_id && full_name) {
+      // Importar funciones de tracking
+      const { unifyVisitorIds } = await import('../services/trackingService.js')
+
       // No esperamos a que termine (async sin await) para responder rápido
-      linkVisitorToContact(visitor_id, contact_id, full_name).catch(err => {
-        logger.error('Error vinculando visitor a contact:', err)
-      })
+      linkVisitorToContact(visitor_id, contact_id, full_name)
+        .then(() => {
+          // Después de vincular, unificar todos los visitor_ids al más viejo
+          return unifyVisitorIds(contact_id)
+        })
+        .catch(err => {
+          logger.error('Error vinculando/unificando visitor a contact:', err)
+        })
     }
 
     // Responder rápido

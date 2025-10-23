@@ -92,13 +92,28 @@ export const handleContactWebhook = async (req, res) => {
       const fullName = data.full_name || data.contactName || `${data.first_name || data.firstName || ''} ${data.last_name || data.lastName || ''}`.trim();
 
       if (fullName && fullName !== 'Sin nombre') {
-        const { linkVisitorToContact } = await import('../services/trackingService.js');
+        const { linkVisitorToContact, unifyVisitorIds } = await import('../services/trackingService.js');
 
         // Ejecutar en background sin esperar
-        linkVisitorToContact(visitorId, contactId, fullName).catch(err => {
-          logger.error(`Error vinculando visitor ${visitorId} a contact ${contactId}:`, err);
-        });
+        linkVisitorToContact(visitorId, contactId, fullName)
+          .then(() => {
+            // Después de vincular, unificar todos los visitor_ids al más viejo
+            return unifyVisitorIds(contactId);
+          })
+          .catch(err => {
+            logger.error(`Error vinculando/unificando visitor para contact ${contactId}:`, err);
+          });
       }
+    }
+
+    // Si NO viene visitor_id en el webhook pero el contacto tiene sesiones, unificarlas
+    if (!visitorId && contactId) {
+      const { unifyVisitorIds } = await import('../services/trackingService.js');
+
+      // Ejecutar en background sin esperar
+      unifyVisitorIds(contactId).catch(err => {
+        logger.error(`Error unificando visitor_ids para contact ${contactId}:`, err);
+      });
     }
 
     logger.info(`✅ Contacto ${contactId} procesado exitosamente${visitorId ? ` (visitor_id: ${visitorId})` : ''}`);

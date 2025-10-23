@@ -646,3 +646,92 @@ export async function getSessionsByDateRange(startDate, endDate) {
     throw error
   }
 }
+
+/**
+ * Unifica todos los visitor_ids de un contacto al más viejo (primera visita)
+ *
+ * Esto resuelve el problema de múltiples visitor_ids por dispositivo/navegador:
+ * - Usuario entra desde desktop → visitor_id_1
+ * - Usuario regresa desde mobile → visitor_id_2
+ * - Usuario se registra → contact_id vinculado a ambos visitor_ids
+ *
+ * Esta función:
+ * 1. Obtiene el visitor_id MÁS VIEJO (primera visita)
+ * 2. Actualiza TODAS las sesiones para usar ese visitor_id
+ * 3. Guarda ese visitor_id en contacts como el identificador oficial
+ *
+ * @param {string} contactId - ID del contacto en HighLevel
+ * @returns {Promise<{success: boolean, canonicalVisitorId: string, sessionsUpdated: number}>}
+ */
+export async function unifyVisitorIds(contactId) {
+  try {
+    // PASO 1: Obtener el visitor_id MÁS VIEJO (primera visita)
+    const oldestSession = await db.get(`
+      SELECT visitor_id, created_at
+      FROM sessions
+      WHERE contact_id = ?
+      ORDER BY created_at ASC
+      LIMIT 1
+    `, [contactId])
+
+    if (!oldestSession) {
+      logger.warn(`No se encontraron sesiones para contacto ${contactId}`)
+      return { success: false, canonicalVisitorId: null, sessionsUpdated: 0 }
+    }
+
+    const canonicalVisitorId = oldestSession.visitor_id
+
+    // PASO 2: Obtener todos los visitor_ids diferentes de este contacto
+    const allVisitorIds = await db.all(`
+      SELECT DISTINCT visitor_id
+      FROM sessions
+      WHERE contact_id = ?
+        AND visitor_id != ?
+    `, [contactId, canonicalVisitorId])
+
+    if (allVisitorIds.length === 0) {
+      logger.info(`✅ Contacto ${contactId} ya tiene visitor_id unificado: ${canonicalVisitorId}`)
+
+      // Asegurarse de que la tabla contacts tenga el visitor_id guardado
+      await db.run(`
+        UPDATE contacts
+        SET visitor_id = ?
+        WHERE id = ?
+      `, [canonicalVisitorId, contactId])
+
+      return { success: true, canonicalVisitorId, sessionsUpdated: 0 }
+    }
+
+    logger.info(`🔄 Unificando ${allVisitorIds.length} visitor_ids diferentes para contacto ${contactId}:`)
+    logger.info(`   → Canonical (más viejo): ${canonicalVisitorId}`)
+    logger.info(`   → A reemplazar: ${allVisitorIds.map(v => v.visitor_id).join(', ')}`)
+
+    // PASO 3: Actualizar TODAS las sesiones para usar el visitor_id canónico
+    const result = await db.run(`
+      UPDATE sessions
+      SET visitor_id = ?
+      WHERE contact_id = ?
+        AND visitor_id != ?
+    `, [canonicalVisitorId, contactId, canonicalVisitorId])
+
+    logger.info(`✅ Actualizadas ${result.changes} sesiones con visitor_id unificado`)
+
+    // PASO 4: Guardar visitor_id canónico en tabla contacts
+    await db.run(`
+      UPDATE contacts
+      SET visitor_id = ?
+      WHERE id = ?
+    `, [canonicalVisitorId, contactId])
+
+    logger.info(`✅ Contacto ${contactId} → visitor_id unificado: ${canonicalVisitorId}`)
+
+    return {
+      success: true,
+      canonicalVisitorId,
+      sessionsUpdated: result.changes
+    }
+  } catch (error) {
+    logger.error(`Error unificando visitor_ids para contacto ${contactId}:`, error)
+    throw error
+  }
+}
