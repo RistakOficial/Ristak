@@ -338,7 +338,7 @@ export const SessionsTable: React.FC<SessionsTableProps> = ({ className }) => {
                     <th style={{ width: '100px' }}>Visitor ID</th>
                     <th style={{ width: '120px' }}>Full Name</th>
                     <th style={{ width: '120px' }}>Started At</th>
-                    <th style={{ width: '200px' }}>Landing URL</th>
+                    <th style={{ width: '200px' }}>Page URL</th>
                     <th style={{ width: '120px' }}>UTM Source</th>
                     <th style={{ width: '150px' }}>UTM Campaign</th>
                     <th style={{ width: '100px' }}>Device Type</th>
@@ -462,7 +462,7 @@ export const SessionsTable: React.FC<SessionsTableProps> = ({ className }) => {
                   <option value="event_name">Event Name</option>
                 </optgroup>
                 <optgroup label="URLs">
-                  <option value="page_url">Landing URL</option>
+                  <option value="page_url">Page URL</option>
                   <option value="referrer_url">Referrer URL</option>
                 </optgroup>
                 <optgroup label="UTMs">
