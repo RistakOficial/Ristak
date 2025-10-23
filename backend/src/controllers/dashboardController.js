@@ -111,16 +111,42 @@ const computeFinancialSnapshot = async (range) => {
   const ltvPromedio = parseFloat(ltvRow?.avg_ltv || 0);
 
   const gananciaBruta = ingresosNetos - gastosPublicidad;
-  const iva = ingresosNetos * 0.16;
-  const gananciaNeta = gananciaBruta - iva;
   const roas = gastosPublicidad > 0 ? ingresosNetos / gastosPublicidad : 0;
+
+  // Calcular costos dinámicamente desde la tabla costs
+  let totalCostos = 0;
+  try {
+    const costs = await db.all('SELECT * FROM costs WHERE is_active = 1');
+
+    for (const cost of costs) {
+      let amount = 0;
+
+      if (cost.calculation_type === 'percentage') {
+        // Porcentaje sobre revenue
+        if (cost.applies_to === 'revenue') {
+          amount = (ingresosNetos * cost.value) / 100;
+        }
+      } else if (cost.calculation_type === 'fixed') {
+        // Monto fijo
+        amount = cost.value;
+      }
+
+      totalCostos += amount;
+    }
+  } catch (error) {
+    logger.warn('Error calculando costos desde tabla costs:', error.message);
+    // Fallback: usar IVA del 16% como antes
+    totalCostos = ingresosNetos * 0.16;
+  }
+
+  const gananciaNeta = gananciaBruta - totalCostos;
 
   return {
     ingresosNetos,
     gastosPublicidad,
     gananciaBruta,
     roas,
-    ivaPagar: iva,
+    totalCostos,  // Reemplaza ivaPagar
     gananciaNeta,
     reembolsos,
     ltvPromedio
@@ -190,9 +216,9 @@ export const getMetrics = async (req, res) => {
         value: parseFloat(currentSnapshot.roas.toFixed(2)),
         variation: parseFloat(calculateDelta(currentSnapshot.roas, previousSnapshot.roas).toFixed(2))
       },
-      ivaPagar: {
-        value: parseFloat(currentSnapshot.ivaPagar.toFixed(2)),
-        variation: parseFloat(calculateDelta(currentSnapshot.ivaPagar, previousSnapshot.ivaPagar).toFixed(2))
+      totalCostos: {
+        value: parseFloat(currentSnapshot.totalCostos.toFixed(2)),
+        variation: parseFloat(calculateDelta(currentSnapshot.totalCostos, previousSnapshot.totalCostos).toFixed(2))
       },
       gananciaNeta: {
         value: parseFloat(currentSnapshot.gananciaNeta.toFixed(2)),

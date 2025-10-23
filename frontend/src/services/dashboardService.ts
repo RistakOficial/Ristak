@@ -14,7 +14,7 @@ export interface DashboardMetrics {
   gastosPublicidad: DashboardKPI;
   gananciaBruta: DashboardKPI;
   roas: DashboardKPI;
-  ivaPagar: DashboardKPI;
+  totalCostos: DashboardKPI;
   gananciaNeta: DashboardKPI;
   reembolsos: DashboardKPI;
   ltvPromedio: DashboardKPI;
@@ -291,7 +291,7 @@ class DashboardService {
       gastosPublicidad: { value: 0, variation: 0 },
       gananciaBruta: { value: 0, variation: 0 },
       roas: { value: 0, variation: 0 },
-      ivaPagar: { value: 0, variation: 0 },
+      totalCostos: { value: 0, variation: 0 },
       gananciaNeta: { value: 0, variation: 0 },
       reembolsos: { value: 0, variation: 0 },
       ltvPromedio: { value: 0, variation: 0 }

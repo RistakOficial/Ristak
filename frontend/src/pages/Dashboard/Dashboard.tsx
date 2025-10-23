@@ -396,9 +396,9 @@ export const Dashboard: React.FC = () => {
           icon={<Target className="w-5 h-5" />}
         />
         <KpiCard
-          title="IVA a Pagar"
-          value={formatCurrency(metrics.ivaPagar.value)}
-          delta={metrics.ivaPagar.variation}
+          title="Costos Totales"
+          value={formatCurrency(metrics.totalCostos.value)}
+          delta={metrics.totalCostos.variation}
           deltaLabel="vs periodo anterior"
           icon={<Receipt className="w-5 h-5" />}
         />
