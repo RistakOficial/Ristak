@@ -258,7 +258,8 @@ const MetricsGrid: React.FC<MetricsGridProps> = ({ metrics, loading, reportType,
     sales: acc.sales + m.sales,
     clicks: acc.clicks + m.clicks,
     visitors: acc.visitors + m.visitors,
-    appointments: acc.appointments + m.appointments
+    appointments: acc.appointments + m.appointments,
+    new_customers: acc.new_customers + m.new_customers
   }), {
     spend: 0,
     revenue: 0,
@@ -266,7 +267,8 @@ const MetricsGrid: React.FC<MetricsGridProps> = ({ metrics, loading, reportType,
     sales: 0,
     clicks: 0,
     visitors: 0,
-    appointments: 0
+    appointments: 0,
+    new_customers: 0
   })
 
   const profit = totals.revenue - totals.spend
@@ -276,16 +278,17 @@ const MetricsGrid: React.FC<MetricsGridProps> = ({ metrics, loading, reportType,
   const epc = totals.clicks > 0 ? totals.revenue / totals.clicks : 0
   const cpl = totals.leads > 0 ? totals.spend / totals.leads : 0
   const epl = totals.leads > 0 ? totals.revenue / totals.leads : 0
-  const cac = totals.sales > 0 ? totals.spend / totals.sales : 0
+  const cac = totals.new_customers > 0 ? totals.spend / totals.new_customers : 0
   const aov = totals.sales > 0 ? totals.revenue / totals.sales : 0
+  const transactionsPerCustomer = totals.new_customers > 0 ? totals.sales / totals.new_customers : 0
   const webToInteresado = totals.visitors > 0 ? (totals.leads / totals.visitors) * 100 : 0
   const interesadoToAppt = totals.leads > 0 ? (totals.appointments / totals.leads) * 100 : 0
   const apptToSale = totals.appointments > 0 ? (totals.sales / totals.appointments) * 100 : 0
 
   const trafficItems = [
     { label: 'Clicks', value: formatNumber(totals.clicks) },
-    { label: 'Costo por Clic', value: formatCurrency(cpc) },
-    { label: 'EPC', value: formatCurrency(epc) }
+    { label: 'Costo por Click', value: formatCurrency(cpc) },
+    { label: 'Ingreso por Click', value: formatCurrency(epc) }
   ]
 
   if (showVisitors) {
@@ -298,10 +301,12 @@ const MetricsGrid: React.FC<MetricsGridProps> = ({ metrics, loading, reportType,
   const metricGroups = [
     {
       title: 'Tráfico',
+      icon: <MousePointerClick size={18} />,
       items: trafficItems
     },
     {
       title: 'Conversión',
+      icon: <Target size={18} />,
       items: [
         { label: labels.leads, value: formatNumber(totals.leads) },
         { label: `Costo por ${labels.lead}`, value: formatCurrency(cpl) },
@@ -313,15 +318,25 @@ const MetricsGrid: React.FC<MetricsGridProps> = ({ metrics, loading, reportType,
       ]
     },
     {
+      title: 'Clientes',
+      icon: <UserCheck size={18} />,
+      items: [
+        { label: `${labels.customers} Nuevos`, value: formatNumber(totals.new_customers) },
+        { label: `Costo por ${labels.customer}`, value: formatCurrency(cac) },
+        { label: 'Total de Transacciones', value: formatNumber(totals.sales) },
+        { label: 'Transacciones por Cliente', value: transactionsPerCustomer.toFixed(1) },
+        { label: 'Ticket Promedio', value: formatCurrency(aov) }
+      ]
+    },
+    {
       title: 'Finanzas',
+      icon: <DollarSign size={18} />,
       items: [
         { label: 'Ingresos', value: formatCurrency(totals.revenue) },
-        { label: 'Gasto', value: formatCurrency(totals.spend) },
-        { label: 'Ganancias', value: formatCurrency(profit) },
+        { label: 'Gasto en Anuncios', value: formatCurrency(totals.spend) },
+        { label: 'Ganancias Netas', value: formatCurrency(profit) },
         { label: 'Retorno de Inversión', value: `${roas.toFixed(2)}x` },
-        { label: 'ROI', value: `${roi.toFixed(1)}%` },
-        { label: `Costo por ${labels.customer}`, value: formatCurrency(cac) },
-        { label: 'Ticket Promedio', value: formatCurrency(aov) }
+        { label: 'ROI', value: `${roi.toFixed(1)}%` }
       ]
     }
   ]
@@ -335,7 +350,10 @@ const MetricsGrid: React.FC<MetricsGridProps> = ({ metrics, loading, reportType,
       ) : (
         metricGroups.map((group) => (
           <Card key={group.title} className={styles.metricsCategoryCard}>
-            <h3 className={styles.metricsCategoryTitle}>{group.title}</h3>
+            <div className={styles.metricsCategoryHeader}>
+              <span className={styles.metricsCategoryIcon}>{group.icon}</span>
+              <h3 className={styles.metricsCategoryTitle}>{group.title}</h3>
+            </div>
             <div className={styles.metricsTableWrapper}>
               <table className={styles.metricsTable}>
                 <thead>
