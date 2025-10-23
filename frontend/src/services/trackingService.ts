@@ -1,50 +1,83 @@
 import apiClient from './apiClient'
 
 export interface TrackingSession {
+  // IDs principales
+  id: string
   session_id: string
   visitor_id: string
   contact_id: string | null
-  contact_created_at?: string | null
-  page_url: string
-  referrer_url: string
+  full_name: string | null
+  email: string | null
+
+  // Evento y timestamps
+  event_name: string
+  started_at: string
+  created_at: string
+
+  // URLs
+  page_url: string | null
+  referrer_url: string | null
+
+  // UTMs
   utm_source: string | null
   utm_medium: string | null
   utm_campaign: string | null
   utm_term: string | null
   utm_content: string | null
+
+  // Click IDs
   gclid: string | null
   fbclid: string | null
+  fbc: string | null
+  fbp: string | null
+  wbraid: string | null
+  gbraid: string | null
   msclkid: string | null
   ttclid: string | null
-  device_type: string
-  pageviews_count: number
-  events_count: number
-  is_bounce: number
-  started_at: string
-  // Campos de plataforma
-  source_platform?: string | null
-  site_source_name?: string | null
-  channel?: string | null
-  // Campos de anuncios
-  campaign_id?: string | null
-  adset_id?: string | null
-  ad_id?: string | null
-  campaign_name?: string | null
-  adset_name?: string | null
-  ad_name?: string | null
-  placement?: string | null
-  // Campos de navegador/OS
-  browser?: string | null
-  browser_version?: string | null
-  os?: string | null
-  language?: string | null
-  timezone?: string | null
-  // Campos de geolocalización
-  geo_country?: string | null
-  geo_region?: string | null
-  geo_city?: string | null
-  ip?: string | null
-  user_agent?: string | null
+
+  // Canal y plataforma
+  channel: string | null
+  source_platform: string | null
+
+  // IDs de campaña (Facebook/Google)
+  campaign_id: string | null
+  adset_id: string | null
+  ad_group_id: string | null
+  ad_id: string | null
+
+  // Nombres de campaña
+  campaign_name: string | null
+  adset_name: string | null
+  ad_group_name: string | null
+  ad_name: string | null
+
+  // Información de anuncio
+  placement: string | null
+  site_source_name: string | null
+  network: string | null
+  match_type: string | null
+  keyword: string | null
+  search_query: string | null
+  creative_id: string | null
+  ad_position: string | null
+
+  // Información técnica
+  ip: string | null
+  user_agent: string | null
+  device_type: string | null
+  os: string | null
+  browser: string | null
+  browser_version: string | null
+  language: string | null
+  timezone: string | null
+
+  // Geolocalización
+  geo_country: string | null
+  geo_region: string | null
+  geo_city: string | null
+
+  // Campos extras del JOIN con contacts
+  contact_created_at?: string | null
 }
 
 export interface TrackingStats {

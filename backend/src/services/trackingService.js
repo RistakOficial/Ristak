@@ -504,14 +504,18 @@ export async function getSessionsByDateRange(startDate, endDate) {
 
     if (usePostgres) {
       // PostgreSQL query con LEFT JOIN para traer created_at del contacto
+      // Incluye TODAS las columnas de la tabla sessions
       query = `
         SELECT
+          s.id,
           s.session_id,
           s.visitor_id,
           s.contact_id,
           s.full_name,
+          s.email,
           s.event_name,
           s.started_at,
+          s.created_at,
           s.page_url,
           s.referrer_url,
           s.utm_source,
@@ -566,14 +570,18 @@ export async function getSessionsByDateRange(startDate, endDate) {
       params = [startDate, endDate]
     } else {
       // SQLite query con LEFT JOIN para traer created_at del contacto
+      // Incluye TODAS las columnas de la tabla sessions
       query = `
         SELECT
+          s.id,
           s.session_id,
           s.visitor_id,
           s.contact_id,
           s.full_name,
+          s.email,
           s.event_name,
           s.started_at,
+          s.created_at,
           s.page_url,
           s.referrer_url,
           s.utm_source,

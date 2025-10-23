@@ -214,6 +214,7 @@ export const SessionsTable: React.FC<SessionsTableProps> = ({ className }) => {
     { key: 'visitor_id', label: 'Visitor ID' },
     { key: 'contact_id', label: 'Contact ID' },
     { key: 'full_name', label: 'Full Name' },
+    { key: 'email', label: 'Email' },
     { key: 'event_name', label: 'Event Name' },
     { key: 'started_at', label: 'Started At' },
     { key: 'page_url', label: 'Page URL' },
