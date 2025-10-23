@@ -40,9 +40,19 @@ export const CalendarsConfiguration: React.FC = () => {
 
   // Sincronizar estados temporales con los valores guardados
   useEffect(() => {
+    console.log('🔵 [CalendarsConfig] Sincronizando estados temporales...')
+    console.log('  - defaultCalendarId desde hook:', defaultCalendarId)
+    console.log('  - attributionCalendarIds desde hook:', attributionCalendarIds)
+    console.log('  - tempDefaultCalendar ANTES:', tempDefaultCalendar)
+    console.log('  - tempAttributionCalendars ANTES:', tempAttributionCalendars)
+
     setTempDefaultCalendar(defaultCalendarId)
     setTempAttributionCalendars(attributionCalendarIds)
     setHasChanges(false)
+
+    console.log('✅ [CalendarsConfig] Estados temporales actualizados')
+    console.log('  - tempDefaultCalendar DESPUÉS:', defaultCalendarId)
+    console.log('  - tempAttributionCalendars DESPUÉS:', attributionCalendarIds)
   }, [defaultCalendarId, attributionCalendarIds])
 
   const loadCalendars = async () => {
@@ -227,6 +237,12 @@ export const CalendarsConfiguration: React.FC = () => {
   }
 
   const allSelected = tempAttributionCalendars.length === calendars.length
+
+  // Log antes de renderizar para ver el valor del dropdown
+  console.log('🟣 [Render] Renderizando CalendarsConfiguration')
+  console.log('  - tempDefaultCalendar:', tempDefaultCalendar)
+  console.log('  - defaultCalendarId:', defaultCalendarId)
+  console.log('  - Calendarios disponibles:', calendars.length)
 
   return (
     <div className={styles.integrationContainer}>
