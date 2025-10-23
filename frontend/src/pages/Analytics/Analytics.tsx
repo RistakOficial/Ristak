@@ -216,38 +216,52 @@ const Analytics: React.FC = () => {
         if (currentSessions.length > 0) {
           // Calcular métricas principales
           const uniqueVids = new Set(currentSessions.map((s: Session) => s.visitor_id)).size
-          // Usar 1 sesión = 1 page view (simplificado)
+
+          // CADA registro es un page_view ahora (cada navegación)
           const totalPageViews = currentSessions.length
+
+          // Contar sesiones únicas (por session_id)
+          const uniqueSessionIds = new Set(currentSessions.map((s: Session) => s.session_id)).size
 
           // Registros = contactos con visitor_id creados en el período
           const registros = contactsData.reduce((sum, item) => sum + item.count, 0)
 
           const conversionRate = uniqueVids > 0 ? ((registros / uniqueVids) * 100) : 0
 
-          // Usuarios recurrentes
-          const visitorCounts: { [key: string]: number } = {}
+          // Usuarios recurrentes: contar visitor_ids que tienen múltiples session_ids diferentes
+          const visitorSessionMap: { [key: string]: Set<string> } = {}
           currentSessions.forEach((s: Session) => {
-            visitorCounts[s.visitor_id] = (visitorCounts[s.visitor_id] || 0) + 1
+            if (!visitorSessionMap[s.visitor_id]) {
+              visitorSessionMap[s.visitor_id] = new Set()
+            }
+            visitorSessionMap[s.visitor_id].add(s.session_id)
           })
-          const returningUsers = Object.values(visitorCounts).filter(count => count > 1).length
+          const returningUsers = Object.values(visitorSessionMap).filter(sessions => sessions.size > 1).length
 
-          const avgPagePerSession = currentSessions.length > 0 ?
-            (totalPageViews / currentSessions.length) : 0
+          // Páginas por sesión = total de page_views / número de sesiones únicas
+          const avgPagePerSession = uniqueSessionIds > 0 ?
+            (totalPageViews / uniqueSessionIds) : 0
 
           // Calcular métricas del período anterior para trends
           const prevUniqueVids = prevSessions.length > 0 ?
             new Set(prevSessions.map((s: Session) => s.visitor_id)).size : 0
           const prevTotalPageViews = prevSessions.length
+          const prevUniqueSessionIds = prevSessions.length > 0 ?
+            new Set(prevSessions.map((s: Session) => s.session_id)).size : 0
           const prevRegistros = prevContactsData.reduce((sum, item) => sum + item.count, 0)
           const prevConversionRate = prevUniqueVids > 0 ? ((prevRegistros / prevUniqueVids) * 100) : 0
 
-          const prevVisitorCounts: { [key: string]: number } = {}
+          // Usuarios recurrentes del período anterior
+          const prevVisitorSessionMap: { [key: string]: Set<string> } = {}
           prevSessions.forEach((s: Session) => {
-            prevVisitorCounts[s.visitor_id] = (prevVisitorCounts[s.visitor_id] || 0) + 1
+            if (!prevVisitorSessionMap[s.visitor_id]) {
+              prevVisitorSessionMap[s.visitor_id] = new Set()
+            }
+            prevVisitorSessionMap[s.visitor_id].add(s.session_id)
           })
-          const prevReturningUsers = Object.values(prevVisitorCounts).filter(count => count > 1).length
-          const prevAvgPagePerSession = prevSessions.length > 0 ?
-            (prevTotalPageViews / prevSessions.length) : 0
+          const prevReturningUsers = Object.values(prevVisitorSessionMap).filter(sessions => sessions.size > 1).length
+          const prevAvgPagePerSession = prevUniqueSessionIds > 0 ?
+            (prevTotalPageViews / prevUniqueSessionIds) : 0
 
           // Calcular trends
           const calculateTrend = (current: number, previous: number) => {
