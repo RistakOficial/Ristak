@@ -466,22 +466,10 @@ export const WebTracking: React.FC = () => {
         {isOnRenderDomain ? (
           <div className={styles.section}>
             <div className={styles.sectionHeader}>
-              <h3 className={styles.sectionTitle}>⚠️ Dominio no configurado</h3>
-              <p className={styles.sectionSubtitle} style={{ marginTop: '8px', fontSize: '0.95rem', color: 'var(--color-text-secondary)' }}>
-                Para usar el Web Tracking, necesitas configurar un dominio personalizado
+              <h3 className={styles.sectionTitle}>🚫 NO tienes acceso a esta vista</h3>
+              <p className={styles.sectionSubtitle} style={{ marginTop: '12px', fontSize: '1rem', color: 'var(--color-text-secondary)', lineHeight: '1.6' }}>
+                Para obtener acceso al Web Tracking, simplemente configura un dominio personalizado siguiendo los pasos a continuación.
               </p>
-            </div>
-
-            <div className={styles.infoBox} style={{ marginTop: '24px', background: 'var(--color-warning-bg)', border: '1px solid var(--color-warning)' }}>
-              <div className={styles.infoBoxTitle} style={{ color: 'var(--color-warning-dark)' }}>
-                <Info size={20} />
-                <span>¿Por qué necesito un dominio personalizado?</span>
-              </div>
-              <div className={styles.infoBoxContent} style={{ marginTop: '12px', lineHeight: '1.7' }}>
-                El pixel de tracking debe ejecutarse en el <strong>mismo dominio</strong> que tu sitio web (same-origin)
-                para poder capturar cookies de Facebook (fbc, fbp) y otros datos de atribución.
-                Si usas el dominio de Render (.onrender.com), los navegadores bloquean estos datos por políticas de seguridad.
-              </div>
             </div>
 
             <div style={{ marginTop: '32px' }}>
