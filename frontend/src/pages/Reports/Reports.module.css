@@ -407,6 +407,12 @@
   font-size: var(--font-size-base);
 }
 
+.metricsChartWrapper {
+  margin-top: var(--spacing-md);
+  padding-top: var(--spacing-md);
+  border-top: 1px solid var(--color-border-subtle);
+}
+
 .metricsEmpty {
   text-align: center;
   padding: var(--spacing-xl);

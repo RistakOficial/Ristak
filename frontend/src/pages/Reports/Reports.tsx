@@ -261,9 +261,10 @@ interface MetricsGridProps {
   loading: boolean
   reportType: ReportType
   showVisitors: boolean
+  viewType: ViewType
 }
 
-const MetricsGrid: React.FC<MetricsGridProps> = ({ metrics, loading, reportType, showVisitors }) => {
+const MetricsGrid: React.FC<MetricsGridProps> = ({ metrics, loading, reportType, showVisitors, viewType }) => {
   const { labels } = useLabels()
   const totals = metrics.reduce((acc, m) => ({
     spend: acc.spend + m.spend,
@@ -299,6 +300,20 @@ const MetricsGrid: React.FC<MetricsGridProps> = ({ metrics, loading, reportType,
   const interesadoToAppt = totals.leads > 0 ? (totals.appointments / totals.leads) * 100 : 0
   const apptToSale = totals.appointments > 0 ? (totals.sales / totals.appointments) * 100 : 0
 
+  // Preparar datos para los gráficos
+  const chartData = metrics.slice().reverse().map(m => ({
+    date: formatPeriodLabel(m.date, viewType, { includeYear: false }),
+    clicks: m.clicks,
+    visitors: m.visitors,
+    leads: m.leads,
+    appointments: m.appointments,
+    sales: m.sales,
+    new_customers: m.new_customers,
+    revenue: m.revenue,
+    spend: m.spend,
+    profit: m.revenue - m.spend
+  }))
+
   const trafficItems = [
     { label: 'Clicks', value: formatNumber(totals.clicks) },
     { label: 'Costo por Click', value: formatCurrency(cpc) },
@@ -316,7 +331,29 @@ const MetricsGrid: React.FC<MetricsGridProps> = ({ metrics, loading, reportType,
     {
       title: 'Tráfico',
       icon: <MousePointerClick size={18} />,
-      items: trafficItems
+      items: trafficItems,
+      chart: (
+        <ResponsiveContainer width="100%" height={200}>
+          <LineChart data={chartData}>
+            <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border-subtle)" />
+            <XAxis dataKey="date" tick={{ fontSize: 11 }} stroke="var(--color-text-tertiary)" />
+            <YAxis tick={{ fontSize: 11 }} stroke="var(--color-text-tertiary)" />
+            <Tooltip
+              contentStyle={{
+                backgroundColor: 'var(--color-surface)',
+                border: '1px solid var(--color-border)',
+                borderRadius: '8px',
+                fontSize: '12px'
+              }}
+            />
+            <Legend wrapperStyle={{ fontSize: '12px' }} />
+            <Line type="monotone" dataKey="clicks" stroke="#3b82f6" name="Clicks" strokeWidth={2} dot={{ r: 3 }} />
+            {showVisitors && (
+              <Line type="monotone" dataKey="visitors" stroke="#8b5cf6" name="Visitantes" strokeWidth={2} dot={{ r: 3 }} />
+            )}
+          </LineChart>
+        </ResponsiveContainer>
+      )
     },
     {
       title: 'Conversión',
@@ -329,7 +366,28 @@ const MetricsGrid: React.FC<MetricsGridProps> = ({ metrics, loading, reportType,
         { label: `${labels.leads}→Citas %`, value: `${interesadoToAppt.toFixed(1)}%` },
         { label: reportType === 'cashflow' ? 'Transacciones' : 'Ventas', value: formatNumber(totals.sales) },
         { label: 'Citas→Ventas %', value: `${apptToSale.toFixed(1)}%` }
-      ]
+      ],
+      chart: (
+        <ResponsiveContainer width="100%" height={200}>
+          <LineChart data={chartData}>
+            <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border-subtle)" />
+            <XAxis dataKey="date" tick={{ fontSize: 11 }} stroke="var(--color-text-tertiary)" />
+            <YAxis tick={{ fontSize: 11 }} stroke="var(--color-text-tertiary)" />
+            <Tooltip
+              contentStyle={{
+                backgroundColor: 'var(--color-surface)',
+                border: '1px solid var(--color-border)',
+                borderRadius: '8px',
+                fontSize: '12px'
+              }}
+            />
+            <Legend wrapperStyle={{ fontSize: '12px' }} />
+            <Line type="monotone" dataKey="leads" stroke="#10b981" name={labels.leads} strokeWidth={2} dot={{ r: 3 }} />
+            <Line type="monotone" dataKey="appointments" stroke="#f59e0b" name="Citas" strokeWidth={2} dot={{ r: 3 }} />
+            <Line type="monotone" dataKey="sales" stroke="#ef4444" name="Ventas" strokeWidth={2} dot={{ r: 3 }} />
+          </LineChart>
+        </ResponsiveContainer>
+      )
     },
     {
       title: 'Clientes',
@@ -340,7 +398,26 @@ const MetricsGrid: React.FC<MetricsGridProps> = ({ metrics, loading, reportType,
         { label: 'Total de Transacciones', value: formatNumber(totals.sales) },
         { label: 'Transacciones por Cliente', value: transactionsPerCustomer.toFixed(1) },
         { label: 'Ticket Promedio', value: formatCurrency(aov) }
-      ]
+      ],
+      chart: (
+        <ResponsiveContainer width="100%" height={200}>
+          <BarChart data={chartData}>
+            <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border-subtle)" />
+            <XAxis dataKey="date" tick={{ fontSize: 11 }} stroke="var(--color-text-tertiary)" />
+            <YAxis tick={{ fontSize: 11 }} stroke="var(--color-text-tertiary)" />
+            <Tooltip
+              contentStyle={{
+                backgroundColor: 'var(--color-surface)',
+                border: '1px solid var(--color-border)',
+                borderRadius: '8px',
+                fontSize: '12px'
+              }}
+            />
+            <Legend wrapperStyle={{ fontSize: '12px' }} />
+            <Bar dataKey="new_customers" fill="#06b6d4" name="Clientes Nuevos" radius={[4, 4, 0, 0]} />
+          </BarChart>
+        </ResponsiveContainer>
+      )
     },
     {
       title: 'Finanzas',
@@ -351,7 +428,29 @@ const MetricsGrid: React.FC<MetricsGridProps> = ({ metrics, loading, reportType,
         { label: 'Ganancias Netas', value: formatCurrency(profit) },
         { label: 'Retorno de Inversión', value: `${roas.toFixed(2)}x` },
         { label: 'ROI', value: `${roi.toFixed(1)}%` }
-      ]
+      ],
+      chart: (
+        <ResponsiveContainer width="100%" height={200}>
+          <AreaChart data={chartData}>
+            <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border-subtle)" />
+            <XAxis dataKey="date" tick={{ fontSize: 11 }} stroke="var(--color-text-tertiary)" />
+            <YAxis tick={{ fontSize: 11 }} stroke="var(--color-text-tertiary)" />
+            <Tooltip
+              contentStyle={{
+                backgroundColor: 'var(--color-surface)',
+                border: '1px solid var(--color-border)',
+                borderRadius: '8px',
+                fontSize: '12px'
+              }}
+              formatter={(value: number) => formatCurrency(value)}
+            />
+            <Legend wrapperStyle={{ fontSize: '12px' }} />
+            <Area type="monotone" dataKey="revenue" stroke="#10b981" fill="#10b981" fillOpacity={0.3} name="Ingresos" />
+            <Area type="monotone" dataKey="spend" stroke="#ef4444" fill="#ef4444" fillOpacity={0.3} name="Gastos" />
+            <Area type="monotone" dataKey="profit" stroke="#3b82f6" fill="#3b82f6" fillOpacity={0.3} name="Ganancias" />
+          </AreaChart>
+        </ResponsiveContainer>
+      )
     }
   ]
 
@@ -386,6 +485,11 @@ const MetricsGrid: React.FC<MetricsGridProps> = ({ metrics, loading, reportType,
                 </tbody>
               </table>
             </div>
+            {chartData.length > 0 && (
+              <div className={styles.metricsChartWrapper}>
+                {group.chart}
+              </div>
+            )}
           </Card>
         ))
       )}
@@ -1162,6 +1266,7 @@ export const Reports: React.FC = () => {
           loading={loadingMetrics}
           reportType={reportType}
           showVisitors={analyticsEnabled}
+          viewType={viewType}
         />
       )}
 
