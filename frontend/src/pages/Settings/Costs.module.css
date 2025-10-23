@@ -26,9 +26,9 @@
 .iconWrapper {
   width: 48px;
   height: 48px;
-  border-radius: 12px;
-  background: var(--primary-100);
-  color: var(--primary-600);
+  border-radius: var(--radius-lg);
+  background: rgba(59, 130, 246, 0.1);
+  color: #3b82f6;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -36,20 +36,20 @@
 }
 
 body.dark .iconWrapper {
-  background: var(--primary-900);
-  color: var(--primary-400);
+  background: rgba(59, 130, 246, 0.15);
+  color: #60a5fa;
 }
 
 .title {
   font-size: 24px;
   font-weight: 600;
-  color: var(--text-primary);
+  color: var(--color-text-primary);
   margin: 0 0 4px 0;
 }
 
 .subtitle {
   font-size: 14px;
-  color: var(--text-secondary);
+  color: var(--color-text-secondary);
   margin: 0;
 }
 
@@ -60,8 +60,8 @@ body.dark .iconWrapper {
   align-items: center;
   justify-content: center;
   padding: 60px 20px;
-  gap: 12px;
-  color: var(--text-secondary);
+  gap: var(--spacing-md);
+  color: var(--color-text-secondary);
 }
 
 .spinner {
@@ -79,26 +79,26 @@ body.dark .iconWrapper {
   align-items: center;
   justify-content: center;
   padding: 60px 20px;
-  gap: 16px;
+  gap: var(--spacing-md);
   text-align: center;
-  color: var(--text-secondary);
+  color: var(--color-text-secondary);
 }
 
 .emptyState svg {
-  color: var(--text-tertiary);
+  color: var(--color-text-tertiary);
 }
 
 .emptyState h3 {
   font-size: 18px;
   font-weight: 600;
-  color: var(--text-primary);
+  color: var(--color-text-primary);
   margin: 0;
 }
 
 .emptyState p {
   font-size: 14px;
-  color: var(--text-secondary);
-  margin: 0 0 8px 0;
+  color: var(--color-text-secondary);
+  margin: 0 0 var(--spacing-sm) 0;
   max-width: 400px;
 }
 
@@ -112,10 +112,10 @@ body.dark .iconWrapper {
 /* Chip de costo */
 .costChip {
   position: relative;
-  padding: 16px;
-  border: 2px solid var(--border-color);
-  border-radius: 12px;
-  background: var(--bg-primary);
+  padding: var(--spacing-md);
+  border: 2px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-background-primary);
   transition: all 0.2s ease;
 }
 
@@ -131,8 +131,8 @@ body.dark .costChip:hover {
 .costHeader {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 12px;
+  gap: var(--spacing-sm);
+  margin-bottom: var(--spacing-md);
 }
 
 .costTypeIndicator {
@@ -146,42 +146,42 @@ body.dark .costChip:hover {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  color: var(--text-tertiary);
+  color: var(--color-text-tertiary);
 }
 
 .costBody {
-  margin-bottom: 12px;
+  margin-bottom: var(--spacing-md);
 }
 
 .costName {
   font-size: 16px;
   font-weight: 600;
-  color: var(--text-primary);
-  margin: 0 0 8px 0;
+  color: var(--color-text-primary);
+  margin: 0 0 var(--spacing-sm) 0;
 }
 
 .costValue {
   font-size: 24px;
   font-weight: 700;
-  color: var(--primary-600);
+  color: #3b82f6;
   margin-bottom: 4px;
 }
 
 body.dark .costValue {
-  color: var(--primary-400);
+  color: #60a5fa;
 }
 
 .appliesTo {
   font-size: 12px;
-  color: var(--text-tertiary);
+  color: var(--color-text-tertiary);
   font-style: italic;
 }
 
 .costActions {
   display: flex;
-  gap: 8px;
-  padding-top: 12px;
-  border-top: 1px solid var(--border-color);
+  gap: var(--spacing-sm);
+  padding-top: var(--spacing-md);
+  border-top: 1px solid var(--color-border);
 }
 
 .actionButton {
@@ -190,18 +190,18 @@ body.dark .costValue {
   justify-content: center;
   width: 32px;
   height: 32px;
-  border: 1px solid var(--border-color);
-  border-radius: 6px;
-  background: var(--bg-secondary);
-  color: var(--text-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-background-secondary);
+  color: var(--color-text-secondary);
   cursor: pointer;
   transition: all 0.2s ease;
 }
 
 .actionButton:hover {
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
-  border-color: var(--border-hover);
+  background: var(--color-background-tertiary);
+  color: var(--color-text-primary);
+  border-color: var(--color-border);
 }
 
 /* Modal */
@@ -216,7 +216,7 @@ body.dark .costValue {
   align-items: center;
   justify-content: center;
   z-index: 9999;
-  padding: 20px;
+  padding: var(--spacing-xl);
 }
 
 body.dark .modalOverlay {
@@ -224,9 +224,9 @@ body.dark .modalOverlay {
 }
 
 .modal {
-  background: var(--bg-primary);
-  border-radius: 12px;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  background: var(--color-background-primary);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
   width: 100%;
   max-width: 500px;
   max-height: 90vh;
@@ -234,21 +234,21 @@ body.dark .modalOverlay {
 }
 
 body.dark .modal {
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.4), 0 4px 6px -2px rgba(0, 0, 0, 0.3);
 }
 
 .modalHeader {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 24px 24px 16px 24px;
-  border-bottom: 1px solid var(--border-color);
+  padding: var(--spacing-xl) var(--spacing-xl) var(--spacing-md) var(--spacing-xl);
+  border-bottom: 1px solid var(--color-border);
 }
 
 .modalHeader h3 {
   font-size: 20px;
   font-weight: 600;
-  color: var(--text-primary);
+  color: var(--color-text-primary);
   margin: 0;
 }
 
@@ -260,50 +260,50 @@ body.dark .modal {
   height: 32px;
   border: none;
   background: transparent;
-  color: var(--text-secondary);
+  color: var(--color-text-secondary);
   cursor: pointer;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   transition: all 0.2s ease;
 }
 
 .closeButton:hover {
-  background: var(--bg-secondary);
-  color: var(--text-primary);
+  background: var(--color-background-secondary);
+  color: var(--color-text-primary);
 }
 
 .modalBody {
-  padding: 24px;
+  padding: var(--spacing-xl);
 }
 
 .modalFooter {
   display: flex;
   justify-content: flex-end;
-  gap: 12px;
-  padding: 16px 24px 24px 24px;
-  border-top: 1px solid var(--border-color);
+  gap: var(--spacing-md);
+  padding: var(--spacing-md) var(--spacing-xl) var(--spacing-xl) var(--spacing-xl);
+  border-top: 1px solid var(--color-border);
 }
 
 /* Form */
 .formGroup {
-  margin-bottom: 20px;
+  margin-bottom: var(--spacing-lg);
 }
 
 .formGroup label {
   display: block;
   font-size: 14px;
   font-weight: 500;
-  color: var(--text-primary);
-  margin-bottom: 8px;
+  color: var(--color-text-primary);
+  margin-bottom: var(--spacing-sm);
 }
 
 .input,
 .select {
   width: 100%;
   padding: 10px 12px;
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
-  background: var(--bg-primary);
-  color: var(--text-primary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-background-primary);
+  color: var(--color-text-primary);
   font-size: 14px;
   transition: all 0.2s ease;
 }
@@ -311,13 +311,13 @@ body.dark .modal {
 .input:focus,
 .select:focus {
   outline: none;
-  border-color: var(--primary-500);
-  box-shadow: 0 0 0 3px var(--primary-100);
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
 }
 
 body.dark .input:focus,
 body.dark .select:focus {
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
 }
 
 .inputWithPrefix {
@@ -331,7 +331,7 @@ body.dark .select:focus {
   left: 12px;
   font-size: 14px;
   font-weight: 600;
-  color: var(--text-tertiary);
+  color: var(--color-text-tertiary);
   pointer-events: none;
 }
 
@@ -341,15 +341,15 @@ body.dark .select:focus {
 
 .radioGroup {
   display: flex;
-  gap: 16px;
+  gap: var(--spacing-md);
 }
 
 .radioLabel {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--spacing-sm);
   font-size: 14px;
-  color: var(--text-primary);
+  color: var(--color-text-primary);
   cursor: pointer;
 }
 
