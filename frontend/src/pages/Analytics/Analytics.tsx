@@ -983,7 +983,7 @@ const Analytics: React.FC = () => {
 
         {/* Gráfica de Registros y Fuentes de Tráfico */}
         <div className="grid gap-4 lg:grid-cols-2">
-          <Card variant="glass" className="p-6">
+          <Card variant="glass" className="p-6 flex flex-col">
             <div className="mb-4">
               <h3 className="text-lg font-semibold">Registros</h3>
               <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
@@ -991,7 +991,7 @@ const Analytics: React.FC = () => {
               </p>
             </div>
 
-            <div style={{ height: '240px', width: '100%' }}>
+            <div className="flex-1 min-h-[280px]">
               {loading ? (
                 <div className="flex h-full items-center justify-center text-sm text-gray-500">
                   Cargando datos...
@@ -999,7 +999,7 @@ const Analytics: React.FC = () => {
               ) : dailyConversions.length > 0 ? (
                 <LineChart
                   data={dailyConversions}
-                  height={240}
+                  height={280}
                   showGrid
                   color="#10b981"
                   showLegend={false}
