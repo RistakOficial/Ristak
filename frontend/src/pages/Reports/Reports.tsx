@@ -280,20 +280,59 @@ const SimpleLineChart: React.FC<SimpleLineChartProps> = ({ data, dataKeys, forma
   const { chartRef, pointPos, isHovering, activeIndex, activeData } = useChartHover({ data })
   const isDarkMode = typeof document !== 'undefined' && document.body.classList.contains('dark')
 
+  // Calcular offset dinámico del tooltip (igual que Dashboard)
+  const tooltipVerticalOffset = React.useMemo(() => {
+    if (!pointPos || !chartRef.current) {
+      return 22
+    }
+
+    const rect = chartRef.current.getBoundingClientRect()
+    const distanceFromTop = Math.max(0, pointPos.y - rect.top)
+    const normalized = rect.height > 0 ? Math.min(Math.max(distanceFromTop / rect.height, 0), 1) : 0.5
+
+    const IDEAL_MIN_GAP = 18
+    const IDEAL_MAX_GAP = 54
+    const TOP_CLEARANCE = 4
+
+    const availableGap = Math.max(distanceFromTop - TOP_CLEARANCE, 0)
+
+    if (availableGap <= IDEAL_MIN_GAP) {
+      return availableGap
+    }
+
+    const idealGap = IDEAL_MIN_GAP + normalized * (IDEAL_MAX_GAP - IDEAL_MIN_GAP)
+    const boundedGap = Math.min(
+      Math.max(IDEAL_MIN_GAP, idealGap),
+      Math.min(availableGap, IDEAL_MAX_GAP)
+    )
+
+    return boundedGap
+  }, [pointPos, chartRef])
+
   return (
     <div ref={chartRef} style={{ position: 'relative', height }}>
       <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={data}>
-          <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border-subtle)" />
+        <AreaChart data={data}>
+          <defs>
+            {dataKeys.map((dk) => (
+              <linearGradient key={`gradient-${dk.key}`} id={`gradient-${dk.key}-line-reports`} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={dk.color} stopOpacity={0.18} />
+                <stop offset="50%" stopColor={dk.color} stopOpacity={0.1} />
+                <stop offset="100%" stopColor={dk.color} stopOpacity={0.02} />
+              </linearGradient>
+            ))}
+          </defs>
+          <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border-subtle)" opacity={0.5} />
           <XAxis dataKey="label" tick={{ fontSize: 11 }} stroke="var(--color-text-tertiary)" />
           <YAxis tick={{ fontSize: 11 }} stroke="var(--color-text-tertiary)" />
           {dataKeys.map((dk) => (
-            <Line
+            <Area
               key={dk.key}
               type="monotone"
               dataKey={dk.key}
               stroke={dk.color}
               strokeWidth={2.5}
+              fill={`url(#gradient-${dk.key}-line-reports)`}
               dot={(props: any) => {
                 const isActive = props.index === activeIndex
                 return (
@@ -318,7 +357,7 @@ const SimpleLineChart: React.FC<SimpleLineChartProps> = ({ data, dataKeys, forma
               animationDuration={0}
             />
           ))}
-        </LineChart>
+        </AreaChart>
       </ResponsiveContainer>
       <ChartTooltip
         active={isHovering && Boolean(pointPos)}
@@ -326,7 +365,7 @@ const SimpleLineChart: React.FC<SimpleLineChartProps> = ({ data, dataKeys, forma
         pointPos={pointPos}
         series={dataKeys}
         formatValue={formatValue}
-        verticalOffset={22}
+        verticalOffset={tooltipVerticalOffset}
       />
     </div>
   )
@@ -344,14 +383,86 @@ interface SimpleBarChartProps {
 const SimpleBarChart: React.FC<SimpleBarChartProps> = ({ data, dataKey, label, color, formatValue, height = 200 }) => {
   const { chartRef, pointPos, isHovering, activeIndex, activeData } = useChartHover({ data })
 
+  // Calcular offset dinámico del tooltip (igual que Dashboard)
+  const tooltipVerticalOffset = React.useMemo(() => {
+    if (!pointPos || !chartRef.current) {
+      return 22
+    }
+
+    const rect = chartRef.current.getBoundingClientRect()
+    const distanceFromTop = Math.max(0, pointPos.y - rect.top)
+    const normalized = rect.height > 0 ? Math.min(Math.max(distanceFromTop / rect.height, 0), 1) : 0.5
+
+    const IDEAL_MIN_GAP = 18
+    const IDEAL_MAX_GAP = 54
+    const TOP_CLEARANCE = 4
+
+    const availableGap = Math.max(distanceFromTop - TOP_CLEARANCE, 0)
+
+    if (availableGap <= IDEAL_MIN_GAP) {
+      return availableGap
+    }
+
+    const idealGap = IDEAL_MIN_GAP + normalized * (IDEAL_MAX_GAP - IDEAL_MIN_GAP)
+    const boundedGap = Math.min(
+      Math.max(IDEAL_MIN_GAP, idealGap),
+      Math.min(availableGap, IDEAL_MAX_GAP)
+    )
+
+    return boundedGap
+  }, [pointPos, chartRef])
+
   return (
     <div ref={chartRef} style={{ position: 'relative', height }}>
       <ResponsiveContainer width="100%" height="100%">
         <BarChart data={data}>
-          <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border-subtle)" />
+          <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border-subtle)" opacity={0.5} />
           <XAxis dataKey="label" tick={{ fontSize: 11 }} stroke="var(--color-text-tertiary)" />
           <YAxis tick={{ fontSize: 11 }} stroke="var(--color-text-tertiary)" />
-          <Bar dataKey={dataKey} fill={color} radius={[4, 4, 0, 0]} />
+          <Bar
+            dataKey={dataKey}
+            fill={color}
+            radius={[4, 4, 0, 0]}
+            shape={(props: any) => {
+              const { x, y, width, height, index } = props
+              const isActive = index === activeIndex
+              return (
+                <g>
+                  <rect
+                    x={x}
+                    y={y}
+                    width={width}
+                    height={height}
+                    fill={color}
+                    rx={4}
+                    ry={4}
+                    opacity={isActive ? 1 : 0.9}
+                    style={{ transition: 'opacity 150ms ease-out' }}
+                  />
+                  {/* Área interactiva invisible para detección de hover */}
+                  <rect
+                    x={x}
+                    y={y}
+                    width={width}
+                    height={height}
+                    fill="transparent"
+                    data-chart-index={index}
+                    data-chart-interactive="true"
+                    style={{ pointerEvents: 'auto', cursor: 'crosshair' }}
+                  />
+                  {/* Dot invisible en el centro superior de cada barra para posicionamiento */}
+                  <circle
+                    cx={x + width / 2}
+                    cy={y}
+                    r={0}
+                    data-chart-index={index}
+                    data-chart-interactive="true"
+                    style={{ pointerEvents: 'none' }}
+                  />
+                </g>
+              )
+            }}
+          />
         </BarChart>
       </ResponsiveContainer>
       <ChartTooltip
@@ -360,7 +471,7 @@ const SimpleBarChart: React.FC<SimpleBarChartProps> = ({ data, dataKey, label, c
         pointPos={pointPos}
         series={[{ key: dataKey, label, color }]}
         formatValue={formatValue}
-        verticalOffset={22}
+        verticalOffset={tooltipVerticalOffset}
       />
     </div>
   )
@@ -377,6 +488,35 @@ const SimpleAreaChart: React.FC<SimpleAreaChartProps> = ({ data, dataKeys, forma
   const { chartRef, pointPos, isHovering, activeIndex, activeData } = useChartHover({ data })
   const isDarkMode = typeof document !== 'undefined' && document.body.classList.contains('dark')
 
+  // Calcular offset dinámico del tooltip (igual que Dashboard)
+  const tooltipVerticalOffset = React.useMemo(() => {
+    if (!pointPos || !chartRef.current) {
+      return 22
+    }
+
+    const rect = chartRef.current.getBoundingClientRect()
+    const distanceFromTop = Math.max(0, pointPos.y - rect.top)
+    const normalized = rect.height > 0 ? Math.min(Math.max(distanceFromTop / rect.height, 0), 1) : 0.5
+
+    const IDEAL_MIN_GAP = 18
+    const IDEAL_MAX_GAP = 54
+    const TOP_CLEARANCE = 4
+
+    const availableGap = Math.max(distanceFromTop - TOP_CLEARANCE, 0)
+
+    if (availableGap <= IDEAL_MIN_GAP) {
+      return availableGap
+    }
+
+    const idealGap = IDEAL_MIN_GAP + normalized * (IDEAL_MAX_GAP - IDEAL_MIN_GAP)
+    const boundedGap = Math.min(
+      Math.max(IDEAL_MIN_GAP, idealGap),
+      Math.min(availableGap, IDEAL_MAX_GAP)
+    )
+
+    return boundedGap
+  }, [pointPos, chartRef])
+
   return (
     <div ref={chartRef} style={{ position: 'relative', height }}>
       <ResponsiveContainer width="100%" height="100%">
@@ -390,7 +530,7 @@ const SimpleAreaChart: React.FC<SimpleAreaChartProps> = ({ data, dataKeys, forma
               </linearGradient>
             ))}
           </defs>
-          <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border-subtle)" />
+          <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border-subtle)" opacity={0.5} />
           <XAxis dataKey="label" tick={{ fontSize: 11 }} stroke="var(--color-text-tertiary)" />
           <YAxis tick={{ fontSize: 11 }} stroke="var(--color-text-tertiary)" />
           {dataKeys.map((dk) => (
@@ -433,7 +573,7 @@ const SimpleAreaChart: React.FC<SimpleAreaChartProps> = ({ data, dataKeys, forma
         pointPos={pointPos}
         series={dataKeys}
         formatValue={formatValue}
-        verticalOffset={22}
+        verticalOffset={tooltipVerticalOffset}
       />
     </div>
   )
