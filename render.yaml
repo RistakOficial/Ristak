@@ -1,35 +1,16 @@
-databases:
-  - name: ristak-db
-    databaseName: ristak_production
-    plan: basic-256mb  # Plan de pago básico ($7/mes) - 256MB RAM
-    diskSizeGB: 1  # Tamaño de disco: 1GB (mínimo, más barato)
-    ipAllowList: []  # Requerido para planes de pago ([] = permitir todas las IPs)
-    region: oregon
-
 services:
-  # Web Service Principal
   - type: web
     name: ristak-app
-    runtime: node
+    env: node
     region: oregon
-    plan: starter  # Plan de pago básico ($7/mes) - Mejor uptime y rendimiento que free tier
     buildCommand: |
       npm install --prefix backend &&
+      rm -rf frontend/node_modules frontend/.vite &&
+      npm cache clean --force &&
       npm install --include=dev --prefix frontend &&
       echo "VITE_API_URL=https://$RENDER_EXTERNAL_HOSTNAME" > frontend/.env.production &&
       NODE_ENV=production npm run build --prefix frontend
-    # Force rebuild: 2025-10-19-fix-env-production
     startCommand: npm start --prefix backend
     envVars:
       - key: NODE_ENV
         value: production
-      - key: PORT
-        value: 3001
-      - key: DATABASE_URL
-        fromDatabase:
-          name: ristak-db
-          property: connectionString
-      # APP_URL y RENDER_EXTERNAL_URL se generan automáticamente por Render (basadas en el nombre del servicio)
-      # ENCRYPTION_MASTER_KEY se auto-genera y guarda en la DB al primer deploy (ver encryption.js)
-    healthCheckPath: /api/health
-    autoDeploy: true
