@@ -24,6 +24,8 @@ export interface ContactsByDate {
  * Obtiene conteo de contactos con visitor_id por fecha de creación
  */
 export async function getContactsByDate(startDate: string, endDate: string): Promise<ContactsByDate[]> {
-  // apiClient.get ya extrae automáticamente el campo 'data' de la respuesta
-  return apiClient.get<ContactsByDate[]>(`/tracking/contacts-by-date?start=${startDate}&end=${endDate}`)
+  const response = await apiClient.get<{ success: boolean; data: ContactsByDate[] }>(
+    `/tracking/contacts-by-date?start=${startDate}&end=${endDate}`
+  )
+  return response.data
 }
