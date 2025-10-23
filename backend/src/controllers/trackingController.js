@@ -1681,22 +1681,46 @@ export async function getContactsByDate(req, res) {
 
     logger.info(`Obteniendo contactos por fecha: ${start} a ${end}`)
 
-    // Query para obtener contactos con visitor_id agrupados por fecha
-    const query = `
-      SELECT 
-        DATE(created_at) as date,
-        COUNT(*) as count
-      FROM contacts
-      WHERE 
-        visitor_id IS NOT NULL 
-        AND visitor_id != ''
-        AND DATE(created_at) >= DATE(?)
-        AND DATE(created_at) <= DATE(?)
-      GROUP BY DATE(created_at)
-      ORDER BY date ASC
-    `
+    const usePostgres = Boolean(process.env.DATABASE_URL)
 
-    const contactsByDate = await db.all(query, [start, end])
+    // Query para obtener contactos con visitor_id agrupados por fecha
+    let query, params
+
+    if (usePostgres) {
+      // PostgreSQL query
+      query = `
+        SELECT
+          TO_CHAR(created_at::date, 'YYYY-MM-DD') as date,
+          COUNT(*) as count
+        FROM contacts
+        WHERE
+          visitor_id IS NOT NULL
+          AND visitor_id != ''
+          AND created_at::date >= $1::date
+          AND created_at::date <= $2::date
+        GROUP BY TO_CHAR(created_at::date, 'YYYY-MM-DD')
+        ORDER BY date ASC
+      `
+      params = [start, end]
+    } else {
+      // SQLite query
+      query = `
+        SELECT
+          DATE(created_at) as date,
+          COUNT(*) as count
+        FROM contacts
+        WHERE
+          visitor_id IS NOT NULL
+          AND visitor_id != ''
+          AND DATE(created_at) >= DATE(?)
+          AND DATE(created_at) <= DATE(?)
+        GROUP BY DATE(created_at)
+        ORDER BY date ASC
+      `
+      params = [start, end]
+    }
+
+    const contactsByDate = await db.all(query, params)
 
     // Crear un mapa con los resultados
     const dataMap = {}
