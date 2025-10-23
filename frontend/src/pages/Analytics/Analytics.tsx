@@ -582,6 +582,11 @@ const Analytics: React.FC = () => {
             .slice(0, 5)
           setOsData(osStats)
 
+          // Calcular top visitors (visitantes con más requests)
+          const visitorCounts: { [key: string]: number } = {}
+          currentSessions.forEach((s: Session) => {
+            visitorCounts[s.visitor_id] = (visitorCounts[s.visitor_id] || 0) + 1
+          })
           const topVisitorsList = Object.entries(visitorCounts)
             .sort(([, a], [, b]) => b - a)
             .slice(0, 5)
@@ -611,7 +616,9 @@ const Analytics: React.FC = () => {
           setDailyTraffic([])
         }
       } catch (error) {
-        console.error('Error cargando analytics:', error)
+        console.error('❌ Error cargando analytics:', error)
+        console.error('❌ Stack trace:', error.stack)
+        console.error('❌ Error type:', error.constructor.name)
       } finally {
         setLoading(false)
       }
