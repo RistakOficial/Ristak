@@ -213,6 +213,11 @@ const Analytics: React.FC = () => {
           getContactsByDate(prevStartDate, prevEndDate)
         ])
 
+        console.log('📊 DEBUG Analytics - currentSessions:', currentSessions)
+        console.log('📊 DEBUG Analytics - tipo:', Array.isArray(currentSessions) ? 'Array' : typeof currentSessions)
+        console.log('📊 DEBUG Analytics - length:', currentSessions?.length || 'N/A')
+        console.log('📊 DEBUG Analytics - primer elemento:', currentSessions?.[0])
+
         if (currentSessions.length > 0) {
           // Calcular métricas principales
           const uniqueVids = new Set(currentSessions.map((s: Session) => s.visitor_id)).size
