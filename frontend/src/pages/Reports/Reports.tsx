@@ -23,7 +23,8 @@ import {
   type ReportRange
 } from '@/services/reportsService'
 import { formatCurrency, formatNumber, formatRoas, formatDate, formatDateToISO, parseLocalDateString } from '@/utils/format'
-import { useAppConfig } from '@/hooks'
+import { useAppConfig, useChartHover } from '@/hooks'
+import { ChartTooltip } from '@/components/common/ChartTooltip/ChartTooltip'
 import styles from './Reports.module.css'
 import {
   Users,
@@ -45,10 +46,7 @@ import {
   XAxis,
   YAxis,
   CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  Legend,
-  TooltipProps
+  ResponsiveContainer
 } from 'recharts'
 
 const monthNames = [
@@ -265,75 +263,178 @@ interface MetricsGridProps {
   viewType: ViewType
 }
 
-// Componente de tooltip personalizado para los gráficos
-interface CustomTooltipProps extends TooltipProps<number, string> {
-  formatter?: (value: number) => string
+// Componentes de gráfico personalizados con tooltip del Dashboard
+interface MetricChartData {
+  label: string
+  [key: string]: number | string
 }
 
-const CustomTooltip: React.FC<CustomTooltipProps> = ({ active, payload, label, formatter }) => {
-  if (!active || !payload || !payload.length) {
-    return null
-  }
+interface SimpleLineChartProps {
+  data: MetricChartData[]
+  dataKeys: { key: string; label: string; color: string }[]
+  formatValue: (value: number, key: string) => string
+  height?: number
+}
+
+const SimpleLineChart: React.FC<SimpleLineChartProps> = ({ data, dataKeys, formatValue, height = 200 }) => {
+  const { chartRef, pointPos, isHovering, activeIndex, activeData } = useChartHover({ data })
+  const isDarkMode = typeof document !== 'undefined' && document.body.classList.contains('dark')
 
   return (
-    <div
-      style={{
-        backgroundColor: 'var(--color-surface)',
-        border: '1px solid var(--color-border)',
-        borderRadius: '8px',
-        padding: '12px',
-        boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)'
-      }}
-    >
-      <p
-        style={{
-          margin: '0 0 8px 0',
-          fontSize: '12px',
-          fontWeight: 600,
-          color: 'var(--color-text-primary)'
-        }}
-      >
-        {label}
-      </p>
-      {payload.map((entry, index) => (
-        <div
-          key={`item-${index}`}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-            marginTop: index > 0 ? '4px' : '0'
-          }}
-        >
-          <span
-            style={{
-              width: '10px',
-              height: '10px',
-              borderRadius: '50%',
-              backgroundColor: entry.color,
-              display: 'inline-block'
-            }}
-          />
-          <span
-            style={{
-              fontSize: '11px',
-              color: 'var(--color-text-secondary)',
-              marginRight: '4px'
-            }}
-          >
-            {entry.name}:
-          </span>
-          <span
-            style={{
-              fontSize: '12px',
-              fontWeight: 600,
-              color: 'var(--color-text-primary)'
-            }}
-          >
-            {formatter ? formatter(entry.value as number) : entry.value}
-          </span>
-        </div>
-      ))}
+    <div ref={chartRef} style={{ position: 'relative', height }}>
+      <ResponsiveContainer width="100%" height="100%">
+        <LineChart data={data}>
+          <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border-subtle)" />
+          <XAxis dataKey="label" tick={{ fontSize: 11 }} stroke="var(--color-text-tertiary)" />
+          <YAxis tick={{ fontSize: 11 }} stroke="var(--color-text-tertiary)" />
+          {dataKeys.map((dk) => (
+            <Line
+              key={dk.key}
+              type="monotone"
+              dataKey={dk.key}
+              stroke={dk.color}
+              strokeWidth={2.5}
+              dot={(props: any) => {
+                const isActive = props.index === activeIndex
+                return (
+                  <circle
+                    cx={props.cx}
+                    cy={props.cy}
+                    r={isActive ? 7 : 3.5}
+                    fill={isActive ? 'var(--color-background-primary)' : dk.color}
+                    stroke={isActive ? dk.color : 'none'}
+                    strokeWidth={isActive ? 3 : 0}
+                    data-chart-index={props.index}
+                    data-chart-interactive="true"
+                    style={{
+                      pointerEvents: 'auto',
+                      transition: 'all 150ms ease-out',
+                      filter: isActive ? 'drop-shadow(0 2px 4px rgba(0, 0, 0, 0.2))' : 'none'
+                    }}
+                  />
+                )
+              }}
+              activeDot={false}
+              animationDuration={0}
+            />
+          ))}
+        </LineChart>
+      </ResponsiveContainer>
+      <ChartTooltip
+        active={isHovering && Boolean(pointPos)}
+        data={activeData}
+        pointPos={pointPos}
+        series={dataKeys}
+        formatValue={formatValue}
+        verticalOffset={22}
+      />
+    </div>
+  )
+}
+
+interface SimpleBarChartProps {
+  data: MetricChartData[]
+  dataKey: string
+  label: string
+  color: string
+  formatValue: (value: number, key: string) => string
+  height?: number
+}
+
+const SimpleBarChart: React.FC<SimpleBarChartProps> = ({ data, dataKey, label, color, formatValue, height = 200 }) => {
+  const { chartRef, pointPos, isHovering, activeIndex, activeData } = useChartHover({ data })
+
+  return (
+    <div ref={chartRef} style={{ position: 'relative', height }}>
+      <ResponsiveContainer width="100%" height="100%">
+        <BarChart data={data}>
+          <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border-subtle)" />
+          <XAxis dataKey="label" tick={{ fontSize: 11 }} stroke="var(--color-text-tertiary)" />
+          <YAxis tick={{ fontSize: 11 }} stroke="var(--color-text-tertiary)" />
+          <Bar dataKey={dataKey} fill={color} radius={[4, 4, 0, 0]} />
+        </BarChart>
+      </ResponsiveContainer>
+      <ChartTooltip
+        active={isHovering && Boolean(pointPos)}
+        data={activeData}
+        pointPos={pointPos}
+        series={[{ key: dataKey, label, color }]}
+        formatValue={formatValue}
+        verticalOffset={22}
+      />
+    </div>
+  )
+}
+
+interface SimpleAreaChartProps {
+  data: MetricChartData[]
+  dataKeys: { key: string; label: string; color: string }[]
+  formatValue: (value: number, key: string) => string
+  height?: number
+}
+
+const SimpleAreaChart: React.FC<SimpleAreaChartProps> = ({ data, dataKeys, formatValue, height = 200 }) => {
+  const { chartRef, pointPos, isHovering, activeIndex, activeData } = useChartHover({ data })
+  const isDarkMode = typeof document !== 'undefined' && document.body.classList.contains('dark')
+
+  return (
+    <div ref={chartRef} style={{ position: 'relative', height }}>
+      <ResponsiveContainer width="100%" height="100%">
+        <AreaChart data={data}>
+          <defs>
+            {dataKeys.map((dk) => (
+              <linearGradient key={`gradient-${dk.key}`} id={`gradient-${dk.key}-reports`} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={dk.color} stopOpacity={0.18} />
+                <stop offset="50%" stopColor={dk.color} stopOpacity={0.1} />
+                <stop offset="100%" stopColor={dk.color} stopOpacity={0.02} />
+              </linearGradient>
+            ))}
+          </defs>
+          <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border-subtle)" />
+          <XAxis dataKey="label" tick={{ fontSize: 11 }} stroke="var(--color-text-tertiary)" />
+          <YAxis tick={{ fontSize: 11 }} stroke="var(--color-text-tertiary)" />
+          {dataKeys.map((dk) => (
+            <Area
+              key={dk.key}
+              type="monotone"
+              dataKey={dk.key}
+              stroke={dk.color}
+              strokeWidth={2.5}
+              fill={`url(#gradient-${dk.key}-reports)`}
+              dot={(props: any) => {
+                const isActive = props.index === activeIndex
+                return (
+                  <circle
+                    cx={props.cx}
+                    cy={props.cy}
+                    r={isActive ? 7 : 3.5}
+                    fill={isActive ? 'var(--color-background-primary)' : dk.color}
+                    stroke={isActive ? dk.color : 'none'}
+                    strokeWidth={isActive ? 3 : 0}
+                    data-chart-index={props.index}
+                    data-chart-interactive="true"
+                    style={{
+                      pointerEvents: 'auto',
+                      transition: 'all 150ms ease-out',
+                      filter: isActive ? 'drop-shadow(0 2px 4px rgba(0, 0, 0, 0.2))' : 'none'
+                    }}
+                  />
+                )
+              }}
+              activeDot={false}
+              animationDuration={0}
+            />
+          ))}
+        </AreaChart>
+      </ResponsiveContainer>
+      <ChartTooltip
+        active={isHovering && Boolean(pointPos)}
+        data={activeData}
+        pointPos={pointPos}
+        series={dataKeys}
+        formatValue={formatValue}
+        verticalOffset={22}
+      />
     </div>
   )
 }
@@ -374,9 +475,9 @@ const MetricsGrid: React.FC<MetricsGridProps> = ({ metrics, loading, reportType,
   const interesadoToAppt = totals.leads > 0 ? (totals.appointments / totals.leads) * 100 : 0
   const apptToSale = totals.appointments > 0 ? (totals.sales / totals.appointments) * 100 : 0
 
-  // Preparar datos para los gráficos
+  // Preparar datos para los gráficos (formato compatible con useChartHover)
   const chartData = metrics.slice().reverse().map(m => ({
-    date: formatPeriodLabel(m.date, viewType, { includeYear: false }),
+    label: formatPeriodLabel(m.date, viewType, { includeYear: false }),
     clicks: m.clicks,
     visitors: m.visitors,
     leads: m.leads,
@@ -401,29 +502,24 @@ const MetricsGrid: React.FC<MetricsGridProps> = ({ metrics, loading, reportType,
     )
   }
 
+  const trafficKeys = [
+    { key: 'clicks', label: 'Clicks', color: '#3b82f6' }
+  ]
+  if (showVisitors) {
+    trafficKeys.push({ key: 'visitors', label: 'Visitantes', color: '#8b5cf6' })
+  }
+
   const metricGroups = [
     {
       title: 'Tráfico',
       icon: <MousePointerClick size={18} />,
       items: trafficItems,
       chart: (
-        <ResponsiveContainer width="100%" height={200}>
-          <LineChart data={chartData}>
-            <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border-subtle)" />
-            <XAxis dataKey="date" tick={{ fontSize: 11 }} stroke="var(--color-text-tertiary)" />
-            <YAxis tick={{ fontSize: 11 }} stroke="var(--color-text-tertiary)" />
-            <Tooltip
-              content={<CustomTooltip formatter={formatNumber} />}
-              cursor={{ stroke: 'var(--color-border)', strokeWidth: 1 }}
-              wrapperStyle={{ zIndex: 1000 }}
-            />
-            <Legend wrapperStyle={{ fontSize: '12px' }} />
-            <Line type="monotone" dataKey="clicks" stroke="#3b82f6" name="Clicks" strokeWidth={2} dot={{ r: 3 }} />
-            {showVisitors && (
-              <Line type="monotone" dataKey="visitors" stroke="#8b5cf6" name="Visitantes" strokeWidth={2} dot={{ r: 3 }} />
-            )}
-          </LineChart>
-        </ResponsiveContainer>
+        <SimpleLineChart
+          data={chartData}
+          dataKeys={trafficKeys}
+          formatValue={(value) => formatNumber(value)}
+        />
       )
     },
     {
@@ -439,22 +535,15 @@ const MetricsGrid: React.FC<MetricsGridProps> = ({ metrics, loading, reportType,
         { label: 'Citas→Ventas %', value: `${apptToSale.toFixed(1)}%` }
       ],
       chart: (
-        <ResponsiveContainer width="100%" height={200}>
-          <LineChart data={chartData}>
-            <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border-subtle)" />
-            <XAxis dataKey="date" tick={{ fontSize: 11 }} stroke="var(--color-text-tertiary)" />
-            <YAxis tick={{ fontSize: 11 }} stroke="var(--color-text-tertiary)" />
-            <Tooltip
-              content={<CustomTooltip formatter={formatNumber} />}
-              cursor={{ stroke: 'var(--color-border)', strokeWidth: 1 }}
-              wrapperStyle={{ zIndex: 1000 }}
-            />
-            <Legend wrapperStyle={{ fontSize: '12px' }} />
-            <Line type="monotone" dataKey="leads" stroke="#10b981" name={labels.leads} strokeWidth={2} dot={{ r: 3 }} />
-            <Line type="monotone" dataKey="appointments" stroke="#f59e0b" name="Citas" strokeWidth={2} dot={{ r: 3 }} />
-            <Line type="monotone" dataKey="sales" stroke="#ef4444" name="Ventas" strokeWidth={2} dot={{ r: 3 }} />
-          </LineChart>
-        </ResponsiveContainer>
+        <SimpleLineChart
+          data={chartData}
+          dataKeys={[
+            { key: 'leads', label: labels.leads, color: '#10b981' },
+            { key: 'appointments', label: 'Citas', color: '#f59e0b' },
+            { key: 'sales', label: 'Ventas', color: '#ef4444' }
+          ]}
+          formatValue={(value) => formatNumber(value)}
+        />
       )
     },
     {
@@ -468,20 +557,13 @@ const MetricsGrid: React.FC<MetricsGridProps> = ({ metrics, loading, reportType,
         { label: 'Ticket Promedio', value: formatCurrency(aov) }
       ],
       chart: (
-        <ResponsiveContainer width="100%" height={200}>
-          <BarChart data={chartData}>
-            <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border-subtle)" />
-            <XAxis dataKey="date" tick={{ fontSize: 11 }} stroke="var(--color-text-tertiary)" />
-            <YAxis tick={{ fontSize: 11 }} stroke="var(--color-text-tertiary)" />
-            <Tooltip
-              content={<CustomTooltip formatter={formatNumber} />}
-              cursor={{ fill: 'rgba(0, 0, 0, 0.05)' }}
-              wrapperStyle={{ zIndex: 1000 }}
-            />
-            <Legend wrapperStyle={{ fontSize: '12px' }} />
-            <Bar dataKey="new_customers" fill="#06b6d4" name="Clientes Nuevos" radius={[4, 4, 0, 0]} />
-          </BarChart>
-        </ResponsiveContainer>
+        <SimpleBarChart
+          data={chartData}
+          dataKey="new_customers"
+          label="Clientes Nuevos"
+          color="#06b6d4"
+          formatValue={(value) => formatNumber(value)}
+        />
       )
     },
     {
@@ -495,22 +577,15 @@ const MetricsGrid: React.FC<MetricsGridProps> = ({ metrics, loading, reportType,
         { label: 'ROI', value: `${roi.toFixed(1)}%` }
       ],
       chart: (
-        <ResponsiveContainer width="100%" height={200}>
-          <AreaChart data={chartData}>
-            <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border-subtle)" />
-            <XAxis dataKey="date" tick={{ fontSize: 11 }} stroke="var(--color-text-tertiary)" />
-            <YAxis tick={{ fontSize: 11 }} stroke="var(--color-text-tertiary)" />
-            <Tooltip
-              content={<CustomTooltip formatter={formatCurrency} />}
-              cursor={{ stroke: 'var(--color-border)', strokeWidth: 1 }}
-              wrapperStyle={{ zIndex: 1000 }}
-            />
-            <Legend wrapperStyle={{ fontSize: '12px' }} />
-            <Area type="monotone" dataKey="revenue" stroke="#10b981" fill="#10b981" fillOpacity={0.3} name="Ingresos" />
-            <Area type="monotone" dataKey="spend" stroke="#ef4444" fill="#ef4444" fillOpacity={0.3} name="Gastos" />
-            <Area type="monotone" dataKey="profit" stroke="#3b82f6" fill="#3b82f6" fillOpacity={0.3} name="Ganancias" />
-          </AreaChart>
-        </ResponsiveContainer>
+        <SimpleAreaChart
+          data={chartData}
+          dataKeys={[
+            { key: 'revenue', label: 'Ingresos', color: '#10b981' },
+            { key: 'spend', label: 'Gastos', color: '#ef4444' },
+            { key: 'profit', label: 'Ganancias', color: '#3b82f6' }
+          ]}
+          formatValue={(value) => formatCurrency(value)}
+        />
       )
     }
   ]

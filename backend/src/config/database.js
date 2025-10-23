@@ -554,19 +554,56 @@ async function initTables() {
     }
 
     // Tabla de sesiones de tracking (pixel /snip.js)
+    // Migración: Si la tabla ya existe con session_id como PRIMARY KEY, la renombramos para backup
+    try {
+      if (usePostgres) {
+        // PostgreSQL: Verificar si existe la columna id
+        const tableInfo = await db.get(`
+          SELECT column_name
+          FROM information_schema.columns
+          WHERE table_name = 'sessions' AND column_name = 'id'
+        `)
+
+        if (!tableInfo) {
+          // Tabla vieja existe, necesita migración
+          logger.info('⚠️  Detectada tabla sessions con esquema viejo, migrando...')
+          await db.run('ALTER TABLE sessions RENAME TO sessions_backup_2025')
+          logger.success('✅ Tabla vieja respaldada como sessions_backup_2025')
+        }
+      } else {
+        // SQLite: Verificar si existe la columna id
+        const tableInfo = await db.get(`
+          SELECT name FROM pragma_table_info('sessions') WHERE name = 'id'
+        `)
+
+        if (!tableInfo) {
+          // Tabla vieja existe, necesita migración
+          logger.info('⚠️  Detectada tabla sessions con esquema viejo, migrando...')
+          await db.run('ALTER TABLE sessions RENAME TO sessions_backup_2025')
+          logger.success('✅ Tabla vieja respaldada como sessions_backup_2025')
+        }
+      }
+    } catch (err) {
+      // Si la tabla no existe, continuamos normal
+      if (!err.message.includes('does not exist') && !err.message.includes('no such table')) {
+        logger.warn('Error verificando esquema de sessions:', err.message)
+      }
+    }
+
+    // Crear tabla con nuevo esquema (cada page_view = 1 registro)
     await db.run(`
       CREATE TABLE IF NOT EXISTS sessions (
-        session_id TEXT PRIMARY KEY,
+        id ${usePostgres ? 'UUID PRIMARY KEY DEFAULT gen_random_uuid()' : 'TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16))))'},
+        session_id TEXT NOT NULL,
         visitor_id TEXT NOT NULL,
         contact_id TEXT,
         full_name TEXT,
         email TEXT,
         event_name TEXT NOT NULL DEFAULT 'page_view',
         started_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        last_event_at TIMESTAMP,
         created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
-        landing_url TEXT,
+        page_url TEXT,
         referrer_url TEXT,
 
         utm_source TEXT,
@@ -619,6 +656,7 @@ async function initTables() {
       )
     `)
 
+    await db.run('CREATE INDEX IF NOT EXISTS idx_sessions_session_id ON sessions(session_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_sessions_visitor ON sessions(visitor_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_sessions_started_at ON sessions(started_at)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_sessions_utm ON sessions(utm_source, utm_medium, utm_campaign)')
