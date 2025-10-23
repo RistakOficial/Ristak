@@ -84,7 +84,7 @@ export const ChartTooltip: React.FC<ChartTooltipProps> = ({
       }
       return pointPos
     })
-  }, [active, pointPos?.x, pointPos?.y, pointPos])
+  }, [active, pointPos])
 
   const effectivePoint = renderPoint ?? lastValidPointRef.current
 
