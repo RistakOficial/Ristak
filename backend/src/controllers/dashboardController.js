@@ -273,7 +273,6 @@ export const getChartData = async (req, res) => {
     // Obtener timezone dinámico de HighLevel
     const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate });
     const timezone = range.appliedTimezone;
-    const usePostgres = Boolean(process.env.DATABASE_URL);
 
     // Obtener filtro de contactos ocultos
     const hiddenFilters = await getHiddenContactFilters();
@@ -282,50 +281,25 @@ export const getChartData = async (req, res) => {
     // Usar getGroupExpression() con timezone dinámico
     const dateExpression = getGroupExpression('date', groupBy, timezone);
 
-    let ingresosQuery, gastosQuery;
-    let ingresosParams, gastosParams;
+    const ingresosQuery = `SELECT
+       ${dateExpression} as periodo,
+       SUM(amount) as total_ingresos
+     FROM payments
+     WHERE status = 'succeeded'
+     AND date >= $1 AND date <= $2
+     ${hiddenCondition ? `AND contact_id IN (SELECT c.id FROM contacts c WHERE ${hiddenCondition})` : ''}
+     GROUP BY periodo
+     ORDER BY periodo`;
+    const ingresosParams = [range.startUtc, range.endUtc];
 
-    if (usePostgres) {
-      ingresosQuery = `SELECT
-         ${dateExpression} as periodo,
-         SUM(amount) as total_ingresos
-       FROM payments
-       WHERE status = 'succeeded'
-       AND date >= $1 AND date <= $2
-       ${hiddenCondition ? `AND contact_id IN (SELECT c.id FROM contacts c WHERE ${hiddenCondition})` : ''}
-       GROUP BY periodo
-       ORDER BY periodo`;
-      ingresosParams = [range.startUtc, range.endUtc];
-
-      gastosQuery = `SELECT
-         ${dateExpression} as periodo,
-         SUM(spend) as total_gastos
-       FROM meta_ads
-       WHERE date >= $1 AND date <= $2
-       GROUP BY periodo
-       ORDER BY periodo`;
-      gastosParams = [range.startUtc, range.endUtc];
-    } else {
-      ingresosQuery = `SELECT
-         ${dateExpression} as periodo,
-         SUM(amount) as total_ingresos
-       FROM payments
-       WHERE status = 'succeeded'
-       AND date >= ? AND date <= ?
-       ${hiddenCondition ? `AND contact_id IN (SELECT c.id FROM contacts c WHERE ${hiddenCondition})` : ''}
-       GROUP BY periodo
-       ORDER BY periodo`;
-      ingresosParams = [range.startUtc, range.endUtc];
-
-      gastosQuery = `SELECT
-         ${dateExpression} as periodo,
-         SUM(spend) as total_gastos
-       FROM meta_ads
-       WHERE date >= ? AND date <= ?
-       GROUP BY periodo
-       ORDER BY periodo`;
-      gastosParams = [range.startUtc, range.endUtc];
-    }
+    const gastosQuery = `SELECT
+       ${dateExpression} as periodo,
+       SUM(spend) as total_gastos
+     FROM meta_ads
+     WHERE date >= $1 AND date <= $2
+     GROUP BY periodo
+     ORDER BY periodo`;
+    const gastosParams = [range.startUtc, range.endUtc];
 
     // Obtener ingresos agrupados
     const ingresosData = await db.all(ingresosQuery, ingresosParams);
@@ -394,7 +368,6 @@ export const getRoasData = async (req, res) => {
     // Obtener timezone dinámico de HighLevel
     const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate });
     const timezone = range.appliedTimezone;
-    const usePostgres = Boolean(process.env.DATABASE_URL);
 
     // Obtener filtro de contactos ocultos
     const hiddenFilters = await getHiddenContactFilters();
@@ -403,43 +376,22 @@ export const getRoasData = async (req, res) => {
     // Agrupar por mes con timezone dinámico
     const monthExpression = getGroupExpression('date', 'month', timezone);
 
-    let query, params;
-
-    if (usePostgres) {
-      query = `
-        SELECT
-          ${monthExpression} as periodo,
-          COALESCE(SUM(i.amount), 0) as ingresos,
-          COALESCE(SUM(g.spend), 0) as gastos
-        FROM (
-          SELECT date, amount FROM payments WHERE status = 'succeeded' AND date >= $1 AND date <= $2
-          ${hiddenCondition ? `AND contact_id IN (SELECT c.id FROM contacts c WHERE ${hiddenCondition})` : ''}
-        ) i
-        LEFT JOIN (
-          SELECT date, spend FROM meta_ads WHERE date >= $3 AND date <= $4
-        ) g ON ${getGroupExpression('i.date', 'month', timezone)} = ${getGroupExpression('g.date', 'month', timezone)}
-        GROUP BY periodo
-        ORDER BY periodo
-      `;
-      params = [range.startUtc, range.endUtc, range.startUtc, range.endUtc];
-    } else {
-      query = `
-        SELECT
-          ${monthExpression} as periodo,
-          COALESCE(SUM(i.amount), 0) as ingresos,
-          COALESCE(SUM(g.spend), 0) as gastos
-        FROM (
-          SELECT date, amount FROM payments WHERE status = 'succeeded' AND date >= ? AND date <= ?
-          ${hiddenCondition ? `AND contact_id IN (SELECT c.id FROM contacts c WHERE ${hiddenCondition})` : ''}
-        ) i
-        LEFT JOIN (
-          SELECT date, spend FROM meta_ads WHERE date >= ? AND date <= ?
-        ) g ON ${getGroupExpression('i.date', 'month', timezone)} = ${getGroupExpression('g.date', 'month', timezone)}
-        GROUP BY periodo
-        ORDER BY periodo
-      `;
-      params = [range.startUtc, range.endUtc, range.startUtc, range.endUtc];
-    }
+    const query = `
+      SELECT
+        ${monthExpression} as periodo,
+        COALESCE(SUM(i.amount), 0) as ingresos,
+        COALESCE(SUM(g.spend), 0) as gastos
+      FROM (
+        SELECT date, amount FROM payments WHERE status = 'succeeded' AND date >= $1 AND date <= $2
+        ${hiddenCondition ? `AND contact_id IN (SELECT c.id FROM contacts c WHERE ${hiddenCondition})` : ''}
+      ) i
+      LEFT JOIN (
+        SELECT date, spend FROM meta_ads WHERE date >= $3 AND date <= $4
+      ) g ON ${getGroupExpression('i.date', 'month', timezone)} = ${getGroupExpression('g.date', 'month', timezone)}
+      GROUP BY periodo
+      ORDER BY periodo
+    `;
+    const params = [range.startUtc, range.endUtc, range.startUtc, range.endUtc];
 
     const data = await db.all(query, params);
 
@@ -470,7 +422,6 @@ export const getNewCustomersData = async (req, res) => {
     // Obtener timezone dinámico de HighLevel
     const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate });
     const timezone = range.appliedTimezone;
-    const usePostgres = Boolean(process.env.DATABASE_URL);
 
     // Usar getGroupExpression() con timezone dinámico
     const dateExpression = getGroupExpression('created_at', groupBy, timezone);
@@ -479,38 +430,19 @@ export const getNewCustomersData = async (req, res) => {
     const hiddenFilters = await getHiddenContactFilters();
     const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'contacts', false);
 
-    let query;
-    let params;
+    const conditions = ['total_paid > 0', 'created_at >= $1', 'created_at <= $2'];
+    if (hiddenCondition) conditions.push(hiddenCondition);
 
-    if (usePostgres) {
-      const conditions = ['total_paid > 0', 'created_at >= $1', 'created_at <= $2'];
-      if (hiddenCondition) conditions.push(hiddenCondition);
-
-      query = `
-        SELECT
-          ${dateExpression} as periodo,
-          COUNT(*) as total
-        FROM contacts
-        WHERE ${conditions.join(' AND ')}
-        GROUP BY periodo
-        ORDER BY periodo
-      `;
-      params = [range.startUtc, range.endUtc];
-    } else {
-      const conditions = ['total_paid > 0', 'created_at >= ?', 'created_at <= ?'];
-      if (hiddenCondition) conditions.push(hiddenCondition);
-
-      query = `
-        SELECT
-          ${dateExpression} as periodo,
-          COUNT(*) as total
-        FROM contacts
-        WHERE ${conditions.join(' AND ')}
-        GROUP BY periodo
-        ORDER BY periodo
-      `;
-      params = [range.startUtc, range.endUtc];
-    }
+    const query = `
+      SELECT
+        ${dateExpression} as periodo,
+        COUNT(*) as total
+      FROM contacts
+      WHERE ${conditions.join(' AND ')}
+      GROUP BY periodo
+      ORDER BY periodo
+    `;
+    const params = [range.startUtc, range.endUtc];
 
     const data = await db.all(query, params);
 
@@ -541,37 +473,20 @@ export const getVisitorsData = async (req, res) => {
     // Obtener timezone dinámico de HighLevel
     const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate });
     const timezone = range.appliedTimezone;
-    const usePostgres = Boolean(process.env.DATABASE_URL);
 
     // Usar getGroupExpression() con timezone dinámico
     const dateExpression = getGroupExpression('started_at', groupBy, timezone);
 
-    let query;
-    let params;
-
-    if (usePostgres) {
-      query = `
-        SELECT
-          ${dateExpression} as periodo,
-          COUNT(DISTINCT visitor_id) as total
-        FROM sessions
-        WHERE started_at >= $1 AND started_at <= $2
-        GROUP BY periodo
-        ORDER BY periodo
-      `;
-      params = [range.startUtc, range.endUtc];
-    } else {
-      query = `
-        SELECT
-          ${dateExpression} as periodo,
-          COUNT(DISTINCT visitor_id) as total
-        FROM sessions
-        WHERE started_at >= ? AND started_at <= ?
-        GROUP BY periodo
-        ORDER BY periodo
-      `;
-      params = [range.startUtc, range.endUtc];
-    }
+    const query = `
+      SELECT
+        ${dateExpression} as periodo,
+        COUNT(DISTINCT visitor_id) as total
+      FROM sessions
+      WHERE started_at >= $1 AND started_at <= $2
+      GROUP BY periodo
+      ORDER BY periodo
+    `;
+    const params = [range.startUtc, range.endUtc];
 
     const data = await db.all(query, params);
 
@@ -602,7 +517,6 @@ export const getLeadsData = async (req, res) => {
     // Obtener timezone dinámico de HighLevel
     const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate });
     const timezone = range.appliedTimezone;
-    const usePostgres = Boolean(process.env.DATABASE_URL);
 
     // Usar getGroupExpression() con timezone dinámico
     const dateExpression = getGroupExpression('created_at', groupBy, timezone);
@@ -611,38 +525,19 @@ export const getLeadsData = async (req, res) => {
     const hiddenFilters = await getHiddenContactFilters();
     const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'contacts', false);
 
-    let query;
-    let params;
+    const conditions = ['created_at >= $1', 'created_at <= $2'];
+    if (hiddenCondition) conditions.push(hiddenCondition);
 
-    if (usePostgres) {
-      const conditions = ['created_at >= $1', 'created_at <= $2'];
-      if (hiddenCondition) conditions.push(hiddenCondition);
-
-      query = `
-        SELECT
-          ${dateExpression} as periodo,
-          COUNT(*) as total
-        FROM contacts
-        WHERE ${conditions.join(' AND ')}
-        GROUP BY periodo
-        ORDER BY periodo
-      `;
-      params = [range.startUtc, range.endUtc];
-    } else {
-      const conditions = ['created_at >= ?', 'created_at <= ?'];
-      if (hiddenCondition) conditions.push(hiddenCondition);
-
-      query = `
-        SELECT
-          ${dateExpression} as periodo,
-          COUNT(*) as total
-        FROM contacts
-        WHERE ${conditions.join(' AND ')}
-        GROUP BY periodo
-        ORDER BY periodo
-      `;
-      params = [range.startUtc, range.endUtc];
-    }
+    const query = `
+      SELECT
+        ${dateExpression} as periodo,
+        COUNT(*) as total
+      FROM contacts
+      WHERE ${conditions.join(' AND ')}
+      GROUP BY periodo
+      ORDER BY periodo
+    `;
+    const params = [range.startUtc, range.endUtc];
 
     const data = await db.all(query, params);
 
@@ -679,7 +574,6 @@ export const getAppointmentsData = async (req, res) => {
 
     // Obtener timezone dinámico de HighLevel
     const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate });
-    const usePostgres = Boolean(process.env.DATABASE_URL);
 
     // PASO 1: Obtener configuración de HighLevel
     const config = await db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1');
@@ -695,19 +589,12 @@ export const getAppointmentsData = async (req, res) => {
     const hiddenFilters = await getHiddenContactFilters();
     const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'contacts', false);
 
-    const contactsQuery = usePostgres
-      ? `
-        SELECT id as contact_id, created_at
-        FROM contacts
-        WHERE created_at >= $1 AND created_at <= $2
-          ${hiddenCondition ? `AND ${hiddenCondition}` : ''}
-      `
-      : `
-        SELECT id as contact_id, created_at
-        FROM contacts
-        WHERE created_at >= ? AND created_at <= ?
-          ${hiddenCondition ? `AND ${hiddenCondition}` : ''}
-      `;
+    const contactsQuery = `
+      SELECT id as contact_id, created_at
+      FROM contacts
+      WHERE created_at >= $1 AND created_at <= $2
+        ${hiddenCondition ? `AND ${hiddenCondition}` : ''}
+    `;
 
     const contactsRaw = await db.all(contactsQuery, [range.startUtc, range.endUtc]);
 
@@ -762,7 +649,6 @@ export const getSalesData = async (req, res) => {
     // Obtener timezone dinámico de HighLevel
     const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate });
     const timezone = range.appliedTimezone;
-    const usePostgres = Boolean(process.env.DATABASE_URL);
 
     // Obtener filtro de contactos ocultos
     const hiddenFilters = await getHiddenContactFilters();
@@ -771,36 +657,18 @@ export const getSalesData = async (req, res) => {
     // Usar getGroupExpression() con timezone dinámico
     const dateExpression = getGroupExpression('date', groupBy, timezone);
 
-    let query;
-    let params;
-
-    if (usePostgres) {
-      query = `
-        SELECT
-          ${dateExpression} as periodo,
-          COUNT(*) as total
-        FROM payments
-        WHERE status = 'succeeded'
-        AND date >= $1 AND date <= $2
-        ${hiddenCondition ? `AND contact_id IN (SELECT c.id FROM contacts c WHERE ${hiddenCondition})` : ''}
-        GROUP BY periodo
-        ORDER BY periodo
-      `;
-      params = [range.startUtc, range.endUtc];
-    } else {
-      query = `
-        SELECT
-          ${dateExpression} as periodo,
-          COUNT(*) as total
-        FROM payments
-        WHERE status = 'succeeded'
-        AND date >= ? AND date <= ?
-        ${hiddenCondition ? `AND contact_id IN (SELECT c.id FROM contacts c WHERE ${hiddenCondition})` : ''}
-        GROUP BY periodo
-        ORDER BY periodo
-      `;
-      params = [range.startUtc, range.endUtc];
-    }
+    const query = `
+      SELECT
+        ${dateExpression} as periodo,
+        COUNT(*) as total
+      FROM payments
+      WHERE status = 'succeeded'
+      AND date >= $1 AND date <= $2
+      ${hiddenCondition ? `AND contact_id IN (SELECT c.id FROM contacts c WHERE ${hiddenCondition})` : ''}
+      GROUP BY periodo
+      ORDER BY periodo
+    `;
+    const params = [range.startUtc, range.endUtc];
 
     const data = await db.all(query, params);
 
@@ -825,22 +693,7 @@ export const getStorageStatus = async (req, res) => {
     const STORAGE_LIMIT_GB = 1; // Límite configurado en render.yaml
     const WARNING_THRESHOLD = 0.8; // Alertar al 80%
 
-    // Solo funciona en PostgreSQL (producción)
-    const isPostgres = Boolean(process.env.DATABASE_URL);
-
-    if (!isPostgres) {
-      // En SQLite (local) devolver datos mock
-      return res.json({
-        sizeGB: 0.05,
-        limitGB: STORAGE_LIMIT_GB,
-        percentUsed: 5,
-        warningThreshold: WARNING_THRESHOLD * 100,
-        needsAttention: false,
-        message: 'Desarrollo local (SQLite)'
-      });
-    }
-
-    // Obtener tamaño actual de la BD
+    // Obtener tamaño actual de la BD PostgreSQL
     const result = await db.get(`
       SELECT
         pg_size_pretty(pg_database_size(current_database())) as size_pretty,
@@ -885,41 +738,21 @@ export const getTrafficSources = async (req, res) => {
 
     // Obtener timezone dinámico de HighLevel
     const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate })
-    const usePostgres = Boolean(process.env.DATABASE_URL)
 
-    let query, params
-
-    if (usePostgres) {
-      // PostgreSQL query - Contar visitantes únicos por fuente
-      query = `
-        SELECT
-          referrer_url,
-          site_source_name,
-          utm_source,
-          source_platform,
-          COUNT(DISTINCT visitor_id) as value
-        FROM sessions
-        WHERE started_at >= $1 AND started_at <= $2
-        GROUP BY referrer_url, site_source_name, utm_source, source_platform
-        ORDER BY value DESC
-      `
-      params = [range.startUtc, range.endUtc]
-    } else {
-      // SQLite query - Contar visitantes únicos por fuente
-      query = `
-        SELECT
-          referrer_url,
-          site_source_name,
-          utm_source,
-          source_platform,
-          COUNT(DISTINCT visitor_id) as value
-        FROM sessions
-        WHERE started_at >= ? AND started_at <= ?
-        GROUP BY referrer_url, site_source_name, utm_source, source_platform
-        ORDER BY value DESC
-      `
-      params = [range.startUtc, range.endUtc]
-    }
+    // Contar visitantes únicos por fuente
+    const query = `
+      SELECT
+        referrer_url,
+        site_source_name,
+        utm_source,
+        source_platform,
+        COUNT(DISTINCT visitor_id) as value
+      FROM sessions
+      WHERE started_at >= $1 AND started_at <= $2
+      GROUP BY referrer_url, site_source_name, utm_source, source_platform
+      ORDER BY value DESC
+    `
+    const params = [range.startUtc, range.endUtc]
 
     const sources = await db.all(query, params)
 
@@ -1000,7 +833,6 @@ export const getFinancialOverview = async (req, res) => {
     // Obtener timezone dinámico de HighLevel
     const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate });
     const timezone = range.appliedTimezone;
-    const usePostgres = Boolean(process.env.DATABASE_URL);
 
     // Obtener filtro de contactos ocultos
     const hiddenFilters = await getHiddenContactFilters();
@@ -1010,50 +842,28 @@ export const getFinancialOverview = async (req, res) => {
     const dayExpression = getGroupExpression('date', 'day', timezone);
 
     // Query para TODOS los ingresos (payments con status succeeded)
-    const revenueQuery = usePostgres
-      ? `
-        SELECT
-          ${dayExpression} as day,
-          SUM(amount) as revenue
-        FROM payments
-        WHERE status = 'succeeded'
-          AND date >= $1 AND date <= $2
-          ${hiddenCondition ? `AND contact_id IN (SELECT c.id FROM contacts c WHERE ${hiddenCondition})` : ''}
-        GROUP BY day
-        ORDER BY day ASC
-      `
-      : `
-        SELECT
-          ${dayExpression} as day,
-          SUM(amount) as revenue
-        FROM payments
-        WHERE status = 'succeeded'
-          AND date >= ? AND date <= ?
-          ${hiddenCondition ? `AND contact_id IN (SELECT c.id FROM contacts c WHERE ${hiddenCondition})` : ''}
-        GROUP BY day
-        ORDER BY day ASC
-      `;
+    const revenueQuery = `
+      SELECT
+        ${dayExpression} as day,
+        SUM(amount) as revenue
+      FROM payments
+      WHERE status = 'succeeded'
+        AND date >= $1 AND date <= $2
+        ${hiddenCondition ? `AND contact_id IN (SELECT c.id FROM contacts c WHERE ${hiddenCondition})` : ''}
+      GROUP BY day
+      ORDER BY day ASC
+    `;
 
     // Query para TODOS los gastos de publicidad
-    const spendQuery = usePostgres
-      ? `
-        SELECT
-          ${dayExpression} as day,
-          SUM(spend) as spend
-        FROM meta_ads
-        WHERE date >= $1 AND date <= $2
-        GROUP BY day
-        ORDER BY day ASC
-      `
-      : `
-        SELECT
-          ${dayExpression} as day,
-          SUM(spend) as spend
-        FROM meta_ads
-        WHERE date >= ? AND date <= ?
-        GROUP BY day
-        ORDER BY day ASC
-      `;
+    const spendQuery = `
+      SELECT
+        ${dayExpression} as day,
+        SUM(spend) as spend
+      FROM meta_ads
+      WHERE date >= $1 AND date <= $2
+      GROUP BY day
+      ORDER BY day ASC
+    `;
 
     const params = [range.startUtc, range.endUtc];
 
@@ -1143,7 +953,6 @@ export const getFunnelData = async (req, res) => {
 
     // Obtener timezone dinámico de HighLevel
     const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate })
-    const usePostgres = Boolean(process.env.DATABASE_URL)
     const isAttributed = scope === 'campaigns' || scope === 'attributed'
     const useContactAttribution = scope === 'campaigns' || scope === 'attributed' || scope === 'attribution'
 
@@ -1173,58 +982,30 @@ export const getFunnelData = async (req, res) => {
 
     if (!useContactAttribution) {
       // Vista "Todos": Todos los visitantes en el rango de fechas
-      let visitorsQuery, visitorsParams
-
-      if (usePostgres) {
-        visitorsQuery = `
-          SELECT COUNT(DISTINCT visitor_id) as count
-          FROM sessions
-          WHERE started_at >= $1 AND started_at <= $2
-        `
-        visitorsParams = [range.startUtc, range.endUtc]
-      } else {
-        visitorsQuery = `
-          SELECT COUNT(DISTINCT visitor_id) as count
-          FROM sessions
-          WHERE started_at >= ? AND started_at <= ?
-        `
-        visitorsParams = [range.startUtc, range.endUtc]
-      }
+      const visitorsQuery = `
+        SELECT COUNT(DISTINCT visitor_id) as count
+        FROM sessions
+        WHERE started_at >= $1 AND started_at <= $2
+      `
+      const visitorsParams = [range.startUtc, range.endUtc]
 
       const visitorsResult = await db.get(visitorsQuery, visitorsParams)
       visitorsCount = parseInt(visitorsResult?.count || 0)
     } else {
       // Vista "Último toque": Solo visitantes que SE CONVIRTIERON en contacto
       // Agrupa por fecha de creación del contacto
-      let visitorsQuery, visitorsParams
-
-      if (usePostgres) {
-        visitorsQuery = `
-          SELECT COUNT(DISTINCT s.visitor_id) as count
-          FROM sessions s
-          INNER JOIN contacts c ON c.id = s.contact_id
-          WHERE c.created_at >= $1 AND c.created_at <= $2
-            ${isAttributed ? `AND c.attribution_ad_id IS NOT NULL AND EXISTS (
-              SELECT 1 FROM meta_ads ma
-              WHERE ma.ad_id = c.attribution_ad_id
-                AND DATE(ma.date) = DATE(c.created_at)
-            )` : ''}
-        `
-        visitorsParams = [range.startUtc, range.endUtc]
-      } else {
-        visitorsQuery = `
-          SELECT COUNT(DISTINCT s.visitor_id) as count
-          FROM sessions s
-          INNER JOIN contacts c ON c.id = s.contact_id
-          WHERE c.created_at >= ? AND c.created_at <= ?
-            ${isAttributed ? `AND c.attribution_ad_id IS NOT NULL AND EXISTS (
-              SELECT 1 FROM meta_ads ma
-              WHERE ma.ad_id = c.attribution_ad_id
-                AND DATE(ma.date) = DATE(c.created_at)
-            )` : ''}
-        `
-        visitorsParams = [range.startUtc, range.endUtc]
-      }
+      const visitorsQuery = `
+        SELECT COUNT(DISTINCT s.visitor_id) as count
+        FROM sessions s
+        INNER JOIN contacts c ON c.id = s.contact_id
+        WHERE c.created_at >= $1 AND c.created_at <= $2
+          ${isAttributed ? `AND c.attribution_ad_id IS NOT NULL AND EXISTS (
+            SELECT 1 FROM meta_ads ma
+            WHERE ma.ad_id = c.attribution_ad_id
+              AND DATE(ma.date) = DATE(c.created_at)
+          )` : ''}
+      `
+      const visitorsParams = [range.startUtc, range.endUtc]
 
       const visitorsResult = await db.get(visitorsQuery, visitorsParams)
       visitorsCount = parseInt(visitorsResult?.count || 0)
@@ -1236,43 +1017,22 @@ export const getFunnelData = async (req, res) => {
     const hiddenFilters = await getHiddenContactFilters();
     const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'contacts', false);
 
-    let leadsQuery, leadsParams
-
-    if (usePostgres) {
-      const conditions = ['created_at >= $1', 'created_at <= $2'];
-      if (isAttributed) {
-        conditions.push(`attribution_ad_id IS NOT NULL AND EXISTS (
-          SELECT 1 FROM meta_ads ma
-          WHERE ma.ad_id = contacts.attribution_ad_id
-            AND DATE(ma.date) = DATE(contacts.created_at)
-        )`);
-      }
-      if (hiddenCondition) conditions.push(hiddenCondition);
-
-      leadsQuery = `
-        SELECT COUNT(*) as count
-        FROM contacts
-        WHERE ${conditions.join(' AND ')}
-      `;
-      leadsParams = [range.startUtc, range.endUtc];
-    } else {
-      const conditions = ['created_at >= ?', 'created_at <= ?'];
-      if (isAttributed) {
-        conditions.push(`attribution_ad_id IS NOT NULL AND EXISTS (
-          SELECT 1 FROM meta_ads ma
-          WHERE ma.ad_id = contacts.attribution_ad_id
-            AND DATE(ma.date) = DATE(contacts.created_at)
-        )`);
-      }
-      if (hiddenCondition) conditions.push(hiddenCondition);
-
-      leadsQuery = `
-        SELECT COUNT(*) as count
-        FROM contacts
-        WHERE ${conditions.join(' AND ')}
-      `;
-      leadsParams = [range.startUtc, range.endUtc];
+    const conditions = ['created_at >= $1', 'created_at <= $2'];
+    if (isAttributed) {
+      conditions.push(`attribution_ad_id IS NOT NULL AND EXISTS (
+        SELECT 1 FROM meta_ads ma
+        WHERE ma.ad_id = contacts.attribution_ad_id
+          AND DATE(ma.date) = DATE(contacts.created_at)
+      )`);
     }
+    if (hiddenCondition) conditions.push(hiddenCondition);
+
+    const leadsQuery = `
+      SELECT COUNT(*) as count
+      FROM contacts
+      WHERE ${conditions.join(' AND ')}
+    `;
+    const leadsParams = [range.startUtc, range.endUtc];
 
     const leadsData = await db.get(leadsQuery, leadsParams)
 
@@ -1291,43 +1051,23 @@ export const getFunnelData = async (req, res) => {
         : new Set()
 
       // Contar cuántos contactos del rango tienen cita
-      if (usePostgres) {
-        const conditions = ['created_at >= $1', 'created_at <= $2'];
-        if (isAttributed) {
-          conditions.push(`attribution_ad_id IS NOT NULL AND EXISTS (
-            SELECT 1 FROM meta_ads ma
-            WHERE ma.ad_id = contacts.attribution_ad_id
-              AND DATE(ma.date) = DATE(contacts.created_at)
-          )`);
-        }
-        if (hiddenCondition) conditions.push(hiddenCondition);
-
-        const contactsQuery = `
-          SELECT id
-          FROM contacts
-          WHERE ${conditions.join(' AND ')}
-        `;
-        const contactsRaw = await db.all(contactsQuery, [range.startUtc, range.endUtc]);
-        appointmentsCount = contactsRaw.filter(c => contactsWithAppointments.has(c.id)).length;
-      } else {
-        const conditions = ['created_at >= ?', 'created_at <= ?'];
-        if (isAttributed) {
-          conditions.push(`attribution_ad_id IS NOT NULL AND EXISTS (
-            SELECT 1 FROM meta_ads ma
-            WHERE ma.ad_id = contacts.attribution_ad_id
-              AND DATE(ma.date) = DATE(contacts.created_at)
-          )`);
-        }
-        if (hiddenCondition) conditions.push(hiddenCondition);
-
-        const contactsQuery = `
-          SELECT id
-          FROM contacts
-          WHERE ${conditions.join(' AND ')}
-        `;
-        const contactsRaw = await db.all(contactsQuery, [range.startUtc, range.endUtc]);
-        appointmentsCount = contactsRaw.filter(c => contactsWithAppointments.has(c.id)).length;
+      const conditions = ['created_at >= $1', 'created_at <= $2'];
+      if (isAttributed) {
+        conditions.push(`attribution_ad_id IS NOT NULL AND EXISTS (
+          SELECT 1 FROM meta_ads ma
+          WHERE ma.ad_id = contacts.attribution_ad_id
+            AND DATE(ma.date) = DATE(contacts.created_at)
+        )`);
       }
+      if (hiddenCondition) conditions.push(hiddenCondition);
+
+      const contactsQuery = `
+        SELECT id
+        FROM contacts
+        WHERE ${conditions.join(' AND ')}
+      `;
+      const contactsRaw = await db.all(contactsQuery, [range.startUtc, range.endUtc]);
+      appointmentsCount = contactsRaw.filter(c => contactsWithAppointments.has(c.id)).length;
     } else {
       // Vista "Todos": Híbrido DB+API filtrado por date_added
       const { loadAppointmentsFromDB, loadAppointmentsFromAPI, mergeAppointments } = await import('../services/appointmentsMerge.js')
@@ -1366,90 +1106,48 @@ export const getFunnelData = async (req, res) => {
 
     if (useContactAttribution) {
       // Vista "Último toque": Contactos creados en el rango con purchases_count > 0
-      if (usePostgres) {
-        const conditions = ['purchases_count > 0', 'created_at >= $1', 'created_at <= $2'];
-        if (isAttributed) {
-          conditions.push(`attribution_ad_id IS NOT NULL AND EXISTS (
-            SELECT 1 FROM meta_ads ma
-            WHERE ma.ad_id = contacts.attribution_ad_id
-              AND DATE(ma.date) = DATE(contacts.created_at)
-          )`);
-        }
-        if (hiddenCondition) conditions.push(hiddenCondition);
-
-        const customersQuery = `
-          SELECT COUNT(DISTINCT id) as count
-          FROM contacts
-          WHERE ${conditions.join(' AND ')}
-        `;
-        const customersData = await db.get(customersQuery, [range.startUtc, range.endUtc]);
-        customersCount = parseInt(customersData?.count || 0);
-      } else {
-        const conditions = ['purchases_count > 0', 'created_at >= ?', 'created_at <= ?'];
-        if (isAttributed) {
-          conditions.push(`attribution_ad_id IS NOT NULL AND EXISTS (
-            SELECT 1 FROM meta_ads ma
-            WHERE ma.ad_id = contacts.attribution_ad_id
-              AND DATE(ma.date) = DATE(contacts.created_at)
-          )`);
-        }
-        if (hiddenCondition) conditions.push(hiddenCondition);
-
-        const customersQuery = `
-          SELECT COUNT(DISTINCT id) as count
-          FROM contacts
-          WHERE ${conditions.join(' AND ')}
-        `;
-        const customersData = await db.get(customersQuery, [range.startUtc, range.endUtc]);
-        customersCount = parseInt(customersData?.count || 0);
+      const conditions = ['purchases_count > 0', 'created_at >= $1', 'created_at <= $2'];
+      if (isAttributed) {
+        conditions.push(`attribution_ad_id IS NOT NULL AND EXISTS (
+          SELECT 1 FROM meta_ads ma
+          WHERE ma.ad_id = contacts.attribution_ad_id
+            AND DATE(ma.date) = DATE(contacts.created_at)
+        )`);
       }
+      if (hiddenCondition) conditions.push(hiddenCondition);
+
+      const customersQuery = `
+        SELECT COUNT(DISTINCT id) as count
+        FROM contacts
+        WHERE ${conditions.join(' AND ')}
+      `;
+      const customersData = await db.get(customersQuery, [range.startUtc, range.endUtc]);
+      customersCount = parseInt(customersData?.count || 0);
     } else {
       // Vista "Todos": Contactos cuyo PRIMER pago está en el rango
       const SUCCESS_PAYMENT_STATUSES = ['succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success']
       const statusPlaceholders = SUCCESS_PAYMENT_STATUSES.map(() => '?').join(',')
 
-      if (usePostgres) {
-        const conditions = ['first_p.first_payment_date >= $' + (SUCCESS_PAYMENT_STATUSES.length + 1),
-                           'first_p.first_payment_date <= $' + (SUCCESS_PAYMENT_STATUSES.length + 2)]
-        if (hiddenCondition) {
-          conditions.push(hiddenCondition.replace(/contacts\./g, 'c.'))
-        }
-
-        const firstPaymentQuery = `
-          SELECT COUNT(DISTINCT c.id) as count
-          FROM contacts c
-          INNER JOIN (
-            SELECT contact_id, MIN(date) as first_payment_date
-            FROM payments
-            WHERE LOWER(status) IN (${statusPlaceholders})
-            GROUP BY contact_id
-          ) first_p ON first_p.contact_id = c.id
-          WHERE ${conditions.join(' AND ')}
-        `
-        const firstPaymentParams = [...SUCCESS_PAYMENT_STATUSES, range.startUtc, range.endUtc]
-        const customersData = await db.get(firstPaymentQuery, firstPaymentParams)
-        customersCount = parseInt(customersData?.count || 0)
-      } else {
-        const conditions = ['first_p.first_payment_date >= ?', 'first_p.first_payment_date <= ?']
-        if (hiddenCondition) {
-          conditions.push(hiddenCondition.replace(/contacts\./g, 'c.'))
-        }
-
-        const firstPaymentQuery = `
-          SELECT COUNT(DISTINCT c.id) as count
-          FROM contacts c
-          INNER JOIN (
-            SELECT contact_id, MIN(date) as first_payment_date
-            FROM payments
-            WHERE LOWER(status) IN (${statusPlaceholders})
-            GROUP BY contact_id
-          ) first_p ON first_p.contact_id = c.id
-          WHERE ${conditions.join(' AND ')}
-        `
-        const firstPaymentParams = [...SUCCESS_PAYMENT_STATUSES, range.startUtc, range.endUtc]
-        const customersData = await db.get(firstPaymentQuery, firstPaymentParams)
-        customersCount = parseInt(customersData?.count || 0)
+      const conditions = ['first_p.first_payment_date >= $' + (SUCCESS_PAYMENT_STATUSES.length + 1),
+                         'first_p.first_payment_date <= $' + (SUCCESS_PAYMENT_STATUSES.length + 2)]
+      if (hiddenCondition) {
+        conditions.push(hiddenCondition.replace(/contacts\./g, 'c.'))
       }
+
+      const firstPaymentQuery = `
+        SELECT COUNT(DISTINCT c.id) as count
+        FROM contacts c
+        INNER JOIN (
+          SELECT contact_id, MIN(date) as first_payment_date
+          FROM payments
+          WHERE LOWER(status) IN (${statusPlaceholders})
+          GROUP BY contact_id
+        ) first_p ON first_p.contact_id = c.id
+        WHERE ${conditions.join(' AND ')}
+      `
+      const firstPaymentParams = [...SUCCESS_PAYMENT_STATUSES, range.startUtc, range.endUtc]
+      const customersData = await db.get(firstPaymentQuery, firstPaymentParams)
+      customersCount = parseInt(customersData?.count || 0)
     }
 
     // ========================================
