@@ -289,12 +289,19 @@ export async function getBlockedSlots(locationId, startTime, endTime, accessToke
   try {
     logger.info(`[HighLevel Calendar] Obteniendo blocked slots para locationId: ${locationId}, rango: ${new Date(startTime).toISOString()} - ${new Date(endTime).toISOString()}`);
 
-    // Construir URL con calendarId opcional
-    let url = `${GHL_API_BASE}/calendars/blocked-slots?locationId=${locationId}&startTime=${startTime}&endTime=${endTime}`;
+    // IMPORTANTE: HighLevel maneja blocked slots de 2 formas:
+    // 1. Por calendarId → Bloqueos a nivel calendario (creados con solo calendarId)
+    // 2. Por userId → Bloqueos a nivel usuario (creados con solo assignedUserId)
+    //
+    // Si filtramos por calendarId, NO obtenemos los blocked slots de usuarios.
+    // Si filtramos por userId, NO obtenemos los blocked slots del calendario.
+    //
+    // SOLUCIÓN: NO filtrar aquí, obtener TODOS y filtrar en el frontend por calendario
+
+    const url = `${GHL_API_BASE}/calendars/blocked-slots?locationId=${locationId}&startTime=${startTime}&endTime=${endTime}`;
 
     if (calendarId) {
-      url += `&calendarId=${calendarId}`;
-      logger.info(`[HighLevel Calendar] Filtrando por calendario: ${calendarId}`);
+      logger.info(`[HighLevel Calendar] Obteniendo blocked slots para calendario: ${calendarId} (sin filtro de API, se filtrará localmente)`);
     }
 
     const response = await fetchWithTimeout(url, {
@@ -317,7 +324,23 @@ export async function getBlockedSlots(locationId, startTime, endTime, accessToke
 
     // La API de HighLevel devuelve los blocked slots en el campo "events"
     // (mismo formato que eventos normales)
-    const blockedSlots = data.events || data.blockedSlots || data.slots || [];
+    let blockedSlots = data.events || data.blockedSlots || data.slots || [];
+
+    // Si se especificó calendarId, filtrar localmente
+    // Incluir: blocked slots con ese calendarId O sin calendarId pero del mismo calendario
+    if (calendarId && blockedSlots.length > 0) {
+      blockedSlots = blockedSlots.filter(slot => {
+        // Incluir si tiene el calendarId especificado
+        if (slot.calendarId === calendarId) return true;
+
+        // NOTA: Los blocked slots creados con assignedUserId NO tienen calendarId
+        // pero aún así bloquean horarios del calendario asociado al usuario.
+        // Por ahora los incluimos TODOS para no perder datos.
+        // TODO: Filtrar por usuarios del calendario si es necesario
+        return true;
+      });
+      logger.info(`[HighLevel Calendar] Filtrados localmente: ${blockedSlots.length} blocked slots`);
+    }
 
     // Transformar a formato estándar si es necesario
     const normalizedSlots = blockedSlots.map(slot => {
