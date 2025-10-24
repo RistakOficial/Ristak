@@ -71,7 +71,7 @@
 
 .dropdown {
   position: absolute;
-  top: calc(100% + 8px);
+  bottom: calc(100% + 8px); /* Se abre hacia ARRIBA */
   left: 0;
   right: 0;
   z-index: 1000;
@@ -82,15 +82,15 @@
   border-radius: 12px;
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.15);
   overflow: hidden;
-  animation: slideDown 0.2s ease;
+  animation: slideUp 0.2s ease; /* Animación hacia arriba */
   display: flex;
   flex-direction: column;
 }
 
-@keyframes slideDown {
+@keyframes slideUp {
   from {
     opacity: 0;
-    transform: translateY(-10px);
+    transform: translateY(10px); /* Empieza desde abajo */
   }
   to {
     opacity: 1;
