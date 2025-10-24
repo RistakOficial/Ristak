@@ -1885,7 +1885,7 @@ export async function getContactsByDate(req, res) {
     // Crear un mapa con los resultados
     const dataMap = {}
     contactsByDate.forEach(row => {
-      dataMap[row.date] = row.count
+      dataMap[row.date] = parseInt(row.count) || 0
     })
 
     // Generar todas las fechas del rango (rellenar con 0 los días sin contactos)
