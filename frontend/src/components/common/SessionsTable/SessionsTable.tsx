@@ -423,8 +423,44 @@ export const SessionsTable: React.FC<SessionsTableProps> = ({ className }) => {
         {sessions.length > 0 ? (
           <div className={styles.tableContainer} style={{ overflowX: 'auto' }}>
             <p style={{ fontSize: '0.875rem', color: 'var(--color-text-secondary)', marginBottom: '12px' }}>
-              Mostrando las primeras {sessions.length} sesiones. Haz clic en "Expandir" para ver todas y gestionar.
+              Mostrando las primeras {sessions.length} sesiones. Haz clic en "Expandir" para ver todas, editar y eliminar.
             </p>
+            <table className={styles.table}>
+              <thead>
+                <tr>
+                  <th style={{ padding: '12px 8px', textAlign: 'left' }}>Fecha</th>
+                  <th style={{ padding: '12px 8px', textAlign: 'left' }}>Evento</th>
+                  <th style={{ padding: '12px 8px', textAlign: 'left' }}>Contacto</th>
+                  <th style={{ padding: '12px 8px', textAlign: 'left' }}>UTM Source</th>
+                  <th style={{ padding: '12px 8px', textAlign: 'left' }}>UTM Campaign</th>
+                  <th style={{ padding: '12px 8px', textAlign: 'left' }}>Dispositivo</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sessions.slice(0, 10).map((session) => (
+                  <tr key={session.id}>
+                    <td style={{ padding: '12px 8px', fontSize: '0.875rem' }}>
+                      {session.started_at ? formatLocalDateTime(new Date(session.started_at)) : '-'}
+                    </td>
+                    <td style={{ padding: '12px 8px', fontSize: '0.875rem' }}>
+                      {session.event_name || '-'}
+                    </td>
+                    <td style={{ padding: '12px 8px', fontSize: '0.875rem' }}>
+                      {session.full_name || session.email || '-'}
+                    </td>
+                    <td style={{ padding: '12px 8px', fontSize: '0.875rem' }}>
+                      {session.utm_source || '-'}
+                    </td>
+                    <td style={{ padding: '12px 8px', fontSize: '0.875rem' }}>
+                      {session.utm_campaign || '-'}
+                    </td>
+                    <td style={{ padding: '12px 8px', fontSize: '0.875rem' }}>
+                      {session.device_type || '-'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         ) : (
           <div className={styles.emptyState}>

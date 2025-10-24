@@ -729,15 +729,13 @@ export async function getSessionsHandler(req, res) {
     // Sin fechas, usar paginación infinita
     logger.info(`🔍 Obteniendo sesiones con offset ${offset} y limit ${limit}`)
 
-    const usePostgres = Boolean(process.env.DATABASE_URL)
-
-    // Query para obtener sesiones con paginación
+    // Query para obtener sesiones con paginación (PostgreSQL)
     const query = `
       SELECT *
       FROM sessions
       ORDER BY created_at DESC
-      LIMIT ${usePostgres ? '$1' : '?'}
-      OFFSET ${usePostgres ? '$2' : '?'}
+      LIMIT $1
+      OFFSET $2
     `
 
     const sessions = await db.all(query, [limit, offset])
@@ -776,7 +774,7 @@ export async function getSessionHandler(req, res) {
   try {
     const { id } = req.params
 
-    const query = 'SELECT * FROM sessions WHERE id = ? LIMIT 1'
+    const query = 'SELECT * FROM sessions WHERE id = $1 LIMIT 1'
     const session = await db.get(query, [id])
 
     if (!session) {
@@ -800,7 +798,7 @@ export async function updateSessionHandler(req, res) {
     const updates = req.body
 
     // Verificar que la sesión existe
-    const existingSession = await db.get('SELECT * FROM sessions WHERE id = ? LIMIT 1', [id])
+    const existingSession = await db.get('SELECT * FROM sessions WHERE id = $1 LIMIT 1', [id])
 
     if (!existingSession) {
       return res.status(404).json({ error: 'Session not found' })
@@ -825,11 +823,13 @@ export async function updateSessionHandler(req, res) {
     // Construir query de actualización solo con campos permitidos
     const updateFields = []
     const updateValues = []
+    let paramIndex = 1
 
     Object.keys(updates).forEach(key => {
       if (allowedFields.includes(key)) {
-        updateFields.push(`${key} = ?`)
+        updateFields.push(`${key} = $${paramIndex}`)
         updateValues.push(updates[key])
+        paramIndex++
       }
     })
 
@@ -843,13 +843,13 @@ export async function updateSessionHandler(req, res) {
     const updateQuery = `
       UPDATE sessions
       SET ${updateFields.join(', ')}
-      WHERE id = ?
+      WHERE id = $${paramIndex}
     `
 
     await db.run(updateQuery, updateValues)
 
     // Obtener sesión actualizada
-    const updatedSession = await db.get('SELECT * FROM sessions WHERE id = ? LIMIT 1', [id])
+    const updatedSession = await db.get('SELECT * FROM sessions WHERE id = $1 LIMIT 1', [id])
 
     logger.info(`✅ Sesión ${id} actualizada exitosamente`)
 
@@ -881,10 +881,8 @@ export async function deleteSessionsHandler(req, res) {
       return res.status(400).json({ error: 'Cannot delete more than 100 sessions at once' })
     }
 
-    const usePostgres = Boolean(process.env.DATABASE_URL)
-
-    // Construir placeholders para la query
-    const placeholders = ids.map((_, i) => usePostgres ? `$${i + 1}` : '?').join(',')
+    // Construir placeholders para PostgreSQL ($1, $2, $3...)
+    const placeholders = ids.map((_, i) => `$${i + 1}`).join(',')
 
     const deleteQuery = `DELETE FROM sessions WHERE id IN (${placeholders})`
 
@@ -1721,7 +1719,7 @@ export async function getVisitorsList(req, res) {
                   for (const event of data.events) {
                     await db.run(`
                       INSERT INTO appointments (id, contact_id, calendar_id, location_id, title, status, start_time, end_time)
-                      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
                       ON CONFLICT(id) DO UPDATE SET
                         status = excluded.status,
                         start_time = excluded.start_time,
@@ -1825,26 +1823,29 @@ export async function getContactsByDate(req, res) {
       return res.status(400).json({ error: 'Se requieren parámetros start y end' })
     }
 
-    logger.info(`Obteniendo contactos por fecha: ${start} a ${end}`)
+    logger.info(`Obteniendo registros por fecha: ${start} a ${end}`)
 
     const usePostgres = Boolean(process.env.DATABASE_URL)
 
-    // Query para obtener contactos con visitor_id agrupados por fecha
+    // Query para contar visitantes únicos que se convirtieron en contactos
+    // (sesiones que tienen contact_id) agrupados por fecha de creación del contacto
     let query, params
 
     if (usePostgres) {
       // PostgreSQL query
       query = `
         SELECT
-          TO_CHAR(created_at::date, 'YYYY-MM-DD') as date,
-          COUNT(*) as count
-        FROM contacts
+          TO_CHAR(c.created_at::date, 'YYYY-MM-DD') as date,
+          COUNT(DISTINCT c.id) as count
+        FROM contacts c
         WHERE
-          visitor_id IS NOT NULL
-          AND visitor_id != ''
-          AND created_at::date >= $1::date
-          AND created_at::date <= $2::date
-        GROUP BY TO_CHAR(created_at::date, 'YYYY-MM-DD')
+          c.created_at::date >= $1::date
+          AND c.created_at::date <= $2::date
+          AND EXISTS (
+            SELECT 1 FROM sessions s
+            WHERE s.contact_id = c.id
+          )
+        GROUP BY TO_CHAR(c.created_at::date, 'YYYY-MM-DD')
         ORDER BY date ASC
       `
       params = [start, end]
@@ -1852,15 +1853,17 @@ export async function getContactsByDate(req, res) {
       // SQLite query
       query = `
         SELECT
-          DATE(created_at) as date,
-          COUNT(*) as count
-        FROM contacts
+          DATE(c.created_at) as date,
+          COUNT(DISTINCT c.id) as count
+        FROM contacts c
         WHERE
-          visitor_id IS NOT NULL
-          AND visitor_id != ''
-          AND DATE(created_at) >= DATE(?)
-          AND DATE(created_at) <= DATE(?)
-        GROUP BY DATE(created_at)
+          DATE(c.created_at) >= DATE(?)
+          AND DATE(c.created_at) <= DATE(?)
+          AND EXISTS (
+            SELECT 1 FROM sessions s
+            WHERE s.contact_id = c.id
+          )
+        GROUP BY DATE(c.created_at)
         ORDER BY date ASC
       `
       params = [start, end]
