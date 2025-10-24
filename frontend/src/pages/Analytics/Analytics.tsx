@@ -814,6 +814,10 @@ const Analytics: React.FC = () => {
                 console.log(`🎯 Comparando campaña: "${session.utm_campaign}" === "${value}"`, session.utm_campaign === value)
                 if (session.utm_campaign === value) fieldMatch = true
                 break
+              case 'utm_medium':
+                console.log(`📦 Comparando adset (utm_medium): "${session.utm_medium}" === "${value}"`, session.utm_medium === value)
+                if (session.utm_medium === value) fieldMatch = true
+                break
               case 'utm_content':
                 console.log(`📢 Comparando ad (utm_content): "${session.utm_content}" === "${value}"`, session.utm_content === value)
                 if (session.utm_content === value) fieldMatch = true
@@ -1228,7 +1232,7 @@ const Analytics: React.FC = () => {
 
     console.log('✅ Visualizaciones recalculadas exitosamente')
     console.groupEnd()
-  }, [sessions, selectedFilters, formatLocalDateShort])
+  }, [sessions, allSessions, selectedFilters, formatLocalDateShort])
 
   // Preparar métricas para KPICards
   const mainMetrics = [

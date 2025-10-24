@@ -35,19 +35,19 @@ export function AdHierarchyMenu({ adsHierarchy, selectedFilters, onFilterToggle 
 
   // Helpers para detectar selección
   const isPlatformSelected = (platformId: string) => {
-    return selectedFilters.ad_platform?.includes(platformId.toLowerCase())
+    return selectedFilters.utm_source?.includes(platformId.toLowerCase())
   }
 
   const isCampaignSelected = (campaignId: string) => {
-    return selectedFilters.campaign_id?.includes(campaignId)
+    return selectedFilters.utm_campaign?.includes(campaignId)
   }
 
   const isAdsetSelected = (adsetId: string) => {
-    return selectedFilters.adset_id?.includes(adsetId)
+    return selectedFilters.utm_medium?.includes(adsetId)
   }
 
   const isAdSelected = (adId: string) => {
-    return selectedFilters.ad_id?.includes(adId)
+    return selectedFilters.utm_content?.includes(adId)
   }
 
   // Obtener datos filtrados
@@ -71,7 +71,7 @@ export function AdHierarchyMenu({ adsHierarchy, selectedFilters, onFilterToggle 
               <div
                 key={platform.platform_id}
                 onMouseEnter={() => setHoveredPlatform(platform.platform_id)}
-                onClick={() => onFilterToggle('ad_platform', platform.platform_id.toLowerCase())}
+                onClick={() => onFilterToggle('utm_source', platform.platform_id.toLowerCase())}
                 className={`
                   flex items-center gap-2 px-3 py-2 cursor-pointer transition-all duration-150
                   ${isSelected
@@ -128,7 +128,7 @@ export function AdHierarchyMenu({ adsHierarchy, selectedFilters, onFilterToggle 
                 <div
                   key={campaign.id}
                   onMouseEnter={() => setHoveredCampaign(campaign.id)}
-                  onClick={() => onFilterToggle('campaign_id', campaign.id)}
+                  onClick={() => onFilterToggle('utm_campaign', campaign.id)}
                   className={`
                     flex items-center gap-2 px-3 py-2 cursor-pointer transition-all duration-150
                     ${isSelected
@@ -179,7 +179,7 @@ export function AdHierarchyMenu({ adsHierarchy, selectedFilters, onFilterToggle 
                 <div
                   key={adset.id}
                   onMouseEnter={() => setHoveredAdset(adset.id)}
-                  onClick={() => onFilterToggle('adset_id', adset.id)}
+                  onClick={() => onFilterToggle('utm_medium', adset.id)}
                   className={`
                     flex items-center gap-2 px-3 py-2 cursor-pointer transition-all duration-150
                     ${isSelected
@@ -228,7 +228,7 @@ export function AdHierarchyMenu({ adsHierarchy, selectedFilters, onFilterToggle 
               return (
                 <div
                   key={ad.id}
-                  onClick={() => onFilterToggle('ad_id', ad.id)}
+                  onClick={() => onFilterToggle('utm_content', ad.id)}
                   className={`
                     flex items-center gap-2 px-3 py-2 cursor-pointer transition-all duration-150
                     ${isSelected
