@@ -495,11 +495,11 @@ export const MetaAdsIntegration: React.FC = () => {
                   {/* 4. Pixel API Token */}
                   <div className={styles.formField}>
                     <label className={styles.formLabel}>
-                      Pixel API Token <span className={styles.formHint}>(opcional)</span>
+                      Pixel API Token <span className={styles.formHint}>(automático)</span>
                     </label>
                     {credentials.pixelApiToken && credentials.pixelApiToken.startsWith('***') ? (
                       <div className={styles.filterChip}>
-                        <span className={styles.chipText}>{credentials.pixelApiToken}</span>
+                        <span className={styles.chipText}>✅ {credentials.pixelApiToken}</span>
                         <button
                           onClick={() => handleRemoveCredential('pixelApiToken')}
                           className={styles.chipDeleteButton}
@@ -509,22 +509,27 @@ export const MetaAdsIntegration: React.FC = () => {
                         </button>
                       </div>
                     ) : (
-                      <input
-                        type="text"
-                        value={credentials.pixelApiToken}
-                        onChange={(e) => handleInputChange('pixelApiToken', e.target.value)}
-                        placeholder={!credentials.pixelId ? 'Primero configura el Pixel ID' : 'EAA...'}
+                      <div
                         className={styles.formInput}
-                        disabled={!credentials.pixelId}
                         style={{
-                          cursor: !credentials.pixelId ? 'not-allowed' : 'text',
-                          opacity: !credentials.pixelId ? 0.5 : 1
+                          cursor: 'not-allowed',
+                          opacity: 0.7,
+                          backgroundColor: 'var(--background-secondary)',
+                          color: 'var(--text-secondary)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          padding: '10px 12px'
                         }}
-                      />
+                      >
+                        {credentials.pixelId
+                          ? '🔄 Se generará automáticamente al guardar'
+                          : 'Primero configura el Pixel ID'
+                        }
+                      </div>
                     )}
                     {credentials.pixelId && (
                       <div style={{ marginTop: '8px', fontSize: '13px', color: 'var(--text-secondary)' }}>
-                        💡 <strong>Cómo obtener:</strong> Events Manager → Pixel → Settings → Conversions API → Generate Token
+                        💡 El token se genera automáticamente cuando guardas la configuración. No necesitas hacer nada más.
                       </div>
                     )}
                   </div>
