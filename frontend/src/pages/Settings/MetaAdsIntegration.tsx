@@ -210,7 +210,39 @@ export const MetaAdsIntegration: React.FC = () => {
   }
 
   const handleRemoveCredential = (field: keyof MetaCredentials) => {
-    setCredentials(prev => ({ ...prev, [field]: '' }))
+    // Limpiar el campo y todos los que dependen de él (cascada)
+    if (field === 'accessToken') {
+      // Si se elimina el token, limpiar TODO
+      setCredentials({
+        adAccountId: '',
+        accessToken: '',
+        pixelId: '',
+        pageId: '',
+        pixelApiToken: ''
+      })
+      setRealAccessToken('')
+      setAdAccounts([])
+      setPixels([])
+    } else if (field === 'adAccountId') {
+      // Si se elimina la cuenta, limpiar pixel y pixel token
+      setCredentials(prev => ({
+        ...prev,
+        adAccountId: '',
+        pixelId: '',
+        pixelApiToken: ''
+      }))
+      setPixels([])
+    } else if (field === 'pixelId') {
+      // Si se elimina el pixel, limpiar pixel token
+      setCredentials(prev => ({
+        ...prev,
+        pixelId: '',
+        pixelApiToken: ''
+      }))
+    } else {
+      // Para otros campos, solo limpiar el campo actual
+      setCredentials(prev => ({ ...prev, [field]: '' }))
+    }
   }
 
   const handleInputChange = (field: keyof MetaCredentials, value: string) => {
@@ -372,6 +404,7 @@ export const MetaAdsIntegration: React.FC = () => {
                           if (account) handleSelectAdAccount(account)
                         }}
                         value={credentials.adAccountId || ''}
+                        disabled={!credentials.accessToken && !realAccessToken}
                       >
                         <option value="">-- Selecciona una cuenta --</option>
                         {adAccounts.map((account) => (
@@ -385,9 +418,19 @@ export const MetaAdsIntegration: React.FC = () => {
                         type="text"
                         value={credentials.adAccountId}
                         onChange={(e) => handleInputChange('adAccountId', e.target.value)}
-                        placeholder="act_123456789012345"
+                        placeholder={!credentials.accessToken && !realAccessToken ? 'Primero agrega el Access Token' : 'act_123456789012345'}
                         className={styles.formInput}
+                        disabled={!credentials.accessToken && !realAccessToken}
+                        style={{
+                          cursor: !credentials.accessToken && !realAccessToken ? 'not-allowed' : 'text',
+                          opacity: !credentials.accessToken && !realAccessToken ? 0.5 : 1
+                        }}
                       />
+                    )}
+                    {!credentials.accessToken && !realAccessToken && (
+                      <div style={{ marginTop: '8px', fontSize: '13px', color: 'var(--color-warning)' }}>
+                        ⚠️ Primero debes configurar el Access Token
+                      </div>
                     )}
                   </div>
                 </div>
@@ -429,6 +472,7 @@ export const MetaAdsIntegration: React.FC = () => {
                           if (pixel) handleSelectPixel(pixel)
                         }}
                         value={credentials.pixelId || ''}
+                        disabled={!credentials.adAccountId}
                       >
                         <option value="">-- Sin pixel (opcional) --</option>
                         {pixels.map((pixel) => (
@@ -442,9 +486,19 @@ export const MetaAdsIntegration: React.FC = () => {
                         type="text"
                         value={credentials.pixelId}
                         onChange={(e) => handleInputChange('pixelId', e.target.value)}
-                        placeholder="1234567890123456"
+                        placeholder={!credentials.adAccountId ? 'Primero selecciona la cuenta de anuncios' : '1234567890123456'}
                         className={styles.formInput}
+                        disabled={!credentials.adAccountId}
+                        style={{
+                          cursor: !credentials.adAccountId ? 'not-allowed' : 'text',
+                          opacity: !credentials.adAccountId ? 0.5 : 1
+                        }}
                       />
+                    )}
+                    {!credentials.adAccountId && (
+                      <div style={{ marginTop: '8px', fontSize: '13px', color: 'var(--color-warning)' }}>
+                        ⚠️ Primero debes seleccionar una cuenta de anuncios
+                      </div>
                     )}
                   </div>
 
@@ -469,13 +523,24 @@ export const MetaAdsIntegration: React.FC = () => {
                         type="text"
                         value={credentials.pixelApiToken}
                         onChange={(e) => handleInputChange('pixelApiToken', e.target.value)}
-                        placeholder="EAA..."
+                        placeholder={!credentials.pixelId ? 'Primero configura el Pixel ID' : 'EAA...'}
                         className={styles.formInput}
+                        disabled={!credentials.pixelId}
+                        style={{
+                          cursor: !credentials.pixelId ? 'not-allowed' : 'text',
+                          opacity: !credentials.pixelId ? 0.5 : 1
+                        }}
                       />
                     )}
-                    <div style={{ marginTop: '8px', fontSize: '13px', color: 'var(--text-secondary)' }}>
-                      💡 <strong>Cómo obtener:</strong> Events Manager → Pixel → Settings → Conversions API → Generate Token
-                    </div>
+                    {credentials.pixelId ? (
+                      <div style={{ marginTop: '8px', fontSize: '13px', color: 'var(--text-secondary)' }}>
+                        💡 <strong>Cómo obtener:</strong> Events Manager → Pixel → Settings → Conversions API → Generate Token
+                      </div>
+                    ) : (
+                      <div style={{ marginTop: '8px', fontSize: '13px', color: 'var(--color-warning)' }}>
+                        ⚠️ Primero debes configurar el Pixel ID
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -500,10 +565,20 @@ export const MetaAdsIntegration: React.FC = () => {
                       type="text"
                       value={credentials.pageId}
                       onChange={(e) => handleInputChange('pageId', e.target.value)}
-                      placeholder="1234567890123456"
+                      placeholder={!credentials.accessToken && !realAccessToken ? 'Primero agrega el Access Token' : '1234567890123456'}
                       className={styles.formInput}
-                      style={{ maxWidth: '400px' }}
+                      style={{
+                        maxWidth: '400px',
+                        cursor: !credentials.accessToken && !realAccessToken ? 'not-allowed' : 'text',
+                        opacity: !credentials.accessToken && !realAccessToken ? 0.5 : 1
+                      }}
+                      disabled={!credentials.accessToken && !realAccessToken}
                     />
+                  )}
+                  {!credentials.accessToken && !realAccessToken && (
+                    <div style={{ marginTop: '8px', fontSize: '13px', color: 'var(--color-warning)' }}>
+                      ⚠️ Primero debes configurar el Access Token
+                    </div>
                   )}
                 </div>
 
