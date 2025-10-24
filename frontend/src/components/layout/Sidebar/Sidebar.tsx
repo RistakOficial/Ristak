@@ -48,15 +48,17 @@ interface NavItem {
   name: string
   href: string
   icon: IconType
+  isDivider?: boolean
 }
 
 const baseNavigation: NavItem[] = [
   { id: 'dashboard', name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
-  { id: 'reports', name: 'Reportes', href: '/reports', icon: FileBarChart },
-  { id: 'campaigns', name: 'Publicidad', href: '/campaigns', icon: Megaphone },
   { id: 'appointments', name: 'Citas', href: '/appointments', icon: Calendar },
   { id: 'transactions', name: 'Pagos', href: '/transactions', icon: Banknote },
-  { id: 'contacts', name: 'Contactos', href: '/contacts', icon: Users }
+  { id: 'contacts', name: 'Contactos', href: '/contacts', icon: Users },
+  { id: 'divider-1', name: '', href: '#', icon: LayoutDashboard, isDivider: true }, // Divisor visual
+  { id: 'campaigns', name: 'Publicidad', href: '/campaigns', icon: Megaphone },
+  { id: 'reports', name: 'Reportes', href: '/reports', icon: FileBarChart }
 ]
 
 const analyticsNavigation: NavItem = {
@@ -69,12 +71,8 @@ const analyticsNavigation: NavItem = {
 const getNavigationItems = (showAnalytics: boolean): NavItem[] => {
   if (!showAnalytics) return baseNavigation
 
-  return [
-    baseNavigation[0],
-    baseNavigation[1],
-    analyticsNavigation,
-    ...baseNavigation.slice(2)
-  ]
+  // Insertar Analíticas después de Reportes (último item)
+  return [...baseNavigation, analyticsNavigation]
 }
 
 interface NavigationItemProps {
@@ -93,6 +91,15 @@ interface SortableItemProps {
 
 const NavigationItem: React.FC<NavigationItemProps> = ({ item, isActive, onNavigate }) => {
   const Icon = item.icon
+
+  // Si es un divisor, renderizar una línea horizontal
+  if (item.isDivider) {
+    return (
+      <div className="py-2">
+        <div className="border-t border-[rgba(148,163,184,0.12)]" />
+      </div>
+    )
+  }
 
   return (
     <Link
@@ -128,6 +135,15 @@ const SortableItem: React.FC<SortableItemProps> = ({ item, isActive, isDragging,
   const style = {
     transform: CSS.Transform.toString(transform),
     transition
+  }
+
+  // Si es un divisor, renderizar una línea horizontal
+  if (item.isDivider) {
+    return (
+      <div ref={setNodeRef} style={style} className="relative py-2">
+        <div className="border-t border-[rgba(148,163,184,0.12)]" />
+      </div>
+    )
   }
 
   return (
