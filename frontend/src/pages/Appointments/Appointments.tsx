@@ -362,10 +362,8 @@ export const Appointments: React.FC = () => {
         accessToken
       );
 
-      console.log('[Appointments] Blocked slots cargados:', blockedSlotsData);
       setBlockedSlots(blockedSlotsData);
     } catch (error) {
-      console.error('[Appointments] Error cargando blocked slots:', error);
       // Error silencioso - si falla, simplemente no se muestran blocked slots
       setBlockedSlots([]);
     }
@@ -730,11 +728,11 @@ export const Appointments: React.FC = () => {
   };
 
   // Eliminar blocked slot
-  const handleDeleteBlockedSlot = async (eventId: string) => {
+  const handleDeleteBlockedSlot = async (blockedSlotId: string) => {
     if (!accessToken) return;
 
     try {
-      await calendarsService.deleteEvent(eventId, accessToken);
+      await calendarsService.deleteBlockedSlot(blockedSlotId, accessToken);
       showToast('success', 'Bloqueo eliminado', 'El horario se desbloqueó correctamente.');
       setIsBlockedSlotModalOpen(false);
       await loadBlockedSlots();

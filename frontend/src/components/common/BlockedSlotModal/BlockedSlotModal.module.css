@@ -373,8 +373,9 @@
 }
 
 :global(body.dark) .deleteModal {
-  background-color: rgba(24, 24, 27, 0.95);
-  border: 1px solid rgba(148, 163, 184, 0.18);
+  background-color: #18181b;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 10px 10px -5px rgba(0, 0, 0, 0.3);
 }
 
 .deleteModalHeader {

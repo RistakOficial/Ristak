@@ -38,6 +38,9 @@ router.post('/block-slots', calendarsController.createBlockedSlot);
 // Actualizar blocked slot existente
 router.put('/block-slots/:id', calendarsController.updateBlockedSlot);
 
+// Eliminar blocked slot
+router.delete('/block-slots/:id', calendarsController.deleteBlockedSlot);
+
 // Obtener un calendario específico
 router.get('/:id', calendarsController.getCalendar);
 

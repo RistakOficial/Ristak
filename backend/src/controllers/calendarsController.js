@@ -421,6 +421,36 @@ export async function deleteEvent(req, res) {
   }
 }
 
+/**
+ * Eliminar un blocked slot (horario bloqueado)
+ */
+export async function deleteBlockedSlot(req, res) {
+  try {
+    const { id } = req.params;
+    const { accessToken } = req.query;
+
+    if (!accessToken) {
+      return res.status(400).json({
+        success: false,
+        error: 'Se requiere accessToken'
+      });
+    }
+
+    await calendarService.deleteBlockedSlot(id, accessToken);
+
+    res.json({
+      success: true,
+      message: 'Blocked slot eliminado exitosamente'
+    });
+  } catch (error) {
+    logger.error(`[Calendars Controller] Error en deleteBlockedSlot: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+}
+
 export default {
   getCalendars,
   getCalendar,
@@ -430,6 +460,7 @@ export default {
   getBlockedSlots,
   createBlockedSlot,
   updateBlockedSlot,
+  deleteBlockedSlot,
   createAppointment,
   updateAppointment,
   updateCalendar,

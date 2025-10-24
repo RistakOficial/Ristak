@@ -756,6 +756,42 @@ export async function updateCalendar(calendarId, updateData, accessToken) {
   }
 }
 
+/**
+ * Eliminar un blocked slot (horario bloqueado)
+ * @param {string} eventId - ID del blocked slot
+ * @param {string} accessToken - Token de acceso OAuth
+ * @returns {Promise<boolean>} True si se eliminó correctamente
+ */
+export async function deleteBlockedSlot(eventId, accessToken) {
+  try {
+    logger.info(`[HighLevel Calendar] Eliminando blocked slot: ${eventId}`);
+
+    const response = await fetchWithTimeout(
+      `${GHL_API_BASE}/calendars/blocked-slots/${eventId}`,
+      {
+        method: 'DELETE',
+        headers: {
+          'Accept': 'application/json',
+          'Version': API_VERSION,
+          'Authorization': `Bearer ${accessToken}`
+        }
+      }
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      logger.error(`[HighLevel Calendar] Error al eliminar blocked slot: ${response.status} - ${errorText}`);
+      throw new Error(`Error al eliminar blocked slot: ${response.status}`);
+    }
+
+    logger.info(`[HighLevel Calendar] Blocked slot eliminado exitosamente: ${eventId}`);
+    return true;
+  } catch (error) {
+    logger.error(`[HighLevel Calendar] Error en deleteBlockedSlot: ${error.message}`);
+    throw error;
+  }
+}
+
 export default {
   getCalendars,
   getCalendar,
@@ -765,6 +801,7 @@ export default {
   getBlockedSlots,
   createBlockedSlot,
   updateBlockedSlot,
+  deleteBlockedSlot,
   createAppointment,
   updateAppointment,
   updateCalendar,

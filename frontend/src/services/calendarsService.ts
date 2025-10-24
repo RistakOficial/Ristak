@@ -329,6 +329,20 @@ export const calendarsService = {
   },
 
   /**
+   * Eliminar un blocked slot (horario bloqueado)
+   */
+  async deleteBlockedSlot(blockedSlotId: string, accessToken: string): Promise<boolean> {
+    try {
+      await apiClient.delete(`/calendars/block-slots/${blockedSlotId}`, {
+        params: { accessToken }
+      });
+      return true;
+    } catch (error) {
+      throw error;
+    }
+  },
+
+  /**
    * Actualizar configuración de un calendario
    */
   async updateCalendar(
