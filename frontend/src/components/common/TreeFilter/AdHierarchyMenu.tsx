@@ -164,11 +164,11 @@ export function AdHierarchyMenu({ adsHierarchy, selectedFilters, onFilterToggle 
         </div>
       )}
 
-      {/* Panel 3: Adsets (solo si hay campaign hovered) */}
+      {/* Panel 3: UTM Medium (solo si hay campaign hovered) */}
       {activeCampaign && (
         <div className="w-64 overflow-y-auto relative" style={{ maxHeight: 'calc(100vh - 160px)', borderRight: '1px solid var(--color-border-subtle)' }}>
           <div className="px-3 py-2 mb-1" style={{ borderBottom: '1px solid var(--color-border-subtle)' }}>
-            <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">Conjuntos de anuncios</h3>
+            <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">UTM Medium</h3>
           </div>
           <div className="py-2">
             {activeCampaign.adsets.map((adset, index) => {
@@ -215,11 +215,11 @@ export function AdHierarchyMenu({ adsHierarchy, selectedFilters, onFilterToggle 
         </div>
       )}
 
-      {/* Panel 4: Ads (solo si hay adset hovered) */}
+      {/* Panel 4: UTM Content (solo si hay adset hovered) */}
       {activeAdset && (
         <div className="w-64 overflow-y-auto relative" style={{ maxHeight: 'calc(100vh - 160px)' }}>
           <div className="px-3 py-2 mb-1" style={{ borderBottom: '1px solid var(--color-border-subtle)' }}>
-            <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">Anuncios</h3>
+            <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">UTM Content</h3>
           </div>
           <div className="py-2">
             {activeAdset.ads.map((ad, index) => {

@@ -130,14 +130,13 @@ export function TreeFilter({
       })
     }
 
-    // Categoría: Anuncios con jerarquía (Platform > Campaign > Adset > Ad)
-    // NOTA: No agregamos "Campañas" como categoría separada porque ya están dentro de Anuncios
+    // Categoría: Parámetros UTM (UTM Source > UTM Campaign > UTM Medium > UTM Content)
     // Guardamos la jerarquía completa en vez de lista plana
     if (availableData.adsHierarchy?.length) {
       tree.push({
         id: 'ads',
-        label: 'Anuncios',
-        icon: Image,
+        label: 'Parámetros UTM',
+        icon: Target,
         // No ponemos children aquí, se renderiza con lógica especial de cascada
       })
     } else if (availableData.ads?.length) {
