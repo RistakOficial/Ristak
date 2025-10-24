@@ -1529,13 +1529,13 @@ export const Appointments: React.FC = () => {
                   startOfWeek.setDate(currentDate.getDate() - dayOfWeek);
 
                   return Array.from({ length: 7 }).map((_, dayIndex) => {
-                    const date = new Date(startOfWeek);
-                    date.setDate(startOfWeek.getDate() + dayIndex);
-                    const isToday = date.toDateString() === new Date().toDateString();
+                    const columnDate = new Date(startOfWeek);
+                    columnDate.setDate(startOfWeek.getDate() + dayIndex);
+                    const isToday = columnDate.toDateString() === new Date().toDateString();
                     const dayEvents = events.filter((event) => {
                       const eventDate = toDateInTimeZone(event.startTime, event.timeZone) ?? new Date(event.startTime);
-                      const columnDate = toDateInTimeZone(date.toISOString(), event.timeZone) ?? date;
-                      return eventDate ? isSameDay(eventDate, columnDate) : false;
+                      const eventColumnDate = toDateInTimeZone(columnDate.toISOString(), event.timeZone) ?? columnDate;
+                      return eventDate ? isSameDay(eventDate, eventColumnDate) : false;
                     });
 
                     return (
