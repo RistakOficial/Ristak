@@ -1947,6 +1947,7 @@ export const savePixelToken = async (req, res) => {
     }
 
     logger.info('Guardando Pixel API Token...');
+    logger.info(`Token recibido (primeros 20 chars): ${pixelApiToken.substring(0, 20)}...`);
 
     // 1. Verificar que exista configuración de Meta
     const metaConfig = await getMetaConfig();
@@ -1958,27 +1959,44 @@ export const savePixelToken = async (req, res) => {
       });
     }
 
+    logger.info(`Meta config encontrado: ad_account_id=${metaConfig.ad_account_id}, pixel_id=${metaConfig.pixel_id || 'ninguno'}`);
+
     // 2. Primero actualizar en HighLevel Custom Values (si está configurado)
     const hlConfig = await db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1');
 
     if (hlConfig && hlConfig.location_id && hlConfig.api_token) {
+      logger.info(`HighLevel configurado. Location ID: ${hlConfig.location_id}`);
+
       try {
         const { saveMetaCustomValues } = await import('../services/highlevelSyncService.js');
 
-        // Pasar DIRECTAMENTE el pixelApiToken del request (no del metaConfig)
-        await saveMetaCustomValues(hlConfig.location_id, hlConfig.api_token, {
+        const credentialsToSave = {
           adAccountId: metaConfig.ad_account_id,
           accessToken: metaConfig.access_token,
           pixelId: metaConfig.pixel_id || '',
           pageId: metaConfig.page_id || '',
           pixelApiToken: pixelApiToken // Token fresco del request body
-        });
+        };
 
-        logger.info('Pixel API Token actualizado en HighLevel Custom Values');
+        logger.info('Credenciales a guardar en HighLevel:');
+        logger.info(`  - adAccountId: ${credentialsToSave.adAccountId}`);
+        logger.info(`  - accessToken: ${credentialsToSave.accessToken ? 'presente (encriptado)' : 'VACÍO'}`);
+        logger.info(`  - pixelId: ${credentialsToSave.pixelId || 'vacío'}`);
+        logger.info(`  - pageId: ${credentialsToSave.pageId || 'vacío'}`);
+        logger.info(`  - pixelApiToken: ${credentialsToSave.pixelApiToken.substring(0, 20)}...`);
+
+        // Pasar DIRECTAMENTE el pixelApiToken del request (no del metaConfig)
+        const result = await saveMetaCustomValues(hlConfig.location_id, hlConfig.api_token, credentialsToSave);
+
+        logger.info('Resultado de saveMetaCustomValues:', JSON.stringify(result, null, 2));
+        logger.info('✅ Pixel API Token actualizado en HighLevel Custom Values');
       } catch (hlError) {
-        logger.warn(`No se pudo actualizar Pixel API Token en HighLevel: ${hlError.message}`);
+        logger.error(`❌ Error actualizando Pixel API Token en HighLevel: ${hlError.message}`);
+        logger.error('Stack:', hlError.stack);
         // No fallar si HighLevel falla, continuar con DB
       }
+    } else {
+      logger.warn('⚠️ HighLevel NO configurado. Saltando actualización de custom values.');
     }
 
     // 3. Actualizar en meta_config local
