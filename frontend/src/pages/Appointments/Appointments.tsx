@@ -977,16 +977,18 @@ export const Appointments: React.FC = () => {
               <Button
                 variant="primary"
                 onClick={openCreateModal}
+                size="sm"
               >
-                <Plus size={18} />
-                Programar cita
+                <Plus size={16} />
+                <span className={styles.buttonText}>Programar</span>
               </Button>
               <Button
                 variant="secondary"
                 onClick={handleOpenCreateBlockedSlot}
+                size="sm"
               >
-                <Lock size={18} />
-                Bloquear horario
+                <Lock size={16} />
+                <span className={styles.buttonText}>Bloquear</span>
               </Button>
             </div>
 
@@ -998,7 +1000,7 @@ export const Appointments: React.FC = () => {
             />
 
             <div className={styles.dateNav}>
-              <Button variant="secondary" onClick={handleToday}>
+              <Button variant="secondary" onClick={handleToday} size="sm">
                 Hoy
               </Button>
               <button className={styles.navBtn} onClick={handlePrev} aria-label="Anterior">
