@@ -594,7 +594,18 @@ export async function collectEvent(req, res) {
     await createSession(sessionData)
 
     // Si hay contact_id, vincular visitor_id histórico con este contacto y unificar
-    if (contact_id && visitor_id && full_name) {
+    if (contact_id && visitor_id) {
+      // Si no viene full_name, buscarlo en la tabla contacts
+      if (!full_name) {
+        try {
+          const contact = await db.get('SELECT full_name FROM contacts WHERE id = ?', [contact_id])
+          full_name = contact?.full_name || 'Sin nombre'
+        } catch (err) {
+          logger.warn(`No se pudo obtener full_name para contacto ${contact_id}: ${err.message}`)
+          full_name = 'Sin nombre'
+        }
+      }
+
       // Importar funciones de tracking
       const { unifyVisitorIds } = await import('../services/trackingService.js')
 
