@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react'
 import { createPortal } from 'react-dom'
-import { KpiCard, Card, Button, Table, DateRangePicker, PageContainer, TabList, Badge, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, ContactDetailsModal } from '@/components/common'
-import type { Column, BadgeVariant } from '@/components/common'
+import { KpiCard, Card, Button, Table, DateRangePicker, PageContainer, TabList, Badge, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, ContactDetailsModal, BarChart } from '@/components/common'
+import type { Column, BadgeVariant, BarChartData } from '@/components/common'
 import {
   Users,
   User,
@@ -186,6 +186,8 @@ export const Contacts: React.FC = () => {
   const [viewMode, setViewMode] = useState<'all' | 'by-date'>('all') // Por defecto 'all' (Todos)
   const [isClient, setIsClient] = useState(false)
   const [allEvents, setAllEvents] = useState<CalendarEvent[]>([]) // Eventos de calendarios
+  const [chartData, setChartData] = useState<BarChartData[]>([])
+  const [loadingChart, setLoadingChart] = useState(false)
 
   const rangeStart = dateRange.start instanceof Date ? dateRange.start : new Date(dateRange.start)
   const rangeEnd = dateRange.end instanceof Date ? dateRange.end : new Date(dateRange.end)
@@ -208,6 +210,7 @@ export const Contacts: React.FC = () => {
 
   useEffect(() => {
     fetchData()
+    fetchChartData()
   }, [dateRange, viewMode])
 
   useEffect(() => {
@@ -387,6 +390,40 @@ export const Contacts: React.FC = () => {
       ad_id: contactData.ad_id
     }]
   }, [contactAppointments, contactData, contactPayments])
+
+  const fetchChartData = async () => {
+    // Solo mostrar gráfico en modo 'by-date'
+    if (viewMode !== 'by-date') {
+      setChartData([])
+      return
+    }
+
+    setLoadingChart(true)
+    try {
+      const start = dateRange.start instanceof Date ? dateRange.start : new Date(dateRange.start)
+      const end = dateRange.end instanceof Date ? dateRange.end : new Date(dateRange.end)
+      const startDate = formatDateToISO(start)
+      const endDate = formatEndDateToISO(end)
+
+      const data = await contactsService.getContactsChart(startDate, endDate)
+
+      // Formatear datos para el gráfico
+      const formattedData = data.map(item => ({
+        name: new Date(item.date).toLocaleDateString('es-MX', {
+          day: 'numeric',
+          month: 'short',
+          year: spansMultipleYears ? 'numeric' : undefined
+        }),
+        value: item.count
+      }))
+
+      setChartData(formattedData)
+    } catch (error) {
+      setChartData([])
+    } finally {
+      setLoadingChart(false)
+    }
+  }
 
   const fetchData = async () => {
     setLoading(true)
@@ -680,6 +717,21 @@ export const Contacts: React.FC = () => {
             icon={<TrendingUp className="text-[var(--color-text-tertiary)]" />}
           />
         </div>
+
+        {viewMode === 'by-date' && (
+          <Card variant="glass" padding="lg">
+            <div className={styles.chartHeader}>
+              <h3 className={styles.chartTitle}>Registros por fecha</h3>
+              <p className={styles.chartSubtitle}>Visualiza cómo se han registrado los contactos a lo largo del tiempo</p>
+            </div>
+            <BarChart
+              data={chartData}
+              loading={loadingChart}
+              height={320}
+              formatTooltip={(value) => `${value} ${value === 1 ? 'registro' : 'registros'}`}
+            />
+          </Card>
+        )}
 
       <Card padding="none">
         <Table

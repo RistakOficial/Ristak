@@ -24,6 +24,11 @@ export interface JourneyEvent {
   data: Record<string, any>
 }
 
+export interface ContactChartData {
+  date: string
+  count: number
+}
+
 const normalizeContact = <T extends Record<string, any>>(contact: T): T => {
   if (!contact || typeof contact !== 'object') {
     return contact
@@ -186,6 +191,20 @@ export const contactsService = {
           ...event,
           data: event && typeof event.data === 'object' && event.data !== null ? event.data : {}
         }))
+    } catch (error) {
+      // TODO: Implement proper logging service
+      return []
+    }
+  },
+
+  async getContactsChart(startDate?: string, endDate?: string): Promise<ContactChartData[]> {
+    try {
+      const params: any = {}
+      if (startDate) params.startDate = startDate
+      if (endDate) params.endDate = endDate
+
+      const data = await apiClient.get<ContactChartData[]>('/contacts/chart', { params })
+      return Array.isArray(data) ? data : []
     } catch (error) {
       // TODO: Implement proper logging service
       return []

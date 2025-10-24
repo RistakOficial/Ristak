@@ -891,6 +891,73 @@ export const deleteContact = async (req, res) => {
 }
 
 /**
+ * Obtiene datos de registros agrupados por fecha para gráfico
+ */
+export const getContactsChart = async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query
+
+    const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate })
+    const rangeLabel = range.isFiltered
+      ? `${range.startUtc || '---'} -> ${range.endUtc || '---'}`
+      : 'todos'
+
+    logger.info(`Obteniendo datos de gráfico de registros - rango: ${rangeLabel}`)
+
+    // Aplicar filtro de contactos ocultos
+    const hiddenFilters = await getHiddenContactFilters()
+    const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'contacts', false)
+
+    // Construir WHERE clause
+    const conditions = []
+    const params = []
+
+    if (range.startUtc) {
+      conditions.push('created_at >= ?')
+      params.push(range.startUtc)
+    }
+
+    if (range.endUtc) {
+      conditions.push('created_at <= ?')
+      params.push(range.endUtc)
+    }
+
+    if (hiddenCondition) {
+      conditions.push(hiddenCondition)
+    }
+
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
+
+    // Query para obtener registros por fecha
+    const query = `
+      SELECT
+        DATE(created_at) as date,
+        COUNT(*) as count
+      FROM contacts
+      ${whereClause}
+      GROUP BY DATE(created_at)
+      ORDER BY date ASC
+    `
+
+    const data = await db.all(query, params)
+
+    logger.debug(`Datos de gráfico obtenidos: ${data.length} días con registros`)
+
+    res.json({
+      success: true,
+      data
+    })
+
+  } catch (error) {
+    logger.error(`Error obteniendo datos de gráfico de registros: ${error.message}`)
+    res.status(500).json({
+      success: false,
+      error: 'Error obteniendo datos de gráfico'
+    })
+  }
+}
+
+/**
  * Obtiene el journey completo del contacto (timeline de eventos)
  * Orden de eventos:
  * 1. Primer toque (sessions o whatsapp_attribution, el más antiguo)
