@@ -499,7 +499,7 @@ export const MetaAdsIntegration: React.FC = () => {
                     </label>
                     {credentials.pixelApiToken && credentials.pixelApiToken.startsWith('***') ? (
                       <div className={styles.filterChip}>
-                        <span className={styles.chipText}>✅ {credentials.pixelApiToken}</span>
+                        <span className={styles.chipText}>{credentials.pixelApiToken}</span>
                         <button
                           onClick={() => handleRemoveCredential('pixelApiToken')}
                           className={styles.chipDeleteButton}
@@ -509,27 +509,22 @@ export const MetaAdsIntegration: React.FC = () => {
                         </button>
                       </div>
                     ) : (
-                      <div
+                      <input
+                        type="text"
+                        value=""
+                        readOnly
+                        placeholder={credentials.pixelId ? 'Se generará automáticamente al guardar' : 'Primero configura el Pixel ID'}
                         className={styles.formInput}
+                        disabled
                         style={{
                           cursor: 'not-allowed',
-                          opacity: 0.7,
-                          backgroundColor: 'var(--background-secondary)',
-                          color: 'var(--text-secondary)',
-                          display: 'flex',
-                          alignItems: 'center',
-                          padding: '10px 12px'
+                          opacity: 0.5
                         }}
-                      >
-                        {credentials.pixelId
-                          ? '🔄 Se generará automáticamente al guardar'
-                          : 'Primero configura el Pixel ID'
-                        }
-                      </div>
+                      />
                     )}
                     {credentials.pixelId && (
                       <div style={{ marginTop: '8px', fontSize: '13px', color: 'var(--text-secondary)' }}>
-                        💡 El token se genera automáticamente cuando guardas la configuración. No necesitas hacer nada más.
+                        El token se genera automáticamente cuando guardas la configuración.
                       </div>
                     )}
                   </div>
