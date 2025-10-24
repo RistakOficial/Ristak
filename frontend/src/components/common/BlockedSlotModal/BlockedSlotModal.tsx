@@ -132,16 +132,89 @@ interface BlockingPreset {
   value: PresetType;
   label: string;
   description: string;
+  // Control de qué campos mostrar
+  showStartDate: boolean; // Mostrar selector de fecha de inicio
+  showStartTime: boolean; // Mostrar selector de hora de inicio
+  showEndDate: boolean;   // Mostrar selector de fecha de fin
+  showEndTime: boolean;   // Mostrar selector de hora de fin
+  autoCalculateEnd: boolean; // Si debe calcular automáticamente el fin al cambiar el inicio
+  duration?: number;      // Duración en horas (para auto-calcular)
 }
 
 const BLOCKING_PRESETS: BlockingPreset[] = [
-  { value: 'custom', label: 'Personalizado', description: 'Elige fechas y horas manualmente' },
-  { value: 'full_day', label: 'Todo el día', description: '9:00 AM - 6:00 PM hoy' },
-  { value: 'morning', label: 'Media mañana', description: '9:00 AM - 1:00 PM hoy' },
-  { value: 'afternoon', label: 'Media tarde', description: '2:00 PM - 6:00 PM hoy' },
-  { value: 'this_week', label: 'Esta semana', description: 'Lunes a viernes (9 AM - 6 PM)' },
-  { value: 'next_week', label: 'Próxima semana', description: 'Lunes a viernes (9 AM - 6 PM)' },
-  { value: 'this_month', label: 'Este mes', description: 'Todos los días laborales restantes' }
+  {
+    value: 'custom',
+    label: 'Personalizado',
+    description: 'Elige fechas y horas manualmente',
+    showStartDate: true,
+    showStartTime: true,
+    showEndDate: true,
+    showEndTime: true,
+    autoCalculateEnd: false
+  },
+  {
+    value: 'full_day',
+    label: 'Todo el día',
+    description: 'Bloquea todo el día (24 horas)',
+    showStartDate: true,
+    showStartTime: false,
+    showEndDate: false,
+    showEndTime: false,
+    autoCalculateEnd: true,
+    duration: 24
+  },
+  {
+    value: 'morning',
+    label: 'Media mañana',
+    description: 'Bloquea 4 horas desde la hora que elijas',
+    showStartDate: true,
+    showStartTime: true,
+    showEndDate: false,
+    showEndTime: false,
+    autoCalculateEnd: true,
+    duration: 4
+  },
+  {
+    value: 'afternoon',
+    label: 'Media tarde',
+    description: 'Bloquea 4 horas desde la hora que elijas',
+    showStartDate: true,
+    showStartTime: true,
+    showEndDate: false,
+    showEndTime: false,
+    autoCalculateEnd: true,
+    duration: 4
+  },
+  {
+    value: 'this_week',
+    label: 'Esta semana',
+    description: 'Lunes a viernes (todo el día)',
+    showStartDate: false,
+    showStartTime: false,
+    showEndDate: false,
+    showEndTime: false,
+    autoCalculateEnd: true
+  },
+  {
+    value: 'next_week',
+    label: 'Próxima semana',
+    description: 'Lunes a viernes (todo el día)',
+    showStartDate: false,
+    showStartTime: false,
+    showEndDate: false,
+    showEndTime: false,
+    autoCalculateEnd: true
+  },
+  {
+    value: 'this_month',
+    label: 'Este mes',
+    description: 'Días laborales restantes (todo el día)',
+    showStartDate: false,
+    showStartTime: false,
+    showEndDate: false,
+    showEndTime: false,
+    autoCalculateEnd: true
+  }
 ];
 
 export const BlockedSlotModal: React.FC<BlockedSlotModalProps> = ({
@@ -299,52 +372,52 @@ export const BlockedSlotModal: React.FC<BlockedSlotModalProps> = ({
 
     switch (preset) {
       case 'full_day':
-        // Hoy de 9am a 6pm
-        startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 9, 0, 0);
-        endDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 18, 0, 0);
+        // Todo el día: desde las 00:00 hasta las 23:59 de hoy
+        startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+        endDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 0);
         break;
 
       case 'morning':
-        // Hoy de 9am a 1pm
+        // Media mañana: 4 horas desde las 9am por default (usuario puede cambiar)
         startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 9, 0, 0);
-        endDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 13, 0, 0);
+        endDate = new Date(startDate.getTime() + 4 * 60 * 60 * 1000); // +4 horas
         break;
 
       case 'afternoon':
-        // Hoy de 2pm a 6pm
+        // Media tarde: 4 horas desde las 2pm por default (usuario puede cambiar)
         startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 14, 0, 0);
-        endDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 18, 0, 0);
+        endDate = new Date(startDate.getTime() + 4 * 60 * 60 * 1000); // +4 horas
         break;
 
       case 'this_week':
-        // Lunes a viernes de esta semana (9am-6pm)
+        // Lunes a viernes de esta semana (todo el día)
         const currentDay = now.getDay(); // 0 = domingo, 1 = lunes, etc.
         const daysUntilMonday = currentDay === 0 ? 1 : 1 - currentDay; // Si es domingo, ir al lunes siguiente
-        const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() + daysUntilMonday, 9, 0, 0);
+        const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() + daysUntilMonday, 0, 0, 0);
         const friday = new Date(monday);
         friday.setDate(monday.getDate() + 4);
-        friday.setHours(18, 0, 0);
+        friday.setHours(23, 59, 0);
         startDate = monday;
         endDate = friday;
         break;
 
       case 'next_week':
-        // Lunes a viernes de la próxima semana
+        // Lunes a viernes de la próxima semana (todo el día)
         const nextMonday = new Date(now);
         const daysToNextMonday = (7 - now.getDay() + 1) % 7 || 7;
         nextMonday.setDate(now.getDate() + daysToNextMonday);
-        nextMonday.setHours(9, 0, 0, 0);
+        nextMonday.setHours(0, 0, 0, 0);
         const nextFriday = new Date(nextMonday);
         nextFriday.setDate(nextMonday.getDate() + 4);
-        nextFriday.setHours(18, 0, 0);
+        nextFriday.setHours(23, 59, 0);
         startDate = nextMonday;
         endDate = nextFriday;
         break;
 
       case 'this_month':
-        // Desde hoy hasta el fin de mes (9am-6pm)
-        startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 9, 0, 0);
-        endDate = new Date(now.getFullYear(), now.getMonth() + 1, 0, 18, 0, 0); // Último día del mes
+        // Desde hoy hasta el fin de mes (todo el día)
+        startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+        endDate = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 0); // Último día del mes
         break;
 
       default:
@@ -366,6 +439,34 @@ export const BlockedSlotModal: React.FC<BlockedSlotModalProps> = ({
   const handlePresetChange = (preset: PresetType) => {
     setSelectedPreset(preset);
     applyPreset(preset);
+  };
+
+  // Auto-calcular end time cuando cambia start time (solo si preset lo requiere)
+  const handleStartTimeChange = (value: string) => {
+    setFormData({ ...formData, startTime: value });
+
+    // Buscar el preset actual
+    const currentPreset = BLOCKING_PRESETS.find(p => p.value === selectedPreset);
+
+    // Si el preset tiene auto-cálculo y una duración definida
+    if (currentPreset?.autoCalculateEnd && currentPreset.duration) {
+      try {
+        const startDate = new Date(value);
+        if (!isNaN(startDate.getTime())) {
+          // Calcular end time según la duración
+          const endDate = new Date(startDate.getTime() + currentPreset.duration * 60 * 60 * 1000);
+          const endISO = endDate.toISOString();
+          setFormData({
+            ...formData,
+            startTime: value,
+            endTime: toLocalInputValue(endISO, formData.timeZone)
+          });
+        }
+      } catch (error) {
+        // Si hay error, solo actualizar startTime
+        setFormData({ ...formData, startTime: value });
+      }
+    }
   };
 
   // Inicializar formulario
@@ -552,45 +653,58 @@ export const BlockedSlotModal: React.FC<BlockedSlotModalProps> = ({
             </div>
           )}
 
-          {/* Fecha y hora - 2 columnas lado a lado */}
+          {/* Fecha y hora - Mostrar campos según preset seleccionado */}
           <div className={styles.field}>
             <label className={styles.label}>
-              Fechas y horario <span className={styles.required}>*</span>
+              {selectedPreset === 'custom' ? 'Fechas y horario' : 'Configuración'} <span className={styles.required}>*</span>
             </label>
-            <div className={styles.fieldRow}>
-              {/* Fecha y hora de inicio */}
-              <div className={styles.field}>
-                <DateTimePicker
-                  label="Inicio"
-                  value={formData.startTime}
-                  onChange={(value) => {
-                    setFormData({ ...formData, startTime: value });
-                    // Si cambia manualmente, volver a "Personalizado"
-                    if (selectedPreset !== 'custom') {
-                      setSelectedPreset('custom');
-                    }
-                  }}
-                  placeholder="Selecciona fecha y hora de inicio"
-                />
-              </div>
 
-              {/* Fecha y hora de fin */}
-              <div className={styles.field}>
-                <DateTimePicker
-                  label="Fin"
-                  value={formData.endTime}
-                  onChange={(value) => {
-                    setFormData({ ...formData, endTime: value });
-                    // Si cambia manualmente, volver a "Personalizado"
-                    if (selectedPreset !== 'custom') {
-                      setSelectedPreset('custom');
-                    }
-                  }}
-                  placeholder="Selecciona fecha y hora de fin"
-                  minDate={formData.startTime}
-                />
-              </div>
-            </div>
+            {/* Obtener configuración del preset actual */}
+            {(() => {
+              const currentPreset = BLOCKING_PRESETS.find(p => p.value === selectedPreset);
+              const showStart = currentPreset?.showStartDate || currentPreset?.showStartTime;
+              const showEnd = currentPreset?.showEndDate || currentPreset?.showEndTime;
+
+              // Si no hay campos que mostrar (ej: "Esta semana", "Próxima semana")
+              if (!showStart && !showEnd) {
+                return (
+                  <div className={styles.presetInfo}>
+                    Las fechas se configuran automáticamente según el preset seleccionado
+                  </div>
+                );
+              }
+
+              return (
+                <div className={styles.fieldRow}>
+                  {/* Fecha y hora de inicio */}
+                  {showStart && (
+                    <div className={styles.field}>
+                      <DateTimePicker
+                        label="Inicio"
+                        value={formData.startTime}
+                        onChange={(value) => handleStartTimeChange(value)}
+                        placeholder="Selecciona fecha y hora de inicio"
+                      />
+                    </div>
+                  )}
+
+                  {/* Fecha y hora de fin - Solo si el preset lo permite */}
+                  {showEnd && (
+                    <div className={styles.field}>
+                      <DateTimePicker
+                        label="Fin"
+                        value={formData.endTime}
+                        onChange={(value) => {
+                          setFormData({ ...formData, endTime: value });
+                        }}
+                        placeholder="Selecciona fecha y hora de fin"
+                        minDate={formData.startTime}
+                      />
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
           </div>
         </div>
 
