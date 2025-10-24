@@ -374,31 +374,30 @@ export async function createBlockedSlot(blockData, locationId, accessToken) {
       throw new Error(`La fecha de fin debe ser posterior a la fecha de inicio`);
     }
 
-    // Validar que calendarId esté presente (obligatorio)
-    if (!blockData.calendarId) {
-      throw new Error('Se requiere calendarId para crear un blocked slot');
+    // Validar que al menos uno esté presente: calendarId O assignedUserId
+    if (!blockData.calendarId && !blockData.assignedUserId) {
+      throw new Error('Se requiere calendarId o assignedUserId para crear un blocked slot');
     }
 
-    // Construir payload según documentación de HighLevel
-    // IMPORTANTE: Calendarios de EVENTO (sin teamMembers) solo requieren calendarId
-    //             Calendarios PERSONALES/ROUND ROBIN requieren assignedUserId
+    // IMPORTANTE: El API de HighLevel usa lógica EXCLUSIVA (XOR):
+    // - calendarId (sin assignedUserId) → Bloquea TODO el calendario
+    // - assignedUserId (sin calendarId) → Bloquea solo ese usuario específico
+    // - AMBOS juntos → ERROR 422 "Either calendarId or assignedUserId must be present"
+
     const payload = {
       title: blockData.title || 'Horario bloqueado',
-      calendarId: blockData.calendarId,
       locationId: locationId,
       startTime: blockData.startTime,
       endTime: blockData.endTime
     };
 
-    logger.info(`[HighLevel Calendar] Usando calendarId: ${blockData.calendarId}`);
-
-    // Solo agregar assignedUserId si fue proporcionado por el frontend
-    // El frontend decide si mandarlo o no según el tipo de calendario
+    // Solo agregar UNO de los dos (nunca ambos)
     if (blockData.assignedUserId) {
       payload.assignedUserId = blockData.assignedUserId;
-      logger.info(`[HighLevel Calendar] Usando assignedUserId: ${blockData.assignedUserId}`);
-    } else {
-      logger.info(`[HighLevel Calendar] No se proporcionó assignedUserId (calendario probablemente de tipo EVENTO)`);
+      logger.info(`[HighLevel Calendar] Bloqueando usuario específico: ${blockData.assignedUserId}`);
+    } else if (blockData.calendarId) {
+      payload.calendarId = blockData.calendarId;
+      logger.info(`[HighLevel Calendar] Bloqueando calendario completo: ${blockData.calendarId}`);
     }
 
     logger.info(`[HighLevel Calendar] Payload final: ${JSON.stringify(payload, null, 2)}`);

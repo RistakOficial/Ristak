@@ -530,12 +530,19 @@ export const BlockedSlotModal: React.FC<BlockedSlotModalProps> = ({
         title: formData.title.trim() || 'Horario bloqueado'
       };
 
-      // IMPORTANTE: Solo incluir assignedUserId si el calendario tiene team members
-      // Los calendarios de EVENTO no tienen usuarios y NO deben recibir assignedUserId
+      // IMPORTANTE: El API de HighLevel usa lógica EXCLUSIVA (XOR):
+      // - calendarId (sin assignedUserId) → Bloquea TODO el calendario
+      // - assignedUserId (sin calendarId) → Bloquea solo ese usuario
+      // - AMBOS → ERROR 422
+
       const hasTeamMembers2 = calendar && calendar.teamMembers && calendar.teamMembers.length > 0;
 
       if (formData.assignedUserId && hasTeamMembers2) {
+        // Calendario con usuarios: bloquear solo el usuario seleccionado
         payload.assignedUserId = formData.assignedUserId;
+      } else {
+        // Calendario sin usuarios o sin selección: bloquear todo el calendario
+        payload.calendarId = calendar?.id;
       }
 
       if (formData.startTime) {
