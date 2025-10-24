@@ -374,30 +374,31 @@ export async function createBlockedSlot(blockData, locationId, accessToken) {
       throw new Error(`La fecha de fin debe ser posterior a la fecha de inicio`);
     }
 
-    // Validar que calendarId O assignedUserId estén presentes
-    if (!blockData.calendarId && !blockData.assignedUserId) {
-      throw new Error('Se requiere calendarId o assignedUserId para crear un blocked slot');
+    // Validar que calendarId esté presente (obligatorio)
+    if (!blockData.calendarId) {
+      throw new Error('Se requiere calendarId para crear un blocked slot');
     }
 
     // Construir payload según documentación de HighLevel
-    // IMPORTANTE: HighLevel requiere EXACTAMENTE uno de estos: calendarId o assignedUserId
+    // IMPORTANTE: Calendarios de EVENTO (sin teamMembers) solo requieren calendarId
+    //             Calendarios PERSONALES/ROUND ROBIN requieren assignedUserId
     const payload = {
       title: blockData.title || 'Horario bloqueado',
+      calendarId: blockData.calendarId,
       locationId: locationId,
       startTime: blockData.startTime,
       endTime: blockData.endTime
     };
 
-    // Agregar calendarId si está presente (PRIORIDAD)
-    if (blockData.calendarId) {
-      payload.calendarId = blockData.calendarId;
-      logger.info(`[HighLevel Calendar] Usando calendarId: ${blockData.calendarId}`);
-    }
+    logger.info(`[HighLevel Calendar] Usando calendarId: ${blockData.calendarId}`);
 
-    // Agregar assignedUserId si está presente
+    // Solo agregar assignedUserId si fue proporcionado por el frontend
+    // El frontend decide si mandarlo o no según el tipo de calendario
     if (blockData.assignedUserId) {
       payload.assignedUserId = blockData.assignedUserId;
       logger.info(`[HighLevel Calendar] Usando assignedUserId: ${blockData.assignedUserId}`);
+    } else {
+      logger.info(`[HighLevel Calendar] No se proporcionó assignedUserId (calendario probablemente de tipo EVENTO)`);
     }
 
     logger.info(`[HighLevel Calendar] Payload final: ${JSON.stringify(payload, null, 2)}`);

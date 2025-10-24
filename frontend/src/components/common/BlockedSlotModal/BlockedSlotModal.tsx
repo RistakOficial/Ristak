@@ -530,9 +530,11 @@ export const BlockedSlotModal: React.FC<BlockedSlotModalProps> = ({
         title: formData.title.trim() || 'Horario bloqueado'
       };
 
-      // Solo incluir assignedUserId si existe (calendarios con team members)
-      // Para calendarios sin team members, el backend usará el usuario por defecto
-      if (formData.assignedUserId) {
+      // IMPORTANTE: Solo incluir assignedUserId si el calendario tiene team members
+      // Los calendarios de EVENTO no tienen usuarios y NO deben recibir assignedUserId
+      const hasTeamMembers2 = calendar && calendar.teamMembers && calendar.teamMembers.length > 0;
+
+      if (formData.assignedUserId && hasTeamMembers2) {
         payload.assignedUserId = formData.assignedUserId;
       }
 
