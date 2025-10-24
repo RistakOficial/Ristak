@@ -711,13 +711,17 @@ const Analytics: React.FC = () => {
       return
     }
 
+    // Detectar si hay filtros activos
+    const hasActiveFilters = Object.keys(selectedFilters).length > 0 &&
+      Object.values(selectedFilters).some(arr => arr.length > 0)
+
     if (sessions.length === 0) {
       // Si no hay sesiones filtradas, resetear solo métricas de sesiones
-      // NO resetear registros ni registrosChartData (vienen de contactsData)
+      // NO resetear registros ni registrosChartData si no hay filtros (mantener originales)
       setMetrics(prev => ({
         pageViews: 0,
         uniqueVisitors: 0,
-        registros: prev.registros, // ← MANTENER valor de contactsData
+        registros: hasActiveFilters ? 0 : prev.registros, // Si hay filtro y no hay datos = 0
         conversionRate: 0,
         returningUsers: 0,
         avgPagePerSession: 0,
@@ -725,7 +729,9 @@ const Analytics: React.FC = () => {
       }))
       setDailyTraffic([])
       setDailyConversions([])
-      // NO resetear registrosChartData aquí - viene de contactsData, no de sessions
+      if (hasActiveFilters) {
+        setRegistrosChartData([]) // Vaciar gráfico si hay filtro activo
+      }
       return
     }
 
@@ -736,7 +742,7 @@ const Analytics: React.FC = () => {
     // Contar sesiones únicas (por session_id)
     const uniqueSessionIds = new Set(sessions.map((s: Session) => s.session_id)).size
 
-    // Registros = sesiones con contact_id (solo para cálculo interno, NO para KPI)
+    // Registros = contactos únicos que aparecen en las sesiones filtradas
     const registrosEnSesiones = new Set(
       sessions
         .filter((s: Session) => {
@@ -746,9 +752,9 @@ const Analytics: React.FC = () => {
         .map((s: Session) => s.contact_id)
     ).size
 
-    // NOTA: NO sobrescribir metrics.registros aquí - viene de contactsData
-    // Solo usar registrosEnSesiones para cálculos internos si es necesario
-    const conversionRate = uniqueVids > 0 ? ((registrosEnSesiones / uniqueVids) * 100) : 0
+    // Si hay filtros activos, usar registrosEnSesiones; si no, mantener original
+    const registrosValue = hasActiveFilters ? registrosEnSesiones : metrics.registros
+    const conversionRate = uniqueVids > 0 ? ((registrosValue / uniqueVids) * 100) : 0
 
     // Usuarios recurrentes: contar visitor_ids que tienen múltiples session_ids diferentes
     const visitorSessionMap: { [key: string]: Set<string> } = {}
@@ -768,7 +774,7 @@ const Analytics: React.FC = () => {
     setMetrics(prev => ({
       pageViews: totalPageViews,
       uniqueVisitors: uniqueVids,
-      registros: prev.registros, // MANTENER valor original de contactsData, NO sobrescribir
+      registros: registrosValue, // Usar valor filtrado si hay filtros activos
       conversionRate,
       returningUsers,
       avgPagePerSession,
@@ -799,6 +805,49 @@ const Analytics: React.FC = () => {
       }))
 
     setDailyTraffic(chartData)
+
+    // Recalcular gráficos de registros SI hay filtros activos
+    if (hasActiveFilters) {
+      // Agrupar contactos únicos por fecha de creación
+      const registrosPorFecha: { [key: string]: Set<string> } = {}
+
+      sessions.forEach((session: Session) => {
+        if (session.contact_id && session.contact_created_at) {
+          const createdDate = new Date(session.contact_created_at)
+          const startedDate = new Date(session.started_at)
+
+          // Solo contar si la sesión fue DESPUÉS o EN la fecha de creación del contacto
+          if (startedDate >= createdDate) {
+            const dateKey = session.contact_created_at.split('T')[0]
+            if (!registrosPorFecha[dateKey]) {
+              registrosPorFecha[dateKey] = new Set()
+            }
+            registrosPorFecha[dateKey].add(session.contact_id)
+          }
+        }
+      })
+
+      // Generar datos para el gráfico de barras (solo período actual filtrado)
+      const filteredRegistrosChartData = Object.entries(registrosPorFecha)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([date, contactSet]) => ({
+          name: formatLocalDateShort(date),
+          value: contactSet.size
+        }))
+
+      setRegistrosChartData(filteredRegistrosChartData)
+
+      // Generar datos para el gráfico de conversiones (con período anterior incluido)
+      const filteredConversionsData = Object.entries(registrosPorFecha)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([date, contactSet]) => ({
+          label: formatLocalDateShort(date),
+          value: contactSet.size
+        }))
+
+      setDailyConversions(filteredConversionsData)
+    }
+    // Si NO hay filtros, mantener los datos originales (ya están seteados en el primer useEffect)
 
     // Recalcular stats para las cards
     const browsersForFilter: { [key: string]: Set<string> } = {}
@@ -945,7 +994,7 @@ const Analytics: React.FC = () => {
         requests: count
       }))
     setTopVisitors(topVisitorsList)
-  }, [sessions])
+  }, [sessions, selectedFilters, formatLocalDateShort])
 
   // Preparar métricas para KPICards
   const mainMetrics = [
