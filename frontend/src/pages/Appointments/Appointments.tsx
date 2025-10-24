@@ -595,6 +595,37 @@ export const Appointments: React.FC = () => {
     setIsCreateModalOpen(true);
   };
 
+  // Doble click en día para crear cita con esa fecha
+  const handleDayDoubleClick = (date: Date) => {
+    if (!selectedCalendar) {
+      showToast('warning', 'Selecciona un calendario', 'Debes elegir un calendario activo antes de programar una cita.');
+      return;
+    }
+
+    const now = new Date();
+    const reference = new Date(date);
+
+    // Si es hoy, usar la hora actual (redondeada a la siguiente hora)
+    if (isSameDay(reference, now)) {
+      reference.setHours(now.getHours() + 1, 0, 0, 0);
+    } else {
+      // Si es otro día, usar las 9:00 AM
+      reference.setHours(9, 0, 0, 0);
+    }
+
+    const startISO = reference.toISOString();
+    const endRef = new Date(reference.getTime() + 60 * 60 * 1000); // 1 hora de duración
+    const endISO = endRef.toISOString();
+
+    setCreateDefaults({
+      start: startISO,
+      end: endISO,
+      timeZone: selectedCalendar?.timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+      title: selectedCalendar?.eventTitle || ''
+    });
+    setIsCreateModalOpen(true);
+  };
+
   const handleCreateAppointment = async (payload: {
     title: string;
     appointmentStatus: CalendarEvent['appointmentStatus'];
@@ -814,14 +845,31 @@ export const Appointments: React.FC = () => {
     const duration = originalEnd.getTime() - originalStart.getTime();
     const newEnd = new Date(newStart.getTime() + duration);
 
-    // Abrir modal con los datos actualizados
-    setSelectedEvent({
-      ...draggedEvent,
-      startTime: newStart.toISOString(),
-      endTime: newEnd.toISOString()
-    });
-    setIsModalOpen(true);
+    // Cerrar modal primero (si estaba abierto)
+    setIsModalOpen(false);
     setDraggedEvent(null);
+
+    // Esperar un tick para que el modal se cierre completamente
+    await new Promise(resolve => setTimeout(resolve, 50));
+
+    // Crear un objeto COMPLETAMENTE NUEVO (sin reusar referencia)
+    const updatedEvent: CalendarEvent = {
+      id: draggedEvent.id,
+      title: draggedEvent.title,
+      startTime: newStart.toISOString(),
+      endTime: newEnd.toISOString(),
+      appointmentStatus: draggedEvent.appointmentStatus,
+      calendarId: draggedEvent.calendarId,
+      contactId: draggedEvent.contactId,
+      assignedUserId: draggedEvent.assignedUserId,
+      address: draggedEvent.address,
+      notes: draggedEvent.notes,
+      timeZone: draggedEvent.timeZone
+    };
+
+    // Abrir modal con el evento actualizado
+    setSelectedEvent(updatedEvent);
+    setIsModalOpen(true);
   };
 
   // Color del evento según estado (compatible con dark mode)
@@ -1179,6 +1227,10 @@ export const Appointments: React.FC = () => {
                         key={index}
                         className={finalCellClasses}
                         onClick={() => setSelectedDate(cell.date)}
+                        onDoubleClick={(e) => {
+                          e.stopPropagation();
+                          handleDayDoubleClick(cell.date);
+                        }}
                         onDragOver={handleDragOver(cell.date)}
                         onDragLeave={handleDragLeave}
                         onDrop={handleDrop(cell.date)}
