@@ -696,7 +696,8 @@ export const MetaAdsIntegration: React.FC = () => {
                           className={styles.formInput}
                         />
                         <div style={{ marginTop: '12px', display: 'flex', justifyContent: 'center' }}>
-                          <Button
+                          <button
+                            type="button"
                             onClick={handleSavePageId}
                             disabled={isSavingPageId || !credentials.pageId}
                             style={{
@@ -715,7 +716,7 @@ export const MetaAdsIntegration: React.FC = () => {
                           >
                             <RefreshCw size={16} className={isSavingPageId ? styles.spinning : ''} />
                             {isSavingPageId ? 'Guardando...' : 'Guardar Page ID'}
-                          </Button>
+                          </button>
                         </div>
                       </>
                     )}
@@ -755,7 +756,8 @@ export const MetaAdsIntegration: React.FC = () => {
                           className={styles.formInput}
                         />
                         <div style={{ marginTop: '12px', display: 'flex', justifyContent: 'center' }}>
-                          <Button
+                          <button
+                            type="button"
                             onClick={handleSavePixelApiToken}
                             disabled={isSavingPixelToken || !credentials.pixelApiToken}
                             style={{
@@ -774,7 +776,7 @@ export const MetaAdsIntegration: React.FC = () => {
                           >
                             <RefreshCw size={16} className={isSavingPixelToken ? styles.spinning : ''} />
                             {isSavingPixelToken ? 'Guardando...' : 'Guardar Pixel API Token'}
-                          </Button>
+                          </button>
                         </div>
                       </>
                     )}
