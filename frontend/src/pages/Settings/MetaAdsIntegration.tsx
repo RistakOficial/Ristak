@@ -427,11 +427,6 @@ export const MetaAdsIntegration: React.FC = () => {
                         }}
                       />
                     )}
-                    {!credentials.accessToken && !realAccessToken && (
-                      <div style={{ marginTop: '8px', fontSize: '13px', color: 'var(--color-warning)' }}>
-                        ⚠️ Primero debes configurar el Access Token
-                      </div>
-                    )}
                   </div>
                 </div>
 
@@ -495,11 +490,6 @@ export const MetaAdsIntegration: React.FC = () => {
                         }}
                       />
                     )}
-                    {!credentials.adAccountId && (
-                      <div style={{ marginTop: '8px', fontSize: '13px', color: 'var(--color-warning)' }}>
-                        ⚠️ Primero debes seleccionar una cuenta de anuncios
-                      </div>
-                    )}
                   </div>
 
                   {/* 4. Pixel API Token */}
@@ -532,13 +522,9 @@ export const MetaAdsIntegration: React.FC = () => {
                         }}
                       />
                     )}
-                    {credentials.pixelId ? (
+                    {credentials.pixelId && (
                       <div style={{ marginTop: '8px', fontSize: '13px', color: 'var(--text-secondary)' }}>
                         💡 <strong>Cómo obtener:</strong> Events Manager → Pixel → Settings → Conversions API → Generate Token
-                      </div>
-                    ) : (
-                      <div style={{ marginTop: '8px', fontSize: '13px', color: 'var(--color-warning)' }}>
-                        ⚠️ Primero debes configurar el Pixel ID
                       </div>
                     )}
                   </div>
@@ -574,11 +560,6 @@ export const MetaAdsIntegration: React.FC = () => {
                       }}
                       disabled={!credentials.accessToken && !realAccessToken}
                     />
-                  )}
-                  {!credentials.accessToken && !realAccessToken && (
-                    <div style={{ marginTop: '8px', fontSize: '13px', color: 'var(--color-warning)' }}>
-                      ⚠️ Primero debes configurar el Access Token
-                    </div>
                   )}
                 </div>
 

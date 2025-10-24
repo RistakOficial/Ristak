@@ -375,32 +375,17 @@ export async function createBlockedSlot(blockData, locationId, accessToken) {
       logger.info(`[HighLevel Calendar] No se proporcionó assignedUserId, obteniendo usuario por defecto del location`);
 
       try {
-        // Obtener usuarios del location
-        const usersResponse = await fetchWithTimeout(
-          `${GHL_API_BASE}/users?locationId=${locationId}`,
-          {
-            method: 'GET',
-            headers: {
-              'Accept': 'application/json',
-              'Version': API_VERSION,
-              'Authorization': `Bearer ${accessToken}`
-            }
-          }
-        );
+        // Usar ghlClient para obtener usuarios (ya incluye companyId)
+        const { GHLClient } = await import('./ghlClient.js');
+        const ghlClient = new GHLClient(accessToken, locationId);
+        const users = await ghlClient.getLocationUsers(locationId);
 
-        if (usersResponse.ok) {
-          const usersData = await usersResponse.json();
-          const users = usersData.users || [];
-
-          if (users.length > 0) {
-            // Usar el primer usuario como default
-            assignedUserId = users[0].id;
-            logger.info(`[HighLevel Calendar] Usando usuario por defecto: ${assignedUserId}`);
-          } else {
-            throw new Error('No se encontraron usuarios en el location para asignar el bloqueo');
-          }
+        if (users && users.length > 0) {
+          // Usar el primer usuario como default
+          assignedUserId = users[0].id;
+          logger.info(`[HighLevel Calendar] Usando usuario por defecto: ${assignedUserId}`);
         } else {
-          throw new Error(`Error al obtener usuarios del location: ${usersResponse.status}`);
+          throw new Error('No se encontraron usuarios en el location para asignar el bloqueo');
         }
       } catch (userError) {
         logger.error(`[HighLevel Calendar] Error al obtener usuario por defecto: ${userError.message}`);
