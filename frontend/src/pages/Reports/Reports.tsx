@@ -277,17 +277,32 @@ interface SimpleLineChartProps {
 }
 
 const SimpleLineChart: React.FC<SimpleLineChartProps> = ({ data, dataKeys, formatValue, height = 200 }) => {
-  const { chartRef, pointPos, isHovering, activeIndex, activeData } = useChartHover({ data })
+  const { chartRef, pointPos: _pointPos, isHovering, activeIndex, activeData } = useChartHover({ data })
+  const [actualPointPos, setActualPointPos] = React.useState<{ x: number; y: number } | null>(null)
+  const activePointRef = React.useRef<{ [key: string]: { x: number; y: number } }>({})
   const isDarkMode = typeof document !== 'undefined' && document.body.classList.contains('dark')
+
+  // Resetear cuando cambia el índice o deja de hacer hover
+  React.useEffect(() => {
+    if (!isHovering) {
+      setActualPointPos(null)
+      activePointRef.current = {}
+    } else {
+      // Limpiar los puntos del índice anterior
+      activePointRef.current = {}
+    }
+  }, [isHovering, activeIndex])
+
+  const resolvedPointPos = actualPointPos ?? null
 
   // Calcular offset dinámico del tooltip (igual que Dashboard)
   const tooltipVerticalOffset = React.useMemo(() => {
-    if (!pointPos || !chartRef.current) {
+    if (!resolvedPointPos || !chartRef.current) {
       return 22
     }
 
     const rect = chartRef.current.getBoundingClientRect()
-    const distanceFromTop = Math.max(0, pointPos.y - rect.top)
+    const distanceFromTop = Math.max(0, resolvedPointPos.y - rect.top)
     const normalized = rect.height > 0 ? Math.min(Math.max(distanceFromTop / rect.height, 0), 1) : 0.5
 
     const IDEAL_MIN_GAP = 18
@@ -307,7 +322,7 @@ const SimpleLineChart: React.FC<SimpleLineChartProps> = ({ data, dataKeys, forma
     )
 
     return boundedGap
-  }, [pointPos, chartRef])
+  }, [resolvedPointPos, chartRef])
 
   return (
     <div ref={chartRef} style={{ position: 'relative', height }}>
@@ -335,6 +350,34 @@ const SimpleLineChart: React.FC<SimpleLineChartProps> = ({ data, dataKeys, forma
               fill={`url(#gradient-${dk.key}-line-reports)`}
               dot={(props: any) => {
                 const isActive = props.index === activeIndex
+
+                // Capturar la posición real del punto cuando está activo
+                if (isActive && props.cx && props.cy) {
+                  const rect = chartRef.current?.getBoundingClientRect()
+                  if (rect) {
+                    const pointX = rect.left + props.cx
+                    const pointY = rect.top + props.cy
+                    const pointKey = `${props.index}-${dk.key}`
+
+                    // Solo guardar si no existe o cambió
+                    const existing = activePointRef.current[pointKey]
+                    if (!existing || existing.x !== pointX || existing.y !== pointY) {
+                      activePointRef.current[pointKey] = { x: pointX, y: pointY }
+
+                      // Usar requestAnimationFrame para evitar setState durante render
+                      requestAnimationFrame(() => {
+                        const allPoints = Object.values(activePointRef.current)
+                        if (allPoints.length > 0) {
+                          const highestPoint = allPoints.reduce((highest, current) =>
+                            current.y < highest.y ? current : highest
+                          )
+                          setActualPointPos(highestPoint)
+                        }
+                      })
+                    }
+                  }
+                }
+
                 return (
                   <circle
                     cx={props.cx}
@@ -360,9 +403,9 @@ const SimpleLineChart: React.FC<SimpleLineChartProps> = ({ data, dataKeys, forma
         </AreaChart>
       </ResponsiveContainer>
       <ChartTooltip
-        active={isHovering && Boolean(pointPos)}
+        active={isHovering && Boolean(resolvedPointPos)}
         data={activeData}
-        pointPos={pointPos}
+        pointPos={resolvedPointPos}
         series={dataKeys}
         formatValue={formatValue}
         verticalOffset={tooltipVerticalOffset}
@@ -381,16 +424,31 @@ interface SimpleBarChartProps {
 }
 
 const SimpleBarChart: React.FC<SimpleBarChartProps> = ({ data, dataKey, label, color, formatValue, height = 200 }) => {
-  const { chartRef, pointPos, isHovering, activeIndex, activeData } = useChartHover({ data })
+  const { chartRef, pointPos: _pointPos, isHovering, activeIndex, activeData } = useChartHover({ data })
+  const [actualPointPos, setActualPointPos] = React.useState<{ x: number; y: number } | null>(null)
+  const activePointRef = React.useRef<{ [key: string]: { x: number; y: number } }>({})
+
+  // Resetear cuando cambia el índice o deja de hacer hover
+  React.useEffect(() => {
+    if (!isHovering) {
+      setActualPointPos(null)
+      activePointRef.current = {}
+    } else {
+      // Limpiar los puntos del índice anterior
+      activePointRef.current = {}
+    }
+  }, [isHovering, activeIndex])
+
+  const resolvedPointPos = actualPointPos ?? null
 
   // Calcular offset dinámico del tooltip (igual que Dashboard)
   const tooltipVerticalOffset = React.useMemo(() => {
-    if (!pointPos || !chartRef.current) {
+    if (!resolvedPointPos || !chartRef.current) {
       return 22
     }
 
     const rect = chartRef.current.getBoundingClientRect()
-    const distanceFromTop = Math.max(0, pointPos.y - rect.top)
+    const distanceFromTop = Math.max(0, resolvedPointPos.y - rect.top)
     const normalized = rect.height > 0 ? Math.min(Math.max(distanceFromTop / rect.height, 0), 1) : 0.5
 
     const IDEAL_MIN_GAP = 18
@@ -410,7 +468,7 @@ const SimpleBarChart: React.FC<SimpleBarChartProps> = ({ data, dataKey, label, c
     )
 
     return boundedGap
-  }, [pointPos, chartRef])
+  }, [resolvedPointPos, chartRef])
 
   return (
     <div ref={chartRef} style={{ position: 'relative', height }}>
@@ -426,6 +484,34 @@ const SimpleBarChart: React.FC<SimpleBarChartProps> = ({ data, dataKey, label, c
             shape={(props: any) => {
               const { x, y, width, height, index } = props
               const isActive = index === activeIndex
+
+              // Capturar la posición real del punto cuando está activo
+              if (isActive) {
+                const rect = chartRef.current?.getBoundingClientRect()
+                if (rect) {
+                  const pointX = rect.left + x + width / 2
+                  const pointY = rect.top + y
+                  const pointKey = `${index}-${dataKey}`
+
+                  // Solo guardar si no existe o cambió
+                  const existing = activePointRef.current[pointKey]
+                  if (!existing || existing.x !== pointX || existing.y !== pointY) {
+                    activePointRef.current[pointKey] = { x: pointX, y: pointY }
+
+                    // Usar requestAnimationFrame para evitar setState durante render
+                    requestAnimationFrame(() => {
+                      const allPoints = Object.values(activePointRef.current)
+                      if (allPoints.length > 0) {
+                        const highestPoint = allPoints.reduce((highest, current) =>
+                          current.y < highest.y ? current : highest
+                        )
+                        setActualPointPos(highestPoint)
+                      }
+                    })
+                  }
+                }
+              }
+
               return (
                 <g>
                   <rect
@@ -466,9 +552,9 @@ const SimpleBarChart: React.FC<SimpleBarChartProps> = ({ data, dataKey, label, c
         </BarChart>
       </ResponsiveContainer>
       <ChartTooltip
-        active={isHovering && Boolean(pointPos)}
+        active={isHovering && Boolean(resolvedPointPos)}
         data={activeData}
-        pointPos={pointPos}
+        pointPos={resolvedPointPos}
         series={[{ key: dataKey, label, color }]}
         formatValue={formatValue}
         verticalOffset={tooltipVerticalOffset}
@@ -485,17 +571,32 @@ interface SimpleAreaChartProps {
 }
 
 const SimpleAreaChart: React.FC<SimpleAreaChartProps> = ({ data, dataKeys, formatValue, height = 200 }) => {
-  const { chartRef, pointPos, isHovering, activeIndex, activeData } = useChartHover({ data })
+  const { chartRef, pointPos: _pointPos, isHovering, activeIndex, activeData } = useChartHover({ data })
+  const [actualPointPos, setActualPointPos] = React.useState<{ x: number; y: number } | null>(null)
+  const activePointRef = React.useRef<{ [key: string]: { x: number; y: number } }>({})
   const isDarkMode = typeof document !== 'undefined' && document.body.classList.contains('dark')
+
+  // Resetear cuando cambia el índice o deja de hacer hover
+  React.useEffect(() => {
+    if (!isHovering) {
+      setActualPointPos(null)
+      activePointRef.current = {}
+    } else {
+      // Limpiar los puntos del índice anterior
+      activePointRef.current = {}
+    }
+  }, [isHovering, activeIndex])
+
+  const resolvedPointPos = actualPointPos ?? null
 
   // Calcular offset dinámico del tooltip (igual que Dashboard)
   const tooltipVerticalOffset = React.useMemo(() => {
-    if (!pointPos || !chartRef.current) {
+    if (!resolvedPointPos || !chartRef.current) {
       return 22
     }
 
     const rect = chartRef.current.getBoundingClientRect()
-    const distanceFromTop = Math.max(0, pointPos.y - rect.top)
+    const distanceFromTop = Math.max(0, resolvedPointPos.y - rect.top)
     const normalized = rect.height > 0 ? Math.min(Math.max(distanceFromTop / rect.height, 0), 1) : 0.5
 
     const IDEAL_MIN_GAP = 18
@@ -515,7 +616,7 @@ const SimpleAreaChart: React.FC<SimpleAreaChartProps> = ({ data, dataKeys, forma
     )
 
     return boundedGap
-  }, [pointPos, chartRef])
+  }, [resolvedPointPos, chartRef])
 
   return (
     <div ref={chartRef} style={{ position: 'relative', height }}>
@@ -543,6 +644,34 @@ const SimpleAreaChart: React.FC<SimpleAreaChartProps> = ({ data, dataKeys, forma
               fill={`url(#gradient-${dk.key}-reports)`}
               dot={(props: any) => {
                 const isActive = props.index === activeIndex
+
+                // Capturar la posición real del punto cuando está activo
+                if (isActive && props.cx && props.cy) {
+                  const rect = chartRef.current?.getBoundingClientRect()
+                  if (rect) {
+                    const pointX = rect.left + props.cx
+                    const pointY = rect.top + props.cy
+                    const pointKey = `${props.index}-${dk.key}`
+
+                    // Solo guardar si no existe o cambió
+                    const existing = activePointRef.current[pointKey]
+                    if (!existing || existing.x !== pointX || existing.y !== pointY) {
+                      activePointRef.current[pointKey] = { x: pointX, y: pointY }
+
+                      // Usar requestAnimationFrame para evitar setState durante render
+                      requestAnimationFrame(() => {
+                        const allPoints = Object.values(activePointRef.current)
+                        if (allPoints.length > 0) {
+                          const highestPoint = allPoints.reduce((highest, current) =>
+                            current.y < highest.y ? current : highest
+                          )
+                          setActualPointPos(highestPoint)
+                        }
+                      })
+                    }
+                  }
+                }
+
                 return (
                   <circle
                     cx={props.cx}
@@ -568,9 +697,9 @@ const SimpleAreaChart: React.FC<SimpleAreaChartProps> = ({ data, dataKeys, forma
         </AreaChart>
       </ResponsiveContainer>
       <ChartTooltip
-        active={isHovering && Boolean(pointPos)}
+        active={isHovering && Boolean(resolvedPointPos)}
         data={activeData}
-        pointPos={pointPos}
+        pointPos={resolvedPointPos}
         series={dataKeys}
         formatValue={formatValue}
         verticalOffset={tooltipVerticalOffset}

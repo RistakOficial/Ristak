@@ -57,10 +57,10 @@ export function AdHierarchyMenu({ adsHierarchy, selectedFilters, onFilterToggle 
 
   return (
     <div className="flex">
-      {/* Panel 1: Platforms */}
+      {/* Panel 1: UTM Source */}
       <div className="w-64 overflow-y-auto relative" style={{ maxHeight: 'calc(100vh - 160px)', borderRight: '1px solid var(--color-border-subtle)' }}>
         <div className="px-3 py-2 mb-1" style={{ borderBottom: '1px solid var(--color-border-subtle)' }}>
-          <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">Plataformas</h3>
+          <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">UTM Source</h3>
         </div>
         <div className="py-2">
           {adsHierarchy.map((platform, index) => {
@@ -113,11 +113,11 @@ export function AdHierarchyMenu({ adsHierarchy, selectedFilters, onFilterToggle 
         </div>
       </div>
 
-      {/* Panel 2: Campaigns (solo si hay platform hovered) */}
+      {/* Panel 2: UTM Campaign (solo si hay platform hovered) */}
       {activePlatform && (
         <div className="w-64 overflow-y-auto relative" style={{ maxHeight: 'calc(100vh - 160px)', borderRight: '1px solid var(--color-border-subtle)' }}>
           <div className="px-3 py-2 mb-1" style={{ borderBottom: '1px solid var(--color-border-subtle)' }}>
-            <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">Campañas</h3>
+            <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">UTM Campaign</h3>
           </div>
           <div className="py-2">
             {activePlatform.campaigns.map((campaign, index) => {
