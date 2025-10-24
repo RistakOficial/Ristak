@@ -803,8 +803,32 @@ git log -1
 ## 📅 ÚLTIMA ACTUALIZACIÓN
 
 **Fecha**: 2025-10-24
-**Versión**: 1.23.1
+**Versión**: 1.23.2
 **Últimos cambios críticos**:
+- **Fix: Tooltips de gráficos en Reports + Layout 2x2 (2025-10-24)**
+  - **Problema detectado**: Los tooltips en Reports no seguían el patrón profesional del Dashboard
+    - No posicionaban el tooltip en el punto más alto cuando hay múltiples series
+    - Distancia del cursor no era óptima
+    - Layout de métricas era responsive variable, no 2x2 consistente
+  - **Solución implementada** (3 componentes de gráficos):
+    - **SimpleLineChart**: Captura punto más alto como AreaChart.tsx del Dashboard
+    - **SimpleBarChart**: Mismo sistema de captura de posición del bar más alto
+    - **SimpleAreaChart**: Mismo sistema para múltiples áreas
+  - **Lógica de tooltip mejorada** (igual que Dashboard):
+    - Cálculo dinámico de `IDEAL_MIN_GAP = 18px` (distancia mínima del cursor)
+    - Cálculo de `IDEAL_MAX_GAP = 54px` (distancia máxima)
+    - Usa `requestAnimationFrame` para evitar setState durante render
+    - Cuando hay múltiples puntos/barras activos, elige el más alto (menor valor Y)
+    - Resalta con sombra al hover: `drop-shadow(0 2px 4px rgba(0, 0, 0, 0.2))`
+    - Resetea estado al cambiar de índice para evitar ghosts
+  - **Layout 2x2 de métricas**:
+    - Cambio de grid: `repeat(auto-fit, minmax(...))` → `repeat(2, 1fr)` (2 columnas fijas)
+    - Responsive: automáticamente a 1 columna en pantallas < 1200px
+    - Tarjetas ahora están más compactas y organizadas
+  - **Archivos modificados**:
+    - `frontend/src/pages/Reports/Reports.tsx`: Todos los 3 componentes de gráficos (SimpleLineChart, SimpleBarChart, SimpleAreaChart)
+    - `frontend/src/pages/Reports/Reports.module.css`: Grid layout 2x2 + media query responsive
+
 - **Fix: Etiquetas personalizadas en Reports (Métricas) (2025-10-24)**
   - **Problema detectado**: La página de Reports mostraba "Clientes" y "Transacciones por Cliente" hardcodeados, sin reflejar personalizaciones
   - **Impacto**: Si un usuario renombraba "Cliente" → "Paciente", los labels en Reports no se actualizaban
