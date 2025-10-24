@@ -435,16 +435,20 @@ class GHLClient {
    */
   async getUserById(userId) {
     try {
-      logger.info(`[GHL Client] Obteniendo usuario con ID: ${userId}`)
+      logger.info(`🔵 [GHL Client] Obteniendo usuario con ID: ${userId}`)
+      logger.info(`🔵 [GHL Client] API Token: ${this.apiToken ? this.apiToken.substring(0, 20) + '...' : 'NO CONFIGURADO'}`)
+      logger.info(`🔵 [GHL Client] Location ID: ${this.locationId || 'NO CONFIGURADO'}`)
 
       // API v2 de HighLevel: GET /users/:userId
       const data = await this.request(`/users/${userId}`)
 
-      logger.info(`[GHL Client] Usuario obtenido: ${data.name || data.email || userId}`)
+      logger.info(`🟢 [GHL Client] ✅ Usuario obtenido: ${data.name || data.email || userId}`)
+      logger.info(`🟢 [GHL Client] Datos completos del usuario:`, JSON.stringify(data, null, 2))
 
       return data
     } catch (error) {
-      logger.error(`[GHL Client] Error al obtener usuario ${userId}: ${error.message}`)
+      logger.error(`🔴 [GHL Client] ❌ Error al obtener usuario ${userId}: ${error.message}`)
+      logger.error(`🔴 [GHL Client] Stack: ${error.stack}`)
       throw error
     }
   }
@@ -456,17 +460,20 @@ class GHLClient {
    */
   async getUsersByIds(userIds) {
     try {
-      logger.info(`[GHL Client] Obteniendo ${userIds.length} usuarios por IDs`)
+      logger.info(`🔵 [GHL Client] Obteniendo ${userIds.length} usuarios por IDs`)
+      logger.info(`🔵 [GHL Client] User IDs a buscar:`, JSON.stringify(userIds))
 
       // Hacer requests en paralelo para todos los usuarios
       const promises = userIds.map(userId => this.getUserById(userId))
       const users = await Promise.all(promises)
 
-      logger.info(`[GHL Client] ${users.length} usuarios obtenidos exitosamente`)
+      logger.info(`🟢 [GHL Client] ✅ ${users.length} usuarios obtenidos exitosamente`)
+      logger.info(`🟢 [GHL Client] Usuarios obtenidos:`, JSON.stringify(users.map(u => ({ id: u.id, name: u.name, email: u.email }))))
 
       return users
     } catch (error) {
-      logger.error(`[GHL Client] Error al obtener usuarios por IDs: ${error.message}`)
+      logger.error(`🔴 [GHL Client] ❌ Error al obtener usuarios por IDs: ${error.message}`)
+      logger.error(`🔴 [GHL Client] Stack: ${error.stack}`)
       throw error
     }
   }

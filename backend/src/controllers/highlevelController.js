@@ -1603,29 +1603,51 @@ export const getLocationUsers = async (req, res) => {
 /**
  * Obtener usuarios por IDs (para Round Robin teamMembers)
  * POST /api/highlevel/users/by-ids
- * Body: { userIds: ['id1', 'id2', 'id3'] }
+ * Body: { userIds: ['id1', 'id2', 'id3'], accessToken, locationId }
  */
 export const getUsersByIds = async (req, res) => {
   try {
-    const { userIds } = req.body;
+    logger.info('🔵 [getUsersByIds] Request recibido');
+    logger.info('🔵 [getUsersByIds] Body:', JSON.stringify(req.body, null, 2));
+
+    const { userIds, accessToken, locationId } = req.body;
 
     if (!userIds || !Array.isArray(userIds) || userIds.length === 0) {
+      logger.error('🔴 [getUsersByIds] ❌ userIds inválido o vacío');
       return res.status(400).json({
         success: false,
         error: 'Debes proporcionar un array de userIds'
       });
     }
 
-    const ghlClient = await getGHLClient();
+    logger.info(`🔵 [getUsersByIds] UserIds recibidos: ${JSON.stringify(userIds)}`);
+    logger.info(`🔵 [getUsersByIds] AccessToken: ${accessToken ? accessToken.substring(0, 20) + '...' : 'NO PROPORCIONADO'}`);
+    logger.info(`🔵 [getUsersByIds] LocationId: ${locationId || 'NO PROPORCIONADO'}`);
+
+    // Si se proporciona accessToken y locationId, usar esos en vez de los de la DB
+    let ghlClient;
+    if (accessToken && locationId) {
+      logger.info('🔵 [getUsersByIds] Usando accessToken y locationId del request');
+      const { default: GHLClient } = await import('../services/ghlClient.js');
+      ghlClient = new GHLClient(accessToken, locationId);
+    } else {
+      logger.info('🔵 [getUsersByIds] Usando configuración de la DB');
+      ghlClient = await getGHLClient();
+    }
+
+    logger.info('🔵 [getUsersByIds] Cliente GHL creado, llamando a getUsersByIds...');
     const users = await ghlClient.getUsersByIds(userIds);
+    logger.info(`🟢 [getUsersByIds] ✅ Usuarios obtenidos: ${users.length}`);
+    logger.info('🟢 [getUsersByIds] Usuarios:', JSON.stringify(users, null, 2));
 
     res.json({
       success: true,
-      users: users || []
+      data: users || []
     });
 
   } catch (error) {
-    logger.error(`Error en getUsersByIds: ${error.message}`);
+    logger.error(`🔴 [getUsersByIds] ❌ Error: ${error.message}`);
+    logger.error(`🔴 [getUsersByIds] Stack: ${error.stack}`);
     res.status(500).json({
       success: false,
       error: error.message || 'Error al obtener usuarios por IDs'
