@@ -633,8 +633,8 @@ export const MetaAdsIntegration: React.FC = () => {
                   )}
                 </div>
 
-                {/* 2. Cuenta de Anuncios - SOLO SI HAY TOKEN */}
-                {(credentials.accessToken || realAccessToken) && (
+                {/* 2. Cuenta de Anuncios - SOLO SI SE VALIDÓ EL TOKEN */}
+                {realAccessToken && (
                   <div className={styles.formGroup}>
                       <label className={styles.formLabel}>
                         Cuenta de Anuncios <span style={{ color: 'var(--color-error)' }}>*</span>
@@ -747,8 +747,8 @@ export const MetaAdsIntegration: React.FC = () => {
                   </div>
                 )}
 
-                {/* 4. Page ID - SOLO SI HAY TOKEN */}
-                {(credentials.accessToken || realAccessToken) && (
+                {/* 4. Page ID - SOLO SI SE VALIDÓ EL TOKEN */}
+                {realAccessToken && (
                   <div className={styles.formGroup}>
                     <label className={styles.formLabel}>
                       Page ID de Facebook <span className={styles.formHint}>(opcional)</span>
