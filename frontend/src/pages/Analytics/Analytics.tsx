@@ -885,9 +885,15 @@ const Analytics: React.FC = () => {
       Object.values(selectedFilters).some(arr => arr.length > 0)
 
     console.log('🎯 Filtros activos:', hasActiveFilters)
+    console.log('📊 selectedFilters:', selectedFilters)
     console.log('📈 Sesiones a procesar:', sessions.length)
+    console.log('📦 AllSessions disponibles:', allSessions.length)
 
-    if (sessions.length === 0) {
+    // BUG FIX: Si no hay filtros activos, usar allSessions en vez de sessions
+    const sessionsToProcess = hasActiveFilters ? sessions : allSessions
+    console.log('✅ Sesiones finales a procesar:', sessionsToProcess.length)
+
+    if (sessionsToProcess.length === 0) {
       console.log('⚠️ No hay sesiones filtradas - Reseteando métricas')
       // Si no hay sesiones filtradas, resetear solo métricas de sesiones
       // NO resetear registros ni registrosChartData si no hay filtros (mantener originales)
@@ -911,18 +917,18 @@ const Analytics: React.FC = () => {
 
     // Recalcular KPIs principales con las sesiones filtradas
     console.log('🧮 Calculando KPIs...')
-    const uniqueVids = new Set(sessions.map((s: Session) => s.visitor_id)).size
-    const totalPageViews = sessions.length
+    const uniqueVids = new Set(sessionsToProcess.map((s: Session) => s.visitor_id)).size
+    const totalPageViews = sessionsToProcess.length
 
     // Contar sesiones únicas (por session_id)
-    const uniqueSessionIds = new Set(sessions.map((s: Session) => s.session_id)).size
+    const uniqueSessionIds = new Set(sessionsToProcess.map((s: Session) => s.session_id)).size
 
     console.log('👥 Visitantes únicos:', uniqueVids)
     console.log('👁️ Visualizaciones de página:', totalPageViews)
     console.log('🔑 Sesiones únicas:', uniqueSessionIds)
 
     // Registros = contactos únicos que aparecen en las sesiones filtradas
-    const sesionesConContacto = sessions.filter((s: Session) => {
+    const sesionesConContacto = sessionsToProcess.filter((s: Session) => {
       if (!s.contact_id || !s.contact_created_at) return false
       return new Date(s.started_at) >= new Date(s.contact_created_at)
     })
@@ -949,7 +955,7 @@ const Analytics: React.FC = () => {
 
     // Usuarios recurrentes: contar visitor_ids que tienen múltiples session_ids diferentes
     const visitorSessionMap: { [key: string]: Set<string> } = {}
-    sessions.forEach((s: Session) => {
+    sessionsToProcess.forEach((s: Session) => {
       if (!visitorSessionMap[s.visitor_id]) {
         visitorSessionMap[s.visitor_id] = new Set()
       }
@@ -979,7 +985,7 @@ const Analytics: React.FC = () => {
     // Recalcular gráfico de tráfico diario con sesiones filtradas
     const dailyStats: { [key: string]: { totalVisits: number, uniqueVisitors: Set<string> } } = {}
 
-    sessions.forEach((session: Session) => {
+    sessionsToProcess.forEach((session: Session) => {
       const date = session.started_at.split('T')[0]
       if (!dailyStats[date]) {
         dailyStats[date] = {
@@ -1010,7 +1016,7 @@ const Analytics: React.FC = () => {
       // Agrupar contactos únicos por fecha de creación
       const registrosPorFecha: { [key: string]: Set<string> } = {}
 
-      sessions.forEach((session: Session) => {
+      sessionsToProcess.forEach((session: Session) => {
         if (session.contact_id && session.contact_created_at) {
           const createdDate = new Date(session.contact_created_at)
           const startedDate = new Date(session.started_at)
@@ -1060,12 +1066,12 @@ const Analytics: React.FC = () => {
 
     // Recalcular stats para las cards
     const browsersForFilter: { [key: string]: Set<string> } = {}
-    sessions.forEach((session: Session) => {
+    sessionsToProcess.forEach((session: Session) => {
       const browser = session.browser || 'Desconocido'
       if (!browsersForFilter[browser]) browsersForFilter[browser] = new Set()
       browsersForFilter[browser].add(session.visitor_id)
     })
-    const uniqueVisitorsInFilter = new Set(sessions.map(s => s.visitor_id)).size
+    const uniqueVisitorsInFilter = new Set(sessionsToProcess.map(s => s.visitor_id)).size
     const browserStats = Object.entries(browsersForFilter)
       .map(([browser, visitorSet]) => ({
         name: browser,
@@ -1077,7 +1083,7 @@ const Analytics: React.FC = () => {
     setBrowserData(browserStats)
 
     const platformsForFilter: { [key: string]: Set<string> } = {}
-    sessions.forEach((session: Session) => {
+    sessionsToProcess.forEach((session: Session) => {
       // Usar normalizador con prioridad: referrer_url → site_source_name → utm_source → source_platform
       const platform = normalizeTrafficSource({
         referrer_url: session.referrer_url,
@@ -1100,7 +1106,7 @@ const Analytics: React.FC = () => {
 
     // Calcular placements para "Top de ubicaciones" (Facebook Feed, Instagram Reels, etc.) - VISITANTES ÚNICOS
     const placementsForFilter: { [key: string]: Set<string> } = {}
-    sessions.forEach((session: Session) => {
+    sessionsToProcess.forEach((session: Session) => {
       const rawPlacement = session.placement || 'Sin ubicación'
       const placement = formatPlacementName(rawPlacement)
       if (!placementsForFilter[placement]) placementsForFilter[placement] = new Set()
@@ -1118,7 +1124,7 @@ const Analytics: React.FC = () => {
 
     // Preparar datos para la dona de fuentes de tráfico - VISITANTES ÚNICOS
     const trafficSourcesFiltered: { [key: string]: Set<string> } = {}
-    sessions.forEach((session: Session) => {
+    sessionsToProcess.forEach((session: Session) => {
       const source = normalizeTrafficSource({
         referrer_url: session.referrer_url,
         site_source_name: session.site_source_name,
@@ -1159,12 +1165,12 @@ const Analytics: React.FC = () => {
     setTrafficSources(trafficSourcesData)
 
     const devicesFiltered: { [key: string]: Set<string> } = {}
-    sessions.forEach((session: Session) => {
+    sessionsToProcess.forEach((session: Session) => {
       const device = session.device_type || 'Desconocido'
       if (!devicesFiltered[device]) devicesFiltered[device] = new Set()
       devicesFiltered[device].add(session.visitor_id)
     })
-    const uniqueVisitorsFiltered = new Set(sessions.map(s => s.visitor_id)).size
+    const uniqueVisitorsFiltered = new Set(sessionsToProcess.map(s => s.visitor_id)).size
     const deviceStats = Object.entries(devicesFiltered)
       .map(([device, visitorSet]) => ({
         name: device,
@@ -1176,7 +1182,7 @@ const Analytics: React.FC = () => {
     setDevicesData(deviceStats)
 
     const operatingSystemsForFilter: { [key: string]: Set<string> } = {}
-    sessions.forEach((session: Session) => {
+    sessionsToProcess.forEach((session: Session) => {
       const os = session.os || 'Desconocido'
       if (!operatingSystemsForFilter[os]) operatingSystemsForFilter[os] = new Set()
       operatingSystemsForFilter[os].add(session.visitor_id)
@@ -1192,7 +1198,7 @@ const Analytics: React.FC = () => {
     setOsData(osStats)
 
     const visitorCounts: { [key: string]: number } = {}
-    sessions.forEach((s: Session) => {
+    sessionsToProcess.forEach((s: Session) => {
       visitorCounts[s.visitor_id] = (visitorCounts[s.visitor_id] || 0) + 1
     })
     const topVisitorsList = Object.entries(visitorCounts)
