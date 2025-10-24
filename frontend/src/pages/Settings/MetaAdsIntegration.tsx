@@ -463,101 +463,35 @@ export const MetaAdsIntegration: React.FC = () => {
               <h2 className={styles.pageTitle} style={{ margin: 0 }}>Meta Ads</h2>
             </div>
             <p className={styles.pageSubtitle}>
-              Tutorial completo para conectar tus anuncios de Facebook con Ristak
+              Conecta tu cuenta de anuncios de Facebook
             </p>
           </div>
         </div>
 
-        {/* Layout 2 columnas: Tutorial + Formulario */}
-        <div className={styles.twoColumnLayout}>
-
-          {/* COLUMNA IZQUIERDA: Tutorial Simple */}
-          <div>
-            <div className={styles.section}>
-              <div className={styles.sectionHeader}>
-                <h3 className={styles.sectionTitle}>Cómo conectar Meta Ads</h3>
-              </div>
-              <div className={styles.sectionContent}>
-                <p className={styles.infoText}>
-                  Conecta tus anuncios de Facebook para ver métricas de rendimiento directamente en Ristak.
-                </p>
-
-                <div className={styles.setupSteps}>
-                  {/* Paso 1 */}
-                  <div className={styles.step}>
-                    <div className={styles.stepNumber}>1</div>
-                    <div className={styles.stepContent}>
-                      <h4 className={styles.stepTitle}>Crear App en Meta</h4>
-                      <p className={styles.stepDescription}>
-                        Abre{' '}
-                        <a href="https://developers.facebook.com" target="_blank" rel="noopener noreferrer" className={styles.link}>
-                          developers.facebook.com
-                        </a>
-                        , crea una app tipo "Empresa" y agrega "Marketing API"
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Paso 2 */}
-                  <div className={styles.step}>
-                    <div className={styles.stepNumber}>2</div>
-                    <div className={styles.stepContent}>
-                      <h4 className={styles.stepTitle}>Generar Token de Sistema</h4>
-                      <p className={styles.stepDescription}>
-                        Ve a{' '}
-                        <a href="https://business.facebook.com" target="_blank" rel="noopener noreferrer" className={styles.link}>
-                          business.facebook.com
-                        </a>
-                        , crea un usuario del sistema y genera un token con permisos{' '}
-                        <code className={styles.codeInline}>ads_read</code> y{' '}
-                        <code className={styles.codeInline}>business_management</code>
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Paso 3 */}
-                  <div className={styles.step}>
-                    <div className={styles.stepNumber}>3</div>
-                    <div className={styles.stepContent}>
-                      <h4 className={styles.stepTitle}>Obtener Account ID</h4>
-                      <p className={styles.stepDescription}>
-                        Abre el Administrador de Anuncios y copia el ID de la cuenta (solo los números, sin "act_")
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Paso 4 */}
-                  <div className={styles.step}>
-                    <div className={styles.stepNumber}>4</div>
-                    <div className={styles.stepContent}>
-                      <h4 className={styles.stepTitle}>Conectar aquí</h4>
-                      <p className={styles.stepDescription}>
-                        Pega tu token, selecciona la cuenta y guarda. Todo se sincroniza automáticamente con HighLevel
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
+        {/* Formulario simple */}
+        <div className={styles.section}>
+          <div className={styles.sectionHeader}>
+            <h3 className={styles.sectionTitle}>Configuración</h3>
           </div>
 
-          {/* COLUMNA DERECHA: Formulario */}
-          <div className={styles.section}>
-            <div className={styles.sectionHeader}>
-              <h3 className={styles.sectionTitle}>Configurar Credenciales</h3>
+          {isLoading ? (
+            <div style={{ padding: '40px', textAlign: 'center', color: 'var(--text-secondary)' }}>
+              Cargando credenciales...
             </div>
-
-            {isLoading ? (
-              <div style={{ padding: '40px', textAlign: 'center', color: 'var(--text-secondary)' }}>
-                Cargando credenciales...
-              </div>
-            ) : (
-              <div style={{ marginTop: 'var(--spacing-lg)' }}>
-                {/* 1. App Access Token - SIEMPRE VISIBLE */}
+          ) : (
+            <div className={styles.sectionContent}>
+                {/* 1. App Access Token */}
                 <div className={styles.formGroup}>
                     <label className={styles.formLabel}>
-                      App Access Token <span style={{ color: 'var(--color-error)' }}>*</span>
+                      Access Token <span style={{ color: 'var(--color-error)' }}>*</span>
                     </label>
+                    <p className={styles.formHint} style={{ marginBottom: '8px' }}>
+                      Genera un token desde{' '}
+                      <a href="https://business.facebook.com/settings/system-users" target="_blank" rel="noopener noreferrer" className={styles.link}>
+                        business.facebook.com
+                      </a>
+                      {' '}con permisos <code className={styles.codeInline}>ads_read</code>
+                    </p>
                     {credentials.accessToken && credentials.accessToken.startsWith('***') ? (
                       <div className={styles.filterChip}>
                         <span className={styles.chipText}>{credentials.accessToken}</span>
@@ -610,11 +544,11 @@ export const MetaAdsIntegration: React.FC = () => {
                   )}
                 </div>
 
-                {/* 2. Cuenta de Anuncios - SOLO SI SE VALIDÓ EL TOKEN */}
+                {/* 2. Cuenta de Anuncios */}
                 {realAccessToken && (
                   <div className={styles.formGroup}>
                       <label className={styles.formLabel}>
-                        Cuenta de Anuncios <span style={{ color: 'var(--color-error)' }}>*</span>
+                        Cuenta de anuncios <span style={{ color: 'var(--color-error)' }}>*</span>
                       </label>
                       {credentials.adAccountId ? (
                         <div className={styles.filterChip}>
@@ -668,11 +602,11 @@ export const MetaAdsIntegration: React.FC = () => {
                   </div>
                 )}
 
-                {/* 3. Pixel de Meta - SOLO SI HAY CUENTA */}
+                {/* 3. Pixel de Meta */}
                 {credentials.adAccountId && (
                   <div className={styles.formGroup}>
                       <label className={styles.formLabel}>
-                        Pixel de Meta <span className={styles.formHint}>(opcional)</span>
+                        Meta Pixel <span className={styles.formHint}>(opcional)</span>
                       </label>
                       {credentials.pixelId ? (
                         <div className={styles.filterChip}>
@@ -724,11 +658,11 @@ export const MetaAdsIntegration: React.FC = () => {
                   </div>
                 )}
 
-                {/* 4. Page ID - SOLO SI SE VALIDÓ EL TOKEN */}
+                {/* 4. Page ID */}
                 {realAccessToken && (
                   <div className={styles.formGroup}>
                     <label className={styles.formLabel}>
-                      Page ID de Facebook <span className={styles.formHint}>(opcional)</span>
+                      Facebook Page ID <span className={styles.formHint}>(opcional)</span>
                     </label>
                     {credentials.pageId ? (
                       <div className={styles.filterChip}>
@@ -754,14 +688,17 @@ export const MetaAdsIntegration: React.FC = () => {
                   </div>
                 )}
 
-                {/* 5. Pixel API Token - SOLO SI HAY PIXEL */}
+                {/* 5. Pixel API Token */}
                 {credentials.pixelId && (
                   <div className={styles.formGroup}>
                     <label className={styles.formLabel}>
-                      Pixel API Token <span className={styles.formHint}>(opcional, para Conversions API)</span>
+                      Pixel API Token <span className={styles.formHint}>(opcional)</span>
                     </label>
-                    <p className={styles.infoText} style={{ marginBottom: '12px', fontSize: '13px' }}>
-                      Para usar la Conversions API de Meta, genera un token manualmente desde el Events Manager.
+                    <p className={styles.formHint} style={{ marginBottom: '8px' }}>
+                      Solo si usas Conversions API. Genera desde{' '}
+                      <a href="https://business.facebook.com/events_manager2" target="_blank" rel="noopener noreferrer" className={styles.link}>
+                        Events Manager
+                      </a>
                     </p>
                     {credentials.pixelApiToken && credentials.pixelApiToken.startsWith('***') ? (
                       <div className={styles.filterChip}>
@@ -807,27 +744,19 @@ export const MetaAdsIntegration: React.FC = () => {
                         </div>
                       </>
                     )}
-                    <div className={styles.infoBox} style={{ marginTop: '12px' }}>
-                      <p style={{ margin: 0, fontSize: '12px' }}>
-                        <strong>¿Cómo obtener este token?</strong><br />
-                        1. Ve a <a href="https://business.facebook.com/events_manager2" target="_blank" rel="noopener noreferrer" className={styles.link}>Events Manager</a><br />
-                        2. Selecciona tu Pixel → Settings → Conversions API<br />
-                        3. Click en "Generate Access Token" → Copia y pega aquí
-                      </p>
-                    </div>
                   </div>
                 )}
 
-                {/* Switch para incluir Meta Pixel en snippet - SOLO si hay pixel configurado y dominio personalizado */}
+                {/* Switch para incluir Meta Pixel en snippet */}
                 {credentials.pixelId && !isRenderDomain && (
                   <div className={styles.formGroup} style={{ marginTop: '32px', paddingTop: '32px', borderTop: '1px solid var(--color-border)' }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
                       <div>
                         <label className={styles.formLabel} style={{ marginBottom: '4px' }}>
-                          Incluir Meta Pixel en snippet de tracking
+                          Incluir en snippet de tracking
                         </label>
                         <p className={styles.formHint} style={{ margin: 0, fontSize: '0.875rem' }}>
-                          Cuando activo, el snippet de Web Tracking incluirá automáticamente el código del Meta Pixel
+                          El snippet de Web Tracking incluirá automáticamente el código del Meta Pixel
                         </p>
                       </div>
                       <label className={styles.switchContainer}>
@@ -856,20 +785,11 @@ export const MetaAdsIntegration: React.FC = () => {
                         <span style={{ fontSize: '0.875rem' }}>Sincronizando snippet...</span>
                       </div>
                     )}
-                    <div className={styles.infoBox} style={{ marginTop: '12px' }}>
-                      <p style={{ margin: 0, fontSize: '12px' }}>
-                        <strong>💡 ¿Qué hace esto?</strong><br />
-                        Si está activo, cuando sincronices el snippet de Web Tracking, automáticamente incluirá el código del Meta Pixel junto con el tracking de Ristak. Así solo necesitas un snippet para ambos.
-                      </p>
-                    </div>
                   </div>
                 )}
-              </div>
-            )}
-          </div>
-
+            </div>
+          )}
         </div>
-        {/* FIN GRID 2 COLUMNAS */}
 
       </Card>
     </div>
