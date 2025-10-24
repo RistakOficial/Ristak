@@ -148,9 +148,10 @@ export const BarChart: React.FC<BarChartProps> = ({
               shape={(props: any) => {
                 const { x, y, width, height, index } = props
                 const isActive = index === activeIndex
+                const hasValue = data[index]?.value > 0
 
                 // Capturar la posición del punto más alto de la barra cuando está activa
-                if (isActive && x !== undefined && y !== undefined) {
+                if (isActive && hasValue && x !== undefined && y !== undefined) {
                   const rect = chartRef.current?.getBoundingClientRect()
                   if (rect) {
                     // Punto en el centro superior de la barra
@@ -169,26 +170,28 @@ export const BarChart: React.FC<BarChartProps> = ({
                       y={y}
                       width={width}
                       height={height}
-                      fill={data[index]?.value > 0 ? color : 'transparent'}
+                      fill={hasValue ? color : 'transparent'}
                       rx={4}
                       ry={4}
                       opacity={isActive ? 1 : 0.9}
                       style={{
                         transition: 'opacity 150ms ease-out',
-                        cursor: data[index]?.value > 0 ? 'pointer' : 'default'
+                        cursor: hasValue ? 'pointer' : 'default'
                       }}
                     />
-                    {/* Área interactiva invisible para detección de hover */}
-                    <rect
-                      x={x}
-                      y={y}
-                      width={width}
-                      height={height}
-                      fill="transparent"
-                      data-chart-index={index}
-                      data-chart-interactive="true"
-                      style={{ pointerEvents: 'auto', cursor: 'crosshair' }}
-                    />
+                    {/* Área interactiva invisible SOLO si hay valor */}
+                    {hasValue && (
+                      <rect
+                        x={x}
+                        y={y}
+                        width={width}
+                        height={height}
+                        fill="transparent"
+                        data-chart-index={index}
+                        data-chart-interactive="true"
+                        style={{ pointerEvents: 'auto', cursor: 'crosshair' }}
+                      />
+                    )}
                   </g>
                 )
               }}
