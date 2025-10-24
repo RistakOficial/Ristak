@@ -402,21 +402,22 @@ export const BlockedSlotModal: React.FC<BlockedSlotModalProps> = ({
             />
           </div>
 
-          {/* Usuario asignado */}
-          <div className={styles.field}>
-            <label className={styles.label}>
-              Usuario asignado <span className={styles.required}>*</span>
-            </label>
-            {loadingUsers ? (
-              <div className={styles.loadingUsers}>
-                <Loader2 size={16} className={styles.spinner} />
-                <span>Cargando usuarios...</span>
-              </div>
-            ) : users.length > 0 ? (
-              <CustomSelect
-                options={users.map(user => ({
-                  value: user.id,
-                  label: user.name || user.email || user.id
+          {/* Usuario asignado - Solo mostrar si el calendario tiene team members */}
+          {calendar && calendar.teamMembers && calendar.teamMembers.length > 0 && (
+            <div className={styles.field}>
+              <label className={styles.label}>
+                Usuario asignado <span className={styles.required}>*</span>
+              </label>
+              {loadingUsers ? (
+                <div className={styles.loadingUsers}>
+                  <Loader2 size={16} className={styles.spinner} />
+                  <span>Cargando usuarios...</span>
+                </div>
+              ) : users.length > 0 ? (
+                <CustomSelect
+                  options={users.map(user => ({
+                    value: user.id,
+                    label: user.name || user.email || user.id
                 }))}
                 value={formData.assignedUserId}
                 onChange={(value) => setFormData({ ...formData, assignedUserId: value })}
@@ -427,7 +428,8 @@ export const BlockedSlotModal: React.FC<BlockedSlotModalProps> = ({
                 No hay usuarios disponibles en este calendario
               </div>
             )}
-          </div>
+            </div>
+          )}
 
           {/* Fecha y hora de inicio */}
           <div className={styles.field}>
