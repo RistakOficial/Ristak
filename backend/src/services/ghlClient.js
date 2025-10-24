@@ -408,10 +408,32 @@ class GHLClient {
       const locId = locationId || this.locationId
       logger.info(`[GHL Client] Obteniendo usuarios para locationId: ${locId}`)
 
-      // API v2 de HighLevel: GET /users/search con query param locationId
+      // Obtener companyId de la configuración de HighLevel
+      const { getHighLevelConfig } = await import('../config/database.js')
+      const config = await getHighLevelConfig()
+
+      if (!config || !config.location_data) {
+        throw new Error('No se encontró configuración de HighLevel con location_data')
+      }
+
+      let locationData
+      try {
+        locationData = JSON.parse(config.location_data)
+      } catch (parseError) {
+        throw new Error(`Error al parsear location_data: ${parseError.message}`)
+      }
+
+      if (!locationData.companyId) {
+        throw new Error('No se encontró companyId en location_data')
+      }
+
+      logger.info(`[GHL Client] Usando companyId: ${locationData.companyId}`)
+
+      // API v2 de HighLevel: GET /users/search con query params locationId y companyId (requeridos)
       const data = await this.request('/users/search', {
         params: {
           locationId: locId,
+          companyId: locationData.companyId,
           limit: 100, // Máximo permitido por la API
           type: 'account' // Tipo de usuarios a obtener
         }
