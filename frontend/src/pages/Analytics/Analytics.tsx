@@ -9,8 +9,10 @@ import {
   LineChart,
   TreeFilter,
   TrafficSourcesChart,
-  SessionsTable
+  SessionsTable,
+  BarChart
 } from '../../components/common'
+import type { BarChartData } from '../../components/common'
 import { Eye, Users, UserCheck, Target, Smartphone, Monitor, Tablet, Globe } from 'lucide-react'
 import { FaFacebook, FaGoogle, FaInstagram, FaTiktok, FaTwitter, FaLinkedin, FaMicrosoft, FaChrome, FaFirefox, FaSafari, FaEdge, FaOpera, FaApple, FaWindows, FaAndroid, FaLinux } from 'react-icons/fa'
 import { SiMacos, SiIos } from 'react-icons/si'
@@ -153,6 +155,7 @@ const Analytics: React.FC = () => {
   // Estado para visualizaciones
   const [dailyTraffic, setDailyTraffic] = useState<TrafficPoint[]>([])
   const [dailyConversions, setDailyConversions] = useState<any[]>([])
+  const [registrosChartData, setRegistrosChartData] = useState<BarChartData[]>([])
   const [trafficSources, setTrafficSources] = useState<{ name: string; value: number; color: string }[]>([])
   const [platformsData, setPlatformsData] = useState<any[]>([])
   const [placementsData, setPlacementsData] = useState<any[]>([])
@@ -703,12 +706,17 @@ const Analytics: React.FC = () => {
           avgPagePerSession: 0
         }
       })
+      setDailyTraffic([])
+      setDailyConversions([])
       return
     }
 
     // Recalcular KPIs principales con las sesiones filtradas
     const uniqueVids = new Set(sessions.map((s: Session) => s.visitor_id)).size
     const totalPageViews = sessions.length
+
+    // Contar sesiones únicas (por session_id)
+    const uniqueSessionIds = new Set(sessions.map((s: Session) => s.session_id)).size
 
     // Registros = sesiones con contact_id
     const registros = new Set(
@@ -722,15 +730,19 @@ const Analytics: React.FC = () => {
 
     const conversionRate = uniqueVids > 0 ? ((registros / uniqueVids) * 100) : 0
 
-    // Usuarios recurrentes
-    const visitorCountsForMetrics: { [key: string]: number } = {}
+    // Usuarios recurrentes: contar visitor_ids que tienen múltiples session_ids diferentes
+    const visitorSessionMap: { [key: string]: Set<string> } = {}
     sessions.forEach((s: Session) => {
-      visitorCountsForMetrics[s.visitor_id] = (visitorCountsForMetrics[s.visitor_id] || 0) + 1
+      if (!visitorSessionMap[s.visitor_id]) {
+        visitorSessionMap[s.visitor_id] = new Set()
+      }
+      visitorSessionMap[s.visitor_id].add(s.session_id)
     })
-    const returningUsers = Object.values(visitorCountsForMetrics).filter(count => count > 1).length
+    const returningUsers = Object.values(visitorSessionMap).filter(sessionSet => sessionSet.size > 1).length
 
-    const avgPagePerSession = sessions.length > 0 ?
-      (totalPageViews / sessions.length) : 0
+    // Páginas por sesión = total de page_views / número de sesiones únicas
+    const avgPagePerSession = uniqueSessionIds > 0 ?
+      (totalPageViews / uniqueSessionIds) : 0
 
     // Actualizar métricas (sin trends, ya que los filtros no tienen período anterior)
     setMetrics(prev => ({
@@ -742,6 +754,31 @@ const Analytics: React.FC = () => {
       avgPagePerSession,
       trends: prev.trends // Mantener trends del período original
     }))
+
+    // Recalcular gráfico de tráfico diario con sesiones filtradas
+    const dailyStats: { [key: string]: { totalVisits: number, uniqueVisitors: Set<string> } } = {}
+
+    sessions.forEach((session: Session) => {
+      const date = session.started_at.split('T')[0]
+      if (!dailyStats[date]) {
+        dailyStats[date] = {
+          totalVisits: 0,
+          uniqueVisitors: new Set()
+        }
+      }
+      dailyStats[date].totalVisits++
+      dailyStats[date].uniqueVisitors.add(session.visitor_id)
+    })
+
+    const chartData = Object.entries(dailyStats)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, stats]) => ({
+        label: formatLocalDateShort(date),
+        value: stats.totalVisits,
+        value2: stats.uniqueVisitors.size
+      }))
+
+    setDailyTraffic(chartData)
 
     // Recalcular stats para las cards
     const browsersForFilter: { [key: string]: Set<string> } = {}
@@ -891,37 +928,29 @@ const Analytics: React.FC = () => {
   }, [sessions])
 
   // Preparar métricas para KPICards
-  const getTrend = (value: number): 'up' | 'down' | undefined => {
-    return value > 0 ? 'up' : value < 0 ? 'down' : undefined
-  }
-
   const mainMetrics = [
     {
-      label: 'Visualizaciones',
+      title: 'Visualizaciones',
       value: metrics.pageViews > 1000 ? `${(metrics.pageViews / 1000).toFixed(1)}K` : String(metrics.pageViews || 0),
-      change: metrics.trends?.pageViews || 0,
-      trend: getTrend(metrics.trends?.pageViews || 0),
+      delta: metrics.trends?.pageViews || 0,
       icon: Eye
     },
     {
-      label: 'Visitantes Únicos',
+      title: 'Visitantes Únicos',
       value: String(metrics.uniqueVisitors || 0),
-      change: metrics.trends?.uniqueVisitors || 0,
-      trend: getTrend(metrics.trends?.uniqueVisitors || 0),
+      delta: metrics.trends?.uniqueVisitors || 0,
       icon: Users
     },
     {
-      label: 'Registros',
+      title: 'Registros',
       value: String(metrics.registros || 0),
-      change: metrics.trends?.registros || 0,
-      trend: getTrend(metrics.trends?.registros || 0),
+      delta: metrics.trends?.registros || 0,
       icon: UserCheck
     },
     {
-      label: 'Conversión',
+      title: 'Conversión',
       value: `${(metrics.conversionRate || 0).toFixed(1)}%`,
-      change: metrics.trends?.conversionRate || 0,
-      trend: getTrend(metrics.trends?.conversionRate || 0),
+      delta: metrics.trends?.conversionRate || 0,
       icon: Target
     }
   ]
@@ -958,11 +987,10 @@ const Analytics: React.FC = () => {
         <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
           {mainMetrics.map((metric) => (
             <KpiCard
-              key={metric.label}
-              title={metric.label}
+              key={metric.title}
+              title={metric.title}
               value={metric.value}
-              change={metric.change}
-              trend={metric.trend}
+              delta={metric.delta}
               icon={metric.icon}
               className={loading ? 'animate-pulse' : ''}
             />
@@ -1175,7 +1203,10 @@ const Analytics: React.FC = () => {
         </div>
 
         {/* Tabla de sesiones de tracking */}
-        <SessionsTable />
+        <SessionsTable
+          filteredSessions={sessions}
+          useExternalData={true}
+        />
       </div>
     </PageContainer>
   )

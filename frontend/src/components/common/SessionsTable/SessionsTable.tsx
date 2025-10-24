@@ -9,9 +9,15 @@ import styles from './SessionsTable.module.css'
 
 interface SessionsTableProps {
   className?: string
+  filteredSessions?: TrackingSession[] // Sesiones ya filtradas desde parent (Analytics)
+  useExternalData?: boolean // Si true, usa filteredSessions en vez de cargar propias
 }
 
-export const SessionsTable: React.FC<SessionsTableProps> = ({ className }) => {
+export const SessionsTable: React.FC<SessionsTableProps> = ({
+  className,
+  filteredSessions = [],
+  useExternalData = false
+}) => {
   const { formatLocalDateTime } = useTimezone()
   const { showToast, showConfirm } = useNotification()
 
@@ -38,13 +44,24 @@ export const SessionsTable: React.FC<SessionsTableProps> = ({ className }) => {
   const observerRef = useRef<IntersectionObserver | null>(null)
   const loadMoreTriggerRef = useRef<HTMLDivElement>(null)
 
+  // Si usa datos externos, actualizar sessions cuando cambien filteredSessions
   useEffect(() => {
-    loadInitialSessions()
-  }, [])
+    if (useExternalData) {
+      setSessions(filteredSessions)
+      setTotal(filteredSessions.length)
+      setHasMore(false) // No hay paginación con datos externos
+    }
+  }, [useExternalData, filteredSessions])
+
+  useEffect(() => {
+    if (!useExternalData) {
+      loadInitialSessions()
+    }
+  }, [useExternalData])
 
   // Configurar Intersection Observer para scroll infinito
   useEffect(() => {
-    if (!isExpanded) return // Solo en vista expandida
+    if (!isExpanded || useExternalData) return // Solo en vista expandida y sin datos externos
 
     const options = {
       root: scrollContainerRef.current,
@@ -101,7 +118,7 @@ export const SessionsTable: React.FC<SessionsTableProps> = ({ className }) => {
   }
 
   // Filtrar sesiones por búsqueda
-  const filteredSessions = useMemo(() => {
+  const searchFilteredSessions = useMemo(() => {
     if (!searchQuery.trim()) return sessions
 
     const query = searchQuery.toLowerCase()
@@ -158,7 +175,7 @@ export const SessionsTable: React.FC<SessionsTableProps> = ({ className }) => {
   // Manejo de selección
   const handleSelectAll = (checked: boolean) => {
     if (checked) {
-      setSelectedIds(new Set(filteredSessions.map(s => s.id)))
+      setSelectedIds(new Set(searchFilteredSessions.map(s => s.id)))
     } else {
       setSelectedIds(new Set())
     }
@@ -386,7 +403,7 @@ export const SessionsTable: React.FC<SessionsTableProps> = ({ className }) => {
     { key: 'geo_city', label: 'City' }
   ]
 
-  const allSelected = filteredSessions.length > 0 && filteredSessions.every(s => selectedIds.has(s.id))
+  const allSelected = searchFilteredSessions.length > 0 && searchFilteredSessions.every(s => selectedIds.has(s.id))
   const someSelected = selectedIds.size > 0 && !allSelected
 
   return (
@@ -408,22 +425,27 @@ export const SessionsTable: React.FC<SessionsTableProps> = ({ className }) => {
               <Maximize2 size={16} />
               Expandir
             </Button>
-            <Button
-              variant="ghost"
-              size="small"
-              onClick={loadInitialSessions}
-              disabled={loadingSessions}
-            >
-              <RefreshCw size={16} className={loadingSessions ? styles.spinIcon : ''} />
-              {loadingSessions ? 'Cargando...' : 'Actualizar'}
-            </Button>
+            {!useExternalData && (
+              <Button
+                variant="ghost"
+                size="small"
+                onClick={loadInitialSessions}
+                disabled={loadingSessions}
+              >
+                <RefreshCw size={16} className={loadingSessions ? styles.spinIcon : ''} />
+                {loadingSessions ? 'Cargando...' : 'Actualizar'}
+              </Button>
+            )}
           </div>
         </div>
 
         {sessions.length > 0 ? (
           <div className={styles.tableContainer} style={{ overflowX: 'auto' }}>
             <p style={{ fontSize: '0.875rem', color: 'var(--color-text-secondary)', marginBottom: '12px' }}>
-              Mostrando las primeras {sessions.length} sesiones. Haz clic en "Expandir" para ver todas, editar y eliminar.
+              {useExternalData
+                ? `Mostrando ${sessions.length} ${sessions.length === 1 ? 'sesión filtrada' : 'sesiones filtradas'}. Haz clic en "Expandir" para ver todas.`
+                : `Mostrando las primeras ${sessions.length} sesiones. Haz clic en "Expandir" para ver todas, editar y eliminar.`
+              }
             </p>
             <table className={styles.table}>
               <thead>
@@ -612,7 +634,7 @@ export const SessionsTable: React.FC<SessionsTableProps> = ({ className }) => {
               </div>
             </div>
             <span style={{ fontSize: '0.875rem', color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}>
-              {filteredSessions.length} {filteredSessions.length === 1 ? 'sesión' : 'sesiones'} {searchQuery.trim() && `(filtradas de ${sessions.length})`}
+              {searchFilteredSessions.length} {searchFilteredSessions.length === 1 ? 'sesión' : 'sesiones'} {searchQuery.trim() && `(filtradas de ${sessions.length})`}
             </span>
           </div>
 
@@ -676,7 +698,7 @@ export const SessionsTable: React.FC<SessionsTableProps> = ({ className }) => {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredSessions.map((session: any, rowIndex: number) => {
+                  {searchFilteredSessions.map((session: any, rowIndex: number) => {
                     const isSelected = selectedIds.has(session.id)
 
                     const getCellValue = (key: string) => {
@@ -753,8 +775,8 @@ export const SessionsTable: React.FC<SessionsTableProps> = ({ className }) => {
                 </tbody>
               </table>
 
-              {/* Trigger para scroll infinito */}
-              {hasMore && (
+              {/* Trigger para scroll infinito (solo si NO usa datos externos) */}
+              {!useExternalData && hasMore && (
                 <div
                   ref={loadMoreTriggerRef}
                   style={{
@@ -777,7 +799,7 @@ export const SessionsTable: React.FC<SessionsTableProps> = ({ className }) => {
                 </div>
               )}
 
-              {!hasMore && sessions.length > 0 && (
+              {!useExternalData && !hasMore && sessions.length > 0 && (
                 <div style={{
                   padding: '20px',
                   textAlign: 'center',

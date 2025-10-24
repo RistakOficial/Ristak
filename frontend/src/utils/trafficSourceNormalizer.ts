@@ -306,10 +306,10 @@ function extractDomain(referrerUrl: string): string | null {
  * Normaliza una fuente de tráfico usando prioridad 1-4
  */
 export function normalizeTrafficSource(data: {
-  referrer_url?: string
-  site_source_name?: string
-  utm_source?: string
-  source_platform?: string
+  referrer_url?: string | null
+  site_source_name?: string | null
+  utm_source?: string | null
+  source_platform?: string | null
 }): string {
   if (!data) return 'Desconocido'
 

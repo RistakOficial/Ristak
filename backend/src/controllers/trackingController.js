@@ -1259,8 +1259,6 @@ export async function getVisitorsByPeriod(req, res) {
       return res.status(400).json({ error: 'startDate and endDate are required' })
     }
 
-    const usePostgres = Boolean(process.env.DATABASE_URL)
-
     // Asegurar que endDate incluya todo el día (hasta 23:59:59)
     const endDateWithTime = (endDate.includes('T') || endDate.includes(':')) ? endDate : `${endDate}T23:59:59`
 
@@ -1277,274 +1275,137 @@ export async function getVisitorsByPeriod(req, res) {
     let query = ''
 
     // Definir el formato de agrupación según el tipo
-    if (usePostgres) {
-      // PostgreSQL queries
-      if (!useContactAttribution) {
-        // Vista "Todos": Agrupa por fecha de sesión (started_at), todos los visitantes
-        switch (groupBy) {
-          case 'day':
-            query = `
-              SELECT
-                TO_CHAR(started_at::date, 'YYYY-MM-DD') as period,
-                COUNT(DISTINCT visitor_id) as unique_visitors
-              FROM sessions
-              WHERE started_at >= $1 AND started_at <= $2
-              GROUP BY TO_CHAR(started_at::date, 'YYYY-MM-DD')
-              ORDER BY period ASC
-            `
-            break
+    if (!useContactAttribution) {
+      // Vista "Todos": Agrupa por fecha de sesión (started_at), todos los visitantes
+      switch (groupBy) {
+        case 'day':
+          query = `
+            SELECT
+              TO_CHAR(started_at::date, 'YYYY-MM-DD') as period,
+              COUNT(DISTINCT visitor_id) as unique_visitors
+            FROM sessions
+            WHERE started_at >= $1 AND started_at <= $2
+            GROUP BY TO_CHAR(started_at::date, 'YYYY-MM-DD')
+            ORDER BY period ASC
+          `
+          break
 
-          case 'week':
-            query = `
-              SELECT
-                TO_CHAR(started_at, 'YYYY-"W"IW') as period,
-                COUNT(DISTINCT visitor_id) as unique_visitors
-              FROM sessions
-              WHERE started_at >= $1 AND started_at <= $2
-              GROUP BY TO_CHAR(started_at, 'YYYY-"W"IW')
-              ORDER BY period ASC
-            `
-            break
+        case 'week':
+          query = `
+            SELECT
+              TO_CHAR(started_at, 'YYYY-"W"IW') as period,
+              COUNT(DISTINCT visitor_id) as unique_visitors
+            FROM sessions
+            WHERE started_at >= $1 AND started_at <= $2
+            GROUP BY TO_CHAR(started_at, 'YYYY-"W"IW')
+            ORDER BY period ASC
+          `
+          break
 
-          case 'month':
-            query = `
-              SELECT
-                TO_CHAR(started_at, 'YYYY-MM') as period,
-                COUNT(DISTINCT visitor_id) as unique_visitors
-              FROM sessions
-              WHERE started_at >= $1 AND started_at <= $2
-              GROUP BY TO_CHAR(started_at, 'YYYY-MM')
-              ORDER BY period ASC
-            `
-            break
+        case 'month':
+          query = `
+            SELECT
+              TO_CHAR(started_at, 'YYYY-MM') as period,
+              COUNT(DISTINCT visitor_id) as unique_visitors
+            FROM sessions
+            WHERE started_at >= $1 AND started_at <= $2
+            GROUP BY TO_CHAR(started_at, 'YYYY-MM')
+            ORDER BY period ASC
+          `
+          break
 
-          case 'year':
-            query = `
-              SELECT
-                TO_CHAR(started_at, 'YYYY') as period,
-                COUNT(DISTINCT visitor_id) as unique_visitors
-              FROM sessions
-              WHERE started_at >= $1 AND started_at <= $2
-              GROUP BY TO_CHAR(started_at, 'YYYY')
-              ORDER BY period ASC
-            `
-            break
+        case 'year':
+          query = `
+            SELECT
+              TO_CHAR(started_at, 'YYYY') as period,
+              COUNT(DISTINCT visitor_id) as unique_visitors
+            FROM sessions
+            WHERE started_at >= $1 AND started_at <= $2
+            GROUP BY TO_CHAR(started_at, 'YYYY')
+            ORDER BY period ASC
+          `
+          break
 
-          default:
-            return res.status(400).json({ error: 'Invalid groupBy value' })
-        }
-      } else {
-        // Vista "Último toque" / "Último toque desde anuncio": Agrupa por fecha de creación del contacto
-        // Solo visitantes que SE CONVIRTIERON en contacto
-        const attributionFilter = isAttributed
-          ? `AND c.attribution_ad_id IS NOT NULL
-             AND EXISTS (
-               SELECT 1 FROM meta_ads ma
-               WHERE ma.ad_id = c.attribution_ad_id
-                 AND (ma.date)::date = (c.created_at)::date
-             )`
-          : ''
-
-        const hiddenFilter = hiddenCondition ? `AND ${hiddenCondition}` : ''
-
-        switch (groupBy) {
-          case 'day':
-            query = `
-              SELECT
-                TO_CHAR(c.created_at::date, 'YYYY-MM-DD') as period,
-                COUNT(DISTINCT s.visitor_id) as unique_visitors
-              FROM sessions s
-              INNER JOIN contacts c ON c.id = s.contact_id
-              WHERE c.created_at >= $1 AND c.created_at <= $2
-                ${attributionFilter}
-                ${hiddenFilter}
-              GROUP BY TO_CHAR(c.created_at::date, 'YYYY-MM-DD')
-              ORDER BY period ASC
-            `
-            break
-
-          case 'week':
-            query = `
-              SELECT
-                TO_CHAR(c.created_at, 'YYYY-"W"IW') as period,
-                COUNT(DISTINCT s.visitor_id) as unique_visitors
-              FROM sessions s
-              INNER JOIN contacts c ON c.id = s.contact_id
-              WHERE c.created_at >= $1 AND c.created_at <= $2
-                ${attributionFilter}
-                ${hiddenFilter}
-              GROUP BY TO_CHAR(c.created_at, 'YYYY-"W"IW')
-              ORDER BY period ASC
-            `
-            break
-
-          case 'month':
-            query = `
-              SELECT
-                TO_CHAR(c.created_at, 'YYYY-MM') as period,
-                COUNT(DISTINCT s.visitor_id) as unique_visitors
-              FROM sessions s
-              INNER JOIN contacts c ON c.id = s.contact_id
-              WHERE c.created_at >= $1 AND c.created_at <= $2
-                ${attributionFilter}
-                ${hiddenFilter}
-              GROUP BY TO_CHAR(c.created_at, 'YYYY-MM')
-              ORDER BY period ASC
-            `
-            break
-
-          case 'year':
-            query = `
-              SELECT
-                TO_CHAR(c.created_at, 'YYYY') as period,
-                COUNT(DISTINCT s.visitor_id) as unique_visitors
-              FROM sessions s
-              INNER JOIN contacts c ON c.id = s.contact_id
-              WHERE c.created_at >= $1 AND c.created_at <= $2
-                ${attributionFilter}
-                ${hiddenFilter}
-              GROUP BY TO_CHAR(c.created_at, 'YYYY')
-              ORDER BY period ASC
-            `
-            break
-
-          default:
-            return res.status(400).json({ error: 'Invalid groupBy value' })
-        }
+        default:
+          return res.status(400).json({ error: 'Invalid groupBy value' })
       }
     } else {
-      // SQLite queries
-      if (!useContactAttribution) {
-        // Vista "Todos": Agrupa por fecha de sesión (started_at), todos los visitantes
-        switch (groupBy) {
-          case 'day':
-            query = `
-              SELECT
-                DATE(started_at) as period,
-                COUNT(DISTINCT visitor_id) as unique_visitors
-              FROM sessions
-              WHERE started_at >= ? AND started_at <= ?
-              GROUP BY DATE(started_at)
-              ORDER BY period ASC
-            `
-            break
+      // Vista "Último toque" / "Último toque desde anuncio": Agrupa por fecha de creación del contacto
+      // Solo visitantes que SE CONVIRTIERON en contacto
+      const attributionFilter = isAttributed
+        ? `AND c.attribution_ad_id IS NOT NULL
+           AND EXISTS (
+             SELECT 1 FROM meta_ads ma
+             WHERE ma.ad_id = c.attribution_ad_id
+               AND (ma.date)::date = (c.created_at)::date
+           )`
+        : ''
 
-          case 'week':
-            query = `
-              SELECT
-                strftime('%Y-W%W', started_at) as period,
-                COUNT(DISTINCT visitor_id) as unique_visitors
-              FROM sessions
-              WHERE started_at >= ? AND started_at <= ?
-              GROUP BY strftime('%Y-W%W', started_at)
-              ORDER BY period ASC
-            `
-            break
+      const hiddenFilter = hiddenCondition ? `AND ${hiddenCondition}` : ''
 
-          case 'month':
-            query = `
-              SELECT
-                strftime('%Y-%m', started_at) as period,
-                COUNT(DISTINCT visitor_id) as unique_visitors
-              FROM sessions
-              WHERE started_at >= ? AND started_at <= ?
-              GROUP BY strftime('%Y-%m', started_at)
-              ORDER BY period ASC
-            `
-            break
+      switch (groupBy) {
+        case 'day':
+          query = `
+            SELECT
+              TO_CHAR(c.created_at::date, 'YYYY-MM-DD') as period,
+              COUNT(DISTINCT s.visitor_id) as unique_visitors
+            FROM sessions s
+            INNER JOIN contacts c ON c.id = s.contact_id
+            WHERE c.created_at >= $1 AND c.created_at <= $2
+              ${attributionFilter}
+              ${hiddenFilter}
+            GROUP BY TO_CHAR(c.created_at::date, 'YYYY-MM-DD')
+            ORDER BY period ASC
+          `
+          break
 
-          case 'year':
-            query = `
-              SELECT
-                strftime('%Y', started_at) as period,
-                COUNT(DISTINCT visitor_id) as unique_visitors
-              FROM sessions
-              WHERE started_at >= ? AND started_at <= ?
-              GROUP BY strftime('%Y', started_at)
-              ORDER BY period ASC
-            `
-            break
+        case 'week':
+          query = `
+            SELECT
+              TO_CHAR(c.created_at, 'YYYY-"W"IW') as period,
+              COUNT(DISTINCT s.visitor_id) as unique_visitors
+            FROM sessions s
+            INNER JOIN contacts c ON c.id = s.contact_id
+            WHERE c.created_at >= $1 AND c.created_at <= $2
+              ${attributionFilter}
+              ${hiddenFilter}
+            GROUP BY TO_CHAR(c.created_at, 'YYYY-"W"IW')
+            ORDER BY period ASC
+          `
+          break
 
-          default:
-            return res.status(400).json({ error: 'Invalid groupBy value' })
-        }
-      } else {
-        // Vista "Último toque" / "Último toque desde anuncio": Agrupa por fecha de creación del contacto
-        const attributionFilter = isAttributed
-          ? `AND c.attribution_ad_id IS NOT NULL
-             AND EXISTS (
-               SELECT 1 FROM meta_ads ma
-               WHERE ma.ad_id = c.attribution_ad_id
-                 AND DATE(ma.date) = DATE(c.created_at)
-             )`
-          : ''
+        case 'month':
+          query = `
+            SELECT
+              TO_CHAR(c.created_at, 'YYYY-MM') as period,
+              COUNT(DISTINCT s.visitor_id) as unique_visitors
+            FROM sessions s
+            INNER JOIN contacts c ON c.id = s.contact_id
+            WHERE c.created_at >= $1 AND c.created_at <= $2
+              ${attributionFilter}
+              ${hiddenFilter}
+            GROUP BY TO_CHAR(c.created_at, 'YYYY-MM')
+            ORDER BY period ASC
+          `
+          break
 
-        const hiddenFilter = hiddenCondition ? `AND ${hiddenCondition}` : ''
+        case 'year':
+          query = `
+            SELECT
+              TO_CHAR(c.created_at, 'YYYY') as period,
+              COUNT(DISTINCT s.visitor_id) as unique_visitors
+            FROM sessions s
+            INNER JOIN contacts c ON c.id = s.contact_id
+            WHERE c.created_at >= $1 AND c.created_at <= $2
+              ${attributionFilter}
+              ${hiddenFilter}
+            GROUP BY TO_CHAR(c.created_at, 'YYYY')
+            ORDER BY period ASC
+          `
+          break
 
-        switch (groupBy) {
-          case 'day':
-            query = `
-              SELECT
-                DATE(c.created_at) as period,
-                COUNT(DISTINCT s.visitor_id) as unique_visitors
-              FROM sessions s
-              INNER JOIN contacts c ON c.id = s.contact_id
-              WHERE c.created_at >= ? AND c.created_at <= ?
-                ${attributionFilter}
-                ${hiddenFilter}
-              GROUP BY DATE(c.created_at)
-              ORDER BY period ASC
-            `
-            break
-
-          case 'week':
-            query = `
-              SELECT
-                strftime('%Y-W%W', c.created_at) as period,
-                COUNT(DISTINCT s.visitor_id) as unique_visitors
-              FROM sessions s
-              INNER JOIN contacts c ON c.id = s.contact_id
-              WHERE c.created_at >= ? AND c.created_at <= ?
-                ${attributionFilter}
-                ${hiddenFilter}
-              GROUP BY strftime('%Y-W%W', c.created_at)
-              ORDER BY period ASC
-            `
-            break
-
-          case 'month':
-            query = `
-              SELECT
-                strftime('%Y-%m', c.created_at) as period,
-                COUNT(DISTINCT s.visitor_id) as unique_visitors
-              FROM sessions s
-              INNER JOIN contacts c ON c.id = s.contact_id
-              WHERE c.created_at >= ? AND c.created_at <= ?
-                ${attributionFilter}
-                ${hiddenFilter}
-              GROUP BY strftime('%Y-%m', c.created_at)
-              ORDER BY period ASC
-            `
-            break
-
-          case 'year':
-            query = `
-              SELECT
-                strftime('%Y', c.created_at) as period,
-                COUNT(DISTINCT s.visitor_id) as unique_visitors
-              FROM sessions s
-              INNER JOIN contacts c ON c.id = s.contact_id
-              WHERE c.created_at >= ? AND c.created_at <= ?
-                ${attributionFilter}
-                ${hiddenFilter}
-              GROUP BY strftime('%Y', c.created_at)
-              ORDER BY period ASC
-            `
-            break
-
-          default:
-            return res.status(400).json({ error: 'Invalid groupBy value' })
-        }
+        default:
+          return res.status(400).json({ error: 'Invalid groupBy value' })
       }
     }
 
