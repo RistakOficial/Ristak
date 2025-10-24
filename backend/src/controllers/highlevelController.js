@@ -1570,21 +1570,43 @@ export const saveInvoiceConfig = async (req, res) => {
 
 /**
  * Obtiene la lista de usuarios del location de HighLevel
- * GET /api/highlevel/users
+ * GET /api/highlevel/users?accessToken=xxx&locationId=yyy
  */
 export const getLocationUsers = async (req, res) => {
   try {
-    const ghlClient = await getGHLClient();
-    const config = await db.get('SELECT * FROM highlevel_config LIMIT 1');
+    logger.info('🔵 [getLocationUsers] Request recibido');
+    logger.info('🔵 [getLocationUsers] Query params:', req.query);
 
-    if (!config || !config.location_id) {
-      return res.status(400).json({
-        success: false,
-        error: 'No hay configuración de HighLevel activa'
-      });
+    const { accessToken, locationId } = req.query;
+
+    // Si se proporciona accessToken y locationId en query params, usar esos
+    let ghlClient;
+    let targetLocationId;
+
+    if (accessToken && locationId) {
+      logger.info('🔵 [getLocationUsers] Usando accessToken y locationId del query');
+      const { default: GHLClient } = await import('../services/ghlClient.js');
+      ghlClient = new GHLClient(accessToken, locationId);
+      targetLocationId = locationId;
+    } else {
+      // Fallback: usar config de la DB
+      logger.info('🔵 [getLocationUsers] Usando configuración de la DB');
+      ghlClient = await getGHLClient();
+      const config = await db.get('SELECT * FROM highlevel_config LIMIT 1');
+
+      if (!config || !config.location_id) {
+        logger.error('🔴 [getLocationUsers] ❌ No hay configuración de HighLevel');
+        return res.status(400).json({
+          success: false,
+          error: 'No hay configuración de HighLevel activa'
+        });
+      }
+      targetLocationId = config.location_id;
     }
 
-    const users = await ghlClient.getLocationUsers(config.location_id);
+    logger.info(`🔵 [getLocationUsers] Obteniendo usuarios para location: ${targetLocationId}`);
+    const users = await ghlClient.getLocationUsers(targetLocationId);
+    logger.info(`🟢 [getLocationUsers] ✅ ${users.length} usuarios obtenidos`);
 
     res.json({
       success: true,
@@ -1592,7 +1614,8 @@ export const getLocationUsers = async (req, res) => {
     });
 
   } catch (error) {
-    logger.error(`Error en getLocationUsers: ${error.message}`);
+    logger.error(`🔴 [getLocationUsers] ❌ Error: ${error.message}`);
+    logger.error(`🔴 [getLocationUsers] Stack: ${error.stack}`);
     res.status(500).json({
       success: false,
       error: error.message || 'Error al obtener usuarios del location'

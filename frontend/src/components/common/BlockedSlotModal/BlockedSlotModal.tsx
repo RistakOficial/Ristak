@@ -178,7 +178,11 @@ export const BlockedSlotModal: React.FC<BlockedSlotModalProps> = ({
 
           // Si no hay team members, obtener usuarios del location
           try {
-            const response = await fetch(`${import.meta.env.VITE_API_URL}/api/highlevel/users`, {
+            const url = new URL(`${import.meta.env.VITE_API_URL}/api/highlevel/users`);
+            url.searchParams.append('accessToken', accessToken || '');
+            url.searchParams.append('locationId', locationId || '');
+
+            const response = await fetch(url.toString(), {
               method: 'GET',
               headers: {
                 'Content-Type': 'application/json'
