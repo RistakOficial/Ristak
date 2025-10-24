@@ -598,7 +598,7 @@ export async function collectEvent(req, res) {
       // Si no viene full_name, buscarlo en la tabla contacts
       if (!full_name) {
         try {
-          const contact = await db.get('SELECT full_name FROM contacts WHERE id = ?', [contact_id])
+          const contact = await db.get('SELECT full_name FROM contacts WHERE id = $1', [contact_id])
           full_name = contact?.full_name || 'Sin nombre'
         } catch (err) {
           logger.warn(`No se pudo obtener full_name para contacto ${contact_id}: ${err.message}`)
