@@ -1647,6 +1647,41 @@ export const saveAndSyncMeta = async (req, res) => {
       logger.error(`Error en sincronización de Meta Ads: ${error.message}`);
     });
 
+    // 8. Si tenemos dominio personalizado (NO estamos en .onrender.com), sincronizar snippet automáticamente
+    const isRenderDomain = req.headers.host?.includes('onrender.com')
+    if (!isRenderDomain && req.headers.host && pixelId) {
+      logger.info(`Dominio personalizado detectado (${req.headers.host}), sincronizando snippet con Meta Pixel ${pixelId}...`)
+
+      // Importar la función de configuración de tracking
+      const { configureTracking } = await import('./trackingController.js')
+
+      // Crear un objeto de respuesta temporal (no queremos esperar ni que falle si hay error)
+      const tempRes = {
+        json: (data) => {
+          if (data.success) {
+            logger.info('✅ Snippet sincronizado automáticamente con Meta Pixel incluido')
+          } else {
+            logger.warn(`⚠️ No se pudo sincronizar snippet: ${data.error || 'unknown'}`)
+          }
+        },
+        status: (code) => {
+          if (code !== 200) {
+            logger.warn(`⚠️ Sincronización de snippet retornó status ${code}`)
+          }
+          return tempRes
+        }
+      }
+
+      // Ejecutar en background (no bloquear la respuesta)
+      configureTracking(req, tempRes).catch(err => {
+        logger.warn(`⚠️ Error sincronizando snippet automáticamente: ${err.message}`)
+      })
+    } else if (isRenderDomain) {
+      logger.info('Dominio .onrender.com detectado, NO sincronizando snippet (requiere dominio personalizado)')
+    } else if (!pixelId) {
+      logger.info('No se proporcionó Pixel ID, snippet NO incluirá Meta Pixel')
+    }
+
     res.json({
       success: true,
       message: 'Credenciales guardadas y sincronización iniciada exitosamente',
