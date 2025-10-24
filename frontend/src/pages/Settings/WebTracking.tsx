@@ -308,9 +308,9 @@ export const WebTracking: React.FC = () => {
               {/* Paso 1: Dominio detectado */}
               <div className={styles.formGroup}>
                 <label className={styles.formLabel}>
-                  ✅ Paso 1: Dominio configurado
+                  Paso 1: Dominio configurado
                 </label>
-                <div className={styles.formInput} style={{ background: 'var(--color-success-bg)', border: '1px solid var(--color-success)', cursor: 'default', color: 'var(--color-success)', fontWeight: 600 }}>
+                <div className={styles.formInput} style={{ cursor: 'default' }}>
                   {trackingDomain}
                 </div>
               </div>
@@ -318,7 +318,7 @@ export const WebTracking: React.FC = () => {
               {/* Paso 2: Sincronizar */}
               <div className={styles.formGroup} style={{ marginTop: '24px' }}>
                 <label className={styles.formLabel}>
-                  {isConfigured ? '✅' : '2️⃣'} Paso 2: Sincronizar con HighLevel
+                  Paso 2: Sincronizar con HighLevel
                 </label>
                 <p className={styles.formHint} style={{ marginBottom: '12px' }}>
                   Esto guarda el código del pixel en HighLevel automáticamente
@@ -341,42 +341,10 @@ export const WebTracking: React.FC = () => {
                   )}
                 </Button>
                 {isConfigured && (
-                  <div style={{ marginTop: '12px', padding: '12px', background: 'var(--color-success-bg)', border: '1px solid var(--color-success)', borderRadius: '6px', fontSize: '0.875rem', color: 'var(--color-success)' }}>
-                    ✅ Ya está sincronizado. El código está guardado como <code className={styles.codeInline}>rstktrack</code> en HighLevel
-                  </div>
+                  <p className={styles.formHint} style={{ marginTop: '12px' }}>
+                    Ya está sincronizado. El código está guardado como rstktrack en HighLevel
+                  </p>
                 )}
-              </div>
-
-              {/* Paso 3: Código del pixel */}
-              <div className={styles.formGroup} style={{ marginTop: '24px' }}>
-                <label className={styles.formLabel}>
-                  3️⃣ Paso 3: Instalar en tu sitio
-                </label>
-                <p className={styles.formHint} style={{ marginBottom: '12px' }}>
-                  Copia este código y pégalo en tu sitio web (ver tutorial abajo)
-                </p>
-                <div className={styles.codeBlockWrapper}>
-                  <button
-                    onClick={handleCopySnippet}
-                    className={styles.copyIconButton}
-                    title={copied ? 'Copiado!' : 'Copiar código'}
-                  >
-                    {copied ? <Check size={16} /> : <Copy size={16} />}
-                  </button>
-                  <div className={styles.codeBlock}>
-                    <pre className={styles.codeContent}>
-                      {trackingService.generateSnippet(trackingDomain)}
-                    </pre>
-                  </div>
-                </div>
-                <div style={{ marginTop: '12px', padding: '12px', background: 'var(--color-gray-50)', borderRadius: '6px', fontSize: '0.875rem' }}>
-                  <strong>¿Dónde lo pego?</strong>
-                  <ul style={{ marginTop: '8px', marginLeft: '20px', lineHeight: '1.8' }}>
-                    <li><strong>WordPress:</strong> Apariencia → Editor de temas → footer.php (antes de &lt;/body&gt;)</li>
-                    <li><strong>HighLevel:</strong> En tu landing page → Settings → Footer Scripts</li>
-                    <li><strong>Shopify:</strong> Configuración → Checkout → Scripts adicionales</li>
-                  </ul>
-                </div>
               </div>
             </>
           )}
