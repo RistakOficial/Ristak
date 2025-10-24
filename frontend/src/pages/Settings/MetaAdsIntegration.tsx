@@ -310,16 +310,79 @@ export const MetaAdsIntegration: React.FC = () => {
           </div>
         </div>
 
-        {/* Layout 2 columnas: Formulario + Tutorial */}
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: '400px 1fr',
-          gap: 'var(--spacing-2xl)',
-          alignItems: 'start'
-        }}
-        className={styles.twoColumnLayout}>
+        {/* Layout 2 columnas: Tutorial + Formulario */}
+        <div className={styles.twoColumnLayout}>
 
-          {/* COLUMNA IZQUIERDA: Formulario */}
+          {/* COLUMNA IZQUIERDA: Tutorial Simple */}
+          <div>
+            <div className={styles.section}>
+              <div className={styles.sectionHeader}>
+                <h3 className={styles.sectionTitle}>Cómo conectar Meta Ads</h3>
+              </div>
+              <div className={styles.sectionContent}>
+                <p className={styles.infoText}>
+                  Conecta tus anuncios de Facebook para ver métricas de rendimiento directamente en Ristak.
+                </p>
+
+                <div className={styles.setupSteps}>
+                  {/* Paso 1 */}
+                  <div className={styles.step}>
+                    <div className={styles.stepNumber}>1</div>
+                    <div className={styles.stepContent}>
+                      <h4 className={styles.stepTitle}>Crear App en Meta Developers</h4>
+                      <p className={styles.stepDescription}>
+                        Ve a <a href="https://developers.facebook.com" target="_blank" rel="noopener noreferrer" className={styles.link}>developers.facebook.com</a>
+                        {' '}→ Crea una App tipo "Empresa" → Agrega "Marketing API"
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Paso 2 */}
+                  <div className={styles.step}>
+                    <div className={styles.stepNumber}>2</div>
+                    <div className={styles.stepContent}>
+                      <h4 className={styles.stepTitle}>Generar System User Token</h4>
+                      <p className={styles.stepDescription}>
+                        Ve a <a href="https://business.facebook.com" target="_blank" rel="noopener noreferrer" className={styles.link}>business.facebook.com</a>
+                        {' '}→ Business Settings → Usuarios del sistema → Crea uno nuevo → Genera token con permisos <code className={styles.codeInline}>ads_read</code> y <code className={styles.codeInline}>business_management</code>
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Paso 3 */}
+                  <div className={styles.step}>
+                    <div className={styles.stepNumber}>3</div>
+                    <div className={styles.stepContent}>
+                      <h4 className={styles.stepTitle}>Encontrar tu Ad Account ID</h4>
+                      <p className={styles.stepDescription}>
+                        Ve al Administrador de Anuncios → En el dropdown superior verás tu ID (números sin el prefijo "act_")
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Paso 4 */}
+                  <div className={styles.step}>
+                    <div className={styles.stepNumber}>4</div>
+                    <div className={styles.stepContent}>
+                      <h4 className={styles.stepTitle}>Configurar en Ristak</h4>
+                      <p className={styles.stepDescription}>
+                        Pega el token y selecciona tu cuenta del dropdown. Guardaremos todo automáticamente en HighLevel.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className={styles.infoBox} style={{ marginTop: 'var(--spacing-lg)' }}>
+                  <Info size={18} />
+                  <div>
+                    <strong>Nota:</strong> El Pixel API Token se genera automáticamente cuando guardas la configuración. No necesitas hacer nada más.
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* COLUMNA DERECHA: Formulario */}
           <div className={styles.section}>
             <div className={styles.sectionHeader}>
               <h3 className={styles.sectionTitle}>Configurar Credenciales</h3>
@@ -603,24 +666,11 @@ export const MetaAdsIntegration: React.FC = () => {
             )}
           </div>
 
-          {/* COLUMNA DERECHA: Tutorial e Instrucciones */}
-          <div>
-
-            {/* Introducción */}
-            <div className={styles.section}>
-          <div className={styles.sectionHeader}>
-            <h3 className={styles.sectionTitle}>¿Para qué sirve esta integración?</h3>
-          </div>
-          <div className={styles.sectionContent}>
-            <p className={styles.infoText}>
-              Esta integración trae automáticamente las métricas de tus anuncios de Facebook (gasto, clics, alcance, etc.)
-              para que puedas ver el rendimiento de tus campañas directamente en Ristak sin tener que entrar a Meta Business Manager.
-            </p>
-          </div>
         </div>
+        {/* FIN GRID 2 COLUMNAS */}
 
-        {/* Lo que necesitas */}
-        <div className={styles.section}>
+        {/* Lo que necesitas (sección completa oculta, ahora está resumido arriba) */}
+        <div className={styles.section} style={{ display: 'none' }}>
           <div className={styles.sectionHeader}>
             <h3 className={styles.sectionTitle}>Lo que vas a necesitar</h3>
           </div>
@@ -1120,12 +1170,6 @@ export const MetaAdsIntegration: React.FC = () => {
             </div>
           </div>
         </div>
-
-          </div>
-          {/* FIN COLUMNA DERECHA */}
-
-        </div>
-        {/* FIN GRID 2 COLUMNAS */}
 
       </Card>
     </div>

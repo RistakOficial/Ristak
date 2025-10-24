@@ -1186,9 +1186,21 @@ export const Appointments: React.FC = () => {
                             const dateKey = cell.date.toISOString().split('T')[0];
                             const dayBlockedSlots = blockedSlotsByDate[dateKey] || [];
                             if (dayBlockedSlots.length > 0) {
+                              // Generar tooltip con info detallada de cada blocked slot
+                              const tooltipContent = dayBlockedSlots.map(slot => {
+                                const title = slot.reason || 'Horario bloqueado';
+                                const timeRange = `${slot.startTime} - ${slot.endTime}`;
+                                return `${title}\n${timeRange}`;
+                              }).join('\n\n');
+
                               return (
-                                <div className={styles.blockedSlotsIndicator} title={`${dayBlockedSlots.length} horario${dayBlockedSlots.length > 1 ? 's' : ''} bloqueado${dayBlockedSlots.length > 1 ? 's' : ''}`}>
-                                  🔒 {dayBlockedSlots.length} bloqueado{dayBlockedSlots.length > 1 ? 's' : ''}
+                                <div
+                                  className={styles.blockedSlotsIndicator}
+                                  title={tooltipContent}
+                                  data-tooltip="true"
+                                >
+                                  <Lock size={12} className={styles.blockedIcon} />
+                                  <span>{dayBlockedSlots.length} bloqueado{dayBlockedSlots.length > 1 ? 's' : ''}</span>
                                 </div>
                               );
                             }
