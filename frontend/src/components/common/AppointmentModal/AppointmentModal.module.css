@@ -5,14 +5,46 @@
   width: 100%;
   max-width: 1000px; /* Aumentado para acomodar 2 columnas cómodamente */
   margin: 0 auto;
-  /* NOTA: El padding lo maneja Modal.content (24px-32px según pantalla) */
-  /* NO agregamos padding aquí para no duplicar y mantener el scroll funcional */
+  padding: 24px 32px; /* Padding propio porque Modal.content tiene padding: 0 en modo custom */
+  max-height: calc(88vh - 140px); /* Altura máxima para permitir scroll */
+  overflow-y: auto; /* Habilitar scroll vertical */
 }
 
 /* En pantallas grandes, aumentar ancho máximo */
 @media (min-width: 1920px) {
   .container {
     max-width: 1200px;
+  }
+}
+
+/* Responsive: Ajustar padding en pantallas medianas */
+@media (max-width: 1440px) {
+  .container {
+    padding: 20px 28px;
+  }
+}
+
+@media (max-width: 1024px) {
+  .container {
+    padding: 18px 24px;
+  }
+}
+
+@media (max-width: 768px) {
+  .container {
+    padding: 16px 20px;
+  }
+}
+
+@media (max-width: 640px) {
+  .container {
+    padding: 18px;
+  }
+}
+
+@media (max-width: 375px) {
+  .container {
+    padding: 16px;
   }
 }
 
@@ -213,7 +245,8 @@
 .field {
   display: flex;
   flex-direction: column;
-  gap: 0.4rem;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem; /* Espaciado entre campos para que no toquen los bordes */
 }
 
 .fieldRow {
