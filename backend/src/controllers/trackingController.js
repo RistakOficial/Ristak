@@ -1838,25 +1838,23 @@ export async function getContactsByDate(req, res) {
 
     const usePostgres = Boolean(process.env.DATABASE_URL)
 
-    // Query para contar visitantes únicos que se convirtieron en contactos
-    // (sesiones que tienen contact_id) agrupados por fecha de creación del contacto
+    // Query SIMPLIFICADA: solo cuenta contactos que tienen visitor_id
+    // (ya no necesita JOIN con sessions porque visitor_id ya está en contacts)
     let query, params
 
     if (usePostgres) {
       // PostgreSQL query
       query = `
         SELECT
-          TO_CHAR(c.created_at::date, 'YYYY-MM-DD') as date,
-          COUNT(DISTINCT c.id) as count
-        FROM contacts c
+          TO_CHAR(created_at::date, 'YYYY-MM-DD') as date,
+          COUNT(DISTINCT id) as count
+        FROM contacts
         WHERE
-          c.created_at::date >= $1::date
-          AND c.created_at::date <= $2::date
-          AND EXISTS (
-            SELECT 1 FROM sessions s
-            WHERE s.contact_id = c.id
-          )
-        GROUP BY TO_CHAR(c.created_at::date, 'YYYY-MM-DD')
+          created_at::date >= $1::date
+          AND created_at::date <= $2::date
+          AND visitor_id IS NOT NULL
+          AND visitor_id != ''
+        GROUP BY TO_CHAR(created_at::date, 'YYYY-MM-DD')
         ORDER BY date ASC
       `
       params = [start, end]
@@ -1864,17 +1862,15 @@ export async function getContactsByDate(req, res) {
       // SQLite query
       query = `
         SELECT
-          DATE(c.created_at) as date,
-          COUNT(DISTINCT c.id) as count
-        FROM contacts c
+          DATE(created_at) as date,
+          COUNT(DISTINCT id) as count
+        FROM contacts
         WHERE
-          DATE(c.created_at) >= DATE(?)
-          AND DATE(c.created_at) <= DATE(?)
-          AND EXISTS (
-            SELECT 1 FROM sessions s
-            WHERE s.contact_id = c.id
-          )
-        GROUP BY DATE(c.created_at)
+          DATE(created_at) >= DATE(?)
+          AND DATE(created_at) <= DATE(?)
+          AND visitor_id IS NOT NULL
+          AND visitor_id != ''
+        GROUP BY DATE(created_at)
         ORDER BY date ASC
       `
       params = [start, end]

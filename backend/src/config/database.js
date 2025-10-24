@@ -725,8 +725,57 @@ async function initTables() {
   }
 }
 
+/**
+ * Migración: Copiar visitor_id de sessions a contacts
+ * Para contactos que no tienen visitor_id pero sí tienen sesiones asociadas
+ */
+async function migrateVisitorIds() {
+  try {
+    logger.info('Iniciando migración de visitor_id...')
+
+    // Actualizar contactos sin visitor_id usando la primera sesión que los tenga
+    const query = usePostgres
+      ? `
+        UPDATE contacts
+        SET visitor_id = s.visitor_id
+        FROM (
+          SELECT DISTINCT ON (contact_id) contact_id, visitor_id
+          FROM sessions
+          WHERE contact_id IS NOT NULL AND visitor_id IS NOT NULL
+          ORDER BY contact_id, started_at ASC
+        ) s
+        WHERE contacts.id = s.contact_id
+          AND (contacts.visitor_id IS NULL OR contacts.visitor_id = '')
+      `
+      : `
+        UPDATE contacts
+        SET visitor_id = (
+          SELECT visitor_id
+          FROM sessions
+          WHERE sessions.contact_id = contacts.id
+            AND sessions.visitor_id IS NOT NULL
+          ORDER BY started_at ASC
+          LIMIT 1
+        )
+        WHERE (visitor_id IS NULL OR visitor_id = '')
+          AND EXISTS (
+            SELECT 1 FROM sessions
+            WHERE sessions.contact_id = contacts.id
+              AND sessions.visitor_id IS NOT NULL
+          )
+      `
+
+    const result = await db.run(query)
+    logger.success(`Migración completada: ${result.changes || 0} contactos actualizados con visitor_id`)
+  } catch (error) {
+    logger.error('Error en migración de visitor_id:', error)
+    // No lanzar error para que no rompa el inicio del servidor
+  }
+}
+
 // Inicializar al importar
 await initTables()
+await migrateVisitorIds()
 
 /**
  * Obtiene la configuración de HighLevel desde la base de datos
