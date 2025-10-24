@@ -405,16 +405,33 @@ async function ensureContactExists(contactId, apiToken, usePostgres) {
     const contact = contactData.contact || contactData
     const attribution = contact.attributions?.find(a => a.isFirst) || {}
 
+    // Buscar visitor_id en sessions por email (si existe)
+    let visitorId = null
+    const email = contact.email
+    if (email) {
+      try {
+        const session = await db.get(
+          'SELECT visitor_id FROM sessions WHERE email = ? ORDER BY started_at ASC LIMIT 1',
+          [email]
+        )
+        if (session?.visitor_id) {
+          visitorId = session.visitor_id
+        }
+      } catch (err) {
+        // Ignorar error, continuar sin visitor_id
+      }
+    }
+
     const query = usePostgres
       ? `INSERT INTO contacts (id, phone, email, full_name, first_name, last_name, source,
           attribution_url, attribution_session_source, attribution_medium, attribution_ad_id, attribution_ad_name,
-          created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+          visitor_id, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
          ON CONFLICT (id) DO NOTHING`
       : `INSERT OR IGNORE INTO contacts (id, phone, email, full_name, first_name, last_name, source,
           attribution_url, attribution_session_source, attribution_medium, attribution_ad_id, attribution_ad_name,
-          created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          visitor_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
     await db.run(query, [
       contact.id,
@@ -429,6 +446,7 @@ async function ensureContactExists(contactId, apiToken, usePostgres) {
       attribution.medium,
       attribution.utmAdId,
       attribution.adName,
+      visitorId,
       contact.dateAdded || new Date().toISOString(),
       contact.dateUpdated || contact.dateAdded || new Date().toISOString()
     ])
@@ -491,20 +509,38 @@ async function syncHighLevelContacts(locationId, apiToken) {
     try {
       const attribution = contact.attributions?.find(a => a.isFirst) || {}
 
+      // Buscar visitor_id en sessions por email (si existe)
+      let visitorId = null
+      const email = contact.email
+      if (email) {
+        try {
+          const session = await db.get(
+            'SELECT visitor_id FROM sessions WHERE email = ? ORDER BY started_at ASC LIMIT 1',
+            [email]
+          )
+          if (session?.visitor_id) {
+            visitorId = session.visitor_id
+          }
+        } catch (err) {
+          // Ignorar error, continuar sin visitor_id
+        }
+      }
+
       const query = usePostgres
         ? `INSERT INTO contacts (id, phone, email, full_name, first_name, last_name, source,
             attribution_url, attribution_session_source, attribution_medium, attribution_ad_id, attribution_ad_name,
-            created_at, updated_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+            visitor_id, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
            ON CONFLICT (id) DO UPDATE SET
             phone = EXCLUDED.phone,
             email = EXCLUDED.email,
             full_name = EXCLUDED.full_name,
+            visitor_id = COALESCE(EXCLUDED.visitor_id, contacts.visitor_id),
             updated_at = EXCLUDED.updated_at`
         : `INSERT OR REPLACE INTO contacts (id, phone, email, full_name, first_name, last_name, source,
             attribution_url, attribution_session_source, attribution_medium, attribution_ad_id, attribution_ad_name,
-            created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+            visitor_id, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
       await db.run(query, [
         contact.id,
@@ -519,6 +555,7 @@ async function syncHighLevelContacts(locationId, apiToken) {
         attribution.medium,
         attribution.utmAdId,
         attribution.adName,
+        visitorId,
         contact.dateAdded || new Date().toISOString(),
         contact.dateUpdated || contact.dateAdded || new Date().toISOString()
       ])
