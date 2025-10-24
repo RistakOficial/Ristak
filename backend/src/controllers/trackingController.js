@@ -1260,10 +1260,10 @@ export async function getVisitorsByPeriod(req, res) {
       return res.status(400).json({ error: 'startDate and endDate are required' })
     }
 
-    // Asegurar que endDate incluya todo el día (hasta 23:59:59)
-    const endDateWithTime = (endDate.includes('T') || endDate.includes(':')) ? endDate : `${endDate}T23:59:59`
+    // Usar timezone de HighLevel para consistencia con Dashboard
+    const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate })
 
-    logger.info(`Obteniendo visitantes por período - rango: ${startDate} -> ${endDateWithTime}, groupBy: ${groupBy}, scope: ${scope}`)
+    logger.info(`Obteniendo visitantes por período - rango: ${range.startUtc} -> ${range.endUtc}, groupBy: ${groupBy}, scope: ${scope}`)
 
     // Determinar lógica de atribución (MISMA LÓGICA QUE buildReportMetrics)
     const useContactAttribution = scope === 'campaigns' || scope === 'attributed' || scope === 'attribution'
@@ -1410,7 +1410,7 @@ export async function getVisitorsByPeriod(req, res) {
       }
     }
 
-    const rows = await db.all(query, [startDate, endDateWithTime])
+    const rows = await db.all(query, [range.startUtc, range.endUtc])
 
     logger.info(`Visitantes por período obtenidos: ${rows.length} períodos con visitas (scope: ${scope})`)
 
@@ -1439,10 +1439,10 @@ export async function getVisitorsList(req, res) {
       return res.status(400).json({ error: 'startDate y endDate son requeridos' })
     }
 
-    // Asegurar que endDate incluya todo el día
-    const endDateWithTime = (endDate.includes('T') || endDate.includes(':')) ? endDate : `${endDate}T23:59:59`
+    // Usar timezone de HighLevel para consistencia con Dashboard
+    const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate })
 
-    logger.info(`Obteniendo lista de visitantes - rango: ${startDate} -> ${endDateWithTime}, scope: ${scope}, ad_id: ${ad_id}, campaign_id: ${campaign_id}, adset_id: ${adset_id}`)
+    logger.info(`Obteniendo lista de visitantes - rango: ${range.startUtc} -> ${range.endUtc}, scope: ${scope}, ad_id: ${ad_id}, campaign_id: ${campaign_id}, adset_id: ${adset_id}`)
 
     // Determinar lógica de atribución (MISMA LÓGICA QUE buildReportMetrics)
     const useContactAttribution = scope === 'campaigns' || scope === 'attributed' || scope === 'attribution'
@@ -1459,7 +1459,7 @@ export async function getVisitorsList(req, res) {
       // Vista "Último toque" / "Último toque desde anuncio": Filtrar por fecha de creación del contacto
       // Solo visitantes que SE CONVIRTIERON en contacto (tienen contact_id)
       conditions = ['c.created_at >= $1', 'c.created_at <= $2', 's.contact_id IS NOT NULL']
-      params = [startDate, endDateWithTime]
+      params = [range.startUtc, range.endUtc]
       paramCount = 2
 
       // Filtrar contactos ocultos
@@ -1479,7 +1479,7 @@ export async function getVisitorsList(req, res) {
     } else {
       // Vista "Todos": Filtrar por fecha de la sesión (started_at)
       conditions = ['s.started_at >= $1', 's.started_at <= $2']
-      params = [startDate, endDateWithTime]
+      params = [range.startUtc, range.endUtc]
       paramCount = 2
     }
 
