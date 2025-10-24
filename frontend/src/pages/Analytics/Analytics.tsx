@@ -909,20 +909,6 @@ const Analytics: React.FC = () => {
       change: metrics.trends?.uniqueVisitors || 0,
       trend: getTrend(metrics.trends?.uniqueVisitors || 0),
       icon: Users
-    },
-    {
-      label: 'Registros',
-      value: String(metrics.registros || 0),
-      change: metrics.trends?.registros || 0,
-      trend: getTrend(metrics.trends?.registros || 0),
-      icon: UserCheck
-    },
-    {
-      label: 'Conversión',
-      value: `${(metrics.conversionRate || 0).toFixed(1)}%`,
-      change: metrics.trends?.conversionRate || 0,
-      trend: getTrend(metrics.trends?.conversionRate || 0),
-      icon: Target
     }
   ]
 
@@ -1003,44 +989,11 @@ const Analytics: React.FC = () => {
           </div>
         </Card>
 
-        {/* Gráfica de Registros y Fuentes de Tráfico */}
-        <div className="grid gap-4 lg:grid-cols-2">
-          <Card variant="glass" className="p-6 flex flex-col">
-            <div className="mb-4">
-              <h3 className="text-lg font-semibold">Registros</h3>
-              <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-                Contactos identificados por día
-              </p>
-            </div>
-
-            <div className="flex-1 min-h-[280px]">
-              {loading ? (
-                <div className="flex h-full items-center justify-center text-sm text-gray-500">
-                  Cargando datos...
-                </div>
-              ) : dailyConversions.length > 0 ? (
-                <LineChart
-                  data={dailyConversions}
-                  height={280}
-                  showGrid
-                  color="#10b981"
-                  showLegend={false}
-                  formatValue={formatTrafficAxis}
-                  formatTooltipValue={(value) => `${value} Registros`}
-                />
-              ) : (
-                <div className="flex h-full items-center justify-center rounded-xl border border-[rgba(148,163,184,0.18)] bg-[color-mix(in_srgb,var(--color-background-glass) 82%, transparent)] text-sm text-[var(--color-text-tertiary)]">
-                  Sin datos de conversiones disponibles
-                </div>
-              )}
-            </div>
-          </Card>
-
-          <TrafficSourcesChart
-            data={trafficSources}
-            loading={loading}
-          />
-        </div>
+        {/* Gráfica de Fuentes de Tráfico */}
+        <TrafficSourcesChart
+          data={trafficSources}
+          loading={loading}
+        />
 
         {/* Grid de stats cards */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
