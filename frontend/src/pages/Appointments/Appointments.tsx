@@ -147,6 +147,7 @@ export const Appointments: React.FC = () => {
     timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
     title: ''
   });
+  const [createScheduleMode, setCreateScheduleMode] = useState<'default' | 'custom'>('default');
 
   // Modal de blocked slot
   const [selectedBlockedSlot, setSelectedBlockedSlot] = useState<(BlockedSlot & { id?: string }) | null>(null);
@@ -597,6 +598,7 @@ export const Appointments: React.FC = () => {
       timeZone: selectedCalendar?.timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
       title: selectedCalendar?.eventTitle || ''
     });
+    setCreateScheduleMode('default'); // Botón normal usa modo por defecto
     setIsCreateModalOpen(true);
   };
 

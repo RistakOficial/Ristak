@@ -22,6 +22,7 @@ interface AppointmentModalProps {
   defaultEnd?: string;
   defaultTimeZone?: string;
   defaultTitle?: string;
+  defaultScheduleMode?: 'default' | 'custom'; // Modo de selección de horario al abrir
   accessToken?: string; // Token para cargar slots disponibles
   locationId?: string; // Location ID para consultas
   onSave: (eventIdOrPayload: string | any, updates?: Partial<CalendarEvent>) => Promise<void>;
@@ -229,6 +230,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   defaultEnd,
   defaultTimeZone,
   defaultTitle,
+  defaultScheduleMode = 'default',
   accessToken,
   locationId,
   onSave,
@@ -254,7 +256,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   const [isClient, setIsClient] = useState(false);
 
   // Modo de selección de horario: 'default' = solo slots disponibles, 'custom' = libre
-  const [scheduleMode, setScheduleMode] = useState<'default' | 'custom'>('default');
+  const [scheduleMode, setScheduleMode] = useState<'default' | 'custom'>(defaultScheduleMode);
   const [freeSlots, setFreeSlots] = useState<FreeSlot[]>([]);
   const [loadingSlots, setLoadingSlots] = useState(false);
   const [selectedDate, setSelectedDate] = useState<string>('');
@@ -430,6 +432,13 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   useEffect(() => {
     setIsClient(true);
   }, []);
+
+  // Resetear scheduleMode al abrir el modal
+  useEffect(() => {
+    if (isOpen && isCreateMode) {
+      setScheduleMode(defaultScheduleMode);
+    }
+  }, [isOpen, isCreateMode, defaultScheduleMode]);
 
   useEffect(() => {
     if (!isOpen) return;

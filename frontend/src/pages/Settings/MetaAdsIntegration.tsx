@@ -733,88 +733,76 @@ export const MetaAdsIntegration: React.FC = () => {
                     )}
                   </div>
                 )}
+
+                {/* 5. Pixel API Token - SOLO SI HAY PIXEL */}
+                {credentials.pixelId && (
+                  <div className={styles.formGroup}>
+                    <label className={styles.formLabel}>
+                      Pixel API Token <span className={styles.formHint}>(opcional, para Conversions API)</span>
+                    </label>
+                    <p className={styles.infoText} style={{ marginBottom: '12px', fontSize: '13px' }}>
+                      Para usar la Conversions API de Meta, genera un token manualmente desde el Events Manager.
+                    </p>
+                    {credentials.pixelApiToken && credentials.pixelApiToken.startsWith('***') ? (
+                      <div className={styles.filterChip}>
+                        <span className={styles.chipText}>{credentials.pixelApiToken}</span>
+                        <button
+                          onClick={() => handleRemoveCredential('pixelApiToken')}
+                          className={styles.chipDeleteButton}
+                          type="button"
+                        >
+                          <Trash2 size={16} style={{ color: '#ef4444' }} />
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        <input
+                          type="text"
+                          value={credentials.pixelApiToken}
+                          onChange={(e) => handleInputChange('pixelApiToken', e.target.value)}
+                          placeholder="Pega aquí el token generado desde Events Manager"
+                          className={styles.formInput}
+                        />
+                        <div style={{ marginTop: '12px', display: 'flex', justifyContent: 'center' }}>
+                          <Button
+                            onClick={handleSavePixelApiToken}
+                            disabled={isSavingPixelToken || !credentials.pixelApiToken}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '8px',
+                              padding: '10px 20px',
+                              fontSize: '14px',
+                              backgroundColor: '#10b981',
+                              color: 'white',
+                              border: 'none',
+                              borderRadius: '6px',
+                              cursor: (isSavingPixelToken || !credentials.pixelApiToken) ? 'not-allowed' : 'pointer',
+                              opacity: (isSavingPixelToken || !credentials.pixelApiToken) ? 0.6 : 1
+                            }}
+                          >
+                            <RefreshCw size={16} className={isSavingPixelToken ? styles.spinning : ''} />
+                            {isSavingPixelToken ? 'Guardando...' : 'Guardar Pixel API Token'}
+                          </Button>
+                        </div>
+                      </>
+                    )}
+                    <div className={styles.infoBox} style={{ marginTop: '12px' }}>
+                      <p style={{ margin: 0, fontSize: '12px' }}>
+                        <strong>¿Cómo obtener este token?</strong><br />
+                        1. Ve a <a href="https://business.facebook.com/events_manager2" target="_blank" rel="noopener noreferrer" className={styles.link}>Events Manager</a><br />
+                        2. Selecciona tu Pixel → Settings → Conversions API<br />
+                        3. Click en "Generate Access Token" → Copia y pega aquí
+                      </p>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
 
         </div>
         {/* FIN GRID 2 COLUMNAS */}
-
-        {/* SECCIÓN SEPARADA: Pixel API Token */}
-        {credentials.pixelId && (
-          <div className={styles.section} style={{ marginTop: 'var(--spacing-2xl)', borderTop: '2px solid var(--color-border)', paddingTop: 'var(--spacing-xl)' }}>
-            <div className={styles.sectionHeader}>
-              <h3 className={styles.sectionTitle}>Conversions API (Pixel API Token)</h3>
-            </div>
-            <div className={styles.sectionContent}>
-              <p className={styles.infoText} style={{ marginBottom: 'var(--spacing-lg)' }}>
-                Para usar la Conversions API de Meta, necesitas generar un token manualmente desde el Events Manager.
-                Este token es específico para el pixel y permite enviar eventos desde tu servidor.
-              </p>
-
-              <div className={styles.formGroup}>
-                <label className={styles.formLabel}>
-                  Pixel API Token <span className={styles.formHint}>(opcional)</span>
-                </label>
-                {credentials.pixelApiToken && credentials.pixelApiToken.startsWith('***') ? (
-                  <div className={styles.filterChip}>
-                    <span className={styles.chipText}>{credentials.pixelApiToken}</span>
-                    <button
-                      onClick={() => handleRemoveCredential('pixelApiToken')}
-                      className={styles.chipDeleteButton}
-                      type="button"
-                    >
-                      <Trash2 size={16} style={{ color: '#ef4444' }} />
-                    </button>
-                  </div>
-                ) : (
-                  <>
-                    <input
-                      type="text"
-                      value={credentials.pixelApiToken}
-                      onChange={(e) => handleInputChange('pixelApiToken', e.target.value)}
-                      placeholder="Pega aquí el token generado desde Events Manager"
-                      className={styles.formInput}
-                    />
-                    <div style={{ marginTop: '12px', display: 'flex', justifyContent: 'center' }}>
-                      <Button
-                        onClick={handleSavePixelApiToken}
-                        disabled={isSavingPixelToken || !credentials.pixelApiToken}
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '8px',
-                          padding: '10px 20px',
-                          fontSize: '14px',
-                          backgroundColor: '#10b981',
-                          color: 'white',
-                          border: 'none',
-                          borderRadius: '6px',
-                          cursor: (isSavingPixelToken || !credentials.pixelApiToken) ? 'not-allowed' : 'pointer',
-                          opacity: (isSavingPixelToken || !credentials.pixelApiToken) ? 0.6 : 1
-                        }}
-                      >
-                        <RefreshCw size={16} className={isSavingPixelToken ? styles.spinning : ''} />
-                        {isSavingPixelToken ? 'Guardando...' : 'Guardar Pixel API Token'}
-                      </Button>
-                    </div>
-                  </>
-                )}
-              </div>
-
-              <div className={styles.infoBox} style={{ marginTop: 'var(--spacing-lg)' }}>
-                <p style={{ margin: 0, fontSize: '13px' }}>
-                  <strong>¿Cómo obtener este token?</strong><br />
-                  1. Ve a <a href="https://business.facebook.com/events_manager2" target="_blank" rel="noopener noreferrer" className={styles.link}>Events Manager</a><br />
-                  2. Selecciona tu Pixel<br />
-                  3. Ve a Settings → Conversions API<br />
-                  4. Click en "Generate Access Token"<br />
-                  5. Copia y pega el token aquí
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
 
       </Card>
     </div>
