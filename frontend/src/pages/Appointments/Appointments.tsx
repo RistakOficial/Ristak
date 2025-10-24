@@ -170,6 +170,11 @@ export const Appointments: React.FC = () => {
   const [draggedEvent, setDraggedEvent] = useState<CalendarEvent | null>(null);
   const [dragOverDate, setDragOverDate] = useState<Date | null>(null);
 
+  // Time selection state (para vistas semana/día - seleccionar rango de horas)
+  const [isSelecting, setIsSelecting] = useState(false);
+  const [selectionStart, setSelectionStart] = useState<{ date: Date; hour: number; minute: number } | null>(null);
+  const [selectionEnd, setSelectionEnd] = useState<{ date: Date; hour: number; minute: number } | null>(null);
+
   const persistLastSelectedCalendar = useCallback((calendarId: string | null) => {
     if (typeof window === 'undefined') return;
     if (calendarId) {
@@ -428,6 +433,18 @@ export const Appointments: React.FC = () => {
       dayGridRef.current.scrollTop = scrollPosition;
     }
   }, [viewMode, currentDate]);
+
+  // Manejar mouseUp global para finalizar selección de tiempo
+  useEffect(() => {
+    if (isSelecting) {
+      const handleGlobalMouseUp = () => {
+        handleTimeSelectionEnd();
+      };
+
+      window.addEventListener('mouseup', handleGlobalMouseUp);
+      return () => window.removeEventListener('mouseup', handleGlobalMouseUp);
+    }
+  }, [isSelecting, selectionStart, selectionEnd]);
 
   // Eventos agrupados por fecha para reutilizar en todas las vistas
   const eventsByDate = useMemo(() => calendarsService.groupEventsByDate(events), [events]);
@@ -870,6 +887,105 @@ export const Appointments: React.FC = () => {
     // Abrir modal con el evento actualizado
     setSelectedEvent(updatedEvent);
     setIsModalOpen(true);
+  };
+
+  // Time Selection Handlers (vistas semana/día)
+  const calculateTimeFromPosition = (
+    e: React.MouseEvent,
+    dayColumn: HTMLElement,
+    date: Date
+  ): { hour: number; minute: number } => {
+    const rect = dayColumn.getBoundingClientRect();
+    const y = e.clientY - rect.top;
+    const totalMinutes = Math.floor((y / 60) * 60); // 60px por hora, convertir a minutos
+    const hour = Math.floor(totalMinutes / 60);
+    const minute = Math.floor((totalMinutes % 60) / 15) * 15; // Redondear a intervalos de 15 min
+
+    return {
+      hour: Math.max(0, Math.min(23, hour)),
+      minute: Math.max(0, Math.min(45, minute))
+    };
+  };
+
+  const handleTimeSelectionStart = (date: Date) => (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!selectedCalendar) return;
+    if (e.button !== 0) return; // Solo click izquierdo
+
+    const dayColumn = e.currentTarget;
+    const { hour, minute } = calculateTimeFromPosition(e, dayColumn, date);
+
+    setIsSelecting(true);
+    setSelectionStart({ date, hour, minute });
+    setSelectionEnd({ date, hour, minute });
+  };
+
+  const handleTimeSelectionMove = (date: Date) => (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!isSelecting || !selectionStart) return;
+
+    const dayColumn = e.currentTarget;
+    const { hour, minute } = calculateTimeFromPosition(e, dayColumn, date);
+
+    setSelectionEnd({ date, hour, minute });
+  };
+
+  const handleTimeSelectionEnd = () => {
+    if (!isSelecting || !selectionStart || !selectionEnd) return;
+
+    setIsSelecting(false);
+
+    // Calcular inicio y fin (asegurar que start < end)
+    const startTime = new Date(selectionStart.date);
+    startTime.setHours(selectionStart.hour, selectionStart.minute, 0, 0);
+
+    const endTime = new Date(selectionEnd.date);
+    endTime.setHours(selectionEnd.hour, selectionEnd.minute + 15, 0, 0); // +15 min para tener duración
+
+    // Si el usuario arrastró hacia arriba, invertir
+    const actualStart = startTime < endTime ? startTime : endTime;
+    const actualEnd = startTime < endTime ? endTime : startTime;
+
+    // Asegurar duración mínima de 15 minutos
+    if (actualEnd.getTime() - actualStart.getTime() < 15 * 60 * 1000) {
+      actualEnd.setMinutes(actualStart.getMinutes() + 15);
+    }
+
+    // Limpiar selección
+    setSelectionStart(null);
+    setSelectionEnd(null);
+
+    // Abrir modal de crear cita con esas horas
+    setCreateDefaults({
+      start: actualStart.toISOString(),
+      end: actualEnd.toISOString(),
+      timeZone: selectedCalendar?.timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+      title: selectedCalendar?.eventTitle || ''
+    });
+    setIsCreateModalOpen(true);
+  };
+
+  // Doble click en hora específica (vistas semana/día)
+  const handleTimeDoubleClick = (date: Date) => (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!selectedCalendar) {
+      showToast('warning', 'Selecciona un calendario', 'Debes elegir un calendario activo antes de programar una cita.');
+      return;
+    }
+
+    const dayColumn = e.currentTarget;
+    const { hour, minute } = calculateTimeFromPosition(e, dayColumn, date);
+
+    const startTime = new Date(date);
+    startTime.setHours(hour, minute, 0, 0);
+
+    const endTime = new Date(startTime);
+    endTime.setHours(hour, minute + 60, 0, 0); // 1 hora de duración
+
+    setCreateDefaults({
+      start: startTime.toISOString(),
+      end: endTime.toISOString(),
+      timeZone: selectedCalendar?.timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+      title: selectedCalendar?.eventTitle || ''
+    });
+    setIsCreateModalOpen(true);
   };
 
   // Color del evento según estado (compatible con dark mode)
