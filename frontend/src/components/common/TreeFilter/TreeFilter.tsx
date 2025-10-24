@@ -130,23 +130,8 @@ export function TreeFilter({
       })
     }
 
-    // Categoría: Campañas
-    if (availableData.campaigns?.length) {
-      tree.push({
-        id: 'campaigns',
-        label: 'Campañas',
-        icon: Target,
-        children: availableData.campaigns.map(c => ({
-          id: `campaign_${c.name}`,
-          label: c.name,
-          field: 'utm_campaign',
-          value: c.name,
-          count: c.count
-        }))
-      })
-    }
-
     // Categoría: Anuncios con jerarquía (Platform > Campaign > Adset > Ad)
+    // NOTA: No agregamos "Campañas" como categoría separada porque ya están dentro de Anuncios
     // Guardamos la jerarquía completa en vez de lista plana
     if (availableData.adsHierarchy?.length) {
       tree.push({
