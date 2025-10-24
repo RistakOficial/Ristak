@@ -1575,3 +1575,24 @@ body.dark .warningBox {
 .spinIcon {
   animation: spin 1s linear infinite;
 }
+
+
+/* Calendar Config Modal Grid - Responsive */
+.calendarConfigGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+}
+
+@media (max-width: 900px) {
+  .calendarConfigGrid {
+    grid-template-columns: 1fr;
+    gap: 20px;
+  }
+}
+
+@media (max-width: 640px) {
+  .calendarConfigGrid {
+    gap: 16px;
+  }
+}

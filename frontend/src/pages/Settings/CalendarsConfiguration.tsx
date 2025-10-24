@@ -443,7 +443,7 @@ export const CalendarsConfiguration: React.FC = () => {
           title={`Configurar: ${selectedCalendar.name}`}
           size="lg"
         >
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px', maxHeight: '70vh', overflowY: 'auto', padding: '4px' }}>
+          <div className={styles.calendarConfigGrid}>
             {/* COLUMNA IZQUIERDA */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
               {/* Duración de cita */}
@@ -688,7 +688,7 @@ export const CalendarsConfiguration: React.FC = () => {
           </div>
 
           {/* Botones (span 2 columns) */}
-          <div style={{ display: 'flex', gap: '12px', marginTop: '24px', gridColumn: '1 / -1' }}>
+          <div style={{ display: 'flex', gap: '12px', marginTop: '24px', paddingTop: '24px', borderTop: '1px solid var(--color-border)', gridColumn: '1 / -1' }}>
             <Button
               onClick={handleSaveCalendarConfig}
               disabled={savingConfig}
