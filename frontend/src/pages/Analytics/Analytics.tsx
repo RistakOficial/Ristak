@@ -1293,6 +1293,9 @@ const Analytics: React.FC = () => {
       <div className="space-y-6">
         {/* Header */}
         <div className="space-y-4">
+          <p className="text-sm text-orange-600 dark:text-orange-400 font-medium">
+            Arreglar filtros
+          </p>
           <h1 className="text-2xl font-bold">Analíticas</h1>
 
           {/* Filtro en árbol y Selector de fechas juntos */}
