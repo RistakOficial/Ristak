@@ -13,7 +13,7 @@ import {
 import { useDateRange } from '@/contexts/DateRangeContext'
 import { useAuth } from '@/contexts/AuthContext'
 import { useLabels } from '@/contexts/LabelsContext'
-import { useAppConfig } from '@/hooks'
+import { useAppConfig, useIsRenderDomain } from '@/hooks'
 import { dashboardService, type DashboardMetrics, type ChartData } from '@/services/dashboardService'
 import { formatCurrency, formatRoas, formatChartDate, formatDateToISO, parseLocalDateString, formatChartCurrency, formatChartNumber } from '@/utils/format'
 
@@ -33,8 +33,15 @@ export const Dashboard: React.FC = () => {
   const { dateRange, setDateRange } = useDateRange()
   const { user } = useAuth()
   const { labels } = useLabels()
+
+  // Detectar si estamos en dominio .onrender.com
+  const isRenderDomain = useIsRenderDomain()
+
+  // Sistema híbrido de configuración
   const [showAnalyticsConfig] = useAppConfig<string | number | boolean>('show_analytics', '1')
-  const analyticsEnabled = parseAnalyticsFlag(showAnalyticsConfig)
+
+  // FORZAR analyticsEnabled a false si estamos en dominio .onrender.com
+  const analyticsEnabled = isRenderDomain ? false : parseAnalyticsFlag(showAnalyticsConfig)
 
   const [metrics, setMetrics] = useState<DashboardMetrics | null>(null)
   const [chartData, setChartData] = useState<ChartData[]>([])

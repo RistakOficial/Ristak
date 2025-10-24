@@ -23,7 +23,7 @@ import {
   type ReportRange
 } from '@/services/reportsService'
 import { formatCurrency, formatNumber, formatRoas, formatDate, formatDateToISO, parseLocalDateString } from '@/utils/format'
-import { useAppConfig, useChartHover } from '@/hooks'
+import { useAppConfig, useChartHover, useIsRenderDomain } from '@/hooks'
 import { ChartTooltip } from '@/components/common/ChartTooltip/ChartTooltip'
 import styles from './Reports.module.css'
 import {
@@ -784,10 +784,16 @@ export const Reports: React.FC = () => {
   const { showToast } = useNotification()
   const { labels } = useLabels()
 
+  // Detectar si estamos en dominio .onrender.com
+  const isRenderDomain = useIsRenderDomain()
+
   // Sistema híbrido de configuración
-  const [visitorSource] = useAppConfig<'platform' | 'tracking'>('visitor_source', 'platform')
+  const [visitorSourceConfig] = useAppConfig<'platform' | 'tracking'>('visitor_source', 'platform')
   const [showAnalyticsConfig] = useAppConfig<string | number | boolean>('show_analytics', '1')
-  const analyticsEnabled = parseAnalyticsFlag(showAnalyticsConfig)
+
+  // FORZAR valores si estamos en dominio .onrender.com
+  const visitorSource = isRenderDomain ? 'platform' : visitorSourceConfig
+  const analyticsEnabled = isRenderDomain ? false : parseAnalyticsFlag(showAnalyticsConfig)
 
   const [reportType, setReportType] = useState<ReportType>('cashflow')
   const reportTypeRef = React.useRef<ReportType>(reportType)

@@ -353,61 +353,6 @@ export const WebTracking: React.FC = () => {
                   </ul>
                 </div>
               </div>
-
-              {/* Switch para mostrar/ocultar Analytics */}
-              <div className={styles.formGroup} style={{ marginTop: '32px', paddingTop: '24px', borderTop: '1px solid var(--color-border)' }}>
-                <label className={styles.formLabel} style={{ marginBottom: '8px' }}>
-                  Página de Analíticas
-                </label>
-                <p className={styles.formHint} style={{ marginBottom: '16px' }}>
-                  Controla si la página de Analíticas aparece en el menú lateral
-                </p>
-                <div className={styles.toggleContainer}>
-                  <span className={`${styles.toggleLabel} ${!showAnalytics ? styles.toggleLabelActive : ''}`}>
-                    Oculta
-                  </span>
-                  <button
-                    onClick={handleToggleAnalytics}
-                    className={`${styles.toggle} ${showAnalytics ? styles.toggleActive : ''}`}
-                    disabled={savingAnalyticsPref}
-                  >
-                    <span className={styles.toggleThumb} />
-                  </button>
-                  <span className={`${styles.toggleLabel} ${showAnalytics ? styles.toggleLabelActive : ''}`}>
-                    Visible
-                  </span>
-                </div>
-              </div>
-
-              {/* Switch para fuente de visitantes */}
-              <div className={styles.formGroup} style={{ marginTop: '32px', paddingTop: '24px', borderTop: '1px solid var(--color-border)' }}>
-                <label className={styles.formLabel} style={{ marginBottom: '8px' }}>
-                  Fuente de Visitantes
-                </label>
-                <p className={styles.formHint} style={{ marginBottom: '16px' }}>
-                  Elige de dónde obtener los datos de visitantes para las páginas de Campañas y Reportes
-                </p>
-                <div className={styles.toggleContainer}>
-                  <span className={`${styles.toggleLabel} ${visitorSource === 'platform' ? styles.toggleLabelActive : ''}`}>
-                    Plataforma de Anuncios
-                  </span>
-                  <button
-                    onClick={handleToggleVisitorSource}
-                    className={`${styles.toggle} ${visitorSource === 'tracking' ? styles.toggleActive : ''}`}
-                    disabled={savingVisitorPref}
-                  >
-                    <span className={styles.toggleThumb} />
-                  </button>
-                  <span className={`${styles.toggleLabel} ${visitorSource === 'tracking' ? styles.toggleLabelActive : ''}`}>
-                    Tracking Interno
-                  </span>
-                </div>
-                <p className={styles.formHint} style={{ marginTop: '12px', fontSize: '0.85rem' }}>
-                  {visitorSource === 'platform'
-                    ? '✓ Usando métricas reportadas por Meta Ads, Google Ads, etc.'
-                    : '✓ Usando visitantes capturados por nuestro pixel de tracking'}
-                </p>
-              </div>
             </>
           )}
           </div>

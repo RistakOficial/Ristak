@@ -17,7 +17,7 @@ import { useLabels } from '@/contexts/LabelsContext'
 import { formatCurrency, formatRoas, formatChartDate, formatDate, formatDateToISO, formatEndDateToISO, parseLocalDateString, formatChartCurrency, formatChartNumber } from '@/utils/format'
 import { campaignsService, type CampaignContact } from '@/services/campaignsService'
 import { reportsService, type CampaignsReport } from '@/services/reportsService'
-import { useAppConfig, useMetaTimezone } from '@/hooks'
+import { useAppConfig, useMetaTimezone, useIsRenderDomain } from '@/hooks'
 import styles from './Campaigns.module.css'
 
 interface AdData {
@@ -105,10 +105,16 @@ export const Campaigns: React.FC = () => {
   const { dateRange, setDateRange } = useDateRange()
   const { labels } = useLabels()
 
+  // Detectar si estamos en dominio .onrender.com
+  const isRenderDomain = useIsRenderDomain()
+
   // Sistema híbrido de configuración
-  const [visitorSource] = useAppConfig<'platform' | 'tracking'>('visitor_source', 'platform')
+  const [visitorSourceConfig] = useAppConfig<'platform' | 'tracking'>('visitor_source', 'platform')
   const [showAnalyticsConfig] = useAppConfig<string | number | boolean>('show_analytics', '1')
-  const analyticsEnabled = parseAnalyticsFlag(showAnalyticsConfig)
+
+  // FORZAR valores si estamos en dominio .onrender.com
+  const visitorSource = isRenderDomain ? 'platform' : visitorSourceConfig
+  const analyticsEnabled = isRenderDomain ? false : parseAnalyticsFlag(showAnalyticsConfig)
 
   // Detectar discrepancia de timezone
   const timezoneInfo = useMetaTimezone()
