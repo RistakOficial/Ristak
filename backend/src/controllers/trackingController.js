@@ -2,6 +2,7 @@ import { logger } from '../utils/logger.js'
 import { createSession, getRecentSessions, linkVisitorToContact, getSessionsByDateRange } from '../services/trackingService.js'
 import { getHighLevelConfig, getAppConfig, setAppConfig, db } from '../config/database.js'
 import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js'
+import { resolveDateRangeWithGHLTimezone } from '../utils/dateUtils.js'
 import fetch from 'node-fetch'
 
 /**
@@ -1212,10 +1213,10 @@ export async function getVisitorsByAd(req, res) {
       return res.status(400).json({ error: 'startDate y endDate son requeridos' })
     }
 
-    // Asegurar que endDate incluya todo el día (hasta 23:59:59)
-    const endDateWithTime = (endDate.includes('T') || endDate.includes(':')) ? endDate : `${endDate}T23:59:59`
+    // Usar timezone de HighLevel para consistencia con Dashboard
+    const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate })
 
-    logger.info(`Obteniendo visitantes por ad - rango: ${startDate} -> ${endDateWithTime}`)
+    logger.info(`Obteniendo visitantes por ad - rango: ${range.startUtc} -> ${range.endUtc}`)
 
     // Query PostgreSQL
     const query = `
@@ -1230,7 +1231,7 @@ export async function getVisitorsByAd(req, res) {
       GROUP BY ad_id
     `
 
-    const visitors = await db.all(query, [startDate, endDateWithTime])
+    const visitors = await db.all(query, [range.startUtc, range.endUtc])
 
     logger.info(`Visitantes por ad obtenidos: ${visitors.length} ads con visitas`)
 

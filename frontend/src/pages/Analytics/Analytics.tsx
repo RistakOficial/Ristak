@@ -718,7 +718,7 @@ const Analytics: React.FC = () => {
       })
       setDailyTraffic([])
       setDailyConversions([])
-      setRegistrosChartData([])
+      // NO resetear registrosChartData aquí - viene de contactsData, no de sessions
       return
     }
 
