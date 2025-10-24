@@ -121,8 +121,10 @@ const formatPlacementName = (placement: string): string => {
 type Session = TrackingSession
 
 // Helper para decodificar nombres URL-encoded (+ → espacio, %XX → carácter)
-const decodeAdName = (name: string | null): string => {
-  if (!name) return 'Sin nombre'
+const decodeAdName = (name: string | null | undefined): string => {
+  if (!name || name === 'null' || name === 'undefined') {
+    return '(Tráfico orgánico)'
+  }
   try {
     // Reemplazar + por espacios, luego decodificar
     return decodeURIComponent(name.replace(/\+/g, ' '))
@@ -890,14 +892,13 @@ const Analytics: React.FC = () => {
     const hasActiveFilters = Object.keys(selectedFilters).length > 0 &&
       Object.values(selectedFilters).some(arr => arr.length > 0)
 
-    console.log('🎯 Filtros activos:', hasActiveFilters)
-    console.log('📊 selectedFilters:', selectedFilters)
-    console.log('📈 Sesiones a procesar:', sessions.length)
-    console.log('📦 AllSessions disponibles:', allSessions.length)
-
     // BUG FIX: Si no hay filtros activos, usar allSessions en vez de sessions
     const sessionsToProcess = hasActiveFilters ? sessions : allSessions
-    console.log('✅ Sesiones finales a procesar:', sessionsToProcess.length)
+
+    console.log('🎯 Filtros activos:', hasActiveFilters)
+    console.log('📊 selectedFilters:', selectedFilters)
+    console.log('📈 Sesiones a procesar:', sessionsToProcess.length)
+    console.log('📦 AllSessions disponibles:', allSessions.length)
 
     if (sessionsToProcess.length === 0) {
       console.log('⚠️ No hay sesiones filtradas - Reseteando métricas')
