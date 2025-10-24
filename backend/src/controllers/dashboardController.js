@@ -890,14 +890,14 @@ export const getTrafficSources = async (req, res) => {
     let query, params
 
     if (usePostgres) {
-      // PostgreSQL query - Obtener todos los campos para normalización con prioridad 1-4
+      // PostgreSQL query - Contar visitantes únicos por fuente
       query = `
         SELECT
           referrer_url,
           site_source_name,
           utm_source,
           source_platform,
-          COUNT(*) as value
+          COUNT(DISTINCT visitor_id) as value
         FROM sessions
         WHERE started_at >= $1 AND started_at <= $2
         GROUP BY referrer_url, site_source_name, utm_source, source_platform
@@ -905,14 +905,14 @@ export const getTrafficSources = async (req, res) => {
       `
       params = [range.startUtc, range.endUtc]
     } else {
-      // SQLite query - Obtener todos los campos para normalización con prioridad 1-4
+      // SQLite query - Contar visitantes únicos por fuente
       query = `
         SELECT
           referrer_url,
           site_source_name,
           utm_source,
           source_platform,
-          COUNT(*) as value
+          COUNT(DISTINCT visitor_id) as value
         FROM sessions
         WHERE started_at >= ? AND started_at <= ?
         GROUP BY referrer_url, site_source_name, utm_source, source_platform
