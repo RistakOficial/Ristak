@@ -183,6 +183,9 @@ const Analytics: React.FC = () => {
   const [browserData, setBrowserData] = useState<any[]>([])
   const [topVisitors, setTopVisitors] = useState<any[]>([])
 
+  // Guardar el valor ORIGINAL de registros para restaurar al quitar filtros
+  const [originalRegistros, setOriginalRegistros] = useState<number>(0)
+
   const [metrics, setMetrics] = useState<Metrics>({
     pageViews: 0,
     uniqueVisitors: 0,
@@ -247,6 +250,9 @@ const Analytics: React.FC = () => {
 
           // Registros = contactos con visitor_id creados en el período (con fallback a array vacío)
           const registros = (contactsData || []).reduce((sum, item) => sum + item.count, 0)
+
+          // Guardar valor ORIGINAL para restaurar al quitar filtros
+          setOriginalRegistros(registros)
 
           const conversionRate = uniqueVids > 0 ? ((registros / uniqueVids) * 100) : 0
 
@@ -947,8 +953,8 @@ const Analytics: React.FC = () => {
 
     console.log('📝 Contactos únicos en sesiones filtradas:', registrosEnSesiones)
 
-    // Si hay filtros activos, usar registrosEnSesiones; si no, mantener original
-    const registrosValue = hasActiveFilters ? registrosEnSesiones : metrics.registros
+    // Si hay filtros activos, usar registrosEnSesiones; si no, usar valor original guardado
+    const registrosValue = hasActiveFilters ? registrosEnSesiones : originalRegistros
     console.log('✅ Valor final de Registros:', registrosValue, hasActiveFilters ? '(filtrado)' : '(original)')
 
     const conversionRate = uniqueVids > 0 ? ((registrosValue / uniqueVids) * 100) : 0

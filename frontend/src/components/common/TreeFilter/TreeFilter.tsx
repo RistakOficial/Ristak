@@ -12,8 +12,10 @@ import {
   Smartphone,
   Globe,
   Monitor,
-  MapPin
+  MapPin,
+  Layers
 } from 'lucide-react'
+import { AdHierarchyMenu } from './AdHierarchyMenu'
 
 // Estructura del árbol de filtros con todas las categorías disponibles
 interface FilterNode {
@@ -78,6 +80,13 @@ export function TreeFilter({
   const dropdownRef = useRef<HTMLDivElement>(null)
   const hoverTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
+  // Estado para rastrear la ruta en la jerarquía de ads (Platform > Campaign > Adset > Ad)
+  const [hoveredAdsPath, setHoveredAdsPath] = useState<{
+    platformId?: string
+    campaignId?: string
+    adsetId?: string
+  }>({})
+
   // Cerrar dropdown cuando se hace click afuera
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -138,61 +147,14 @@ export function TreeFilter({
     }
 
     // Categoría: Anuncios con jerarquía (Platform > Campaign > Adset > Ad)
+    // Guardamos la jerarquía completa en vez de lista plana
     if (availableData.adsHierarchy?.length) {
-      const adsChildren: FilterNode[] = []
-
-      availableData.adsHierarchy.forEach(platform => {
-        // Agregar opción para filtrar por plataforma completa
-        adsChildren.push({
-          id: `platform_${platform.platform_id}`,
-          label: `📱 ${platform.platform}`,
-          field: 'ad_platform',
-          value: platform.platform_id,
-          count: platform.count
-        })
-
-        platform.campaigns.forEach(campaign => {
-          // Agregar opción para filtrar por campaña completa
-          adsChildren.push({
-            id: `campaign_${campaign.id}`,
-            label: `  🎯 ${campaign.name}`,
-            field: 'campaign_id',
-            value: campaign.id,
-            count: campaign.count
-          })
-
-          campaign.adsets.forEach(adset => {
-            // Agregar opción para filtrar por conjunto completo
-            adsChildren.push({
-              id: `adset_${adset.id}`,
-              label: `    📦 ${adset.name}`,
-              field: 'adset_id',
-              value: adset.id,
-              count: adset.count
-            })
-
-            adset.ads.forEach(ad => {
-              // Agregar cada anuncio individual
-              adsChildren.push({
-                id: `ad_${ad.id}`,
-                label: `      📢 ${ad.name}`,
-                field: 'ad_id',
-                value: ad.id,
-                count: ad.count
-              })
-            })
-          })
-        })
+      tree.push({
+        id: 'ads',
+        label: 'Anuncios',
+        icon: Image,
+        // No ponemos children aquí, se renderiza con lógica especial de cascada
       })
-
-      if (adsChildren.length > 0) {
-        tree.push({
-          id: 'ads',
-          label: 'Anuncios',
-          icon: Image,
-          children: adsChildren
-        })
-      }
     } else if (availableData.ads?.length) {
       // Fallback a la lista plana si no hay jerarquía
       tree.push({
@@ -519,17 +481,26 @@ export function TreeFilter({
 
           {/* Panel derecho: Opciones de la categoría con hover o resultados de búsqueda */}
           {(hoveredCategory || showSearchResults) && (
-            <div
-              className="w-64 overflow-y-auto"
-              style={{ maxHeight: 'calc(100vh - 160px)' }}
-              onMouseEnter={() => {
-                if (hoverTimeoutRef.current) {
-                  clearTimeout(hoverTimeoutRef.current)
-                }
-                setHoveredCategory(hoveredCategory)
-              }}
-            >
-              {showSearchResults ? (
+            <>
+              {/* JERARQUÍA ESPECIAL PARA ANUNCIOS: 4 paneles en cascada */}
+              {hoveredCategory === 'ads' && !showSearchResults && availableData.adsHierarchy?.length ? (
+                <AdHierarchyMenu
+                  adsHierarchy={availableData.adsHierarchy}
+                  selectedFilters={selectedFilters}
+                  onFilterToggle={handleFilterToggle}
+                />
+              ) : (
+                <div
+                  className="w-64 overflow-y-auto"
+                  style={{ maxHeight: 'calc(100vh - 160px)' }}
+                  onMouseEnter={() => {
+                    if (hoverTimeoutRef.current) {
+                      clearTimeout(hoverTimeoutRef.current)
+                    }
+                    setHoveredCategory(hoveredCategory)
+                  }}
+                >
+                  {showSearchResults ? (
                 // Mostrar resultados de búsqueda global
                 <div className="py-2">
                   {getGlobalSearchResults().map(({ category, items }) => {
@@ -677,7 +648,9 @@ export function TreeFilter({
                   )
                 })
               )}
-            </div>
+                </div>
+              )}
+            </>
           )}
         </div>
       )}
