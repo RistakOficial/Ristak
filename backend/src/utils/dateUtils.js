@@ -82,20 +82,6 @@ export function resolveDateRange ({ startDate, endDate, timezone = DEFAULT_TIMEZ
     end = now
   }
 
-  // 🔥 FIX CRÍTICO: Si el endDate es HOY o está en el futuro cercano (hasta mañana),
-  // agregar un margen de seguridad para evitar problemas de timezone.
-  // Esto asegura que TODOS los datos del día actual se incluyan sin importar
-  // discrepancias de timezone entre HighLevel, PostgreSQL y el usuario.
-  if (end) {
-    const today = DateTime.now().setZone(zone).startOf('day')
-    const tomorrow = today.plus({ days: 1 })
-
-    // Si endDate es hoy o mañana, agregar 12 horas de margen
-    if (end >= today && end <= tomorrow.endOf('day')) {
-      end = end.plus({ hours: 12 })
-    }
-  }
-
   const providedStart = Boolean(start)
   const providedEnd = Boolean(end)
 

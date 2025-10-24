@@ -516,17 +516,25 @@ export const BlockedSlotModal: React.FC<BlockedSlotModalProps> = ({
         return;
       }
 
-      // Validación: usuario asignado requerido
-      if (!formData.assignedUserId) {
+      // Si el calendario tiene team members, es obligatorio seleccionar usuario
+      const hasTeamMembers = calendar && calendar.teamMembers && calendar.teamMembers.length > 0;
+
+      // Si NO hay assignedUserId y el calendario SÍ tiene team members, mostrar error
+      if (!formData.assignedUserId && hasTeamMembers) {
         showToast('error', 'Usuario requerido', 'Debes seleccionar un usuario para asignar el bloqueo');
         setIsSaving(false);
         return;
       }
 
       const payload: any = {
-        title: formData.title.trim() || 'Horario bloqueado',
-        assignedUserId: formData.assignedUserId
+        title: formData.title.trim() || 'Horario bloqueado'
       };
+
+      // Solo incluir assignedUserId si existe (calendarios con team members)
+      // Para calendarios sin team members, el backend usará el usuario por defecto
+      if (formData.assignedUserId) {
+        payload.assignedUserId = formData.assignedUserId;
+      }
 
       if (formData.startTime) {
         const startIso = convertLocalInputToISO(formData.startTime, formData.timeZone);
