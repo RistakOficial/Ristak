@@ -869,6 +869,9 @@
 
 /* Blocked Slots Indicator (Vista mensual) */
 .blockedSlotsIndicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
   font-size: 0.7rem;
   line-height: 1.2;
   padding: 0.25rem 0.5rem;
@@ -877,13 +880,34 @@
   color: var(--color-text-secondary);
   text-align: center;
   margin-top: 0.2rem;
-  cursor: default;
+  cursor: help;
   user-select: none;
+  transition: all 0.15s ease;
+  white-space: pre-line;
+}
+
+.blockedSlotsIndicator:hover {
+  background-color: rgba(148, 163, 184, 0.3);
+  transform: translateY(-1px);
+}
+
+.blockedIcon {
+  flex-shrink: 0;
+  opacity: 0.8;
+  transition: opacity 0.15s ease;
+}
+
+.blockedSlotsIndicator:hover .blockedIcon {
+  opacity: 1;
 }
 
 :global(body.dark) .blockedSlotsIndicator {
   background-color: rgba(148, 163, 184, 0.25);
   color: rgba(203, 213, 225, 0.9);
+}
+
+:global(body.dark) .blockedSlotsIndicator:hover {
+  background-color: rgba(148, 163, 184, 0.35);
 }
 
 /* Blocked Slot (Vistas semana/día) */
