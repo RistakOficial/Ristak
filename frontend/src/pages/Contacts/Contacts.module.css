@@ -46,6 +46,18 @@
   gap: var(--spacing-md);
 }
 
+.chartsGrid {
+  display: grid;
+  gap: var(--spacing-md);
+  grid-template-columns: 1fr;
+}
+
+@media (min-width: 1024px) {
+  .chartsGrid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
 .chartHeader {
   margin-bottom: var(--spacing-lg);
 }

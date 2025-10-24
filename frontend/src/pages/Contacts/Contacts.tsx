@@ -719,18 +719,20 @@ export const Contacts: React.FC = () => {
         </div>
 
         {viewMode === 'by-date' && (
-          <Card variant="glass" padding="lg">
-            <div className={styles.chartHeader}>
-              <h3 className={styles.chartTitle}>Registros por fecha</h3>
-              <p className={styles.chartSubtitle}>Visualiza cómo se han registrado los contactos a lo largo del tiempo</p>
-            </div>
-            <BarChart
-              data={chartData}
-              loading={loadingChart}
-              height={320}
-              formatTooltip={(value) => `${value} ${value === 1 ? 'registro' : 'registros'}`}
-            />
-          </Card>
+          <div className={styles.chartsGrid}>
+            <Card variant="glass" padding="lg">
+              <div className={styles.chartHeader}>
+                <h3 className={styles.chartTitle}>Registros por fecha</h3>
+                <p className={styles.chartSubtitle}>Visualiza cómo se han registrado los contactos a lo largo del tiempo</p>
+              </div>
+              <BarChart
+                data={chartData}
+                loading={loadingChart}
+                height={320}
+                formatTooltip={(value) => `${value} ${value === 1 ? 'registro' : 'registros'}`}
+              />
+            </Card>
+          </div>
         )}
 
       <Card padding="none">
