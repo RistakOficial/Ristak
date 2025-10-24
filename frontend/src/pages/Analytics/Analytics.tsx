@@ -744,22 +744,24 @@ const Analytics: React.FC = () => {
     }))
 
     // Recalcular stats para las cards
-    const browsers: { [key: string]: number } = {}
+    const browsersForFilter: { [key: string]: Set<string> } = {}
     sessions.forEach((session: Session) => {
       const browser = session.browser || 'Desconocido'
-      browsers[browser] = (browsers[browser] || 0) + 1
+      if (!browsersForFilter[browser]) browsersForFilter[browser] = new Set()
+      browsersForFilter[browser].add(session.visitor_id)
     })
-    const browserStats = Object.entries(browsers)
-      .map(([browser, count]) => ({
+    const uniqueVisitorsInFilter = new Set(sessions.map(s => s.visitor_id)).size
+    const browserStats = Object.entries(browsersForFilter)
+      .map(([browser, visitorSet]) => ({
         name: browser,
-        users: count,
-        percentage: ((count / sessions.length) * 100).toFixed(1)
+        users: visitorSet.size,
+        percentage: ((visitorSet.size / uniqueVisitorsInFilter) * 100).toFixed(1)
       }))
       .sort((a, b) => b.users - a.users)
       .slice(0, 5)
     setBrowserData(browserStats)
 
-    const platforms: { [key: string]: number } = {}
+    const platformsForFilter: { [key: string]: Set<string> } = {}
     sessions.forEach((session: Session) => {
       // Usar normalizador con prioridad: referrer_url → site_source_name → utm_source → source_platform
       const platform = normalizeTrafficSource({
@@ -768,38 +770,39 @@ const Analytics: React.FC = () => {
         utm_source: session.utm_source,
         source_platform: session.source_platform
       })
-
-      platforms[platform] = (platforms[platform] || 0) + 1
+      if (!platformsForFilter[platform]) platformsForFilter[platform] = new Set()
+      platformsForFilter[platform].add(session.visitor_id)
     })
-    const platformStats = Object.entries(platforms)
-      .map(([platform, count]) => ({
+    const platformStats = Object.entries(platformsForFilter)
+      .map(([platform, visitorSet]) => ({
         name: platform,
-        users: count,
-        percentage: ((count / sessions.length) * 100).toFixed(1)
+        users: visitorSet.size,
+        percentage: ((visitorSet.size / uniqueVisitorsInFilter) * 100).toFixed(1)
       }))
       .sort((a, b) => b.users - a.users)
       .slice(0, 5)
     setPlatformsData(platformStats)
 
-    // Calcular placements para "Top de ubicaciones" (Facebook Feed, Instagram Reels, etc.)
-    const placements: { [key: string]: number } = {}
+    // Calcular placements para "Top de ubicaciones" (Facebook Feed, Instagram Reels, etc.) - VISITANTES ÚNICOS
+    const placementsForFilter: { [key: string]: Set<string> } = {}
     sessions.forEach((session: Session) => {
       const rawPlacement = session.placement || 'Sin ubicación'
       const placement = formatPlacementName(rawPlacement)
-      placements[placement] = (placements[placement] || 0) + 1
+      if (!placementsForFilter[placement]) placementsForFilter[placement] = new Set()
+      placementsForFilter[placement].add(session.visitor_id)
     })
-    const placementStats = Object.entries(placements)
-      .map(([placement, count]) => ({
+    const placementStats = Object.entries(placementsForFilter)
+      .map(([placement, visitorSet]) => ({
         name: placement,
-        users: count,
-        percentage: ((count / sessions.length) * 100).toFixed(1)
+        users: visitorSet.size,
+        percentage: ((visitorSet.size / uniqueVisitorsInFilter) * 100).toFixed(1)
       }))
       .sort((a, b) => b.users - a.users)
       .slice(0, 5)
     setPlacementsData(placementStats)
 
-    // Preparar datos para la dona de fuentes de tráfico con prioridad: referrer_url → site_source_name → utm_source → source_platform
-    const trafficSources: { [key: string]: number } = {}
+    // Preparar datos para la dona de fuentes de tráfico - VISITANTES ÚNICOS
+    const trafficSourcesFiltered: { [key: string]: Set<string> } = {}
     sessions.forEach((session: Session) => {
       const source = normalizeTrafficSource({
         referrer_url: session.referrer_url,
@@ -807,7 +810,8 @@ const Analytics: React.FC = () => {
         utm_source: session.utm_source,
         source_platform: session.source_platform
       })
-      trafficSources[source] = (trafficSources[source] || 0) + 1
+      if (!trafficSourcesFiltered[source]) trafficSourcesFiltered[source] = new Set()
+      trafficSourcesFiltered[source].add(session.visitor_id)
     })
 
     const trafficColorMap: { [key: string]: string } = {
@@ -829,41 +833,44 @@ const Analytics: React.FC = () => {
       'Orgánico': '#10b981'
     }
 
-    const trafficSourcesData = Object.entries(trafficSources)
-      .map(([source, count]) => ({
+    const trafficSourcesData = Object.entries(trafficSourcesFiltered)
+      .map(([source, visitorSet]) => ({
         name: source,
-        value: count,
+        value: visitorSet.size,
         color: trafficColorMap[source] || '#6b7280'
       }))
       .sort((a, b) => b.value - a.value)
       .slice(0, 10)
     setTrafficSources(trafficSourcesData)
 
-    const devices: { [key: string]: number } = {}
+    const devicesFiltered: { [key: string]: Set<string> } = {}
     sessions.forEach((session: Session) => {
       const device = session.device_type || 'Desconocido'
-      devices[device] = (devices[device] || 0) + 1
+      if (!devicesFiltered[device]) devicesFiltered[device] = new Set()
+      devicesFiltered[device].add(session.visitor_id)
     })
-    const deviceStats = Object.entries(devices)
-      .map(([device, count]) => ({
+    const uniqueVisitorsFiltered = new Set(sessions.map(s => s.visitor_id)).size
+    const deviceStats = Object.entries(devicesFiltered)
+      .map(([device, visitorSet]) => ({
         name: device,
-        users: count,
-        percentage: ((count / sessions.length) * 100).toFixed(1)
+        users: visitorSet.size,
+        percentage: ((visitorSet.size / uniqueVisitorsFiltered) * 100).toFixed(1)
       }))
       .sort((a, b) => b.users - a.users)
       .slice(0, 5)
     setDevicesData(deviceStats)
 
-    const operatingSystems: { [key: string]: number } = {}
+    const operatingSystemsForFilter: { [key: string]: Set<string> } = {}
     sessions.forEach((session: Session) => {
       const os = session.os || 'Desconocido'
-      operatingSystems[os] = (operatingSystems[os] || 0) + 1
+      if (!operatingSystemsForFilter[os]) operatingSystemsForFilter[os] = new Set()
+      operatingSystemsForFilter[os].add(session.visitor_id)
     })
-    const osStats = Object.entries(operatingSystems)
-      .map(([os, count]) => ({
+    const osStats = Object.entries(operatingSystemsForFilter)
+      .map(([os, visitorSet]) => ({
         name: os,
-        users: count,
-        percentage: ((count / sessions.length) * 100).toFixed(1)
+        users: visitorSet.size,
+        percentage: ((visitorSet.size / uniqueVisitorsInFilter) * 100).toFixed(1)
       }))
       .sort((a, b) => b.users - a.users)
       .slice(0, 5)
