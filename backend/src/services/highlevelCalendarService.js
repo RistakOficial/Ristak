@@ -315,27 +315,33 @@ export async function getBlockedSlots(locationId, startTime, endTime, accessToke
     const data = await response.json();
     logger.info(`[HighLevel Calendar] Blocked slots obtenidos exitosamente`);
 
-    // La API de HighLevel puede devolver diferentes formatos
-    // Normalizar la respuesta a un array consistente
-    const blockedSlots = data.blockedSlots || data.slots || [];
+    // La API de HighLevel devuelve los blocked slots en el campo "events"
+    // (mismo formato que eventos normales)
+    const blockedSlots = data.events || data.blockedSlots || data.slots || [];
 
     // Transformar a formato estándar si es necesario
     const normalizedSlots = blockedSlots.map(slot => {
-      // Si el slot ya tiene el formato correcto, devolverlo tal cual
-      if (slot.date && slot.startTime && slot.endTime) {
-        return slot;
+      // Si el slot ya tiene el formato correcto (date + startTime + endTime separados)
+      if (slot.date && typeof slot.startTime === 'string' && slot.startTime.length === 5) {
+        return {
+          ...slot,
+          id: slot.id, // Incluir ID para poder editar/eliminar
+          reason: slot.reason || slot.title || 'Bloqueado'
+        };
       }
 
-      // Si viene en formato timestamp, convertir
-      const slotDate = new Date(slot.slot || slot.startTime);
-      const slotEndDate = new Date(slot.endTime || slotDate.getTime() + 30 * 60 * 1000); // +30 min por defecto
+      // Si viene en formato ISO completo (del API de HighLevel)
+      // startTime: "2025-10-28T15:00:00.000Z" -> extraer date y time
+      const startDate = new Date(slot.startTime);
+      const endDate = new Date(slot.endTime || startDate.getTime() + 30 * 60 * 1000);
 
       return {
-        date: slotDate.toISOString().split('T')[0], // YYYY-MM-DD
-        startTime: slotDate.toTimeString().slice(0, 5), // HH:mm
-        endTime: slotEndDate.toTimeString().slice(0, 5), // HH:mm
-        reason: slot.reason || slot.title || 'Bloqueado',
-        blockedBy: slot.blockedBy || slot.userId || null
+        id: slot.id, // IMPORTANTE: Incluir ID para editar/eliminar
+        date: startDate.toISOString().split('T')[0], // YYYY-MM-DD
+        startTime: startDate.toISOString().split('T')[1].slice(0, 5), // HH:mm (en UTC)
+        endTime: endDate.toISOString().split('T')[1].slice(0, 5), // HH:mm (en UTC)
+        reason: slot.title || slot.reason || 'Bloqueado',
+        blockedBy: slot.assignedUserId || slot.blockedBy || null
       };
     });
 

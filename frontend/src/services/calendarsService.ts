@@ -118,6 +118,7 @@ export interface FreeSlot {
 }
 
 export interface BlockedSlot {
+  id?: string;         // ID del blocked slot (para editar/eliminar)
   date: string;        // YYYY-MM-DD
   startTime: string;   // HH:mm
   endTime: string;     // HH:mm
