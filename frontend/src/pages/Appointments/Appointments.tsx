@@ -1633,7 +1633,7 @@ export const Appointments: React.FC = () => {
 
                         {/* Blocked slots posicionados */}
                         {(() => {
-                          const dateKey = date.toISOString().split('T')[0];
+                          const dateKey = columnDate.toISOString().split('T')[0];
                           const dayBlockedSlots = blockedSlotsByDate[dateKey] || [];
 
                           return dayBlockedSlots.map((slot, idx) => {
@@ -1672,7 +1672,7 @@ export const Appointments: React.FC = () => {
                         {/* Indicador de hora actual */}
                         {(() => {
                           const now = new Date();
-                          const isToday = date.toDateString() === now.toDateString();
+                          const isToday = columnDate.toDateString() === now.toDateString();
                           if (!isToday) return null;
 
                           const currentHour = now.getHours() + now.getMinutes() / 60;
