@@ -130,21 +130,21 @@ export function TreeFilter({
       })
     }
 
-    // Categoría: Parámetros UTM (UTM Source > UTM Campaign > UTM Medium > UTM Content)
+    // Categoría: Plataformas (utm_source > utm_campaign > utm_medium > utm_content)
     // Guardamos la jerarquía completa en vez de lista plana
     if (availableData.adsHierarchy?.length) {
       tree.push({
         id: 'ads',
-        label: 'Parámetros UTM',
-        icon: Target,
+        label: 'Plataformas',
+        icon: Smartphone,
         // No ponemos children aquí, se renderiza con lógica especial de cascada
       })
     } else if (availableData.ads?.length) {
       // Fallback a la lista plana si no hay jerarquía
       tree.push({
         id: 'ads',
-        label: 'Anuncios',
-        icon: Image,
+        label: 'Plataformas',
+        icon: Smartphone,
         children: availableData.ads.map(a => ({
           id: `ad_${a.name}`,
           label: a.name,

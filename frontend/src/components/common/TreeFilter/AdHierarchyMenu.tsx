@@ -57,10 +57,10 @@ export function AdHierarchyMenu({ adsHierarchy, selectedFilters, onFilterToggle 
 
   return (
     <div className="flex">
-      {/* Panel 1: UTM Source */}
+      {/* Panel 1: utm_source */}
       <div className="w-64 overflow-y-auto relative" style={{ maxHeight: 'calc(100vh - 160px)', borderRight: '1px solid var(--color-border-subtle)' }}>
         <div className="px-3 py-2 mb-1" style={{ borderBottom: '1px solid var(--color-border-subtle)' }}>
-          <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">UTM Source</h3>
+          <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">utm_source</h3>
         </div>
         <div className="py-2">
           {adsHierarchy.map((platform, index) => {
@@ -113,11 +113,11 @@ export function AdHierarchyMenu({ adsHierarchy, selectedFilters, onFilterToggle 
         </div>
       </div>
 
-      {/* Panel 2: UTM Campaign (solo si hay platform hovered) */}
+      {/* Panel 2: utm_campaign (solo si hay platform hovered) */}
       {activePlatform && (
         <div className="w-64 overflow-y-auto relative" style={{ maxHeight: 'calc(100vh - 160px)', borderRight: '1px solid var(--color-border-subtle)' }}>
           <div className="px-3 py-2 mb-1" style={{ borderBottom: '1px solid var(--color-border-subtle)' }}>
-            <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">UTM Campaign</h3>
+            <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">utm_campaign</h3>
           </div>
           <div className="py-2">
             {activePlatform.campaigns.map((campaign, index) => {
@@ -164,11 +164,11 @@ export function AdHierarchyMenu({ adsHierarchy, selectedFilters, onFilterToggle 
         </div>
       )}
 
-      {/* Panel 3: UTM Medium (solo si hay campaign hovered) */}
+      {/* Panel 3: utm_medium (solo si hay campaign hovered) */}
       {activeCampaign && (
         <div className="w-64 overflow-y-auto relative" style={{ maxHeight: 'calc(100vh - 160px)', borderRight: '1px solid var(--color-border-subtle)' }}>
           <div className="px-3 py-2 mb-1" style={{ borderBottom: '1px solid var(--color-border-subtle)' }}>
-            <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">UTM Medium</h3>
+            <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">utm_medium</h3>
           </div>
           <div className="py-2">
             {activeCampaign.adsets.map((adset, index) => {
@@ -215,11 +215,11 @@ export function AdHierarchyMenu({ adsHierarchy, selectedFilters, onFilterToggle 
         </div>
       )}
 
-      {/* Panel 4: UTM Content (solo si hay adset hovered) */}
+      {/* Panel 4: utm_content (solo si hay adset hovered) */}
       {activeAdset && (
         <div className="w-64 overflow-y-auto relative" style={{ maxHeight: 'calc(100vh - 160px)' }}>
           <div className="px-3 py-2 mb-1" style={{ borderBottom: '1px solid var(--color-border-subtle)' }}>
-            <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">UTM Content</h3>
+            <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">utm_content</h3>
           </div>
           <div className="py-2">
             {activeAdset.ads.map((ad, index) => {

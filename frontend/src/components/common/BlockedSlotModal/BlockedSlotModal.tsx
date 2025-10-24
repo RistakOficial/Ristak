@@ -125,6 +125,25 @@ const convertLocalInputToISO = (localInput: string, timeZone: string): string | 
   }
 };
 
+// Presets de bloqueo rápido
+type PresetType = 'custom' | 'full_day' | 'morning' | 'afternoon' | 'this_week' | 'next_week' | 'this_month';
+
+interface BlockingPreset {
+  value: PresetType;
+  label: string;
+  description: string;
+}
+
+const BLOCKING_PRESETS: BlockingPreset[] = [
+  { value: 'custom', label: 'Personalizado', description: 'Elige fechas y horas manualmente' },
+  { value: 'full_day', label: 'Todo el día', description: '9:00 AM - 6:00 PM hoy' },
+  { value: 'morning', label: 'Media mañana', description: '9:00 AM - 1:00 PM hoy' },
+  { value: 'afternoon', label: 'Media tarde', description: '2:00 PM - 6:00 PM hoy' },
+  { value: 'this_week', label: 'Esta semana', description: 'Lunes a viernes (9 AM - 6 PM)' },
+  { value: 'next_week', label: 'Próxima semana', description: 'Lunes a viernes (9 AM - 6 PM)' },
+  { value: 'this_month', label: 'Este mes', description: 'Todos los días laborales restantes' }
+];
+
 export const BlockedSlotModal: React.FC<BlockedSlotModalProps> = ({
   isOpen,
   onClose,
@@ -145,6 +164,7 @@ export const BlockedSlotModal: React.FC<BlockedSlotModalProps> = ({
   const isCreateMode = mode === 'create';
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isClient, setIsClient] = useState(false);
+  const [selectedPreset, setSelectedPreset] = useState<PresetType>('custom');
 
   // Users (team members del calendario)
   const [users, setUsers] = useState<User[]>([]);
@@ -269,6 +289,85 @@ export const BlockedSlotModal: React.FC<BlockedSlotModalProps> = ({
     loadUsers();
   }, [calendar, isOpen, accessToken, locationId, showToast]);
 
+  // Función para calcular fechas según preset
+  const applyPreset = (preset: PresetType) => {
+    if (preset === 'custom') return;
+
+    const now = new Date();
+    let startDate: Date;
+    let endDate: Date;
+
+    switch (preset) {
+      case 'full_day':
+        // Hoy de 9am a 6pm
+        startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 9, 0, 0);
+        endDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 18, 0, 0);
+        break;
+
+      case 'morning':
+        // Hoy de 9am a 1pm
+        startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 9, 0, 0);
+        endDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 13, 0, 0);
+        break;
+
+      case 'afternoon':
+        // Hoy de 2pm a 6pm
+        startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 14, 0, 0);
+        endDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 18, 0, 0);
+        break;
+
+      case 'this_week':
+        // Lunes a viernes de esta semana (9am-6pm)
+        const currentDay = now.getDay(); // 0 = domingo, 1 = lunes, etc.
+        const daysUntilMonday = currentDay === 0 ? 1 : 1 - currentDay; // Si es domingo, ir al lunes siguiente
+        const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() + daysUntilMonday, 9, 0, 0);
+        const friday = new Date(monday);
+        friday.setDate(monday.getDate() + 4);
+        friday.setHours(18, 0, 0);
+        startDate = monday;
+        endDate = friday;
+        break;
+
+      case 'next_week':
+        // Lunes a viernes de la próxima semana
+        const nextMonday = new Date(now);
+        const daysToNextMonday = (7 - now.getDay() + 1) % 7 || 7;
+        nextMonday.setDate(now.getDate() + daysToNextMonday);
+        nextMonday.setHours(9, 0, 0, 0);
+        const nextFriday = new Date(nextMonday);
+        nextFriday.setDate(nextMonday.getDate() + 4);
+        nextFriday.setHours(18, 0, 0);
+        startDate = nextMonday;
+        endDate = nextFriday;
+        break;
+
+      case 'this_month':
+        // Desde hoy hasta el fin de mes (9am-6pm)
+        startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 9, 0, 0);
+        endDate = new Date(now.getFullYear(), now.getMonth() + 1, 0, 18, 0, 0); // Último día del mes
+        break;
+
+      default:
+        return;
+    }
+
+    // Convertir a formato ISO local para los inputs datetime-local
+    const startISO = startDate.toISOString();
+    const endISO = endDate.toISOString();
+
+    setFormData({
+      ...formData,
+      startTime: toLocalInputValue(startISO, formData.timeZone),
+      endTime: toLocalInputValue(endISO, formData.timeZone)
+    });
+  };
+
+  // Manejar cambio de preset
+  const handlePresetChange = (preset: PresetType) => {
+    setSelectedPreset(preset);
+    applyPreset(preset);
+  };
+
   // Inicializar formulario
   useEffect(() => {
     if (isOpen) {
@@ -382,7 +481,7 @@ export const BlockedSlotModal: React.FC<BlockedSlotModalProps> = ({
         isOpen={isOpen}
         onClose={onClose}
         title={isCreateMode ? 'Bloquear horario' : 'Editar horario bloqueado'}
-        size="md"
+        size="xl"
         type="custom"
       >
         <div className={styles.modalContent}>
@@ -401,6 +500,28 @@ export const BlockedSlotModal: React.FC<BlockedSlotModalProps> = ({
               onChange={(e) => setFormData({ ...formData, title: e.target.value })}
             />
           </div>
+
+          {/* Presets de bloqueo rápido */}
+          {isCreateMode && (
+            <div className={styles.field}>
+              <label className={styles.label}>
+                Opciones de bloqueo rápido
+              </label>
+              <div className={styles.presetsGrid}>
+                {BLOCKING_PRESETS.map((preset) => (
+                  <button
+                    key={preset.value}
+                    type="button"
+                    className={`${styles.presetCard} ${selectedPreset === preset.value ? styles.presetCardActive : ''}`}
+                    onClick={() => handlePresetChange(preset.value)}
+                  >
+                    <div className={styles.presetLabel}>{preset.label}</div>
+                    <div className={styles.presetDescription}>{preset.description}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Usuario asignado - Solo mostrar si el calendario tiene team members */}
           {calendar && calendar.teamMembers && calendar.teamMembers.length > 0 && (
@@ -431,28 +552,45 @@ export const BlockedSlotModal: React.FC<BlockedSlotModalProps> = ({
             </div>
           )}
 
-          {/* Fecha y hora de inicio */}
+          {/* Fecha y hora - 2 columnas lado a lado */}
           <div className={styles.field}>
             <label className={styles.label}>
-              Inicio <span className={styles.required}>*</span>
+              Fechas y horario <span className={styles.required}>*</span>
             </label>
-            <DateTimePicker
-              value={formData.startTime}
-              onChange={(value) => setFormData({ ...formData, startTime: value })}
-              placeholder="Selecciona fecha y hora de inicio"
-            />
-          </div>
+            <div className={styles.fieldRow}>
+              {/* Fecha y hora de inicio */}
+              <div className={styles.field}>
+                <DateTimePicker
+                  label="Inicio"
+                  value={formData.startTime}
+                  onChange={(value) => {
+                    setFormData({ ...formData, startTime: value });
+                    // Si cambia manualmente, volver a "Personalizado"
+                    if (selectedPreset !== 'custom') {
+                      setSelectedPreset('custom');
+                    }
+                  }}
+                  placeholder="Selecciona fecha y hora de inicio"
+                />
+              </div>
 
-          {/* Fecha y hora de fin */}
-          <div className={styles.field}>
-            <label className={styles.label}>
-              Fin <span className={styles.required}>*</span>
-            </label>
-            <DateTimePicker
-              value={formData.endTime}
-              onChange={(value) => setFormData({ ...formData, endTime: value })}
-              placeholder="Selecciona fecha y hora de fin"
-            />
+              {/* Fecha y hora de fin */}
+              <div className={styles.field}>
+                <DateTimePicker
+                  label="Fin"
+                  value={formData.endTime}
+                  onChange={(value) => {
+                    setFormData({ ...formData, endTime: value });
+                    // Si cambia manualmente, volver a "Personalizado"
+                    if (selectedPreset !== 'custom') {
+                      setSelectedPreset('custom');
+                    }
+                  }}
+                  placeholder="Selecciona fecha y hora de fin"
+                  minDate={formData.startTime}
+                />
+              </div>
+            </div>
           </div>
         </div>
 
