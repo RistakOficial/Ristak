@@ -190,12 +190,24 @@ export async function getBlockedSlots(req, res) {
       });
     }
 
+    // Obtener el calendario completo para extraer teamMembers
+    let calendar = null;
+    if (calendarId) {
+      try {
+        const calendarData = await calendarService.getCalendar(calendarId, accessToken);
+        calendar = calendarData.calendar || calendarData; // Normalizar respuesta
+      } catch (error) {
+        logger.warn(`[Calendars Controller] No se pudo obtener calendario ${calendarId}: ${error.message}`);
+      }
+    }
+
     const blockedSlots = await calendarService.getBlockedSlots(
       locationId,
       parseInt(startTime, 10),
       parseInt(endTime, 10),
       accessToken,
-      calendarId // Pasar el calendarId al servicio
+      calendarId,
+      calendar // Pasar el objeto calendario completo con teamMembers
     );
 
     res.json({
