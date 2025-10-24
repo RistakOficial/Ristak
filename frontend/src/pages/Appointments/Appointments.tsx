@@ -434,18 +434,6 @@ export const Appointments: React.FC = () => {
     }
   }, [viewMode, currentDate]);
 
-  // Manejar mouseUp global para finalizar selección de tiempo
-  useEffect(() => {
-    if (isSelecting) {
-      const handleGlobalMouseUp = () => {
-        handleTimeSelectionEnd();
-      };
-
-      window.addEventListener('mouseup', handleGlobalMouseUp);
-      return () => window.removeEventListener('mouseup', handleGlobalMouseUp);
-    }
-  }, [isSelecting, handleTimeSelectionEnd]);
-
   // Eventos agrupados por fecha para reutilizar en todas las vistas
   const eventsByDate = useMemo(() => calendarsService.groupEventsByDate(events), [events]);
 
@@ -990,6 +978,18 @@ export const Appointments: React.FC = () => {
     });
     setIsCreateModalOpen(true);
   }, [isSelecting, selectionStart, selectionEnd, selectedCalendar]);
+
+  // useEffect para manejar mouseUp global (finalizar selección de tiempo)
+  useEffect(() => {
+    if (isSelecting) {
+      const handleGlobalMouseUp = () => {
+        handleTimeSelectionEnd();
+      };
+
+      window.addEventListener('mouseup', handleGlobalMouseUp);
+      return () => window.removeEventListener('mouseup', handleGlobalMouseUp);
+    }
+  }, [isSelecting, handleTimeSelectionEnd]);
 
   // Doble click en hora específica (vistas semana/día)
   const handleTimeDoubleClick = (date: Date) => (e: React.MouseEvent<HTMLDivElement>) => {
