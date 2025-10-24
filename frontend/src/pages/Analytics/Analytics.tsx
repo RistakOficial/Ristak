@@ -909,6 +909,20 @@ const Analytics: React.FC = () => {
       change: metrics.trends?.uniqueVisitors || 0,
       trend: getTrend(metrics.trends?.uniqueVisitors || 0),
       icon: Users
+    },
+    {
+      label: 'Registros',
+      value: String(metrics.registros || 0),
+      change: metrics.trends?.registros || 0,
+      trend: getTrend(metrics.trends?.registros || 0),
+      icon: UserCheck
+    },
+    {
+      label: 'Conversión',
+      value: `${(metrics.conversionRate || 0).toFixed(1)}%`,
+      change: metrics.trends?.conversionRate || 0,
+      trend: getTrend(metrics.trends?.conversionRate || 0),
+      icon: Target
     }
   ]
 
