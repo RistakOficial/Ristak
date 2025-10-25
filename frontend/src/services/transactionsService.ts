@@ -33,12 +33,13 @@ export interface TransactionSummary {
 }
 
 export const transactionsService = {
-  async getTransactions(startDate?: string, endDate?: string, sync?: boolean): Promise<Transaction[]> {
+  async getTransactions(startDate?: string, endDate?: string, forceSync?: boolean): Promise<Transaction[]> {
     try {
       const params: Record<string, string> = {}
       if (startDate) params.startDate = startDate
       if (endDate) params.endDate = endDate
-      if (sync) params.sync = 'true'
+      // Forzar sincronización cuando se especifica (después de crear invoice)
+      if (forceSync) params.sync = 'true'
 
       const data = await apiClient.get<Transaction[]>('/transactions', {
         params

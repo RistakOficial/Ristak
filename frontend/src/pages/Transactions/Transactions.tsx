@@ -62,7 +62,7 @@ export const Transactions: React.FC = () => {
     setIsClient(true)
   }, [])
 
-  const fetchData = async () => {
+  const fetchData = async (forceSync = false) => {
     setLoading(true)
     try {
       let startDate: string | undefined
@@ -79,7 +79,7 @@ export const Transactions: React.FC = () => {
       // Si viewMode === 'all', no enviamos fechas para obtener TODOS los pagos
 
       const [transactionsData, summaryData] = await Promise.all([
-        transactionsService.getTransactions(startDate, endDate),
+        transactionsService.getTransactions(startDate, endDate, forceSync),
         transactionsService.getSummary(startDate, endDate)
       ])
 
@@ -209,14 +209,14 @@ export const Transactions: React.FC = () => {
 
   const handleSendPayment = async (id: string, sendMethod: 'email' | 'sms' | 'both' = 'email') => {
     try {
-      // Buscar el transaction para obtener el ghl_invoice_id
+      // Buscar el transaction para obtener el invoiceId
       const transaction = transactions.find(t => t.id === id)
-      if (!transaction || !transaction.ghl_invoice_id) {
+      if (!transaction || !transaction.invoiceId) {
         showToast('error', 'Error', 'No se pudo encontrar el invoice para enviar')
         return
       }
 
-      await highLevelService.sendInvoice(transaction.ghl_invoice_id, sendMethod)
+      await highLevelService.sendInvoice(transaction.invoiceId, sendMethod)
 
       let successMessage = 'Pago enviado al cliente correctamente'
       if (sendMethod === 'email') {
@@ -715,7 +715,8 @@ export const Transactions: React.FC = () => {
         onClose={() => setShowRecordPaymentModal(false)}
         onSuccess={() => {
           setShowRecordPaymentModal(false)
-          fetchData()
+          // Forzar sincronización después de crear un invoice para que aparezca inmediatamente
+          fetchData(true)
         }}
       />
       </div>
