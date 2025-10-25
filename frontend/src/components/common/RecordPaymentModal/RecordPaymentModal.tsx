@@ -563,11 +563,14 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     }
   }
 
-  const handleConfirm = async () => {
+  const handleConfirm = async (customSendMethod?: 'email' | 'sms' | 'both') => {
     if (!invoiceSummary || !invoicePayload) {
       showToast('error', 'No se pudo procesar el pago. Intenta nuevamente.')
       return
     }
+
+    // Usar customSendMethod si se proporciona, de lo contrario usar el estado
+    const effectiveSendMethod = customSendMethod || sendMethod
 
     setLoading(true)
     setStep('processing')
@@ -598,14 +601,14 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
       switch (paymentOption) {
         case 'link': {
-          await highLevelService.sendInvoice(invoiceId, sendMethod)
+          await highLevelService.sendInvoice(invoiceId, effectiveSendMethod)
 
           let successMessage = 'Enlace de pago enviado al cliente'
-          if (sendMethod === 'email') {
+          if (effectiveSendMethod === 'email') {
             successMessage = 'Enlace enviado por email correctamente'
-          } else if (sendMethod === 'sms') {
+          } else if (effectiveSendMethod === 'sms') {
             successMessage = 'Enlace enviado por WhatsApp correctamente'
-          } else if (sendMethod === 'both') {
+          } else if (effectiveSendMethod === 'both') {
             successMessage = 'Enlace enviado por email y WhatsApp correctamente'
           }
 
@@ -1173,10 +1176,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
             <div style={{ display: 'flex', gap: '8px' }}>
               <Button
                 variant="outline"
-                onClick={() => {
-                  setSendMethod('email')
-                  handleConfirm()
-                }}
+                onClick={() => handleConfirm('email')}
                 disabled={loading}
               >
                 {loading && sendMethod === 'email' ? (
@@ -1193,10 +1193,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
               </Button>
               <Button
                 variant="outline"
-                onClick={() => {
-                  setSendMethod('sms')
-                  handleConfirm()
-                }}
+                onClick={() => handleConfirm('sms')}
                 disabled={loading}
               >
                 {loading && sendMethod === 'sms' ? (
@@ -1213,10 +1210,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
               </Button>
               <Button
                 variant="primary"
-                onClick={() => {
-                  setSendMethod('both')
-                  handleConfirm()
-                }}
+                onClick={() => handleConfirm('both')}
                 disabled={loading}
               >
                 {loading && sendMethod === 'both' ? (
