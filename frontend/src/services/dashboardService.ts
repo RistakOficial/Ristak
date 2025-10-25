@@ -1,5 +1,5 @@
 // Servicio para el Dashboard principal
-import { formatDateToISO } from '@/utils/format'
+import { formatDateToISO, formatEndDateToISO } from '@/utils/format'
 
 // Si no hay VITE_API_URL, usa rutas relativas
 const API_URL = import.meta.env.VITE_API_URL || '';
@@ -35,7 +35,7 @@ class DashboardService {
     try {
       const queryParams = new URLSearchParams({
         startDate: formatDateToISO(params.start),
-        endDate: formatDateToISO(params.end)
+        endDate: formatEndDateToISO(params.end)
       });
 
       const response = await fetch(`${API_URL}/api/dashboard/metrics?${queryParams}`);
@@ -59,7 +59,7 @@ class DashboardService {
     try {
       const queryParams = new URLSearchParams({
         startDate: formatDateToISO(params.start),
-        endDate: formatDateToISO(params.end)
+        endDate: formatEndDateToISO(params.end)
       });
 
       // Usar el nuevo endpoint de dashboard que muestra TODOS los ingresos y gastos
@@ -93,7 +93,7 @@ class DashboardService {
     try {
       const queryParams = new URLSearchParams({
         startDate: formatDateToISO(params.start),
-        endDate: formatDateToISO(params.end)
+        endDate: formatEndDateToISO(params.end)
       });
 
       const response = await fetch(`${API_URL}/api/dashboard/roas?${queryParams}`);
@@ -117,7 +117,7 @@ class DashboardService {
     try {
       const queryParams = new URLSearchParams({
         startDate: formatDateToISO(params.start),
-        endDate: formatDateToISO(params.end),
+        endDate: formatEndDateToISO(params.end),
         groupBy: params.groupBy || 'day'
       });
 
@@ -142,7 +142,7 @@ class DashboardService {
     try {
       const queryParams = new URLSearchParams({
         startDate: formatDateToISO(params.start),
-        endDate: formatDateToISO(params.end),
+        endDate: formatEndDateToISO(params.end),
         groupBy: params.groupBy || 'day'
       });
 
@@ -167,7 +167,7 @@ class DashboardService {
     try {
       const queryParams = new URLSearchParams({
         startDate: formatDateToISO(params.start),
-        endDate: formatDateToISO(params.end),
+        endDate: formatEndDateToISO(params.end),
         groupBy: params.groupBy || 'day'
       });
 
@@ -192,7 +192,7 @@ class DashboardService {
     try {
       const queryParams = new URLSearchParams({
         startDate: formatDateToISO(params.start),
-        endDate: formatDateToISO(params.end),
+        endDate: formatEndDateToISO(params.end),
         groupBy: params.groupBy || 'day'
       });
 
@@ -217,7 +217,7 @@ class DashboardService {
     try {
       const queryParams = new URLSearchParams({
         startDate: formatDateToISO(params.start),
-        endDate: formatDateToISO(params.end),
+        endDate: formatEndDateToISO(params.end),
         groupBy: params.groupBy || 'day'
       });
 
@@ -241,7 +241,7 @@ class DashboardService {
     try {
       const queryParams = new URLSearchParams({
         startDate: formatDateToISO(params.start),
-        endDate: formatDateToISO(params.end)
+        endDate: formatEndDateToISO(params.end)
       });
 
       const response = await fetch(`${API_URL}/api/dashboard/traffic-sources?${queryParams}`);
@@ -266,7 +266,7 @@ class DashboardService {
     try {
       const queryParams = new URLSearchParams({
         startDate: formatDateToISO(params.start),
-        endDate: formatDateToISO(params.end),
+        endDate: formatEndDateToISO(params.end),
         scope: params.scope || 'all'
       });
 
