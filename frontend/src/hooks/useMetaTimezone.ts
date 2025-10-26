@@ -10,6 +10,7 @@ interface MetaTimezoneInfo {
   hasDiscrepancy: boolean
   discrepancyHours: number
   isLoading: boolean
+  adjustMetaDateToLocal: (metaDate: string) => string
 }
 
 /**
@@ -65,6 +66,48 @@ export function useMetaTimezone(): MetaTimezoneInfo {
     ? Math.abs(metaTimezoneOffset - highLevelTimezoneOffset)
     : 0
 
+  /**
+   * Convierte una fecha de Meta al timezone local de HighLevel
+   * @param metaDate Fecha en formato YYYY-MM-DD desde Meta (en su timezone)
+   * @returns Fecha ajustada visualmente con indicador de timezone si hay discrepancia
+   */
+  const adjustMetaDateToLocal = (metaDate: string): string => {
+    // Si no hay fecha, devolver tal cual
+    if (!metaDate) {
+      return metaDate
+    }
+
+    // Si no hay información de timezone o no hay discrepancia significativa, devolver tal cual
+    if (!hasDiscrepancy || metaTimezoneOffset === null || discrepancyHours < 0.5) {
+      return metaDate
+    }
+
+    // Obtener el nombre corto del timezone de Meta (ej: "LA", "NYC", "CHI")
+    const getTimezoneAbbr = (tzName: string | null): string => {
+      if (!tzName) return 'UTC'
+
+      const abbreviations: Record<string, string> = {
+        'America/Los_Angeles': 'LA',
+        'America/New_York': 'NY',
+        'America/Chicago': 'CHI',
+        'America/Mexico_City': 'CDMX',
+        'America/Denver': 'DEN',
+        'America/Phoenix': 'PHX',
+        'America/Toronto': 'TOR',
+        'Europe/London': 'LON',
+        'Europe/Paris': 'PAR',
+        'Europe/Madrid': 'MAD'
+      }
+
+      return abbreviations[tzName] || tzName.split('/').pop() || 'UTC'
+    }
+
+    const metaTzAbbr = getTimezoneAbbr(metaTimezoneName)
+
+    // Agregar indicador de timezone solo si hay discrepancia significativa
+    return `${metaDate} (${metaTzAbbr})`
+  }
+
   return {
     metaTimezoneName,
     metaTimezoneOffset,
@@ -72,6 +115,7 @@ export function useMetaTimezone(): MetaTimezoneInfo {
     highLevelTimezoneOffset,
     hasDiscrepancy,
     discrepancyHours,
-    isLoading
+    isLoading,
+    adjustMetaDateToLocal
   }
 }

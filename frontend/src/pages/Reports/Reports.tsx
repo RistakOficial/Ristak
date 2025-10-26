@@ -23,7 +23,7 @@ import {
   type ReportRange
 } from '@/services/reportsService'
 import { formatCurrency, formatNumber, formatRoas, formatDate, formatDateToISO, parseLocalDateString } from '@/utils/format'
-import { useAppConfig, useChartHover, useIsRenderDomain } from '@/hooks'
+import { useAppConfig, useChartHover, useIsRenderDomain, useMetaTimezone } from '@/hooks'
 import { ChartTooltip } from '@/components/common/ChartTooltip/ChartTooltip'
 import styles from './Reports.module.css'
 import {
@@ -751,7 +751,12 @@ const MetricsGrid: React.FC<MetricsGridProps> = ({ metrics, loading, reportType,
     const dateB = new Date(b.date).getTime()
     return dateA - dateB // Orden ascendente
   }).map(m => ({
-    label: formatPeriodLabel(m.date, viewType, { includeYear: false }),
+    // Ajustar fecha con timezone de Meta si hay discrepancia
+    label: formatPeriodLabel(
+      timezoneInfo.adjustMetaDateToLocal ? timezoneInfo.adjustMetaDateToLocal(m.date) : m.date,
+      viewType,
+      { includeYear: false }
+    ),
     clicks: m.clicks,
     visitors: m.visitors,
     leads: m.leads,
@@ -922,6 +927,9 @@ export const Reports: React.FC = () => {
   const { dateRange, setDateRange } = useDateRange()
   const { showToast } = useNotification()
   const { labels } = useLabels()
+
+  // Detectar discrepancia de timezone con Meta
+  const timezoneInfo = useMetaTimezone()
 
   // Detectar si estamos en dominio .onrender.com
   const isRenderDomain = useIsRenderDomain()
@@ -1101,7 +1109,11 @@ export const Reports: React.FC = () => {
       return {
         id: `${item.date}-${index}`,
         date: item.date,
-        displayDate: formatPeriodLabel(item.date, viewType, { includeYear: includeYearForTable }),
+        displayDate: formatPeriodLabel(
+          timezoneInfo.adjustMetaDateToLocal ? timezoneInfo.adjustMetaDateToLocal(item.date) : item.date,
+          viewType,
+          { includeYear: includeYearForTable }
+        ),
         roas: item.roas,
         profit,
         revenue: item.revenue,

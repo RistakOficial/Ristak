@@ -231,7 +231,12 @@ export const Campaigns: React.FC = () => {
       // Formatear fechas inteligentemente para el gráfico
       const formattedSpendData = spendData.map((item, index) => ({
         ...item,
-        label: formatChartDate(item.label, rangeInDays, index > 0 ? spendData[index - 1].label : undefined)
+        // Primero ajustar la fecha con timezone de Meta, luego formatear para el gráfico
+        label: formatChartDate(
+          timezoneInfo.adjustMetaDateToLocal ? timezoneInfo.adjustMetaDateToLocal(item.label) : item.label,
+          rangeInDays,
+          index > 0 ? (timezoneInfo.adjustMetaDateToLocal ? timezoneInfo.adjustMetaDateToLocal(spendData[index - 1].label) : spendData[index - 1].label) : undefined
+        )
       }))
 
       // Set data for revenue chart (default)
@@ -242,13 +247,21 @@ export const Campaigns: React.FC = () => {
 
       // Process funnel metrics into the format needed for each chart
       const formattedLeadsData = funnelMetricsRaw.map((item, index) => ({
-        label: formatChartDate(item.label, rangeInDays, index > 0 ? funnelMetricsRaw[index - 1].label : undefined),
+        label: formatChartDate(
+          timezoneInfo.adjustMetaDateToLocal ? timezoneInfo.adjustMetaDateToLocal(item.label) : item.label,
+          rangeInDays,
+          index > 0 ? (timezoneInfo.adjustMetaDateToLocal ? timezoneInfo.adjustMetaDateToLocal(funnelMetricsRaw[index - 1].label) : funnelMetricsRaw[index - 1].label) : undefined
+        ),
         value: item.leads,          // Leads
         value2: item.appointments   // Citas
       }))
 
       const formattedAppointmentsData = funnelMetricsRaw.map((item, index) => ({
-        label: formatChartDate(item.label, rangeInDays, index > 0 ? funnelMetricsRaw[index - 1].label : undefined),
+        label: formatChartDate(
+          timezoneInfo.adjustMetaDateToLocal ? timezoneInfo.adjustMetaDateToLocal(item.label) : item.label,
+          rangeInDays,
+          index > 0 ? (timezoneInfo.adjustMetaDateToLocal ? timezoneInfo.adjustMetaDateToLocal(funnelMetricsRaw[index - 1].label) : funnelMetricsRaw[index - 1].label) : undefined
+        ),
         value: item.appointments,  // Citas
         value2: item.sales         // Ventas
       }))
@@ -256,7 +269,11 @@ export const Campaigns: React.FC = () => {
 
       if (analyticsEnabled) {
         const formattedVisitorsData = funnelMetricsRaw.map((item, index) => ({
-          label: formatChartDate(item.label, rangeInDays, index > 0 ? funnelMetricsRaw[index - 1].label : undefined),
+          label: formatChartDate(
+            timezoneInfo.adjustMetaDateToLocal ? timezoneInfo.adjustMetaDateToLocal(item.label) : item.label,
+            rangeInDays,
+            index > 0 ? (timezoneInfo.adjustMetaDateToLocal ? timezoneInfo.adjustMetaDateToLocal(funnelMetricsRaw[index - 1].label) : funnelMetricsRaw[index - 1].label) : undefined
+          ),
           value: item.visitors,  // Visitantes
           value2: item.leads     // Leads
         }))
