@@ -1,0 +1,158 @@
+.content {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  padding: 28px 32px;
+}
+
+.description {
+  font-size: 14px;
+  color: var(--color-text-secondary);
+  line-height: 1.5;
+}
+
+.linkContainer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.inputWrapper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.linkInput {
+  flex: 1;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  font-size: 13px;
+  font-family: monospace;
+  color: var(--color-text-primary);
+  background: var(--color-surface);
+  cursor: text;
+  transition: all 0.15s ease;
+}
+
+.linkInput:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  background: var(--color-background);
+}
+
+.linkInput::selection {
+  background: var(--color-primary-alpha);
+}
+
+.copyButton {
+  flex-shrink: 0;
+  min-width: 40px;
+  padding: 0 12px;
+}
+
+.checkIcon {
+  color: var(--color-status-success);
+}
+
+.hint {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  margin: 0;
+}
+
+.infoBox {
+  padding: 16px;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background: var(--color-background);
+}
+
+body.dark .infoBox {
+  background: rgba(148, 163, 184, 0.04);
+  border-color: rgba(148, 163, 184, 0.18);
+}
+
+.infoTitle {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  margin: 0 0 12px 0;
+}
+
+.infoList {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  list-style: disc;
+  list-style-position: inside;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.infoList li {
+  line-height: 1.4;
+}
+
+.footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 24px 32px;
+  border-top: 1px solid var(--color-border);
+}
+
+.primaryActions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .content {
+    padding: 20px 24px;
+  }
+
+  .footer {
+    padding: 18px 24px;
+    flex-direction: column-reverse;
+  }
+
+  .primaryActions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+}
+
+@media (max-width: 480px) {
+  .content {
+    padding: 16px 20px;
+  }
+
+  .footer {
+    padding: 14px 20px;
+  }
+
+  .inputWrapper {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .copyButton {
+    width: 100%;
+  }
+
+  .primaryActions {
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .primaryActions button {
+    width: 100%;
+  }
+}

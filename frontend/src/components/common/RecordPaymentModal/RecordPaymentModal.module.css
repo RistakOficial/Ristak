@@ -487,6 +487,12 @@ body.dark .summaryBadge,
   background: rgba(var(--color-primary-rgb), 0.12);
 }
 
+/* Selector de método de envío integrado */
+.sendMethodSelector {
+  margin-top: 12px;
+  width: 100%;
+}
+
 .optionInfo {
   display: flex;
   align-items: center;

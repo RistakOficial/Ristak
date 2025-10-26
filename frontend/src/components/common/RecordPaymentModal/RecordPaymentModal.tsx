@@ -3,6 +3,7 @@ import { Modal } from '../Modal'
 import { Button } from '../Button'
 import { TabList } from '../TabList'
 import { CustomSelect } from '../CustomSelect'
+import { PaymentLinkDialog } from '../PaymentLinkDialog'
 import {
   Search,
   Loader2,
@@ -33,7 +34,7 @@ const normalizeAmount = (value: string | number): number => {
   return Math.round(parsed * 100) / 100
 }
 
-type PaymentOption = 'link' | 'saved' | 'manual'
+type PaymentOption = 'generate' | 'send' | 'saved' | 'manual'
 
 interface RecordPaymentModalProps {
   isOpen: boolean
@@ -152,14 +153,16 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   // Payment options
   const [invoicePayload, setInvoicePayload] = useState<Record<string, any> | null>(null)
   const [invoiceSummary, setInvoiceSummary] = useState<InvoiceSummary | null>(null)
-  const [paymentOption, setPaymentOption] = useState<PaymentOption>('link')
-  const [sendMethod, setSendMethod] = useState<'email' | 'sms' | 'both'>('email')
+  const [paymentOption, setPaymentOption] = useState<PaymentOption>('generate')
+  const [sendMethod, setSendMethod] = useState<'email' | 'sms' | 'both'>('sms')
   const [checkingCards, setCheckingCards] = useState(false)
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([])
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<string | null>(null)
   const [customerId, setCustomerId] = useState<string | null>(null)
   const [manualPaymentData, setManualPaymentData] = useState<ManualPaymentData>(defaultManualPaymentData)
   const [transferInfoUrl, setTransferInfoUrl] = useState<string | null>(null)
+  const [showPaymentLinkDialog, setShowPaymentLinkDialog] = useState(false)
+  const [paymentLink, setPaymentLink] = useState<string>('')
 
   // Stripe connection status
   const [stripeConnected, setStripeConnected] = useState(false)
@@ -187,12 +190,15 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     setCustomAmount('')
     setInvoicePayload(null)
     setInvoiceSummary(null)
-    setPaymentOption('link')
+    setPaymentOption('generate')
+    setSendMethod('sms')
     setCheckingCards(false)
     setPaymentMethods([])
     setSelectedPaymentMethod(null)
     setCustomerId(null)
     setManualPaymentData(defaultManualPaymentData())
+    setShowPaymentLinkDialog(false)
+    setPaymentLink('')
   }
 
   const loadConfig = async () => {
@@ -600,15 +606,40 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       }
 
       switch (paymentOption) {
-        case 'link': {
-          await highLevelService.sendInvoice(invoiceId, effectiveSendMethod)
+        case 'generate': {
+          // Generar enlace sin enviar
+          const response = await highLevelService.sendInvoice(invoiceId, 'none')
+
+          // Construir el enlace de pago
+          const paymentLink = `https://services.leadconnectorhq.com/payment/${invoiceId}`
+          setPaymentLink(paymentLink)
+          setShowPaymentLinkDialog(true)
+
+          // No cerrar el modal principal, solo mostrar el dialog del enlace
+          setStep('form')
+          return // No ejecutar onSuccess ni cerrar el modal
+        }
+
+        case 'send': {
+          // Validar que tenga teléfono si se va a enviar por WhatsApp
+          if ((sendMethod === 'sms' || sendMethod === 'both') && !selectedContact?.phone) {
+            throw new Error('El contacto no tiene teléfono registrado. No se puede enviar por WhatsApp.')
+          }
+
+          // Validar que tenga email si se va a enviar por email
+          if ((sendMethod === 'email' || sendMethod === 'both') && !selectedContact?.email) {
+            throw new Error('El contacto no tiene email registrado. No se puede enviar por correo.')
+          }
+
+          // Enviar enlace por el método seleccionado
+          await highLevelService.sendInvoice(invoiceId, sendMethod)
 
           let successMessage = 'Enlace de pago enviado al cliente'
-          if (effectiveSendMethod === 'email') {
+          if (sendMethod === 'email') {
             successMessage = 'Enlace enviado por email correctamente'
-          } else if (effectiveSendMethod === 'sms') {
+          } else if (sendMethod === 'sms') {
             successMessage = 'Enlace enviado por WhatsApp correctamente'
-          } else if (effectiveSendMethod === 'both') {
+          } else if (sendMethod === 'both') {
             successMessage = 'Enlace enviado por email y WhatsApp correctamente'
           }
 
@@ -958,86 +989,93 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           )}
         </div>
 
-        {stripeConnected && (
-          <>
         <div className={styles.paymentOptions}>
+          {/* Opción 1: Generar enlace de pago */}
           <button
             type="button"
-            className={`${styles.optionButton} ${paymentOption === 'link' ? styles.optionButtonActive : ''}`}
-            onClick={() => setPaymentOption('link')}
+            className={`${styles.optionButton} ${paymentOption === 'generate' ? styles.optionButtonActive : ''}`}
+            onClick={() => setPaymentOption('generate')}
           >
             <div className={styles.optionInfo}>
               <div className={styles.optionIcon}>
                 <LinkIcon size={18} />
               </div>
               <div>
-                <p>Enviar enlace de pago</p>
-                <span>El cliente recibirá un enlace directo para pagar</span>
+                <p>Generar enlace de pago</p>
+                <span>Copia el enlace para enviarlo tú mismo</span>
               </div>
             </div>
-            {paymentOption === 'link' && <Check size={18} />}
+            {paymentOption === 'generate' && <Check size={18} />}
           </button>
 
-          {stripeConnected && (
-            <>
-              <button
-                type="button"
-                className={`${styles.optionButton} ${paymentOption === 'saved' ? styles.optionButtonActive : ''}`}
-                onClick={() => {
-                  setPaymentOption('saved')
-                  loadPaymentMethods(invoiceSummary.contactId)
-                }}
-              >
-                <div className={styles.optionInfo}>
-                  <div className={styles.optionIcon}>
-                    <CreditCard size={18} />
-                  </div>
-                  <div>
-                    <p>Cobrar tarjeta guardada</p>
-                    <span>
-                      {checkingCards
-                        ? 'Verificando tarjetas...'
-                        : paymentMethods.length > 0
-                          ? `${paymentMethods.length} tarjeta${paymentMethods.length > 1 ? 's' : ''} disponible${paymentMethods.length > 1 ? 's' : ''}`
-                          : 'Comprueba si el cliente tiene tarjetas guardadas'}
-                    </span>
-                  </div>
-                </div>
-                {paymentOption === 'saved' && <Check size={18} />}
-              </button>
-
-              {paymentOption === 'saved' && (
-                <div className={styles.cardList}>
-                  {checkingCards ? (
-                    <div className={styles.cardLoading}>
-                      <Loader2 size={16} className={styles.processingIcon} />
-                      <span>Buscando tarjetas guardadas...</span>
-                    </div>
-                  ) : paymentMethods.length > 0 ? (
-                    paymentMethods.map((pm) => (
-                      <button
-                        key={pm.id}
-                        type="button"
-                        className={`${styles.cardButton} ${selectedPaymentMethod === pm.id ? styles.cardButtonActive : ''}`}
-                        onClick={() => setSelectedPaymentMethod(pm.id)}
-                      >
-                        <div>
-                          <p>{pm.brand?.toUpperCase()} •••• {pm.last4}</p>
-                          <span>Vence {pm.expMonth}/{pm.expYear}</span>
-                        </div>
-                        {selectedPaymentMethod === pm.id && <Check size={16} />}
-                      </button>
-                    ))
+          {/* Opción 2: Enviar enlace de pago por... (con selector integrado) */}
+          <div
+            className={`${styles.optionButton} ${paymentOption === 'send' ? styles.optionButtonActive : ''}`}
+            onClick={() => setPaymentOption('send')}
+          >
+            <div className={styles.optionInfo}>
+              <div className={styles.optionIcon}>
+                <Send size={18} />
+              </div>
+              <div>
+                <p>Enviar enlace de pago por</p>
+                <span>
+                  {(!selectedContact?.email && !selectedContact?.phone) ? (
+                    <span style={{ color: 'var(--color-status-error)' }}>⚠️ Sin email ni teléfono</span>
                   ) : (
-                    <div className={styles.cardEmpty}>
-                      Este cliente no tiene tarjetas guardadas en Stripe.
-                    </div>
+                    'Envía automáticamente al cliente'
                   )}
+                </span>
+              </div>
+            </div>
+            {paymentOption === 'send' && <Check size={18} />}
+
+            {/* Selector integrado en el mismo botón */}
+            {paymentOption === 'send' && (
+              <div className={styles.sendMethodSelector} onClick={(e) => e.stopPropagation()}>
+                <CustomSelect
+                  value={sendMethod}
+                  onChange={(value) => setSendMethod(value as 'email' | 'sms' | 'both')}
+                  options={[
+                    { value: 'sms', label: 'WhatsApp', icon: <MessageCircle size={14} /> },
+                    { value: 'email', label: 'Email', icon: <Mail size={14} /> },
+                    { value: 'both', label: 'Email y WhatsApp', icon: <Send size={14} /> }
+                  ]}
+                />
+              </div>
+            )}
+          </div>
+
+          {/* Opción 3: Cobrar tarjeta guardada */}
+          {stripeConnected && (
+            <button
+              type="button"
+              className={`${styles.optionButton} ${paymentOption === 'saved' ? styles.optionButtonActive : ''}`}
+              onClick={() => {
+                setPaymentOption('saved')
+                loadPaymentMethods(invoiceSummary.contactId)
+              }}
+            >
+              <div className={styles.optionInfo}>
+                <div className={styles.optionIcon}>
+                  <CreditCard size={18} />
                 </div>
-              )}
-            </>
+                <div>
+                  <p>Cobrar tarjeta guardada</p>
+                  <span>
+                    {checkingCards
+                      ? 'Verificando tarjetas...'
+                      : paymentMethods.length > 0
+                        ? `${paymentMethods.length} tarjeta${paymentMethods.length > 1 ? 's' : ''} disponible${paymentMethods.length > 1 ? 's' : ''}`
+                        : 'Comprueba si el cliente tiene tarjetas guardadas'}
+                  </span>
+                </div>
+              </div>
+              {paymentOption === 'saved' && <Check size={18} />}
+            </button>
           )}
 
+          {/* Opción 4: Registrar pago manual */}
           <button
             type="button"
             className={`${styles.optionButton} ${paymentOption === 'manual' ? styles.optionButtonActive : ''}`}
@@ -1055,7 +1093,36 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
             {paymentOption === 'manual' && <Check size={18} />}
           </button>
         </div>
-          </>
+
+        {/* Mostrar lista de tarjetas cuando se selecciona 'saved' */}
+        {paymentOption === 'saved' && (
+          <div className={styles.cardList}>
+            {checkingCards ? (
+              <div className={styles.cardLoading}>
+                <Loader2 size={16} className={styles.processingIcon} />
+                <span>Buscando tarjetas guardadas...</span>
+              </div>
+            ) : paymentMethods.length > 0 ? (
+              paymentMethods.map((pm) => (
+                <button
+                  key={pm.id}
+                  type="button"
+                  className={`${styles.cardButton} ${selectedPaymentMethod === pm.id ? styles.cardButtonActive : ''}`}
+                  onClick={() => setSelectedPaymentMethod(pm.id)}
+                >
+                  <div>
+                    <p>{pm.brand?.toUpperCase()} •••• {pm.last4}</p>
+                    <span>Vence {pm.expMonth}/{pm.expYear}</span>
+                  </div>
+                  {selectedPaymentMethod === pm.id && <Check size={16} />}
+                </button>
+              ))
+            ) : (
+              <div className={styles.cardEmpty}>
+                Este cliente no tiene tarjetas guardadas en Stripe.
+              </div>
+            )}
+          </div>
         )}
 
         {paymentOption === 'manual' && (
@@ -1163,7 +1230,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
               setStep('form')
               setInvoicePayload(null)
               setInvoiceSummary(null)
-              setPaymentOption('link')
+              setPaymentOption('generate')
               setPaymentMethods([])
               setSelectedPaymentMethod(null)
               setCustomerId(null)
@@ -1172,79 +1239,25 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           >
             Regresar
           </Button>
-          {paymentOption === 'link' ? (
-            <div style={{ display: 'flex', gap: '8px' }}>
-              <Button
-                variant="outline"
-                onClick={() => handleConfirm('email')}
-                disabled={loading}
-              >
-                {loading && sendMethod === 'email' ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Enviando...
-                  </>
-                ) : (
-                  <>
-                    <Mail size={16} style={{ marginRight: '6px' }} />
-                    Enviar por Email
-                  </>
-                )}
-              </Button>
-              <Button
-                variant="outline"
-                onClick={() => handleConfirm('sms')}
-                disabled={loading}
-              >
-                {loading && sendMethod === 'sms' ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Enviando...
-                  </>
-                ) : (
-                  <>
-                    <MessageCircle size={16} style={{ marginRight: '6px' }} />
-                    Enviar por WhatsApp
-                  </>
-                )}
-              </Button>
-              <Button
-                variant="primary"
-                onClick={() => handleConfirm('both')}
-                disabled={loading}
-              >
-                {loading && sendMethod === 'both' ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Enviando...
-                  </>
-                ) : (
-                  <>
-                    <Send size={16} style={{ marginRight: '6px' }} />
-                    Enviar por Ambos
-                  </>
-                )}
-              </Button>
-            </div>
-          ) : (
-            <Button
-              variant="primary"
-              onClick={handleConfirm}
-              disabled={loading || (paymentOption === 'saved' && (!selectedPaymentMethod || checkingCards))}
-            >
-              {loading ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Procesando...
-                </>
-              ) : (
-                <>
-                  {paymentOption === 'saved' && 'Cobrar tarjeta'}
-                  {paymentOption === 'manual' && 'Registrar pago'}
-                </>
-              )}
-            </Button>
-          )}
+          <Button
+            variant="primary"
+            onClick={handleConfirm}
+            disabled={loading || (paymentOption === 'saved' && (!selectedPaymentMethod || checkingCards))}
+          >
+            {loading ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Procesando...
+              </>
+            ) : (
+              <>
+                {paymentOption === 'generate' && 'Generar enlace'}
+                {paymentOption === 'send' && 'Enviar enlace'}
+                {paymentOption === 'saved' && 'Cobrar tarjeta'}
+                {paymentOption === 'manual' && 'Registrar pago'}
+              </>
+            )}
+          </Button>
         </div>
       )
     }
@@ -1277,6 +1290,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   }
 
   return (
+    <>
     <Modal
       isOpen={isOpen}
       onClose={onClose}
@@ -1294,5 +1308,19 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       {step === 'options' && renderPaymentOptions()}
       {renderFooter()}
     </Modal>
+
+    {/* Dialog para mostrar el enlace de pago generado */}
+    <PaymentLinkDialog
+      isOpen={showPaymentLinkDialog}
+      onClose={() => {
+        setShowPaymentLinkDialog(false)
+        resetForm()
+        onClose()
+        onSuccess?.()
+      }}
+      paymentLink={paymentLink}
+      contactName={invoiceSummary?.contactName}
+    />
+    </>
   )
 }

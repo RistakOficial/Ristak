@@ -33,6 +33,7 @@ export { VisitorDetailsModal } from './VisitorDetailsModal'
 
 // Componentes de pagos
 export { RecordPaymentModal } from './RecordPaymentModal'
+export { PaymentLinkDialog } from './PaymentLinkDialog'
 
 // Componentes de citas
 export { AppointmentModal } from './AppointmentModal'
