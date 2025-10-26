@@ -925,14 +925,14 @@ export async function getTrackingConfig(req, res) {
     // Detectar dominio automáticamente
     let trackingDomain = null
 
-    // PRIORIDAD 1: Host del request (captura custom domains como ristak.midominio.com)
-    // Esto SIEMPRE refleja el dominio real desde el cual el usuario accede
-    if (req.headers.host) {
-      trackingDomain = req.headers.host
-    }
-    // PRIORIDAD 2: Variable de entorno custom (fallback si no hay header)
-    else if (process.env.TRACKING_DOMAIN) {
+    // PRIORIDAD 1: Variable de entorno TRACKING_DOMAIN (dominio personalizado configurado)
+    if (process.env.TRACKING_DOMAIN) {
       trackingDomain = process.env.TRACKING_DOMAIN
+    }
+    // PRIORIDAD 2: Host del request (captura custom domains como ristak.midominio.com)
+    // Esto SIEMPRE refleja el dominio real desde el cual el usuario accede
+    else if (req.headers.host) {
+      trackingDomain = req.headers.host
     }
     // PRIORIDAD 3: RENDER_EXTERNAL_URL como último recurso
     else if (process.env.RENDER_EXTERNAL_URL) {
@@ -1010,14 +1010,14 @@ export async function configureTracking(req, res) {
     // Detectar dominio automáticamente (misma lógica que getTrackingConfig)
     let trackingDomain = null
 
-    // PRIORIDAD 1: Host del request (captura custom domains como ristak.midominio.com)
-    // Esto SIEMPRE refleja el dominio real desde el cual el usuario accede
-    if (req.headers.host) {
-      trackingDomain = req.headers.host
-    }
-    // PRIORIDAD 2: Variable de entorno custom (fallback si no hay header)
-    else if (process.env.TRACKING_DOMAIN) {
+    // PRIORIDAD 1: Variable de entorno TRACKING_DOMAIN (dominio personalizado configurado)
+    if (process.env.TRACKING_DOMAIN) {
       trackingDomain = process.env.TRACKING_DOMAIN
+    }
+    // PRIORIDAD 2: Host del request (captura custom domains como ristak.midominio.com)
+    // Esto SIEMPRE refleja el dominio real desde el cual el usuario accede
+    else if (req.headers.host) {
+      trackingDomain = req.headers.host
     }
     // PRIORIDAD 3: RENDER_EXTERNAL_URL como fallback
     else if (process.env.RENDER_EXTERNAL_URL) {
