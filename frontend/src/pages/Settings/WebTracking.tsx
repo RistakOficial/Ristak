@@ -122,11 +122,11 @@ export const WebTracking: React.FC = () => {
                     <span style={{
                       padding: '4px 12px',
                       borderRadius: '6px',
-                      background: 'var(--color-warning-bg)',
-                      color: 'var(--color-warning-dark)',
+                      background: 'var(--color-surface)',
+                      color: 'var(--color-text-secondary)',
                       fontSize: '0.875rem',
                       fontWeight: 600,
-                      border: '1px solid var(--color-warning)'
+                      border: '1px solid var(--color-border)'
                     }}>
                       Dominio requerido
                     </span>
