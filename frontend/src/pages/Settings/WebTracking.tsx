@@ -116,7 +116,22 @@ export const WebTracking: React.FC = () => {
                 <Activity size={40} color="var(--color-primary)" strokeWidth={2.5} />
               </div>
               <div>
-                <h1 className={styles.pageTitle}>Web Tracking</h1>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <h1 className={styles.pageTitle}>Rastreo Web</h1>
+                  {isOnRenderDomain && (
+                    <span style={{
+                      padding: '4px 12px',
+                      borderRadius: '6px',
+                      background: 'var(--color-warning-bg)',
+                      color: 'var(--color-warning-dark)',
+                      fontSize: '0.875rem',
+                      fontWeight: 600,
+                      border: '1px solid var(--color-warning)'
+                    }}>
+                      Dominio requerido
+                    </span>
+                  )}
+                </div>
                 <p className={styles.pageSubtitle}>
                   {isOnRenderDomain
                     ? 'Configura un dominio personalizado para activar el tracking'
@@ -144,16 +159,13 @@ export const WebTracking: React.FC = () => {
         {isOnRenderDomain ? (
           <div className={styles.section}>
             <div className={styles.sectionHeader}>
-              <h3 className={styles.sectionTitle}>🚫 NO tienes acceso a esta vista</h3>
-              <p className={styles.sectionSubtitle} style={{ marginTop: '12px', fontSize: '1rem', color: 'var(--color-text-secondary)', lineHeight: '1.6' }}>
-                Para obtener acceso al Web Tracking, simplemente configura un dominio personalizado siguiendo los pasos a continuación.
+              <h3 className={styles.sectionTitle}>Instrucciones de configuración</h3>
+              <p className={styles.sectionSubtitle} style={{ marginTop: '8px', fontSize: '0.95rem', color: 'var(--color-text-secondary)', lineHeight: '1.6' }}>
+                Para activar el rastreo web, configura un dominio personalizado siguiendo estos pasos
               </p>
             </div>
 
-            <div style={{ marginTop: '32px' }}>
-              <h4 className={styles.sectionTitle} style={{ fontSize: '1.1rem', marginBottom: '16px' }}>
-                📋 Instrucciones de configuración
-              </h4>
+            <div style={{ marginTop: '24px' }}>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
                 {/* Paso 1 */}
