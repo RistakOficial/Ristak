@@ -832,6 +832,18 @@ export const Campaigns: React.FC = () => {
       width: '8%'
     },
     {
+      key: 'cpa',
+      header: 'Costo por Cita',
+      visible: false,
+      render: (value, item) => {
+        if (item.showPlaceholder) return <span className={styles.placeholderText}>—</span>
+        const cpa = (item.appointments || 0) > 0 ? item.spend / item.appointments : 0
+        return formatCurrency(cpa)
+      },
+      sortable: true,
+      width: '8%'
+    },
+    {
       key: 'appointments',
       header: (
         <div style={{ textAlign: 'center', lineHeight: '1.2' }}>

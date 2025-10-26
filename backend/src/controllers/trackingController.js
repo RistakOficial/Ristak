@@ -925,8 +925,12 @@ export async function getTrackingConfig(req, res) {
     // Detectar dominio automáticamente
     let trackingDomain = null
 
+    // PRIORIDAD 0: Si el frontend envía su dominio, usar ese
+    if (req.query.frontendDomain && req.query.frontendDomain !== 'localhost') {
+      trackingDomain = req.query.frontendDomain
+    }
     // PRIORIDAD 1: Variable de entorno TRACKING_DOMAIN (dominio personalizado configurado)
-    if (process.env.TRACKING_DOMAIN) {
+    else if (process.env.TRACKING_DOMAIN) {
       trackingDomain = process.env.TRACKING_DOMAIN
     }
     // PRIORIDAD 2: Host del request (captura custom domains como ristak.midominio.com)
@@ -1010,8 +1014,12 @@ export async function configureTracking(req, res) {
     // Detectar dominio automáticamente (misma lógica que getTrackingConfig)
     let trackingDomain = null
 
+    // PRIORIDAD 0: Si el frontend envía su dominio, usar ese
+    if (req.body.frontendDomain && req.body.frontendDomain !== 'localhost') {
+      trackingDomain = req.body.frontendDomain
+    }
     // PRIORIDAD 1: Variable de entorno TRACKING_DOMAIN (dominio personalizado configurado)
-    if (process.env.TRACKING_DOMAIN) {
+    else if (process.env.TRACKING_DOMAIN) {
       trackingDomain = process.env.TRACKING_DOMAIN
     }
     // PRIORIDAD 2: Host del request (captura custom domains como ristak.midominio.com)

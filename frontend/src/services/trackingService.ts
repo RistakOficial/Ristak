@@ -149,7 +149,11 @@ export function generateSnippet(domain: string): string {
  * Obtiene la configuración automática del tracking
  */
 export async function getTrackingConfig(): Promise<TrackingConfig> {
-  const response = await apiClient.get<TrackingConfig>('/api/tracking/config')
+  // Enviar el dominio actual del frontend como parámetro
+  const currentDomain = window.location.hostname
+  const response = await apiClient.get<TrackingConfig>('/api/tracking/config', {
+    params: { frontendDomain: currentDomain }
+  })
   return response
 }
 
@@ -157,7 +161,11 @@ export async function getTrackingConfig(): Promise<TrackingConfig> {
  * Configura automáticamente el tracking en HighLevel
  */
 export async function configureTracking(): Promise<{ success: boolean; message: string; snippet?: string; instructions?: string; error?: string }> {
-  const response = await apiClient.post<any>('/api/tracking/configure')
+  // Enviar el dominio actual del frontend en el body
+  const currentDomain = window.location.hostname
+  const response = await apiClient.post<any>('/api/tracking/configure', {
+    frontendDomain: currentDomain
+  })
   return response
 }
 

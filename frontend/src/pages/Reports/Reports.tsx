@@ -81,6 +81,7 @@ type TableRow = {
   cpc: number
   cpv: number
   cpl: number
+  cpa: number
   cac: number
   webToInteresadosRate: number
   interesadosToApptsRate: number
@@ -1101,6 +1102,7 @@ export const Reports: React.FC = () => {
       const cpc = item.clicks > 0 ? item.spend / item.clicks : 0
       const cpv = item.visitors > 0 ? item.spend / item.visitors : 0
       const cpl = item.leads > 0 ? item.spend / item.leads : 0
+      const cpa = item.appointments > 0 ? item.spend / item.appointments : 0
       const cac = item.sales > 0 ? item.spend / item.sales : 0
       const webToInteresadosRate = item.visitors > 0 ? (item.leads / item.visitors) * 100 : 0
       const interesadosToApptsRate = item.leads > 0 ? (item.appointments / item.leads) * 100 : 0
@@ -1128,6 +1130,7 @@ export const Reports: React.FC = () => {
         cpc,
         cpv,
         cpl,
+        cpa,
         cac,
         webToInteresadosRate,
         interesadosToApptsRate,
@@ -1360,6 +1363,13 @@ export const Reports: React.FC = () => {
         key: 'cac',
         header: `Costo por ${labels.customer}`,
         sortable: true,
+        render: (value: number) => <span>{formatCurrency(value)}</span>
+      },
+      {
+        key: 'cpa',
+        header: 'Costo por Cita',
+        sortable: true,
+        visible: false,
         render: (value: number) => <span>{formatCurrency(value)}</span>
       },
       {

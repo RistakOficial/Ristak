@@ -1039,15 +1039,46 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
             {/* Selector integrado en el mismo botón */}
             {paymentOption === 'send' && (
               <div className={styles.sendMethodSelector} onClick={(e) => e.stopPropagation()}>
-                <CustomSelect
-                  value={sendMethod}
-                  onChange={(value) => setSendMethod(value as 'email' | 'sms' | 'both')}
-                  options={[
-                    { value: 'sms', label: 'WhatsApp', icon: <MessageCircle size={14} /> },
-                    { value: 'email', label: 'Email', icon: <Mail size={14} /> },
-                    { value: 'both', label: 'Email y WhatsApp', icon: <Send size={14} /> }
-                  ]}
-                />
+                {(() => {
+                  // Construir opciones dinámicamente según los datos del contacto
+                  const availableOptions = []
+                  const hasEmail = selectedContact?.email
+                  const hasPhone = selectedContact?.phone
+
+                  if (hasPhone) {
+                    availableOptions.push({ value: 'sms', label: 'WhatsApp', icon: <MessageCircle size={14} /> })
+                  }
+                  if (hasEmail) {
+                    availableOptions.push({ value: 'email', label: 'Email', icon: <Mail size={14} /> })
+                  }
+                  if (hasEmail && hasPhone) {
+                    availableOptions.push({ value: 'both', label: 'Email y WhatsApp', icon: <Send size={14} /> })
+                  }
+
+                  // Si no hay opciones disponibles, mostrar mensaje
+                  if (availableOptions.length === 0) {
+                    return (
+                      <div className={styles.noOptionsMessage}>
+                        <AlertCircle size={14} />
+                        <span>El contacto no tiene email ni teléfono</span>
+                      </div>
+                    )
+                  }
+
+                  // Si el sendMethod actual no está disponible, resetear
+                  const currentMethodAvailable = availableOptions.some(opt => opt.value === sendMethod)
+                  if (!currentMethodAvailable && availableOptions.length > 0) {
+                    setSendMethod(availableOptions[0].value as 'email' | 'sms' | 'both')
+                  }
+
+                  return (
+                    <CustomSelect
+                      value={sendMethod}
+                      onChange={(value) => setSendMethod(value as 'email' | 'sms' | 'both')}
+                      options={availableOptions}
+                    />
+                  )
+                })()}
               </div>
             )}
           </div>
