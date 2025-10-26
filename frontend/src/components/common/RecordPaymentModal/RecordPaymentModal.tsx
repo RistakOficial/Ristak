@@ -577,6 +577,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
     // Usar customSendMethod si se proporciona, de lo contrario usar el estado
     const effectiveSendMethod = customSendMethod || sendMethod
+    console.log('🔄 Effective send method:', effectiveSendMethod)
 
     setLoading(true)
     setStep('processing')
@@ -585,6 +586,9 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       let invoiceId = invoiceSummary.invoiceId
 
       if (!invoiceId) {
+        console.log('🟡 No hay invoice ID, creando invoice...')
+        console.log('🟡 Payload del invoice:', invoicePayload)
+
         const response = await fetch('/api/highlevel/invoices', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -593,22 +597,33 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
         const data = await response.json()
         if (!response.ok) {
+          console.error('❌ Error al crear invoice:', data)
           throw new Error(data.error || 'Error al crear el invoice')
         }
 
+        console.log('✅ Invoice creado exitosamente:', data)
         invoiceId = data.invoice?.id || data.invoice?._id
 
         if (!invoiceId) {
           throw new Error('No se pudo obtener el ID del invoice')
         }
 
+        console.log('✅ Invoice ID obtenido:', invoiceId)
         setInvoiceSummary(prev => (prev ? { ...prev, invoiceId } : prev))
+      } else {
+        console.log('🟢 Ya existe invoice ID:', invoiceId)
       }
+
+      console.log('🔵 Invoice ID obtenido:', invoiceId)
+      console.log('🔵 Payment option seleccionada:', paymentOption)
+      console.log('🔵 Send method:', sendMethod)
 
       switch (paymentOption) {
         case 'generate': {
+          console.log('📋 Generando enlace sin enviar...')
           // Generar enlace sin enviar
           const response = await highLevelService.sendInvoice(invoiceId, 'none')
+          console.log('📋 Response de generate:', response)
 
           // Usar el paymentLink que viene del backend (con el domain correcto)
           if (response?.paymentLink) {
@@ -627,25 +642,33 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         }
 
         case 'send': {
+          console.log('📧 Preparando envío de invoice...')
+          console.log('📧 Contacto:', {
+            email: selectedContact?.email,
+            phone: selectedContact?.phone
+          })
+
           // Validar que tenga teléfono si se va a enviar por WhatsApp
-          if ((sendMethod === 'sms' || sendMethod === 'both') && !selectedContact?.phone) {
+          if ((effectiveSendMethod === 'sms' || effectiveSendMethod === 'both') && !selectedContact?.phone) {
             throw new Error('El contacto no tiene teléfono registrado. No se puede enviar por WhatsApp.')
           }
 
           // Validar que tenga email si se va a enviar por email
-          if ((sendMethod === 'email' || sendMethod === 'both') && !selectedContact?.email) {
+          if ((effectiveSendMethod === 'email' || effectiveSendMethod === 'both') && !selectedContact?.email) {
             throw new Error('El contacto no tiene email registrado. No se puede enviar por correo.')
           }
 
+          console.log(`📧 Enviando invoice ${invoiceId} por método: ${effectiveSendMethod}`)
           // Enviar enlace por el método seleccionado
-          await highLevelService.sendInvoice(invoiceId, sendMethod)
+          await highLevelService.sendInvoice(invoiceId, effectiveSendMethod)
+          console.log('✅ Invoice enviado exitosamente')
 
           let successMessage = 'Enlace de pago enviado al cliente'
-          if (sendMethod === 'email') {
+          if (effectiveSendMethod === 'email') {
             successMessage = 'Enlace enviado por email correctamente'
-          } else if (sendMethod === 'sms') {
+          } else if (effectiveSendMethod === 'sms') {
             successMessage = 'Enlace enviado por WhatsApp correctamente'
-          } else if (sendMethod === 'both') {
+          } else if (effectiveSendMethod === 'both') {
             successMessage = 'Enlace enviado por email y WhatsApp correctamente'
           }
 
