@@ -405,10 +405,9 @@ async function ensureContactExists(contactId, apiToken, usePostgres) {
     const contact = contactData.contact || contactData
 
     // HighLevel puede enviar atribución en dos lugares: attributions[] o attributionSource
-    // IMPORTANTE: Siempre preferir FIRST attribution sobre LAST attribution
+    // IMPORTANTE: SIEMPRE usar FIRST attribution, NUNCA lastAttributionSource
     const attribution = contact.attributions?.find(a => a.isFirst) || {}
-    const attributionSource = contact.attributionSource || {}  // Solo first, NO lastAttributionSource
-    const lastAttributionSource = contact.lastAttributionSource || {}  // Solo como fallback
+    const attributionSource = contact.attributionSource || {}  // Solo FIRST attribution
 
     // Buscar visitor_id en sessions por email (si existe)
     let visitorId = null
@@ -446,11 +445,11 @@ async function ensureContactExists(contactId, apiToken, usePostgres) {
       contact.firstName,
       contact.lastName,
       contact.source || 'gohighlevel',
-      attribution.pageUrl || attribution.url || attributionSource.url || lastAttributionSource.url,
-      attribution.utmSessionSource || attributionSource.utmSessionSource || lastAttributionSource.utmSessionSource,
-      attribution.medium || attributionSource.medium || lastAttributionSource.medium,
-      attribution.utmAdId || attributionSource.adId || lastAttributionSource.adId,  // NO usar mediumId (tiene valores incorrectos)
-      attribution.adName || attributionSource.adName || lastAttributionSource.adName,
+      attribution.pageUrl || attribution.url || attributionSource.url,
+      attribution.utmSessionSource || attributionSource.utmSessionSource,
+      attribution.medium || attributionSource.medium,
+      attribution.utmAdId || attributionSource.adId,  // NUNCA usar lastAttributionSource ni mediumId
+      attribution.adName || attributionSource.adName,
       visitorId,
       contact.dateAdded || new Date().toISOString(),
       contact.dateUpdated || contact.dateAdded || new Date().toISOString()
@@ -513,10 +512,9 @@ async function syncHighLevelContacts(locationId, apiToken) {
   for (const contact of allContacts) {
     try {
       // HighLevel puede enviar atribución en dos lugares: attributions[] o attributionSource
-      // IMPORTANTE: Siempre preferir FIRST attribution sobre LAST attribution
+      // IMPORTANTE: SIEMPRE usar FIRST attribution, NUNCA lastAttributionSource
       const attribution = contact.attributions?.find(a => a.isFirst) || {}
-      const attributionSource = contact.attributionSource || {}  // Solo first, NO lastAttributionSource
-      const lastAttributionSource = contact.lastAttributionSource || {}  // Solo como fallback
+      const attributionSource = contact.attributionSource || {}  // Solo FIRST attribution
 
       // Buscar visitor_id en sessions por email (si existe)
       let visitorId = null
@@ -559,11 +557,11 @@ async function syncHighLevelContacts(locationId, apiToken) {
         contact.firstName,
         contact.lastName,
         contact.source || 'gohighlevel',
-        attribution.pageUrl || attribution.url || attributionSource.url || lastAttributionSource.url,
-        attribution.utmSessionSource || attributionSource.utmSessionSource || lastAttributionSource.utmSessionSource,
-        attribution.medium || attributionSource.medium || lastAttributionSource.medium,
-        attribution.utmAdId || attributionSource.adId || lastAttributionSource.adId,  // NO usar mediumId (tiene valores incorrectos)
-        attribution.adName || attributionSource.adName || lastAttributionSource.adName,
+        attribution.pageUrl || attribution.url || attributionSource.url,
+        attribution.utmSessionSource || attributionSource.utmSessionSource,
+        attribution.medium || attributionSource.medium,
+        attribution.utmAdId || attributionSource.adId,  // NUNCA usar lastAttributionSource ni mediumId
+        attribution.adName || attributionSource.adName,
         visitorId,
         contact.dateAdded || new Date().toISOString(),
         contact.dateUpdated || contact.dateAdded || new Date().toISOString()
