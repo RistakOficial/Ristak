@@ -792,7 +792,7 @@ export const Campaigns: React.FC = () => {
           </div>
         )
       },
-      sortable: false,
+      sortable: true,
       width: '30%'
     },
     {
