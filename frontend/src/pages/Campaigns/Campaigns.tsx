@@ -200,13 +200,22 @@ export const Campaigns: React.FC = () => {
       if (existing) {
         // Sumar todos los campos numéricos excepto 'label'
         Object.keys(item).forEach(field => {
-          if (field !== 'label' && typeof item[field] === 'number') {
-            existing[field] = (existing[field] || 0) + item[field]
+          if (field !== 'label' && typeof item[field] === 'number' && !isNaN(item[field])) {
+            const currentVal = existing[field] || 0
+            const newVal = item[field] || 0
+            existing[field] = Number(currentVal) + Number(newVal)
           }
         })
       } else {
-        // Copiar todo el objeto pero con el label actualizado
-        grouped.set(key, { ...item, label: key })
+        // Copiar todo el objeto pero con el label actualizado, asegurando valores numéricos
+        const cleanedItem: any = { label: key }
+        Object.keys(item).forEach(field => {
+          if (field !== 'label') {
+            const val = item[field]
+            cleanedItem[field] = (typeof val === 'number' && !isNaN(val)) ? val : 0
+          }
+        })
+        grouped.set(key, cleanedItem)
       }
     })
 
@@ -322,8 +331,11 @@ export const Campaigns: React.FC = () => {
             timezoneInfo.adjustMetaDateToLocal ? timezoneInfo.adjustMetaDateToLocal(item.label) : item.label,
             rangeInDays,
             index > 0 ? (timezoneInfo.adjustMetaDateToLocal ? timezoneInfo.adjustMetaDateToLocal(groupedSpendData[index - 1].label) : groupedSpendData[index - 1].label) : undefined
-          )
-        }))
+          ),
+          // Asegurar que los valores sean números válidos
+          value: isNaN(item.value) || item.value === null || item.value === undefined ? 0 : Number(item.value),
+          value2: isNaN(item.value2) || item.value2 === null || item.value2 === undefined ? 0 : Number(item.value2)
+        })).filter(item => item.label && item.label !== '') // Filtrar items sin label válido
 
         // Set data for revenue chart (default)
         setRevenueData(formattedSpendData)
@@ -352,9 +364,9 @@ export const Campaigns: React.FC = () => {
             rangeInDays,
             index > 0 ? (timezoneInfo.adjustMetaDateToLocal ? timezoneInfo.adjustMetaDateToLocal(groupedLeadsData[index - 1].label) : groupedLeadsData[index - 1].label) : undefined
           ),
-          value: item.value,
-          value2: item.value2
-        }))
+          value: isNaN(item.value) || item.value === null || item.value === undefined ? 0 : Number(item.value),
+          value2: isNaN(item.value2) || item.value2 === null || item.value2 === undefined ? 0 : Number(item.value2)
+        })).filter(item => item.label && item.label !== '')
 
         // Preparar datos de citas con agrupación
         const appointmentsChartData = funnelMetricsRaw.map((item: any) => ({
@@ -369,9 +381,9 @@ export const Campaigns: React.FC = () => {
             rangeInDays,
             index > 0 ? (timezoneInfo.adjustMetaDateToLocal ? timezoneInfo.adjustMetaDateToLocal(groupedAppointmentsData[index - 1].label) : groupedAppointmentsData[index - 1].label) : undefined
           ),
-          value: item.value,
-          value2: item.value2
-        }))
+          value: isNaN(item.value) || item.value === null || item.value === undefined ? 0 : Number(item.value),
+          value2: isNaN(item.value2) || item.value2 === null || item.value2 === undefined ? 0 : Number(item.value2)
+        })).filter(item => item.label && item.label !== '')
 
         if (analyticsEnabled) {
           // Preparar datos de visitantes con agrupación
@@ -387,9 +399,9 @@ export const Campaigns: React.FC = () => {
               rangeInDays,
               index > 0 ? (timezoneInfo.adjustMetaDateToLocal ? timezoneInfo.adjustMetaDateToLocal(groupedVisitorsData[index - 1].label) : groupedVisitorsData[index - 1].label) : undefined
             ),
-            value: item.value,
-            value2: item.value2
-          }))
+            value: isNaN(item.value) || item.value === null || item.value === undefined ? 0 : Number(item.value),
+            value2: isNaN(item.value2) || item.value2 === null || item.value2 === undefined ? 0 : Number(item.value2)
+          })).filter(item => item.label && item.label !== '')
           setVisitorsData(formattedVisitorsData || [])
         } else {
           setVisitorsData([])
@@ -1318,8 +1330,14 @@ export const Campaigns: React.FC = () => {
                 data={selectedConfig.data.filter(item =>
                   item &&
                   item.label &&
-                  (item.value !== undefined || item.value2 !== undefined)
-                )}
+                  item.label !== '' &&
+                  (typeof item.value === 'number' && !isNaN(item.value)) ||
+                  (typeof item.value2 === 'number' && !isNaN(item.value2))
+                ).map(item => ({
+                  label: item.label,
+                  value: typeof item.value === 'number' && !isNaN(item.value) ? item.value : 0,
+                  value2: typeof item.value2 === 'number' && !isNaN(item.value2) ? item.value2 : undefined
+                }))}
                 height={300}
                 showGrid={true}
                 color={selectedConfig.color}
