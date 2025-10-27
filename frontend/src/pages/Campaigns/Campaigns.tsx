@@ -332,65 +332,72 @@ export const Campaigns: React.FC = () => {
       // Fetch funnel metrics
       const funnelMetricsRaw = await campaignsService.getFunnelMetrics(startDate, endDate)
 
-      // Process funnel metrics into the format needed for each chart
-      // Preparar datos de leads con agrupación
-      const leadsChartData = funnelMetricsRaw.map((item: any) => ({
-        label: item.label,
-        value: item.leads || 0,
-        value2: item.appointments || 0
-      }))
-      const groupedLeadsData = groupChartData(leadsChartData, groupingType)
-      const formattedLeadsData = groupedLeadsData.map((item: any, index: number) => ({
-        label: formatChartDate(
-          timezoneInfo.adjustMetaDateToLocal ? timezoneInfo.adjustMetaDateToLocal(item.label) : item.label,
-          rangeInDays,
-          index > 0 ? (timezoneInfo.adjustMetaDateToLocal ? timezoneInfo.adjustMetaDateToLocal(groupedLeadsData[index - 1].label) : groupedLeadsData[index - 1].label) : undefined
-        ),
-        value: item.value,
-        value2: item.value2
-      }))
-
-      // Preparar datos de citas con agrupación
-      const appointmentsChartData = funnelMetricsRaw.map((item: any) => ({
-        label: item.label,
-        value: item.appointments || 0,
-        value2: item.sales || 0
-      }))
-      const groupedAppointmentsData = groupChartData(appointmentsChartData, groupingType)
-      const formattedAppointmentsData = groupedAppointmentsData.map((item: any, index: number) => ({
-        label: formatChartDate(
-          timezoneInfo.adjustMetaDateToLocal ? timezoneInfo.adjustMetaDateToLocal(item.label) : item.label,
-          rangeInDays,
-          index > 0 ? (timezoneInfo.adjustMetaDateToLocal ? timezoneInfo.adjustMetaDateToLocal(groupedAppointmentsData[index - 1].label) : groupedAppointmentsData[index - 1].label) : undefined
-        ),
-        value: item.value,
-        value2: item.value2
-      }))
-
-
-      if (analyticsEnabled) {
-        // Preparar datos de visitantes con agrupación
-        const visitorsChartData = funnelMetricsRaw.map((item: any) => ({
+      // Validar que tenemos datos del funnel
+      if (!funnelMetricsRaw || funnelMetricsRaw.length === 0) {
+        setLeadsData([])
+        setAppointmentsData([])
+        setVisitorsData([])
+      } else {
+        // Process funnel metrics into the format needed for each chart
+        // Preparar datos de leads con agrupación
+        const leadsChartData = funnelMetricsRaw.map((item: any) => ({
           label: item.label,
-          value: item.visitors || 0,
-          value2: item.leads || 0
+          value: item.leads || 0,
+          value2: item.appointments || 0
         }))
-        const groupedVisitorsData = groupChartData(visitorsChartData, groupingType)
-        const formattedVisitorsData = groupedVisitorsData.map((item: any, index: number) => ({
+        const groupedLeadsData = groupChartData(leadsChartData, groupingType)
+        const formattedLeadsData = groupedLeadsData.map((item: any, index: number) => ({
           label: formatChartDate(
             timezoneInfo.adjustMetaDateToLocal ? timezoneInfo.adjustMetaDateToLocal(item.label) : item.label,
             rangeInDays,
-            index > 0 ? (timezoneInfo.adjustMetaDateToLocal ? timezoneInfo.adjustMetaDateToLocal(groupedVisitorsData[index - 1].label) : groupedVisitorsData[index - 1].label) : undefined
+            index > 0 ? (timezoneInfo.adjustMetaDateToLocal ? timezoneInfo.adjustMetaDateToLocal(groupedLeadsData[index - 1].label) : groupedLeadsData[index - 1].label) : undefined
           ),
           value: item.value,
           value2: item.value2
         }))
-        setVisitorsData(formattedVisitorsData || [])
-      } else {
-        setVisitorsData([])
+
+        // Preparar datos de citas con agrupación
+        const appointmentsChartData = funnelMetricsRaw.map((item: any) => ({
+          label: item.label,
+          value: item.appointments || 0,
+          value2: item.sales || 0
+        }))
+        const groupedAppointmentsData = groupChartData(appointmentsChartData, groupingType)
+        const formattedAppointmentsData = groupedAppointmentsData.map((item: any, index: number) => ({
+          label: formatChartDate(
+            timezoneInfo.adjustMetaDateToLocal ? timezoneInfo.adjustMetaDateToLocal(item.label) : item.label,
+            rangeInDays,
+            index > 0 ? (timezoneInfo.adjustMetaDateToLocal ? timezoneInfo.adjustMetaDateToLocal(groupedAppointmentsData[index - 1].label) : groupedAppointmentsData[index - 1].label) : undefined
+          ),
+          value: item.value,
+          value2: item.value2
+        }))
+
+        if (analyticsEnabled) {
+          // Preparar datos de visitantes con agrupación
+          const visitorsChartData = funnelMetricsRaw.map((item: any) => ({
+            label: item.label,
+            value: item.visitors || 0,
+            value2: item.leads || 0
+          }))
+          const groupedVisitorsData = groupChartData(visitorsChartData, groupingType)
+          const formattedVisitorsData = groupedVisitorsData.map((item: any, index: number) => ({
+            label: formatChartDate(
+              timezoneInfo.adjustMetaDateToLocal ? timezoneInfo.adjustMetaDateToLocal(item.label) : item.label,
+              rangeInDays,
+              index > 0 ? (timezoneInfo.adjustMetaDateToLocal ? timezoneInfo.adjustMetaDateToLocal(groupedVisitorsData[index - 1].label) : groupedVisitorsData[index - 1].label) : undefined
+            ),
+            value: item.value,
+            value2: item.value2
+          }))
+          setVisitorsData(formattedVisitorsData || [])
+        } else {
+          setVisitorsData([])
+        }
+
+        setLeadsData(formattedLeadsData || [])
+        setAppointmentsData(formattedAppointmentsData || [])
       }
-      setLeadsData(formattedLeadsData || [])
-      setAppointmentsData(formattedAppointmentsData || [])
     } catch (error) {
       // Don't fall back to mock data - show empty state
       setCampaigns([])
@@ -1306,9 +1313,13 @@ export const Campaigns: React.FC = () => {
             />
           </div>
           <div style={{ height: 300 }}>
-            {selectedConfig.data.length > 0 ? (
+            {selectedConfig.data && selectedConfig.data.length > 0 ? (
               <AreaChart
-                data={selectedConfig.data}
+                data={selectedConfig.data.filter(item =>
+                  item &&
+                  item.label &&
+                  (item.value !== undefined || item.value2 !== undefined)
+                )}
                 height={300}
                 showGrid={true}
                 color={selectedConfig.color}
