@@ -14,7 +14,7 @@ import {
 } from 'lucide-react'
 import { useDateRange } from '@/contexts/DateRangeContext'
 import { useLabels } from '@/contexts/LabelsContext'
-import { formatCurrency, formatRoas, formatDateToISO, formatEndDateToISO, parseLocalDateString, formatChartCurrency, formatChartNumber, formatGroupedChartDate } from '@/utils/format'
+import { formatCurrency, formatRoas, formatDateToISO, formatEndDateToISO, parseLocalDateString, formatChartCurrency, formatChartNumber } from '@/utils/format'
 import { campaignsService, type CampaignContact } from '@/services/campaignsService'
 import { reportsService, type CampaignsReport } from '@/services/reportsService'
 import { useAppConfig, useMetaTimezone, useIsRenderDomain } from '@/hooks'
@@ -150,88 +150,135 @@ export const Campaigns: React.FC = () => {
 
   /**
    * Agrupa datos de gráfico por semana o mes según el rango
-   * @param data Array de datos con propiedades dinámicas
-   * @param groupBy 'day' | 'week' | 'month'
-   * @returns Datos agrupados
+   * VERSIÓN SIMPLIFICADA Y ROBUSTA
    */
-  const groupChartData = (data: any[], groupBy: 'day' | 'week' | 'month') => {
-    if (groupBy === 'day' || !data.length) return data
+  const groupAndFormatChartData = useCallback((
+    rawData: any[],
+    rangeInDays: number,
+    adjustDateFn?: (date: string) => string
+  ) => {
+    // Si no hay datos, retornar vacío
+    if (!rawData || rawData.length === 0) {
+      return []
+    }
 
-    const grouped = new Map<string, any>()
+    // Determinar tipo de agrupación
+    let groupBy: 'day' | 'week' | 'month' = 'day'
+    if (rangeInDays > 90) groupBy = 'month'
+    else if (rangeInDays > 31) groupBy = 'week'
 
-    data.forEach((item, idx) => {
-      // Validar que tenemos un label y que se puede convertir a fecha
+    // Si es vista diaria, solo formatear
+    if (groupBy === 'day') {
+      return rawData.map((item, index) => {
+        const dateStr = adjustDateFn ? adjustDateFn(item.label) : item.label
+        const cleanDate = dateStr.split(' (')[0] // Remover timezone indicator si existe
+        const [year, month, day] = cleanDate.split('-').map(Number)
+        const date = new Date(year, month - 1, day)
+
+        // Detectar cambio de año
+        let yearChanged = false
+        if (index > 0) {
+          const prevDateStr = adjustDateFn ? adjustDateFn(rawData[index - 1].label) : rawData[index - 1].label
+          const prevCleanDate = prevDateStr.split(' (')[0]
+          const [prevYear] = prevCleanDate.split('-').map(Number)
+          yearChanged = prevYear !== year
+        }
+
+        const monthNames = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sept', 'oct', 'nov', 'dic']
+        const monthName = monthNames[month - 1]
+        const formattedDate = yearChanged ? `${day} ${monthName} ${year}` : `${day} ${monthName}`
+
+        // Agregar timezone indicator si existe
+        const tzMatch = dateStr.match(/\s\(([^)]+)\)$/)
+        const label = tzMatch ? `${formattedDate} (${tzMatch[1]})` : formattedDate
+
+        return {
+          label,
+          value: Number(item.value) || 0,
+          value2: Number(item.value2) || 0
+        }
+      })
+    }
+
+    // Agrupar datos
+    const grouped = new Map<string, { value: number; value2: number }>()
+
+    rawData.forEach(item => {
       if (!item.label) return
 
-      // Intentar parsear la fecha de manera más robusta
-      let date: Date
-      try {
-        // Si el label ya es una fecha ISO (YYYY-MM-DD), parsearlo directamente
-        if (typeof item.label === 'string' && item.label.match(/^\d{4}-\d{2}-\d{2}/)) {
-          const [year, month, day] = item.label.split('-').map(Number)
-          date = new Date(year, month - 1, day)
-        } else {
-          date = new Date(item.label)
-        }
+      const cleanDate = item.label.split(' (')[0]
+      const [year, month, day] = cleanDate.split('-').map(Number)
+      const date = new Date(year, month - 1, day)
 
-        // Verificar que la fecha es válida
-        if (isNaN(date.getTime())) {
-          return
-        }
-      } catch (error) {
-        return
-      }
+      if (isNaN(date.getTime())) return
 
       let key: string
 
       if (groupBy === 'week') {
-        // Obtener el lunes de la semana
+        // Lunes de la semana
         const monday = new Date(date)
-        const day = monday.getDay()
-        const diff = monday.getDate() - day + (day === 0 ? -6 : 1)
+        const dayOfWeek = monday.getDay()
+        const diff = monday.getDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1)
         monday.setDate(diff)
-        key = formatDateToISO(monday)
+        key = `${monday.getFullYear()}-${String(monday.getMonth() + 1).padStart(2, '0')}-${String(monday.getDate()).padStart(2, '0')}`
       } else {
-        // Agrupar por mes
-        key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-01`
+        // Primer día del mes
+        key = `${year}-${String(month).padStart(2, '0')}-01`
       }
 
       const existing = grouped.get(key)
+      const val1 = Number(item.value) || 0
+      const val2 = Number(item.value2) || 0
+
       if (existing) {
-        // Sumar todos los campos numéricos excepto 'label'
-        Object.keys(item).forEach(field => {
-          if (field !== 'label' && typeof item[field] === 'number' && !isNaN(item[field])) {
-            const currentVal = existing[field] || 0
-            const newVal = item[field] || 0
-            existing[field] = Number(currentVal) + Number(newVal)
-          }
-        })
+        existing.value += val1
+        existing.value2 += val2
       } else {
-        // Copiar todo el objeto pero con el label actualizado, asegurando valores numéricos
-        const cleanedItem: any = { label: key }
-        Object.keys(item).forEach(field => {
-          if (field !== 'label') {
-            const val = item[field]
-            cleanedItem[field] = (typeof val === 'number' && !isNaN(val)) ? val : 0
-          }
-        })
-        grouped.set(key, cleanedItem)
+        grouped.set(key, { value: val1, value2: val2 })
       }
     })
 
-    // Convertir de vuelta a array y ordenar
-    return Array.from(grouped.values()).sort((a, b) => a.label.localeCompare(b.label))
-  }
+    // Convertir a array y formatear
+    const sortedKeys = Array.from(grouped.keys()).sort()
 
-  /**
-   * Determina el tipo de agrupación basado en el rango de días
-   * Ajustado para mejor visualización de datos
-   */
-  const getGroupingType = (rangeInDays: number): 'day' | 'week' | 'month' => {
-    if (rangeInDays <= 31) return 'day'      // Hasta 31 días: vista diaria
-    if (rangeInDays <= 90) return 'week'     // 32-90 días (~3 meses): vista semanal
-    return 'month'                            // Más de 90 días: vista mensual
-  }
+    return sortedKeys.map((key, index) => {
+      const data = grouped.get(key)!
+      const dateStr = adjustDateFn ? adjustDateFn(key) : key
+      const cleanDate = dateStr.split(' (')[0]
+      const [year, month, day] = cleanDate.split('-').map(Number)
+      const date = new Date(year, month - 1, day)
+
+      // Detectar cambio de año
+      let yearChanged = false
+      if (index > 0) {
+        const prevKey = sortedKeys[index - 1]
+        const prevDateStr = adjustDateFn ? adjustDateFn(prevKey) : prevKey
+        const prevCleanDate = prevDateStr.split(' (')[0]
+        const [prevYear] = prevCleanDate.split('-').map(Number)
+        yearChanged = prevYear !== year
+      }
+
+      const monthNames = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sept', 'Oct', 'Nov', 'Dic']
+      const monthName = monthNames[month - 1]
+
+      let formattedDate: string
+      if (groupBy === 'month') {
+        formattedDate = yearChanged ? `${monthName} ${year}` : monthName
+      } else {
+        formattedDate = yearChanged ? `${day} ${monthName.toLowerCase()} ${year}` : `${day} ${monthName.toLowerCase()}`
+      }
+
+      // Agregar timezone indicator si existe
+      const tzMatch = dateStr.match(/\s\(([^)]+)\)$/)
+      const label = tzMatch ? `${formattedDate} (${tzMatch[1]})` : formattedDate
+
+      return {
+        label,
+        value: data.value,
+        value2: data.value2
+      }
+    })
+  }, [timezoneInfo])
 
   const fetchCampaigns = useCallback(async () => {
     try {
@@ -313,113 +360,58 @@ export const Campaigns: React.FC = () => {
       // Calcular rango en días
       const rangeInDays = Math.ceil((dateRange.end.getTime() - dateRange.start.getTime()) / (1000 * 60 * 60 * 24))
 
-      // Determinar tipo de agrupación
-      const groupingType = getGroupingType(rangeInDays)
-
-      // Validar que tenemos datos antes de agrupar
-      if (!spendData || spendData.length === 0) {
-        setRevenueData([])
-      } else {
-        // Agrupar datos según el rango
-        const groupedSpendData = groupChartData(spendData, groupingType)
-
-        // Formatear fechas según el tipo de agrupación
-        const formattedSpendData = groupedSpendData.map((item: any, index: number) => {
-          // Primero ajustar la fecha con timezone de Meta si es necesario
-          const adjustedLabel = timezoneInfo.adjustMetaDateToLocal ? timezoneInfo.adjustMetaDateToLocal(item.label) : item.label
-          const prevAdjustedLabel = index > 0 && timezoneInfo.adjustMetaDateToLocal
-            ? timezoneInfo.adjustMetaDateToLocal(groupedSpendData[index - 1].label)
-            : (index > 0 ? groupedSpendData[index - 1].label : undefined)
-
-          return {
-            ...item,
-            label: formatGroupedChartDate(adjustedLabel, groupingType, prevAdjustedLabel),
-            value: isNaN(item.value) || item.value === null || item.value === undefined ? 0 : Number(item.value),
-            value2: isNaN(item.value2) || item.value2 === null || item.value2 === undefined ? 0 : Number(item.value2)
-          }
-        }).filter(item => item.label && item.label !== '')
-
-        // Set data for revenue chart (default)
-        setRevenueData(formattedSpendData)
-      }
+      // Procesar datos de revenue usando la función simplificada
+      const processedRevenueData = groupAndFormatChartData(
+        spendData || [],
+        rangeInDays,
+        timezoneInfo.adjustMetaDateToLocal
+      )
+      setRevenueData(processedRevenueData)
 
       // Fetch funnel metrics
       const funnelMetricsRaw = await campaignsService.getFunnelMetrics(startDate, endDate)
 
-      // Validar que tenemos datos del funnel
-      if (!funnelMetricsRaw || funnelMetricsRaw.length === 0) {
-        setLeadsData([])
-        setAppointmentsData([])
-        setVisitorsData([])
+      // Procesar datos de leads
+      const leadsChartData = (funnelMetricsRaw || []).map((item: any) => ({
+        label: item.label,
+        value: item.leads || 0,
+        value2: item.appointments || 0
+      }))
+      const processedLeadsData = groupAndFormatChartData(
+        leadsChartData,
+        rangeInDays,
+        timezoneInfo.adjustMetaDateToLocal
+      )
+      setLeadsData(processedLeadsData)
+
+      // Procesar datos de citas
+      const appointmentsChartData = (funnelMetricsRaw || []).map((item: any) => ({
+        label: item.label,
+        value: item.appointments || 0,
+        value2: item.sales || 0
+      }))
+      const processedAppointmentsData = groupAndFormatChartData(
+        appointmentsChartData,
+        rangeInDays,
+        timezoneInfo.adjustMetaDateToLocal
+      )
+      setAppointmentsData(processedAppointmentsData)
+
+      // Procesar datos de visitantes (solo si está habilitado)
+      if (analyticsEnabled) {
+        const visitorsChartData = (funnelMetricsRaw || []).map((item: any) => ({
+          label: item.label,
+          value: item.visitors || 0,
+          value2: item.leads || 0
+        }))
+        const processedVisitorsData = groupAndFormatChartData(
+          visitorsChartData,
+          rangeInDays,
+          timezoneInfo.adjustMetaDateToLocal
+        )
+        setVisitorsData(processedVisitorsData)
       } else {
-        // Process funnel metrics into the format needed for each chart
-        // Preparar datos de leads con agrupación
-        const leadsChartData = funnelMetricsRaw.map((item: any) => ({
-          label: item.label,
-          value: item.leads || 0,
-          value2: item.appointments || 0
-        }))
-        const groupedLeadsData = groupChartData(leadsChartData, groupingType)
-        const formattedLeadsData = groupedLeadsData.map((item: any, index: number) => {
-          const adjustedLabel = timezoneInfo.adjustMetaDateToLocal ? timezoneInfo.adjustMetaDateToLocal(item.label) : item.label
-          const prevAdjustedLabel = index > 0 && timezoneInfo.adjustMetaDateToLocal
-            ? timezoneInfo.adjustMetaDateToLocal(groupedLeadsData[index - 1].label)
-            : (index > 0 ? groupedLeadsData[index - 1].label : undefined)
-
-          return {
-            label: formatGroupedChartDate(adjustedLabel, groupingType, prevAdjustedLabel),
-            value: isNaN(item.value) || item.value === null || item.value === undefined ? 0 : Number(item.value),
-            value2: isNaN(item.value2) || item.value2 === null || item.value2 === undefined ? 0 : Number(item.value2)
-          }
-        }).filter(item => item.label && item.label !== '')
-
-        // Preparar datos de citas con agrupación
-        const appointmentsChartData = funnelMetricsRaw.map((item: any) => ({
-          label: item.label,
-          value: item.appointments || 0,
-          value2: item.sales || 0
-        }))
-        const groupedAppointmentsData = groupChartData(appointmentsChartData, groupingType)
-        const formattedAppointmentsData = groupedAppointmentsData.map((item: any, index: number) => {
-          const adjustedLabel = timezoneInfo.adjustMetaDateToLocal ? timezoneInfo.adjustMetaDateToLocal(item.label) : item.label
-          const prevAdjustedLabel = index > 0 && timezoneInfo.adjustMetaDateToLocal
-            ? timezoneInfo.adjustMetaDateToLocal(groupedAppointmentsData[index - 1].label)
-            : (index > 0 ? groupedAppointmentsData[index - 1].label : undefined)
-
-          return {
-            label: formatGroupedChartDate(adjustedLabel, groupingType, prevAdjustedLabel),
-            value: isNaN(item.value) || item.value === null || item.value === undefined ? 0 : Number(item.value),
-            value2: isNaN(item.value2) || item.value2 === null || item.value2 === undefined ? 0 : Number(item.value2)
-          }
-        }).filter(item => item.label && item.label !== '')
-
-        if (analyticsEnabled) {
-          // Preparar datos de visitantes con agrupación
-          const visitorsChartData = funnelMetricsRaw.map((item: any) => ({
-            label: item.label,
-            value: item.visitors || 0,
-            value2: item.leads || 0
-          }))
-          const groupedVisitorsData = groupChartData(visitorsChartData, groupingType)
-          const formattedVisitorsData = groupedVisitorsData.map((item: any, index: number) => {
-            const adjustedLabel = timezoneInfo.adjustMetaDateToLocal ? timezoneInfo.adjustMetaDateToLocal(item.label) : item.label
-            const prevAdjustedLabel = index > 0 && timezoneInfo.adjustMetaDateToLocal
-              ? timezoneInfo.adjustMetaDateToLocal(groupedVisitorsData[index - 1].label)
-              : (index > 0 ? groupedVisitorsData[index - 1].label : undefined)
-
-            return {
-              label: formatGroupedChartDate(adjustedLabel, groupingType, prevAdjustedLabel),
-              value: isNaN(item.value) || item.value === null || item.value === undefined ? 0 : Number(item.value),
-              value2: isNaN(item.value2) || item.value2 === null || item.value2 === undefined ? 0 : Number(item.value2)
-            }
-          }).filter(item => item.label && item.label !== '')
-          setVisitorsData(formattedVisitorsData || [])
-        } else {
-          setVisitorsData([])
-        }
-
-        setLeadsData(formattedLeadsData || [])
-        setAppointmentsData(formattedAppointmentsData || [])
+        setVisitorsData([])
       }
     } catch (error) {
       console.error('❌ Error en fetchCampaigns:', error)
@@ -433,7 +425,7 @@ export const Campaigns: React.FC = () => {
     } finally {
       setLoading(false)
     }
-  }, [analyticsEnabled, dateRange.end, dateRange.start, visitorSource, timezoneInfo])
+  }, [analyticsEnabled, dateRange.end, dateRange.start, visitorSource, timezoneInfo, groupAndFormatChartData])
 
   // Fetch campaigns on mount and when date range or visitor source changes
   useEffect(() => {
@@ -1343,17 +1335,7 @@ export const Campaigns: React.FC = () => {
           <div style={{ height: 300 }}>
             {selectedConfig.data && selectedConfig.data.length > 0 ? (
               <AreaChart
-                data={selectedConfig.data.filter(item =>
-                  item &&
-                  item.label &&
-                  item.label !== '' &&
-                  (typeof item.value === 'number' && !isNaN(item.value)) ||
-                  (typeof item.value2 === 'number' && !isNaN(item.value2))
-                ).map(item => ({
-                  label: item.label,
-                  value: typeof item.value === 'number' && !isNaN(item.value) ? item.value : 0,
-                  value2: typeof item.value2 === 'number' && !isNaN(item.value2) ? item.value2 : undefined
-                }))}
+                data={selectedConfig.data}
                 height={300}
                 showGrid={true}
                 color={selectedConfig.color}
