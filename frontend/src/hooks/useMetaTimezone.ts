@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { campaignsService } from '@/services/campaignsService'
 import { useTimezone } from '@/contexts/TimezoneContext'
 
@@ -71,7 +71,7 @@ export function useMetaTimezone(): MetaTimezoneInfo {
    * @param metaDate Fecha en formato YYYY-MM-DD desde Meta (en su timezone)
    * @returns Fecha ajustada visualmente con indicador de timezone si hay discrepancia
    */
-  const adjustMetaDateToLocal = (metaDate: string): string => {
+  const adjustMetaDateToLocal = useCallback((metaDate: string): string => {
     // Si no hay fecha, devolver tal cual
     if (!metaDate) {
       return metaDate
@@ -106,9 +106,9 @@ export function useMetaTimezone(): MetaTimezoneInfo {
 
     // Agregar indicador de timezone solo si hay discrepancia significativa
     return `${metaDate} (${metaTzAbbr})`
-  }
+  }, [hasDiscrepancy, metaTimezoneOffset, discrepancyHours, metaTimezoneName])
 
-  return {
+  return useMemo(() => ({
     metaTimezoneName,
     metaTimezoneOffset,
     highLevelTimezoneName: timezone,
@@ -117,5 +117,14 @@ export function useMetaTimezone(): MetaTimezoneInfo {
     discrepancyHours,
     isLoading,
     adjustMetaDateToLocal
-  }
+  }), [
+    metaTimezoneName,
+    metaTimezoneOffset,
+    timezone,
+    highLevelTimezoneOffset,
+    hasDiscrepancy,
+    discrepancyHours,
+    isLoading,
+    adjustMetaDateToLocal
+  ])
 }

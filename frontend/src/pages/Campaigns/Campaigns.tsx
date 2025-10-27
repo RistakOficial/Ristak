@@ -157,7 +157,6 @@ export const Campaigns: React.FC = () => {
   const groupChartData = (data: any[], groupBy: 'day' | 'week' | 'month') => {
     if (groupBy === 'day' || !data.length) return data
 
-    console.log(`🔄 Agrupando por ${groupBy}:`, data.length, 'items')
     const grouped = new Map<string, any>()
 
     data.forEach((item, idx) => {
@@ -240,8 +239,6 @@ export const Campaigns: React.FC = () => {
       const startDate = formatDateToISO(dateRange.start)
       const endDate = formatEndDateToISO(dateRange.end) // Incluir día completo hasta 23:59:59
 
-      console.log('🔍 Fetching campaigns:', { startDate, endDate, rangeInDays: Math.ceil((dateRange.end.getTime() - dateRange.start.getTime()) / (1000 * 60 * 60 * 24)) })
-
       const summaryPromise = reportsService
         .getCampaignsReport({ from: startDate, to: endDate })
         .catch(() => null as CampaignsReport | null)
@@ -319,21 +316,12 @@ export const Campaigns: React.FC = () => {
       // Determinar tipo de agrupación
       const groupingType = getGroupingType(rangeInDays)
 
-      console.log('📊 Agrupación:', { rangeInDays, groupingType, spendDataLength: spendData?.length })
-
       // Validar que tenemos datos antes de agrupar
       if (!spendData || spendData.length === 0) {
-        console.log('⚠️ No hay datos de spend')
         setRevenueData([])
       } else {
         // Agrupar datos según el rango
         const groupedSpendData = groupChartData(spendData, groupingType)
-
-        console.log('📈 Datos agrupados:', {
-          original: spendData.length,
-          agrupados: groupedSpendData.length,
-          muestra: groupedSpendData.slice(0, 3)
-        })
 
         // Formatear fechas inteligentemente para el gráfico
         const formattedSpendData = groupedSpendData.map((item: any, index: number) => ({
@@ -432,7 +420,6 @@ export const Campaigns: React.FC = () => {
       setAppointmentsData([])
       setVisitorsData([])
     } finally {
-      console.log('✅ fetchCampaigns terminado, setLoading(false)')
       setLoading(false)
     }
   }, [analyticsEnabled, dateRange.end, dateRange.start, visitorSource, timezoneInfo])
