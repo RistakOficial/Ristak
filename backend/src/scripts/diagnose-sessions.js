@@ -1,3 +1,4 @@
+import { writeFileSync } from 'fs';
 import pg from 'pg';
 
 const { Pool } = pg;
@@ -9,10 +10,15 @@ const pool = new Pool({
   }
 });
 
-async function diagnose() {
-  try {
-    console.log('🔍 Conectando a la base de datos...\n');
+const OUTPUT_FILE = 'diagnose-sessions-report.json';
 
+async function diagnose() {
+  const report = {
+    startedAt: new Date().toISOString(),
+    status: 'pending'
+  };
+
+  try {
     // 1. Verificar si la tabla existe
     const tableCheck = await pool.query(`
       SELECT EXISTS (
@@ -20,11 +26,11 @@ async function diagnose() {
         WHERE table_name = 'sessions'
       );
     `);
-    console.log('✅ Tabla sessions existe:', tableCheck.rows[0].exists);
+    report.tableExists = Boolean(tableCheck.rows[0].exists);
 
     // 2. Contar registros totales
     const count = await pool.query('SELECT COUNT(*) as total FROM sessions');
-    console.log('📊 Total de registros en sessions:', count.rows[0].total);
+    report.totalSessions = Number(count.rows[0].total || 0);
 
     // 3. Ver estructura de la tabla
     const structure = await pool.query(`
@@ -33,10 +39,10 @@ async function diagnose() {
       WHERE table_name = 'sessions'
       ORDER BY ordinal_position;
     `);
-    console.log('\n📋 Estructura de la tabla sessions:');
-    structure.rows.forEach(col => {
-      console.log(`   - ${col.column_name}: ${col.data_type}`);
-    });
+    report.tableStructure = structure.rows.map(col => ({
+      column: col.column_name,
+      type: col.data_type
+    }));
 
     // 4. Verificar si existe sessions_backup_2025
     const backupCheck = await pool.query(`
@@ -45,25 +51,32 @@ async function diagnose() {
         WHERE table_name = 'sessions_backup_2025'
       );
     `);
-    console.log('\n🔍 Tabla sessions_backup_2025 existe:', backupCheck.rows[0].exists);
+    report.backup = {
+      exists: Boolean(backupCheck.rows[0].exists)
+    };
 
-    if (backupCheck.rows[0].exists) {
+    if (report.backup.exists) {
       const backupCount = await pool.query('SELECT COUNT(*) as total FROM sessions_backup_2025');
-      console.log('📦 Registros en backup:', backupCount.rows[0].total);
+      report.backup.total = Number(backupCount.rows[0].total || 0);
     }
 
     // 5. Ver registros recientes (últimos 5)
-    if (parseInt(count.rows[0].total) > 0) {
+    if (report.totalSessions > 0) {
       const recent = await pool.query(`
         SELECT id, session_id, visitor_id, started_at, page_url
         FROM sessions
         ORDER BY started_at DESC
         LIMIT 5
       `);
-      console.log('\n📝 Últimos 5 registros:');
-      recent.rows.forEach(row => {
-        console.log(`   - ${row.started_at}: ${row.page_url} (visitor: ${row.visitor_id.substring(0, 8)}...)`);
-      });
+      report.recentSessions = recent.rows.map(row => ({
+        id: row.id,
+        sessionId: row.session_id,
+        visitorId: row.visitor_id,
+        startedAt: row.started_at,
+        pageUrl: row.page_url
+      }));
+    } else {
+      report.recentSessions = [];
     }
 
     // 6. Contar por fecha (últimos 7 días)
@@ -75,21 +88,22 @@ async function diagnose() {
       ORDER BY date DESC
       LIMIT 7
     `);
-    console.log('\n📅 Registros por día (últimos 7 días):');
-    if (byDate.rows.length > 0) {
-      byDate.rows.forEach(row => {
-        console.log(`   - ${row.date}: ${row.count} registros`);
-      });
-    } else {
-      console.log('   (Sin datos en los últimos 7 días)');
-    }
+    report.countsByDate = byDate.rows.map(row => ({
+      date: row.date,
+      count: Number(row.count || 0)
+    }));
 
-    await pool.end();
-    console.log('\n✅ Diagnóstico completado');
+    report.status = 'ok';
   } catch (error) {
-    console.error('❌ Error:', error.message);
+    report.status = 'error';
+    report.error = error instanceof Error ? error.message : String(error);
+    writeFileSync(OUTPUT_FILE, JSON.stringify(report, null, 2));
+    await pool.end();
     process.exit(1);
   }
+
+  await pool.end();
+  writeFileSync(OUTPUT_FILE, JSON.stringify(report, null, 2));
 }
 
 diagnose();

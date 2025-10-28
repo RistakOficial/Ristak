@@ -710,6 +710,7 @@ const SimpleAreaChart: React.FC<SimpleAreaChartProps> = ({ data, dataKeys, forma
 }
 
 const MetricsGrid: React.FC<MetricsGridProps> = ({ metrics, loading, reportType, showVisitors, viewType }) => {
+  const timezoneInfo = useMetaTimezone()
   const { labels } = useLabels()
   const totals = metrics.reduce((acc, m) => ({
     spend: acc.spend + m.spend,

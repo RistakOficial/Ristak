@@ -587,11 +587,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       setSelectedPaymentMethod(methods.length > 0 ? methods[0].id : null)
 
       // Mostrar mensaje informativo si no hay tarjetas
-      if (methods.length === 0 && data.message) {
-        console.log('ℹ️', data.message)
-      }
+      // Si no hay tarjetas y llega mensaje informativo, simplemente continuamos sin mostrar logs
     } catch (error: any) {
-      console.error('Error cargando tarjetas:', error)
       // No mostrar toast de error si simplemente no hay tarjetas
       if (!error.message.includes('no ha pagado con tarjeta')) {
         showToast('warning', 'No se pudieron cargar las tarjetas guardadas')

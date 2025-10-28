@@ -286,8 +286,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
       );
 
       setFreeSlots(slots);
-    } catch (error) {
-      console.error('Error al cargar slots:', error);
+    } catch {
       showToast('error', 'Error al cargar horarios', 'No se pudieron cargar los horarios disponibles');
       setFreeSlots([]);
     } finally {

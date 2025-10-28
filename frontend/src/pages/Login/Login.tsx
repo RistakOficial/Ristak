@@ -38,7 +38,7 @@ export const Login: React.FC = () => {
   }
 
   const handleCopyCode = () => {
-    const code = `node -e "const crypto = require('crypto'); const { Pool } = require('pg'); const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } }); async function reset() { const salt = crypto.randomBytes(16).toString('hex'); const hash = crypto.pbkdf2Sync('admin123', salt, 100000, 64, 'sha512').toString('hex'); const passwordHash = salt + ':' + hash; await pool.query('UPDATE users SET username = \$1, password_hash = \$2, updated_at = CURRENT_TIMESTAMP WHERE id = (SELECT id FROM users ORDER BY id LIMIT 1)', ['admin', passwordHash]); console.log('✅ Credenciales reseteadas: admin / admin123'); await pool.end(); } reset();"`
+    const code = `node -e "const crypto = require('crypto'); const { Pool } = require('pg'); const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } }); async function reset() { const salt = crypto.randomBytes(16).toString('hex'); const hash = crypto.pbkdf2Sync('admin123', salt, 100000, 64, 'sha512').toString('hex'); const passwordHash = salt + ':' + hash; await pool.query('UPDATE users SET username = \$1, password_hash = \$2, updated_at = CURRENT_TIMESTAMP WHERE id = (SELECT id FROM users ORDER BY id LIMIT 1)', ['admin', passwordHash]); process.stdout.write('✅ Credenciales reseteadas: admin / admin123\\n'); await pool.end(); } reset();"`
 
     navigator.clipboard.writeText(code)
     setCopied(true)
@@ -152,7 +152,7 @@ export const Login: React.FC = () => {
                   Copia y pega este comando en el Shell:
                   <div className={styles.codeBlock}>
                     <code>
-                      node -e "const crypto = require('crypto'); const &#123; Pool &#125; = require('pg'); const pool = new Pool(&#123; connectionString: process.env.DATABASE_URL, ssl: &#123; rejectUnauthorized: false &#125; &#125;); async function reset() &#123; const salt = crypto.randomBytes(16).toString('hex'); const hash = crypto.pbkdf2Sync('admin123', salt, 100000, 64, 'sha512').toString('hex'); const passwordHash = salt + ':' + hash; await pool.query('UPDATE users SET username = $1, password_hash = $2, updated_at = CURRENT_TIMESTAMP WHERE id = (SELECT id FROM users ORDER BY id LIMIT 1)', ['admin', passwordHash]); console.log('✅ Credenciales reseteadas: admin / admin123'); await pool.end(); &#125; reset();"
+                      node -e "const crypto = require('crypto'); const &#123; Pool &#125; = require('pg'); const pool = new Pool(&#123; connectionString: process.env.DATABASE_URL, ssl: &#123; rejectUnauthorized: false &#125; &#125;); async function reset() &#123; const salt = crypto.randomBytes(16).toString('hex'); const hash = crypto.pbkdf2Sync('admin123', salt, 100000, 64, 'sha512').toString('hex'); const passwordHash = salt + ':' + hash; await pool.query('UPDATE users SET username = $1, password_hash = $2, updated_at = CURRENT_TIMESTAMP WHERE id = (SELECT id FROM users ORDER BY id LIMIT 1)', ['admin', passwordHash]); process.stdout.write('✅ Credenciales reseteadas: admin / admin123\n'); await pool.end(); &#125; reset();"
                     </code>
                     <button
                       onClick={handleCopyCode}

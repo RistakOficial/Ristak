@@ -10,7 +10,7 @@
 4. **NUNCA hacer cambios sin verificar el contexto completo** - Leer TODO el proyecto antes
 5. **SIEMPRE actualizar este archivo** cuando cambies la estructura o agregues features
 6. **SIEMPRE limpiar imports no usados** y dependencias fantasma
-7. **NUNCA commitear console.logs** de debug en producción
+7. **NUNCA commitear logs de consola** de debug en producción
 8. **🔴 ENTORNO DE TRABAJO: TODO ES RENDER (PRODUCCIÓN)**
    - SIEMPRE commit + push después de cada cambio
    - Los cambios se ven en Render directamente
@@ -342,7 +342,7 @@ POST   /webhook/meta                    # Webhook de Meta
 - **Service Layer** para lógica de negocio
 - **Route Handlers** delgados (solo validación y respuesta)
 - **Utils** para funciones helper reutilizables
-- **Logger personalizado** en vez de console.log
+- **Logger personalizado** en vez de usar la consola
 
 ---
 
@@ -688,8 +688,8 @@ git log -1
 - ✓ Health check endpoint implementado (/api/health)
 - ✓ useEffect con dependencias incorrectas arreglado en Campaigns.tsx
 - ✓ URL hardcodeada eliminada en Campaigns.tsx (ahora usa campaignsService)
-- ✓ console.logs de producción eliminados (frontend y backend)
-- ✓ Backend usa logger consistentemente en lugar de console.log
+- ✓ Logs de producción eliminados (frontend y backend)
+- ✓ Backend usa logger consistentemente en lugar de salidas directas a consola
 - ✓ formatChartDate movido a utils/format.ts para reutilización
 - ✓ Archivos .env.example consolidados (solo uno en raíz con documentación completa)
 - ✓ Mapeo correcto de fechas de GHL: created_at guarda dateAdded (no fecha de sincronización)

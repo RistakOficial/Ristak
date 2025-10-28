@@ -55,12 +55,9 @@ export const useDomainFeatureSync = () => {
             shouldEnable = Boolean(config?.trackingDomain?.trim()) ||
               Boolean(config?.showAnalytics) ||
               Boolean(config?.isConfigured)
-          } catch (error) {
+          } catch {
             // Si la API falla, preferimos habilitar (fail-open) para no ocultar Analíticas por error transitorio
             shouldEnable = true
-            if (import.meta.env.DEV) {
-              console.warn('[useDomainFeatureSync] No se pudo obtener tracking config, habilitando por defecto', error)
-            }
           }
 
           if (!shouldEnable) return
@@ -87,10 +84,7 @@ export const useDomainFeatureSync = () => {
             }))
           }
         }
-      } catch (error) {
-        if (!cancelled) {
-          console.error('[useDomainFeatureSync] Error sincronizando configuración de dominio', error)
-        }
+      } catch {
       } finally {
         syncingRef.current = false
       }

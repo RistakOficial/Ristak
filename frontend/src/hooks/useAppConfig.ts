@@ -42,8 +42,8 @@ export function useAppConfig<T = string>(
       if (cached !== null) {
         return JSON.parse(cached) as T
       }
-    } catch (error) {
-      console.warn(`Error leyendo cache de ${key}:`, error)
+    } catch {
+      // Ignore cache read errors and fall back to default value
     }
     return defaultValue
   })
@@ -78,8 +78,8 @@ export function useAppConfig<T = string>(
             return current
           })
         }
-      } catch (error) {
-        console.warn(`No se pudo sincronizar ${key} desde DB, usando cache:`, error)
+      } catch {
+        // Keep cached value when DB sync fails
       }
     }
 
@@ -135,7 +135,6 @@ export function useAppConfig<T = string>(
         detail: { key, value: newValue }
       }))
     } catch (error) {
-      console.error(`Error guardando configuración ${key}:`, error)
       throw error
     } finally {
       if (mountedRef.current) {
@@ -165,8 +164,8 @@ export function useAppConfigs(keys: string[]) {
         if (value !== null) {
           cached[key] = JSON.parse(value)
         }
-      } catch (error) {
-        console.warn(`Error leyendo cache de ${key}:`, error)
+      } catch {
+        // Ignore cache read errors for individual keys
       }
     })
     return cached
@@ -202,7 +201,7 @@ export function useAppConfigs(keys: string[]) {
                     localStorage.setItem(`${CONFIG_PREFIX}${key}`, JSON.stringify(parsed))
                     hasChanges = true
                   }
-                } catch (error) {
+                } catch {
                   updated[key] = value
                   localStorage.setItem(`${CONFIG_PREFIX}${key}`, JSON.stringify(value))
                   hasChanges = true
@@ -213,8 +212,8 @@ export function useAppConfigs(keys: string[]) {
             return hasChanges ? updated : current
           })
         }
-      } catch (error) {
-        console.warn('No se pudo sincronizar config desde DB:', error)
+      } catch {
+        // Leave current cache untouched if sync fails
       }
     }
 
@@ -254,7 +253,6 @@ export function useAppConfigs(keys: string[]) {
         })
       }
     } catch (error) {
-      console.error('Error guardando configuraciones:', error)
       throw error
     } finally {
       if (mountedRef.current) {

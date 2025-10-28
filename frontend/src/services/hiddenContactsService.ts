@@ -14,8 +14,7 @@ export const hiddenContactsService = {
     try {
       const data = await apiClient.get<HiddenFilter[]>('/hidden-contacts')
       return data
-    } catch (error) {
-      console.error('Error fetching hidden filters:', error)
+    } catch {
       return []
     }
   },

@@ -87,7 +87,7 @@ Esta clave se usa para proteger tus tokens de Meta Ads y otros datos sensibles.
 2. Agrega una variable: `ENCRYPTION_MASTER_KEY`
 3. Genera una clave con este comando:
    ```bash
-   node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+   node -e "process.stdout.write(require('crypto').randomBytes(32).toString('hex'))"
    ```
 4. Guarda el valor generado
 

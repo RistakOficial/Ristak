@@ -128,8 +128,8 @@ export function Table<T extends Record<string, any>>({
 
     try {
       await updateTableConfig(config)
-    } catch (error) {
-      console.error('Error guardando configuración de tabla:', error)
+    } catch {
+      // Intentionally left blank to avoid breaking flow when persistence fails
     }
   }
 

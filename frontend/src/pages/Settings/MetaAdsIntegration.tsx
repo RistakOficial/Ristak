@@ -104,8 +104,7 @@ export const MetaAdsIntegration: React.FC = () => {
               if (revealData.success && revealData.accessToken) {
                 tokenToUse = revealData.accessToken
               }
-            } catch (error) {
-              console.error('Error revelando token:', error)
+            } catch {
               // Si falla, no hacer nada más (no cargar cuentas)
               setIsLoading(false)
               return
@@ -127,8 +126,7 @@ export const MetaAdsIntegration: React.FC = () => {
           }
         }
       }
-    } catch (error) {
-      console.error('Error cargando credenciales:', error)
+    } catch {
     } finally {
       setIsLoading(false)
     }
@@ -205,8 +203,7 @@ export const MetaAdsIntegration: React.FC = () => {
         showToast('info', 'Sin pixeles', 'No se encontraron pixeles para esta cuenta')
         setPixels([])
       }
-    } catch (error) {
-      console.error('🔴 Error cargando pixeles:', error)
+    } catch {
       showToast('error', 'Error', 'No se pudieron cargar los pixeles')
       setPixels([])
     } finally {

@@ -616,8 +616,6 @@ const Analytics: React.FC = () => {
             })).sort((a, b) => b.count - a.count)
           })).sort((a, b) => b.count - a.count)
 
-          console.log('📊 Jerarquía de anuncios construida:', filterData.adsHierarchy)
-
           setAvailableFilterData(filterData)
 
           // Calcular stats para las cards - VISITANTES ÚNICOS
@@ -784,8 +782,7 @@ const Analytics: React.FC = () => {
           })
           setDailyTraffic([])
         }
-      } catch (error) {
-        console.error('Error cargando analytics:', error)
+      } catch {
       } finally {
         setLoading(false)
       }
@@ -796,15 +793,9 @@ const Analytics: React.FC = () => {
 
   // Efecto para filtrar sesiones cuando cambian los filtros seleccionados
   useEffect(() => {
-    console.group('🔍 [ANALYTICS] Filtrado de Sesiones')
-    console.log('📊 Total sesiones sin filtrar:', allSessions.length)
-    console.log('🎯 Filtros seleccionados:', selectedFilters)
-
     if (Object.keys(selectedFilters).length === 0) {
-      console.log('✅ Sin filtros - Mostrando todas las sesiones')
       setSessions(allSessions)
     } else {
-      console.log('🔎 Aplicando filtros...')
       const filtered = allSessions.filter((session: Session) => {
         for (const [field, values] of Object.entries(selectedFilters)) {
           if (values.length === 0) continue
@@ -818,26 +809,22 @@ const Analytics: React.FC = () => {
                 if (session.page_url) {
                   const urlPath = session.page_url.split('?')[0]
                   const pageName = urlPath.split('/').pop() || 'home'
-                  console.log(`📄 Comparando página: "${pageName}" === "${value}"`, pageName === value)
                   if (pageName === value) fieldMatch = true
                 }
                 break
               case 'utm_campaign':
                 // Decodificar para comparar correctamente (evitar formato +++)
                 const decodedCampaign = decodeAdName(session.utm_campaign)
-                console.log(`🎯 Comparando campaña: "${decodedCampaign}" === "${value}"`, decodedCampaign === value)
                 if (decodedCampaign === value) fieldMatch = true
                 break
               case 'utm_medium':
                 // Decodificar para comparar correctamente (evitar formato +++)
                 const decodedMedium = session.utm_medium ? decodeAdName(session.utm_medium) : ''
-                console.log(`📦 Comparando adset (utm_medium): "${decodedMedium}" === "${value}"`, decodedMedium === value)
                 if (decodedMedium === value) fieldMatch = true
                 break
               case 'utm_content':
                 // Decodificar para comparar correctamente (evitar formato +++)
                 const decodedContent = session.utm_content ? decodeAdName(session.utm_content) : ''
-                console.log(`📢 Comparando ad (utm_content): "${decodedContent}" === "${value}"`, decodedContent === value)
                 if (decodedContent === value) fieldMatch = true
                 break
               case 'utm_source':
@@ -849,42 +836,33 @@ const Analytics: React.FC = () => {
                   source_platform: session.source_platform
                 })
                 // Comparar en lowercase (platformId ahora es normalizado + lowercase)
-                console.log(`🌐 Comparando fuente: "${normalizedSource.toLowerCase()}" === "${value}"`, normalizedSource.toLowerCase() === value)
                 if (normalizedSource.toLowerCase() === value) fieldMatch = true
                 break
               case 'device_type':
-                console.log(`📱 Comparando dispositivo: "${session.device_type}" === "${value}"`, session.device_type === value)
                 if (session.device_type === value) fieldMatch = true
                 break
               case 'browser':
-                console.log(`🌍 Comparando navegador: "${session.browser}" === "${value}"`, session.browser === value)
                 if (session.browser === value) fieldMatch = true
                 break
               case 'os':
-                console.log(`💻 Comparando OS: "${session.os}" === "${value}"`, session.os === value)
                 if (session.os === value) fieldMatch = true
                 break
               case 'placement':
                 const placementFormatted = formatPlacementName(session.placement || '')
-                console.log(`📍 Comparando placement: "${placementFormatted}" === "${value}"`, placementFormatted === value)
                 if (placementFormatted === value) fieldMatch = true
                 break
               case 'ad_platform':
                 const sessionPlatform = (session.source_platform || '').toLowerCase()
-                console.log(`📱 Comparando plataforma: "${sessionPlatform}" === "${value}"`, sessionPlatform === value)
                 if (sessionPlatform === value) fieldMatch = true
                 break
               case 'campaign_id':
-                console.log(`🎯 Comparando campaign_id: "${session.campaign_id}" === "${value}"`, session.campaign_id === value)
                 if (session.campaign_id === value) fieldMatch = true
                 break
               case 'adset_id':
                 const sessionAdsetId = session.adset_id || session.ad_group_id
-                console.log(`📦 Comparando adset_id: "${sessionAdsetId}" === "${value}"`, sessionAdsetId === value)
                 if (sessionAdsetId === value) fieldMatch = true
                 break
               case 'ad_id':
-                console.log(`📢 Comparando ad_id: "${session.ad_id}" === "${value}"`, session.ad_id === value)
                 if (session.ad_id === value) fieldMatch = true
                 break
             }
@@ -896,15 +874,6 @@ const Analytics: React.FC = () => {
         return true
       })
 
-      console.log('✅ Sesiones filtradas:', filtered.length)
-      console.log('📋 Primeras 3 sesiones filtradas:', filtered.slice(0, 3).map(s => ({
-        visitor_id: s.visitor_id,
-        contact_id: s.contact_id,
-        page_url: s.page_url,
-        utm_campaign: s.utm_campaign,
-        device_type: s.device_type
-      })))
-
       // Ordenar sesiones filtradas de más reciente a más vieja
       const sortedFiltered = [...filtered].sort((a, b) => {
         const dateA = new Date(a.started_at).getTime()
@@ -913,17 +882,12 @@ const Analytics: React.FC = () => {
       })
       setSessions(sortedFiltered)
     }
-    console.groupEnd()
   }, [selectedFilters, allSessions])
 
   // Efecto para recalcular visualizaciones cuando cambien las sesiones filtradas
   useEffect(() => {
-    console.group('📊 [ANALYTICS] Recalculando Visualizaciones')
-
     // No hacer nada si allSessions está vacío (aún no se han cargado los datos iniciales)
     if (allSessions.length === 0) {
-      console.log('⏳ AllSessions vacío - esperando datos iniciales')
-      console.groupEnd()
       return
     }
 
@@ -934,13 +898,7 @@ const Analytics: React.FC = () => {
     // BUG FIX: Si no hay filtros activos, usar allSessions en vez de sessions
     const sessionsToProcess = hasActiveFilters ? sessions : allSessions
 
-    console.log('🎯 Filtros activos:', hasActiveFilters)
-    console.log('📊 selectedFilters:', selectedFilters)
-    console.log('📈 Sesiones a procesar:', sessionsToProcess.length)
-    console.log('📦 AllSessions disponibles:', allSessions.length)
-
     if (sessionsToProcess.length === 0) {
-      console.log('⚠️ No hay sesiones filtradas - Reseteando métricas')
       // Si no hay sesiones filtradas, resetear solo métricas de sesiones
       // NO resetear registros ni registrosChartData si no hay filtros (mantener originales)
       setMetrics(prev => ({
@@ -957,21 +915,15 @@ const Analytics: React.FC = () => {
       if (hasActiveFilters) {
         setRegistrosChartData([]) // Vaciar gráfico si hay filtro activo
       }
-      console.groupEnd()
       return
     }
 
     // Recalcular KPIs principales con las sesiones filtradas
-    console.log('🧮 Calculando KPIs...')
     const uniqueVids = new Set(sessionsToProcess.map((s: Session) => s.visitor_id)).size
     const totalPageViews = sessionsToProcess.length
 
     // Contar sesiones únicas (por session_id)
     const uniqueSessionIds = new Set(sessionsToProcess.map((s: Session) => s.session_id)).size
-
-    console.log('👥 Visitantes únicos:', uniqueVids)
-    console.log('👁️ Visualizaciones de página:', totalPageViews)
-    console.log('🔑 Sesiones únicas:', uniqueSessionIds)
 
     // Registros = contactos únicos que aparecen en las sesiones filtradas
     const sesionesConContacto = sessionsToProcess.filter((s: Session) => {
@@ -979,23 +931,12 @@ const Analytics: React.FC = () => {
       return new Date(s.started_at) >= new Date(s.contact_created_at)
     })
 
-    console.log('📞 Sesiones con contact_id:', sesionesConContacto.length)
-    console.log('📋 Primeras 3 sesiones con contacto:', sesionesConContacto.slice(0, 3).map(s => ({
-      visitor_id: s.visitor_id,
-      contact_id: s.contact_id,
-      contact_created_at: s.contact_created_at,
-      started_at: s.started_at
-    })))
-
     const registrosEnSesiones = new Set(
       sesionesConContacto.map((s: Session) => s.contact_id)
     ).size
 
-    console.log('📝 Contactos únicos en sesiones filtradas:', registrosEnSesiones)
-
     // Si hay filtros activos, usar registrosEnSesiones; si no, usar valor original guardado
     const registrosValue = hasActiveFilters ? registrosEnSesiones : originalRegistros
-    console.log('✅ Valor final de Registros:', registrosValue, hasActiveFilters ? '(filtrado)' : '(original)')
 
     const conversionRate = uniqueVids > 0 ? ((registrosValue / uniqueVids) * 100) : 0
 
@@ -1012,10 +953,6 @@ const Analytics: React.FC = () => {
     // Páginas por sesión = total de page_views / número de sesiones únicas
     const avgPagePerSession = uniqueSessionIds > 0 ?
       (totalPageViews / uniqueSessionIds) : 0
-
-    console.log('🔁 Usuarios recurrentes:', returningUsers)
-    console.log('📄 Páginas por sesión:', avgPagePerSession.toFixed(2))
-    console.log('🎯 Tasa de conversión:', conversionRate.toFixed(2) + '%')
 
     // Actualizar métricas (sin trends, ya que los filtros no tienen período anterior)
     setMetrics(prev => ({
@@ -1053,12 +990,8 @@ const Analytics: React.FC = () => {
 
     setDailyTraffic(chartData)
 
-    console.log('📊 Gráfico de tráfico generado con', chartData.length, 'puntos')
-
     // Recalcular gráficos de registros SI hay filtros activos
     if (hasActiveFilters) {
-      console.log('📈 Recalculando gráfico de registros (filtros activos)...')
-
       // Agrupar contactos únicos por fecha de creación
       const registrosPorFecha: { [key: string]: Set<string> } = {}
 
@@ -1078,13 +1011,6 @@ const Analytics: React.FC = () => {
         }
       })
 
-      console.log('📅 Fechas con registros:', Object.keys(registrosPorFecha).length)
-      console.log('📋 Detalle por fecha:', Object.entries(registrosPorFecha).map(([date, contactSet]) => ({
-        fecha: date,
-        registros: contactSet.size,
-        contactos: Array.from(contactSet).slice(0, 3)
-      })))
-
       // Generar datos para el gráfico de barras (solo período actual filtrado)
       const filteredRegistrosChartData = Object.entries(registrosPorFecha)
         .sort(([a], [b]) => a.localeCompare(b))
@@ -1093,7 +1019,6 @@ const Analytics: React.FC = () => {
           value: contactSet.size
         }))
 
-      console.log('📊 Gráfico de barras de registros:', filteredRegistrosChartData)
       setRegistrosChartData(filteredRegistrosChartData)
 
       // Generar datos para el gráfico de conversiones (con período anterior incluido)
@@ -1106,7 +1031,6 @@ const Analytics: React.FC = () => {
 
       setDailyConversions(filteredConversionsData)
     } else {
-      console.log('📊 Manteniendo gráfico de registros original (sin filtros)')
     }
     // Si NO hay filtros, mantener los datos originales (ya están seteados en el primer useEffect)
 
@@ -1256,8 +1180,6 @@ const Analytics: React.FC = () => {
       }))
     setTopVisitors(topVisitorsList)
 
-    console.log('✅ Visualizaciones recalculadas exitosamente')
-    console.groupEnd()
   }, [sessions, allSessions, selectedFilters, formatLocalDateShort])
 
   // Preparar métricas para KPICards

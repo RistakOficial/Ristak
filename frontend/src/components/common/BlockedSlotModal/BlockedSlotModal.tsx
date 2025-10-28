@@ -255,20 +255,10 @@ export const BlockedSlotModal: React.FC<BlockedSlotModalProps> = ({
       try {
         setLoadingUsers(true);
 
-        console.log('🔵 [BlockedSlotModal] Iniciando carga de usuarios');
-        console.log('🔵 [BlockedSlotModal] Calendar:', calendar);
-        console.log('🔵 [BlockedSlotModal] Calendar ID:', calendar.id);
-        console.log('🔵 [BlockedSlotModal] Calendar Name:', calendar.name);
-
         // Extraer team members del calendario
         const teamMemberIds = calendar.teamMembers?.map(tm => tm.userId) || [];
-        console.log('🔵 [BlockedSlotModal] Team Members del calendario:', calendar.teamMembers);
-        console.log('🔵 [BlockedSlotModal] Team Member IDs extraídos:', teamMemberIds);
 
         if (teamMemberIds.length === 0) {
-          console.log('🟡 [BlockedSlotModal] ⚠️ No hay team members en el calendario');
-          console.log('🔵 [BlockedSlotModal] Intentando obtener usuarios del location...');
-
           // Si no hay team members, obtener usuarios del location
           try {
             const url = new URL(`${import.meta.env.VITE_API_URL}/api/highlevel/users`);
@@ -285,14 +275,11 @@ export const BlockedSlotModal: React.FC<BlockedSlotModalProps> = ({
             if (response.ok) {
               const result = await response.json();
               const locationUsers = result.users || [];
-              console.log('🟢 [BlockedSlotModal] ✅ Usuarios del location obtenidos:', locationUsers);
               setUsers(locationUsers);
             } else {
-              console.log('🔴 [BlockedSlotModal] ❌ No se pudieron obtener usuarios del location');
               setUsers([]);
             }
-          } catch (error) {
-            console.log('🔴 [BlockedSlotModal] ❌ Error al obtener usuarios del location:', error);
+          } catch {
             setUsers([]);
           }
           return;
@@ -305,7 +292,6 @@ export const BlockedSlotModal: React.FC<BlockedSlotModalProps> = ({
             accessToken,
             locationId
           };
-          console.log('🔵 [BlockedSlotModal] Payload para /api/highlevel/users/by-ids:', payload);
 
           const response = await fetch(`${import.meta.env.VITE_API_URL}/api/highlevel/users/by-ids`, {
             method: 'POST',
@@ -315,18 +301,11 @@ export const BlockedSlotModal: React.FC<BlockedSlotModalProps> = ({
             body: JSON.stringify(payload)
           });
 
-          console.log('🔵 [BlockedSlotModal] Response status:', response.status);
-          console.log('🔵 [BlockedSlotModal] Response ok:', response.ok);
-
           if (response.ok) {
             const result = await response.json();
-            console.log('🟢 [BlockedSlotModal] ✅ Respuesta exitosa:', result);
             const usersData = result.data || [];
-            console.log('🟢 [BlockedSlotModal] Usuarios cargados:', usersData);
             setUsers(usersData);
           } else {
-            const errorText = await response.text();
-            console.log('🔴 [BlockedSlotModal] ❌ Error en response:', errorText);
             // Fallback: mostrar IDs truncados
             const fallbackUsers = teamMemberIds.map(id => ({
               id,
@@ -335,11 +314,9 @@ export const BlockedSlotModal: React.FC<BlockedSlotModalProps> = ({
               firstName: '',
               lastName: ''
             }));
-            console.log('🟡 [BlockedSlotModal] Usando fallback users:', fallbackUsers);
             setUsers(fallbackUsers);
           }
-        } catch (error) {
-          console.log('🔴 [BlockedSlotModal] ❌ Excepción al cargar usuarios:', error);
+        } catch {
           // Fallback: mostrar IDs truncados
           const fallbackUsers = teamMemberIds.map(id => ({
             id,
@@ -348,11 +325,9 @@ export const BlockedSlotModal: React.FC<BlockedSlotModalProps> = ({
             firstName: '',
             lastName: ''
           }));
-          console.log('🟡 [BlockedSlotModal] Usando fallback users después de error:', fallbackUsers);
           setUsers(fallbackUsers);
         }
-      } catch (error) {
-        console.log('🔴 [BlockedSlotModal] ❌ Error general al cargar usuarios:', error);
+      } catch {
         showToast('error', 'Error al cargar usuarios', 'No se pudieron cargar los usuarios del calendario');
       } finally {
         setLoadingUsers(false);

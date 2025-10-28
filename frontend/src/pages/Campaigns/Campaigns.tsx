@@ -307,10 +307,7 @@ export const Campaigns: React.FC = () => {
           ? fetch(`/api/tracking/visitors-by-ad?startDate=${startDate}&endDate=${endDate}`)
               .then(res => res.json())
               .then(data => data.data || {})
-              .catch((error) => {
-                console.error('❌ Error fetching visitors:', error)
-                return {}
-              })
+              .catch(() => ({}))
           : Promise.resolve({})
       ]
 
@@ -420,8 +417,7 @@ export const Campaigns: React.FC = () => {
       } else {
         setVisitorsData([])
       }
-    } catch (error) {
-      console.error('❌ Error en fetchCampaigns:', error)
+    } catch {
       // Don't fall back to mock data - show empty state
       setCampaigns([])
       setCampaignSummary(null)
@@ -627,8 +623,7 @@ export const Campaigns: React.FC = () => {
       } else {
         setModalVisitors([])
       }
-    } catch (error) {
-      console.error('Error cargando visitantes:', error)
+    } catch {
       setModalVisitors([])
     } finally {
       setVisitorsModalLoading(false)
