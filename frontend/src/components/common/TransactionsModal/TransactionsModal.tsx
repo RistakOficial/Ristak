@@ -36,6 +36,8 @@ export const TransactionsModal: React.FC<TransactionsModalProps> = ({
 }) => {
   if (!isOpen) return null
 
+  const totalAmount = transactions.reduce((sum, t) => sum + (t.amount || 0), 0)
+
   const getStatusColor = (status: string) => {
     const lowerStatus = status?.toLowerCase()
     if (['succeeded', 'paid', 'completed', 'success'].includes(lowerStatus)) return styles.statusSuccess
@@ -66,10 +68,9 @@ export const TransactionsModal: React.FC<TransactionsModalProps> = ({
       onClose={onClose}
       title={title}
       size="xl"
+      type="custom"
     >
       <div className={styles.container}>
-        {subtitle && <div className={styles.subtitle}>{subtitle}</div>}
-
         {loading ? (
           <div className={styles.loading}>
             <div className={styles.spinner}></div>
@@ -81,15 +82,17 @@ export const TransactionsModal: React.FC<TransactionsModalProps> = ({
           </div>
         ) : (
           <>
+            {subtitle && <div className={styles.subtitle}>{subtitle}</div>}
+
             <div className={styles.summary}>
               <div className={styles.summaryItem}>
-                <span className={styles.summaryLabel}>Total de transacciones:</span>
+                <span className={styles.summaryLabel}>Transacciones</span>
                 <span className={styles.summaryValue}>{transactions.length}</span>
               </div>
               <div className={styles.summaryItem}>
-                <span className={styles.summaryLabel}>Monto total:</span>
+                <span className={styles.summaryLabel}>Monto Total</span>
                 <span className={styles.summaryValue}>
-                  {formatCurrency(transactions.reduce((sum, t) => sum + (t.amount || 0), 0))}
+                  {formatCurrency(totalAmount)}
                 </span>
               </div>
             </div>
@@ -119,20 +122,20 @@ export const TransactionsModal: React.FC<TransactionsModalProps> = ({
 
                   <div className={styles.transactionDetails}>
                     <div className={styles.detailItem}>
-                      <span className={styles.detailLabel}>Fecha:</span>
+                      <span className={styles.detailLabel}>Fecha</span>
                       <span className={styles.detailValue}>
                         {formatDate(new Date(transaction.date))}
                       </span>
                     </div>
                     {transaction.payment_method && (
                       <div className={styles.detailItem}>
-                        <span className={styles.detailLabel}>Método:</span>
+                        <span className={styles.detailLabel}>Método</span>
                         <span className={styles.detailValue}>{transaction.payment_method}</span>
                       </div>
                     )}
                     {transaction.description && (
                       <div className={styles.detailItem}>
-                        <span className={styles.detailLabel}>Descripción:</span>
+                        <span className={styles.detailLabel}>Descripción</span>
                         <span className={styles.detailValue}>{transaction.description}</span>
                       </div>
                     )}
