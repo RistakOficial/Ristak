@@ -1342,7 +1342,7 @@ const Analytics: React.FC = () => {
             </p>
           </div>
 
-          <div className="h-[280px]">
+          <div className="mt-4 h-[clamp(320px,45vh,560px)] min-h-[320px]">
             {loading ? (
               <div className="flex h-full items-center justify-center text-sm text-gray-500">
                 Cargando datos...
@@ -1350,7 +1350,7 @@ const Analytics: React.FC = () => {
             ) : dailyTraffic.length > 0 ? (
               <LineChart
                 data={dailyTraffic}
-                height={280}
+                minHeight={320}
                 showGrid
                 color="#8b5cf6"
                 color2="#3b82f6"

@@ -54,7 +54,7 @@ export const Settings: React.FC = () => {
           className={({ isActive }) => `${styles.tab} ${isActive ? styles.tabActive : ''}`}
         >
           <Activity size={18} />
-          <span>Trackeo Web</span>
+          <span>Rastreo Web</span>
         </NavLink>
         <NavLink
           to="/settings/payments"

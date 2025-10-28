@@ -24,7 +24,8 @@ interface LegendLabels {
 
 interface LineChartProps {
   data: DataPoint[]
-  height?: number
+  height?: number | string
+  minHeight?: number | string
   showGrid?: boolean
   color?: string
   color2?: string
@@ -51,7 +52,8 @@ const defaultFormatTooltip = (value: number): string => formatCurrency(value)
 
 export const LineChart: React.FC<LineChartProps> = ({
   data,
-  height = 280,
+  height = '100%',
+  minHeight,
   showGrid = true,
   color = DEFAULT_COLOR_PRIMARY,
   color2 = DEFAULT_COLOR_SECONDARY,
@@ -112,9 +114,19 @@ export const LineChart: React.FC<LineChartProps> = ({
     return values
   }, [data])
 
-  const maxValue = numericValues.length > 0 ? Math.max(...numericValues) : 0
-  // Los datos deben ocupar máximo el 75% de la altura del gráfico
-  const yDomain: [number, number] = [0, maxValue > 0 ? Math.ceil(maxValue / 0.75) : 1]
+  const yDomain = useMemo<[number, number]>(() => {
+    if (numericValues.length === 0) {
+      return [0, 1]
+    }
+
+    const maxValue = Math.max(...numericValues)
+    if (maxValue <= 0) {
+      return [0, 1]
+    }
+
+    const paddedMax = Math.max(maxValue * 1.05, maxValue + 1)
+    return [0, paddedMax]
+  }, [numericValues])
 
   const axisFormatter = (value: number) => formatValue(value)
   const tooltipFormatter = (value: number, key: string) => formatTooltipValue(value, key)
@@ -168,7 +180,15 @@ export const LineChart: React.FC<LineChartProps> = ({
       <div
         ref={chartRef}
         className="relative"
-        style={{ minHeight: height, height }}
+        style={{
+          height,
+          minHeight:
+            typeof minHeight !== 'undefined'
+              ? minHeight
+              : typeof height === 'number'
+                ? height
+                : 280
+        }}
       >
         <ResponsiveContainer width="100%" height="100%">
           <RechartsAreaChart data={data} margin={{ top: 10, right: 12, left: 0, bottom: 5 }}>
