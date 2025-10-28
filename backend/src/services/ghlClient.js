@@ -551,7 +551,7 @@ export async function getGHLClient() {
  */
 export async function getContactById(contactId) {
   const client = await getGHLClient()
-  return await client.get(`/contacts/${contactId}`)
+  return await client.getContact(contactId)
 }
 
 /**
@@ -562,7 +562,7 @@ export async function getContactById(contactId) {
  */
 export async function recordPayment(invoiceId, paymentData) {
   const client = await getGHLClient()
-  return await client.post(`/invoices/${invoiceId}/record-payment`, paymentData)
+  return await client.recordPayment(invoiceId, paymentData)
 }
 
 /**

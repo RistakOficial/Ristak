@@ -25,8 +25,12 @@ export async function getContactPaymentMethods(req, res) {
     // 1. Obtener datos del contacto desde GHL
     let contact
     try {
-      contact = await ghlService.getContactById(contactId)
+      const response = await ghlService.getContactById(contactId)
+      // La respuesta de HighLevel viene envuelta en { contact: {...} }
+      contact = response?.contact || response
+
       if (!contact || !contact.email) {
+        logger.info(`Contacto ${contactId}: sin email configurado`)
         return res.json({
           success: true,
           hasPaymentMethods: false,
@@ -45,29 +49,17 @@ export async function getContactPaymentMethods(req, res) {
     }
 
     // 2. Buscar cliente en Stripe por email
-    let stripeCustomer
-    try {
-      stripeCustomer = await stripeService.findCustomerByEmail(locationId, contact.email)
+    const stripeCustomer = await stripeService.findCustomerByEmail(locationId, contact.email)
 
-      if (!stripeCustomer) {
-        return res.json({
-          success: true,
-          hasPaymentMethods: false,
-          paymentMethods: [],
-          customerId: null
-        })
-      }
-    } catch (error) {
-      // Si no hay Stripe configurado, retornar sin error
-      if (error.message.includes('No se encontró configuración de Stripe')) {
-        return res.json({
-          success: true,
-          hasPaymentMethods: false,
-          paymentMethods: [],
-          message: 'Stripe no está configurado'
-        })
-      }
-      throw error
+    if (!stripeCustomer) {
+      logger.info(`Contacto ${contactId} no tiene customer en Stripe`)
+      return res.json({
+        success: true,
+        hasPaymentMethods: false,
+        paymentMethods: [],
+        customerId: null,
+        message: 'Este contacto no ha pagado con tarjeta anteriormente'
+      })
     }
 
     // 3. Obtener tarjetas del cliente
@@ -76,12 +68,14 @@ export async function getContactPaymentMethods(req, res) {
     // 4. Formatear respuesta
     const formattedMethods = paymentMethods.map(pm => ({
       id: pm.id,
-      brand: pm.card.brand,
-      last4: pm.card.last4,
-      expMonth: pm.card.exp_month,
-      expYear: pm.card.exp_year,
-      fingerprint: pm.card.fingerprint
+      brand: pm.card?.brand || 'unknown',
+      last4: pm.card?.last4 || '****',
+      expMonth: pm.card?.exp_month || 0,
+      expYear: pm.card?.exp_year || 0,
+      fingerprint: pm.card?.fingerprint || ''
     }))
+
+    logger.info(`Encontradas ${formattedMethods.length} tarjetas para contacto ${contactId}`)
 
     res.json({
       success: true,
@@ -140,7 +134,9 @@ export async function chargePaymentMethod(req, res) {
     const locationId = config.location_id
 
     // Obtener datos del contacto
-    const contact = await ghlService.getContactById(contactId)
+    const response = await ghlService.getContactById(contactId)
+    const contact = response?.contact || response
+
     if (!contact) {
       return res.status(404).json({
         success: false,

@@ -562,9 +562,22 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     setCheckingCards(true)
     try {
       const response = await fetch(`/api/payment-methods/contact/${contactId}`)
+
+      // Verificar que la respuesta es válida
+      if (!response.ok) {
+        // Intentar parsear el error si es JSON
+        try {
+          const errorData = await response.json()
+          throw new Error(errorData.error || `Error HTTP ${response.status}`)
+        } catch {
+          throw new Error(`Error al cargar tarjetas (${response.status})`)
+        }
+      }
+
       const data = await response.json()
 
-      if (!response.ok) {
+      // Verificar que success sea true (si existe)
+      if (data.success === false) {
         throw new Error(data.error || 'Error al obtener tarjetas guardadas')
       }
 
@@ -573,11 +586,16 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       setCustomerId(data.customerId || null)
       setSelectedPaymentMethod(methods.length > 0 ? methods[0].id : null)
 
+      // Mostrar mensaje informativo si no hay tarjetas
       if (methods.length === 0 && data.message) {
-        showToast('info', data.message)
+        console.log('ℹ️', data.message)
       }
     } catch (error: any) {
-      showToast('error', error.message || 'No se pudieron obtener las tarjetas guardadas')
+      console.error('Error cargando tarjetas:', error)
+      // No mostrar toast de error si simplemente no hay tarjetas
+      if (!error.message.includes('no ha pagado con tarjeta')) {
+        showToast('warning', 'No se pudieron cargar las tarjetas guardadas')
+      }
       setPaymentMethods([])
       setCustomerId(null)
       setSelectedPaymentMethod(null)
