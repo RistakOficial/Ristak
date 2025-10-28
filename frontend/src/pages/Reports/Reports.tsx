@@ -535,7 +535,7 @@ const SimpleBarChart: React.FC<SimpleBarChartProps> = ({ data, dataKey, label, c
                     fill="transparent"
                     data-chart-index={index}
                     data-chart-interactive="true"
-                    style={{ pointerEvents: 'auto', cursor: 'crosshair' }}
+                    style={{ pointerEvents: 'auto', cursor: 'default' }}
                   />
                   {/* Dot invisible en el centro superior de cada barra para posicionamiento */}
                   <circle
@@ -854,6 +854,7 @@ const MetricsGrid: React.FC<MetricsGridProps> = ({ metrics, loading, reportType,
         { label: 'Ingresos', value: formatCurrency(totals.revenue) },
         { label: 'Gasto en Anuncios', value: formatCurrency(totals.spend) },
         { label: 'Ganancias Netas', value: formatCurrency(profit) },
+        { label: 'Transacciones', value: formatNumber(totals.sales) },
         { label: 'Retorno de Inversión', value: `${roas.toFixed(2)}x` },
         { label: 'ROI', value: `${roi.toFixed(1)}%` }
       ],
