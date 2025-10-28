@@ -39,16 +39,14 @@ export const TrafficSourcesChart: React.FC<TrafficSourcesChartProps> = ({ data, 
   const [activeIndex, setActiveIndex] = useState<number | null>(null)
   const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null)
 
-  const handleMouseMove = useCallback((state: any, event: React.MouseEvent) => {
-    const index = typeof state?.activeTooltipIndex === 'number' ? state.activeTooltipIndex : null
+  // Manejar hover sobre celdas individuales del pie
+  const handleCellMouseEnter = useCallback((index: number) => (event: React.MouseEvent) => {
+    setActiveIndex(index)
+    setTooltipPos({ x: event.clientX, y: event.clientY })
+  }, [])
 
-    if (index !== null) {
-      setActiveIndex(index)
-      setTooltipPos({ x: event.clientX, y: event.clientY })
-    } else {
-      setActiveIndex(null)
-      setTooltipPos(null)
-    }
+  const handleCellMouseMove = useCallback((event: React.MouseEvent) => {
+    setTooltipPos({ x: event.clientX, y: event.clientY })
   }, [])
 
   const handleMouseLeave = useCallback(() => {
@@ -84,10 +82,7 @@ export const TrafficSourcesChart: React.FC<TrafficSourcesChartProps> = ({ data, 
         ) : chartData.length > 0 ? (
           <>
             <ResponsiveContainer width="100%" height="100%">
-              <PieChart
-                onMouseMove={handleMouseMove}
-                onMouseLeave={handleMouseLeave}
-              >
+              <PieChart onMouseLeave={handleMouseLeave}>
                 <Pie
                   data={chartData}
                   cx="50%"
@@ -105,6 +100,8 @@ export const TrafficSourcesChart: React.FC<TrafficSourcesChartProps> = ({ data, 
                       key={`cell-${index}`}
                       fill={entry.color}
                       className={styles.chartCell}
+                      onMouseEnter={handleCellMouseEnter(index)}
+                      onMouseMove={handleCellMouseMove}
                     />
                   ))}
                 </Pie>
