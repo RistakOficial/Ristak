@@ -11,12 +11,12 @@ export async function getContactPaymentMethods(req, res) {
   try {
     const { contactId } = req.params
 
-    // Obtener location_id de la configuraci�n
+    // Obtener location_id de la configuración
     const config = await db.get('SELECT location_id FROM highlevel_config LIMIT 1')
     if (!config || !config.location_id) {
       return res.status(400).json({
         success: false,
-        error: 'No hay configuraci�n de HighLevel. Configura tu cuenta primero.'
+        error: 'No hay configuración de HighLevel. Configura tu cuenta primero.'
       })
     }
 
@@ -40,7 +40,7 @@ export async function getContactPaymentMethods(req, res) {
         success: true,
         hasPaymentMethods: false,
         paymentMethods: [],
-        message: 'No se pudo obtener informaci�n del contacto'
+        message: 'No se pudo obtener información del contacto'
       })
     }
 
@@ -59,12 +59,12 @@ export async function getContactPaymentMethods(req, res) {
       }
     } catch (error) {
       // Si no hay Stripe configurado, retornar sin error
-      if (error.message.includes('No se encontr� configuraci�n de Stripe')) {
+      if (error.message.includes('No se encontró configuración de Stripe')) {
         return res.json({
           success: true,
           hasPaymentMethods: false,
           paymentMethods: [],
-          message: 'Stripe no est� configurado'
+          message: 'Stripe no está configurado'
         })
       }
       throw error
@@ -93,7 +93,7 @@ export async function getContactPaymentMethods(req, res) {
     logger.error('Error obteniendo payment methods:', error)
     res.status(500).json({
       success: false,
-      error: error.message || 'Error obteniendo m�todos de pago'
+      error: error.message || 'Error obteniendo métodos de pago'
     })
   }
 }
@@ -133,7 +133,7 @@ export async function chargePaymentMethod(req, res) {
     if (!config || !config.location_id) {
       return res.status(400).json({
         success: false,
-        error: 'No hay configuraci�n de HighLevel'
+        error: 'No hay configuración de HighLevel'
       })
     }
 
@@ -181,7 +181,7 @@ export async function chargePaymentMethod(req, res) {
         logger.info('Pago registrado en invoice GHL:', invoiceId)
       } catch (error) {
         logger.warn('No se pudo registrar el pago en GHL:', error.message)
-        // No fallar la petici�n si no se pudo registrar en GHL
+        // No fallar la petición si no se pudo registrar en GHL
       }
     }
 
@@ -198,16 +198,16 @@ export async function chargePaymentMethod(req, res) {
   } catch (error) {
     logger.error('Error cobrando a payment method:', error)
 
-    // Mensajes de error m�s amigables
+    // Mensajes de error más amigables
     let errorMessage = 'Error procesando el pago'
     if (error.message.includes('card_declined')) {
       errorMessage = 'La tarjeta fue rechazada'
     } else if (error.message.includes('insufficient_funds')) {
       errorMessage = 'Fondos insuficientes'
     } else if (error.message.includes('expired_card')) {
-      errorMessage = 'La tarjeta est� expirada'
+      errorMessage = 'La tarjeta está expirada'
     } else if (error.message.includes('authentication_required')) {
-      errorMessage = 'Se requiere autenticaci�n adicional (no disponible para pagos offline)'
+      errorMessage = 'Se requiere autenticación adicional (no disponible para pagos offline)'
     }
 
     res.status(500).json({
@@ -267,7 +267,7 @@ export async function savePaymentMethod(req, res) {
     logger.error('Error guardando payment method:', error)
     res.status(500).json({
       success: false,
-      error: 'Error guardando m�todo de pago'
+      error: 'Error guardando método de pago'
     })
   }
 }

@@ -585,10 +585,59 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       let invoiceId = invoiceSummary.invoiceId
 
       if (!invoiceId) {
+        // Crear una copia limpia del payload para evitar referencias circulares
+        const cleanPayload = {
+          name: invoicePayload.name,
+          title: invoicePayload.title,
+          currency: invoicePayload.currency,
+          businessDetails: {
+            name: invoicePayload.businessDetails?.name || '',
+            ...(invoicePayload.businessDetails?.email && { email: invoicePayload.businessDetails.email }),
+            ...(invoicePayload.businessDetails?.logoUrl && { logoUrl: invoicePayload.businessDetails.logoUrl }),
+            ...(invoicePayload.businessDetails?.phone && { phone: invoicePayload.businessDetails.phone }),
+            ...(invoicePayload.businessDetails?.website && { website: invoicePayload.businessDetails.website }),
+            ...(invoicePayload.businessDetails?.address && {
+              address: {
+                line1: invoicePayload.businessDetails.address.line1 || '',
+                ...(invoicePayload.businessDetails.address.city && { city: invoicePayload.businessDetails.address.city }),
+                ...(invoicePayload.businessDetails.address.state && { state: invoicePayload.businessDetails.address.state }),
+                ...(invoicePayload.businessDetails.address.country && { country: invoicePayload.businessDetails.address.country }),
+                ...(invoicePayload.businessDetails.address.postalCode && { postalCode: invoicePayload.businessDetails.address.postalCode })
+              }
+            })
+          },
+          contactDetails: {
+            id: invoicePayload.contactDetails?.id || '',
+            name: invoicePayload.contactDetails?.name || '',
+            email: invoicePayload.contactDetails?.email || '',
+            phoneNo: invoicePayload.contactDetails?.phoneNo || ''
+          },
+          items: invoicePayload.items?.map((item: any) => ({
+            name: item.name,
+            description: item.description,
+            amount: item.amount,
+            qty: item.qty,
+            currency: item.currency,
+            ...(item.priceId && { priceId: item.priceId }),
+            ...(item.productId && { productId: item.productId })
+          })) || [],
+          issueDate: invoicePayload.issueDate,
+          dueDate: invoicePayload.dueDate,
+          liveMode: invoicePayload.liveMode,
+          ...(invoicePayload.tax && {
+            tax: {
+              name: invoicePayload.tax.name,
+              rate: invoicePayload.tax.rate,
+              amount: invoicePayload.tax.amount
+            }
+          }),
+          ...(invoicePayload.termsNotes && { termsNotes: invoicePayload.termsNotes })
+        }
+
         const response = await fetch('/api/highlevel/invoices', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(invoicePayload)
+          body: JSON.stringify(cleanPayload)
         })
 
         const data = await response.json()

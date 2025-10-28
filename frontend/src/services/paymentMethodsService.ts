@@ -60,7 +60,7 @@ export async function chargePaymentMethod(
 }
 
 /**
- * Guarda configuraci�n de Stripe
+ * Guarda configuración de Stripe
  */
 export interface StripeConfig {
   testSecretKey?: string;
@@ -74,7 +74,7 @@ export async function saveStripeConfig(config: StripeConfig): Promise<{ success:
 }
 
 /**
- * Obtiene la configuraci�n actual de Stripe (sin mostrar claves)
+ * Obtiene la configuración actual de Stripe (sin mostrar claves)
  */
 export interface StripeConfigResponse {
   success: boolean;
