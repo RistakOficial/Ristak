@@ -63,6 +63,7 @@ export const LineChart: React.FC<LineChartProps> = ({
   showLegend = false,
   legendLabels = { label1: 'Serie 1', label2: 'Serie 2' }
 }) => {
+  console.log('📈 LineChart render - data:', data, 'length:', data?.length)
   const { chartRef, pointPos: _pointPos, isHovering, activeIndex, activeData } = useChartHover({ data })
   const [actualPointPos, setActualPointPos] = useState<{ x: number; y: number } | null>(null)
   const activePointRef = useRef<{ [key: string]: { x: number; y: number } }>({})

@@ -382,6 +382,7 @@ const Analytics: React.FC = () => {
               value2: stats.uniqueVisitors.size
             }))
 
+          console.log('📊 Analytics - dailyTraffic data:', chartData)
           setDailyTraffic(chartData)
 
           // Gráfico de conversiones (registros reales de contactos por fecha de creación)
