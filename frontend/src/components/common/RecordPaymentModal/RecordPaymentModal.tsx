@@ -587,7 +587,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
       if (!invoiceId) {
         console.log('🟡 No hay invoice ID, creando invoice...')
-        console.log('🟡 Payload del invoice:', invoicePayload)
+        console.log('🟡 Contacto ID:', invoicePayload?.contactDetails?.id)
 
         const response = await fetch('/api/highlevel/invoices', {
           method: 'POST',
