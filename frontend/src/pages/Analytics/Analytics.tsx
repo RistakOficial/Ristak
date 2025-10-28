@@ -8,7 +8,7 @@ import {
   Card,
   KpiCard,
   DateRangePicker,
-  LineChart,
+  AreaChart,
   TreeFilter,
   TrafficSourcesChart,
   SessionsTable,
@@ -1302,15 +1302,15 @@ const Analytics: React.FC = () => {
             </p>
           </div>
 
-          <div className="mt-4 h-[clamp(320px,45vh,560px)] min-h-[320px]">
+          <div className="relative w-full" style={{ minHeight: 340, height: 340 }}>
             {loading ? (
-              <div className="flex h-full items-center justify-center text-sm text-gray-500">
+              <div className="flex h-full items-center justify-center rounded-xl border border-[rgba(148,163,184,0.18)] bg-[color-mix(in_srgb,var(--color-background-glass) 82%, transparent)] text-sm text-[var(--color-text-tertiary)]">
                 Cargando datos...
               </div>
             ) : dailyTraffic.length > 0 ? (
-              <LineChart
+              <AreaChart
                 data={dailyTraffic}
-                minHeight={320}
+                height={340}
                 showGrid
                 color="#8b5cf6"
                 color2="#3b82f6"
