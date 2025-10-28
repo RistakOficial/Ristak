@@ -1,15 +1,14 @@
-import React, { useMemo, useRef, useState, useEffect } from 'react'
+import React, { useMemo } from 'react'
 import {
   LineChart as RechartsLineChart,
   Line,
   XAxis,
   YAxis,
   CartesianGrid,
-  ResponsiveContainer
+  ResponsiveContainer,
+  Tooltip
 } from 'recharts'
 import { formatCurrency, formatChartCurrency } from '@/utils/format'
-import { useChartHover } from '@/hooks/useChartHover'
-import { ChartTooltip } from '../ChartTooltip/ChartTooltip'
 
 interface DataPoint {
   label: string
@@ -65,35 +64,7 @@ export const LineChart: React.FC<LineChartProps> = ({
 }) => {
   console.log('📈 LineChart data received:', data?.length, 'points')
   console.log('📈 First data point:', data?.[0])
-  const { chartRef, pointPos: _pointPos, isHovering, activeIndex, activeData } = useChartHover({ data })
-  const [actualPointPos, setActualPointPos] = useState<{ x: number; y: number } | null>(null)
-  const activePointRef = useRef<{ [key: string]: { x: number; y: number } }>({})
-  const pendingUpdateRef = useRef<{ x: number; y: number } | null>(null)
   const hasSecondSeries = data.some((d) => typeof d.value2 === 'number')
-  const isDarkMode = typeof document !== 'undefined' && document.body.classList.contains('dark')
-
-  // Resetear cuando cambia el índice o deja de hacer hover
-  useEffect(() => {
-    if (!isHovering) {
-      setActualPointPos(null)
-      activePointRef.current = {}
-      pendingUpdateRef.current = null
-    } else {
-      // Limpiar los puntos del índice anterior
-      activePointRef.current = {}
-      pendingUpdateRef.current = null
-    }
-  }, [isHovering, activeIndex])
-
-  // Actualizar posición después del render
-  // CRÍTICO: Usar useLayoutEffect para sincronización inmediata después del render
-  // Se ejecuta cuando isHovering o activeIndex cambian (que es cuando se actualiza pendingUpdateRef)
-  useEffect(() => {
-    if (pendingUpdateRef.current) {
-      setActualPointPos(pendingUpdateRef.current)
-      pendingUpdateRef.current = null
-    }
-  }, [isHovering, activeIndex])  // Solo cuando cambian estos valores
 
   const series = useMemo<SeriesDefinition[]>(() => {
     const definitions: SeriesDefinition[] = [
@@ -134,37 +105,6 @@ export const LineChart: React.FC<LineChartProps> = ({
   }, [numericValues])
 
   const axisFormatter = (value: number) => formatValue(value)
-  const tooltipFormatter = (value: number, key: string) => formatTooltipValue(value, key)
-  const resolvedPointPos = actualPointPos ?? pendingUpdateRef.current ?? null
-  const tooltipAnchor = resolvedPointPos
-
-  const tooltipVerticalOffset = useMemo(() => {
-    if (!tooltipAnchor || !chartRef.current) {
-      return 22
-    }
-
-    const rect = chartRef.current.getBoundingClientRect()
-    const distanceFromTop = Math.max(0, tooltipAnchor.y - rect.top)
-    const normalized = rect.height > 0 ? Math.min(Math.max(distanceFromTop / rect.height, 0), 1) : 0.5
-
-    const IDEAL_MIN_GAP = 18
-    const IDEAL_MAX_GAP = 54
-    const TOP_CLEARANCE = 4
-
-    const availableGap = Math.max(distanceFromTop - TOP_CLEARANCE, 0)
-
-    if (availableGap <= IDEAL_MIN_GAP) {
-      return availableGap
-    }
-
-    const idealGap = IDEAL_MIN_GAP + normalized * (IDEAL_MAX_GAP - IDEAL_MIN_GAP)
-    const boundedGap = Math.min(
-      Math.max(IDEAL_MIN_GAP, idealGap),
-      Math.min(availableGap, IDEAL_MAX_GAP)
-    )
-
-    return boundedGap
-  }, [tooltipAnchor, chartRef])
 
   return (
     <div className="space-y-3">
@@ -183,7 +123,6 @@ export const LineChart: React.FC<LineChartProps> = ({
       )}
 
       <div
-        ref={chartRef}
         className="relative"
         style={{
           height,
@@ -224,7 +163,8 @@ export const LineChart: React.FC<LineChartProps> = ({
               allowDecimals={false}
             />
 
-            {/* Tooltip de Recharts deshabilitado - usamos nuestro FloatingTooltip */}
+            {/* Tooltip nativo de Recharts habilitado temporalmente para diagnóstico */}
+            <Tooltip />
 
             {series.map((serie) => (
               <Line
@@ -234,65 +174,10 @@ export const LineChart: React.FC<LineChartProps> = ({
                 dataKey={serie.key}
                 stroke={serie.color}
                 strokeWidth={2.5}
-                dot={
-                  showPoints
-                    ? (props: any) => {
-                        const isActive = props.index === activeIndex
-
-                        // Capturar la posición real del punto cuando está activo
-                        if (isActive && props.cx && props.cy) {
-                          const rect = chartRef.current?.getBoundingClientRect()
-                          if (rect) {
-                            const pointX = rect.left + props.cx
-                            const pointY = rect.top + props.cy
-                            // Guardar la posición de este punto
-                            activePointRef.current[`${props.index}-${serie.key}`] = { x: pointX, y: pointY }
-
-                            // Guardar para actualizar después del render
-                            const allPoints = Object.values(activePointRef.current)
-                            if (allPoints.length > 0) {
-                              const highestPoint = allPoints.reduce((highest, current) =>
-                                current.y < highest.y ? current : highest
-                              )
-                              pendingUpdateRef.current = highestPoint
-                            }
-                          }
-                        }
-
-                        return (
-                          <circle
-                            cx={props.cx}
-                            cy={props.cy}
-                            r={showPoints ? (isActive ? 7 : 3.5) : 0}
-                            fill={
-                              showPoints
-                                ? isActive
-                                  ? 'var(--color-background-primary)'
-                                  : serie.color
-                                : 'transparent'
-                            }
-                            stroke={showPoints && isActive ? serie.color : 'none'}
-                            strokeWidth={showPoints && isActive ? 3 : 0}
-                            data-chart-index={props.index}
-                            data-chart-interactive={showPoints ? 'true' : undefined}
-                            style={{
-                              pointerEvents: showPoints ? 'auto' : 'none',
-                              transition: showPoints ? 'all 150ms ease-out' : undefined,
-                              filter:
-                                showPoints && isActive
-                                  ? 'drop-shadow(0 2px 4px rgba(0, 0, 0, 0.2))'
-                                  : 'none'
-                            }}
-                          />
-                        )
-                      }
-                    : false
-                }
-                activeDot={false}
-                animationDuration={0}
-                animationBegin={0}
+                dot={showPoints ? { r: 3, fill: serie.color } : false}
+                activeDot={showPoints ? { r: 6 } : false}
+                animationDuration={300}
                 connectNulls
-                isAnimationActive={false}
               />
             ))}
           </RechartsLineChart>
@@ -300,6 +185,7 @@ export const LineChart: React.FC<LineChartProps> = ({
       </div>
 
       {/* Nuestro tooltip flotante que aparece sobre el punto */}
+      {/* Temporalmente comentado para diagnóstico
       <ChartTooltip
         active={isHovering && Boolean(resolvedPointPos)}
         data={activeData}
@@ -308,6 +194,7 @@ export const LineChart: React.FC<LineChartProps> = ({
         formatValue={tooltipFormatter}
         verticalOffset={tooltipVerticalOffset}
       />
+      */}
     </div>
   )
 }

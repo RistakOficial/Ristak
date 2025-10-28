@@ -67,7 +67,7 @@ export const TransactionsModal: React.FC<TransactionsModalProps> = ({
       isOpen={isOpen}
       onClose={onClose}
       title={title}
-      size="xl"
+      size="lg"
       type="custom"
     >
       <div className={styles.container}>
