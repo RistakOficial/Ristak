@@ -41,8 +41,8 @@ interface SeriesDefinition {
   color: string
 }
 
-const DEFAULT_COLOR_PRIMARY = 'var(--color-accent-blue)'
-const DEFAULT_COLOR_SECONDARY = 'var(--color-accent-orange)'
+const DEFAULT_COLOR_PRIMARY = '#3b82f6'
+const DEFAULT_COLOR_SECONDARY = '#f59e0b'
 
 const defaultFormatAxis = (value: number): string => formatChartCurrency(value)
 
@@ -64,6 +64,7 @@ export const LineChart: React.FC<LineChartProps> = ({
 }) => {
   console.log('📈 LineChart data received:', data?.length, 'points')
   console.log('📈 First data point:', data?.[0])
+  console.log('📈 Colors:', color, color2)
   const hasSecondSeries = data.some((d) => typeof d.value2 === 'number')
 
   const series = useMemo<SeriesDefinition[]>(() => {
@@ -75,6 +76,7 @@ export const LineChart: React.FC<LineChartProps> = ({
       definitions.push({ key: 'value2', label: legendLabels.label2, color: color2 })
     }
 
+    console.log('📈 Series definitions:', definitions)
     return definitions
   }, [color, color2, legendLabels.label1, legendLabels.label2, hasSecondSeries])
 
@@ -137,17 +139,17 @@ export const LineChart: React.FC<LineChartProps> = ({
         <ResponsiveContainer width="100%" height="100%">
           <RechartsLineChart
             data={data}
-            margin={{ top: 10, right: 12, left: 0, bottom: 5 }}
+            margin={{ top: 10, right: 12, left: 10, bottom: 5 }}
             onMouseEnter={() => console.log('📈 Chart mouse enter')}
             onMouseLeave={() => console.log('📈 Chart mouse leave')}>
             {showGrid && (
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border-subtle)" opacity={0.5} />
+              <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" opacity={0.5} />
             )}
 
             <XAxis
               dataKey="label"
-              tick={{ fill: 'var(--color-text-tertiary)', fontSize: 13 }}
-              axisLine={{ stroke: 'var(--color-border-subtle)', opacity: 0.2 }}
+              tick={{ fill: '#6b7280', fontSize: 13 }}
+              axisLine={{ stroke: '#e5e7eb', opacity: 0.2 }}
               tickLine={false}
               allowDuplicatedCategory
               padding={{ left: 0, right: 0 }}
@@ -156,8 +158,8 @@ export const LineChart: React.FC<LineChartProps> = ({
 
             <YAxis
               domain={yDomain}
-              tick={{ fill: 'var(--color-text-tertiary)', fontSize: 13 }}
-              axisLine={{ stroke: 'var(--color-border-subtle)', opacity: 0.2 }}
+              tick={{ fill: '#6b7280', fontSize: 13 }}
+              axisLine={{ stroke: '#e5e7eb', opacity: 0.2 }}
               tickLine={false}
               tickFormatter={axisFormatter}
               allowDecimals={false}
@@ -173,10 +175,10 @@ export const LineChart: React.FC<LineChartProps> = ({
                 type="monotone"
                 dataKey={serie.key}
                 stroke={serie.color}
-                strokeWidth={2.5}
-                dot={showPoints ? { r: 3, fill: serie.color } : false}
-                activeDot={showPoints ? { r: 6 } : false}
-                animationDuration={300}
+                strokeWidth={3}
+                dot={{ r: 4, fill: serie.color }}
+                activeDot={{ r: 6 }}
+                isAnimationActive={false}
                 connectNulls
               />
             ))}
