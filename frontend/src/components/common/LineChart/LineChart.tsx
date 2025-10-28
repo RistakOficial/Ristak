@@ -63,7 +63,6 @@ export const LineChart: React.FC<LineChartProps> = ({
   showLegend = false,
   legendLabels = { label1: 'Serie 1', label2: 'Serie 2' }
 }) => {
-  console.log('📈 LineChart render - data:', data, 'length:', data?.length)
   const { chartRef, pointPos: _pointPos, isHovering, activeIndex, activeData } = useChartHover({ data })
   const [actualPointPos, setActualPointPos] = useState<{ x: number; y: number } | null>(null)
   const activePointRef = useRef<{ [key: string]: { x: number; y: number } }>({})
@@ -164,9 +163,9 @@ export const LineChart: React.FC<LineChartProps> = ({
   }, [tooltipAnchor, chartRef])
 
   return (
-    <div className="space-y-3">
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', gap: '12px' }}>
       {showLegend && (
-        <div className="flex flex-wrap items-center justify-center gap-4 text-xs text-gray-500 dark:text-gray-400 mb-2">
+        <div className="flex flex-wrap items-center justify-center gap-4 text-xs text-gray-500 dark:text-gray-400">
           {series.map((serie) => (
             <div key={serie.key} className="inline-flex items-center gap-2">
               <span
@@ -183,7 +182,7 @@ export const LineChart: React.FC<LineChartProps> = ({
         ref={chartRef}
         className="relative"
         style={{
-          height,
+          flex: 1,
           minHeight:
             typeof minHeight !== 'undefined'
               ? minHeight

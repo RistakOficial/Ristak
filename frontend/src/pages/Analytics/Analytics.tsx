@@ -382,7 +382,6 @@ const Analytics: React.FC = () => {
               value2: stats.uniqueVisitors.size
             }))
 
-          console.log('📊 Analytics - dailyTraffic data:', chartData)
           setDailyTraffic(chartData)
 
           // Gráfico de conversiones (registros reales de contactos por fecha de creación)
@@ -1297,17 +1296,10 @@ const Analytics: React.FC = () => {
         {/* Gráfico de tráfico */}
         <Card variant="glass" className="p-6">
           <div className="mb-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-lg font-semibold">Tráfico del Sitio</h3>
-                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-                  Visualizaciones de página y visitantes únicos
-                </p>
-              </div>
-              <p className="text-sm text-orange-600 dark:text-orange-400 font-medium">
-                Arreglar gráfico
-              </p>
-            </div>
+            <h3 className="text-lg font-semibold">Tráfico del Sitio</h3>
+            <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+              Visualizaciones de página y visitantes únicos
+            </p>
           </div>
 
           <div className="mt-4 h-[clamp(320px,45vh,560px)] min-h-[320px]">
