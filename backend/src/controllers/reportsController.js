@@ -229,7 +229,7 @@ export const getTransactionsList = async (req, res) => {
       SELECT
         p.id,
         p.contact_id,
-        c.name as contact_name,
+        c.full_name as contact_name,
         c.email as contact_email,
         c.phone as contact_phone,
         p.amount,
