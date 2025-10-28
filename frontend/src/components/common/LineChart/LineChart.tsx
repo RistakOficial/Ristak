@@ -1,7 +1,7 @@
 import React, { useMemo, useRef, useState, useEffect } from 'react'
 import {
-  AreaChart as RechartsAreaChart,
-  Area,
+  LineChart as RechartsLineChart,
+  Line,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -191,21 +191,7 @@ export const LineChart: React.FC<LineChartProps> = ({
         }}
       >
         <ResponsiveContainer width="100%" height="100%">
-          <RechartsAreaChart data={data} margin={{ top: 10, right: 12, left: 0, bottom: 5 }}>
-            <defs>
-              {series.map((serie) => (
-                <linearGradient
-                  key={`gradient-${serie.key}`}
-                  id={`gradient-${serie.key}-${isDarkMode ? 'dark' : 'light'}`}
-                  x1="0" y1="0" x2="0" y2="1"
-                >
-                  <stop offset="0%" stopColor={serie.color} stopOpacity={0.18} />
-                  <stop offset="50%" stopColor={serie.color} stopOpacity={0.1} />
-                  <stop offset="100%" stopColor={serie.color} stopOpacity={0.02} />
-                </linearGradient>
-              ))}
-            </defs>
-
+          <RechartsLineChart data={data} margin={{ top: 10, right: 12, left: 0, bottom: 5 }}>
             {showGrid && (
               <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border-subtle)" opacity={0.5} />
             )}
@@ -232,14 +218,13 @@ export const LineChart: React.FC<LineChartProps> = ({
             {/* Tooltip de Recharts deshabilitado - usamos nuestro FloatingTooltip */}
 
             {series.map((serie) => (
-              <Area
+              <Line
                 key={serie.key}
                 name={serie.label}
                 type="monotone"
                 dataKey={serie.key}
                 stroke={serie.color}
                 strokeWidth={2.5}
-                fill={`url(#gradient-${serie.key}-${isDarkMode ? 'dark' : 'light'})`}
                 dot={
                   showPoints
                     ? (props: any) => {
@@ -301,7 +286,7 @@ export const LineChart: React.FC<LineChartProps> = ({
                 isAnimationActive={false}
               />
             ))}
-          </RechartsAreaChart>
+          </RechartsLineChart>
         </ResponsiveContainer>
       </div>
 
