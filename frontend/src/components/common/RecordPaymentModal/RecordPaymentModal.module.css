@@ -490,7 +490,7 @@ body.dark .summaryBadge,
 /* Selector de método de envío integrado */
 .sendMethodSelector {
   margin-top: 12px;
-  width: 100%;
+  max-width: 220px;
 }
 
 /* Mensaje cuando no hay opciones de envío */
