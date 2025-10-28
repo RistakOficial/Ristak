@@ -1296,10 +1296,17 @@ const Analytics: React.FC = () => {
         {/* Gráfico de tráfico */}
         <Card variant="glass" className="p-6">
           <div className="mb-4">
-            <h3 className="text-lg font-semibold">Tráfico del Sitio</h3>
-            <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-              Visualizaciones de página y visitantes únicos
-            </p>
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-lg font-semibold">Tráfico del Sitio</h3>
+                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                  Visualizaciones de página y visitantes únicos
+                </p>
+              </div>
+              <p className="text-sm text-orange-600 dark:text-orange-400 font-medium">
+                Arreglar gráfico
+              </p>
+            </div>
           </div>
 
           <div className="mt-4 h-[clamp(320px,45vh,560px)] min-h-[320px]">
