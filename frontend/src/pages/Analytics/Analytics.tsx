@@ -1394,7 +1394,7 @@ const Analytics: React.FC = () => {
         </div>
 
         {/* Grid de stats cards */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
           {/* Top Plataformas */}
           <Card variant="glass">
             <div className="p-4 border-b border-[var(--color-border)]">
