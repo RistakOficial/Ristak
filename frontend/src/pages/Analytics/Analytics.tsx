@@ -156,6 +156,33 @@ type TrafficPoint = {
   value2: number
 }
 
+const parseTimestamp = (timestamp?: string | null): Date | null => {
+  if (!timestamp) return null
+
+  const trimmed = timestamp.trim()
+  if (!trimmed) return null
+
+  const normalized = trimmed.includes('T') ? trimmed : trimmed.replace(' ', 'T')
+
+  const direct = new Date(normalized)
+  if (!Number.isNaN(direct.getTime())) {
+    return direct
+  }
+
+  const utcFallback = new Date(`${normalized}Z`)
+  if (!Number.isNaN(utcFallback.getTime())) {
+    return utcFallback
+  }
+
+  return null
+}
+
+const getDateKeyFromTimestamp = (timestamp?: string | null): string | null => {
+  const parsed = parseTimestamp(timestamp)
+  if (!parsed) return null
+  return parsed.toISOString().split('T')[0]
+}
+
 const Analytics: React.FC = () => {
   const isRenderDomain = useIsRenderDomain()
   const { dateRange, setDateRange } = useDateRange()
@@ -321,28 +348,30 @@ const Analytics: React.FC = () => {
 
           // Incluir sesiones del período anterior para contexto visual
           prevSessions.forEach((session: Session) => {
-            const date = session.started_at.split('T')[0]
-            if (!dailyStats[date]) {
-              dailyStats[date] = {
+            const dateKey = getDateKeyFromTimestamp(session.started_at)
+            if (!dateKey) return
+            if (!dailyStats[dateKey]) {
+              dailyStats[dateKey] = {
                 totalVisits: 0,
                 uniqueVisitors: new Set()
               }
             }
-            dailyStats[date].totalVisits++
-            dailyStats[date].uniqueVisitors.add(session.visitor_id)
+            dailyStats[dateKey].totalVisits++
+            dailyStats[dateKey].uniqueVisitors.add(session.visitor_id)
           })
 
           // Incluir sesiones del período actual
           currentSessions.forEach((session: Session) => {
-            const date = session.started_at.split('T')[0]
-            if (!dailyStats[date]) {
-              dailyStats[date] = {
+            const dateKey = getDateKeyFromTimestamp(session.started_at)
+            if (!dateKey) return
+            if (!dailyStats[dateKey]) {
+              dailyStats[dateKey] = {
                 totalVisits: 0,
                 uniqueVisitors: new Set()
               }
             }
-            dailyStats[date].totalVisits++
-            dailyStats[date].uniqueVisitors.add(session.visitor_id)
+            dailyStats[dateKey].totalVisits++
+            dailyStats[dateKey].uniqueVisitors.add(session.visitor_id)
           })
 
           const chartData = Object.entries(dailyStats)
@@ -380,8 +409,8 @@ const Analytics: React.FC = () => {
 
           // Guardar todas las sesiones y sesiones filtradas (ordenadas de más reciente a más vieja)
           const sortedSessions = [...currentSessions].sort((a, b) => {
-            const dateA = new Date(a.started_at).getTime()
-            const dateB = new Date(b.started_at).getTime()
+            const dateA = parseTimestamp(a.started_at)?.getTime() ?? 0
+            const dateB = parseTimestamp(b.started_at)?.getTime() ?? 0
             return dateB - dateA // DESC: más reciente primero
           })
           setAllSessions(sortedSessions)
@@ -876,8 +905,8 @@ const Analytics: React.FC = () => {
 
       // Ordenar sesiones filtradas de más reciente a más vieja
       const sortedFiltered = [...filtered].sort((a, b) => {
-        const dateA = new Date(a.started_at).getTime()
-        const dateB = new Date(b.started_at).getTime()
+        const dateA = parseTimestamp(a.started_at)?.getTime() ?? 0
+        const dateB = parseTimestamp(b.started_at)?.getTime() ?? 0
         return dateB - dateA // DESC: más reciente primero
       })
       setSessions(sortedFiltered)
@@ -928,7 +957,13 @@ const Analytics: React.FC = () => {
     // Registros = contactos únicos que aparecen en las sesiones filtradas
     const sesionesConContacto = sessionsToProcess.filter((s: Session) => {
       if (!s.contact_id || !s.contact_created_at) return false
-      return new Date(s.started_at) >= new Date(s.contact_created_at)
+
+      const startedDate = parseTimestamp(s.started_at)
+      const contactCreatedDate = parseTimestamp(s.contact_created_at)
+
+      if (!startedDate || !contactCreatedDate) return false
+
+      return startedDate >= contactCreatedDate
     })
 
     const registrosEnSesiones = new Set(
@@ -969,15 +1004,16 @@ const Analytics: React.FC = () => {
     const dailyStats: { [key: string]: { totalVisits: number, uniqueVisitors: Set<string> } } = {}
 
     sessionsToProcess.forEach((session: Session) => {
-      const date = session.started_at.split('T')[0]
-      if (!dailyStats[date]) {
-        dailyStats[date] = {
+      const dateKey = getDateKeyFromTimestamp(session.started_at)
+      if (!dateKey) return
+      if (!dailyStats[dateKey]) {
+        dailyStats[dateKey] = {
           totalVisits: 0,
           uniqueVisitors: new Set()
         }
       }
-      dailyStats[date].totalVisits++
-      dailyStats[date].uniqueVisitors.add(session.visitor_id)
+      dailyStats[dateKey].totalVisits++
+      dailyStats[dateKey].uniqueVisitors.add(session.visitor_id)
     })
 
     const chartData = Object.entries(dailyStats)
@@ -997,17 +1033,19 @@ const Analytics: React.FC = () => {
 
       sessionsToProcess.forEach((session: Session) => {
         if (session.contact_id && session.contact_created_at) {
-          const createdDate = new Date(session.contact_created_at)
-          const startedDate = new Date(session.started_at)
+          const createdDate = parseTimestamp(session.contact_created_at)
+          const startedDate = parseTimestamp(session.started_at)
 
-          // Solo contar si la sesión fue DESPUÉS o EN la fecha de creación del contacto
-          if (startedDate >= createdDate) {
-            const dateKey = session.contact_created_at.split('T')[0]
-            if (!registrosPorFecha[dateKey]) {
-              registrosPorFecha[dateKey] = new Set()
-            }
-            registrosPorFecha[dateKey].add(session.contact_id)
+          if (!createdDate || !startedDate || startedDate < createdDate) {
+            return
           }
+
+          const dateKey = getDateKeyFromTimestamp(session.contact_created_at)
+          if (!dateKey) return
+          if (!registrosPorFecha[dateKey]) {
+            registrosPorFecha[dateKey] = new Set()
+          }
+          registrosPorFecha[dateKey].add(session.contact_id)
         }
       })
 

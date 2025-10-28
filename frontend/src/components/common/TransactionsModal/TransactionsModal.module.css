@@ -1,0 +1,249 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.subtitle {
+  font-size: 0.875rem;
+  color: var(--color-text-secondary);
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 3rem;
+  gap: 1rem;
+}
+
+.spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid var(--color-border);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.empty {
+  text-align: center;
+  padding: 3rem;
+  color: var(--color-text-secondary);
+}
+
+.summary {
+  display: flex;
+  justify-content: space-between;
+  padding: 1rem;
+  background: var(--color-background-secondary);
+  border-radius: 0.5rem;
+  border: 1px solid var(--color-border);
+}
+
+.summaryItem {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.summaryLabel {
+  font-size: 0.75rem;
+  color: var(--color-text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.025em;
+}
+
+.summaryValue {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.listContainer {
+  max-height: 60vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding-right: 0.5rem;
+}
+
+.listContainer::-webkit-scrollbar {
+  width: 6px;
+}
+
+.listContainer::-webkit-scrollbar-track {
+  background: var(--color-background-secondary);
+  border-radius: 3px;
+}
+
+.listContainer::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 3px;
+}
+
+.listContainer::-webkit-scrollbar-thumb:hover {
+  background: var(--color-border-hover);
+}
+
+.transactionCard {
+  padding: 1rem;
+  background: var(--color-background-primary);
+  border: 1px solid var(--color-border);
+  border-radius: 0.5rem;
+  transition: all 0.2s;
+}
+
+.transactionCard:hover {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  border-color: var(--color-border-hover);
+}
+
+.transactionHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.contactName {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  margin: 0 0 0.25rem 0;
+}
+
+.contactInfo {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+}
+
+.contactEmail,
+.contactPhone {
+  font-size: 0.813rem;
+  color: var(--color-text-secondary);
+}
+
+.amountSection {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.25rem;
+}
+
+.amount {
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.status {
+  font-size: 0.75rem;
+  font-weight: 500;
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.25rem;
+  text-transform: uppercase;
+  letter-spacing: 0.025em;
+}
+
+.statusSuccess {
+  background: var(--color-success-background);
+  color: var(--color-success);
+  border: 1px solid var(--color-success-border);
+}
+
+.statusRefunded {
+  background: var(--color-warning-background);
+  color: var(--color-warning);
+  border: 1px solid var(--color-warning-border);
+}
+
+.statusPending {
+  background: var(--color-info-background);
+  color: var(--color-info);
+  border: 1px solid var(--color-info-border);
+}
+
+.statusDefault {
+  background: var(--color-background-secondary);
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border);
+}
+
+.transactionDetails {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.detailItem {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.detailLabel {
+  font-size: 0.813rem;
+  color: var(--color-text-tertiary);
+  font-weight: 500;
+}
+
+.detailValue {
+  font-size: 0.813rem;
+  color: var(--color-text-secondary);
+}
+
+/* Dark mode adjustments */
+:global(body.dark) .transactionCard {
+  background: var(--color-background-secondary);
+}
+
+:global(body.dark) .transactionCard:hover {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+:global(body.dark) .statusSuccess {
+  background: rgba(16, 185, 129, 0.15);
+  color: #10b981;
+  border-color: rgba(16, 185, 129, 0.3);
+}
+
+:global(body.dark) .statusRefunded {
+  background: rgba(245, 158, 11, 0.15);
+  color: #f59e0b;
+  border-color: rgba(245, 158, 11, 0.3);
+}
+
+:global(body.dark) .statusPending {
+  background: rgba(59, 130, 246, 0.15);
+  color: #3b82f6;
+  border-color: rgba(59, 130, 246, 0.3);
+}
+
+/* Responsive */
+@media (max-width: 640px) {
+  .transactionHeader {
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .amountSection {
+    align-items: flex-start;
+  }
+
+  .summary {
+    flex-direction: column;
+    gap: 1rem;
+  }
+}

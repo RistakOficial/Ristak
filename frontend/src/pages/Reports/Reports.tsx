@@ -8,6 +8,7 @@ import {
   Button,
   ContactDetailsModal,
   VisitorDetailsModal,
+  TransactionsModal,
   ViewSelector,
   PageContainer
 } from '@/components/common'
@@ -991,6 +992,22 @@ export const Reports: React.FC = () => {
   const [visitorsModalDate, setVisitorsModalDate] = useState('')
   const [visitorsModalRawDate, setVisitorsModalRawDate] = useState('') // Para guardar la fecha original
 
+  // Estado para modal de transacciones
+  const [transactionsModalState, setTransactionsModalState] = useState<{
+    open: boolean
+    loading: boolean
+    title: string
+    subtitle: string
+    transactions: any[]
+    range?: { from: string; to: string }
+  }>({
+    open: false,
+    loading: false,
+    title: 'Transacciones',
+    subtitle: '',
+    transactions: []
+  })
+
   const baseRange = {
     start: dateRange.start instanceof Date ? dateRange.start : new Date(dateRange.start),
     end: dateRange.end instanceof Date ? dateRange.end : new Date(dateRange.end)
@@ -1228,6 +1245,45 @@ export const Reports: React.FC = () => {
     }
   }, [dateRange, apiRange.from, apiRange.to]) // Reaccionar a cambios de fecha
 
+  // Función para abrir modal de transacciones
+  const handleOpenTransactionsModal = useCallback(async (range?: { from: string; to: string }) => {
+    const from = range?.from ?? apiRange.from
+    const to = range?.to ?? apiRange.to
+
+    setTransactionsModalState({
+      open: true,
+      loading: true,
+      title: 'Transacciones',
+      subtitle: `${formatPeriodLabel(from, 'day', { includeYear: true })} – ${formatPeriodLabel(to, 'day', { includeYear: true })}`,
+      transactions: [],
+      range
+    })
+
+    try {
+      const response = await fetch(
+        `/api/reports/transactions?` + new URLSearchParams({
+          from,
+          to
+        })
+      )
+
+      if (response.ok) {
+        const result = await response.json()
+        setTransactionsModalState(prev => ({
+          ...prev,
+          transactions: result.data?.transactions || [],
+          loading: false
+        }))
+      } else {
+        setTransactionsModalState(prev => ({ ...prev, transactions: [], loading: false }))
+        showToast('error', 'No se pudieron cargar las transacciones', 'Intenta nuevamente')
+      }
+    } catch (error) {
+      setTransactionsModalState(prev => ({ ...prev, transactions: [], loading: false }))
+      showToast('error', 'Error al cargar transacciones', 'Verifica tu conexión')
+    }
+  }, [apiRange.from, apiRange.to, showToast])
+
   // Función para abrir modal de visitantes
   const handleOpenVisitorsModal = useCallback(async (date: string) => {
     if (!analyticsEnabled) return
@@ -1406,7 +1462,20 @@ export const Reports: React.FC = () => {
         header: 'Transacciones',
         sortable: true,
         visible: false,
-        render: (value: number) => <span>{formatNumber(value)}</span>
+        render: (value: number, row) => {
+          const hasValue = (value || 0) > 0
+          return hasValue ? (
+            <button
+              type="button"
+              className={styles.metricLink}
+              onClick={() => handleOpenTransactionsModal(resolvePeriodRange(row.date, viewType))}
+            >
+              {formatNumber(value)}
+            </button>
+          ) : (
+            <span>{formatNumber(value)}</span>
+          )
+        }
       },
       {
         key: 'clicks',
@@ -1513,7 +1582,7 @@ export const Reports: React.FC = () => {
     }
 
     return filteredColumns
-  }, [reportType, viewType, visitorSource, handleOpenModal, handleOpenVisitorsModal, labels.lead, labels.leads, labels.customer, labels.customers, analyticsEnabled])
+  }, [reportType, viewType, visitorSource, handleOpenModal, handleOpenVisitorsModal, handleOpenTransactionsModal, labels.lead, labels.leads, labels.customer, labels.customers, analyticsEnabled])
 
   const summaryCards = summary ? [
     {
@@ -1768,6 +1837,16 @@ export const Reports: React.FC = () => {
             loading={visitorsModalLoading}
           />
         )}
+
+        {/* Modal de Transacciones */}
+        <TransactionsModal
+          isOpen={transactionsModalState.open}
+          onClose={() => setTransactionsModalState(prev => ({ ...prev, open: false }))}
+          title={transactionsModalState.title}
+          subtitle={transactionsModalState.subtitle}
+          transactions={transactionsModalState.transactions}
+          loading={transactionsModalState.loading}
+        />
       </div>
     </PageContainer>
   )

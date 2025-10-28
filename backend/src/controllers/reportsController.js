@@ -191,3 +191,74 @@ export const getContactsList = async (req, res) => {
     })
   }
 }
+
+export const getTransactionsList = async (req, res) => {
+  try {
+    const { from, to } = req.query
+
+    // Importar db aquí para evitar problemas de importación circular
+    const { db } = await import('../config/database.js')
+    const { resolveDateRangeWithGHLTimezone } = await import('../utils/dateUtils.js')
+
+    const range = await resolveDateRangeWithGHLTimezone({ startDate: from, endDate: to })
+
+    const params = []
+    const conditions = []
+
+    // Solo contar transacciones exitosas
+    const SUCCESS_PAYMENT_STATUSES = [
+      'succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success'
+    ]
+    const statusPlaceholders = SUCCESS_PAYMENT_STATUSES.map(() => '?').join(',')
+    conditions.push(`LOWER(p.status) IN (${statusPlaceholders})`)
+    params.push(...SUCCESS_PAYMENT_STATUSES)
+
+    if (range.startUtc) {
+      conditions.push('p.date >= ?')
+      params.push(range.startUtc)
+    }
+
+    if (range.endUtc) {
+      conditions.push('p.date <= ?')
+      params.push(range.endUtc)
+    }
+
+    const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
+
+    const query = `
+      SELECT
+        p.id,
+        p.contact_id,
+        c.name as contact_name,
+        c.email as contact_email,
+        c.phone as contact_phone,
+        p.amount,
+        p.status,
+        p.date,
+        p.payment_method,
+        p.description
+      FROM payments p
+      LEFT JOIN contacts c ON c.id = p.contact_id
+      ${whereClause}
+      ORDER BY p.date DESC
+    `
+
+    const transactions = await db.all(query, params)
+
+    logger.info(`Lista de transacciones generada: ${transactions.length} registros`)
+
+    res.json({
+      success: true,
+      data: {
+        transactions,
+        range: buildRangePayload(range)
+      }
+    })
+  } catch (error) {
+    logger.error(`Error en getTransactionsList: ${error.message}`)
+    res.status(500).json({
+      success: false,
+      error: 'Error al obtener la lista de transacciones'
+    })
+  }
+}
