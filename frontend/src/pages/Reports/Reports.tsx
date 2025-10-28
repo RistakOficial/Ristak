@@ -72,6 +72,7 @@ type TableRow = {
   revenue: number
   spend: number
   sales: number
+  transactions: number
   new_customers: number
   leads: number
   appointments: number
@@ -1123,6 +1124,7 @@ export const Reports: React.FC = () => {
         revenue: item.revenue,
         spend: item.spend,
         sales: item.sales,
+        transactions: item.sales, // En vista "Todos" sales es el conteo de transacciones
         new_customers: item.new_customers,
         leads: item.leads,
         appointments: item.appointments,
@@ -1400,6 +1402,13 @@ export const Reports: React.FC = () => {
         }
       },
       {
+        key: 'transactions',
+        header: 'Transacciones',
+        sortable: true,
+        visible: false,
+        render: (value: number) => <span>{formatNumber(value)}</span>
+      },
+      {
         key: 'clicks',
         header: 'Clicks',
         sortable: true,
@@ -1488,12 +1497,23 @@ export const Reports: React.FC = () => {
         render: (value: number) => <span>{value.toFixed(1)}%</span>
       }
     ]
+
+    // Filtrar columnas según configuración
+    let filteredColumns = columns
+
+    // Filtrar columnas de visitantes si analytics no está habilitado
     if (!analyticsEnabled) {
       const visitorKeys = new Set(['visitors', 'cpv', 'webToInteresadosRate'])
-      return columns.filter((column) => !visitorKeys.has(String(column.key)))
+      filteredColumns = filteredColumns.filter((column) => !visitorKeys.has(String(column.key)))
     }
-    return columns
-  }, [reportType, viewType, visitorSource, handleOpenModal, handleOpenVisitorsModal, labels.lead, labels.leads, analyticsEnabled])
+
+    // Filtrar columna de transacciones: solo en vista "Todos"
+    if (reportType !== 'cashflow') {
+      filteredColumns = filteredColumns.filter((column) => column.key !== 'transactions')
+    }
+
+    return filteredColumns
+  }, [reportType, viewType, visitorSource, handleOpenModal, handleOpenVisitorsModal, labels.lead, labels.leads, labels.customer, labels.customers, analyticsEnabled])
 
   const summaryCards = summary ? [
     {
