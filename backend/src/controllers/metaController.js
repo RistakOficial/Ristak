@@ -1849,20 +1849,28 @@ export const getAdAccounts = async (req, res) => {
     const { accessToken } = req.query;
 
     if (!accessToken) {
+      logger.error('❌ No se proporcionó accessToken');
       return res.status(400).json({
         success: false,
         error: 'Se requiere accessToken'
       });
     }
 
-    logger.info('Obteniendo todas las cuentas de anuncios accesibles...');
+    logger.info('🔍 ===== INICIO: Obtención de cuentas de Meta Ads =====');
+    logger.info(`📝 Token recibido (primeros 20 chars): ${accessToken.substring(0, 20)}...`);
 
-    // Para System Users: obtener user_id y luego todos los businesses con sus ad accounts
+    // PASO 1: Verificar token y obtener user_id
     const debugUrl = `${API_URLS.META_GRAPH}/debug_token?input_token=${accessToken}&access_token=${accessToken}`;
+    logger.info(`🔑 PASO 1: Verificando token con Meta API...`);
+    logger.info(`   URL: ${API_URLS.META_GRAPH}/debug_token`);
+
     const debugResponse = await fetch(debugUrl);
     const debugData = await debugResponse.json();
 
+    logger.info(`📦 Respuesta de debug_token:`, JSON.stringify(debugData, null, 2));
+
     if (debugData.error) {
+      logger.error(`❌ Error en debug_token:`, debugData.error);
       return res.status(400).json({
         success: false,
         error: debugData.error.message || 'Token inválido'
@@ -1870,19 +1878,37 @@ export const getAdAccounts = async (req, res) => {
     }
 
     const userId = debugData.data?.user_id;
+    const tokenType = debugData.data?.type;
+    const appId = debugData.data?.app_id;
+    const isValid = debugData.data?.is_valid;
+    const scopes = debugData.data?.scopes || [];
+
+    logger.info(`✅ Token válido: ${isValid}`);
+    logger.info(`   - Tipo: ${tokenType}`);
+    logger.info(`   - User ID: ${userId}`);
+    logger.info(`   - App ID: ${appId}`);
+    logger.info(`   - Scopes: ${scopes.join(', ')}`);
+
     if (!userId) {
+      logger.error(`❌ No se pudo extraer user_id del token`);
       return res.status(400).json({
         success: false,
         error: 'No se pudo obtener user_id del token'
       });
     }
 
-    // Obtener todos los businesses
+    // PASO 2: Obtener businesses del System User
     const businessUrl = `${API_URLS.META_GRAPH}/${userId}/businesses?fields=id,name&access_token=${accessToken}`;
+    logger.info(`🏢 PASO 2: Obteniendo businesses del System User...`);
+    logger.info(`   URL: ${API_URLS.META_GRAPH}/${userId}/businesses`);
+
     const businessResponse = await fetch(businessUrl);
     const businessData = await businessResponse.json();
 
+    logger.info(`📦 Respuesta de businesses:`, JSON.stringify(businessData, null, 2));
+
     if (businessData.error) {
+      logger.error(`❌ Error obteniendo businesses:`, businessData.error);
       return res.status(400).json({
         success: false,
         error: businessData.error.message
@@ -1890,45 +1916,98 @@ export const getAdAccounts = async (req, res) => {
     }
 
     const businesses = businessData.data || [];
+    logger.info(`✅ Encontrados ${businesses.length} business(es)`);
 
     if (businesses.length === 0) {
+      logger.warn(`⚠️ El System User NO tiene businesses asignados`);
+      logger.warn(`   Esto significa que no tiene acceso a ninguna cuenta de anuncios`);
       return res.json({
         success: true,
         data: { adAccounts: [] }
       });
     }
 
-    // Obtener ad accounts de TODOS los businesses (owned + client)
+    businesses.forEach((biz, index) => {
+      logger.info(`   ${index + 1}. ${biz.name} (ID: ${biz.id})`);
+    });
+
+    // PASO 3: Obtener ad accounts de cada business
+    logger.info(`💼 PASO 3: Obteniendo ad accounts de cada business...`);
     const allAdAccounts = [];
 
-    for (const business of businesses) {
-      // Owned accounts
+    for (let i = 0; i < businesses.length; i++) {
+      const business = businesses[i];
+      logger.info(`\n📊 Business ${i + 1}/${businesses.length}: ${business.name} (${business.id})`);
+
+      // 3A: Owned accounts
       const ownedUrl = `${API_URLS.META_GRAPH}/${business.id}/owned_ad_accounts?fields=id,account_id,name,currency,timezone_name,account_status&access_token=${accessToken}`;
+      logger.info(`   🔍 Buscando owned_ad_accounts...`);
+      logger.info(`      URL: ${API_URLS.META_GRAPH}/${business.id}/owned_ad_accounts`);
+
       const ownedRes = await fetch(ownedUrl);
       const ownedData = await ownedRes.json();
 
-      if (ownedData.data) {
+      logger.info(`   📦 Respuesta owned_ad_accounts:`, JSON.stringify(ownedData, null, 2));
+
+      if (ownedData.error) {
+        logger.warn(`   ⚠️ Error en owned_ad_accounts:`, ownedData.error);
+      } else if (ownedData.data && ownedData.data.length > 0) {
+        logger.info(`   ✅ Encontradas ${ownedData.data.length} owned account(s)`);
+        ownedData.data.forEach((acc, idx) => {
+          logger.info(`      ${idx + 1}. ${acc.name} (${acc.id})`);
+        });
         allAdAccounts.push(...ownedData.data);
+      } else {
+        logger.info(`   ℹ️ No hay owned accounts en este business`);
       }
 
-      // Client accounts
+      // 3B: Client accounts
       const clientUrl = `${API_URLS.META_GRAPH}/${business.id}/client_ad_accounts?fields=id,account_id,name,currency,timezone_name,account_status&access_token=${accessToken}`;
+      logger.info(`   🔍 Buscando client_ad_accounts...`);
+      logger.info(`      URL: ${API_URLS.META_GRAPH}/${business.id}/client_ad_accounts`);
+
       const clientRes = await fetch(clientUrl);
       const clientData = await clientRes.json();
 
-      if (clientData.data) {
+      logger.info(`   📦 Respuesta client_ad_accounts:`, JSON.stringify(clientData, null, 2));
+
+      if (clientData.error) {
+        logger.warn(`   ⚠️ Error en client_ad_accounts:`, clientData.error);
+      } else if (clientData.data && clientData.data.length > 0) {
+        logger.info(`   ✅ Encontradas ${clientData.data.length} client account(s)`);
+        clientData.data.forEach((acc, idx) => {
+          logger.info(`      ${idx + 1}. ${acc.name} (${acc.id})`);
+        });
         allAdAccounts.push(...clientData.data);
+      } else {
+        logger.info(`   ℹ️ No hay client accounts en este business`);
       }
     }
 
-    // Deduplicar por account_id (por si una cuenta aparece en múltiples businesses)
+    // PASO 4: Deduplicar
+    logger.info(`\n🔄 PASO 4: Deduplicando cuentas...`);
+    logger.info(`   Total antes de deduplicar: ${allAdAccounts.length}`);
+
     const uniqueAccounts = Array.from(
       new Map(allAdAccounts.map(acc => [acc.account_id, acc])).values()
     );
 
-    logger.info(`✅ Encontradas ${uniqueAccounts.length} cuentas de anuncios únicas`);
+    logger.info(`   Total después de deduplicar: ${uniqueAccounts.length}`);
 
-    const data = { data: uniqueAccounts };
+    if (uniqueAccounts.length > 0) {
+      logger.info(`\n✅ RESULTADO FINAL: ${uniqueAccounts.length} cuenta(s) única(s)`);
+      uniqueAccounts.forEach((acc, idx) => {
+        logger.info(`   ${idx + 1}. ${acc.name} (${acc.id}) - ${acc.currency} - ${acc.timezone_name}`);
+      });
+    } else {
+      logger.warn(`\n⚠️ RESULTADO FINAL: NO se encontraron cuentas de anuncios`);
+      logger.warn(`   Posibles causas:`);
+      logger.warn(`   - El System User no tiene permisos sobre ninguna ad account`);
+      logger.warn(`   - Las ad accounts están en otro business no listado`);
+      logger.warn(`   - El token necesita más permisos (ads_management, ads_read)`);
+    }
+
+    logger.info(`🏁 ===== FIN: Obtención de cuentas de Meta Ads =====\n`);
 
     res.json({
       success: true,
