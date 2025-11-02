@@ -1909,6 +1909,11 @@ export const getAdAccounts = async (req, res) => {
     const isValid = debugData.data?.is_valid;
     const scopes = debugData.data?.scopes || [];
 
+    console.log(`✅ Token válido: ${isValid}`);
+    console.log(`   - Tipo: ${tokenType}`);
+    console.log(`   - User ID: ${userId}`);
+    console.log(`   - App ID: ${appId}`);
+    console.log(`   - Scopes: ${scopes.join(', ')}`);
     logger.info(`✅ Token válido: ${isValid}`);
     logger.info(`   - Tipo: ${tokenType}`);
     logger.info(`   - User ID: ${userId}`);
@@ -1916,6 +1921,7 @@ export const getAdAccounts = async (req, res) => {
     logger.info(`   - Scopes: ${scopes.join(', ')}`);
 
     if (!userId) {
+      console.log(`❌ No se pudo extraer user_id del token`);
       logger.error(`❌ No se pudo extraer user_id del token`);
       return res.status(400).json({
         success: false,
@@ -1924,16 +1930,20 @@ export const getAdAccounts = async (req, res) => {
     }
 
     // PASO 2: Obtener businesses del System User (FORZAR v23.0)
+    console.log(`\n🏢 PASO 2: Obteniendo businesses del System User...`);
     const businessUrl = `https://graph.facebook.com/v23.0/${userId}/businesses?fields=id,name&access_token=${accessToken}`;
+    console.log(`   URL COMPLETA: ${businessUrl.replace(accessToken, 'TOKEN_OCULTO')}`);
     logger.info(`🏢 PASO 2: Obteniendo businesses del System User...`);
     logger.info(`   URL COMPLETA: ${businessUrl.replace(accessToken, 'TOKEN_OCULTO')}`);
 
     const businessResponse = await fetch(businessUrl);
     const businessData = await businessResponse.json();
 
+    console.log(`📦 Respuesta de businesses:`, JSON.stringify(businessData, null, 2));
     logger.info(`📦 Respuesta de businesses:`, JSON.stringify(businessData, null, 2));
 
     if (businessData.error) {
+      console.log(`❌ Error obteniendo businesses:`, JSON.stringify(businessData.error));
       logger.error(`❌ Error obteniendo businesses:`, businessData.error);
       return res.status(400).json({
         success: false,
@@ -1942,9 +1952,12 @@ export const getAdAccounts = async (req, res) => {
     }
 
     const businesses = businessData.data || [];
+    console.log(`✅ Encontrados ${businesses.length} business(es)`);
     logger.info(`✅ Encontrados ${businesses.length} business(es)`);
 
     if (businesses.length === 0) {
+      console.log(`⚠️ El System User NO tiene businesses asignados`);
+      console.log(`   Esto significa que no tiene acceso a ninguna cuenta de anuncios`);
       logger.warn(`⚠️ El System User NO tiene businesses asignados`);
       logger.warn(`   Esto significa que no tiene acceso a ninguna cuenta de anuncios`);
       return res.json({
@@ -1954,15 +1967,18 @@ export const getAdAccounts = async (req, res) => {
     }
 
     businesses.forEach((biz, index) => {
+      console.log(`   ${index + 1}. ${biz.name} (ID: ${biz.id})`);
       logger.info(`   ${index + 1}. ${biz.name} (ID: ${biz.id})`);
     });
 
     // PASO 3: Obtener ad accounts de cada business
+    console.log(`\n💼 PASO 3: Obteniendo ad accounts de cada business...`);
     logger.info(`💼 PASO 3: Obteniendo ad accounts de cada business...`);
     const allAdAccounts = [];
 
     for (let i = 0; i < businesses.length; i++) {
       const business = businesses[i];
+      console.log(`\n📊 Business ${i + 1}/${businesses.length}: ${business.name} (${business.id})`);
       logger.info(`\n📊 Business ${i + 1}/${businesses.length}: ${business.name} (${business.id})`);
 
       // 3A: Owned accounts (FORZAR v23.0)
@@ -1973,17 +1989,22 @@ export const getAdAccounts = async (req, res) => {
       const ownedRes = await fetch(ownedUrl);
       const ownedData = await ownedRes.json();
 
+      console.log(`   📦 Respuesta owned_ad_accounts:`, JSON.stringify(ownedData, null, 2));
       logger.info(`   📦 Respuesta owned_ad_accounts:`, JSON.stringify(ownedData, null, 2));
 
       if (ownedData.error) {
+        console.log(`   ⚠️ Error en owned_ad_accounts:`, JSON.stringify(ownedData.error));
         logger.warn(`   ⚠️ Error en owned_ad_accounts:`, ownedData.error);
       } else if (ownedData.data && ownedData.data.length > 0) {
+        console.log(`   ✅ Encontradas ${ownedData.data.length} owned account(s)`);
         logger.info(`   ✅ Encontradas ${ownedData.data.length} owned account(s)`);
         ownedData.data.forEach((acc, idx) => {
+          console.log(`      ${idx + 1}. ${acc.name} (${acc.id})`);
           logger.info(`      ${idx + 1}. ${acc.name} (${acc.id})`);
         });
         allAdAccounts.push(...ownedData.data);
       } else {
+        console.log(`   ℹ️ No hay owned accounts en este business`);
         logger.info(`   ℹ️ No hay owned accounts en este business`);
       }
 
@@ -1995,22 +2016,29 @@ export const getAdAccounts = async (req, res) => {
       const clientRes = await fetch(clientUrl);
       const clientData = await clientRes.json();
 
+      console.log(`   📦 Respuesta client_ad_accounts:`, JSON.stringify(clientData, null, 2));
       logger.info(`   📦 Respuesta client_ad_accounts:`, JSON.stringify(clientData, null, 2));
 
       if (clientData.error) {
+        console.log(`   ⚠️ Error en client_ad_accounts:`, JSON.stringify(clientData.error));
         logger.warn(`   ⚠️ Error en client_ad_accounts:`, clientData.error);
       } else if (clientData.data && clientData.data.length > 0) {
+        console.log(`   ✅ Encontradas ${clientData.data.length} client account(s)`);
         logger.info(`   ✅ Encontradas ${clientData.data.length} client account(s)`);
         clientData.data.forEach((acc, idx) => {
+          console.log(`      ${idx + 1}. ${acc.name} (${acc.id})`);
           logger.info(`      ${idx + 1}. ${acc.name} (${acc.id})`);
         });
         allAdAccounts.push(...clientData.data);
       } else {
+        console.log(`   ℹ️ No hay client accounts en este business`);
         logger.info(`   ℹ️ No hay client accounts en este business`);
       }
     }
 
     // PASO 4: Deduplicar
+    console.log(`\n🔄 PASO 4: Deduplicando cuentas...`);
+    console.log(`   Total antes de deduplicar: ${allAdAccounts.length}`);
     logger.info(`\n🔄 PASO 4: Deduplicando cuentas...`);
     logger.info(`   Total antes de deduplicar: ${allAdAccounts.length}`);
 
@@ -2018,14 +2046,22 @@ export const getAdAccounts = async (req, res) => {
       new Map(allAdAccounts.map(acc => [acc.account_id, acc])).values()
     );
 
+    console.log(`   Total después de deduplicar: ${uniqueAccounts.length}`);
     logger.info(`   Total después de deduplicar: ${uniqueAccounts.length}`);
 
     if (uniqueAccounts.length > 0) {
+      console.log(`\n✅ RESULTADO FINAL: ${uniqueAccounts.length} cuenta(s) única(s)`);
       logger.info(`\n✅ RESULTADO FINAL: ${uniqueAccounts.length} cuenta(s) única(s)`);
       uniqueAccounts.forEach((acc, idx) => {
+        console.log(`   ${idx + 1}. ${acc.name} (${acc.id}) - ${acc.currency} - ${acc.timezone_name}`);
         logger.info(`   ${idx + 1}. ${acc.name} (${acc.id}) - ${acc.currency} - ${acc.timezone_name}`);
       });
     } else {
+      console.log(`\n⚠️ RESULTADO FINAL: NO se encontraron cuentas de anuncios`);
+      console.log(`   Posibles causas:`);
+      console.log(`   - El System User no tiene permisos sobre ninguna ad account`);
+      console.log(`   - Las ad accounts están en otro business no listado`);
+      console.log(`   - El token necesita más permisos (ads_management, ads_read)`);
       logger.warn(`\n⚠️ RESULTADO FINAL: NO se encontraron cuentas de anuncios`);
       logger.warn(`   Posibles causas:`);
       logger.warn(`   - El System User no tiene permisos sobre ninguna ad account`);
@@ -2033,6 +2069,7 @@ export const getAdAccounts = async (req, res) => {
       logger.warn(`   - El token necesita más permisos (ads_management, ads_read)`);
     }
 
+    console.log(`🏁 ===== FIN: Obtención de cuentas de Meta Ads =====\n`);
     logger.info(`🏁 ===== FIN: Obtención de cuentas de Meta Ads =====\n`);
 
     res.json({
