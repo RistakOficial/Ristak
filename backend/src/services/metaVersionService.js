@@ -106,25 +106,20 @@ export async function getVersionHistory(limit = 10) {
 
 /**
  * Inicializa la versión desde BD al arrancar el servidor
- * Valida que la versión funcione antes de usarla
+ * SIEMPRE usa v23.0 para evitar problemas con versiones inválidas
  */
 export async function initializeVersion() {
   try {
-    let currentVersion = await getCurrentVersion()
+    // FORZAR v23.0 siempre (versión estable conocida)
+    const stableVersion = 'v23.0'
 
-    // Validar que la versión funciona
-    logger.info(`🔧 Verificando versión guardada: ${currentVersion}`)
-    const isValid = await testVersion(currentVersion)
+    logger.info(`🔧 Forzando versión estable: ${stableVersion}`)
 
-    if (!isValid) {
-      logger.warn(`⚠️ La versión ${currentVersion} no es válida, usando v23.0`)
-      currentVersion = 'v23.0'
-      await saveVersion(currentVersion)
-    }
+    setMetaApiVersion(stableVersion)
+    await saveVersion(stableVersion)
 
-    setMetaApiVersion(currentVersion)
-    logger.info(`✅ Versión de Meta API inicializada: ${currentVersion}`)
-    return currentVersion
+    logger.info(`✅ Versión de Meta API inicializada: ${stableVersion}`)
+    return stableVersion
   } catch (error) {
     logger.error('Error inicializando versión:', error.message)
     const fallback = 'v23.0'
