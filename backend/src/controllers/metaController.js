@@ -1856,35 +1856,46 @@ export const getAdAccounts = async (req, res) => {
       });
     }
 
+    console.log('🔍 ===== INICIO: Obtención de cuentas de Meta Ads =====');
+    console.log(`📝 Token recibido (primeros 20 chars): ${accessToken.substring(0, 20)}...`);
     logger.info('🔍 ===== INICIO: Obtención de cuentas de Meta Ads =====');
     logger.info(`📝 Token recibido (primeros 20 chars): ${accessToken.substring(0, 20)}...`);
 
     // VERIFICAR VERSIÓN ACTUAL EN MEMORIA
     const { getMetaApiVersion } = await import('../config/constants.js');
     const currentVersion = getMetaApiVersion();
+    console.log(`🔧 Versión de Meta API en memoria: ${currentVersion}`);
+    console.log(`🌐 URL base que se usará: https://graph.facebook.com/${currentVersion}`);
     logger.info(`🔧 Versión de Meta API en memoria: ${currentVersion}`);
     logger.info(`🌐 URL base que se usará: https://graph.facebook.com/${currentVersion}`);
 
     // FORZAR v23.0 SI ES NECESARIO
     if (currentVersion !== 'v23.0') {
+      console.log(`⚠️ VERSIÓN INCORRECTA DETECTADA: ${currentVersion}`);
+      console.log(`🔄 Forzando cambio a v23.0...`);
       logger.warn(`⚠️ VERSIÓN INCORRECTA DETECTADA: ${currentVersion}`);
       logger.warn(`🔄 Forzando cambio a v23.0...`);
       const { setMetaApiVersion } = await import('../config/constants.js');
       setMetaApiVersion('v23.0');
+      console.log(`✅ Versión actualizada a v23.0`);
       logger.info(`✅ Versión actualizada a v23.0`);
     }
 
     // PASO 1: Verificar token y obtener user_id
     const debugUrl = `https://graph.facebook.com/v23.0/debug_token?input_token=${accessToken}&access_token=${accessToken}`;
+    console.log(`🔑 PASO 1: Verificando token con Meta API...`);
+    console.log(`   URL: https://graph.facebook.com/v23.0/debug_token`);
     logger.info(`🔑 PASO 1: Verificando token con Meta API...`);
     logger.info(`   URL: https://graph.facebook.com/v23.0/debug_token`);
 
     const debugResponse = await fetch(debugUrl);
     const debugData = await debugResponse.json();
 
+    console.log(`📦 Respuesta de debug_token:`, JSON.stringify(debugData, null, 2));
     logger.info(`📦 Respuesta de debug_token:`, JSON.stringify(debugData, null, 2));
 
     if (debugData.error) {
+      console.log(`❌ Error en debug_token:`, JSON.stringify(debugData.error));
       logger.error(`❌ Error en debug_token:`, debugData.error);
       return res.status(400).json({
         success: false,
