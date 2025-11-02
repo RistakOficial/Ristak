@@ -178,7 +178,17 @@ class CampaignsService {
     }
   }> {
     try {
-      const data = await apiClient.get('/meta/verify-token')
+      const data = await apiClient.get('/meta/verify-token') as {
+        success: boolean
+        configured: boolean
+        tokenStatus?: {
+          valid: boolean
+          message: string
+          expiresAt?: string
+          daysUntilExpiry?: number
+          scopes?: string[]
+        }
+      }
       return data
     } catch (error) {
       return { success: false, configured: false }
@@ -254,7 +264,18 @@ class CampaignsService {
     } | null
   }> {
     try {
-      const data = await apiClient.get('/meta/config')
+      const data = await apiClient.get('/meta/config') as {
+        success: boolean
+        configured: boolean
+        config: {
+          adAccountId: string
+          pixelId: string | null
+          pixelApiToken: string | null
+          timezoneId: number | null
+          timezoneName: string | null
+          timezoneOffsetHoursUtc: number | null
+        } | null
+      }
       return data
     } catch (error) {
       return { success: false, configured: false, config: null }
@@ -275,7 +296,17 @@ class CampaignsService {
     try {
       const data = await apiClient.get('/meta/ad-accounts', {
         params: { accessToken }
-      })
+      }) as {
+        success: boolean
+        adAccounts: {
+          id: string
+          account_id: string
+          name: string
+          currency: string
+          timezone_name: string
+          account_status: number
+        }[]
+      }
       return data
     } catch (error) {
       return { success: false, adAccounts: [] }
@@ -294,10 +325,40 @@ class CampaignsService {
     try {
       const data = await apiClient.get('/meta/pixels', {
         params: { adAccountId, accessToken }
-      })
+      }) as {
+        success: boolean
+        pixels: {
+          id: string
+          name: string
+          creation_time: string
+          last_fired_time: string
+        }[]
+      }
       return data
     } catch (error) {
       return { success: false, pixels: [] }
+    }
+  }
+
+  async syncMetaAds(): Promise<{
+    success: boolean
+    message?: string
+    count?: number
+    error?: string
+  }> {
+    try {
+      const data = await apiClient.post('/meta/update-recent') as {
+        success: boolean
+        message?: string
+        count?: number
+        error?: string
+      }
+      return data
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Error al sincronizar'
+      }
     }
   }
 }

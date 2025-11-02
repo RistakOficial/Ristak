@@ -63,6 +63,9 @@ export const MetaAdsIntegration: React.FC = () => {
   // Estado para re-sincronización al cambiar el switch
   const [isSyncingSnippet, setIsSyncingSnippet] = useState(false)
 
+  // Estado para sincronización manual de Meta Ads
+  const [isSyncingMetaAds, setIsSyncingMetaAds] = useState(false)
+
   const { showToast } = useNotification()
   const { theme } = useTheme()
 
@@ -461,6 +464,36 @@ export const MetaAdsIntegration: React.FC = () => {
     }
   }
 
+  // Sincronización manual de Meta Ads
+  const handleSyncMetaAds = async () => {
+    setIsSyncingMetaAds(true)
+    showToast('info', 'Sincronizando...', 'Obteniendo datos de Meta Ads (últimos 7 días)')
+
+    try {
+      const result = await campaignsService.syncMetaAds()
+
+      if (result.success) {
+        showToast(
+          'success',
+          'Sincronización completada',
+          result.count
+            ? `${result.count} anuncios actualizados correctamente`
+            : 'Datos actualizados correctamente'
+        )
+      } else {
+        showToast(
+          'error',
+          'Error al sincronizar',
+          result.error || 'No se pudo completar la sincronización'
+        )
+      }
+    } catch (error) {
+      showToast('error', 'Error', 'No se pudo conectar con el servidor')
+    } finally {
+      setIsSyncingMetaAds(false)
+    }
+  }
+
   return (
     <div className={styles.integrationContainer}>
       <Card className={styles.mainCard}>
@@ -830,6 +863,43 @@ export const MetaAdsIntegration: React.FC = () => {
                         <span style={{ fontSize: '0.875rem' }}>Sincronizando snippet...</span>
                       </div>
                     )}
+                  </div>
+                )}
+
+                {/* Sincronización manual de Meta Ads */}
+                {credentials.accessToken && credentials.adAccountId && (
+                  <div className={styles.formGroup} style={{ marginTop: '32px', paddingTop: '32px', borderTop: '1px solid var(--color-border)' }}>
+                    <label className={styles.formLabel} style={{ marginBottom: '8px' }}>
+                      Sincronización manual
+                    </label>
+                    <p className={styles.formHint} style={{ marginBottom: '16px' }}>
+                      Sincroniza manualmente los datos de Meta Ads (últimos 7 días). La sincronización automática ocurre cada hora.
+                    </p>
+                    <div style={{ display: 'flex', justifyContent: 'center' }}>
+                      <button
+                        type="button"
+                        onClick={handleSyncMetaAds}
+                        disabled={isSyncingMetaAds}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '8px',
+                          padding: '12px 24px',
+                          fontSize: '14px',
+                          fontWeight: 500,
+                          backgroundColor: '#0866FF',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '6px',
+                          cursor: isSyncingMetaAds ? 'not-allowed' : 'pointer',
+                          opacity: isSyncingMetaAds ? 0.6 : 1,
+                          transition: 'all 0.2s ease'
+                        }}
+                      >
+                        <RefreshCw size={18} className={isSyncingMetaAds ? styles.spinning : ''} />
+                        {isSyncingMetaAds ? 'Sincronizando...' : 'Sincronizar datos de Meta Ads'}
+                      </button>
+                    </div>
                   </div>
                 )}
             </div>
