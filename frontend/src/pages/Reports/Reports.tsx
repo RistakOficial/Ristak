@@ -751,27 +751,29 @@ const MetricsGrid: React.FC<MetricsGridProps> = ({ metrics, loading, reportType,
 
   // Preparar datos para los gráficos (formato compatible con useChartHover)
   // Ordenar cronológicamente (fecha más antigua a la izquierda, más reciente a la derecha)
-  const chartData = metrics.slice().sort((a, b) => {
-    const dateA = new Date(a.date).getTime()
-    const dateB = new Date(b.date).getTime()
-    return dateA - dateB // Orden ascendente
-  }).map(m => ({
-    // Ajustar fecha con timezone de Meta si hay discrepancia
-    label: formatPeriodLabel(
-      timezoneInfo.adjustMetaDateToLocal ? timezoneInfo.adjustMetaDateToLocal(m.date) : m.date,
-      viewType,
-      { includeYear: false }
-    ),
-    clicks: m.clicks,
-    visitors: m.visitors,
-    leads: m.leads,
-    appointments: m.appointments,
-    sales: m.sales,
-    new_customers: m.new_customers,
-    revenue: m.revenue,
-    spend: m.spend,
-    profit: m.revenue - m.spend
-  }))
+  const chartData = React.useMemo(() => {
+    return metrics.slice().sort((a, b) => {
+      const dateA = new Date(a.date).getTime()
+      const dateB = new Date(b.date).getTime()
+      return dateA - dateB // Orden ascendente
+    }).map(m => ({
+      // Ajustar fecha con timezone de Meta si hay discrepancia
+      label: formatPeriodLabel(
+        timezoneInfo.adjustMetaDateToLocal ? timezoneInfo.adjustMetaDateToLocal(m.date) : m.date,
+        viewType,
+        { includeYear: false }
+      ),
+      clicks: m.clicks,
+      visitors: m.visitors,
+      leads: m.leads,
+      appointments: m.appointments,
+      sales: m.sales,
+      new_customers: m.new_customers,
+      revenue: m.revenue,
+      spend: m.spend,
+      profit: m.revenue - m.spend
+    }))
+  }, [metrics, timezoneInfo, viewType])
 
   const trafficItems = [
     { label: 'Clicks', value: formatNumber(totals.clicks) },
