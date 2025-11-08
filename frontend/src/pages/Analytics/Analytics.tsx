@@ -1249,7 +1249,7 @@ const Analytics: React.FC = () => {
     }
   ]
 
-  if (loading && (!metrics || !chartData.length)) {
+  if (loading && (!metrics || !dailyTraffic.length)) {
     return <Loading message="Cargando analíticas..." />
   }
 
