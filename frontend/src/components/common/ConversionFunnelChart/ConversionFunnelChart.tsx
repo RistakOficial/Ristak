@@ -31,8 +31,8 @@ export const ConversionFunnelChart: React.FC<ConversionFunnelChartProps> = ({
 
   const scopeOptions = [
     { value: 'all' as const, label: 'Todos', icon: Layers },
-    { value: 'attribution' as const, label: 'Último toque', icon: Target },
-    { value: 'campaigns' as const, label: 'Desde anuncio', icon: MousePointerClick }
+    { value: 'attribution' as const, label: 'Al momento de registro', icon: Target },
+    { value: 'campaigns' as const, label: 'Identificados de anuncios', icon: MousePointerClick }
   ]
 
   const DEFAULT_STAGES: FunnelStage[] = [
