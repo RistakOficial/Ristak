@@ -759,7 +759,7 @@ async function syncHighLevelPayments(locationId, apiToken) {
   // Importar el servicio de invoices que YA tiene el fix para las descripciones
   const { syncAllInvoices } = await import('./invoicesSyncService.js')
 
-  updatePayments(0, 0, 'running', 'Obteniendo invoices de HighLevel...')
+  updatePayments(0, 0, 'running', 'Sincronizando invoices de HighLevel...')
 
   try {
     // Usar el servicio de invoices que YA obtiene las descripciones de invoiceItems[0].name
