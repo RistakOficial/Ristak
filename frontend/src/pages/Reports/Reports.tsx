@@ -795,7 +795,7 @@ const MetricsGrid: React.FC<MetricsGridProps> = ({ metrics, loading, reportType,
     trafficKeys.push({ key: 'visitors', label: 'Visitantes', color: '#8b5cf6' })
   }
 
-  const allMetricGroups = [
+  const allMetricGroups = React.useMemo(() => [
     {
       title: 'Tráfico',
       icon: <MousePointerClick size={18} />,
@@ -875,7 +875,7 @@ const MetricsGrid: React.FC<MetricsGridProps> = ({ metrics, loading, reportType,
         />
       )
     }
-  ]
+  ], [chartData, trafficItems, trafficKeys, labels, totals, reportType, profit, roas, roi, cac, aov, transactionsPerCustomer, cpl, epl, interesadoToAppt, apptToSale])
 
   // Filtrar la tarjeta de "Tráfico" si showVisitors es false (dominio .onrender.com)
   const metricGroups = showVisitors
