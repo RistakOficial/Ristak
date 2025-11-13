@@ -128,7 +128,7 @@ const computeFinancialSnapshot = async (range) => {
   // Calcular promedio de pagos INDIVIDUALES (no total_paid de contactos)
   // IMPORTANTE: Solo pagos exitosos según Mandamiento #11
   const SUCCESS_PAYMENT_STATUSES = ['succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success'];
-  const statusPlaceholders = SUCCESS_PAYMENT_STATUSES.map((_, i) => `$${i + 1}`).join(',');
+  const statusPlaceholders = SUCCESS_PAYMENT_STATUSES.map(() => '?').join(',');
 
   const paymentsAvgFilters = [`LOWER(status) IN (${statusPlaceholders})`];
   const paymentsAvgParams = [...SUCCESS_PAYMENT_STATUSES];
