@@ -472,6 +472,7 @@ export function TreeFilter({
                   adsHierarchy={availableData.adsHierarchy}
                   selectedFilters={selectedFilters}
                   onFilterToggle={handleFilterToggle}
+                  onFilterChange={onFilterChange}
                 />
               ) : (
                 <div

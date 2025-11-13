@@ -26,9 +26,10 @@ interface AdHierarchyMenuProps {
   adsHierarchy: AdHierarchyData[]
   selectedFilters: Record<string, string[]>
   onFilterToggle: (field: string, value: string) => void
+  onFilterChange?: (filters: Record<string, string[]>) => void
 }
 
-export function AdHierarchyMenu({ adsHierarchy, selectedFilters, onFilterToggle }: AdHierarchyMenuProps) {
+export function AdHierarchyMenu({ adsHierarchy, selectedFilters, onFilterToggle, onFilterChange }: AdHierarchyMenuProps) {
   const [hoveredPlatform, setHoveredPlatform] = useState<string | null>(null)
   const [hoveredCampaign, setHoveredCampaign] = useState<string | null>(null)
   const [hoveredAdset, setHoveredAdset] = useState<string | null>(null)
@@ -52,7 +53,39 @@ export function AdHierarchyMenu({ adsHierarchy, selectedFilters, onFilterToggle 
 
   // Función helper para manejar selección/deselección jerárquica
   const handleHierarchicalToggle = (level: 'platform' | 'campaign' | 'adset' | 'ad', value: string, parentIds?: { platform?: string; campaign?: string; adset?: string }) => {
-    const fieldsToToggle: { field: string; value: string }[] = []
+    // Si no tenemos onFilterChange, usamos el método antiguo (fallback)
+    if (!onFilterChange) {
+      onFilterToggle(
+        level === 'platform' ? 'utm_source' :
+        level === 'campaign' ? 'utm_campaign' :
+        level === 'adset' ? 'utm_medium' : 'utm_content',
+        level === 'platform' ? value.toLowerCase() : value
+      )
+      return
+    }
+
+    // Crear una copia profunda del estado actual de filtros
+    const newFilters: Record<string, string[]> = {
+      utm_source: [...(selectedFilters.utm_source || [])],
+      utm_campaign: [...(selectedFilters.utm_campaign || [])],
+      utm_medium: [...(selectedFilters.utm_medium || [])],
+      utm_content: [...(selectedFilters.utm_content || [])]
+    }
+
+    // Función helper para agregar un valor a un campo si no existe
+    const addToFilter = (field: string, value: string) => {
+      if (!newFilters[field]) newFilters[field] = []
+      if (!newFilters[field].includes(value)) {
+        newFilters[field].push(value)
+      }
+    }
+
+    // Función helper para quitar un valor de un campo
+    const removeFromFilter = (field: string, value: string) => {
+      if (newFilters[field]) {
+        newFilters[field] = newFilters[field].filter(v => v !== value)
+      }
+    }
 
     // Determinar si estamos agregando o quitando
     let isAdding = false
@@ -63,20 +96,20 @@ export function AdHierarchyMenu({ adsHierarchy, selectedFilters, onFilterToggle 
 
       if (isAdding) {
         // Solo agregar la plataforma
-        fieldsToToggle.push({ field: 'utm_source', value: platformId })
+        addToFilter('utm_source', platformId)
       } else {
         // Quitar plataforma y todos sus hijos
-        fieldsToToggle.push({ field: 'utm_source', value: platformId })
+        removeFromFilter('utm_source', platformId)
 
         // Quitar todas las campañas, adsets y ads de esta plataforma
         const platform = adsHierarchy.find(p => p.platform_id === value)
         if (platform) {
           platform.campaigns.forEach(campaign => {
-            fieldsToToggle.push({ field: 'utm_campaign', value: campaign.id })
+            removeFromFilter('utm_campaign', campaign.id)
             campaign.adsets.forEach(adset => {
-              fieldsToToggle.push({ field: 'utm_medium', value: adset.id })
+              removeFromFilter('utm_medium', adset.id)
               adset.ads.forEach(ad => {
-                fieldsToToggle.push({ field: 'utm_content', value: ad.id })
+                removeFromFilter('utm_content', ad.id)
               })
             })
           })
@@ -87,25 +120,22 @@ export function AdHierarchyMenu({ adsHierarchy, selectedFilters, onFilterToggle 
 
       if (isAdding) {
         // Agregar la campaña Y su plataforma padre
-        fieldsToToggle.push({ field: 'utm_campaign', value })
+        addToFilter('utm_campaign', value)
         if (parentIds?.platform) {
-          // Solo agregar el padre si no está ya seleccionado
-          if (!isPlatformSelected(parentIds.platform)) {
-            fieldsToToggle.push({ field: 'utm_source', value: parentIds.platform.toLowerCase() })
-          }
+          addToFilter('utm_source', parentIds.platform.toLowerCase())
         }
       } else {
         // Quitar campaña y todos sus hijos
-        fieldsToToggle.push({ field: 'utm_campaign', value })
+        removeFromFilter('utm_campaign', value)
 
         // Quitar todos los adsets y ads de esta campaña
         const platform = adsHierarchy.find(p => p.platform_id === parentIds?.platform)
         const campaign = platform?.campaigns.find(c => c.id === value)
         if (campaign) {
           campaign.adsets.forEach(adset => {
-            fieldsToToggle.push({ field: 'utm_medium', value: adset.id })
+            removeFromFilter('utm_medium', adset.id)
             adset.ads.forEach(ad => {
-              fieldsToToggle.push({ field: 'utm_content', value: ad.id })
+              removeFromFilter('utm_content', ad.id)
             })
           })
         }
@@ -115,16 +145,16 @@ export function AdHierarchyMenu({ adsHierarchy, selectedFilters, onFilterToggle 
 
       if (isAdding) {
         // Agregar el adset Y todos sus padres
-        fieldsToToggle.push({ field: 'utm_medium', value })
-        if (parentIds?.campaign && !isCampaignSelected(parentIds.campaign)) {
-          fieldsToToggle.push({ field: 'utm_campaign', value: parentIds.campaign })
+        addToFilter('utm_medium', value)
+        if (parentIds?.campaign) {
+          addToFilter('utm_campaign', parentIds.campaign)
         }
-        if (parentIds?.platform && !isPlatformSelected(parentIds.platform)) {
-          fieldsToToggle.push({ field: 'utm_source', value: parentIds.platform.toLowerCase() })
+        if (parentIds?.platform) {
+          addToFilter('utm_source', parentIds.platform.toLowerCase())
         }
       } else {
         // Quitar adset y todos sus hijos
-        fieldsToToggle.push({ field: 'utm_medium', value })
+        removeFromFilter('utm_medium', value)
 
         // Quitar todos los ads de este adset
         const platform = adsHierarchy.find(p => p.platform_id === parentIds?.platform)
@@ -132,7 +162,7 @@ export function AdHierarchyMenu({ adsHierarchy, selectedFilters, onFilterToggle 
         const adset = campaign?.adsets.find(a => a.id === value)
         if (adset) {
           adset.ads.forEach(ad => {
-            fieldsToToggle.push({ field: 'utm_content', value: ad.id })
+            removeFromFilter('utm_content', ad.id)
           })
         }
       }
@@ -141,26 +171,31 @@ export function AdHierarchyMenu({ adsHierarchy, selectedFilters, onFilterToggle 
 
       if (isAdding) {
         // Agregar el ad Y TODOS sus padres (la magia de la jerarquía!)
-        fieldsToToggle.push({ field: 'utm_content', value })
-        if (parentIds?.adset && !isAdsetSelected(parentIds.adset)) {
-          fieldsToToggle.push({ field: 'utm_medium', value: parentIds.adset })
+        addToFilter('utm_content', value)
+        if (parentIds?.adset) {
+          addToFilter('utm_medium', parentIds.adset)
         }
-        if (parentIds?.campaign && !isCampaignSelected(parentIds.campaign)) {
-          fieldsToToggle.push({ field: 'utm_campaign', value: parentIds.campaign })
+        if (parentIds?.campaign) {
+          addToFilter('utm_campaign', parentIds.campaign)
         }
-        if (parentIds?.platform && !isPlatformSelected(parentIds.platform)) {
-          fieldsToToggle.push({ field: 'utm_source', value: parentIds.platform.toLowerCase() })
+        if (parentIds?.platform) {
+          addToFilter('utm_source', parentIds.platform.toLowerCase())
         }
       } else {
         // Solo quitar el ad
-        fieldsToToggle.push({ field: 'utm_content', value })
+        removeFromFilter('utm_content', value)
       }
     }
 
-    // Aplicar todos los cambios
-    fieldsToToggle.forEach(({ field, value }) => {
-      onFilterToggle(field, value)
+    // Limpiar campos vacíos
+    Object.keys(newFilters).forEach(key => {
+      if (!newFilters[key] || newFilters[key].length === 0) {
+        delete newFilters[key]
+      }
     })
+
+    // Aplicar todos los cambios de una sola vez
+    onFilterChange(newFilters)
   }
 
   // Obtener datos filtrados
