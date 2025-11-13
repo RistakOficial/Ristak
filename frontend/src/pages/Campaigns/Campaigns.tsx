@@ -118,6 +118,7 @@ export const Campaigns: React.FC = () => {
 
   // Detectar discrepancia de timezone
   const timezoneInfo = useMetaTimezone()
+  const [timezoneWarningDismissed, setTimezoneWarningDismissed] = useAppConfig<boolean>('timezone_warning_dismissed', false)
 
   const [campaigns, setCampaigns] = useState<CampaignData[]>([])
   const [loading, setLoading] = useState(true)
@@ -1220,11 +1221,22 @@ export const Campaigns: React.FC = () => {
                 preset: 'custom' as const
               })}
             />
+
+            {/* Timezone Discrepancy Warning - Minimized version */}
+            {!timezoneInfo.isLoading && timezoneInfo.hasDiscrepancy && timezoneWarningDismissed && (
+              <button
+                className={styles.timezoneWarningMinimized}
+                onClick={() => setTimezoneWarningDismissed(false)}
+                title="Click para ver detalles"
+              >
+                ⚠️ Zona horaria diferente
+              </button>
+            )}
           </div>
         </div>
 
-        {/* Timezone Discrepancy Warning */}
-        {!timezoneInfo.isLoading && timezoneInfo.hasDiscrepancy && (
+        {/* Timezone Discrepancy Warning - Full version */}
+        {!timezoneInfo.isLoading && timezoneInfo.hasDiscrepancy && !timezoneWarningDismissed && (
           <div className={styles.timezoneWarning}>
             <div className={styles.warningIcon}>⚠️</div>
             <div className={styles.warningContent}>
@@ -1236,6 +1248,13 @@ export const Campaigns: React.FC = () => {
                 Las fechas de las campañas pueden verse diferentes a lo esperado.
               </div>
             </div>
+            <button
+              className={styles.dismissButton}
+              onClick={() => setTimezoneWarningDismissed(true)}
+              aria-label="Omitir aviso"
+            >
+              Omitir
+            </button>
           </div>
         )}
 
