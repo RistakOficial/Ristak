@@ -1126,7 +1126,7 @@ export const Reports: React.FC = () => {
       const cpv = item.visitors > 0 ? item.spend / item.visitors : 0
       const cpl = item.leads > 0 ? item.spend / item.leads : 0
       const cpa = item.appointments > 0 ? item.spend / item.appointments : 0
-      const cac = item.sales > 0 ? item.spend / item.sales : 0
+      const cac = item.new_customers > 0 ? item.spend / item.new_customers : 0
       const webToInteresadosRate = item.visitors > 0 ? (item.leads / item.visitors) * 100 : 0
       const interesadosToApptsRate = item.leads > 0 ? (item.appointments / item.leads) * 100 : 0
       const apptsToSalesRate = item.appointments > 0 ? (item.sales / item.appointments) * 100 : 0
