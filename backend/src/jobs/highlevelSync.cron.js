@@ -13,8 +13,8 @@ import { syncHighLevelData, setSyncTriggerSource } from '../services/highlevelSy
 export function startHighLevelSyncCron() {
   logger.info('🔄 Iniciando cron job de sincronización completa de HighLevel (cada hora)')
 
-  // Ejecutar cada hora (minuto 0)
-  cron.schedule('0 * * * *', async () => {
+  // Ejecutar cada hora (minuto 17) para no competir con el cron de Meta Ads
+  cron.schedule('17 * * * *', async () => {
     logger.info('⏰ Ejecutando sincronización automática de HighLevel (contactos, citas, pagos)...')
 
     try {

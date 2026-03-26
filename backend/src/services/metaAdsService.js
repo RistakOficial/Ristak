@@ -15,6 +15,7 @@ let syncProgress = {
   monthsTotal: 0,
   monthsCurrent: 0
 }
+let isMetaFullSyncRunning = false
 
 export function getMetaSyncProgress() {
   return syncProgress
@@ -445,6 +446,13 @@ async function saveAdsToDatabase(ads, accountId) {
  * @param {Function} onProgress - Callback para reportar progreso (opcional)
  */
 export async function syncMetaAds(startDate, onProgress = null) {
+  if (isMetaFullSyncRunning) {
+    const message = 'Ya hay una sincronización completa de Meta en progreso'
+    logger.warn(message)
+    return { success: false, message }
+  }
+
+  isMetaFullSyncRunning = true
   try {
     const config = await getMetaConfig()
     if (!config) {
@@ -501,10 +509,6 @@ export async function syncMetaAds(startDate, onProgress = null) {
       onProgress({ saved: 0, total: dateChunks.length, status: 'syncing', message: `Preparando ${dateChunks.length} meses de datos...` })
     }
 
-    // Borrar TODOS los ads existentes antes de sincronizar
-    logger.info('Borrando ads existentes...')
-    await db.run('DELETE FROM meta_ads WHERE ad_account_id = ?', [ad_account_id])
-
     // Procesar cada chunk mensual
     for (let i = 0; i < dateChunks.length; i++) {
       const chunk = dateChunks[i]
@@ -528,6 +532,15 @@ export async function syncMetaAds(startDate, onProgress = null) {
       const ads = await fetchMetaAdsInsights(ad_account_id, access_token, chunk.since, chunk.until)
 
       logger.info(`Mes ${i + 1}/${dateChunks.length}: ${ads.length} ads obtenidos`)
+
+      // IMPORTANTE:
+      // En lugar de borrar TODA la tabla (causa ventanas de "gasto = 0" durante sync),
+      // borramos SOLO el rango del chunk actual y luego lo reinsertamos.
+      // Así la app nunca se queda sin histórico completo mientras sincroniza.
+      await db.run(
+        'DELETE FROM meta_ads WHERE ad_account_id = ? AND date >= ? AND date <= ?',
+        [ad_account_id, chunk.since, chunk.until]
+      )
 
       if (ads.length > 0) {
         await saveAdsToDatabase(ads, ad_account_id)
@@ -593,6 +606,8 @@ export async function syncMetaAds(startDate, onProgress = null) {
 
     logger.error('Error en sincronización de Meta Ads:', error.message)
     throw error
+  } finally {
+    isMetaFullSyncRunning = false
   }
 }
 
@@ -602,6 +617,11 @@ export async function syncMetaAds(startDate, onProgress = null) {
  */
 export async function updateRecentAds() {
   try {
+    if (isMetaFullSyncRunning) {
+      logger.warn('Saltando actualización rápida de Meta porque hay una sincronización completa en curso')
+      return { success: false, message: 'Sync completo en progreso' }
+    }
+
     const config = await getMetaConfig()
     if (!config) {
       logger.warn('No hay configuración de Meta. Saltando actualización de ads recientes.')
