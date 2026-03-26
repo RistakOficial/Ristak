@@ -1080,7 +1080,20 @@ export async function buildReportMetrics ({ startDate, endDate, groupBy = 'day',
   }
 
   const spendParams = []
-  const spendConditions = buildRangeConditions('date', range, spendParams)
+  const spendConditions = []
+
+  // IMPORTANTE: meta_ads.date es TEXT con formato YYYY-MM-DD.
+  // Debemos comparar contra fechas YYYY-MM-DD en timezone de GHL, no contra startUtc/endUtc con hora.
+  if (range.startZoned) {
+    spendConditions.push('date >= ?')
+    spendParams.push(range.startZoned.toISODate())
+  }
+
+  if (range.endZoned) {
+    spendConditions.push('date <= ?')
+    spendParams.push(range.endZoned.toISODate())
+  }
+
   const spendWhere = spendConditions.length ? `WHERE ${spendConditions.join(' AND ')}` : ''
   const spendGroupExpr = getGroupExpression('meta_ads.date', groupBy, timezone)
 
