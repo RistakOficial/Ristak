@@ -19,4 +19,5 @@ databases:
   - name: ristak-db
     databaseName: ristak_db
     user: ristak_user
-    plan: standard
+    plan: basic-1gb
+    diskSizeGB: 15
