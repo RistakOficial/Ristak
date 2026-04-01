@@ -4,6 +4,8 @@
 
 Sistema para rastrar el `ad_id` de Facebook cuando un usuario hace clic en un anuncio de Click-to-WhatsApp y envía su primer mensaje. El ad_id viene incrustado en el mensaje con una nomenclatura especial `<<ad_id>>`.
 
+**IMPORTANTE**: Para WhatsApp, el `ad_id` SOLO viene del mensaje, no de atribuciones generales de HighLevel.
+
 ---
 
 ## 🔄 Flujo Completo
@@ -28,14 +30,14 @@ Sistema para rastrar el `ad_id` de Facebook cuando un usuario hace clic en un an
    - En tabla "whatsapp_attribution": el mensaje original + ad_id extraído
    - En tabla "contacts": attribution_ad_id = el ad_id extraído
    ↓
-9. El contacto está relacionado con el anuncio correcto ✅
+9. El contacto está relacionado DEFINITIVAMENTE con el anuncio ✅
 ```
 
 ---
 
 ## 🛠️ Configuración en HighLevel
 
-### Paso 1: Crear Custom Field (Optional but Recommended)
+### Paso 1: Crear Custom Field (Recomendado)
 
 En HighLevel, crea un custom field llamado `first_message` o `ad_id_thru_message` que capture el **primer mensaje** del cliente cuando entra por WhatsApp.
 
@@ -74,10 +76,7 @@ El webhook debe enviar el primer mensaje en el campo `ad_id_thru_message`:
   "phone": "+1234567890",
   "ad_id_thru_message": "Hola buenas tardes me interesa info del servicio <<2393204235278523053>>",
   "referral_source_url": "https://...",
-  "referral_source_type": "whatsapp",
-  "customData": {
-    "first_message": "Hola buenas tardes me interesa info del servicio <<2393204235278523053>>"
-  }
+  "referral_source_type": "whatsapp"
 }
 ```
 
@@ -108,19 +107,19 @@ attribution_ad_id = "2393204235278523053"
 ### En tabla `whatsapp_attribution`
 
 ```sql
-id              -- ID único del registro
-contact_id      -- ID del contacto
-phone           -- Teléfono del contacto
-ad_id_thru_message -- Mensaje original completo con <<ad_id>>
-extracted_ad_id -- El ad_id extraído (sin <<>>)
-created_at      -- Fecha de creación
+id                  -- ID único del registro
+contact_id          -- ID del contacto
+phone               -- Teléfono del contacto
+message_content     -- Mensaje original completo con <<ad_id>>
+ad_id_thru_message  -- El ad_id extraído (sin <<>>)
+created_at          -- Fecha de creación
 ```
 
 ### En tabla `contacts`
 
 ```sql
-id              -- ID del contacto
-attribution_ad_id -- El ad_id (se actualiza desde webhook)
+id                  -- ID del contacto
+attribution_ad_id   -- El ad_id (se actualiza desde webhook WhatsApp)
 attribution_ad_name -- Nombre del anuncio (si se tiene)
 ```
 
@@ -147,7 +146,7 @@ Para verificar que funciona:
 3. Envía un mensaje de prueba desde WhatsApp
 4. En tu DB local, verifica:
    ```sql
-   SELECT * FROM whatsapp_attribution WHERE extracted_ad_id = 'TEST_AD_ID_123';
+   SELECT * FROM whatsapp_attribution WHERE ad_id_thru_message = 'TEST_AD_ID_123';
    SELECT * FROM contacts WHERE attribution_ad_id = 'TEST_AD_ID_123';
    ```
 5. Debe haber registros con el ad_id extraído
@@ -163,6 +162,20 @@ Ristak busca el primer mensaje en este orden:
 3. `data.customData.first_message`
 
 Si no encuentra en ninguno de estos, no extrae el ad_id.
+
+---
+
+## ⚠️ IMPORTANTE: Prioridad para WhatsApp
+
+**Cuando un contacto vino por WhatsApp:**
+- SOLO se usa el `ad_id` del mensaje (extraído con regex)
+- NO se considera `attribution.utmAdId` ni otros campos de atribución general
+- El ad_id del mensaje es la **fuente de verdad definitiva** para WhatsApp
+
+```javascript
+// Orden de prioridad PARA WHATSAPP:
+1. ad_id_thru_message (del mensaje) ← ÚNICO QUE SE USA
+```
 
 ---
 
@@ -196,8 +209,8 @@ En los logs del backend verás mensajes como:
 
 ```
 📥 Webhook de atribución WhatsApp recibido para: +1234567890
-🔍 Ad ID extraído del mensaje: 2393204235278523053
-✅ Ad ID guardado en contacts para contacto abc123: 2393204235278523053
+🔍 Ad ID extraído del mensaje WhatsApp: 2393204235278523053
+✅ Ad ID de WhatsApp guardado en contacts para contacto abc123: 2393204235278523053
 ✅ Atribución WhatsApp procesada para +1234567890 - Ad ID: 2393204235278523053
 ```
 
@@ -206,8 +219,9 @@ En los logs del backend verás mensajes como:
 ## 📌 Resumen de Cambios
 
 - ✅ Nueva función `extractAdIdFromMessage()` en webhooksController.js
-- ✅ Campos nuevos en tabla `whatsapp_attribution`: `ad_id_thru_message`, `extracted_ad_id`
-- ✅ Actualización automática de `contacts.attribution_ad_id`
+- ✅ Campos en tabla `whatsapp_attribution`: `message_content`, `ad_id_thru_message`
+- ✅ Actualización automática de `contacts.attribution_ad_id` (SOLO del mensaje)
+- ✅ NO considera attribution.utmAdId ni otros campos para WhatsApp
 - ✅ Índices de DB creados para búsquedas rápidas
 - ✅ Backward compatible (función migración agrega columnas si no existen)
 
@@ -215,16 +229,18 @@ En los logs del backend verás mensajes como:
 
 ## 🎯 Ventajas de Este Enfoque
 
-✅ **No depende de parámetros de URL** - Más confiable que URLs largas  
+✅ **NO depende de parámetros de URL** - Más confiable que URLs largas  
 ✅ **El mensaje es proof** - Ves exactamente qué ad_id vino  
 ✅ **Funciona aunque el usuario edite el mensaje** - Si mantiene `<<ad_id>>`  
+✅ **100% de confiabilidad** - No hay ambigüedades  
 ✅ **Fácil de debuggear** - Ves el mensaje completo en la DB  
 ✅ **Sin dependencias externas** - Solo regex y parsing simple  
 ✅ **Limpio y organizado** - El ad_id viene en su propio campo
+✅ **Dedicado para WhatsApp** - No mezcla con datos de web
 
 ---
 
 ## 📅 Versión
 
 Implementado: 2025-10-27
-Versión de Ristak: 1.24.0
+Versión de Ristak: 1.24.1 (renombradas columnas)

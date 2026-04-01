@@ -571,14 +571,15 @@ export const handleWhatsAppAttributionWebhook = async (req, res) => {
       return res.status(200).json({ success: true, message: 'Webhook recibido' });
     }
 
-    // Extraer el primer mensaje del contacto (puede contener el ad_id)
-    const firstMessage = data.ad_id_thru_message || data.first_message || customData.first_message || null;
-    let extractedAdId = null;
+    // Extraer el primer mensaje del contacto (contiene el ad_id)
+    // IMPORTANTE: Para WhatsApp, el ad_id VIENE SOLO del mensaje, NO de atribuciones generales
+    const messageContent = data.ad_id_thru_message || data.first_message || customData.first_message || null;
+    let adIdThroughMessage = null;
 
-    if (firstMessage) {
-      extractedAdId = extractAdIdFromMessage(firstMessage);
-      if (extractedAdId) {
-        logger.info(`🔍 Ad ID extraído del mensaje: ${extractedAdId}`);
+    if (messageContent) {
+      adIdThroughMessage = extractAdIdFromMessage(messageContent);
+      if (adIdThroughMessage) {
+        logger.info(`🔍 Ad ID extraído del mensaje WhatsApp: ${adIdThroughMessage}`);
       }
     }
 
@@ -587,12 +588,12 @@ export const handleWhatsAppAttributionWebhook = async (req, res) => {
       ? `INSERT INTO whatsapp_attribution (
           contact_id, phone, referral_source_url, referral_source_type, referral_source_id,
           referral_headline, referral_body, referral_image_url, referral_video_url,
-          referral_thumbnail_url, referral_ctwa_clid, ad_id_thru_message, extracted_ad_id
+          referral_thumbnail_url, referral_ctwa_clid, message_content, ad_id_thru_message
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`
       : `INSERT INTO whatsapp_attribution (
           contact_id, phone, referral_source_url, referral_source_type, referral_source_id,
           referral_headline, referral_body, referral_image_url, referral_video_url,
-          referral_thumbnail_url, referral_ctwa_clid, ad_id_thru_message, extracted_ad_id
+          referral_thumbnail_url, referral_ctwa_clid, message_content, ad_id_thru_message
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 
     await db.run(query, [
@@ -607,25 +608,26 @@ export const handleWhatsAppAttributionWebhook = async (req, res) => {
       customData.video_url || data.referral_video_url || data.videoUrl || data.video_url,
       customData.thumbnail_url || data.referral_thumbnail_url || data.thumbnailUrl || data.thumbnail_url,
       customData.ctwa_clid || data.referral_ctwa_clid || data.ctwa_clid || data.ctwaCLID,
-      firstMessage,
-      extractedAdId
+      messageContent,
+      adIdThroughMessage
     ]);
 
-    // Si se extrajo ad_id, actualizar la tabla contacts con el attribution_ad_id
-    if (extractedAdId && contactId) {
+    // IMPORTANTE: Para WhatsApp, SOLO usar ad_id del mensaje
+    // No considerar attribution.utmAdId ni otros campos (esos son para web)
+    if (adIdThroughMessage && contactId) {
       try {
         await db.run(
           `UPDATE contacts SET attribution_ad_id = ? WHERE id = ?`,
-          [extractedAdId, contactId]
+          [adIdThroughMessage, contactId]
         );
-        logger.info(`✅ Ad ID guardado en contacts para contacto ${contactId}: ${extractedAdId}`);
+        logger.info(`✅ Ad ID de WhatsApp guardado en contacts para contacto ${contactId}: ${adIdThroughMessage}`);
       } catch (err) {
-        logger.warn(`No se pudo guardar ad_id en contacts: ${err.message}`);
+        logger.warn(`No se pudo guardar ad_id WhatsApp en contacts: ${err.message}`);
       }
     }
 
-    logger.info(`✅ Atribución WhatsApp procesada para ${phone} (contacto ${contactId})${extractedAdId ? ` - Ad ID: ${extractedAdId}` : ''}`);
-    res.status(200).json({ success: true, message: 'Atribución procesada', adIdExtracted: extractedAdId });
+    logger.info(`✅ Atribución WhatsApp procesada para ${phone} (contacto ${contactId})${adIdThroughMessage ? ` - Ad ID: ${adIdThroughMessage}` : ''}`);
+    res.status(200).json({ success: true, message: 'Atribución procesada', ad_id_thru_message: adIdThroughMessage });
 
   } catch (error) {
     logger.error(`Error en handleWhatsAppAttributionWebhook: ${error.message}`);

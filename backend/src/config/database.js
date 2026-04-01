@@ -319,20 +319,27 @@ async function initTables() {
 
     // Agregar columnas nuevas si no existen (para migración) - PRIMERO
     try {
-      await db.run(`ALTER TABLE whatsapp_attribution ADD COLUMN ad_id_thru_message TEXT`)
+      await db.run(`ALTER TABLE whatsapp_attribution ADD COLUMN message_content TEXT`)
     } catch (err) {
       // Columna ya existe, ignorar
     }
 
     try {
-      await db.run(`ALTER TABLE whatsapp_attribution ADD COLUMN extracted_ad_id TEXT`)
+      await db.run(`ALTER TABLE whatsapp_attribution ADD COLUMN ad_id_thru_message TEXT`)
     } catch (err) {
       // Columna ya existe, ignorar
     }
 
+    // Eliminar columna extracted_ad_id si existe (renombrada a ad_id_thru_message)
+    try {
+      await db.run(`ALTER TABLE whatsapp_attribution DROP COLUMN extracted_ad_id`)
+    } catch (err) {
+      // Columna no existe o DB no soporta DROP, ignorar
+    }
+
     // Crear índices DESPUÉS de asegurar que las columnas existen
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_contact ON whatsapp_attribution(contact_id)')
-    await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_extracted_ad ON whatsapp_attribution(extracted_ad_id)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_ad_id ON whatsapp_attribution(ad_id_thru_message)')
 
     // Tabla de versiones de Meta API (para auto-actualización)
     await db.run(`
