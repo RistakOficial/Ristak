@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { KpiCard, Card, DateRangePicker, AreaChart, PageContainer, TrafficSourcesChart, ConversionFunnelChart, ViewSelector, Loading } from '@/components/common'
+import funnelStyles from '@/components/common/ConversionFunnelChart/ConversionFunnelChart.module.css'
 import {
   DollarSign,
   Megaphone,
@@ -223,6 +224,9 @@ export const Dashboard: React.FC = () => {
 
   const financialScopeOptions = React.useMemo(
     () => [
+      { value: 'all' as const, label: 'Todos', icon: Layers },
+      { value: 'attribution' as const, label: 'Al registro', icon: Target },
+      { value: 'campaigns' as const, label: 'Identificados de anuncios', icon: MousePointerClick }
     ],
     []
   )
@@ -485,6 +489,18 @@ export const Dashboard: React.FC = () => {
                 onChange={(value) => setSelectedChartView(value as any)}
               />
               {selectedChartView === 'revenue-spend' && (
+                <div className={funnelStyles.scopeSelector}>
+                  {financialScopeOptions.map(({ value, label, icon: Icon }) => (
+                    <button
+                      key={value}
+                      className={`${funnelStyles.scopeButton} ${financialScope === value ? funnelStyles.scopeButtonActive : ''}`}
+                      onClick={() => setFinancialScope(value)}
+                    >
+                      <Icon size={13} />
+                      {label}
+                    </button>
+                  ))}
+                </div>
               )}
             </div>
           </div>
