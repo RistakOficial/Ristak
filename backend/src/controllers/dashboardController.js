@@ -893,7 +893,7 @@ export const getTrafficSources = async (req, res) => {
  */
 export const getFinancialOverview = async (req, res) => {
   try {
-    const { startDate, endDate } = req.query;
+    const { startDate, endDate, scope = 'all' } = req.query;
 
     if (!startDate || !endDate) {
       return res.status(400).json({
@@ -905,6 +905,8 @@ export const getFinancialOverview = async (req, res) => {
     // Obtener timezone dinámico de HighLevel
     const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate });
     const timezone = range.appliedTimezone;
+    const isAttributed = scope === 'campaigns' || scope === 'attributed';
+    const useContactAttribution = scope === 'campaigns' || scope === 'attributed' || scope === 'attribution';
 
     // Obtener filtro de contactos ocultos
     const hiddenFilters = await getHiddenContactFilters();
@@ -913,18 +915,46 @@ export const getFinancialOverview = async (req, res) => {
     // Usar getGroupExpression() con timezone dinámico
     const dayExpression = getGroupExpression('date', 'day', timezone);
 
-    // Query para TODOS los ingresos (payments con status succeeded)
-    const revenueQuery = `
-      SELECT
-        ${dayExpression} as day,
-        SUM(amount) as revenue
-      FROM payments
-      WHERE status = 'succeeded'
-        AND date >= $1 AND date <= $2
-        ${hiddenCondition ? `AND contact_id IN (SELECT c.id FROM contacts c WHERE ${hiddenCondition})` : ''}
-      GROUP BY day
-      ORDER BY day ASC
-    `;
+    let revenueQuery = '';
+    let revenueParams = [];
+
+    if (!useContactAttribution) {
+      // Vista "Todos": ingresos por fecha real de pago
+      revenueQuery = `
+        SELECT
+          ${dayExpression.replace(/\bdate\b/g, 'p.date')} as day,
+          COALESCE(SUM(p.amount), 0) as revenue
+        FROM payments p
+        LEFT JOIN contacts c ON c.id = p.contact_id
+        WHERE p.status = 'succeeded'
+          AND p.date >= $1 AND p.date <= $2
+          ${hiddenCondition ? `AND ${hiddenCondition}` : ''}
+        GROUP BY day
+        ORDER BY day ASC
+      `;
+      revenueParams = [range.startUtc, range.endUtc];
+    } else {
+      // Vista "Al registro" / "Identificados de anuncios": ingresos por fecha de creación del contacto
+      revenueQuery = `
+        SELECT
+          ${getGroupExpression('c.created_at', 'day', timezone)} as day,
+          COALESCE(SUM(p.amount), 0) as revenue
+        FROM contacts c
+        LEFT JOIN payments p
+          ON p.contact_id = c.id
+          AND p.status = 'succeeded'
+        WHERE c.created_at >= $1 AND c.created_at <= $2
+          ${isAttributed ? `AND c.attribution_ad_id IS NOT NULL AND EXISTS (
+            SELECT 1 FROM meta_ads ma
+            WHERE ma.ad_id = c.attribution_ad_id
+              AND DATE(ma.date) = DATE(c.created_at)
+          )` : ''}
+          ${hiddenCondition ? `AND ${hiddenCondition}` : ''}
+        GROUP BY day
+        ORDER BY day ASC
+      `;
+      revenueParams = [range.startUtc, range.endUtc];
+    }
 
     // Query para TODOS los gastos de publicidad
     const spendQuery = `
@@ -939,8 +969,6 @@ export const getFinancialOverview = async (req, res) => {
 
     // IMPORTANTE: meta_ads.date es TEXT "YYYY-MM-DD", usar toISODate()
     const spendParams = [range.startZoned.toISODate(), range.endZoned.toISODate()];
-    const revenueParams = [range.startUtc, range.endUtc];
-
     const [revenueData, spendData] = await Promise.all([
       db.all(revenueQuery, revenueParams),
       db.all(spendQuery, spendParams)
