@@ -55,11 +55,13 @@ class DashboardService {
   async getFinancialChart(params: {
     start: Date;
     end: Date;
+    scope?: 'all' | 'attribution' | 'campaigns';
   }): Promise<ChartData[]> {
     try {
       const queryParams = new URLSearchParams({
         startDate: formatDateToISO(params.start),
-        endDate: formatEndDateToISO(params.end)
+        endDate: formatEndDateToISO(params.end),
+        scope: params.scope || 'all'
       });
 
       // Usar el nuevo endpoint de dashboard que muestra TODOS los ingresos y gastos

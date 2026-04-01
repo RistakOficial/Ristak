@@ -54,6 +54,7 @@ export const Dashboard: React.FC = () => {
   const [trafficSources, setTrafficSources] = useState<{ name: string; value: number; color: string }[]>([])
   const [funnelData, setFunnelData] = useState<{ stage: string; value: number }[]>([])
   const [funnelScope, setFunnelScope] = useState<'all' | 'attribution' | 'campaigns'>('all')
+  const [financialScope, setFinancialScope] = useState<'all' | 'attribution' | 'campaigns'>('all')
   const [funnelLoading, setFunnelLoading] = useState(false)
   const [loading, setLoading] = useState(true)
   const [selectedChartView, setSelectedChartView] = useState<'revenue-spend' | 'visitors-leads' | 'leads-appointments' | 'appointments-sales'>('revenue-spend')
@@ -218,6 +219,15 @@ export const Dashboard: React.FC = () => {
     return active?.label ?? 'Ingresos vs Gastos'
   }, [chartViewOptions, selectedChartView])
 
+  const financialScopeOptions = React.useMemo(
+    () => [
+      { value: 'all', label: 'Todos' },
+      { value: 'attribution', label: 'Al registro' },
+      { value: 'campaigns', label: 'Identificados de anuncios' }
+    ],
+    []
+  )
+
   useEffect(() => {
     if (!analyticsEnabled && selectedChartView === 'visitors-leads') {
       setSelectedChartView('revenue-spend')
@@ -333,7 +343,8 @@ export const Dashboard: React.FC = () => {
           }),
           dashboardService.getFinancialChart({
             start: twelveMonthsAgo,
-            end: now
+            end: now,
+            scope: financialScope
           }),
           trafficPromise,
           dashboardService.getFunnelData({
@@ -355,7 +366,7 @@ export const Dashboard: React.FC = () => {
     }
 
     loadData()
-  }, [analyticsEnabled, dateRange, user])
+  }, [analyticsEnabled, dateRange, financialScope, user])
 
   // useEffect separado solo para el funnel (no recarga toda la página)
   React.useEffect(() => {
@@ -468,11 +479,20 @@ export const Dashboard: React.FC = () => {
               </h2>
               <p className="text-sm text-[var(--color-text-secondary)] mt-0.5">Últimos 12 meses</p>
             </div>
-            <ViewSelector
-              options={chartViewOptions}
-              value={selectedChartView}
-              onChange={(value) => setSelectedChartView(value as any)}
-            />
+            <div className="flex flex-col items-end gap-2">
+              <ViewSelector
+                options={chartViewOptions}
+                value={selectedChartView}
+                onChange={(value) => setSelectedChartView(value as any)}
+              />
+              {selectedChartView === 'revenue-spend' && (
+                <ViewSelector
+                  options={financialScopeOptions}
+                  value={financialScope}
+                  onChange={(value) => setFinancialScope(value as 'all' | 'attribution' | 'campaigns')}
+                />
+              )}
+            </div>
           </div>
           <div className="relative w-full" style={{ minHeight: chartHeight, height: chartHeight }}>
             {isChartLoading ? (
