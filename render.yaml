@@ -19,4 +19,4 @@ databases:
   - name: ristak-db
     databaseName: ristak_db
     user: ristak_user
-    plan: starter
+    plan: standard
