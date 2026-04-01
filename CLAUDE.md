@@ -823,8 +823,31 @@ git log -1
 ## 📅 ÚLTIMA ACTUALIZACIÓN
 
 **Fecha**: 2025-10-27
-**Versión**: 1.23.4
+**Versión**: 1.24.0
 **Últimos cambios críticos**:
+- **Feature: Atribución de Ad ID desde Mensaje de WhatsApp (2025-10-27)** ⭐ NUEVO
+  - **Problema**: Click-to-WhatsApp no pasaba el ad_id de Facebook a HighLevel
+  - **Solución**: Ad ID va incrustado en el primer mensaje con nomenclatura `<<ad_id>>`
+  - **Implementación**:
+    - Nueva función `extractAdIdFromMessage()` en webhooksController.js
+    - Busca patrón regex `<<(\d+)>>` en el primer mensaje
+    - Extrae ad_id y lo guarda en `contacts.attribution_ad_id`
+    - Campos nuevos en tabla `whatsapp_attribution`: `ad_id_thru_message`, `extracted_ad_id`
+  - **Configuración en Facebook**: En el mensaje pre-llenado del Click-to-WhatsApp:
+    ```
+    Hola buenas tardes me interesa info <<{{ad_id}}>>
+    ```
+  - **Flujo**: Usuario hace clic → Mensaje con ad_id → HighLevel recibe → Webhook a Ristak → Extrae ad_id → Guarda en DB → Atribución completa ✅
+  - **Ventajas**:
+    - No depende de parámetros de URL complejos
+    - El mensaje es proof del origen
+    - Funciona aunque el usuario edite el mensaje (si mantiene `<<ad_id>>`)
+    - Se relaciona automáticamente con campañas de Meta
+  - **Archivos modificados**:
+    - webhooksController.js: Nueva función + lógica mejorada
+    - database.js: Nuevas columnas y índices en `whatsapp_attribution`
+  - **Documentación**: Ver `WHATSAPP_AD_ATTRIBUTION.md`
+
 - **Fix: Agrupación inteligente de datos en gráficos de Campaigns (2025-10-27)**
   - **Problema detectado**: Gráficos se quedaban en blanco con rangos largos (365+ días)
     - Al seleccionar un año completo, intentaba renderizar 365 puntos diarios

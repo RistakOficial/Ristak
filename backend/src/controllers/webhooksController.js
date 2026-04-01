@@ -4,6 +4,22 @@ import { updateSingleContactStats } from '../utils/updateContactsStats.js';
 import * as stripeService from '../services/stripeService.js';
 
 /**
+ * Extrae el ad_id del mensaje usando patrón <<ad_id>>
+ * Ejemplo: "Hola buenas tardes me interesa info del servicio <<2393204235278523053>>"
+ * Retorna: "2393204235278523053"
+ */
+function extractAdIdFromMessage(message) {
+  if (!message || typeof message !== 'string') return null;
+
+  // Regex para encontrar <<número>>
+  const match = message.match(/<<(\d+)>>/);
+  if (match && match[1]) {
+    return match[1];
+  }
+  return null;
+}
+
+/**
  * Procesa webhook de contacto nuevo o actualizado
  */
 export const handleContactWebhook = async (req, res) => {
@@ -546,6 +562,7 @@ export const handleWhatsAppAttributionWebhook = async (req, res) => {
     const customData = data.customData || {};
 
     const phone = data.phone || data.contactPhone;
+    const contactId = data.contact_id || data.contactId;
 
     logger.info(`📥 Webhook de atribución WhatsApp recibido para: ${phone || 'sin teléfono'}`);
 
@@ -554,21 +571,32 @@ export const handleWhatsAppAttributionWebhook = async (req, res) => {
       return res.status(200).json({ success: true, message: 'Webhook recibido' });
     }
 
+    // Extraer el primer mensaje del contacto (puede contener el ad_id)
+    const firstMessage = data.ad_id_thru_message || data.first_message || customData.first_message || null;
+    let extractedAdId = null;
+
+    if (firstMessage) {
+      extractedAdId = extractAdIdFromMessage(firstMessage);
+      if (extractedAdId) {
+        logger.info(`🔍 Ad ID extraído del mensaje: ${extractedAdId}`);
+      }
+    }
+
     const usePostgres = process.env.DATABASE_URL ? true : false;
     const query = usePostgres
       ? `INSERT INTO whatsapp_attribution (
           contact_id, phone, referral_source_url, referral_source_type, referral_source_id,
           referral_headline, referral_body, referral_image_url, referral_video_url,
-          referral_thumbnail_url, referral_ctwa_clid
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
+          referral_thumbnail_url, referral_ctwa_clid, ad_id_thru_message, extracted_ad_id
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`
       : `INSERT INTO whatsapp_attribution (
           contact_id, phone, referral_source_url, referral_source_type, referral_source_id,
           referral_headline, referral_body, referral_image_url, referral_video_url,
-          referral_thumbnail_url, referral_ctwa_clid
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+          referral_thumbnail_url, referral_ctwa_clid, ad_id_thru_message, extracted_ad_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 
     await db.run(query, [
-      data.contact_id || data.contactId,
+      contactId,
       phone,
       customData.source_url || data.referral_source_url || data.sourceUrl || data.source_url,
       customData.source_type || data.referral_source_type || data.sourceType || data.source_type,
@@ -578,11 +606,26 @@ export const handleWhatsAppAttributionWebhook = async (req, res) => {
       customData.image_url || data.referral_image_url || data.imageUrl || data.image_url,
       customData.video_url || data.referral_video_url || data.videoUrl || data.video_url,
       customData.thumbnail_url || data.referral_thumbnail_url || data.thumbnailUrl || data.thumbnail_url,
-      customData.ctwa_clid || data.referral_ctwa_clid || data.ctwa_clid || data.ctwaCLID
+      customData.ctwa_clid || data.referral_ctwa_clid || data.ctwa_clid || data.ctwaCLID,
+      firstMessage,
+      extractedAdId
     ]);
 
-    logger.info(`✅ Atribución WhatsApp procesada para ${phone} (contacto ${data.contact_id})`);
-    res.status(200).json({ success: true, message: 'Atribución procesada' });
+    // Si se extrajo ad_id, actualizar la tabla contacts con el attribution_ad_id
+    if (extractedAdId && contactId) {
+      try {
+        await db.run(
+          `UPDATE contacts SET attribution_ad_id = ? WHERE id = ?`,
+          [extractedAdId, contactId]
+        );
+        logger.info(`✅ Ad ID guardado en contacts para contacto ${contactId}: ${extractedAdId}`);
+      } catch (err) {
+        logger.warn(`No se pudo guardar ad_id en contacts: ${err.message}`);
+      }
+    }
+
+    logger.info(`✅ Atribución WhatsApp procesada para ${phone} (contacto ${contactId})${extractedAdId ? ` - Ad ID: ${extractedAdId}` : ''}`);
+    res.status(200).json({ success: true, message: 'Atribución procesada', adIdExtracted: extractedAdId });
 
   } catch (error) {
     logger.error(`Error en handleWhatsAppAttributionWebhook: ${error.message}`);
