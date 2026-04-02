@@ -825,6 +825,22 @@ git log -1
 **Fecha**: 2026-04-01
 **Versión**: 1.25.0
 **Últimos cambios críticos**:
+- **Feature: Protección de ad_id_thru_message - Solo reemplazar si vacío (2026-04-01)** ⭐ NUEVO
+  - **Problema**: Webhooks de WhatsApp llegaban 2 veces, el segundo podía sobrescribir el ad_id del mensaje
+  - **Solución**: Lógica inteligente que SOLO reemplaza `ad_id_thru_message` si está vacío
+  - **Flujo**:
+    1. Primer webhook: trae datos de referral pero `ad_id_thru_message = ""` (vacío)
+    2. Segundo webhook (2ms después): trae SOLO `ad_id_thru_message = "234237529953"` (lleno)
+       - Verifica: ¿El actual está vacío? SÍ → **REEMPLAZA** ✅
+    3. Si llega otro webhook: `ad_id_thru_message` ya tiene valor → **MANTIENE** ✅
+  - **Implementación**:
+    - Antes de guardar, verifica si existe registro anterior del contacto
+    - Lee el `ad_id_thru_message` actual de la tabla `whatsapp_attribution`
+    - Si está vacío o no existe: permite el nuevo valor
+    - Si ya tiene valor: lo mantiene (no sobrescribe)
+    - Logs detallados sobre qué decidió hacer
+  - **Archivo modificado**: `webhooksController.js`
+
 - **Feature: Validación Inteligente de ad_id contra meta_ads (2026-04-01)** ⭐ NUEVO
   - **Problema**: Los ad_ids podían venir incorrectos de HighLevel (utm_id falso), causando atribución a anuncios inexistentes
   - **Solución**: Sistema de fallback inteligente que valida TODOS los candidatos contra `meta_ads` y usa el correcto
