@@ -822,54 +822,16 @@ git log -1
 
 ## 📅 ÚLTIMA ACTUALIZACIÓN
 
-**Fecha**: 2026-04-01
-**Versión**: 1.25.0
+**Fecha**: 2026-04-03
+**Versión**: 1.24.0
 **Últimos cambios críticos**:
-- **Feature: Protección de ad_id_thru_message - Solo reemplazar si vacío (2026-04-01)** ⭐ NUEVO
-  - **Problema**: Webhooks de WhatsApp llegaban 2 veces, el segundo podía sobrescribir el ad_id del mensaje
-  - **Solución**: Lógica inteligente que SOLO reemplaza `ad_id_thru_message` si está vacío
-  - **Flujo**:
-    1. Primer webhook: trae datos de referral pero `ad_id_thru_message = ""` (vacío)
-    2. Segundo webhook (2ms después): trae SOLO `ad_id_thru_message = "234237529953"` (lleno)
-       - Verifica: ¿El actual está vacío? SÍ → **REEMPLAZA** ✅
-    3. Si llega otro webhook: `ad_id_thru_message` ya tiene valor → **MANTIENE** ✅
-  - **Implementación**:
-    - Antes de guardar, verifica si existe registro anterior del contacto
-    - Lee el `ad_id_thru_message` actual de la tabla `whatsapp_attribution`
-    - Si está vacío o no existe: permite el nuevo valor
-    - Si ya tiene valor: lo mantiene (no sobrescribe)
-    - Logs detallados sobre qué decidió hacer
+- **Removal: Eliminada extracción de Ad ID desde mensajes de WhatsApp (2026-04-03)**
+  - **Removido**: Funciones `extractAdIdFromMessage()` y `resolveAdIdWithValidation()` del webhook
+  - **Simplificado**: Handler `handleWhatsAppAttributionWebhook()` para usar solo `referral_source_id`
+  - **Razón**: Simplificar lógica de atribución, usar solo fuentes confiables de HighLevel
   - **Archivo modificado**: `webhooksController.js`
 
-- **Feature: Validación Inteligente de ad_id contra meta_ads (2026-04-01)** ⭐ NUEVO
-  - **Problema**: Los ad_ids podían venir incorrectos de HighLevel (utm_id falso), causando atribución a anuncios inexistentes
-  - **Solución**: Sistema de fallback inteligente que valida TODOS los candidatos contra `meta_ads` y usa el correcto
-  - **Implementación**:
-    - **Nueva función**: `resolveAdIdWithValidation(utmAdId, referralSourceId, adIdThroughMessage)`
-      - Recibe los 3 candidatos de ad_id (desde diferentes fuentes)
-      - Valida CADA UNO contra tabla `meta_ads` para verificar que exista
-      - Devuelve: `{ adId, source, validated }`
-    - **Lógica de selección** (inteligente, flexible):
-      1. Si solo 1 candidato existe en meta_ads → usa ese
-      2. Si varios existen → usa por prioridad: utm > referral > message
-      3. Si ninguno existe → retorna utm pero marcado como `validated: false`
-    - **Webhook de WhatsApp** mejorado (`handleWhatsAppAttributionWebhook`):
-      - Extrae los 3 candidatos: `utmAdId` (del contacto actual), `referralSourceId`, `adIdThroughMessage`
-      - Llama a `resolveAdIdWithValidation` para validar
-      - Actualiza `contacts.attribution_ad_id` con el resultado
-      - Devuelve response con detalles: `{ final_ad_id, ad_id_source, ad_id_validated }`
-    - **Logs detallados** para debugging:
-      - Qué candidatos se evaluaron
-      - Cuál existe en meta_ads
-      - Cuál se eligió y por qué
-  - **Resultado**: 
-    - ✅ Si utm_id viene incorrecto pero referral o message son válidos → usa el correcto
-    - ✅ Fallback automático sin perder atribución
-    - ✅ Logs claros para auditar decisiones
-  - **Archivo modificado**: `webhooksController.js`
-  - **Sin cambios en tablas**: Usa `meta_ads` existente para validar
-
-- **Feature: Pantalla de Setup para crear el Primer Usuario (2026-04-01)** ⭐ NUEVO
+- **Feature: Pantalla de Setup para crear el Primer Usuario (2026-04-01)** ⭐
   - **Problema**: La app creaba un usuario "admin/admin123" por defecto automáticamente. Inseguro y poco profesional.
   - **Solución**: Primera vez que se abre la app → mostrar pantalla "Configura tu acceso" → el usuario elige su propio usuario y contraseña.
   - **Implementación**:
@@ -916,30 +878,6 @@ git log -1
     2. Llenar formulario → crea usuario + redirige a /dashboard ✅
     3. Logout → va a /login (no a /setup) ✅
     4. Intentar ir a /setup cuando hay usuarios → redirige a /login ✅
-
-- **Feature: Atribución de Ad ID desde Mensaje de WhatsApp (2025-10-27)**
-- **Feature: Atribución de Ad ID desde Mensaje de WhatsApp (2025-10-27)** ⭐ NUEVO
-  - **Problema**: Click-to-WhatsApp no pasaba el ad_id de Facebook a HighLevel
-  - **Solución**: Ad ID va incrustado en el primer mensaje con nomenclatura `<<ad_id>>`
-  - **Implementación**:
-    - Nueva función `extractAdIdFromMessage()` en webhooksController.js
-    - Busca patrón regex `<<(\d+)>>` en el primer mensaje
-    - Extrae ad_id y lo guarda en `contacts.attribution_ad_id`
-    - Campos nuevos en tabla `whatsapp_attribution`: `ad_id_thru_message`, `extracted_ad_id`
-  - **Configuración en Facebook**: En el mensaje pre-llenado del Click-to-WhatsApp:
-    ```
-    Hola buenas tardes me interesa info <<{{ad_id}}>>
-    ```
-  - **Flujo**: Usuario hace clic → Mensaje con ad_id → HighLevel recibe → Webhook a Ristak → Extrae ad_id → Guarda en DB → Atribución completa ✅
-  - **Ventajas**:
-    - No depende de parámetros de URL complejos
-    - El mensaje es proof del origen
-    - Funciona aunque el usuario edite el mensaje (si mantiene `<<ad_id>>`)
-    - Se relaciona automáticamente con campañas de Meta
-  - **Archivos modificados**:
-    - webhooksController.js: Nueva función + lógica mejorada
-    - database.js: Nuevas columnas y índices en `whatsapp_attribution`
-  - **Documentación**: Ver `WHATSAPP_AD_ATTRIBUTION.md`
 
 - **Fix: Agrupación inteligente de datos en gráficos de Campaigns (2025-10-27)**
   - **Problema detectado**: Gráficos se quedaban en blanco con rangos largos (365+ días)

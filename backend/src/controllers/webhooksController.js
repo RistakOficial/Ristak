@@ -3,78 +3,6 @@ import { logger } from '../utils/logger.js';
 import { updateSingleContactStats } from '../utils/updateContactsStats.js';
 import * as stripeService from '../services/stripeService.js';
 
-/**
- * Extrae el ad_id del mensaje usando patrón <<ad_id>>
- * Ejemplo: "Hola buenas tardes me interesa info del servicio <<2393204235278523053>>"
- * Retorna: "2393204235278523053"
- */
-function extractAdIdFromMessage(message) {
-  if (!message || typeof message !== 'string') return null;
-
-  // Regex para encontrar <<número>>
-  const match = message.match(/<<(\d+)>>/);
-  if (match && match[1]) {
-    return match[1];
-  }
-  return null;
-}
-
-/**
- * Valida ad_ids contra meta_ads y retorna el más confiable que EXISTA
- * Lógica inteligente:
- * 1. Valida TODOS los candidatos contra meta_ads.ad_id
- * 2. Si solo uno existe → usa ese
- * 3. Si varios existen → usa por prioridad (utm > referral > message)
- * 4. Si ninguno existe → retorna utm pero marcado como "no_validated"
- */
-async function resolveAdIdWithValidation(utmAdId, referralSourceId, adIdThroughMessage) {
-  const candidates = {
-    utmAdId: { value: utmAdId, priority: 1 },
-    referralSourceId: { value: referralSourceId, priority: 2 },
-    adIdThroughMessage: { value: adIdThroughMessage, priority: 3 }
-  };
-
-  // Filtrar null/undefined
-  const validCandidates = Object.entries(candidates)
-    .filter(([_, data]) => data.value)
-    .map(([source, data]) => ({ source, ...data }));
-
-  if (validCandidates.length === 0) {
-    return { adId: null, source: null, validated: false };
-  }
-
-  // Validar cada candidato contra meta_ads
-  const validatedCandidates = [];
-
-  for (const candidate of validCandidates) {
-    try {
-      const existsInMetaAds = await db.get(
-        'SELECT ad_id FROM meta_ads WHERE ad_id = ? LIMIT 1',
-        [candidate.value]
-      );
-
-      if (existsInMetaAds) {
-        validatedCandidates.push({ ...candidate, validated: true });
-      } else {
-        validatedCandidates.push({ ...candidate, validated: false });
-      }
-    } catch (err) {
-      logger.warn(`Error validando ad_id ${candidate.value}: ${err.message}`);
-      validatedCandidates.push({ ...candidate, validated: false });
-    }
-  }
-
-  // Estrategia de selección:
-  // 1. Preferir los validados, ordenados por prioridad
-  const validated = validatedCandidates.filter(c => c.validated).sort((a, b) => a.priority - b.priority);
-  if (validated.length > 0) {
-    return { adId: validated[0].value, source: validated[0].source, validated: true };
-  }
-
-  // 2. Si ninguno está validado, retornar el de mayor prioridad (utm)
-  const sorted = validatedCandidates.sort((a, b) => a.priority - b.priority);
-  return { adId: sorted[0].value, source: sorted[0].source, validated: false };
-}
 
 /**
  * Procesa webhook de contacto nuevo o actualizado
@@ -628,126 +556,52 @@ export const handleWhatsAppAttributionWebhook = async (req, res) => {
       return res.status(200).json({ success: true, message: 'Webhook recibido' });
     }
 
-    // Extraer los 3 candidatos de ad_id
-    const messageContent = data.ad_id_thru_message || data.first_message || customData.first_message || null;
-    let adIdThroughMessage = null;
-
-    if (messageContent) {
-      adIdThroughMessage = extractAdIdFromMessage(messageContent);
-      if (adIdThroughMessage) {
-        logger.info(`🔍 Ad ID extraído del mensaje WhatsApp: ${adIdThroughMessage}`);
-      }
-    }
-
-    // Extraer referral_source_id
+    // Extraer referral_source_id (fuente de atribución)
     const referralSourceId = customData.source_id || data.referral_source_id || data.sourceId || data.source_id || null;
-
-    // Leer el utm_ad_id actual del contacto (si existe)
-    let utmAdId = null;
-    if (contactId) {
-      try {
-        const contact = await db.get(
-          'SELECT attribution_ad_id FROM contacts WHERE id = ?',
-          [contactId]
-        );
-        if (contact?.attribution_ad_id) {
-          utmAdId = contact.attribution_ad_id;
-          logger.info(`📋 UtmAdId actual del contacto ${contactId}: ${utmAdId}`);
-        }
-      } catch (err) {
-        logger.warn(`No se pudo leer utm_ad_id del contacto: ${err.message}`);
-      }
-    }
-
-    // Verificar si ya existe registro para este contacto
-    // Si existe y tiene ad_id_thru_message, NO lo reemplazamos (solo si estaba vacío)
-    let finalAdIdThroughMessage = adIdThroughMessage;
-    if (contactId) {
-      try {
-        const existingRecord = await db.get(
-          'SELECT ad_id_thru_message FROM whatsapp_attribution WHERE contact_id = ? ORDER BY created_at DESC LIMIT 1',
-          [contactId]
-        );
-        if (existingRecord?.ad_id_thru_message && existingRecord.ad_id_thru_message.trim() !== '') {
-          // Ya tiene un valor no-vacío → mantener el anterior
-          finalAdIdThroughMessage = existingRecord.ad_id_thru_message;
-          logger.info(`📌 Ad ID del mensaje anterior mantiene su valor: ${existingRecord.ad_id_thru_message} (no se reemplaza)`);
-        } else if (!adIdThroughMessage && existingRecord?.ad_id_thru_message) {
-          // El nuevo está vacío pero el anterior tenía valor → mantener anterior
-          finalAdIdThroughMessage = existingRecord.ad_id_thru_message;
-          logger.info(`📌 Nuevo mensaje vacío, manteniendo anterior: ${existingRecord.ad_id_thru_message}`);
-        }
-      } catch (err) {
-        logger.warn(`No se pudo verificar ad_id_thru_message anterior: ${err.message}`);
-      }
-    }
 
     const usePostgres = process.env.DATABASE_URL ? true : false;
     const query = usePostgres
       ? `INSERT INTO whatsapp_attribution (
           contact_id, phone, referral_source_url, referral_source_type, referral_source_id,
           referral_headline, referral_body, referral_image_url, referral_video_url,
-          referral_thumbnail_url, referral_ctwa_clid, message_content, ad_id_thru_message
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`
+          referral_thumbnail_url, referral_ctwa_clid
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
       : `INSERT INTO whatsapp_attribution (
           contact_id, phone, referral_source_url, referral_source_type, referral_source_id,
           referral_headline, referral_body, referral_image_url, referral_video_url,
-          referral_thumbnail_url, referral_ctwa_clid, message_content, ad_id_thru_message
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+          referral_thumbnail_url, referral_ctwa_clid
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 
     await db.run(query, [
       contactId,
       phone,
       customData.source_url || data.referral_source_url || data.sourceUrl || data.source_url,
       customData.source_type || data.referral_source_type || data.sourceType || data.source_type,
-      customData.source_id || data.referral_source_id || data.sourceId || data.source_id,
+      referralSourceId,
       customData.headline || data.referral_headline || data.headline,
       customData.body || data.referral_body || data.body,
       customData.image_url || data.referral_image_url || data.imageUrl || data.image_url,
       customData.video_url || data.referral_video_url || data.videoUrl || data.video_url,
       customData.thumbnail_url || data.referral_thumbnail_url || data.thumbnailUrl || data.thumbnail_url,
-      customData.ctwa_clid || data.referral_ctwa_clid || data.ctwa_clid || data.ctwaCLID,
-      messageContent,
-      finalAdIdThroughMessage
+      customData.ctwa_clid || data.referral_ctwa_clid || data.ctwa_clid || data.ctwaCLID
     ]);
 
-    // VALIDACIÓN INTELIGENTE: Comparar los 3 candidatos contra meta_ads
-    // Prioridad: utm > referral > message (pero solo si existen en meta_ads)
-    let finalAdId = null;
-    let adIdSource = null;
-    let adIdValidated = false;
+    // Usar referral_source_id como ad_id si viene disponible
+    let finalAdId = referralSourceId || null;
 
-    if (utmAdId || referralSourceId || finalAdIdThroughMessage) {
-      try {
-        const resolution = await resolveAdIdWithValidation(utmAdId, referralSourceId, finalAdIdThroughMessage);
-        finalAdId = resolution.adId;
-        adIdSource = resolution.source;
-        adIdValidated = resolution.validated;
-
-        logger.info(`🔍 Validación de ad_id completada para ${contactId}:`);
-        logger.info(`   Candidatos: utm=${utmAdId}, referral=${referralSourceId}, message=${finalAdIdThroughMessage}`);
-        logger.info(`   Resultado: ${finalAdId} (fuente: ${adIdSource}, validado: ${adIdValidated})`);
-
-        if (finalAdId && contactId) {
-          await db.run(
-            `UPDATE contacts SET attribution_ad_id = ? WHERE id = ?`,
-            [finalAdId, contactId]
-          );
-          logger.info(`✅ Ad ID guardado en contacts para ${contactId}: ${finalAdId} (${adIdValidated ? 'validado' : 'no validado'} en meta_ads)`);
-        }
-      } catch (err) {
-        logger.error(`Error en validación de ad_id: ${err.message}`);
-      }
+    if (finalAdId && contactId) {
+      await db.run(
+        `UPDATE contacts SET attribution_ad_id = ? WHERE id = ?`,
+        [finalAdId, contactId]
+      );
+      logger.info(`✅ Ad ID guardado en contacts para ${contactId}: ${finalAdId}`);
     }
 
     logger.info(`✅ Atribución WhatsApp procesada para ${phone} (contacto ${contactId}) - Ad ID final: ${finalAdId || 'ninguno'}`);
     res.status(200).json({
       success: true,
       message: 'Atribución procesada',
-      ad_id_thru_message: finalAdIdThroughMessage,
-      final_ad_id: finalAdId,
-      ad_id_source: adIdSource,
-      ad_id_validated: adIdValidated
+      final_ad_id: finalAdId
     });
 
   } catch (error) {
