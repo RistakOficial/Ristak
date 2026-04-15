@@ -115,12 +115,18 @@ body.dark .modal {
   overflow-y: auto; /* Siempre permitir scroll */
 }
 
-/* Para modales custom: sin scroll en .content, el contenido interno maneja su propio scroll */
+/* Para modales custom: layout flex para que el contenido scrollee y el footer quede sticky */
+.modal.custom {
+  display: flex;
+  flex-direction: column;
+}
+
 .modal.custom .content {
-  overflow-y: visible;
-  overflow: visible;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
   max-height: none;
-  padding: 0; /* Los modales custom manejan su propio padding - NOTA: El contenido interno debe tener padding */
+  padding: 0;
 }
 
 .message {
