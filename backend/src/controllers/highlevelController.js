@@ -1,6 +1,7 @@
 import fetch from 'node-fetch';
 import { db } from '../config/database.js';
 import { syncHighLevelData, getSyncProgress } from '../services/highlevelSyncService.js';
+import { syncSingleInvoice } from '../services/invoicesSyncService.js';
 import { logger } from '../utils/logger.js';
 import { API_URLS } from '../config/constants.js';
 import { getGHLClient } from '../services/ghlClient.js';
@@ -1738,6 +1739,34 @@ export const getUsersByIds = async (req, res) => {
     res.status(500).json({
       success: false,
       error: error.message || 'Error al obtener usuarios por IDs'
+    });
+  }
+};
+
+/**
+ * Sincroniza un invoice específico desde HighLevel a BD local (upsert seguro).
+ * Llamado desde el frontend después de crear/pagar un invoice para que los datos
+ * aparezcan inmediatamente en la página de transacciones sin hacer un sync completo.
+ *
+ * POST /api/highlevel/invoices/:invoiceId/sync
+ */
+export const syncInvoice = async (req, res) => {
+  try {
+    const { invoiceId } = req.params;
+
+    if (!invoiceId) {
+      return res.status(400).json({ success: false, error: 'invoiceId requerido' });
+    }
+
+    const result = await syncSingleInvoice(invoiceId);
+
+    res.json(result);
+  } catch (error) {
+    logger.error(`Error en syncInvoice(${req.params.invoiceId}): ${error.message}`);
+    // Responder error pero con código 200 para que el frontend no trate esto como falla crítica
+    res.status(200).json({
+      success: false,
+      error: error.message || 'No se pudo sincronizar el invoice desde HighLevel'
     });
   }
 };

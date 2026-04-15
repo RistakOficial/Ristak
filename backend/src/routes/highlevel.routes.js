@@ -18,6 +18,7 @@ import {
   createInvoice,
   recordPayment,
   sendInvoice,
+  syncInvoice,
   text2Pay,
   getContactPaymentMethods,
   chargeSavedPaymentMethod,
@@ -68,6 +69,7 @@ router.get('/products/:productId/prices', listPrices)
 router.post('/invoices', createInvoice)
 router.post('/invoices/:invoiceId/send', sendInvoice)
 router.post('/invoices/:invoiceId/record-payment', recordPayment)
+router.post('/invoices/:invoiceId/sync', syncInvoice)
 router.post('/text2pay', text2Pay)
 router.get('/payment-methods/contact/:contactId', getContactPaymentMethods)
 router.post('/payment-methods/charge', chargeSavedPaymentMethod)

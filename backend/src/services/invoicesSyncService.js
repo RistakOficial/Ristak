@@ -345,6 +345,115 @@ export async function syncAllInvoices({ contactId } = {}) {
 }
 
 /**
+ * Sincroniza UN invoice específico desde HighLevel a BD local (upsert seguro)
+ * Usado después de crear/pagar un invoice para asegurar que la BD refleja el estado real de GHL.
+ * Protección anti-race condition: nunca hace downgrade de 'paid' a 'draft'.
+ *
+ * @param {string} invoiceId - ID del invoice en HighLevel
+ * @returns {Promise<Object>} - { success, invoiceId, status }
+ */
+export async function syncSingleInvoice(invoiceId) {
+  try {
+    const ghlClient = await getGHLClient()
+    const response = await ghlClient.getInvoice(invoiceId)
+    const invoice = response.invoice || response
+
+    if (!invoice || (!invoice.id && !invoice._id)) {
+      throw new Error(`Invoice ${invoiceId} no encontrado en HighLevel`)
+    }
+
+    const ghlInvoiceId = invoice.id || invoice._id
+    const contactId = invoice.contactDetails?.id || invoice.contactId
+
+    const ghlStatus = mapInvoiceStatus(invoice.status)
+
+    const invoiceData = {
+      contact_id: contactId || null,
+      amount: invoice.total || invoice.amount || 0,
+      currency: invoice.currency || 'MXN',
+      status: ghlStatus,
+      payment_method: invoice.paymentMode || null,
+      reference: invoice.invoiceNumber || null,
+      description:
+        invoice.invoiceItems?.[0]?.name ||
+        invoice.invoiceItems?.[0]?.description ||
+        invoice.title || invoice.name || 'Pago',
+      date: invoice.createdAt || invoice.issueDate || new Date().toISOString(),
+      invoice_number: invoice.invoiceNumber || null,
+      due_date: invoice.dueDate || null,
+      sent_at: invoice.sentAt || null,
+    }
+
+    // Verificar si ya existe en BD local
+    const existing = await db.get(
+      'SELECT id, status FROM payments WHERE ghl_invoice_id = ?',
+      [ghlInvoiceId]
+    )
+
+    if (existing) {
+      // Protección anti-race condition: si local ya tiene 'paid' y GHL aún no lo refleja,
+      // conservar 'paid' y solo actualizar los demás campos.
+      const statusToSave = existing.status === 'paid' ? 'paid' : invoiceData.status
+
+      await db.run(
+        `UPDATE payments
+         SET status = ?, amount = ?, currency = ?, payment_method = ?,
+             reference = ?, description = ?, due_date = ?, sent_at = ?,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE ghl_invoice_id = ?`,
+        [
+          statusToSave,
+          invoiceData.amount,
+          invoiceData.currency,
+          invoiceData.payment_method,
+          invoiceData.reference,
+          invoiceData.description,
+          invoiceData.due_date,
+          invoiceData.sent_at,
+          ghlInvoiceId
+        ]
+      )
+      logger.info(`Invoice actualizado desde GHL: ${ghlInvoiceId} (${statusToSave})`)
+    } else {
+      // No existe en BD — insertar. Si el contacto no existe en contacts, guardarlo igual con contact_id null.
+      await db.run(
+        `INSERT INTO payments (
+          id, contact_id, amount, currency, status, payment_method,
+          reference, description, date, ghl_invoice_id, invoice_number,
+          due_date, sent_at, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+        [
+          ghlInvoiceId,
+          invoiceData.contact_id,
+          invoiceData.amount,
+          invoiceData.currency,
+          invoiceData.status,
+          invoiceData.payment_method,
+          invoiceData.reference,
+          invoiceData.description,
+          invoiceData.date,
+          ghlInvoiceId,
+          invoiceData.invoice_number,
+          invoiceData.due_date,
+          invoiceData.sent_at
+        ]
+      )
+      logger.info(`Invoice insertado desde GHL: ${ghlInvoiceId} (${invoiceData.status})`)
+    }
+
+    // Actualizar stats del contacto si está pagado
+    if (['paid', 'succeeded', 'completed'].includes(invoiceData.status) && invoiceData.contact_id) {
+      await updateContactStats(invoiceData.contact_id)
+    }
+
+    return { success: true, invoiceId: ghlInvoiceId, status: invoiceData.status }
+  } catch (error) {
+    logger.error(`Error en syncSingleInvoice(${invoiceId}): ${error.message}`)
+    throw error
+  }
+}
+
+/**
  * Mapea el status de HighLevel a nuestros estados internos
  * @param {string} ghlStatus - Status de HighLevel
  * @returns {string} - Status interno

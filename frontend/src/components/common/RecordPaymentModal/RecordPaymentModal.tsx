@@ -702,6 +702,9 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
           setShowPaymentLinkDialog(true)
 
+          // Sincronizar el invoice en segundo plano para que aparezca en transacciones
+          fetch(`/api/highlevel/invoices/${invoiceId}/sync`, { method: 'POST' }).catch(() => {})
+
           // No cerrar el modal principal, solo mostrar el dialog del enlace
           setStep('form')
           return // No ejecutar onSuccess ni cerrar el modal
@@ -783,6 +786,15 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         }
         default:
           break
+      }
+
+      // Sincronizar el invoice específico desde GHL para asegurar que la BD
+      // tiene el estado actualizado. Silencioso: si falla, los datos locales
+      // ya están correctos gracias a createInvoice + recordPayment.
+      try {
+        await fetch(`/api/highlevel/invoices/${invoiceId}/sync`, { method: 'POST' })
+      } catch {
+        // continuar aunque falle el sync — datos locales ya son correctos
       }
 
       onSuccess?.()

@@ -719,8 +719,9 @@ export const Transactions: React.FC = () => {
         onClose={() => setShowRecordPaymentModal(false)}
         onSuccess={() => {
           setShowRecordPaymentModal(false)
-          // Forzar sincronización después de crear un invoice para que aparezca inmediatamente
-          fetchData(true)
+          // El modal ya sincronizó el invoice específico desde GHL.
+          // Solo recargar desde BD local (sin sync completo).
+          fetchData()
         }}
       />
       </div>
