@@ -1229,10 +1229,10 @@ export const Appointments: React.FC = () => {
       </div>
 
       {/* Grid principal */}
-      <div className={styles.mainGrid}>
+      <div className={`${styles.mainGrid}${viewMode === 'month' ? ` ${styles.mainGridMonth}` : ''}`}>
         {/* Calendario */}
-        <Card className={styles.calendarCard}>
-          <div className={styles.calendarCardContent}>
+        <Card className={`${styles.calendarCard}${viewMode === 'month' ? ` ${styles.calendarCardMonth}` : ''}`}>
+          <div className={`${styles.calendarCardContent}${viewMode === 'month' ? ` ${styles.calendarContentMonth}` : ''}`}>
           {/* Barra de vista */}
           <div className={styles.viewBar}>
             <div className={styles.viewBarActions}>
