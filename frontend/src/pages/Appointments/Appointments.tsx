@@ -450,22 +450,32 @@ export const Appointments: React.FC = () => {
     return grouped;
   }, [blockedSlots]);
 
-  // Generar celdas del calendario mensual (SIEMPRE 4 semanas = 28 días)
+  // Generar celdas del calendario mensual cubriendo TODAS las semanas del mes
+  // (4, 5 o 6 semanas según el mes: 28, 35 o 42 celdas)
   const monthCells = useMemo((): DayCell[] => {
     const year = currentDate.getFullYear();
     const month = currentDate.getMonth();
 
-    // Primer día del mes
+    // Primer y último día del mes
     const firstDay = new Date(year, month, 1);
+    const lastDay = new Date(year, month + 1, 0);
+
     // Lunes de la semana del primer día
     const startDay = new Date(firstDay);
-    const dayOfWeek = (firstDay.getDay() + 6) % 7; // 0 = lunes
-    startDay.setDate(firstDay.getDate() - dayOfWeek);
+    const firstDayOfWeek = (firstDay.getDay() + 6) % 7; // 0 = lunes
+    startDay.setDate(firstDay.getDate() - firstDayOfWeek);
+
+    // Domingo de la semana del último día
+    const lastDayOfWeek = (lastDay.getDay() + 6) % 7; // 0 = lunes ... 6 = domingo
+    const daysToAdd = 6 - lastDayOfWeek;
+
+    // Calcular cuántas celdas totales (siempre múltiplo de 7)
+    const msPerDay = 1000 * 60 * 60 * 24;
+    const totalDays = Math.round((lastDay.getTime() - startDay.getTime()) / msPerDay) + 1 + daysToAdd;
 
     const cells: DayCell[] = [];
 
-    // Generar EXACTAMENTE 28 celdas (4 semanas)
-    for (let i = 0; i < 28; i++) {
+    for (let i = 0; i < totalDays; i++) {
       const date = new Date(startDay);
       date.setDate(startDay.getDate() + i);
 
