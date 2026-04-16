@@ -501,9 +501,9 @@
 }
 
 /* Overrides for month view - allow natural height expansion */
+/* Keep overflow:hidden in parents to preserve rounded corners; height:auto lets content grow */
 .calendarCardMonth {
   height: auto;
-  overflow: visible;
 }
 
 .calendarCardMonth > div {
@@ -699,11 +699,11 @@
   background-color: var(--color-primary-100);
 }
 
-/* Calendar View */
+/* Calendar View - overflow:hidden clips grid cells to the rounded corners */
 .calendarView {
   display: flex;
   flex-direction: column;
-  overflow: visible;
+  overflow: hidden;
   height: auto;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-xl);
