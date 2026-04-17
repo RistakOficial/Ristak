@@ -8,6 +8,7 @@ interface DateRangePickerProps {
   endDate: string
   onChange: (start: string, end: string) => void
   placeholder?: string
+  variant?: 'single' | 'dual'
 }
 
 interface DatePreset {
@@ -143,9 +144,11 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
   startDate,
   endDate,
   onChange,
-  placeholder = 'Seleccionar fechas'
+  placeholder = 'Seleccionar fechas',
+  variant = 'single'
 }) => {
   const [isOpen, setIsOpen] = useState(false)
+  const [activeField, setActiveField] = useState<'start' | 'end' | null>(null)
   const [leftMonth, setLeftMonth] = useState(() => {
     if (startDate) {
       const date = parseLocalDate(startDate)
@@ -179,6 +182,7 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
     const handleClickOutside = (event: MouseEvent) => {
       if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
         setIsOpen(false)
+        setActiveField(null)
       }
     }
 
@@ -216,6 +220,34 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
       setTempEnd(parseLocalDate(endDate) || null)
     }
   }, [startDate, endDate])
+
+  const formatSingleDate = (dateStr: string): string => {
+    const date = parseLocalDate(dateStr)
+    if (!date) return 'Seleccionar'
+    const day = date.getDate()
+    const month = MONTHS[date.getMonth()].slice(0, 3)
+    const year = date.getFullYear()
+    return `${day} ${month}, ${year}`
+  }
+
+  const handleDualOpen = (field: 'start' | 'end') => {
+    if (isOpen && activeField === field) {
+      setIsOpen(false)
+      setActiveField(null)
+      return
+    }
+    const parsedStart = parseLocalDate(startDate)
+    const parsedEnd = parseLocalDate(endDate)
+    setTempStart(parsedStart)
+    setTempEnd(parsedEnd)
+    if (parsedStart) {
+      setLeftMonth(new Date(parsedStart.getFullYear(), parsedStart.getMonth(), 1))
+      setRightMonth(new Date(parsedStart.getFullYear(), parsedStart.getMonth() + 1, 1))
+    }
+    setActiveField(field)
+    setSelectingEndDate(field === 'end')
+    setIsOpen(true)
+  }
 
   const formatDateRange = () => {
     if (!startDate || !endDate) return placeholder
@@ -258,20 +290,24 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
 
   const handleDateClick = (date: Date) => {
     if (!selectingEndDate) {
-      // Selecting start date
       setTempStart(date)
       setTempEnd(null)
       setSelectingEndDate(true)
     } else {
-      // Selecting end date
+      let newStart = tempStart!
+      let newEnd = date
       if (date < tempStart!) {
-        // If end date is before start date, swap them
-        setTempEnd(tempStart)
-        setTempStart(date)
-      } else {
-        setTempEnd(date)
+        newEnd = tempStart!
+        newStart = date
       }
+      setTempEnd(newEnd)
+      setTempStart(newStart)
       setSelectingEndDate(false)
+      if (variant === 'dual') {
+        onChange(formatDateToISO(newStart), formatDateToISO(newEnd))
+        setIsOpen(false)
+        setActiveField(null)
+      }
     }
   }
 
@@ -279,20 +315,20 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
     const { start, end } = preset.getValue()
     setTempStart(start)
     setTempEnd(end)
-
-    // Adjust calendar view to show selected range
     setLeftMonth(new Date(start.getFullYear(), start.getMonth(), 1))
-    const rightDate = new Date(start.getFullYear(), start.getMonth() + 1, 1)
-    setRightMonth(rightDate)
+    setRightMonth(new Date(start.getFullYear(), start.getMonth() + 1, 1))
+    if (variant === 'dual') {
+      onChange(formatDateToISO(start), formatDateToISO(end))
+      setIsOpen(false)
+      setActiveField(null)
+    }
   }
 
   const applyDateRange = () => {
     if (tempStart && tempEnd) {
-      onChange(
-        formatDateToISO(tempStart),
-        formatDateToISO(tempEnd)
-      )
+      onChange(formatDateToISO(tempStart), formatDateToISO(tempEnd))
       setIsOpen(false)
+      setActiveField(null)
     }
   }
 
@@ -300,6 +336,7 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
     setTempStart(parseLocalDate(startDate) || null)
     setTempEnd(parseLocalDate(endDate) || null)
     setIsOpen(false)
+    setActiveField(null)
   }
 
   // Normalizar fecha a medianoche local para comparación
@@ -431,16 +468,44 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
 
   return (
     <div className={styles.wrapper} ref={containerRef}>
-      <button
-        className={styles.input}
-        onClick={() => setIsOpen(!isOpen)}
-        type="button"
-      >
-        <Calendar size={16} className={styles.icon} />
-        <span className={startDate ? styles.value : styles.placeholder}>
-          {formatDateRange()}
-        </span>
-      </button>
+      {variant === 'dual' ? (
+        <div className={styles.dualTrigger}>
+          <button
+            className={`${styles.dualBox} ${activeField === 'start' && isOpen ? styles.dualBoxActive : ''}`}
+            onClick={() => handleDualOpen('start')}
+            type="button"
+          >
+            <Calendar size={14} className={styles.icon} />
+            <div className={styles.dualBoxContent}>
+              <span className={styles.dualBoxLabel}>Desde</span>
+              <span className={styles.dualBoxValue}>{formatSingleDate(startDate)}</span>
+            </div>
+          </button>
+          <span className={styles.dualArrow}>→</span>
+          <button
+            className={`${styles.dualBox} ${activeField === 'end' && isOpen ? styles.dualBoxActive : ''}`}
+            onClick={() => handleDualOpen('end')}
+            type="button"
+          >
+            <Calendar size={14} className={styles.icon} />
+            <div className={styles.dualBoxContent}>
+              <span className={styles.dualBoxLabel}>Hasta</span>
+              <span className={styles.dualBoxValue}>{formatSingleDate(endDate)}</span>
+            </div>
+          </button>
+        </div>
+      ) : (
+        <button
+          className={styles.input}
+          onClick={() => setIsOpen(!isOpen)}
+          type="button"
+        >
+          <Calendar size={16} className={styles.icon} />
+          <span className={startDate ? styles.value : styles.placeholder}>
+            {formatDateRange()}
+          </span>
+        </button>
+      )}
 
       {isOpen && (
         <div className={styles.dropdown}>
@@ -470,7 +535,7 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
 
           <div className={styles.calendarSection}>
             <div className={styles.rangeDisplay}>
-              <div className={styles.rangeField}>
+              <div className={`${styles.rangeField} ${!selectingEndDate ? styles.rangeFieldActive : ''}`}>
                 <label className={styles.rangeLabel}>Fecha inicial</label>
                 <div className={styles.rangeValue}>
                   {tempStart ? tempStart.toLocaleDateString('es-MX', {
@@ -481,7 +546,7 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
                 </div>
               </div>
               <div className={styles.rangeSeparator}>→</div>
-              <div className={styles.rangeField}>
+              <div className={`${styles.rangeField} ${selectingEndDate ? styles.rangeFieldActive : ''}`}>
                 <label className={styles.rangeLabel}>Fecha final</label>
                 <div className={styles.rangeValue}>
                   {tempEnd ? tempEnd.toLocaleDateString('es-MX', {

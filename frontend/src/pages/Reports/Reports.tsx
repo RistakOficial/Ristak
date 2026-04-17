@@ -1672,6 +1672,7 @@ export const Reports: React.FC = () => {
               {viewType === 'day' && (
                 <div className={styles.datePickerControl}>
                   <DateRangePicker
+                    variant="dual"
                     startDate={toIsoDate(baseRange.start)}
                     endDate={toIsoDate(baseRange.end)}
                     onChange={(start, end) => setDateRange({
