@@ -254,39 +254,6 @@
   gap: var(--spacing-sm);
 }
 
-.customMonthControls {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-sm);
-  background-color: var(--color-surface);
-  border-radius: var(--radius-md);
-  padding: 0.5rem 0.75rem;
-  border: 1px solid var(--color-border-subtle);
-}
-
-.customControl {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-  font-size: var(--font-size-xs);
-  color: var(--color-text-secondary);
-}
-
-.customControl select,
-.customControl input {
-  min-width: 120px;
-  padding: 0.4rem 0.6rem;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--color-border-subtle);
-  font-size: var(--font-size-sm);
-  background-color: var(--color-background-secondary);
-  color: var(--color-text-primary);
-}
-
-.numberInput {
-  width: 90px;
-}
-
 .metricsContainer {
   display: grid;
   grid-template-columns: repeat(2, 1fr);

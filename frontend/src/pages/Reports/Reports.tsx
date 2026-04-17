@@ -224,9 +224,6 @@ const computeRangeForView = (
   viewType: ViewType,
   baseRange: { start: Date; end: Date },
   monthPreset: 'last12' | 'thisYear' | 'custom',
-  customMonthYear: number,
-  customMonthStart: number,
-  customMonthEnd: number,
   yearRange: { start: number; end: number }
 ) => {
   if (viewType === 'day') {
@@ -244,8 +241,8 @@ const computeRangeForView = (
     }
 
     if (monthPreset === 'custom') {
-      const start = startOfMonth(customMonthYear, customMonthStart)
-      const end = endOfMonth(customMonthYear, customMonthEnd)
+      const start = startOfMonth(baseRange.start.getFullYear(), baseRange.start.getMonth())
+      const end = endOfMonth(baseRange.end.getFullYear(), baseRange.end.getMonth())
       return { from: toIsoDate(start), to: toIsoDate(end) }
     }
 
@@ -959,9 +956,6 @@ export const Reports: React.FC = () => {
   const [viewType, setViewType] = useState<ViewType>('month')
   const [displayMode, setDisplayMode] = useState<DisplayMode>('table')
   const [monthPreset, setMonthPreset] = useState<'last12' | 'thisYear' | 'custom'>('last12')
-  const [customMonthYear, setCustomMonthYear] = useState(currentYear)
-  const [customMonthStart, setCustomMonthStart] = useState(0)
-  const [customMonthEnd, setCustomMonthEnd] = useState(11)
   const [yearRange, setYearRange] = useState(defaultYearRange)
 
   const [metrics, setMetrics] = useState<ReportMetricRow[]>([])
@@ -1020,9 +1014,6 @@ export const Reports: React.FC = () => {
     viewType,
     baseRange,
     monthPreset,
-    customMonthYear,
-    customMonthStart,
-    customMonthEnd,
     yearRange
   )
 
@@ -1630,18 +1621,6 @@ export const Reports: React.FC = () => {
     setMonthPreset(value as typeof monthPreset)
   }
 
-  const handleCustomMonthChange = (type: 'start' | 'end', value: number) => {
-    if (type === 'start') {
-      if (value <= customMonthEnd) {
-        setCustomMonthStart(value)
-      }
-    } else {
-      if (value >= customMonthStart) {
-        setCustomMonthEnd(value)
-      }
-    }
-  }
-
   const handleYearRangeChange = (key: 'start' | 'end', delta: number) => {
     setYearRange(prev => {
       const updated = { ...prev, [key]: prev[key] + delta }
@@ -1691,42 +1670,21 @@ export const Reports: React.FC = () => {
                     onChange={handleMonthPresetChange}
                   />
                   {monthPreset === 'custom' && (
-                    <div className={styles.customMonthControls}>
-                      <label className={styles.customControl}>
-                        Año
-                        <input
-                          type="number"
-                          value={customMonthYear}
-                          onChange={(event) => setCustomMonthYear(Number(event.target.value))}
-                          className={styles.numberInput}
-                        />
-                      </label>
-                      <label className={styles.customControl}>
-                        Inicio
-                        <select
-                          value={customMonthStart}
-                          onChange={(event) => handleCustomMonthChange('start', Number(event.target.value))}
-                        >
-                          {monthNames.map((name, index) => (
-                          <option key={name} value={index}>{name}</option>
-                        ))}
-                      </select>
-                    </label>
-                    <label className={styles.customControl}>
-                      Fin
-                      <select
-                        value={customMonthEnd}
-                        onChange={(event) => handleCustomMonthChange('end', Number(event.target.value))}
-                      >
-                        {monthNames.map((name, index) => (
-                          <option key={name} value={index}>{name}</option>
-                        ))}
-                      </select>
-                    </label>
-                  </div>
-                )}
-              </>
-            )}
+                    <div className={styles.datePickerControl}>
+                      <DateRangePicker
+                        variant="dual"
+                        startDate={toIsoDate(baseRange.start)}
+                        endDate={toIsoDate(baseRange.end)}
+                        onChange={(start, end) => setDateRange({
+                          start: parseLocalDateString(start),
+                          end: parseLocalDateString(end),
+                          preset: 'custom'
+                        })}
+                      />
+                    </div>
+                  )}
+                </>
+              )}
             {viewType === 'year' && (
               <div className={styles.yearControls}>
                 <div className={styles.yearControlGroup}>
