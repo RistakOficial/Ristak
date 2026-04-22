@@ -330,7 +330,7 @@ export const SyncProgressBar: React.FC<SyncProgressBarProps> = ({ onClose }) => 
     typeof value === 'number' ? value.toLocaleString('es-MX') : '0'
 
   const containerClasses = cn(
-    'fixed inset-y-0 right-0 z-[1200] w-full sm:w-[480px] transition-all duration-300',
+    'fixed top-[var(--header-height)] bottom-0 right-0 z-[1200] w-full sm:w-[480px] transition-all duration-300',
     isClosing ? 'translate-x-full opacity-0' : 'translate-x-0 opacity-100'
   )
 
