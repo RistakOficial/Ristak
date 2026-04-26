@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react'
-import { Calendar, ChevronLeft, ChevronRight, Clock, TrendingUp } from 'lucide-react'
+import { Calendar, ChevronLeft, ChevronRight, ChevronDown, Clock, TrendingUp } from 'lucide-react'
 import styles from './DateRangePicker.module.css'
 import { formatDateToISO } from '@/utils/format'
 
@@ -23,6 +23,9 @@ const MONTHS = [
 ]
 
 const WEEKDAYS = ['Do', 'Lu', 'Ma', 'Mi', 'Ju', 'Vi', 'Sa']
+
+const CURRENT_YEAR = new Date().getFullYear()
+const YEARS = Array.from({ length: CURRENT_YEAR - 2017 + 3 }, (_, i) => 2018 + i)
 
 // Helper: Normalizar fecha a medianoche local (00:00:00.000)
 const toMidnight = (date: Date): Date => {
@@ -176,6 +179,7 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
   )
   const [hoveredDate, setHoveredDate] = useState<Date | null>(null)
   const [selectingEndDate, setSelectingEndDate] = useState(false)
+  const [openDropdown, setOpenDropdown] = useState<string | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -220,6 +224,27 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
       setTempEnd(parseLocalDate(endDate) || null)
     }
   }, [startDate, endDate])
+
+  useEffect(() => {
+    if (!isOpen) setOpenDropdown(null)
+  }, [isOpen])
+
+  const toggleDropdown = (isLeft: boolean, type: 'month' | 'year') => {
+    const key = `${isLeft ? 'left' : 'right'}-${type}`
+    setOpenDropdown(prev => (prev === key ? null : key))
+  }
+
+  const selectMonth = (isLeft: boolean, monthIdx: number) => {
+    const setter = isLeft ? setLeftMonth : setRightMonth
+    setter(prev => new Date(prev.getFullYear(), monthIdx, 1))
+    setOpenDropdown(null)
+  }
+
+  const selectYear = (isLeft: boolean, year: number) => {
+    const setter = isLeft ? setLeftMonth : setRightMonth
+    setter(prev => new Date(year, prev.getMonth(), 1))
+    setOpenDropdown(null)
+  }
 
   const formatSingleDate = (dateStr: string): string => {
     const date = parseLocalDate(dateStr)
@@ -441,9 +466,64 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
           >
             <ChevronLeft size={16} />
           </button>
-          <div className={styles.monthYear}>
-            {MONTHS[currentMonth.getMonth()]} {currentMonth.getFullYear()}
+
+          <div className={styles.monthYearSelector}>
+            <div className={styles.pickerWrapper}>
+              <button
+                className={styles.monthYearBtn}
+                onClick={() => toggleDropdown(isLeftCalendar, 'month')}
+                type="button"
+              >
+                {MONTHS[currentMonth.getMonth()]}
+                <ChevronDown size={11} />
+              </button>
+              {openDropdown === `${isLeftCalendar ? 'left' : 'right'}-month` && (
+                <div className={styles.pickerDropdown}>
+                  {MONTHS.map((m, idx) => (
+                    <button
+                      key={m}
+                      className={`${styles.pickerItem} ${idx === currentMonth.getMonth() ? styles.pickerItemActive : ''}`}
+                      onClick={() => selectMonth(isLeftCalendar, idx)}
+                      type="button"
+                    >
+                      {m}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className={styles.pickerWrapper}>
+              <button
+                className={styles.monthYearBtn}
+                onClick={() => toggleDropdown(isLeftCalendar, 'year')}
+                type="button"
+              >
+                {currentMonth.getFullYear()}
+                <ChevronDown size={11} />
+              </button>
+              {openDropdown === `${isLeftCalendar ? 'left' : 'right'}-year` && (
+                <div className={styles.pickerDropdown}>
+                  {YEARS.map(year => (
+                    <button
+                      key={year}
+                      ref={(el) => {
+                        if (el && year === currentMonth.getFullYear()) {
+                          el.scrollIntoView({ block: 'center', behavior: 'instant' })
+                        }
+                      }}
+                      className={`${styles.pickerItem} ${year === currentMonth.getFullYear() ? styles.pickerItemActive : ''}`}
+                      onClick={() => selectYear(isLeftCalendar, year)}
+                      type="button"
+                    >
+                      {year}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
+
           <button
             className={styles.navButton}
             onClick={() => navigateMonth(isLeftCalendar, 'next')}
