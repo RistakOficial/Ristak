@@ -218,6 +218,88 @@
   color: var(--color-text-primary);
 }
 
+.monthYearSelector {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.pickerWrapper {
+  position: relative;
+}
+
+.monthYearBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 4px 8px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+  transition: background-color var(--transition-fast);
+}
+
+.monthYearBtn:hover {
+  background-color: var(--color-surface);
+}
+
+.pickerDropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--color-background-secondary);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  z-index: 200;
+  overflow-y: auto;
+  max-height: 210px;
+  min-width: 110px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+[data-theme="dark"] .pickerDropdown {
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
+.pickerItem {
+  display: block;
+  width: 100%;
+  padding: 7px 10px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  text-align: center;
+  transition: all var(--transition-fast);
+  white-space: nowrap;
+}
+
+.pickerItem:hover {
+  background-color: var(--color-surface);
+  color: var(--color-text-primary);
+}
+
+.pickerItemActive {
+  background-color: var(--color-primary-alpha);
+  color: var(--color-primary);
+  font-weight: var(--font-weight-semibold);
+}
+
+:global(body.dark) .pickerItemActive {
+  color: var(--color-text-onAccent);
+}
+
 .weekDays {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
