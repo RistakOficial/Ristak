@@ -1647,36 +1647,20 @@ export const Reports: React.FC = () => {
             {metricsRangeLabel && <span className={styles.rangeLabel}>{metricsRangeLabel}</span>}
           </div>
           <div className={styles.filtersArea}>
-            {/* Row 1: preset selector (left) + scope & display tabs (right) */}
-            <div className={styles.filtersTopRow}>
-              <div className={styles.presetArea}>
-                {viewType === 'month' && (
-                  <ViewSelector
-                    value={monthPreset}
-                    options={monthRangeOptions}
-                    onChange={handleMonthPresetChange}
-                  />
-                )}
-              </div>
-              <div className={styles.tabsContainer}>
-                <TabList
-                  tabs={scopeTabs}
-                  activeTab={reportType}
-                  onTabChange={(value) => setReportType(value as ReportType)}
-                  variant="compact"
-                />
-                <TabList
-                  tabs={displayTabs}
-                  activeTab={displayMode}
-                  onTabChange={(value) => setDisplayMode(value as DisplayMode)}
-                  variant="compact"
+            {/* Cuando es rango personalizado, el selector va solo en su propia fila */}
+            {viewType === 'month' && monthPreset === 'custom' && (
+              <div className={styles.presetRow}>
+                <ViewSelector
+                  value={monthPreset}
+                  options={monthRangeOptions}
+                  onChange={handleMonthPresetChange}
                 />
               </div>
-            </div>
+            )}
 
-            {/* Row 2: date inputs (left) + Día/Mes/Año tab (right) */}
-            <div className={styles.filtersBottomRow}>
-              <div className={styles.dateControlsArea}>
+            {/* Fila principal: controles izquierda + todos los tabs juntos a la derecha */}
+            <div className={styles.controlsRow}>
+              <div className={styles.leftControls}>
                 {viewType === 'day' && (
                   <div className={styles.datePickerControl}>
                     <DateRangePicker
@@ -1690,6 +1674,13 @@ export const Reports: React.FC = () => {
                       })}
                     />
                   </div>
+                )}
+                {viewType === 'month' && monthPreset !== 'custom' && (
+                  <ViewSelector
+                    value={monthPreset}
+                    options={monthRangeOptions}
+                    onChange={handleMonthPresetChange}
+                  />
                 )}
                 {viewType === 'month' && monthPreset === 'custom' && (
                   <div className={styles.datePickerControl}>
@@ -1726,12 +1717,28 @@ export const Reports: React.FC = () => {
                   </div>
                 )}
               </div>
-              <TabList
-                tabs={viewTabs}
-                activeTab={viewType}
-                onTabChange={(value) => setViewType(value as ViewType)}
-                variant="compact"
-              />
+
+              {/* Todos los tabs juntos en la misma fila */}
+              <div className={styles.tabsContainer}>
+                <TabList
+                  tabs={scopeTabs}
+                  activeTab={reportType}
+                  onTabChange={(value) => setReportType(value as ReportType)}
+                  variant="compact"
+                />
+                <TabList
+                  tabs={displayTabs}
+                  activeTab={displayMode}
+                  onTabChange={(value) => setDisplayMode(value as DisplayMode)}
+                  variant="compact"
+                />
+                <TabList
+                  tabs={viewTabs}
+                  activeTab={viewType}
+                  onTabChange={(value) => setViewType(value as ViewType)}
+                  variant="compact"
+                />
+              </div>
             </div>
           </div>
       </header>
