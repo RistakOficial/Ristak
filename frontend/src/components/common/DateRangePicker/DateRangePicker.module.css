@@ -496,29 +496,8 @@
 /* Dual variant trigger */
 .dualTrigger {
   display: inline-flex;
-  flex-direction: column;
-}
-
-.dualInputRow {
-  display: inline-flex;
-  align-items: flex-end;
+  align-items: center;
   gap: 6px;
-}
-
-.dualFieldGroup {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
-.dualFieldLabel {
-  font-size: var(--font-size-xs);
-  color: var(--color-text-tertiary);
-  font-weight: var(--font-weight-medium);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  padding-left: 2px;
-  user-select: none;
 }
 
 .dualBox {
@@ -565,7 +544,6 @@
   font-size: var(--font-size-sm);
   flex-shrink: 0;
   user-select: none;
-  padding-bottom: 7px;
 }
 
 /* Active range field highlight inside dropdown */
