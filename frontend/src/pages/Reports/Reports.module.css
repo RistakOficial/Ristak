@@ -63,22 +63,12 @@
   margin-top: var(--spacing-sm);
 }
 
-.filtersTopRow {
+.presetRow {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--spacing-md);
-  flex-wrap: wrap;
-  min-height: 2rem;
 }
 
-.presetArea {
-  display: flex;
-  align-items: center;
-  flex-shrink: 0;
-}
-
-.filtersBottomRow {
+.controlsRow {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -86,12 +76,12 @@
   flex-wrap: wrap;
 }
 
-.dateControlsArea {
+.leftControls {
   display: flex;
   align-items: center;
   gap: var(--spacing-md);
-  flex-wrap: wrap;
   flex-shrink: 0;
+  flex-wrap: wrap;
 }
 
 .tabsContainer {
@@ -99,12 +89,16 @@
   align-items: center;
   gap: var(--spacing-md);
   flex-wrap: wrap;
+  margin-left: auto;
 }
 
 @media (max-width: 1024px) {
-  .filtersTopRow,
-  .filtersBottomRow {
+  .controlsRow {
     justify-content: flex-start;
+  }
+
+  .tabsContainer {
+    margin-left: 0;
   }
 }
 
