@@ -564,30 +564,22 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
     <div className={styles.wrapper} ref={containerRef}>
       {variant === 'dual' ? (
         <div className={styles.dualTrigger}>
-          <div className={styles.dualInputRow}>
-            <div className={styles.dualFieldGroup}>
-              <span className={styles.dualFieldLabel}>Desde</span>
-              <button
-                className={`${styles.dualBox} ${activeField === 'start' && isOpen ? styles.dualBoxActive : ''}`}
-                onClick={() => handleDualOpen('start')}
-                type="button"
-              >
-                <Calendar size={14} className={styles.icon} />
-                <span className={styles.dualBoxValue}>{formatSingleDate(startDate)}</span>
-              </button>
-            </div>
-            <span className={styles.dualArrow}>→</span>
-            <div className={styles.dualFieldGroup}>
-              <span className={styles.dualFieldLabel}>Hasta</span>
-              <button
-                className={`${styles.dualBox} ${activeField === 'end' && isOpen ? styles.dualBoxActive : ''}`}
-                onClick={() => handleDualOpen('end')}
-                type="button"
-              >
-                <span className={styles.dualBoxValue}>{formatSingleDate(endDate)}</span>
-              </button>
-            </div>
-          </div>
+          <button
+            className={`${styles.dualBox} ${activeField === 'start' && isOpen ? styles.dualBoxActive : ''}`}
+            onClick={() => handleDualOpen('start')}
+            type="button"
+          >
+            <Calendar size={14} className={styles.icon} />
+            <span className={styles.dualBoxValue}>{formatSingleDate(startDate)}</span>
+          </button>
+          <span className={styles.dualArrow}>→</span>
+          <button
+            className={`${styles.dualBox} ${activeField === 'end' && isOpen ? styles.dualBoxActive : ''}`}
+            onClick={() => handleDualOpen('end')}
+            type="button"
+          >
+            <span className={styles.dualBoxValue}>{formatSingleDate(endDate)}</span>
+          </button>
         </div>
       ) : (
         <button
