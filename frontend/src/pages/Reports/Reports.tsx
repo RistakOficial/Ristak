@@ -1662,18 +1662,15 @@ export const Reports: React.FC = () => {
             <div className={styles.controlsRow}>
               <div className={styles.leftControls}>
                 {viewType === 'day' && (
-                  <div className={styles.datePickerControl}>
-                    <DateRangePicker
-                      variant="dual"
-                      startDate={toIsoDate(baseRange.start)}
-                      endDate={toIsoDate(baseRange.end)}
-                      onChange={(start, end) => setDateRange({
-                        start: parseLocalDateString(start),
-                        end: parseLocalDateString(end),
-                        preset: 'custom'
-                      })}
-                    />
-                  </div>
+                  <DateRangePicker
+                    startDate={toIsoDate(baseRange.start)}
+                    endDate={toIsoDate(baseRange.end)}
+                    onChange={(start, end) => setDateRange({
+                      start: parseLocalDateString(start),
+                      end: parseLocalDateString(end),
+                      preset: 'custom'
+                    })}
+                  />
                 )}
                 {viewType === 'month' && monthPreset !== 'custom' && (
                   <ViewSelector
@@ -1683,18 +1680,15 @@ export const Reports: React.FC = () => {
                   />
                 )}
                 {viewType === 'month' && monthPreset === 'custom' && (
-                  <div className={styles.datePickerControl}>
-                    <DateRangePicker
-                      variant="dual"
-                      startDate={toIsoDate(baseRange.start)}
-                      endDate={toIsoDate(baseRange.end)}
-                      onChange={(start, end) => setDateRange({
-                        start: parseLocalDateString(start),
-                        end: parseLocalDateString(end),
-                        preset: 'custom'
-                      })}
-                    />
-                  </div>
+                  <DateRangePicker
+                    startDate={toIsoDate(baseRange.start)}
+                    endDate={toIsoDate(baseRange.end)}
+                    onChange={(start, end) => setDateRange({
+                      start: parseLocalDateString(start),
+                      end: parseLocalDateString(end),
+                      preset: 'custom'
+                    })}
+                  />
                 )}
                 {viewType === 'year' && (
                   <div className={styles.yearControls}>
