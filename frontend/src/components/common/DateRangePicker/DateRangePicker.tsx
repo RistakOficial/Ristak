@@ -564,29 +564,30 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
     <div className={styles.wrapper} ref={containerRef}>
       {variant === 'dual' ? (
         <div className={styles.dualTrigger}>
-          <button
-            className={`${styles.dualBox} ${activeField === 'start' && isOpen ? styles.dualBoxActive : ''}`}
-            onClick={() => handleDualOpen('start')}
-            type="button"
-          >
-            <Calendar size={14} className={styles.icon} />
-            <div className={styles.dualBoxContent}>
-              <span className={styles.dualBoxLabel}>Desde</span>
-              <span className={styles.dualBoxValue}>{formatSingleDate(startDate)}</span>
+          <div className={styles.dualInputRow}>
+            <div className={styles.dualFieldGroup}>
+              <span className={styles.dualFieldLabel}>Desde</span>
+              <button
+                className={`${styles.dualBox} ${activeField === 'start' && isOpen ? styles.dualBoxActive : ''}`}
+                onClick={() => handleDualOpen('start')}
+                type="button"
+              >
+                <Calendar size={14} className={styles.icon} />
+                <span className={styles.dualBoxValue}>{formatSingleDate(startDate)}</span>
+              </button>
             </div>
-          </button>
-          <span className={styles.dualArrow}>→</span>
-          <button
-            className={`${styles.dualBox} ${activeField === 'end' && isOpen ? styles.dualBoxActive : ''}`}
-            onClick={() => handleDualOpen('end')}
-            type="button"
-          >
-            <Calendar size={14} className={styles.icon} />
-            <div className={styles.dualBoxContent}>
-              <span className={styles.dualBoxLabel}>Hasta</span>
-              <span className={styles.dualBoxValue}>{formatSingleDate(endDate)}</span>
+            <span className={styles.dualArrow}>→</span>
+            <div className={styles.dualFieldGroup}>
+              <span className={styles.dualFieldLabel}>Hasta</span>
+              <button
+                className={`${styles.dualBox} ${activeField === 'end' && isOpen ? styles.dualBoxActive : ''}`}
+                onClick={() => handleDualOpen('end')}
+                type="button"
+              >
+                <span className={styles.dualBoxValue}>{formatSingleDate(endDate)}</span>
+              </button>
             </div>
-          </button>
+          </div>
         </div>
       ) : (
         <button
