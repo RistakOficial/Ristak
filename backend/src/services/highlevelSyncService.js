@@ -488,16 +488,45 @@ async function syncHighLevelContacts(locationId, apiToken) {
   // Paginar hasta obtener todos los contactos
   updateContacts(0, 0, 'running', 'Obteniendo contactos de HighLevel...')
 
+  const MAX_429_RETRIES = 5
+  const DEFAULT_RETRY_WAIT_MS = 60000 // 60 segundos por defecto si no hay Retry-After
+
   while (nextPageUrl) {
     pageCount++
     logger.info(`Obteniendo página ${pageCount}...`)
 
-    const response = await fetch(nextPageUrl, {
-      headers: {
-        'Authorization': `Bearer ${apiToken}`,
-        'Version': '2021-07-28'
+    let response = null
+    let retries429 = 0
+
+    while (retries429 <= MAX_429_RETRIES) {
+      response = await fetch(nextPageUrl, {
+        headers: {
+          'Authorization': `Bearer ${apiToken}`,
+          'Version': '2021-07-28'
+        }
+      })
+
+      if (response.status === 429) {
+        if (retries429 >= MAX_429_RETRIES) {
+          let errorBody = ''
+          try { errorBody = await response.text() } catch (_) {}
+          throw new Error(`Error ${response.status} obteniendo contactos: ${response.statusText}. Detalle: ${errorBody}`)
+        }
+
+        const retryAfterHeader = response.headers.get('Retry-After')
+        const waitMs = retryAfterHeader ? parseInt(retryAfterHeader, 10) * 1000 : DEFAULT_RETRY_WAIT_MS
+        const waitSec = Math.round(waitMs / 1000)
+
+        retries429++
+        logger.warn(`Rate limit alcanzado (429) en página ${pageCount}. Esperando ${waitSec}s antes de reintentar (intento ${retries429}/${MAX_429_RETRIES})...`)
+        updateContacts(0, allContacts.length, 'running', `Rate limit de HighLevel. Esperando ${waitSec}s... (intento ${retries429})`)
+
+        await new Promise(resolve => setTimeout(resolve, waitMs))
+        continue
       }
-    })
+
+      break // Respuesta distinta de 429, salir del loop de reintentos
+    }
 
     if (!response.ok) {
       let errorBody = ''

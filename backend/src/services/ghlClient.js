@@ -15,6 +15,8 @@ const GHL_BASE_URL = 'https://services.leadconnectorhq.com'
 const GHL_API_VERSION = '2021-07-28'
 const MAX_RETRIES = 3
 const RETRY_DELAY = 1000 // 1 segundo
+const MAX_429_RETRIES = 5
+const DEFAULT_429_WAIT_MS = 60000 // 60s si no hay Retry-After header
 
 class GHLClient {
   constructor(apiToken, locationId) {
@@ -45,6 +47,7 @@ class GHLClient {
     const url = this.buildUrl(endpoint, params)
 
     let lastError = null
+    let retries429 = 0
 
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
       try {
@@ -58,6 +61,24 @@ class GHLClient {
           },
           body: body ? JSON.stringify(body) : undefined,
         })
+
+        // Manejar rate limiting (429) con espera y reintentos dedicados
+        if (response.status === 429) {
+          if (retries429 >= MAX_429_RETRIES) {
+            const errorText = await response.text().catch(() => '')
+            throw new Error(`GHL API Error (429): Too Many Requests. Se agotaron los reintentos.`)
+          }
+
+          const retryAfterHeader = response.headers.get('Retry-After')
+          const waitMs = retryAfterHeader ? parseInt(retryAfterHeader, 10) * 1000 : DEFAULT_429_WAIT_MS
+          const waitSec = Math.round(waitMs / 1000)
+
+          retries429++
+          logger.warn(`GHL rate limit (429) en ${endpoint}. Esperando ${waitSec}s (intento ${retries429}/${MAX_429_RETRIES})...`)
+          await this.sleep(waitMs)
+          attempt-- // No consumir un intento normal por un rate limit
+          continue
+        }
 
         if (!response.ok) {
           const errorText = await response.text()
