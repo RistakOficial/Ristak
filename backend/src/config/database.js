@@ -223,6 +223,7 @@ async function initTables() {
         description TEXT,
         date DATETIME,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE
       )
     `)
@@ -409,6 +410,15 @@ async function initTables() {
       // Agregar sent_at para saber cuándo se envió
       try {
         await db.run('ALTER TABLE payments ADD COLUMN sent_at DATETIME')
+      } catch (err) {
+        if (!err.message.includes('duplicate column name') && !err.message.includes('already exists')) {
+          throw err
+        }
+      }
+
+      // Agregar updated_at para soportar edición de pagos
+      try {
+        await db.run('ALTER TABLE payments ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP')
       } catch (err) {
         if (!err.message.includes('duplicate column name') && !err.message.includes('already exists')) {
           throw err

@@ -111,7 +111,7 @@
   background-color: var(--color-background);
   border-radius: var(--radius-lg);
   padding: var(--spacing-xl);
-  max-width: 500px;
+  max-width: 560px;
   width: 90%;
   max-height: 80vh;
   overflow-y: auto;

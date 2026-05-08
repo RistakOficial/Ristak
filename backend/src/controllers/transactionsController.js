@@ -6,6 +6,193 @@ import { getGHLClient } from '../services/ghlClient.js'
 import { getHighLevelConfig } from '../config/database.js'
 import { syncInvoices, syncAllInvoices, getInvoicesFromDB } from '../services/invoicesSyncService.js'
 import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js'
+import { updateSingleContactStats } from '../utils/updateContactsStats.js'
+
+const SUCCESS_PAYMENT_STATUSES = new Set(['succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success'])
+const VALID_TRANSACTION_STATUSES = new Set([
+  'draft',
+  'sent',
+  'paid',
+  'pending',
+  'overdue',
+  'partial',
+  'void',
+  'refunded',
+  'failed',
+  'deleted'
+])
+
+const PAYMENT_METHOD_TO_GHL_MODE = {
+  card: 'card',
+  stripe: 'card',
+  transfer: 'bank_transfer',
+  bank_transfer: 'bank_transfer',
+  cash: 'cash',
+  check: 'check',
+  paypal: 'other',
+  other: 'other'
+}
+
+const normalizeStatus = (status) => {
+  if (!status) return status
+  const normalized = String(status).toLowerCase()
+  return normalized === 'succeeded' ? 'paid' : normalized
+}
+
+const normalizeAmount = (amount) => {
+  if (amount === undefined || amount === null || amount === '') return undefined
+  const parsed = Number(amount)
+  if (!Number.isFinite(parsed)) {
+    throw new Error('Monto inválido')
+  }
+  return Math.round(parsed * 100) / 100
+}
+
+const toDateOnly = (dateValue) => {
+  if (!dateValue) return undefined
+  return String(dateValue).split('T')[0]
+}
+
+const mapTransactionRow = (t) => ({
+  id: t.id,
+  date: t.date,
+  contactId: t.contact_id,
+  contactName: t.contact_name || '',
+  email: t.contact_email || '',
+  phone: t.contact_phone || '',
+  amount: t.amount,
+  currency: t.currency,
+  method: t.payment_method || 'other',
+  status: normalizeStatus(t.status),
+  reference: t.reference,
+  description: t.description,
+  createdAt: t.created_at,
+  updatedAt: t.updated_at,
+  invoiceId: t.ghl_invoice_id,
+  invoiceNumber: t.invoice_number,
+  dueDate: t.due_date,
+  sentAt: t.sent_at
+})
+
+const getInvoiceFromResponse = (response) => response?.invoice || response?.data || response || {}
+
+const getInvoiceItems = (invoice) => {
+  if (Array.isArray(invoice.items)) return invoice.items
+  if (Array.isArray(invoice.invoiceItems)) return invoice.invoiceItems
+  return []
+}
+
+const buildInvoiceItemsForAmount = ({ invoice, amount, currency, description }) => {
+  const items = getInvoiceItems(invoice)
+  const firstItem = items[0] || {}
+  const rawTaxRate = Number(invoice.tax?.rate || 0)
+  const taxRate = Number.isFinite(rawTaxRate) && rawTaxRate > 0 ? rawTaxRate : 0
+  const subtotal = taxRate > 0
+    ? Math.round((amount / (1 + taxRate / 100)) * 100) / 100
+    : amount
+  const taxAmount = taxRate > 0 ? Math.round((amount - subtotal) * 100) / 100 : 0
+
+  const nextItem = {
+    ...firstItem,
+    name: description || firstItem.name || invoice.name || invoice.title || 'Pago',
+    description: description || firstItem.description || firstItem.name || invoice.name || invoice.title || 'Pago',
+    amount: subtotal,
+    qty: firstItem.qty || 1,
+    currency
+  }
+
+  return {
+    items: [nextItem],
+    tax: taxRate > 0
+      ? {
+          ...invoice.tax,
+          amount: taxAmount,
+          rate: taxRate
+        }
+      : undefined
+  }
+}
+
+const buildInvoiceUpdatePayload = ({ invoice, transaction, updates }) => {
+  const amount = updates.amount ?? Number(transaction.amount || invoice.total || invoice.amount || 0)
+  const currency = updates.currency || transaction.currency || invoice.currency || 'MXN'
+  const description = updates.description ?? transaction.description ?? invoice.name ?? invoice.title ?? 'Pago'
+  const issueDate = toDateOnly(updates.date || transaction.date || invoice.issueDate || invoice.createdAt)
+  const dueDate = toDateOnly(updates.dueDate || transaction.due_date || invoice.dueDate)
+  const currentItems = getInvoiceItems(invoice)
+  const invoiceItemData = buildInvoiceItemsForAmount({ invoice, amount, currency, description })
+
+  const payload = {
+    name: description,
+    title: invoice.title || description,
+    currency,
+    contactDetails: {
+      ...(invoice.contactDetails || {}),
+      id: updates.contactId || invoice.contactDetails?.id || transaction.contact_id || invoice.contactId,
+      name: updates.contactName || invoice.contactDetails?.name || invoice.contactName || '',
+      email: updates.email || invoice.contactDetails?.email || '',
+      phoneNo: updates.phone || invoice.contactDetails?.phoneNo || invoice.contactDetails?.phone || ''
+    },
+    businessDetails: invoice.businessDetails,
+    liveMode: invoice.liveMode !== undefined ? invoice.liveMode : true,
+    items: invoiceItemData.items,
+  }
+
+  if (issueDate) payload.issueDate = issueDate
+  if (dueDate) payload.dueDate = dueDate
+  if (invoiceItemData.tax) payload.tax = invoiceItemData.tax
+  if (invoice.termsNotes) payload.termsNotes = invoice.termsNotes
+
+  if (!updates.amount && currentItems.length > 0) {
+    payload.items = currentItems.map((item, index) => index === 0
+      ? {
+          ...item,
+          name: description || item.name,
+          description: description || item.description || item.name,
+          currency: item.currency || currency
+        }
+      : item
+    )
+  }
+
+  Object.keys(payload).forEach((key) => {
+    if (payload[key] === undefined || payload[key] === null) {
+      delete payload[key]
+    }
+  })
+
+  return payload
+}
+
+const getTransactionByIdForResponse = async (id) => {
+  const row = await db.get(
+    `SELECT
+      p.id,
+      p.contact_id,
+      p.amount,
+      p.currency,
+      p.status,
+      p.payment_method,
+      p.reference,
+      p.description,
+      p.date,
+      p.created_at,
+      p.updated_at,
+      p.ghl_invoice_id,
+      p.invoice_number,
+      p.due_date,
+      p.sent_at,
+      c.full_name as contact_name,
+      c.email as contact_email,
+      c.phone as contact_phone
+    FROM payments p
+    LEFT JOIN contacts c ON p.contact_id = c.id
+    WHERE p.id = ?`,
+    [id]
+  )
+
+  return row ? mapTransactionRow(row) : null
+}
 
 /**
  * Obtiene todas las transacciones/pagos con paginación y filtros
@@ -101,6 +288,7 @@ export const getTransactions = async (req, res) => {
         p.description,
         p.date,
         p.created_at,
+        p.updated_at,
         p.ghl_invoice_id,
         p.invoice_number,
         p.due_date,
@@ -118,25 +306,7 @@ export const getTransactions = async (req, res) => {
     const transactions = await db.all(transactionsQuery, [...params, limitNumber, offset])
 
     // Mapear campos de base de datos a nombres esperados por frontend
-    const mappedTransactions = transactions.map(t => ({
-      id: t.id,
-      date: t.date,
-      contactId: t.contact_id,
-      contactName: t.contact_name || '',
-      email: t.contact_email || '',
-      phone: t.contact_phone || '',
-      amount: t.amount,
-      currency: t.currency,
-      method: t.payment_method || 'other',
-      status: t.status === 'succeeded' ? 'paid' : t.status,
-      reference: t.reference,
-      description: t.description,
-      createdAt: t.created_at,
-      invoiceId: t.ghl_invoice_id,
-      invoiceNumber: t.invoice_number,
-      dueDate: t.due_date,
-      sentAt: t.sent_at
-    }))
+    const mappedTransactions = transactions.map(mapTransactionRow)
 
     // Calcular información de paginación
     const totalPages = Math.ceil(totalTransactions / limitNumber)
@@ -217,10 +387,15 @@ export const getTransactionById = async (req, res) => {
       amount: transaction.amount,
       currency: transaction.currency,
       method: transaction.payment_method || 'other',
-      status: transaction.status === 'succeeded' ? 'paid' : transaction.status,
+      status: normalizeStatus(transaction.status),
       reference: transaction.reference,
       description: transaction.description,
       createdAt: transaction.created_at,
+      updatedAt: transaction.updated_at,
+      invoiceId: transaction.ghl_invoice_id,
+      invoiceNumber: transaction.invoice_number,
+      dueDate: transaction.due_date,
+      sentAt: transaction.sent_at,
       contactSource: transaction.contact_source,
       attributionAdName: transaction.attribution_ad_name,
       attributionAdId: transaction.attribution_ad_id
@@ -303,6 +478,176 @@ export const getTransactionSummary = async (req, res) => {
 }
 
 /**
+ * Actualiza una transacción/pago y sincroniza los cambios posibles con HighLevel
+ */
+export const updateTransaction = async (req, res) => {
+  try {
+    const { id } = req.params
+    const {
+      amount,
+      currency,
+      method,
+      paymentMethod,
+      status,
+      reference,
+      description,
+      date,
+      dueDate,
+      contactId,
+      contactName,
+      email,
+      phone
+    } = req.body
+
+    const transaction = await db.get('SELECT * FROM payments WHERE id = ?', [id])
+
+    if (!transaction) {
+      return res.status(404).json({
+        success: false,
+        error: 'Transacción no encontrada'
+      })
+    }
+
+    const updates = {
+      amount: normalizeAmount(amount),
+      currency: currency ? String(currency).toUpperCase() : undefined,
+      method: paymentMethod || method,
+      status: status ? normalizeStatus(status) : undefined,
+      reference: reference !== undefined ? String(reference || '') : undefined,
+      description: description !== undefined ? String(description || '') : undefined,
+      date: date || undefined,
+      dueDate: dueDate || undefined,
+      contactId: contactId || undefined,
+      contactName: contactName || undefined,
+      email: email || undefined,
+      phone: phone || undefined
+    }
+
+    if (updates.amount !== undefined && updates.amount <= 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'El monto debe ser mayor a 0'
+      })
+    }
+
+    if (updates.status && !VALID_TRANSACTION_STATUSES.has(updates.status)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Estado de pago inválido'
+      })
+    }
+
+    const currentStatus = normalizeStatus(transaction.status)
+    const nextStatus = updates.status || currentStatus
+    const statusChanged = nextStatus !== currentStatus
+    const invoiceId = transaction.ghl_invoice_id
+
+    if (invoiceId && statusChanged && nextStatus === 'refunded') {
+      return res.status(422).json({
+        success: false,
+        error: 'HighLevel no expone un endpoint público para emitir reembolsos desde esta integración. Haz el refund en HighLevel; Ristak lo actualizará por webhook o sincronización.'
+      })
+    }
+
+    if (invoiceId && statusChanged && nextStatus === 'void' && SUCCESS_PAYMENT_STATUSES.has(currentStatus)) {
+      return res.status(422).json({
+        success: false,
+        error: 'HighLevel no permite anular un invoice pagado sin reembolsarlo primero. Procesa el refund en HighLevel y después sincroniza.'
+      })
+    }
+
+    if (invoiceId && statusChanged && !['paid', 'void'].includes(nextStatus)) {
+      return res.status(422).json({
+        success: false,
+        error: `HighLevel no permite cambiar manualmente el estado del invoice a "${nextStatus}" por API. Sí se puede editar monto, fecha, descripción, registrar pago o anular.`
+      })
+    }
+
+    const hasInvoiceFieldUpdates = [
+      updates.amount,
+      updates.currency,
+      updates.description,
+      updates.date,
+      updates.dueDate,
+      updates.contactId
+    ].some(value => value !== undefined)
+
+    if (invoiceId && hasInvoiceFieldUpdates && nextStatus !== 'void') {
+      const ghlClient = await getGHLClient()
+      const invoiceResponse = await ghlClient.getInvoice(invoiceId)
+      const invoice = getInvoiceFromResponse(invoiceResponse)
+      const payload = buildInvoiceUpdatePayload({ invoice, transaction, updates })
+      await ghlClient.updateInvoice(invoiceId, payload)
+    }
+
+    if (invoiceId && statusChanged && nextStatus === 'paid') {
+      const ghlClient = await getGHLClient()
+      await ghlClient.recordPayment(invoiceId, {
+        amount: updates.amount ?? transaction.amount,
+        currency: updates.currency || transaction.currency || 'MXN',
+        fulfilledAt: updates.date || transaction.date || new Date().toISOString(),
+        mode: PAYMENT_METHOD_TO_GHL_MODE[updates.method || transaction.payment_method] || 'cash',
+        note: 'Pago registrado desde edición de Ristak'
+      })
+    }
+
+    if (invoiceId && statusChanged && nextStatus === 'void') {
+      const ghlClient = await getGHLClient()
+      await ghlClient.voidInvoice(invoiceId)
+    }
+
+    const finalContactId = updates.contactId ?? transaction.contact_id
+    const finalAmount = updates.amount ?? transaction.amount
+    const finalCurrency = updates.currency || transaction.currency || 'MXN'
+    const finalStatus = nextStatus
+    const finalMethod = updates.method ?? transaction.payment_method
+    const finalReference = updates.reference ?? transaction.reference
+    const finalDescription = updates.description ?? transaction.description
+    const finalDate = updates.date ?? transaction.date
+    const finalDueDate = updates.dueDate ?? transaction.due_date
+
+    await db.run(
+      `UPDATE payments
+       SET contact_id = ?, amount = ?, currency = ?, status = ?, payment_method = ?,
+           reference = ?, description = ?, date = ?, due_date = ?, updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [
+        finalContactId,
+        finalAmount,
+        finalCurrency,
+        finalStatus,
+        finalMethod,
+        finalReference,
+        finalDescription,
+        finalDate,
+        finalDueDate,
+        id
+      ]
+    )
+
+    const statsContacts = new Set([transaction.contact_id, finalContactId].filter(Boolean))
+    await Promise.all([...statsContacts].map(contact => updateSingleContactStats(contact)))
+
+    const updatedTransaction = await getTransactionByIdForResponse(id)
+
+    logger.success(`Transacción actualizada: ${id}`)
+
+    res.json({
+      success: true,
+      data: updatedTransaction
+    })
+
+  } catch (error) {
+    logger.error(`Error actualizando transacción ${req.params.id}: ${error.message}`)
+    const statusCode = error.message === 'Monto inválido' ? 400 : 500
+    res.status(statusCode).json({
+      success: false,
+      error: error.message || 'Error actualizando transacción'
+    })
+  }
+}
+
+/**
  * Elimina una transacción/pago
  */
 export const deleteTransaction = async (req, res) => {
@@ -359,14 +704,17 @@ export const voidTransaction = async (req, res) => {
       })
     }
 
-    // Anular en HighLevel si tiene invoice_id
-    if (transaction.invoice_id) {
+    // Anular en HighLevel si tiene invoice asociado
+    if (transaction.ghl_invoice_id) {
       const ghlClient = await getGHLClient()
-      await ghlClient.voidInvoice(transaction.invoice_id)
+      await ghlClient.voidInvoice(transaction.ghl_invoice_id)
     }
 
     // Actualizar estado en BD
-    await db.run('UPDATE payments SET status = ? WHERE id = ?', ['void', id])
+    await db.run('UPDATE payments SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', ['void', id])
+    if (transaction.contact_id) {
+      await updateSingleContactStats(transaction.contact_id)
+    }
 
     logger.success(`Transacción anulada: ${id}`)
 
@@ -404,10 +752,10 @@ export const recordPayment = async (req, res) => {
       })
     }
 
-    // Marcar como pagado en HighLevel si tiene invoice_id
-    if (transaction.invoice_id) {
+    // Marcar como pagado en HighLevel si tiene invoice asociado
+    if (transaction.ghl_invoice_id) {
       const ghlClient = await getGHLClient()
-      await ghlClient.recordPayment(transaction.invoice_id, {
+      await ghlClient.recordPayment(transaction.ghl_invoice_id, {
         amount: amount || transaction.amount,
         currency: transaction.currency || 'MXN',
         fulfilledAt: paymentDate || new Date().toISOString(),
@@ -417,7 +765,13 @@ export const recordPayment = async (req, res) => {
     }
 
     // Actualizar estado en BD
-    await db.run('UPDATE payments SET status = ? WHERE id = ?', ['paid', id])
+    await db.run(
+      'UPDATE payments SET status = ?, amount = ?, payment_method = ?, date = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+      ['paid', amount || transaction.amount, paymentMethod || transaction.payment_method, paymentDate || transaction.date, id]
+    )
+    if (transaction.contact_id) {
+      await updateSingleContactStats(transaction.contact_id)
+    }
 
     logger.success(`Pago registrado para transacción: ${id}`)
 
@@ -454,10 +808,10 @@ export const sendTransaction = async (req, res) => {
       })
     }
 
-    // Enviar en HighLevel si tiene invoice_id
-    if (transaction.invoice_id) {
+    // Enviar en HighLevel si tiene invoice asociado
+    if (transaction.ghl_invoice_id) {
       const ghlClient = await getGHLClient()
-      await ghlClient.sendInvoice(transaction.invoice_id)
+      await ghlClient.sendInvoice(transaction.ghl_invoice_id)
     } else {
       throw new Error('No se puede enviar: el pago no tiene invoice asociado')
     }
@@ -495,7 +849,7 @@ export const getPaymentLink = async (req, res) => {
       })
     }
 
-    if (!transaction.invoice_id) {
+    if (!transaction.ghl_invoice_id) {
       return res.status(400).json({
         success: false,
         error: 'El pago no tiene enlace asociado'
@@ -505,7 +859,7 @@ export const getPaymentLink = async (req, res) => {
     // Obtener configuración para el domain
     const config = await getHighLevelConfig()
     const ghlClient = await getGHLClient()
-    const link = await ghlClient.getInvoicePaymentLink(transaction.invoice_id, config.domain)
+    const link = await ghlClient.getInvoicePaymentLink(transaction.ghl_invoice_id, config.domain)
 
     res.json({
       success: true,

@@ -39,17 +39,29 @@ class ApiClient {
       },
     })
 
-    if (!response.ok) {
-      throw new Error(`API Error: ${response.status} ${response.statusText}`)
-    }
-
     // Handle 204 No Content
     if (response.status === 204) {
       return {} as T
     }
 
-    const rawJson = await response.json()
+    let rawJson: unknown
+    try {
+      rawJson = await response.json()
+    } catch {
+      if (!response.ok) {
+        throw new Error(`API Error: ${response.status} ${response.statusText}`)
+      }
+      return {} as T
+    }
+
     const json = dedupeContactsPayload(rawJson)
+
+    if (!response.ok) {
+      const message = json && typeof json === 'object' && 'error' in json
+        ? String((json as { error?: unknown }).error)
+        : `API Error: ${response.status} ${response.statusText}`
+      throw new Error(message)
+    }
 
     // Si la respuesta tiene la estructura { success: true, data: ... } Y el campo data existe, extraer el campo data
     // IMPORTANTE: Solo extraer data si existe, algunos endpoints devuelven success + otros campos directamente

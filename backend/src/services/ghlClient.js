@@ -385,6 +385,25 @@ class GHLClient {
     })
   }
 
+  async updateInvoice(invoiceId, data) {
+    const body = {
+      ...data,
+      altId: this.locationId,
+      altType: 'location',
+    }
+
+    logger.info(`Actualizando invoice: ${invoiceId}`)
+
+    const response = await this.request(`/invoices/${invoiceId}`, {
+      method: 'PUT',
+      body
+    })
+
+    logger.success(`Invoice actualizado: ${invoiceId}`)
+
+    return response
+  }
+
   async listInvoices({ limit = 50, offset = 0, contactId } = {}) {
     const params = {
       altId: this.locationId,

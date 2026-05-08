@@ -36,6 +36,11 @@ interface ModalData {
   selectedContact?: Contact | null
 }
 
+const toDateInputValue = (value?: string | null): string => {
+  if (!value) return formatDateToISO(new Date())
+  return String(value).split('T')[0]
+}
+
 export const Transactions: React.FC = () => {
   const { dateRange, setDateRange } = useDateRange()
   const { formatLocalDateShort } = useTimezone()
@@ -134,7 +139,7 @@ export const Transactions: React.FC = () => {
       id: transaction.contactId || `temp-${Date.now()}`,
       name: transaction.contactName,
       email: transaction.email,
-      phone: '',
+      phone: transaction.phone || '',
       createdAt: '',
       ltv: 0,
       status: 'customer',
@@ -251,10 +256,14 @@ export const Transactions: React.FC = () => {
       contactId: modal.selectedContact.id,
       contactName: modal.selectedContact.name,
       email: modal.selectedContact.email || '',
+      phone: modal.selectedContact.phone || '',
       amount: parseFloat(formData.get('amount') as string) || 0,
+      currency: (formData.get('currency') as string) || modal.transaction?.currency || 'MXN',
       method: formData.get('method') as any,
       status: formData.get('status') as any,
-      description: formData.get('description') as string
+      reference: formData.get('reference') as string,
+      description: formData.get('description') as string,
+      dueDate: (formData.get('dueDate') as string) || undefined
     }
 
     try {
@@ -265,13 +274,12 @@ export const Transactions: React.FC = () => {
       } else if (modal.type === 'edit') {
         const updatedTransaction = await transactionsService.updateTransaction(transaction.id, transaction)
         setTransactions(prev => prev.map(t => t.id === updatedTransaction.id ? updatedTransaction : t))
-        showToast('success', 'Pago actualizado correctamente', `Se actualizó el registro de pago de ${formatCurrency(transaction.amount)}`)
+        showToast('success', 'Pago actualizado correctamente', `Se actualizó el registro de pago de ${formatCurrency(updatedTransaction.amount)}`)
       }
       setModal({ type: null, selectedContact: null })
       fetchData()
-    } catch (error) {
-      // Error already shown to user via toast
-      showToast('error', 'No se pudo guardar el pago', 'Hubo un problema al guardar la información. Verifica los datos e intenta nuevamente.')
+    } catch (error: any) {
+      showToast('error', 'No se pudo guardar el pago', error?.message || 'Hubo un problema al guardar la información. Verifica los datos e intenta nuevamente.')
     }
   }
 
@@ -388,8 +396,8 @@ export const Transactions: React.FC = () => {
           actions.push('send')
         }
 
-        // Editar - solo para draft
-        if (item.status === 'draft') {
+        // Editar - disponible para pagos visibles; backend valida qué puede sincronizar HighLevel
+        if (item.status !== 'deleted') {
           actions.push('edit')
         }
 
@@ -659,6 +667,13 @@ export const Transactions: React.FC = () => {
                 </div>
               </div>
               <div className={styles.formGroup}>
+                <label>Moneda</label>
+                <select name="currency" defaultValue={modal.transaction?.currency || 'MXN'}>
+                  <option value="MXN">MXN</option>
+                  <option value="USD">USD</option>
+                </select>
+              </div>
+              <div className={styles.formGroup}>
                 <label>Método de pago</label>
                 <select name="method" defaultValue={modal.transaction?.method || 'card'}>
                   <option value="card">Tarjeta</option>
@@ -684,12 +699,28 @@ export const Transactions: React.FC = () => {
                 </select>
               </div>
               <div className={styles.formGroup}>
-                <label>Fecha</label>
+                <label>Fecha de pago / emisión</label>
                 <input
                   name="date"
                   type="date"
-                  defaultValue={modal.transaction?.date || formatDateToISO(new Date())}
+                  defaultValue={toDateInputValue(modal.transaction?.date)}
                   required
+                />
+              </div>
+              <div className={styles.formGroup}>
+                <label>Fecha de vencimiento</label>
+                <input
+                  name="dueDate"
+                  type="date"
+                  defaultValue={modal.transaction?.dueDate ? toDateInputValue(modal.transaction.dueDate) : ''}
+                />
+              </div>
+              <div className={styles.formGroup}>
+                <label>Referencia</label>
+                <input
+                  name="reference"
+                  type="text"
+                  defaultValue={modal.transaction?.reference}
                 />
               </div>
               <div className={styles.formGroup}>

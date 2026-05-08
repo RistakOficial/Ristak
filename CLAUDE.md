@@ -556,6 +556,13 @@ git log -1
   - Endpoints: GET /api/highlevel/products, GET /api/highlevel/products/:id/prices, POST /api/highlevel/invoices, POST /api/highlevel/invoices/:id/send, POST /api/highlevel/invoices/:id/record-payment, POST /api/highlevel/text2pay, GET /api/highlevel/stripe-config
   - Integrado en página de Transactions con botón "+ Registrar pago"
   - ⚠️ Nota: Cargar productos requiere scope `products.readonly` en el token de HighLevel. El cobro directo funciona sin este scope.
+- ✓ Edición de pagos desde página Transactions:
+  - Botón "Editar" disponible para pagos no eliminados
+  - Permite modificar monto, moneda, método, estado, fecha de pago/emisión, vencimiento, referencia, descripción y contacto
+  - Backend: PUT /api/transactions/:id sincroniza campos editables con HighLevel usando PUT /invoices/:invoiceId cuando existe `ghl_invoice_id`
+  - Acciones de estado soportadas contra HighLevel: marcar como pagado (`record-payment`) y anular (`void`)
+  - Reembolsos: HighLevel no expone endpoint público para emitir refunds desde Ristak; deben procesarse en HighLevel y entran por webhook/sync como `refunded`
+  - Siempre recalcula estadísticas del contacto tras editar monto/status/contacto
 
 - ✓ Gestión de Calendarios y Citas (página Appointments):
   - Visualización de calendarios de HighLevel con navegación entre calendarios

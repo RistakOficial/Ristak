@@ -4,6 +4,7 @@ import {
   getTransactionById,
   getTransactionStats,
   getTransactionSummary,
+  updateTransaction,
   deleteTransaction,
   voidTransaction,
   recordPayment,
@@ -18,6 +19,7 @@ router.get('/', getTransactions)
 router.get('/stats', getTransactionStats)
 router.get('/summary', getTransactionSummary)
 router.get('/:id', getTransactionById)
+router.put('/:id', updateTransaction)
 router.delete('/:id', deleteTransaction)
 
 // Acciones sobre transacciones
