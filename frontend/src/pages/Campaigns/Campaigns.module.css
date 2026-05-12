@@ -790,3 +790,10 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+.winnersTabsRow {
+  display: flex;
+  justify-content: flex-start;
+  align-items: center;
+  margin-top: var(--spacing-xs);
+}

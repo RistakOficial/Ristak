@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { KpiCard, Card, DateRangePicker, Table, Icon, ContactDetailsModal, VisitorDetailsModal, PageContainer, ViewSelector, AreaChart, Loading } from '@/components/common'
+import { KpiCard, Card, DateRangePicker, Table, Icon, ContactDetailsModal, VisitorDetailsModal, PageContainer, ViewSelector, AreaChart, Loading, TabList } from '@/components/common'
 import type { Column } from '@/components/common'
 import {
   RefreshCw,
@@ -127,6 +127,7 @@ export const Campaigns: React.FC = () => {
   const [expandedCampaigns, setExpandedCampaigns] = useState<Set<string>>(new Set())
   const [expandedAdSets, setExpandedAdSets] = useState<Set<string>>(new Set())
   const [viewMode, setViewMode] = useState<'campaigns' | 'winners'>('campaigns')
+  const [winnersCategory, setWinnersCategory] = useState<'campaigns' | 'adsets' | 'ads'>('campaigns')
   const [campaignSummary, setCampaignSummary] = useState<CampaignsReport['summary'] | null>(null)
   const [selectedChart, setSelectedChart] = useState<ChartView>('revenue')
 
@@ -682,24 +683,73 @@ export const Campaigns: React.FC = () => {
   }, [])
 
   // Lista plana de ads ganadores: ordenados por revenue → sales → appointments → leads
-  const winnersData = React.useMemo(() => {
-    const ads: any[] = []
+  const sortWinners = React.useCallback((items: any[]) => {
+    return [...items]
+      .filter(item =>
+        (item.revenue || 0) > 0 ||
+        (item.sales || 0) > 0 ||
+        (item.appointments || 0) > 0 ||
+        (item.leads || 0) > 0
+      )
+      .sort((a, b) => {
+        const ar = a.revenue || 0, br = b.revenue || 0
+        if (br !== ar) return br - ar
+        const asa = a.sales || 0, bsa = b.sales || 0
+        if (bsa !== asa) return bsa - asa
+        const ap = a.appointments || 0, bp = b.appointments || 0
+        if (bp !== ap) return bp - ap
+        const al = a.leads || 0, bl = b.leads || 0
+        return bl - al
+      })
+      .map((item, index) => ({ ...item, rank: index + 1 }))
+  }, [])
 
+  const winnersCampaigns = React.useMemo(() => {
+    const items = campaigns.map(campaign => ({
+      ...campaign,
+      id: String(campaign.id),
+      level: 'campaign' as const,
+      platform: campaign.platform,
+      revenue: campaign.revenue || 0,
+      sales: campaign.sales || 0,
+      appointments: (campaign as any).appointments || 0,
+      leads: campaign.leads || 0,
+      spend: campaign.spend || 0
+    }))
+    return sortWinners(items)
+  }, [campaigns, sortWinners])
+
+  const winnersAdSets = React.useMemo(() => {
+    const items: any[] = []
+    campaigns.forEach(campaign => {
+      const adSetsData = campaign.adsets || campaign.adSets || []
+      adSetsData.forEach((adSet: any) => {
+        items.push({
+          ...adSet,
+          id: String(adSet.id),
+          level: 'adset',
+          campaignId: String(campaign.id),
+          campaignName: campaign.name,
+          platform: campaign.platform,
+          revenue: adSet.revenue || 0,
+          sales: adSet.sales || 0,
+          appointments: adSet.appointments || 0,
+          leads: adSet.leads || 0,
+          spend: adSet.spend || 0
+        })
+      })
+    })
+    return sortWinners(items)
+  }, [campaigns, sortWinners])
+
+  const winnersAds = React.useMemo(() => {
+    const items: any[] = []
     campaigns.forEach(campaign => {
       const adSetsData = campaign.adsets || campaign.adSets || []
       adSetsData.forEach((adSet: any) => {
         const adsData = adSet.ads || []
         adsData.forEach((ad: any) => {
-          const revenue = ad.revenue || 0
-          const sales = ad.sales || 0
-          const appointments = ad.appointments || 0
-          const leads = ad.leads || 0
-
-          if (revenue <= 0 && sales <= 0 && appointments <= 0 && leads <= 0) {
-            return
-          }
-
-          ads.push({
+          items.push({
             ...ad,
             id: String(ad.id),
             level: 'ad',
@@ -708,25 +758,58 @@ export const Campaigns: React.FC = () => {
             adSetId: String(adSet.id),
             adSetName: adSet.name,
             platform: campaign.platform,
-            revenue,
-            sales,
-            appointments,
-            leads
+            revenue: ad.revenue || 0,
+            sales: ad.sales || 0,
+            appointments: ad.appointments || 0,
+            leads: ad.leads || 0,
+            spend: ad.spend || 0
           })
         })
       })
     })
+    return sortWinners(items)
+  }, [campaigns, sortWinners])
 
-    ads.sort((a, b) => {
-      if (b.revenue !== a.revenue) return b.revenue - a.revenue
-      if (b.sales !== a.sales) return b.sales - a.sales
-      if (b.appointments !== a.appointments) return b.appointments - a.appointments
-      if (b.leads !== a.leads) return b.leads - a.leads
-      return 0
-    })
+  const winnersActiveData = winnersCategory === 'campaigns'
+    ? winnersCampaigns
+    : winnersCategory === 'adsets'
+      ? winnersAdSets
+      : winnersAds
 
-    return ads.map((ad, index) => ({ ...ad, rank: index + 1 }))
-  }, [campaigns])
+  const winnersNameColumn = React.useMemo((): Column<any> => ({
+    key: 'name',
+    header: winnersCategory === 'campaigns' ? 'Campaña' : winnersCategory === 'adsets' ? 'Conjunto de anuncios' : 'Anuncio',
+    fixed: true,
+    visible: true,
+    render: (value: string, item: any) => (
+      <div className={styles.winnerNameCell}>
+        <div className={styles.winnerNameRow}>
+          {item.platform && (
+            <Icon
+              name={item.platform.toLowerCase()}
+              size={16}
+              className={styles.campaignIcon}
+            />
+          )}
+          <strong className={styles.winnerAdName}>{value}</strong>
+        </div>
+        {item.level === 'adset' && item.campaignName && (
+          <div className={styles.winnerBreadcrumb}>
+            <span>{item.campaignName}</span>
+          </div>
+        )}
+        {item.level === 'ad' && (
+          <div className={styles.winnerBreadcrumb}>
+            <span>{item.campaignName}</span>
+            <ChevronRight size={12} />
+            <span>{item.adSetName}</span>
+          </div>
+        )}
+      </div>
+    ),
+    sortable: true,
+    width: '28%'
+  }), [winnersCategory])
 
   const winnersColumns: Column<any>[] = React.useMemo(() => [
     {
@@ -739,33 +822,7 @@ export const Campaigns: React.FC = () => {
       sortable: true,
       width: '60px'
     },
-    {
-      key: 'name',
-      header: 'Anuncio',
-      fixed: true,
-      visible: true,
-      render: (value: string, item: any) => (
-        <div className={styles.winnerNameCell}>
-          <div className={styles.winnerNameRow}>
-            {item.platform && (
-              <Icon
-                name={item.platform.toLowerCase()}
-                size={16}
-                className={styles.campaignIcon}
-              />
-            )}
-            <strong className={styles.winnerAdName}>{value}</strong>
-          </div>
-          <div className={styles.winnerBreadcrumb}>
-            <span>{item.campaignName}</span>
-            <ChevronRight size={12} />
-            <span>{item.adSetName}</span>
-          </div>
-        </div>
-      ),
-      sortable: true,
-      width: '28%'
-    },
+    winnersNameColumn,
     {
       key: 'revenue',
       header: 'Ingresos',
@@ -876,7 +933,7 @@ export const Campaigns: React.FC = () => {
       sortable: true,
       width: '9%'
     }
-  ], [labels, handleOpenContactsModal])
+  ], [labels, handleOpenContactsModal, winnersNameColumn])
 
   // Preparar datos planos para la tabla
   const getFlattenedData = () => {
@@ -1552,60 +1609,77 @@ export const Campaigns: React.FC = () => {
           />
         </div>
 
-        <Card variant="glass" className={styles.chartCard}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.5rem' }}>
-            <div>
-              <h2 className={styles.chartTitle}>{selectedConfig.title}</h2>
-              <p style={{ fontSize: '14px', color: 'var(--color-text-secondary)', marginTop: '4px' }}>
-                {selectedConfig.subtitle}
-              </p>
+        {viewMode === 'campaigns' && (
+          <Card variant="glass" className={styles.chartCard}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.5rem' }}>
+              <div>
+                <h2 className={styles.chartTitle}>{selectedConfig.title}</h2>
+                <p style={{ fontSize: '14px', color: 'var(--color-text-secondary)', marginTop: '4px' }}>
+                  {selectedConfig.subtitle}
+                </p>
+              </div>
+              <ViewSelector
+                options={chartOptions}
+                value={selectedChart}
+                onChange={handleChartChange}
+              />
             </div>
-            <ViewSelector
-              options={chartOptions}
-              value={selectedChart}
-              onChange={handleChartChange}
+            <div style={{ height: 300 }}>
+              {selectedConfig.data && selectedConfig.data.length > 0 ? (
+                <AreaChart
+                  data={selectedConfig.data}
+                  height={300}
+                  showGrid={true}
+                  color={selectedConfig.color}
+                  color2={selectedConfig.color2}
+                  formatValue={selectedConfig.formatValue}
+                  formatTooltipValue={selectedConfig.formatTooltipValue || selectedConfig.formatValue}
+                  showLegend={selectedConfig.showLegend}
+                  legendLabels={selectedConfig.legendLabels}
+                />
+              ) : (
+                <div className="flex h-full items-center justify-center rounded-xl border border-[rgba(148,163,184,0.18)] bg-[color-mix(in_srgb,var(--color-background-glass) 82%, transparent)] text-sm text-[var(--color-text-tertiary)]">
+                  <div className="text-center">
+                    <p>{selectedConfig.emptyMessage}</p>
+                    <p className="text-xs mt-2 opacity-75">Sincroniza tus campañas de Meta Ads para ver el gráfico</p>
+                  </div>
+                </div>
+              )}
+            </div>
+          </Card>
+        )}
+
+      {viewMode === 'winners' ? (
+        <>
+          <div className={styles.winnersTabsRow}>
+            <TabList
+              tabs={[
+                { value: 'campaigns', label: 'Campañas' },
+                { value: 'adsets', label: 'Conjuntos de anuncios' },
+                { value: 'ads', label: 'Anuncios' }
+              ]}
+              activeTab={winnersCategory}
+              onTabChange={(value) => setWinnersCategory(value as 'campaigns' | 'adsets' | 'ads')}
             />
           </div>
-          <div style={{ height: 300 }}>
-            {selectedConfig.data && selectedConfig.data.length > 0 ? (
-              <AreaChart
-                data={selectedConfig.data}
-                height={300}
-                showGrid={true}
-                color={selectedConfig.color}
-                color2={selectedConfig.color2}
-                formatValue={selectedConfig.formatValue}
-                formatTooltipValue={selectedConfig.formatTooltipValue || selectedConfig.formatValue}
-                showLegend={selectedConfig.showLegend}
-                legendLabels={selectedConfig.legendLabels}
-              />
-            ) : (
-              <div className="flex h-full items-center justify-center rounded-xl border border-[rgba(148,163,184,0.18)] bg-[color-mix(in_srgb,var(--color-background-glass) 82%, transparent)] text-sm text-[var(--color-text-tertiary)]">
-                <div className="text-center">
-                  <p>{selectedConfig.emptyMessage}</p>
-                  <p className="text-xs mt-2 opacity-75">Sincroniza tus campañas de Meta Ads para ver el gráfico</p>
-                </div>
-              </div>
-            )}
-          </div>
-        </Card>
-
-      <Card padding="none">
-        {viewMode === 'winners' ? (
-          <Table
-            key="winners_table"
-            initialColumns={winnersColumns}
-            data={winnersData}
-            keyExtractor={(item) => `winner_${item.id}`}
-            emptyMessage="Aún no hay anuncios ganadores para este período"
-            loading={loading}
-            searchable={true}
-            searchPlaceholder="Buscar anuncios ganadores..."
-            paginated={true}
-            pageSize={50}
-            tableId="campaigns_winners"
-          />
-        ) : (
+          <Card padding="none">
+            <Table
+              key={`winners_table_${winnersCategory}`}
+              initialColumns={winnersColumns}
+              data={winnersActiveData}
+              keyExtractor={(item) => `winner_${winnersCategory}_${item.id}`}
+              emptyMessage="Aún no hay ganadores para este período"
+              loading={loading}
+              searchable={true}
+              searchPlaceholder={`Buscar ${winnersCategory === 'campaigns' ? 'campañas' : winnersCategory === 'adsets' ? 'conjuntos' : 'anuncios'}...`}
+              paginated={true}
+              pageSize={50}
+              tableId={`campaigns_winners_${winnersCategory}`}
+            />
+          </Card>
+        </>
+      ) : (
+        <Card padding="none">
           <Table
             key="campaigns_table"
             initialColumns={columns}
@@ -1619,8 +1693,8 @@ export const Campaigns: React.FC = () => {
             pageSize={50}
             tableId="campaigns"
           />
-        )}
-      </Card>
+        </Card>
+      )}
 
       {/* Modal de contactos */}
       <ContactDetailsModal
