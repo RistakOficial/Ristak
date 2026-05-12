@@ -10,7 +10,8 @@ import {
   Users,
   ChevronRight,
   ChevronDown,
-  Loader2
+  Loader2,
+  Trophy
 } from 'lucide-react'
 import { useDateRange } from '@/contexts/DateRangeContext'
 import { useLabels } from '@/contexts/LabelsContext'
@@ -125,6 +126,7 @@ export const Campaigns: React.FC = () => {
   const [syncStatus, setSyncStatus] = useState<any>(null)
   const [expandedCampaigns, setExpandedCampaigns] = useState<Set<string>>(new Set())
   const [expandedAdSets, setExpandedAdSets] = useState<Set<string>>(new Set())
+  const [viewMode, setViewMode] = useState<'campaigns' | 'winners'>('campaigns')
   const [campaignSummary, setCampaignSummary] = useState<CampaignsReport['summary'] | null>(null)
   const [selectedChart, setSelectedChart] = useState<ChartView>('revenue')
 
@@ -679,6 +681,203 @@ export const Campaigns: React.FC = () => {
     })
   }, [])
 
+  // Lista plana de ads ganadores: ordenados por revenue → sales → appointments → leads
+  const winnersData = React.useMemo(() => {
+    const ads: any[] = []
+
+    campaigns.forEach(campaign => {
+      const adSetsData = campaign.adsets || campaign.adSets || []
+      adSetsData.forEach((adSet: any) => {
+        const adsData = adSet.ads || []
+        adsData.forEach((ad: any) => {
+          const revenue = ad.revenue || 0
+          const sales = ad.sales || 0
+          const appointments = ad.appointments || 0
+          const leads = ad.leads || 0
+
+          if (revenue <= 0 && sales <= 0 && appointments <= 0 && leads <= 0) {
+            return
+          }
+
+          ads.push({
+            ...ad,
+            id: String(ad.id),
+            level: 'ad',
+            campaignId: String(campaign.id),
+            campaignName: campaign.name,
+            adSetId: String(adSet.id),
+            adSetName: adSet.name,
+            platform: campaign.platform,
+            revenue,
+            sales,
+            appointments,
+            leads
+          })
+        })
+      })
+    })
+
+    ads.sort((a, b) => {
+      if (b.revenue !== a.revenue) return b.revenue - a.revenue
+      if (b.sales !== a.sales) return b.sales - a.sales
+      if (b.appointments !== a.appointments) return b.appointments - a.appointments
+      if (b.leads !== a.leads) return b.leads - a.leads
+      return 0
+    })
+
+    return ads.map((ad, index) => ({ ...ad, rank: index + 1 }))
+  }, [campaigns])
+
+  const winnersColumns: Column<any>[] = React.useMemo(() => [
+    {
+      key: 'rank',
+      header: '#',
+      visible: true,
+      render: (value: number) => (
+        <span className={styles.winnerRank}>{value}</span>
+      ),
+      sortable: true,
+      width: '60px'
+    },
+    {
+      key: 'name',
+      header: 'Anuncio',
+      fixed: true,
+      visible: true,
+      render: (value: string, item: any) => (
+        <div className={styles.winnerNameCell}>
+          <div className={styles.winnerNameRow}>
+            {item.platform && (
+              <Icon
+                name={item.platform.toLowerCase()}
+                size={16}
+                className={styles.campaignIcon}
+              />
+            )}
+            <strong className={styles.winnerAdName}>{value}</strong>
+          </div>
+          <div className={styles.winnerBreadcrumb}>
+            <span>{item.campaignName}</span>
+            <ChevronRight size={12} />
+            <span>{item.adSetName}</span>
+          </div>
+        </div>
+      ),
+      sortable: true,
+      width: '28%'
+    },
+    {
+      key: 'revenue',
+      header: 'Ingresos',
+      visible: true,
+      render: (value: number) => formatCurrency(value || 0),
+      sortable: true,
+      width: '11%'
+    },
+    {
+      key: 'sales',
+      header: (
+        <div style={{ textAlign: 'center', lineHeight: '1.2' }}>
+          <div>{labels.customers}</div>
+          <div style={{ fontSize: '0.75em', opacity: 0.7 }}>(Nuevos)</div>
+        </div>
+      ),
+      visible: true,
+      render: (value: number, item: any) => {
+        const hasSales = (value || 0) > 0
+        return (
+          <span
+            className={hasSales ? styles.clickableNumber : ''}
+            onClick={(e) => {
+              if (hasSales) {
+                e.stopPropagation()
+                handleOpenContactsModal(item, 'sales')
+              }
+            }}
+          >
+            {value || 0}
+          </span>
+        )
+      },
+      sortable: true,
+      width: '9%'
+    },
+    {
+      key: 'appointments',
+      header: (
+        <div style={{ textAlign: 'center', lineHeight: '1.2' }}>
+          <div>Citas</div>
+          <div style={{ fontSize: '0.75em', opacity: 0.7 }}>(Primera)</div>
+        </div>
+      ),
+      visible: true,
+      render: (value: number, item: any) => {
+        const hasAppointments = (value || 0) > 0
+        return (
+          <span
+            className={hasAppointments ? styles.clickableNumber : ''}
+            onClick={(e) => {
+              if (hasAppointments) {
+                e.stopPropagation()
+                handleOpenContactsModal(item, 'appointments')
+              }
+            }}
+          >
+            {(value || 0).toLocaleString()}
+          </span>
+        )
+      },
+      sortable: true,
+      width: '9%'
+    },
+    {
+      key: 'leads',
+      header: labels.leads,
+      visible: true,
+      render: (value: number, item: any) => {
+        const hasLeads = (value || 0) > 0
+        return (
+          <span
+            className={hasLeads ? styles.clickableNumber : ''}
+            onClick={(e) => {
+              if (hasLeads) {
+                e.stopPropagation()
+                handleOpenContactsModal(item, 'interesados')
+              }
+            }}
+          >
+            {value || 0}
+          </span>
+        )
+      },
+      sortable: true,
+      width: '9%'
+    },
+    {
+      key: 'spend',
+      header: 'Inversión',
+      visible: true,
+      render: (value: number) => formatCurrency(value || 0),
+      sortable: true,
+      width: '11%'
+    },
+    {
+      key: 'roas',
+      header: 'ROAS',
+      visible: true,
+      render: (_value: number, item: any) => {
+        const roasValue = item.spend > 0 ? (item.revenue || 0) / item.spend : 0
+        return (
+          <span className={roasValue >= 3 ? styles.goodRoas : styles.lowRoas}>
+            {formatRoas(roasValue)}
+          </span>
+        )
+      },
+      sortable: true,
+      width: '9%'
+    }
+  ], [labels, handleOpenContactsModal])
+
   // Preparar datos planos para la tabla
   const getFlattenedData = () => {
     const flatData: any[] = []
@@ -1222,6 +1421,16 @@ export const Campaigns: React.FC = () => {
               })}
             />
 
+            <button
+              type="button"
+              className={styles.viewToggleButton}
+              onClick={() => setViewMode(viewMode === 'campaigns' ? 'winners' : 'campaigns')}
+              aria-pressed={viewMode === 'winners'}
+            >
+              <Trophy size={16} />
+              {viewMode === 'campaigns' ? 'Ver Ganadores' : 'Ver Campañas'}
+            </button>
+
             {/* Timezone Discrepancy Warning - Minimized version */}
             {!timezoneInfo.isLoading && timezoneInfo.hasDiscrepancy && timezoneWarningDismissed && (
               <button
@@ -1382,19 +1591,35 @@ export const Campaigns: React.FC = () => {
         </Card>
 
       <Card padding="none">
-        <Table
-          key="campaigns_table"
-          initialColumns={columns}
-          data={getFlattenedData()}
-          keyExtractor={(item) => `${item.level}_${item.id}_${item.campaignId || ''}_${item.adSetId || ''}`}
-          emptyMessage="No hay campañas disponibles"
-          loading={loading}
-          searchable={true}
-          searchPlaceholder="Buscar campañas..."
-          paginated={true}
-          pageSize={50}
-          tableId="campaigns"
-        />
+        {viewMode === 'winners' ? (
+          <Table
+            key="winners_table"
+            initialColumns={winnersColumns}
+            data={winnersData}
+            keyExtractor={(item) => `winner_${item.id}`}
+            emptyMessage="Aún no hay anuncios ganadores para este período"
+            loading={loading}
+            searchable={true}
+            searchPlaceholder="Buscar anuncios ganadores..."
+            paginated={true}
+            pageSize={50}
+            tableId="campaigns_winners"
+          />
+        ) : (
+          <Table
+            key="campaigns_table"
+            initialColumns={columns}
+            data={getFlattenedData()}
+            keyExtractor={(item) => `${item.level}_${item.id}_${item.campaignId || ''}_${item.adSetId || ''}`}
+            emptyMessage="No hay campañas disponibles"
+            loading={loading}
+            searchable={true}
+            searchPlaceholder="Buscar campañas..."
+            paginated={true}
+            pageSize={50}
+            tableId="campaigns"
+          />
+        )}
       </Card>
 
       {/* Modal de contactos */}
