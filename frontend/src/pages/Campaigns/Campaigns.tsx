@@ -48,8 +48,9 @@ interface AdData {
 }
 
 interface CreativePreviewData {
+  creativeId: string | null
   name: string
-  type: 'image' | 'video'
+  type: 'image' | 'video' | 'html'
   thumbnailUrl: string | null
   imageUrl: string | null
   videoUrl: string | null
@@ -171,6 +172,9 @@ export const Campaigns: React.FC = () => {
   const [visitorsModalTitle, setVisitorsModalTitle] = useState('')
   const [selectedVisitorItem, setSelectedVisitorItem] = useState<any>(null)
   const [selectedCreative, setSelectedCreative] = useState<CreativePreviewData | null>(null)
+  const [creativePreviewHtml, setCreativePreviewHtml] = useState<string | null>(null)
+  const [creativePreviewLoading, setCreativePreviewLoading] = useState(false)
+  const [creativePreviewError, setCreativePreviewError] = useState<string | null>(null)
 
   /**
    * Agrupa datos de gráfico por semana o mes según el rango
@@ -470,6 +474,55 @@ export const Campaigns: React.FC = () => {
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [selectedCreative])
+
+  useEffect(() => {
+    let cancelled = false
+
+    setCreativePreviewHtml(null)
+    setCreativePreviewError(null)
+
+    if (!selectedCreative) {
+      setCreativePreviewLoading(false)
+      return
+    }
+
+    const shouldFetchMetaPreview = Boolean(
+      selectedCreative.creativeId &&
+      !selectedCreative.videoUrl &&
+      (selectedCreative.type === 'video' || !selectedCreative.imageUrl)
+    )
+
+    if (!shouldFetchMetaPreview) {
+      setCreativePreviewLoading(false)
+      return
+    }
+
+    setCreativePreviewLoading(true)
+    campaignsService.getCreativePreview(selectedCreative.creativeId as string)
+      .then((preview) => {
+        if (cancelled) return
+
+        if (preview?.body) {
+          setCreativePreviewHtml(preview.body)
+        } else {
+          setCreativePreviewError('Meta no regresó una previsualización para este anuncio.')
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setCreativePreviewError('No se pudo cargar la previsualización de Meta.')
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setCreativePreviewLoading(false)
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
   }, [selectedCreative])
 
   const checkSyncStatus = useCallback(async () => {
@@ -812,17 +865,21 @@ export const Campaigns: React.FC = () => {
   const getCreativePreviewData = React.useCallback((item: any): CreativePreviewData | null => {
     if (item.level !== 'ad') return null
 
+    const creativeId = item.creativeId || null
     const thumbnailUrl = item.creativeThumbnailUrl || item.creativeImageUrl || null
     const imageUrl = item.creativeImageUrl || item.creativeThumbnailUrl || null
     const videoUrl = item.creativeVideoUrl || null
     const previewUrl = item.creativePreviewUrl || null
-    const type = item.creativeType === 'video' || videoUrl ? 'video' : (imageUrl || thumbnailUrl ? 'image' : null)
+    const type = item.creativeType === 'video' || videoUrl
+      ? 'video'
+      : (imageUrl || thumbnailUrl ? 'image' : (creativeId ? 'html' : null))
 
-    if (!type || (!thumbnailUrl && !imageUrl && !videoUrl && !previewUrl)) {
+    if (!type || (!thumbnailUrl && !imageUrl && !videoUrl && !previewUrl && !creativeId)) {
       return null
     }
 
     return {
+      creativeId,
       name: item.name || 'Anuncio',
       type,
       thumbnailUrl,
@@ -1832,7 +1889,7 @@ export const Campaigns: React.FC = () => {
               <div>
                 <div className={styles.creativeModalTitle}>{selectedCreative.name}</div>
                 <div className={styles.creativeModalMeta}>
-                  {selectedCreative.type === 'video' ? 'Video' : 'Imagen'}
+                  {selectedCreative.type === 'video' ? 'Video' : selectedCreative.type === 'image' ? 'Imagen' : 'Preview Meta'}
                 </div>
               </div>
               <button
@@ -1855,6 +1912,16 @@ export const Campaigns: React.FC = () => {
                   autoPlay
                   playsInline
                 />
+              ) : creativePreviewLoading ? (
+                <div className={styles.creativeModalStatus}>Cargando preview de Meta...</div>
+              ) : creativePreviewHtml ? (
+                <iframe
+                  className={styles.creativeModalFrame}
+                  srcDoc={creativePreviewHtml}
+                  title={`Preview de ${selectedCreative.name}`}
+                  sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+                  allow="autoplay; encrypted-media; picture-in-picture"
+                />
               ) : selectedCreative.type === 'video' && selectedCreative.previewUrl ? (
                 <iframe
                   className={styles.creativeModalFrame}
@@ -1862,12 +1929,16 @@ export const Campaigns: React.FC = () => {
                   title={`Preview de ${selectedCreative.name}`}
                   allow="autoplay; encrypted-media; picture-in-picture"
                 />
-              ) : (
+              ) : selectedCreative.imageUrl || selectedCreative.thumbnailUrl ? (
                 <img
                   src={selectedCreative.imageUrl || selectedCreative.thumbnailUrl || ''}
                   alt={selectedCreative.name}
                   className={styles.creativeModalImage}
                 />
+              ) : (
+                <div className={styles.creativeModalStatus}>
+                  {creativePreviewError || 'No hay media disponible para este anuncio.'}
+                </div>
               )}
             </div>
 

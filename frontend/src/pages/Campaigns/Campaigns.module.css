@@ -949,6 +949,13 @@
   background: white;
 }
 
+.creativeModalStatus {
+  color: white;
+  font-size: var(--font-size-sm);
+  padding: 24px;
+  text-align: center;
+}
+
 .creativeModalFooter {
   padding: 12px 18px;
   border-top: 1px solid var(--color-border-subtle);

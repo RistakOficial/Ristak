@@ -110,6 +110,13 @@ export interface CampaignContact {
   mergedContactIds?: string[]
 }
 
+export interface CreativePreviewResponse {
+  success: boolean
+  creativeId: string
+  adFormat: string
+  body: string
+}
+
 class CampaignsService {
   async getCampaigns(startDate: string, endDate: string): Promise<Campaign[]> {
     try {
@@ -136,6 +143,16 @@ class CampaignsService {
     try {
       const data = await apiClient.get<any>('/meta/sync/status')
       return data?.status || null
+    } catch (error) {
+      return null
+    }
+  }
+
+  async getCreativePreview(creativeId: string, adFormat = 'DESKTOP_FEED_STANDARD'): Promise<CreativePreviewResponse | null> {
+    try {
+      return await apiClient.get<CreativePreviewResponse>(`/meta/creative-preview/${encodeURIComponent(creativeId)}`, {
+        params: { adFormat }
+      })
     } catch (error) {
       return null
     }

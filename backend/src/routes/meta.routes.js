@@ -6,6 +6,7 @@ import {
   syncAds,
   getSyncProgressEndpoint,
   updateRecent,
+  getCreativePreview,
   getCampaigns,
   getSpendOverTime,
   getSyncStatus,
@@ -49,6 +50,7 @@ router.post('/update-recent', updateRecent)
 
 // Datos
 router.get('/campaigns', getCampaigns)
+router.get('/creative-preview/:creativeId', getCreativePreview)
 router.get('/spend-over-time', getSpendOverTime)
 router.get('/contacts', getContactsByType)
 router.get('/leads-over-time', getLeadsOverTime)

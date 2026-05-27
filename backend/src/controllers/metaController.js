@@ -213,6 +213,90 @@ export const getSyncProgressEndpoint = async (req, res) => {
   }
 };
 
+const META_PREVIEW_FORMATS = [
+  'DESKTOP_FEED_STANDARD',
+  'MOBILE_FEED_STANDARD',
+  'INSTAGRAM_STANDARD',
+  'INSTAGRAM_REELS',
+  'INSTAGRAM_STORY',
+  'FACEBOOK_REELS_MOBILE',
+  'FACEBOOK_STORY_MOBILE'
+];
+
+/**
+ * Obtiene el preview renderizado por Meta para un creative.
+ * El HTML de Meta suele venir como iframe/snippet y puede expirar, por eso se pide bajo demanda.
+ */
+export const getCreativePreview = async (req, res) => {
+  try {
+    const creativeId = String(req.params.creativeId || '').trim();
+    const requestedFormat = String(req.query.adFormat || META_PREVIEW_FORMATS[0]).trim().toUpperCase();
+
+    if (!/^[0-9]+$/.test(creativeId)) {
+      return res.status(400).json({
+        success: false,
+        error: 'creativeId inválido'
+      });
+    }
+
+    const metaConfig = await getMetaConfig();
+    if (!metaConfig?.access_token) {
+      return res.status(404).json({
+        success: false,
+        error: 'No hay configuración de Meta guardada'
+      });
+    }
+
+    const formatsToTry = [
+      META_PREVIEW_FORMATS.includes(requestedFormat) ? requestedFormat : META_PREVIEW_FORMATS[0],
+      ...META_PREVIEW_FORMATS
+    ].filter((format, index, formats) => formats.indexOf(format) === index);
+
+    const errors = [];
+
+    for (const adFormat of formatsToTry) {
+      try {
+        const params = new URLSearchParams({
+          fields: 'body',
+          ad_format: adFormat,
+          access_token: metaConfig.access_token
+        });
+        const response = await fetch(`${API_URLS.META_GRAPH}/${encodeURIComponent(creativeId)}/previews?${params.toString()}`);
+        const data = await response.json();
+
+        if (data.error) {
+          errors.push(`${adFormat}: ${data.error.message}`);
+          continue;
+        }
+
+        const preview = Array.isArray(data?.data) ? data.data.find(item => item?.body) : null;
+        if (preview?.body) {
+          return res.json({
+            success: true,
+            creativeId,
+            adFormat,
+            body: preview.body
+          });
+        }
+      } catch (error) {
+        errors.push(`${adFormat}: ${error.message}`);
+      }
+    }
+
+    logger.warn(`Meta no regresó preview para creative ${creativeId}: ${errors.join(' | ')}`);
+    return res.status(404).json({
+      success: false,
+      error: 'Meta no regresó preview para este creative'
+    });
+  } catch (error) {
+    logger.error(`Error en getCreativePreview: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      error: 'Error al obtener preview del creative'
+    });
+  }
+};
+
 /**
  * Inicia sincronización manual de Meta Ads desde hace 35 meses (como HighLevel)
  */

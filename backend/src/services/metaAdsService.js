@@ -30,15 +30,19 @@ const META_AD_CREATIVE_FIELDS = [
   'id',
   'name',
   'object_type',
+  'image_hash',
   'thumbnail_url',
+  'thumbnail_id',
   'image_url',
   'video_id',
   'preview_url',
+  'object_story_id',
+  'effective_object_story_id',
   'object_story_spec',
   'asset_feed_spec'
 ].join(',')
 
-const META_VIDEO_FIELDS = 'id,source,permalink_url,thumbnails.limit(1){uri,is_preferred}'
+const META_VIDEO_FIELDS = 'id,source,permalink_url,thumbnails.limit(4){uri,is_preferred,width,height}'
 
 function chunkArray(items, size) {
   const chunks = []
@@ -84,7 +88,92 @@ function getCreativeVideoId(creative = {}) {
   ))
 }
 
-function extractCreativeMedia(creative = {}, videoMediaById = new Map()) {
+function getCreativeImageHashes(creative = {}) {
+  const storySpec = creative.object_story_spec || {}
+  const videoData = storySpec.video_data || {}
+  const linkData = storySpec.link_data || {}
+  const photoData = storySpec.photo_data || {}
+  const templateData = storySpec.template_data || {}
+  const assetFeedSpec = creative.asset_feed_spec || {}
+  const assetImages = Array.isArray(assetFeedSpec.images) ? assetFeedSpec.images : []
+  const assetVideos = Array.isArray(assetFeedSpec.videos) ? assetFeedSpec.videos : []
+
+  const hashes = [
+    creative.image_hash,
+    creative.thumbnail_hash,
+    linkData.image_hash,
+    linkData.picture_hash,
+    videoData.image_hash,
+    videoData.thumbnail_hash,
+    photoData.image_hash,
+    photoData.hash,
+    templateData.image_hash,
+    templateData.picture_hash,
+    ...assetImages.flatMap(image => [image.hash, image.image_hash]),
+    ...assetVideos.flatMap(video => [video.thumbnail_hash, video.image_hash])
+  ]
+
+  return [...new Set(hashes.map(normalizeId).filter(Boolean))]
+}
+
+function getCreativeAdImage(creative = {}, adImagesByHash = new Map()) {
+  for (const imageHash of getCreativeImageHashes(creative)) {
+    const adImage = adImagesByHash.get(imageHash)
+    if (adImage) return adImage
+  }
+
+  return null
+}
+
+function normalizeMetaAdAccountId(accountId) {
+  return normalizeId(accountId)?.replace(/^act_/i, '') || null
+}
+
+async function fetchMetaAdImagesByHash(accountId, imageHashes, accessToken) {
+  const cleanAccountId = normalizeMetaAdAccountId(accountId)
+  const uniqueHashes = [...new Set(imageHashes.map(normalizeId).filter(Boolean))]
+  const adImagesByHash = new Map()
+
+  if (!cleanAccountId || uniqueHashes.length === 0) {
+    return adImagesByHash
+  }
+
+  for (const chunk of chunkArray(uniqueHashes, 50)) {
+    try {
+      const params = new URLSearchParams({
+        fields: 'hash,url,url_128,permalink_url,width,height',
+        hashes: JSON.stringify(chunk),
+        access_token: accessToken
+      })
+      const response = await fetch(`${API_URLS.META_GRAPH}/act_${cleanAccountId}/adimages?${params.toString()}`)
+      const data = await response.json()
+
+      if (data.error) {
+        logger.warn(`No se pudieron resolver imágenes de Meta por hash: ${data.error.message}`)
+        continue
+      }
+
+      const images = Array.isArray(data?.data) ? data.data : []
+      images.forEach(image => {
+        const imageHash = normalizeId(image?.hash)
+        if (!imageHash) return
+
+        adImagesByHash.set(imageHash, {
+          url: pickFirstString(image.url, image.url_128, image.permalink_url),
+          permalinkUrl: pickFirstString(image.permalink_url),
+          width: image.width || null,
+          height: image.height || null
+        })
+      })
+    } catch (error) {
+      logger.warn(`Error resolviendo imágenes de Meta por hash: ${error.message}`)
+    }
+  }
+
+  return adImagesByHash
+}
+
+function extractCreativeMedia(creative = {}, videoMediaById = new Map(), adImagesByHash = new Map()) {
   const storySpec = creative.object_story_spec || {}
   const videoData = storySpec.video_data || {}
   const linkData = storySpec.link_data || {}
@@ -95,19 +184,25 @@ function extractCreativeMedia(creative = {}, videoMediaById = new Map()) {
 
   const videoId = getCreativeVideoId(creative)
   const videoMedia = videoId ? videoMediaById.get(videoId) : null
+  const adImage = getCreativeAdImage(creative, adImagesByHash)
   const imageUrl = pickFirstString(
     creative.image_url,
     linkData.image_url,
+    linkData.picture,
     photoData.url,
     videoData.image_url,
+    videoData.thumbnail_url,
     assetImage?.url,
     assetImage?.image_url,
-    assetImage?.thumbnail_url
+    assetImage?.thumbnail_url,
+    adImage?.url,
+    adImage?.permalinkUrl
   )
   const videoUrl = pickFirstString(videoMedia?.videoUrl)
   const thumbnailUrl = pickFirstString(
     creative.thumbnail_url,
     videoData.image_url,
+    videoData.thumbnail_url,
     assetVideo?.thumbnail_url,
     videoMedia?.thumbnailUrl,
     imageUrl
@@ -167,7 +262,7 @@ async function fetchMetaVideoMedia(videoIds, accessToken) {
   return videoMediaById
 }
 
-async function fetchMetaCreativesForAds(adIds, accessToken) {
+async function fetchMetaCreativesForAds(adIds, accessToken, accountId = null) {
   const uniqueAdIds = [...new Set(adIds.map(normalizeId).filter(Boolean))]
   const rawCreativesByAdId = new Map()
 
@@ -201,14 +296,16 @@ async function fetchMetaCreativesForAds(adIds, accessToken) {
   }
 
   const videoIds = [...rawCreativesByAdId.values()].map(getCreativeVideoId).filter(Boolean)
+  const imageHashes = [...rawCreativesByAdId.values()].flatMap(getCreativeImageHashes)
   const videoMediaById = await fetchMetaVideoMedia(videoIds, accessToken)
+  const adImagesByHash = await fetchMetaAdImagesByHash(accountId, imageHashes, accessToken)
   const creativeMediaByAdId = new Map()
 
   rawCreativesByAdId.forEach((creative, adId) => {
-    creativeMediaByAdId.set(adId, extractCreativeMedia(creative, videoMediaById))
+    creativeMediaByAdId.set(adId, extractCreativeMedia(creative, videoMediaById, adImagesByHash))
   })
 
-  logger.info(`Creatives de Meta obtenidos: ${creativeMediaByAdId.size}/${uniqueAdIds.length}`)
+  logger.info(`Creatives de Meta obtenidos: ${creativeMediaByAdId.size}/${uniqueAdIds.length}; imágenes resueltas: ${adImagesByHash.size}`)
   return creativeMediaByAdId
 }
 
@@ -742,7 +839,7 @@ export async function syncMetaAds(startDate, onProgress = null) {
       const missingCreativeAdIds = adIds.filter(adId => !creativeMediaCache.has(adId))
 
       if (missingCreativeAdIds.length > 0) {
-        const fetchedCreativeMedia = await fetchMetaCreativesForAds(missingCreativeAdIds, access_token)
+        const fetchedCreativeMedia = await fetchMetaCreativesForAds(missingCreativeAdIds, access_token, ad_account_id)
         missingCreativeAdIds.forEach(adId => {
           creativeMediaCache.set(adId, fetchedCreativeMedia.get(adId) || null)
         })
@@ -879,7 +976,8 @@ export async function updateRecentAds() {
     if (ads.length > 0) {
       const creativeMediaByAdId = await fetchMetaCreativesForAds(
         ads.map(ad => ad.ad_id),
-        access_token
+        access_token,
+        ad_account_id
       )
       await saveAdsToDatabase(ads, ad_account_id, creativeMediaByAdId)
     }
