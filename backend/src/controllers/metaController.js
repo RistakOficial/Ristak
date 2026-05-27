@@ -304,7 +304,7 @@ export const getCampaigns = async (req, res) => {
       AND EXISTS (
         SELECT 1 FROM meta_ads ma
         WHERE ma.ad_id = c.attribution_ad_id
-          AND ma.date::date = c.created_at::date
+          AND DATE(ma.date) = DATE(c.created_at)
       )
       ${hiddenCondition ? `AND ${hiddenCondition}` : ''}
     `;
@@ -358,6 +358,13 @@ export const getCampaigns = async (req, res) => {
         m.campaign_id, m.campaign_name,
         m.adset_id, m.adset_name,
         m.ad_id, m.ad_name,
+        MAX(m.creative_id) as creative_id,
+        MAX(m.creative_type) as creative_type,
+        MAX(m.creative_thumbnail_url) as creative_thumbnail_url,
+        MAX(m.creative_image_url) as creative_image_url,
+        MAX(m.creative_video_id) as creative_video_id,
+        MAX(m.creative_video_url) as creative_video_url,
+        MAX(m.creative_preview_url) as creative_preview_url,
         COALESCE(SUM(m.spend), 0) as spend,
         COALESCE(SUM(m.reach), 0) as reach,
         COALESCE(SUM(m.clicks), 0) as clicks,
@@ -444,6 +451,13 @@ export const getCampaigns = async (req, res) => {
       adset.ads.push({
         id: row.ad_id,
         name: row.ad_name,
+        creativeId: row.creative_id || null,
+        creativeType: row.creative_type || null,
+        creativeThumbnailUrl: row.creative_thumbnail_url || null,
+        creativeImageUrl: row.creative_image_url || null,
+        creativeVideoId: row.creative_video_id || null,
+        creativeVideoUrl: row.creative_video_url || null,
+        creativePreviewUrl: row.creative_preview_url || null,
         spend: parseFloat(row.spend) || 0,
         reach: parseInt(row.reach) || 0,
         clicks: parseInt(row.clicks) || 0,

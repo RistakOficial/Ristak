@@ -26,6 +26,192 @@ function updateProgress(updates) {
   logger.info(`Progreso Meta: ${syncProgress.step} (Mes ${syncProgress.monthsCurrent}/${syncProgress.monthsTotal})`)
 }
 
+const META_AD_CREATIVE_FIELDS = [
+  'id',
+  'name',
+  'object_type',
+  'thumbnail_url',
+  'image_url',
+  'video_id',
+  'preview_url',
+  'object_story_spec',
+  'asset_feed_spec'
+].join(',')
+
+const META_VIDEO_FIELDS = 'id,source,permalink_url,thumbnails.limit(1){uri,is_preferred}'
+
+function chunkArray(items, size) {
+  const chunks = []
+  for (let index = 0; index < items.length; index += size) {
+    chunks.push(items.slice(index, index + size))
+  }
+  return chunks
+}
+
+function pickFirstString(...values) {
+  for (const value of values) {
+    if (Array.isArray(value)) {
+      const nested = pickFirstString(...value)
+      if (nested) return nested
+      continue
+    }
+
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim()
+    }
+  }
+
+  return null
+}
+
+function normalizeId(value) {
+  if (value === null || value === undefined) return null
+  const normalized = String(value).trim()
+  return normalized || null
+}
+
+function getCreativeVideoId(creative = {}) {
+  const storySpec = creative.object_story_spec || {}
+  const videoData = storySpec.video_data || {}
+  const assetFeedSpec = creative.asset_feed_spec || {}
+  const assetVideo = Array.isArray(assetFeedSpec.videos) ? assetFeedSpec.videos[0] : null
+
+  return normalizeId(pickFirstString(
+    creative.video_id,
+    videoData.video_id,
+    assetVideo?.video_id,
+    assetVideo?.id
+  ))
+}
+
+function extractCreativeMedia(creative = {}, videoMediaById = new Map()) {
+  const storySpec = creative.object_story_spec || {}
+  const videoData = storySpec.video_data || {}
+  const linkData = storySpec.link_data || {}
+  const photoData = storySpec.photo_data || {}
+  const assetFeedSpec = creative.asset_feed_spec || {}
+  const assetImage = Array.isArray(assetFeedSpec.images) ? assetFeedSpec.images[0] : null
+  const assetVideo = Array.isArray(assetFeedSpec.videos) ? assetFeedSpec.videos[0] : null
+
+  const videoId = getCreativeVideoId(creative)
+  const videoMedia = videoId ? videoMediaById.get(videoId) : null
+  const imageUrl = pickFirstString(
+    creative.image_url,
+    linkData.image_url,
+    photoData.url,
+    videoData.image_url,
+    assetImage?.url,
+    assetImage?.image_url,
+    assetImage?.thumbnail_url
+  )
+  const videoUrl = pickFirstString(videoMedia?.videoUrl)
+  const thumbnailUrl = pickFirstString(
+    creative.thumbnail_url,
+    videoData.image_url,
+    assetVideo?.thumbnail_url,
+    videoMedia?.thumbnailUrl,
+    imageUrl
+  )
+  const previewUrl = pickFirstString(creative.preview_url, videoMedia?.previewUrl)
+  const creativeType = videoId || videoUrl ? 'video' : (imageUrl || thumbnailUrl ? 'image' : null)
+
+  return {
+    creative_id: normalizeId(creative.id),
+    creative_type: creativeType,
+    creative_thumbnail_url: thumbnailUrl,
+    creative_image_url: imageUrl,
+    creative_video_id: videoId,
+    creative_video_url: videoUrl,
+    creative_preview_url: previewUrl
+  }
+}
+
+async function fetchMetaVideoMedia(videoIds, accessToken) {
+  const uniqueVideoIds = [...new Set(videoIds.map(normalizeId).filter(Boolean))]
+  const videoMediaById = new Map()
+
+  if (uniqueVideoIds.length === 0) {
+    return videoMediaById
+  }
+
+  for (const chunk of chunkArray(uniqueVideoIds, 50)) {
+    try {
+      const params = new URLSearchParams({
+        ids: chunk.join(','),
+        fields: META_VIDEO_FIELDS,
+        access_token: accessToken
+      })
+      const response = await fetch(`${API_URLS.META_GRAPH}?${params.toString()}`)
+      const data = await response.json()
+
+      if (data.error) {
+        logger.warn(`No se pudo obtener video media de Meta: ${data.error.message}`)
+        continue
+      }
+
+      Object.entries(data || {}).forEach(([videoId, video]) => {
+        const thumbnails = Array.isArray(video?.thumbnails?.data) ? video.thumbnails.data : []
+        const preferredThumbnail = thumbnails.find(thumbnail => thumbnail.is_preferred) || thumbnails[0]
+
+        videoMediaById.set(String(videoId), {
+          videoUrl: pickFirstString(video?.source),
+          thumbnailUrl: pickFirstString(preferredThumbnail?.uri),
+          previewUrl: pickFirstString(video?.permalink_url)
+        })
+      })
+    } catch (error) {
+      logger.warn(`Error obteniendo video media de Meta: ${error.message}`)
+    }
+  }
+
+  return videoMediaById
+}
+
+async function fetchMetaCreativesForAds(adIds, accessToken) {
+  const uniqueAdIds = [...new Set(adIds.map(normalizeId).filter(Boolean))]
+  const rawCreativesByAdId = new Map()
+
+  if (uniqueAdIds.length === 0) {
+    return new Map()
+  }
+
+  for (const chunk of chunkArray(uniqueAdIds, 50)) {
+    try {
+      const params = new URLSearchParams({
+        ids: chunk.join(','),
+        fields: `id,creative{${META_AD_CREATIVE_FIELDS}}`,
+        access_token: accessToken
+      })
+      const response = await fetch(`${API_URLS.META_GRAPH}?${params.toString()}`)
+      const data = await response.json()
+
+      if (data.error) {
+        logger.warn(`No se pudieron obtener creatives de Meta: ${data.error.message}`)
+        continue
+      }
+
+      Object.entries(data || {}).forEach(([adId, adData]) => {
+        if (adData?.creative) {
+          rawCreativesByAdId.set(String(adId), adData.creative)
+        }
+      })
+    } catch (error) {
+      logger.warn(`Error obteniendo creatives de Meta: ${error.message}`)
+    }
+  }
+
+  const videoIds = [...rawCreativesByAdId.values()].map(getCreativeVideoId).filter(Boolean)
+  const videoMediaById = await fetchMetaVideoMedia(videoIds, accessToken)
+  const creativeMediaByAdId = new Map()
+
+  rawCreativesByAdId.forEach((creative, adId) => {
+    creativeMediaByAdId.set(adId, extractCreativeMedia(creative, videoMediaById))
+  })
+
+  logger.info(`Creatives de Meta obtenidos: ${creativeMediaByAdId.size}/${uniqueAdIds.length}`)
+  return creativeMediaByAdId
+}
+
 /**
  * Obtiene la configuración de Meta desde la base de datos
  * DESENCRIPTA el access_token antes de devolverlo
@@ -386,7 +572,7 @@ async function fetchMetaAdsInsights(accountId, accessToken, sinceDate, untilDate
  * Las guardamos TAL CUAL porque representan "el día" en el timezone del anunciante.
  * El frontend debe mostrarlas en el timezone del usuario de HighLevel (no se convierten).
  */
-async function saveAdsToDatabase(ads, accountId) {
+async function saveAdsToDatabase(ads, accountId, creativeMediaByAdId = new Map()) {
   try {
     // IMPORTANTE: accountId se guarda SIN el prefijo "act_" para consistencia
     // - Meta Config guarda: "123456789" (sin "act_")
@@ -401,15 +587,26 @@ async function saveAdsToDatabase(ads, accountId) {
 
       // ad.date_start viene como "YYYY-MM-DD" en el timezone de la cuenta de Meta
       // Lo guardamos directo sin conversión (representa el "día" en el timezone del anunciante)
+      const creativeMedia = creativeMediaByAdId.get(String(ad.ad_id)) || {}
+
       await db.run(`
         INSERT INTO meta_ads (
           date, ad_account_id, campaign_id, campaign_name, adset_id, adset_name,
-          ad_id, ad_name, spend, reach, clicks, cpc, cpm, ctr
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ad_id, ad_name, creative_id, creative_type, creative_thumbnail_url,
+          creative_image_url, creative_video_id, creative_video_url, creative_preview_url,
+          spend, reach, clicks, cpc, cpm, ctr
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(date, campaign_id, adset_id, ad_id) DO UPDATE SET
           campaign_name = excluded.campaign_name,
           adset_name = excluded.adset_name,
           ad_name = excluded.ad_name,
+          creative_id = COALESCE(excluded.creative_id, meta_ads.creative_id),
+          creative_type = COALESCE(excluded.creative_type, meta_ads.creative_type),
+          creative_thumbnail_url = COALESCE(excluded.creative_thumbnail_url, meta_ads.creative_thumbnail_url),
+          creative_image_url = COALESCE(excluded.creative_image_url, meta_ads.creative_image_url),
+          creative_video_id = COALESCE(excluded.creative_video_id, meta_ads.creative_video_id),
+          creative_video_url = COALESCE(excluded.creative_video_url, meta_ads.creative_video_url),
+          creative_preview_url = COALESCE(excluded.creative_preview_url, meta_ads.creative_preview_url),
           spend = excluded.spend,
           reach = excluded.reach,
           clicks = excluded.clicks,
@@ -426,6 +623,13 @@ async function saveAdsToDatabase(ads, accountId) {
         ad.adset_name || '',
         ad.ad_id,
         ad.ad_name || '',
+        creativeMedia.creative_id || null,
+        creativeMedia.creative_type || null,
+        creativeMedia.creative_thumbnail_url || null,
+        creativeMedia.creative_image_url || null,
+        creativeMedia.creative_video_id || null,
+        creativeMedia.creative_video_url || null,
+        creativeMedia.creative_preview_url || null,
         parseFloat(ad.spend || 0),
         parseInt(ad.reach || 0),
         parseInt(ad.clicks || 0),
@@ -503,6 +707,7 @@ export async function syncMetaAds(startDate, onProgress = null) {
     logger.info(`Sincronizando ${dateChunks.length} meses de datos...`)
 
     syncProgress.monthsTotal = dateChunks.length
+    const creativeMediaCache = new Map()
 
     // Reportar total de meses a sincronizar
     if (onProgress) {
@@ -533,6 +738,24 @@ export async function syncMetaAds(startDate, onProgress = null) {
 
       logger.info(`Mes ${i + 1}/${dateChunks.length}: ${ads.length} ads obtenidos`)
 
+      const adIds = [...new Set(ads.map(ad => normalizeId(ad.ad_id)).filter(Boolean))]
+      const missingCreativeAdIds = adIds.filter(adId => !creativeMediaCache.has(adId))
+
+      if (missingCreativeAdIds.length > 0) {
+        const fetchedCreativeMedia = await fetchMetaCreativesForAds(missingCreativeAdIds, access_token)
+        missingCreativeAdIds.forEach(adId => {
+          creativeMediaCache.set(adId, fetchedCreativeMedia.get(adId) || null)
+        })
+      }
+
+      const creativeMediaByAdId = new Map()
+      adIds.forEach(adId => {
+        const media = creativeMediaCache.get(adId)
+        if (media) {
+          creativeMediaByAdId.set(adId, media)
+        }
+      })
+
       // IMPORTANTE:
       // En lugar de borrar TODA la tabla (causa ventanas de "gasto = 0" durante sync),
       // borramos SOLO el rango del chunk actual y luego lo reinsertamos.
@@ -543,7 +766,7 @@ export async function syncMetaAds(startDate, onProgress = null) {
       )
 
       if (ads.length > 0) {
-        await saveAdsToDatabase(ads, ad_account_id)
+        await saveAdsToDatabase(ads, ad_account_id, creativeMediaByAdId)
       }
 
       updateProgress({
@@ -654,7 +877,11 @@ export async function updateRecentAds() {
     logger.info(`${ads.length} ads obtenidos para actualización`)
 
     if (ads.length > 0) {
-      await saveAdsToDatabase(ads, ad_account_id)
+      const creativeMediaByAdId = await fetchMetaCreativesForAds(
+        ads.map(ad => ad.ad_id),
+        access_token
+      )
+      await saveAdsToDatabase(ads, ad_account_id, creativeMediaByAdId)
     }
 
     logger.success('Ads recientes actualizados correctamente')

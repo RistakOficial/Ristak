@@ -36,6 +36,13 @@ export interface AdSet {
 export interface Ad {
   id: string
   name: string
+  creativeId?: string | null
+  creativeType?: 'image' | 'video' | null
+  creativeThumbnailUrl?: string | null
+  creativeImageUrl?: string | null
+  creativeVideoId?: string | null
+  creativeVideoUrl?: string | null
+  creativePreviewUrl?: string | null
   spend: number
   reach: number
   impressions: number

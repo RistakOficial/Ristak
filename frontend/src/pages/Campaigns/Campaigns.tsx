@@ -10,8 +10,11 @@ import {
   Users,
   ChevronRight,
   ChevronDown,
-  Loader2,
-  Trophy
+  Trophy,
+  PlayCircle,
+  Image as ImageIcon,
+  X,
+  ExternalLink
 } from 'lucide-react'
 import { useDateRange } from '@/contexts/DateRangeContext'
 import { useLabels } from '@/contexts/LabelsContext'
@@ -24,6 +27,13 @@ import styles from './Campaigns.module.css'
 interface AdData {
   id: string
   name: string
+  creativeId?: string | null
+  creativeType?: 'image' | 'video' | null
+  creativeThumbnailUrl?: string | null
+  creativeImageUrl?: string | null
+  creativeVideoId?: string | null
+  creativeVideoUrl?: string | null
+  creativePreviewUrl?: string | null
   spend: number
   reach?: number
   impressions?: number
@@ -35,6 +45,15 @@ interface AdData {
   roas?: number
   cpc?: number
   cpm?: number
+}
+
+interface CreativePreviewData {
+  name: string
+  type: 'image' | 'video'
+  thumbnailUrl: string | null
+  imageUrl: string | null
+  videoUrl: string | null
+  previewUrl: string | null
 }
 
 interface AdSetData {
@@ -151,6 +170,7 @@ export const Campaigns: React.FC = () => {
   const [visitorsModalLoading, setVisitorsModalLoading] = useState(false)
   const [visitorsModalTitle, setVisitorsModalTitle] = useState('')
   const [selectedVisitorItem, setSelectedVisitorItem] = useState<any>(null)
+  const [selectedCreative, setSelectedCreative] = useState<CreativePreviewData | null>(null)
 
   /**
    * Agrupa datos de gráfico por semana o mes según el rango
@@ -438,6 +458,19 @@ export const Campaigns: React.FC = () => {
   useEffect(() => {
     fetchCampaigns()
   }, [fetchCampaigns])
+
+  useEffect(() => {
+    if (!selectedCreative) return
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setSelectedCreative(null)
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [selectedCreative])
 
   const checkSyncStatus = useCallback(async () => {
     try {
@@ -776,6 +809,66 @@ export const Campaigns: React.FC = () => {
       ? winnersAdSets
       : winnersAds
 
+  const getCreativePreviewData = React.useCallback((item: any): CreativePreviewData | null => {
+    if (item.level !== 'ad') return null
+
+    const thumbnailUrl = item.creativeThumbnailUrl || item.creativeImageUrl || null
+    const imageUrl = item.creativeImageUrl || item.creativeThumbnailUrl || null
+    const videoUrl = item.creativeVideoUrl || null
+    const previewUrl = item.creativePreviewUrl || null
+    const type = item.creativeType === 'video' || videoUrl ? 'video' : (imageUrl || thumbnailUrl ? 'image' : null)
+
+    if (!type || (!thumbnailUrl && !imageUrl && !videoUrl && !previewUrl)) {
+      return null
+    }
+
+    return {
+      name: item.name || 'Anuncio',
+      type,
+      thumbnailUrl,
+      imageUrl,
+      videoUrl,
+      previewUrl
+    }
+  }, [])
+
+  const renderCreativePreview = React.useCallback((item: any) => {
+    const media = getCreativePreviewData(item)
+
+    if (!media) {
+      return null
+    }
+
+    return (
+      <button
+        type="button"
+        className={styles.creativePreviewButton}
+        onClick={(event) => {
+          event.stopPropagation()
+          setSelectedCreative(media)
+        }}
+        aria-label={`Ver preview de ${media.name}`}
+        title={`Ver preview de ${media.name}`}
+      >
+        {media.thumbnailUrl ? (
+          <img
+            src={media.thumbnailUrl}
+            alt=""
+            className={styles.creativePreviewImage}
+            loading="lazy"
+          />
+        ) : (
+          <ImageIcon size={18} className={styles.creativePreviewIcon} />
+        )}
+        {media.type === 'video' && (
+          <span className={styles.creativePlayBadge} aria-hidden="true">
+            <PlayCircle size={18} />
+          </span>
+        )}
+      </button>
+    )
+  }, [getCreativePreviewData])
+
   const winnersNameColumn = React.useMemo((): Column<any> => ({
     key: 'name',
     header: winnersCategory === 'campaigns' ? 'Campaña' : winnersCategory === 'adsets' ? 'Conjunto de anuncios' : 'Anuncio',
@@ -791,6 +884,7 @@ export const Campaigns: React.FC = () => {
               className={styles.campaignIcon}
             />
           )}
+          {item.level === 'ad' && renderCreativePreview(item)}
           <strong className={styles.winnerAdName}>{value}</strong>
         </div>
         {item.level === 'adset' && item.campaignName && (
@@ -809,7 +903,7 @@ export const Campaigns: React.FC = () => {
     ),
     sortable: true,
     width: '28%'
-  }), [winnersCategory])
+  }), [renderCreativePreview, winnersCategory])
 
   const winnersColumns: Column<any>[] = React.useMemo(() => [
     {
@@ -1044,6 +1138,7 @@ export const Campaigns: React.FC = () => {
                   className={styles.campaignIcon}
                 />
               )}
+              {item.level === 'ad' && renderCreativePreview(item)}
               <strong className={`${styles.nameText} ${styles[item.level]}`}>
                 {value}
               </strong>
@@ -1722,6 +1817,75 @@ export const Campaigns: React.FC = () => {
           data={modalVisitors}
           loading={visitorsModalLoading}
         />
+      )}
+
+      {selectedCreative && (
+        <div
+          className={styles.creativeModalBackdrop}
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Preview de ${selectedCreative.name}`}
+          onClick={() => setSelectedCreative(null)}
+        >
+          <div className={styles.creativeModal} onClick={(event) => event.stopPropagation()}>
+            <div className={styles.creativeModalHeader}>
+              <div>
+                <div className={styles.creativeModalTitle}>{selectedCreative.name}</div>
+                <div className={styles.creativeModalMeta}>
+                  {selectedCreative.type === 'video' ? 'Video' : 'Imagen'}
+                </div>
+              </div>
+              <button
+                type="button"
+                className={styles.creativeModalClose}
+                onClick={() => setSelectedCreative(null)}
+                aria-label="Cerrar preview"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className={styles.creativeModalBody}>
+              {selectedCreative.type === 'video' && selectedCreative.videoUrl ? (
+                <video
+                  className={styles.creativeModalVideo}
+                  src={selectedCreative.videoUrl}
+                  poster={selectedCreative.thumbnailUrl || undefined}
+                  controls
+                  autoPlay
+                  playsInline
+                />
+              ) : selectedCreative.type === 'video' && selectedCreative.previewUrl ? (
+                <iframe
+                  className={styles.creativeModalFrame}
+                  src={selectedCreative.previewUrl}
+                  title={`Preview de ${selectedCreative.name}`}
+                  allow="autoplay; encrypted-media; picture-in-picture"
+                />
+              ) : (
+                <img
+                  src={selectedCreative.imageUrl || selectedCreative.thumbnailUrl || ''}
+                  alt={selectedCreative.name}
+                  className={styles.creativeModalImage}
+                />
+              )}
+            </div>
+
+            {selectedCreative.previewUrl && (
+              <div className={styles.creativeModalFooter}>
+                <a
+                  className={styles.creativeMetaLink}
+                  href={selectedCreative.previewUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  <ExternalLink size={16} />
+                  Abrir en Meta
+                </a>
+              </div>
+            )}
+          </div>
+        </div>
       )}
       </div>
     </PageContainer>

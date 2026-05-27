@@ -282,6 +282,13 @@ async function initTables() {
         adset_name TEXT,
         ad_id TEXT NOT NULL,
         ad_name TEXT,
+        creative_id TEXT,
+        creative_type TEXT,
+        creative_thumbnail_url TEXT,
+        creative_image_url TEXT,
+        creative_video_id TEXT,
+        creative_video_url TEXT,
+        creative_preview_url TEXT,
         spend REAL DEFAULT 0,
         reach INTEGER DEFAULT 0,
         clicks INTEGER DEFAULT 0,
@@ -502,6 +509,27 @@ async function initTables() {
       } catch (err) {
         if (!err.message.includes('duplicate column name') && !err.message.includes('already exists')) {
           throw err
+        }
+      }
+
+      // Agregar columnas de creative a meta_ads para previsualizar anuncios
+      const metaAdsCreativeColumns = [
+        ['creative_id', 'TEXT'],
+        ['creative_type', 'TEXT'],
+        ['creative_thumbnail_url', 'TEXT'],
+        ['creative_image_url', 'TEXT'],
+        ['creative_video_id', 'TEXT'],
+        ['creative_video_url', 'TEXT'],
+        ['creative_preview_url', 'TEXT']
+      ]
+
+      for (const [columnName, columnType] of metaAdsCreativeColumns) {
+        try {
+          await db.run(`ALTER TABLE meta_ads ADD COLUMN ${columnName} ${columnType}`)
+        } catch (err) {
+          if (!err.message.includes('duplicate column') && !err.message.includes('already exists')) {
+            throw err
+          }
         }
       }
 
