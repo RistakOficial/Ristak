@@ -29,6 +29,56 @@ interface FilterOption {
   value: string
 }
 
+// Sorts flat rows that encode a parent→child tree (campaign → adset → ad) via their `level`
+// field and the order in which they arrive (each parent is immediately followed by its children).
+// Children must stay grouped under their parent, so we rebuild the tree from that adjacency,
+// sort each sibling group independently, and re-flatten. A plain global sort would scatter child
+// rows away from their parent, making an expanded row's contents appear under a different row.
+// Rows without nesting (flat single-level lists, non-hierarchical tables) all become roots and
+// therefore sort exactly like a normal flat sort.
+function sortHierarchicalRows<T extends Record<string, any>>(
+  rows: T[],
+  compare: (a: T, b: T) => number
+): T[] {
+  interface TreeNode { row: T; children: TreeNode[] }
+
+  const roots: TreeNode[] = []
+  let currentCampaign: TreeNode | null = null
+  let currentAdSet: TreeNode | null = null
+
+  rows.forEach(row => {
+    const node: TreeNode = { row, children: [] }
+
+    if (row.level === 'adset' && currentCampaign?.row.level === 'campaign') {
+      currentCampaign.children.push(node)
+      currentAdSet = node
+    } else if (row.level === 'ad' && currentAdSet?.row.level === 'adset') {
+      currentAdSet.children.push(node)
+    } else {
+      roots.push(node)
+      currentCampaign = node
+      currentAdSet = null
+    }
+  })
+
+  const sortNodes = (nodes: TreeNode[]) => {
+    nodes.sort((a, b) => compare(a.row, b.row))
+    nodes.forEach(node => sortNodes(node.children))
+  }
+  sortNodes(roots)
+
+  const flattened: T[] = []
+  const flatten = (nodes: TreeNode[]) => {
+    nodes.forEach(node => {
+      flattened.push(node.row)
+      flatten(node.children)
+    })
+  }
+  flatten(roots)
+
+  return flattened
+}
+
 interface TableProps<T> {
   columns?: Column<T>[] // Opcional ahora
   initialColumns?: Column<T>[] // Para definir columnas por defecto
@@ -225,7 +275,7 @@ export function Table<T extends Record<string, any>>({
     }
 
     if (sortBy) {
-      filtered.sort((a, b) => {
+      const compare = (a: T, b: T) => {
         const aValue = a[sortBy]
         const bValue = b[sortBy]
 
@@ -233,7 +283,10 @@ export function Table<T extends Record<string, any>>({
 
         const result = aValue > bValue ? 1 : -1
         return sortOrder === 'asc' ? result : -result
-      })
+      }
+
+      const hasHierarchy = filtered.some(item => item && (item as any).level)
+      filtered = hasHierarchy ? sortHierarchicalRows(filtered, compare) : filtered.sort(compare)
     }
 
     return filtered
