@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
-import { Bot, ChevronRight, Eraser, SendHorizonal, Sparkles } from 'lucide-react'
+import { Bot, Eraser, SendHorizonal, Sparkles } from 'lucide-react'
 import { aiAgentService, type AIAgentMessage, type AIAgentViewContext } from '@/services/aiAgentService'
 import styles from './AIAgentPanel.module.css'
 
@@ -46,11 +46,7 @@ function collectVisibleText() {
     .slice(0, 5000)
 }
 
-interface AIAgentPanelProps {
-  onCollapse?: () => void
-}
-
-export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ onCollapse }) => {
+export const AIAgentPanel: React.FC = () => {
   const location = useLocation()
   const [messages, setMessages] = useState<AIAgentMessage[]>([])
   const [input, setInput] = useState('')
@@ -122,17 +118,6 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ onCollapse }) => {
         </div>
 
         <div className={styles.headerActions}>
-          {onCollapse && (
-            <button
-              type="button"
-              className={styles.iconButton}
-              onClick={onCollapse}
-              aria-label="Ocultar agente AI"
-              title="Ocultar agente AI"
-            >
-              <ChevronRight size={17} />
-            </button>
-          )}
           <button
             type="button"
             className={styles.iconButton}

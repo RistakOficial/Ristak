@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { Outlet, useNavigate } from 'react-router-dom'
-import { Bot, ChevronLeft } from 'lucide-react'
+import { Bot, ChevronLeft, ChevronRight } from 'lucide-react'
 import { Layout } from '@/components/layout/Layout'
 import { Sidebar } from '@/components/layout/Sidebar'
 import { Header } from '@/components/layout/Header'
@@ -139,6 +139,19 @@ export const AppShell: React.FC = () => {
 
   const showAIAgentPanelToggle = aiAgentConfigured && !aiAgentPanelVisible
 
+  const aiAgentToggle = (
+    <button
+      type="button"
+      className={aiAgentPanelVisible ? styles.aiAgentDockToggle : styles.aiAgentToggle}
+      onClick={() => setAIAgentPanelVisibility(!aiAgentPanelVisible)}
+      aria-label={aiAgentPanelVisible ? 'Ocultar agente AI' : 'Mostrar agente AI'}
+      title={aiAgentPanelVisible ? 'Ocultar agente AI' : 'Mostrar agente AI'}
+    >
+      {aiAgentPanelVisible ? <ChevronRight size={20} /> : <ChevronLeft size={20} />}
+      <Bot size={20} />
+    </button>
+  )
+
   return (
     <>
       {syncProgressVisible && <SyncProgressBar onClose={handleProgressBarClose} />}
@@ -147,7 +160,10 @@ export const AppShell: React.FC = () => {
         <Layout
           sidebar={<Sidebar locationName={locationName} locationLogo={locationLogo} />}
           rightSidebar={aiAgentConfigured && aiAgentPanelVisible ? (
-            <AIAgentPanel onCollapse={() => setAIAgentPanelVisibility(false)} />
+            <div className={styles.aiAgentPanelDock}>
+              {aiAgentToggle}
+              <AIAgentPanel />
+            </div>
           ) : undefined}
         >
           <div className="flex flex-col min-h-full">
@@ -160,16 +176,7 @@ export const AppShell: React.FC = () => {
         </Layout>
 
         {showAIAgentPanelToggle && (
-          <button
-            type="button"
-            className={styles.aiAgentToggle}
-            onClick={() => setAIAgentPanelVisibility(true)}
-            aria-label="Mostrar agente AI"
-            title="Mostrar agente AI"
-          >
-            <ChevronLeft size={18} />
-            <Bot size={18} />
-          </button>
+          aiAgentToggle
         )}
       </div>
     </>
