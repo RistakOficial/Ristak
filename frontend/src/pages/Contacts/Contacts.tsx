@@ -86,6 +86,10 @@ const mergeContactDetailRecords = (
     if (!appointment) return
     const key = appointment.id ?? `${appointment.start_time}-${appointment.title ?? ''}`
     appointmentMap.set(key, appointment)
+    if (isShowedAppointmentStatus(appointment.appointment_status || appointment.status)) {
+      merged.hasShowedAppointment = true
+      merged.hasAttendedAppointment = true
+    }
   })
 
   const getStatusPriority = (status?: Contact['status']) => status ? STATUS_PRIORITY[status] ?? 0 : 0
@@ -105,6 +109,8 @@ const mergeContactDetailRecords = (
 
     merged.purchases = Math.max(merged.purchases ?? 0, contact.purchases ?? 0)
     merged.ltv = Math.max(merged.ltv ?? 0, contact.ltv ?? 0)
+    merged.hasShowedAppointment = Boolean(merged.hasShowedAppointment || contact.hasShowedAppointment)
+    merged.hasAttendedAppointment = Boolean(merged.hasAttendedAppointment || contact.hasAttendedAppointment)
 
     if (getStatusPriority(contact.status) > getStatusPriority(merged.status)) {
       merged.status = contact.status ?? merged.status
@@ -131,6 +137,10 @@ const mergeContactDetailRecords = (
       const key = appointment.id ?? `${appointment.start_time}-${appointment.title ?? ''}`
       if (!appointmentMap.has(key)) {
         appointmentMap.set(key, appointment)
+      }
+      if (isShowedAppointmentStatus(appointment.appointment_status || appointment.status)) {
+        merged.hasShowedAppointment = true
+        merged.hasAttendedAppointment = true
       }
     })
   }
@@ -388,6 +398,12 @@ export const Contacts: React.FC = () => {
       purchases: contactData.purchases,
       payments,
       appointments,
+      firstAppointmentDate: contactData.firstAppointmentDate,
+      nextAppointmentDate: contactData.nextAppointmentDate,
+      hasAppointments: contactData.hasAppointments ?? contactAppointments.length > 0,
+      hasShowedAppointment: contactData.hasShowedAppointment,
+      hasAttendedAppointment: contactData.hasAttendedAppointment,
+      status: contactData.status,
       source: contactData.source,
       ad_name: contactData.ad_name,
       ad_id: contactData.ad_id
@@ -525,8 +541,22 @@ export const Contacts: React.FC = () => {
     customer: { label: labels.customer, variant: 'primary' }
   }
 
-  const getStatusBadge = (status: Contact['status']) => {
-    const config = statusConfig[status] ?? { label: status, variant: 'neutral' as BadgeVariant }
+  const hasAttendedAppointment = (contact: Contact) =>
+    Boolean(contact.hasShowedAppointment || contact.hasAttendedAppointment) ||
+    Boolean(allEvents.some(event =>
+      event.contactId === contact.id &&
+      isShowedAppointmentStatus(event.appointmentStatus || (event as any).status)
+    )) ||
+    Boolean(contact.appointments?.some(appointment =>
+      isShowedAppointmentStatus(appointment.appointment_status || appointment.status)
+    ))
+
+  const getStatusBadge = (contact: Contact) => {
+    if (contact.status !== 'customer' && hasAttendedAppointment(contact)) {
+      return <Badge variant="success">Asistió a Cita</Badge>
+    }
+
+    const config = statusConfig[contact.status] ?? { label: contact.status, variant: 'neutral' as BadgeVariant }
     return <Badge variant={config.variant}>{config.label}</Badge>
   }
 
@@ -553,7 +583,7 @@ export const Contacts: React.FC = () => {
     {
       key: 'status',
       header: 'Estado',
-      render: (value) => getStatusBadge(value as Contact['status']),
+      render: (_value, item) => getStatusBadge(item),
       sortable: true
     },
     {

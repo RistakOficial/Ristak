@@ -1603,6 +1603,7 @@ export async function buildContactsList ({ startDate, endDate, type = 'interesad
   let paymentsMap = new Map()
   let appointmentsMap = new Map()
   let firstSessionMap = new Map()
+  let contactsWithAttendances = new Set()
 
   if (contactIds.length > 0) {
     // Cargar payments para todos
@@ -1610,6 +1611,14 @@ export async function buildContactsList ({ startDate, endDate, type = 'interesad
 
     // Cargar appointments para todos
     appointmentsMap = await fetchAppointmentsForContacts(contactIds)
+
+    const attendanceConfig = await db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1')
+    const attributionCalendarIds = await getAttributionCalendarIds()
+    contactsWithAttendances = await getContactsWithShowedAppointmentsHybrid(
+      attendanceConfig?.location_id,
+      attendanceConfig?.api_token,
+      attributionCalendarIds
+    )
 
     // Cargar primera sesión (primera atribución) para todos
     const placeholders = contactIds.map(() => '?').join(',')
@@ -1712,7 +1721,9 @@ export async function buildContactsList ({ startDate, endDate, type = 'interesad
       lifetimeLtv,
       lifetimePurchases,
       isCustomer,
-      hasAppointments: appointments.length > 0
+      hasAppointments: appointments.length > 0,
+      hasShowedAppointment: contactsWithAttendances.has(contact.id),
+      hasAttendedAppointment: contactsWithAttendances.has(contact.id)
     }
   })
 

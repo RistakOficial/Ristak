@@ -1070,9 +1070,15 @@ export const getContactsByType = async (req, res) => {
     let paymentsMap = new Map();
     let appointmentsMap = new Map();
     let firstSessionMap = new Map();
+    let contactsWithAttendances = new Set();
 
     if (contactIds.length > 0) {
       const placeholders = contactIds.map(() => '?').join(',');
+      const attendanceConfig = await db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1');
+      contactsWithAttendances = await getContactsWithShowedAppointmentsHybrid(
+        attendanceConfig?.location_id,
+        attendanceConfig?.api_token
+      );
 
       // IMPORTANTE: NO filtrar pagos por rango de fechas
       // El modal debe mostrar TODOS los pagos del cliente, independientemente del rango seleccionado
@@ -1111,7 +1117,8 @@ export const getContactsByType = async (req, res) => {
           title,
           start_time,
           end_time,
-          status
+          status,
+          appointment_status
         FROM appointments
         WHERE contact_id IN (${placeholders})
         ORDER BY start_time DESC
@@ -1126,7 +1133,7 @@ export const getContactsByType = async (req, res) => {
           title: appointment.title,
           start_time: appointment.start_time,
           end_time: appointment.end_time,
-          status: appointment.status
+          status: appointment.appointment_status || appointment.status
         });
         map.set(appointment.contact_id, list);
         return map;
@@ -1213,6 +1220,8 @@ export const getContactsByType = async (req, res) => {
         campaign_name: contact.campaign_name,
         adset_name: contact.adset_name,
         is_sale: contact.purchases_count > 0,
+        hasShowedAppointment: contactsWithAttendances.has(contact.id),
+        hasAttendedAppointment: contactsWithAttendances.has(contact.id),
         payments: payments,
         appointments: appointments,
         firstSession: firstSession

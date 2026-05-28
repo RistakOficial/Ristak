@@ -217,6 +217,7 @@ export const getContacts = async (req, res) => {
         lastPurchase: c.last_purchase_date,
         purchases: c.purchases_count || 0,
         hasShowedAppointment: Boolean(c.has_showed_appointment),
+        hasAttendedAppointment: Boolean(c.has_showed_appointment),
         source: c.source,
         ad_name: c.attribution_ad_name,
         ad_id: c.attribution_ad_id,
@@ -292,7 +293,21 @@ export const getContactById = async (req, res) => {
         COALESCE(ps.last_purchase_date, c.last_purchase_date) AS last_purchase_date,
         c.appointment_date,
         c.created_at,
-        (SELECT COUNT(*) > 0 FROM appointments WHERE contact_id = c.id) AS has_appointments
+        (SELECT COUNT(*) > 0 FROM appointments WHERE contact_id = c.id) AS has_appointments,
+        (
+          COALESCE(ps.purchases_count, c.purchases_count, 0) > 0
+          OR EXISTS (
+            SELECT 1
+            FROM appointment_attendance_signals aas
+            WHERE aas.contact_id = c.id
+          )
+          OR EXISTS (
+            SELECT 1
+            FROM appointments
+            WHERE contact_id = c.id
+              AND LOWER(COALESCE(appointment_status, status, '')) = 'showed'
+          )
+        ) AS has_showed_appointment
       FROM contacts c
       LEFT JOIN payment_stats ps ON ps.contact_id = c.id
       WHERE c.id = ?`,
@@ -483,6 +498,11 @@ export const getContactById = async (req, res) => {
     const appointmentsOrdered = dedupedAppointments.sort((a, b) =>
       new Date(b.start_time).getTime() - new Date(a.start_time).getTime()
     )
+    const hasShowedAppointment =
+      Boolean(contact.has_showed_appointment) ||
+      appointmentsOrdered.some(appointment =>
+        String(appointment.appointment_status || appointment.status || '').trim().toLowerCase() === 'showed'
+      )
 
     // Determinar status basado en la actividad del contacto
     let status = 'lead'
@@ -551,6 +571,8 @@ export const getContactById = async (req, res) => {
       appointments: appointmentsOrdered,
       firstAppointmentDate,
       nextAppointmentDate,
+      hasShowedAppointment,
+      hasAttendedAppointment: hasShowedAppointment,
       firstSession: firstSession ? {
         started_at: firstSession.started_at,
         page_url: firstSession.page_url,
@@ -679,6 +701,7 @@ export const searchContacts = async (req, res) => {
         lastPurchase: c.last_purchase_date,
         purchases: c.purchases_count || 0,
         hasShowedAppointment: Boolean(c.has_showed_appointment),
+        hasAttendedAppointment: Boolean(c.has_showed_appointment),
         source: c.source,
         ad_name: c.attribution_ad_name,
         ad_id: c.attribution_ad_id,

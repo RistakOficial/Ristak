@@ -155,6 +155,8 @@ export interface ContactListItem {
   lifetimePurchases?: number
   isCustomer?: boolean
   hasAppointments?: boolean
+  hasShowedAppointment?: boolean
+  hasAttendedAppointment?: boolean
 }
 
 class ReportsService {

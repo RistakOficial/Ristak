@@ -35,6 +35,7 @@ export interface Contact {
   firstAppointmentDate?: string | null
   nextAppointmentDate?: string | null
   hasShowedAppointment?: boolean
+  hasAttendedAppointment?: boolean
   payments?: ContactPayment[]
   appointments?: ContactAppointment[]
 }

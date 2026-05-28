@@ -66,6 +66,8 @@ interface ContactDetail {
   lifetimePurchases?: number
   isCustomer?: boolean
   hasAppointments?: boolean
+  hasShowedAppointment?: boolean
+  hasAttendedAppointment?: boolean
   is_sale?: boolean
   firstSession?: ContactFirstSession | null
 }

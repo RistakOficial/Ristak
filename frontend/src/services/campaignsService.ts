@@ -114,6 +114,8 @@ export interface CampaignContact {
   normalizedPhone?: string | null
   duplicateCount?: number
   mergedContactIds?: string[]
+  hasShowedAppointment?: boolean
+  hasAttendedAppointment?: boolean
 }
 
 export interface CreativePreviewResponse {
