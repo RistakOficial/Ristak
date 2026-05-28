@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { Outlet, useNavigate } from 'react-router-dom'
+import { Bot, ChevronLeft } from 'lucide-react'
 import { Layout } from '@/components/layout/Layout'
 import { Sidebar } from '@/components/layout/Sidebar'
 import { Header } from '@/components/layout/Header'
@@ -9,6 +10,25 @@ import { AIAgentPanel } from '@/components/ai'
 import { useAuth } from '@/contexts/AuthContext'
 import { useDomainFeatureSync } from '@/hooks'
 import { aiAgentService, type AIAgentConfigStatus } from '@/services/aiAgentService'
+import styles from './AppShell.module.css'
+
+const AI_AGENT_PANEL_VISIBLE_KEY = 'ristak.aiAgentPanel.visible'
+
+function getStoredAIAgentPanelVisible() {
+  try {
+    return window.localStorage.getItem(AI_AGENT_PANEL_VISIBLE_KEY) !== 'false'
+  } catch {
+    return true
+  }
+}
+
+function saveAIAgentPanelVisible(visible: boolean) {
+  try {
+    window.localStorage.setItem(AI_AGENT_PANEL_VISIBLE_KEY, String(visible))
+  } catch {
+    // localStorage can fail in private or restricted browser contexts.
+  }
+}
 
 export const AppShell: React.FC = () => {
   const navigate = useNavigate()
@@ -17,6 +37,7 @@ export const AppShell: React.FC = () => {
   const [locationName, setLocationName] = useState<string>('Mi Negocio')
   const [locationLogo, setLocationLogo] = useState<string | null>(null)
   const [aiAgentConfigured, setAiAgentConfigured] = useState(false)
+  const [aiAgentPanelVisible, setAiAgentPanelVisible] = useState(getStoredAIAgentPanelVisible)
 
   // Asegurar que las configuraciones sensibles al dominio estén sincronizadas
   useDomainFeatureSync()
@@ -111,6 +132,13 @@ export const AppShell: React.FC = () => {
     setSyncProgressVisible(false)
   }
 
+  const setAIAgentPanelVisibility = (visible: boolean) => {
+    setAiAgentPanelVisible(visible)
+    saveAIAgentPanelVisible(visible)
+  }
+
+  const showAIAgentPanelToggle = aiAgentConfigured && !aiAgentPanelVisible
+
   return (
     <>
       {syncProgressVisible && <SyncProgressBar onClose={handleProgressBarClose} />}
@@ -118,7 +146,9 @@ export const AppShell: React.FC = () => {
       <div className="relative transition-all duration-300 ease-in-out">
         <Layout
           sidebar={<Sidebar locationName={locationName} locationLogo={locationLogo} />}
-          rightSidebar={aiAgentConfigured ? <AIAgentPanel /> : undefined}
+          rightSidebar={aiAgentConfigured && aiAgentPanelVisible ? (
+            <AIAgentPanel onCollapse={() => setAIAgentPanelVisibility(false)} />
+          ) : undefined}
         >
           <div className="flex flex-col min-h-full">
             <TestModeBanner />
@@ -128,6 +158,19 @@ export const AppShell: React.FC = () => {
             </div>
           </div>
         </Layout>
+
+        {showAIAgentPanelToggle && (
+          <button
+            type="button"
+            className={styles.aiAgentToggle}
+            onClick={() => setAIAgentPanelVisibility(true)}
+            aria-label="Mostrar agente AI"
+            title="Mostrar agente AI"
+          >
+            <ChevronLeft size={18} />
+            <Bot size={18} />
+          </button>
+        )}
       </div>
     </>
   )

@@ -1,0 +1,40 @@
+.aiAgentToggle {
+  position: fixed;
+  top: 50%;
+  right: 14px;
+  z-index: 1200;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  width: 48px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 8px;
+  color: var(--color-text-primary);
+  background: color-mix(in srgb, var(--color-background-secondary) 92%, var(--color-background-tertiary) 8%);
+  box-shadow: 0 14px 32px rgba(15, 23, 42, 0.18);
+  transform: translateY(-50%);
+  transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.aiAgentToggle:hover {
+  background: var(--color-background-secondary);
+  border-color: rgba(148, 163, 184, 0.42);
+  box-shadow: 0 16px 36px rgba(15, 23, 42, 0.22);
+}
+
+.aiAgentToggle:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(100, 116, 139, 0.18), 0 16px 36px rgba(15, 23, 42, 0.22);
+}
+
+@media (max-width: 768px) {
+  .aiAgentToggle {
+    top: auto;
+    right: 12px;
+    bottom: 18px;
+    transform: none;
+  }
+}
