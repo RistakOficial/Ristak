@@ -245,7 +245,16 @@ export const Transactions: React.FC = () => {
   }
 
   const handleSaveTransaction = async (formData: FormData) => {
-    if (!modal.selectedContact) {
+    const contactSnapshot = modal.type === 'edit' && modal.transaction
+      ? {
+          id: modal.transaction.contactId,
+          name: modal.transaction.contactName || 'Sin nombre',
+          email: modal.transaction.email || '',
+          phone: modal.transaction.phone || ''
+        }
+      : modal.selectedContact
+
+    if (!contactSnapshot) {
       showToast('error', 'Contacto no seleccionado', 'Necesitas buscar y seleccionar un contacto para asociar este pago')
       return
     }
@@ -253,10 +262,10 @@ export const Transactions: React.FC = () => {
     const transaction: Transaction = {
       id: modal.transaction?.id || '',
       date: formData.get('date') as string,
-      contactId: modal.selectedContact.id,
-      contactName: modal.selectedContact.name,
-      email: modal.selectedContact.email || '',
-      phone: modal.selectedContact.phone || '',
+      contactId: contactSnapshot.id,
+      contactName: contactSnapshot.name,
+      email: contactSnapshot.email || '',
+      phone: contactSnapshot.phone || '',
       amount: parseFloat(formData.get('amount') as string) || 0,
       currency: (formData.get('currency') as string) || modal.transaction?.currency || 'MXN',
       method: formData.get('method') as any,
@@ -270,7 +279,7 @@ export const Transactions: React.FC = () => {
       if (modal.type === 'create') {
         const newTransaction = await transactionsService.createTransaction(transaction)
         setTransactions(prev => [...prev, newTransaction])
-        showToast('success', '¡Pago registrado exitosamente!', `Se registró el pago de ${formatCurrency(transaction.amount)} para ${modal.selectedContact.name}`)
+        showToast('success', '¡Pago registrado exitosamente!', `Se registró el pago de ${formatCurrency(transaction.amount)} para ${contactSnapshot.name}`)
       } else if (modal.type === 'edit') {
         const updatedTransaction = await transactionsService.updateTransaction(transaction.id, transaction)
         setTransactions(prev => prev.map(t => t.id === updatedTransaction.id ? updatedTransaction : t))
@@ -537,6 +546,9 @@ export const Transactions: React.FC = () => {
     return <Loading message="Cargando pagos..." />
   }
 
+  const lockedContactName = modal.transaction?.contactName || modal.selectedContact?.name || 'Sin nombre'
+  const lockedContactDetail = modal.transaction?.email || modal.selectedContact?.email || modal.transaction?.phone || modal.selectedContact?.phone
+
   return (
     <PageContainer>
       <div className={styles.container}>
@@ -642,14 +654,26 @@ export const Transactions: React.FC = () => {
               const formData = new FormData(e.currentTarget)
               handleSaveTransaction(formData)
             }}>
-              <div className={styles.formGroup}>
-                <ContactSearchInput
-                  value={modal.selectedContact || null}
-                  onChange={(contact) => setModal({ ...modal, selectedContact: contact })}
-                  placeholder="Buscar contacto por nombre, email o teléfono"
-                  required
-                />
-              </div>
+              {modal.type === 'edit' ? (
+                <div className={styles.formGroup}>
+                  <label>Contacto</label>
+                  <div className={styles.lockedContact}>
+                    <span className={styles.lockedContactName}>{formatName(lockedContactName)}</span>
+                    {lockedContactDetail && (
+                      <span className={styles.lockedContactDetail}>{lockedContactDetail}</span>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className={styles.formGroup}>
+                  <ContactSearchInput
+                    value={modal.selectedContact || null}
+                    onChange={(contact) => setModal({ ...modal, selectedContact: contact })}
+                    placeholder="Buscar contacto por nombre, email o teléfono"
+                    required
+                  />
+                </div>
+              )}
               <div className={styles.formGroup}>
                 <label>Monto</label>
                 <div className={styles.inputWithIcon}>
