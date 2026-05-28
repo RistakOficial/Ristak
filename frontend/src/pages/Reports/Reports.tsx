@@ -90,6 +90,9 @@ type TableRow = {
   cac: number
   webToInteresadosRate: number
   interesadosToApptsRate: number
+  apptsToAttendanceRate: number
+  attendanceToSalesRate: number
+  attendanceToCustomersRate: number
   apptsToSalesRate: number
 }
 
@@ -743,6 +746,8 @@ const MetricsGrid: React.FC<MetricsGridProps> = ({ metrics, loading, reportType,
   const epc = totals.clicks > 0 ? totals.revenue / totals.clicks : 0
   const cpl = totals.leads > 0 ? totals.spend / totals.leads : 0
   const epl = totals.leads > 0 ? totals.revenue / totals.leads : 0
+  const cpa = totals.appointments > 0 ? totals.spend / totals.appointments : 0
+  const cpaAttendance = totals.attendances > 0 ? totals.spend / totals.attendances : 0
   const cac = totals.new_customers > 0 ? totals.spend / totals.new_customers : 0
   const aov = totals.sales > 0 ? totals.revenue / totals.sales : 0
   const transactionsPerCustomer = totals.new_customers > 0 ? totals.sales / totals.new_customers : 0
@@ -750,6 +755,8 @@ const MetricsGrid: React.FC<MetricsGridProps> = ({ metrics, loading, reportType,
   const interesadoToAppt = totals.leads > 0 ? (totals.appointments / totals.leads) * 100 : 0
   const apptToAttendance = totals.appointments > 0 ? (totals.attendances / totals.appointments) * 100 : 0
   const attendanceToSale = totals.attendances > 0 ? (totals.sales / totals.attendances) * 100 : 0
+  const attendanceToCustomer = totals.attendances > 0 ? (totals.new_customers / totals.attendances) * 100 : 0
+  const salesLabel = reportType === 'cashflow' ? 'Transacciones' : 'Ventas'
 
   // Preparar datos para los gráficos (formato compatible con useChartHover)
   // Ordenar cronológicamente (fecha más antigua a la izquierda, más reciente a la derecha)
@@ -819,11 +826,13 @@ const MetricsGrid: React.FC<MetricsGridProps> = ({ metrics, loading, reportType,
         { label: `Costo por ${labels.lead}`, value: formatCurrency(cpl) },
         { label: `Ingreso por ${labels.lead}`, value: formatCurrency(epl) },
         { label: 'Citas (Primera)', value: formatNumber(totals.appointments) },
+        { label: 'Costo por Cita', value: formatCurrency(cpa) },
         { label: `${labels.leads}→Citas %`, value: `${interesadoToAppt.toFixed(1)}%` },
         { label: 'Asistencias', value: formatNumber(totals.attendances) },
+        { label: 'Costo por Asistencia', value: formatCurrency(cpaAttendance) },
         { label: 'Citas→Asistencias %', value: `${apptToAttendance.toFixed(1)}%` },
-        { label: reportType === 'cashflow' ? 'Transacciones' : 'Ventas', value: formatNumber(totals.sales) },
-        { label: 'Asistencias→Ventas %', value: `${attendanceToSale.toFixed(1)}%` }
+        { label: salesLabel, value: formatNumber(totals.sales) },
+        { label: `Asistencias→${salesLabel} %`, value: `${attendanceToSale.toFixed(1)}%` }
       ],
       chart: (
         <SimpleLineChart
@@ -844,6 +853,7 @@ const MetricsGrid: React.FC<MetricsGridProps> = ({ metrics, loading, reportType,
       items: [
         { label: `${labels.customers} Nuevos`, value: formatNumber(totals.new_customers) },
         { label: `Costo por ${labels.customer}`, value: formatCurrency(cac) },
+        { label: `Asistencias→${labels.customers} %`, value: `${attendanceToCustomer.toFixed(1)}%` },
         { label: 'Total de Transacciones', value: formatNumber(totals.sales) },
         { label: `Transacciones por ${labels.customer}`, value: transactionsPerCustomer.toFixed(1) },
         { label: 'Ticket Promedio', value: formatCurrency(aov) }
@@ -881,7 +891,7 @@ const MetricsGrid: React.FC<MetricsGridProps> = ({ metrics, loading, reportType,
         />
       )
     }
-  ], [chartData, trafficItems, trafficKeys, labels, totals, reportType, profit, roas, roi, cac, aov, transactionsPerCustomer, cpl, epl, interesadoToAppt, apptToSale])
+  ], [chartData, trafficItems, trafficKeys, labels, totals, reportType, profit, roas, roi, cac, aov, transactionsPerCustomer, cpl, epl, cpa, cpaAttendance, interesadoToAppt, apptToAttendance, attendanceToSale, attendanceToCustomer, salesLabel])
 
   // Filtrar la tarjeta de "Tráfico" si showVisitors es false (dominio .onrender.com)
   const metricGroups = showVisitors
@@ -1130,6 +1140,9 @@ export const Reports: React.FC = () => {
       const cac = item.new_customers > 0 ? item.spend / item.new_customers : 0
       const webToInteresadosRate = item.visitors > 0 ? (item.leads / item.visitors) * 100 : 0
       const interesadosToApptsRate = item.leads > 0 ? (item.appointments / item.leads) * 100 : 0
+      const apptsToAttendanceRate = item.appointments > 0 ? ((item.attendances || 0) / item.appointments) * 100 : 0
+      const attendanceToSalesRate = (item.attendances || 0) > 0 ? (item.sales / (item.attendances || 0)) * 100 : 0
+      const attendanceToCustomersRate = (item.attendances || 0) > 0 ? (item.new_customers / (item.attendances || 0)) * 100 : 0
       const apptsToSalesRate = item.appointments > 0 ? (item.sales / item.appointments) * 100 : 0
 
       return {
@@ -1161,6 +1174,9 @@ export const Reports: React.FC = () => {
         cac,
         webToInteresadosRate,
         interesadosToApptsRate,
+        apptsToAttendanceRate,
+        attendanceToSalesRate,
+        attendanceToCustomersRate,
         apptsToSalesRate
       }
     }).sort((a, b) => {
@@ -1589,10 +1605,36 @@ export const Reports: React.FC = () => {
         render: (value: number) => <span>{value.toFixed(1)}%</span>
       },
       {
+        key: 'apptsToAttendanceRate',
+        header: (
+          <div style={{ textAlign: 'center', lineHeight: '1.2' }}>
+            <div>Citas→Asistencias %</div>
+            <div style={{ fontSize: '0.75em', opacity: 0.7 }}>(Primera)</div>
+          </div>
+        ),
+        sortable: true,
+        visible: false,
+        render: (value: number) => <span>{value.toFixed(1)}%</span>
+      },
+      {
+        key: 'attendanceToSalesRate',
+        header: `Asistencias→${salesLabel} %`,
+        sortable: true,
+        visible: false,
+        render: (value: number) => <span>{value.toFixed(1)}%</span>
+      },
+      {
+        key: 'attendanceToCustomersRate',
+        header: `Asistencias→${labels.customers} %`,
+        sortable: true,
+        visible: false,
+        render: (value: number) => <span>{value.toFixed(1)}%</span>
+      },
+      {
         key: 'apptsToSalesRate',
         header: (
           <div style={{ textAlign: 'center', lineHeight: '1.2' }}>
-            <div>Citas→Ventas %</div>
+            <div>{`Citas→${salesLabel} %`}</div>
             <div style={{ fontSize: '0.75em', opacity: 0.7 }}>(Primera)</div>
           </div>
         ),
