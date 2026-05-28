@@ -171,7 +171,21 @@ export const getContacts = async (req, res) => {
         COALESCE(ps.last_purchase_date, c.last_purchase_date) AS last_purchase_date,
         c.appointment_date,
         c.created_at,
-        (SELECT COUNT(*) > 0 FROM appointments WHERE contact_id = c.id) AS has_appointments
+        (SELECT COUNT(*) > 0 FROM appointments WHERE contact_id = c.id) AS has_appointments,
+        (
+          COALESCE(ps.purchases_count, c.purchases_count, 0) > 0
+          OR EXISTS (
+            SELECT 1
+            FROM appointment_attendance_signals aas
+            WHERE aas.contact_id = c.id
+          )
+          OR EXISTS (
+            SELECT 1
+            FROM appointments
+            WHERE contact_id = c.id
+              AND LOWER(COALESCE(appointment_status, status, '')) = 'showed'
+          )
+        ) AS has_showed_appointment
       FROM contacts c
       LEFT JOIN payment_stats ps ON ps.contact_id = c.id
       ${mainWhereClause}
@@ -202,6 +216,7 @@ export const getContacts = async (req, res) => {
         status,
         lastPurchase: c.last_purchase_date,
         purchases: c.purchases_count || 0,
+        hasShowedAppointment: Boolean(c.has_showed_appointment),
         source: c.source,
         ad_name: c.attribution_ad_name,
         ad_id: c.attribution_ad_id,
@@ -618,7 +633,21 @@ export const searchContacts = async (req, res) => {
         c.source,
         c.attribution_ad_name,
         c.attribution_ad_id,
-        (SELECT COUNT(*) > 0 FROM appointments WHERE contact_id = c.id) AS has_appointments
+        (SELECT COUNT(*) > 0 FROM appointments WHERE contact_id = c.id) AS has_appointments,
+        (
+          COALESCE(ps.purchases_count, c.purchases_count, 0) > 0
+          OR EXISTS (
+            SELECT 1
+            FROM appointment_attendance_signals aas
+            WHERE aas.contact_id = c.id
+          )
+          OR EXISTS (
+            SELECT 1
+            FROM appointments
+            WHERE contact_id = c.id
+              AND LOWER(COALESCE(appointment_status, status, '')) = 'showed'
+          )
+        ) AS has_showed_appointment
       FROM contacts c
       LEFT JOIN payment_stats ps ON ps.contact_id = c.id
       WHERE
@@ -649,6 +678,7 @@ export const searchContacts = async (req, res) => {
         status,
         lastPurchase: c.last_purchase_date,
         purchases: c.purchases_count || 0,
+        hasShowedAppointment: Boolean(c.has_showed_appointment),
         source: c.source,
         ad_name: c.attribution_ad_name,
         ad_id: c.attribution_ad_id,

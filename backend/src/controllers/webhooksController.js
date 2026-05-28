@@ -1,6 +1,7 @@
 import { db } from '../config/database.js';
 import { logger } from '../utils/logger.js';
 import { updateSingleContactStats } from '../utils/updateContactsStats.js';
+import { recordAttendanceAttributionSignal } from '../services/appointmentsMerge.js';
 import * as stripeService from '../services/stripeService.js';
 
 
@@ -508,6 +509,23 @@ export const handleAppointmentShowedWebhook = async (req, res) => {
         SET appointment_date = COALESCE(appointment_date, ?)
         WHERE id = ?
       `, [startTime, contactId]);
+    }
+
+    let attendanceContactId = contactId;
+    if (!attendanceContactId && updatedAppointmentId) {
+      const appointmentRow = await db.get(
+        'SELECT contact_id FROM appointments WHERE id = ?',
+        [updatedAppointmentId]
+      );
+      attendanceContactId = appointmentRow?.contact_id;
+    }
+
+    if (attendanceContactId) {
+      await recordAttendanceAttributionSignal({
+        contactId: attendanceContactId,
+        appointmentId: updatedAppointmentId,
+        source: 'webhook_showed'
+      });
     }
 
     logger.info(`✅ Cita marcada como asistida: ${updatedAppointmentId || 'sin ID'}${contactId ? ` para contacto ${contactId}` : ''}`);

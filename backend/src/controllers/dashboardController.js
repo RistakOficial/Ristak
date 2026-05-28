@@ -4,7 +4,7 @@ import { resolveDateRange, resolveDateRangeWithGHLTimezone } from '../utils/date
 import { normalizeTrafficSource } from '../utils/trafficSourceNormalizer.js';
 import { getGroupExpression } from '../services/analyticsService.js';
 import { DateTime } from 'luxon';
-import { getContactsWithAppointmentsHybrid } from '../services/appointmentsMerge.js';
+import { getContactsWithAppointmentsHybrid, getContactsWithShowedAppointmentsHybrid } from '../services/appointmentsMerge.js';
 import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js';
 
 const calculateDelta = (current, previous) => {
@@ -1202,7 +1202,33 @@ export const getFunnelData = async (req, res) => {
     }
 
     // ========================================
-    // 4. CLIENTES NUEVOS (según scope)
+    // 4. ASISTENCIAS (siempre por fecha de creación del contacto)
+    // ========================================
+    const attendanceConditions = ['created_at >= $1', 'created_at <= $2'];
+    if (isAttributed) {
+      attendanceConditions.push(`attribution_ad_id IS NOT NULL AND EXISTS (
+        SELECT 1 FROM meta_ads ma
+        WHERE ma.ad_id = contacts.attribution_ad_id
+          AND DATE(ma.date) = DATE(contacts.created_at)
+      )`);
+    }
+    if (hiddenCondition) attendanceConditions.push(hiddenCondition);
+
+    const contactsWithAttendances = await getContactsWithShowedAppointmentsHybrid(
+      hlConfig?.location_id,
+      hlConfig?.api_token,
+      attributionCalendarIds
+    )
+    const attendanceContactsQuery = `
+      SELECT id
+      FROM contacts
+      WHERE ${attendanceConditions.join(' AND ')}
+    `;
+    const attendanceContactsRaw = await db.all(attendanceContactsQuery, [range.startUtc, range.endUtc]);
+    const attendancesCount = attendanceContactsRaw.filter(c => contactsWithAttendances.has(c.id)).length;
+
+    // ========================================
+    // 5. CLIENTES NUEVOS (según scope)
     // ========================================
     let customersCount = 0
 
@@ -1253,12 +1279,13 @@ export const getFunnelData = async (req, res) => {
     }
 
     // ========================================
-    // 5. RESPUESTA
+    // 6. RESPUESTA
     // ========================================
     const data = [
       { stage: 'Visitantes', value: visitorsCount },
       { stage: labels.leads, value: parseInt(leadsData?.count || 0) },
       { stage: 'Citas', value: appointmentsCount },
+      { stage: 'Asistencias', value: attendancesCount },
       { stage: labels.customers, value: customersCount }
     ]
 

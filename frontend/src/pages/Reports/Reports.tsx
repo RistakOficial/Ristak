@@ -63,7 +63,7 @@ const monthNamesShort = [
 type ViewType = 'day' | 'month' | 'year'
 type ReportType = 'cashflow' | 'attribution' | 'campaigns'
 type DisplayMode = 'table' | 'metrics'
-type ModalType = 'interesados' | 'sales' | 'appointments' | 'customers'
+type ModalType = 'interesados' | 'sales' | 'appointments' | 'attendances' | 'customers'
 
 type TableRow = {
   id: string
@@ -78,6 +78,7 @@ type TableRow = {
   new_customers: number
   leads: number
   appointments: number
+  attendances: number
   clicks: number
   reach: number
   visitors: number
@@ -85,6 +86,7 @@ type TableRow = {
   cpv: number
   cpl: number
   cpa: number
+  cpaAttendance: number
   cac: number
   webToInteresadosRate: number
   interesadosToApptsRate: number
@@ -720,6 +722,7 @@ const MetricsGrid: React.FC<MetricsGridProps> = ({ metrics, loading, reportType,
     clicks: acc.clicks + m.clicks,
     visitors: acc.visitors + m.visitors,
     appointments: acc.appointments + m.appointments,
+    attendances: acc.attendances + (m.attendances || 0),
     new_customers: acc.new_customers + m.new_customers
   }), {
     spend: 0,
@@ -729,6 +732,7 @@ const MetricsGrid: React.FC<MetricsGridProps> = ({ metrics, loading, reportType,
     clicks: 0,
     visitors: 0,
     appointments: 0,
+    attendances: 0,
     new_customers: 0
   })
 
@@ -744,7 +748,8 @@ const MetricsGrid: React.FC<MetricsGridProps> = ({ metrics, loading, reportType,
   const transactionsPerCustomer = totals.new_customers > 0 ? totals.sales / totals.new_customers : 0
   const webToInteresado = totals.visitors > 0 ? (totals.leads / totals.visitors) * 100 : 0
   const interesadoToAppt = totals.leads > 0 ? (totals.appointments / totals.leads) * 100 : 0
-  const apptToSale = totals.appointments > 0 ? (totals.sales / totals.appointments) * 100 : 0
+  const apptToAttendance = totals.appointments > 0 ? (totals.attendances / totals.appointments) * 100 : 0
+  const attendanceToSale = totals.attendances > 0 ? (totals.sales / totals.attendances) * 100 : 0
 
   // Preparar datos para los gráficos (formato compatible con useChartHover)
   // Ordenar cronológicamente (fecha más antigua a la izquierda, más reciente a la derecha)
@@ -764,6 +769,7 @@ const MetricsGrid: React.FC<MetricsGridProps> = ({ metrics, loading, reportType,
       visitors: m.visitors,
       leads: m.leads,
       appointments: m.appointments,
+      attendances: m.attendances || 0,
       sales: m.sales,
       new_customers: m.new_customers,
       revenue: m.revenue,
@@ -814,8 +820,10 @@ const MetricsGrid: React.FC<MetricsGridProps> = ({ metrics, loading, reportType,
         { label: `Ingreso por ${labels.lead}`, value: formatCurrency(epl) },
         { label: 'Citas (Primera)', value: formatNumber(totals.appointments) },
         { label: `${labels.leads}→Citas %`, value: `${interesadoToAppt.toFixed(1)}%` },
+        { label: 'Asistencias', value: formatNumber(totals.attendances) },
+        { label: 'Citas→Asistencias %', value: `${apptToAttendance.toFixed(1)}%` },
         { label: reportType === 'cashflow' ? 'Transacciones' : 'Ventas', value: formatNumber(totals.sales) },
-        { label: 'Citas→Ventas %', value: `${apptToSale.toFixed(1)}%` }
+        { label: 'Asistencias→Ventas %', value: `${attendanceToSale.toFixed(1)}%` }
       ],
       chart: (
         <SimpleLineChart
@@ -823,6 +831,7 @@ const MetricsGrid: React.FC<MetricsGridProps> = ({ metrics, loading, reportType,
           dataKeys={[
             { key: 'leads', label: labels.leads, color: '#10b981' },
             { key: 'appointments', label: 'Citas', color: '#f59e0b' },
+            { key: 'attendances', label: 'Asistencias', color: '#2563eb' },
             { key: 'sales', label: 'Ventas', color: '#ef4444' }
           ]}
           formatValue={(value) => formatNumber(value)}
@@ -1117,6 +1126,7 @@ export const Reports: React.FC = () => {
       const cpv = item.visitors > 0 ? item.spend / item.visitors : 0
       const cpl = item.leads > 0 ? item.spend / item.leads : 0
       const cpa = item.appointments > 0 ? item.spend / item.appointments : 0
+      const cpaAttendance = (item.attendances || 0) > 0 ? item.spend / (item.attendances || 0) : 0
       const cac = item.new_customers > 0 ? item.spend / item.new_customers : 0
       const webToInteresadosRate = item.visitors > 0 ? (item.leads / item.visitors) * 100 : 0
       const interesadosToApptsRate = item.leads > 0 ? (item.appointments / item.leads) * 100 : 0
@@ -1139,6 +1149,7 @@ export const Reports: React.FC = () => {
         new_customers: item.new_customers,
         leads: item.leads,
         appointments: item.appointments,
+        attendances: item.attendances || 0,
         clicks: item.clicks,
         reach: item.reach,
         visitors: item.visitors,
@@ -1146,6 +1157,7 @@ export const Reports: React.FC = () => {
         cpv,
         cpl,
         cpa,
+        cpaAttendance,
         cac,
         webToInteresadosRate,
         interesadosToApptsRate,
@@ -1179,7 +1191,9 @@ export const Reports: React.FC = () => {
             ? (currentReportType === 'campaigns' ? 'Ventas' : 'Transacciones')
             : type === 'appointments'
               ? 'Citas (Primera)'
-              : labels.customers),
+              : type === 'attendances'
+                ? 'Asistencias'
+                : labels.customers),
       subtitle: `${formatPeriodLabel(from, 'day', { includeYear: true })} – ${formatPeriodLabel(to, 'day', { includeYear: true })}`,
       contacts: [],
       loading: true,
@@ -1427,6 +1441,13 @@ export const Reports: React.FC = () => {
         render: (value: number) => <span>{formatCurrency(value)}</span>
       },
       {
+        key: 'cpaAttendance',
+        header: 'Costo por Asistencia',
+        sortable: true,
+        visible: false,
+        render: (value: number) => <span>{formatCurrency(value)}</span>
+      },
+      {
         key: 'appointments',
         header: (
           <div style={{ textAlign: 'center', lineHeight: '1.2' }}>
@@ -1443,6 +1464,26 @@ export const Reports: React.FC = () => {
               type="button"
               className={styles.metricLink}
               onClick={() => handleOpenModal('appointments', resolvePeriodRange(row.date, viewType), 'Citas')}
+            >
+              {formatNumber(value)}
+            </button>
+          ) : (
+            <span>{formatNumber(value)}</span>
+          )
+        }
+      },
+      {
+        key: 'attendances',
+        header: 'Asistencias',
+        sortable: true,
+        visible: true,
+        render: (value: number, row) => {
+          const hasValue = (value || 0) > 0
+          return hasValue ? (
+            <button
+              type="button"
+              className={styles.metricLink}
+              onClick={() => handleOpenModal('attendances', resolvePeriodRange(row.date, viewType), 'Asistencias')}
             >
               {formatNumber(value)}
             </button>
@@ -1797,7 +1838,7 @@ export const Reports: React.FC = () => {
             ad_id: contact.ad_id
           }))}
           loading={modalState.loading}
-          type={modalState.type === 'customers' ? 'sales' : modalState.type === 'sales' ? 'sales' : modalState.type === 'appointments' ? 'appointments' : 'interesados'}
+          type={modalState.type === 'customers' ? 'sales' : modalState.type === 'sales' ? 'sales' : (modalState.type === 'appointments' || modalState.type === 'attendances') ? 'appointments' : 'interesados'}
         />
 
         {/* Modal de Visitantes */}
