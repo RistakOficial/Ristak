@@ -34,6 +34,12 @@
   border-bottom: 1px solid var(--color-border);
   margin-bottom: 24px;
   overflow-x: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.tabs::-webkit-scrollbar {
+  display: none;
 }
 
 .tab {
