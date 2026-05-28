@@ -14,6 +14,8 @@ export interface Campaign {
   roas?: number
   sales?: number
   leads?: number
+  appointments?: number
+  attendances?: number
   adsets?: AdSet[]
 }
 
@@ -30,6 +32,8 @@ export interface AdSet {
   roas?: number
   sales?: number
   leads?: number
+  appointments?: number
+  attendances?: number
   ads?: Ad[]
 }
 
@@ -53,6 +57,8 @@ export interface Ad {
   roas?: number
   sales?: number
   leads?: number
+  appointments?: number
+  attendances?: number
 }
 
 export interface CampaignContactPayment {
@@ -145,7 +151,9 @@ class CampaignsService {
         revenue: campaign.revenue || 0,
         roas: campaign.revenue && campaign.spend > 0 ? campaign.revenue / campaign.spend : 0,
         sales: campaign.sales || 0,
-        leads: campaign.leads || 0
+        leads: campaign.leads || 0,
+        appointments: campaign.appointments || 0,
+        attendances: campaign.attendances || 0
       }))
     } catch (error) {
       // Return empty array on error instead of crashing
@@ -197,7 +205,7 @@ class CampaignsService {
   }
 
   async getContactsByType(params: {
-    type: 'interesados' | 'sales'
+    type: 'interesados' | 'sales' | 'appointments' | 'attendances'
     startDate: string
     endDate: string
     campaign_id?: string

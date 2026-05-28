@@ -41,6 +41,8 @@ interface AdData {
   visitors?: number
   leads?: number
   sales?: number
+  appointments?: number
+  attendances?: number
   revenue?: number
   roas?: number
   cpc?: number
@@ -68,6 +70,8 @@ interface AdSetData {
   visitors?: number
   leads?: number
   sales?: number
+  appointments?: number
+  attendances?: number
   revenue?: number
   roas?: number
   cpc?: number
@@ -87,6 +91,8 @@ interface CampaignData {
   visitors?: number
   leads?: number
   sales?: number
+  appointments?: number
+  attendances?: number
   revenue?: number
   roas?: number
   cpc?: number
@@ -160,7 +166,7 @@ export const Campaigns: React.FC = () => {
 
   // Estados para modal de contactos
   const [isModalOpen, setIsModalOpen] = useState(false)
-  const [modalType, setModalType] = useState<'interesados' | 'sales' | 'appointments'>('interesados')
+  const [modalType, setModalType] = useState<'interesados' | 'sales' | 'appointments' | 'attendances'>('interesados')
   const [modalContacts, setModalContacts] = useState<CampaignContact[]>([])
   const [modalLoading, setModalLoading] = useState(false)
   const [modalTitle, setModalTitle] = useState('')
@@ -367,15 +373,28 @@ export const Campaigns: React.FC = () => {
           })
         }
 
+        const adsets = (campaign.adsets || []).map((adset: any) => ({
+          ...adset,
+          appointments: adset.appointments || 0,
+          attendances: adset.attendances || 0,
+          ads: (adset.ads || []).map((ad: any) => ({
+            ...ad,
+            appointments: ad.appointments || 0,
+            attendances: ad.attendances || 0
+          }))
+        }))
+
         return {
           ...campaign,
           platform: 'Meta', // All campaigns from Meta
-          adSets: campaign.adsets, // Map adsets to adSets for compatibility
-          adsets: campaign.adsets, // Keep both for compatibility
+          adSets: adsets, // Map adsets to adSets for compatibility
+          adsets, // Keep both for compatibility
           visitors: includeTrackingVisitors ? campaignVisitors : 0,
           revenue: campaign.revenue || 0,
           sales: campaign.sales || 0,
           leads: campaign.leads || 0,
+          appointments: campaign.appointments || 0,
+          attendances: campaign.attendances || 0,
           roas: campaign.roas || (campaign.revenue && campaign.spend ? campaign.revenue / campaign.spend : 0)
         }
       })
@@ -657,11 +676,19 @@ export const Campaigns: React.FC = () => {
     }
   }, [checkSyncStatus])
 
-  const handleOpenContactsModal = useCallback(async (item: any, type: 'interesados' | 'sales' | 'appointments') => {
+  const handleOpenContactsModal = useCallback(async (item: any, type: 'interesados' | 'sales' | 'appointments' | 'attendances') => {
+    const typeLabel = type === 'interesados'
+      ? labels.leads
+      : type === 'sales'
+        ? 'Ventas'
+        : type === 'attendances'
+          ? 'Asistencias'
+          : 'Citas'
+
     setModalLoading(true)
     setIsModalOpen(true)
     setModalType(type)
-    setModalTitle(`${type === 'interesados' ? labels.leads : type === 'sales' ? 'Ventas' : 'Citas'} - ${item.name}`)
+    setModalTitle(`${typeLabel} - ${item.name}`)
     setModalContacts([])
     setSelectedModalItem(item)
 
@@ -861,13 +888,14 @@ export const Campaigns: React.FC = () => {
     })
   }, [])
 
-  // Lista plana de ads ganadores: ordenados por revenue → sales → appointments → leads
+  // Lista plana de ads ganadores: ordenados por revenue → sales → appointments → attendances → leads
   const sortWinners = React.useCallback((items: any[]) => {
     return [...items]
       .filter(item =>
         (item.revenue || 0) > 0 ||
         (item.sales || 0) > 0 ||
         (item.appointments || 0) > 0 ||
+        (item.attendances || 0) > 0 ||
         (item.leads || 0) > 0
       )
       .sort((a, b) => {
@@ -877,6 +905,8 @@ export const Campaigns: React.FC = () => {
         if (bsa !== asa) return bsa - asa
         const ap = a.appointments || 0, bp = b.appointments || 0
         if (bp !== ap) return bp - ap
+        const aa = a.attendances || 0, ba = b.attendances || 0
+        if (ba !== aa) return ba - aa
         const al = a.leads || 0, bl = b.leads || 0
         return bl - al
       })
@@ -892,6 +922,7 @@ export const Campaigns: React.FC = () => {
       revenue: campaign.revenue || 0,
       sales: campaign.sales || 0,
       appointments: (campaign as any).appointments || 0,
+      attendances: (campaign as any).attendances || 0,
       leads: campaign.leads || 0,
       spend: campaign.spend || 0
     }))
@@ -913,6 +944,7 @@ export const Campaigns: React.FC = () => {
           revenue: adSet.revenue || 0,
           sales: adSet.sales || 0,
           appointments: adSet.appointments || 0,
+          attendances: adSet.attendances || 0,
           leads: adSet.leads || 0,
           spend: adSet.spend || 0
         })
@@ -940,6 +972,7 @@ export const Campaigns: React.FC = () => {
             revenue: ad.revenue || 0,
             sales: ad.sales || 0,
             appointments: ad.appointments || 0,
+            attendances: ad.attendances || 0,
             leads: ad.leads || 0,
             spend: ad.spend || 0
           })
@@ -1131,6 +1164,29 @@ export const Campaigns: React.FC = () => {
               if (hasAppointments) {
                 e.stopPropagation()
                 handleOpenContactsModal(item, 'appointments')
+              }
+            }}
+          >
+            {(value || 0).toLocaleString()}
+          </span>
+        )
+      },
+      sortable: true,
+      width: '9%'
+    },
+    {
+      key: 'attendances',
+      header: 'Asistencias',
+      visible: true,
+      render: (value: number, item: any) => {
+        const hasAttendances = (value || 0) > 0
+        return (
+          <span
+            className={hasAttendances ? styles.clickableNumber : ''}
+            onClick={(e) => {
+              if (hasAttendances) {
+                e.stopPropagation()
+                handleOpenContactsModal(item, 'attendances')
               }
             }}
           >
@@ -1505,6 +1561,32 @@ export const Campaigns: React.FC = () => {
               if (hasAppointments) {
                 e.stopPropagation()
                 handleOpenContactsModal(item, 'appointments')
+              }
+            }}
+          >
+            {(value || 0).toLocaleString()}
+          </span>
+        )
+      },
+      sortable: true,
+      width: '7%'
+    },
+    {
+      key: 'attendances',
+      header: 'Asistencias',
+      visible: true,
+      render: (value, item) => {
+        if (item.showPlaceholder) return <span className={styles.placeholderText}>—</span>
+
+        const hasAttendances = (value || 0) > 0
+
+        return (
+          <span
+            className={hasAttendances ? styles.clickableNumber : ''}
+            onClick={(e) => {
+              if (hasAttendances) {
+                e.stopPropagation()
+                handleOpenContactsModal(item, 'attendances')
               }
             }}
           >
@@ -1953,7 +2035,13 @@ export const Campaigns: React.FC = () => {
         title={modalTitle}
         subtitle={modalContacts.length === 0
           ? 'Sin datos para este periodo'
-          : `${modalContacts.length} ${modalType === 'interesados' ? labels.leads.toLowerCase() : labels.customers.toLowerCase()}`}
+          : `${modalContacts.length} ${modalType === 'interesados'
+            ? labels.leads.toLowerCase()
+            : modalType === 'sales'
+              ? labels.customers.toLowerCase()
+              : modalType === 'attendances'
+                ? 'asistencias'
+                : 'citas'}`}
         data={modalContacts}
         loading={modalLoading}
         type={modalType}

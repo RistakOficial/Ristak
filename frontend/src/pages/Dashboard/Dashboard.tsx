@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { KpiCard, Card, DateRangePicker, AreaChart, PageContainer, TrafficSourcesChart, ConversionFunnelChart, ViewSelector, Loading } from '@/components/common'
+import { KpiCard, Card, DateRangePicker, AreaChart, PageContainer, TrafficSourcesChart, ConversionFunnelChart, ViewSelector, Loading, ContactDetailsModal, VisitorDetailsModal } from '@/components/common'
 import funnelStyles from '@/components/common/ConversionFunnelChart/ConversionFunnelChart.module.css'
 import {
   DollarSign,
@@ -17,7 +17,8 @@ import { useDateRange } from '@/contexts/DateRangeContext'
 import { useAuth } from '@/contexts/AuthContext'
 import { useLabels } from '@/contexts/LabelsContext'
 import { useAppConfig, useIsRenderDomain, useMetaTimezone } from '@/hooks'
-import { dashboardService, type DashboardMetrics, type ChartData } from '@/services/dashboardService'
+import { dashboardService, type DashboardMetrics, type ChartData, type DashboardVisitorDetail } from '@/services/dashboardService'
+import { reportsService, type ContactListItem } from '@/services/reportsService'
 import { formatCurrency, formatRoas, formatChartDate, formatDateToISO, parseLocalDateString, formatChartCurrency, formatChartNumber } from '@/utils/format'
 
 const parseAnalyticsFlag = (value: unknown) => {
@@ -31,6 +32,9 @@ const parseAnalyticsFlag = (value: unknown) => {
   }
   return Boolean(value)
 }
+
+type FunnelStageKind = 'visitors' | 'leads' | 'appointments' | 'attendances' | 'customers'
+type ContactModalType = 'interesados' | 'sales' | 'appointments' | 'attendances'
 
 export const Dashboard: React.FC = () => {
   const { dateRange, setDateRange } = useDateRange()
@@ -63,6 +67,17 @@ export const Dashboard: React.FC = () => {
   const [selectedChartView, setSelectedChartView] = useState<'revenue-spend' | 'visitors-leads' | 'leads-appointments' | 'appointments-sales'>('revenue-spend')
   const [extendedChartDataLoaded, setExtendedChartDataLoaded] = useState(false)
   const [extendedChartDataLoading, setExtendedChartDataLoading] = useState(false)
+  const [contactModalOpen, setContactModalOpen] = useState(false)
+  const [contactModalTitle, setContactModalTitle] = useState('')
+  const [contactModalSubtitle, setContactModalSubtitle] = useState('')
+  const [contactModalType, setContactModalType] = useState<ContactModalType>('interesados')
+  const [contactModalLoading, setContactModalLoading] = useState(false)
+  const [contactModalContacts, setContactModalContacts] = useState<ContactListItem[]>([])
+  const [visitorsModalOpen, setVisitorsModalOpen] = useState(false)
+  const [visitorsModalTitle, setVisitorsModalTitle] = useState('Visitantes')
+  const [visitorsModalSubtitle, setVisitorsModalSubtitle] = useState('')
+  const [visitorsModalLoading, setVisitorsModalLoading] = useState(false)
+  const [visitorsModalData, setVisitorsModalData] = useState<DashboardVisitorDetail[]>([])
 
   const funnelChartData = React.useMemo(() => {
     if (analyticsEnabled) return funnelData
@@ -221,6 +236,92 @@ export const Dashboard: React.FC = () => {
     const active = chartViewOptions.find(option => option.value === selectedChartView)
     return active?.label ?? 'Ingresos vs Gastos'
   }, [chartViewOptions, selectedChartView])
+
+  const selectedRangeLabel = React.useMemo(() => {
+    const from = formatDateToISO(dateRange.start)
+    const to = formatDateToISO(dateRange.end)
+    return from === to ? from : `${from} - ${to}`
+  }, [dateRange.start, dateRange.end])
+
+  const getFunnelStageKind = React.useCallback((stage: string): FunnelStageKind | null => {
+    const normalized = stage.trim().toLowerCase()
+    const leadsLabel = labels.leads.trim().toLowerCase()
+    const customersLabel = labels.customers.trim().toLowerCase()
+
+    if (normalized === 'visitantes') return 'visitors'
+    if ([leadsLabel, 'leads', 'interesados', 'prospectos'].includes(normalized)) return 'leads'
+    if (normalized === 'citas') return 'appointments'
+    if (normalized === 'asistencias') return 'attendances'
+    if ([customersLabel, 'clientes', 'customers'].includes(normalized)) return 'customers'
+    return null
+  }, [labels.customers, labels.leads])
+
+  const handleFunnelStageClick = React.useCallback(async (stage: { stage: string; value: number }) => {
+    const kind = getFunnelStageKind(stage.stage)
+    if (!kind) return
+
+    if (kind === 'visitors') {
+      if (!analyticsEnabled) return
+
+      setContactModalOpen(false)
+      setVisitorsModalOpen(true)
+      setVisitorsModalTitle('Visitantes')
+      setVisitorsModalSubtitle(selectedRangeLabel)
+      setVisitorsModalData([])
+      setVisitorsModalLoading(true)
+
+      try {
+        const visitors = await dashboardService.getVisitorsList({
+          start: dateRange.start,
+          end: dateRange.end,
+          scope: funnelScope
+        })
+        setVisitorsModalData(visitors)
+      } catch {
+        setVisitorsModalData([])
+      } finally {
+        setVisitorsModalLoading(false)
+      }
+      return
+    }
+
+    const contactConfig = {
+      leads: { listType: 'interesados', modalType: 'interesados', title: labels.leads },
+      appointments: { listType: 'appointments', modalType: 'appointments', title: 'Citas' },
+      attendances: { listType: 'attendances', modalType: 'attendances', title: 'Asistencias' },
+      customers: { listType: 'customers', modalType: 'sales', title: labels.customers }
+    }[kind] as {
+      listType: 'interesados' | 'customers' | 'appointments' | 'attendances'
+      modalType: ContactModalType
+      title: string
+    }
+
+    setVisitorsModalOpen(false)
+    setContactModalOpen(true)
+    setContactModalTitle(contactConfig.title)
+    setContactModalSubtitle(selectedRangeLabel)
+    setContactModalType(contactConfig.modalType)
+    setContactModalContacts([])
+    setContactModalLoading(true)
+
+    try {
+      const result = await reportsService.getContactsList({
+        from: formatDateToISO(dateRange.start),
+        to: formatEndDateToISO(dateRange.end),
+        type: contactConfig.listType,
+        scope: funnelScope
+      })
+
+      setContactModalContacts(result.contacts.map(contact => ({
+        ...contact,
+        created_at: contact.created_at || (contact as any).createdAt
+      })))
+    } catch {
+      setContactModalContacts([])
+    } finally {
+      setContactModalLoading(false)
+    }
+  }, [analyticsEnabled, dateRange.end, dateRange.start, funnelScope, getFunnelStageKind, labels.customers, labels.leads, selectedRangeLabel])
 
   const financialScopeOptions = React.useMemo(
     () => [
@@ -397,7 +498,8 @@ export const Dashboard: React.FC = () => {
   }
 
   return (
-    <PageContainer>
+    <>
+      <PageContainer>
       <div className="flex flex-col" style={{ gap: '18px' }}>
         <div className="flex flex-col items-start gap-1">
           <h1 className="m-0 text-[24px] font-bold text-[var(--color-text-primary)]">Dashboard</h1>
@@ -536,6 +638,7 @@ export const Dashboard: React.FC = () => {
             showVisitors={analyticsEnabled}
             scope={funnelScope}
             onScopeChange={setFunnelScope}
+            onStageClick={handleFunnelStageClick}
           />
           {analyticsEnabled && (
             <TrafficSourcesChart
@@ -545,6 +648,26 @@ export const Dashboard: React.FC = () => {
           )}
         </div>
       </div>
-    </PageContainer>
+      </PageContainer>
+
+      <ContactDetailsModal
+        isOpen={contactModalOpen}
+        onClose={() => setContactModalOpen(false)}
+        title={contactModalTitle}
+        subtitle={contactModalSubtitle}
+        data={contactModalContacts}
+        loading={contactModalLoading}
+        type={contactModalType}
+      />
+
+      <VisitorDetailsModal
+        isOpen={visitorsModalOpen}
+        onClose={() => setVisitorsModalOpen(false)}
+        title={visitorsModalTitle}
+        subtitle={visitorsModalSubtitle}
+        data={visitorsModalData}
+        loading={visitorsModalLoading}
+      />
+    </>
   )
 }

@@ -3,6 +3,7 @@ import { createSession, getRecentSessions, linkVisitorToContact, getSessionsByDa
 import { getHighLevelConfig, getAppConfig, setAppConfig, db } from '../config/database.js'
 import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js'
 import { resolveDateRangeWithGHLTimezone } from '../utils/dateUtils.js'
+import { getContactsWithShowedAppointmentsHybrid } from '../services/appointmentsMerge.js'
 import fetch from 'node-fetch'
 
 /**
@@ -1568,6 +1569,10 @@ export async function getVisitorsList(req, res) {
     // Verificar citas usando lógica híbrida (DB + API) para contactos sin citas en DB
     const config = await db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1')
     const contactsWithAppointments = new Set()
+    const contactsWithAttendances = await getContactsWithShowedAppointmentsHybrid(
+      config?.location_id,
+      config?.api_token
+    )
 
     // Agregar contactos que ya tienen citas en DB
     visitors.forEach(v => {
@@ -1667,38 +1672,45 @@ export async function getVisitorsList(req, res) {
     }
 
     // Formatear datos
-    const formattedVisitors = visitors.map(v => ({
-      visitorId: v.visitor_id,
-      sessionId: v.session_id,
-      contactId: v.contact_id,
-      createdAt: v.created_at,
-      firstVisit: v.created_at, // Alias para compatibilidad con el frontend
-      pageUrl: v.page_url,
-      referrerUrl: v.referrer_url,
-      utmSource: v.utm_source,
-      utmMedium: v.utm_medium,
-      utmCampaign: v.utm_campaign,
-      utmTerm: v.utm_term,
-      utmContent: v.utm_content,
-      gclid: v.gclid,
-      fbclid: v.fbclid,
-      deviceType: v.device_type,
-      browser: v.browser,
-      os: v.os,
-      language: v.language,
-      adId: v.ad_id,
-      adName: v.ad_name,
-      // Datos del contacto (si está identificado)
-      contact: v.contact_id ? {
-        id: v.contact_id,
-        name: capitalizeName(v.contact_name),
-        email: v.contact_email,
-        phone: v.contact_phone,
-        ltv: parseFloat(v.contact_ltv) || 0,
-        purchases: parseInt(v.contact_purchases) || 0,
-        appointments: contactsWithAppointments.has(v.contact_id) ? [{ dummy: true }] : []
-      } : null
-    }))
+    const formattedVisitors = visitors.map(v => {
+      const hasAttendedAppointment = v.contact_id ? contactsWithAttendances.has(v.contact_id) : false
+
+      return {
+        visitorId: v.visitor_id,
+        sessionId: v.session_id,
+        contactId: v.contact_id,
+        createdAt: v.created_at,
+        firstVisit: v.created_at, // Alias para compatibilidad con el frontend
+        pageUrl: v.page_url,
+        referrerUrl: v.referrer_url,
+        utmSource: v.utm_source,
+        utmMedium: v.utm_medium,
+        utmCampaign: v.utm_campaign,
+        utmTerm: v.utm_term,
+        utmContent: v.utm_content,
+        gclid: v.gclid,
+        fbclid: v.fbclid,
+        deviceType: v.device_type,
+        browser: v.browser,
+        os: v.os,
+        language: v.language,
+        adId: v.ad_id,
+        adName: v.ad_name,
+        // Datos del contacto (si está identificado)
+        contact: v.contact_id ? {
+          id: v.contact_id,
+          name: capitalizeName(v.contact_name),
+          email: v.contact_email,
+          phone: v.contact_phone,
+          ltv: parseFloat(v.contact_ltv) || 0,
+          purchases: parseInt(v.contact_purchases) || 0,
+          hasAttendedAppointment,
+          appointments: contactsWithAppointments.has(v.contact_id)
+            ? [{ dummy: true, status: hasAttendedAppointment ? 'showed' : undefined }]
+            : []
+        } : null
+      }
+    })
 
     res.json({ success: true, data: formattedVisitors })
   } catch (error) {
