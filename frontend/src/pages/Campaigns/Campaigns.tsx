@@ -1078,6 +1078,14 @@ export const Campaigns: React.FC = () => {
       width: '11%'
     },
     {
+      key: 'spend',
+      header: 'Inversión',
+      visible: true,
+      render: (value: number) => formatCurrency(value || 0),
+      sortable: true,
+      width: '11%'
+    },
+    {
       key: 'sales',
       header: (
         <div style={{ textAlign: 'center', lineHeight: '1.2' }}>
@@ -1155,14 +1163,6 @@ export const Campaigns: React.FC = () => {
       },
       sortable: true,
       width: '9%'
-    },
-    {
-      key: 'spend',
-      header: 'Inversión',
-      visible: true,
-      render: (value: number) => formatCurrency(value || 0),
-      sortable: true,
-      width: '11%'
     },
     {
       key: 'roas',
