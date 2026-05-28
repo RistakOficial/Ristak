@@ -11,7 +11,10 @@ import {
   fetchMetaCreativeMediaForAd
 } from '../services/metaAdsService.js';
 import { resolveDateRange, resolveDateRangeWithGHLTimezone } from '../utils/dateUtils.js';
-import { getContactsWithAppointmentsHybrid } from '../services/appointmentsMerge.js';
+import {
+  getContactsWithAppointmentsHybrid,
+  getContactsWithShowedAppointmentsHybrid
+} from '../services/appointmentsMerge.js';
 import { fetchAndSaveMetaConfig } from '../services/highlevelSyncService.js';
 import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js';
 import { API_URLS } from '../config/constants.js';
@@ -490,7 +493,7 @@ export const getCampaigns = async (req, res) => {
 
     logger.info(`Obteniendo campañas Meta - rango: ${adsStart} -> ${adsEnd}`);
 
-    // Primero obtener interesados, ventas y citas por ad_id
+    // Primero obtener interesados, ventas, citas y asistencias por ad_id
     // IMPORTANTE: La columna "citas" cuenta contactos con AL MENOS 1 cita (no el total de citas)
     // Se basa en la FECHA DE CREACIÓN DEL CONTACTO para medir atribución de marketing correctamente:
     // - Si un contacto se creó el 1-enero y agendó cita el 15-febrero, se atribuye al 1-enero
@@ -502,8 +505,13 @@ export const getCampaigns = async (req, res) => {
     const contactsWithAppointments = config && config.api_token
       ? await getContactsWithAppointmentsHybrid(config.location_id, config.api_token)
       : new Set();
+    const contactsWithAttendances = await getContactsWithShowedAppointmentsHybrid(
+      config?.location_id,
+      config?.api_token
+    );
 
     logger.info(`📊 ${contactsWithAppointments.size} contactos con citas (híbrido DB + API - Campaigns)`);
+    logger.info(`📊 ${contactsWithAttendances.size} contactos con asistencia (híbrido DB + API - Campaigns)`);
 
     // PASO 2: Obtener métricas básicas de contactos CON validación de match en meta_ads
     // IMPORTANTE: Solo contar contactos cuyo attribution_ad_id tenga registro en meta_ads en la misma fecha
@@ -541,6 +549,7 @@ export const getCampaigns = async (req, res) => {
           interesados: new Set(),
           ventas: new Set(),
           citas: new Set(),
+          asistencias: new Set(),
           revenue: 0
         };
       }
@@ -555,6 +564,10 @@ export const getCampaigns = async (req, res) => {
         metricsMap[c.ad_id].citas.add(c.contact_id);
       }
 
+      if (contactsWithAttendances.has(c.contact_id)) {
+        metricsMap[c.ad_id].asistencias.add(c.contact_id);
+      }
+
       metricsMap[c.ad_id].revenue += parseFloat(c.total_paid || 0);
     });
 
@@ -564,6 +577,7 @@ export const getCampaigns = async (req, res) => {
       interesados: metricsMap[ad_id].interesados.size,
       ventas: metricsMap[ad_id].ventas.size,
       citas: metricsMap[ad_id].citas.size,
+      asistencias: metricsMap[ad_id].asistencias.size,
       revenue: metricsMap[ad_id].revenue
     }));
 
@@ -603,13 +617,14 @@ export const getCampaigns = async (req, res) => {
     const rows = await db.all(aggregationQuery, aggregationParams);
     await hydrateMissingCreativeMedia(rows);
 
-    // Crear un mapa de ad_id -> {interesados, ventas, citas, revenue}
+    // Crear un mapa de ad_id -> {interesados, ventas, citas, asistencias, revenue}
     const contactsMap = {};
     contactsData.forEach(row => {
       contactsMap[row.ad_id] = {
         interesados: parseInt(row.interesados) || 0,
         ventas: parseInt(row.ventas) || 0,
         citas: parseInt(row.citas) || 0,
+        asistencias: parseInt(row.asistencias) || 0,
         revenue: parseFloat(row.revenue) || 0
       };
     });
@@ -634,6 +649,7 @@ export const getCampaigns = async (req, res) => {
           sales: 0,
           leads: 0,
           appointments: 0,
+          attendances: 0,
           visitors: 0,
           adsets: {}
         };
@@ -657,6 +673,7 @@ export const getCampaigns = async (req, res) => {
           sales: 0,
           leads: 0,
           appointments: 0,
+          attendances: 0,
           visitors: 0,
           ads: []
         };
@@ -665,7 +682,7 @@ export const getCampaigns = async (req, res) => {
       const adset = campaign.adsets[row.adset_id];
 
       // Obtener datos de contactos para este ad
-      const contactData = contactsMap[row.ad_id] || { interesados: 0, ventas: 0, citas: 0, revenue: 0 };
+      const contactData = contactsMap[row.ad_id] || { interesados: 0, ventas: 0, citas: 0, asistencias: 0, revenue: 0 };
 
       // Agregar ad
       adset.ads.push({
@@ -688,7 +705,8 @@ export const getCampaigns = async (req, res) => {
         roas: parseFloat(row.spend) > 0 ? contactData.revenue / parseFloat(row.spend) : 0,
         sales: contactData.ventas,
         leads: contactData.interesados,
-        appointments: contactData.citas
+        appointments: contactData.citas,
+        attendances: contactData.asistencias
       });
 
       // Sumar a adset
@@ -699,6 +717,7 @@ export const getCampaigns = async (req, res) => {
       adset.sales += contactData.ventas;
       adset.leads += contactData.interesados;
       adset.appointments = (adset.appointments || 0) + contactData.citas;
+      adset.attendances = (adset.attendances || 0) + contactData.asistencias;
 
       // Sumar a campaña
       campaign.spend += parseFloat(row.spend) || 0;
@@ -708,6 +727,7 @@ export const getCampaigns = async (req, res) => {
       campaign.sales += contactData.ventas;
       campaign.leads += contactData.interesados;
       campaign.appointments = (campaign.appointments || 0) + contactData.citas;
+      campaign.attendances = (campaign.attendances || 0) + contactData.asistencias;
     });
 
     // Convertir objetos a arrays y calcular promedios
@@ -1031,17 +1051,18 @@ export const getContactsByType = async (req, res) => {
     const contactsParams = [...adIdsList, range.startUtc, range.endUtc];
     let contacts = await db.all(contactsQuery, contactsParams);
 
-    // Si type === 'appointments', filtrar usando híbrido DB + API
-    if (type === 'appointments') {
+    // Si type === 'appointments' o 'attendances', filtrar usando híbrido DB + API
+    if (type === 'appointments' || type === 'attendances') {
       const config = await db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1');
-      const contactsWithAppointments = config && config.api_token
-        ? await getContactsWithAppointmentsHybrid(config.location_id, config.api_token)
-        : new Set();
+      const contactIdsWithMetric = type === 'attendances'
+        ? await getContactsWithShowedAppointmentsHybrid(config?.location_id, config?.api_token)
+        : config && config.api_token
+          ? await getContactsWithAppointmentsHybrid(config.location_id, config.api_token)
+          : new Set();
 
-      logger.info(`📊 Filtrando ${contacts.length} contactos por citas (${contactsWithAppointments.size} con citas - híbrido DB + API)`);
+      logger.info(`📊 Filtrando ${contacts.length} contactos por ${type} (${contactIdsWithMetric.size} encontrados - híbrido DB + API)`);
 
-      // Filtrar solo contactos con citas
-      contacts = contacts.filter(c => contactsWithAppointments.has(c.id));
+      contacts = contacts.filter(c => contactIdsWithMetric.has(c.id));
     }
 
     const contactIds = contacts.map(contact => contact.id).filter(Boolean);

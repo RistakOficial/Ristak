@@ -16,6 +16,7 @@ interface VisitorDetail {
     ltv?: number
     purchases?: number
     appointments?: any[]
+    hasAttendedAppointment?: boolean
   }
   firstVisit?: string
   createdAt?: string
@@ -108,18 +109,30 @@ export function VisitorDetailsModal({
 
     const hasPurchases = (visitor.contact.purchases || 0) > 0
     const hasAppointments = visitor.contact.appointments && visitor.contact.appointments.length > 0
+    const hasAttendedAppointment =
+      Boolean(visitor.contact.hasAttendedAppointment) ||
+      (visitor.contact.appointments || []).some((appointment: any) => {
+        const rawStatus = appointment?.appointmentStatus ?? appointment?.appointment_status ?? appointment?.status
+        const status = String(rawStatus || '').trim().toLowerCase()
+        return ['completed', 'showed', 'attended'].includes(status)
+      })
 
     // Prioridad 1: Cliente (tiene compras)
     if (hasPurchases) {
       return { label: labels.customer, variant: 'success' }
     }
 
-    // Prioridad 2: Agendó cita (tiene citas pero no es cliente)
+    // Prioridad 2: Asistió a cita (sin ser cliente)
+    if (hasAttendedAppointment) {
+      return { label: 'Asistió a Cita', variant: 'success' }
+    }
+
+    // Prioridad 3: Agendó cita (tiene citas pero no es cliente)
     if (hasAppointments) {
       return { label: 'Agendó cita', variant: 'purple' }
     }
 
-    // Prioridad 3: Lead (solo contacto, sin citas ni compras)
+    // Prioridad 4: Lead (solo contacto, sin citas ni compras)
     return { label: labels.lead, variant: 'default' }
   }
 

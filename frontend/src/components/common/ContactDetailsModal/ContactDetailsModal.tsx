@@ -77,7 +77,7 @@ interface ContactDetailsModalProps {
   subtitle?: string
   data: ContactDetail[]
   loading: boolean
-  type?: 'interesados' | 'sales' | 'appointments' | null
+  type?: 'interesados' | 'sales' | 'appointments' | 'attendances' | null
 }
 
 export function ContactDetailsModal({
@@ -205,6 +205,7 @@ export function ContactDetailsModal({
       const normalizeTag = (tag: string) => tag.toLowerCase()
       const CUSTOMER_KEYWORDS = ['customer', 'cliente', 'sale', 'ventas', 'sold', 'converted', 'paid', 'pagó', 'compró', 'closed-won', 'won', 'compra', 'pago']
       const APPOINTMENT_KEYWORDS = ['appointment', 'cita', 'agend', 'booked', 'scheduled', 'confirmado', 'reserva', 'reservo', 'calendar']
+      const ATTENDANCE_KEYWORDS = ['asist', 'showed', 'attended', 'completed']
       const statusMatches = (keywords: string[]) => keywords.some(keyword => normalizedStatus.includes(keyword))
       const tagsMatch = (keywords: string[]) =>
         normalizedTags.some(tag => keywords.some(keyword => normalizeTag(tag).includes(keyword)))
@@ -227,8 +228,22 @@ export function ContactDetailsModal({
         statusMatches(APPOINTMENT_KEYWORDS) ||
         tagsMatch(APPOINTMENT_KEYWORDS)
 
+      const hasAttendedAppointment =
+        Boolean((contact as any).hasShowedAppointment || (contact as any).hasAttendedAppointment) ||
+        (contact.appointments ?? []).some(appointment => {
+          const rawAppointmentStatus = (appointment as any).appointmentStatus ?? (appointment as any).appointment_status ?? appointment.status
+          const status = String(rawAppointmentStatus || '').trim().toLowerCase()
+          return ['completed', 'showed', 'attended'].includes(status)
+        }) ||
+        statusMatches(ATTENDANCE_KEYWORDS) ||
+        tagsMatch(ATTENDANCE_KEYWORDS)
+
       if (hasPurchases) {
         return { text: labels.customer, variant: 'success' }
+      }
+
+      if (hasAttendedAppointment) {
+        return { text: 'Asistió a Cita', variant: 'success' }
       }
 
       if (hasAppointments) {

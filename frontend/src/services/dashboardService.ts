@@ -27,6 +27,41 @@ export interface ChartData {
   ganancia?: number;
 }
 
+export type DashboardFunnelScope = 'all' | 'attribution' | 'campaigns';
+
+export interface DashboardVisitorDetail {
+  visitorId: string;
+  sessionId?: string;
+  contactId?: string | null;
+  createdAt?: string;
+  firstVisit?: string;
+  pageUrl?: string | null;
+  referrerUrl?: string | null;
+  utmSource?: string | null;
+  utmMedium?: string | null;
+  utmCampaign?: string | null;
+  utmTerm?: string | null;
+  utmContent?: string | null;
+  gclid?: string | null;
+  fbclid?: string | null;
+  deviceType?: string | null;
+  browser?: string | null;
+  os?: string | null;
+  language?: string | null;
+  adId?: string | null;
+  adName?: string | null;
+  contact?: {
+    id?: string;
+    name?: string | null;
+    email?: string | null;
+    phone?: string | null;
+    ltv?: number;
+    purchases?: number;
+    appointments?: any[];
+    hasAttendedAppointment?: boolean;
+  } | null;
+}
+
 class DashboardService {
   async getDashboardMetrics(params: {
     start: Date;
@@ -157,6 +192,31 @@ class DashboardService {
       return await response.json();
     } catch (error) {
       // TODO: Implement proper logging service
+      return [];
+    }
+  }
+
+  async getVisitorsList(params: {
+    start: Date;
+    end: Date;
+    scope?: DashboardFunnelScope;
+  }): Promise<DashboardVisitorDetail[]> {
+    try {
+      const queryParams = new URLSearchParams({
+        startDate: formatDateToISO(params.start),
+        endDate: formatEndDateToISO(params.end),
+        scope: params.scope || 'all'
+      });
+
+      const response = await fetch(`${API_URL}/api/tracking/visitors?${queryParams}`);
+
+      if (!response.ok) {
+        return [];
+      }
+
+      const result = await response.json();
+      return Array.isArray(result?.data) ? result.data : [];
+    } catch (error) {
       return [];
     }
   }

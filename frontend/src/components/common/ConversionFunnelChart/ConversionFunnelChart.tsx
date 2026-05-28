@@ -18,6 +18,7 @@ interface ConversionFunnelChartProps {
   showVisitors?: boolean
   scope?: ScopeType
   onScopeChange?: (scope: ScopeType) => void
+  onStageClick?: (stage: FunnelStage) => void
 }
 
 export const ConversionFunnelChart: React.FC<ConversionFunnelChartProps> = ({
@@ -25,7 +26,8 @@ export const ConversionFunnelChart: React.FC<ConversionFunnelChartProps> = ({
   loading = false,
   showVisitors = true,
   scope = 'all',
-  onScopeChange
+  onScopeChange,
+  onStageClick
 }) => {
   const { labels } = useLabels()
 
@@ -134,7 +136,12 @@ export const ConversionFunnelChart: React.FC<ConversionFunnelChartProps> = ({
 
             return (
               <div key={item.stage} className={styles.stageContainer}>
-                <div className={styles.stageContent}>
+                <button
+                  type="button"
+                  className={`${styles.stageContent} ${onStageClick ? styles.stageButton : ''}`}
+                  onClick={() => onStageClick?.(item)}
+                  disabled={!onStageClick}
+                >
                   <div className={styles.iconContainer}>
                     <Icon className={styles.icon} />
                   </div>
@@ -161,7 +168,7 @@ export const ConversionFunnelChart: React.FC<ConversionFunnelChartProps> = ({
                       />
                     </div>
                   </div>
-                </div>
+                </button>
 
                 {index < safeData.length - 1 && (
                   <div className={styles.connector} />

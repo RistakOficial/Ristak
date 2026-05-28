@@ -132,10 +132,31 @@
   align-items: center;
   gap: 1rem;
   transition: transform 0.2s;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
 }
 
 .stageContent:hover {
   transform: translateX(0.25rem);
+}
+
+.stageContent:disabled {
+  cursor: default;
+}
+
+.stageButton {
+  cursor: pointer;
+}
+
+.stageButton:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 4px;
+  border-radius: 0.5rem;
 }
 
 .iconContainer {

@@ -151,9 +151,33 @@ export function Table<T extends Record<string, any>>({
       }
     })
 
-    initialColumns.forEach(col => {
+    const insertColumnAtDefaultPosition = (col: Column<T>, defaultIndex: number) => {
+      let insertAt = orderedColumns.length
+
+      for (let i = defaultIndex - 1; i >= 0; i -= 1) {
+        const previousIndex = orderedColumns.findIndex(existing => existing.key === initialColumns[i]?.key)
+        if (previousIndex >= 0) {
+          insertAt = previousIndex + 1
+          break
+        }
+      }
+
+      if (insertAt === orderedColumns.length) {
+        for (let i = defaultIndex + 1; i < initialColumns.length; i += 1) {
+          const nextIndex = orderedColumns.findIndex(existing => existing.key === initialColumns[i]?.key)
+          if (nextIndex >= 0) {
+            insertAt = nextIndex
+            break
+          }
+        }
+      }
+
+      orderedColumns.splice(insertAt, 0, col)
+    }
+
+    initialColumns.forEach((col, defaultIndex) => {
       if (!savedTableConfig.find((c: any) => c.id === col.key)) {
-        orderedColumns.push(col)
+        insertColumnAtDefaultPosition(col, defaultIndex)
       }
     })
 
