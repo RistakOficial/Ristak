@@ -256,6 +256,21 @@ async function initTables() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_appointments_contact ON appointments(contact_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_appointments_start_time ON appointments(start_time)')
 
+    // Señales irreversibles para atribución de asistencia.
+    // No alteran el estado operativo del calendario.
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS appointment_attendance_signals (
+        contact_id TEXT PRIMARY KEY,
+        appointment_id TEXT,
+        source TEXT NOT NULL DEFAULT 'webhook_showed',
+        first_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE
+      )
+    `)
+
+    await db.run('CREATE INDEX IF NOT EXISTS idx_attendance_signals_appointment ON appointment_attendance_signals(appointment_id)')
+
     // Tabla de configuración de Meta
     await db.run(`
       CREATE TABLE IF NOT EXISTS meta_config (

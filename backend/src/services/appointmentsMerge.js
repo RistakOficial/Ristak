@@ -1,6 +1,53 @@
 import { db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 
+function normalizeAppointmentStatusValue(status) {
+  return String(status || '').trim().toLowerCase()
+}
+
+function isShowedAppointmentStatus(status) {
+  return normalizeAppointmentStatusValue(status) === 'showed'
+}
+
+function getAppointmentStatus(appointment) {
+  return appointment?.appointmentStatus || appointment?.appointment_status || appointment?.status || ''
+}
+
+export async function recordAttendanceAttributionSignal({ contactId, appointmentId = null, source = 'webhook_showed' } = {}) {
+  if (!contactId) {
+    return false
+  }
+
+  await db.run(`
+    INSERT INTO appointment_attendance_signals (
+      contact_id, appointment_id, source, first_seen_at, updated_at
+    )
+    VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    ON CONFLICT (contact_id) DO UPDATE SET
+      appointment_id = COALESCE(appointment_attendance_signals.appointment_id, excluded.appointment_id),
+      source = CASE
+        WHEN appointment_attendance_signals.source = 'webhook_showed'
+          THEN appointment_attendance_signals.source
+        ELSE excluded.source
+      END,
+      updated_at = CURRENT_TIMESTAMP
+  `, [contactId, appointmentId, source])
+
+  return true
+}
+
+async function loadAttendanceSignalContactIds() {
+  try {
+    const rows = await db.all('SELECT contact_id FROM appointment_attendance_signals')
+    return new Set(rows.map(row => row.contact_id).filter(Boolean))
+  } catch (error) {
+    if (!/appointment_attendance_signals|no such table|does not exist/i.test(error.message || '')) {
+      logger.warn(`No se pudieron cargar señales sticky de asistencia: ${error.message}`)
+    }
+    return new Set()
+  }
+}
+
 /**
  * Carga appointments desde API de HighLevel
  * @param {string} locationId
@@ -100,7 +147,8 @@ export async function loadAppointmentsFromAPI(locationId, apiToken, calendarIds 
                 calendarId: event.calendarId || calendar.id,
                 locationId: event.locationId || locationId,
                 title: event.title || '',
-                status: event.status || 'scheduled',
+                status: event.status || event.appointmentStatus || 'scheduled',
+                appointmentStatus: event.appointmentStatus || event.appoinmentStatus || event.appointment_status || event.state,
                 startTime: event.startTime,
                 endTime: event.endTime,
                 dateAdded: event.dateAdded || event.createdAt || event.createdOn || event.startTime,
@@ -165,6 +213,7 @@ export async function loadAppointmentsFromDB(filters = {}) {
         location_id as "locationId",
         title,
         status,
+        appointment_status as "appointmentStatus",
         start_time as "startTime",
         end_time as "endTime",
         date_added as "dateAdded",
@@ -222,6 +271,7 @@ export function mergeAppointments(dbAppointments, apiAppointments, strategy = 'o
           ...existing,
           dateAdded: existing.dateAdded < apt.dateAdded ? existing.dateAdded : apt.dateAdded,
           status: apt.status, // Status de API (más fresco)
+          appointmentStatus: apt.appointmentStatus || existing.appointmentStatus || apt.status || existing.status,
           startTime: apt.startTime, // Por si fue reprogramada
           endTime: apt.endTime,
           dateUpdated: apt.dateUpdated,
@@ -239,6 +289,7 @@ export function mergeAppointments(dbAppointments, apiAppointments, strategy = 'o
           locationId: existing.locationId || apt.locationId,
           title: apt.title || existing.title, // Título de API (puede haber cambiado)
           status: apt.status || existing.status, // Status de API
+          appointmentStatus: apt.appointmentStatus || existing.appointmentStatus || apt.status || existing.status,
           startTime: apt.startTime || existing.startTime, // Fecha de API (puede haber sido reprogramada)
           endTime: apt.endTime || existing.endTime,
           dateAdded: existing.dateAdded < apt.dateAdded ? existing.dateAdded : apt.dateAdded, // Más antiguo
@@ -283,6 +334,59 @@ export async function getContactsWithAppointmentsHybrid(locationId, apiToken, ca
 
   } catch (error) {
     logger.error(`Error en getContactsWithAppointmentsHybrid: ${error.message}`)
+    return new Set()
+  }
+}
+
+function isShowedAppointment(appointment) {
+  return isShowedAppointmentStatus(getAppointmentStatus(appointment))
+}
+
+/**
+ * Obtiene contact_ids únicos con al menos una cita marcada como showed
+ * @param {string} locationId
+ * @param {string} apiToken
+ * @param {Array<string>} calendarIds - Calendarios de atribución
+ * @returns {Promise<Set<string>>} Set de contact_ids con asistencia
+ */
+export async function getContactsWithShowedAppointmentsHybrid(locationId, apiToken, calendarIds = null) {
+  try {
+    const [dbAppointments, apiAppointments] = await Promise.all([
+      loadAppointmentsFromDB({ calendarIds }),
+      locationId && apiToken ? loadAppointmentsFromAPI(locationId, apiToken, calendarIds) : []
+    ])
+
+    const merged = mergeAppointments(dbAppointments, apiAppointments, 'oldest_date')
+    const contactIds = new Set()
+
+    // Prioridad 1: señal sticky nacida del webhook de asistencia.
+    const stickyContactIds = await loadAttendanceSignalContactIds()
+    stickyContactIds.forEach(contactId => contactIds.add(contactId))
+
+    // Prioridad 2: si ya es cliente, cuenta como asistencia para atribución.
+    const customerRows = await db.all(`
+      SELECT id
+      FROM contacts
+      WHERE COALESCE(purchases_count, 0) > 0
+         OR COALESCE(total_paid, 0) > 0
+    `)
+    customerRows.forEach(row => {
+      if (row?.id) {
+        contactIds.add(row.id)
+      }
+    })
+
+    // Prioridad 3: showed normal desde DB/API de HighLevel como backup.
+    merged
+      .filter(isShowedAppointment)
+      .map(apt => apt.contactId)
+      .filter(Boolean)
+      .forEach(contactId => contactIds.add(contactId))
+
+    logger.info(`✅ Total contactos con asistencia showed (híbrido): ${contactIds.size}`)
+    return contactIds
+  } catch (error) {
+    logger.error(`Error en getContactsWithShowedAppointmentsHybrid: ${error.message}`)
     return new Set()
   }
 }

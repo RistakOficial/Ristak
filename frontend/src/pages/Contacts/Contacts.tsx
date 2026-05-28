@@ -35,6 +35,9 @@ const APPOINTMENT_CANCELED_STATUSES = new Set([
   'missed'
 ])
 
+const isShowedAppointmentStatus = (status?: string | null) =>
+  String(status || '').trim().toLowerCase() === 'showed'
+
 const STATUS_PRIORITY: Record<Contact['status'], number> = {
   lead: 0,
   appointment: 1,
@@ -217,9 +220,9 @@ export const Contacts: React.FC = () => {
     setIsClient(true)
   }, [])
 
-  // Cargar eventos de calendarios cuando se activa el filtro "Citados"
+  // Cargar eventos de calendarios cuando se activa el filtro "Citados" o "Asistencias"
   useEffect(() => {
-    if (filter !== 'appointments' || !locationId || !accessToken) {
+    if (!['appointments', 'attendances'].includes(filter) || !locationId || !accessToken) {
       setAllEvents([])
       setLoadingEvents(false)
       return
@@ -461,6 +464,23 @@ export const Contacts: React.FC = () => {
       if (filter === 'all') return true
       if (filter === 'leads') return contact.status === 'lead'
       if (filter === 'customers') return contact.status === 'customer'
+      if (filter === 'attendances') {
+        if (contact.status === 'customer' || (contact.purchases || 0) > 0) {
+          return true
+        }
+
+        const hasShowedInCalendar = allEvents.some(event =>
+          event.contactId === contact.id &&
+          isShowedAppointmentStatus(event.appointmentStatus || (event as any).status)
+        )
+        const hasShowedAppointment =
+          contact.hasShowedAppointment ||
+          contact.appointments?.some(appointment =>
+            isShowedAppointmentStatus(appointment.appointment_status || appointment.status)
+          )
+
+        return hasShowedInCalendar || Boolean(hasShowedAppointment)
+      }
 
       // Citados: Tienen cita pero NO son clientes
       if (filter === 'appointments') {
@@ -475,11 +495,12 @@ export const Contacts: React.FC = () => {
 
         // Si hay eventos de calendario, confiar en esa data
         if (allEvents.length > 0) {
-          return hasAppointmentInCalendar
+          return hasAppointmentInCalendar || contact.status === 'appointment'
         }
 
         // Fallback: usar datos locales si no se cargaron eventos
         const hasAppointments =
+          contact.status === 'appointment' ||
           (contact.appointments && contact.appointments.length > 0) ||
           contact.firstAppointmentDate !== null && contact.firstAppointmentDate !== undefined
 
@@ -494,6 +515,7 @@ export const Contacts: React.FC = () => {
     { label: 'Todos', value: 'all' },
     { label: labels.leads, value: 'leads' },
     { label: 'Citados', value: 'appointments' },
+    { label: 'Asistencias', value: 'attendances' },
     { label: labels.customers, value: 'customers' }
   ]
 

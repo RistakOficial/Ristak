@@ -1,6 +1,6 @@
 import React from 'react'
 import { Card } from '../Card'
-import { Users, UserCheck, Calendar, DollarSign, Layers, Target, MousePointerClick } from 'lucide-react'
+import { Users, UserCheck, Calendar, DollarSign, Layers, Target, MousePointerClick, CheckCircle2 } from 'lucide-react'
 import { useLabels } from '@/contexts/LabelsContext'
 import styles from './ConversionFunnelChart.module.css'
 
@@ -39,18 +39,23 @@ export const ConversionFunnelChart: React.FC<ConversionFunnelChartProps> = ({
     { stage: 'Visitantes', value: 0, icon: Users },
     { stage: labels.leads, value: 0, icon: UserCheck },
     { stage: 'Citas', value: 0, icon: Calendar },
+    { stage: 'Asistencias', value: 0, icon: CheckCircle2 },
     { stage: labels.customers, value: 0, icon: DollarSign },
   ]
   const stageIconMap: Record<string, React.ComponentType<any>> = {
     visitantes: Users,
     leads: UserCheck,
+    interesados: UserCheck,
     citas: Calendar,
+    asistencias: CheckCircle2,
     clientes: DollarSign
   }
 
   const getStageIcon = (stage: string, icon?: React.ComponentType<any>) => {
     if (icon) return icon
     const normalized = stage.trim().toLowerCase()
+    if (normalized === labels.leads.trim().toLowerCase()) return UserCheck
+    if (normalized === labels.customers.trim().toLowerCase()) return DollarSign
     return stageIconMap[normalized] ?? Users
   }
 
@@ -73,6 +78,14 @@ export const ConversionFunnelChart: React.FC<ConversionFunnelChartProps> = ({
   const totalConversion = safeData.length > 0 && safeData[0].value > 0
     ? ((safeData[safeData.length - 1].value / safeData[0].value) * 100).toFixed(1)
     : '0'
+  const getStageValue = (stageNames: string[]) => {
+    const normalizedNames = stageNames.map(name => name.trim().toLowerCase())
+    return safeData.find(item => normalizedNames.includes(item.stage.trim().toLowerCase()))?.value || 0
+  }
+  const leadsValue = getStageValue([labels.leads, 'leads', 'interesados'])
+  const appointmentsValue = getStageValue(['citas'])
+  const attendancesValue = getStageValue(['asistencias'])
+  const customersValue = getStageValue([labels.customers, 'clientes', 'customers'])
 
   return (
     <Card variant="glass" className={styles.container}>
@@ -101,7 +114,7 @@ export const ConversionFunnelChart: React.FC<ConversionFunnelChartProps> = ({
       <div className={styles.funnelContainer}>
         {loading ? (
           <div className={styles.loadingList}>
-            {[1, 2, 3, 4].map((i) => (
+            {[1, 2, 3, 4, 5].map((i) => (
               <div key={i} className={styles.loadingItem}>
                 <div className={styles.loadingIcon} />
                 <div className={styles.loadingContent}>
@@ -171,22 +184,30 @@ export const ConversionFunnelChart: React.FC<ConversionFunnelChartProps> = ({
             <p className={styles.insightLabel}>{labels.leads} → Citas</p>
             <p className={styles.insightValue}>
               <span className={styles.insightHighlight}>
-                {safeData[1]?.value > 0 ? ((safeData[2]?.value / safeData[1].value) * 100).toFixed(1) : '0'}%
+                {leadsValue > 0 ? ((appointmentsValue / leadsValue) * 100).toFixed(1) : '0'}%
               </span>
             </p>
           </div>
           <div className={styles.insightItem}>
-            <p className={styles.insightLabel}>Citas → {labels.customers}</p>
+            <p className={styles.insightLabel}>Citas → Asistencias</p>
             <p className={styles.insightValue}>
               <span className={styles.insightHighlight}>
-                {safeData[2]?.value > 0 ? ((safeData[3]?.value / safeData[2].value) * 100).toFixed(1) : '0'}%
+                {appointmentsValue > 0 ? ((attendancesValue / appointmentsValue) * 100).toFixed(1) : '0'}%
+              </span>
+            </p>
+          </div>
+          <div className={styles.insightItem}>
+            <p className={styles.insightLabel}>Asistencias → {labels.customers}</p>
+            <p className={styles.insightValue}>
+              <span className={styles.insightHighlight}>
+                {attendancesValue > 0 ? ((customersValue / attendancesValue) * 100).toFixed(1) : '0'}%
               </span>
             </p>
           </div>
           <div className={styles.insightItem}>
             <p className={styles.insightLabel}>Oportunidades perdidas</p>
             <p className={styles.insightValue}>
-              {safeData[1]?.value > 0 ? (safeData[1].value - (safeData[2]?.value || 0)).toLocaleString() : '0'}
+              {leadsValue > 0 ? (leadsValue - appointmentsValue).toLocaleString() : '0'}
               <span className={styles.insightSubtext}> {labels.leads} sin cita</span>
             </p>
           </div>

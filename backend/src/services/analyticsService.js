@@ -2,7 +2,13 @@ import { db } from '../config/database.js'
 import { DateTime } from 'luxon'
 import { resolveDateRange, resolveDateRangeWithGHLTimezone } from '../utils/dateUtils.js'
 import { logger } from '../utils/logger.js'
-import { getContactsWithAppointmentsHybrid, loadAppointmentsFromDB, loadAppointmentsFromAPI, mergeAppointments } from './appointmentsMerge.js'
+import {
+  getContactsWithAppointmentsHybrid,
+  getContactsWithShowedAppointmentsHybrid,
+  loadAppointmentsFromDB,
+  loadAppointmentsFromAPI,
+  mergeAppointments
+} from './appointmentsMerge.js'
 import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js'
 
 const isPostgres = Boolean(process.env.DATABASE_URL)
@@ -800,6 +806,7 @@ export async function buildReportMetrics ({ startDate, endDate, groupBy = 'day',
         leads: 0,
         customers: 0,
         appointments: 0,
+        attendances: 0,
         spend: 0,
         clicks: 0,
         reach: 0,
@@ -809,7 +816,8 @@ export async function buildReportMetrics ({ startDate, endDate, groupBy = 'day',
         new_customers: 0,
         leadsSet: new Set(),
         customersSet: new Set(),
-        appointmentsSet: new Set()
+        appointmentsSet: new Set(),
+        attendancesSet: new Set()
       })
     }
     return periodMap.get(period)
@@ -917,6 +925,23 @@ export async function buildReportMetrics ({ startDate, endDate, groupBy = 'day',
     })
   }
 
+  // PASO 4.5: Asistencias siempre se atribuye por fecha de creación del contacto.
+  const attendanceConfig = await db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1')
+  const attendanceCalendarIds = await getAttributionCalendarIds()
+  const contactsWithAttendances = await getContactsWithShowedAppointmentsHybrid(
+    attendanceConfig?.location_id,
+    attendanceConfig?.api_token,
+    attendanceCalendarIds
+  )
+
+  contactsRaw.forEach(contact => {
+    if (contactsWithAttendances.has(contact.contact_id)) {
+      const bucket = ensureBucket(contact.period)
+      const baseKey = buildContactKey(contact) ?? `contact-${contactKeyFallback++}`
+      bucket.attendancesSet.add(baseKey)
+    }
+  })
+
   // PASO 5: Contar clientes nuevos según el scope
   // Vista "Última atribución": Cliente nuevo = contacto con purchases_count > 0, agrupado por fecha de creación del contacto
   // Vista "Todos": Cliente nuevo = fecha del PRIMER PAGO (no fecha de creación)
@@ -1004,10 +1029,12 @@ export async function buildReportMetrics ({ startDate, endDate, groupBy = 'day',
     // new_customers siempre viene de newCustomersMap (ya procesado según el scope arriba)
     bucket.new_customers = newCustomersMap.has(bucket.period) ? newCustomersMap.get(bucket.period).size : 0
     bucket.appointments = bucket.appointmentsSet.size  // ✅ Siempre convertir appointments
+    bucket.attendances = bucket.attendancesSet.size
     // Limpiar sets temporales
     delete bucket.leadsSet
     delete bucket.customersSet
     delete bucket.appointmentsSet
+    delete bucket.attendancesSet
   })
 
 
@@ -1191,6 +1218,7 @@ export async function buildReportMetrics ({ startDate, endDate, groupBy = 'day',
       leads: item.leads,
       customers: item.customers,
       appointments: item.appointments,
+      attendances: item.attendances,
       sales: item.sales,
       clicks: item.clicks,
       reach: item.reach,
@@ -1261,7 +1289,7 @@ async function fetchAppointmentsForContacts(contactIds, range = {}) {
   }
 
   const appointmentsQuery = `
-    SELECT id, contact_id, title, status, start_time
+    SELECT id, contact_id, title, status, appointment_status, start_time
     FROM appointments
     WHERE contact_id IN (${placeholders})${calendarCondition}
     ORDER BY start_time DESC
@@ -1274,7 +1302,7 @@ async function fetchAppointmentsForContacts(contactIds, range = {}) {
     list.push({
       id: row.id,
       title: row.title,
-      status: row.status,
+      status: row.appointment_status || row.status,
       start_time: row.start_time
     })
     map.set(row.contact_id, list)
@@ -1351,6 +1379,33 @@ export async function buildContactsList ({ startDate, endDate, type = 'interesad
       const paymentContacts = await db.all(paymentsQuery, paymentParams)
       contactIds = paymentContacts.map(row => row.contact_id)
     }
+  } else if (type === 'attendances') {
+    const attendanceParams = []
+    const attendanceConditions = buildRangeConditions('c.created_at', range, attendanceParams)
+    if (scopeAttributed) {
+      attendanceConditions.push(attributionMatchCondition('c'))
+    }
+    if (hiddenConditionC) {
+      attendanceConditions.push(hiddenConditionC)
+    }
+
+    const attendanceWhere = attendanceConditions.length ? `WHERE ${attendanceConditions.join(' AND ')}` : ''
+    const attendanceCandidates = await db.all(`
+      SELECT c.id as contact_id
+      FROM contacts c
+      ${attendanceWhere}
+    `, attendanceParams)
+    const config = await db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1')
+    const attributionCalendarIds = await getAttributionCalendarIds()
+    const contactsWithAttendances = await getContactsWithShowedAppointmentsHybrid(
+      config?.location_id,
+      config?.api_token,
+      attributionCalendarIds
+    )
+
+    contactIds = attendanceCandidates
+      .map(row => row.contact_id)
+      .filter(contactId => contactsWithAttendances.has(contactId))
   } else if (type === 'appointments') {
     if (useContactAttribution) {
       const appointmentParams = []
