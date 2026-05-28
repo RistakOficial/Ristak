@@ -20,7 +20,7 @@ export const Layout: React.FC<LayoutProps> = ({ sidebar, rightSidebar, children 
       </main>
 
       {rightSidebar && (
-        <aside className="w-[clamp(320px,26vw,390px)] flex-shrink-0 border-l border-[rgba(148,163,184,0.12)] max-md:fixed max-md:inset-y-0 max-md:right-0 max-md:z-[1300] max-md:w-[min(100vw,380px)]">
+        <aside className="w-[clamp(390px,32vw,520px)] flex-shrink-0 border-l border-[rgba(148,163,184,0.12)] max-md:fixed max-md:inset-y-0 max-md:right-0 max-md:z-[1300] max-md:w-[min(100vw,440px)]">
           {rightSidebar}
         </aside>
       )}
