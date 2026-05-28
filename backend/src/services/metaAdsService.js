@@ -35,7 +35,6 @@ const META_AD_CREATIVE_FIELDS = [
   'thumbnail_id',
   'image_url',
   'video_id',
-  'preview_url',
   'object_story_id',
   'effective_object_story_id',
   'object_story_spec',
