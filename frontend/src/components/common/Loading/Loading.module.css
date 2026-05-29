@@ -219,35 +219,6 @@
   background-size: 100% 25%, 16.66% 100%;
 }
 
-.skeletonChartLine,
-.skeletonChartLineShort,
-.skeletonChartLineTiny {
-  position: absolute;
-  left: 8%;
-  right: 8%;
-  height: 10px;
-  border-radius: 999px;
-  transform-origin: left center;
-}
-
-.skeletonChartLine {
-  top: 54%;
-  width: 84%;
-  transform: rotate(-5deg);
-}
-
-.skeletonChartLineShort {
-  top: 38%;
-  width: 58%;
-  transform: rotate(7deg);
-}
-
-.skeletonChartLineTiny {
-  top: 70%;
-  width: 42%;
-  transform: rotate(-3deg);
-}
-
 .skeletonContentGrid {
   display: grid;
   grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);

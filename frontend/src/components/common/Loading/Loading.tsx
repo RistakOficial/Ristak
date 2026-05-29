@@ -61,11 +61,7 @@ export const Loading: React.FC<LoadingProps> = ({
                 <div className={`${styles.skeletonBlock} ${styles.skeletonSegment}`} />
               </div>
             </div>
-            <div className={styles.skeletonChart}>
-              <div className={`${styles.skeletonBlock} ${styles.skeletonChartLine}`} />
-              <div className={`${styles.skeletonBlock} ${styles.skeletonChartLineShort}`} />
-              <div className={`${styles.skeletonBlock} ${styles.skeletonChartLineTiny}`} />
-            </div>
+            <div className={styles.skeletonChart} />
           </div>
 
           <div className={styles.skeletonContentGrid}>
