@@ -39,6 +39,9 @@
   position: relative;
   margin-bottom: 1.5rem;
   border-radius: var(--design-table-radius, 1rem);
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .loadingContainer,
@@ -74,13 +77,40 @@
   margin: 0.25rem 0 0 0;
 }
 
-.chartCell {
-  transition: opacity 0.2s;
-  cursor: pointer;
+.donutFrame {
+  position: relative;
+  width: min(13rem, 100%);
+  aspect-ratio: 1;
 }
 
-.chartCell:hover {
-  opacity: 0.8;
+.donutChart {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.donutTrack,
+.donutSegment {
+  fill: none;
+  stroke-width: 28;
+}
+
+.donutTrack {
+  stroke: color-mix(in srgb, var(--design-chart-panel-bg, var(--color-background-secondary)) 88%, transparent);
+}
+
+.donutSegment {
+  stroke-linecap: butt;
+  transition: opacity 0.18s ease, filter 0.18s ease;
+  cursor: pointer;
+  outline: none;
+}
+
+.donutSegment:hover,
+.donutSegment:focus-visible {
+  opacity: 0.86;
+  filter: drop-shadow(0 0 0.35rem rgba(255, 255, 255, 0.18));
 }
 
 .centerLabel {
@@ -90,22 +120,33 @@
   transform: translate(-50%, -50%);
   text-align: center;
   pointer-events: none;
-  min-width: 5rem;
+  width: 5.8rem;
+  max-width: 42%;
   border-radius: var(--design-control-radius, 999px);
-  padding: 0.45rem 0.75rem;
-  background: var(--design-chart-panel-bg, transparent);
+  padding: 0.45rem 0.55rem;
+  background: color-mix(in srgb, var(--design-chart-panel-bg, var(--color-background-primary)) 92%, transparent);
   border: 1px solid var(--design-table-border, transparent);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.02);
 }
 
 .centerValue {
-  font-size: 1.5rem;
+  font-size: 1.25rem;
+  line-height: 1.1;
   font-weight: 700;
   color: var(--color-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .centerText {
   font-size: 0.75rem;
   color: var(--color-text-tertiary);
+  line-height: 1.2;
+  margin-top: 0.2rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .sourcesList {

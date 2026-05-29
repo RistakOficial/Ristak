@@ -313,6 +313,15 @@ export function normalizeTrafficSource(data: {
 }): string {
   if (!data) return 'Desconocido'
 
+  const hasSourceSignal = [
+    data.referrer_url,
+    data.site_source_name,
+    data.utm_source,
+    data.source_platform
+  ].some(value => (typeof value === 'string' ? value.trim().length > 0 : Boolean(value)))
+
+  if (!hasSourceSignal) return 'Directo'
+
   // Prioridad 1: referrer_url
   if (data.referrer_url) {
     const domain = extractDomain(data.referrer_url)

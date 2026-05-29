@@ -1,5 +1,4 @@
-import React, { useMemo, useState, useCallback } from 'react'
-import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts'
+import React, { useCallback, useMemo, useState } from 'react'
 import { Card } from '../Card'
 import { Globe } from 'lucide-react'
 import { ChartTooltip } from '../ChartTooltip/ChartTooltip'
@@ -8,7 +7,7 @@ import styles from './TrafficSourcesChart.module.css'
 interface TrafficData {
   name: string
   value: number
-  color: string
+  color?: string
 }
 
 interface TrafficSourcesChartProps {
@@ -16,39 +15,173 @@ interface TrafficSourcesChartProps {
   loading?: boolean
 }
 
-const DEFAULT_COLORS = [
-  'var(--design-chart-primary, #10b981)',
-  'var(--design-chart-tertiary, #3b82f6)',
-  'var(--design-chart-accent, #8b5cf6)',
-  'var(--design-chart-warning, #f59e0b)',
-  'var(--design-chart-danger, #ef4444)',
-  'var(--design-chart-secondary, #64748b)',
-  'var(--design-chart-muted, #94a3b8)',
-  'color-mix(in srgb, var(--design-chart-primary, #10b981) 62%, var(--design-chart-accent, #8b5cf6))',
+interface ChartSource {
+  name: string
+  value: number
+  color: string
+  percentage: number
+}
+
+interface DonutSegment extends ChartSource {
+  startAngle: number
+  endAngle: number
+  isFullCircle: boolean
+}
+
+const SOURCE_COLORS: Record<string, string> = {
+  Facebook: '#1877f2',
+  Google: '#4285f4',
+  Instagram: '#c32aa3',
+  TikTok: '#ee1d52',
+  Bing: '#00a4ef',
+  Microsoft: '#00a4ef',
+  Twitter: '#1da1f2',
+  LinkedIn: '#0a66c2',
+  YouTube: '#ff0000',
+  Messenger: '#0084ff',
+  WhatsApp: '#25d366',
+  Snapchat: '#fffc00',
+  Pinterest: '#e60023',
+  Reddit: '#ff4500',
+  Telegram: '#0088cc',
+  Email: '#ea4335',
+  Directo: '#6b7280',
+  Orgánico: '#10b981',
+  Referencia: '#8b5cf6',
+  Yahoo: '#7b0099',
+  DuckDuckGo: '#de5833',
+  Otro: '#94a3b8',
+  Desconocido: '#64748b'
+}
+
+const FALLBACK_COLORS = [
+  '#2dd4bf',
+  '#60a5fa',
+  '#f59e0b',
+  '#a78bfa',
+  '#f43f5e',
+  '#34d399',
+  '#f97316',
+  '#94a3b8'
 ]
 
+const DONUT_CENTER = 100
+const DONUT_RADIUS = 72
+
+const getSourceColor = (name: string, color: string | undefined, index: number) => {
+  const incomingColor = color?.trim()
+  if (incomingColor) return incomingColor
+
+  return SOURCE_COLORS[name] ?? FALLBACK_COLORS[index % FALLBACK_COLORS.length]
+}
+
+const toPoint = (angle: number) => {
+  const radians = (angle - 90) * (Math.PI / 180)
+
+  return {
+    x: DONUT_CENTER + DONUT_RADIUS * Math.cos(radians),
+    y: DONUT_CENTER + DONUT_RADIUS * Math.sin(radians)
+  }
+}
+
+const describeArc = (startAngle: number, endAngle: number) => {
+  const start = toPoint(endAngle)
+  const end = toPoint(startAngle)
+  const largeArcFlag = endAngle - startAngle <= 180 ? '0' : '1'
+
+  return [
+    `M ${start.x.toFixed(3)} ${start.y.toFixed(3)}`,
+    `A ${DONUT_RADIUS} ${DONUT_RADIUS} 0 ${largeArcFlag} 0 ${end.x.toFixed(3)} ${end.y.toFixed(3)}`
+  ].join(' ')
+}
+
 export const TrafficSourcesChart: React.FC<TrafficSourcesChartProps> = ({ data, loading = false }) => {
-  const chartData = useMemo(() => {
-    return data.map((item, index) => ({
-      ...item,
-      color: item.color?.startsWith('var(--design-chart')
-        ? item.color
-        : DEFAULT_COLORS[index % DEFAULT_COLORS.length]
-    }))
+  const normalizedData = useMemo(() => {
+    const sourceMap = new Map<string, { name: string; value: number; color?: string; firstIndex: number }>()
+
+    data.forEach((item, index) => {
+      const name = item.name?.trim() || 'Desconocido'
+      const value = Number(item.value)
+
+      if (!Number.isFinite(value) || value <= 0) return
+
+      const existing = sourceMap.get(name)
+      if (existing) {
+        sourceMap.set(name, {
+          ...existing,
+          value: existing.value + value,
+          color: existing.color || item.color
+        })
+        return
+      }
+
+      sourceMap.set(name, {
+        name,
+        value,
+        color: item.color,
+        firstIndex: index
+      })
+    })
+
+    return Array.from(sourceMap.values())
+      .sort((a, b) => b.value - a.value || a.firstIndex - b.firstIndex)
+      .map((item, index) => ({
+        ...item,
+        color: getSourceColor(item.name, item.color, index)
+      }))
   }, [data])
 
-  const totalVisits = chartData.reduce((sum, item) => sum + item.value, 0)
+  const totalVisits = normalizedData.reduce((sum, item) => sum + item.value, 0)
+
+  const chartData = useMemo<ChartSource[]>(() => {
+    return normalizedData.map((item) => ({
+      name: item.name,
+      value: item.value,
+      color: item.color,
+      percentage: totalVisits > 0 ? (item.value / totalVisits) * 100 : 0
+    }))
+  }, [normalizedData, totalVisits])
+
+  const segments = useMemo<DonutSegment[]>(() => {
+    if (totalVisits <= 0) return []
+
+    let angleCursor = 0
+
+    return chartData.map((item) => {
+      const sweepAngle = (item.value / totalVisits) * 360
+      const gapAngle = chartData.length > 1 ? Math.min(2.4, sweepAngle * 0.28) : 0
+      const startAngle = angleCursor + gapAngle / 2
+      const endAngle = angleCursor + sweepAngle - gapAngle / 2
+
+      angleCursor += sweepAngle
+
+      return {
+        ...item,
+        startAngle,
+        endAngle,
+        isFullCircle: sweepAngle >= 359.9
+      }
+    }).filter((segment) => segment.isFullCircle || segment.endAngle > segment.startAngle)
+  }, [chartData, totalVisits])
+
   const [activeIndex, setActiveIndex] = useState<number | null>(null)
   const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null)
 
-  // Manejar hover sobre celdas individuales del pie
-  const handleCellMouseEnter = useCallback((index: number) => (event: React.MouseEvent) => {
+  const activeSource = activeIndex !== null ? chartData[activeIndex] : null
+
+  const handleSegmentMouseEnter = useCallback((index: number) => (event: React.MouseEvent<SVGElement>) => {
     setActiveIndex(index)
     setTooltipPos({ x: event.clientX, y: event.clientY })
   }, [])
 
-  const handleCellMouseMove = useCallback((event: React.MouseEvent) => {
+  const handleSegmentMouseMove = useCallback((event: React.MouseEvent<SVGElement>) => {
     setTooltipPos({ x: event.clientX, y: event.clientY })
+  }, [])
+
+  const handleSegmentFocus = useCallback((index: number) => (event: React.FocusEvent<SVGElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect()
+    setActiveIndex(index)
+    setTooltipPos({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 })
   }, [])
 
   const handleMouseLeave = useCallback(() => {
@@ -56,10 +189,9 @@ export const TrafficSourcesChart: React.FC<TrafficSourcesChartProps> = ({ data, 
     setTooltipPos(null)
   }, [])
 
-  // Formatear tooltip
   const formatTooltipValue = (value: number) => {
-    const percentage = totalVisits > 0 ? ((value / totalVisits) * 100).toFixed(1) : '0'
-    return `${value.toLocaleString()} (${percentage}%)`
+    const percentage = totalVisits > 0 ? ((value / totalVisits) * 100).toFixed(1) : '0.0'
+    return `${value.toLocaleString('es-MX')} (${percentage}%)`
   }
 
   return (
@@ -69,9 +201,9 @@ export const TrafficSourcesChart: React.FC<TrafficSourcesChartProps> = ({ data, 
           <h3 className={styles.title}>Fuentes de Tráfico</h3>
           <div className={styles.totalContainer}>
             <span className={styles.totalValue}>
-              {totalVisits.toLocaleString()}
+              {totalVisits.toLocaleString('es-MX')}
             </span>
-            <span className={styles.totalLabel}>visitantes totales</span>
+            <span className={styles.totalLabel}>visitantes únicos</span>
           </div>
         </div>
       </div>
@@ -82,45 +214,64 @@ export const TrafficSourcesChart: React.FC<TrafficSourcesChartProps> = ({ data, 
             <div className={styles.loadingText}>Cargando datos...</div>
           </div>
         ) : chartData.length > 0 ? (
-          <>
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart onMouseLeave={handleMouseLeave}>
-                <Pie
-                  data={chartData}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={60}
-                  outerRadius={90}
-                  paddingAngle={2}
-                  dataKey="value"
-                  startAngle={90}
-                  endAngle={450}
-                  stroke="var(--design-chart-panel-bg, none)"
-                  strokeWidth={3}
-                >
-                  {chartData.map((entry, index) => (
-                    <Cell
-                      key={`cell-${index}`}
-                      fill={entry.color}
-                      className={styles.chartCell}
-                      onMouseEnter={handleCellMouseEnter(index)}
-                      onMouseMove={handleCellMouseMove}
+          <div className={styles.donutFrame} onMouseLeave={handleMouseLeave}>
+            <svg
+              className={styles.donutChart}
+              viewBox="0 0 200 200"
+              role="img"
+              aria-label={`Fuentes de tráfico con ${totalVisits.toLocaleString('es-MX')} visitantes únicos`}
+              shapeRendering="geometricPrecision"
+            >
+              <circle
+                className={styles.donutTrack}
+                cx={DONUT_CENTER}
+                cy={DONUT_CENTER}
+                r={DONUT_RADIUS}
+              />
+              {segments.map((segment, index) => {
+                const commonProps = {
+                  className: styles.donutSegment,
+                  stroke: segment.color,
+                  tabIndex: 0,
+                  role: 'listitem',
+                  'aria-label': `${segment.name}: ${segment.value.toLocaleString('es-MX')} visitantes, ${segment.percentage.toFixed(1)}%`,
+                  onMouseEnter: handleSegmentMouseEnter(index),
+                  onMouseMove: handleSegmentMouseMove,
+                  onFocus: handleSegmentFocus(index),
+                  onBlur: handleMouseLeave
+                }
+
+                if (segment.isFullCircle) {
+                  return (
+                    <circle
+                      key={segment.name}
+                      {...commonProps}
+                      cx={DONUT_CENTER}
+                      cy={DONUT_CENTER}
+                      r={DONUT_RADIUS}
                     />
-                  ))}
-                </Pie>
-                <Tooltip content={() => null} cursor={false} />
-              </PieChart>
-            </ResponsiveContainer>
+                  )
+                }
+
+                return (
+                  <path
+                    key={segment.name}
+                    {...commonProps}
+                    d={describeArc(segment.startAngle, segment.endAngle)}
+                  />
+                )
+              })}
+            </svg>
 
             <ChartTooltip
-              active={activeIndex !== null}
-              data={activeIndex !== null ? { ...chartData[activeIndex], label: chartData[activeIndex].name } : null}
+              active={Boolean(activeSource)}
+              data={activeSource ? { ...activeSource, label: activeSource.name } : null}
               pointPos={tooltipPos}
               series={[
                 {
                   key: 'value',
                   label: 'Visitantes',
-                  color: chartData[activeIndex ?? 0]?.color ?? 'var(--design-chart-primary, #10b981)'
+                  color: activeSource?.color ?? 'var(--design-chart-primary, #10b981)'
                 }
               ]}
               formatValue={formatTooltipValue}
@@ -128,10 +279,14 @@ export const TrafficSourcesChart: React.FC<TrafficSourcesChartProps> = ({ data, 
             />
 
             <div className={styles.centerLabel}>
-              <div className={styles.centerValue}>{chartData.length}</div>
-              <div className={styles.centerText}>fuentes</div>
+              <div className={styles.centerValue}>
+                {(activeSource?.value ?? totalVisits).toLocaleString('es-MX')}
+              </div>
+              <div className={styles.centerText}>
+                {activeSource?.name ?? 'visitantes'}
+              </div>
             </div>
-          </>
+          </div>
         ) : (
           <div className={styles.emptyContainer} data-ristak-chart-empty>
             <Globe className={styles.emptyIcon} />
@@ -153,7 +308,7 @@ export const TrafficSourcesChart: React.FC<TrafficSourcesChartProps> = ({ data, 
           </div>
         ) : (
           chartData.map((item) => {
-            const percentage = totalVisits > 0 ? ((item.value / totalVisits) * 100).toFixed(1) : '0'
+            const percentage = item.percentage.toFixed(1)
 
             return (
               <div key={item.name} className={styles.sourceItem}>
@@ -167,7 +322,7 @@ export const TrafficSourcesChart: React.FC<TrafficSourcesChartProps> = ({ data, 
                     <span className={styles.sourcePercentage}>{percentage}%</span>
                   </div>
                   <span className={styles.sourceValue}>
-                    {item.value.toLocaleString()}
+                    {item.value.toLocaleString('es-MX')}
                   </span>
                 </div>
 
@@ -175,7 +330,7 @@ export const TrafficSourcesChart: React.FC<TrafficSourcesChartProps> = ({ data, 
                   <div
                     className={styles.progressFill}
                     style={{
-                      width: `${percentage}%`,
+                      width: `${item.percentage}%`,
                       backgroundColor: item.color
                     }}
                   />
@@ -191,7 +346,7 @@ export const TrafficSourcesChart: React.FC<TrafficSourcesChartProps> = ({ data, 
           <div className={styles.insightItem}>
             <p className={styles.insightLabel}>Mayor fuente</p>
             <p className={styles.insightValue}>
-              {chartData[0].name} <span className={styles.insightHighlight}>{((chartData[0].value / totalVisits) * 100).toFixed(1)}%</span>
+              {chartData[0].name} <span className={styles.insightHighlight}>{chartData[0].percentage.toFixed(1)}%</span>
             </p>
           </div>
           <div className={styles.insightItem}>
