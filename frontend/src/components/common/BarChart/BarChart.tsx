@@ -1,6 +1,7 @@
 import React, { useMemo, useState, useEffect, useRef } from 'react'
 import { BarChart as RechartsBarChart, Bar, XAxis, YAxis, ResponsiveContainer, CartesianGrid } from 'recharts'
 import { useChartHover } from '@/hooks/useChartHover'
+import { DEFAULT_BAR_RADIUS, getTopRoundedBarPath } from '../chartShapes'
 import { ChartTooltip } from '../ChartTooltip/ChartTooltip'
 import styles from './BarChart.module.css'
 
@@ -30,6 +31,8 @@ export const BarChart: React.FC<BarChartProps> = ({
   formatTooltip = (value) => value.toString(),
   formatXAxis = (value) => value
 }) => {
+  const minHeight = typeof height === 'number' ? `${height}px` : height
+
   // Convertir data a formato compatible con useChartHover (label en vez de name)
   const chartData = useMemo(() =>
     data.map(item => ({ label: item.name, value: item.value })),
@@ -100,7 +103,7 @@ export const BarChart: React.FC<BarChartProps> = ({
 
   if (loading) {
     return (
-      <div className={styles.loadingContainer} style={{ height: '100%' }}>
+      <div className={styles.loadingContainer} style={{ height: '100%', minHeight }}>
         <div className={styles.loadingSpinner} />
       </div>
     )
@@ -108,15 +111,15 @@ export const BarChart: React.FC<BarChartProps> = ({
 
   if (!data || data.length === 0) {
     return (
-      <div className={styles.emptyContainer} data-ristak-chart-empty style={{ height: '100%' }}>
+      <div className={styles.emptyContainer} data-ristak-chart-empty style={{ height: '100%', minHeight }}>
         <p className={styles.emptyMessage}>No hay datos disponibles para el período seleccionado</p>
       </div>
     )
   }
 
   return (
-    <div className={styles.container} data-ristak-chart="bar" style={{ height: '100%' }}>
-      <div ref={chartRef} style={{ height: '100%', position: 'relative' }}>
+    <div className={styles.container} data-ristak-chart="bar" style={{ height: '100%', minHeight }}>
+      <div ref={chartRef} className={styles.chartFrame}>
         <ResponsiveContainer width="100%" height="100%">
           <RechartsBarChart
             data={data}
@@ -142,13 +145,14 @@ export const BarChart: React.FC<BarChartProps> = ({
             />
             <Bar
               dataKey="value"
-              radius={[8, 8, 0, 0]}
+              radius={[DEFAULT_BAR_RADIUS, DEFAULT_BAR_RADIUS, 0, 0]}
               animationDuration={300}
               isAnimationActive={true}
               shape={(props: any) => {
                 const { x, y, width, height, index } = props
                 const isActive = index === activeIndex
                 const hasValue = data[index]?.value > 0
+                const barPath = hasValue ? getTopRoundedBarPath(x, y, width, height) : ''
 
                 // Capturar la posición del punto más alto de la barra cuando está activa
                 if (isActive && hasValue && x !== undefined && y !== undefined) {
@@ -165,20 +169,17 @@ export const BarChart: React.FC<BarChartProps> = ({
                 return (
                   <g>
                     {/* Barra visible */}
-                    <rect
-                      x={x}
-                      y={y}
-                      width={width}
-                      height={height}
-                      fill={hasValue ? color : 'transparent'}
-                      rx={8}
-                      ry={8}
-                      opacity={isActive ? 1 : 0.9}
-                      style={{
-                        transition: 'opacity 150ms ease-out',
-                        cursor: 'default'
-                      }}
-                    />
+                    {barPath && (
+                      <path
+                        d={barPath}
+                        fill={color}
+                        opacity={isActive ? 1 : 0.9}
+                        style={{
+                          transition: 'opacity 150ms ease-out',
+                          cursor: 'default'
+                        }}
+                      />
+                    )}
                     {/* Área interactiva invisible SOLO si hay valor */}
                     {hasValue && (
                       <rect

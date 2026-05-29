@@ -285,6 +285,16 @@
   padding: var(--spacing-lg);
   overflow: visible;
   position: relative;
+  min-height: 0;
+}
+
+.metricsCategoryCard :global([data-ristak-card-content]) {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--spacing-md);
+  height: 100%;
+  min-height: 0;
 }
 
 .metricsCategoryHeader {
@@ -327,6 +337,7 @@
 }
 
 .metricsTableWrapper {
+  flex: 0 0 auto;
   overflow-x: auto;
   margin: 0;
   background: var(--design-table-bg, transparent);
@@ -403,13 +414,25 @@
 }
 
 .metricsChartWrapper {
-  margin-top: var(--spacing-md);
+  display: flex;
+  flex: 1 1 280px;
+  flex-direction: column;
+  min-height: clamp(260px, 34vh, 380px);
+  min-width: 0;
+  margin-top: 0;
   padding: var(--spacing-md);
   border-top: 1px solid var(--design-table-border, var(--color-border-subtle));
   background: var(--design-chart-panel-bg, transparent);
   border-radius: var(--design-table-radius, var(--radius-md));
   overflow: visible;
   position: relative;
+}
+
+.metricsChartCanvas {
+  position: relative;
+  flex: 1;
+  width: 100%;
+  min-height: 0;
 }
 
 /* Asegurar que el tooltip sea visible */

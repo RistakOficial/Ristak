@@ -1332,14 +1332,17 @@ const Analytics: React.FC = () => {
         {/* Grid de Gráficas: Registros y Fuentes de Tráfico */}
         <div className="grid gap-4 lg:grid-cols-2">
           {/* Gráfico de Barras de Registros */}
-          <Card variant="glass" className="p-6">
-            <div className="mb-4">
+          <Card
+            variant="glass"
+            className="p-6 h-full [&>[data-ristak-card-content]]:flex [&>[data-ristak-card-content]]:h-full [&>[data-ristak-card-content]]:flex-col"
+          >
+            <div className="mb-4 flex-shrink-0">
               <h3 className="text-lg font-semibold">Registros por Fecha</h3>
               <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
                 Contactos registrados en el período
               </p>
             </div>
-            <div className="h-[320px]">
+            <div className="relative w-full flex-1 min-h-[320px]">
               <BarChart
                 data={registrosChartData}
                 loading={loading}

@@ -26,6 +26,7 @@ import {
 } from '@/services/reportsService'
 import { formatCurrency, formatNumber, formatRoas, formatDate, formatDateToISO, parseLocalDateString } from '@/utils/format'
 import { useAppConfig, useChartHover, useIsRenderDomain, useMetaTimezone } from '@/hooks'
+import { DEFAULT_BAR_RADIUS, getTopRoundedBarPath } from '@/components/common/chartShapes'
 import { ChartTooltip } from '@/components/common/ChartTooltip/ChartTooltip'
 import styles from './Reports.module.css'
 import {
@@ -304,10 +305,10 @@ interface SimpleLineChartProps {
   data: MetricChartData[]
   dataKeys: { key: string; label: string; color: string }[]
   formatValue: (value: number, key: string) => string
-  height?: number
+  height?: number | string
 }
 
-const SimpleLineChart: React.FC<SimpleLineChartProps> = ({ data, dataKeys, formatValue, height = 200 }) => {
+const SimpleLineChart: React.FC<SimpleLineChartProps> = ({ data, dataKeys, formatValue, height = '100%' }) => {
   const { chartRef, pointPos: _pointPos, isHovering, activeIndex, activeData } = useChartHover({ data })
   const [actualPointPos, setActualPointPos] = React.useState<{ x: number; y: number } | null>(null)
   const activePointRef = React.useRef<{ [key: string]: { x: number; y: number } }>({})
@@ -357,9 +358,9 @@ const SimpleLineChart: React.FC<SimpleLineChartProps> = ({ data, dataKeys, forma
   }, [resolvedPointPos, chartRef])
 
   return (
-    <div ref={chartRef} data-ristak-chart="report-line" style={{ position: 'relative', height }}>
+    <div ref={chartRef} className={styles.metricsChartCanvas} data-ristak-chart="report-line" style={{ height }}>
       <ResponsiveContainer width="100%" height="100%">
-        <AreaChart data={data}>
+        <AreaChart data={data} margin={{ top: 8, right: 12, left: -6, bottom: 0 }}>
           <defs>
             {dataKeys.map((dk) => (
               <linearGradient key={`gradient-${dk.key}`} id={`${gradientIdPrefix}-gradient-${dk.key}-line-reports`} x1="0" y1="0" x2="0" y2="1">
@@ -454,10 +455,10 @@ interface SimpleBarChartProps {
   label: string
   color: string
   formatValue: (value: number, key: string) => string
-  height?: number
+  height?: number | string
 }
 
-const SimpleBarChart: React.FC<SimpleBarChartProps> = ({ data, dataKey, label, color, formatValue, height = 200 }) => {
+const SimpleBarChart: React.FC<SimpleBarChartProps> = ({ data, dataKey, label, color, formatValue, height = '100%' }) => {
   const { chartRef, pointPos: _pointPos, isHovering, activeIndex, activeData } = useChartHover({ data })
   const [actualPointPos, setActualPointPos] = React.useState<{ x: number; y: number } | null>(null)
   const activePointRef = React.useRef<{ [key: string]: { x: number; y: number } }>({})
@@ -505,22 +506,25 @@ const SimpleBarChart: React.FC<SimpleBarChartProps> = ({ data, dataKey, label, c
   }, [resolvedPointPos, chartRef])
 
   return (
-    <div ref={chartRef} data-ristak-chart="report-bar" style={{ position: 'relative', height }}>
+    <div ref={chartRef} className={styles.metricsChartCanvas} data-ristak-chart="report-bar" style={{ height }}>
       <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={data}>
+        <BarChart data={data} margin={{ top: 8, right: 12, left: -6, bottom: 0 }}>
           <CartesianGrid strokeDasharray="var(--design-chart-grid-dash, 3 3)" stroke="var(--design-chart-grid, var(--color-border-subtle))" opacity={1} />
           <XAxis dataKey="label" tick={{ fontSize: 11, fill: 'var(--design-chart-axis, var(--color-text-tertiary))', fontFamily: 'var(--font-app)' }} stroke="var(--design-chart-grid, var(--color-text-tertiary))" />
           <YAxis tick={{ fontSize: 11, fill: 'var(--design-chart-axis, var(--color-text-tertiary))', fontFamily: 'var(--font-app)' }} stroke="var(--design-chart-grid, var(--color-text-tertiary))" />
           <Bar
             dataKey={dataKey}
             fill={color}
-            radius={[8, 8, 0, 0]}
+            radius={[DEFAULT_BAR_RADIUS, DEFAULT_BAR_RADIUS, 0, 0]}
             shape={(props: any) => {
               const { x, y, width, height, index } = props
               const isActive = index === activeIndex
+              const rawValue = Number(data[index]?.[dataKey] ?? 0)
+              const hasValue = Number.isFinite(rawValue) && rawValue > 0
+              const barPath = hasValue ? getTopRoundedBarPath(x, y, width, height) : ''
 
               // Capturar la posición real del punto cuando está activo
-              if (isActive) {
+              if (isActive && hasValue) {
                 const rect = chartRef.current?.getBoundingClientRect()
                 if (rect) {
                   const pointX = rect.left + x + width / 2
@@ -548,37 +552,38 @@ const SimpleBarChart: React.FC<SimpleBarChartProps> = ({ data, dataKey, label, c
 
               return (
                 <g>
-                  <rect
-                    x={x}
-                    y={y}
-                    width={width}
-                    height={height}
-                    fill={color}
-                    rx={8}
-                    ry={8}
-                    opacity={isActive ? 1 : 0.9}
-                    style={{ transition: 'opacity 150ms ease-out' }}
-                  />
+                  {barPath && (
+                    <path
+                      d={barPath}
+                      fill={color}
+                      opacity={isActive ? 1 : 0.9}
+                      style={{ transition: 'opacity 150ms ease-out' }}
+                    />
+                  )}
                   {/* Área interactiva invisible para detección de hover */}
-                  <rect
-                    x={x}
-                    y={y}
-                    width={width}
-                    height={height}
-                    fill="transparent"
-                    data-chart-index={index}
-                    data-chart-interactive="true"
-                    style={{ pointerEvents: 'auto', cursor: 'default' }}
-                  />
+                  {hasValue && (
+                    <rect
+                      x={x}
+                      y={y}
+                      width={width}
+                      height={height}
+                      fill="transparent"
+                      data-chart-index={index}
+                      data-chart-interactive="true"
+                      style={{ pointerEvents: 'auto', cursor: 'default' }}
+                    />
+                  )}
                   {/* Dot invisible en el centro superior de cada barra para posicionamiento */}
-                  <circle
-                    cx={x + width / 2}
-                    cy={y}
-                    r={0}
-                    data-chart-index={index}
-                    data-chart-interactive="true"
-                    style={{ pointerEvents: 'none' }}
-                  />
+                  {hasValue && (
+                    <circle
+                      cx={x + width / 2}
+                      cy={y}
+                      r={0}
+                      data-chart-index={index}
+                      data-chart-interactive="true"
+                      style={{ pointerEvents: 'none' }}
+                    />
+                  )}
                 </g>
               )
             }}
@@ -601,10 +606,10 @@ interface SimpleAreaChartProps {
   data: MetricChartData[]
   dataKeys: { key: string; label: string; color: string }[]
   formatValue: (value: number, key: string) => string
-  height?: number
+  height?: number | string
 }
 
-const SimpleAreaChart: React.FC<SimpleAreaChartProps> = ({ data, dataKeys, formatValue, height = 200 }) => {
+const SimpleAreaChart: React.FC<SimpleAreaChartProps> = ({ data, dataKeys, formatValue, height = '100%' }) => {
   const { chartRef, pointPos: _pointPos, isHovering, activeIndex, activeData } = useChartHover({ data })
   const [actualPointPos, setActualPointPos] = React.useState<{ x: number; y: number } | null>(null)
   const activePointRef = React.useRef<{ [key: string]: { x: number; y: number } }>({})
@@ -654,9 +659,9 @@ const SimpleAreaChart: React.FC<SimpleAreaChartProps> = ({ data, dataKeys, forma
   }, [resolvedPointPos, chartRef])
 
   return (
-    <div ref={chartRef} data-ristak-chart="report-area" style={{ position: 'relative', height }}>
+    <div ref={chartRef} className={styles.metricsChartCanvas} data-ristak-chart="report-area" style={{ height }}>
       <ResponsiveContainer width="100%" height="100%">
-        <AreaChart data={data}>
+        <AreaChart data={data} margin={{ top: 8, right: 12, left: -6, bottom: 0 }}>
           <defs>
             {dataKeys.map((dk) => (
               <linearGradient key={`gradient-${dk.key}`} id={`${gradientIdPrefix}-gradient-${dk.key}-reports`} x1="0" y1="0" x2="0" y2="1">
