@@ -43,7 +43,7 @@ export const Card: React.FC<CardProps> = ({
       onClick={onClick}
       {...props}
     >
-      <div className="relative z-10">{children}</div>
+      <div data-ristak-card-content className="relative z-10 w-full">{children}</div>
     </div>
   )
 }

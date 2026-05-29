@@ -50,9 +50,12 @@ export const KpiCard: React.FC<KpiCardProps> = ({
       data-ristak-kpi-card
       variant="glass"
       padding="sm"
-      className={cn('overflow-hidden', className)}
+      className={cn('flex h-full overflow-hidden', className)}
     >
-      <div className="flex items-start justify-between gap-3">
+      <div
+        data-ristak-kpi-content
+        className="flex min-h-[calc(var(--design-kpi-min-height,112px)-2rem)] items-center justify-between gap-3"
+      >
         <div className="min-w-0 flex-1">
           <p className="mb-1 text-sm text-[var(--color-text-tertiary)]">
             {title}
