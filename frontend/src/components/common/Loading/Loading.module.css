@@ -42,6 +42,266 @@
   animation: pulse 1.5s ease-in-out infinite;
 }
 
+.skeletonPage {
+  --skeleton-base: color-mix(in srgb, var(--color-background-tertiary) 76%, var(--color-text-primary) 8%);
+  --skeleton-card: color-mix(in srgb, var(--color-background-secondary) 88%, var(--color-text-primary) 4%);
+  --skeleton-border: rgba(148, 163, 184, 0.18);
+  --skeleton-highlight: rgba(255, 255, 255, 0.55);
+  --skeleton-muted: color-mix(in srgb, var(--color-background-tertiary) 82%, var(--color-text-primary) 6%);
+
+  width: 100%;
+  min-height: calc(100vh - var(--header-height));
+  padding: 3rem 1.5rem 4rem;
+  color: var(--color-text-primary);
+  background: transparent;
+  animation: fadeIn 0.18s ease-out;
+}
+
+.skeletonInner {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  width: 100%;
+  max-width: 80rem;
+  margin: 0 auto;
+}
+
+.skeletonHeader,
+.skeletonPanelHeader,
+.skeletonCardTop,
+.skeletonListItem,
+.skeletonTableRow {
+  display: flex;
+  align-items: center;
+}
+
+.skeletonHeader,
+.skeletonPanelHeader {
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.skeletonTitleGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  min-width: 0;
+  flex: 1;
+}
+
+.skeletonBlock,
+.skeletonIcon,
+.skeletonDot {
+  position: relative;
+  overflow: hidden;
+  background: var(--skeleton-base);
+}
+
+.skeletonBlock::after,
+.skeletonIcon::after,
+.skeletonDot::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-110%);
+  background: linear-gradient(90deg, transparent 0%, var(--skeleton-highlight) 50%, transparent 100%);
+  animation: skeletonShimmer 1.45s ease-in-out infinite;
+}
+
+.skeletonBlock {
+  border-radius: 8px;
+}
+
+.skeletonTitle {
+  width: min(220px, 56vw);
+  height: 28px;
+}
+
+.skeletonSubtitle {
+  width: min(320px, 70vw);
+  height: 14px;
+}
+
+.skeletonControl {
+  width: 220px;
+  height: 42px;
+  flex-shrink: 0;
+}
+
+.skeletonKpiGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.skeletonCard,
+.skeletonPanel {
+  border: 1px solid var(--skeleton-border);
+  border-radius: 12px;
+  background: var(--skeleton-card);
+  backdrop-filter: var(--effect-glassMorphism-backdropFilter);
+}
+
+.skeletonCard {
+  min-height: 118px;
+  padding: 1rem;
+}
+
+.skeletonCardTop {
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.85rem;
+}
+
+.skeletonLabel {
+  width: 52%;
+  height: 14px;
+}
+
+.skeletonIcon,
+.skeletonDot {
+  flex-shrink: 0;
+  border-radius: 999px;
+}
+
+.skeletonIcon {
+  width: 30px;
+  height: 30px;
+  background: var(--skeleton-muted);
+}
+
+.skeletonValue {
+  width: 68%;
+  height: 30px;
+  margin-bottom: 0.75rem;
+}
+
+.skeletonMeta {
+  width: 78%;
+  height: 12px;
+}
+
+.skeletonPanel {
+  padding: 1.35rem;
+}
+
+.skeletonPanelTitle {
+  width: 180px;
+  height: 22px;
+  margin-bottom: 0.55rem;
+}
+
+.skeletonPanelSubtitle {
+  width: 130px;
+  height: 13px;
+}
+
+.skeletonSegmentGroup {
+  display: flex;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+.skeletonSegment {
+  width: 84px;
+  height: 34px;
+}
+
+.skeletonChart {
+  position: relative;
+  min-height: 320px;
+  margin-top: 1.25rem;
+  border: 1px solid var(--skeleton-border);
+  border-radius: 12px;
+  background:
+    linear-gradient(var(--skeleton-border) 1px, transparent 1px),
+    linear-gradient(90deg, var(--skeleton-border) 1px, transparent 1px);
+  background-size: 100% 25%, 16.66% 100%;
+}
+
+.skeletonChartLine,
+.skeletonChartLineShort,
+.skeletonChartLineTiny {
+  position: absolute;
+  left: 8%;
+  right: 8%;
+  height: 10px;
+  border-radius: 999px;
+  transform-origin: left center;
+}
+
+.skeletonChartLine {
+  top: 54%;
+  width: 84%;
+  transform: rotate(-5deg);
+}
+
+.skeletonChartLineShort {
+  top: 38%;
+  width: 58%;
+  transform: rotate(7deg);
+}
+
+.skeletonChartLineTiny {
+  top: 70%;
+  width: 42%;
+  transform: rotate(-3deg);
+}
+
+.skeletonContentGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  gap: 1rem;
+}
+
+.skeletonList,
+.skeletonTable {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+.skeletonListItem {
+  min-height: 32px;
+  gap: 0.75rem;
+}
+
+.skeletonDot {
+  width: 12px;
+  height: 12px;
+  background: var(--skeleton-muted);
+}
+
+.skeletonListLine {
+  height: 14px;
+  flex: 1;
+}
+
+.skeletonListValue {
+  width: 64px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+.skeletonTableRow {
+  min-height: 34px;
+  gap: 0.75rem;
+}
+
+.skeletonTableCellWide,
+.skeletonTableCell {
+  height: 14px;
+}
+
+.skeletonTableCellWide {
+  flex: 1.4;
+}
+
+.skeletonTableCell {
+  flex: 0.8;
+}
+
 @keyframes spin {
   from {
     transform: rotate(0deg);
@@ -69,9 +329,31 @@
   }
 }
 
+@keyframes skeletonShimmer {
+  100% {
+    transform: translateX(110%);
+  }
+}
+
 /* Dark mode adjustments */
 :global(body.dark) .fullScreenContainer {
   background: var(--color-bg-primary);
+}
+
+:global(body.dark) .skeletonPage {
+  --skeleton-base: color-mix(in srgb, var(--color-background-tertiary) 84%, var(--color-text-primary) 8%);
+  --skeleton-card: color-mix(in srgb, var(--color-background-secondary) 88%, var(--color-text-primary) 5%);
+  --skeleton-border: rgba(148, 163, 184, 0.16);
+  --skeleton-highlight: rgba(255, 255, 255, 0.12);
+  --skeleton-muted: color-mix(in srgb, var(--color-background-tertiary) 86%, var(--color-text-primary) 10%);
+}
+
+:global(body.light) .skeletonPage {
+  --skeleton-base: color-mix(in srgb, var(--color-background-tertiary) 76%, var(--color-text-primary) 8%);
+  --skeleton-card: color-mix(in srgb, var(--color-background-secondary) 94%, var(--color-text-primary) 3%);
+  --skeleton-border: rgba(148, 163, 184, 0.2);
+  --skeleton-highlight: rgba(255, 255, 255, 0.82);
+  --skeleton-muted: color-mix(in srgb, var(--color-background-tertiary) 80%, var(--color-text-primary) 7%);
 }
 
 :global(body.dark) .spinner {
@@ -80,4 +362,55 @@
 
 :global(body.dark) .message {
   color: var(--color-text-secondary);
+}
+
+@media (min-width: 640px) {
+  .skeletonPage {
+    padding-inline: 2.5rem;
+  }
+}
+
+@media (min-width: 1280px) {
+  .skeletonKpiGrid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 900px) {
+  .skeletonContentGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .skeletonPanelHeader {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
+@media (max-width: 640px) {
+  .skeletonPage {
+    padding: 2rem 1rem 3rem;
+  }
+
+  .skeletonHeader {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .skeletonControl,
+  .skeletonSegment {
+    width: 100%;
+  }
+
+  .skeletonSegmentGroup {
+    width: 100%;
+  }
+
+  .skeletonKpiGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .skeletonChart {
+    min-height: 240px;
+  }
 }
