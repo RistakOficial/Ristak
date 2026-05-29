@@ -15,6 +15,9 @@ interface DataPoint {
   label: string
   value: number
   value2?: number
+  periodStart?: string
+  periodEnd?: string
+  periodKey?: string
 }
 
 interface LegendLabels {
@@ -33,6 +36,7 @@ interface AreaChartProps {
   formatTooltipValue?: (value: number, key: string) => string
   showLegend?: boolean
   legendLabels?: LegendLabels
+  onPointClick?: (point: DataPoint, index: number, seriesKey: 'value' | 'value2') => void
 }
 
 interface SeriesDefinition {
@@ -59,7 +63,8 @@ export const AreaChart: React.FC<AreaChartProps> = ({
   formatValue = defaultFormatAxis,
   formatTooltipValue = (value) => defaultFormatTooltip(value),
   showLegend = false,
-  legendLabels = { label1: 'Serie 1', label2: 'Serie 2' }
+  legendLabels = { label1: 'Serie 1', label2: 'Serie 2' },
+  onPointClick
 }) => {
   const { chartRef, pointPos: _pointPos, isHovering, activeIndex, activeData } = useChartHover({ data })
   const gradientIdPrefix = useId().replace(/:/g, '')
@@ -259,8 +264,23 @@ export const AreaChart: React.FC<AreaChartProps> = ({
                             strokeWidth={showPoints && isActive ? 3 : 0}
                             data-chart-index={props.index}
                             data-chart-interactive={showPoints ? 'true' : undefined}
+                            role={onPointClick ? 'button' : undefined}
+                            tabIndex={onPointClick ? 0 : undefined}
+                            aria-label={onPointClick ? `Ver detalles de ${serie.label} en ${props.payload?.label ?? 'este punto'}` : undefined}
+                            onClick={(event) => {
+                              if (!onPointClick || !props.payload) return
+                              event.stopPropagation()
+                              onPointClick(props.payload, props.index, serie.key)
+                            }}
+                            onKeyDown={(event) => {
+                              if (!onPointClick || !props.payload) return
+                              if (event.key !== 'Enter' && event.key !== ' ') return
+                              event.preventDefault()
+                              onPointClick(props.payload, props.index, serie.key)
+                            }}
                             style={{
                               pointerEvents: showPoints ? 'auto' : 'none',
+                              cursor: onPointClick ? 'pointer' : undefined,
                               transition: showPoints ? 'all 150ms ease-out' : undefined,
                               filter:
                                 showPoints && isActive

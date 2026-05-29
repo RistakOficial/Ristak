@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { KpiCard, Card, DateRangePicker, AreaChart, PageContainer, TrafficSourcesChart, ConversionFunnelChart, ViewSelector, Loading, ContactDetailsModal, VisitorDetailsModal, HelpTooltip } from '@/components/common'
+import { KpiCard, Card, DateRangePicker, AreaChart, PageContainer, TrafficSourcesChart, ConversionFunnelChart, ViewSelector, Loading, ContactDetailsModal, VisitorDetailsModal, HelpTooltip, Modal } from '@/components/common'
 import funnelStyles from '@/components/common/ConversionFunnelChart/ConversionFunnelChart.module.css'
 import {
   DollarSign,
@@ -28,6 +28,7 @@ import { dashboardService, type DashboardMetrics, type ChartData, type Dashboard
 import { reportsService, type ContactListItem } from '@/services/reportsService'
 import { transactionsService, type Transaction } from '@/services/transactionsService'
 import { calendarsService, type CalendarEvent } from '@/services/calendarsService'
+import { campaignsService, type Campaign } from '@/services/campaignsService'
 import { formatCurrency, formatRoas, formatChartDate, formatDateToISO, formatEndDateToISO, parseLocalDateString, formatChartCurrency, formatChartNumber, formatDate } from '@/utils/format'
 
 const parseAnalyticsFlag = (value: unknown) => {
@@ -45,6 +46,64 @@ const parseAnalyticsFlag = (value: unknown) => {
 type FunnelStageKind = 'visitors' | 'leads' | 'appointments' | 'attendances' | 'customers'
 type ContactModalType = 'interesados' | 'sales' | 'appointments' | 'attendances'
 type ChartView = 'revenue-spend' | 'visitors-leads' | 'leads-appointments' | 'appointments-attendances' | 'attendances-sales' | 'appointments-sales'
+type ChartSeriesKey = 'value' | 'value2'
+
+interface DashboardChartPoint {
+  label: string
+  value: number
+  value2?: number
+  periodStart: string
+  periodEnd: string
+  periodKey: string
+}
+
+type DashboardChartClickPoint = Omit<DashboardChartPoint, 'periodStart' | 'periodEnd' | 'periodKey'> & Partial<Pick<DashboardChartPoint, 'periodStart' | 'periodEnd' | 'periodKey'>>
+type ChartInsightContactType = 'interesados' | 'customers' | 'sales' | 'appointments' | 'attendances'
+
+interface DashboardChartConfig {
+  data: DashboardChartPoint[]
+  label1: string
+  label2: string
+  color: string
+  color2: string
+  formatValue: (value: number) => string
+  formatTooltipValue: (value: number) => string
+}
+
+interface ChartInsightItem {
+  id: string
+  title: string
+  subtitle?: string
+  meta?: string
+  value?: string
+  status?: string
+}
+
+interface ChartInsightColumn {
+  key: string
+  title: string
+  metricLabel: string
+  metricValue: string
+  emptyMessage: string
+  items: ChartInsightItem[]
+}
+
+interface ChartInsightModalState {
+  open: boolean
+  requestKey?: string
+  title: string
+  subtitle: string
+  loading: boolean
+  columns: ChartInsightColumn[]
+}
+
+const emptyChartInsightModal: ChartInsightModalState = {
+  open: false,
+  title: '',
+  subtitle: '',
+  loading: false,
+  columns: []
+}
 
 const TRANSACTION_STATUS_LABELS: Record<Transaction['status'], string> = {
   draft: 'Borrador',
@@ -68,6 +127,12 @@ const APPOINTMENT_STATUS_LABELS: Record<CalendarEvent['appointmentStatus'], stri
   rescheduled: 'Reagendada'
 }
 
+const SUCCESS_PAYMENT_STATUSES = new Set(['succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success'])
+
+const isSuccessfulPaymentStatus = (status?: string | null) => (
+  SUCCESS_PAYMENT_STATUSES.has(status?.trim().toLowerCase() ?? '')
+)
+
 const getTimeValue = (date?: string | null) => {
   if (!date) return 0
   const time = new Date(date).getTime()
@@ -89,6 +154,36 @@ const getContactName = (contact: ContactListItem) => (
 const getAppointmentTitle = (appointment: CalendarEvent) => (
   appointment.title || appointment.description || 'Cita sin título'
 )
+
+const getLast12MonthKeys = () => {
+  const now = new Date()
+  const months: string[] = []
+
+  for (let i = 11; i >= 0; i--) {
+    const date = new Date(now.getFullYear(), now.getMonth() - i, 1)
+    months.push(`${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`)
+  }
+
+  return months
+}
+
+const getMonthPeriod = (monthKey: string) => {
+  const [year, month] = monthKey.split('-').map(Number)
+  const start = new Date(year, month - 1, 1)
+  const end = new Date(year, month, 0)
+
+  return {
+    periodStart: formatDateToISO(start),
+    periodEnd: formatEndDateToISO(end)
+  }
+}
+
+const formatPeriodRange = (from: string, to: string) => {
+  const startDate = parseLocalDateString(from.slice(0, 10))
+  const endDate = to.includes('T') ? new Date(to) : parseLocalDateString(to.slice(0, 10))
+
+  return `${formatDate(startDate, { includeYear: true })} - ${formatDate(endDate, { includeYear: true })}`
+}
 
 export const Dashboard: React.FC = () => {
   const { dateRange, setDateRange } = useDateRange()
@@ -139,6 +234,7 @@ export const Dashboard: React.FC = () => {
   const [recentTransactions, setRecentTransactions] = useState<Transaction[]>([])
   const [recentAppointments, setRecentAppointments] = useState<CalendarEvent[]>([])
   const [recentContacts, setRecentContacts] = useState<ContactListItem[]>([])
+  const [chartInsightModal, setChartInsightModal] = useState<ChartInsightModalState>(emptyChartInsightModal)
 
   const funnelChartData = React.useMemo(() => {
     if (analyticsEnabled) return funnelData
@@ -146,23 +242,20 @@ export const Dashboard: React.FC = () => {
   }, [analyticsEnabled, funnelData])
 
   const chartsGridClass = analyticsEnabled ? 'grid gap-4 lg:grid-cols-2' : 'grid gap-4'
+  const last12MonthKeys = React.useMemo(() => getLast12MonthKeys(), [])
 
   // Agrupar datos financieros por mes para últimos 12 meses
-  const formattedFinancialData = React.useMemo(() => {
-    // Crear los últimos 12 meses
-    const now = new Date()
-    const last12Months: string[] = []
-
-    for (let i = 11; i >= 0; i--) {
-      const date = new Date(now.getFullYear(), now.getMonth() - i, 1)
-      const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
-      last12Months.push(monthKey)
-    }
-
+  const formattedFinancialData = React.useMemo<DashboardChartPoint[]>(() => {
     // Agrupar datos por mes
     const monthlyData = chartData.reduce((acc, item) => {
-      const date = new Date(item.date)
-      const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
+      const monthMatch = /^(\d{4})-(\d{2})/.exec(item.date)
+      const date = monthMatch ? null : new Date(item.date)
+      if (!monthMatch && (!date || Number.isNaN(date.getTime()))) {
+        return acc
+      }
+      const monthKey = monthMatch
+        ? `${monthMatch[1]}-${monthMatch[2]}`
+        : `${date?.getFullYear()}-${String((date?.getMonth() ?? 0) + 1).padStart(2, '0')}`
 
       if (!acc[monthKey]) {
         acc[monthKey] = { ingresos: 0, gastado: 0 }
@@ -175,33 +268,36 @@ export const Dashboard: React.FC = () => {
     }, {} as Record<string, { ingresos: number; gastado: number }>)
 
     // Crear array con todos los 12 meses (con o sin datos)
-    return last12Months.map((monthKey, index) => ({
-      label: formatChartDate(monthKey, 365, index > 0 ? last12Months[index - 1] : undefined),
-      value: monthlyData[monthKey]?.ingresos || 0,
-      value2: monthlyData[monthKey]?.gastado || 0
-    }))
-  }, [chartData])
+    return last12MonthKeys.map((monthKey, index) => {
+      const period = getMonthPeriod(monthKey)
+
+      return {
+        label: formatChartDate(monthKey, 365, index > 0 ? last12MonthKeys[index - 1] : undefined),
+        value: monthlyData[monthKey]?.ingresos || 0,
+        value2: monthlyData[monthKey]?.gastado || 0,
+        periodKey: monthKey,
+        ...period
+      }
+    })
+  }, [chartData, last12MonthKeys])
 
   const currencyAxisFormatter = React.useCallback((value: number) => formatChartCurrency(value), [])
 
   // Configuración del gráfico según la vista seleccionada
-  const chartConfig = React.useMemo(() => {
-    const now = new Date()
-    const last12Months: string[] = []
-
-    for (let i = 11; i >= 0; i--) {
-      const date = new Date(now.getFullYear(), now.getMonth() - i, 1)
-      const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
-      last12Months.push(monthKey)
-    }
-
-    const formatData = (rawData: { label: string; value: number; value2: number }[]) => {
+  const chartConfig = React.useMemo<DashboardChartConfig>(() => {
+    const formatData = (rawData: { label: string; value: number; value2: number }[]): DashboardChartPoint[] => {
       const dataMap = new Map(rawData.map(d => [d.label, d]))
-      return last12Months.map((monthKey, index) => ({
-        label: formatChartDate(monthKey, 365, index > 0 ? last12Months[index - 1] : undefined),
-        value: dataMap.get(monthKey)?.value || 0,
-        value2: dataMap.get(monthKey)?.value2 || 0
-      }))
+      return last12MonthKeys.map((monthKey, index) => {
+        const period = getMonthPeriod(monthKey)
+
+        return {
+          label: formatChartDate(monthKey, 365, index > 0 ? last12MonthKeys[index - 1] : undefined),
+          value: dataMap.get(monthKey)?.value || 0,
+          value2: dataMap.get(monthKey)?.value2 || 0,
+          periodKey: monthKey,
+          ...period
+        }
+      })
     }
 
     switch (selectedChartView) {
@@ -287,7 +383,7 @@ export const Dashboard: React.FC = () => {
           formatTooltipValue: (value: number) => formatCurrency(value)
         }
     }
-  }, [analyticsEnabled, selectedChartView, formattedFinancialData, visitorsLeadsData, leadsAppointmentsData, appointmentsAttendancesData, attendancesSalesData, appointmentsSalesData, labels.leads, currencyAxisFormatter])
+  }, [analyticsEnabled, selectedChartView, formattedFinancialData, visitorsLeadsData, leadsAppointmentsData, appointmentsAttendancesData, attendancesSalesData, appointmentsSalesData, labels.leads, currencyAxisFormatter, last12MonthKeys])
 
   const isExtendedChartView = selectedChartView !== 'revenue-spend'
   const isChartLoading = isExtendedChartView && extendedChartDataLoading
@@ -733,7 +829,7 @@ export const Dashboard: React.FC = () => {
   const getStatusClassName = (status?: string | null) => {
     const normalized = status?.toLowerCase()
 
-    if (normalized === 'paid' || normalized === 'confirmed' || normalized === 'showed') {
+    if (normalized === 'paid' || normalized === 'succeeded' || normalized === 'success' || normalized === 'completed' || normalized === 'confirmed' || normalized === 'showed') {
       return 'border-[rgba(16,185,129,0.34)] text-[var(--color-status-success)]'
     }
 
@@ -747,6 +843,389 @@ export const Dashboard: React.FC = () => {
 
     return 'border-[rgba(148,163,184,0.22)] text-[var(--color-text-secondary)]'
   }
+
+  const normalizeContacts = React.useCallback((contacts: ContactListItem[]) => (
+    contacts.map(contact => ({
+      ...contact,
+      created_at: contact.created_at || (contact as any).createdAt || ''
+    }))
+  ), [])
+
+  const fetchContactsForInsight = React.useCallback(async (
+    type: ChartInsightContactType,
+    from: string,
+    to: string,
+    scope: 'all' | 'attribution' | 'campaigns' = 'all'
+  ) => {
+    const result = await reportsService.getContactsList({ from, to, type, scope })
+    return normalizeContacts(result.contacts)
+  }, [normalizeContacts])
+
+  const mapContactsToInsightItems = React.useCallback((
+    contacts: ContactListItem[],
+    context: 'lead' | 'appointment' | 'attendance' | 'payment' = 'lead'
+  ): ChartInsightItem[] => {
+    const getPrimaryDate = (contact: ContactListItem) => {
+      if (context === 'payment') {
+        const payment = [...(contact.payments ?? [])]
+          .filter(paymentItem => isSuccessfulPaymentStatus(paymentItem.status))
+          .sort((a, b) => getTimeValue(b.date) - getTimeValue(a.date))[0]
+        return payment?.date || getContactCreatedAt(contact)
+      }
+
+      if (context === 'appointment' || context === 'attendance') {
+        const appointment = [...(contact.appointments ?? [])]
+          .sort((a, b) => getTimeValue(b.start_time) - getTimeValue(a.start_time))[0]
+        return appointment?.start_time || getContactCreatedAt(contact)
+      }
+
+      return getContactCreatedAt(contact)
+    }
+
+    return [...contacts]
+      .sort((a, b) => getTimeValue(getPrimaryDate(b)) - getTimeValue(getPrimaryDate(a)))
+      .map(contact => {
+        const successfulPayments = [...(contact.payments ?? [])]
+          .filter(payment => isSuccessfulPaymentStatus(payment.status))
+          .sort((a, b) => getTimeValue(b.date) - getTimeValue(a.date))
+        const primaryPayment = successfulPayments[0]
+        const paymentTotal = successfulPayments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0)
+        const appointments = [...(contact.appointments ?? [])]
+          .sort((a, b) => getTimeValue(b.start_time) - getTimeValue(a.start_time))
+        const primaryAppointment = appointments[0]
+        const contactValue = context === 'payment'
+          ? paymentTotal || contact.ltv || contact.lifetimeLtv || 0
+          : contact.ltv || contact.lifetimeLtv || 0
+        const subtitle = contact.email || contact.phone || contact.source || contact.firstSession?.campaign_name || 'Sin datos de contacto'
+        const meta = context === 'payment'
+          ? primaryPayment
+            ? `Pago ${formatDate(primaryPayment.date, { includeYear: true })}`
+            : `Registro ${formatDate(getContactCreatedAt(contact), { includeYear: true })}`
+          : (context === 'appointment' || context === 'attendance') && primaryAppointment
+            ? formatLocalDateTime(primaryAppointment.start_time)
+            : `Registro ${formatDate(getContactCreatedAt(contact), { includeYear: true })}`
+
+        return {
+          id: `contact-${contact.id}`,
+          title: getContactName(contact),
+          subtitle,
+          meta,
+          value: contactValue > 0 ? formatCurrency(contactValue) : undefined,
+          status: context === 'payment'
+            ? 'Pagó'
+            : context === 'attendance'
+              ? 'Asistió'
+              : context === 'appointment'
+                ? 'Citado'
+                : contact.attributed
+                  ? 'Anuncio'
+                  : undefined
+        }
+      })
+  }, [formatLocalDateTime])
+
+  const mapVisitorsToInsightItems = React.useCallback((visitors: DashboardVisitorDetail[]): ChartInsightItem[] => (
+    [...visitors]
+      .sort((a, b) => getTimeValue(b.createdAt || b.firstVisit) - getTimeValue(a.createdAt || a.firstVisit))
+      .map(visitor => {
+        const contact = visitor.contact
+        const source = visitor.utmCampaign || visitor.adName || visitor.utmSource || visitor.pageUrl || 'Sin fuente'
+        const title = contact?.name || contact?.email || contact?.phone || `Visitante ${visitor.visitorId.slice(0, 8)}`
+        const subtitle = contact?.email || contact?.phone || source
+        const device = [visitor.deviceType, visitor.browser].filter(Boolean).join(' · ')
+
+        return {
+          id: `visitor-${visitor.visitorId}-${visitor.sessionId ?? 'session'}`,
+          title,
+          subtitle,
+          meta: `${formatDate(visitor.createdAt || visitor.firstVisit, { includeYear: true })}${device ? ` · ${device}` : ''}`,
+          value: contact?.ltv && contact.ltv > 0 ? formatCurrency(contact.ltv) : undefined,
+          status: visitor.contactId ? 'Con contacto' : 'Visitante'
+        }
+      })
+  ), [])
+
+  const mapCampaignsToInsightItems = React.useCallback((campaigns: Campaign[]): ChartInsightItem[] => (
+    campaigns
+      .filter(campaign => Number(campaign.spend || 0) > 0)
+      .sort((a, b) => Number(b.spend || 0) - Number(a.spend || 0))
+      .map(campaign => ({
+        id: `campaign-${campaign.id}`,
+        title: campaign.name || 'Campaña sin nombre',
+        subtitle: `${(campaign.clicks || 0).toLocaleString('es-MX')} clicks · ${(campaign.reach || 0).toLocaleString('es-MX')} alcance`,
+        meta: `ROAS ${formatRoas(campaign.roas || 0)}`,
+        value: formatCurrency(campaign.spend || 0),
+        status: 'Gasto'
+      }))
+  ), [])
+
+  const buildInsightColumn = React.useCallback((
+    key: string,
+    title: string,
+    metricLabel: string,
+    metricValue: string,
+    emptyMessage: string,
+    items: ChartInsightItem[]
+  ): ChartInsightColumn => ({
+    key,
+    title,
+    metricLabel,
+    metricValue,
+    emptyMessage,
+    items
+  }), [])
+
+  const handleChartPointClick = React.useCallback(async (
+    point: DashboardChartClickPoint,
+    _index: number,
+    _seriesKey: ChartSeriesKey
+  ) => {
+    const inferredPeriod = point.periodKey ? getMonthPeriod(point.periodKey) : null
+    const periodStart = point.periodStart ?? inferredPeriod?.periodStart
+    const periodEnd = point.periodEnd ?? inferredPeriod?.periodEnd
+
+    if (!periodStart || !periodEnd) return
+
+    const requestKey = `${selectedChartView}-${periodStart}-${periodEnd}-${Date.now()}`
+    const metricValue1 = chartConfig.formatTooltipValue(point.value || 0)
+    const metricValue2 = chartConfig.formatTooltipValue(point.value2 || 0)
+    const modalTitle = `${activeChartLabel} · ${point.label}`
+
+    setChartInsightModal({
+      open: true,
+      requestKey,
+      title: modalTitle,
+      subtitle: formatPeriodRange(periodStart, periodEnd),
+      loading: true,
+      columns: []
+    })
+
+    const commitColumns = (columns: ChartInsightColumn[]) => {
+      setChartInsightModal(prev => (
+        prev.requestKey === requestKey
+          ? { ...prev, loading: false, columns }
+          : prev
+      ))
+    }
+
+    try {
+      let columns: ChartInsightColumn[] = []
+
+      if (selectedChartView === 'revenue-spend') {
+        const [payingContacts, campaigns] = await Promise.all([
+          fetchContactsForInsight('sales', periodStart, periodEnd, financialScope),
+          campaignsService.getCampaigns(periodStart, periodEnd)
+        ])
+
+        columns = [
+          buildInsightColumn(
+            'revenue',
+            'Personas que pagaron',
+            chartConfig.label1,
+            metricValue1,
+            'Sin pagos registrados en este mes.',
+            mapContactsToInsightItems(payingContacts, 'payment')
+          ),
+          buildInsightColumn(
+            'spend',
+            'Gastos de publicidad',
+            chartConfig.label2,
+            metricValue2,
+            'Sin gasto publicitario en este mes.',
+            mapCampaignsToInsightItems(campaigns)
+          )
+        ]
+      } else if (selectedChartView === 'visitors-leads') {
+        const [visitors, leads] = await Promise.all([
+          dashboardService.getVisitorsList({
+            start: parseLocalDateString(periodStart.slice(0, 10)),
+            end: new Date(periodEnd),
+            scope: 'all'
+          }),
+          fetchContactsForInsight('interesados', periodStart, periodEnd)
+        ])
+
+        columns = [
+          buildInsightColumn(
+            'visitors',
+            'Visitantes',
+            chartConfig.label1,
+            metricValue1,
+            'Sin visitantes registrados en este mes.',
+            mapVisitorsToInsightItems(visitors)
+          ),
+          buildInsightColumn(
+            'leads',
+            labels.leads,
+            chartConfig.label2,
+            metricValue2,
+            `Sin ${labels.leads.toLowerCase()} registrados en este mes.`,
+            mapContactsToInsightItems(leads, 'lead')
+          )
+        ]
+      } else if (selectedChartView === 'leads-appointments') {
+        const [leads, appointments] = await Promise.all([
+          fetchContactsForInsight('interesados', periodStart, periodEnd),
+          fetchContactsForInsight('appointments', periodStart, periodEnd)
+        ])
+
+        columns = [
+          buildInsightColumn(
+            'leads',
+            labels.leads,
+            chartConfig.label1,
+            metricValue1,
+            `Sin ${labels.leads.toLowerCase()} registrados en este mes.`,
+            mapContactsToInsightItems(leads, 'lead')
+          ),
+          buildInsightColumn(
+            'appointments',
+            'Citados',
+            chartConfig.label2,
+            metricValue2,
+            'Sin citas registradas en este mes.',
+            mapContactsToInsightItems(appointments, 'appointment')
+          )
+        ]
+      } else if (selectedChartView === 'appointments-attendances') {
+        const [appointments, attendances] = await Promise.all([
+          fetchContactsForInsight('appointments', periodStart, periodEnd),
+          fetchContactsForInsight('attendances', periodStart, periodEnd)
+        ])
+
+        columns = [
+          buildInsightColumn(
+            'appointments',
+            'Citados',
+            chartConfig.label1,
+            metricValue1,
+            'Sin citas registradas en este mes.',
+            mapContactsToInsightItems(appointments, 'appointment')
+          ),
+          buildInsightColumn(
+            'attendances',
+            'Asistieron',
+            chartConfig.label2,
+            metricValue2,
+            'Sin asistencias registradas en este mes.',
+            mapContactsToInsightItems(attendances, 'attendance')
+          )
+        ]
+      } else if (selectedChartView === 'attendances-sales') {
+        const [attendances, payingContacts] = await Promise.all([
+          fetchContactsForInsight('attendances', periodStart, periodEnd),
+          fetchContactsForInsight('sales', periodStart, periodEnd)
+        ])
+
+        columns = [
+          buildInsightColumn(
+            'attendances',
+            'Asistieron',
+            chartConfig.label1,
+            metricValue1,
+            'Sin asistencias registradas en este mes.',
+            mapContactsToInsightItems(attendances, 'attendance')
+          ),
+          buildInsightColumn(
+            'sales',
+            'Clientes que pagaron',
+            chartConfig.label2,
+            metricValue2,
+            'Sin clientes con pago en este mes.',
+            mapContactsToInsightItems(payingContacts, 'payment')
+          )
+        ]
+      } else if (selectedChartView === 'appointments-sales') {
+        const [appointments, payingContacts] = await Promise.all([
+          fetchContactsForInsight('appointments', periodStart, periodEnd),
+          fetchContactsForInsight('sales', periodStart, periodEnd)
+        ])
+
+        columns = [
+          buildInsightColumn(
+            'appointments',
+            'Citados',
+            chartConfig.label1,
+            metricValue1,
+            'Sin citas registradas en este mes.',
+            mapContactsToInsightItems(appointments, 'appointment')
+          ),
+          buildInsightColumn(
+            'sales',
+            'Clientes que pagaron',
+            chartConfig.label2,
+            metricValue2,
+            'Sin clientes con pago en este mes.',
+            mapContactsToInsightItems(payingContacts, 'payment')
+          )
+        ]
+      }
+
+      commitColumns(columns)
+    } catch {
+      commitColumns([
+        buildInsightColumn(
+          'error',
+          'Detalle del punto',
+          'Estado',
+          'Sin cargar',
+          'No se pudo cargar el detalle de este punto.',
+          []
+        )
+      ])
+    }
+  }, [
+    activeChartLabel,
+    buildInsightColumn,
+    chartConfig,
+    fetchContactsForInsight,
+    financialScope,
+    labels.leads,
+    mapCampaignsToInsightItems,
+    mapContactsToInsightItems,
+    mapVisitorsToInsightItems,
+    selectedChartView
+  ])
+
+  const renderInsightLoadingColumns = () => (
+    <div className="grid gap-4 lg:grid-cols-2">
+      {[0, 1].map(columnIndex => (
+        <div key={`chart-insight-loading-${columnIndex}`} className="rounded-xl border border-[rgba(148,163,184,0.18)]">
+          <div className="border-b border-[rgba(148,163,184,0.14)] p-4">
+            <div className="h-4 w-32 animate-pulse rounded bg-[color-mix(in_srgb,var(--color-text-primary)_8%,transparent)]" />
+            <div className="mt-3 h-7 w-24 animate-pulse rounded bg-[color-mix(in_srgb,var(--color-text-primary)_10%,transparent)]" />
+          </div>
+          <div className="p-4">
+            {renderOperationsLoadingRows(5)}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+
+  const renderInsightItem = (item: ChartInsightItem) => (
+    <div key={item.id} className="flex items-start justify-between gap-4 border-b border-[rgba(148,163,184,0.12)] py-3 last:border-b-0">
+      <div className="min-w-0">
+        <p className="m-0 truncate text-sm font-semibold text-[var(--color-text-primary)]">{item.title}</p>
+        {item.subtitle && (
+          <p className="mt-1 truncate text-xs text-[var(--color-text-tertiary)]">{item.subtitle}</p>
+        )}
+        {item.meta && (
+          <p className="mt-1 text-xs text-[var(--color-text-secondary)]">{item.meta}</p>
+        )}
+      </div>
+      <div className="flex flex-shrink-0 flex-col items-end gap-1 text-right">
+        {item.value && (
+          <span className="text-sm font-semibold text-[var(--color-text-primary)]">{item.value}</span>
+        )}
+        {item.status && (
+          <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${getStatusClassName(item.status)}`}>
+            {item.status}
+          </span>
+        )}
+      </div>
+    </div>
+  )
 
   if (loading || !metrics) {
     return <Loading message="Cargando dashboard..." />
@@ -876,16 +1355,17 @@ export const Dashboard: React.FC = () => {
               </div>
             ) : hasChartData ? (
               <AreaChart
-                data={chartConfig.data}
-                height={chartHeight}
-                showGrid
-                color={chartConfig.color}
-                color2={chartConfig.color2}
-                formatValue={chartConfig.formatValue}
-                formatTooltipValue={chartConfig.formatTooltipValue}
-                showLegend
-                legendLabels={{ label1: chartConfig.label1, label2: chartConfig.label2 }}
-              />
+                  data={chartConfig.data}
+                  height={chartHeight}
+                  showGrid
+                  color={chartConfig.color}
+                  color2={chartConfig.color2}
+                  formatValue={chartConfig.formatValue}
+                  formatTooltipValue={chartConfig.formatTooltipValue}
+                  showLegend
+                  legendLabels={{ label1: chartConfig.label1, label2: chartConfig.label2 }}
+                  onPointClick={handleChartPointClick}
+                />
             ) : (
               <div data-ristak-chart-empty className="flex h-full items-center justify-center rounded-xl border border-[rgba(148,163,184,0.18)] bg-[color-mix(in_srgb,var(--color-background-glass) 82%, transparent)] text-sm text-[var(--color-text-tertiary)]">
                 Sin datos disponibles
@@ -1057,18 +1537,72 @@ export const Dashboard: React.FC = () => {
             </div>
           </Card>
         </section>
-      </div>
-      </PageContainer>
+        </div>
+        </PageContainer>
 
-      <ContactDetailsModal
-        isOpen={contactModalOpen}
-        onClose={() => setContactModalOpen(false)}
-        title={contactModalTitle}
-        subtitle={contactModalSubtitle}
-        data={contactModalContacts}
-        loading={contactModalLoading}
-        type={contactModalType}
-      />
+        <Modal
+          isOpen={chartInsightModal.open}
+          onClose={() => setChartInsightModal(emptyChartInsightModal)}
+          title={chartInsightModal.title}
+          size="xl"
+          type="custom"
+        >
+          <div className="space-y-5 p-6">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <p className="m-0 text-sm text-[var(--color-text-secondary)]">{chartInsightModal.subtitle}</p>
+              {!chartInsightModal.loading && chartInsightModal.columns.length > 0 && (
+                <span className="text-xs font-semibold uppercase tracking-[0.08em] text-[var(--color-text-tertiary)]">
+                  {chartInsightModal.columns.reduce((total, column) => total + column.items.length, 0).toLocaleString('es-MX')} registros
+                </span>
+              )}
+            </div>
+
+            {chartInsightModal.loading ? renderInsightLoadingColumns() : chartInsightModal.columns.length > 0 ? (
+              <div className={`grid gap-4 ${chartInsightModal.columns.length > 1 ? 'lg:grid-cols-2' : ''}`}>
+                {chartInsightModal.columns.map(column => (
+                  <div key={column.key} className="min-w-0 rounded-xl border border-[rgba(148,163,184,0.18)]">
+                    <div className="flex items-start justify-between gap-4 border-b border-[rgba(148,163,184,0.14)] p-4">
+                      <div className="min-w-0">
+                        <p className="m-0 text-xs font-semibold uppercase tracking-[0.08em] text-[var(--color-text-tertiary)]">
+                          {column.metricLabel}
+                        </p>
+                        <h3 className="mt-1 truncate text-base font-semibold text-[var(--color-text-primary)]">
+                          {column.title}
+                        </h3>
+                      </div>
+                      <span className="flex-shrink-0 text-lg font-semibold text-[var(--color-text-primary)]">
+                        {column.metricValue}
+                      </span>
+                    </div>
+                    <div className="max-h-[52vh] overflow-y-auto px-4">
+                      {column.items.length > 0 ? (
+                        column.items.map(renderInsightItem)
+                      ) : (
+                        <div className="flex min-h-[180px] items-center justify-center px-4 text-center text-sm text-[var(--color-text-tertiary)]">
+                          {column.emptyMessage}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="flex min-h-[240px] items-center justify-center rounded-xl border border-dashed border-[rgba(148,163,184,0.2)] px-4 text-center text-sm text-[var(--color-text-tertiary)]">
+                Sin detalles disponibles para este punto.
+              </div>
+            )}
+          </div>
+        </Modal>
+
+        <ContactDetailsModal
+          isOpen={contactModalOpen}
+          onClose={() => setContactModalOpen(false)}
+          title={contactModalTitle}
+          subtitle={contactModalSubtitle}
+          data={contactModalContacts}
+          loading={contactModalLoading}
+          type={contactModalType}
+        />
 
       <VisitorDetailsModal
         isOpen={visitorsModalOpen}
