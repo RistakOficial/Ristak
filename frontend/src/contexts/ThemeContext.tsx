@@ -27,7 +27,11 @@ export const DESIGN_PRESETS: Array<{
   }
 ]
 
-const DESIGN_PRESET_STORAGE_KEY = 'ristak-design-preset'
+const THEME_COLOR_CONFIG_KEY = 'theme_color'
+const THEME_STYLE_CONFIG_KEY = 'theme_style'
+const DEFAULT_DESIGN_PRESET: DesignPreset = 'editorial'
+const LEGACY_THEME_STORAGE_KEY = 'manualTheme'
+const LEGACY_DESIGN_PRESET_STORAGE_KEY = 'ristak-design-preset'
 
 interface ThemeContextType {
   theme: ThemeMode
@@ -51,50 +55,132 @@ const getSystemPreference = (): ThemeMode => {
   return 'light'
 }
 
-const isDesignPreset = (value: string | null): value is DesignPreset => {
-  return Boolean(value && DESIGN_PRESETS.some((preset) => preset.id === value))
-}
+const parseConfigValue = (value: unknown): string | null => {
+  if (typeof value !== 'string') {
+    return null
+  }
 
-const getStoredDesignPreset = (): DesignPreset => {
-  if (typeof window === 'undefined') {
-    return 'classic'
+  const trimmedValue = value.trim()
+
+  if (!trimmedValue) {
+    return null
   }
 
   try {
-    const storedPreset = window.localStorage.getItem(DESIGN_PRESET_STORAGE_KEY)
-    return isDesignPreset(storedPreset) ? storedPreset : 'classic'
+    const parsed = JSON.parse(trimmedValue)
+    return typeof parsed === 'string' ? parsed : trimmedValue
   } catch {
-    return 'classic'
+    return trimmedValue
+  }
+}
+
+const isThemeMode = (value: unknown): value is ThemeMode => {
+  return value === 'light' || value === 'dark'
+}
+
+const isDesignPreset = (value: unknown): value is DesignPreset => {
+  return typeof value === 'string' && DESIGN_PRESETS.some((preset) => preset.id === value)
+}
+
+const getConfigTheme = (value: unknown): ThemeMode | null => {
+  const parsedValue = parseConfigValue(value)
+  return isThemeMode(parsedValue) ? parsedValue : null
+}
+
+const getConfigDesignPreset = (value: unknown): DesignPreset | null => {
+  const parsedValue = parseConfigValue(value)
+  return isDesignPreset(parsedValue) ? parsedValue : null
+}
+
+const getLegacyTheme = (): ThemeMode | null => {
+  if (typeof window === 'undefined') {
+    return null
+  }
+
+  try {
+    const savedTheme = window.sessionStorage.getItem(LEGACY_THEME_STORAGE_KEY)
+    return isThemeMode(savedTheme) ? savedTheme : null
+  } catch {
+    return null
+  }
+}
+
+const getLegacyDesignPreset = (): DesignPreset | null => {
+  if (typeof window === 'undefined') {
+    return null
+  }
+
+  try {
+    const storedPreset = window.localStorage.getItem(LEGACY_DESIGN_PRESET_STORAGE_KEY)
+    return isDesignPreset(storedPreset) ? storedPreset : null
+  } catch {
+    return null
+  }
+}
+
+const clearLegacyThemeStorage = () => {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  try {
+    window.sessionStorage.removeItem(LEGACY_THEME_STORAGE_KEY)
+  } catch {
+    // Ignore restricted storage contexts.
+  }
+
+  try {
+    window.localStorage.removeItem(LEGACY_DESIGN_PRESET_STORAGE_KEY)
+  } catch {
+    // Ignore restricted storage contexts.
+  }
+}
+
+const saveAppConfig = async (key: string, value: string) => {
+  const response = await fetch('/api/config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ key, value })
+  })
+
+  if (!response.ok) {
+    throw new Error(`Failed to save ${key}`)
+  }
+}
+
+const deleteAppConfig = async (key: string) => {
+  const response = await fetch(`/api/config?keys=${encodeURIComponent(key)}`, {
+    method: 'DELETE'
+  })
+
+  if (!response.ok) {
+    throw new Error(`Failed to delete ${key}`)
   }
 }
 
 export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [theme, setThemeState] = useState<ThemeMode>(() => {
-    const savedTheme = sessionStorage.getItem('manualTheme') as ThemeMode | null
-    if (savedTheme) {
-      return savedTheme
-    }
-    return getSystemPreference()
+    return getLegacyTheme() ?? getSystemPreference()
   })
 
   const [themeSource, setThemeSource] = useState<ThemeSource>(() => {
-    return sessionStorage.getItem('manualTheme') ? 'manual' : 'system'
+    return getLegacyTheme() ? 'manual' : 'system'
   })
-  const [designPreset, setDesignPresetState] = useState<DesignPreset>(getStoredDesignPreset)
+  const [designPreset, setDesignPresetState] = useState<DesignPreset>(() => getLegacyDesignPreset() ?? DEFAULT_DESIGN_PRESET)
 
   const setTheme = (newTheme: ThemeMode) => {
     setThemeState(newTheme)
     setThemeSource('manual')
-    sessionStorage.setItem('manualTheme', newTheme)
+    void saveAppConfig(THEME_COLOR_CONFIG_KEY, newTheme).catch((error) => {
+      console.error('Error saving theme color config:', error)
+    })
   }
 
   const setDesignPreset = (preset: DesignPreset) => {
     setDesignPresetState(preset)
-    try {
-      window.localStorage.setItem(DESIGN_PRESET_STORAGE_KEY, preset)
-    } catch {
-      // Keep the selected preset in memory when localStorage is unavailable.
-    }
+    void saveAppConfig(THEME_STYLE_CONFIG_KEY, preset).catch((error) => {
+      console.error('Error saving theme style config:', error)
+    })
   }
 
   const toggleTheme = () => {
@@ -103,26 +189,85 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }
 
   const resetToSystem = () => {
-    sessionStorage.removeItem('manualTheme')
     setThemeSource('system')
     setThemeState(getSystemPreference())
+    void deleteAppConfig(THEME_COLOR_CONFIG_KEY).catch((error) => {
+      console.error('Error deleting theme color config:', error)
+    })
   }
 
   useEffect(() => {
-    if (themeSource !== 'system') {
-      return
+    let isMounted = true
+
+    const syncThemeConfig = async () => {
+      try {
+        const response = await fetch(`/api/config?keys=${THEME_COLOR_CONFIG_KEY},${THEME_STYLE_CONFIG_KEY}`)
+
+        if (!response.ok) {
+          throw new Error('Failed to fetch theme config')
+        }
+
+        const data = await response.json()
+        const config = data.config ?? {}
+        const configuredTheme = getConfigTheme(config[THEME_COLOR_CONFIG_KEY])
+        const configuredPreset = getConfigDesignPreset(config[THEME_STYLE_CONFIG_KEY])
+        const legacyTheme = getLegacyTheme()
+        const legacyPreset = getLegacyDesignPreset()
+        const migrations: Array<Promise<void>> = []
+
+        if (!isMounted) {
+          return
+        }
+
+        if (configuredTheme) {
+          setThemeState(configuredTheme)
+          setThemeSource('manual')
+        } else if (legacyTheme) {
+          setThemeState(legacyTheme)
+          setThemeSource('manual')
+          migrations.push(saveAppConfig(THEME_COLOR_CONFIG_KEY, legacyTheme))
+        } else {
+          setThemeState(getSystemPreference())
+          setThemeSource('system')
+        }
+
+        if (configuredPreset) {
+          setDesignPresetState(configuredPreset)
+        } else if (legacyPreset) {
+          setDesignPresetState(legacyPreset)
+          migrations.push(saveAppConfig(THEME_STYLE_CONFIG_KEY, legacyPreset))
+        } else {
+          setDesignPresetState(DEFAULT_DESIGN_PRESET)
+        }
+
+        void Promise.all(migrations)
+          .then(() => {
+            clearLegacyThemeStorage()
+          })
+          .catch((error) => {
+            console.error('Error migrating legacy theme config:', error)
+          })
+      } catch (error) {
+        console.error('Error loading theme config:', error)
+      }
     }
 
-    if (!window.matchMedia) {
+    void syncThemeConfig()
+
+    return () => {
+      isMounted = false
+    }
+  }, [])
+
+  useEffect(() => {
+    if (themeSource !== 'system' || typeof window === 'undefined' || !window.matchMedia) {
       return
     }
 
     const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
 
     const handleChange = (event: MediaQueryListEvent) => {
-      if (themeSource === 'system') {
-        setThemeState(event.matches ? 'dark' : 'light')
-      }
+      setThemeState(event.matches ? 'dark' : 'light')
     }
 
     mediaQuery.addEventListener('change', handleChange)
@@ -152,6 +297,8 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     document.body.classList.remove('light', 'dark')
     document.body.classList.add(theme)
+    root.dataset.theme = theme
+    document.body.dataset.theme = theme
   }, [theme])
 
   useEffect(() => {
