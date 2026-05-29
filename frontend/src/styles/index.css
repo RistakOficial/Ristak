@@ -1348,14 +1348,9 @@ body[data-design-preset]:not([data-design-preset='classic']) [data-ristak-tablis
 }
 
 body[data-design-preset]:not([data-design-preset='classic']) [data-ristak-tablist-tab][data-active='true'] {
-  background: transparent !important;
+  background: rgba(var(--color-primary-rgb), 0.18) !important;
   color: var(--color-text-primary) !important;
   box-shadow: none !important;
-}
-
-body[data-design-preset]:not([data-design-preset='classic']) [data-ristak-tablist-indicator] {
-  border-radius: calc(var(--design-control-radius) - 0.25rem) !important;
-  background: rgba(var(--color-primary-rgb), 0.18) !important;
 }
 
 body[data-design-preset]:not([data-design-preset='classic']) [class*='scopeSelector'] {
