@@ -809,26 +809,6 @@ label:has(> input[type="radio"]) {
   background: #1d1b18;
 }
 
-.design-preset-preview[data-preset='bento'] {
-  border-radius: 14px;
-  background: linear-gradient(135deg, #eef1f4, #ffffff);
-}
-
-.design-preset-preview[data-preset='bento']::before {
-  width: 9px;
-  height: 9px;
-  border-radius: 4px;
-  background: #64748b;
-}
-
-.design-preset-preview[data-preset='bento']::after {
-  left: 17px;
-  right: 6px;
-  height: 16px;
-  border-radius: 7px;
-  background: #dbe1e8;
-}
-
 body [data-ristak-user-menu] {
   background: color-mix(in srgb, var(--color-background-secondary) 94%, transparent) !important;
   backdrop-filter: blur(18px) saturate(1.12);
@@ -1133,126 +1113,6 @@ body.dark[data-design-preset='editorial'] {
   --design-table-header-spacing: 0.12em;
 }
 
-body.light[data-design-preset='bento'] {
-  --font-app: 'Hanken Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  --font-display: 'Hanken Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  --font-mono: 'IBM Plex Mono', 'SF Mono', Consolas, monospace;
-  --color-background-primary: #f5f6f8;
-  --color-background-secondary: #ffffff;
-  --color-background-tertiary: #eef1f4;
-  --color-background-glass: rgba(255, 255, 255, 0.84);
-  --color-text-primary: #17202a;
-  --color-text-secondary: #56616d;
-  --color-text-tertiary: #7b8794;
-  --color-primary: #475569;
-  --color-primary-rgb: 71, 85, 105;
-  --color-primary-hover: #334155;
-  --color-primary-light: rgba(71, 85, 105, 0.14);
-  --color-primary-alpha: rgba(71, 85, 105, 0.24);
-  --effect-glassMorphism-background: rgba(255, 255, 255, 0.84);
-  --effect-glassMorphism-backdropFilter: blur(16px) saturate(1.1);
-  --effect-glassMorphism-border: 1px solid rgba(23, 32, 42, 0.08);
-  --design-sidebar-bg: #ffffff;
-  --design-header-bg: rgba(245, 246, 248, 0.86);
-  --design-card-bg: rgba(255, 255, 255, 0.9);
-  --design-card-border: rgba(23, 32, 42, 0.08);
-  --design-card-shadow: 0 22px 50px -34px rgba(15, 23, 42, 0.32);
-  --design-card-radius: 1.15rem;
-  --design-control-radius: 0.95rem;
-  --design-page-max: 84rem;
-  --design-kpi-min-height: 132px;
-  --design-kpi-label-size: 0.72rem;
-  --design-kpi-label-transform: uppercase;
-  --design-kpi-label-spacing: 0.1em;
-  --design-kpi-value-size: 1.65rem;
-  --design-chart-primary: #475569;
-  --design-chart-secondary: #64748b;
-  --design-chart-tertiary: #3f7fba;
-  --design-chart-accent: #7d6fc1;
-  --design-chart-warning: #c9943d;
-  --design-chart-danger: #bc5f5f;
-  --design-chart-muted: #94a3b8;
-  --design-chart-grid: rgba(23, 32, 42, 0.09);
-  --design-chart-grid-dash: 5 8;
-  --design-chart-axis: #7b8794;
-  --design-chart-empty-bg: color-mix(in srgb, #ffffff 94%, #64748b 6%);
-  --design-chart-panel-bg: rgba(255, 255, 255, 0.76);
-  --design-chart-tooltip-bg: #111827;
-  --design-chart-tooltip-border: rgba(255, 255, 255, 0.14);
-  --design-chart-area-opacity-start: 0.26;
-  --design-chart-area-opacity-mid: 0.11;
-  --design-chart-area-opacity-end: 0.02;
-  --design-table-bg: rgba(255, 255, 255, 0.9);
-  --design-table-toolbar-bg: rgba(255, 255, 255, 0.88);
-  --design-table-head-bg: color-mix(in srgb, #ffffff 90%, #64748b 10%);
-  --design-table-control-bg: rgba(255, 255, 255, 0.82);
-  --design-table-empty-bg: color-mix(in srgb, #ffffff 95%, #64748b 5%);
-  --design-table-row-even: rgba(100, 116, 139, 0.035);
-  --design-table-border: rgba(23, 32, 42, 0.08);
-  --design-table-header-font: var(--font-mono);
-  --design-table-header-spacing: 0.1em;
-}
-
-body.dark[data-design-preset='bento'] {
-  --font-app: 'Hanken Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  --font-display: 'Hanken Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  --font-mono: 'IBM Plex Mono', 'SF Mono', Consolas, monospace;
-  --color-background-primary: #0f1115;
-  --color-background-secondary: #151922;
-  --color-background-tertiary: #1b2130;
-  --color-background-glass: rgba(21, 25, 34, 0.8);
-  --color-text-primary: #f3f6fa;
-  --color-text-secondary: #c3cbd6;
-  --color-text-tertiary: #8793a4;
-  --color-primary: #94a3b8;
-  --color-primary-rgb: 148, 163, 184;
-  --color-primary-hover: #cbd5e1;
-  --color-primary-light: rgba(148, 163, 184, 0.16);
-  --color-primary-alpha: rgba(148, 163, 184, 0.24);
-  --effect-glassMorphism-background: rgba(21, 25, 34, 0.8);
-  --effect-glassMorphism-backdropFilter: blur(18px) saturate(1.12);
-  --effect-glassMorphism-border: 1px solid rgba(255, 255, 255, 0.08);
-  --design-sidebar-bg: #11151d;
-  --design-header-bg: rgba(15, 17, 21, 0.84);
-  --design-card-bg: rgba(21, 25, 34, 0.88);
-  --design-card-border: rgba(255, 255, 255, 0.08);
-  --design-card-shadow: 0 22px 56px -30px rgba(0, 0, 0, 0.82);
-  --design-card-radius: 1.15rem;
-  --design-control-radius: 0.95rem;
-  --design-page-max: 84rem;
-  --design-kpi-min-height: 132px;
-  --design-kpi-label-size: 0.72rem;
-  --design-kpi-label-transform: uppercase;
-  --design-kpi-label-spacing: 0.1em;
-  --design-kpi-value-size: 1.65rem;
-  --design-chart-primary: #cbd5e1;
-  --design-chart-secondary: #8793a4;
-  --design-chart-tertiary: #78a6ff;
-  --design-chart-accent: #a78bfa;
-  --design-chart-warning: #f4b860;
-  --design-chart-danger: #f87171;
-  --design-chart-muted: #64748b;
-  --design-chart-grid: rgba(255, 255, 255, 0.075);
-  --design-chart-grid-dash: 5 8;
-  --design-chart-axis: #8793a4;
-  --design-chart-empty-bg: rgba(21, 25, 34, 0.78);
-  --design-chart-panel-bg: rgba(17, 21, 29, 0.72);
-  --design-chart-tooltip-bg: #0f1115;
-  --design-chart-tooltip-border: rgba(255, 255, 255, 0.1);
-  --design-chart-area-opacity-start: 0.28;
-  --design-chart-area-opacity-mid: 0.12;
-  --design-chart-area-opacity-end: 0.02;
-  --design-table-bg: rgba(21, 25, 34, 0.88);
-  --design-table-toolbar-bg: rgba(17, 21, 29, 0.9);
-  --design-table-head-bg: rgba(24, 30, 42, 0.9);
-  --design-table-control-bg: rgba(15, 18, 26, 0.82);
-  --design-table-empty-bg: rgba(21, 25, 34, 0.86);
-  --design-table-row-even: rgba(148, 163, 184, 0.035);
-  --design-table-border: rgba(255, 255, 255, 0.08);
-  --design-table-header-font: var(--font-mono);
-  --design-table-header-spacing: 0.1em;
-}
-
 body[data-design-preset] [data-ristak-layout] {
   background: var(--color-background-primary) !important;
 }
@@ -1425,8 +1285,7 @@ body[data-design-preset]:not([data-design-preset='classic']) table tbody tr:nth-
   background: var(--design-table-row-even);
 }
 
-body[data-design-preset='atelier'] [data-dashboard-kpi-grid] [data-ristak-kpi-card]:first-child,
-body[data-design-preset='bento'] [data-dashboard-kpi-grid] [data-ristak-kpi-card]:first-child {
+body[data-design-preset='atelier'] [data-dashboard-kpi-grid] [data-ristak-kpi-card]:first-child {
   background: var(--design-card-bg) !important;
 }
 
@@ -1479,19 +1338,6 @@ body[data-design-preset='editorial'] [class*='scopeButtonActive'] {
   border-color: rgba(var(--color-primary-rgb), 0.32) !important;
 }
 
-body[data-design-preset='bento'] [data-dashboard-kpi-grid] {
-  grid-auto-rows: minmax(130px, auto);
-}
-
-body[data-design-preset='bento'] [data-dashboard-kpi-grid] [data-ristak-kpi-card]:first-child {
-  grid-column: span 2 / span 2;
-  min-height: 156px;
-}
-
-body[data-design-preset='bento'] [data-dashboard-kpi-grid] [data-ristak-kpi-card]:first-child::after {
-  display: none;
-}
-
 @media (max-width: 1279px) {
   body[data-design-preset='editorial'] [data-dashboard-kpi-grid] [data-ristak-kpi-card]:nth-child(4n) {
     border-right: 1px solid var(--design-card-border) !important;
@@ -1514,9 +1360,5 @@ body[data-design-preset='bento'] [data-dashboard-kpi-grid] [data-ristak-kpi-card
   body[data-design-preset]:not([data-design-preset='classic']) [data-ristak-page] {
     padding-left: 1rem;
     padding-right: 1rem;
-  }
-
-  body[data-design-preset='bento'] [data-dashboard-kpi-grid] [data-ristak-kpi-card]:first-child {
-    grid-column: span 2 / span 2;
   }
 }

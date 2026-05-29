@@ -3,7 +3,7 @@ import { themes, sharedTokens } from '@/theme/tokens'
 
 type ThemeMode = 'light' | 'dark'
 type ThemeSource = 'system' | 'manual'
-export type DesignPreset = 'classic' | 'atelier' | 'editorial' | 'bento'
+export type DesignPreset = 'classic' | 'atelier' | 'editorial'
 
 export const DESIGN_PRESETS: Array<{
   id: DesignPreset
@@ -24,11 +24,6 @@ export const DESIGN_PRESETS: Array<{
     id: 'editorial',
     label: 'Línea',
     description: 'Contenedores unidos con tipografía moderna'
-  },
-  {
-    id: 'bento',
-    label: 'Bento',
-    description: 'Tarjetas amplias y más visuales'
   }
 ]
 
