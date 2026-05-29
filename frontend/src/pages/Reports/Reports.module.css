@@ -279,9 +279,9 @@
   display: flex;
   flex-direction: column;
   gap: var(--spacing-md);
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
+  background: var(--design-table-bg, var(--color-surface));
+  border: 1px solid var(--design-table-border, var(--color-border));
+  border-radius: var(--design-card-radius, var(--radius-lg));
   padding: var(--spacing-lg);
   overflow: visible;
   position: relative;
@@ -292,7 +292,7 @@
   align-items: center;
   gap: var(--spacing-sm);
   padding-bottom: var(--spacing-sm);
-  border-bottom: 2px solid var(--color-border-subtle);
+  border-bottom: 1px solid var(--design-table-border, var(--color-border-subtle));
 }
 
 .metricsCategoryIcon {
@@ -329,23 +329,29 @@
 .metricsTableWrapper {
   overflow-x: auto;
   margin: 0;
+  background: var(--design-table-bg, transparent);
+  border: 1px solid var(--design-table-border, var(--color-border-subtle));
+  border-radius: var(--design-table-radius, var(--radius-md));
 }
 
 .metricsTable {
   width: 100%;
   border-collapse: collapse;
   border-spacing: 0;
+  background: var(--design-table-bg, transparent);
 }
 
 .metricsTable thead th {
   text-align: left;
-  padding: var(--spacing-xs) 0;
+  padding: var(--spacing-xs) var(--spacing-sm);
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-semibold);
+  font-family: var(--design-table-header-font, inherit);
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: var(--design-table-header-spacing, 0.08em);
   color: var(--color-text-tertiary);
-  border-bottom: 1px solid var(--color-border-subtle);
+  background: var(--design-table-head-bg, transparent);
+  border-bottom: 1px solid var(--design-table-border, var(--color-border-subtle));
 }
 
 .metricsTable thead th:last-child {
@@ -357,17 +363,21 @@
   padding: var(--spacing-sm) var(--spacing-md);
   font-size: var(--font-size-xs);
   text-transform: uppercase;
-  letter-spacing: 0.1em;
+  letter-spacing: var(--design-table-header-spacing, 0.1em);
   color: var(--color-text-tertiary);
-  background-color: var(--color-surface);
-  border-top: 1px solid var(--color-border);
-  border-bottom: 1px solid var(--color-border-subtle);
+  background-color: var(--design-table-head-bg, var(--color-surface));
+  border-top: 1px solid var(--design-table-border, var(--color-border));
+  border-bottom: 1px solid var(--design-table-border, var(--color-border-subtle));
 }
 
 .metricsRow td {
-  padding: var(--spacing-sm) 0;
+  padding: var(--spacing-sm);
   font-size: var(--font-size-sm);
-  border-bottom: 1px solid var(--color-border-subtle);
+  border-bottom: 1px solid var(--design-table-border, var(--color-border-subtle));
+}
+
+.metricsRow:nth-child(even) td {
+  background: var(--design-table-row-even, transparent);
 }
 
 .metricsRow:last-child td {

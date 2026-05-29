@@ -345,7 +345,7 @@ export function Table<T extends Record<string, any>>({
   }
 
   return (
-    <div className={styles.container}>
+    <div className={styles.container} data-ristak-table>
       <div className={styles.tableHeader}>
         <div className={styles.leftControls}>
           {searchable && (
@@ -393,7 +393,7 @@ export function Table<T extends Record<string, any>>({
       </div>
 
       <div className={styles.tableWrapper}>
-        <table className={styles.table}>
+        <table className={styles.table} data-ristak-table-element>
           <thead>
             {/* Fila de columnas ocultas en modo edición */}
             {editMode && (

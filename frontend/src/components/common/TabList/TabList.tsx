@@ -29,7 +29,7 @@ export const TabList: React.FC<TabListProps> = ({
   )
 
   return (
-    <div className={containerClasses}>
+    <div className={containerClasses} data-ristak-tablist>
       {tabs.map((tab) => {
         const isActive = tab.value === activeTab
 
@@ -37,6 +37,8 @@ export const TabList: React.FC<TabListProps> = ({
           <button
             key={tab.value}
             onClick={() => onTabChange(tab.value)}
+            data-ristak-tablist-tab
+            data-active={isActive ? 'true' : undefined}
             className={cn(
               'relative rounded-lg px-3 py-1.5 text-sm font-medium transition-colors whitespace-nowrap flex items-center gap-1.5',
               isActive

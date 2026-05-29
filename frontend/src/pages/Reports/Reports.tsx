@@ -912,7 +912,7 @@ const MetricsGrid: React.FC<MetricsGridProps> = ({ metrics, loading, reportType,
               <h3 className={styles.metricsCategoryTitle}>{group.title}</h3>
             </div>
             <div className={styles.metricsTableWrapper}>
-              <table className={styles.metricsTable}>
+              <table className={styles.metricsTable} data-ristak-table-element>
                 <thead>
                   <tr>
                     <th>Descripción</th>

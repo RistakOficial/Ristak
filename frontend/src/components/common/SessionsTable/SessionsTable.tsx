@@ -305,14 +305,13 @@ export const SessionsTable: React.FC<SessionsTableProps> = ({
           padding: '12px 8px',
           textAlign: 'left',
           fontWeight: 600,
-          borderBottom: '2px solid var(--color-border)',
+          borderBottom: '1px solid var(--design-table-border, var(--color-border))',
           width: `${displayWidth}px`,
           minWidth: `${displayWidth}px`,
           maxWidth: `${displayWidth}px`,
           position: 'relative',
           userSelect: 'none',
-          backgroundColor: 'var(--color-surface)',
-          backgroundImage: 'linear-gradient(to bottom, var(--color-gray-50), var(--color-surface))'
+          backgroundColor: 'var(--design-table-head-bg, var(--color-surface))'
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -334,7 +333,7 @@ export const SessionsTable: React.FC<SessionsTableProps> = ({
             }}
             onMouseEnter={(e) => {
               if (!isResizing) {
-                e.currentTarget.style.backgroundColor = 'var(--color-border)'
+                e.currentTarget.style.backgroundColor = 'var(--design-table-border, var(--color-border))'
               }
             }}
             onMouseLeave={(e) => {
@@ -409,7 +408,7 @@ export const SessionsTable: React.FC<SessionsTableProps> = ({
   return (
     <>
       {/* Vista normal (compacta) */}
-      <div className={`${styles.section} ${className}`}>
+      <div className={`${styles.section}${className ? ` ${className}` : ''}`} data-ristak-table>
         <div className={styles.sectionHeader}>
           <h3 className={styles.sectionTitle}>
             Eventos de Tracking
@@ -447,7 +446,7 @@ export const SessionsTable: React.FC<SessionsTableProps> = ({
                 : `Mostrando las primeras ${sessions.length} sesiones. Haz clic en "Expandir" para ver todas, editar y eliminar.`
               }
             </p>
-            <table className={styles.table}>
+            <table className={styles.table} data-ristak-table-element>
               <thead>
                 <tr>
                   <th style={{ padding: '12px 8px', textAlign: 'left' }}>Fecha</th>
@@ -511,11 +510,11 @@ export const SessionsTable: React.FC<SessionsTableProps> = ({
           {/* Header del modal expandido */}
           <div style={{
             padding: '20px 24px',
-            borderBottom: '1px solid var(--color-border)',
+            borderBottom: '1px solid var(--design-table-border, var(--color-border))',
             display: 'flex',
             justifyContent: 'space-between',
             alignItems: 'center',
-            backgroundColor: 'var(--color-surface)'
+            backgroundColor: 'var(--design-table-toolbar-bg, var(--color-surface))'
           }}>
             <h2 style={{ fontSize: '1.25rem', fontWeight: 600, margin: 0 }}>
               Eventos de Tracking - Vista Completa
@@ -539,8 +538,8 @@ export const SessionsTable: React.FC<SessionsTableProps> = ({
             display: 'flex',
             justifyContent: 'space-between',
             alignItems: 'center',
-            borderBottom: '1px solid var(--color-border)',
-            backgroundColor: 'var(--color-surface)',
+            borderBottom: '1px solid var(--design-table-border, var(--color-border))',
+            backgroundColor: 'var(--design-table-toolbar-bg, var(--color-surface))',
             gap: '16px'
           }}>
             <div style={{ display: 'flex', gap: '12px', flex: 1, maxWidth: '700px' }}>
@@ -550,10 +549,10 @@ export const SessionsTable: React.FC<SessionsTableProps> = ({
                 onChange={(e) => setSearchColumn(e.target.value)}
                 style={{
                   padding: '8px 12px',
-                  border: '1px solid var(--color-border)',
-                  borderRadius: '6px',
+                  border: '1px solid var(--design-table-border, var(--color-border))',
+                  borderRadius: 'var(--design-control-radius, 6px)',
                   fontSize: '0.875rem',
-                  backgroundColor: 'var(--color-background)',
+                  backgroundColor: 'var(--design-table-control-bg, var(--color-background))',
                   color: 'var(--color-text)',
                   outline: 'none',
                   cursor: 'pointer',
@@ -623,10 +622,10 @@ export const SessionsTable: React.FC<SessionsTableProps> = ({
                   style={{
                     width: '100%',
                     padding: '8px 12px 8px 40px',
-                    border: '1px solid var(--color-border)',
-                    borderRadius: '6px',
+                    border: '1px solid var(--design-table-border, var(--color-border))',
+                    borderRadius: 'var(--design-control-radius, 6px)',
                     fontSize: '0.875rem',
-                    backgroundColor: 'var(--color-background)',
+                    backgroundColor: 'var(--design-table-control-bg, var(--color-background))',
                     color: 'var(--color-text)',
                     outline: 'none'
                   }}
@@ -655,9 +654,9 @@ export const SessionsTable: React.FC<SessionsTableProps> = ({
               <table style={{
                 borderCollapse: 'collapse',
                 fontSize: '0.875rem',
-                backgroundColor: 'var(--color-surface)',
+                backgroundColor: 'var(--design-table-bg, var(--color-surface))',
                 width: '100%'
-              }}>
+              }} data-ristak-table-element>
                 <thead style={{
                   position: 'sticky',
                   top: 0,
@@ -668,8 +667,8 @@ export const SessionsTable: React.FC<SessionsTableProps> = ({
                     <th style={{
                       width: '50px',
                       padding: '12px 8px',
-                      backgroundColor: 'var(--color-surface)',
-                      borderBottom: '2px solid var(--color-border)',
+                      backgroundColor: 'var(--design-table-head-bg, var(--color-surface))',
+                      borderBottom: '1px solid var(--design-table-border, var(--color-border))',
                       position: 'sticky',
                       top: 0,
                       zIndex: 11
@@ -735,7 +734,7 @@ export const SessionsTable: React.FC<SessionsTableProps> = ({
                       <tr
                         key={`${session.session_id}-${rowIndex}`}
                         style={{
-                          borderBottom: '1px solid var(--color-border)',
+                          borderBottom: '1px solid var(--design-table-border, var(--color-border))',
                           backgroundColor: isSelected ? 'var(--color-primary-50)' : 'transparent'
                         }}
                       >
@@ -819,9 +818,9 @@ export const SessionsTable: React.FC<SessionsTableProps> = ({
               bottom: '32px',
               left: '50%',
               transform: 'translateX(-50%)',
-              backgroundColor: 'var(--color-surface)',
-              border: '1px solid var(--color-border)',
-              borderRadius: '12px',
+              backgroundColor: 'var(--design-table-bg, var(--color-surface))',
+              border: '1px solid var(--design-table-border, var(--color-border))',
+              borderRadius: 'var(--design-card-radius, 12px)',
               padding: '16px 24px',
               display: 'flex',
               gap: '12px',
@@ -832,7 +831,7 @@ export const SessionsTable: React.FC<SessionsTableProps> = ({
               <span style={{ fontSize: '0.875rem', fontWeight: 600 }}>
                 {selectedIds.size} {selectedIds.size === 1 ? 'sesión seleccionada' : 'sesiones seleccionadas'}
               </span>
-              <div style={{ width: '1px', height: '24px', backgroundColor: 'var(--color-border)' }} />
+              <div style={{ width: '1px', height: '24px', backgroundColor: 'var(--design-table-border, var(--color-border))' }} />
               <Button
                 variant="ghost"
                 size="small"
