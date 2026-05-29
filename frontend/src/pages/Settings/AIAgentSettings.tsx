@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { Bot, CheckCircle, Database, Eye, EyeOff, KeyRound, PanelRight, Sparkles, Trash2, XCircle } from 'lucide-react'
+import { Bot, CheckCircle, Database, Eye, EyeOff, Globe2, KeyRound, PanelRight, Save, Sparkles, Trash2, XCircle } from 'lucide-react'
 import { Button, Card } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
 import { aiAgentService, type AIAgentConfigStatus } from '@/services/aiAgentService'
@@ -9,12 +9,32 @@ const emptyStatus: AIAgentConfigStatus = {
   configured: false,
   model: 'gpt-5.2',
   tokenPreview: null,
+  businessContext: '',
+  marketContext: '',
+  idealCustomer: '',
+  locationContext: '',
+  competitorsContext: '',
+  brandVoice: '',
+  researchDomains: '',
+  webSearchEnabled: false,
   updatedAt: null
+}
+
+const emptyForm = {
+  businessContext: '',
+  marketContext: '',
+  idealCustomer: '',
+  locationContext: '',
+  competitorsContext: '',
+  brandVoice: '',
+  researchDomains: '',
+  webSearchEnabled: false
 }
 
 export const AIAgentSettings: React.FC = () => {
   const { showToast, showConfirm } = useNotification()
   const [status, setStatus] = useState<AIAgentConfigStatus>(emptyStatus)
+  const [form, setForm] = useState(emptyForm)
   const [apiKey, setApiKey] = useState('')
   const [showApiKey, setShowApiKey] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -32,6 +52,16 @@ export const AIAgentSettings: React.FC = () => {
     try {
       const nextStatus = await aiAgentService.getConfig()
       setStatus(nextStatus)
+      setForm({
+        businessContext: nextStatus.businessContext || '',
+        marketContext: nextStatus.marketContext || '',
+        idealCustomer: nextStatus.idealCustomer || '',
+        locationContext: nextStatus.locationContext || '',
+        competitorsContext: nextStatus.competitorsContext || '',
+        brandVoice: nextStatus.brandVoice || '',
+        researchDomains: nextStatus.researchDomains || '',
+        webSearchEnabled: Boolean(nextStatus.webSearchEnabled)
+      })
     } catch (error: any) {
       showToast('error', 'Error', error?.message || 'No se pudo cargar el estado del agente AI')
     } finally {
@@ -43,22 +73,31 @@ export const AIAgentSettings: React.FC = () => {
     loadStatus()
   }, [])
 
-  const handleSave = async () => {
-    if (!apiKey.trim()) {
-      showToast('warning', 'Token requerido', 'Pega una API Key válida de OpenAI')
-      return
-    }
+  const updateField = (field: keyof typeof emptyForm, value: string | boolean) => {
+    setForm((current) => ({
+      ...current,
+      [field]: value
+    }))
+  }
 
+  const handleSave = async () => {
     setSaving(true)
     try {
-      const nextStatus = await aiAgentService.saveConfig(apiKey.trim())
+      const nextStatus = await aiAgentService.saveConfig({
+        apiKey: apiKey.trim() || undefined,
+        ...form
+      })
       setStatus(nextStatus)
       setApiKey('')
       setShowApiKey(false)
       emitConfigChange(nextStatus)
-      showToast('success', 'Agente AI listo', 'El panel lateral ya está disponible en la app')
+      showToast(
+        'success',
+        'Agente AI actualizado',
+        nextStatus.configured ? 'El agente ya usará el contexto del negocio.' : 'Contexto guardado. Agrega el token para activar el panel lateral.'
+      )
     } catch (error: any) {
-      showToast('error', 'No se pudo conectar OpenAI', error?.message || 'Revisa el API Token')
+      showToast('error', 'No se pudo guardar', error?.message || 'Revisa la configuración del agente')
     } finally {
       setSaving(false)
     }
@@ -69,6 +108,7 @@ export const AIAgentSettings: React.FC = () => {
     try {
       await aiAgentService.deleteConfig()
       setStatus(emptyStatus)
+      setForm(emptyForm)
       setApiKey('')
       emitConfigChange(emptyStatus)
       showToast('success', 'Agente AI desconectado', 'El panel lateral fue ocultado')
@@ -149,7 +189,122 @@ export const AIAgentSettings: React.FC = () => {
 
             <Button onClick={handleSave} loading={saving} disabled={loading || saving}>
               <KeyRound size={16} />
-              Guardar token
+              Guardar configuración
+            </Button>
+          </div>
+        </div>
+
+        <div className={styles.section} style={{ marginTop: 22 }}>
+          <h3 className={styles.sectionTitle}>Contexto del negocio</h3>
+          <div className={styles.contextGrid}>
+            <div className={styles.fieldWide}>
+              <label className={styles.label}>Detalles del negocio</label>
+              <textarea
+                className={styles.textarea}
+                value={form.businessContext}
+                placeholder="Qué vendes, cómo operas, ticket promedio, promesas, diferenciadores, restricciones importantes..."
+                onChange={(event) => updateField('businessContext', event.target.value)}
+                disabled={saving || loading}
+                rows={4}
+              />
+            </div>
+
+            <div className={styles.field}>
+              <label className={styles.label}>Mercado o nicho</label>
+              <textarea
+                className={styles.textarea}
+                value={form.marketContext}
+                placeholder="Ej. clínica estética, educación, real estate, consultoría, servicios locales..."
+                onChange={(event) => updateField('marketContext', event.target.value)}
+                disabled={saving || loading}
+                rows={3}
+              />
+            </div>
+
+            <div className={styles.field}>
+              <label className={styles.label}>Cliente ideal</label>
+              <textarea
+                className={styles.textarea}
+                value={form.idealCustomer}
+                placeholder="Quién compra, qué le duele, objeciones, nivel económico, edad, ubicación, motivaciones..."
+                onChange={(event) => updateField('idealCustomer', event.target.value)}
+                disabled={saving || loading}
+                rows={3}
+              />
+            </div>
+
+            <div className={styles.field}>
+              <label className={styles.label}>Zona geográfica</label>
+              <textarea
+                className={styles.textarea}
+                value={form.locationContext}
+                placeholder="Ciudad, país, colonias, contexto local, temporadas, cultura, limitaciones geográficas..."
+                onChange={(event) => updateField('locationContext', event.target.value)}
+                disabled={saving || loading}
+                rows={3}
+              />
+            </div>
+
+            <div className={styles.field}>
+              <label className={styles.label}>Competidores o referencias</label>
+              <textarea
+                className={styles.textarea}
+                value={form.competitorsContext}
+                placeholder="Competidores, marcas de referencia, sitios, cuentas, ventajas o desventajas que conozcas..."
+                onChange={(event) => updateField('competitorsContext', event.target.value)}
+                disabled={saving || loading}
+                rows={3}
+              />
+            </div>
+
+            <div className={styles.fieldWide}>
+              <label className={styles.label}>Tono, prioridades y reglas</label>
+              <textarea
+                className={styles.textarea}
+                value={form.brandVoice}
+                placeholder="Cómo quieres que recomiende: agresivo, conservador, premium, familiar; qué evitar; qué metas importan más..."
+                onChange={(event) => updateField('brandVoice', event.target.value)}
+                disabled={saving || loading}
+                rows={3}
+              />
+            </div>
+          </div>
+        </div>
+
+        <div className={styles.section} style={{ marginTop: 22 }}>
+          <h3 className={styles.sectionTitle}>Investigación online</h3>
+          <label className={styles.toggleRow}>
+            <input
+              type="checkbox"
+              checked={form.webSearchEnabled}
+              onChange={(event) => updateField('webSearchEnabled', event.target.checked)}
+              disabled={saving || loading}
+            />
+            <span>
+              <Globe2 size={16} />
+              Permitir que la IA investigue en internet cuando el contexto externo pueda mejorar la recomendación.
+            </span>
+          </label>
+
+          <div className={styles.field}>
+            <label className={styles.label}>Dominios preferidos u obligatorios</label>
+            <textarea
+              className={styles.textarea}
+              value={form.researchDomains}
+              placeholder="Opcional. Un dominio por línea o separados por coma. Ej. inegi.org.mx, statista.com, gob.mx"
+              onChange={(event) => updateField('researchDomains', event.target.value)}
+              disabled={saving || loading || !form.webSearchEnabled}
+              rows={3}
+            />
+            <p className={styles.helper}>
+              Si lo dejas vacío, la IA podrá buscar abierto. Si pones dominios, se limitará a esas fuentes.
+            </p>
+          </div>
+
+          <div className={styles.actions}>
+            <Button onClick={handleSave} loading={saving} disabled={loading || saving}>
+              <Save size={16} />
+              Guardar contexto
             </Button>
           </div>
         </div>
@@ -173,6 +328,13 @@ export const AIAgentSettings: React.FC = () => {
                   Visible en la app
                 </span>
               </div>
+              <div className={styles.detailItem}>
+                <span className={styles.detailLabel}>Investigación online</span>
+                <span className={styles.detailValue}>
+                  <Globe2 size={15} />
+                  {status.webSearchEnabled ? 'Activada' : 'Desactivada'}
+                </span>
+              </div>
             </div>
           </div>
         )}
@@ -192,7 +354,11 @@ export const AIAgentSettings: React.FC = () => {
             </div>
             <div className={styles.capability}>
               <Sparkles size={16} />
-              Detecta oportunidades, riesgos y siguientes acciones según los datos disponibles.
+              Combina los números internos con el contexto del mercado, cliente ideal y zona geográfica.
+            </div>
+            <div className={styles.capability}>
+              <Globe2 size={16} />
+              Puede investigar online para traer contexto social, cultural, político, histórico o competitivo cuando aporte valor.
             </div>
             <div className={styles.capability}>
               <CheckCircle size={16} />

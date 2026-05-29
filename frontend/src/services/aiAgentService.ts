@@ -4,6 +4,10 @@ export interface AIAgentMessage {
   id?: string
   role: AIAgentRole
   content: string
+  sources?: Array<{
+    title: string
+    url: string
+  }>
   createdAt?: string
 }
 
@@ -11,7 +15,27 @@ export interface AIAgentConfigStatus {
   configured: boolean
   model: string
   tokenPreview: string | null
+  businessContext: string
+  marketContext: string
+  idealCustomer: string
+  locationContext: string
+  competitorsContext: string
+  brandVoice: string
+  researchDomains: string
+  webSearchEnabled: boolean
   updatedAt: string | null
+}
+
+export interface AIAgentConfigInput {
+  apiKey?: string
+  businessContext: string
+  marketContext: string
+  idealCustomer: string
+  locationContext: string
+  competitorsContext: string
+  brandVoice: string
+  researchDomains: string
+  webSearchEnabled: boolean
 }
 
 export interface AIAgentViewContext {
@@ -24,6 +48,10 @@ export interface AIAgentViewContext {
 export interface AIAgentChatResult {
   reply: string
   model: string
+  sources?: Array<{
+    title: string
+    url: string
+  }>
   usage?: unknown
 }
 
@@ -67,10 +95,10 @@ export const aiAgentService = {
     return request<AIAgentConfigStatus>('/config')
   },
 
-  saveConfig(apiKey: string): Promise<AIAgentConfigStatus> {
+  saveConfig(config: AIAgentConfigInput): Promise<AIAgentConfigStatus> {
     return request<AIAgentConfigStatus>('/config', {
       method: 'POST',
-      body: JSON.stringify({ apiKey })
+      body: JSON.stringify(config)
     })
   },
 

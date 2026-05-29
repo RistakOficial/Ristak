@@ -173,10 +173,37 @@ async function initTables() {
         id ${usePostgres ? 'SERIAL PRIMARY KEY' : 'INTEGER PRIMARY KEY AUTOINCREMENT'},
         openai_api_key_encrypted TEXT,
         model TEXT DEFAULT 'gpt-5.2',
+        business_context TEXT,
+        market_context TEXT,
+        ideal_customer TEXT,
+        location_context TEXT,
+        competitors_context TEXT,
+        brand_voice TEXT,
+        research_domains TEXT,
+        web_search_enabled INTEGER DEFAULT 0,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
     `)
+
+    const aiAgentColumns = [
+      ['business_context', 'TEXT'],
+      ['market_context', 'TEXT'],
+      ['ideal_customer', 'TEXT'],
+      ['location_context', 'TEXT'],
+      ['competitors_context', 'TEXT'],
+      ['brand_voice', 'TEXT'],
+      ['research_domains', 'TEXT'],
+      ['web_search_enabled', 'INTEGER DEFAULT 0']
+    ]
+
+    for (const [columnName, columnType] of aiAgentColumns) {
+      try {
+        await db.run(`ALTER TABLE ai_agent_config ADD COLUMN ${columnName} ${columnType}`)
+      } catch (err) {
+        // Ignore if the column already exists.
+      }
+    }
 
     // Insertar configuración por defecto de Analytics (visible por defecto)
     // Usar INSERT con ON CONFLICT para compatibilidad SQLite/PostgreSQL

@@ -29,30 +29,35 @@ export async function saveConfig(req, res) {
   try {
     const apiKey = String(req.body?.apiKey || '').trim()
 
-    if (!apiKey) {
-      return res.status(400).json({
-        success: false,
-        error: 'Se requiere el API Token de OpenAI'
-      })
-    }
-
-    if (!apiKey.startsWith('sk-')) {
+    if (apiKey && !apiKey.startsWith('sk-')) {
       return res.status(400).json({
         success: false,
         error: 'El API Token de OpenAI no tiene un formato válido'
       })
     }
 
-    const validation = await verifyOpenAIApiKey(apiKey)
+    if (apiKey) {
+      const validation = await verifyOpenAIApiKey(apiKey)
 
-    if (!validation.valid) {
-      return res.status(400).json({
-        success: false,
-        error: validation.error || 'API Token de OpenAI inválido'
-      })
+      if (!validation.valid) {
+        return res.status(400).json({
+          success: false,
+          error: validation.error || 'API Token de OpenAI inválido'
+        })
+      }
     }
 
-    const status = await saveAIAgentConfig(apiKey)
+    const status = await saveAIAgentConfig({
+      apiKey: apiKey || null,
+      businessContext: req.body?.businessContext,
+      marketContext: req.body?.marketContext,
+      idealCustomer: req.body?.idealCustomer,
+      locationContext: req.body?.locationContext,
+      competitorsContext: req.body?.competitorsContext,
+      brandVoice: req.body?.brandVoice,
+      researchDomains: req.body?.researchDomains,
+      webSearchEnabled: Boolean(req.body?.webSearchEnabled)
+    })
 
     res.json({
       success: true,

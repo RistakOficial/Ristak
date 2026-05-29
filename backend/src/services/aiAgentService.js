@@ -14,6 +14,8 @@ const MAX_MODEL_QUERIES = 6
 const MAX_AGENT_QUERIES = 10
 const MAX_REPAIR_QUERIES = 4
 const MAX_AGENT_ROWS = 200
+const BUSINESS_PROFILE_LIMIT = 6000
+const WEB_SEARCH_DOMAIN_LIMIT = 20
 const isPostgres = Boolean(process.env.DATABASE_URL)
 
 const paidStatuses = "('paid','succeeded','success','completed','complete')"
@@ -190,6 +192,51 @@ function extractResponseText(responseData) {
   return parts.join('\n').trim()
 }
 
+function extractResponseSources(responseData) {
+  const sources = []
+  const seen = new Set()
+
+  const addSource = (source = {}) => {
+    const url = typeof source.url === 'string' ? source.url : ''
+    if (!url || seen.has(url)) return
+
+    seen.add(url)
+    sources.push({
+      url,
+      title: cleanText(source.title || source.url, 160)
+    })
+  }
+
+  if (Array.isArray(responseData?.sources)) {
+    responseData.sources.forEach(addSource)
+  }
+
+  if (Array.isArray(responseData?.output)) {
+    for (const item of responseData.output) {
+      if (Array.isArray(item?.action?.sources)) {
+        item.action.sources.forEach(addSource)
+      }
+
+      if (!Array.isArray(item?.content)) continue
+
+      for (const content of item.content) {
+        if (!Array.isArray(content?.annotations)) continue
+
+        for (const annotation of content.annotations) {
+          if (annotation?.type === 'url_citation') {
+            addSource({
+              url: annotation.url,
+              title: annotation.title
+            })
+          }
+        }
+      }
+    }
+  }
+
+  return sources.slice(0, 8)
+}
+
 function parseJsonObject(text) {
   const raw = String(text || '').trim()
 
@@ -281,19 +328,61 @@ function getDefaultRiskPlan(runtimeContext) {
   }
 }
 
-async function callOpenAIResponse(apiKey, { instructions, input, maxOutputTokens = 1200 }) {
+function parseResearchDomains(value) {
+  if (!value || typeof value !== 'string') return []
+
+  return value
+    .split(/[\n,]+/)
+    .map(item => item.trim().replace(/^https?:\/\//i, '').replace(/\/.*$/g, ''))
+    .filter(Boolean)
+    .slice(0, WEB_SEARCH_DOMAIN_LIMIT)
+}
+
+function buildWebSearchTools(config, runtimeContext) {
+  if (!config?.web_search_enabled) return []
+
+  const tool = {
+    type: 'web_search',
+    user_location: {
+      type: 'approximate',
+      timezone: runtimeContext.timezone
+    }
+  }
+
+  const domains = parseResearchDomains(config.research_domains)
+  if (domains.length) {
+    tool.filters = {
+      allowed_domains: domains
+    }
+  }
+
+  return [tool]
+}
+
+async function callOpenAIResponse(apiKey, { instructions, input, maxOutputTokens = 1200, tools = [], include = [] }) {
+  const body = {
+    model: DEFAULT_MODEL,
+    instructions,
+    input,
+    max_output_tokens: maxOutputTokens
+  }
+
+  if (tools.length) {
+    body.tools = tools
+    body.tool_choice = 'auto'
+  }
+
+  if (include.length) {
+    body.include = include
+  }
+
   const response = await fetchWithTimeout(`${OPENAI_API_URL}/responses`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json'
     },
-    body: JSON.stringify({
-      model: DEFAULT_MODEL,
-      instructions,
-      input,
-      max_output_tokens: maxOutputTokens
-    })
+    body: JSON.stringify(body)
   })
 
   let data = null
@@ -316,7 +405,8 @@ async function callOpenAIResponse(apiKey, { instructions, input, maxOutputTokens
 
   return {
     text,
-    data
+    data,
+    sources: extractResponseSources(data)
   }
 }
 
@@ -354,6 +444,31 @@ function buildSafeViewContext(viewContext) {
     routeLabel: cleanText(viewContext?.routeLabel, 250),
     visibleText: cleanText(viewContext?.visibleText, VIEW_CONTEXT_LIMIT)
   }
+}
+
+function buildBusinessProfileContext(config) {
+  if (!config) return 'Sin contexto de negocio configurado.'
+
+  const fields = [
+    ['Detalles del negocio', config.business_context],
+    ['Mercado o nicho', config.market_context],
+    ['Cliente ideal', config.ideal_customer],
+    ['Zona geografica', config.location_context],
+    ['Competidores o referencias', config.competitors_context],
+    ['Tono, prioridades y restricciones', config.brand_voice],
+    ['Dominios preferidos para investigar', config.research_domains],
+    ['Investigacion online', config.web_search_enabled ? 'Activada' : 'Desactivada']
+  ]
+
+  const text = fields
+    .map(([label, value]) => {
+      const cleaned = cleanText(String(value || ''), 900)
+      return cleaned ? `${label}: ${cleaned}` : ''
+    })
+    .filter(Boolean)
+    .join('\n')
+
+  return cleanText(text || 'Sin contexto de negocio configurado.', BUSINESS_PROFILE_LIMIT)
 }
 
 function sqlMonthExpression(column, timezone = 'UTC') {
@@ -690,7 +805,7 @@ async function executeAgentQuery(query) {
   }
 }
 
-async function createQueryPlan(apiKey, { messages, viewContext, runtimeContext, databaseContextResults = [] }) {
+async function createQueryPlan(apiKey, { messages, viewContext, runtimeContext, databaseContextResults = [], agentConfig }) {
   const instructions = [
     'Eres un analista senior de datos para Ristak.',
     'Tu trabajo es decidir qué consultas SQL de sólo lectura necesitas para responder la última pregunta del usuario.',
@@ -699,6 +814,7 @@ async function createQueryPlan(apiKey, { messages, viewContext, runtimeContext, 
     'No uses presets rígidos. Si el usuario pide algo ambiguo, haz la interpretación más útil según las definiciones del dashboard y deja la suposición en assumptions.',
     'Ya se ejecutó un mapa base de la DB con rangos, histórico mensual y valores comunes. Úsalo para decidir consultas específicas sin repetir lo que ya está cubierto.',
     'Genera consultas específicas para la pregunta aunque el usuario use palabras raras, incompletas o casuales. Traduce intención de negocio a datos.',
+    'Usa el contexto del negocio para interpretar mercado, nicho, cliente ideal, zona, competidores y prioridades del usuario.',
     'Si una fecha es relativa o rara, conviértela tú a fechas absolutas usando la fecha actual. Nunca dejes params como start_date, end_date, start_ts o placeholders similares.',
     'Mantén el SQL compacto y evita columnas que no ayuden a responder.',
     `Máximo ${MAX_MODEL_QUERIES} consultas. Cada consulta debe ser necesaria.`,
@@ -716,6 +832,9 @@ async function createQueryPlan(apiKey, { messages, viewContext, runtimeContext, 
     ANALYST_SCHEMA,
     '',
     BUSINESS_DEFINITIONS,
+    '',
+    'Contexto configurado del negocio:',
+    buildBusinessProfileContext(agentConfig),
     '',
     'Resultados base de DB ya consultados:',
     JSON.stringify(databaseContextResults, null, 2),
@@ -778,7 +897,7 @@ function filterNewQueries(queries, existingNames, limit) {
   return nextQueries
 }
 
-async function createRepairQueryPlan(apiKey, { messages, viewContext, runtimeContext, plan, queryResults }) {
+async function createRepairQueryPlan(apiKey, { messages, viewContext, runtimeContext, plan, queryResults, agentConfig }) {
   const failedResults = (Array.isArray(queryResults) ? queryResults : []).filter(result => result?.error)
 
   if (!failedResults.length) {
@@ -817,6 +936,9 @@ async function createRepairQueryPlan(apiKey, { messages, viewContext, runtimeCon
     ANALYST_SCHEMA,
     '',
     BUSINESS_DEFINITIONS,
+    '',
+    'Contexto configurado del negocio:',
+    buildBusinessProfileContext(agentConfig),
     '',
     'Plan original:',
     JSON.stringify(plan, null, 2),
@@ -904,8 +1026,9 @@ function prepareQueryResultsForReply(queryResults) {
   return successfulResults
 }
 
-async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, runtimeContext, plan, queryResults }) {
+async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, runtimeContext, plan, queryResults, agentConfig }) {
   const modelQueryResults = prepareQueryResultsForReply(queryResults)
+  const webSearchTools = buildWebSearchTools(agentConfig, runtimeContext)
   const instructions = [
     'Eres el Agente AI interno de Ristak.',
     'Responde como copiloto de un dueño de negocio principiante, no como analista técnico.',
@@ -916,6 +1039,9 @@ async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, ru
     'No uses markdown pesado: sin encabezados #, sin **negritas**, sin tablas y sin símbolos raros. Puedes usar líneas cortas.',
     'No metas notas de criterio largas. Si hace falta una aclaración, que sea una frase corta al final.',
     'Si calculas porcentajes o diferencias, tradúcelos a significado de negocio.',
+    'Usa el contexto configurado del negocio para que tus recomendaciones entiendan mercado, nicho, cliente ideal, zona, cultura local, competencia y prioridades.',
+    'Si la busqueda online esta activada, investiga cuando el contexto externo pueda mejorar la recomendacion: tendencias del mercado, contexto social, cultural, politico, geografico, historico, competencia, temporada, noticias o regulaciones.',
+    'Cuando uses informacion online, conecta esa informacion con los datos internos del negocio y menciona las fuentes de forma natural.',
     'Si los resultados incluyen historico_negocio_por_mes o historico_rango_disponible, sí tienes datos históricos de la DB. No digas que sólo tienes el snapshot, la vista o el mes actual.',
     'Si el usuario pide comparación histórica, explica la evolución con los meses reales disponibles y menciona desde qué mes arranca el dato.',
     'Si el usuario pregunta cómo le ha ido desde los inicios, responde con el histórico completo disponible. No le pidas elegir "mes a mes" o "últimos 12 meses" antes de contestar.',
@@ -929,6 +1055,9 @@ async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, ru
   const input = [
     `Fecha/hora actual local: ${runtimeContext.nowIso}`,
     `Timezone del negocio: ${runtimeContext.timezone}`,
+    '',
+    'Contexto configurado del negocio:',
+    buildBusinessProfileContext(agentConfig),
     '',
     'Definiciones de negocio usadas:',
     BUSINESS_DEFINITIONS,
@@ -948,16 +1077,36 @@ async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, ru
     'Contesta el último mensaje del usuario.'
   ].join('\n')
 
-  const { text, data } = await callOpenAIResponse(apiKey, {
-    instructions,
-    input,
-    maxOutputTokens: 1400
-  })
+  let response
+
+  try {
+    response = await callOpenAIResponse(apiKey, {
+      instructions,
+      input,
+      maxOutputTokens: webSearchTools.length ? 1800 : 1400,
+      tools: webSearchTools,
+      include: webSearchTools.length ? ['web_search_call.action.sources'] : []
+    })
+  } catch (error) {
+    if (!webSearchTools.length) throw error
+
+    response = await callOpenAIResponse(apiKey, {
+      instructions: [
+        instructions,
+        'La busqueda online no estuvo disponible en este intento. Responde con DB, vista actual y contexto configurado, sin inventar contexto externo.'
+      ].join('\n'),
+      input,
+      maxOutputTokens: 1400
+    })
+  }
+
+  const { text, data, sources } = response
 
   return {
     reply: stripMarkdown(text),
     model: data?.model || DEFAULT_MODEL,
     usage: data?.usage || null,
+    sources,
     debug: {
       queryCount: queryResults.length
     }
@@ -1263,9 +1412,28 @@ function buildDirectReply(directFacts) {
   ].join('\n')
 }
 
+function cleanConfigText(value, maxLength = 3000) {
+  return cleanText(String(value || ''), maxLength)
+}
+
+function toBooleanValue(value) {
+  return value === true || value === 1 || value === '1' || value === 'true'
+}
+
 export async function getAIAgentConfig() {
   return await db.get(`
-    SELECT openai_api_key_encrypted, model, updated_at
+    SELECT
+      openai_api_key_encrypted,
+      model,
+      business_context,
+      market_context,
+      ideal_customer,
+      location_context,
+      competitors_context,
+      brand_voice,
+      research_domains,
+      web_search_enabled,
+      updated_at
     FROM ai_agent_config
     ORDER BY id ASC
     LIMIT 1
@@ -1280,7 +1448,15 @@ export async function getAIAgentStatus() {
       configured: false,
       model: DEFAULT_MODEL,
       tokenPreview: null,
-      updatedAt: null
+      businessContext: config?.business_context || '',
+      marketContext: config?.market_context || '',
+      idealCustomer: config?.ideal_customer || '',
+      locationContext: config?.location_context || '',
+      competitorsContext: config?.competitors_context || '',
+      brandVoice: config?.brand_voice || '',
+      researchDomains: config?.research_domains || '',
+      webSearchEnabled: toBooleanValue(config?.web_search_enabled),
+      updatedAt: config?.updated_at || null
     }
   }
 
@@ -1296,21 +1472,71 @@ export async function getAIAgentStatus() {
     configured: true,
     model: config.model || DEFAULT_MODEL,
     tokenPreview,
+    businessContext: config.business_context || '',
+    marketContext: config.market_context || '',
+    idealCustomer: config.ideal_customer || '',
+    locationContext: config.location_context || '',
+    competitorsContext: config.competitors_context || '',
+    brandVoice: config.brand_voice || '',
+    researchDomains: config.research_domains || '',
+    webSearchEnabled: toBooleanValue(config.web_search_enabled),
     updatedAt: config.updated_at || null
   }
 }
 
-export async function saveAIAgentConfig(apiKey) {
-  const encryptedKey = encrypt(apiKey)
+export async function saveAIAgentConfig({
+  apiKey,
+  businessContext,
+  marketContext,
+  idealCustomer,
+  locationContext,
+  competitorsContext,
+  brandVoice,
+  researchDomains,
+  webSearchEnabled
+} = {}) {
+  const encryptedKey = apiKey ? encrypt(apiKey) : null
 
   await db.run(`
-    INSERT INTO ai_agent_config (id, openai_api_key_encrypted, model, updated_at)
-    VALUES (1, ?, ?, CURRENT_TIMESTAMP)
+    INSERT INTO ai_agent_config (
+      id,
+      openai_api_key_encrypted,
+      model,
+      business_context,
+      market_context,
+      ideal_customer,
+      location_context,
+      competitors_context,
+      brand_voice,
+      research_domains,
+      web_search_enabled,
+      updated_at
+    )
+    VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
     ON CONFLICT(id) DO UPDATE SET
-      openai_api_key_encrypted = excluded.openai_api_key_encrypted,
+      openai_api_key_encrypted = COALESCE(excluded.openai_api_key_encrypted, ai_agent_config.openai_api_key_encrypted),
       model = excluded.model,
+      business_context = excluded.business_context,
+      market_context = excluded.market_context,
+      ideal_customer = excluded.ideal_customer,
+      location_context = excluded.location_context,
+      competitors_context = excluded.competitors_context,
+      brand_voice = excluded.brand_voice,
+      research_domains = excluded.research_domains,
+      web_search_enabled = excluded.web_search_enabled,
       updated_at = CURRENT_TIMESTAMP
-  `, [encryptedKey, DEFAULT_MODEL])
+  `, [
+    encryptedKey,
+    DEFAULT_MODEL,
+    cleanConfigText(businessContext),
+    cleanConfigText(marketContext),
+    cleanConfigText(idealCustomer),
+    cleanConfigText(locationContext),
+    cleanConfigText(competitorsContext),
+    cleanConfigText(brandVoice),
+    cleanConfigText(researchDomains, 1500),
+    webSearchEnabled ? 1 : 0
+  ])
 
   return getAIAgentStatus()
 }
@@ -1615,6 +1841,7 @@ function buildModelInput(messages, viewContext, databaseContext, directFacts) {
 
 export async function createAgentReply({ apiKey, messages, viewContext }) {
   const runtimeContext = await getAgentRuntimeContext()
+  const agentConfig = await getAIAgentConfig()
   const coreQueries = await buildCoreResearchQueries(runtimeContext)
   const corePlan = {
     assumptions: [
@@ -1627,7 +1854,8 @@ export async function createAgentReply({ apiKey, messages, viewContext }) {
     messages,
     viewContext: viewContext || {},
     runtimeContext,
-    databaseContextResults: coreResults
+    databaseContextResults: coreResults,
+    agentConfig
   })
   const plan = await augmentQueryPlanWithAutomaticResearch(modelPlan, {
     runtimeContext,
@@ -1650,7 +1878,8 @@ export async function createAgentReply({ apiKey, messages, viewContext }) {
       viewContext: viewContext || {},
       runtimeContext,
       plan: finalPlan,
-      queryResults
+      queryResults,
+      agentConfig
     })
 
     if (repairPlan.queries.length) {
@@ -1674,7 +1903,8 @@ export async function createAgentReply({ apiKey, messages, viewContext }) {
     viewContext: viewContext || {},
     runtimeContext,
     plan: finalPlan,
-    queryResults
+    queryResults,
+    agentConfig
   })
 
   if (!result.reply) {

@@ -22,11 +22,12 @@ const routeLabels: Record<string, string> = {
   '/settings': 'Configuración'
 }
 
-function createMessage(role: AIAgentMessage['role'], content: string): AIAgentMessage {
+function createMessage(role: AIAgentMessage['role'], content: string, sources?: AIAgentMessage['sources']): AIAgentMessage {
   return {
     id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
     role,
     content,
+    sources,
     createdAt: new Date().toISOString()
   }
 }
@@ -81,7 +82,7 @@ export const AIAgentPanel: React.FC = () => {
       const result = await aiAgentService.sendMessage(nextMessages, getViewContext())
       setMessages((current) => [
         ...current,
-        createMessage('assistant', result.reply)
+        createMessage('assistant', result.reply, result.sources)
       ])
     } catch (error: any) {
       setMessages((current) => [
@@ -162,6 +163,22 @@ export const AIAgentPanel: React.FC = () => {
                   {message.role === 'user' ? 'Tú' : 'Agente'}
                 </span>
                 <div className={styles.bubble}>{message.content}</div>
+                {message.role === 'assistant' && Boolean(message.sources?.length) && (
+                  <div className={styles.sources}>
+                    <span className={styles.sourcesLabel}>Fuentes</span>
+                    {message.sources?.map((source) => (
+                      <a
+                        key={source.url}
+                        href={source.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className={styles.sourceLink}
+                      >
+                        {source.title || source.url}
+                      </a>
+                    ))}
+                  </div>
+                )}
               </div>
             ))}
 
