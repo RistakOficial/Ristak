@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react'
+import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { Calendar, ChevronLeft, ChevronRight, ChevronDown, Clock, TrendingUp } from 'lucide-react'
 import styles from './DateRangePicker.module.css'
 import { formatDateToISO } from '@/utils/format'
@@ -180,7 +180,7 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
   const [hoveredDate, setHoveredDate] = useState<Date | null>(null)
   const [selectingEndDate, setSelectingEndDate] = useState(false)
   const [openDropdown, setOpenDropdown] = useState<string | null>(null)
-  const [alignDropdownRight, setAlignDropdownRight] = useState(false)
+  const [dropdownPosition, setDropdownPosition] = useState<React.CSSProperties | undefined>()
   const containerRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -226,9 +226,46 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
     }
   }, [startDate, endDate])
 
+  const updateDropdownPosition = useCallback(() => {
+    if (typeof window === 'undefined' || !containerRef.current) {
+      setDropdownPosition(undefined)
+      return
+    }
+
+    const rect = containerRef.current.getBoundingClientRect()
+    const viewportPadding = 16
+    const maxWidth = Math.max(320, window.innerWidth - viewportPadding * 2)
+    const width = Math.min(860, maxWidth)
+    const maxLeft = Math.max(viewportPadding, window.innerWidth - width - viewportPadding)
+    const preferredLeft = rect.right - width
+    const left = Math.min(Math.max(viewportPadding, preferredLeft), maxLeft)
+    const top = rect.bottom + 8
+
+    setDropdownPosition({
+      top,
+      left,
+      width,
+      maxHeight: Math.max(320, window.innerHeight - top - viewportPadding)
+    })
+  }, [])
+
   useEffect(() => {
-    if (!isOpen) setOpenDropdown(null)
-  }, [isOpen])
+    if (!isOpen) {
+      setOpenDropdown(null)
+      setDropdownPosition(undefined)
+      return
+    }
+
+    updateDropdownPosition()
+
+    window.addEventListener('resize', updateDropdownPosition)
+    window.addEventListener('scroll', updateDropdownPosition, true)
+
+    return () => {
+      window.removeEventListener('resize', updateDropdownPosition)
+      window.removeEventListener('scroll', updateDropdownPosition, true)
+    }
+  }, [isOpen, updateDropdownPosition])
 
   const toggleDropdown = (isLeft: boolean, type: 'month' | 'year') => {
     const key = `${isLeft ? 'left' : 'right'}-${type}`
@@ -276,7 +313,7 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
       setActiveField(null)
       return
     }
-    updateDropdownAlignment()
+    updateDropdownPosition()
     const parsedStart = parseLocalDate(startDate)
     const parsedEnd = parseLocalDate(endDate)
     setTempStart(parsedStart)
@@ -290,20 +327,9 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
     setIsOpen(true)
   }
 
-  const updateDropdownAlignment = () => {
-    if (typeof window === 'undefined' || !containerRef.current) {
-      setAlignDropdownRight(false)
-      return
-    }
-
-    const rect = containerRef.current.getBoundingClientRect()
-    const dropdownWidth = Math.min(680, window.innerWidth - 32)
-    setAlignDropdownRight(rect.left + dropdownWidth > window.innerWidth - 16)
-  }
-
   const handleSingleOpen = () => {
     if (!isOpen) {
-      updateDropdownAlignment()
+      updateDropdownPosition()
     }
     setIsOpen(!isOpen)
   }
@@ -588,6 +614,7 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
             className={`${styles.dualBox} ${activeField === 'start' && isOpen ? styles.dualBoxActive : ''}`}
             onClick={() => handleDualOpen('start')}
             type="button"
+            data-date-range-trigger
           >
             <Calendar size={14} className={styles.icon} />
             <span className={styles.dualBoxValue}>{formatSingleDate(startDate)}</span>
@@ -597,6 +624,7 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
             className={`${styles.dualBox} ${activeField === 'end' && isOpen ? styles.dualBoxActive : ''}`}
             onClick={() => handleDualOpen('end')}
             type="button"
+            data-date-range-trigger
           >
             <span className={styles.dualBoxValue}>{formatSingleDate(endDate)}</span>
           </button>
@@ -606,6 +634,7 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
           className={styles.input}
           onClick={handleSingleOpen}
           type="button"
+          data-date-range-trigger
         >
           <Calendar size={16} className={styles.icon} />
           <span className={startDate ? styles.value : styles.placeholder}>
@@ -615,7 +644,7 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
       )}
 
       {isOpen && (
-        <div className={`${styles.dropdown} ${alignDropdownRight ? styles.dropdownAlignRight : ''}`}>
+        <div className={styles.dropdown} style={dropdownPosition} data-date-range-dropdown>
           <div className={styles.sidebar}>
             <h4 className={styles.sidebarTitle}>Seleccionar fechas</h4>
             <div className={styles.presetList}>

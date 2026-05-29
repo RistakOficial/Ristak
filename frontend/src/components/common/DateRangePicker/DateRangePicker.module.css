@@ -47,21 +47,16 @@
 }
 
 .dropdown {
-  position: absolute;
-  top: calc(100% + 8px);
-  left: 0;
+  position: fixed;
   background: var(--color-background-secondary);
   border: 1px solid var(--color-border-subtle);
   border-radius: var(--radius-xl);
   z-index: var(--z-index-dropdown);
   display: flex;
-  min-width: 680px;
+  min-width: 0;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 24px);
   overflow: hidden;
-}
-
-.dropdownAlignRight {
-  left: auto;
-  right: 0;
 }
 
 [data-theme="dark"] .dropdown {
@@ -71,6 +66,7 @@
 /* Sidebar with presets */
 .sidebar {
   width: 200px;
+  flex-shrink: 0;
   background: color-mix(in srgb, var(--color-background-tertiary) 85%, rgba(255, 255, 255, 0.04));
   border-right: 1px solid rgba(148, 163, 184, 0.12);
   padding: var(--spacing-lg);
@@ -137,6 +133,7 @@
 /* Calendar Section */
 .calendarSection {
   flex: 1;
+  min-width: 0;
   padding: var(--spacing-lg);
   display: flex;
   flex-direction: column;
@@ -188,6 +185,7 @@
 
 .calendar {
   flex: 1;
+  min-width: 260px;
 }
 
 .calendarHeader {
@@ -563,12 +561,12 @@
 /* Responsive */
 @media (max-width: 768px) {
   .dropdown {
-    min-width: auto;
-    width: calc(100vw - 2 * var(--spacing-md));
-    left: 50%;
-    right: auto;
-    transform: translateX(-50%);
     flex-direction: column;
+    overflow-y: auto;
+  }
+
+  .calendar {
+    min-width: 0;
   }
 
   .sidebar {
