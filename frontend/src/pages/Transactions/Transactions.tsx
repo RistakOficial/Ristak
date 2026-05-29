@@ -561,8 +561,16 @@ export const Transactions: React.FC = () => {
           <div className={styles.dateFilters}>
             <TabList
               tabs={[
-                { value: 'all', label: 'Todos' },
-                { value: 'by-date', label: 'Por fecha' }
+                {
+                  value: 'all',
+                  label: 'Todos',
+                  description: 'Muestra todos los pagos, sin limitar por rango de fechas.'
+                },
+                {
+                  value: 'by-date',
+                  label: 'Por fecha',
+                  description: 'Activa el calendario para revisar pagos de un periodo específico.'
+                }
               ]}
               activeTab={viewMode}
               onTabChange={(value) => setViewMode(value as 'all' | 'by-date')}

@@ -38,6 +38,7 @@
   height: 14rem;
   position: relative;
   margin-bottom: 1.5rem;
+  border-radius: var(--design-table-radius, 1rem);
 }
 
 .loadingContainer,
@@ -57,7 +58,7 @@
 .emptyIcon {
   width: 3rem;
   height: 3rem;
-  color: var(--color-text-tertiary);
+  color: var(--design-chart-muted, var(--color-text-tertiary));
   margin-bottom: 0.5rem;
 }
 
@@ -89,6 +90,11 @@
   transform: translate(-50%, -50%);
   text-align: center;
   pointer-events: none;
+  min-width: 5rem;
+  border-radius: var(--design-control-radius, 999px);
+  padding: 0.45rem 0.75rem;
+  background: var(--design-chart-panel-bg, transparent);
+  border: 1px solid var(--design-table-border, transparent);
 }
 
 .centerValue {
@@ -178,8 +184,8 @@
   font-weight: 600;
   color: var(--color-text-secondary);
   padding: 0.125rem 0.5rem;
-  background-color: var(--color-background-secondary);
-  border-radius: 9999px;
+  background-color: var(--design-chart-panel-bg, var(--color-background-secondary));
+  border-radius: var(--design-control-radius, 9999px);
   flex-shrink: 0;
 }
 
@@ -192,7 +198,7 @@
 
 .progressBar {
   height: 0.5rem;
-  background-color: var(--color-background-secondary);
+  background-color: var(--design-chart-panel-bg, var(--color-background-secondary));
   border-radius: 9999px;
   overflow: hidden;
 }
@@ -206,9 +212,9 @@
 .insights {
   margin-top: 2rem;
   padding: 1rem;
-  background-color: var(--color-background-secondary);
-  border: 1px solid var(--color-border);
-  border-radius: 0.75rem;
+  background-color: var(--design-chart-panel-bg, var(--color-background-secondary));
+  border: 1px solid var(--design-table-border, var(--color-border));
+  border-radius: var(--design-table-radius, 0.75rem);
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: 1rem;
@@ -235,7 +241,7 @@
 }
 
 .insightHighlight {
-  color: var(--color-success-500);
+  color: var(--design-chart-primary, var(--color-success));
   margin-left: 0.5rem;
 }
 

@@ -219,25 +219,25 @@ export function ContactDetailsModal({
         {/* Header */}
         <div className={styles.header}>
           <div className={styles.headerContent}>
-            <div>
-              <h3 className={styles.title}>{title}</h3>
+            <div className={styles.headerTitleGroup}>
+              <div className={styles.titleRow}>
+                <h3 className={styles.title}>{title}</h3>
+                <div className={styles.stats}>
+                  <span className={styles.statItem}>
+                    {data.length} {data.length === 1 ? 'elemento' : 'elementos'}
+                  </span>
+                  {type === 'sales' && data.some(d => (d.ltv || 0) > 0) && (
+                    <span className={styles.statValue}>
+                      Total: {formatCurrency(data.reduce((sum, d) => sum + (d.ltv || 0), 0))}
+                    </span>
+                  )}
+                </div>
+              </div>
               {subtitle && <p className={styles.subtitle}>{subtitle}</p>}
             </div>
             <button onClick={onClose} className={styles.closeButton}>
               <Icon name="x" size={16} />
             </button>
-          </div>
-
-          {/* Stats */}
-          <div className={styles.stats}>
-            <span className={styles.statItem}>
-              {data.length} {data.length === 1 ? 'elemento' : 'elementos'}
-            </span>
-            {type === 'sales' && data.some(d => (d.ltv || 0) > 0) && (
-              <span className={styles.statValue}>
-                Total: {formatCurrency(data.reduce((sum, d) => sum + (d.ltv || 0), 0))}
-              </span>
-            )}
           </div>
         </div>
 
@@ -358,15 +358,18 @@ export function ContactDetailsModal({
                       ) : null
                     })()}
                   </div>
-                  {selectedContact.email && (
-                    <p className={styles.contactHeaderEmail}>
-                      {selectedContact.email}
-                    </p>
-                  )}
-                  {selectedContact.phone && (
-                    <p className={styles.contactHeaderPhone}>
-                      {selectedContact.phone}
-                    </p>
+                  {(selectedContact.email || selectedContact.phone) && (
+                    <div className={styles.contactHeaderMeta}>
+                      {selectedContact.email && (
+                        <span>{selectedContact.email}</span>
+                      )}
+                      {selectedContact.email && selectedContact.phone && (
+                        <span className={styles.metaSeparator}>/</span>
+                      )}
+                      {selectedContact.phone && (
+                        <span>{selectedContact.phone}</span>
+                      )}
+                    </div>
                   )}
                 </div>
               </div>

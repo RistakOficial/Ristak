@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState, useEffect } from 'react'
+import React, { useMemo, useRef, useState, useEffect, useId } from 'react'
 import {
   AreaChart as RechartsAreaChart,
   Area,
@@ -41,8 +41,8 @@ interface SeriesDefinition {
   color: string
 }
 
-const DEFAULT_COLOR_PRIMARY = '#3b82f6'
-const DEFAULT_COLOR_SECONDARY = '#10b981'
+const DEFAULT_COLOR_PRIMARY = 'var(--design-chart-primary, #10b981)'
+const DEFAULT_COLOR_SECONDARY = 'var(--design-chart-secondary, #64748b)'
 
 const defaultFormatAxis = (value: number): string => formatChartCurrency(value)
 
@@ -62,6 +62,7 @@ export const AreaChart: React.FC<AreaChartProps> = ({
   legendLabels = { label1: 'Serie 1', label2: 'Serie 2' }
 }) => {
   const { chartRef, pointPos: _pointPos, isHovering, activeIndex, activeData } = useChartHover({ data })
+  const gradientIdPrefix = useId().replace(/:/g, '')
   const [actualPointPos, setActualPointPos] = useState<{ x: number; y: number } | null>(null)
   const activePointRef = useRef<{ [key: string]: { x: number; y: number } }>({})
   const hasSecondSeries = data.some((d) => typeof d.value2 === 'number')
@@ -135,7 +136,7 @@ export const AreaChart: React.FC<AreaChartProps> = ({
   }, [tooltipAnchor, chartRef])
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-3" data-ristak-chart="area">
       {showLegend && (
         <div className="flex flex-wrap items-center justify-center gap-4 text-xs text-[var(--color-text-secondary)] mb-2">
           {series.map((serie) => (
@@ -157,28 +158,28 @@ export const AreaChart: React.FC<AreaChartProps> = ({
               {series.map((serie) => (
                 <linearGradient
                   key={`gradient-${serie.key}`}
-                  id={`gradient-${serie.key}-${isDarkMode ? 'dark' : 'light'}`}
+                  id={`${gradientIdPrefix}-gradient-${serie.key}-${isDarkMode ? 'dark' : 'light'}`}
                   x1="0" y1="0" x2="0" y2="1"
                 >
-                  <stop offset="0%" stopColor={serie.color} stopOpacity={0.2} />
-                  <stop offset="50%" stopColor={serie.color} stopOpacity={0.1} />
-                  <stop offset="100%" stopColor={serie.color} stopOpacity={0.02} />
+                  <stop offset="0%" stopColor={serie.color} stopOpacity="var(--design-chart-area-opacity-start, 0.2)" />
+                  <stop offset="50%" stopColor={serie.color} stopOpacity="var(--design-chart-area-opacity-mid, 0.1)" />
+                  <stop offset="100%" stopColor={serie.color} stopOpacity="var(--design-chart-area-opacity-end, 0.02)" />
                 </linearGradient>
               ))}
             </defs>
 
             {showGrid && (
               <CartesianGrid
-                strokeDasharray="3 3"
-                stroke="var(--color-border-subtle)"
-                opacity={0.3}
+                strokeDasharray="var(--design-chart-grid-dash, 3 3)"
+                stroke="var(--design-chart-grid, var(--color-border-subtle))"
+                opacity={1}
               />
             )}
 
             <XAxis
               dataKey="label"
-              tick={{ fill: 'var(--color-text-tertiary)', fontSize: 12 }}
-              axisLine={{ stroke: 'var(--color-text-tertiary)', opacity: 0.2 }}
+              tick={{ fill: 'var(--design-chart-axis, var(--color-text-tertiary))', fontSize: 12, fontFamily: 'var(--font-app)' }}
+              axisLine={{ stroke: 'var(--design-chart-grid, var(--color-text-tertiary))', opacity: 1 }}
               tickLine={false}
               allowDuplicatedCategory
               padding={{ left: 0, right: 0 }}
@@ -187,8 +188,8 @@ export const AreaChart: React.FC<AreaChartProps> = ({
 
             <YAxis
               domain={yDomain}
-              tick={{ fill: 'var(--color-text-tertiary)', fontSize: 12 }}
-              axisLine={{ stroke: 'var(--color-text-tertiary)', opacity: 0.2 }}
+              tick={{ fill: 'var(--design-chart-axis, var(--color-text-tertiary))', fontSize: 12, fontFamily: 'var(--font-app)' }}
+              axisLine={{ stroke: 'var(--design-chart-grid, var(--color-text-tertiary))', opacity: 1 }}
               tickLine={false}
               tickFormatter={(value, index) => {
                 // Ocultar el primer valor del eje Y para evitar solapamiento con eje X
@@ -207,7 +208,9 @@ export const AreaChart: React.FC<AreaChartProps> = ({
                 name={serie.label}
                 stroke={serie.color}
                 strokeWidth={2.5}
-                fill={`url(#gradient-${serie.key}-${isDarkMode ? 'dark' : 'light'})`}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                fill={`url(#${gradientIdPrefix}-gradient-${serie.key}-${isDarkMode ? 'dark' : 'light'})`}
                 dot={
                   showPoints
                     ? (props: any) => {

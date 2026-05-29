@@ -1,5 +1,6 @@
 import React from 'react'
 import { Card } from '../Card'
+import { HelpTooltip } from '../HelpTooltip'
 import { Users, UserCheck, Calendar, DollarSign, Layers, Target, MousePointerClick, CheckCircle2 } from 'lucide-react'
 import { useLabels } from '@/contexts/LabelsContext'
 import styles from './ConversionFunnelChart.module.css'
@@ -32,9 +33,24 @@ export const ConversionFunnelChart: React.FC<ConversionFunnelChartProps> = ({
   const { labels } = useLabels()
 
   const scopeOptions = [
-    { value: 'all' as const, label: 'Todos', icon: Layers },
-    { value: 'attribution' as const, label: 'Al registro', icon: Target },
-    { value: 'campaigns' as const, label: 'Identificados de anuncios', icon: MousePointerClick }
+    {
+      value: 'all' as const,
+      label: 'Todos',
+      icon: Layers,
+      description: 'Incluye todas las conversiones del periodo usando la fecha real de cada etapa.'
+    },
+    {
+      value: 'attribution' as const,
+      label: 'Al registro',
+      icon: Target,
+      description: 'Acomoda las conversiones según la fecha en que se registró el contacto.'
+    },
+    {
+      value: 'campaigns' as const,
+      label: 'Identificados de anuncios',
+      icon: MousePointerClick,
+      description: 'Muestra solo contactos que pudieron vincularse a un anuncio identificado.'
+    }
   ]
 
   const DEFAULT_STAGES: FunnelStage[] = [
@@ -90,23 +106,30 @@ export const ConversionFunnelChart: React.FC<ConversionFunnelChartProps> = ({
   const customersValue = getStageValue([labels.customers, 'clientes', 'customers'])
 
   return (
-    <Card variant="glass" className={styles.container}>
+    <Card variant="glass" className={styles.container} data-ristak-chart="funnel">
       <div className={styles.header}>
         <h3 className={styles.title}>Conversiones</h3>
         {onScopeChange && (
-          <div className={styles.scopeSelector}>
+          <div className={styles.scopeSelector} data-ristak-scope-selector>
             {scopeOptions.map((option) => {
               const Icon = option.icon
-              return (
+              const button = (
                 <button
-                  key={option.value}
                   className={`${styles.scopeButton} ${scope === option.value ? styles.scopeButtonActive : ''}`}
+                  data-ristak-scope-button
+                  data-active={scope === option.value ? 'true' : undefined}
                   onClick={() => onScopeChange(option.value)}
                   disabled={loading}
                 >
                   <Icon size={14} />
                   <span>{option.label}</span>
                 </button>
+              )
+
+              return (
+                <HelpTooltip key={option.value} content={option.description}>
+                  {button}
+                </HelpTooltip>
               )
             })}
           </div>

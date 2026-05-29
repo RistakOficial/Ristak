@@ -100,9 +100,24 @@ type TableRow = {
 // "Al momento de registro" agrupa todo por fecha de creación del contacto (sin filtro de anuncios).
 // "Identificados de anuncios" agrupa por fecha de creación + filtra solo contactos con ad_id.
 const scopeTabs = [
-  { value: 'cashflow', label: 'Todos', icon: <Layers size={16} /> },
-  { value: 'attribution', label: 'Al momento de registro', icon: <Target size={16} /> },
-  { value: 'campaigns', label: 'Identificados de anuncios', icon: <MousePointerClick size={16} /> }
+  {
+    value: 'cashflow',
+    label: 'Todos',
+    icon: <Layers size={16} />,
+    description: 'Usa la fecha real de cada evento: pagos cuando se pagaron, citas cuando se agendaron y registros cuando ocurrieron.'
+  },
+  {
+    value: 'attribution',
+    label: 'Al momento de registro',
+    icon: <Target size={16} />,
+    description: 'Agrupa pagos, citas y ventas en la fecha en que se creó el contacto para medir qué registros terminaron convirtiendo.'
+  },
+  {
+    value: 'campaigns',
+    label: 'Identificados de anuncios',
+    icon: <MousePointerClick size={16} />,
+    description: 'Muestra solo contactos identificados desde anuncios y atribuye sus resultados al día en que se registraron.'
+  }
 ]
 
 const viewTabs = [
@@ -112,8 +127,18 @@ const viewTabs = [
 ]
 
 const displayTabs = [
-  { value: 'table', label: 'Histórico', icon: <TableIcon size={16} /> },
-  { value: 'metrics', label: 'Métricas', icon: <BarChart3 size={16} /> }
+  {
+    value: 'table',
+    label: 'Histórico',
+    icon: <TableIcon size={16} />,
+    description: 'Vista de tabla para revisar cada periodo con sus ingresos, gastos, citas, clientes y demás métricas.'
+  },
+  {
+    value: 'metrics',
+    label: 'Métricas',
+    icon: <BarChart3 size={16} />,
+    description: 'Vista resumida por tarjetas y gráficas para comparar indicadores sin entrar al detalle de cada fila.'
+  }
 ]
 
 const monthRangeOptions = [
@@ -286,6 +311,7 @@ const SimpleLineChart: React.FC<SimpleLineChartProps> = ({ data, dataKeys, forma
   const { chartRef, pointPos: _pointPos, isHovering, activeIndex, activeData } = useChartHover({ data })
   const [actualPointPos, setActualPointPos] = React.useState<{ x: number; y: number } | null>(null)
   const activePointRef = React.useRef<{ [key: string]: { x: number; y: number } }>({})
+  const gradientIdPrefix = React.useId().replace(/:/g, '')
   const isDarkMode = typeof document !== 'undefined' && document.body.classList.contains('dark')
 
   // Resetear cuando cambia el índice o deja de hacer hover
@@ -331,21 +357,21 @@ const SimpleLineChart: React.FC<SimpleLineChartProps> = ({ data, dataKeys, forma
   }, [resolvedPointPos, chartRef])
 
   return (
-    <div ref={chartRef} style={{ position: 'relative', height }}>
+    <div ref={chartRef} data-ristak-chart="report-line" style={{ position: 'relative', height }}>
       <ResponsiveContainer width="100%" height="100%">
         <AreaChart data={data}>
           <defs>
             {dataKeys.map((dk) => (
-              <linearGradient key={`gradient-${dk.key}`} id={`gradient-${dk.key}-line-reports`} x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor={dk.color} stopOpacity={0.18} />
-                <stop offset="50%" stopColor={dk.color} stopOpacity={0.1} />
-                <stop offset="100%" stopColor={dk.color} stopOpacity={0.02} />
+              <linearGradient key={`gradient-${dk.key}`} id={`${gradientIdPrefix}-gradient-${dk.key}-line-reports`} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={dk.color} stopOpacity="var(--design-chart-area-opacity-start, 0.18)" />
+                <stop offset="50%" stopColor={dk.color} stopOpacity="var(--design-chart-area-opacity-mid, 0.1)" />
+                <stop offset="100%" stopColor={dk.color} stopOpacity="var(--design-chart-area-opacity-end, 0.02)" />
               </linearGradient>
             ))}
           </defs>
-          <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border-subtle)" opacity={0.5} />
-          <XAxis dataKey="label" tick={{ fontSize: 11 }} stroke="var(--color-text-tertiary)" />
-          <YAxis tick={{ fontSize: 11 }} stroke="var(--color-text-tertiary)" />
+          <CartesianGrid strokeDasharray="var(--design-chart-grid-dash, 3 3)" stroke="var(--design-chart-grid, var(--color-border-subtle))" opacity={1} />
+          <XAxis dataKey="label" tick={{ fontSize: 11, fill: 'var(--design-chart-axis, var(--color-text-tertiary))', fontFamily: 'var(--font-app)' }} stroke="var(--design-chart-grid, var(--color-text-tertiary))" />
+          <YAxis tick={{ fontSize: 11, fill: 'var(--design-chart-axis, var(--color-text-tertiary))', fontFamily: 'var(--font-app)' }} stroke="var(--design-chart-grid, var(--color-text-tertiary))" />
           {dataKeys.map((dk) => (
             <Area
               key={dk.key}
@@ -353,7 +379,9 @@ const SimpleLineChart: React.FC<SimpleLineChartProps> = ({ data, dataKeys, forma
               dataKey={dk.key}
               stroke={dk.color}
               strokeWidth={2.5}
-              fill={`url(#gradient-${dk.key}-line-reports)`}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              fill={`url(#${gradientIdPrefix}-gradient-${dk.key}-line-reports)`}
               dot={(props: any) => {
                 const isActive = props.index === activeIndex
 
@@ -477,16 +505,16 @@ const SimpleBarChart: React.FC<SimpleBarChartProps> = ({ data, dataKey, label, c
   }, [resolvedPointPos, chartRef])
 
   return (
-    <div ref={chartRef} style={{ position: 'relative', height }}>
+    <div ref={chartRef} data-ristak-chart="report-bar" style={{ position: 'relative', height }}>
       <ResponsiveContainer width="100%" height="100%">
         <BarChart data={data}>
-          <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border-subtle)" opacity={0.5} />
-          <XAxis dataKey="label" tick={{ fontSize: 11 }} stroke="var(--color-text-tertiary)" />
-          <YAxis tick={{ fontSize: 11 }} stroke="var(--color-text-tertiary)" />
+          <CartesianGrid strokeDasharray="var(--design-chart-grid-dash, 3 3)" stroke="var(--design-chart-grid, var(--color-border-subtle))" opacity={1} />
+          <XAxis dataKey="label" tick={{ fontSize: 11, fill: 'var(--design-chart-axis, var(--color-text-tertiary))', fontFamily: 'var(--font-app)' }} stroke="var(--design-chart-grid, var(--color-text-tertiary))" />
+          <YAxis tick={{ fontSize: 11, fill: 'var(--design-chart-axis, var(--color-text-tertiary))', fontFamily: 'var(--font-app)' }} stroke="var(--design-chart-grid, var(--color-text-tertiary))" />
           <Bar
             dataKey={dataKey}
             fill={color}
-            radius={[4, 4, 0, 0]}
+            radius={[8, 8, 0, 0]}
             shape={(props: any) => {
               const { x, y, width, height, index } = props
               const isActive = index === activeIndex
@@ -526,8 +554,8 @@ const SimpleBarChart: React.FC<SimpleBarChartProps> = ({ data, dataKey, label, c
                     width={width}
                     height={height}
                     fill={color}
-                    rx={4}
-                    ry={4}
+                    rx={8}
+                    ry={8}
                     opacity={isActive ? 1 : 0.9}
                     style={{ transition: 'opacity 150ms ease-out' }}
                   />
@@ -580,6 +608,7 @@ const SimpleAreaChart: React.FC<SimpleAreaChartProps> = ({ data, dataKeys, forma
   const { chartRef, pointPos: _pointPos, isHovering, activeIndex, activeData } = useChartHover({ data })
   const [actualPointPos, setActualPointPos] = React.useState<{ x: number; y: number } | null>(null)
   const activePointRef = React.useRef<{ [key: string]: { x: number; y: number } }>({})
+  const gradientIdPrefix = React.useId().replace(/:/g, '')
   const isDarkMode = typeof document !== 'undefined' && document.body.classList.contains('dark')
 
   // Resetear cuando cambia el índice o deja de hacer hover
@@ -625,21 +654,21 @@ const SimpleAreaChart: React.FC<SimpleAreaChartProps> = ({ data, dataKeys, forma
   }, [resolvedPointPos, chartRef])
 
   return (
-    <div ref={chartRef} style={{ position: 'relative', height }}>
+    <div ref={chartRef} data-ristak-chart="report-area" style={{ position: 'relative', height }}>
       <ResponsiveContainer width="100%" height="100%">
         <AreaChart data={data}>
           <defs>
             {dataKeys.map((dk) => (
-              <linearGradient key={`gradient-${dk.key}`} id={`gradient-${dk.key}-reports`} x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor={dk.color} stopOpacity={0.18} />
-                <stop offset="50%" stopColor={dk.color} stopOpacity={0.1} />
-                <stop offset="100%" stopColor={dk.color} stopOpacity={0.02} />
+              <linearGradient key={`gradient-${dk.key}`} id={`${gradientIdPrefix}-gradient-${dk.key}-reports`} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={dk.color} stopOpacity="var(--design-chart-area-opacity-start, 0.18)" />
+                <stop offset="50%" stopColor={dk.color} stopOpacity="var(--design-chart-area-opacity-mid, 0.1)" />
+                <stop offset="100%" stopColor={dk.color} stopOpacity="var(--design-chart-area-opacity-end, 0.02)" />
               </linearGradient>
             ))}
           </defs>
-          <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border-subtle)" opacity={0.5} />
-          <XAxis dataKey="label" tick={{ fontSize: 11 }} stroke="var(--color-text-tertiary)" />
-          <YAxis tick={{ fontSize: 11 }} stroke="var(--color-text-tertiary)" />
+          <CartesianGrid strokeDasharray="var(--design-chart-grid-dash, 3 3)" stroke="var(--design-chart-grid, var(--color-border-subtle))" opacity={1} />
+          <XAxis dataKey="label" tick={{ fontSize: 11, fill: 'var(--design-chart-axis, var(--color-text-tertiary))', fontFamily: 'var(--font-app)' }} stroke="var(--design-chart-grid, var(--color-text-tertiary))" />
+          <YAxis tick={{ fontSize: 11, fill: 'var(--design-chart-axis, var(--color-text-tertiary))', fontFamily: 'var(--font-app)' }} stroke="var(--design-chart-grid, var(--color-text-tertiary))" />
           {dataKeys.map((dk) => (
             <Area
               key={dk.key}
@@ -647,7 +676,9 @@ const SimpleAreaChart: React.FC<SimpleAreaChartProps> = ({ data, dataKeys, forma
               dataKey={dk.key}
               stroke={dk.color}
               strokeWidth={2.5}
-              fill={`url(#gradient-${dk.key}-reports)`}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              fill={`url(#${gradientIdPrefix}-gradient-${dk.key}-reports)`}
               dot={(props: any) => {
                 const isActive = props.index === activeIndex
 
@@ -799,10 +830,10 @@ const MetricsGrid: React.FC<MetricsGridProps> = ({ metrics, loading, reportType,
   }
 
   const trafficKeys = [
-    { key: 'clicks', label: 'Clicks', color: '#3b82f6' }
+    { key: 'clicks', label: 'Clicks', color: 'var(--design-chart-tertiary, #3b82f6)' }
   ]
   if (showVisitors) {
-    trafficKeys.push({ key: 'visitors', label: 'Visitantes', color: '#8b5cf6' })
+    trafficKeys.push({ key: 'visitors', label: 'Visitantes', color: 'var(--design-chart-accent, #8b5cf6)' })
   }
 
   const allMetricGroups = React.useMemo(() => [
@@ -838,10 +869,10 @@ const MetricsGrid: React.FC<MetricsGridProps> = ({ metrics, loading, reportType,
         <SimpleLineChart
           data={chartData}
           dataKeys={[
-            { key: 'leads', label: labels.leads, color: '#10b981' },
-            { key: 'appointments', label: 'Citas', color: '#f59e0b' },
-            { key: 'attendances', label: 'Asistencias', color: '#2563eb' },
-            { key: 'sales', label: 'Ventas', color: '#ef4444' }
+            { key: 'leads', label: labels.leads, color: 'var(--design-chart-primary, #10b981)' },
+            { key: 'appointments', label: 'Citas', color: 'var(--design-chart-warning, #f59e0b)' },
+            { key: 'attendances', label: 'Asistencias', color: 'var(--design-chart-tertiary, #3b82f6)' },
+            { key: 'sales', label: 'Ventas', color: 'var(--design-chart-danger, #ef4444)' }
           ]}
           formatValue={(value) => formatNumber(value)}
         />
@@ -863,7 +894,7 @@ const MetricsGrid: React.FC<MetricsGridProps> = ({ metrics, loading, reportType,
           data={chartData}
           dataKey="new_customers"
           label={`${labels.customers} Nuevos`}
-          color="#06b6d4"
+          color="var(--design-chart-tertiary, #06b6d4)"
           formatValue={(value) => formatNumber(value)}
         />
       )
@@ -883,9 +914,9 @@ const MetricsGrid: React.FC<MetricsGridProps> = ({ metrics, loading, reportType,
         <SimpleAreaChart
           data={chartData}
           dataKeys={[
-            { key: 'revenue', label: 'Ingresos', color: '#10b981' },
-            { key: 'spend', label: 'Gastos', color: '#ef4444' },
-            { key: 'profit', label: 'Ganancias', color: '#3b82f6' }
+            { key: 'revenue', label: 'Ingresos', color: 'var(--design-chart-primary, #10b981)' },
+            { key: 'spend', label: 'Gastos', color: 'var(--design-chart-danger, #ef4444)' },
+            { key: 'profit', label: 'Ganancias', color: 'var(--design-chart-tertiary, #3b82f6)' }
           ]}
           formatValue={(value) => formatCurrency(value)}
         />

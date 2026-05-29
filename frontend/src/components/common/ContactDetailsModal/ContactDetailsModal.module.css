@@ -1,9 +1,9 @@
 .modalContainer {
   display: flex;
   flex-direction: column;
-  height: 85vh;
-  max-height: 900px;
-  min-height: 600px;
+  height: 86vh;
+  max-height: 860px;
+  min-height: 540px;
   /* NOTA: Este modal es type="custom", por lo que Modal.content tiene padding: 0
      Todos los elementos internos manejan su propio padding */
 }
@@ -11,7 +11,7 @@
 /* En pantallas grandes, permitir más altura */
 @media (min-width: 1920px) {
   .modalContainer {
-    max-height: 1000px;
+    max-height: 920px;
   }
 }
 
@@ -75,7 +75,7 @@
 }
 
 .header {
-  padding: 2rem 2.5rem;
+  padding: 0.875rem 1.25rem;
   border-bottom: 1px solid rgba(148, 163, 184, 0.18);
   background: var(--color-background-secondary);
 }
@@ -83,19 +83,30 @@
 /* En pantallas grandes, aumentar padding */
 @media (min-width: 1920px) {
   .header {
-    padding: 2.25rem 3rem;
+    padding: 1rem 1.5rem;
   }
 }
 
 .headerContent {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 1rem;
 }
 
+.headerTitleGroup {
+  min-width: 0;
+}
+
+.titleRow {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
 .title {
-  font-size: 1.125rem;
+  font-size: 1rem;
   font-weight: 600;
   color: var(--color-text-primary);
   margin: 0;
@@ -105,13 +116,13 @@
 .subtitle {
   font-size: 0.8125rem;
   color: var(--color-text-tertiary);
-  margin: 0.25rem 0 0 0;
+  margin: 0.125rem 0 0 0;
   font-weight: 500;
 }
 
 .closeButton {
-  width: 2rem;
-  height: 2rem;
+  width: 1.875rem;
+  height: 1.875rem;
   border-radius: var(--radius-md);
   background-color: transparent;
   border: 1px solid rgba(148, 163, 184, 0.18);
@@ -131,14 +142,10 @@
 }
 
 .stats {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 1rem;
-  margin-top: 0.75rem;
-  padding: 0.625rem 0.875rem;
-  background: color-mix(in srgb, var(--color-background-glass) 82%, transparent);
-  border-radius: var(--radius-lg);
-  border: 1px solid rgba(148, 163, 184, 0.18);
+  gap: 0.5rem;
+  flex-wrap: wrap;
 }
 
 .statItem {
@@ -159,13 +166,14 @@
 .mainContent {
   display: flex;
   flex: 1;
+  min-height: 0;
   overflow: hidden;
 }
 
 .leftPanel {
   display: flex;
   flex-direction: column;
-  width: 360px;
+  width: 340px;
   border-right: 1px solid rgba(148, 163, 184, 0.18);
 }
 
@@ -176,14 +184,14 @@
 }
 
 .searchContainer {
-  padding: 1.25rem 1.5rem;
+  padding: 0.75rem 1rem;
   border-bottom: 1px solid rgba(148, 163, 184, 0.18);
   background-color: var(--color-background-secondary);
 }
 
 @media (min-width: 1920px) {
   .searchContainer {
-    padding: 1.5rem 2rem;
+    padding: 0.875rem 1.25rem;
   }
 }
 
@@ -203,10 +211,10 @@
 
 .searchInput {
   width: 100%;
-  padding: 0.625rem 2.75rem 0.625rem 2.75rem;
+  padding: 0.5625rem 2.5rem 0.5625rem 2.5rem;
   background: color-mix(in srgb, var(--color-background-glass) 70%, transparent);
   border: 1px solid rgba(148, 163, 184, 0.18);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-sm);
   font-size: 0.8125rem;
   color: var(--color-text-primary);
   transition: all 0.2s ease;
@@ -296,7 +304,7 @@
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  padding: 0.75rem 1rem;
+  padding: 0.625rem 0.875rem;
   border-bottom: 1px solid rgba(148, 163, 184, 0.12);
   cursor: pointer;
   transition: all 0.15s ease;
@@ -393,7 +401,7 @@
 }
 
 .footer {
-  padding: 0.75rem 1rem;
+  padding: 0.5rem 0.875rem;
   border-top: 1px solid rgba(148, 163, 184, 0.18);
   font-size: 0.75rem;
   color: var(--color-text-tertiary);
@@ -410,16 +418,16 @@
 
 .contactHeader {
   display: flex;
-  align-items: flex-start;
-  gap: 0.875rem;
-  padding: 1.25rem 1.5rem;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.875rem 1.25rem;
   border-bottom: 1px solid rgba(148, 163, 184, 0.18);
   background: color-mix(in srgb, var(--color-background-glass) 50%, transparent);
 }
 
 .contactHeaderAvatar {
-  width: 2.75rem;
-  height: 2.75rem;
+  width: 2.25rem;
+  height: 2.25rem;
   border-radius: 50%;
   background: rgba(var(--color-primary-rgb), 0.15);
   display: flex;
@@ -427,11 +435,12 @@
   justify-content: center;
   color: var(--color-primary);
   flex-shrink: 0;
-  border: 2px solid rgba(var(--color-primary-rgb), 0.2);
+  border: 1px solid rgba(var(--color-primary-rgb), 0.2);
 }
 
 .contactHeaderInfo {
   flex: 1;
+  min-width: 0;
 }
 
 .contactHeaderNameRow {
@@ -442,10 +451,14 @@
 }
 
 .contactHeaderName {
-  font-size: 1rem;
+  font-size: 0.9375rem;
   font-weight: 600;
   color: var(--color-text-primary);
   margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .contactHeaderBadge {
@@ -454,27 +467,43 @@
   letter-spacing: 0.02em;
 }
 
-.contactHeaderEmail,
-.contactHeaderPhone {
+.contactHeaderMeta {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
   font-size: 0.8125rem;
   color: var(--color-text-tertiary);
-  margin: 0.25rem 0 0 0;
+  margin-top: 0.1875rem;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.contactHeaderMeta span:not(.metaSeparator) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.metaSeparator {
+  color: var(--color-border);
+  flex-shrink: 0;
 }
 
 .contactDetails {
   flex: 1;
   overflow-y: auto;
-  padding: 1.5rem 2rem;
+  padding: 1rem 1.25rem;
 }
 
 @media (min-width: 1920px) {
   .contactDetails {
-    padding: 2rem 2.5rem;
+    padding: 1.25rem 1.5rem;
   }
 }
 
 .detailSection {
-  margin-bottom: 1.5rem;
+  margin-bottom: 1rem;
 }
 
 .detailSection:last-child {
@@ -487,18 +516,18 @@
   color: var(--color-text-tertiary);
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  margin: 0 0 0.625rem 0;
+  margin: 0 0 0.5rem 0;
 }
 
 .detailSectionContent {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: 0.375rem;
 }
 
 .detailItem {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 0.5rem;
   font-size: 0.8125rem;
   color: var(--color-text-secondary);
@@ -581,8 +610,8 @@
 .twoColumnGrid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 1rem;
-  margin-bottom: 1.5rem;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
 }
 
 @media (max-width: 900px) {
@@ -595,12 +624,12 @@
   background: color-mix(in srgb, var(--color-background-glass) 50%, transparent);
   border: 1px solid rgba(148, 163, 184, 0.18);
   border-radius: var(--radius-sm);
-  padding: 1rem;
-  margin-bottom: 0.75rem;
+  padding: 0.75rem;
+  margin-bottom: 0.5rem;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  min-height: 4.5rem;
+  min-height: 3.75rem;
 }
 
 .summaryCardButton {
@@ -608,8 +637,8 @@
   background: color-mix(in srgb, var(--color-background-glass) 50%, transparent);
   border: 1px solid rgba(148, 163, 184, 0.18);
   border-radius: var(--radius-sm);
-  padding: 1rem;
-  margin-bottom: 0.75rem;
+  padding: 0.75rem;
+  margin-bottom: 0.5rem;
   cursor: pointer;
   transition: all 0.2s ease;
   text-align: left;
@@ -625,7 +654,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
-  min-height: 3rem;
+  min-height: 2.5rem;
 }
 
 .summaryCardChevron {
@@ -635,14 +664,14 @@
 }
 
 .summaryTitle {
-  font-size: 0.875rem;
+  font-size: 0.8125rem;
   font-weight: 600;
   color: var(--color-text-secondary);
   margin: 0;
 }
 
 .summaryCount {
-  font-size: 1.5rem;
+  font-size: 1.25rem;
   font-weight: 700;
   color: var(--color-primary);
   margin: 0;
@@ -650,7 +679,7 @@
 }
 
 .summaryAmount {
-  font-size: 1.5rem;
+  font-size: 1.25rem;
   font-weight: 700;
   color: var(--color-success);
   margin: 0;
@@ -659,18 +688,18 @@
 
 .paymentList {
   list-style: none;
-  margin: 0.75rem 0 0 0;
+  margin: 0.5rem 0 0 0;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: 0.375rem;
 }
 
 .paymentItem {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0.625rem 0.875rem;
+  padding: 0.5rem 0.75rem;
   border-radius: var(--radius-sm);
   border: 1px solid rgba(148, 163, 184, 0.18);
   background: color-mix(in srgb, var(--color-background-glass) 50%, transparent);
@@ -761,11 +790,11 @@
 @media (max-width: 768px) {
   .modalContainer {
     height: 90vh;
-    margin: -1rem;
+    margin: 0;
   }
 
   .header {
-    padding: 1rem 1.25rem;
+    padding: 0.875rem 1rem;
   }
 
   .title {
@@ -786,12 +815,10 @@
   }
 
   .contactItem {
-    padding: 0.75rem 1rem;
+    padding: 0.625rem 0.875rem;
   }
 
   .stats {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 0.5rem;
+    gap: 0.375rem;
   }
 }

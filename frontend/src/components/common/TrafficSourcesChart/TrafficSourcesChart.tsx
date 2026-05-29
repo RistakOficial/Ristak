@@ -17,21 +17,23 @@ interface TrafficSourcesChartProps {
 }
 
 const DEFAULT_COLORS = [
-  '#3b82f6', // Blue
-  '#10b981', // Green
-  '#f59e0b', // Amber
-  '#ef4444', // Red
-  '#8b5cf6', // Purple
-  '#ec4899', // Pink
-  '#14b8a6', // Teal
-  '#f97316', // Orange
+  'var(--design-chart-primary, #10b981)',
+  'var(--design-chart-tertiary, #3b82f6)',
+  'var(--design-chart-accent, #8b5cf6)',
+  'var(--design-chart-warning, #f59e0b)',
+  'var(--design-chart-danger, #ef4444)',
+  'var(--design-chart-secondary, #64748b)',
+  'var(--design-chart-muted, #94a3b8)',
+  'color-mix(in srgb, var(--design-chart-primary, #10b981) 62%, var(--design-chart-accent, #8b5cf6))',
 ]
 
 export const TrafficSourcesChart: React.FC<TrafficSourcesChartProps> = ({ data, loading = false }) => {
   const chartData = useMemo(() => {
     return data.map((item, index) => ({
       ...item,
-      color: item.color || DEFAULT_COLORS[index % DEFAULT_COLORS.length]
+      color: item.color?.startsWith('var(--design-chart')
+        ? item.color
+        : DEFAULT_COLORS[index % DEFAULT_COLORS.length]
     }))
   }, [data])
 
@@ -61,7 +63,7 @@ export const TrafficSourcesChart: React.FC<TrafficSourcesChartProps> = ({ data, 
   }
 
   return (
-    <Card variant="glass" className={styles.container}>
+    <Card variant="glass" className={styles.container} data-ristak-chart="donut">
       <div className={styles.header}>
         <div>
           <h3 className={styles.title}>Fuentes de Tráfico</h3>
@@ -93,7 +95,8 @@ export const TrafficSourcesChart: React.FC<TrafficSourcesChartProps> = ({ data, 
                   dataKey="value"
                   startAngle={90}
                   endAngle={450}
-                  stroke="none"
+                  stroke="var(--design-chart-panel-bg, none)"
+                  strokeWidth={3}
                 >
                   {chartData.map((entry, index) => (
                     <Cell
@@ -117,7 +120,7 @@ export const TrafficSourcesChart: React.FC<TrafficSourcesChartProps> = ({ data, 
                 {
                   key: 'value',
                   label: 'Visitantes',
-                  color: chartData[activeIndex ?? 0]?.color ?? '#3b82f6'
+                  color: chartData[activeIndex ?? 0]?.color ?? 'var(--design-chart-primary, #10b981)'
                 }
               ]}
               formatValue={formatTooltipValue}
@@ -130,7 +133,7 @@ export const TrafficSourcesChart: React.FC<TrafficSourcesChartProps> = ({ data, 
             </div>
           </>
         ) : (
-          <div className={styles.emptyContainer}>
+          <div className={styles.emptyContainer} data-ristak-chart-empty>
             <Globe className={styles.emptyIcon} />
             <p className={styles.emptyText}>Sin datos de tráfico</p>
             <p className={styles.emptySubtext}>Los datos aparecerán cuando haya visitas</p>

@@ -196,23 +196,23 @@ export function VisitorDetailsModal({
         {/* Header */}
         <div className={styles.header}>
           <div className={styles.headerContent}>
-            <div>
-              <h3 className={styles.title}>{title}</h3>
+            <div className={styles.headerTitleGroup}>
+              <div className={styles.titleRow}>
+                <h3 className={styles.title}>{title}</h3>
+                <div className={styles.stats}>
+                  <span className={styles.statItem}>
+                    {normalizedData.length} {normalizedData.length === 1 ? 'visitante' : 'visitantes'}
+                  </span>
+                  <span className={styles.statValue}>
+                    {normalizedData.filter(d => d.contact?.id).length} identificados
+                  </span>
+                </div>
+              </div>
               {subtitle && <p className={styles.subtitle}>{subtitle}</p>}
             </div>
             <button onClick={onClose} className={styles.closeButton}>
               <Icon name="x" size={16} />
             </button>
-          </div>
-
-          {/* Stats */}
-          <div className={styles.stats}>
-            <span className={styles.statItem}>
-              {normalizedData.length} {normalizedData.length === 1 ? 'visitante' : 'visitantes'}
-            </span>
-            <span className={styles.statValue}>
-              {normalizedData.filter(d => d.contact?.id).length} identificados
-            </span>
           </div>
         </div>
 
@@ -322,15 +322,18 @@ export function VisitorDetailsModal({
                   <h4 className={styles.visitorHeaderName}>
                     {getVisitorName(selectedVisitor)}
                   </h4>
-                  {selectedVisitor.contact?.email && (
-                    <p className={styles.visitorHeaderEmail}>
-                      {selectedVisitor.contact.email}
-                    </p>
-                  )}
-                  {selectedVisitor.contact?.phone && (
-                    <p className={styles.visitorHeaderPhone}>
-                      {selectedVisitor.contact.phone}
-                    </p>
+                  {(selectedVisitor.contact?.email || selectedVisitor.contact?.phone) && (
+                    <div className={styles.visitorHeaderMeta}>
+                      {selectedVisitor.contact?.email && (
+                        <span>{selectedVisitor.contact.email}</span>
+                      )}
+                      {selectedVisitor.contact?.email && selectedVisitor.contact?.phone && (
+                        <span className={styles.metaSeparator}>/</span>
+                      )}
+                      {selectedVisitor.contact?.phone && (
+                        <span>{selectedVisitor.contact.phone}</span>
+                      )}
+                    </div>
                   )}
                   {!selectedVisitor.contact?.id && (
                     <p className={styles.visitorHeaderAnonymous}>

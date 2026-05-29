@@ -1107,8 +1107,16 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                   <div className={styles.tabListWrapper}>
                     <TabList
                       tabs={[
-                        { value: 'default', label: 'Por defecto' },
-                        { value: 'custom', label: 'Personalizado' }
+                        {
+                          value: 'default',
+                          label: 'Por defecto',
+                          description: 'Usa el horario sugerido por la disponibilidad del calendario.'
+                        },
+                        {
+                          value: 'custom',
+                          label: 'Personalizado',
+                          description: 'Te deja escoger una fecha y hora exactas para esta cita.'
+                        }
                       ]}
                       activeTab={scheduleMode}
                       onTabChange={(value) => setScheduleMode(value as 'default' | 'custom')}

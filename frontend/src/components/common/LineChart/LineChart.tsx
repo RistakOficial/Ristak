@@ -42,8 +42,8 @@ interface SeriesDefinition {
   color: string
 }
 
-const DEFAULT_COLOR_PRIMARY = '#8b5cf6'
-const DEFAULT_COLOR_SECONDARY = '#3b82f6'
+const DEFAULT_COLOR_PRIMARY = 'var(--design-chart-primary, #10b981)'
+const DEFAULT_COLOR_SECONDARY = 'var(--design-chart-secondary, #64748b)'
 
 const defaultFormatAxis = (value: number): string => formatChartCurrency(value)
 
@@ -163,7 +163,7 @@ export const LineChart: React.FC<LineChartProps> = ({
   }, [tooltipAnchor, chartRef])
 
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+    <div data-ristak-chart="line" style={{ height: '100%', display: 'flex', flexDirection: 'column', gap: '12px' }}>
       {showLegend && (
         <div className="flex flex-wrap items-center justify-center gap-4 text-xs text-gray-500 dark:text-gray-400">
           {series.map((serie) => (
@@ -194,13 +194,17 @@ export const LineChart: React.FC<LineChartProps> = ({
         <ResponsiveContainer width="100%" height="100%">
           <RechartsLineChart data={data} margin={{ top: 10, right: 12, left: 0, bottom: 5 }}>
             {showGrid && (
-              <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" opacity={0.5} />
+              <CartesianGrid
+                strokeDasharray="var(--design-chart-grid-dash, 3 3)"
+                stroke="var(--design-chart-grid, #e5e7eb)"
+                opacity={1}
+              />
             )}
 
             <XAxis
               dataKey="label"
-              tick={{ fill: '#6b7280', fontSize: 13 }}
-              axisLine={{ stroke: '#e5e7eb', opacity: 0.2 }}
+              tick={{ fill: 'var(--design-chart-axis, #6b7280)', fontSize: 13, fontFamily: 'var(--font-app)' }}
+              axisLine={{ stroke: 'var(--design-chart-grid, #e5e7eb)', opacity: 1 }}
               tickLine={false}
               allowDuplicatedCategory
               padding={{ left: 0, right: 0 }}
@@ -209,8 +213,8 @@ export const LineChart: React.FC<LineChartProps> = ({
 
             <YAxis
               domain={yDomain}
-              tick={{ fill: '#6b7280', fontSize: 13 }}
-              axisLine={{ stroke: '#e5e7eb', opacity: 0.2 }}
+              tick={{ fill: 'var(--design-chart-axis, #6b7280)', fontSize: 13, fontFamily: 'var(--font-app)' }}
+              axisLine={{ stroke: 'var(--design-chart-grid, #e5e7eb)', opacity: 1 }}
               tickLine={false}
               tickFormatter={axisFormatter}
               allowDecimals={false}
@@ -226,6 +230,8 @@ export const LineChart: React.FC<LineChartProps> = ({
                 dataKey={serie.key}
                 stroke={serie.color}
                 strokeWidth={2.5}
+                strokeLinecap="round"
+                strokeLinejoin="round"
                 dot={
                   showPoints
                     ? (props: any) => {

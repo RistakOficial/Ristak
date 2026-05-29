@@ -865,6 +865,21 @@ body[data-design-preset] {
   --design-kpi-value-size: 1.5rem;
   --design-chart-primary: var(--color-status-success);
   --design-chart-secondary: #64748b;
+  --design-chart-tertiary: #3b82f6;
+  --design-chart-accent: #8b5cf6;
+  --design-chart-warning: #f59e0b;
+  --design-chart-danger: #ef4444;
+  --design-chart-muted: #94a3b8;
+  --design-chart-grid: rgba(148, 163, 184, 0.22);
+  --design-chart-grid-dash: 4 6;
+  --design-chart-axis: var(--color-text-tertiary);
+  --design-chart-empty-bg: color-mix(in srgb, var(--color-background-glass) 82%, transparent);
+  --design-chart-panel-bg: color-mix(in srgb, var(--color-background-glass) 72%, transparent);
+  --design-chart-tooltip-bg: #1a1a1a;
+  --design-chart-tooltip-border: rgba(255, 255, 255, 0.12);
+  --design-chart-area-opacity-start: 0.2;
+  --design-chart-area-opacity-mid: 0.1;
+  --design-chart-area-opacity-end: 0.02;
   --design-table-bg: var(--color-background);
   --design-table-toolbar-bg: var(--color-background);
   --design-table-head-bg: var(--color-surface);
@@ -912,6 +927,21 @@ body.light[data-design-preset='atelier'] {
   --design-kpi-value-size: 1.68rem;
   --design-chart-primary: #2f7d5b;
   --design-chart-secondary: #9b988f;
+  --design-chart-tertiary: #547f91;
+  --design-chart-accent: #9c7d45;
+  --design-chart-warning: #c88f43;
+  --design-chart-danger: #bd695d;
+  --design-chart-muted: #b7b1a3;
+  --design-chart-grid: rgba(28, 27, 24, 0.1);
+  --design-chart-grid-dash: 2 7;
+  --design-chart-axis: #87857c;
+  --design-chart-empty-bg: color-mix(in srgb, #fffefa 90%, #2f7d5b 10%);
+  --design-chart-panel-bg: color-mix(in srgb, #fffefa 92%, #2f7d5b 8%);
+  --design-chart-tooltip-bg: #1f211c;
+  --design-chart-tooltip-border: rgba(255, 255, 255, 0.12);
+  --design-chart-area-opacity-start: 0.24;
+  --design-chart-area-opacity-mid: 0.1;
+  --design-chart-area-opacity-end: 0.015;
   --design-table-bg: #fffefa;
   --design-table-toolbar-bg: color-mix(in srgb, #fffefa 92%, #2f7d5b 8%);
   --design-table-head-bg: color-mix(in srgb, #fffefa 86%, #2f7d5b 14%);
@@ -957,6 +987,21 @@ body.dark[data-design-preset='atelier'] {
   --design-kpi-value-size: 1.68rem;
   --design-chart-primary: #64b98e;
   --design-chart-secondary: #8d8a80;
+  --design-chart-tertiary: #89aeb8;
+  --design-chart-accent: #c6a05c;
+  --design-chart-warning: #d59b55;
+  --design-chart-danger: #d9796d;
+  --design-chart-muted: #77746b;
+  --design-chart-grid: rgba(255, 255, 255, 0.08);
+  --design-chart-grid-dash: 2 7;
+  --design-chart-axis: #8d8a80;
+  --design-chart-empty-bg: rgba(23, 23, 19, 0.72);
+  --design-chart-panel-bg: rgba(26, 29, 23, 0.66);
+  --design-chart-tooltip-bg: #1b1c18;
+  --design-chart-tooltip-border: rgba(255, 255, 255, 0.1);
+  --design-chart-area-opacity-start: 0.24;
+  --design-chart-area-opacity-mid: 0.1;
+  --design-chart-area-opacity-end: 0.015;
   --design-table-bg: rgba(23, 23, 19, 0.86);
   --design-table-toolbar-bg: rgba(19, 20, 16, 0.92);
   --design-table-head-bg: rgba(26, 29, 23, 0.88);
@@ -1002,6 +1047,21 @@ body.light[data-design-preset='editorial'] {
   --design-kpi-value-size: 1.8rem;
   --design-chart-primary: #2d6f58;
   --design-chart-secondary: #77736a;
+  --design-chart-tertiary: #506f88;
+  --design-chart-accent: #8d765f;
+  --design-chart-warning: #a98238;
+  --design-chart-danger: #a65d55;
+  --design-chart-muted: #aaa49a;
+  --design-chart-grid: rgba(23, 21, 17, 0.09);
+  --design-chart-grid-dash: 1 0;
+  --design-chart-axis: #858176;
+  --design-chart-empty-bg: #fbfaf6;
+  --design-chart-panel-bg: #f4f2ec;
+  --design-chart-tooltip-bg: #201e19;
+  --design-chart-tooltip-border: rgba(255, 255, 255, 0.12);
+  --design-chart-area-opacity-start: 0.16;
+  --design-chart-area-opacity-mid: 0.07;
+  --design-chart-area-opacity-end: 0;
   --design-table-bg: #fffefa;
   --design-table-toolbar-bg: #fffefa;
   --design-table-head-bg: #f2f0ea;
@@ -1047,6 +1107,21 @@ body.dark[data-design-preset='editorial'] {
   --design-kpi-value-size: 1.8rem;
   --design-chart-primary: #78b899;
   --design-chart-secondary: #8a8374;
+  --design-chart-tertiary: #7e9aab;
+  --design-chart-accent: #b49a75;
+  --design-chart-warning: #bd9550;
+  --design-chart-danger: #bd746b;
+  --design-chart-muted: #635e53;
+  --design-chart-grid: rgba(255, 255, 255, 0.075);
+  --design-chart-grid-dash: 1 0;
+  --design-chart-axis: #8a8374;
+  --design-chart-empty-bg: #1a1914;
+  --design-chart-panel-bg: #1d1b15;
+  --design-chart-tooltip-bg: #232019;
+  --design-chart-tooltip-border: rgba(255, 255, 255, 0.09);
+  --design-chart-area-opacity-start: 0.16;
+  --design-chart-area-opacity-mid: 0.07;
+  --design-chart-area-opacity-end: 0;
   --design-table-bg: #181712;
   --design-table-toolbar-bg: #181712;
   --design-table-head-bg: #1d1b15;
@@ -1093,6 +1168,21 @@ body.light[data-design-preset='bento'] {
   --design-kpi-value-size: 1.65rem;
   --design-chart-primary: #28775a;
   --design-chart-secondary: #68736d;
+  --design-chart-tertiary: #3f7fba;
+  --design-chart-accent: #7d6fc1;
+  --design-chart-warning: #c9943d;
+  --design-chart-danger: #bc5f5f;
+  --design-chart-muted: #9aa8a1;
+  --design-chart-grid: rgba(23, 32, 28, 0.09);
+  --design-chart-grid-dash: 5 8;
+  --design-chart-axis: #7b8781;
+  --design-chart-empty-bg: color-mix(in srgb, #ffffff 92%, #28775a 8%);
+  --design-chart-panel-bg: rgba(255, 255, 255, 0.76);
+  --design-chart-tooltip-bg: #10201a;
+  --design-chart-tooltip-border: rgba(255, 255, 255, 0.14);
+  --design-chart-area-opacity-start: 0.26;
+  --design-chart-area-opacity-mid: 0.11;
+  --design-chart-area-opacity-end: 0.02;
   --design-table-bg: rgba(255, 255, 255, 0.9);
   --design-table-toolbar-bg: rgba(255, 255, 255, 0.88);
   --design-table-head-bg: color-mix(in srgb, #ffffff 88%, #28775a 12%);
@@ -1139,6 +1229,21 @@ body.dark[data-design-preset='bento'] {
   --design-kpi-value-size: 1.65rem;
   --design-chart-primary: #6ac89d;
   --design-chart-secondary: #7f9188;
+  --design-chart-tertiary: #78a6ff;
+  --design-chart-accent: #a78bfa;
+  --design-chart-warning: #f4b860;
+  --design-chart-danger: #f87171;
+  --design-chart-muted: #657970;
+  --design-chart-grid: rgba(255, 255, 255, 0.075);
+  --design-chart-grid-dash: 5 8;
+  --design-chart-axis: #7f9188;
+  --design-chart-empty-bg: rgba(18, 26, 24, 0.78);
+  --design-chart-panel-bg: rgba(15, 23, 21, 0.72);
+  --design-chart-tooltip-bg: #0c1513;
+  --design-chart-tooltip-border: rgba(255, 255, 255, 0.1);
+  --design-chart-area-opacity-start: 0.28;
+  --design-chart-area-opacity-mid: 0.12;
+  --design-chart-area-opacity-end: 0.02;
   --design-table-bg: rgba(18, 26, 24, 0.88);
   --design-table-toolbar-bg: rgba(15, 23, 21, 0.9);
   --design-table-head-bg: rgba(20, 31, 27, 0.9);
@@ -1235,6 +1340,7 @@ body[data-design-preset]:not([data-design-preset='classic']) [data-ristak-tablis
   border-color: var(--design-table-border) !important;
   border-radius: var(--design-control-radius) !important;
   background: var(--design-table-control-bg) !important;
+  overflow: hidden;
 }
 
 body[data-design-preset]:not([data-design-preset='classic']) [data-ristak-tablist-tab] {
@@ -1242,9 +1348,61 @@ body[data-design-preset]:not([data-design-preset='classic']) [data-ristak-tablis
 }
 
 body[data-design-preset]:not([data-design-preset='classic']) [data-ristak-tablist-tab][data-active='true'] {
-  background: rgba(var(--color-primary-rgb), 0.18) !important;
+  background: transparent !important;
   color: var(--color-text-primary) !important;
   box-shadow: none !important;
+}
+
+body[data-design-preset]:not([data-design-preset='classic']) [data-ristak-tablist-indicator] {
+  border-radius: calc(var(--design-control-radius) - 0.25rem) !important;
+  background: rgba(var(--color-primary-rgb), 0.18) !important;
+}
+
+body[data-design-preset]:not([data-design-preset='classic']) [class*='scopeSelector'] {
+  width: fit-content;
+  max-width: 100%;
+  border-color: var(--design-table-border) !important;
+  border-radius: var(--design-control-radius) !important;
+  background: var(--design-table-control-bg) !important;
+  overflow: hidden;
+}
+
+body[data-design-preset]:not([data-design-preset='classic']) [class*='scopeButton'] {
+  border-radius: calc(var(--design-control-radius) - 0.25rem) !important;
+}
+
+body[data-design-preset]:not([data-design-preset='classic']) [class*='scopeButtonActive'] {
+  background: rgba(var(--color-primary-rgb), 0.18) !important;
+  border-color: rgba(var(--color-primary-rgb), 0.32) !important;
+  color: var(--color-text-primary) !important;
+  box-shadow: none !important;
+}
+
+body[data-design-preset]:not([data-design-preset='classic']) [data-ristak-chart-empty] {
+  background: var(--design-chart-empty-bg) !important;
+  border-color: var(--design-table-border) !important;
+  border-radius: var(--design-table-radius) !important;
+}
+
+body[data-design-preset]:not([data-design-preset='classic']) .recharts-cartesian-grid line {
+  stroke: var(--design-chart-grid) !important;
+  stroke-dasharray: var(--design-chart-grid-dash) !important;
+}
+
+body[data-design-preset]:not([data-design-preset='classic']) .recharts-cartesian-axis-line,
+body[data-design-preset]:not([data-design-preset='classic']) .recharts-cartesian-axis-tick-line {
+  stroke: var(--design-chart-grid) !important;
+}
+
+body[data-design-preset]:not([data-design-preset='classic']) .recharts-cartesian-axis-tick text {
+  fill: var(--design-chart-axis) !important;
+  font-family: var(--font-app) !important;
+}
+
+body[data-design-preset]:not([data-design-preset='classic']) .recharts-area-curve,
+body[data-design-preset]:not([data-design-preset='classic']) .recharts-line-curve {
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 body[data-design-preset]:not([data-design-preset='classic']) [data-ristak-table] {

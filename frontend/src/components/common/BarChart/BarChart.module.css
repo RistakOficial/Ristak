@@ -33,9 +33,9 @@
   justify-content: center;
   height: 100%;
   min-height: 200px;
-  background: var(--color-background-glass);
-  border: 1px solid var(--color-border);
-  border-radius: 12px;
+  background: var(--design-chart-empty-bg, var(--color-background-glass));
+  border: 1px solid var(--design-table-border, var(--color-border));
+  border-radius: var(--design-table-radius, 12px);
 }
 
 .emptyMessage {
@@ -47,9 +47,9 @@
 
 /* Tooltip personalizado */
 .tooltip {
-  background: var(--color-background-elevated);
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
+  background: var(--design-chart-tooltip-bg, var(--color-background-elevated));
+  border: 1px solid var(--design-chart-tooltip-border, var(--color-border));
+  border-radius: var(--design-table-radius, 8px);
   padding: 12px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
   pointer-events: none;
@@ -76,6 +76,6 @@
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #10b981;
+  background: var(--design-chart-primary, #10b981);
   flex-shrink: 0;
 }

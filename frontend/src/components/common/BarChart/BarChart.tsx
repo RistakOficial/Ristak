@@ -24,7 +24,7 @@ export const BarChart: React.FC<BarChartProps> = ({
   data,
   loading = false,
   height = 300,
-  color = '#10b981', // Verde por defecto
+  color = 'var(--design-chart-primary, #10b981)',
   xAxisLabel,
   yAxisLabel,
   formatTooltip = (value) => value.toString(),
@@ -108,14 +108,14 @@ export const BarChart: React.FC<BarChartProps> = ({
 
   if (!data || data.length === 0) {
     return (
-      <div className={styles.emptyContainer} style={{ height: '100%' }}>
+      <div className={styles.emptyContainer} data-ristak-chart-empty style={{ height: '100%' }}>
         <p className={styles.emptyMessage}>No hay datos disponibles para el período seleccionado</p>
       </div>
     )
   }
 
   return (
-    <div className={styles.container} style={{ height: '100%' }}>
+    <div className={styles.container} data-ristak-chart="bar" style={{ height: '100%' }}>
       <div ref={chartRef} style={{ height: '100%', position: 'relative' }}>
         <ResponsiveContainer width="100%" height="100%">
           <RechartsBarChart
@@ -123,26 +123,26 @@ export const BarChart: React.FC<BarChartProps> = ({
             margin={{ top: 10, right: 10, left: 0, bottom: 20 }}
           >
             <CartesianGrid
-              strokeDasharray="3 3"
-              stroke="var(--color-border)"
+              strokeDasharray="var(--design-chart-grid-dash, 3 3)"
+              stroke="var(--design-chart-grid, var(--color-border))"
               vertical={false}
             />
             <XAxis
               dataKey="name"
-              stroke="var(--color-text-tertiary)"
-              tick={{ fill: 'var(--color-text-secondary)', fontSize: 12 }}
+              stroke="var(--design-chart-grid, var(--color-text-tertiary))"
+              tick={{ fill: 'var(--design-chart-axis, var(--color-text-secondary))', fontSize: 12, fontFamily: 'var(--font-app)' }}
               tickFormatter={formatXAxis}
               label={xAxisLabel ? { value: xAxisLabel, position: 'insideBottom', offset: -10, fill: 'var(--color-text-tertiary)' } : undefined}
             />
             <YAxis
-              stroke="var(--color-text-tertiary)"
-              tick={{ fill: 'var(--color-text-secondary)', fontSize: 12 }}
+              stroke="var(--design-chart-grid, var(--color-text-tertiary))"
+              tick={{ fill: 'var(--design-chart-axis, var(--color-text-secondary))', fontSize: 12, fontFamily: 'var(--font-app)' }}
               allowDecimals={false}
               label={yAxisLabel ? { value: yAxisLabel, angle: -90, position: 'insideLeft', fill: 'var(--color-text-tertiary)' } : undefined}
             />
             <Bar
               dataKey="value"
-              radius={[4, 4, 0, 0]}
+              radius={[8, 8, 0, 0]}
               animationDuration={300}
               isAnimationActive={true}
               shape={(props: any) => {
@@ -171,8 +171,8 @@ export const BarChart: React.FC<BarChartProps> = ({
                       width={width}
                       height={height}
                       fill={hasValue ? color : 'transparent'}
-                      rx={4}
-                      ry={4}
+                      rx={8}
+                      ry={8}
                       opacity={isActive ? 1 : 0.9}
                       style={{
                         transition: 'opacity 150ms ease-out',

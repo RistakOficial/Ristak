@@ -404,8 +404,10 @@
 
 .metricsChartWrapper {
   margin-top: var(--spacing-md);
-  padding-top: var(--spacing-md);
-  border-top: 1px solid var(--color-border-subtle);
+  padding: var(--spacing-md);
+  border-top: 1px solid var(--design-table-border, var(--color-border-subtle));
+  background: var(--design-chart-panel-bg, transparent);
+  border-radius: var(--design-table-radius, var(--radius-md));
   overflow: visible;
   position: relative;
 }

@@ -714,8 +714,16 @@ export const Contacts: React.FC = () => {
           <div className={styles.dateFilters}>
             <TabList
               tabs={[
-                { value: 'all', label: 'Todos' },
-                { value: 'by-date', label: 'Por fecha' }
+                {
+                  value: 'all',
+                  label: 'Todos',
+                  description: 'Muestra todos los contactos guardados, sin limitar por el rango de fechas.'
+                },
+                {
+                  value: 'by-date',
+                  label: 'Por fecha',
+                  description: 'Activa el calendario para ver solo contactos creados dentro de un periodo.'
+                }
               ]}
               activeTab={viewMode}
               onTabChange={(value) => setViewMode(value as 'all' | 'by-date')}

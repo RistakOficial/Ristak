@@ -1306,7 +1306,7 @@ const Analytics: React.FC = () => {
 
           <div className="relative w-full" style={{ minHeight: 340, height: 340 }}>
             {loading ? (
-              <div className="flex h-full items-center justify-center rounded-xl border border-[rgba(148,163,184,0.18)] bg-[color-mix(in_srgb,var(--color-background-glass) 82%, transparent)] text-sm text-[var(--color-text-tertiary)]">
+              <div data-ristak-chart-empty className="flex h-full items-center justify-center rounded-xl border border-[rgba(148,163,184,0.18)] bg-[color-mix(in_srgb,var(--color-background-glass) 82%, transparent)] text-sm text-[var(--color-text-tertiary)]">
                 Cargando datos...
               </div>
             ) : dailyTraffic.length > 0 ? (
@@ -1314,15 +1314,15 @@ const Analytics: React.FC = () => {
                 data={dailyTraffic}
                 height={340}
                 showGrid
-                color="#8b5cf6"
-                color2="#3b82f6"
+                color="var(--design-chart-primary, #10b981)"
+                color2="var(--design-chart-tertiary, #3b82f6)"
                 showLegend
                 legendLabels={{ label1: 'Visitas Totales', label2: 'Visitantes Únicos' }}
                 formatValue={formatTrafficAxis}
                 formatTooltipValue={formatTrafficTooltip}
               />
             ) : (
-              <div className="flex h-full items-center justify-center rounded-xl border border-[rgba(148,163,184,0.18)] bg-[color-mix(in_srgb,var(--color-background-glass) 82%, transparent)] text-sm text-[var(--color-text-tertiary)]">
+              <div data-ristak-chart-empty className="flex h-full items-center justify-center rounded-xl border border-[rgba(148,163,184,0.18)] bg-[color-mix(in_srgb,var(--color-background-glass) 82%, transparent)] text-sm text-[var(--color-text-tertiary)]">
                 Sin datos de tráfico disponibles
               </div>
             )}

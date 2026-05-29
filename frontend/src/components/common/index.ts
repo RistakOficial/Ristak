@@ -42,6 +42,7 @@ export { BlockedSlotModal } from './BlockedSlotModal'
 
 // Componentes de UI
 export { ViewSelector } from './ViewSelector'
+export { HelpTooltip } from './HelpTooltip'
 export { Icon } from './Icon'
 export { Badge } from './Badge'
 export type { BadgeProps, BadgeVariant } from './Badge'

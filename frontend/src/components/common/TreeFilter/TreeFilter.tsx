@@ -16,6 +16,7 @@ import {
   Layers
 } from 'lucide-react'
 import { AdHierarchyMenu } from './AdHierarchyMenu'
+import { HelpTooltip } from '../HelpTooltip'
 
 // Estructura del árbol de filtros con todas las categorías disponibles
 interface FilterNode {
@@ -289,6 +290,9 @@ export function TreeFilter({
   const activeFiltersCount = useMemo(() => {
     return Object.values(selectedFilters).reduce((acc, values) => acc + values.length, 0)
   }, [selectedFilters])
+  const filterTooltip = activeFiltersCount > 0
+    ? 'Abre el panel para revisar, sumar o quitar filtros activos de analíticas.'
+    : 'Sin filtros aplicados. Abre para filtrar por páginas, anuncios, fuentes, dispositivos, navegadores y ubicaciones.'
 
   // Filtrar nodos por búsqueda
   const getFilteredChildren = (node: FilterNode) => {
@@ -348,27 +352,29 @@ export function TreeFilter({
   return (
     <div ref={dropdownRef} className="relative">
       {/* Botón principal */}
-      <button
-        onClick={() => setIsOpen(!isOpen)}
-        className={`
-          flex items-center gap-2 px-3 py-2
-          rounded-lg transition-all duration-200
-          bg-[var(--color-background-secondary)]
-          ${isOpen ? 'ring-2 ring-[var(--color-accent)]/50' : 'hover:bg-[var(--color-background-tertiary)]'}
-        `}
-        style={{ border: '1px solid var(--color-border-subtle)' }}
-      >
-        <Filter className="w-4 h-4 text-[var(--color-text-primary)]" />
-        <span className="text-sm text-[var(--color-text-primary)]">
-          {activeFiltersCount > 0 ? `Filtros (${activeFiltersCount})` : 'Todos'}
-        </span>
-        <ChevronDown
+      <HelpTooltip content={filterTooltip}>
+        <button
+          onClick={() => setIsOpen(!isOpen)}
           className={`
-            w-3 h-3 text-[var(--color-text-secondary)] transition-transform duration-200
-            ${isOpen ? 'rotate-180' : ''}
+            flex items-center gap-2 px-3 py-2
+            rounded-lg transition-all duration-200
+            bg-[var(--color-background-secondary)]
+            ${isOpen ? 'ring-2 ring-[var(--color-accent)]/50' : 'hover:bg-[var(--color-background-tertiary)]'}
           `}
-        />
-      </button>
+          style={{ border: '1px solid var(--color-border-subtle)' }}
+        >
+          <Filter className="w-4 h-4 text-[var(--color-text-primary)]" />
+          <span className="text-sm text-[var(--color-text-primary)]">
+            {activeFiltersCount > 0 ? `Filtros (${activeFiltersCount})` : 'Todos'}
+          </span>
+          <ChevronDown
+            className={`
+              w-3 h-3 text-[var(--color-text-secondary)] transition-transform duration-200
+              ${isOpen ? 'rotate-180' : ''}
+            `}
+          />
+        </button>
+      </HelpTooltip>
 
       {/* Dropdown principal con menú tipo navegación */}
       {isOpen && (

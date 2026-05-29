@@ -20,10 +20,11 @@
   display: flex;
   align-items: center;
   gap: 0.25rem;
-  background-color: var(--color-background-secondary);
+  background-color: var(--design-table-control-bg, var(--color-background-secondary));
   padding: 0.25rem;
-  border-radius: 0.5rem;
-  border: 1px solid var(--color-border);
+  border-radius: var(--design-control-radius, 0.5rem);
+  border: 1px solid var(--design-table-border, var(--color-border));
+  overflow: hidden;
 }
 
 .scopeButton {
@@ -36,7 +37,7 @@
   color: var(--color-text-tertiary);
   background-color: transparent;
   border: none;
-  border-radius: 0.375rem;
+  border-radius: calc(var(--design-control-radius, 0.625rem) - 0.25rem);
   cursor: pointer;
   transition: all 0.15s ease;
   white-space: nowrap;
@@ -45,7 +46,7 @@
 
 .scopeButton:hover:not(:disabled) {
   color: var(--color-text-secondary);
-  background-color: var(--color-background-tertiary);
+  background-color: var(--design-chart-panel-bg, var(--color-background-tertiary));
 }
 
 .scopeButton:disabled {
@@ -54,25 +55,26 @@
 }
 
 .scopeButtonActive {
-  color: #ffffff;
-  background-color: #374151;
+  color: var(--color-text-primary);
+  background-color: rgba(var(--color-primary-rgb), 0.18);
+  border: 1px solid rgba(var(--color-primary-rgb), 0.32);
 }
 
 :global(body.dark) .scopeButtonActive {
-  color: #ffffff;
-  background-color: #1f2937;
-  border: 1px solid #4b5563;
+  color: var(--color-text-primary);
+  background-color: rgba(var(--color-primary-rgb), 0.18);
+  border: 1px solid rgba(var(--color-primary-rgb), 0.32);
 }
 
 .scopeButtonActive:hover {
-  color: #ffffff;
-  background-color: #374151;
+  color: var(--color-text-primary);
+  background-color: rgba(var(--color-primary-rgb), 0.22);
 }
 
 :global(body.dark) .scopeButtonActive:hover {
-  color: #ffffff;
-  background-color: #1f2937;
-  border: 1px solid #4b5563;
+  color: var(--color-text-primary);
+  background-color: rgba(var(--color-primary-rgb), 0.22);
+  border: 1px solid rgba(var(--color-primary-rgb), 0.34);
 }
 
 .funnelContainer {
@@ -162,8 +164,9 @@
 .iconContainer {
   width: 3rem;
   height: 3rem;
-  border-radius: 0.75rem;
-  background-color: var(--color-background-secondary);
+  border-radius: var(--design-table-radius, 0.75rem);
+  background-color: var(--design-chart-panel-bg, var(--color-background-secondary));
+  border: 1px solid var(--design-table-border, transparent);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -214,19 +217,19 @@
 .conversionRate {
   font-size: 0.75rem;
   font-weight: 600;
-  color: var(--color-success-500);
+  color: var(--design-chart-primary, var(--color-success));
 }
 
 .progressBar {
   height: 1rem;
-  background-color: var(--color-background-secondary);
+  background-color: var(--design-chart-panel-bg, var(--color-background-secondary));
   border-radius: 9999px;
   overflow: hidden;
 }
 
 .progressFill {
   height: 100%;
-  background-color: var(--color-text-secondary);
+  background: linear-gradient(90deg, var(--design-chart-primary, var(--color-text-secondary)), var(--design-chart-tertiary, var(--design-chart-primary, var(--color-text-secondary))));
   border-radius: 9999px;
   transition: width 1s ease-out;
 }
@@ -238,7 +241,7 @@
   height: 0.75rem;
   width: 1px;
   background: linear-gradient(to bottom,
-    var(--color-border) 0%,
+    var(--design-chart-grid, var(--color-border)) 0%,
     transparent 100%
   );
 }
@@ -246,9 +249,9 @@
 .insights {
   margin-top: 2rem;
   padding: 1rem;
-  background-color: var(--color-background-secondary);
-  border: 1px solid var(--color-border);
-  border-radius: 0.75rem;
+  background-color: var(--design-chart-panel-bg, var(--color-background-secondary));
+  border: 1px solid var(--design-table-border, var(--color-border));
+  border-radius: var(--design-table-radius, 0.75rem);
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: 1rem;
@@ -278,7 +281,7 @@
 }
 
 .insightHighlight {
-  color: var(--color-success-500);
+  color: var(--design-chart-primary, var(--color-success));
   font-size: 1rem;
 }
 

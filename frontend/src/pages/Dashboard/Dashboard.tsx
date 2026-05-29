@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { KpiCard, Card, DateRangePicker, AreaChart, PageContainer, TrafficSourcesChart, ConversionFunnelChart, ViewSelector, Loading, ContactDetailsModal, VisitorDetailsModal } from '@/components/common'
+import { KpiCard, Card, DateRangePicker, AreaChart, PageContainer, TrafficSourcesChart, ConversionFunnelChart, ViewSelector, Loading, ContactDetailsModal, VisitorDetailsModal, HelpTooltip } from '@/components/common'
 import funnelStyles from '@/components/common/ConversionFunnelChart/ConversionFunnelChart.module.css'
 import {
   DollarSign,
@@ -173,8 +173,8 @@ export const Dashboard: React.FC = () => {
           data: formatData(visitorsLeadsData),
           label1: 'Visitantes',
           label2: labels.leads,
-          color: '#3b82f6',
-          color2: '#8b5cf6',
+          color: 'var(--design-chart-tertiary, #3b82f6)',
+          color2: 'var(--design-chart-accent, #8b5cf6)',
           formatValue: formatChartNumber,
           formatTooltipValue: (value: number) => value.toLocaleString('es-MX')
         }
@@ -183,8 +183,8 @@ export const Dashboard: React.FC = () => {
           data: formatData(leadsAppointmentsData),
           label1: labels.leads,
           label2: 'Citas',
-          color: '#8b5cf6',
-          color2: '#ec4899',
+          color: 'var(--design-chart-primary, #10b981)',
+          color2: 'var(--design-chart-warning, #f59e0b)',
           formatValue: formatChartNumber,
           formatTooltipValue: (value: number) => value.toLocaleString('es-MX')
         }
@@ -193,8 +193,8 @@ export const Dashboard: React.FC = () => {
           data: formatData(appointmentsAttendancesData),
           label1: 'Citas',
           label2: 'Asistencias',
-          color: '#ec4899',
-          color2: '#f59e0b',
+          color: 'var(--design-chart-warning, #f59e0b)',
+          color2: 'var(--design-chart-tertiary, #3b82f6)',
           formatValue: formatChartNumber,
           formatTooltipValue: (value: number) => value.toLocaleString('es-MX')
         }
@@ -203,8 +203,8 @@ export const Dashboard: React.FC = () => {
           data: formatData(attendancesSalesData),
           label1: 'Asistencias',
           label2: 'Ventas',
-          color: '#f59e0b',
-          color2: '#10b981',
+          color: 'var(--design-chart-tertiary, #3b82f6)',
+          color2: 'var(--design-chart-primary, #10b981)',
           formatValue: formatChartNumber,
           formatTooltipValue: (value: number) => value.toLocaleString('es-MX')
         }
@@ -213,8 +213,8 @@ export const Dashboard: React.FC = () => {
           data: formatData(appointmentsSalesData),
           label1: 'Citas',
           label2: 'Ventas',
-          color: '#ec4899',
-          color2: '#10b981',
+          color: 'var(--design-chart-warning, #f59e0b)',
+          color2: 'var(--design-chart-primary, #10b981)',
           formatValue: formatChartNumber,
           formatTooltipValue: (value: number) => value.toLocaleString('es-MX')
         }
@@ -350,9 +350,24 @@ export const Dashboard: React.FC = () => {
 
   const financialScopeOptions = React.useMemo(
     () => [
-      { value: 'all' as const, label: 'Todos', icon: Layers },
-      { value: 'attribution' as const, label: 'Al registro', icon: Target },
-      { value: 'campaigns' as const, label: 'Identificados de anuncios', icon: MousePointerClick }
+      {
+        value: 'all' as const,
+        label: 'Todos',
+        icon: Layers,
+        description: 'Muestra ingresos y gasto por la fecha real en que ocurrió cada evento.'
+      },
+      {
+        value: 'attribution' as const,
+        label: 'Al registro',
+        icon: Target,
+        description: 'Agrupa los resultados en la fecha de creación del contacto para evaluar qué registros convirtieron.'
+      },
+      {
+        value: 'campaigns' as const,
+        label: 'Identificados de anuncios',
+        icon: MousePointerClick,
+        description: 'Filtra a contactos identificados desde anuncios y atribuye sus resultados al día de registro.'
+      }
     ],
     []
   )
@@ -629,17 +644,26 @@ export const Dashboard: React.FC = () => {
             </div>
             <div className="flex items-end gap-4">
               {selectedChartView === 'revenue-spend' && (
-                <div className={funnelStyles.scopeSelector}>
-                  {financialScopeOptions.map(({ value, label, icon: Icon }) => (
-                    <button
-                      key={value}
-                      className={`${funnelStyles.scopeButton} ${financialScope === value ? funnelStyles.scopeButtonActive : ''}`}
-                      onClick={() => setFinancialScope(value)}
-                    >
-                      <Icon size={13} />
-                      {label}
-                    </button>
-                  ))}
+                <div className={funnelStyles.scopeSelector} data-ristak-scope-selector>
+                  {financialScopeOptions.map(({ value, label, icon: Icon, description }) => {
+                    const button = (
+                      <button
+                        className={`${funnelStyles.scopeButton} ${financialScope === value ? funnelStyles.scopeButtonActive : ''}`}
+                        data-ristak-scope-button
+                        data-active={financialScope === value ? 'true' : undefined}
+                        onClick={() => setFinancialScope(value)}
+                      >
+                        <Icon size={13} />
+                        {label}
+                      </button>
+                    )
+
+                    return (
+                      <HelpTooltip key={value} content={description}>
+                        {button}
+                      </HelpTooltip>
+                    )
+                  })}
                 </div>
               )}
               <ViewSelector
@@ -651,7 +675,7 @@ export const Dashboard: React.FC = () => {
           </div>
           <div className="relative w-full" style={{ minHeight: chartHeight, height: chartHeight }}>
             {isChartLoading ? (
-              <div className="flex h-full items-center justify-center rounded-xl border border-[rgba(148,163,184,0.18)] bg-[color-mix(in_srgb,var(--color-background-glass) 82%, transparent)] text-sm text-[var(--color-text-tertiary)]">
+              <div data-ristak-chart-empty className="flex h-full items-center justify-center rounded-xl border border-[rgba(148,163,184,0.18)] bg-[color-mix(in_srgb,var(--color-background-glass) 82%, transparent)] text-sm text-[var(--color-text-tertiary)]">
                 Cargando datos del gráfico...
               </div>
             ) : hasChartData ? (
@@ -667,7 +691,7 @@ export const Dashboard: React.FC = () => {
                 legendLabels={{ label1: chartConfig.label1, label2: chartConfig.label2 }}
               />
             ) : (
-              <div className="flex h-full items-center justify-center rounded-xl border border-[rgba(148,163,184,0.18)] bg-[color-mix(in_srgb,var(--color-background-glass) 82%, transparent)] text-sm text-[var(--color-text-tertiary)]">
+              <div data-ristak-chart-empty className="flex h-full items-center justify-center rounded-xl border border-[rgba(148,163,184,0.18)] bg-[color-mix(in_srgb,var(--color-background-glass) 82%, transparent)] text-sm text-[var(--color-text-tertiary)]">
                 Sin datos disponibles
               </div>
             )}

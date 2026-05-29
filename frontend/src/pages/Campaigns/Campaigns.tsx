@@ -1702,8 +1702,8 @@ export const Campaigns: React.FC = () => {
         title: 'Ingresos vs Gastos de Publicidad',
         subtitle: 'Valor total acumulado de contactos por fecha de creación',
         data: revenueData,
-        color: '#10b981',
-        color2: '#64748b',
+        color: 'var(--design-chart-primary, #10b981)',
+        color2: 'var(--design-chart-secondary, #64748b)',
         showLegend: true,
         legendLabels: { label1: 'Ingresos', label2: 'Gastos Publicidad' },
         formatValue: formatChartCurrency,
@@ -1714,8 +1714,8 @@ export const Campaigns: React.FC = () => {
         title: `Visitantes vs ${labels.leads}`,
         subtitle: 'Comparación de visitantes únicos y contactos registrados',
         data: visitorsData,
-        color: '#f59e0b',
-        color2: '#3b82f6',
+        color: 'var(--design-chart-warning, #f59e0b)',
+        color2: 'var(--design-chart-tertiary, #3b82f6)',
         showLegend: true,
         legendLabels: { label1: 'Visitantes', label2: labels.leads },
         formatValue: formatChartNumber,
@@ -1726,8 +1726,8 @@ export const Campaigns: React.FC = () => {
         title: `${labels.leads} vs Citas`,
         subtitle: 'Comparación de contactos registrados y primeras citas agendadas',
         data: leadsData,
-        color: '#3b82f6',
-        color2: '#8b5cf6',
+        color: 'var(--design-chart-primary, #10b981)',
+        color2: 'var(--design-chart-warning, #f59e0b)',
         showLegend: true,
         legendLabels: { label1: labels.leads, label2: 'Citas' },
         formatValue: formatChartNumber,
@@ -1738,8 +1738,8 @@ export const Campaigns: React.FC = () => {
         title: 'Citas vs Ventas',
         subtitle: 'Comparación de primeras citas agendadas y conversiones a venta',
         data: appointmentsData,
-        color: '#8b5cf6',
-        color2: '#10b981',
+        color: 'var(--design-chart-warning, #f59e0b)',
+        color2: 'var(--design-chart-primary, #10b981)',
         showLegend: true,
         legendLabels: { label1: 'Citas', label2: 'Ventas' },
         formatValue: formatChartNumber,
@@ -1967,7 +1967,7 @@ export const Campaigns: React.FC = () => {
                   legendLabels={selectedConfig.legendLabels}
                 />
               ) : (
-                <div className="flex h-full items-center justify-center rounded-xl border border-[rgba(148,163,184,0.18)] bg-[color-mix(in_srgb,var(--color-background-glass) 82%, transparent)] text-sm text-[var(--color-text-tertiary)]">
+                <div data-ristak-chart-empty className="flex h-full items-center justify-center rounded-xl border border-[rgba(148,163,184,0.18)] bg-[color-mix(in_srgb,var(--color-background-glass) 82%, transparent)] text-sm text-[var(--color-text-tertiary)]">
                   <div className="text-center">
                     <p>{selectedConfig.emptyMessage}</p>
                     <p className="text-xs mt-2 opacity-75">Sincroniza tus campañas de Meta Ads para ver el gráfico</p>
