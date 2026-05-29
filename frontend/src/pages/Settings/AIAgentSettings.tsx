@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { Bot, CheckCircle, Database, Eye, EyeOff, Globe2, KeyRound, PanelRight, Save, Sparkles, Trash2, XCircle } from 'lucide-react'
+import { Bot, CheckCircle, Database, Eye, EyeOff, Globe2, KeyRound, MessageCircle, Save, Sparkles, Trash2, XCircle } from 'lucide-react'
 import { Button, Card } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
 import { aiAgentService, type AIAgentConfigStatus } from '@/services/aiAgentService'
@@ -94,7 +94,7 @@ export const AIAgentSettings: React.FC = () => {
       showToast(
         'success',
         'Agente AI actualizado',
-        nextStatus.configured ? 'El agente ya usará el contexto del negocio.' : 'Contexto guardado. Agrega el token para activar el panel lateral.'
+        nextStatus.configured ? 'El agente ya usará el contexto del negocio.' : 'Contexto guardado. Agrega el token para activar el chat con IA.'
       )
     } catch (error: any) {
       showToast('error', 'No se pudo guardar', error?.message || 'Revisa la configuración del agente')
@@ -111,7 +111,7 @@ export const AIAgentSettings: React.FC = () => {
       setForm(emptyForm)
       setApiKey('')
       emitConfigChange(emptyStatus)
-      showToast('success', 'Agente AI desconectado', 'El panel lateral fue ocultado')
+      showToast('success', 'Agente AI desconectado', 'El chat seguirá visible para volver a configurarlo cuando quieras.')
     } catch (error: any) {
       showToast('error', 'Error', error?.message || 'No se pudo desconectar el agente AI')
     } finally {
@@ -122,7 +122,7 @@ export const AIAgentSettings: React.FC = () => {
   const handleDisconnect = () => {
     showConfirm(
       'Desconectar Agente AI',
-      'Se eliminará el token guardado y el panel lateral dejará de aparecer en la app.',
+      'Se eliminará el token guardado. El chat seguirá visible, pero quedará en modo configuración.',
       disconnect,
       'Desconectar',
       'Cancelar'
@@ -140,7 +140,7 @@ export const AIAgentSettings: React.FC = () => {
             <div>
               <h2 className={styles.title}>Agente AI</h2>
               <p className={styles.description}>
-                Conecta OpenAI para activar un chat lateral con acceso de solo lectura al contexto del negocio y a la vista actual de la interfaz.
+                Conecta OpenAI para activar el chat flotante con acceso de solo lectura al contexto del negocio y a la vista actual de la interfaz.
               </p>
             </div>
           </div>
@@ -322,9 +322,9 @@ export const AIAgentSettings: React.FC = () => {
                 <span className={styles.detailValue}>{status.model}</span>
               </div>
               <div className={styles.detailItem}>
-                <span className={styles.detailLabel}>Panel</span>
+                <span className={styles.detailLabel}>Chat</span>
                 <span className={styles.detailValue}>
-                  <PanelRight size={15} />
+                  <MessageCircle size={15} />
                   Visible en la app
                 </span>
               </div>
@@ -349,7 +349,7 @@ export const AIAgentSettings: React.FC = () => {
               Lee un resumen seguro de contactos, pagos, citas, campañas, sesiones web y fuentes de tráfico.
             </div>
             <div className={styles.capability}>
-              <PanelRight size={16} />
+              <MessageCircle size={16} />
               Usa la ruta y el texto visible de la pantalla actual para explicar lo que estás viendo.
             </div>
             <div className={styles.capability}>
