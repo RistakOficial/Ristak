@@ -558,8 +558,10 @@ export function ContactDetailsModal({
                     <div className={styles.detailSection}>
                       <button
                         type="button"
-                        className={styles.summaryCardButton}
+                        className={`${styles.summaryCardButton} ${appointmentsExpanded ? styles.summaryCardButtonOpen : ''}`}
                         onClick={() => setAppointmentsExpanded(prev => !prev)}
+                        aria-expanded={appointmentsExpanded}
+                        data-contact-summary-trigger="appointments"
                       >
                         <div className={styles.summaryCardContent}>
                           <div>
@@ -575,7 +577,7 @@ export function ContactDetailsModal({
                       </button>
 
                       {appointmentsExpanded && (
-                        <ul className={styles.paymentList}>
+                        <ul className={styles.paymentList} data-contact-summary-list="appointments">
                           {selectedContact.appointments.map(appointment => {
                             const statusInfo = getAppointmentStatusLabel(appointment.status)
                             const appointmentDate = new Date(appointment.start_time)
@@ -618,8 +620,10 @@ export function ContactDetailsModal({
                     <div className={styles.detailSection}>
                       <button
                         type="button"
-                        className={styles.summaryCardButton}
+                        className={`${styles.summaryCardButton} ${paymentsExpanded ? styles.summaryCardButtonOpen : ''}`}
                         onClick={() => setPaymentsExpanded(prev => !prev)}
+                        aria-expanded={paymentsExpanded}
+                        data-contact-summary-trigger="payments"
                       >
                         <div className={styles.summaryCardContent}>
                           <div>
@@ -635,7 +639,7 @@ export function ContactDetailsModal({
                       </button>
 
                       {paymentsExpanded && (
-                        <ul className={styles.paymentList}>
+                        <ul className={styles.paymentList} data-contact-summary-list="payments">
                           {payments.map(payment => {
                             const statusInfo = getStatusLabel(payment.status)
                             return (
