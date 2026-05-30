@@ -160,9 +160,9 @@ export const AIAgentSettings: React.FC = () => {
 
         <div className={styles.section} style={{ marginTop: 20 }}>
           <h3 className={styles.sectionTitle}>Credenciales de OpenAI</h3>
-          <div className={styles.formGrid}>
-            <div className={styles.field}>
-              <label className={styles.label}>API Token</label>
+          <div className={styles.field}>
+            <label className={styles.label}>API Token</label>
+            <div className={styles.inputRow}>
               <div className={styles.inputWrap}>
                 <input
                   className={styles.input}
@@ -182,15 +182,14 @@ export const AIAgentSettings: React.FC = () => {
                   {showApiKey ? <EyeOff size={16} /> : <Eye size={16} />}
                 </button>
               </div>
-              <p className={styles.helper}>
-                El token se valida con OpenAI y se guarda cifrado en el backend. Nunca se manda de regreso al navegador.
-              </p>
+              <Button onClick={handleSave} loading={saving} disabled={loading || saving}>
+                <KeyRound size={16} />
+                Guardar configuración
+              </Button>
             </div>
-
-            <Button onClick={handleSave} loading={saving} disabled={loading || saving}>
-              <KeyRound size={16} />
-              Guardar configuración
-            </Button>
+            <p className={styles.helper}>
+              El token se valida con OpenAI y se guarda cifrado en el backend. Nunca se manda de regreso al navegador.
+            </p>
           </div>
         </div>
 
