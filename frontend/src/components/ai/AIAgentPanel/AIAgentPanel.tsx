@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
-import { Bot, CheckCircle, Eraser, KeyRound, MessageCircle, SendHorizonal, Sparkles, X } from 'lucide-react'
+import { Bot, Eraser, KeyRound, MessageCircle, SendHorizonal, Sparkles, X } from 'lucide-react'
 import { aiAgentService, type AIAgentConfigInput, type AIAgentConfigStatus, type AIAgentMessage, type AIAgentViewContext } from '@/services/aiAgentService'
 import styles from './AIAgentPanel.module.css'
 
@@ -271,7 +271,7 @@ export const AIAgentPanel: React.FC = () => {
     setMessages((current) => {
       if (current.length) return current
       return [
-        createMessage('assistant', 'Antes de analizar números, necesito entender tu negocio para no darte recomendaciones genéricas.'),
+        createMessage('assistant', 'Antes de que me des detalles sobre tu negocio, necesito hacerte unas preguntas para guardarlas en el sistema. Con esa base podré darte mejores consejos y recomendaciones, apoyándome tanto en tu data como en el contexto general del mercado y el mundo.'),
         createMessage('assistant', firstQuestion.question)
       ]
     })
@@ -586,14 +586,16 @@ export const AIAgentPanel: React.FC = () => {
 
       <button
         type="button"
-        className={styles.floatingButton}
+        className={open ? styles.floatingButtonOpen : styles.floatingButton}
         onClick={() => setOpenState(!open)}
         aria-label={open ? 'Cerrar agente AI' : 'Abrir agente AI'}
       >
-        {open ? <X size={19} /> : <MessageCircle size={20} />}
-        <span className={styles.floatingButtonLabel}>{open ? 'Cerrar chat' : 'Chat AI'}</span>
-        {!status.configured && <span className={styles.setupBadge} />}
-        {status.configured && <CheckCircle className={styles.connectedBadge} size={16} />}
+        {open ? <X size={18} /> : (
+          <>
+            <MessageCircle size={18} />
+            <span className={styles.floatingButtonLabel}>Chat AI</span>
+          </>
+        )}
       </button>
     </div>
   )
