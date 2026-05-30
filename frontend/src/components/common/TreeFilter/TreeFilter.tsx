@@ -13,6 +13,7 @@ import {
   Globe,
   Monitor,
   MapPin,
+  UserCheck,
   Layers
 } from 'lucide-react'
 import { AdHierarchyMenu } from './AdHierarchyMenu'
@@ -63,6 +64,7 @@ interface TreeFilterProps {
     os?: Array<{ name: string; count: number }>
     countries?: Array<{ name: string; count: number }>
     placements?: Array<{ name: string; count: number }>
+    conversions?: Array<{ stage: string; name: string; count: number }>
     adsHierarchy?: Array<AdHierarchyNode>
   }
   selectedFilters: Record<string, string[]>
@@ -236,6 +238,22 @@ export function TreeFilter({
       })
     }
 
+    // Categoría: Conversión
+    if (availableData.conversions?.length) {
+      tree.push({
+        id: 'conversion',
+        label: 'Conversión',
+        icon: UserCheck,
+        children: availableData.conversions.map(c => ({
+          id: `conversion_${c.stage}`,
+          label: c.name,
+          field: 'conversion_stage',
+          value: c.stage,
+          count: c.count
+        }))
+      })
+    }
+
     return tree
   }, [availableData])
 
@@ -292,7 +310,7 @@ export function TreeFilter({
   }, [selectedFilters])
   const filterTooltip = activeFiltersCount > 0
     ? 'Abre el panel para revisar, sumar o quitar filtros activos de analíticas.'
-    : 'Sin filtros aplicados. Abre para filtrar por páginas, anuncios, fuentes, dispositivos, navegadores y ubicaciones.'
+    : 'Sin filtros aplicados. Abre para filtrar por páginas, anuncios, fuentes, dispositivos, navegadores, ubicaciones y conversión.'
 
   // Filtrar nodos por búsqueda
   const getFilteredChildren = (node: FilterNode) => {

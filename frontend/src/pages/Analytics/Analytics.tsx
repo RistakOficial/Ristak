@@ -157,6 +157,59 @@ type TrafficPoint = {
   value2: number
 }
 
+type ConversionStage = 'prospect' | 'appointment_scheduled' | 'appointment_attended' | 'customer'
+
+const CONVERSION_FILTERS: Array<{ stage: ConversionStage; label: string }> = [
+  { stage: 'prospect', label: 'Prospecto' },
+  { stage: 'appointment_scheduled', label: 'Agendaron cita' },
+  { stage: 'appointment_attended', label: 'Citas asistidas' },
+  { stage: 'customer', label: 'Clientes' }
+]
+
+const toNumber = (value: unknown): number => {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0
+  if (typeof value === 'string') {
+    const parsed = Number(value)
+    return Number.isFinite(parsed) ? parsed : 0
+  }
+  return 0
+}
+
+const toBoolean = (value: unknown): boolean => {
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'number') return value > 0
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase()
+    return normalized === 'true' || normalized === '1' || normalized === 'yes'
+  }
+  return false
+}
+
+const getSessionConversionStage = (session: Session): ConversionStage | null => {
+  const hasContact = Boolean(session.contact_id || session.contact_created_at)
+  if (!hasContact) return null
+
+  if (
+    toNumber(session.contact_purchases_count) > 0 ||
+    toNumber(session.contact_total_paid) > 0
+  ) {
+    return 'customer'
+  }
+
+  if (toBoolean(session.contact_has_attended_appointment)) {
+    return 'appointment_attended'
+  }
+
+  if (
+    toBoolean(session.contact_has_appointment) ||
+    Boolean(session.contact_appointment_date)
+  ) {
+    return 'appointment_scheduled'
+  }
+
+  return 'prospect'
+}
+
 const parseTimestamp = (timestamp?: string | null): Date | null => {
   if (!timestamp) return null
 
@@ -426,7 +479,8 @@ const Analytics: React.FC = () => {
             devices: [],
             browsers: [],
             os: [],
-            placements: []
+            placements: [],
+            conversions: []
           }
 
           // Páginas
@@ -475,9 +529,18 @@ const Analytics: React.FC = () => {
           const browsersMap: { [key: string]: Set<string> } = {}
           const osMap: { [key: string]: Set<string> } = {}
           const placementsMap: { [key: string]: Set<string> } = {}
+          const conversionsMap = CONVERSION_FILTERS.reduce<Record<ConversionStage, Set<string>>>((acc, item) => {
+            acc[item.stage] = new Set()
+            return acc
+          }, {} as Record<ConversionStage, Set<string>>)
 
           currentSessions.forEach((session: Session) => {
             const visitorId = session.visitor_id
+            const conversionStage = getSessionConversionStage(session)
+
+            if (conversionStage) {
+              conversionsMap[conversionStage].add(visitorId)
+            }
 
             // Construir jerarquía de anuncios usando UTMs (más confiable que campos específicos)
             // Requerimos al menos utm_source y utm_campaign para construir la jerarquía
@@ -623,6 +686,12 @@ const Analytics: React.FC = () => {
           filterData.placements = Object.entries(placementsMap)
             .map(([name, visitorSet]) => ({ name, count: visitorSet.size }))
             .sort((a, b) => b.count - a.count)
+
+          filterData.conversions = CONVERSION_FILTERS.map(item => ({
+            stage: item.stage,
+            name: item.label,
+            count: conversionsMap[item.stage].size
+          }))
 
           // Convertir jerarquía de anuncios a formato compatible con TreeFilter
           filterData.adsHierarchy = Array.from(adsHierarchyMap.values()).map(platformNode => ({
@@ -794,6 +863,17 @@ const Analytics: React.FC = () => {
           setTopVisitors(topVisitorsList)
         } else {
           // Reset si no hay datos
+          setOriginalRegistros(0)
+          setAllSessions([])
+          setSessions([])
+          setAvailableFilterData({})
+          setTrafficSources([])
+          setPlatformsData([])
+          setPlacementsData([])
+          setDevicesData([])
+          setOsData([])
+          setBrowserData([])
+          setTopVisitors([])
           setMetrics({
             pageViews: 0,
             uniqueVisitors: 0,
@@ -811,6 +891,8 @@ const Analytics: React.FC = () => {
             }
           })
           setDailyTraffic([])
+          setDailyConversions([])
+          setRegistrosChartData([])
         }
       } catch {
       } finally {
@@ -865,8 +947,7 @@ const Analytics: React.FC = () => {
                   utm_source: session.utm_source,
                   source_platform: session.source_platform
                 })
-                // Comparar en lowercase (platformId ahora es normalizado + lowercase)
-                if (normalizedSource.toLowerCase() === value) fieldMatch = true
+                if (normalizedSource.toLowerCase() === value.toLowerCase()) fieldMatch = true
                 break
               case 'device_type':
                 if (session.device_type === value) fieldMatch = true
@@ -894,6 +975,9 @@ const Analytics: React.FC = () => {
                 break
               case 'ad_id':
                 if (session.ad_id === value) fieldMatch = true
+                break
+              case 'conversion_stage':
+                if (getSessionConversionStage(session) === value) fieldMatch = true
                 break
             }
           }

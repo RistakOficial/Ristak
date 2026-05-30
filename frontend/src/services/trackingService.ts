@@ -78,6 +78,11 @@ export interface TrackingSession {
 
   // Campos extras del JOIN con contacts
   contact_created_at?: string | null
+  contact_purchases_count?: number | string | null
+  contact_total_paid?: number | string | null
+  contact_appointment_date?: string | null
+  contact_has_appointment?: boolean | number | string | null
+  contact_has_attended_appointment?: boolean | number | string | null
 }
 
 export interface TrackingStats {

@@ -577,7 +577,33 @@ export async function getSessionsByDateRange(startDate, endDate) {
         s.geo_city,
         s.ip,
         s.user_agent,
-        c.created_at as contact_created_at
+        c.created_at as contact_created_at,
+        c.purchases_count as contact_purchases_count,
+        c.total_paid as contact_total_paid,
+        c.appointment_date as contact_appointment_date,
+        CASE
+          WHEN c.id IS NOT NULL AND (
+            c.appointment_date IS NOT NULL OR EXISTS (
+              SELECT 1
+              FROM appointments a
+              WHERE a.contact_id = c.id
+            )
+          ) THEN 1 ELSE 0
+        END as contact_has_appointment,
+        CASE
+          WHEN c.id IS NOT NULL AND (
+            EXISTS (
+              SELECT 1
+              FROM appointment_attendance_signals aas
+              WHERE aas.contact_id = c.id
+            ) OR EXISTS (
+              SELECT 1
+              FROM appointments aa
+              WHERE aa.contact_id = c.id
+                AND LOWER(COALESCE(aa.appointment_status, aa.status, '')) IN ('showed', 'completed', 'attended')
+            )
+          ) THEN 1 ELSE 0
+        END as contact_has_attended_appointment
       FROM sessions s
       LEFT JOIN contacts c ON s.contact_id = c.id
       WHERE s.started_at >= $1 AND s.started_at <= $2
