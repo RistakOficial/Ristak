@@ -1311,12 +1311,12 @@ body[data-design-preset='editorial'] [data-ristak-page-inner] :is(
   [class*='statsGrid'],
   .grid
 ):has([data-ristak-kpi-card]) {
-  gap: 1px !important;
+  gap: 0 !important;
   padding: 0;
   overflow: hidden;
   border: 1px solid var(--design-card-border) !important;
   border-radius: var(--design-card-radius);
-  background: var(--design-card-border);
+  background: var(--design-card-bg);
   box-shadow: var(--design-card-shadow);
 }
 
@@ -1326,7 +1326,51 @@ body[data-design-preset='editorial'] [data-ristak-page-inner] :is(
   [class*='statsGrid'],
   .grid
 ):has([data-ristak-kpi-card]) > * {
+  position: relative;
   min-width: 0;
+}
+
+body[data-design-preset='editorial'] [data-ristak-page-inner] :is(
+  [data-dashboard-kpi-grid],
+  [class*='kpiRow'],
+  [class*='statsGrid'],
+  .grid
+):has([data-ristak-kpi-card]) > *::before,
+body[data-design-preset='editorial'] [data-ristak-page-inner] :is(
+  [data-dashboard-kpi-grid],
+  [class*='kpiRow'],
+  [class*='statsGrid'],
+  .grid
+):has([data-ristak-kpi-card]) > *::after {
+  content: '';
+  position: absolute;
+  z-index: 2;
+  pointer-events: none;
+  background: var(--design-card-border);
+}
+
+body[data-design-preset='editorial'] [data-ristak-page-inner] :is(
+  [data-dashboard-kpi-grid],
+  [class*='kpiRow'],
+  [class*='statsGrid'],
+  .grid
+):has([data-ristak-kpi-card]) > *::before {
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 1px;
+}
+
+body[data-design-preset='editorial'] [data-ristak-page-inner] :is(
+  [data-dashboard-kpi-grid],
+  [class*='kpiRow'],
+  [class*='statsGrid'],
+  .grid
+):has([data-ristak-kpi-card]) > *::after {
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 1px;
 }
 
 body[data-design-preset='editorial'] [data-ristak-page-inner] :is(
@@ -1340,6 +1384,188 @@ body[data-design-preset='editorial'] [data-ristak-page-inner] :is(
   border-radius: 0 !important;
   background: var(--design-card-bg) !important;
   box-shadow: none !important;
+}
+
+body[data-design-preset='editorial'] [data-ristak-page-inner] :is(
+  [data-dashboard-kpi-grid],
+  [class*='kpiRow'],
+  [class*='statsGrid'],
+  .grid
+):has(> :nth-child(8):last-child) > *:nth-child(4n)::after,
+body[data-design-preset='editorial'] [data-ristak-page-inner] :is(
+  [data-dashboard-kpi-grid],
+  [class*='kpiRow'],
+  [class*='statsGrid'],
+  .grid
+):has(> :nth-child(5):last-child) > *:nth-child(5n)::after,
+body[data-design-preset='editorial'] [data-ristak-page-inner] :is(
+  [data-dashboard-kpi-grid],
+  [class*='kpiRow'],
+  [class*='statsGrid'],
+  .grid
+):has(> :nth-child(4):last-child) > *:nth-child(4n)::after,
+body[data-design-preset='editorial'] [data-ristak-page-inner] :is(
+  [data-dashboard-kpi-grid],
+  [class*='kpiRow'],
+  [class*='statsGrid'],
+  .grid
+):has([data-ristak-kpi-card]) > *:last-child::after {
+  display: none;
+}
+
+body[data-design-preset='editorial'] [data-ristak-page-inner] :is(
+  [data-dashboard-kpi-grid],
+  [class*='kpiRow'],
+  [class*='statsGrid'],
+  .grid
+):has(> :nth-child(8):last-child) > *:nth-last-child(-n + 4)::before,
+body[data-design-preset='editorial'] [data-ristak-page-inner] :is(
+  [data-dashboard-kpi-grid],
+  [class*='kpiRow'],
+  [class*='statsGrid'],
+  .grid
+):has(> :nth-child(5):last-child) > *:nth-last-child(-n + 5)::before,
+body[data-design-preset='editorial'] [data-ristak-page-inner] :is(
+  [data-dashboard-kpi-grid],
+  [class*='kpiRow'],
+  [class*='statsGrid'],
+  .grid
+):has(> :nth-child(4):last-child) > *:nth-last-child(-n + 4)::before {
+  display: none;
+}
+
+@media (max-width: 1279px) {
+  body[data-design-preset='editorial'] [data-ristak-page-inner] :is(
+    [data-dashboard-kpi-grid],
+    [class*='kpiRow'],
+    [class*='statsGrid'],
+    .grid
+  ):has(> :nth-child(8):last-child) > *:nth-last-child(-n + 4)::before {
+    display: block;
+  }
+
+  body[data-design-preset='editorial'] [data-ristak-page-inner] :is(
+    [data-dashboard-kpi-grid],
+    [class*='kpiRow'],
+    [class*='statsGrid'],
+    .grid
+  ):has(> :nth-child(8):last-child) > *:nth-child(2n)::after,
+  body[data-design-preset='editorial'] [data-ristak-page-inner] :is(
+    [data-dashboard-kpi-grid],
+    [class*='kpiRow'],
+    [class*='statsGrid'],
+    .grid
+  ):has(> :nth-child(8):last-child) > *:nth-last-child(-n + 2)::before {
+    display: none;
+  }
+}
+
+@media (max-width: 1200px) {
+  body[data-design-preset='editorial'] [data-ristak-page-inner] :is(
+    [data-dashboard-kpi-grid],
+    [class*='kpiRow'],
+    [class*='statsGrid'],
+    .grid
+  ):has(> :nth-child(5):last-child) > *:nth-last-child(-n + 5)::before {
+    display: block;
+  }
+
+  body[data-design-preset='editorial'] [data-ristak-page-inner] :is(
+    [data-dashboard-kpi-grid],
+    [class*='kpiRow'],
+    [class*='statsGrid'],
+    .grid
+  ):has(> :nth-child(5):last-child) > *:nth-child(3n)::after,
+  body[data-design-preset='editorial'] [data-ristak-page-inner] :is(
+    [data-dashboard-kpi-grid],
+    [class*='kpiRow'],
+    [class*='statsGrid'],
+    .grid
+  ):has(> :nth-child(5):last-child) > *:nth-last-child(-n + 2)::before {
+    display: none;
+  }
+}
+
+@media (max-width: 768px) {
+  body[data-design-preset='editorial'] [data-ristak-page-inner] :is(
+    [data-dashboard-kpi-grid],
+    [class*='kpiRow'],
+    [class*='statsGrid'],
+    .grid
+  ):has(> :nth-child(5):last-child) > *:nth-child(3n)::after,
+  body[data-design-preset='editorial'] [data-ristak-page-inner] :is(
+    [data-dashboard-kpi-grid],
+    [class*='kpiRow'],
+    [class*='statsGrid'],
+    .grid
+  ):has(> :nth-child(5):last-child) > *:nth-last-child(-n + 2)::before,
+  body[data-design-preset='editorial'] [data-ristak-page-inner] :is(
+    [data-dashboard-kpi-grid],
+    [class*='kpiRow'],
+    [class*='statsGrid'],
+    .grid
+  ):has(> :nth-child(4):last-child) > *:nth-last-child(-n + 4)::before {
+    display: block;
+  }
+
+  body[data-design-preset='editorial'] [data-ristak-page-inner] :is(
+    [data-dashboard-kpi-grid],
+    [class*='kpiRow'],
+    [class*='statsGrid'],
+    .grid
+  ):has(> :nth-child(5):last-child) > *:nth-child(2n)::after,
+  body[data-design-preset='editorial'] [data-ristak-page-inner] :is(
+    [data-dashboard-kpi-grid],
+    [class*='kpiRow'],
+    [class*='statsGrid'],
+    .grid
+  ):has(> :nth-child(4):last-child) > *:nth-child(2n)::after,
+  body[data-design-preset='editorial'] [data-ristak-page-inner] :is(
+    [data-dashboard-kpi-grid],
+    [class*='kpiRow'],
+    [class*='statsGrid'],
+    .grid
+  ):has(> :nth-child(4):last-child) > *:nth-last-child(-n + 2)::before,
+  body[data-design-preset='editorial'] [data-ristak-page-inner] :is(
+    [data-dashboard-kpi-grid],
+    [class*='kpiRow'],
+    [class*='statsGrid'],
+    .grid
+  ):has(> :nth-child(5):last-child) > *:last-child::before {
+    display: none;
+  }
+}
+
+@media (max-width: 480px) {
+  body[data-design-preset='editorial'] [data-ristak-page-inner] :is(
+    [data-dashboard-kpi-grid],
+    [class*='kpiRow'],
+    [class*='statsGrid'],
+    .grid
+  ):has(> :nth-child(4):last-child) > *:nth-last-child(-n + 2)::before,
+  body[data-design-preset='editorial'] [data-ristak-page-inner] :is(
+    [data-dashboard-kpi-grid],
+    [class*='kpiRow'],
+    [class*='statsGrid'],
+    .grid
+  ):has(> :nth-child(5):last-child) > *:last-child::before {
+    display: block;
+  }
+
+  body[data-design-preset='editorial'] [data-ristak-page-inner] :is(
+    [data-dashboard-kpi-grid],
+    [class*='kpiRow'],
+    [class*='statsGrid'],
+    .grid
+  ):has([data-ristak-kpi-card]) > *::after,
+  body[data-design-preset='editorial'] [data-ristak-page-inner] :is(
+    [data-dashboard-kpi-grid],
+    [class*='kpiRow'],
+    [class*='statsGrid'],
+    .grid
+  ):has([data-ristak-kpi-card]) > *:last-child::before {
+    display: none;
+  }
 }
 
 body[data-design-preset='editorial'] [data-dashboard-heading] h1,
