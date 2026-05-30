@@ -47,6 +47,17 @@ type FunnelStageKind = 'visitors' | 'leads' | 'appointments' | 'attendances' | '
 type ContactModalType = 'interesados' | 'sales' | 'appointments' | 'attendances'
 type ChartView = 'revenue-spend' | 'visitors-leads' | 'leads-appointments' | 'appointments-attendances' | 'attendances-sales'
 type ChartSeriesKey = 'value' | 'value2'
+type ChartBucketGranularity = 'day' | 'week' | 'fortnight' | 'month' | 'quarter' | 'year'
+type ChartPeriodPreference =
+  | 'year'
+  | 'last12'
+  | 'calendar-auto'
+  | 'calendar-day'
+  | 'calendar-week'
+  | 'calendar-fortnight'
+  | 'calendar-month'
+  | 'calendar-quarter'
+  | 'calendar-year'
 
 interface DashboardChartPoint {
   label: string
@@ -68,6 +79,28 @@ interface DashboardChartConfig {
   color2: string
   formatValue: (value: number) => string
   formatTooltipValue: (value: number) => string
+}
+
+interface ChartBucket {
+  key: string
+  label: string
+  start: Date
+  end: Date
+  periodStart: string
+  periodEnd: string
+}
+
+interface ChartWindow {
+  start: Date
+  end: Date
+  granularity: ChartBucketGranularity
+  buckets: ChartBucket[]
+}
+
+interface RawDualSeriesPoint {
+  label: string
+  value: number
+  value2: number
 }
 
 interface ChartInsightItem {
@@ -128,10 +161,264 @@ const APPOINTMENT_STATUS_LABELS: Record<CalendarEvent['appointmentStatus'], stri
 }
 
 const SUCCESS_PAYMENT_STATUSES = new Set(['succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success'])
+const DAY_IN_MS = 24 * 60 * 60 * 1000
+const VALID_CHART_PERIODS = new Set<ChartPeriodPreference>([
+  'year',
+  'last12',
+  'calendar-auto',
+  'calendar-day',
+  'calendar-week',
+  'calendar-fortnight',
+  'calendar-month',
+  'calendar-quarter',
+  'calendar-year'
+])
+
+const GRANULARITY_LABELS: Record<ChartBucketGranularity, string> = {
+  day: 'por día',
+  week: 'por semana',
+  fortnight: 'por quincena',
+  month: 'por mes',
+  quarter: 'por trimestre',
+  year: 'por año'
+}
 
 const isSuccessfulPaymentStatus = (status?: string | null) => (
   SUCCESS_PAYMENT_STATUSES.has(status?.trim().toLowerCase() ?? '')
 )
+
+const normalizeChartPeriodPreference = (value: unknown): ChartPeriodPreference => (
+  typeof value === 'string' && VALID_CHART_PERIODS.has(value as ChartPeriodPreference)
+    ? value as ChartPeriodPreference
+    : 'last12'
+)
+
+const startOfLocalDay = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate())
+
+const endOfLocalDay = (date: Date) => {
+  const end = startOfLocalDay(date)
+  end.setHours(23, 59, 59, 999)
+  return end
+}
+
+const addDays = (date: Date, days: number) => {
+  const next = new Date(date)
+  next.setDate(next.getDate() + days)
+  return next
+}
+
+const addMonths = (date: Date, months: number) => (
+  new Date(date.getFullYear(), date.getMonth() + months, 1)
+)
+
+const getInclusiveRangeDays = (start: Date, end: Date) => (
+  Math.max(1, Math.floor((startOfLocalDay(end).getTime() - startOfLocalDay(start).getTime()) / DAY_IN_MS) + 1)
+)
+
+const getMonthKey = (date: Date) => (
+  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
+)
+
+const getQuarterKey = (date: Date) => (
+  `${date.getFullYear()}-Q${Math.floor(date.getMonth() / 3) + 1}`
+)
+
+const getAvailableCalendarGranularities = (rangeDays: number): ChartBucketGranularity[] => {
+  if (rangeDays <= 14) return ['day', 'week']
+  if (rangeDays <= 45) return ['day', 'week', 'fortnight']
+  if (rangeDays <= 120) return ['week', 'fortnight', 'month']
+  if (rangeDays <= 400) return ['month', 'quarter']
+  return ['month', 'quarter', 'year']
+}
+
+const getDefaultCalendarGranularity = (rangeDays: number): ChartBucketGranularity => {
+  if (rangeDays <= 45) return 'day'
+  if (rangeDays <= 120) return 'week'
+  if (rangeDays <= 400) return 'month'
+  return 'quarter'
+}
+
+const getChartPointDate = (dateStr: string): Date | null => {
+  const trimmed = dateStr?.trim()
+  if (!trimmed) return null
+
+  const monthMatch = /^(\d{4})-(\d{2})$/.exec(trimmed)
+  if (monthMatch) {
+    return new Date(Number(monthMatch[1]), Number(monthMatch[2]) - 1, 1)
+  }
+
+  const dayMatch = /^(\d{4})-(\d{2})-(\d{2})/.exec(trimmed)
+  if (dayMatch) {
+    return new Date(Number(dayMatch[1]), Number(dayMatch[2]) - 1, Number(dayMatch[3]))
+  }
+
+  const parsed = new Date(trimmed)
+  return Number.isNaN(parsed.getTime()) ? null : parsed
+}
+
+const formatFortnightLabel = (start: Date, end: Date) => {
+  const sameMonth = start.getMonth() === end.getMonth() && start.getFullYear() === end.getFullYear()
+  const monthLabel = formatChartDate(formatDateToISO(end), 45)
+
+  if (sameMonth) {
+    return `${start.getDate()}-${end.getDate()} ${monthLabel.replace(/^\d+\s/, '')}`
+  }
+
+  return `${formatChartDate(formatDateToISO(start), 45)} - ${formatChartDate(formatDateToISO(end), 45)}`
+}
+
+const createChartBucket = (
+  key: string,
+  start: Date,
+  end: Date,
+  granularity: ChartBucketGranularity,
+  previousKey?: string,
+  rangeDays = 365
+): ChartBucket => {
+  const periodStartDate = startOfLocalDay(start)
+  const periodEndDate = endOfLocalDay(end)
+
+  let label = key
+  if (granularity === 'day' || granularity === 'week') {
+    label = formatChartDate(formatDateToISO(periodStartDate), rangeDays, previousKey)
+  } else if (granularity === 'fortnight') {
+    label = formatFortnightLabel(periodStartDate, periodEndDate)
+  } else if (granularity === 'month') {
+    label = formatChartDate(getMonthKey(periodStartDate), rangeDays, previousKey)
+  } else if (granularity === 'quarter') {
+    label = `T${Math.floor(periodStartDate.getMonth() / 3) + 1} ${periodStartDate.getFullYear()}`
+  } else {
+    label = String(periodStartDate.getFullYear())
+  }
+
+  return {
+    key,
+    label,
+    start: periodStartDate,
+    end: periodEndDate,
+    periodStart: formatDateToISO(periodStartDate),
+    periodEnd: formatEndDateToISO(periodEndDate)
+  }
+}
+
+const buildChartBuckets = (
+  startInput: Date,
+  endInput: Date,
+  granularity: ChartBucketGranularity
+): ChartBucket[] => {
+  const start = startOfLocalDay(startInput)
+  const end = startOfLocalDay(endInput)
+  const rangeDays = getInclusiveRangeDays(start, end)
+  const buckets: ChartBucket[] = []
+
+  if (granularity === 'day') {
+    for (let cursor = start; cursor <= end; cursor = addDays(cursor, 1)) {
+      const key = formatDateToISO(cursor)
+      buckets.push(createChartBucket(key, cursor, cursor, granularity, buckets[buckets.length - 1]?.periodStart, rangeDays))
+    }
+    return buckets
+  }
+
+  if (granularity === 'week') {
+    for (let cursor = start; cursor <= end; cursor = addDays(cursor, 7)) {
+      const bucketEnd = new Date(Math.min(addDays(cursor, 6).getTime(), end.getTime()))
+      const key = `week-${formatDateToISO(cursor)}`
+      buckets.push(createChartBucket(key, cursor, bucketEnd, granularity, buckets[buckets.length - 1]?.periodStart, rangeDays))
+    }
+    return buckets
+  }
+
+  if (granularity === 'fortnight') {
+    let cursor = start.getDate() <= 15
+      ? new Date(start.getFullYear(), start.getMonth(), 1)
+      : new Date(start.getFullYear(), start.getMonth(), 16)
+
+    while (cursor <= end) {
+      const naturalEnd = cursor.getDate() === 1
+        ? new Date(cursor.getFullYear(), cursor.getMonth(), 15)
+        : new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0)
+      const bucketStart = new Date(Math.max(cursor.getTime(), start.getTime()))
+      const bucketEnd = new Date(Math.min(naturalEnd.getTime(), end.getTime()))
+      const key = `fortnight-${formatDateToISO(cursor)}`
+
+      buckets.push(createChartBucket(key, bucketStart, bucketEnd, granularity, buckets[buckets.length - 1]?.periodStart, rangeDays))
+      cursor = cursor.getDate() === 1
+        ? new Date(cursor.getFullYear(), cursor.getMonth(), 16)
+        : new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1)
+    }
+    return buckets
+  }
+
+  if (granularity === 'month') {
+    for (let cursor = new Date(start.getFullYear(), start.getMonth(), 1); cursor <= end; cursor = addMonths(cursor, 1)) {
+      const naturalEnd = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0)
+      const bucketStart = new Date(Math.max(cursor.getTime(), start.getTime()))
+      const bucketEnd = new Date(Math.min(naturalEnd.getTime(), end.getTime()))
+      const key = getMonthKey(cursor)
+
+      buckets.push(createChartBucket(key, bucketStart, bucketEnd, granularity, buckets[buckets.length - 1]?.periodStart, rangeDays))
+    }
+    return buckets
+  }
+
+  if (granularity === 'quarter') {
+    const firstQuarterMonth = Math.floor(start.getMonth() / 3) * 3
+    for (let cursor = new Date(start.getFullYear(), firstQuarterMonth, 1); cursor <= end; cursor = addMonths(cursor, 3)) {
+      const naturalEnd = new Date(cursor.getFullYear(), cursor.getMonth() + 3, 0)
+      const bucketStart = new Date(Math.max(cursor.getTime(), start.getTime()))
+      const bucketEnd = new Date(Math.min(naturalEnd.getTime(), end.getTime()))
+      const key = getQuarterKey(cursor)
+
+      buckets.push(createChartBucket(key, bucketStart, bucketEnd, granularity, buckets[buckets.length - 1]?.periodStart, rangeDays))
+    }
+    return buckets
+  }
+
+  for (let cursor = new Date(start.getFullYear(), 0, 1); cursor <= end; cursor = new Date(cursor.getFullYear() + 1, 0, 1)) {
+    const naturalEnd = new Date(cursor.getFullYear(), 11, 31)
+    const bucketStart = new Date(Math.max(cursor.getTime(), start.getTime()))
+    const bucketEnd = new Date(Math.min(naturalEnd.getTime(), end.getTime()))
+    const key = String(cursor.getFullYear())
+
+    buckets.push(createChartBucket(key, bucketStart, bucketEnd, granularity, buckets[buckets.length - 1]?.periodStart, rangeDays))
+  }
+
+  return buckets
+}
+
+const aggregateDualSeries = (
+  rawData: RawDualSeriesPoint[],
+  buckets: ChartBucket[]
+): DashboardChartPoint[] => {
+  const totals = new Map(buckets.map(bucket => [bucket.key, { value: 0, value2: 0 }]))
+
+  rawData.forEach(item => {
+    const pointDate = getChartPointDate(item.label)
+    if (!pointDate) return
+
+    const bucket = buckets.find(candidate => pointDate >= candidate.start && pointDate <= candidate.end)
+    if (!bucket) return
+
+    const current = totals.get(bucket.key)
+    if (!current) return
+
+    current.value += Number(item.value || 0)
+    current.value2 += Number(item.value2 || 0)
+  })
+
+  return buckets.map(bucket => {
+    const values = totals.get(bucket.key) ?? { value: 0, value2: 0 }
+
+    return {
+      label: bucket.label,
+      value: values.value,
+      value2: values.value2,
+      periodKey: bucket.key,
+      periodStart: bucket.periodStart,
+      periodEnd: bucket.periodEnd
+    }
+  })
+}
 
 const getTimeValue = (date?: string | null) => {
   if (!date) return 0
@@ -155,29 +442,6 @@ const getAppointmentTitle = (appointment: CalendarEvent) => (
   appointment.title || appointment.description || 'Cita sin título'
 )
 
-const getLast12MonthKeys = () => {
-  const now = new Date()
-  const months: string[] = []
-
-  for (let i = 11; i >= 0; i--) {
-    const date = new Date(now.getFullYear(), now.getMonth() - i, 1)
-    months.push(`${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`)
-  }
-
-  return months
-}
-
-const getMonthPeriod = (monthKey: string) => {
-  const [year, month] = monthKey.split('-').map(Number)
-  const start = new Date(year, month - 1, 1)
-  const end = new Date(year, month, 0)
-
-  return {
-    periodStart: formatDateToISO(start),
-    periodEnd: formatEndDateToISO(end)
-  }
-}
-
 const formatPeriodRange = (from: string, to: string) => {
   const startDate = parseLocalDateString(from.slice(0, 10))
   const endDate = to.includes('T') ? new Date(to) : parseLocalDateString(to.slice(0, 10))
@@ -199,6 +463,8 @@ export const Dashboard: React.FC = () => {
 
   // Sistema híbrido de configuración
   const [showAnalyticsConfig] = useAppConfig<string | number | boolean>('show_analytics', '1')
+  const [chartPeriodConfig, setChartPeriodConfig] = useAppConfig<string>('dashboard_chart_period', 'last12')
+  const chartPeriodPreference = normalizeChartPeriodPreference(chartPeriodConfig)
 
   // FORZAR analyticsEnabled a false si estamos en dominio .onrender.com
   const analyticsEnabled = isRenderDomain ? false : parseAnalyticsFlag(showAnalyticsConfig)
@@ -241,62 +507,96 @@ export const Dashboard: React.FC = () => {
   }, [analyticsEnabled, funnelData])
 
   const chartsGridClass = analyticsEnabled ? 'grid gap-4 lg:grid-cols-2' : 'grid gap-4'
-  const last12MonthKeys = React.useMemo(() => getLast12MonthKeys(), [])
+  const calendarRangeDays = React.useMemo(
+    () => getInclusiveRangeDays(dateRange.start, dateRange.end),
+    [dateRange.start, dateRange.end]
+  )
+  const availableCalendarGranularities = React.useMemo(
+    () => getAvailableCalendarGranularities(calendarRangeDays),
+    [calendarRangeDays]
+  )
+  const defaultCalendarGranularity = React.useMemo(
+    () => getDefaultCalendarGranularity(calendarRangeDays),
+    [calendarRangeDays]
+  )
 
-  // Agrupar datos financieros por mes para últimos 12 meses
+  const effectiveCalendarGranularity = React.useMemo<ChartBucketGranularity>(() => {
+    if (!chartPeriodPreference.startsWith('calendar-') || chartPeriodPreference === 'calendar-auto') {
+      return defaultCalendarGranularity
+    }
+
+    const requested = chartPeriodPreference.replace('calendar-', '') as ChartBucketGranularity
+    return availableCalendarGranularities.includes(requested) ? requested : defaultCalendarGranularity
+  }, [availableCalendarGranularities, chartPeriodPreference, defaultCalendarGranularity])
+
+  const chartPeriodOptions = React.useMemo(() => {
+    const calendarOptions = availableCalendarGranularities.map((granularity) => ({
+      value: `calendar-${granularity}`,
+      label: `Calendario: ${GRANULARITY_LABELS[granularity]}`
+    }))
+
+    return [
+      { value: 'year', label: 'Por año' },
+      { value: 'last12', label: 'Últimos 12 meses' },
+      { value: 'calendar-auto', label: `Según calendario: ${GRANULARITY_LABELS[defaultCalendarGranularity]}` },
+      ...calendarOptions
+    ]
+  }, [availableCalendarGranularities, defaultCalendarGranularity])
+
+  const selectedChartPeriodValue = React.useMemo(() => {
+    return chartPeriodOptions.some(option => option.value === chartPeriodPreference)
+      ? chartPeriodPreference
+      : 'calendar-auto'
+  }, [chartPeriodOptions, chartPeriodPreference])
+
+  const chartWindow = React.useMemo<ChartWindow>(() => {
+    const today = startOfLocalDay(new Date())
+    let start = dateRange.start
+    let end = dateRange.end
+    let granularity: ChartBucketGranularity = effectiveCalendarGranularity
+
+    if (chartPeriodPreference === 'year') {
+      start = new Date(today.getFullYear(), 0, 1)
+      end = today
+      granularity = 'month'
+    } else if (chartPeriodPreference === 'last12') {
+      start = new Date(today.getFullYear(), today.getMonth() - 11, 1)
+      end = today
+      granularity = 'month'
+    }
+
+    const normalizedStart = startOfLocalDay(start)
+    const normalizedEnd = startOfLocalDay(end)
+    return {
+      start: normalizedStart,
+      end: normalizedEnd,
+      granularity,
+      buckets: buildChartBuckets(normalizedStart, normalizedEnd, granularity)
+    }
+  }, [chartPeriodPreference, dateRange.end, dateRange.start, effectiveCalendarGranularity])
+
+  const chartApiGroupBy = chartWindow.granularity === 'day' || chartWindow.granularity === 'week' || chartWindow.granularity === 'fortnight'
+    ? 'day'
+    : 'month'
+
+  // Agrupar datos financieros según el rango activo del gráfico
   const formattedFinancialData = React.useMemo<DashboardChartPoint[]>(() => {
-    // Agrupar datos por mes
-    const monthlyData = chartData.reduce((acc, item) => {
-      const monthMatch = /^(\d{4})-(\d{2})/.exec(item.date)
-      const date = monthMatch ? null : new Date(item.date)
-      if (!monthMatch && (!date || Number.isNaN(date.getTime()))) {
-        return acc
-      }
-      const monthKey = monthMatch
-        ? `${monthMatch[1]}-${monthMatch[2]}`
-        : `${date?.getFullYear()}-${String((date?.getMonth() ?? 0) + 1).padStart(2, '0')}`
-
-      if (!acc[monthKey]) {
-        acc[monthKey] = { ingresos: 0, gastado: 0 }
-      }
-
-      acc[monthKey].ingresos += item.ingresos
-      acc[monthKey].gastado += item.gastado
-
-      return acc
-    }, {} as Record<string, { ingresos: number; gastado: number }>)
-
-    // Crear array con todos los 12 meses (con o sin datos)
-    return last12MonthKeys.map((monthKey, index) => {
-      const period = getMonthPeriod(monthKey)
-
-      return {
-        label: formatChartDate(monthKey, 365, index > 0 ? last12MonthKeys[index - 1] : undefined),
-        value: monthlyData[monthKey]?.ingresos || 0,
-        value2: monthlyData[monthKey]?.gastado || 0,
-        periodKey: monthKey,
-        ...period
-      }
-    })
-  }, [chartData, last12MonthKeys])
+    return aggregateDualSeries(
+      chartData.map(item => ({
+        label: item.date,
+        value: item.ingresos,
+        value2: item.gastado
+      })),
+      chartWindow.buckets
+    )
+  }, [chartData, chartWindow.buckets])
 
   const currencyAxisFormatter = React.useCallback((value: number) => formatChartCurrency(value), [])
 
   // Configuración del gráfico según la vista seleccionada
   const chartConfig = React.useMemo<DashboardChartConfig>(() => {
     const formatData = (rawData: { label: string; value: number; value2: number }[]): DashboardChartPoint[] => {
-      const dataMap = new Map(rawData.map(d => [d.label, d]))
-      return last12MonthKeys.map((monthKey, index) => {
-        const period = getMonthPeriod(monthKey)
-
-        return {
-          label: formatChartDate(monthKey, 365, index > 0 ? last12MonthKeys[index - 1] : undefined),
-          value: dataMap.get(monthKey)?.value || 0,
-          value2: dataMap.get(monthKey)?.value2 || 0,
-          periodKey: monthKey,
-          ...period
-        }
-      })
+      return aggregateDualSeries(rawData, chartWindow.buckets)
     }
 
     switch (selectedChartView) {
@@ -372,7 +672,7 @@ export const Dashboard: React.FC = () => {
           formatTooltipValue: (value: number) => formatCurrency(value)
         }
     }
-  }, [analyticsEnabled, selectedChartView, formattedFinancialData, visitorsLeadsData, leadsAppointmentsData, appointmentsAttendancesData, attendancesSalesData, labels.leads, currencyAxisFormatter, last12MonthKeys])
+  }, [analyticsEnabled, selectedChartView, formattedFinancialData, visitorsLeadsData, leadsAppointmentsData, appointmentsAttendancesData, attendancesSalesData, labels.leads, currencyAxisFormatter, chartWindow.buckets])
 
   const isExtendedChartView = selectedChartView !== 'revenue-spend'
   const isChartLoading = isExtendedChartView && extendedChartDataLoading
@@ -526,6 +826,10 @@ export const Dashboard: React.FC = () => {
     []
   )
 
+  const handleChartPeriodChange = React.useCallback((value: string) => {
+    void setChartPeriodConfig(normalizeChartPeriodPreference(value))
+  }, [setChartPeriodConfig])
+
   useEffect(() => {
     if (!analyticsEnabled && selectedChartView === 'visitors-leads') {
       setSelectedChartView('revenue-spend')
@@ -540,20 +844,16 @@ export const Dashboard: React.FC = () => {
 
     setExtendedChartDataLoading(true)
     try {
-      const now = new Date()
-      const twelveMonthsAgo = new Date(now)
-      twelveMonthsAgo.setMonth(now.getMonth() - 12)
-
       const visitorsPromise = analyticsEnabled
-        ? dashboardService.getVisitorsData({ start: twelveMonthsAgo, end: now, groupBy: 'month' })
+        ? dashboardService.getVisitorsData({ start: chartWindow.start, end: chartWindow.end, groupBy: chartApiGroupBy })
         : Promise.resolve<{ label: string; value: number }[]>([])
 
       const [visitorsData, leadsData, appointmentsData, attendancesData, salesData] = await Promise.all([
         visitorsPromise,
-        dashboardService.getLeadsData({ start: twelveMonthsAgo, end: now, groupBy: 'month' }),
-        dashboardService.getAppointmentsData({ start: twelveMonthsAgo, end: now, groupBy: 'month' }),
-        dashboardService.getAttendancesData({ start: twelveMonthsAgo, end: now, groupBy: 'month' }),
-        dashboardService.getSalesData({ start: twelveMonthsAgo, end: now, groupBy: 'month' })
+        dashboardService.getLeadsData({ start: chartWindow.start, end: chartWindow.end, groupBy: chartApiGroupBy }),
+        dashboardService.getAppointmentsData({ start: chartWindow.start, end: chartWindow.end, groupBy: chartApiGroupBy }),
+        dashboardService.getAttendancesData({ start: chartWindow.start, end: chartWindow.end, groupBy: chartApiGroupBy }),
+        dashboardService.getSalesData({ start: chartWindow.start, end: chartWindow.end, groupBy: chartApiGroupBy })
       ])
 
       const visitorsMap = new Map(visitorsData.map(d => [d.label, d.value]))
@@ -610,7 +910,7 @@ export const Dashboard: React.FC = () => {
     } finally {
       setExtendedChartDataLoading(false)
     }
-  }, [analyticsEnabled, extendedChartDataLoaded, extendedChartDataLoading, user])
+  }, [analyticsEnabled, chartApiGroupBy, chartWindow.end, chartWindow.start, extendedChartDataLoaded, extendedChartDataLoading, user])
 
   React.useEffect(() => {
     setExtendedChartDataLoaded(false)
@@ -619,7 +919,7 @@ export const Dashboard: React.FC = () => {
     setLeadsAppointmentsData([])
     setAppointmentsAttendancesData([])
     setAttendancesSalesData([])
-  }, [analyticsEnabled, dateRange.start, dateRange.end])
+  }, [analyticsEnabled, chartApiGroupBy, chartWindow.end, chartWindow.start])
 
   React.useEffect(() => {
     if (selectedChartView === 'revenue-spend') return
@@ -633,11 +933,6 @@ export const Dashboard: React.FC = () => {
 
       setLoading(true)
       try {
-        // Calcular últimos 12 meses para los gráficos
-        const now = new Date()
-        const twelveMonthsAgo = new Date(now)
-        twelveMonthsAgo.setMonth(now.getMonth() - 12)
-
         const trafficPromise = analyticsEnabled
           ? dashboardService.getTrafficSources({
               start: dateRange.start,
@@ -651,8 +946,8 @@ export const Dashboard: React.FC = () => {
             end: dateRange.end
           }),
           dashboardService.getFinancialChart({
-            start: twelveMonthsAgo,
-            end: now,
+            start: chartWindow.start,
+            end: chartWindow.end,
             scope: financialScope
           }),
           trafficPromise,
@@ -675,7 +970,7 @@ export const Dashboard: React.FC = () => {
     }
 
     loadData()
-  }, [analyticsEnabled, dateRange, financialScope, user])
+  }, [analyticsEnabled, chartWindow.end, chartWindow.start, dateRange, financialScope, user])
 
   useEffect(() => {
     if (!user) return
@@ -972,9 +1267,8 @@ export const Dashboard: React.FC = () => {
     _index: number,
     _seriesKey: ChartSeriesKey
   ) => {
-    const inferredPeriod = point.periodKey ? getMonthPeriod(point.periodKey) : null
-    const periodStart = point.periodStart ?? inferredPeriod?.periodStart
-    const periodEnd = point.periodEnd ?? inferredPeriod?.periodEnd
+    const periodStart = point.periodStart
+    const periodEnd = point.periodEnd
 
     if (!periodStart || !periodEnd) return
 
@@ -1015,7 +1309,7 @@ export const Dashboard: React.FC = () => {
             'Personas que pagaron',
             chartConfig.label1,
             metricValue1,
-            'Sin pagos registrados en este mes.',
+            'Sin pagos registrados en este periodo.',
             mapContactsToInsightItems(payingContacts, 'payment')
           ),
           buildInsightColumn(
@@ -1023,7 +1317,7 @@ export const Dashboard: React.FC = () => {
             'Gastos de publicidad',
             chartConfig.label2,
             metricValue2,
-            'Sin gasto publicitario en este mes.',
+            'Sin gasto publicitario en este periodo.',
             mapCampaignsToInsightItems(campaigns)
           )
         ]
@@ -1043,7 +1337,7 @@ export const Dashboard: React.FC = () => {
             'Visitantes',
             chartConfig.label1,
             metricValue1,
-            'Sin visitantes registrados en este mes.',
+            'Sin visitantes registrados en este periodo.',
             mapVisitorsToInsightItems(visitors)
           ),
           buildInsightColumn(
@@ -1051,7 +1345,7 @@ export const Dashboard: React.FC = () => {
             labels.leads,
             chartConfig.label2,
             metricValue2,
-            `Sin ${labels.leads.toLowerCase()} registrados en este mes.`,
+            `Sin ${labels.leads.toLowerCase()} registrados en este periodo.`,
             mapContactsToInsightItems(leads, 'lead')
           )
         ]
@@ -1067,7 +1361,7 @@ export const Dashboard: React.FC = () => {
             labels.leads,
             chartConfig.label1,
             metricValue1,
-            `Sin ${labels.leads.toLowerCase()} registrados en este mes.`,
+            `Sin ${labels.leads.toLowerCase()} registrados en este periodo.`,
             mapContactsToInsightItems(leads, 'lead')
           ),
           buildInsightColumn(
@@ -1075,7 +1369,7 @@ export const Dashboard: React.FC = () => {
             'Citados',
             chartConfig.label2,
             metricValue2,
-            'Sin citas registradas en este mes.',
+            'Sin citas registradas en este periodo.',
             mapContactsToInsightItems(appointments, 'appointment')
           )
         ]
@@ -1091,7 +1385,7 @@ export const Dashboard: React.FC = () => {
             'Citados',
             chartConfig.label1,
             metricValue1,
-            'Sin citas registradas en este mes.',
+            'Sin citas registradas en este periodo.',
             mapContactsToInsightItems(appointments, 'appointment')
           ),
           buildInsightColumn(
@@ -1099,7 +1393,7 @@ export const Dashboard: React.FC = () => {
             'Asistieron',
             chartConfig.label2,
             metricValue2,
-            'Sin asistencias registradas en este mes.',
+            'Sin asistencias registradas en este periodo.',
             mapContactsToInsightItems(attendances, 'attendance')
           )
         ]
@@ -1115,7 +1409,7 @@ export const Dashboard: React.FC = () => {
             'Asistieron',
             chartConfig.label1,
             metricValue1,
-            'Sin asistencias registradas en este mes.',
+            'Sin asistencias registradas en este periodo.',
             mapContactsToInsightItems(attendances, 'attendance')
           ),
           buildInsightColumn(
@@ -1123,7 +1417,7 @@ export const Dashboard: React.FC = () => {
             'Clientes que pagaron',
             chartConfig.label2,
             metricValue2,
-            'Sin clientes con pago en este mes.',
+            'Sin clientes con pago en este periodo.',
             mapContactsToInsightItems(payingContacts, 'payment')
           )
         ]
@@ -1278,14 +1572,19 @@ export const Dashboard: React.FC = () => {
         </div>
 
         <Card data-dashboard-chart-card variant="glass" className="space-y-5">
-          <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-            <div className="space-y-1">
-              <h2 className="text-xl font-semibold text-[var(--color-text-primary)]">
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <h2 className="m-0 text-xl font-semibold text-[var(--color-text-primary)] sm:whitespace-nowrap">
                 {activeChartLabel}
               </h2>
-              <p className="text-sm text-[var(--color-text-secondary)] mt-0.5">Últimos 12 meses</p>
+              <ViewSelector
+                className="min-w-[190px]"
+                options={chartPeriodOptions}
+                value={selectedChartPeriodValue}
+                onChange={handleChartPeriodChange}
+              />
             </div>
-            <div className="flex flex-wrap items-center gap-3 xl:justify-end">
+            <div className="flex flex-wrap items-center gap-x-6 gap-y-3 xl:justify-end">
               <div className="flex flex-wrap items-center gap-4 text-xs text-[var(--color-text-secondary)]">
                 {chartLegendItems.map((item) => (
                   <div key={item.key} className="inline-flex items-center gap-2">
@@ -1334,15 +1633,15 @@ export const Dashboard: React.FC = () => {
               </div>
             ) : hasChartData ? (
               <AreaChart
-                  data={chartConfig.data}
-                  height={chartHeight}
-                  showGrid
-                  color={chartConfig.color}
-                  color2={chartConfig.color2}
-                  formatValue={chartConfig.formatValue}
-                  formatTooltipValue={chartConfig.formatTooltipValue}
-                  onPointClick={handleChartPointClick}
-                />
+                data={chartConfig.data}
+                height={chartHeight}
+                showGrid
+                color={chartConfig.color}
+                color2={chartConfig.color2}
+                formatValue={chartConfig.formatValue}
+                formatTooltipValue={chartConfig.formatTooltipValue}
+                onPointClick={handleChartPointClick}
+              />
             ) : (
               <div data-ristak-chart-empty className="flex h-full items-center justify-center rounded-xl border border-[rgba(148,163,184,0.18)] bg-[color-mix(in_srgb,var(--color-background-glass) 82%, transparent)] text-sm text-[var(--color-text-tertiary)]">
                 Sin datos disponibles
