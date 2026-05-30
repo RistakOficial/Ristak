@@ -13,6 +13,15 @@ interface TrafficData {
 interface TrafficSourcesChartProps {
   data: TrafficData[]
   loading?: boolean
+  title?: string
+  totalLabel?: string
+  emptyText?: string
+  emptySubtext?: string
+  itemLabel?: string
+  insightPrimaryLabel?: string
+  insightCountLabel?: string
+  insightCountSuffix?: string
+  headerAction?: React.ReactNode
 }
 
 interface ChartSource {
@@ -95,7 +104,19 @@ const describeArc = (startAngle: number, endAngle: number) => {
   ].join(' ')
 }
 
-export const TrafficSourcesChart: React.FC<TrafficSourcesChartProps> = ({ data, loading = false }) => {
+export const TrafficSourcesChart: React.FC<TrafficSourcesChartProps> = ({
+  data,
+  loading = false,
+  title = 'Fuentes de Tráfico',
+  totalLabel = 'visitantes únicos',
+  emptyText = 'Sin datos de tráfico',
+  emptySubtext = 'Los datos aparecerán cuando haya visitas',
+  itemLabel = 'Visitantes',
+  insightPrimaryLabel = 'Mayor fuente',
+  insightCountLabel = 'Diversificación',
+  insightCountSuffix = 'fuentes activas',
+  headerAction
+}) => {
   const normalizedData = useMemo(() => {
     const sourceMap = new Map<string, { name: string; value: number; color?: string; firstIndex: number }>()
 
@@ -198,14 +219,19 @@ export const TrafficSourcesChart: React.FC<TrafficSourcesChartProps> = ({ data, 
     <Card variant="glass" className={styles.container} data-ristak-chart="donut">
       <div className={styles.header}>
         <div>
-          <h3 className={styles.title}>Fuentes de Tráfico</h3>
+          <h3 className={styles.title}>{title}</h3>
           <div className={styles.totalContainer}>
             <span className={styles.totalValue}>
               {totalVisits.toLocaleString('es-MX')}
             </span>
-            <span className={styles.totalLabel}>visitantes únicos</span>
+            <span className={styles.totalLabel}>{totalLabel}</span>
           </div>
         </div>
+        {headerAction && (
+          <div className={styles.headerAction}>
+            {headerAction}
+          </div>
+        )}
       </div>
 
       <div className={styles.chartContainer}>
@@ -219,7 +245,7 @@ export const TrafficSourcesChart: React.FC<TrafficSourcesChartProps> = ({ data, 
               className={styles.donutChart}
               viewBox="0 0 200 200"
               role="img"
-              aria-label={`Fuentes de tráfico con ${totalVisits.toLocaleString('es-MX')} visitantes únicos`}
+              aria-label={`${title} con ${totalVisits.toLocaleString('es-MX')} ${totalLabel}`}
               shapeRendering="geometricPrecision"
             >
               <circle
@@ -234,7 +260,7 @@ export const TrafficSourcesChart: React.FC<TrafficSourcesChartProps> = ({ data, 
                   stroke: segment.color,
                   tabIndex: 0,
                   role: 'listitem',
-                  'aria-label': `${segment.name}: ${segment.value.toLocaleString('es-MX')} visitantes, ${segment.percentage.toFixed(1)}%`,
+                  'aria-label': `${segment.name}: ${segment.value.toLocaleString('es-MX')} ${itemLabel.toLowerCase()}, ${segment.percentage.toFixed(1)}%`,
                   onMouseEnter: handleSegmentMouseEnter(index),
                   onMouseMove: handleSegmentMouseMove,
                   onFocus: handleSegmentFocus(index),
@@ -270,7 +296,7 @@ export const TrafficSourcesChart: React.FC<TrafficSourcesChartProps> = ({ data, 
               series={[
                 {
                   key: 'value',
-                  label: 'Visitantes',
+                  label: itemLabel,
                   color: activeSource?.color ?? 'var(--design-chart-primary, #10b981)'
                 }
               ]}
@@ -287,8 +313,8 @@ export const TrafficSourcesChart: React.FC<TrafficSourcesChartProps> = ({ data, 
         ) : (
           <div className={styles.emptyContainer} data-ristak-chart-empty>
             <Globe className={styles.emptyIcon} />
-            <p className={styles.emptyText}>Sin datos de tráfico</p>
-            <p className={styles.emptySubtext}>Los datos aparecerán cuando haya visitas</p>
+            <p className={styles.emptyText}>{emptyText}</p>
+            <p className={styles.emptySubtext}>{emptySubtext}</p>
           </div>
         )}
       </div>
@@ -341,14 +367,14 @@ export const TrafficSourcesChart: React.FC<TrafficSourcesChartProps> = ({ data, 
       {!loading && chartData.length > 0 && (
         <div className={styles.insights}>
           <div className={styles.insightItem}>
-            <p className={styles.insightLabel}>Mayor fuente</p>
+            <p className={styles.insightLabel}>{insightPrimaryLabel}</p>
             <p className={styles.insightValue}>
               {chartData[0].name} <span className={styles.insightHighlight}>{chartData[0].percentage.toFixed(1)}%</span>
             </p>
           </div>
           <div className={styles.insightItem}>
-            <p className={styles.insightLabel}>Diversificación</p>
-            <p className={styles.insightValue}>{chartData.length} fuentes activas</p>
+            <p className={styles.insightLabel}>{insightCountLabel}</p>
+            <p className={styles.insightValue}>{chartData.length} {insightCountSuffix}</p>
           </div>
         </div>
       )}

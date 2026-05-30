@@ -15,10 +15,8 @@ import {
   TreeFilter,
   TrafficSourcesChart,
   SessionsTable,
-  BarChart,
   Loading
 } from '../../components/common'
-import type { BarChartData } from '../../components/common'
 import { Eye, Users, UserCheck, Target, Smartphone, Monitor, Tablet, Globe, Minus, Plus } from 'lucide-react'
 import { FaFacebook, FaGoogle, FaInstagram, FaTiktok, FaTwitter, FaLinkedin, FaMicrosoft, FaChrome, FaFirefox, FaSafari, FaEdge, FaOpera, FaWindows, FaAndroid, FaLinux } from 'react-icons/fa'
 import { SiMacos, SiIos } from 'react-icons/si'
@@ -29,6 +27,9 @@ import { normalizeTrafficSource } from '../../utils/trafficSourceNormalizer'
 
 type ViewType = 'day' | 'month' | 'year'
 type MonthPreset = 'last12' | 'thisYear' | 'custom'
+type AnalyticsMainChartView = 'traffic' | 'visitors-registrations' | 'sessions-visitors' | 'identity-returning'
+type AnalyticsConversionChartView = 'registrations-customers' | 'appointments-attendances' | 'prospects-customers'
+type AnalyticsDistributionView = 'sources' | 'platforms' | 'devices' | 'placements' | 'browsers' | 'os'
 
 const monthNamesShort = [
   'ene', 'feb', 'mar', 'abr', 'may', 'jun',
@@ -225,6 +226,35 @@ type TrafficPoint = {
   value2: number
 }
 
+type SessionTrendPoint = {
+  label: string
+  pageViews: number
+  uniqueVisitors: number
+  uniqueSessions: number
+  identifiedContacts: number
+  returningVisitors: number
+}
+
+type ConversionTrendPoint = {
+  label: string
+  prospects: number
+  registrations: number
+  appointments: number
+  attendances: number
+  customers: number
+}
+
+type ChartMetricConfig = {
+  title: string
+  description: string
+  label1: string
+  label2: string
+  color: string
+  color2: string
+  data: TrafficPoint[]
+  emptyMessage: string
+}
+
 type ConversionStage = 'prospect' | 'appointment_scheduled' | 'appointment_attended' | 'customer'
 
 const CONVERSION_FILTERS: Array<{ stage: ConversionStage; label: string }> = [
@@ -232,6 +262,17 @@ const CONVERSION_FILTERS: Array<{ stage: ConversionStage; label: string }> = [
   { stage: 'appointment_scheduled', label: 'Agendaron cita' },
   { stage: 'appointment_attended', label: 'Citas asistidas' },
   { stage: 'customer', label: 'Clientes' }
+]
+
+const distributionColors = [
+  '#2dd4bf',
+  '#60a5fa',
+  '#f59e0b',
+  '#a78bfa',
+  '#f43f5e',
+  '#34d399',
+  '#f97316',
+  '#94a3b8'
 ]
 
 const toNumber = (value: unknown): number => {
@@ -396,6 +437,178 @@ const aggregateContactsByPeriod = (
     .map(([period, count]) => ({ period, count }))
 }
 
+const buildSessionTrendData = (
+  sessions: Session[],
+  viewType: ViewType,
+  convertToLocalTime: (utcDate: string | Date) => Date
+): SessionTrendPoint[] => {
+  const stats = new Map<string, {
+    pageViews: number
+    visitors: Set<string>
+    sessionIds: Set<string>
+    contactIds: Set<string>
+    visitorSessions: Map<string, Set<string>>
+  }>()
+
+  sessions.forEach((session) => {
+    const periodKey = getPeriodKeyFromTimestamp(session.started_at, viewType, convertToLocalTime)
+    if (!periodKey) return
+
+    if (!stats.has(periodKey)) {
+      stats.set(periodKey, {
+        pageViews: 0,
+        visitors: new Set(),
+        sessionIds: new Set(),
+        contactIds: new Set(),
+        visitorSessions: new Map()
+      })
+    }
+
+    const bucket = stats.get(periodKey)!
+    bucket.pageViews++
+    bucket.visitors.add(session.visitor_id)
+    bucket.sessionIds.add(session.session_id)
+
+    if (session.contact_id) {
+      bucket.contactIds.add(session.contact_id)
+    }
+
+    if (!bucket.visitorSessions.has(session.visitor_id)) {
+      bucket.visitorSessions.set(session.visitor_id, new Set())
+    }
+    bucket.visitorSessions.get(session.visitor_id)!.add(session.session_id)
+  })
+
+  return Array.from(stats.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([period, bucket]) => ({
+      label: formatPeriodLabel(period, viewType),
+      pageViews: bucket.pageViews,
+      uniqueVisitors: bucket.visitors.size,
+      uniqueSessions: bucket.sessionIds.size,
+      identifiedContacts: bucket.contactIds.size,
+      returningVisitors: Array.from(bucket.visitorSessions.values()).filter(sessionSet => sessionSet.size > 1).length
+    }))
+}
+
+const hasCustomerConversion = (session: Session) =>
+  toNumber(session.contact_purchases_count) > 0 || toNumber(session.contact_total_paid) > 0
+
+const hasAttendedConversion = (session: Session) =>
+  toBoolean(session.contact_has_attended_appointment)
+
+const hasAppointmentConversion = (session: Session) =>
+  toBoolean(session.contact_has_appointment) || Boolean(session.contact_appointment_date)
+
+const buildConversionTrendData = (
+  sessions: Session[],
+  viewType: ViewType,
+  convertToLocalTime: (utcDate: string | Date) => Date
+): ConversionTrendPoint[] => {
+  const stats = new Map<string, {
+    prospects: Set<string>
+    registrations: Set<string>
+    appointments: Set<string>
+    attendances: Set<string>
+    customers: Set<string>
+  }>()
+
+  sessions.forEach((session) => {
+    if (!session.contact_id && !session.contact_created_at) return
+
+    const periodKey = getPeriodKeyFromTimestamp(
+      session.contact_created_at || session.started_at,
+      viewType,
+      convertToLocalTime
+    )
+    if (!periodKey) return
+
+    if (!stats.has(periodKey)) {
+      stats.set(periodKey, {
+        prospects: new Set(),
+        registrations: new Set(),
+        appointments: new Set(),
+        attendances: new Set(),
+        customers: new Set()
+      })
+    }
+
+    const contactKey = session.contact_id || `${session.visitor_id}:${session.email || session.full_name || 'unknown'}`
+    const bucket = stats.get(periodKey)!
+
+    bucket.registrations.add(contactKey)
+
+    if (hasAppointmentConversion(session)) {
+      bucket.appointments.add(contactKey)
+    }
+
+    if (hasAttendedConversion(session)) {
+      bucket.attendances.add(contactKey)
+    }
+
+    if (hasCustomerConversion(session)) {
+      bucket.customers.add(contactKey)
+      return
+    }
+
+    if (!hasAppointmentConversion(session) && !hasAttendedConversion(session)) {
+      bucket.prospects.add(contactKey)
+    }
+  })
+
+  return Array.from(stats.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([period, bucket]) => ({
+      label: formatPeriodLabel(period, viewType),
+      prospects: bucket.prospects.size,
+      registrations: bucket.registrations.size,
+      appointments: bucket.appointments.size,
+      attendances: bucket.attendances.size,
+      customers: bucket.customers.size
+    }))
+}
+
+const mergeVisitorRegistrationData = (
+  trafficData: TrafficPoint[],
+  conversionData: Array<{ label: string; value: number }>
+): TrafficPoint[] => {
+  const visitorsByLabel = new Map(trafficData.map(item => [item.label, item.value2]))
+  const registrationsByLabel = new Map(conversionData.map(item => [item.label, Number(item.value || 0)]))
+  const labels = [
+    ...trafficData.map(item => item.label),
+    ...conversionData.map(item => item.label).filter(label => !visitorsByLabel.has(label))
+  ]
+
+  return labels.map(label => ({
+    label,
+    value: visitorsByLabel.get(label) || 0,
+    value2: registrationsByLabel.get(label) || 0
+  }))
+}
+
+const mapTrendToChartData = <T extends { label: string }>(
+  trendData: T[],
+  valueKey: keyof T,
+  value2Key: keyof T
+): TrafficPoint[] => trendData.map(item => ({
+  label: item.label,
+  value: Number(item[valueKey] || 0),
+  value2: Number(item[value2Key] || 0)
+}))
+
+const mapListToDistributionData = (
+  items: Array<{ name: string; users?: number; value?: number; color?: string }>,
+  limit = 10
+) => items
+  .map((item, index) => ({
+    name: item.name,
+    value: Number(item.value ?? item.users ?? 0),
+    color: item.color || distributionColors[index % distributionColors.length]
+  }))
+  .filter(item => item.value > 0)
+  .sort((a, b) => b.value - a.value)
+  .slice(0, limit)
+
 const Analytics: React.FC = () => {
   const isRenderDomain = useIsRenderDomain()
   const { dateRange, setDateRange } = useDateRange()
@@ -416,7 +629,6 @@ const Analytics: React.FC = () => {
   // Estado para visualizaciones
   const [dailyTraffic, setDailyTraffic] = useState<TrafficPoint[]>([])
   const [dailyConversions, setDailyConversions] = useState<any[]>([])
-  const [registrosChartData, setRegistrosChartData] = useState<BarChartData[]>([])
   const [trafficSources, setTrafficSources] = useState<{ name: string; value: number; color: string }[]>([])
   const [platformsData, setPlatformsData] = useState<any[]>([])
   const [placementsData, setPlacementsData] = useState<any[]>([])
@@ -427,6 +639,9 @@ const Analytics: React.FC = () => {
   const [viewType, setViewType] = useState<ViewType>('day')
   const [monthPreset, setMonthPreset] = useState<MonthPreset>('last12')
   const [yearRange, setYearRange] = useState(defaultYearRange)
+  const [selectedMainChartView, setSelectedMainChartView] = useState<AnalyticsMainChartView>('traffic')
+  const [selectedConversionChartView, setSelectedConversionChartView] = useState<AnalyticsConversionChartView>('registrations-customers')
+  const [selectedDistributionView, setSelectedDistributionView] = useState<AnalyticsDistributionView>('sources')
 
   // Guardar el valor ORIGINAL de registros para restaurar al quitar filtros
   const [originalRegistros, setOriginalRegistros] = useState<number>(0)
@@ -568,33 +783,21 @@ const Analytics: React.FC = () => {
             }
           })
 
-          // Preparar datos para gráfico de tráfico por período (incluyendo período anterior)
+          // Preparar datos para gráfico de tráfico por período
           setDailyTraffic(buildTrafficChartData(
-            [...prevSessions, ...currentSessions],
+            currentSessions,
             viewType,
             convertToLocalTime
           ))
 
           // Gráfico de conversiones (registros reales de contactos por fecha de creación)
-          // Combinar período actual y anterior para contexto visual
-          const allContactsData = [...(prevContactsData || []), ...(contactsData || [])]
-
-          const conversionChartData = aggregateContactsByPeriod(allContactsData, viewType)
+          const conversionChartData = aggregateContactsByPeriod(contactsData || [], viewType)
             .map(item => ({
               label: formatPeriodLabel(item.period, viewType),
               value: item.count
             }))
 
           setDailyConversions(conversionChartData)
-
-          // Preparar datos para el gráfico de barras de registros (solo período actual)
-          const registrosBarChartData = aggregateContactsByPeriod(contactsData || [], viewType)
-            .map(item => ({
-              name: formatPeriodLabel(item.period, viewType),
-              value: item.count
-            }))
-
-          setRegistrosChartData(registrosBarChartData)
 
           // Guardar todas las sesiones y sesiones filtradas (ordenadas de más reciente a más vieja)
           const sortedSessions = [...currentSessions].sort((a, b) => {
@@ -1027,7 +1230,6 @@ const Analytics: React.FC = () => {
           })
           setDailyTraffic([])
           setDailyConversions([])
-          setRegistrosChartData([])
         }
       } catch {
       } finally {
@@ -1148,8 +1350,7 @@ const Analytics: React.FC = () => {
     const sessionsToProcess = hasActiveFilters ? sessions : allSessions
 
     if (sessionsToProcess.length === 0) {
-      // Si no hay sesiones filtradas, resetear solo métricas de sesiones
-      // NO resetear registros ni registrosChartData si no hay filtros (mantener originales)
+      // Si no hay sesiones filtradas, resetear solo métricas de sesiones.
       setMetrics(prev => ({
         pageViews: 0,
         uniqueVisitors: 0,
@@ -1161,9 +1362,6 @@ const Analytics: React.FC = () => {
       }))
       setDailyTraffic([])
       setDailyConversions([])
-      if (hasActiveFilters) {
-        setRegistrosChartData([]) // Vaciar gráfico si hay filtro activo
-      }
       return
     }
 
@@ -1246,17 +1444,7 @@ const Analytics: React.FC = () => {
         }
       })
 
-      // Generar datos para el gráfico de barras (solo período actual filtrado)
-      const filteredRegistrosChartData = Object.entries(registrosPorFecha)
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([period, contactSet]) => ({
-          name: formatPeriodLabel(period, viewType),
-          value: contactSet.size
-        }))
-
-      setRegistrosChartData(filteredRegistrosChartData)
-
-      // Generar datos para el gráfico de conversiones (con período anterior incluido)
+      // Generar datos para el gráfico de conversiones filtrado.
       const filteredConversionsData = Object.entries(registrosPorFecha)
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([period, contactSet]) => ({
@@ -1460,6 +1648,204 @@ const Analytics: React.FC = () => {
   }
 
   const periodLabel = viewType === 'year' ? 'año' : viewType === 'month' ? 'mes' : 'fecha'
+  const hasActiveFiltersForCharts = Object.values(selectedFilters).some(values => values.length > 0)
+  const sessionsForCharts = hasActiveFiltersForCharts ? sessions : allSessions
+
+  const mainChartOptions = React.useMemo<Array<{ value: AnalyticsMainChartView; label: string }>>(() => [
+    { value: 'traffic', label: 'Tráfico del sitio' },
+    { value: 'visitors-registrations', label: 'Visitantes vs Registros' },
+    { value: 'sessions-visitors', label: 'Sesiones vs Visitantes' },
+    { value: 'identity-returning', label: 'Identificados vs Recurrentes' }
+  ], [])
+
+  const conversionChartOptions = React.useMemo<Array<{ value: AnalyticsConversionChartView; label: string }>>(() => [
+    { value: 'registrations-customers', label: 'Registros vs Clientes' },
+    { value: 'appointments-attendances', label: 'Citas vs Asistencias' },
+    { value: 'prospects-customers', label: 'Prospectos vs Clientes' }
+  ], [])
+
+  const distributionOptions = React.useMemo<Array<{ value: AnalyticsDistributionView; label: string }>>(() => [
+    { value: 'sources', label: 'Fuentes' },
+    { value: 'platforms', label: 'Plataformas' },
+    { value: 'devices', label: 'Dispositivos' },
+    { value: 'placements', label: 'Ubicaciones' },
+    { value: 'browsers', label: 'Navegadores' },
+    { value: 'os', label: 'Sistemas' }
+  ], [])
+
+  const sessionTrendData = React.useMemo(
+    () => buildSessionTrendData(sessionsForCharts, viewType, convertToLocalTime),
+    [sessionsForCharts, viewType, convertToLocalTime]
+  )
+
+  const conversionTrendData = React.useMemo(
+    () => buildConversionTrendData(sessionsForCharts, viewType, convertToLocalTime),
+    [sessionsForCharts, viewType, convertToLocalTime]
+  )
+
+  const mainChartConfig = React.useMemo<ChartMetricConfig>(() => {
+    switch (selectedMainChartView) {
+      case 'visitors-registrations':
+        return {
+          title: 'Visitantes vs Registros',
+          description: `Cuántos visitantes terminan identificándose por ${periodLabel}`,
+          label1: 'Visitantes únicos',
+          label2: 'Registros',
+          color: 'var(--design-chart-tertiary, #3b82f6)',
+          color2: 'var(--design-chart-accent, #8b5cf6)',
+          data: mergeVisitorRegistrationData(dailyTraffic, dailyConversions),
+          emptyMessage: 'Sin datos de visitantes o registros disponibles'
+        }
+      case 'sessions-visitors':
+        return {
+          title: 'Sesiones vs Visitantes',
+          description: `Frecuencia de regreso y volumen real por ${periodLabel}`,
+          label1: 'Sesiones',
+          label2: 'Visitantes únicos',
+          color: 'var(--design-chart-warning, #f59e0b)',
+          color2: 'var(--design-chart-tertiary, #3b82f6)',
+          data: mapTrendToChartData(sessionTrendData, 'uniqueSessions', 'uniqueVisitors'),
+          emptyMessage: 'Sin sesiones disponibles'
+        }
+      case 'identity-returning':
+        return {
+          title: 'Identificados vs Recurrentes',
+          description: `Calidad del tráfico: contactos identificados y usuarios que regresan por ${periodLabel}`,
+          label1: 'Contactos identificados',
+          label2: 'Visitantes recurrentes',
+          color: 'var(--design-chart-primary, #10b981)',
+          color2: 'var(--design-chart-secondary, #64748b)',
+          data: mapTrendToChartData(sessionTrendData, 'identifiedContacts', 'returningVisitors'),
+          emptyMessage: 'Sin visitantes identificados o recurrentes'
+        }
+      case 'traffic':
+      default:
+        return {
+          title: 'Tráfico del Sitio',
+          description: `Visualizaciones de página y visitantes únicos por ${periodLabel}`,
+          label1: 'Visualizaciones',
+          label2: 'Visitantes únicos',
+          color: 'var(--design-chart-primary, #10b981)',
+          color2: 'var(--design-chart-tertiary, #3b82f6)',
+          data: dailyTraffic,
+          emptyMessage: 'Sin datos de tráfico disponibles'
+        }
+    }
+  }, [dailyConversions, dailyTraffic, periodLabel, selectedMainChartView, sessionTrendData])
+
+  const conversionChartConfig = React.useMemo<ChartMetricConfig>(() => {
+    switch (selectedConversionChartView) {
+      case 'appointments-attendances':
+        return {
+          title: 'Citas vs Asistencias',
+          description: `Controla si la agenda se está convirtiendo en show-ups por ${periodLabel}`,
+          label1: 'Citas agendadas',
+          label2: 'Citas asistidas',
+          color: 'var(--design-chart-warning, #f59e0b)',
+          color2: 'var(--design-chart-tertiary, #3b82f6)',
+          data: mapTrendToChartData(conversionTrendData, 'appointments', 'attendances'),
+          emptyMessage: 'Sin citas o asistencias disponibles'
+        }
+      case 'prospects-customers':
+        return {
+          title: 'Prospectos vs Clientes',
+          description: `Compara contactos en etapa inicial contra clientes por ${periodLabel}`,
+          label1: 'Prospectos',
+          label2: 'Clientes',
+          color: 'var(--design-chart-accent, #8b5cf6)',
+          color2: 'var(--design-chart-primary, #10b981)',
+          data: mapTrendToChartData(conversionTrendData, 'prospects', 'customers'),
+          emptyMessage: 'Sin prospectos o clientes disponibles'
+        }
+      case 'registrations-customers':
+      default:
+        return {
+          title: 'Registros vs Clientes',
+          description: `Mide cuántos registros terminan siendo clientes por ${periodLabel}`,
+          label1: 'Registros',
+          label2: 'Clientes',
+          color: 'var(--design-chart-accent, #8b5cf6)',
+          color2: 'var(--design-chart-primary, #10b981)',
+          data: mapTrendToChartData(conversionTrendData, 'registrations', 'customers'),
+          emptyMessage: 'Sin registros o clientes disponibles'
+        }
+    }
+  }, [conversionTrendData, periodLabel, selectedConversionChartView])
+
+  const distributionConfig = React.useMemo(() => {
+    switch (selectedDistributionView) {
+      case 'platforms':
+        return {
+          title: 'Distribución por Plataforma',
+          totalLabel: 'visitantes únicos',
+          emptyText: 'Sin plataformas',
+          emptySubtext: 'Aparecerán cuando el tráfico traiga fuente detectable',
+          insightPrimaryLabel: 'Mayor plataforma',
+          insightCountLabel: 'Variedad',
+          insightCountSuffix: 'plataformas activas',
+          data: mapListToDistributionData(platformsData)
+        }
+      case 'devices':
+        return {
+          title: 'Distribución por Dispositivo',
+          totalLabel: 'visitantes únicos',
+          emptyText: 'Sin dispositivos',
+          emptySubtext: 'Aparecerán cuando haya visitas con dispositivo detectado',
+          insightPrimaryLabel: 'Mayor dispositivo',
+          insightCountLabel: 'Variedad',
+          insightCountSuffix: 'dispositivos activos',
+          data: mapListToDistributionData(devicesData)
+        }
+      case 'placements':
+        return {
+          title: 'Distribución por Ubicación',
+          totalLabel: 'visitantes únicos',
+          emptyText: 'Sin ubicaciones',
+          emptySubtext: 'Aparecerán cuando las campañas envíen placement',
+          insightPrimaryLabel: 'Mayor ubicación',
+          insightCountLabel: 'Variedad',
+          insightCountSuffix: 'ubicaciones activas',
+          data: mapListToDistributionData(placementsData)
+        }
+      case 'browsers':
+        return {
+          title: 'Distribución por Navegador',
+          totalLabel: 'visitantes únicos',
+          emptyText: 'Sin navegadores',
+          emptySubtext: 'Aparecerán cuando haya visitas capturadas',
+          insightPrimaryLabel: 'Mayor navegador',
+          insightCountLabel: 'Variedad',
+          insightCountSuffix: 'navegadores activos',
+          data: mapListToDistributionData(browserData)
+        }
+      case 'os':
+        return {
+          title: 'Distribución por Sistema',
+          totalLabel: 'visitantes únicos',
+          emptyText: 'Sin sistemas',
+          emptySubtext: 'Aparecerán cuando haya visitas capturadas',
+          insightPrimaryLabel: 'Mayor sistema',
+          insightCountLabel: 'Variedad',
+          insightCountSuffix: 'sistemas activos',
+          data: mapListToDistributionData(osData)
+        }
+      case 'sources':
+      default:
+        return {
+          title: 'Distribución por Fuente',
+          totalLabel: 'visitantes únicos',
+          emptyText: 'Sin fuentes',
+          emptySubtext: 'Los datos aparecerán cuando haya visitas',
+          insightPrimaryLabel: 'Mayor fuente',
+          insightCountLabel: 'Diversificación',
+          insightCountSuffix: 'fuentes activas',
+          data: trafficSources
+        }
+    }
+  }, [browserData, devicesData, osData, placementsData, platformsData, selectedDistributionView, trafficSources])
+
+  const mainChartHasData = mainChartConfig.data.some(item => (item.value || 0) > 0 || (item.value2 || 0) > 0)
+  const conversionChartHasData = conversionChartConfig.data.some(item => (item.value || 0) > 0 || (item.value2 || 0) > 0)
 
   if (loading && (!metrics || !dailyTraffic.length)) {
     return <Loading message="Cargando analíticas..." />
@@ -1582,13 +1968,32 @@ const Analytics: React.FC = () => {
           ))}
         </div>
 
-        {/* Gráfico de tráfico */}
+        {/* Gráfico principal */}
         <Card variant="glass" className="p-6">
-          <div className="mb-4">
-            <h3 className="text-lg font-semibold">Tráfico del Sitio</h3>
-            <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-              Visualizaciones de página y visitantes únicos por {periodLabel}
-            </p>
+          <div className="mb-4 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <h3 className="text-lg font-semibold">{mainChartConfig.title}</h3>
+              <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                {mainChartConfig.description}
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-3 lg:justify-end">
+              <div className="flex flex-wrap items-center gap-4 text-xs text-[var(--color-text-secondary)]">
+                <span className="inline-flex items-center gap-2">
+                  <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: mainChartConfig.color }} />
+                  <span className="font-medium">{mainChartConfig.label1}</span>
+                </span>
+                <span className="inline-flex items-center gap-2">
+                  <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: mainChartConfig.color2 }} />
+                  <span className="font-medium">{mainChartConfig.label2}</span>
+                </span>
+              </div>
+              <ViewSelector
+                options={mainChartOptions}
+                value={selectedMainChartView}
+                onChange={(value) => setSelectedMainChartView(value as AnalyticsMainChartView)}
+              />
+            </div>
           </div>
 
           <div className="relative w-full" style={{ minHeight: 340, height: 340 }}>
@@ -1596,52 +2001,95 @@ const Analytics: React.FC = () => {
               <div data-ristak-chart-empty className="flex h-full items-center justify-center rounded-xl border border-[rgba(148,163,184,0.18)] bg-[color-mix(in_srgb,var(--color-background-glass) 82%, transparent)] text-sm text-[var(--color-text-tertiary)]">
                 Cargando datos...
               </div>
-            ) : dailyTraffic.length > 0 ? (
+            ) : mainChartHasData ? (
               <AreaChart
-                data={dailyTraffic}
+                data={mainChartConfig.data}
                 height={340}
                 showGrid
-                color="var(--design-chart-primary, #10b981)"
-                color2="var(--design-chart-tertiary, #3b82f6)"
-                showLegend
-                legendLabels={{ label1: 'Visitas Totales', label2: 'Visitantes Únicos' }}
+                color={mainChartConfig.color}
+                color2={mainChartConfig.color2}
+                legendLabels={{ label1: mainChartConfig.label1, label2: mainChartConfig.label2 }}
                 formatValue={formatTrafficAxis}
                 formatTooltipValue={formatTrafficTooltip}
               />
             ) : (
               <div data-ristak-chart-empty className="flex h-full items-center justify-center rounded-xl border border-[rgba(148,163,184,0.18)] bg-[color-mix(in_srgb,var(--color-background-glass) 82%, transparent)] text-sm text-[var(--color-text-tertiary)]">
-                Sin datos de tráfico disponibles
+                {mainChartConfig.emptyMessage}
               </div>
             )}
           </div>
         </Card>
 
-        {/* Grid de Gráficas: Registros y Fuentes de Tráfico */}
+        {/* Grid de Gráficas: Conversión y Distribución */}
         <div className="grid gap-4 lg:grid-cols-2">
-          {/* Gráfico de Barras de Registros */}
           <Card
             variant="glass"
             className="p-6 h-full [&>[data-ristak-card-content]]:flex [&>[data-ristak-card-content]]:h-full [&>[data-ristak-card-content]]:flex-col"
           >
-            <div className="mb-4 flex-shrink-0">
-              <h3 className="text-lg font-semibold">Registros por {periodLabel}</h3>
-              <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-                Contactos registrados por {periodLabel}
-              </p>
-            </div>
-            <div className="relative w-full flex-1 min-h-[320px]">
-              <BarChart
-                data={registrosChartData}
-                loading={loading}
-                formatTooltip={(value) => `${value} ${value === 1 ? 'registro' : 'registros'}`}
+            <div className="mb-4 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <h3 className="text-lg font-semibold">{conversionChartConfig.title}</h3>
+                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                  {conversionChartConfig.description}
+                </p>
+              </div>
+              <ViewSelector
+                options={conversionChartOptions}
+                value={selectedConversionChartView}
+                onChange={(value) => setSelectedConversionChartView(value as AnalyticsConversionChartView)}
               />
+            </div>
+            <div className="mb-3 flex flex-wrap items-center gap-4 text-xs text-[var(--color-text-secondary)]">
+              <span className="inline-flex items-center gap-2">
+                <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: conversionChartConfig.color }} />
+                <span className="font-medium">{conversionChartConfig.label1}</span>
+              </span>
+              <span className="inline-flex items-center gap-2">
+                <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: conversionChartConfig.color2 }} />
+                <span className="font-medium">{conversionChartConfig.label2}</span>
+              </span>
+            </div>
+            <div className="relative w-full flex-1 min-h-[320px]" style={{ height: 320 }}>
+              {loading ? (
+                <div data-ristak-chart-empty className="flex h-full items-center justify-center rounded-xl border border-[rgba(148,163,184,0.18)] bg-[color-mix(in_srgb,var(--color-background-glass) 82%, transparent)] text-sm text-[var(--color-text-tertiary)]">
+                  Cargando datos...
+                </div>
+              ) : conversionChartHasData ? (
+                <AreaChart
+                  data={conversionChartConfig.data}
+                  height={320}
+                  showGrid
+                  color={conversionChartConfig.color}
+                  color2={conversionChartConfig.color2}
+                  legendLabels={{ label1: conversionChartConfig.label1, label2: conversionChartConfig.label2 }}
+                  formatValue={formatTrafficAxis}
+                  formatTooltipValue={formatTrafficTooltip}
+                />
+              ) : (
+                <div data-ristak-chart-empty className="flex h-full items-center justify-center rounded-xl border border-[rgba(148,163,184,0.18)] bg-[color-mix(in_srgb,var(--color-background-glass) 82%, transparent)] text-sm text-[var(--color-text-tertiary)]">
+                  {conversionChartConfig.emptyMessage}
+                </div>
+              )}
             </div>
           </Card>
 
-          {/* Gráfica de Fuentes de Tráfico */}
           <TrafficSourcesChart
-            data={trafficSources}
+            data={distributionConfig.data}
             loading={loading}
+            title={distributionConfig.title}
+            totalLabel={distributionConfig.totalLabel}
+            emptyText={distributionConfig.emptyText}
+            emptySubtext={distributionConfig.emptySubtext}
+            insightPrimaryLabel={distributionConfig.insightPrimaryLabel}
+            insightCountLabel={distributionConfig.insightCountLabel}
+            insightCountSuffix={distributionConfig.insightCountSuffix}
+            headerAction={(
+              <ViewSelector
+                options={distributionOptions}
+                value={selectedDistributionView}
+                onChange={(value) => setSelectedDistributionView(value as AnalyticsDistributionView)}
+              />
+            )}
           />
         </div>
 

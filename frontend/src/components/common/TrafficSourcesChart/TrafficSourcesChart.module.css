@@ -6,7 +6,12 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 1rem;
   margin-bottom: 1.5rem;
+}
+
+.headerAction {
+  flex-shrink: 0;
 }
 
 .title {
@@ -280,6 +285,15 @@
 }
 
 @media (max-width: 640px) {
+  .header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .headerAction {
+    width: 100%;
+  }
+
   .insights {
     grid-template-columns: 1fr;
   }
