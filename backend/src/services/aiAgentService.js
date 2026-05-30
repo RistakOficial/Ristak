@@ -150,9 +150,7 @@ function normalizeText(value) {
 
 function stripMarkdown(value) {
   return String(value || '')
-    .replace(/\*\*/g, '')
     .replace(/^#{1,6}\s+/gm, '')
-    .replace(/^\s*[-*]\s+/gm, '')
     .replace(/\n{3,}/g, '\n\n')
     .trim()
 }
@@ -1069,10 +1067,12 @@ async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, ru
     'Empieza con la respuesta concreta en lenguaje natural. Luego explica qué significa para el negocio. Termina con una acción recomendada si aplica.',
     'Evita jerga técnica. Si usas ROAS, CAC, atribución, cohort o términos parecidos, explícalos en palabras simples o usa una frase equivalente.',
     'Para preguntas de campañas o anuncios, sí da el ranking por ROAS (ganadora primero) con ingresos atribuidos y utilidad por campaña; para otras preguntas, muestra primero el ganador o el dato clave y evita rankings innecesariamente largos.',
-    'Cuando el usuario pida información de un registro específico o una lista de contactos, citas, pagos, campañas, anuncios o fuentes, NO respondas en un párrafo largo. Preséntalo como ficha visual con líneas cortas, labels claros y espacios entre bloques.',
-    'Formato recomendado para un contacto: "Contacto\\nNombre: ...\\nTeléfono: ...\\nFecha de entrada: ...\\nOrigen: ...\\nCampaña/anuncio: ...\\nCitas: ...\\nPagos: ...\\nEstado: ...\\n\\nLectura de negocio: ...\\nSiguiente acción: ...".',
-    'Formato recomendado para pagos, citas o campañas: empieza con "Resumen", luego lista los campos clave uno por línea (monto, fecha, estado, campaña, gasto, ingresos, utilidad, resultado), después "Qué significa" y "Siguiente acción".',
-    'No uses markdown pesado: sin encabezados #, sin **negritas**, sin tablas y sin símbolos raros. Sí puedes usar títulos cortos sin símbolos, saltos de línea y labels tipo "Nombre:", "Estado:", "Siguiente acción:".',
+    'Cuando el usuario pida información de un registro específico o una lista de contactos, citas, pagos, campañas, anuncios o fuentes, NO respondas en un párrafo largo. Preséntalo como ficha visual con líneas cortas, labels claros, negritas y espacios entre bloques.',
+    'Puedes usar Markdown ligero porque el chat lo renderiza bonito: **negritas**, listas numeradas y tablas simples de 2 columnas. No uses encabezados # ni tablas enormes.',
+    'Para campañas o comparativos de métricas, usa este estilo: frase corta inicial, línea destacada con 🏆 y el ganador en **negritas**, periodo, tabla de Métrica/Resultado, ranking corto y conclusión.',
+    'Formato recomendado para un contacto: "**Contacto**\\nNombre: ...\\nTeléfono: ...\\nFecha de entrada: ...\\nOrigen: ...\\nCampaña/anuncio: ...\\nCitas: ...\\nPagos: ...\\nEstado: ...\\n\\n**Lectura de negocio:** ...\\n**Siguiente acción:** ...".',
+    'Formato recomendado para pagos, citas o campañas: empieza con "**Resumen**", luego tabla o labels con campos clave (monto, fecha, estado, campaña, gasto, ingresos, utilidad, resultado), después "**Qué significa:**" y "**Siguiente acción:**".',
+    'Usa máximo un emoji visual cuando ayude a orientar (ej. 🏆 para ganador). No llenes la respuesta de símbolos.',
     'Si son varios registros, muestra máximo 5 en formato escaneable y cierra con el total o la lectura principal. Si hay más, di cuántos faltan sin pedir permiso para seguir.',
     'No metas notas de criterio largas. Si hace falta una aclaración, que sea una frase corta al final.',
     'Si calculas porcentajes o diferencias, tradúcelos a significado de negocio.',

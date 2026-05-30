@@ -188,6 +188,187 @@ function getNextOnboardingQuestion(form: AIAgentConfigInput) {
   return onboardingQuestions.find((item) => !String(form[item.field] || '').trim()) || null
 }
 
+function renderInlineMarkdown(text: string, keyPrefix: string) {
+  const parts = text.split(/(\*\*[^*]+\*\*)/g)
+
+  return parts.map((part, index) => {
+    if (part.startsWith('**') && part.endsWith('**') && part.length > 4) {
+      return (
+        <strong key={`${keyPrefix}-strong-${index}`} className={styles.inlineStrong}>
+          {part.slice(2, -2)}
+        </strong>
+      )
+    }
+
+    return <React.Fragment key={`${keyPrefix}-text-${index}`}>{part}</React.Fragment>
+  })
+}
+
+function isMarkdownTableLine(line: string) {
+  return /^\s*\|.+\|\s*$/.test(line)
+}
+
+function isMarkdownTableDivider(line: string) {
+  return /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(line)
+}
+
+function parseTableRow(line: string) {
+  return line
+    .trim()
+    .replace(/^\|/, '')
+    .replace(/\|$/, '')
+    .split('|')
+    .map((cell) => cell.trim())
+}
+
+function renderMarkdownTable(lines: string[], keyPrefix: string) {
+  const rows = lines.filter((line) => !isMarkdownTableDivider(line)).map(parseTableRow)
+  const [header = [], ...bodyRows] = rows
+
+  if (!header.length || !bodyRows.length) return null
+
+  return (
+    <div className={styles.metricTableWrap} key={keyPrefix}>
+      <table className={styles.metricTable}>
+        <thead>
+          <tr>
+            {header.map((cell, index) => (
+              <th key={`${keyPrefix}-head-${index}`}>
+                {renderInlineMarkdown(cell, `${keyPrefix}-head-${index}`)}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {bodyRows.map((row, rowIndex) => (
+            <tr key={`${keyPrefix}-row-${rowIndex}`}>
+              {row.map((cell, cellIndex) => (
+                <td key={`${keyPrefix}-cell-${rowIndex}-${cellIndex}`}>
+                  {renderInlineMarkdown(cell, `${keyPrefix}-cell-${rowIndex}-${cellIndex}`)}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function getKeyValueParts(line: string) {
+  const match = line.match(/^\s*(?:\*\*)?([^:*|\n]{2,46})(?:\*\*)?:\s+(.+)$/)
+  if (!match) return null
+
+  return {
+    label: match[1].trim(),
+    value: match[2].trim()
+  }
+}
+
+function renderMessageContent(content: string) {
+  const lines = content.replace(/\r\n/g, '\n').split('\n')
+  const nodes: React.ReactNode[] = []
+  let index = 0
+
+  while (index < lines.length) {
+    const line = lines[index]
+    const trimmed = line.trim()
+
+    if (!trimmed) {
+      index += 1
+      continue
+    }
+
+    if (isMarkdownTableLine(line) && lines[index + 1] && isMarkdownTableDivider(lines[index + 1])) {
+      const tableLines: string[] = []
+
+      while (index < lines.length && isMarkdownTableLine(lines[index])) {
+        tableLines.push(lines[index])
+        index += 1
+      }
+
+      const tableNode = renderMarkdownTable(tableLines, `table-${index}`)
+      if (tableNode) nodes.push(tableNode)
+      continue
+    }
+
+    if (/^\d+\.\s+/.test(trimmed)) {
+      const items: string[] = []
+
+      while (index < lines.length && /^\d+\.\s+/.test(lines[index].trim())) {
+        items.push(lines[index].trim().replace(/^\d+\.\s+/, ''))
+        index += 1
+      }
+
+      nodes.push(
+        <ol className={styles.orderedList} key={`ol-${index}`}>
+          {items.map((item, itemIndex) => (
+            <li key={`ol-${index}-${itemIndex}`}>
+              {renderInlineMarkdown(item, `ol-${index}-${itemIndex}`)}
+            </li>
+          ))}
+        </ol>
+      )
+      continue
+    }
+
+    if (/^[-•]\s+/.test(trimmed)) {
+      const items: string[] = []
+
+      while (index < lines.length && /^[-•]\s+/.test(lines[index].trim())) {
+        items.push(lines[index].trim().replace(/^[-•]\s+/, ''))
+        index += 1
+      }
+
+      nodes.push(
+        <ul className={styles.bulletList} key={`ul-${index}`}>
+          {items.map((item, itemIndex) => (
+            <li key={`ul-${index}-${itemIndex}`}>
+              {renderInlineMarkdown(item, `ul-${index}-${itemIndex}`)}
+            </li>
+          ))}
+        </ul>
+      )
+      continue
+    }
+
+    const keyValueRows: Array<{ label: string; value: string }> = []
+    let keyValueIndex = index
+
+    while (keyValueIndex < lines.length) {
+      const parts = getKeyValueParts(lines[keyValueIndex])
+      if (!parts) break
+
+      keyValueRows.push(parts)
+      keyValueIndex += 1
+    }
+
+    if (keyValueRows.length >= 2) {
+      nodes.push(
+        <div className={styles.kvGrid} key={`kv-${index}`}>
+          {keyValueRows.map((row, rowIndex) => (
+            <div className={styles.kvRow} key={`kv-${index}-${rowIndex}`}>
+              <span className={styles.kvKey}>{row.label}</span>
+              <span className={styles.kvValue}>{renderInlineMarkdown(row.value, `kv-${index}-${rowIndex}`)}</span>
+            </div>
+          ))}
+        </div>
+      )
+      index = keyValueIndex
+      continue
+    }
+
+    nodes.push(
+      <p className={nodes.length === 0 ? styles.contentLead : styles.richParagraph} key={`p-${index}`}>
+        {renderInlineMarkdown(trimmed, `p-${index}`)}
+      </p>
+    )
+    index += 1
+  }
+
+  return <div className={styles.richContent}>{nodes}</div>
+}
+
 export const AIAgentPanel: React.FC = () => {
   const location = useLocation()
   const [open, setOpen] = useState(getStoredOpenState)
@@ -529,7 +710,7 @@ export const AIAgentPanel: React.FC = () => {
                     <span className={styles.messageLabel}>
                       {message.role === 'user' ? 'Tú' : 'Agente'}
                     </span>
-                    <div className={styles.bubble}>{message.content}</div>
+                    <div className={styles.bubble}>{renderMessageContent(message.content)}</div>
                     {message.role === 'assistant' && Boolean(message.sources?.length) && (
                       <div className={styles.sources}>
                         <span className={styles.sourcesLabel}>Fuentes</span>
