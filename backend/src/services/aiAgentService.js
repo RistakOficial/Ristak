@@ -65,6 +65,10 @@ costs:
 
 hidden_contact_filters:
   id, filter_text, match_type, created_at
+
+Relaciones clave para atribución de publicidad:
+- contacts.attribution_ad_id se une con meta_ads.ad_id para saber de qué anuncio, adset y campaña vino cada contacto (meta_ads tiene campaign_name, adset_name, ad_name).
+- payments.contact_id, appointments.contact_id y sessions.contact_id se unen con contacts.id.
 `
 
 const BUSINESS_DEFINITIONS = `
@@ -81,6 +85,33 @@ Definiciones del dashboard:
 - Para históricos, tendencias, predicciones o frases como "meses pasados", "desde el primer pago" o "próximos 6 meses", revisa la serie histórica mensual desde el primer dato disponible. No te limites al mes visible del dashboard.
 - Para predicciones, no prometas certeza. Usa el histórico mensual para dar un escenario base y explica el riesgo principal en palabras simples.
 - No necesitas limitarte al texto visible del frontend. Usa tu criterio para investigar las tablas necesarias.
+
+Atribución de campañas, anuncios y publicidad (modelo oficial de la página de Publicidad/Campañas):
+- Sí puedes medir resultados por campaña, adset y anuncio: leads, citas, asistencias, ventas e ingresos. NUNCA digas que no se puede amarrar ventas o ingresos a una campaña, ni pidas UTMs nuevos ni una "ventana de pago"; este modelo ya existe y es el mismo que usa la página de Publicidad.
+- Vínculo: contacts.attribution_ad_id = meta_ads.ad_id. El nombre de campaña, adset y anuncio sale de meta_ads (campaign_name, adset_name, ad_name).
+- Fecha de atribución = contacts.created_at (el día en que se creó el contacto). TODO (lead, cita, venta e ingreso) se cuenta en el día en que se creó el contacto, no en la fecha del pago ni de la cita.
+- Validación obligatoria (idéntica a la página de Publicidad): solo cuenta un contacto si su anuncio estuvo activo ese mismo día, es decir, si existe una fila en meta_ads con ese ad_id y la misma fecha que el created_at del contacto:
+  EXISTS (SELECT 1 FROM meta_ads ma WHERE ma.ad_id = c.attribution_ad_id AND DATE(ma.date) = DATE(c.created_at))
+- Métricas por campaña/adset/anuncio, siempre sobre el cohort de contactos atribuidos y contadas por created_at dentro del rango:
+  Leads/interesados: COUNT(DISTINCT contactos) con attribution_ad_id válido.
+  Ventas: esos contactos con purchases_count > 0 (cada contacto cuenta una sola vez).
+  Ingresos/revenue: SUM(contacts.total_paid) de esos contactos (su valor total acumulado/LTV), colocado en la fecha created_at. NO se agrupa por fecha de pago.
+  Citas: contactos del cohort con al menos 1 cita (binario por contacto).
+  Asistencias: contactos del cohort con cita asistida (showed).
+  Gasto/inversión: SUM(meta_ads.spend) por meta_ads.date en el rango.
+  ROAS o retorno por peso: ingresos atribuidos ÷ gasto del rango.
+- VENTANA DE ATRIBUCIÓN: la venta y el ingreso se atribuyen al día en que se creó el contacto, aunque el pago entre días o meses después. No uses ventanas de 7, 14 o 30 días sobre la fecha de pago; usa SIEMPRE contacts.created_at.
+- Ejemplo de resultados por campaña en un rango (placeholders ? con fechas ISO; cada contacto cuenta una vez porque meta_ads es único por ad_id y día):
+  SELECT ma.campaign_name,
+         COUNT(DISTINCT c.id) AS leads,
+         COUNT(DISTINCT CASE WHEN c.purchases_count > 0 THEN c.id END) AS ventas,
+         COALESCE(SUM(c.total_paid), 0) AS ingresos
+  FROM contacts c
+  JOIN meta_ads ma ON ma.ad_id = c.attribution_ad_id AND DATE(ma.date) = DATE(c.created_at)
+  WHERE c.attribution_ad_id IS NOT NULL AND c.created_at >= ? AND c.created_at <= ?
+  GROUP BY ma.campaign_name
+  ORDER BY ingresos DESC
+- Para gasto y ROAS por campaña, suma meta_ads.spend del rango agrupado por campaign_name y divide los ingresos atribuidos entre ese gasto.
 
 Reglas SQL:
 - Usa solo SELECT o WITH ... SELECT.
@@ -805,6 +836,7 @@ async function createQueryPlan(apiKey, { messages, viewContext, runtimeContext, 
     'Puedes investigar con criterio propio: fechas raras, comparativos, cohorts, fuentes como Facebook/Meta, embudos, CAC, ROAS, inversión, asistencia, ventas, etc.',
     'No uses presets rígidos. Si el usuario pide algo ambiguo, haz la interpretación más útil según las definiciones del dashboard y deja la suposición en assumptions.',
     'Ya se ejecutó un mapa base de la DB con rangos, histórico mensual y valores comunes. Úsalo para decidir consultas específicas sin repetir lo que ya está cubierto.',
+    'Para medir resultados de una campaña o anuncio (leads, citas, asistencias, ventas, ingresos, ROAS), usa el modelo de atribución de Publicidad: une contacts.attribution_ad_id con meta_ads.ad_id, atribuye por contacts.created_at, valida que el anuncio existiera ese día (EXISTS en meta_ads con la misma fecha) y suma contacts.total_paid como ingreso. No uses payments.date ni ventanas de pago para atribuir a campañas.',
     'Genera consultas específicas para la pregunta aunque el usuario use palabras raras, incompletas o casuales. Traduce intención de negocio a datos.',
     'Usa el contexto del negocio para interpretar mercado, nicho, cliente ideal, zona, competidores y prioridades del usuario.',
     'Si una fecha es relativa o rara, conviértela tú a fechas absolutas usando la fecha actual. Nunca dejes params como start_date, end_date, start_ts o placeholders similares.',
@@ -1032,6 +1064,7 @@ async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, ru
     'No metas notas de criterio largas. Si hace falta una aclaración, que sea una frase corta al final.',
     'Si calculas porcentajes o diferencias, tradúcelos a significado de negocio.',
     'Usa el contexto configurado del negocio para que tus recomendaciones entiendan mercado, nicho, cliente ideal, zona, cultura local, competencia y prioridades.',
+    'Cuando el usuario pregunte si una campaña o anuncio está generando citas, ventas o ingresos, SÍ puedes responderlo con el modelo de atribución de Publicidad (attribution_ad_id + fecha de creación del contacto). Nunca digas que no se puede saber, que falta amarrar la venta, ni pidas UTMs o una ventana de pago. La venta y el ingreso se atribuyen al día en que se creó el contacto, no a la fecha del pago.',
     'NO uses la herramienta de busqueda web cuando la pregunta sea analisis interno del negocio: ventas, campanas, pagos, citas, contactos, ROAS, rentabilidad, conteos, tendencias o cualquier cosa que se pueda contestar con la DB. En esos casos responde solo con la data interna y sin citar enlaces externos.',
     'Usa la busqueda web SOLO cuando el usuario pida explicitamente ideas o contexto externo: estrategia de mercado, benchmarks de la industria, tendencias del sector, contexto social, cultural, politico, geografico, regulatorio, competidores externos, noticias o temporada. Si tienes duda, asume que es pregunta interna y no busques.',
     'Cuando uses informacion externa, cita los enlaces dentro del texto de la respuesta (no como lista al final) y conectalos con los datos internos del negocio.',
