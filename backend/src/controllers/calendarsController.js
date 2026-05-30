@@ -1,6 +1,7 @@
 import * as calendarService from '../services/highlevelCalendarService.js';
 import { logger } from '../utils/logger.js';
 import { getGHLClient } from '../services/ghlClient.js';
+import { db } from '../config/database.js';
 
 /**
  * Controlador para endpoints de Calendarios de HighLevel
@@ -109,9 +110,67 @@ export async function getEvents(req, res) {
  * Este endpoint devuelve el contactId y assignedUserId completos
  * NO requiere accessToken - lo obtiene automáticamente de la configuración guardada
  */
+async function getLocalAppointment(eventId) {
+  const appointment = await db.get(
+    `SELECT
+      a.id,
+      a.calendar_id,
+      a.contact_id,
+      a.location_id,
+      a.title,
+      a.status,
+      a.appointment_status,
+      a.assigned_user_id,
+      a.notes,
+      a.address,
+      a.start_time,
+      a.end_time,
+      a.date_added,
+      a.date_updated,
+      c.full_name AS contact_name,
+      c.email AS contact_email,
+      c.phone AS contact_phone
+    FROM appointments a
+    LEFT JOIN contacts c ON c.id = a.contact_id
+    WHERE a.id = ?`,
+    [eventId]
+  );
+
+  if (!appointment) {
+    return null;
+  }
+
+  return {
+    id: appointment.id,
+    title: appointment.title || appointment.contact_name || '(Sin título)',
+    calendarId: appointment.calendar_id || '',
+    locationId: appointment.location_id || '',
+    contactId: appointment.contact_id || undefined,
+    appointmentStatus: appointment.appointment_status || appointment.status || 'confirmed',
+    assignedUserId: appointment.assigned_user_id || undefined,
+    notes: appointment.notes || '',
+    address: appointment.address || '',
+    startTime: appointment.start_time,
+    endTime: appointment.end_time || appointment.start_time,
+    dateAdded: appointment.date_added || appointment.start_time,
+    dateUpdated: appointment.date_updated || undefined,
+    contactName: appointment.contact_name || '',
+    contactEmail: appointment.contact_email || '',
+    contactPhone: appointment.contact_phone || ''
+  };
+}
+
 export async function getAppointment(req, res) {
   try {
     const { eventId } = req.params;
+    const localAppointment = await getLocalAppointment(eventId);
+
+    if (localAppointment) {
+      return res.json({
+        success: true,
+        data: localAppointment
+      });
+    }
 
     // Obtener el GHL Client que ya tiene el accessToken configurado
     const ghlClient = await getGHLClient();
@@ -129,6 +188,19 @@ export async function getAppointment(req, res) {
       data: appointment
     });
   } catch (error) {
+    try {
+      const localAppointment = await getLocalAppointment(req.params.eventId);
+      if (localAppointment) {
+        logger.warn(`[Calendars Controller] Usando cita local por fallback: ${error.message}`);
+        return res.json({
+          success: true,
+          data: localAppointment
+        });
+      }
+    } catch (fallbackError) {
+      logger.warn(`[Calendars Controller] Fallback local de cita falló: ${fallbackError.message}`);
+    }
+
     logger.error(`[Calendars Controller] Error en getAppointment: ${error.message}`);
     res.status(500).json({
       success: false,

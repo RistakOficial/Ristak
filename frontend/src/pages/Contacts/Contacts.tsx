@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useMemo } from 'react'
+import React, { useState, useEffect, useMemo, useRef } from 'react'
 import { createPortal } from 'react-dom'
+import { useSearchParams } from 'react-router-dom'
 import { KpiCard, Card, Button, Table, DateRangePicker, PageContainer, TabList, Badge, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, ContactDetailsModal, BarChart, Loading } from '@/components/common'
 import type { Column, BarChartData } from '@/components/common'
 import {
@@ -178,6 +179,7 @@ const mergeContactDetailRecords = (
 
 export const Contacts: React.FC = () => {
   const { dateRange, setDateRange } = useDateRange()
+  const [searchParams, setSearchParams] = useSearchParams()
   const { showToast } = useNotification()
   const { labels } = useLabels()
   const { formatLocalDateShort } = useTimezone()
@@ -199,6 +201,7 @@ export const Contacts: React.FC = () => {
   const [allEvents, setAllEvents] = useState<CalendarEvent[]>([]) // Eventos de calendarios
   const [chartData, setChartData] = useState<BarChartData[]>([])
   const [loadingChart, setLoadingChart] = useState(false)
+  const handledOpenContactRef = useRef<string | null>(null)
 
   const rangeStart = dateRange.start instanceof Date ? dateRange.start : new Date(dateRange.start)
   const rangeEnd = dateRange.end instanceof Date ? dateRange.end : new Date(dateRange.end)
@@ -218,6 +221,57 @@ export const Contacts: React.FC = () => {
     setContactDetailsLoading(false)
     setSelectedContactDetails(null)
   }
+
+  useEffect(() => {
+    const openType = searchParams.get('open')
+    const contactId = searchParams.get('id')
+
+    if (openType !== 'contact' || !contactId) {
+      handledOpenContactRef.current = null
+      return
+    }
+
+    if (handledOpenContactRef.current === contactId) {
+      return
+    }
+
+    handledOpenContactRef.current = contactId
+    let isMounted = true
+
+    const clearOpenParams = () => {
+      const nextParams = new URLSearchParams(searchParams)
+      nextParams.delete('open')
+      nextParams.delete('id')
+      setSearchParams(nextParams, { replace: true })
+    }
+
+    const openContactFromSearch = async () => {
+      try {
+        const contact = contacts.find((item) => item.id === contactId) ?? await contactsService.getContactDetails(contactId)
+
+        if (!isMounted) return
+
+        setSelectedContact(contact)
+        setSelectedContactDetails(null)
+        setSelectedContactId(contact.id)
+        setContactDetailsLoading(true)
+      } catch {
+        if (isMounted) {
+          showToast('error', 'No se pudo abrir el contacto', 'El resultado existe, pero no se pudo cargar el detalle.')
+        }
+      } finally {
+        if (isMounted) {
+          clearOpenParams()
+        }
+      }
+    }
+
+    openContactFromSearch()
+
+    return () => {
+      isMounted = false
+    }
+  }, [contacts, searchParams, setSearchParams, showToast])
 
   useEffect(() => {
     fetchData()

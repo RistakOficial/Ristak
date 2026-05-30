@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { KpiCard, Card, Button, PageContainer, AppointmentModal, BlockedSlotModal, TabList, Loading } from '@/components/common';
 import { ChevronLeft, ChevronRight, Plus, ChevronDown, Check, Calendar as CalendarIcon, Search, X, Settings, Lock } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
@@ -96,6 +96,26 @@ const toDateInTimeZone = (value?: string | null, timeZone?: string): Date | null
   );
 };
 
+const normalizeCalendarEvent = (event: any, fallbackId: string): CalendarEvent => ({
+  ...event,
+  id: String(event?.id || fallbackId),
+  title: event?.title || event?.name || '(Sin título)',
+  calendarId: event?.calendarId || event?.calendar_id || '',
+  locationId: event?.locationId || event?.location_id || '',
+  contactId: event?.contactId || event?.contact_id,
+  groupId: event?.groupId || event?.group_id,
+  appointmentStatus: (event?.appointmentStatus || event?.appointment_status || event?.status || 'confirmed') as CalendarEvent['appointmentStatus'],
+  assignedUserId: event?.assignedUserId || event?.assigned_user_id,
+  address: event?.address || '',
+  notes: event?.notes || '',
+  description: event?.description || '',
+  startTime: event?.startTime || event?.start_time || event?.start || '',
+  endTime: event?.endTime || event?.end_time || event?.end || event?.startTime || event?.start_time || '',
+  dateAdded: event?.dateAdded || event?.date_added || '',
+  dateUpdated: event?.dateUpdated || event?.date_updated,
+  timeZone: event?.timeZone || event?.timezone || event?.time_zone
+});
+
 const isSameDay = (a: Date, b: Date): boolean => {
   return (
     a.getFullYear() === b.getFullYear() &&
@@ -110,6 +130,7 @@ export const Appointments: React.FC = () => {
   const { theme } = useTheme();
   const { formatLocalDateShort } = useTimezone();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   // Estado del calendario
   const [viewMode, setViewMode] = useState<ViewMode>('month');
@@ -198,6 +219,7 @@ export const Appointments: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearchDropdownOpen, setIsSearchDropdownOpen] = useState(false);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const handledOpenAppointmentRef = useRef<string | null>(null);
 
   // Tooltip de eventos
   const [hoveredEventId, setHoveredEventId] = useState<string | null>(null);
@@ -685,6 +707,74 @@ export const Appointments: React.FC = () => {
     setSelectedEvent(event);
     setIsModalOpen(true);
   };
+
+  useEffect(() => {
+    const openType = searchParams.get('open');
+    const appointmentId = searchParams.get('id');
+
+    if (openType !== 'appointment' || !appointmentId) {
+      handledOpenAppointmentRef.current = null;
+      return;
+    }
+
+    if (calendars.length === 0 && locationId && accessToken && loading) {
+      return;
+    }
+
+    if (handledOpenAppointmentRef.current === appointmentId) {
+      return;
+    }
+
+    handledOpenAppointmentRef.current = appointmentId;
+    let isMounted = true;
+
+    const clearOpenParams = () => {
+      const nextParams = new URLSearchParams(searchParams);
+      nextParams.delete('open');
+      nextParams.delete('id');
+      setSearchParams(nextParams, { replace: true });
+    };
+
+    const openAppointmentFromSearch = async () => {
+      try {
+        const appointment = await calendarsService.getAppointment(appointmentId);
+        if (!appointment) {
+          throw new Error('Appointment not found');
+        }
+
+        if (!isMounted) return;
+
+        const normalizedEvent = normalizeCalendarEvent(appointment, appointmentId);
+        const eventDate = toDateInTimeZone(normalizedEvent.startTime, normalizedEvent.timeZone) ?? new Date(normalizedEvent.startTime);
+        const matchingCalendar = calendars.find((calendar) => calendar.id === normalizedEvent.calendarId);
+
+        if (matchingCalendar) {
+          selectCalendar(matchingCalendar);
+        }
+
+        if (!Number.isNaN(eventDate.getTime())) {
+          setCurrentDate(eventDate);
+        }
+
+        setViewMode('day');
+        handleEventClick(normalizedEvent);
+      } catch {
+        if (isMounted) {
+          showToast('error', 'No se pudo abrir la cita', 'El resultado existe, pero no se pudo cargar el detalle.');
+        }
+      } finally {
+        if (isMounted) {
+          clearOpenParams();
+        }
+      }
+    };
+
+    openAppointmentFromSearch();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [accessToken, calendars, loading, locationId, searchParams, selectCalendar, setSearchParams, showToast]);
 
   const handleCloseModal = () => {
     setIsModalOpen(false);

@@ -98,6 +98,8 @@ interface TableProps<T> {
   initialSortBy?: string // Columna para ordenar inicialmente
   initialSortOrder?: 'asc' | 'desc' // Orden inicial
   loadingVariant?: 'skeleton' | 'spinner'
+  focusedRowKey?: string | null
+  rowClassName?: (item: T) => string | undefined
 }
 
 export function Table<T extends Record<string, any>>({
@@ -118,7 +120,9 @@ export function Table<T extends Record<string, any>>({
   tableId,
   initialSortBy,
   initialSortOrder = 'asc',
-  loadingVariant = 'skeleton'
+  loadingVariant = 'skeleton',
+  focusedRowKey,
+  rowClassName
 }: TableProps<T>) {
   // Sistema híbrido de configuración de tablas
   const [savedTableConfig, updateTableConfig] = useTableConfig(tableId || 'default')
@@ -328,6 +332,15 @@ export function Table<T extends Record<string, any>>({
 
   const totalPages = Math.ceil(filteredData.length / pageSize)
 
+  useEffect(() => {
+    if (!focusedRowKey || !paginated) return
+
+    const focusedIndex = filteredData.findIndex((item) => keyExtractor(item) === focusedRowKey)
+    if (focusedIndex < 0) return
+
+    setCurrentPage(Math.floor(focusedIndex / pageSize) + 1)
+  }, [filteredData, focusedRowKey, keyExtractor, pageSize, paginated])
+
   const handleSort = (key: string) => {
     if (sortBy === key) {
       setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')
@@ -532,6 +545,7 @@ export function Table<T extends Record<string, any>>({
               </tr>
             ) : (
               paginatedData.map((item) => {
+                const rowKey = keyExtractor(item)
                 const rowStyle: React.CSSProperties = {
                   // Borde lateral en lugar de fondo de color
                   borderLeft: item.level === 'adset'
@@ -555,10 +569,11 @@ export function Table<T extends Record<string, any>>({
 
                 return (
                   <tr
-                    key={keyExtractor(item)}
-                    className={onRowClick ? styles.clickable : ''}
+                    key={rowKey}
+                    className={`${onRowClick ? styles.clickable : ''} ${rowClassName?.(item) ?? ''}`.trim()}
                     onClick={() => onRowClick?.(item)}
                     data-level={item.level || ''}
+                    data-row-key={rowKey}
                     style={rowStyle}
                   >
                     {visibleColumns.map((column) => (

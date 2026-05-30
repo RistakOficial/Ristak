@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { KpiCard, Card, DateRangePicker, Table, Icon, ContactDetailsModal, VisitorDetailsModal, PageContainer, ViewSelector, AreaChart, Loading, TabList } from '@/components/common'
 import type { Column } from '@/components/common'
 import {
@@ -129,8 +130,55 @@ const parseAnalyticsFlag = (value: unknown) => {
   return Boolean(value)
 }
 
+type CampaignSearchLevel = 'campaign' | 'adset' | 'ad'
+
+const getCampaignTableRowKey = (item: any) =>
+  `${item.level}_${item.id}_${item.campaignId || ''}_${item.adSetId || ''}`
+
+const getCampaignSearchRowKey = (
+  level: CampaignSearchLevel,
+  ids: { campaignId: string; adsetId?: string | null; adId?: string | null }
+) => {
+  if (level === 'campaign') {
+    return `campaign_${ids.campaignId}__`
+  }
+
+  if (level === 'adset') {
+    return `adset_${ids.adsetId || ''}_${ids.campaignId}_`
+  }
+
+  return `ad_${ids.adId || ''}_${ids.campaignId}_${ids.adsetId || ''}`
+}
+
+const isDateWithinRange = (date: Date, start: Date, end: Date) => {
+  const target = new Date(date)
+  target.setHours(12, 0, 0, 0)
+
+  const rangeStart = new Date(start)
+  rangeStart.setHours(0, 0, 0, 0)
+
+  const rangeEnd = new Date(end)
+  rangeEnd.setHours(23, 59, 59, 999)
+
+  return target >= rangeStart && target <= rangeEnd
+}
+
+const getMonthRange = (date: Date) => ({
+  start: new Date(date.getFullYear(), date.getMonth(), 1),
+  end: new Date(date.getFullYear(), date.getMonth() + 1, 0)
+})
+
+const escapeSelectorValue = (value: string) => {
+  if (typeof CSS !== 'undefined' && typeof CSS.escape === 'function') {
+    return CSS.escape(value)
+  }
+
+  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+}
+
 export const Campaigns: React.FC = () => {
   const { dateRange, setDateRange } = useDateRange()
+  const [searchParams, setSearchParams] = useSearchParams()
   const { labels } = useLabels()
 
   // Detectar si estamos en dominio .onrender.com
@@ -183,6 +231,9 @@ export const Campaigns: React.FC = () => {
   const [creativePreviewLoading, setCreativePreviewLoading] = useState(false)
   const [creativePreviewError, setCreativePreviewError] = useState<string | null>(null)
   const [creativeFrameSize, setCreativeFrameSize] = useState<{ width: number; height: number } | null>(null)
+  const [highlightedRowKey, setHighlightedRowKey] = useState<string | null>(null)
+  const handledOpenCampaignRef = React.useRef<string | null>(null)
+  const adjustedCampaignRangeRef = React.useRef<string | null>(null)
 
   /**
    * Agrupa datos de gráfico por semana o mes según el rango
@@ -887,6 +938,140 @@ export const Campaigns: React.FC = () => {
       return newSet
     })
   }, [])
+
+  useEffect(() => {
+    const openType = searchParams.get('open')
+
+    if (openType !== 'campaign') {
+      handledOpenCampaignRef.current = null
+      adjustedCampaignRangeRef.current = null
+      return
+    }
+
+    const rawLevel = searchParams.get('level')
+    const level: CampaignSearchLevel = rawLevel === 'adset' || rawLevel === 'ad' ? rawLevel : 'campaign'
+    const itemId = searchParams.get('id')
+
+    if (!itemId) return
+
+    const campaignId = searchParams.get('campaignId') || (level === 'campaign' ? itemId : null)
+    const adsetId = searchParams.get('adsetId') || (level === 'adset' ? itemId : null)
+    const adId = searchParams.get('adId') || (level === 'ad' ? itemId : null)
+
+    if (!campaignId) return
+
+    const signature = [level, itemId, campaignId, adsetId, adId].filter(Boolean).join(':')
+    const targetDateParam = searchParams.get('date')
+    const targetDate = targetDateParam ? parseLocalDateString(targetDateParam) : null
+
+    const matchingCampaign = campaigns.find((campaign) => String(campaign.id) === String(campaignId))
+    const adSetsData = matchingCampaign?.adsets || matchingCampaign?.adSets || []
+    const matchingAdSet = adsetId
+      ? adSetsData.find((adSet: any) => String(adSet.id) === String(adsetId))
+      : null
+    const matchingAd = adId
+      ? matchingAdSet?.ads?.find((ad: any) => String(ad.id) === String(adId))
+      : null
+
+    const targetExists = level === 'campaign'
+      ? Boolean(matchingCampaign)
+      : level === 'adset'
+        ? Boolean(matchingAdSet)
+        : Boolean(matchingAd)
+
+    if (!targetExists && targetDate && !Number.isNaN(targetDate.getTime())) {
+      const start = dateRange.start instanceof Date ? dateRange.start : new Date(dateRange.start)
+      const end = dateRange.end instanceof Date ? dateRange.end : new Date(dateRange.end)
+
+      if (!isDateWithinRange(targetDate, start, end) && adjustedCampaignRangeRef.current !== signature) {
+        adjustedCampaignRangeRef.current = signature
+        const monthRange = getMonthRange(targetDate)
+        setLoading(true)
+        setDateRange({
+          start: monthRange.start,
+          end: monthRange.end,
+          preset: 'custom'
+        })
+        return
+      }
+    }
+
+    if (!targetExists) {
+      if (loading) return
+
+      const nextParams = new URLSearchParams(searchParams)
+      nextParams.delete('open')
+      nextParams.delete('level')
+      nextParams.delete('id')
+      nextParams.delete('campaignId')
+      nextParams.delete('adsetId')
+      nextParams.delete('adId')
+      nextParams.delete('date')
+      setSearchParams(nextParams, { replace: true })
+      return
+    }
+
+    if (handledOpenCampaignRef.current === signature) {
+      return
+    }
+
+    handledOpenCampaignRef.current = signature
+
+    setViewMode('campaigns')
+    setExpandedCampaigns((previous) => {
+      const next = new Set(previous)
+      next.add(String(campaignId))
+      return next
+    })
+
+    if (level === 'ad' || level === 'adset') {
+      const targetAdSetId = adsetId || matchingAdSet?.id
+      if (targetAdSetId) {
+        setExpandedAdSets((previous) => {
+          const next = new Set(previous)
+          next.add(String(targetAdSetId))
+          return next
+        })
+      }
+    }
+
+    const targetRowKey = getCampaignSearchRowKey(level, {
+      campaignId: String(campaignId),
+      adsetId: adsetId ? String(adsetId) : null,
+      adId: adId ? String(adId) : null
+    })
+
+    setHighlightedRowKey(targetRowKey)
+
+    const nextParams = new URLSearchParams(searchParams)
+    nextParams.delete('open')
+    nextParams.delete('level')
+    nextParams.delete('id')
+    nextParams.delete('campaignId')
+    nextParams.delete('adsetId')
+    nextParams.delete('adId')
+    nextParams.delete('date')
+    setSearchParams(nextParams, { replace: true })
+  }, [campaigns, dateRange, loading, searchParams, setDateRange, setSearchParams])
+
+  useEffect(() => {
+    if (!highlightedRowKey) return
+
+    const scrollTimeout = window.setTimeout(() => {
+      const selector = `[data-row-key="${escapeSelectorValue(highlightedRowKey)}"]`
+      const row = document.querySelector(selector)
+      row?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }, 260)
+
+    const clearTimeout = window.setTimeout(() => {
+      setHighlightedRowKey(null)
+    }, 5000)
+
+    return () => {
+      window.clearTimeout(scrollTimeout)
+      window.clearTimeout(clearTimeout)
+    }
+  }, [highlightedRowKey])
 
   // Lista plana de ads ganadores: ordenados por revenue → sales → appointments → attendances → leads
   const sortWinners = React.useCallback((items: any[]) => {
@@ -2013,7 +2198,7 @@ export const Campaigns: React.FC = () => {
             key="campaigns_table"
             initialColumns={columns}
             data={getFlattenedData()}
-            keyExtractor={(item) => `${item.level}_${item.id}_${item.campaignId || ''}_${item.adSetId || ''}`}
+            keyExtractor={getCampaignTableRowKey}
             emptyMessage="No hay campañas disponibles"
             loading={loading}
             searchable={true}
@@ -2021,6 +2206,8 @@ export const Campaigns: React.FC = () => {
             paginated={true}
             pageSize={50}
             tableId="campaigns"
+            focusedRowKey={highlightedRowKey}
+            rowClassName={(item) => getCampaignTableRowKey(item) === highlightedRowKey ? styles.highlightedRow : undefined}
           />
         </Card>
       )}

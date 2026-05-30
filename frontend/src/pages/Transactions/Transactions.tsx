@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
+import { useSearchParams } from 'react-router-dom'
 import { KpiCard, Card, Button, Table, DateRangePicker, ContactSearchInput, PageContainer, TabList, RecordPaymentModal, Badge, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, Loading } from '@/components/common'
 import type { Column, BadgeVariant } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
@@ -43,6 +44,7 @@ const toDateInputValue = (value?: string | null): string => {
 
 export const Transactions: React.FC = () => {
   const { dateRange, setDateRange } = useDateRange()
+  const [searchParams, setSearchParams] = useSearchParams()
   const { formatLocalDateShort } = useTimezone()
   const { showConfirm, showToast } = useNotification()
   const [transactions, setTransactions] = useState<Transaction[]>([])
@@ -53,6 +55,7 @@ export const Transactions: React.FC = () => {
   const [viewMode, setViewMode] = useState<'all' | 'by-date'>('all') // Por defecto 'all' (Todos)
   const [showRecordPaymentModal, setShowRecordPaymentModal] = useState(false)
   const [isClient, setIsClient] = useState(false)
+  const handledOpenPaymentRef = useRef<string | null>(null)
 
   const rangeStart = dateRange.start instanceof Date ? dateRange.start : new Date(dateRange.start)
   const rangeEnd = dateRange.end instanceof Date ? dateRange.end : new Date(dateRange.end)
@@ -147,6 +150,54 @@ export const Transactions: React.FC = () => {
     }
     setModal({ type: 'edit', transaction, selectedContact: mockContact })
   }
+
+  useEffect(() => {
+    const openType = searchParams.get('open')
+    const paymentId = searchParams.get('id')
+
+    if (openType !== 'payment' || !paymentId) {
+      handledOpenPaymentRef.current = null
+      return
+    }
+
+    if (handledOpenPaymentRef.current === paymentId) {
+      return
+    }
+
+    handledOpenPaymentRef.current = paymentId
+    let isMounted = true
+
+    const clearOpenParams = () => {
+      const nextParams = new URLSearchParams(searchParams)
+      nextParams.delete('open')
+      nextParams.delete('id')
+      setSearchParams(nextParams, { replace: true })
+    }
+
+    const openPaymentFromSearch = async () => {
+      try {
+        const transaction = transactions.find((item) => item.id === paymentId) ?? await transactionsService.getTransaction(paymentId)
+
+        if (!isMounted) return
+
+        handleEdit(transaction)
+      } catch {
+        if (isMounted) {
+          showToast('error', 'No se pudo abrir el pago', 'El resultado existe, pero no se pudo cargar el detalle.')
+        }
+      } finally {
+        if (isMounted) {
+          clearOpenParams()
+        }
+      }
+    }
+
+    openPaymentFromSearch()
+
+    return () => {
+      isMounted = false
+    }
+  }, [searchParams, setSearchParams, showToast, transactions])
 
   const handleDelete = async (id: string) => {
     showConfirm(

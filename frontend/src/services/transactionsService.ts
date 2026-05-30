@@ -51,6 +51,10 @@ export const transactionsService = {
     }
   },
 
+  async getTransaction(id: string): Promise<Transaction> {
+    return await apiClient.get<Transaction>(`/transactions/${id}`)
+  },
+
   async getSummary(startDate?: string, endDate?: string): Promise<TransactionSummary> {
     try {
       const params: Record<string, string> = {}

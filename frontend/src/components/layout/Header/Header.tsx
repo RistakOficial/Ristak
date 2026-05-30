@@ -1,10 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { Send, Moon, Sun, ChevronDown, Settings as SettingsIcon, LogOut, Palette, Check } from 'lucide-react'
+import { Moon, Sun, ChevronDown, Settings as SettingsIcon, LogOut, Palette, Check } from 'lucide-react'
 import { cn } from '@/utils/cn'
 import { useTheme } from '@/contexts/ThemeContext'
 import { useAuth } from '@/contexts/AuthContext'
 import { Link } from 'react-router-dom'
 import { useScrollDirection } from '@/hooks/useScrollDirection'
+import { GlobalSearch } from '@/components/common/GlobalSearch/GlobalSearch'
 
 interface HeaderProps {
   onLogout: () => void
@@ -73,18 +74,8 @@ export const Header: React.FC<HeaderProps> = ({ onLogout }) => {
       style={{ height: 'var(--header-height)', zIndex: 'var(--z-index-header)' }}
     >
       <div className="flex items-center gap-2 sm:gap-4 flex-1 max-w-xl ml-12 lg:ml-0">
-        <div className="flex items-center gap-2 flex-1">
-          <input
-            type="text"
-            placeholder="Buscar"
-            className="flex-1 px-3 sm:px-4 py-2 rounded-xl glass border border-[rgba(148,163,184,0.18)] text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] bg-transparent focus:outline-none text-sm sm:text-base"
-          />
-          <button
-            className="p-2 rounded-xl glass border border-[rgba(148,163,184,0.18)] text-[var(--color-text-primary)] hover:glass-hover transition-colors"
-            title="Enviar"
-          >
-            <Send className="w-4 h-4" />
-          </button>
+        <div className="flex items-center gap-2 flex-1 min-w-0">
+          <GlobalSearch />
         </div>
       </div>
 

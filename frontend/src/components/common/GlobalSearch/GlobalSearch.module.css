@@ -1,0 +1,205 @@
+.root {
+  position: relative;
+  min-width: 0;
+  width: 100%;
+}
+
+.inputWrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: var(--design-control-radius, 12px);
+  background: var(--effect-glassMorphism-background, rgba(255, 255, 255, 0.04));
+  backdrop-filter: var(--effect-glassMorphism-backdropFilter, blur(10px));
+}
+
+.inputIcon {
+  position: absolute;
+  left: 12px;
+  color: var(--color-text-tertiary);
+  pointer-events: none;
+}
+
+.input {
+  width: 100%;
+  min-width: 0;
+  height: 40px;
+  border: 0;
+  background: transparent;
+  color: var(--color-text-primary);
+  font-size: 0.95rem;
+  outline: none;
+  padding: 0 76px 0 38px;
+}
+
+.input::placeholder {
+  color: var(--color-text-tertiary);
+}
+
+.clearButton,
+.searchButton {
+  position: absolute;
+  top: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  transform: translateY(-50%);
+  border: 0;
+  border-radius: var(--design-control-radius, 8px);
+  color: var(--color-text-secondary);
+  background: transparent;
+  transition: background-color var(--transition-fast), color var(--transition-fast), opacity var(--transition-fast);
+}
+
+.clearButton {
+  right: 38px;
+}
+
+.searchButton {
+  right: 5px;
+  border-left: 1px solid rgba(148, 163, 184, 0.14);
+}
+
+.clearButton:hover,
+.searchButton:hover:not(:disabled) {
+  color: var(--color-text-primary);
+  background: rgba(148, 163, 184, 0.12);
+}
+
+.searchButton:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.dropdown {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  right: 0;
+  z-index: calc(var(--z-index-header, 1200) + 20);
+  max-height: min(68vh, 620px);
+  overflow-y: auto;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: var(--design-card-radius, 12px);
+  background: color-mix(in srgb, var(--color-background-secondary) 92%, transparent);
+  box-shadow: 0 18px 45px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(18px);
+  padding: 8px;
+}
+
+.category + .category {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+.categoryHeader {
+  padding: 5px 8px 7px;
+  color: var(--color-text-tertiary);
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.resultList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.resultItem {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+  align-items: center;
+  width: 100%;
+  min-height: 54px;
+  gap: 10px;
+  border: 0;
+  border-radius: var(--design-control-radius, 8px);
+  background: transparent;
+  color: var(--color-text-primary);
+  padding: 8px;
+  text-align: left;
+}
+
+.resultItem:hover,
+.resultItemActive {
+  background: rgba(var(--color-primary-rgb, 100, 116, 139), 0.13);
+}
+
+.resultIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--design-control-radius, 8px);
+  color: var(--color-text-secondary);
+  background: rgba(148, 163, 184, 0.12);
+}
+
+.resultBody {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 2px;
+}
+
+.resultTitle,
+.resultSubtitle,
+.resultMeta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.resultTitle {
+  color: var(--color-text-primary);
+  font-size: 0.9rem;
+  font-weight: 650;
+}
+
+.resultSubtitle {
+  color: var(--color-text-tertiary);
+  font-size: 0.78rem;
+}
+
+.resultMeta {
+  justify-self: end;
+  max-width: 190px;
+  color: var(--color-text-tertiary);
+  font-size: 0.75rem;
+}
+
+.stateRow {
+  padding: 18px 12px;
+  color: var(--color-text-tertiary);
+  font-size: 0.86rem;
+  text-align: center;
+}
+
+@media (max-width: 720px) {
+  .dropdown {
+    position: fixed;
+    top: calc(var(--header-height, 84px) - 8px);
+    left: 12px;
+    right: 12px;
+    max-height: min(72vh, 560px);
+  }
+
+  .resultItem {
+    grid-template-columns: 32px minmax(0, 1fr);
+  }
+
+  .resultMeta {
+    grid-column: 2;
+    justify-self: start;
+    max-width: 100%;
+  }
+}

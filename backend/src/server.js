@@ -35,6 +35,7 @@ import maintenanceRoutes from './routes/maintenance.routes.js'
 import authRoutes from './routes/auth.routes.js'
 import hiddenContactsRoutes from './routes/hiddenContacts.routes.js'
 import aiAgentRoutes from './routes/aiAgent.routes.js'
+import searchRoutes from './routes/search.routes.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -78,6 +79,7 @@ app.use('/api', costsRoutes)
 app.use('/api/maintenance', maintenanceRoutes)
 app.use('/api/hidden-contacts', hiddenContactsRoutes)
 app.use('/api/ai-agent', aiAgentRoutes)
+app.use('/api/search', searchRoutes)
 app.use('/webhook', webhooksRoutes)
 app.use('/webhooks', webhooksRoutes) // Alias para webhooks con 's'
 
