@@ -207,16 +207,8 @@ function extractResponseSources(responseData) {
     })
   }
 
-  if (Array.isArray(responseData?.sources)) {
-    responseData.sources.forEach(addSource)
-  }
-
   if (Array.isArray(responseData?.output)) {
     for (const item of responseData.output) {
-      if (Array.isArray(item?.action?.sources)) {
-        item.action.sources.forEach(addSource)
-      }
-
       if (!Array.isArray(item?.content)) continue
 
       for (const content of item.content) {
@@ -1040,8 +1032,9 @@ async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, ru
     'No metas notas de criterio largas. Si hace falta una aclaración, que sea una frase corta al final.',
     'Si calculas porcentajes o diferencias, tradúcelos a significado de negocio.',
     'Usa el contexto configurado del negocio para que tus recomendaciones entiendan mercado, nicho, cliente ideal, zona, cultura local, competencia y prioridades.',
-    'Si la busqueda online esta activada, investiga cuando el contexto externo pueda mejorar la recomendacion: tendencias del mercado, contexto social, cultural, politico, geografico, historico, competencia, temporada, noticias o regulaciones.',
-    'Cuando uses informacion online, conecta esa informacion con los datos internos del negocio y menciona las fuentes de forma natural.',
+    'NO uses la herramienta de busqueda web cuando la pregunta sea analisis interno del negocio: ventas, campanas, pagos, citas, contactos, ROAS, rentabilidad, conteos, tendencias o cualquier cosa que se pueda contestar con la DB. En esos casos responde solo con la data interna y sin citar enlaces externos.',
+    'Usa la busqueda web SOLO cuando el usuario pida explicitamente ideas o contexto externo: estrategia de mercado, benchmarks de la industria, tendencias del sector, contexto social, cultural, politico, geografico, regulatorio, competidores externos, noticias o temporada. Si tienes duda, asume que es pregunta interna y no busques.',
+    'Cuando uses informacion externa, cita los enlaces dentro del texto de la respuesta (no como lista al final) y conectalos con los datos internos del negocio.',
     'Si los resultados incluyen historico_negocio_por_mes o historico_rango_disponible, sí tienes datos históricos de la DB. No digas que sólo tienes el snapshot, la vista o el mes actual.',
     'Si el usuario pide comparación histórica, explica la evolución con los meses reales disponibles y menciona desde qué mes arranca el dato.',
     'Si el usuario pregunta cómo le ha ido desde los inicios, responde con el histórico completo disponible. No le pidas elegir "mes a mes" o "últimos 12 meses" antes de contestar.',
