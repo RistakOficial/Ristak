@@ -15,6 +15,11 @@
   --color-bg-primary: var(--color-background-primary);
   --app-page-max: 104rem;
   --app-page-wide-max: var(--app-page-max);
+  --app-skeleton-card: var(--design-card-bg, color-mix(in srgb, var(--color-background-secondary) 90%, var(--color-primary) 6%));
+  --app-skeleton-border: var(--design-card-border, rgba(148, 163, 184, 0.18));
+  --app-skeleton-base: color-mix(in srgb, var(--color-primary) 14%, var(--app-skeleton-card) 86%);
+  --app-skeleton-muted: color-mix(in srgb, var(--color-primary) 20%, var(--app-skeleton-card) 80%);
+  --app-skeleton-highlight: color-mix(in srgb, var(--color-primary) 18%, rgba(255, 255, 255, 0.72) 82%);
 
   /* Default (fallback) to dark theme tokens */
   --color-background-primary: #0a0b0d;

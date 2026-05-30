@@ -1,4 +1,6 @@
 .container {
+  --chart-loading-fill: var(--app-skeleton-base);
+
   padding: 1.5rem;
 }
 
@@ -103,7 +105,7 @@
   width: 3rem;
   height: 3rem;
   border-radius: 0.75rem;
-  background-color: var(--color-background-secondary);
+  background: var(--chart-loading-fill);
   flex-shrink: 0;
 }
 
@@ -116,14 +118,14 @@
 
 .loadingBar {
   height: 1rem;
-  background-color: var(--color-background-secondary);
+  background: var(--chart-loading-fill);
   border-radius: 0.25rem;
   width: 6rem;
 }
 
 .loadingProgress {
   height: 0.5rem;
-  background-color: var(--color-background-secondary);
+  background: var(--chart-loading-fill);
   border-radius: 0.25rem;
   width: 100%;
 }

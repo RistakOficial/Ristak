@@ -43,11 +43,11 @@
 }
 
 .skeletonPage {
-  --skeleton-base: color-mix(in srgb, var(--color-background-tertiary) 76%, var(--color-text-primary) 8%);
-  --skeleton-card: color-mix(in srgb, var(--color-background-secondary) 88%, var(--color-text-primary) 4%);
-  --skeleton-border: rgba(148, 163, 184, 0.18);
-  --skeleton-highlight: rgba(255, 255, 255, 0.55);
-  --skeleton-muted: color-mix(in srgb, var(--color-background-tertiary) 82%, var(--color-text-primary) 6%);
+  --skeleton-base: var(--app-skeleton-base);
+  --skeleton-card: var(--app-skeleton-card);
+  --skeleton-border: var(--app-skeleton-border);
+  --skeleton-highlight: var(--app-skeleton-highlight);
+  --skeleton-muted: var(--app-skeleton-muted);
 
   width: 100%;
   min-height: calc(100vh - var(--header-height));
@@ -62,7 +62,7 @@
   flex-direction: column;
   gap: 18px;
   width: 100%;
-  max-width: 80rem;
+  max-width: var(--app-page-max);
   margin: 0 auto;
 }
 
@@ -146,8 +146,9 @@
 .skeletonCard,
 .skeletonPanel {
   border: 1px solid var(--skeleton-border);
-  border-radius: 12px;
+  border-radius: var(--design-card-radius, 12px);
   background: var(--skeleton-card);
+  box-shadow: var(--design-card-shadow, none);
   backdrop-filter: var(--effect-glassMorphism-backdropFilter);
 }
 
@@ -240,11 +241,12 @@
   min-height: 320px;
   margin-top: 1.25rem;
   border: 1px solid var(--skeleton-border);
-  border-radius: 12px;
+  border-radius: var(--design-card-radius, 12px);
   background:
     linear-gradient(var(--skeleton-border) 1px, transparent 1px),
-    linear-gradient(90deg, var(--skeleton-border) 1px, transparent 1px);
-  background-size: 100% 25%, 16.66% 100%;
+    linear-gradient(90deg, var(--skeleton-border) 1px, transparent 1px),
+    color-mix(in srgb, var(--skeleton-base) 42%, transparent);
+  background-size: 100% 25%, 16.66% 100%, auto;
 }
 
 .skeletonContentGrid {
@@ -340,19 +342,11 @@
 }
 
 :global(body.dark) .skeletonPage {
-  --skeleton-base: color-mix(in srgb, var(--color-background-tertiary) 84%, var(--color-text-primary) 8%);
-  --skeleton-card: color-mix(in srgb, var(--color-background-secondary) 88%, var(--color-text-primary) 5%);
-  --skeleton-border: rgba(148, 163, 184, 0.16);
-  --skeleton-highlight: rgba(255, 255, 255, 0.12);
-  --skeleton-muted: color-mix(in srgb, var(--color-background-tertiary) 86%, var(--color-text-primary) 10%);
+  --skeleton-highlight: color-mix(in srgb, var(--color-primary) 28%, rgba(255, 255, 255, 0.16) 72%);
 }
 
 :global(body.light) .skeletonPage {
-  --skeleton-base: color-mix(in srgb, var(--color-background-tertiary) 76%, var(--color-text-primary) 8%);
-  --skeleton-card: color-mix(in srgb, var(--color-background-secondary) 94%, var(--color-text-primary) 3%);
-  --skeleton-border: rgba(148, 163, 184, 0.2);
-  --skeleton-highlight: rgba(255, 255, 255, 0.82);
-  --skeleton-muted: color-mix(in srgb, var(--color-background-tertiary) 80%, var(--color-text-primary) 7%);
+  --skeleton-highlight: color-mix(in srgb, var(--color-primary) 14%, rgba(255, 255, 255, 0.86) 86%);
 }
 
 :global(body.dark) .spinner {

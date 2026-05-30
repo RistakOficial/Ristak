@@ -1099,10 +1099,10 @@ export const Dashboard: React.FC = () => {
     Array.from({ length: count }).map((_, index) => (
       <div key={`operations-loading-${index}`} className="flex items-center justify-between gap-4 border-b border-[rgba(148,163,184,0.12)] py-3 last:border-b-0">
         <div className="min-w-0 flex-1 space-y-2">
-          <div className="h-3.5 w-2/3 animate-pulse rounded bg-[color-mix(in_srgb,var(--color-text-primary)_9%,transparent)]" />
-          <div className="h-3 w-1/2 animate-pulse rounded bg-[color-mix(in_srgb,var(--color-text-primary)_7%,transparent)]" />
+          <div className="h-3.5 w-2/3 animate-pulse rounded bg-[var(--app-skeleton-base)]" />
+          <div className="h-3 w-1/2 animate-pulse rounded bg-[var(--app-skeleton-muted)]" />
         </div>
-        <div className="h-6 w-20 animate-pulse rounded-full bg-[color-mix(in_srgb,var(--color-text-primary)_7%,transparent)]" />
+        <div className="h-6 w-20 animate-pulse rounded-full bg-[var(--app-skeleton-muted)]" />
       </div>
     ))
   )
@@ -1452,10 +1452,10 @@ export const Dashboard: React.FC = () => {
   const renderInsightLoadingColumns = () => (
     <div className="grid gap-4 lg:grid-cols-2">
       {[0, 1].map(columnIndex => (
-        <div key={`chart-insight-loading-${columnIndex}`} className="rounded-xl border border-[rgba(148,163,184,0.18)]">
-          <div className="border-b border-[rgba(148,163,184,0.14)] p-4">
-            <div className="h-4 w-32 animate-pulse rounded bg-[color-mix(in_srgb,var(--color-text-primary)_8%,transparent)]" />
-            <div className="mt-3 h-7 w-24 animate-pulse rounded bg-[color-mix(in_srgb,var(--color-text-primary)_10%,transparent)]" />
+        <div key={`chart-insight-loading-${columnIndex}`} className="rounded-xl border border-[var(--app-skeleton-border)] bg-[var(--app-skeleton-card)]">
+          <div className="border-b border-[var(--app-skeleton-border)] p-4">
+            <div className="h-4 w-32 animate-pulse rounded bg-[var(--app-skeleton-base)]" />
+            <div className="mt-3 h-7 w-24 animate-pulse rounded bg-[var(--app-skeleton-muted)]" />
           </div>
           <div className="p-4">
             {renderOperationsLoadingRows(5)}

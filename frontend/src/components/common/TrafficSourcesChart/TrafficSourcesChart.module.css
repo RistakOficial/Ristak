@@ -1,4 +1,6 @@
 .container {
+  --chart-loading-fill: var(--app-skeleton-base);
+
   padding: 1.5rem;
 }
 
@@ -159,14 +161,14 @@
   width: 0.75rem;
   height: 0.75rem;
   border-radius: 50%;
-  background-color: var(--color-background-secondary);
+  background: var(--chart-loading-fill);
   flex-shrink: 0;
 }
 
 .loadingBar {
   flex: 1;
   height: 0.5rem;
-  background-color: var(--color-background-secondary);
+  background: var(--chart-loading-fill);
   border-radius: 0.25rem;
 }
 

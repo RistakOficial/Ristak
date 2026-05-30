@@ -1,4 +1,7 @@
 .container {
+  --table-skeleton-base: var(--app-skeleton-base);
+  --table-skeleton-highlight: var(--app-skeleton-highlight);
+
   display: flex;
   flex-direction: column;
   background-color: var(--design-table-bg, var(--color-background));
@@ -273,7 +276,7 @@
   position: relative;
   overflow: hidden;
   border-radius: 8px;
-  background: color-mix(in srgb, var(--color-background-tertiary) 76%, var(--color-text-primary) 8%);
+  background: var(--table-skeleton-base);
 }
 
 .skeletonBlock::after {
@@ -281,7 +284,7 @@
   position: absolute;
   inset: 0;
   transform: translateX(-110%);
-  background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.55) 50%, transparent 100%);
+  background: linear-gradient(90deg, transparent 0%, var(--table-skeleton-highlight) 50%, transparent 100%);
   animation: skeletonShimmer 1.45s ease-in-out infinite;
 }
 
@@ -341,12 +344,12 @@
   width: 74%;
 }
 
-body.dark .skeletonBlock {
-  background: color-mix(in srgb, var(--color-background-tertiary) 84%, var(--color-text-primary) 8%);
+:global(body.dark) .container {
+  --table-skeleton-highlight: color-mix(in srgb, var(--color-primary) 28%, rgba(255, 255, 255, 0.16) 72%);
 }
 
-body.dark .skeletonBlock::after {
-  background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.12) 50%, transparent 100%);
+:global(body.light) .container {
+  --table-skeleton-highlight: color-mix(in srgb, var(--color-primary) 14%, rgba(255, 255, 255, 0.86) 86%);
 }
 
 @keyframes skeletonShimmer {
