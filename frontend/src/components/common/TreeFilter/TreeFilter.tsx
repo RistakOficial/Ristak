@@ -308,9 +308,17 @@ export function TreeFilter({
   const activeFiltersCount = useMemo(() => {
     return Object.values(selectedFilters).reduce((acc, values) => acc + values.length, 0)
   }, [selectedFilters])
+  const hasActiveFilters = activeFiltersCount > 0
   const filterTooltip = activeFiltersCount > 0
     ? 'Abre el panel para revisar, sumar o quitar filtros activos de analíticas.'
     : 'Sin filtros aplicados. Abre para filtrar por conversión, páginas, anuncios, fuentes, dispositivos, navegadores y ubicaciones.'
+
+  const handleClearAllFilters = () => {
+    onFilterChange({})
+    setHoveredCategory(null)
+    setShowSearchResults(false)
+    setSearchTerm('')
+  }
 
   // Filtrar nodos por búsqueda
   const getFilteredChildren = (node: FilterNode) => {
@@ -421,6 +429,23 @@ export function TreeFilter({
               </div>
             </div>
 
+            {hasActiveFilters && (
+              <div className="px-3 py-2" style={{ borderBottom: '1px solid var(--color-border-subtle)' }}>
+                <button
+                  type="button"
+                  onClick={handleClearAllFilters}
+                  aria-label={`Borrar todo: ${activeFiltersCount} filtros activos`}
+                  className="w-full flex items-center justify-between gap-2 px-2.5 py-2 text-sm
+                           text-red-500 hover:bg-red-500/10 rounded-md transition-colors duration-150"
+                >
+                  <span>Borrar todo</span>
+                  <span className="text-xs bg-red-500/10 text-red-500 px-1.5 py-0.5 rounded">
+                    {activeFiltersCount}
+                  </span>
+                </button>
+              </div>
+            )}
+
             {/* Lista de categorías o resultados de búsqueda */}
             <div className="py-2 max-h-80 overflow-y-auto">
               {showSearchResults ? (
@@ -469,21 +494,6 @@ export function TreeFilter({
                 </div>
               )}
 
-              {/* Botón limpiar filtros */}
-              {activeFiltersCount > 0 && (
-                <div className="border-t border-[var(--color-border)] mt-2 pt-2 px-3">
-                  <button
-                    onClick={() => {
-                      onFilterChange({})
-                      setHoveredCategory(null)
-                    }}
-                    className="w-full px-2 py-1.5 text-xs text-red-500 hover:bg-red-500/10
-                             rounded-md transition-colors duration-150 text-center"
-                  >
-                    Limpiar todos ({activeFiltersCount})
-                  </button>
-                </div>
-              )}
             </div>
           </div>
 
