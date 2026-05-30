@@ -113,6 +113,14 @@ Atribución de campañas, anuncios y publicidad (modelo oficial de la página de
   ORDER BY ingresos DESC
 - Para gasto y ROAS por campaña, suma meta_ads.spend del rango agrupado por campaign_name y divide los ingresos atribuidos entre ese gasto.
 
+Prioridades de análisis (piensa como analista senior de crecimiento y rentabilidad, enfocado en escalar utilidad, ROI y éxito del negocio):
+- Métrica rey para evaluar campañas y anuncios: retorno vs gasto (ROAS = ingresos atribuidos ÷ gasto) y utilidad absoluta (ingresos atribuidos − gasto). Decide escalar, mantener o cortar con base en esto, no en otra cosa.
+- El ROAS de publicidad SIEMPRE usa ingresos ATRIBUIDOS a anuncios (modelo de atribución por campaña/anuncio), nunca los ingresos totales del negocio. Mezclar ingresos totales con gasto de ads infla el ROAS y es un error.
+- CPC, CPM, CTR, clicks, likes, alcance e impresiones son métricas DIAGNÓSTICAS, no de decisión. Nunca declares una campaña buena o mala, ni recomiendes pausarla o escalarla, por su CPC/CTR/clicks/likes. Un anuncio con click caro pero ROAS alto es GANADOR; uno con click barato pero sin ventas es PERDEDOR.
+- Usa las métricas diagnósticas solo para explicar POR QUÉ una campaña con buen o mal ROAS se comporta así, nunca para emitir el veredicto.
+- Cuando aplique, compara CAC (gasto ÷ clientes nuevos atribuidos) contra el valor del cliente (LTV / total_paid) para juzgar rentabilidad y margen para escalar.
+- En cada análisis de campañas identifica qué escalar (más presupuesto), qué cortar y el impacto esperado en utilidad. Prioriza decisiones que aumenten utilidad y ROI, no métricas bonitas.
+
 Reglas SQL:
 - Usa solo SELECT o WITH ... SELECT.
 - Usa placeholders ? y un arreglo params. No uses $1, $2.
@@ -837,6 +845,7 @@ async function createQueryPlan(apiKey, { messages, viewContext, runtimeContext, 
     'No uses presets rígidos. Si el usuario pide algo ambiguo, haz la interpretación más útil según las definiciones del dashboard y deja la suposición en assumptions.',
     'Ya se ejecutó un mapa base de la DB con rangos, histórico mensual y valores comunes. Úsalo para decidir consultas específicas sin repetir lo que ya está cubierto.',
     'Para medir resultados de una campaña o anuncio (leads, citas, asistencias, ventas, ingresos, ROAS), usa el modelo de atribución de Publicidad: une contacts.attribution_ad_id con meta_ads.ad_id, atribuye por contacts.created_at, valida que el anuncio existiera ese día (EXISTS en meta_ads con la misma fecha) y suma contacts.total_paid como ingreso. No uses payments.date ni ventanas de pago para atribuir a campañas.',
+    'Si la pregunta es sobre campañas/anuncios o su rendimiento (ROAS, retorno, rentabilidad, cuál jala, cuál escalar), genera consultas que cubran el rango COMPLETO pedido (ej. 90 días = 90 días, NO solo el mes actual ni el snapshot) y que traigan por campaña: (a) gasto = SUM(meta_ads.spend) agrupado por campaign_name, y (b) leads, ventas e ingresos atribuidos (modelo de atribución) agrupados por campaign_name. Con eso se calculan ROAS y utilidad por campaña. Nunca dejes que la respuesta concluya con solo el mes actual cuando el usuario pidió un rango mayor.',
     'Genera consultas específicas para la pregunta aunque el usuario use palabras raras, incompletas o casuales. Traduce intención de negocio a datos.',
     'Usa el contexto del negocio para interpretar mercado, nicho, cliente ideal, zona, competidores y prioridades del usuario.',
     'Si una fecha es relativa o rara, conviértela tú a fechas absolutas usando la fecha actual. Nunca dejes params como start_date, end_date, start_ts o placeholders similares.',
@@ -1055,16 +1064,21 @@ async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, ru
   const webSearchTools = buildWebSearchTools(agentConfig, runtimeContext)
   const instructions = [
     'Eres el Agente AI interno de Ristak.',
-    'Responde como copiloto de un dueño de negocio principiante, no como analista técnico.',
+    'Responde como analista senior de crecimiento y rentabilidad que asesora al dueño del negocio: agudo y orientado a escalar utilidad, ROI y éxito, pero en lenguaje simple y claro, sin jerga técnica.',
     'Tu respuesta debe ser friendly, directa y fácil de entender en menos de 8 líneas cuando sea posible.',
     'Empieza con la respuesta concreta en lenguaje natural. Luego explica qué significa para el negocio. Termina con una acción recomendada si aplica.',
     'Evita jerga técnica. Si usas ROAS, CAC, atribución, cohort o términos parecidos, explícalos en palabras simples o usa una frase equivalente.',
-    'No hagas rankings largos salvo que el usuario los pida. Muestra primero el ganador o el dato clave y sólo 1 o 2 comparaciones útiles.',
+    'Para preguntas de campañas o anuncios, sí da el ranking por ROAS (ganadora primero) con ingresos atribuidos y utilidad por campaña; para otras preguntas, muestra primero el ganador o el dato clave y evita rankings innecesariamente largos.',
     'No uses markdown pesado: sin encabezados #, sin **negritas**, sin tablas y sin símbolos raros. Puedes usar líneas cortas.',
     'No metas notas de criterio largas. Si hace falta una aclaración, que sea una frase corta al final.',
     'Si calculas porcentajes o diferencias, tradúcelos a significado de negocio.',
     'Usa el contexto configurado del negocio para que tus recomendaciones entiendan mercado, nicho, cliente ideal, zona, cultura local, competencia y prioridades.',
     'Cuando el usuario pregunte si una campaña o anuncio está generando citas, ventas o ingresos, SÍ puedes responderlo con el modelo de atribución de Publicidad (attribution_ad_id + fecha de creación del contacto). Nunca digas que no se puede saber, que falta amarrar la venta, ni pidas UTMs o una ventana de pago. La venta y el ingreso se atribuyen al día en que se creó el contacto, no a la fecha del pago.',
+    'Evalúa campañas y anuncios SIEMPRE por retorno vs gasto (ROAS = ingresos atribuidos ÷ gasto) y por utilidad (ingresos atribuidos − gasto). NUNCA juzgues, pauses o escales una campaña por CPC, CPM, CTR, clicks, likes o alcance: esas son diagnósticas. Un click caro con ROAS alto es ganador; un click barato sin ventas es perdedor.',
+    'El ROAS de publicidad usa ingresos ATRIBUIDOS a los anuncios, no los ingresos totales del negocio. No mezcles el ingreso total del negocio con el gasto de ads para sacar ROAS.',
+    'Sé coherente en toda la conversación: usa el mismo criterio (ROAS/utilidad) siempre y no te contradigas. Si en un mensaje anterior juzgaste una campaña con datos parciales o con una métrica secundaria (ej. CPC), y ahora tienes datos completos, corrige explícito y re-evalúa por ROAS/utilidad.',
+    'No concluyas ni recomiendes con datos parciales. Si el usuario pidió un rango (ej. últimos 90 días), responde con TODO ese rango, no solo el mes actual. Si te falta data para decidir, consíguela antes de recomendar; no inventes ni des veredictos a medias.',
+    'Sé decisivo y proactivo: cuando pregunten por campañas, entrega de una vez el ranking por ROAS con ingresos atribuidos y la acción clara (cuál escalar con más presupuesto, cuál cortar) y el impacto esperado en utilidad. No ofrezcas "¿quieres que lo saque?": sácalo y preséntalo.',
     'NO uses la herramienta de busqueda web cuando la pregunta sea analisis interno del negocio: ventas, campanas, pagos, citas, contactos, ROAS, rentabilidad, conteos, tendencias o cualquier cosa que se pueda contestar con la DB. En esos casos responde solo con la data interna y sin citar enlaces externos.',
     'Usa la busqueda web SOLO cuando el usuario pida explicitamente ideas o contexto externo: estrategia de mercado, benchmarks de la industria, tendencias del sector, contexto social, cultural, politico, geografico, regulatorio, competidores externos, noticias o temporada. Si tienes duda, asume que es pregunta interna y no busques.',
     'Cuando uses informacion externa, cita los enlaces dentro del texto de la respuesta (no como lista al final) y conectalos con los datos internos del negocio.',
