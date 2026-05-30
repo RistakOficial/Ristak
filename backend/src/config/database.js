@@ -720,6 +720,14 @@ async function initTables() {
         }
       }
 
+      try {
+        await db.run('ALTER TABLE highlevel_config ADD COLUMN card_setup_amount REAL DEFAULT 25')
+      } catch (err) {
+        if (!err.message.includes('duplicate column') && !err.message.includes('already exists')) {
+          throw err
+        }
+      }
+
       // Crear índice para ghl_invoice_id DESPUÉS de agregar la columna
       try {
         await db.run('CREATE INDEX IF NOT EXISTS idx_payments_ghl_invoice ON payments(ghl_invoice_id)')

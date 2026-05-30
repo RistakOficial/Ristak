@@ -26,6 +26,7 @@ export const PaymentsConfiguration: React.FC = () => {
   const [paymentDueDays, setPaymentDueDays] = useState(7)
   const [paymentTermsNotes, setPaymentTermsNotes] = useState('')
   const [transferInfoUrl, setTransferInfoUrl] = useState('')
+  const [cardSetupAmount, setCardSetupAmount] = useState(25)
   const [loadingPaymentConfig, setLoadingPaymentConfig] = useState(false)
 
   useEffect(() => {
@@ -146,6 +147,7 @@ export const PaymentsConfiguration: React.FC = () => {
       if (config.invoiceDueDays) setPaymentDueDays(config.invoiceDueDays)
       if (config.invoiceTermsNotes) setPaymentTermsNotes(config.invoiceTermsNotes)
       if (config.transferInfoUrl) setTransferInfoUrl(config.transferInfoUrl)
+      if (config.cardSetupAmount) setCardSetupAmount(Number(config.cardSetupAmount))
     } catch (error) {
       // Error silencioso - usar valores por defecto
     }
@@ -164,7 +166,8 @@ export const PaymentsConfiguration: React.FC = () => {
           invoiceNumberPrefix: paymentNumberPrefix.trim(),
           invoiceTermsNotes: paymentTermsNotes.trim() || null,
           invoiceDueDays: paymentDueDays,
-          transferInfoUrl: transferInfoUrl.trim() || null
+          transferInfoUrl: transferInfoUrl.trim() || null,
+          cardSetupAmount
         })
       })
 
@@ -470,6 +473,21 @@ export const PaymentsConfiguration: React.FC = () => {
               />
               <p className={styles.hint}>
                 Este enlace aparecerá en el registro de pagos manuales para que el cajero lo copie y envíe al cliente
+              </p>
+            </div>
+
+            <div className={styles.formField}>
+              <label className={styles.label}>Monto para Domiciliar Tarjeta (MXN)</label>
+              <input
+                type="number"
+                min="1"
+                step="0.01"
+                value={cardSetupAmount}
+                onChange={(e) => setCardSetupAmount(Number(e.target.value) || 25)}
+                className={styles.input}
+              />
+              <p className={styles.hint}>
+                Se cobra solo cuando hace falta guardar o autorizar una tarjeta antes de activar parcialidades automáticas
               </p>
             </div>
           </div>

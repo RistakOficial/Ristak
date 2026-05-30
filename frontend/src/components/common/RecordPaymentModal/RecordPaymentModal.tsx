@@ -13,8 +13,6 @@ import {
   CreditCard,
   Check,
   AlertCircle,
-  Mail,
-  MessageCircle,
   Send,
   Calendar,
   Percent,
@@ -50,12 +48,6 @@ interface InstallmentDraft {
   type: InstallmentValueType
   value: string
   dueDate: string
-}
-
-interface ChannelSelection {
-  email: boolean
-  sms: boolean
-  whatsapp: boolean
 }
 
 interface RecordPaymentModalProps {
@@ -180,6 +172,42 @@ const resolvePartialAmount = (type: InstallmentValueType, value: string, totalAm
     : parsedValue
 }
 
+const formatPercentValue = (value: number) => {
+  const rounded = Math.round(value * 100) / 100
+  return String(rounded).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1')
+}
+
+const getRemainingPercentages = (
+  count: number,
+  firstEnabled: boolean,
+  firstType: InstallmentValueType,
+  firstValue: string,
+  total: number
+) => {
+  if (count <= 0) return []
+
+  const firstAmount = firstEnabled
+    ? resolvePartialAmount(firstType, firstValue, total)
+    : 0
+  const firstPercent = firstEnabled
+    ? firstType === 'percentage'
+      ? normalizeAmount(firstValue)
+      : total > 0
+        ? normalizeAmount((firstAmount / total) * 100)
+        : 0
+    : 0
+  const remainingPercent = Math.max(0, normalizeAmount(100 - firstPercent))
+  const base = Math.floor((remainingPercent / count) * 100) / 100
+
+  return Array.from({ length: count }, (_, index) => {
+    if (index === count - 1) {
+      return normalizeAmount(remainingPercent - base * (count - 1))
+    }
+
+    return normalizeAmount(base)
+  })
+}
+
 const isOfflineFirstPaymentMethod = (method: FirstPaymentMethod) => (
   method === 'cash' || method === 'bank_transfer' || method === 'deposit'
 )
@@ -215,14 +243,10 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const [firstPaymentValue, setFirstPaymentValue] = useState('40')
   const [firstPaymentDate, setFirstPaymentDate] = useState(toDateInputValue(new Date()))
   const [firstPaymentMethod, setFirstPaymentMethod] = useState<FirstPaymentMethod>('bank_transfer')
-  const [remainingAutomatic, setRemainingAutomatic] = useState(false)
+  const [remainingAutomatic, setRemainingAutomatic] = useState(true)
   const [remainingFrequency, setRemainingFrequency] = useState<RemainingFrequency>('monthly')
   const [remainingInstallments, setRemainingInstallments] = useState<InstallmentDraft[]>(defaultPartialInstallments)
-  const [partialChannels, setPartialChannels] = useState<ChannelSelection>({
-    email: true,
-    sms: true,
-    whatsapp: true
-  })
+  const [autoDistributeRemaining, setAutoDistributeRemaining] = useState(true)
 
   // Business details (required by GHL)
   const [businessName, setBusinessName] = useState('Mi Negocio')
@@ -238,6 +262,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const [invoiceTitle, setInvoiceTitle] = useState('PAGO')
   const [invoiceTermsNotes, setInvoiceTermsNotes] = useState<string | null>(null)
   const [invoiceDueDays, setInvoiceDueDays] = useState(7)
+  const [cardSetupAmount, setCardSetupAmount] = useState(25)
 
   // Product charge
   const [products, setProducts] = useState<Product[]>([])
@@ -291,7 +316,11 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   )
   const partialPlanTotal = normalizeAmount(firstPaymentAmount + remainingTotalAmount)
   const partialPlanDifference = normalizeAmount(totalAmount - partialPlanTotal)
+  const hasSavedCardForContact = paymentMethods.length > 0
   const partialNeedsCardAuthorization = paymentMode === 'partial' && remainingAutomatic && (
+    !hasSavedCardForContact && (!firstPaymentEnabled || isOfflineFirstPaymentMethod(firstPaymentMethod))
+  )
+  const partialUsesSavedCardWithoutLink = paymentMode === 'partial' && hasSavedCardForContact && (
     !firstPaymentEnabled || isOfflineFirstPaymentMethod(firstPaymentMethod)
   )
 
@@ -314,14 +343,10 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     setFirstPaymentValue('40')
     setFirstPaymentDate(toDateInputValue(new Date()))
     setFirstPaymentMethod('bank_transfer')
-    setRemainingAutomatic(false)
+    setRemainingAutomatic(true)
     setRemainingFrequency('monthly')
     setRemainingInstallments(defaultPartialInstallments())
-    setPartialChannels({
-      email: true,
-      sms: true,
-      whatsapp: true
-    })
+    setAutoDistributeRemaining(true)
     setSelectedProduct(null)
     setSelectedPrice(null)
     setPrices([])
@@ -364,6 +389,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       setInvoiceTitle(config.invoiceTitle || 'PAGO')
       setInvoiceTermsNotes(config.invoiceTermsNotes || null)
       setInvoiceDueDays(config.invoiceDueDays || 7)
+      setCardSetupAmount(config.cardSetupAmount || 25)
       setTransferInfoUrl(config.transferInfoUrl || null)
     } catch (error) {
     }
@@ -473,6 +499,39 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     })))
   }, [firstPaymentDate, paymentMode, remainingFrequency])
 
+  useEffect(() => {
+    if (paymentMode !== 'partial' || !autoDistributeRemaining) return
+
+    setRemainingInstallments(prev => {
+      const percentages = getRemainingPercentages(
+        prev.length,
+        firstPaymentEnabled,
+        firstPaymentType,
+        firstPaymentValue,
+        totalAmount
+      )
+
+      return prev.map((installment, index) => ({
+        ...installment,
+        type: 'percentage',
+        value: formatPercentValue(percentages[index] || 0)
+      }))
+    })
+  }, [
+    autoDistributeRemaining,
+    firstPaymentEnabled,
+    firstPaymentType,
+    firstPaymentValue,
+    paymentMode,
+    remainingInstallments.length,
+    totalAmount
+  ])
+
+  useEffect(() => {
+    if (paymentMode !== 'partial' || !selectedContact || !stripeConnected) return
+    loadPaymentMethods(selectedContact.id, true)
+  }, [paymentMode, selectedContact?.id, stripeConnected])
+
   const loadProducts = async () => {
     setLoadingProducts(true)
     try {
@@ -539,6 +598,10 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   }
 
   const updateRemainingInstallment = (id: string, updates: Partial<InstallmentDraft>) => {
+    if ('type' in updates || 'value' in updates) {
+      setAutoDistributeRemaining(false)
+    }
+
     setRemainingInstallments(prev => prev.map(installment => (
       installment.id === id
         ? { ...installment, ...updates }
@@ -547,14 +610,15 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   }
 
   const addRemainingInstallment = () => {
+    setAutoDistributeRemaining(true)
     setRemainingInstallments(prev => {
       const nextIndex = prev.length + 1
       return [
         ...prev,
         {
           id: createInstallmentId(),
-          type: 'amount',
-          value: '',
+          type: 'percentage',
+          value: '0',
           dueDate: getNextDueDate(firstPaymentDate, remainingFrequency === 'custom' ? 'monthly' : remainingFrequency, nextIndex)
         }
       ]
@@ -562,12 +626,13 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   }
 
   const removeRemainingInstallment = (id: string) => {
+    setAutoDistributeRemaining(true)
     setRemainingInstallments(prev => (
       prev.length <= 1 ? prev : prev.filter(installment => installment.id !== id)
     ))
   }
 
-  const buildPartialFlowPayload = (payload: Record<string, any>, summary: InvoiceSummary) => ({
+  const buildPartialFlowPayload = (payload: Record<string, any>, summary: InvoiceSummary, channels: Record<string, boolean>) => ({
     contact: selectedContact,
     totalAmount: summary.amount,
     currency: summary.currency,
@@ -592,14 +657,19 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       dueDate: installment.dueDate,
       frequency: remainingFrequency
     })),
-    channels: partialChannels
+    channels
   })
 
-  const submitPartialFlow = async (payload: Record<string, any>, summary: InvoiceSummary) => {
+  const submitPartialFlow = async (
+    payload: Record<string, any>,
+    summary: InvoiceSummary,
+    channels: Record<string, boolean>,
+    deliveryMode: PaymentOption
+  ) => {
     const response = await fetch('/api/highlevel/payment-flows/installments', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(buildPartialFlowPayload(payload, summary))
+      body: JSON.stringify(buildPartialFlowPayload(payload, summary, channels))
     })
 
     const data = await response.json()
@@ -612,6 +682,15 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       : 'Parcialidades creadas correctamente.'
 
     showToast('success', 'Éxito', statusMessage)
+
+    const linkToShow = data.firstPaymentLink || data.cardSetupPaymentLink
+    if (deliveryMode === 'generate' && linkToShow) {
+      setPaymentLink(linkToShow)
+      setShowPaymentLinkDialog(true)
+      setStep('form')
+      return
+    }
+
     onSuccess?.()
     onClose()
   }
@@ -694,6 +773,11 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     }
 
     if (paymentMode === 'partial') {
+      if (!stripeConnected) {
+        showToast('error', 'Configura Stripe antes de crear parcialidades automáticas')
+        return
+      }
+
       if (totalAmount <= 0) {
         showToast('error', 'Ingresa un total válido para el plan')
         return
@@ -799,8 +883,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       setInvoiceSummary(summary)
 
       if (paymentMode === 'partial') {
-        setStep('processing')
-        await submitPartialFlow(payload, summary)
+        setPaymentOption('generate')
+        setStep('options')
         return
       }
 
@@ -824,7 +908,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     }
   }
 
-  const loadPaymentMethods = async (contactId: string) => {
+  const loadPaymentMethods = async (contactId: string, silent = false) => {
     setCheckingCards(true)
     try {
       const response = await fetch(`/api/payment-methods/contact/${contactId}`)
@@ -856,7 +940,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       // Si no hay tarjetas y llega mensaje informativo, simplemente continuamos sin mostrar logs
     } catch (error: any) {
       // No mostrar toast de error si simplemente no hay tarjetas
-      if (!error.message.includes('no ha pagado con tarjeta')) {
+      if (!silent && !error.message.includes('no ha pagado con tarjeta')) {
         showToast('warning', 'No se pudieron cargar las tarjetas guardadas')
       }
       setPaymentMethods([])
@@ -880,6 +964,23 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     setStep('processing')
 
     try {
+      if (paymentMode === 'partial') {
+        const channels = paymentOption === 'send'
+          ? {
+              email: effectiveSendMethod === 'email' || effectiveSendMethod === 'both',
+              sms: effectiveSendMethod === 'sms' || effectiveSendMethod === 'both',
+              whatsapp: effectiveSendMethod === 'sms' || effectiveSendMethod === 'both'
+            }
+          : {
+              email: false,
+              sms: false,
+              whatsapp: false
+            }
+
+        await submitPartialFlow(invoicePayload, invoiceSummary, channels, paymentOption)
+        return
+      }
+
       let invoiceId = invoiceSummary.invoiceId
 
       if (!invoiceId) {
@@ -1323,7 +1424,10 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                     { value: 'no', label: 'Sin primer pago' }
                   ]}
                   activeTab={firstPaymentEnabled ? 'yes' : 'no'}
-                  onTabChange={(value) => setFirstPaymentEnabled(value === 'yes')}
+                  onTabChange={(value) => {
+                    setFirstPaymentEnabled(value === 'yes')
+                    setAutoDistributeRemaining(true)
+                  }}
                   variant="compact"
                 />
               </div>
@@ -1335,7 +1439,10 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                       <label>Tipo</label>
                       <select
                         value={firstPaymentType}
-                        onChange={(e) => setFirstPaymentType(e.target.value as InstallmentValueType)}
+                        onChange={(e) => {
+                          setFirstPaymentType(e.target.value as InstallmentValueType)
+                          setAutoDistributeRemaining(true)
+                        }}
                         className={styles.select}
                       >
                         <option value="percentage">Porcentaje</option>
@@ -1353,7 +1460,10 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                           step="0.01"
                           min="0"
                           value={firstPaymentValue}
-                          onChange={(e) => setFirstPaymentValue(e.target.value)}
+                          onChange={(e) => {
+                            setFirstPaymentValue(e.target.value)
+                            setAutoDistributeRemaining(true)
+                          }}
                           className={styles.input}
                         />
                       </div>
@@ -1398,15 +1508,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                   <ShieldCheck size={16} />
                   <span>Pagos restantes</span>
                 </div>
-                <TabList
-                  tabs={[
-                    { value: 'manual', label: 'Manuales' },
-                    { value: 'auto', label: 'Automáticos' }
-                  ]}
-                  activeTab={remainingAutomatic ? 'auto' : 'manual'}
-                  onTabChange={(value) => setRemainingAutomatic(value === 'auto')}
-                  variant="compact"
-                />
+                <span className={styles.partialPill}>Automáticos</span>
               </div>
 
               <div className={styles.partialGrid}>
@@ -1482,51 +1584,16 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
               </Button>
             </div>
 
-            {remainingAutomatic && (
-              <div className={styles.partialBlock}>
-                <div className={styles.partialBlockTitle}>
-                  <Send size={16} />
-                  <span>Canales para el link</span>
-                </div>
-                <div className={styles.channelGrid}>
-                  <label className={`${styles.channelOption} ${partialChannels.email ? styles.channelOptionActive : ''}`}>
-                    <input
-                      type="checkbox"
-                      checked={partialChannels.email}
-                      onChange={(e) => setPartialChannels(prev => ({ ...prev, email: e.target.checked }))}
-                    />
-                    <Mail size={16} />
-                    <span>Email</span>
-                  </label>
-                  <label className={`${styles.channelOption} ${partialChannels.sms ? styles.channelOptionActive : ''}`}>
-                    <input
-                      type="checkbox"
-                      checked={partialChannels.sms}
-                      onChange={(e) => setPartialChannels(prev => ({ ...prev, sms: e.target.checked }))}
-                    />
-                    <Send size={16} />
-                    <span>SMS</span>
-                  </label>
-                  <label className={`${styles.channelOption} ${partialChannels.whatsapp ? styles.channelOptionActive : ''}`}>
-                    <input
-                      type="checkbox"
-                      checked={partialChannels.whatsapp}
-                      onChange={(e) => setPartialChannels(prev => ({ ...prev, whatsapp: e.target.checked }))}
-                    />
-                    <MessageCircle size={16} />
-                    <span>WhatsApp</span>
-                  </label>
-                </div>
-                <div className={styles.authorizationNotice}>
-                  <AlertCircle size={16} />
-                  <span>
-                    {partialNeedsCardAuthorization
-                      ? 'Se registrará el primer pago offline si aplica y se enviará un cobro separado de $25 MXN para domiciliar la tarjeta. El plan automático quedará esperando autorización.'
-                      : 'El primer pago con tarjeta autoriza la tarjeta. No se enviará cobro adicional de $25 MXN.'}
-                  </span>
-                </div>
-              </div>
-            )}
+            <div className={styles.authorizationNotice}>
+              <AlertCircle size={16} />
+              <span>
+                {hasSavedCardForContact
+                  ? 'Este cliente ya tiene tarjeta guardada. El plan automático puede quedar activo después de crear el cobro.'
+                  : partialNeedsCardAuthorization
+                    ? `Si no hay tarjeta guardada, se enviará un cobro separado de ${formatCurrency(cardSetupAmount, currency)} para domiciliar. El plan no se activa hasta que esa tarjeta quede autorizada.`
+                    : 'El primer pago con tarjeta autoriza la tarjeta. El plan no se activa hasta que ese pago sea exitoso y la tarjeta quede guardada.'}
+              </span>
+            </div>
 
             <div className={styles.partialTotals}>
               <div>
@@ -1571,6 +1638,147 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
   const renderPaymentOptions = () => {
     if (!invoiceSummary) return null
+
+    if (paymentMode === 'partial') {
+      const authorizationLabel = hasSavedCardForContact
+        ? 'El cliente ya tiene tarjeta guardada; no necesita link de domiciliación.'
+        : partialNeedsCardAuthorization
+          ? `Se usará el link de domiciliación por ${formatCurrency(cardSetupAmount, invoiceSummary.currency)} si no existe tarjeta guardada.`
+          : 'El primer pago con tarjeta funcionará como autorización.'
+
+      return (
+        <div className={styles.optionsContent}>
+          <div className={styles.summaryCard}>
+            <div className={styles.summaryHeader}>
+              <div>
+                <span>Cliente</span>
+                <h3 className={styles.summaryClient}>{invoiceSummary.contactName}</h3>
+                {invoiceSummary.contactEmail && (
+                  <p className={styles.summaryDetail}>{invoiceSummary.contactEmail}</p>
+                )}
+              </div>
+              <div className={styles.summaryAmountBlock}>
+                <span>Total parcializado</span>
+                <p className={styles.summaryTotal}>{formatCurrency(invoiceSummary.amount, invoiceSummary.currency)}</p>
+              </div>
+            </div>
+            <div className={styles.summaryBreakdown}>
+              {firstPaymentEnabled && (
+                <div className={styles.summaryRow}>
+                  <span>Primer pago</span>
+                  <span>{formatCurrency(firstPaymentAmount, invoiceSummary.currency)}</span>
+                </div>
+              )}
+              <div className={styles.summaryRow}>
+                <span>Pagos restantes</span>
+                <span>{resolvedRemainingInstallments.length} pagos automáticos</span>
+              </div>
+              <div className={styles.summaryRow}>
+                <span>Autorización</span>
+                <span className={styles.summaryNoteValue}>{authorizationLabel}</span>
+              </div>
+            </div>
+          </div>
+
+          {partialUsesSavedCardWithoutLink ? (
+            <div className={styles.authorizationNotice}>
+              <ShieldCheck size={16} />
+              <span>Al crear el cobro, el plan quedará activo con la tarjeta guardada del cliente.</span>
+            </div>
+          ) : (
+            <div className={styles.paymentOptions}>
+              <button
+                type="button"
+                className={`${styles.optionButton} ${paymentOption === 'generate' ? styles.optionButtonActive : ''}`}
+                onClick={() => setPaymentOption('generate')}
+              >
+                <div className={styles.optionInfo}>
+                  <div className={styles.optionIcon}>
+                    <LinkIcon size={18} />
+                  </div>
+                  <div>
+                    <p>Generar enlace</p>
+                    <span>Copia el enlace de primer pago o domiciliación</span>
+                  </div>
+                </div>
+                {paymentOption === 'generate' && <Check size={18} />}
+              </button>
+
+              <div
+                className={`${styles.optionButton} ${paymentOption === 'send' ? styles.optionButtonActive : ''}`}
+                onClick={() => setPaymentOption('send')}
+              >
+                <div className={styles.optionInfo}>
+                  <div className={styles.optionIcon}>
+                    <Send size={18} />
+                  </div>
+                  <div>
+                    <p>Enviar enlace por</p>
+                    <span>
+                      {(!selectedContact?.email && !selectedContact?.phone) ? (
+                        <span style={{ color: 'var(--color-status-error)' }}>Sin email ni teléfono</span>
+                      ) : (
+                        'Usa los canales del contacto'
+                      )}
+                    </span>
+                  </div>
+                </div>
+                {paymentOption === 'send' && <Check size={18} />}
+
+                {paymentOption === 'send' && (
+                  <div className={styles.sendMethodSelector} onClick={(e) => e.stopPropagation()}>
+                    {(() => {
+                      const availableOptions = []
+                      const hasEmail = selectedContact?.email
+                      const hasPhone = selectedContact?.phone
+
+                      if (hasPhone) {
+                        availableOptions.push({ value: 'sms', label: 'WhatsApp' })
+                      }
+                      if (hasEmail) {
+                        availableOptions.push({ value: 'email', label: 'Email' })
+                      }
+                      if (hasEmail && hasPhone) {
+                        availableOptions.push({ value: 'both', label: 'Email y WhatsApp' })
+                      }
+
+                      if (availableOptions.length === 0) {
+                        return (
+                          <div className={styles.noOptionsMessage}>
+                            <AlertCircle size={14} />
+                            <span>El contacto no tiene email ni teléfono</span>
+                          </div>
+                        )
+                      }
+
+                      const currentMethodAvailable = availableOptions.some(opt => opt.value === sendMethod)
+                      if (!currentMethodAvailable && availableOptions.length > 0) {
+                        setSendMethod(availableOptions[0].value as 'email' | 'sms' | 'both')
+                      }
+
+                      return (
+                        <CustomSelect
+                          value={sendMethod}
+                          onChange={(value) => setSendMethod(value as 'email' | 'sms' | 'both')}
+                          options={availableOptions}
+                        />
+                      )
+                    })()}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {checkingCards && (
+            <div className={styles.cardLoading}>
+              <Loader2 size={16} className={styles.processingIcon} />
+              <span>Verificando tarjetas guardadas...</span>
+            </div>
+          )}
+        </div>
+      )
+    }
 
     return (
       <div className={styles.optionsContent}>
@@ -1915,8 +2123,10 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                 </>
               ) : (
                 <>
-                  {paymentOption === 'generate' && 'Generar enlace'}
-                  {paymentOption === 'send' && 'Enviar enlace'}
+                  {paymentOption === 'generate' && (paymentMode === 'partial'
+                    ? partialUsesSavedCardWithoutLink ? 'Crear plan' : 'Crear y generar enlace'
+                    : 'Generar enlace')}
+                  {paymentOption === 'send' && (paymentMode === 'partial' ? 'Crear y enviar enlace' : 'Enviar enlace')}
                   {paymentOption === 'saved' && 'Cobrar tarjeta'}
                   {paymentOption === 'manual' && 'Registrar pago'}
                 </>

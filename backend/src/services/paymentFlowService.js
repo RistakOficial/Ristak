@@ -3,6 +3,10 @@ import { db } from '../config/database.js'
 import { getGHLClient } from './ghlClient.js'
 import { buildInvoicePaymentUrl } from '../utils/paymentUrl.js'
 import { logger } from '../utils/logger.js'
+import {
+  findCustomerByEmail as stripeFindCustomerByEmail,
+  listPaymentMethods as stripeListPaymentMethods
+} from './stripeService.js'
 
 export const PAYMENT_FLOW_STATES = {
   DRAFT: 'draft',
@@ -18,7 +22,7 @@ export const PAYMENT_FLOW_STATES = {
   OVERDUE: 'overdue'
 }
 
-const CARD_SETUP_AMOUNT = 25
+const DEFAULT_CARD_SETUP_AMOUNT = 25
 const OFFLINE_METHODS = new Set(['cash', 'bank_transfer', 'transfer', 'deposit', 'offline', 'manual', 'check', 'other'])
 const CARD_METHODS = new Set(['card', 'payment_link', 'direct_card', 'saved_card'])
 const CURRENCY_DEFAULT = 'MXN'
@@ -94,6 +98,41 @@ async function getInvoiceSendContext() {
       fromEmail
     }
   }
+}
+
+async function getPaymentFlowConfig() {
+  const config = await db.get('SELECT location_id, card_setup_amount FROM highlevel_config LIMIT 1')
+  const cardSetupAmount = normalizeAmount(config?.card_setup_amount || DEFAULT_CARD_SETUP_AMOUNT)
+
+  return {
+    locationId: config?.location_id || null,
+    cardSetupAmount: cardSetupAmount > 0 ? cardSetupAmount : DEFAULT_CARD_SETUP_AMOUNT
+  }
+}
+
+async function contactHasAuthorizedCard(contactOrFlow) {
+  const contactId = contactOrFlow.contact_id || contactOrFlow.id
+  const contactEmail = contactOrFlow.contact_email || contactOrFlow.email
+  const { locationId } = await getPaymentFlowConfig()
+
+  if (contactId) {
+    const localMethod = await db.get(
+      `SELECT id FROM payment_methods
+       WHERE contact_id = ? AND is_active = 1
+       LIMIT 1`,
+      [contactId]
+    )
+
+    if (localMethod) return true
+  }
+
+  if (!locationId || !contactEmail) return false
+
+  const stripeCustomer = await stripeFindCustomerByEmail(locationId, contactEmail)
+  if (!stripeCustomer) return false
+
+  const methods = await stripeListPaymentMethods(locationId, stripeCustomer.id)
+  return methods.length > 0
 }
 
 function buildInvoicePayload({ basePayload, contact, amount, currency, concept, title, dueDate }) {
@@ -354,7 +393,9 @@ export async function createInstallmentPaymentFlow(payload) {
   const firstPaymentDate = firstPaymentEnabled ? (firstPayment.date || new Date().toISOString().split('T')[0]) : null
   const firstPaymentIsOffline = firstPaymentEnabled && OFFLINE_METHODS.has(firstPaymentMethod)
   const firstPaymentIsCard = firstPaymentEnabled && CARD_METHODS.has(firstPaymentMethod)
-  const cardSetupRequired = remainingAutomatic && (!firstPaymentEnabled || firstPaymentIsOffline)
+  const { cardSetupAmount } = await getPaymentFlowConfig()
+  const alreadyHasAuthorizedCard = remainingAutomatic ? await contactHasAuthorizedCard(contact) : false
+  const cardSetupRequired = remainingAutomatic && !alreadyHasAuthorizedCard && (!firstPaymentEnabled || firstPaymentIsOffline)
 
   let stateHistory = addState([], PAYMENT_FLOW_STATES.DRAFT)
 
@@ -384,7 +425,7 @@ export async function createInstallmentPaymentFlow(payload) {
       firstPaymentEnabled ? 'pending' : 'not_required',
       remainingAutomatic ? 1 : 0,
       cardSetupRequired ? 1 : 0,
-      CARD_SETUP_AMOUNT,
+      cardSetupAmount,
       PAYMENT_FLOW_STATES.DRAFT,
       JSON.stringify(stateHistory),
       JSON.stringify({
@@ -513,7 +554,7 @@ export async function createInstallmentPaymentFlow(payload) {
       ghlClient,
       basePayload: payload.invoicePayload,
       contact,
-      amount: CARD_SETUP_AMOUNT,
+      amount: cardSetupAmount,
       currency,
       concept: 'Domiciliación de tarjeta',
       title: 'Autorización de tarjeta',
@@ -544,6 +585,29 @@ export async function createInstallmentPaymentFlow(payload) {
     response.stateHistory = stateHistory
   }
 
+  if (remainingAutomatic && alreadyHasAuthorizedCard && !firstPaymentIsCard) {
+    stateHistory = addState(stateHistory, PAYMENT_FLOW_STATES.CARD_AUTHORIZED)
+    stateHistory = addState(stateHistory, PAYMENT_FLOW_STATES.INSTALLMENT_PLAN_CREATED)
+    stateHistory = addState(stateHistory, PAYMENT_FLOW_STATES.INSTALLMENT_PLAN_ACTIVE)
+    const now = new Date().toISOString()
+
+    await updateFlowState(flowId, PAYMENT_FLOW_STATES.INSTALLMENT_PLAN_ACTIVE, stateHistory, {
+      card_authorized_at: now,
+      installment_plan_created_at: now,
+      installment_plan_active_at: now
+    })
+
+    await db.run(
+      `UPDATE installment_payments
+       SET status = 'scheduled', updated_at = CURRENT_TIMESTAMP
+       WHERE flow_id = ? AND automatic = 1`,
+      [flowId]
+    )
+
+    response.currentState = PAYMENT_FLOW_STATES.INSTALLMENT_PLAN_ACTIVE
+    response.stateHistory = stateHistory
+  }
+
   if (!remainingAutomatic && !firstPaymentIsCard) {
     stateHistory = addState(stateHistory, PAYMENT_FLOW_STATES.INSTALLMENT_PLAN_CREATED)
     stateHistory = addState(stateHistory, PAYMENT_FLOW_STATES.INSTALLMENT_PLAN_ACTIVE)
@@ -571,12 +635,7 @@ export async function createInstallmentPaymentFlow(payload) {
 }
 
 async function activateFlowIfReady(flow) {
-  const hasSavedCard = await db.get(
-    `SELECT id FROM payment_methods
-     WHERE contact_id = ? AND is_active = 1
-     LIMIT 1`,
-    [flow.contact_id]
-  )
+  const hasSavedCard = await contactHasAuthorizedCard(flow)
 
   if (!hasSavedCard) {
     return false

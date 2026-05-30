@@ -202,7 +202,7 @@ export const getConfig = async (req, res) => {
     let config;
     try {
       config = await db.get(
-        'SELECT location_id, api_token, location_data, created_at, invoice_title, invoice_number_prefix, invoice_terms_notes, invoice_due_days, transfer_info_url FROM highlevel_config LIMIT 1'
+        'SELECT location_id, api_token, location_data, created_at, invoice_title, invoice_number_prefix, invoice_terms_notes, invoice_due_days, transfer_info_url, card_setup_amount FROM highlevel_config LIMIT 1'
       );
     } catch (selectError) {
       // Si falla (columnas no existen), usar SELECT básico
@@ -257,7 +257,8 @@ export const getConfig = async (req, res) => {
       invoiceNumberPrefix: config.invoice_number_prefix || 'INV-',
       invoiceTermsNotes: config.invoice_terms_notes || null,
       invoiceDueDays: config.invoice_due_days || 7,
-      transferInfoUrl: config.transfer_info_url || null
+      transferInfoUrl: config.transfer_info_url || null,
+      cardSetupAmount: config.card_setup_amount || 25
     });
 
   } catch (error) {
@@ -1529,7 +1530,7 @@ export const getStripeConfig = async (req, res) => {
  */
 export const saveInvoiceConfig = async (req, res) => {
   try {
-    const { invoiceTitle, invoiceNumberPrefix, invoiceTermsNotes, invoiceDueDays, transferInfoUrl } = req.body;
+    const { invoiceTitle, invoiceNumberPrefix, invoiceTermsNotes, invoiceDueDays, transferInfoUrl, cardSetupAmount } = req.body;
 
     // Validaciones básicas
     if (!invoiceTitle || !invoiceNumberPrefix) {
@@ -1543,6 +1544,14 @@ export const saveInvoiceConfig = async (req, res) => {
       return res.status(400).json({
         success: false,
         error: 'Los días de vencimiento deben ser al menos 1'
+      });
+    }
+
+    const parsedCardSetupAmount = Number(cardSetupAmount ?? 25);
+    if (!Number.isFinite(parsedCardSetupAmount) || parsedCardSetupAmount <= 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'El monto de domiciliación debe ser mayor a 0'
       });
     }
 
@@ -1563,7 +1572,8 @@ export const saveInvoiceConfig = async (req, res) => {
           invoice_number_prefix = ?,
           invoice_terms_notes = ?,
           invoice_due_days = ?,
-          transfer_info_url = ?
+          transfer_info_url = ?,
+          card_setup_amount = ?
       WHERE location_id = ?
     `;
 
@@ -1573,6 +1583,7 @@ export const saveInvoiceConfig = async (req, res) => {
       invoiceTermsNotes?.trim() || null,
       parseInt(invoiceDueDays),
       transferInfoUrl?.trim() || null,
+      Math.round(parsedCardSetupAmount * 100) / 100,
       config.location_id
     ];
 
@@ -1580,7 +1591,7 @@ export const saveInvoiceConfig = async (req, res) => {
       await db.run(updateSQL, values);
     } catch (updateError) {
       // Si falla porque las columnas no existen, agregarlas primero
-      if (updateError.message.includes('no such column')) {
+      if (updateError.message.includes('no such column') || updateError.message.includes('does not exist')) {
         logger.warn('🔧 Columnas de invoice no existen, agregándolas...');
 
         // Agregar columnas
@@ -1623,6 +1634,15 @@ export const saveInvoiceConfig = async (req, res) => {
         try {
           await db.run('ALTER TABLE highlevel_config ADD COLUMN transfer_info_url TEXT');
           logger.success('✅ Columna transfer_info_url agregada');
+        } catch (e) {
+          if (!e.message.includes('duplicate column') && !e.message.includes('already exists')) {
+            throw e;
+          }
+        }
+
+        try {
+          await db.run('ALTER TABLE highlevel_config ADD COLUMN card_setup_amount REAL DEFAULT 25');
+          logger.success('✅ Columna card_setup_amount agregada');
         } catch (e) {
           if (!e.message.includes('duplicate column') && !e.message.includes('already exists')) {
             throw e;

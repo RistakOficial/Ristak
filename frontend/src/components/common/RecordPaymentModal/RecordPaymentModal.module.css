@@ -384,6 +384,15 @@
   color: var(--color-primary);
 }
 
+.partialPill {
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: rgba(var(--color-primary-rgb), 0.1);
+  color: var(--color-text-primary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .partialGrid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
@@ -646,8 +655,15 @@ body.dark .summaryBadge,
 .summaryRow {
   display: flex;
   justify-content: space-between;
+  gap: 16px;
   font-size: 13px;
   color: var(--color-text-secondary);
+}
+
+.summaryNoteValue {
+  max-width: 58%;
+  text-align: right;
+  line-height: 1.4;
 }
 
 .summaryTax {
@@ -1096,6 +1112,10 @@ body.dark .tooltipInfo {
   .channelGrid,
   .partialTotals {
     grid-template-columns: 1fr;
+  }
+
+  .summaryNoteValue {
+    max-width: 100%;
   }
 }
 
