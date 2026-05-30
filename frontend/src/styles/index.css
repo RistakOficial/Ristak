@@ -315,6 +315,18 @@ body.light {
   backdrop-filter: blur(12px);
 }
 
+[data-ristak-header] {
+  border-width: 0 0 1px;
+  border-style: solid;
+  border-color: rgba(148, 163, 184, 0.12);
+}
+
+[data-ristak-sidebar-header] {
+  border-bottom-width: 1px;
+  border-bottom-style: solid;
+  border-bottom-color: rgba(148, 163, 184, 0.12);
+}
+
 .bg-glass-subtle {
   background: rgba(255, 255, 255, 0.02);
   backdrop-filter: blur(8px);
@@ -1132,6 +1144,10 @@ body[data-design-preset]:not([data-design-preset='classic']) [data-ristak-header
   backdrop-filter: var(--effect-glassMorphism-backdropFilter);
   border-color: var(--design-border) !important;
   border-radius: 0 !important;
+}
+
+body[data-design-preset]:not([data-design-preset='classic']) [data-ristak-sidebar-header] {
+  border-bottom-color: var(--design-border) !important;
 }
 
 body[data-design-preset]:not([data-design-preset='classic']) [data-ristak-page] {
