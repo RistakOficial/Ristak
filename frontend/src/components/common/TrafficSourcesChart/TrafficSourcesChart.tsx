@@ -218,7 +218,7 @@ export const TrafficSourcesChart: React.FC<TrafficSourcesChartProps> = ({
   return (
     <Card variant="glass" className={styles.container} data-ristak-chart="donut">
       <div className={styles.header}>
-        <div>
+        <div className={styles.headerMain}>
           <h3 className={styles.title}>{title}</h3>
           <div className={styles.totalContainer}>
             <span className={styles.totalValue}>

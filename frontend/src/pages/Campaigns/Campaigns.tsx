@@ -2125,30 +2125,46 @@ export const Campaigns: React.FC = () => {
 
         {viewMode === 'campaigns' && (
           <Card variant="glass" className={styles.chartCard}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.5rem' }}>
-              <div>
-                <h2 className={styles.chartTitle}>{selectedConfig.title}</h2>
+            <div className="mb-4 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+              <div className="min-w-0 flex-1">
+                <h2 className={styles.chartTitle} style={{ margin: 0 }}>{selectedConfig.title}</h2>
                 <p style={{ fontSize: '14px', color: 'var(--color-text-secondary)', marginTop: '4px' }}>
                   {selectedConfig.subtitle}
                 </p>
               </div>
-              <ViewSelector
-                options={chartOptions}
-                value={selectedChart}
-                onChange={handleChartChange}
-              />
+              <div className="flex shrink-0 flex-wrap items-center gap-3 lg:justify-end">
+                {selectedConfig.showLegend && selectedConfig.legendLabels && (
+                  <div className="flex flex-wrap items-center gap-4 text-xs text-[var(--color-text-secondary)]">
+                    <span className="inline-flex items-center gap-2">
+                      <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: selectedConfig.color }} />
+                      <span className="font-medium">{selectedConfig.legendLabels.label1}</span>
+                    </span>
+                    {selectedConfig.legendLabels.label2 && (
+                      <span className="inline-flex items-center gap-2">
+                        <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: selectedConfig.color2 }} />
+                        <span className="font-medium">{selectedConfig.legendLabels.label2}</span>
+                      </span>
+                    )}
+                  </div>
+                )}
+                <ViewSelector
+                  options={chartOptions}
+                  value={selectedChart}
+                  onChange={handleChartChange}
+                />
+              </div>
             </div>
-            <div style={{ height: 300 }}>
+            <div style={{ height: 340 }}>
               {selectedConfig.data && selectedConfig.data.length > 0 ? (
                 <AreaChart
                   data={selectedConfig.data}
-                  height={300}
+                  height={340}
                   showGrid={true}
                   color={selectedConfig.color}
                   color2={selectedConfig.color2}
                   formatValue={selectedConfig.formatValue}
                   formatTooltipValue={selectedConfig.formatTooltipValue || selectedConfig.formatValue}
-                  showLegend={selectedConfig.showLegend}
+                  showLegend={false}
                   legendLabels={selectedConfig.legendLabels}
                 />
               ) : (

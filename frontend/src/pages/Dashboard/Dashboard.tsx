@@ -682,7 +682,7 @@ export const Dashboard: React.FC = () => {
     [chartConfig]
   )
 
-  const chartHeight = 340
+  const chartHeight = 380
 
   const chartViewOptions = React.useMemo(() => {
     const options: Array<{ value: ChartView; label: string }> = [
@@ -1571,9 +1571,9 @@ export const Dashboard: React.FC = () => {
         />
         </div>
 
-        <Card data-dashboard-chart-card variant="glass" className="space-y-5">
-          <div className="flex flex-col gap-3">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
+        <Card data-dashboard-chart-card variant="glass" className="space-y-4">
+          <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+            <div className="flex min-w-0 flex-1 flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
               <h2 className="m-0 text-xl font-semibold text-[var(--color-text-primary)] sm:whitespace-nowrap">
                 {activeChartLabel}
               </h2>
@@ -1584,7 +1584,7 @@ export const Dashboard: React.FC = () => {
                 onChange={handleChartPeriodChange}
               />
             </div>
-            <div className="flex flex-wrap items-center gap-x-6 gap-y-3 xl:justify-end">
+            <div className="flex shrink-0 flex-wrap items-center gap-x-6 gap-y-3 xl:justify-end">
               <div className="flex flex-wrap items-center gap-4 text-xs text-[var(--color-text-secondary)]">
                 {chartLegendItems.map((item) => (
                   <div key={item.key} className="inline-flex items-center gap-2">

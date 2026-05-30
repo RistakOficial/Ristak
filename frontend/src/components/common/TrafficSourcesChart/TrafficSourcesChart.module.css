@@ -9,7 +9,15 @@
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
-  margin-bottom: 1.5rem;
+  margin-bottom: 1rem;
+}
+
+.headerMain {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem 0.75rem;
+  min-width: 0;
 }
 
 .headerAction {
@@ -20,14 +28,14 @@
   font-size: 1.125rem;
   font-weight: 600;
   color: var(--color-text-primary);
-  margin: 0 0 0.5rem 0;
+  margin: 0;
 }
 
 .totalContainer {
   display: flex;
   align-items: baseline;
   gap: 0.5rem;
-  margin-top: 0.5rem;
+  margin-top: 0;
 }
 
 .totalValue {

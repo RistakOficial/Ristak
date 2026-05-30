@@ -2053,14 +2053,14 @@ const Analytics: React.FC = () => {
 
         {/* Gráfico principal */}
         <Card variant="glass" className="p-6">
-          <div className="mb-4 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-            <div>
+          <div className="mb-4 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div className="min-w-0 flex-1">
               <h3 className="text-lg font-semibold">{mainChartConfig.title}</h3>
               <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
                 {mainChartConfig.description}
               </p>
             </div>
-            <div className="flex flex-wrap items-center gap-3 lg:justify-end">
+            <div className="flex shrink-0 flex-wrap items-center gap-3 lg:justify-end">
               <div className="flex flex-wrap items-center gap-4 text-xs text-[var(--color-text-secondary)]">
                 <span className="inline-flex items-center gap-2">
                   <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: mainChartConfig.color }} />
@@ -2079,7 +2079,7 @@ const Analytics: React.FC = () => {
             </div>
           </div>
 
-          <div className="relative w-full" style={{ minHeight: 340, height: 340 }}>
+          <div className="relative w-full" style={{ minHeight: 360, height: 360 }}>
             {loading ? (
               <div data-ristak-chart-empty className="flex h-full items-center justify-center rounded-xl border border-[rgba(148,163,184,0.18)] bg-[color-mix(in_srgb,var(--color-background-glass) 82%, transparent)] text-sm text-[var(--color-text-tertiary)]">
                 Cargando datos...
@@ -2087,7 +2087,7 @@ const Analytics: React.FC = () => {
             ) : mainChartHasData ? (
               <AreaChart
                 data={mainChartConfig.data}
-                height={340}
+                height={360}
                 showGrid
                 color={mainChartConfig.color}
                 color2={mainChartConfig.color2}
@@ -2109,30 +2109,32 @@ const Analytics: React.FC = () => {
             variant="glass"
             className="p-6 h-full [&>[data-ristak-card-content]]:flex [&>[data-ristak-card-content]]:h-full [&>[data-ristak-card-content]]:flex-col"
           >
-            <div className="mb-4 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-              <div>
+            <div className="mb-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0 flex-1">
                 <h3 className="text-lg font-semibold">{conversionChartConfig.title}</h3>
                 <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
                   {conversionChartConfig.description}
                 </p>
               </div>
-              <ViewSelector
-                options={conversionChartOptions}
-                value={selectedConversionChartView}
-                onChange={(value) => setSelectedConversionChartView(value as AnalyticsConversionChartView)}
-              />
+              <div className="flex shrink-0 flex-wrap items-center gap-3 sm:justify-end">
+                <div className="flex flex-wrap items-center gap-4 text-xs text-[var(--color-text-secondary)]">
+                  <span className="inline-flex items-center gap-2">
+                    <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: conversionChartConfig.color }} />
+                    <span className="font-medium">{conversionChartConfig.label1}</span>
+                  </span>
+                  <span className="inline-flex items-center gap-2">
+                    <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: conversionChartConfig.color2 }} />
+                    <span className="font-medium">{conversionChartConfig.label2}</span>
+                  </span>
+                </div>
+                <ViewSelector
+                  options={conversionChartOptions}
+                  value={selectedConversionChartView}
+                  onChange={(value) => setSelectedConversionChartView(value as AnalyticsConversionChartView)}
+                />
+              </div>
             </div>
-            <div className="mb-3 flex flex-wrap items-center gap-4 text-xs text-[var(--color-text-secondary)]">
-              <span className="inline-flex items-center gap-2">
-                <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: conversionChartConfig.color }} />
-                <span className="font-medium">{conversionChartConfig.label1}</span>
-              </span>
-              <span className="inline-flex items-center gap-2">
-                <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: conversionChartConfig.color2 }} />
-                <span className="font-medium">{conversionChartConfig.label2}</span>
-              </span>
-            </div>
-            <div className="relative w-full flex-1 min-h-[320px]">
+            <div className="relative w-full flex-1 min-h-[340px]">
               {loading ? (
                 <div data-ristak-chart-empty className="flex h-full items-center justify-center rounded-xl border border-[rgba(148,163,184,0.18)] bg-[color-mix(in_srgb,var(--color-background-glass) 82%, transparent)] text-sm text-[var(--color-text-tertiary)]">
                   Cargando datos...
@@ -2141,7 +2143,7 @@ const Analytics: React.FC = () => {
                 <AreaChart
                   data={conversionChartConfig.data}
                   height="100%"
-                  minHeight={320}
+                  minHeight={340}
                   showGrid
                   color={conversionChartConfig.color}
                   color2={conversionChartConfig.color2}
