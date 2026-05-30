@@ -27,7 +27,8 @@ interface LegendLabels {
 
 interface AreaChartProps {
   data: DataPoint[]
-  height?: number
+  height?: number | string
+  minHeight?: number | string
   showGrid?: boolean
   color?: string
   color2?: string
@@ -56,6 +57,7 @@ const defaultFormatTooltip = (value: number): string => formatCurrency(value)
 export const AreaChart: React.FC<AreaChartProps> = ({
   data,
   height = 250,
+  minHeight,
   showGrid = true,
   color = DEFAULT_COLOR_PRIMARY,
   color2 = DEFAULT_COLOR_SECONDARY,
@@ -107,6 +109,7 @@ export const AreaChart: React.FC<AreaChartProps> = ({
 
   const maxValue = numericValues.length > 0 ? Math.max(...numericValues) : 0
   const yDomain: [number, number] = [0, maxValue > 0 ? Math.ceil(maxValue * 1.4) : 1]
+  const usesFluidHeight = typeof height === 'string'
 
   const tooltipFormatter = (value: number, key: string) => formatTooltipValue(value, key)
   const resolvedPointPos = actualPointPos ?? null
@@ -141,7 +144,11 @@ export const AreaChart: React.FC<AreaChartProps> = ({
   }, [tooltipAnchor, chartRef])
 
   return (
-    <div className="space-y-3" data-ristak-chart="area">
+    <div
+      className={usesFluidHeight ? 'flex flex-col gap-3' : 'space-y-3'}
+      data-ristak-chart="area"
+      style={usesFluidHeight ? { height, minHeight } : undefined}
+    >
       {showLegend && (
         <div className="flex flex-wrap items-center justify-center gap-4 text-xs text-[var(--color-text-secondary)] mb-2">
           {series.map((serie) => (
@@ -156,7 +163,11 @@ export const AreaChart: React.FC<AreaChartProps> = ({
         </div>
       )}
 
-      <div ref={chartRef} className="relative" style={{ height }}>
+      <div
+        ref={chartRef}
+        className="relative"
+        style={usesFluidHeight ? { flex: 1, minHeight: minHeight ?? 0 } : { height }}
+      >
         <ResponsiveContainer width="100%" height="100%">
           <RechartsAreaChart data={data} margin={{ top: 10, right: 12, left: 0, bottom: 5 }}>
             <defs>

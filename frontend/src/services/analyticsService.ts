@@ -20,6 +20,15 @@ export interface ContactsByDate {
   count: number
 }
 
+export interface ContactConversionsByDate {
+  date: string
+  registrations: number
+  prospects: number
+  appointments: number
+  attendances: number
+  customers: number
+}
+
 /**
  * Obtiene conteo de contactos con visitor_id por fecha de creación
  */
@@ -27,5 +36,14 @@ export async function getContactsByDate(startDate: string, endDate: string): Pro
   // apiClient ya extrae automáticamente el campo 'data' de { success: true, data: [...] }
   return apiClient.get<ContactsByDate[]>(
     `/tracking/contacts-by-date?start=${startDate}&end=${endDate}`
+  )
+}
+
+/**
+ * Obtiene conversiones por fecha de creación del contacto.
+ */
+export async function getContactConversionsByDate(startDate: string, endDate: string): Promise<ContactConversionsByDate[]> {
+  return apiClient.get<ContactConversionsByDate[]>(
+    `/tracking/contact-conversions-by-date?start=${startDate}&end=${endDate}`
   )
 }

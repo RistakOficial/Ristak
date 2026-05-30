@@ -15,7 +15,8 @@ import {
   getVisitorsByAd,
   getVisitorsByPeriod,
   getVisitorsList,
-  getContactsByDate
+  getContactsByDate,
+  getContactConversionsByDate
 } from '../controllers/trackingController.js'
 
 const router = express.Router()
@@ -59,5 +60,8 @@ router.get('/visitors', getVisitorsList)
 
 // Obtener contactos con visitor_id por fecha (para gráfico de registros)
 router.get('/contacts-by-date', getContactsByDate)
+
+// Obtener conversiones por fecha de creación del contacto
+router.get('/contact-conversions-by-date', getContactConversionsByDate)
 
 export default router

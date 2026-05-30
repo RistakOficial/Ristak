@@ -21,7 +21,13 @@ import {
 import { Eye, Users, UserCheck, Target, Smartphone, Monitor, Tablet, Globe, Minus, Plus } from 'lucide-react'
 import { FaFacebook, FaGoogle, FaInstagram, FaTiktok, FaTwitter, FaLinkedin, FaMicrosoft, FaChrome, FaFirefox, FaSafari, FaEdge, FaOpera, FaWindows, FaAndroid, FaLinux } from 'react-icons/fa'
 import { SiMacos, SiIos } from 'react-icons/si'
-import { getSessionsByDateRange, getContactsByDate, type ContactsByDate } from '../../services/analyticsService'
+import {
+  getSessionsByDateRange,
+  getContactsByDate,
+  getContactConversionsByDate,
+  type ContactsByDate,
+  type ContactConversionsByDate
+} from '../../services/analyticsService'
 import { TrackingSession } from '../../services/trackingService'
 import { formatDateToISO, parseLocalDateString, formatUrlParameter, formatChartNumber } from '../../utils/format'
 import { normalizeTrafficSource } from '../../utils/trafficSourceNormalizer'
@@ -438,6 +444,46 @@ const aggregateContactsByPeriod = (
     .map(([period, count]) => ({ period, count }))
 }
 
+const aggregateContactConversionsByPeriod = (
+  rows: ContactConversionsByDate[],
+  viewType: ViewType
+): ConversionTrendPoint[] => {
+  const totals = new Map<string, Omit<ConversionTrendPoint, 'label'>>()
+
+  rows.forEach((item) => {
+    const date = parseLocalDateString(item.date)
+    if (Number.isNaN(date.getTime())) return
+
+    const periodKey = getPeriodKeyFromDate(date, viewType)
+    const bucket = totals.get(periodKey) || {
+      prospects: 0,
+      registrations: 0,
+      appointments: 0,
+      attendances: 0,
+      customers: 0
+    }
+
+    bucket.prospects += Number(item.prospects || 0)
+    bucket.registrations += Number(item.registrations || 0)
+    bucket.appointments += Number(item.appointments || 0)
+    bucket.attendances += Number(item.attendances || 0)
+    bucket.customers += Number(item.customers || 0)
+
+    totals.set(periodKey, bucket)
+  })
+
+  return Array.from(totals.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([period, bucket]) => ({
+      label: formatPeriodLabel(period, viewType),
+      prospects: bucket.prospects,
+      registrations: bucket.registrations,
+      appointments: bucket.appointments,
+      attendances: bucket.attendances,
+      customers: bucket.customers
+    }))
+}
+
 const buildSessionTrendData = (
   sessions: Session[],
   viewType: ViewType,
@@ -515,10 +561,10 @@ const buildConversionTrendData = (
   }>()
 
   sessions.forEach((session) => {
-    if (!session.contact_id && !session.contact_created_at) return
+    if (!session.contact_created_at) return
 
     const periodKey = getPeriodKeyFromTimestamp(
-      session.contact_created_at || session.started_at,
+      session.contact_created_at,
       viewType,
       convertToLocalTime
     )
@@ -645,6 +691,7 @@ const Analytics: React.FC = () => {
   // Estado para visualizaciones
   const [dailyTraffic, setDailyTraffic] = useState<TrafficPoint[]>([])
   const [dailyConversions, setDailyConversions] = useState<any[]>([])
+  const [contactConversionsByDate, setContactConversionsByDate] = useState<ContactConversionsByDate[]>([])
   const [trafficSources, setTrafficSources] = useState<{ name: string; value: number; color: string }[]>([])
   const [platformsData, setPlatformsData] = useState<any[]>([])
   const [placementsData, setPlacementsData] = useState<any[]>([])
@@ -716,12 +763,21 @@ const Analytics: React.FC = () => {
         const prevEndDate = formatDateToISO(previousEnd)
 
         // Fetch datos del período actual y anterior
-        const [currentSessions, prevSessions, contactsData, prevContactsData] = await Promise.all([
+        const [
+          currentSessions,
+          prevSessions,
+          contactsData,
+          prevContactsData,
+          contactConversionRows
+        ] = await Promise.all([
           getSessionsByDateRange(startDate, endDate),
           getSessionsByDateRange(prevStartDate, prevEndDate),
           getContactsByDate(startDate, endDate),
-          getContactsByDate(prevStartDate, prevEndDate)
+          getContactsByDate(prevStartDate, prevEndDate),
+          getContactConversionsByDate(startDate, endDate)
         ])
+
+        setContactConversionsByDate(contactConversionRows || [])
 
         if (currentSessions.length > 0) {
           // Calcular métricas principales
@@ -1246,8 +1302,10 @@ const Analytics: React.FC = () => {
           })
           setDailyTraffic([])
           setDailyConversions([])
+          setContactConversionsByDate(contactConversionRows || [])
         }
       } catch {
+        setContactConversionsByDate([])
       } finally {
         setLoading(false)
       }
@@ -1694,10 +1752,19 @@ const Analytics: React.FC = () => {
     [sessionsForCharts, viewType, convertToLocalTime]
   )
 
-  const conversionTrendData = React.useMemo(
+  const contactCreatedConversionTrendData = React.useMemo(
+    () => aggregateContactConversionsByPeriod(contactConversionsByDate, viewType),
+    [contactConversionsByDate, viewType]
+  )
+
+  const filteredConversionTrendData = React.useMemo(
     () => buildConversionTrendData(sessionsForCharts, viewType, convertToLocalTime),
     [sessionsForCharts, viewType, convertToLocalTime]
   )
+
+  const conversionTrendData = hasActiveFiltersForCharts
+    ? filteredConversionTrendData
+    : contactCreatedConversionTrendData
 
   const mainChartConfig = React.useMemo<ChartMetricConfig>(() => {
     switch (selectedMainChartView) {
@@ -2065,7 +2132,7 @@ const Analytics: React.FC = () => {
                 <span className="font-medium">{conversionChartConfig.label2}</span>
               </span>
             </div>
-            <div className="relative w-full flex-1 min-h-[320px]" style={{ height: 320 }}>
+            <div className="relative w-full flex-1 min-h-[320px]">
               {loading ? (
                 <div data-ristak-chart-empty className="flex h-full items-center justify-center rounded-xl border border-[rgba(148,163,184,0.18)] bg-[color-mix(in_srgb,var(--color-background-glass) 82%, transparent)] text-sm text-[var(--color-text-tertiary)]">
                   Cargando datos...
@@ -2073,7 +2140,8 @@ const Analytics: React.FC = () => {
               ) : conversionChartHasData ? (
                 <AreaChart
                   data={conversionChartConfig.data}
-                  height={320}
+                  height="100%"
+                  minHeight={320}
                   showGrid
                   color={conversionChartConfig.color}
                   color2={conversionChartConfig.color2}

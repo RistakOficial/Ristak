@@ -6,6 +6,16 @@ import { resolveDateRangeWithGHLTimezone } from '../utils/dateUtils.js'
 import { getContactsWithShowedAppointmentsHybrid } from '../services/appointmentsMerge.js'
 import fetch from 'node-fetch'
 
+const isPostgres = Boolean(process.env.DATABASE_URL)
+
+const parseIsoDateToUtc = (value) => {
+  const [year, month, day] = String(value || '').split('-').map(Number)
+  if (!year || !month || !day) return null
+  return new Date(Date.UTC(year, month - 1, day))
+}
+
+const formatUtcDateKey = (date) => date.toISOString().slice(0, 10)
+
 /**
  * Genera el código JavaScript del pixel de tracking
  * GET /snip.js
@@ -1775,6 +1785,115 @@ export async function getContactsByDate(req, res) {
     res.json({ success: true, data: result })
   } catch (error) {
     logger.error('Error obteniendo contactos por fecha:', error)
+    res.status(500).json({ error: 'Internal server error' })
+  }
+}
+
+/**
+ * Obtiene conversiones por fecha de creación del contacto.
+ * GET /api/tracking/contact-conversions-by-date
+ * Query params: start (YYYY-MM-DD), end (YYYY-MM-DD)
+ */
+export async function getContactConversionsByDate(req, res) {
+  try {
+    const { start, end } = req.query
+
+    if (!start || !end) {
+      return res.status(400).json({ error: 'Se requieren parámetros start y end' })
+    }
+
+    logger.info(`Obteniendo conversiones por fecha de creación: ${start} a ${end}`)
+
+    const dateExpr = isPostgres
+      ? "TO_CHAR(c.created_at::date, 'YYYY-MM-DD')"
+      : 'DATE(c.created_at)'
+    const dateFilter = isPostgres
+      ? 'c.created_at::date >= ?::date AND c.created_at::date <= ?::date'
+      : 'DATE(c.created_at) >= DATE(?) AND DATE(c.created_at) <= DATE(?)'
+
+    const customerCondition = '(COALESCE(c.purchases_count, 0) > 0 OR COALESCE(c.total_paid, 0) > 0)'
+    const appointmentCondition = `(
+      c.appointment_date IS NOT NULL OR EXISTS (
+        SELECT 1
+        FROM appointments a
+        WHERE a.contact_id = c.id
+      )
+    )`
+    const attendanceCondition = `(
+      EXISTS (
+        SELECT 1
+        FROM appointment_attendance_signals aas
+        WHERE aas.contact_id = c.id
+      ) OR EXISTS (
+        SELECT 1
+        FROM appointments aa
+        WHERE aa.contact_id = c.id
+          AND LOWER(COALESCE(aa.appointment_status, aa.status, '')) IN ('showed', 'completed', 'attended')
+      )
+    )`
+
+    const query = `
+      WITH contact_flags AS (
+        SELECT
+          c.id,
+          ${dateExpr} as date,
+          CASE WHEN ${customerCondition} THEN 1 ELSE 0 END as is_customer,
+          CASE WHEN ${appointmentCondition} THEN 1 ELSE 0 END as has_appointment,
+          CASE WHEN ${attendanceCondition} THEN 1 ELSE 0 END as has_attendance
+        FROM contacts c
+        WHERE
+          ${dateFilter}
+          AND c.visitor_id IS NOT NULL
+          AND c.visitor_id != ''
+      )
+      SELECT
+        date,
+        COUNT(DISTINCT id) as registrations,
+        COUNT(DISTINCT CASE WHEN is_customer = 0 AND has_appointment = 0 AND has_attendance = 0 THEN id END) as prospects,
+        COUNT(DISTINCT CASE WHEN has_appointment = 1 THEN id END) as appointments,
+        COUNT(DISTINCT CASE WHEN has_attendance = 1 THEN id END) as attendances,
+        COUNT(DISTINCT CASE WHEN is_customer = 1 THEN id END) as customers
+      FROM contact_flags
+      GROUP BY date
+      ORDER BY date ASC
+    `
+
+    const rows = await db.all(query, [start, end])
+    const dataMap = {}
+
+    rows.forEach(row => {
+      dataMap[row.date] = {
+        registrations: parseInt(row.registrations, 10) || 0,
+        prospects: parseInt(row.prospects, 10) || 0,
+        appointments: parseInt(row.appointments, 10) || 0,
+        attendances: parseInt(row.attendances, 10) || 0,
+        customers: parseInt(row.customers, 10) || 0
+      }
+    })
+
+    const result = []
+    const startDate = parseIsoDateToUtc(start)
+    const endDate = parseIsoDateToUtc(end)
+
+    if (!startDate || !endDate) {
+      return res.status(400).json({ error: 'Formato de fecha inválido' })
+    }
+
+    for (let d = new Date(startDate); d <= endDate; d.setUTCDate(d.getUTCDate() + 1)) {
+      const dateStr = formatUtcDateKey(d)
+      result.push({
+        date: dateStr,
+        registrations: dataMap[dateStr]?.registrations || 0,
+        prospects: dataMap[dateStr]?.prospects || 0,
+        appointments: dataMap[dateStr]?.appointments || 0,
+        attendances: dataMap[dateStr]?.attendances || 0,
+        customers: dataMap[dateStr]?.customers || 0
+      })
+    }
+
+    res.json({ success: true, data: result })
+  } catch (error) {
+    logger.error('Error obteniendo conversiones por fecha de creación:', error)
     res.status(500).json({ error: 'Internal server error' })
   }
 }
