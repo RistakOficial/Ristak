@@ -1305,31 +1305,41 @@ body[data-design-preset='atelier'] [data-dashboard-kpi-grid] [data-ristak-kpi-ca
   background: var(--design-card-bg) !important;
 }
 
-body[data-design-preset='editorial'] [data-dashboard-kpi-grid] {
-  gap: 0 !important;
+body[data-design-preset='editorial'] [data-ristak-page-inner] :is(
+  [data-dashboard-kpi-grid],
+  [class*='kpiRow'],
+  [class*='statsGrid'],
+  .grid
+):has([data-ristak-kpi-card]) {
+  gap: 1px !important;
+  padding: 1px;
   overflow: hidden;
-  border: 1px solid var(--design-card-border);
+  border: 0 !important;
   border-radius: var(--design-card-radius);
-  background: var(--design-card-bg);
+  background: var(--design-card-border);
   box-shadow: var(--design-card-shadow);
 }
 
-body[data-design-preset='editorial'] [data-dashboard-kpi-grid] [data-ristak-kpi-card] {
+body[data-design-preset='editorial'] [data-ristak-page-inner] :is(
+  [data-dashboard-kpi-grid],
+  [class*='kpiRow'],
+  [class*='statsGrid'],
+  .grid
+):has([data-ristak-kpi-card]) > * {
+  min-width: 0;
+}
+
+body[data-design-preset='editorial'] [data-ristak-page-inner] :is(
+  [data-dashboard-kpi-grid],
+  [class*='kpiRow'],
+  [class*='statsGrid'],
+  .grid
+):has([data-ristak-kpi-card]) [data-ristak-kpi-card] {
   min-height: 126px;
   border: 0 !important;
-  border-right: 1px solid var(--design-card-border) !important;
-  border-bottom: 1px solid var(--design-card-border) !important;
   border-radius: 0 !important;
-  background: transparent !important;
+  background: var(--design-card-bg) !important;
   box-shadow: none !important;
-}
-
-body[data-design-preset='editorial'] [data-dashboard-kpi-grid] [data-ristak-kpi-card]:nth-child(4n) {
-  border-right: 0 !important;
-}
-
-body[data-design-preset='editorial'] [data-dashboard-kpi-grid] [data-ristak-kpi-card]:nth-last-child(-n + 4) {
-  border-bottom: 0 !important;
 }
 
 body[data-design-preset='editorial'] [data-dashboard-heading] h1,
@@ -1352,24 +1362,6 @@ body[data-design-preset='editorial'] [class*='scopeButton'] {
 body[data-design-preset='editorial'] [class*='scopeButtonActive'] {
   background: rgba(var(--color-primary-rgb), 0.18) !important;
   border-color: rgba(var(--color-primary-rgb), 0.32) !important;
-}
-
-@media (max-width: 1279px) {
-  body[data-design-preset='editorial'] [data-dashboard-kpi-grid] [data-ristak-kpi-card]:nth-child(4n) {
-    border-right: 1px solid var(--design-card-border) !important;
-  }
-
-  body[data-design-preset='editorial'] [data-dashboard-kpi-grid] [data-ristak-kpi-card]:nth-child(2n) {
-    border-right: 0 !important;
-  }
-
-  body[data-design-preset='editorial'] [data-dashboard-kpi-grid] [data-ristak-kpi-card]:nth-last-child(-n + 4) {
-    border-bottom: 1px solid var(--design-card-border) !important;
-  }
-
-  body[data-design-preset='editorial'] [data-dashboard-kpi-grid] [data-ristak-kpi-card]:nth-last-child(-n + 2) {
-    border-bottom: 0 !important;
-  }
 }
 
 @media (max-width: 640px) {
