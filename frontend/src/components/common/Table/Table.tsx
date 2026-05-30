@@ -97,6 +97,7 @@ interface TableProps<T> {
   tableId?: string // ID para guardar config en rstk_config
   initialSortBy?: string // Columna para ordenar inicialmente
   initialSortOrder?: 'asc' | 'desc' // Orden inicial
+  loadingVariant?: 'skeleton' | 'spinner'
 }
 
 export function Table<T extends Record<string, any>>({
@@ -116,7 +117,8 @@ export function Table<T extends Record<string, any>>({
   onFilterChange,
   tableId,
   initialSortBy,
-  initialSortOrder = 'asc'
+  initialSortOrder = 'asc',
+  loadingVariant = 'skeleton'
 }: TableProps<T>) {
   // Sistema híbrido de configuración de tablas
   const [savedTableConfig, updateTableConfig] = useTableConfig(tableId || 'default')
@@ -335,11 +337,54 @@ export function Table<T extends Record<string, any>>({
     }
   }
 
-  if (loading) {
+  if (loading && loadingVariant === 'spinner') {
     return (
       <div className={styles.loadingContainer}>
         <div className={styles.spinner}></div>
         <div className={styles.loadingText}>Cargando...</div>
+      </div>
+    )
+  }
+
+  if (loading) {
+    const skeletonColumnCount = Math.max(visibleColumns.length, 4)
+    const skeletonRows = Math.min(Math.max(pageSize, 6), 10)
+
+    return (
+      <div className={styles.container} data-ristak-table aria-busy="true" aria-live="polite" aria-label="Cargando tabla">
+        <div className={styles.tableHeader}>
+          <div className={styles.leftControls}>
+            {searchable && <div className={`${styles.skeletonBlock} ${styles.skeletonSearch}`} />}
+            {filters && <div className={`${styles.skeletonBlock} ${styles.skeletonFilters}`} />}
+          </div>
+          <div className={`${styles.skeletonBlock} ${styles.skeletonAction}`} />
+        </div>
+
+        <div className={styles.skeletonTableWrapper}>
+          <div
+            className={styles.skeletonTable}
+            style={{
+              '--skeleton-columns': skeletonColumnCount,
+              minWidth: `${skeletonColumnCount * 120}px`
+            } as React.CSSProperties}
+          >
+            <div className={`${styles.skeletonRow} ${styles.skeletonHeaderRow}`}>
+              {Array.from({ length: skeletonColumnCount }).map((_, index) => (
+                <div className={`${styles.skeletonBlock} ${styles.skeletonHeaderCell}`} key={`skeleton-heading-${index}`} />
+              ))}
+            </div>
+            {Array.from({ length: skeletonRows }).map((_, rowIndex) => (
+              <div className={styles.skeletonRow} key={`skeleton-row-${rowIndex}`}>
+                {Array.from({ length: skeletonColumnCount }).map((_, cellIndex) => (
+                  <div
+                    className={`${styles.skeletonBlock} ${styles.skeletonCell}`}
+                    key={`skeleton-cell-${rowIndex}-${cellIndex}`}
+                  />
+                ))}
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
     )
   }

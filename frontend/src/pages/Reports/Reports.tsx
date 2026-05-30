@@ -1758,7 +1758,7 @@ export const Reports: React.FC = () => {
   }
 
   return (
-    <PageContainer>
+    <PageContainer size="wide">
       <div className={styles.container}>
         <header className={styles.header}>
           <div className={styles.titleBlock}>

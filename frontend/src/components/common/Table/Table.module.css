@@ -269,6 +269,92 @@
   font-size: var(--font-size-base);
 }
 
+.skeletonBlock {
+  position: relative;
+  overflow: hidden;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--color-background-tertiary) 76%, var(--color-text-primary) 8%);
+}
+
+.skeletonBlock::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-110%);
+  background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.55) 50%, transparent 100%);
+  animation: skeletonShimmer 1.45s ease-in-out infinite;
+}
+
+.skeletonSearch {
+  width: min(420px, 100%);
+  height: 40px;
+}
+
+.skeletonFilters {
+  width: min(360px, 100%);
+  height: 40px;
+}
+
+.skeletonAction {
+  width: 88px;
+  height: 40px;
+  flex-shrink: 0;
+}
+
+.skeletonTableWrapper {
+  overflow-x: auto;
+  background-color: var(--design-table-bg, var(--color-background));
+}
+
+.skeletonTable {
+  width: 100%;
+}
+
+.skeletonRow {
+  display: grid;
+  grid-template-columns: repeat(var(--skeleton-columns), minmax(92px, 1fr));
+  gap: var(--spacing-md);
+  align-items: center;
+  padding: var(--spacing-md);
+  border-bottom: 1px solid var(--design-table-border, var(--color-border-subtle));
+}
+
+.skeletonHeaderRow {
+  background-color: var(--design-table-head-bg, var(--color-surface));
+}
+
+.skeletonHeaderCell {
+  width: 70%;
+  height: 12px;
+}
+
+.skeletonCell {
+  width: 88%;
+  height: 14px;
+}
+
+.skeletonRow .skeletonCell:nth-child(1) {
+  width: 64%;
+}
+
+.skeletonRow .skeletonCell:nth-child(3n) {
+  width: 74%;
+}
+
+body.dark .skeletonBlock {
+  background: color-mix(in srgb, var(--color-background-tertiary) 84%, var(--color-text-primary) 8%);
+}
+
+body.dark .skeletonBlock::after {
+  background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.12) 50%, transparent 100%);
+}
+
+@keyframes skeletonShimmer {
+  100% {
+    transform: translateX(110%);
+  }
+}
+
 .pagination {
   padding: var(--spacing-md);
   display: flex;
