@@ -453,7 +453,9 @@ export const AIAgentPanel: React.FC = () => {
   const [loadingConfig, setLoadingConfig] = useState(true)
   const [savingConfig, setSavingConfig] = useState(false)
   const [sending, setSending] = useState(false)
+  const [unreadReplies, setUnreadReplies] = useState(0)
   const askedOnboardingRef = useRef(false)
+  const previousMessageCountRef = useRef(messages.length)
   const endRef = useRef<HTMLDivElement | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
 
@@ -468,6 +470,9 @@ export const AIAgentPanel: React.FC = () => {
 
   const setOpenState = (nextOpen: boolean) => {
     setOpen(nextOpen)
+    if (nextOpen) {
+      setUnreadReplies(0)
+    }
     saveOpenState(nextOpen)
   }
 
@@ -510,6 +515,25 @@ export const AIAgentPanel: React.FC = () => {
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
   }, [messages, sending, savingConfig, open])
+
+  useEffect(() => {
+    if (open) {
+      setUnreadReplies(0)
+      previousMessageCountRef.current = messages.length
+      return
+    }
+
+    if (messages.length > previousMessageCountRef.current) {
+      const newMessages = messages.slice(previousMessageCountRef.current)
+      const newAssistantReplies = newMessages.filter((message) => message.role === 'assistant').length
+
+      if (newAssistantReplies > 0) {
+        setUnreadReplies((current) => Math.min(current + newAssistantReplies, 9))
+      }
+    }
+
+    previousMessageCountRef.current = messages.length
+  }, [messages, open])
 
   useEffect(() => {
     saveMessages(messages)
@@ -674,6 +698,13 @@ export const AIAgentPanel: React.FC = () => {
     askedOnboardingRef.current = businessContextLoaded
     setMessages([])
   }
+
+  const floatingButtonClassName = open
+    ? styles.floatingButtonOpen
+    : `${styles.floatingButton} ${unreadReplies ? styles.floatingButtonUnread : ''}`
+  const closedButtonLabel = unreadReplies
+    ? `Abrir agente AI, ${unreadReplies} respuesta nueva`
+    : 'Abrir agente AI'
 
   return (
     <div className={styles.floatingRoot}>
@@ -858,14 +889,20 @@ export const AIAgentPanel: React.FC = () => {
 
       <button
         type="button"
-        className={open ? styles.floatingButtonOpen : styles.floatingButton}
+        className={floatingButtonClassName}
         onClick={() => setOpenState(!open)}
-        aria-label={open ? 'Cerrar agente AI' : 'Abrir agente AI'}
+        aria-label={open ? 'Cerrar agente AI' : closedButtonLabel}
       >
         {open ? <X size={18} /> : (
           <>
             <MessageCircle size={18} />
             <span className={styles.floatingButtonLabel}>Chat AI</span>
+            {unreadReplies > 0 && (
+              <span className={styles.unreadIndicator} aria-hidden="true">
+                <span className={styles.unreadDot} />
+                <span className={styles.unreadBadge}>{unreadReplies}</span>
+              </span>
+            )}
           </>
         )}
       </button>

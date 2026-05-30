@@ -27,6 +27,11 @@
   border-radius: 999px;
 }
 
+.floatingButtonUnread {
+  padding-right: 12px;
+  box-shadow: 0 8px 32px rgba(15, 23, 42, 0.28);
+}
+
 .floatingButtonOpen {
   width: 44px;
   height: 44px;
@@ -53,15 +58,47 @@
   letter-spacing: -0.01em;
 }
 
+.unreadIndicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-left: 3px;
+  padding-left: 10px;
+  border-left: 1px solid color-mix(in srgb, var(--color-background-primary) 28%, transparent);
+}
+
+.unreadDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #22c55e;
+  box-shadow: 0 0 0 4px rgba(34, 197, 94, 0.18);
+}
+
+.unreadBadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: #ef4444;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1;
+}
+
 .window {
   position: absolute;
   right: 0;
   bottom: 76px;
   display: flex;
   flex-direction: column;
-  width: min(640px, calc(100vw - 32px));
-  height: min(760px, calc(100vh - 116px));
-  min-height: 560px;
+  width: min(760px, calc(100vw - 40px));
+  height: min(820px, calc(100vh - 104px));
+  min-height: min(620px, calc(100vh - 104px));
   overflow: hidden;
   border: 1px solid rgba(148, 163, 184, 0.22);
   border-radius: 14px;
@@ -703,7 +740,7 @@
     right: -4px;
     bottom: 74px;
     width: calc(100vw - 24px);
-    height: min(680px, calc(100vh - 104px));
+    height: min(720px, calc(100vh - 104px));
     min-height: 0;
   }
 
