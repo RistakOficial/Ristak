@@ -1931,7 +1931,7 @@ const Analytics: React.FC = () => {
   const conversionChartHasData = conversionChartConfig.data.some(item => (item.value || 0) > 0 || (item.value2 || 0) > 0)
 
   if (loading && (!metrics || !dailyTraffic.length)) {
-    return <Loading message="Cargando analíticas..." />
+    return <Loading message="Cargando analíticas..." kpiCount={4} />
   }
 
   return (

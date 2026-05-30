@@ -134,8 +134,21 @@
   gap: 1rem;
 }
 
+.skeletonKpiGrid[data-kpi-count='4'] {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.skeletonKpiGrid[data-kpi-count='5'] {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.skeletonKpiGrid[data-kpi-count='8'] {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 :global(body[data-design-preset='editorial']) .skeletonKpiGridJoined {
   gap: 0;
+  padding: 0;
   overflow: hidden;
   border: 1px solid var(--design-card-border);
   border-radius: var(--design-card-radius);
@@ -153,6 +166,7 @@
 }
 
 .skeletonCard {
+  position: relative;
   min-height: 118px;
   padding: 1rem;
 }
@@ -160,20 +174,46 @@
 :global(body[data-design-preset='editorial']) .skeletonKpiGridJoined .skeletonCard {
   min-height: 126px;
   border: 0;
-  border-right: 1px solid var(--design-card-border);
-  border-bottom: 1px solid var(--design-card-border);
   border-radius: 0;
-  background: transparent;
+  background: var(--design-card-bg);
   box-shadow: none;
   backdrop-filter: none;
 }
 
-:global(body[data-design-preset='editorial']) .skeletonKpiGridJoined .skeletonCard:nth-child(2n) {
-  border-right: 0;
+:global(body[data-design-preset='editorial']) .skeletonKpiGridJoined .skeletonCard::before,
+:global(body[data-design-preset='editorial']) .skeletonKpiGridJoined .skeletonCard::after {
+  content: '';
+  position: absolute;
+  z-index: 2;
+  pointer-events: none;
+  background: var(--design-card-border);
 }
 
-:global(body[data-design-preset='editorial']) .skeletonKpiGridJoined .skeletonCard:nth-last-child(-n + 2) {
-  border-bottom: 0;
+:global(body[data-design-preset='editorial']) .skeletonKpiGridJoined .skeletonCard::before {
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 1px;
+}
+
+:global(body[data-design-preset='editorial']) .skeletonKpiGridJoined .skeletonCard::after {
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 1px;
+}
+
+:global(body[data-design-preset='editorial']) .skeletonKpiGridJoined[data-kpi-count='4'] .skeletonCard:nth-child(4n)::after,
+:global(body[data-design-preset='editorial']) .skeletonKpiGridJoined[data-kpi-count='5'] .skeletonCard:nth-child(5n)::after,
+:global(body[data-design-preset='editorial']) .skeletonKpiGridJoined[data-kpi-count='8'] .skeletonCard:nth-child(4n)::after,
+:global(body[data-design-preset='editorial']) .skeletonKpiGridJoined .skeletonCard:last-child::after {
+  display: none;
+}
+
+:global(body[data-design-preset='editorial']) .skeletonKpiGridJoined[data-kpi-count='4'] .skeletonCard:nth-last-child(-n + 4)::before,
+:global(body[data-design-preset='editorial']) .skeletonKpiGridJoined[data-kpi-count='5'] .skeletonCard:nth-last-child(-n + 5)::before,
+:global(body[data-design-preset='editorial']) .skeletonKpiGridJoined[data-kpi-count='8'] .skeletonCard:nth-last-child(-n + 4)::before {
+  display: none;
 }
 
 .skeletonCardTop {
@@ -364,20 +404,37 @@
 }
 
 @media (min-width: 1280px) {
-  .skeletonKpiGrid {
+  .skeletonKpiGrid[data-kpi-count='8'] {
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
+}
 
-  :global(body[data-design-preset='editorial']) .skeletonKpiGridJoined .skeletonCard:nth-child(2n) {
-    border-right: 1px solid var(--design-card-border);
+@media (max-width: 1279px) {
+  :global(body[data-design-preset='editorial']) .skeletonKpiGridJoined[data-kpi-count='8'] .skeletonCard::before,
+  :global(body[data-design-preset='editorial']) .skeletonKpiGridJoined[data-kpi-count='8'] .skeletonCard::after {
+    display: block;
   }
 
-  :global(body[data-design-preset='editorial']) .skeletonKpiGridJoined .skeletonCard:nth-child(4n) {
-    border-right: 0;
+  :global(body[data-design-preset='editorial']) .skeletonKpiGridJoined[data-kpi-count='8'] .skeletonCard:nth-child(2n)::after,
+  :global(body[data-design-preset='editorial']) .skeletonKpiGridJoined[data-kpi-count='8'] .skeletonCard:nth-last-child(-n + 2)::before {
+    display: none;
+  }
+}
+
+@media (max-width: 1200px) {
+  .skeletonKpiGrid[data-kpi-count='5'] {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
-  :global(body[data-design-preset='editorial']) .skeletonKpiGridJoined .skeletonCard:nth-last-child(-n + 4) {
-    border-bottom: 0;
+  :global(body[data-design-preset='editorial']) .skeletonKpiGridJoined[data-kpi-count='5'] .skeletonCard::before,
+  :global(body[data-design-preset='editorial']) .skeletonKpiGridJoined[data-kpi-count='5'] .skeletonCard::after {
+    display: block;
+  }
+
+  :global(body[data-design-preset='editorial']) .skeletonKpiGridJoined[data-kpi-count='5'] .skeletonCard:nth-child(3n)::after,
+  :global(body[data-design-preset='editorial']) .skeletonKpiGridJoined[data-kpi-count='5'] .skeletonCard:last-child::after,
+  :global(body[data-design-preset='editorial']) .skeletonKpiGridJoined[data-kpi-count='5'] .skeletonCard:nth-last-child(-n + 2)::before {
+    display: none;
   }
 }
 
@@ -411,23 +468,48 @@
     width: 100%;
   }
 
-  .skeletonKpiGrid {
+  .skeletonChart {
+    min-height: 240px;
+  }
+}
+
+@media (max-width: 768px) {
+  .skeletonKpiGrid[data-kpi-count='4'],
+  .skeletonKpiGrid[data-kpi-count='5'],
+  .skeletonKpiGrid[data-kpi-count='8'] {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  :global(body[data-design-preset='editorial']) .skeletonKpiGridJoined[data-kpi-count='4'] .skeletonCard::before,
+  :global(body[data-design-preset='editorial']) .skeletonKpiGridJoined[data-kpi-count='4'] .skeletonCard::after,
+  :global(body[data-design-preset='editorial']) .skeletonKpiGridJoined[data-kpi-count='5'] .skeletonCard::before,
+  :global(body[data-design-preset='editorial']) .skeletonKpiGridJoined[data-kpi-count='5'] .skeletonCard::after {
+    display: block;
+  }
+
+  :global(body[data-design-preset='editorial']) .skeletonKpiGridJoined[data-kpi-count='4'] .skeletonCard:nth-child(2n)::after,
+  :global(body[data-design-preset='editorial']) .skeletonKpiGridJoined[data-kpi-count='4'] .skeletonCard:nth-last-child(-n + 2)::before,
+  :global(body[data-design-preset='editorial']) .skeletonKpiGridJoined[data-kpi-count='5'] .skeletonCard:nth-child(2n)::after,
+  :global(body[data-design-preset='editorial']) .skeletonKpiGridJoined[data-kpi-count='5'] .skeletonCard:last-child::after,
+  :global(body[data-design-preset='editorial']) .skeletonKpiGridJoined[data-kpi-count='5'] .skeletonCard:last-child::before {
+    display: none;
+  }
+}
+
+@media (max-width: 480px) {
+  .skeletonKpiGrid[data-kpi-count='4'],
+  .skeletonKpiGrid[data-kpi-count='5'],
+  .skeletonKpiGrid[data-kpi-count='8'] {
     grid-template-columns: 1fr;
   }
 
-  :global(body[data-design-preset='editorial']) .skeletonKpiGridJoined .skeletonCard {
-    border-right: 0;
+  :global(body[data-design-preset='editorial']) .skeletonKpiGridJoined .skeletonCard::before,
+  :global(body[data-design-preset='editorial']) .skeletonKpiGridJoined .skeletonCard::after {
+    display: block;
   }
 
-  :global(body[data-design-preset='editorial']) .skeletonKpiGridJoined .skeletonCard:nth-last-child(-n + 2) {
-    border-bottom: 1px solid var(--design-card-border);
-  }
-
-  :global(body[data-design-preset='editorial']) .skeletonKpiGridJoined .skeletonCard:last-child {
-    border-bottom: 0;
-  }
-
-  .skeletonChart {
-    min-height: 240px;
+  :global(body[data-design-preset='editorial']) .skeletonKpiGridJoined .skeletonCard::after,
+  :global(body[data-design-preset='editorial']) .skeletonKpiGridJoined .skeletonCard:last-child::before {
+    display: none;
   }
 }

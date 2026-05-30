@@ -1754,7 +1754,7 @@ export const Reports: React.FC = () => {
   const closeModal = () => setModalState(prev => ({ ...prev, open: false }))
 
   if ((loadingMetrics || loadingSummary) && !metrics.length && !summary) {
-    return <Loading message="Cargando reportes..." />
+    return <Loading message="Cargando reportes..." kpiCount={4} />
   }
 
   return (

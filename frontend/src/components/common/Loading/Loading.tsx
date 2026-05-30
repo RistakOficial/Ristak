@@ -8,6 +8,7 @@ interface LoadingProps {
   size?: 'sm' | 'md' | 'lg'
   variant?: 'skeleton' | 'spinner'
   kpiLayout?: 'cards' | 'joined'
+  kpiCount?: number
 }
 
 export const Loading: React.FC<LoadingProps> = ({
@@ -15,7 +16,8 @@ export const Loading: React.FC<LoadingProps> = ({
   fullScreen = false,
   size = 'md',
   variant = 'skeleton',
-  kpiLayout = 'cards'
+  kpiLayout = 'joined',
+  kpiCount = 4
 }) => {
   const sizeClasses = {
     sm: 'w-6 h-6',
@@ -25,6 +27,7 @@ export const Loading: React.FC<LoadingProps> = ({
 
   const shouldRenderSpinner = fullScreen || variant === 'spinner'
   const containerClass = fullScreen ? styles.fullScreenContainer : styles.container
+  const normalizedKpiCount = Math.max(0, Math.floor(kpiCount))
   const skeletonKpiGridClassName = kpiLayout === 'joined'
     ? `${styles.skeletonKpiGrid} ${styles.skeletonKpiGridJoined}`
     : styles.skeletonKpiGrid
@@ -41,18 +44,20 @@ export const Loading: React.FC<LoadingProps> = ({
             <div className={`${styles.skeletonBlock} ${styles.skeletonControl}`} />
           </div>
 
-          <div className={skeletonKpiGridClassName}>
-            {Array.from({ length: 8 }).map((_, index) => (
-              <div className={styles.skeletonCard} key={`kpi-${index}`}>
-                <div className={styles.skeletonCardTop}>
-                  <div className={`${styles.skeletonBlock} ${styles.skeletonLabel}`} />
-                  <div className={styles.skeletonIcon} />
+          {normalizedKpiCount > 0 && (
+            <div className={skeletonKpiGridClassName} data-kpi-count={normalizedKpiCount}>
+              {Array.from({ length: normalizedKpiCount }).map((_, index) => (
+                <div className={styles.skeletonCard} key={`kpi-${index}`}>
+                  <div className={styles.skeletonCardTop}>
+                    <div className={`${styles.skeletonBlock} ${styles.skeletonLabel}`} />
+                    <div className={styles.skeletonIcon} />
+                  </div>
+                  <div className={`${styles.skeletonBlock} ${styles.skeletonValue}`} />
+                  <div className={`${styles.skeletonBlock} ${styles.skeletonMeta}`} />
                 </div>
-                <div className={`${styles.skeletonBlock} ${styles.skeletonValue}`} />
-                <div className={`${styles.skeletonBlock} ${styles.skeletonMeta}`} />
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
 
           <div className={styles.skeletonPanel}>
             <div className={styles.skeletonPanelHeader}>
