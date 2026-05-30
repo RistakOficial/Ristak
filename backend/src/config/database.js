@@ -438,6 +438,72 @@ async function initTables() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_payment_methods_stripe_customer ON payment_methods(stripe_customer_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_payment_methods_location ON payment_methods(location_id)')
 
+    // Tabla de flujos de pago por parcialidades.
+    // Guarda el estado de autorización/tarjeta sin contaminar la tabla de pagos reales.
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS payment_flows (
+        id TEXT PRIMARY KEY,
+        contact_id TEXT NOT NULL,
+        contact_name TEXT,
+        contact_email TEXT,
+        contact_phone TEXT,
+        total_amount REAL NOT NULL,
+        currency TEXT DEFAULT 'MXN',
+        concept TEXT,
+        payment_type TEXT DEFAULT 'partial',
+        first_payment_amount REAL DEFAULT 0,
+        first_payment_type TEXT,
+        first_payment_value REAL,
+        first_payment_date DATETIME,
+        first_payment_method TEXT,
+        first_payment_status TEXT,
+        first_payment_invoice_id TEXT,
+        remaining_automatic INTEGER DEFAULT 0,
+        card_setup_required INTEGER DEFAULT 0,
+        card_setup_amount REAL DEFAULT 25,
+        card_setup_status TEXT,
+        card_setup_invoice_id TEXT,
+        card_setup_payment_link TEXT,
+        current_state TEXT NOT NULL,
+        state_history TEXT,
+        card_authorized_at DATETIME,
+        installment_plan_created_at DATETIME,
+        installment_plan_active_at DATETIME,
+        metadata TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+
+    await db.run('CREATE INDEX IF NOT EXISTS idx_payment_flows_contact ON payment_flows(contact_id)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_payment_flows_state ON payment_flows(current_state)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_payment_flows_first_invoice ON payment_flows(first_payment_invoice_id)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_payment_flows_card_setup_invoice ON payment_flows(card_setup_invoice_id)')
+
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS installment_payments (
+        id TEXT PRIMARY KEY,
+        flow_id TEXT NOT NULL,
+        sequence INTEGER NOT NULL,
+        amount REAL NOT NULL,
+        percentage REAL,
+        due_date DATETIME,
+        frequency TEXT DEFAULT 'custom',
+        payment_method TEXT,
+        automatic INTEGER DEFAULT 0,
+        status TEXT NOT NULL,
+        ghl_invoice_id TEXT,
+        notes TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (flow_id) REFERENCES payment_flows(id) ON DELETE CASCADE
+      )
+    `)
+
+    await db.run('CREATE INDEX IF NOT EXISTS idx_installment_payments_flow ON installment_payments(flow_id)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_installment_payments_status ON installment_payments(status)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_installment_payments_due_date ON installment_payments(due_date)')
+
     // Agregar columnas que puedan faltar en tablas existentes
     try {
       // Agregar ghl_invoice_id a payments (UNIQUE para evitar duplicados)

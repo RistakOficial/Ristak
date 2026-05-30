@@ -314,6 +314,254 @@
   padding-left: 36px;
 }
 
+.dateInput {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.dateInput .input {
+  padding-left: 36px;
+}
+
+.partialSection {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background: var(--color-surface);
+}
+
+.partialHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.partialHeader p {
+  margin: 0 0 4px 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+.partialHeader span {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+}
+
+.partialBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  border: 1px dashed var(--color-border);
+  border-radius: 10px;
+  background: var(--color-background);
+}
+
+.partialBlockHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.partialBlockTitle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+.partialBlockTitle svg {
+  color: var(--color-primary);
+}
+
+.partialGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+}
+
+.partialAmountPreview {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  min-height: 42px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface);
+}
+
+.partialAmountPreview span {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+}
+
+.partialAmountPreview strong {
+  font-size: 15px;
+  color: var(--color-text-primary);
+}
+
+.installmentList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.installmentRow {
+  display: grid;
+  grid-template-columns: 32px 74px minmax(88px, 1fr) minmax(136px, 1.2fr) minmax(92px, auto) 36px;
+  gap: 8px;
+  align-items: center;
+}
+
+.installmentSequence {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: rgba(var(--color-primary-rgb), 0.1);
+  color: var(--color-primary);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.installmentAmount {
+  min-width: 92px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  text-align: right;
+}
+
+.iconButton {
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface);
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.iconButton:hover:not(:disabled) {
+  border-color: var(--color-status-error);
+  color: var(--color-status-error);
+}
+
+.iconButton:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.channelGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.channelOption {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface);
+  color: var(--color-text-tertiary);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.channelOption input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.channelOptionActive {
+  border-color: var(--color-primary);
+  background: rgba(var(--color-primary-rgb), 0.1);
+  color: var(--color-text-primary);
+}
+
+.authorizationNotice {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(var(--color-primary-rgb), 0.08);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.authorizationNotice svg {
+  flex: 0 0 auto;
+  color: var(--color-primary);
+  margin-top: 1px;
+}
+
+.partialTotals {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.partialTotals > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-background);
+  font-size: 13px;
+}
+
+.partialTotals span {
+  color: var(--color-text-tertiary);
+}
+
+.partialTotals strong {
+  color: var(--color-text-primary);
+}
+
+.partialDifferenceOk strong {
+  color: var(--color-status-success);
+}
+
+.partialDifferenceError {
+  border-color: rgba(239, 68, 68, 0.35) !important;
+  background: rgba(239, 68, 68, 0.08) !important;
+}
+
+.partialDifferenceError strong {
+  color: var(--color-status-error);
+}
+
 .summaryCard {
   display: flex;
   flex-direction: column;
@@ -830,6 +1078,25 @@ body.dark .tooltipInfo {
   .manualGrid {
     grid-template-columns: 1fr;
   }
+
+  .installmentRow {
+    grid-template-columns: 32px 74px 1fr;
+  }
+
+  .installmentRow input[type="date"],
+  .installmentAmount,
+  .installmentRow .iconButton {
+    grid-column: span 3;
+  }
+
+  .installmentAmount {
+    text-align: left;
+  }
+
+  .channelGrid,
+  .partialTotals {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 640px) {
@@ -847,6 +1114,14 @@ body.dark .tooltipInfo {
 
   .manualGrid {
     grid-template-columns: 1fr;
+  }
+
+  .partialBlockHeader {
+    align-items: stretch;
+  }
+
+  .partialBlockHeader > * {
+    width: 100%;
   }
 }
 

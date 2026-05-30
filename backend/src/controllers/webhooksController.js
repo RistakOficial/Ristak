@@ -3,6 +3,10 @@ import { logger } from '../utils/logger.js';
 import { updateSingleContactStats } from '../utils/updateContactsStats.js';
 import { recordAttendanceAttributionSignal } from '../services/appointmentsMerge.js';
 import * as stripeService from '../services/stripeService.js';
+import {
+  activatePendingPaymentFlowsForContact,
+  markPaymentFlowInvoicePaid
+} from '../services/paymentFlowService.js';
 
 
 /**
@@ -247,6 +251,11 @@ export const handlePaymentWebhook = async (req, res) => {
           });
 
           logger.info(`💳 Payment method guardado automáticamente para contacto ${contactId}`);
+
+          const activatedFlows = await activatePendingPaymentFlowsForContact(contactId);
+          if (activatedFlows > 0) {
+            logger.info(`✅ ${activatedFlows} flujo(s) de parcialidades activado(s) para contacto ${contactId}`);
+          }
         }
       }
     } catch (error) {
@@ -688,6 +697,8 @@ export const handleInvoiceWebhook = async (req, res) => {
           await updateSingleContactStats(payment.contact_id);
           logger.success(`Estadísticas actualizadas para contacto: ${payment.contact_id}`);
         }
+
+        await markPaymentFlowInvoicePaid(invoiceId);
       }
 
       // Si fue reembolsado, recalcular estadísticas

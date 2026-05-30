@@ -12,6 +12,7 @@ import {
   findCustomerByEmail as stripeFindCustomerByEmail,
   listPaymentMethods as stripeListPaymentMethods
 } from '../services/stripeService.js';
+import { createInstallmentPaymentFlow } from '../services/paymentFlowService.js';
 
 /**
  * Prueba la conexión con HighLevel
@@ -1025,6 +1026,28 @@ export const recordPayment = async (req, res) => {
     res.status(500).json({
       success: false,
       error: error.message || 'Error al registrar pago'
+    });
+  }
+};
+
+/**
+ * Crea un flujo de cobro por parcialidades.
+ * Regla dura: los pagos automáticos quedan esperando tarjeta autorizada.
+ */
+export const createInstallmentFlow = async (req, res) => {
+  try {
+    const result = await createInstallmentPaymentFlow(req.body);
+
+    res.json({
+      success: true,
+      message: 'Flujo de parcialidades creado correctamente',
+      ...result
+    });
+  } catch (error) {
+    logger.error(`Error en createInstallmentFlow: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'No se pudo crear el flujo de parcialidades'
     });
   }
 };

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { Modal } from '../Modal'
 import { Button } from '../Button'
 import { TabList } from '../TabList'
@@ -15,7 +15,12 @@ import {
   AlertCircle,
   Mail,
   MessageCircle,
-  Send
+  Send,
+  Calendar,
+  Percent,
+  Plus,
+  Trash2,
+  ShieldCheck
 } from 'lucide-react'
 import styles from './RecordPaymentModal.module.css'
 import { useNotification } from '@/contexts/NotificationContext'
@@ -35,6 +40,23 @@ const normalizeAmount = (value: string | number): number => {
 }
 
 type PaymentOption = 'generate' | 'send' | 'saved' | 'manual'
+type PaymentMode = 'single' | 'partial'
+type InstallmentValueType = 'percentage' | 'amount'
+type FirstPaymentMethod = 'cash' | 'bank_transfer' | 'deposit' | 'card'
+type RemainingFrequency = 'custom' | 'weekly' | 'biweekly' | 'monthly'
+
+interface InstallmentDraft {
+  id: string
+  type: InstallmentValueType
+  value: string
+  dueDate: string
+}
+
+interface ChannelSelection {
+  email: boolean
+  sms: boolean
+  whatsapp: boolean
+}
 
 interface RecordPaymentModalProps {
   isOpen: boolean
@@ -103,6 +125,65 @@ const defaultManualPaymentData = (): ManualPaymentData => ({
   notes: ''
 })
 
+const toDateInputValue = (date: Date) => date.toISOString().split('T')[0]
+
+const addDays = (date: Date, days: number) => {
+  const next = new Date(date)
+  next.setDate(next.getDate() + days)
+  return next
+}
+
+const addMonths = (date: Date, months: number) => {
+  const next = new Date(date)
+  next.setMonth(next.getMonth() + months)
+  return next
+}
+
+const createInstallmentId = () => `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+
+const defaultPartialInstallments = (): InstallmentDraft[] => {
+  const today = new Date()
+  return [
+    {
+      id: createInstallmentId(),
+      type: 'percentage',
+      value: '30',
+      dueDate: toDateInputValue(addMonths(today, 1))
+    },
+    {
+      id: createInstallmentId(),
+      type: 'percentage',
+      value: '30',
+      dueDate: toDateInputValue(addMonths(today, 2))
+    }
+  ]
+}
+
+const getNextDueDate = (baseDate: string, frequency: RemainingFrequency, index: number) => {
+  const base = baseDate ? new Date(`${baseDate}T00:00:00`) : new Date()
+
+  if (frequency === 'weekly') {
+    return toDateInputValue(addDays(base, 7 * index))
+  }
+
+  if (frequency === 'biweekly') {
+    return toDateInputValue(addDays(base, 14 * index))
+  }
+
+  return toDateInputValue(addMonths(base, index))
+}
+
+const resolvePartialAmount = (type: InstallmentValueType, value: string, totalAmount: number) => {
+  const parsedValue = normalizeAmount(value)
+  return type === 'percentage'
+    ? normalizeAmount(totalAmount * (parsedValue / 100))
+    : parsedValue
+}
+
+const isOfflineFirstPaymentMethod = (method: FirstPaymentMethod) => (
+  method === 'cash' || method === 'bank_transfer' || method === 'deposit'
+)
+
 export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   isOpen,
   onClose,
@@ -126,6 +207,22 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const [description, setDescription] = useState('')
   const [currency, setCurrency] = useState('MXN')
   const [includeIVA, setIncludeIVA] = useState(false)
+
+  // Partial payments
+  const [paymentMode, setPaymentMode] = useState<PaymentMode>('single')
+  const [firstPaymentEnabled, setFirstPaymentEnabled] = useState(true)
+  const [firstPaymentType, setFirstPaymentType] = useState<InstallmentValueType>('percentage')
+  const [firstPaymentValue, setFirstPaymentValue] = useState('40')
+  const [firstPaymentDate, setFirstPaymentDate] = useState(toDateInputValue(new Date()))
+  const [firstPaymentMethod, setFirstPaymentMethod] = useState<FirstPaymentMethod>('bank_transfer')
+  const [remainingAutomatic, setRemainingAutomatic] = useState(false)
+  const [remainingFrequency, setRemainingFrequency] = useState<RemainingFrequency>('monthly')
+  const [remainingInstallments, setRemainingInstallments] = useState<InstallmentDraft[]>(defaultPartialInstallments)
+  const [partialChannels, setPartialChannels] = useState<ChannelSelection>({
+    email: true,
+    sms: true,
+    whatsapp: true
+  })
 
   // Business details (required by GHL)
   const [businessName, setBusinessName] = useState('Mi Negocio')
@@ -170,6 +267,34 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
   const { showToast } = useNotification()
 
+  const subtotalAmount = useMemo(() => (
+    chargeType === 'product'
+      ? normalizeAmount(customAmount)
+      : normalizeAmount(amount)
+  ), [amount, chargeType, customAmount])
+
+  const taxAmount = includeIVA ? normalizeAmount(subtotalAmount * IVA_RATE) : 0
+  const totalAmount = includeIVA ? normalizeAmount(subtotalAmount + taxAmount) : subtotalAmount
+  const firstPaymentAmount = firstPaymentEnabled
+    ? resolvePartialAmount(firstPaymentType, firstPaymentValue, totalAmount)
+    : 0
+  const resolvedRemainingInstallments = useMemo(() => {
+    return remainingInstallments.map((installment, index) => ({
+      ...installment,
+      sequence: index + 1,
+      amount: resolvePartialAmount(installment.type, installment.value, totalAmount),
+      percentage: installment.type === 'percentage' ? normalizeAmount(installment.value) : null
+    }))
+  }, [remainingInstallments, totalAmount])
+  const remainingTotalAmount = normalizeAmount(
+    resolvedRemainingInstallments.reduce((sum, installment) => sum + installment.amount, 0)
+  )
+  const partialPlanTotal = normalizeAmount(firstPaymentAmount + remainingTotalAmount)
+  const partialPlanDifference = normalizeAmount(totalAmount - partialPlanTotal)
+  const partialNeedsCardAuthorization = paymentMode === 'partial' && remainingAutomatic && (
+    !firstPaymentEnabled || isOfflineFirstPaymentMethod(firstPaymentMethod)
+  )
+
   const resetForm = () => {
     setStep('form')
     setLoading(false)
@@ -183,6 +308,20 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     setDescription('')
     setCurrency('MXN')
     setIncludeIVA(false)
+    setPaymentMode('single')
+    setFirstPaymentEnabled(true)
+    setFirstPaymentType('percentage')
+    setFirstPaymentValue('40')
+    setFirstPaymentDate(toDateInputValue(new Date()))
+    setFirstPaymentMethod('bank_transfer')
+    setRemainingAutomatic(false)
+    setRemainingFrequency('monthly')
+    setRemainingInstallments(defaultPartialInstallments())
+    setPartialChannels({
+      email: true,
+      sms: true,
+      whatsapp: true
+    })
     setSelectedProduct(null)
     setSelectedPrice(null)
     setPrices([])
@@ -325,6 +464,15 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     }
   }, [selectedPrice])
 
+  useEffect(() => {
+    if (paymentMode !== 'partial' || remainingFrequency === 'custom') return
+
+    setRemainingInstallments(prev => prev.map((installment, index) => ({
+      ...installment,
+      dueDate: getNextDueDate(firstPaymentDate, remainingFrequency, index + 1)
+    })))
+  }, [firstPaymentDate, paymentMode, remainingFrequency])
+
   const loadProducts = async () => {
     setLoadingProducts(true)
     try {
@@ -388,6 +536,84 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const handleClearContact = () => {
     setSelectedContact(null)
     setSearchQuery('')
+  }
+
+  const updateRemainingInstallment = (id: string, updates: Partial<InstallmentDraft>) => {
+    setRemainingInstallments(prev => prev.map(installment => (
+      installment.id === id
+        ? { ...installment, ...updates }
+        : installment
+    )))
+  }
+
+  const addRemainingInstallment = () => {
+    setRemainingInstallments(prev => {
+      const nextIndex = prev.length + 1
+      return [
+        ...prev,
+        {
+          id: createInstallmentId(),
+          type: 'amount',
+          value: '',
+          dueDate: getNextDueDate(firstPaymentDate, remainingFrequency === 'custom' ? 'monthly' : remainingFrequency, nextIndex)
+        }
+      ]
+    })
+  }
+
+  const removeRemainingInstallment = (id: string) => {
+    setRemainingInstallments(prev => (
+      prev.length <= 1 ? prev : prev.filter(installment => installment.id !== id)
+    ))
+  }
+
+  const buildPartialFlowPayload = (payload: Record<string, any>, summary: InvoiceSummary) => ({
+    contact: selectedContact,
+    totalAmount: summary.amount,
+    currency: summary.currency,
+    description: summary.description,
+    invoicePayload: payload,
+    firstPayment: {
+      enabled: firstPaymentEnabled,
+      type: firstPaymentType,
+      value: normalizeAmount(firstPaymentValue),
+      amount: firstPaymentAmount,
+      date: firstPaymentDate,
+      method: firstPaymentEnabled ? firstPaymentMethod : 'none'
+    },
+    remainingAutomatic,
+    remainingFrequency,
+    remainingPayments: resolvedRemainingInstallments.map(installment => ({
+      sequence: installment.sequence,
+      type: installment.type,
+      value: normalizeAmount(installment.value),
+      amount: installment.amount,
+      percentage: installment.percentage,
+      dueDate: installment.dueDate,
+      frequency: remainingFrequency
+    })),
+    channels: partialChannels
+  })
+
+  const submitPartialFlow = async (payload: Record<string, any>, summary: InvoiceSummary) => {
+    const response = await fetch('/api/highlevel/payment-flows/installments', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(buildPartialFlowPayload(payload, summary))
+    })
+
+    const data = await response.json()
+    if (!response.ok) {
+      throw new Error(data.error || 'No se pudo crear el flujo de parcialidades')
+    }
+
+    const statusMessage = data.currentState === 'waiting_card_authorization'
+      ? 'Parcialidades creadas. El sistema esperará la autorización de tarjeta antes de activar los pagos automáticos.'
+      : 'Parcialidades creadas correctamente.'
+
+    showToast('success', 'Éxito', statusMessage)
+    onSuccess?.()
+    onClose()
   }
 
   const buildInvoicePayload = (preparedSubtotal: number, preparedTaxAmount: number, finalCurrency: string, contactName: string, items: any[], contactId: string, contactEmail: string, contactPhone: string) => {
@@ -467,6 +693,38 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       }
     }
 
+    if (paymentMode === 'partial') {
+      if (totalAmount <= 0) {
+        showToast('error', 'Ingresa un total válido para el plan')
+        return
+      }
+
+      if (firstPaymentEnabled && firstPaymentAmount <= 0) {
+        showToast('error', 'Configura un primer pago mayor a 0')
+        return
+      }
+
+      if (firstPaymentEnabled && firstPaymentAmount >= totalAmount) {
+        showToast('error', 'El primer pago debe ser menor al total cuando hay parcialidades restantes')
+        return
+      }
+
+      if (resolvedRemainingInstallments.length === 0) {
+        showToast('error', 'Agrega al menos un pago restante')
+        return
+      }
+
+      if (resolvedRemainingInstallments.some(installment => installment.amount <= 0 || !installment.dueDate)) {
+        showToast('error', 'Todos los pagos restantes necesitan monto y fecha')
+        return
+      }
+
+      if (Math.abs(partialPlanDifference) > 0.5) {
+        showToast('error', `Las parcialidades no cuadran: faltan o sobran ${formatCurrency(Math.abs(partialPlanDifference), currency)}`)
+        return
+      }
+    }
+
     try {
       setLoading(true)
 
@@ -525,8 +783,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         selectedContact.phone || ''
       )
 
-      setInvoicePayload(payload)
-      setInvoiceSummary({
+      const summary: InvoiceSummary = {
         contactId: selectedContact.id,
         contactName,
         contactEmail: selectedContact.email || '',
@@ -536,7 +793,16 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         includesTax: includeIVA,
         currency: finalCurrency,
         description: description || (chargeType === 'product' && selectedProduct ? selectedProduct.name : 'Pago')
-      })
+      }
+
+      setInvoicePayload(payload)
+      setInvoiceSummary(summary)
+
+      if (paymentMode === 'partial') {
+        setStep('processing')
+        await submitPartialFlow(payload, summary)
+        return
+      }
 
       setPaymentMethods([])
       setSelectedPaymentMethod(null)
@@ -547,7 +813,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       if (!stripeConnected) {
         setPaymentOption('manual')
       } else {
-        setPaymentOption('link')
+        setPaymentOption('generate')
       }
 
       setStep('options')
@@ -904,6 +1170,22 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           </div>
         </div>
 
+        <div className={styles.field}>
+          <label className={styles.label}>Tipo de pago</label>
+          <div style={{ marginTop: '4px' }}>
+            <TabList
+              tabs={[
+                { value: 'single', label: 'Único' },
+                { value: 'partial', label: 'Parcialidades' }
+              ]}
+              activeTab={paymentMode}
+              onTabChange={(value) => setPaymentMode(value as PaymentMode)}
+              variant="compact"
+              className={styles.fullWidthTabList}
+            />
+          </div>
+        </div>
+
         {chargeType === 'product' && (
           <>
             <div className={styles.field}>
@@ -1018,6 +1300,246 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
             />
           </div>
         </div>
+
+        {paymentMode === 'partial' && (
+          <div className={styles.partialSection}>
+            <div className={styles.partialHeader}>
+              <div>
+                <p>Plan de parcialidades</p>
+                <span>Primer pago, pagos restantes y autorización de tarjeta.</span>
+              </div>
+              <span className={styles.summaryBadge}>Parcial</span>
+            </div>
+
+            <div className={styles.partialBlock}>
+              <div className={styles.partialBlockHeader}>
+                <div className={styles.partialBlockTitle}>
+                  <DollarSign size={16} />
+                  <span>Primer pago</span>
+                </div>
+                <TabList
+                  tabs={[
+                    { value: 'yes', label: 'Con primer pago' },
+                    { value: 'no', label: 'Sin primer pago' }
+                  ]}
+                  activeTab={firstPaymentEnabled ? 'yes' : 'no'}
+                  onTabChange={(value) => setFirstPaymentEnabled(value === 'yes')}
+                  variant="compact"
+                />
+              </div>
+
+              {firstPaymentEnabled && (
+                <>
+                  <div className={styles.partialGrid}>
+                    <div className={styles.manualField}>
+                      <label>Tipo</label>
+                      <select
+                        value={firstPaymentType}
+                        onChange={(e) => setFirstPaymentType(e.target.value as InstallmentValueType)}
+                        className={styles.select}
+                      >
+                        <option value="percentage">Porcentaje</option>
+                        <option value="amount">Monto fijo</option>
+                      </select>
+                    </div>
+                    <div className={styles.manualField}>
+                      <label>{firstPaymentType === 'percentage' ? 'Porcentaje' : 'Monto'}</label>
+                      <div className={styles.amountInput}>
+                        {firstPaymentType === 'percentage'
+                          ? <Percent size={16} className={styles.dollarIcon} />
+                          : <DollarSign size={16} className={styles.dollarIcon} />}
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={firstPaymentValue}
+                          onChange={(e) => setFirstPaymentValue(e.target.value)}
+                          className={styles.input}
+                        />
+                      </div>
+                    </div>
+                    <div className={styles.manualField}>
+                      <label>Fecha</label>
+                      <div className={styles.dateInput}>
+                        <Calendar size={16} className={styles.dollarIcon} />
+                        <input
+                          type="date"
+                          value={firstPaymentDate}
+                          onChange={(e) => setFirstPaymentDate(e.target.value)}
+                          className={styles.input}
+                        />
+                      </div>
+                    </div>
+                    <div className={styles.manualField}>
+                      <label>Método</label>
+                      <select
+                        value={firstPaymentMethod}
+                        onChange={(e) => setFirstPaymentMethod(e.target.value as FirstPaymentMethod)}
+                        className={styles.select}
+                      >
+                        <option value="bank_transfer">Transferencia</option>
+                        <option value="cash">Efectivo</option>
+                        <option value="deposit">Depósito</option>
+                        <option value="card">Tarjeta / link</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div className={styles.partialAmountPreview}>
+                    <span>Primer pago calculado</span>
+                    <strong>{formatCurrency(firstPaymentAmount, currency)}</strong>
+                  </div>
+                </>
+              )}
+            </div>
+
+            <div className={styles.partialBlock}>
+              <div className={styles.partialBlockHeader}>
+                <div className={styles.partialBlockTitle}>
+                  <ShieldCheck size={16} />
+                  <span>Pagos restantes</span>
+                </div>
+                <TabList
+                  tabs={[
+                    { value: 'manual', label: 'Manuales' },
+                    { value: 'auto', label: 'Automáticos' }
+                  ]}
+                  activeTab={remainingAutomatic ? 'auto' : 'manual'}
+                  onTabChange={(value) => setRemainingAutomatic(value === 'auto')}
+                  variant="compact"
+                />
+              </div>
+
+              <div className={styles.partialGrid}>
+                <div className={styles.manualField}>
+                  <label>Frecuencia</label>
+                  <select
+                    value={remainingFrequency}
+                    onChange={(e) => setRemainingFrequency(e.target.value as RemainingFrequency)}
+                    className={styles.select}
+                  >
+                    <option value="monthly">Mensual</option>
+                    <option value="biweekly">Quincenal</option>
+                    <option value="weekly">Semanal</option>
+                    <option value="custom">Personalizada</option>
+                  </select>
+                </div>
+                <div className={styles.partialAmountPreview}>
+                  <span>Restante calculado</span>
+                  <strong>{formatCurrency(remainingTotalAmount, currency)}</strong>
+                </div>
+              </div>
+
+              <div className={styles.installmentList}>
+                {resolvedRemainingInstallments.map((installment) => (
+                  <div key={installment.id} className={styles.installmentRow}>
+                    <div className={styles.installmentSequence}>{installment.sequence}</div>
+                    <select
+                      value={installment.type}
+                      onChange={(e) => updateRemainingInstallment(installment.id, { type: e.target.value as InstallmentValueType })}
+                      className={styles.select}
+                    >
+                      <option value="percentage">%</option>
+                      <option value="amount">$</option>
+                    </select>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={installment.value}
+                      onChange={(e) => updateRemainingInstallment(installment.id, { value: e.target.value })}
+                      className={styles.input}
+                      aria-label={`Monto de parcialidad ${installment.sequence}`}
+                    />
+                    <input
+                      type="date"
+                      value={installment.dueDate}
+                      onChange={(e) => updateRemainingInstallment(installment.id, { dueDate: e.target.value })}
+                      className={styles.input}
+                      disabled={remainingFrequency !== 'custom'}
+                      aria-label={`Fecha de parcialidad ${installment.sequence}`}
+                    />
+                    <div className={styles.installmentAmount}>{formatCurrency(installment.amount, currency)}</div>
+                    <button
+                      type="button"
+                      className={styles.iconButton}
+                      onClick={() => removeRemainingInstallment(installment.id)}
+                      disabled={remainingInstallments.length <= 1}
+                      title="Eliminar parcialidad"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={addRemainingInstallment}
+              >
+                <Plus size={14} />
+                Agregar pago
+              </Button>
+            </div>
+
+            {remainingAutomatic && (
+              <div className={styles.partialBlock}>
+                <div className={styles.partialBlockTitle}>
+                  <Send size={16} />
+                  <span>Canales para el link</span>
+                </div>
+                <div className={styles.channelGrid}>
+                  <label className={`${styles.channelOption} ${partialChannels.email ? styles.channelOptionActive : ''}`}>
+                    <input
+                      type="checkbox"
+                      checked={partialChannels.email}
+                      onChange={(e) => setPartialChannels(prev => ({ ...prev, email: e.target.checked }))}
+                    />
+                    <Mail size={16} />
+                    <span>Email</span>
+                  </label>
+                  <label className={`${styles.channelOption} ${partialChannels.sms ? styles.channelOptionActive : ''}`}>
+                    <input
+                      type="checkbox"
+                      checked={partialChannels.sms}
+                      onChange={(e) => setPartialChannels(prev => ({ ...prev, sms: e.target.checked }))}
+                    />
+                    <Send size={16} />
+                    <span>SMS</span>
+                  </label>
+                  <label className={`${styles.channelOption} ${partialChannels.whatsapp ? styles.channelOptionActive : ''}`}>
+                    <input
+                      type="checkbox"
+                      checked={partialChannels.whatsapp}
+                      onChange={(e) => setPartialChannels(prev => ({ ...prev, whatsapp: e.target.checked }))}
+                    />
+                    <MessageCircle size={16} />
+                    <span>WhatsApp</span>
+                  </label>
+                </div>
+                <div className={styles.authorizationNotice}>
+                  <AlertCircle size={16} />
+                  <span>
+                    {partialNeedsCardAuthorization
+                      ? 'Se registrará el primer pago offline si aplica y se enviará un cobro separado de $25 MXN para domiciliar la tarjeta. El plan automático quedará esperando autorización.'
+                      : 'El primer pago con tarjeta autoriza la tarjeta. No se enviará cobro adicional de $25 MXN.'}
+                  </span>
+                </div>
+              </div>
+            )}
+
+            <div className={styles.partialTotals}>
+              <div>
+                <span>Total planificado</span>
+                <strong>{formatCurrency(partialPlanTotal, currency)}</strong>
+              </div>
+              <div className={Math.abs(partialPlanDifference) > 0.5 ? styles.partialDifferenceError : styles.partialDifferenceOk}>
+                <span>Diferencia</span>
+                <strong>{formatCurrency(partialPlanDifference, currency)}</strong>
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className={styles.summaryCard}>
           <div className={styles.summaryHeader}>
@@ -1432,7 +1954,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
               Preparando...
             </>
           ) : (
-            'Continuar'
+            paymentMode === 'partial' ? 'Crear parcialidades' : 'Continuar'
           )}
         </Button>
       </div>
@@ -1447,7 +1969,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       title={
         step === 'options'
           ? (stripeConnected ? 'Elige cómo cobrar' : 'Registrar pago manual')
-          : 'Registrar nuevo cobro'
+          : paymentMode === 'partial' ? 'Registrar cobro parcial' : 'Registrar nuevo cobro'
       }
       size="md"
       type="custom"
