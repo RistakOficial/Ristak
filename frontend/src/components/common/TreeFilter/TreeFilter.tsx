@@ -81,7 +81,7 @@ export function TreeFilter({
   const [isOpen, setIsOpen] = useState(false)
   const [showSearchResults, setShowSearchResults] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
-  const hoverTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Estado para rastrear la ruta en la jerarquía de ads (Platform > Campaign > Adset > Ad)
   const [hoveredAdsPath, setHoveredAdsPath] = useState<{
@@ -116,6 +116,22 @@ export function TreeFilter({
   // Construir el árbol de filtros basado en los datos disponibles
   const filterTree = useMemo<FilterNode[]>(() => {
     const tree: FilterNode[] = []
+
+    // Categoría: Conversión
+    if (availableData.conversions?.length) {
+      tree.push({
+        id: 'conversion',
+        label: 'Conversión',
+        icon: UserCheck,
+        children: availableData.conversions.map(c => ({
+          id: `conversion_${c.stage}`,
+          label: c.name,
+          field: 'conversion_stage',
+          value: c.stage,
+          count: c.count
+        }))
+      })
+    }
 
     // Categoría: Páginas
     if (availableData.pages?.length) {
@@ -238,22 +254,6 @@ export function TreeFilter({
       })
     }
 
-    // Categoría: Conversión
-    if (availableData.conversions?.length) {
-      tree.push({
-        id: 'conversion',
-        label: 'Conversión',
-        icon: UserCheck,
-        children: availableData.conversions.map(c => ({
-          id: `conversion_${c.stage}`,
-          label: c.name,
-          field: 'conversion_stage',
-          value: c.stage,
-          count: c.count
-        }))
-      })
-    }
-
     return tree
   }, [availableData])
 
@@ -310,7 +310,7 @@ export function TreeFilter({
   }, [selectedFilters])
   const filterTooltip = activeFiltersCount > 0
     ? 'Abre el panel para revisar, sumar o quitar filtros activos de analíticas.'
-    : 'Sin filtros aplicados. Abre para filtrar por páginas, anuncios, fuentes, dispositivos, navegadores, ubicaciones y conversión.'
+    : 'Sin filtros aplicados. Abre para filtrar por conversión, páginas, anuncios, fuentes, dispositivos, navegadores y ubicaciones.'
 
   // Filtrar nodos por búsqueda
   const getFilteredChildren = (node: FilterNode) => {
@@ -525,7 +525,7 @@ export function TreeFilter({
                           <span className="text-xs text-[var(--color-text-tertiary)]">({items.length})</span>
                         </div>
 
-                        {/* Lista de opciones con checkboxes */}
+                        {/* Lista de opciones */}
                         <div>
                           {items.map((item, index) => {
                             const isSelected = isNodeSelected(item)
@@ -548,29 +548,19 @@ export function TreeFilter({
                                 `}
                                 style={{ backgroundColor: !isSelected && index % 2 === 1 ? 'var(--table-row-even)' : undefined }}
                               >
-                                {/* Checkbox */}
-                                <div className={`
-                                  w-4 h-4 rounded transition-all duration-200
-                                  flex items-center justify-center flex-shrink-0
-                                  ${isSelected
-                                    ? 'bg-[var(--color-primary)] border-2 border-[var(--color-primary)]'
-                                    : 'bg-[var(--color-background-secondary)] border-2 border-[var(--color-border)] hover:border-[var(--color-primary)]'
-                                  }
-                                `}>
-                                  {isSelected && (
-                                    <Check className="w-3 h-3 stroke-[3]" style={{ color: '#ffffff' }} />
-                                  )}
-                                </div>
-
-                                {/* Label */}
                                 <span className="text-sm flex-1">{item.label}</span>
 
-                                {/* Contador */}
                                 {item.count !== undefined && (
                                   <span className="text-xs text-[var(--color-text-secondary)]">
                                     {item.count}
                                   </span>
                                 )}
+
+                                <span className="w-4 h-4 flex items-center justify-center flex-shrink-0">
+                                  {isSelected && (
+                                    <Check className="w-4 h-4 stroke-[2.5] text-[var(--color-accent)]" />
+                                  )}
+                                </span>
                               </div>
                             )
                           })}
@@ -603,7 +593,7 @@ export function TreeFilter({
                         </h3>
                       </div>
 
-                      {/* Lista de opciones con checkboxes */}
+                      {/* Lista de opciones */}
                       <div>
                         {filteredChildren.map((item, index) => {
                           const isSelected = isNodeSelected(item)
@@ -626,29 +616,19 @@ export function TreeFilter({
                               `}
                               style={{ backgroundColor: !isSelected && index % 2 === 1 ? 'var(--table-row-even)' : undefined }}
                             >
-                              {/* Checkbox */}
-                              <div className={`
-                                w-4 h-4 rounded transition-all duration-200
-                                flex items-center justify-center flex-shrink-0
-                                ${isSelected
-                                  ? 'bg-[var(--color-primary)] border-2 border-[var(--color-primary)]'
-                                  : 'bg-[var(--color-background-secondary)] border-2 border-[var(--color-border)] hover:border-[var(--color-primary)]'
-                                }
-                              `}>
-                                {isSelected && (
-                                  <Check className="w-3 h-3 stroke-[3]" style={{ color: '#ffffff' }} />
-                                )}
-                              </div>
-
-                              {/* Label */}
                               <span className="text-sm flex-1">{item.label}</span>
 
-                              {/* Contador */}
                               {item.count !== undefined && (
                                 <span className="text-xs text-[var(--color-text-secondary)]">
                                   {item.count}
                                 </span>
                               )}
+
+                              <span className="w-4 h-4 flex items-center justify-center flex-shrink-0">
+                                {isSelected && (
+                                  <Check className="w-4 h-4 stroke-[2.5] text-[var(--color-accent)]" />
+                                )}
+                              </span>
                             </div>
                           )
                         })}

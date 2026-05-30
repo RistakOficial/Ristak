@@ -231,17 +231,6 @@ export function AdHierarchyMenu({ adsHierarchy, selectedFilters, onFilterToggle,
                 `}
                 style={{ backgroundColor: !isSelected && !isHovered && index % 2 === 1 ? 'var(--table-row-even)' : undefined }}
               >
-                {/* Checkbox */}
-                <div className={`
-                  w-4 h-4 rounded transition-all duration-200 flex items-center justify-center flex-shrink-0
-                  ${isSelected
-                    ? 'bg-[var(--color-primary)] border-2 border-[var(--color-primary)]'
-                    : 'bg-[var(--color-background-secondary)] border-2 border-[var(--color-border)] hover:border-[var(--color-primary)]'
-                  }
-                `}>
-                  {isSelected && <Check className="w-3 h-3 stroke-[3]" style={{ color: '#ffffff' }} />}
-                </div>
-
                 {/* Icon */}
                 <Smartphone className="w-4 h-4 flex-shrink-0" />
 
@@ -250,6 +239,10 @@ export function AdHierarchyMenu({ adsHierarchy, selectedFilters, onFilterToggle,
 
                 {/* Count */}
                 <span className="text-xs text-[var(--color-text-secondary)]">{platform.count}</span>
+
+                <span className="w-4 h-4 flex items-center justify-center flex-shrink-0">
+                  {isSelected && <Check className="w-4 h-4 stroke-[2.5] text-[var(--color-accent)]" />}
+                </span>
 
                 {/* Arrow si tiene campañas */}
                 {platform.campaigns.length > 0 && (
@@ -288,19 +281,13 @@ export function AdHierarchyMenu({ adsHierarchy, selectedFilters, onFilterToggle,
                   `}
                   style={{ backgroundColor: !isSelected && !isHovered && index % 2 === 1 ? 'var(--table-row-even)' : undefined }}
                 >
-                  <div className={`
-                    w-4 h-4 rounded transition-all duration-200 flex items-center justify-center flex-shrink-0
-                    ${isSelected
-                      ? 'bg-[var(--color-primary)] border-2 border-[var(--color-primary)]'
-                      : 'bg-[var(--color-background-secondary)] border-2 border-[var(--color-border)] hover:border-[var(--color-primary)]'
-                    }
-                  `}>
-                    {isSelected && <Check className="w-3 h-3 stroke-[3]" style={{ color: '#ffffff' }} />}
-                  </div>
-
                   <Target className="w-4 h-4 flex-shrink-0" />
                   <span className="text-sm flex-1">{campaign.name}</span>
                   <span className="text-xs text-[var(--color-text-secondary)]">{campaign.count}</span>
+
+                  <span className="w-4 h-4 flex items-center justify-center flex-shrink-0">
+                    {isSelected && <Check className="w-4 h-4 stroke-[2.5] text-[var(--color-accent)]" />}
+                  </span>
 
                   {campaign.adsets.length > 0 && (
                     <ChevronRight className="w-3 h-3 text-[var(--color-text-secondary)]" />
@@ -339,19 +326,13 @@ export function AdHierarchyMenu({ adsHierarchy, selectedFilters, onFilterToggle,
                   `}
                   style={{ backgroundColor: !isSelected && !isHovered && index % 2 === 1 ? 'var(--table-row-even)' : undefined }}
                 >
-                  <div className={`
-                    w-4 h-4 rounded transition-all duration-200 flex items-center justify-center flex-shrink-0
-                    ${isSelected
-                      ? 'bg-[var(--color-primary)] border-2 border-[var(--color-primary)]'
-                      : 'bg-[var(--color-background-secondary)] border-2 border-[var(--color-border)] hover:border-[var(--color-primary)]'
-                    }
-                  `}>
-                    {isSelected && <Check className="w-3 h-3 stroke-[3]" style={{ color: '#ffffff' }} />}
-                  </div>
-
                   <Layers className="w-4 h-4 flex-shrink-0" />
                   <span className="text-sm flex-1">{adset.name}</span>
                   <span className="text-xs text-[var(--color-text-secondary)]">{adset.count}</span>
+
+                  <span className="w-4 h-4 flex items-center justify-center flex-shrink-0">
+                    {isSelected && <Check className="w-4 h-4 stroke-[2.5] text-[var(--color-accent)]" />}
+                  </span>
 
                   {adset.ads.length > 0 && (
                     <ChevronRight className="w-3 h-3 text-[var(--color-text-secondary)]" />
@@ -386,19 +367,13 @@ export function AdHierarchyMenu({ adsHierarchy, selectedFilters, onFilterToggle,
                   `}
                   style={{ backgroundColor: !isSelected && index % 2 === 1 ? 'var(--table-row-even)' : undefined }}
                 >
-                  <div className={`
-                    w-4 h-4 rounded transition-all duration-200 flex items-center justify-center flex-shrink-0
-                    ${isSelected
-                      ? 'bg-[var(--color-primary)] border-2 border-[var(--color-primary)]'
-                      : 'bg-[var(--color-background-secondary)] border-2 border-[var(--color-border)] hover:border-[var(--color-primary)]'
-                    }
-                  `}>
-                    {isSelected && <Check className="w-3 h-3 stroke-[3]" style={{ color: '#ffffff' }} />}
-                  </div>
-
                   <ImageIcon className="w-4 h-4 flex-shrink-0" />
                   <span className="text-sm flex-1">{ad.name}</span>
                   <span className="text-xs text-[var(--color-text-secondary)]">{ad.count}</span>
+
+                  <span className="w-4 h-4 flex items-center justify-center flex-shrink-0">
+                    {isSelected && <Check className="w-4 h-4 stroke-[2.5] text-[var(--color-accent)]" />}
+                  </span>
                 </div>
               )
             })}
