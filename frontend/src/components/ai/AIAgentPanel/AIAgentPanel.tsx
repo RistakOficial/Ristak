@@ -2,12 +2,10 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { ArrowUp, Bot, Eraser, KeyRound, MessageCircle, Mic, Pause, SendHorizonal, Sparkles, X } from 'lucide-react'
 import { aiAgentService, type AIAgentClarificationOption, type AIAgentConfigInput, type AIAgentConfigStatus, type AIAgentMessage, type AIAgentViewContext } from '@/services/aiAgentService'
-import { highLevelService } from '@/services/highLevelService'
 import styles from './AIAgentPanel.module.css'
 
 const AI_AGENT_FLOATING_OPEN_KEY = 'ristak.aiAgentFloating.open'
 const LEGACY_AI_AGENT_MESSAGES_KEY = 'ristak.aiAgentFloating.messages'
-const PAYMENT_CONFIG_CHANGED_EVENT = 'ristak-payment-config-changed'
 const VOICE_WAVE_BAR_COUNT = 128
 const VOICE_WAVE_MIN_HEIGHT = 4
 const VOICE_WAVE_MAX_HEIGHT = 30
@@ -651,7 +649,6 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
   const embedded = variant === 'embedded'
   const [open, setOpen] = useState(() => embedded || getStoredOpenState())
   const [status, setStatus] = useState<AIAgentConfigStatus>(emptyStatus)
-  const [paymentMode, setPaymentMode] = useState<'live' | 'test'>('live')
   const [form, setForm] = useState<AIAgentConfigInput>(emptyForm)
   const [messages, setMessages] = useState<AIAgentMessage[]>([])
   const [input, setInput] = useState('')
@@ -689,7 +686,6 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
   const voiceIsActive = voiceState !== 'idle'
   const formattedVoiceElapsed = useMemo(() => formatVoiceDuration(voiceElapsed), [voiceElapsed])
   const visible = embedded || open
-  const paymentTestMode = paymentMode === 'test'
 
   const focusComposer = () => {
     window.requestAnimationFrame(() => textareaRef.current?.focus())
@@ -732,19 +728,9 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
     }
   }
 
-  const loadPaymentMode = async () => {
-    try {
-      const config = await highLevelService.getConfig()
-      setPaymentMode(config.ghlInvoiceMode === 'test' ? 'test' : 'live')
-    } catch {
-      setPaymentMode('live')
-    }
-  }
-
   useEffect(() => {
     clearLegacyStoredMessages()
     loadStatus()
-    loadPaymentMode()
 
     const handleConfigChange = (event: Event) => {
       const customEvent = event as CustomEvent<AIAgentConfigStatus>
@@ -756,19 +742,11 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
     }
 
     window.addEventListener('ai-agent-config-changed', handleConfigChange)
-    window.addEventListener(PAYMENT_CONFIG_CHANGED_EVENT, loadPaymentMode)
 
     return () => {
       window.removeEventListener('ai-agent-config-changed', handleConfigChange)
-      window.removeEventListener(PAYMENT_CONFIG_CHANGED_EVENT, loadPaymentMode)
     }
   }, [])
-
-  useEffect(() => {
-    if (visible) {
-      loadPaymentMode()
-    }
-  }, [visible])
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
@@ -1227,12 +1205,9 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
   }
 
   const floatingButtonClassName = `${styles.floatingButton} ${unreadReplies ? styles.floatingButtonUnread : ''}`
-  const closedButtonBaseLabel = unreadReplies
+  const closedButtonLabel = unreadReplies
     ? `Abrir agente AI, ${unreadReplies} respuesta nueva`
     : 'Abrir agente AI'
-  const closedButtonLabel = paymentTestMode
-    ? `${closedButtonBaseLabel}. Modo prueba activo para pagos`
-    : closedButtonBaseLabel
   const rootClassName = embedded ? styles.embeddedRoot : styles.floatingRoot
   const windowClassName = embedded ? `${styles.window} ${styles.embeddedWindow}` : styles.window
 
@@ -1250,12 +1225,6 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
                 <div className={styles.subtitle}>
                   <span className={status.configured ? styles.statusDot : styles.statusDotMuted} />
                   <span>{status.configured ? 'Conectado a OpenAI' : 'Configúralo aquí mismo'}</span>
-                  {paymentTestMode && (
-                    <span className={styles.paymentModeBadge} title="Los pagos del agente se ejecutan en modo prueba">
-                      <span className={styles.paymentModeBadgeDot} />
-                      Modo prueba
-                    </span>
-                  )}
                 </div>
               </div>
             </div>
@@ -1317,13 +1286,6 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
             <div className={styles.contextNotice}>
               <Sparkles size={15} />
               Falta contexto del negocio. Respóndeme estas preguntas y lo guardaré automáticamente en Configuración.
-            </div>
-          )}
-
-          {status.configured && paymentTestMode && (
-            <div className={styles.paymentModeNotice} role="status">
-              <span className={styles.paymentModeNoticeDot} />
-              Modo prueba activo. Si registras pagos desde aquí, el agente los hará en prueba.
             </div>
           )}
 
@@ -1499,13 +1461,6 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
           <>
             <MessageCircle size={18} />
             <span className={styles.floatingButtonLabel}>Chat AI</span>
-            {paymentTestMode && (
-              <span
-                className={styles.floatingPaymentModeDot}
-                title="Modo prueba activo para pagos"
-                aria-hidden="true"
-              />
-            )}
             {unreadReplies > 0 && (
               <span className={styles.unreadIndicator} aria-hidden="true">
                 <span className={styles.unreadDot} />
