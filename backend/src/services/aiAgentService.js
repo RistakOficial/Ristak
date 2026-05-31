@@ -641,6 +641,36 @@ function assistantAskedForExecutionConfirmation(previousAssistantText, contextPa
   return askedForConfirmation && (!contextPattern || contextPattern.test(normalized))
 }
 
+function isPaymentContextText(value) {
+  const normalized = normalizeText(value)
+  return /(pago|cobr|invoice|factura|tarjeta|domicili|payment_flow|payment_live_mode|confirmas que quieres|link de pago|parcialidad|plan de pagos|mxn)/.test(normalized)
+}
+
+function isExplicitNonPaymentTopicSwitchText(value) {
+  const normalized = normalizeText(value)
+  if (!normalized) return false
+
+  const mentionsPayment = /(pago|cobr|invoice|factura|tarjeta|domicili|link de pago|parcialidad|plan de pagos|mxn|\$\s*\d)/.test(normalized)
+  const mentionsMetaOrCampaigns = isMetaAdsEntityRequest(normalized) ||
+    /(campan|anunci|publicidad|facebook|instagram|roas|rentab)/.test(normalized)
+  const mentionsOtherCrmDomain = /(workflow|flujo|automatizacion|automatización|cita|calendario|appointment|oportunidad|pipeline|mensaje|conversacion|conversación|producto|precio|contacto|cliente|lead|campo personalizado|custom field|mercado|competidor|noticia|internet)/.test(normalized)
+
+  if (!mentionsMetaOrCampaigns && !mentionsOtherCrmDomain) return false
+
+  const strongSwitchCue = /(cambiando de tema|otra cosa|por cierto|aprovechando|se me ocurrio|se me ocurrió|hablando de|y de)/.test(normalized)
+  const weakSwitchCue = /(ahora|oye|tambien|también)/.test(normalized)
+  const directTask = /(cual|cuál|cuanto|cuánto|cuantos|cuántos|dame|muestra|busca|revisa|analiza|cambia|actualiza|modifica|mete|saca|crea|agenda|manda|envia|envía|haz|hacer)/.test(normalized)
+  const hardNonPaymentTask = /(workflow|flujo|automatizacion|automatización|oportunidad|pipeline|mensaje|conversacion|conversación|mercado|competidor|noticia|internet|cita|calendario|appointment|contacto|cliente|lead|campo personalizado|custom field).*(busca|revisa|analiza|cambia|actualiza|modifica|mete|saca|crea|agenda|manda|envia|envía|haz|hacer)|(?:busca|revisa|analiza|cambia|actualiza|modifica|mete|saca|crea|agenda|manda|envia|envía|haz|hacer).*(workflow|flujo|automatizacion|automatización|oportunidad|pipeline|mensaje|conversacion|conversación|mercado|competidor|noticia|internet|cita|calendario|appointment|contacto|cliente|lead|campo personalizado|custom field)/.test(normalized)
+  const paymentContinuationCue = mentionsPayment ||
+    /(link|email|correo|sms|whatsapp|metodo|método|fecha|monto|concepto|mensual|semanal|quincenal|mismo dia|mismo día|ultimo dia|último día|fin de mes)/.test(normalized)
+
+  if (paymentContinuationCue && !mentionsMetaOrCampaigns && !strongSwitchCue && !hardNonPaymentTask) {
+    return false
+  }
+
+  return strongSwitchCue || weakSwitchCue || directTask || mentionsMetaOrCampaigns
+}
+
 function hasUserConfirmedExecution(messages, { contextPattern } = {}) {
   const latestUserIndex = findLatestUserMessageIndex(messages)
   if (latestUserIndex < 0) return false
@@ -663,6 +693,10 @@ function isConversationalFollowUp(messages) {
   const previousAssistantText = normalizeText(getPreviousAssistantMessageText(messages, latestUserIndex))
 
   if (!latestUserText || !previousAssistantText || latestUserText.length > 140) return false
+
+  if (isPaymentContextText(previousAssistantText) && isExplicitNonPaymentTopicSwitchText(latestUserText)) {
+    return false
+  }
 
   if (isAffirmativeExecutionIntent(latestUserText) && assistantAskedForExecutionConfirmation(previousAssistantText)) {
     return true
@@ -5430,8 +5464,10 @@ function isPaymentConversationContinuation(messages) {
   if (latestUserIndex < 0 || !hasPreviousPaymentContext(messages)) return false
 
   const latestUserText = normalizeText(getMessageText(messages[latestUserIndex]))
+  if (isExplicitNonPaymentTopicSwitchText(latestUserText)) return false
+
   return isConversationalFollowUp(messages) ||
-    /(cobr|pago|program|agenda|fecha|dia|día|mismo|ajust|ultimo dia|último día|fin de mes|concepto|descripcion|descripción|prueba|test|modo|confirm|autoriz|ejecut|guardad|junio|julio|agosto|septiembre|octubre|noviembre|diciembre|enero|febrero|marzo|abril|mayo|domicili|tarjeta|link|transfer|deposit|efectivo|parcial|difer|mensual|semanal|\b\d{1,2}\b)/.test(latestUserText)
+    /(cobr|pago|program|agenda|fecha|dia|día|mismo|ajust|ultimo dia|último día|fin de mes|concepto|descripcion|descripción|prueba|test|modo|confirm|autoriz|ejecut|guardad|junio|julio|agosto|septiembre|octubre|noviembre|diciembre|enero|febrero|marzo|abril|mayo|domicili|tarjeta|link|email|correo|sms|whatsapp|mandalo|mándalo|envialo|envíalo|transfer|deposit|efectivo|parcial|difer|mensual|semanal|\b\d{1,2}\b)/.test(latestUserText)
 }
 
 function shouldForcePaymentConversationRoute(messages) {
@@ -5442,6 +5478,8 @@ function shouldForcePaymentConversationRoute(messages) {
   if (latestUserIndex < 0) return false
 
   const latestUserText = normalizeText(getMessageText(messages[latestUserIndex]))
+  if (isExplicitNonPaymentTopicSwitchText(latestUserText)) return false
+
   return isAffirmativeExecutionIntent(latestUserText)
 }
 
@@ -5465,7 +5503,7 @@ function forcePaymentConversationRoute(route = {}, messages = []) {
     metaAdsOperationalIntent: false,
     skipLocalShortcuts: true,
     confidence: 0.98,
-    reason: 'Continuación de conversación de pagos; se conserva el hilo y se bloquea routing a Meta/contact lookup.'
+    reason: 'Continuación real de conversación de pagos; se conserva el hilo sin impedir cambios explícitos de tema.'
   }, {
     domain: 'payments',
     action,
@@ -8775,6 +8813,12 @@ export async function createAgentReply({ apiKey, messages, viewContext }) {
     viewContext: viewContext || {},
     runtimeContext
   })
+  if (supervisorRoute.domain === 'payments' && isExplicitNonPaymentTopicSwitchText(latestUserMessage)) {
+    supervisorRoute = {
+      ...buildLocalSupervisorRoute(messages),
+      reason: 'El último mensaje cambió explícitamente de tema; se priorizó la intención nueva sobre el hilo de pagos.'
+    }
+  }
   supervisorRoute = forcePaymentConversationRoute(supervisorRoute, messages)
   const metaAdsBusinessMetricIntent = isMetaAdsBusinessMetricRequest(latestUserMessage)
   const metaAdsMutationIntent = isMetaAdsMutationVerb(latestUserMessage)
