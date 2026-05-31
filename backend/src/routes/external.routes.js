@@ -26,6 +26,7 @@ import {
   getTransactions
 } from '../controllers/transactionsController.js'
 import { requireApiToken } from '../middleware/apiTokenMiddleware.js'
+import { getExternalApiAppId } from '../utils/apiTokens.js'
 
 const router = express.Router()
 
@@ -35,16 +36,19 @@ function getRequestOrigin(req) {
   return host ? `${proto}://${host}` : ''
 }
 
-function getOpenApiSpec(req, res) {
-  const origin = getRequestOrigin(req)
+async function getOpenApiSpec(req, res) {
+  try {
+    const origin = getRequestOrigin(req)
+    const appId = await getExternalApiAppId()
 
-  res.json({
+    res.json({
     openapi: '3.1.0',
     info: {
       title: 'Ristak External API',
       version: '1.0.0',
-      description: 'API autenticada para consultar datos de Ristak desde ChatGPT u otros clientes autorizados.'
+      description: 'API autenticada para consultar datos de Ristak desde sistemas externos autorizados.'
     },
+    'x-ristak-app-id': appId,
     servers: origin ? [{ url: origin }] : undefined,
     components: {
       securitySchemes: {
@@ -282,18 +286,32 @@ function getOpenApiSpec(req, res) {
         }
       }
     }
-  })
+    })
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: 'No se pudo generar el schema OpenAPI'
+    })
+  }
 }
 
 router.get('/openapi.json', getOpenApiSpec)
 
 router.use(requireApiToken)
 
-router.get('/me', (req, res) => {
-  res.json({
-    success: true,
-    user: req.apiUser
-  })
+router.get('/me', async (req, res) => {
+  try {
+    res.json({
+      success: true,
+      appId: await getExternalApiAppId(),
+      user: req.apiUser
+    })
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: 'No se pudo obtener el usuario autenticado'
+    })
+  }
 })
 
 router.get('/dashboard/metrics', getDashboardMetrics)

@@ -1,6 +1,6 @@
 import React from 'react'
 import { Routes, Route, Navigate, NavLink } from 'react-router-dom'
-import { Send, CreditCard, Activity, Calendar, UserCircle, TrendingDown, Bot } from 'lucide-react'
+import { Send, CreditCard, Activity, Calendar, UserCircle, TrendingDown, Bot, KeyRound } from 'lucide-react'
 import { HighLevelIntegration } from './HighLevelIntegration'
 import { Costs } from './Costs'
 import { PaymentsConfiguration } from './PaymentsConfiguration'
@@ -9,6 +9,7 @@ import { WebTracking } from './WebTracking'
 import { CalendarsConfiguration } from './CalendarsConfiguration'
 import { AccountSettings } from './AccountSettings'
 import { AIAgentSettings } from './AIAgentSettings'
+import { APIAccessSettings } from './APIAccessSettings'
 import { useTheme } from '@/contexts/ThemeContext'
 import styles from './Settings.module.css'
 
@@ -79,6 +80,13 @@ export const Settings: React.FC = () => {
           <span>Agente AI</span>
         </NavLink>
         <NavLink
+          to="/settings/api-access"
+          className={({ isActive }) => `${styles.tab} ${isActive ? styles.tabActive : ''}`}
+        >
+          <KeyRound size={18} />
+          <span>Acceso API</span>
+        </NavLink>
+        <NavLink
           to="/settings/account"
           className={({ isActive }) => `${styles.tab} ${isActive ? styles.tabActive : ''}`}
         >
@@ -97,6 +105,7 @@ export const Settings: React.FC = () => {
           <Route path="tracking" element={<WebTracking />} />
           <Route path="payments" element={<PaymentsConfiguration />} />
           <Route path="ai-agent" element={<AIAgentSettings />} />
+          <Route path="api-access" element={<APIAccessSettings />} />
           <Route path="account" element={<AccountSettings />} />
         </Routes>
       </div>

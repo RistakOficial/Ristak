@@ -2,6 +2,7 @@ import { db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 import { hashPassword, verifyPassword, generateToken } from '../utils/auth.js'
 import {
+  getExternalApiAppId,
   getApiTokenMetadataForUser,
   revokeApiTokenForUser,
   rotateApiTokenForUser
@@ -72,11 +73,17 @@ export async function login(req, res) {
 
     logger.success(`✅ Login exitoso: ${username}`)
 
+    const [apiTokenMetadata, appId] = await Promise.all([
+      getApiTokenMetadataForUser(user.id),
+      getExternalApiAppId()
+    ])
+
     res.json({
       success: true,
       message: 'Login exitoso',
       token,
-      apiTokenMetadata: await getApiTokenMetadataForUser(user.id),
+      appId,
+      apiTokenMetadata,
       user: {
         id: user.id,
         username: user.username,
@@ -291,10 +298,14 @@ export async function getMe(req, res) {
  */
 export async function getApiToken(req, res) {
   try {
-    const metadata = await getApiTokenMetadataForUser(req.user.userId)
+    const [metadata, appId] = await Promise.all([
+      getApiTokenMetadataForUser(req.user.userId),
+      getExternalApiAppId()
+    ])
 
     res.json({
       success: true,
+      appId,
       apiToken: metadata
     })
   } catch (error) {
@@ -313,12 +324,14 @@ export async function getApiToken(req, res) {
 export async function rotateApiToken(req, res) {
   try {
     const { token, metadata } = await rotateApiTokenForUser(req.user.userId)
+    const appId = await getExternalApiAppId()
 
     logger.success(`✅ API token rotado para usuario ID: ${req.user.userId}`)
 
     res.json({
       success: true,
       message: 'API token generado exitosamente',
+      appId,
       apiToken: token,
       apiTokenMetadata: metadata
     })
@@ -338,12 +351,14 @@ export async function rotateApiToken(req, res) {
 export async function revokeApiToken(req, res) {
   try {
     const metadata = await revokeApiTokenForUser(req.user.userId)
+    const appId = await getExternalApiAppId()
 
     logger.success(`✅ API token revocado para usuario ID: ${req.user.userId}`)
 
     res.json({
       success: true,
       message: 'API token revocado exitosamente',
+      appId,
       apiToken: metadata
     })
   } catch (error) {
@@ -512,7 +527,10 @@ export async function setup(req, res) {
       throw new Error('No se pudo resolver el ID del usuario creado')
     }
 
-    const { token: apiToken, metadata: apiTokenMetadata } = await rotateApiTokenForUser(userId)
+    const [{ token: apiToken, metadata: apiTokenMetadata }, appId] = await Promise.all([
+      rotateApiTokenForUser(userId),
+      getExternalApiAppId()
+    ])
 
     // Generar token JWT
     const token = generateToken({
@@ -528,6 +546,7 @@ export async function setup(req, res) {
       success: true,
       message: 'Usuario creado exitosamente',
       token,
+      appId,
       apiToken,
       apiTokenMetadata,
       user: {

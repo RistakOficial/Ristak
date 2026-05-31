@@ -3,7 +3,10 @@ import { db } from '../config/database.js'
 import { logger } from './logger.js'
 
 export const API_TOKEN_PREFIX = 'ristak_live_'
+export const API_APP_ID_PREFIX = 'app_'
 const API_TOKEN_RANDOM_BYTES = 32
+const API_APP_ID_RANDOM_BYTES = 16
+const API_APP_ID_CONFIG_KEY = 'external_api_app_id'
 
 export function generateApiToken() {
   return `${API_TOKEN_PREFIX}${crypto.randomBytes(API_TOKEN_RANDOM_BYTES).toString('base64url')}`
@@ -11,6 +14,35 @@ export function generateApiToken() {
 
 export function hashApiToken(token) {
   return crypto.createHash('sha256').update(String(token), 'utf8').digest('hex')
+}
+
+export async function getExternalApiAppId() {
+  const existing = await db.get(
+    'SELECT config_value FROM app_config WHERE config_key = ?',
+    [API_APP_ID_CONFIG_KEY]
+  )
+
+  if (existing?.config_value) {
+    return existing.config_value
+  }
+
+  const appId = `${API_APP_ID_PREFIX}${crypto.randomBytes(API_APP_ID_RANDOM_BYTES).toString('base64url')}`
+
+  await db.run(
+    `INSERT INTO app_config (config_key, config_value, updated_at)
+     VALUES (?, ?, CURRENT_TIMESTAMP)
+     ON CONFLICT(config_key) DO UPDATE SET
+       config_value = COALESCE(app_config.config_value, excluded.config_value),
+       updated_at = CURRENT_TIMESTAMP`,
+    [API_APP_ID_CONFIG_KEY, appId]
+  )
+
+  const stored = await db.get(
+    'SELECT config_value FROM app_config WHERE config_key = ?',
+    [API_APP_ID_CONFIG_KEY]
+  )
+
+  return stored?.config_value || appId
 }
 
 function buildMetadata(row) {

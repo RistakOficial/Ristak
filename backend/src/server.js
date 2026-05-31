@@ -33,6 +33,7 @@ import configRoutes from './routes/config.routes.js'
 import costsRoutes from './routes/costs.routes.js'
 import maintenanceRoutes from './routes/maintenance.routes.js'
 import authRoutes from './routes/auth.routes.js'
+import apiAccessRoutes from './routes/apiAccess.routes.js'
 import hiddenContactsRoutes from './routes/hiddenContacts.routes.js'
 import aiAgentRoutes from './routes/aiAgent.routes.js'
 import searchRoutes from './routes/search.routes.js'
@@ -63,6 +64,7 @@ app.get('/api/health', (req, res) => {
 
 // API Routes
 app.use('/api/auth', authRoutes)
+app.use('/api/api-access', apiAccessRoutes)
 app.use('/api/reports', reportsRoutes)
 app.use('/api/highlevel', highlevelRoutes)
 app.use('/api/meta', metaRoutes)
