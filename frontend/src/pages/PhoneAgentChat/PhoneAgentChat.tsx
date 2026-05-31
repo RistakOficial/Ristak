@@ -7,6 +7,7 @@ import styles from './PhoneAgentChat.module.css'
 const PORTABLE_WIDTH_QUERY = '(max-width: 1366px)'
 const COARSE_POINTER_QUERY = '(pointer: coarse)'
 const MOBILE_OR_TABLET_USER_AGENT_PATTERN = /Android|iPad|iPhone|iPod|IEMobile|Opera Mini|Mobile|Tablet/i
+const SCROLLABLE_CHAT_SELECTOR = '[data-ai-agent-scrollable="true"], textarea'
 
 type AccessState = 'checking' | 'allowed' | 'blocked'
 
@@ -52,6 +53,81 @@ export const PhoneAgentChat: React.FC = () => {
       window.visualViewport?.removeEventListener('resize', updateAccess)
     }
   }, [])
+
+  useEffect(() => {
+    if (accessState !== 'allowed') return
+
+    const html = document.documentElement
+    const body = document.body
+    const viewportMeta = document.querySelector<HTMLMetaElement>('meta[name="viewport"]')
+    const previousViewportContent = viewportMeta?.getAttribute('content') || ''
+    const previousHtmlOverflow = html.style.overflow
+    const previousHtmlHeight = html.style.height
+    const previousHtmlOverscroll = html.style.overscrollBehavior
+    const previousBodyOverflow = body.style.overflow
+    const previousBodyHeight = body.style.height
+    const previousBodyOverscroll = body.style.overscrollBehavior
+    let startY = 0
+
+    if (viewportMeta && !previousViewportContent.includes('viewport-fit=cover')) {
+      viewportMeta.setAttribute('content', `${previousViewportContent}, viewport-fit=cover`)
+    }
+
+    html.style.overflow = 'hidden'
+    html.style.height = '100%'
+    html.style.overscrollBehavior = 'none'
+    body.style.overflow = 'hidden'
+    body.style.height = '100%'
+    body.style.overscrollBehavior = 'none'
+
+    const getScrollableElement = (target: EventTarget | null) => {
+      if (!(target instanceof Element)) return null
+      const scrollable = target.closest(SCROLLABLE_CHAT_SELECTOR)
+      return scrollable instanceof HTMLElement ? scrollable : null
+    }
+
+    const handleTouchStart = (event: TouchEvent) => {
+      startY = event.touches[0]?.clientY || 0
+    }
+
+    const handleTouchMove = (event: TouchEvent) => {
+      const scrollable = getScrollableElement(event.target)
+
+      if (!scrollable) {
+        event.preventDefault()
+        return
+      }
+
+      const currentY = event.touches[0]?.clientY || startY
+      const deltaY = currentY - startY
+      const canScroll = scrollable.scrollHeight > scrollable.clientHeight + 1
+      const atTop = scrollable.scrollTop <= 0
+      const atBottom = scrollable.scrollTop + scrollable.clientHeight >= scrollable.scrollHeight - 1
+
+      if (!canScroll || (atTop && deltaY > 0) || (atBottom && deltaY < 0)) {
+        event.preventDefault()
+      }
+    }
+
+    window.addEventListener('touchstart', handleTouchStart, { passive: false })
+    window.addEventListener('touchmove', handleTouchMove, { passive: false })
+
+    return () => {
+      window.removeEventListener('touchstart', handleTouchStart)
+      window.removeEventListener('touchmove', handleTouchMove)
+
+      if (viewportMeta) {
+        viewportMeta.setAttribute('content', previousViewportContent)
+      }
+
+      html.style.overflow = previousHtmlOverflow
+      html.style.height = previousHtmlHeight
+      html.style.overscrollBehavior = previousHtmlOverscroll
+      body.style.overflow = previousBodyOverflow
+      body.style.height = previousBodyHeight
+      body.style.overscrollBehavior = previousBodyOverscroll
+    }
+  }, [accessState])
 
   if (accessState === 'checking') {
     return (

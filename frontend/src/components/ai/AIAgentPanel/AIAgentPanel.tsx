@@ -1327,7 +1327,7 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
             </div>
           )}
 
-          <div className={styles.body}>
+          <div className={styles.body} data-ai-agent-scrollable="true">
             {messages.length === 0 ? (
               <div className={styles.empty}>
                 <p className={styles.emptyText}>
