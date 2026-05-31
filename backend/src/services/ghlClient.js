@@ -547,6 +547,43 @@ class GHLClient {
     })
   }
 
+  async cancelInvoiceSchedule(scheduleId, data = {}) {
+    if (!scheduleId) {
+      throw new Error('scheduleId requerido para cancelar schedule')
+    }
+
+    const body = {
+      ...data,
+      altId: this.locationId,
+      altType: 'location'
+    }
+
+    logger.info(`Cancelando invoice schedule: ${scheduleId}`)
+
+    return this.request(`/invoices/schedule/${scheduleId}/cancel`, {
+      method: 'POST',
+      body,
+      version: GHL_INVOICE_SCHEDULE_API_VERSION
+    })
+  }
+
+  async deleteInvoiceSchedule(scheduleId) {
+    if (!scheduleId) {
+      throw new Error('scheduleId requerido para eliminar schedule')
+    }
+
+    logger.info(`Eliminando invoice schedule: ${scheduleId}`)
+
+    return this.request(`/invoices/schedule/${scheduleId}`, {
+      method: 'DELETE',
+      params: {
+        altId: this.locationId,
+        altType: 'location'
+      },
+      version: GHL_INVOICE_SCHEDULE_API_VERSION
+    })
+  }
+
   async listInvoiceSchedules({ limit = 100, offset = 0 } = {}) {
     return this.request('/invoices/schedule', {
       params: {

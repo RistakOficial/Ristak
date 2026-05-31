@@ -162,6 +162,14 @@ export const transactionsService = {
     return data
   },
 
+  async actionPaymentPlan(id: string, action: string, payload: Record<string, any> = {}): Promise<PaymentPlan> {
+    const data = await apiClient.post<PaymentPlan>(`/highlevel/invoices/schedules/${id}/action`, {
+      action,
+      payload
+    })
+    return data
+  },
+
   calculateDelta(current: number, previous: number): number {
     if (previous === 0) return current > 0 ? 100 : 0
     return ((current - previous) / previous) * 100

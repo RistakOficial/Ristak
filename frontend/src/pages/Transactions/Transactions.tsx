@@ -22,6 +22,9 @@ import {
   Send,
   Mail,
   MessageCircle,
+  PauseCircle,
+  PlayCircle,
+  Ban,
   X
 } from 'lucide-react'
 import { useDateRange } from '@/contexts/DateRangeContext'
@@ -237,6 +240,7 @@ export const Transactions: React.FC = () => {
   const [summary, setSummary] = useState<TransactionSummary | null>(null)
   const [loading, setLoading] = useState(false)
   const [paymentPlansLoading, setPaymentPlansLoading] = useState(false)
+  const [paymentPlanActionId, setPaymentPlanActionId] = useState<string | null>(null)
   const [syncing, setSyncing] = useState(false)
   const [modal, setModal] = useState<ModalData>({ type: null, selectedContact: null })
   const [paymentPlanModal, setPaymentPlanModal] = useState<PaymentPlanModalData>({
@@ -486,6 +490,72 @@ export const Transactions: React.FC = () => {
       setPaymentPlanModal(prev => ({ ...prev, saving: false }))
       showToast('error', 'No se pudo guardar el plan', error?.message || 'HighLevel rechazó la actualización del plan de pago.')
     }
+  }
+
+  const updatePaymentPlanInState = (updatedPlan: PaymentPlan) => {
+    setPaymentPlans(prev => prev.map(plan => plan.id === updatedPlan.id ? updatedPlan : plan))
+    setPaymentPlanModal(prev => {
+      if (!prev.plan || prev.plan.id !== updatedPlan.id) return prev
+
+      return {
+        ...prev,
+        plan: updatedPlan,
+        rawJson: JSON.stringify(getPlanPayload(updatedPlan), null, 2)
+      }
+    })
+  }
+
+  const runPaymentPlanAction = async (
+    plan: PaymentPlan,
+    action: 'activate' | 'pause' | 'cancel' | 'delete',
+    successTitle: string,
+    successMessage: string
+  ) => {
+    const actionId = `${plan.id}:${action}`
+    setPaymentPlanActionId(actionId)
+
+    try {
+      const updatedPlan = await transactionsService.actionPaymentPlan(plan.id, action)
+      updatePaymentPlanInState(updatedPlan)
+      showToast('success', successTitle, successMessage)
+      fetchPaymentPlans()
+    } catch (error: any) {
+      showToast('error', 'No se pudo actualizar el plan', error?.message || 'HighLevel rechazó la acción para esta factura recurrente.')
+    } finally {
+      setPaymentPlanActionId(null)
+    }
+  }
+
+  const handlePaymentPlanAction = (
+    plan: PaymentPlan,
+    action: 'activate' | 'pause' | 'cancel' | 'delete'
+  ) => {
+    const planName = plan.name || plan.title || 'este plan de pago'
+
+    if (action === 'cancel') {
+      showConfirm(
+        'Cancelar plan de pago',
+        `¿Seguro que quieres cancelar ${planName}? HighLevel dejará de generar esta factura recurrente.`,
+        () => runPaymentPlanAction(plan, action, 'Plan cancelado', 'La factura recurrente quedó cancelada en HighLevel y se actualizó localmente.')
+      )
+      return
+    }
+
+    if (action === 'delete') {
+      showConfirm(
+        'Eliminar plan de pago',
+        `¿Seguro que quieres eliminar ${planName}? Esta acción borra el schedule en HighLevel y lo marca como eliminado en la base local.`,
+        () => runPaymentPlanAction(plan, action, 'Plan eliminado', 'La factura recurrente se eliminó en HighLevel y quedó marcada como eliminada localmente.')
+      )
+      return
+    }
+
+    if (action === 'pause') {
+      runPaymentPlanAction(plan, action, 'Plan pausado', 'La factura recurrente quedó pausada y el registro local fue actualizado.')
+      return
+    }
+
+    runPaymentPlanAction(plan, action, 'Plan activado', 'La factura recurrente quedó activa/programada en HighLevel.')
   }
 
   const handleCreatePaymentPlan = async (formData: FormData) => {
@@ -1096,7 +1166,9 @@ export const Transactions: React.FC = () => {
           </div>
         )
       },
-      sortable: false
+      sortable: false,
+      fixed: true,
+      width: '88px'
     }
   ]
 
@@ -1118,6 +1190,13 @@ export const Transactions: React.FC = () => {
     const config = planStatusBadges[normalized] ?? { label: normalized, variant: 'neutral' as BadgeVariant }
     return <Badge variant={config.variant}>{config.label}</Badge>
   }
+
+  const getNormalizedPlanStatus = (plan: PaymentPlan) => String(plan.status || 'active').toLowerCase()
+  const isPlanDeleted = (plan: PaymentPlan) => getNormalizedPlanStatus(plan) === 'deleted'
+  const canActivatePaymentPlan = (plan: PaymentPlan) => ['draft', 'paused', 'inactive', 'pending'].includes(getNormalizedPlanStatus(plan))
+  const canPausePaymentPlan = (plan: PaymentPlan) => ['active', 'scheduled', 'pending', 'sent'].includes(getNormalizedPlanStatus(plan))
+  const canCancelPaymentPlan = (plan: PaymentPlan) => !['cancelled', 'canceled', 'completed', 'complete', 'deleted'].includes(getNormalizedPlanStatus(plan))
+  const canDeletePaymentPlan = (plan: PaymentPlan) => !isPlanDeleted(plan)
 
   const paymentTableTabs = [
     { label: 'Transacciones', value: 'transactions' },
@@ -1183,6 +1262,84 @@ export const Transactions: React.FC = () => {
       header: 'Email',
       sortable: true,
       visible: false
+    },
+    {
+      key: 'actions',
+      header: 'Acciones',
+      render: (_value, item) => {
+        const status = getNormalizedPlanStatus(item)
+        const actionInProgress = paymentPlanActionId?.startsWith(`${item.id}:`) || false
+        const activationLabel = status === 'paused' ? 'Continuar plan' : 'Activar plan'
+
+        if (isPlanDeleted(item)) {
+          return <span className={styles.mutedAction}>-</span>
+        }
+
+        return (
+          <div className={styles.actions} onClick={(event) => event.stopPropagation()}>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  className={styles.actionButton}
+                  title="Acciones del plan"
+                  disabled={actionInProgress}
+                >
+                  <MoreVertical size={16} />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem disabled={actionInProgress} onClick={() => handleOpenPaymentPlan(item)}>
+                  <Edit size={16} />
+                  <span style={{ marginLeft: '8px' }}>Editar factura</span>
+                </DropdownMenuItem>
+
+                {canActivatePaymentPlan(item) && (
+                  <DropdownMenuItem disabled={actionInProgress} onClick={() => handlePaymentPlanAction(item, 'activate')}>
+                    <PlayCircle size={16} />
+                    <span style={{ marginLeft: '8px' }}>{activationLabel}</span>
+                  </DropdownMenuItem>
+                )}
+
+                {canPausePaymentPlan(item) && (
+                  <DropdownMenuItem disabled={actionInProgress} onClick={() => handlePaymentPlanAction(item, 'pause')}>
+                    <PauseCircle size={16} />
+                    <span style={{ marginLeft: '8px' }}>Pausar plan</span>
+                  </DropdownMenuItem>
+                )}
+
+                {(canCancelPaymentPlan(item) || canDeletePaymentPlan(item)) && (
+                  <DropdownMenuSeparator />
+                )}
+
+                {canCancelPaymentPlan(item) && (
+                  <DropdownMenuItem
+                    disabled={actionInProgress}
+                    onClick={() => handlePaymentPlanAction(item, 'cancel')}
+                    className={styles.destructive}
+                  >
+                    <Ban size={16} />
+                    <span style={{ marginLeft: '8px' }}>Cancelar plan</span>
+                  </DropdownMenuItem>
+                )}
+
+                {canDeletePaymentPlan(item) && (
+                  <DropdownMenuItem
+                    disabled={actionInProgress}
+                    onClick={() => handlePaymentPlanAction(item, 'delete')}
+                    className={styles.destructive}
+                  >
+                    <Trash2 size={16} />
+                    <span style={{ marginLeft: '8px' }}>Eliminar plan</span>
+                  </DropdownMenuItem>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        )
+      },
+      sortable: false,
+      fixed: true,
+      width: '88px'
     }
   ]
 

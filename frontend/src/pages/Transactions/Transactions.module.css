@@ -102,6 +102,18 @@
   color: var(--color-text-primary);
 }
 
+.actionButton:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+.mutedAction {
+  color: var(--color-text-tertiary);
+  display: inline-flex;
+  justify-content: center;
+  width: 100%;
+}
+
 .destructive {
   color: var(--color-error) !important;
 }

@@ -1520,6 +1520,79 @@ async function getLocalInvoiceSchedule(scheduleId) {
   return row ? paymentPlanFromRow(row) : null;
 }
 
+async function markLocalInvoiceScheduleStatus(scheduleId, status, rawPatch = {}) {
+  const now = new Date().toISOString();
+  const existing = await getLocalInvoiceSchedule(scheduleId);
+  const existingRaw = existing?.raw && typeof existing.raw === 'object' ? existing.raw : {};
+  const raw = {
+    ...existingRaw,
+    ...rawPatch,
+    id: existing?.id || existingRaw.id || scheduleId,
+    _id: existingRaw._id || scheduleId,
+    status,
+    scheduleStatus: status,
+    state: status,
+    updatedAt: now
+  };
+
+  const updatedSchedule = existing
+    ? {
+      ...existing,
+      id: existing.id || scheduleId,
+      status,
+      updatedAt: now,
+      sortDate: existing.sortDate || now,
+      raw
+    }
+    : normalizeInvoiceSchedule(raw);
+
+  await persistLocalInvoiceSchedule(updatedSchedule);
+  return updatedSchedule;
+}
+
+async function getInvoiceScheduleMutationSource(ghlClient, scheduleId) {
+  try {
+    const detailResponse = await ghlClient.getInvoiceSchedule(scheduleId);
+    const schedule = extractScheduleFromResponse(detailResponse);
+    if (schedule) return schedule;
+  } catch (error) {
+    logger.warn(`No se pudo leer schedule ${scheduleId} desde GHL antes de mutarlo: ${error.message}`);
+  }
+
+  const localSchedule = await getLocalInvoiceSchedule(scheduleId);
+  return localSchedule?.raw || {};
+}
+
+async function normalizePersistedInvoiceScheduleAction(ghlClient, scheduleId, response, fallbackStatus, rawPatch = {}) {
+  let schedule = extractScheduleFromResponse(response);
+
+  if (!schedule) {
+    try {
+      const detailResponse = await ghlClient.getInvoiceSchedule(scheduleId);
+      schedule = extractScheduleFromResponse(detailResponse);
+    } catch (error) {
+      logger.warn(`Acción aplicada a schedule ${scheduleId}, pero no se pudo refrescar detalle: ${error.message}`);
+    }
+  }
+
+  if (schedule) {
+    const normalizedSchedule = normalizeInvoiceSchedule(schedule);
+    await persistLocalInvoiceSchedule(normalizedSchedule);
+    return normalizedSchedule;
+  }
+
+  if (fallbackStatus) {
+    return markLocalInvoiceScheduleStatus(scheduleId, fallbackStatus, rawPatch);
+  }
+
+  const localSchedule = await getLocalInvoiceSchedule(scheduleId);
+  if (localSchedule) return localSchedule;
+
+  const normalizedSchedule = normalizeInvoiceSchedule({ id: scheduleId, ...rawPatch });
+  await persistLocalInvoiceSchedule(normalizedSchedule);
+  return normalizedSchedule;
+}
+
 function sanitizeInvoiceSchedulePayload(payload = {}) {
   const sanitized = { ...payload };
   delete sanitized.raw;
@@ -1809,6 +1882,101 @@ export const updateInvoiceSchedule = async (req, res) => {
     res.status(500).json({
       success: false,
       error: error.message || 'Error al actualizar plan de pago'
+    });
+  }
+};
+
+export const actionInvoiceSchedule = async (req, res) => {
+  try {
+    const { scheduleId } = req.params;
+    const requestedAction = String(req.body?.action || '').trim().toLowerCase();
+    const payload = req.body?.payload && typeof req.body.payload === 'object' && !Array.isArray(req.body.payload)
+      ? req.body.payload
+      : {};
+    const actionAliases = {
+      activate: 'activate',
+      activar: 'activate',
+      continue: 'activate',
+      continuar: 'activate',
+      resume: 'activate',
+      reanudar: 'activate',
+      schedule: 'activate',
+      pause: 'pause',
+      pausar: 'pause',
+      cancel: 'cancel',
+      cancelar: 'cancel',
+      delete: 'delete',
+      eliminar: 'delete',
+      remove: 'delete',
+      'auto-payment': 'auto-payment',
+      autopayment: 'auto-payment'
+    };
+    const action = actionAliases[requestedAction];
+
+    if (!scheduleId) {
+      return res.status(400).json({
+        success: false,
+        error: 'scheduleId requerido'
+      });
+    }
+
+    if (!action) {
+      return res.status(400).json({
+        success: false,
+        error: 'Acción inválida para plan de pago'
+      });
+    }
+
+    const ghlClient = await getGHLClient();
+    let response;
+    let data;
+
+    if (action === 'activate') {
+      response = await ghlClient.scheduleInvoiceSchedule(scheduleId, payload);
+      data = await normalizePersistedInvoiceScheduleAction(ghlClient, scheduleId, response, 'active', {
+        ...payload,
+        status: 'active'
+      });
+    } else if (action === 'pause') {
+      const currentSchedule = await getInvoiceScheduleMutationSource(ghlClient, scheduleId);
+      const pausePayload = sanitizeInvoiceSchedulePayload({
+        ...currentSchedule,
+        ...payload,
+        status: 'paused',
+        scheduleStatus: 'paused',
+        state: 'paused'
+      });
+
+      response = await ghlClient.updateInvoiceSchedule(scheduleId, pausePayload);
+      data = await normalizePersistedInvoiceScheduleAction(ghlClient, scheduleId, response, 'paused', {
+        ...payload,
+        status: 'paused'
+      });
+    } else if (action === 'cancel') {
+      response = await ghlClient.cancelInvoiceSchedule(scheduleId, payload);
+      data = await normalizePersistedInvoiceScheduleAction(ghlClient, scheduleId, response, 'cancelled', {
+        ...payload,
+        status: 'cancelled'
+      });
+    } else if (action === 'delete') {
+      response = await ghlClient.deleteInvoiceSchedule(scheduleId);
+      data = await markLocalInvoiceScheduleStatus(scheduleId, 'deleted', {
+        deletedAt: new Date().toISOString()
+      });
+    } else if (action === 'auto-payment') {
+      response = await ghlClient.manageInvoiceScheduleAutoPayment(scheduleId, payload);
+      data = await normalizePersistedInvoiceScheduleAction(ghlClient, scheduleId, response, null, payload);
+    }
+
+    res.json({
+      success: true,
+      data
+    });
+  } catch (error) {
+    logger.error(`Error aplicando acción a invoice schedule ${req.params.scheduleId}: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Error al aplicar acción al plan de pago'
     });
   }
 };

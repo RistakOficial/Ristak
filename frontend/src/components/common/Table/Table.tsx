@@ -79,6 +79,25 @@ function sortHierarchicalRows<T extends Record<string, any>>(
   return flattened
 }
 
+function enforceFixedColumnPositions<T>(columns: Column<T>[], defaultColumns: Column<T>[]) {
+  const columnsByKey = new Map(columns.map(column => [column.key, column]))
+  const movableColumns = columns.filter(column => !column.fixed)
+  const normalizedColumns = [...movableColumns]
+
+  defaultColumns.forEach((defaultColumn, defaultIndex) => {
+    if (!defaultColumn.fixed) return
+
+    const resolvedColumn = columnsByKey.get(defaultColumn.key) || defaultColumn
+    normalizedColumns.splice(Math.min(defaultIndex, normalizedColumns.length), 0, {
+      ...resolvedColumn,
+      ...defaultColumn,
+      visible: true
+    })
+  })
+
+  return normalizedColumns
+}
+
 interface TableProps<T> {
   columns?: Column<T>[] // Opcional ahora
   initialColumns?: Column<T>[] // Para definir columnas por defecto
@@ -141,7 +160,7 @@ export function Table<T extends Record<string, any>>({
   // Recalcular columnas base cuando cambian la definición o la config guardada
   const resolvedInitialColumns = useMemo(() => {
     if (!tableId || !savedTableConfig) {
-      return initialColumns
+      return enforceFixedColumnPositions(initialColumns, initialColumns)
     }
 
     const columnsMap = new Map(initialColumns.map(col => [col.key, col]))
@@ -187,7 +206,7 @@ export function Table<T extends Record<string, any>>({
       }
     })
 
-    return orderedColumns
+    return enforceFixedColumnPositions(orderedColumns, initialColumns)
   }, [initialColumns, savedTableConfig, tableId])
 
   const [columns, setColumns] = useState<Column<T>[]>(resolvedInitialColumns)
@@ -278,6 +297,9 @@ export function Table<T extends Record<string, any>>({
   }
 
   const toggleColumnVisibility = (columnKey: string) => {
+    const targetColumn = columns.find(col => col.key === columnKey)
+    if (targetColumn?.fixed) return
+
     const newColumns = columns.map(col =>
       col.key === columnKey ? { ...col, visible: !col.visible } : col
     )
