@@ -858,6 +858,7 @@ async function setupHighLevelWebhooks(locationId, apiToken, baseUrl) {
   const webhooks = {
     'webhook_contacts': `${baseUrl}/webhook/contact`,
     'webhook_payments': `${baseUrl}/webhook/payment`,
+    'webhook_invoice': `${baseUrl}/webhook/invoice`,
     'webhook_refunds': `${baseUrl}/webhook/refund`,
     'webhook_appointments': `${baseUrl}/webhook/appointment`,
     'webhook_appointment_showed': `${baseUrl}/webhook/appointment/showed`,

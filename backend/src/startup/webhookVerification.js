@@ -33,6 +33,7 @@ export async function verifyAndUpdateWebhooks() {
     const webhooks = {
       'webhook_contacts': `${productionUrl}/webhook/contact`,
       'webhook_payments': `${productionUrl}/webhook/payment`,
+      'webhook_invoice': `${productionUrl}/webhook/invoice`,
       'webhook_refunds': `${productionUrl}/webhook/refund`,
       'webhook_appointments': `${productionUrl}/webhook/appointment`,
       'webhook_appointment_showed': `${productionUrl}/webhook/appointment/showed`,

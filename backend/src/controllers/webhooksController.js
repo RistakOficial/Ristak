@@ -8,6 +8,37 @@ import {
   markPaymentFlowInvoicePaid
 } from '../services/paymentFlowService.js';
 
+function firstValue(...values) {
+  return values.find(value => value !== undefined && value !== null && value !== '');
+}
+
+function extractInvoiceWebhookPayload(data) {
+  return data.invoice || data.invoiceData || data.data || data.resource || data.object || {};
+}
+
+function extractInvoiceWebhookId(data) {
+  const invoice = extractInvoiceWebhookPayload(data);
+  return firstValue(
+    data._id,
+    data.id,
+    data.invoiceId,
+    data.invoice_id,
+    data.entityId,
+    data.entity_id,
+    data.resourceId,
+    data.resource_id,
+    invoice._id,
+    invoice.id,
+    invoice.invoiceId,
+    invoice.invoice_id
+  );
+}
+
+function normalizeStripeObjectId(value) {
+  if (!value) return null;
+  if (typeof value === 'string') return value;
+  return value.id || value._id || null;
+}
 
 /**
  * Procesa webhook de contacto nuevo o actualizado
@@ -223,16 +254,36 @@ export const handlePaymentWebhook = async (req, res) => {
     // Guardar payment method si viene info de Stripe en el webhook
     try {
       const chargeSnapshot = payment.chargeSnapshot || payment.charge_snapshot || {};
+      let paymentMethodData = firstValue(
+        chargeSnapshot.payment_method,
+        chargeSnapshot.paymentMethod,
+        payment.payment_method,
+        payment.paymentMethod,
+        payment.payment_method_details,
+        payment.paymentMethodDetails
+      );
+      const stripeCustomerId = normalizeStripeObjectId(firstValue(
+        chargeSnapshot.customer,
+        chargeSnapshot.customerId,
+        payment.customer?.id,
+        payment.customerId,
+        payment.customer_id
+      ));
+      let stripePaymentMethodId = normalizeStripeObjectId(paymentMethodData);
 
-      if (chargeSnapshot.customer && chargeSnapshot.payment_method) {
+      if (stripeCustomerId && stripePaymentMethodId) {
         // Obtener location_id
         const config = await db.get('SELECT location_id FROM highlevel_config LIMIT 1');
 
         if (config && config.location_id) {
+          if (typeof paymentMethodData === 'string') {
+            paymentMethodData = await stripeService.getPaymentMethod(config.location_id, paymentMethodData);
+          }
+
           // Obtener datos del contacto
           const contact = await db.get('SELECT full_name, email FROM contacts WHERE id = ?', [contactId]);
 
-          const paymentMethodData = chargeSnapshot.payment_method;
+          stripePaymentMethodId = normalizeStripeObjectId(paymentMethodData) || stripePaymentMethodId;
           const card = paymentMethodData.card || {};
 
           // Guardar payment method
@@ -241,8 +292,8 @@ export const handlePaymentWebhook = async (req, res) => {
             contactId: contactId,
             contactName: contact?.full_name || payment.customer?.name || 'Sin nombre',
             contactEmail: contact?.email || payment.customer?.email,
-            stripeCustomerId: chargeSnapshot.customer,
-            stripePaymentMethodId: paymentMethodData.id || paymentMethodData,
+            stripeCustomerId,
+            stripePaymentMethodId,
             brand: card.brand || 'unknown',
             last4: card.last4 || '****',
             expMonth: card.exp_month || 12,
@@ -606,15 +657,16 @@ export const handleRefundWebhook = async (req, res) => {
 export const handleInvoiceWebhook = async (req, res) => {
   try {
     const data = req.body;
-    const eventType = data.type || data.eventType;
+    const invoicePayload = extractInvoiceWebhookPayload(data);
+    const eventType = firstValue(data.type, data.eventType, data.event, data.eventName);
 
     logger.info(`📥 Webhook de invoice recibido: ${eventType || 'sin tipo'}`);
 
     // Obtener invoice ID
-    const invoiceId = data.id || data.invoiceId || data._id;
+    const invoiceId = extractInvoiceWebhookId(data);
 
     if (!invoiceId) {
-      logger.warn('Webhook de invoice sin ID, ignorando');
+      logger.warn(`Webhook de invoice sin ID, ignorando: ${JSON.stringify(data).slice(0, 500)}`);
       return res.status(200).json({ success: true, message: 'Webhook recibido' });
     }
 
@@ -634,7 +686,15 @@ export const handleInvoiceWebhook = async (req, res) => {
       case 'invoice.paid':
       case 'InvoiceFulfilled':
         newStatus = 'paid';
-        updateFields.payment_method = data.paymentMode || data.payment_mode || 'online';
+        updateFields.payment_method = firstValue(
+          data.paymentMode,
+          data.payment_mode,
+          invoicePayload.paymentMode,
+          invoicePayload.payment_mode,
+          invoicePayload.paymentMethod,
+          invoicePayload.payment_method,
+          'online'
+        );
         logger.info(`Invoice ${invoiceId} fue pagado`);
         break;
 

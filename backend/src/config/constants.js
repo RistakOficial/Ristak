@@ -49,6 +49,7 @@ export const API_URLS = {
 export const CUSTOM_VALUE_KEYS = {
   WEBHOOK_CONTACTS: 'webhook_contacts',
   WEBHOOK_PAYMENTS: 'webhook_payments',
+  WEBHOOK_INVOICE: 'webhook_invoice',
   WEBHOOK_REFUNDS: 'webhook_refunds',
   WEBHOOK_APPOINTMENTS: 'webhook_appointments',
   WEBHOOK_APPOINTMENT_SHOWED: 'webhook_appointment_showed',
@@ -62,6 +63,7 @@ export const CUSTOM_VALUE_KEYS = {
 export const WEBHOOK_PATHS = {
   CONTACT: '/webhook/contact',
   PAYMENT: '/webhook/payment',
+  INVOICE: '/webhook/invoice',
   REFUND: '/webhook/refund',
   APPOINTMENT: '/webhook/appointment',
   APPOINTMENT_SHOWED: '/webhook/appointment/showed',

@@ -13,6 +13,7 @@ import { logger } from '../utils/logger.js'
 
 const GHL_BASE_URL = 'https://services.leadconnectorhq.com'
 const GHL_API_VERSION = '2021-07-28'
+const GHL_INVOICE_SCHEDULE_API_VERSION = '2023-02-21'
 const MAX_RETRIES = 3
 const RETRY_DELAY = 1000 // 1 segundo
 const MAX_429_RETRIES = 5
@@ -43,7 +44,7 @@ class GHLClient {
   }
 
   async request(endpoint, options = {}) {
-    const { method = 'GET', body, params } = options
+    const { method = 'GET', body, params, version = GHL_API_VERSION } = options
     const url = this.buildUrl(endpoint, params)
 
     let lastError = null
@@ -55,7 +56,7 @@ class GHLClient {
           method,
           headers: {
             'Authorization': `Bearer ${this.apiToken}`,
-            'Version': GHL_API_VERSION,
+            'Version': version,
             'Content-Type': 'application/json',
             'Accept': 'application/json',
           },
@@ -354,10 +355,18 @@ class GHLClient {
       return { success: true, message: 'Invoice creado pero no enviado' }
     }
 
+    const actionBySendMethod = {
+      email: 'email',
+      sms: 'sms',
+      both: 'sms_and_email',
+      sms_and_email: 'sms_and_email',
+      send_manually: 'send_manually'
+    }
+
     const body = {
       altId: this.locationId,
       altType: 'location',
-      action: options.sendMethod || 'email',  // Acepta: 'email', 'sms', 'both', 'none'
+      action: actionBySendMethod[options.sendMethod] || 'email',
       liveMode: options.liveMode !== undefined ? options.liveMode : true,
     }
 
@@ -373,6 +382,67 @@ class GHLClient {
     return this.request(`/invoices/${invoiceId}/send`, {
       method: 'POST',
       body
+    })
+  }
+
+  async createInvoiceSchedule(data) {
+    const body = {
+      ...data,
+      altId: this.locationId,
+      altType: 'location',
+    }
+
+    logger.info(`Creando invoice schedule: ${body.name || 'sin nombre'}`)
+
+    const response = await this.request('/invoices/schedule', {
+      method: 'POST',
+      body,
+      version: GHL_INVOICE_SCHEDULE_API_VERSION
+    })
+
+    const scheduleId = response?._id || response?.id
+    logger.success(`Invoice schedule creado: ${scheduleId || 'sin id'}`)
+    return response
+  }
+
+  async manageInvoiceScheduleAutoPayment(scheduleId, data) {
+    if (!scheduleId) {
+      throw new Error('scheduleId requerido para configurar autopago')
+    }
+
+    const body = {
+      ...data,
+      altId: this.locationId,
+      altType: 'location',
+      id: data.id || scheduleId
+    }
+
+    logger.info(`Configurando autopago para schedule: ${scheduleId}`)
+
+    return this.request(`/invoices/schedule/${scheduleId}/auto-payment`, {
+      method: 'POST',
+      body,
+      version: GHL_INVOICE_SCHEDULE_API_VERSION
+    })
+  }
+
+  async scheduleInvoiceSchedule(scheduleId, data = {}) {
+    if (!scheduleId) {
+      throw new Error('scheduleId requerido para activar schedule')
+    }
+
+    const body = {
+      ...data,
+      altId: this.locationId,
+      altType: 'location'
+    }
+
+    logger.info(`Activando invoice schedule: ${scheduleId}`)
+
+    return this.request(`/invoices/schedule/${scheduleId}/schedule`, {
+      method: 'POST',
+      body,
+      version: GHL_INVOICE_SCHEDULE_API_VERSION
     })
   }
 

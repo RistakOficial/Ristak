@@ -89,10 +89,17 @@ async function getInvoiceSendContext() {
   const business = locationData?.business || {}
   const fromName = business.name || locationData?.name || null
   const fromEmail = business.email || locationData?.email || null
+  const businessDetails = {
+    name: fromName || 'Mi Negocio',
+    phoneNo: business.phone || locationData?.phone || '',
+    website: business.website || locationData?.website || '',
+    ...(business.address && { address: business.address })
+  }
 
   return {
     domain: locationData?.domain || null,
     liveMode: config.stripe_mode ? config.stripe_mode === 'live' : true,
+    businessDetails,
     sentFrom: {
       fromName,
       fromEmail
@@ -110,29 +117,47 @@ async function getPaymentFlowConfig() {
   }
 }
 
-async function contactHasAuthorizedCard(contactOrFlow) {
+async function getAuthorizedPaymentMethod(contactOrFlow) {
   const contactId = contactOrFlow.contact_id || contactOrFlow.id
   const contactEmail = contactOrFlow.contact_email || contactOrFlow.email
   const { locationId } = await getPaymentFlowConfig()
 
   if (contactId) {
     const localMethod = await db.get(
-      `SELECT id FROM payment_methods
+      `SELECT stripe_customer_id, stripe_payment_method_id, brand, last4
+       FROM payment_methods
        WHERE contact_id = ? AND is_active = 1
+       ORDER BY is_default DESC, last_used_at DESC, created_at DESC
        LIMIT 1`,
       [contactId]
     )
 
-    if (localMethod) return true
+    if (localMethod?.stripe_customer_id && localMethod?.stripe_payment_method_id) {
+      return {
+        customerId: localMethod.stripe_customer_id,
+        paymentMethodId: localMethod.stripe_payment_method_id,
+        brand: localMethod.brand || 'card',
+        last4: localMethod.last4 || '****'
+      }
+    }
   }
 
-  if (!locationId || !contactEmail) return false
+  if (!locationId || !contactEmail) return null
 
   const stripeCustomer = await stripeFindCustomerByEmail(locationId, contactEmail)
-  if (!stripeCustomer) return false
+  if (!stripeCustomer) return null
 
   const methods = await stripeListPaymentMethods(locationId, stripeCustomer.id)
-  return methods.length > 0
+  const method = methods[0]
+
+  if (!method) return null
+
+  return {
+    customerId: stripeCustomer.id,
+    paymentMethodId: method.id,
+    brand: method.card?.brand || 'card',
+    last4: method.card?.last4 || '****'
+  }
 }
 
 function buildInvoicePayload({ basePayload, contact, amount, currency, concept, title, dueDate }) {
@@ -163,6 +188,15 @@ function buildInvoicePayload({ basePayload, contact, amount, currency, concept, 
     issueDate: new Date().toISOString().split('T')[0],
     dueDate: normalizeDateOnly(dueDate || basePayload?.dueDate),
     liveMode: basePayload?.liveMode !== undefined ? basePayload.liveMode : true,
+    sentTo: {
+      email: contact.email ? [contact.email] : [],
+      phoneNo: contact.phone ? [contact.phone] : []
+    },
+    paymentMethods: basePayload?.paymentMethods || {
+      stripe: {
+        enableBankDebitOnly: false
+      }
+    },
     ...(termsNotes && { termsNotes })
   }
 }
@@ -274,6 +308,159 @@ async function sendInvoice({ ghlClient, invoiceId, contact, channels, forceAllAv
     sendMethod,
     paymentLink
   }
+}
+
+function buildScheduleExecuteAt(dueDate) {
+  const date = normalizeDateOnly(dueDate)
+  const scheduledAt = new Date(`${date}T09:00:00.000Z`)
+  const minimumFutureAt = new Date(Date.now() + 5 * 60 * 1000)
+
+  return scheduledAt > minimumFutureAt
+    ? scheduledAt.toISOString()
+    : minimumFutureAt.toISOString()
+}
+
+function buildAutoPayment(paymentMethod) {
+  return {
+    enable: true,
+    type: 'card',
+    paymentMethodId: paymentMethod.paymentMethodId,
+    customerId: paymentMethod.customerId,
+    card: {
+      brand: paymentMethod.brand || 'card',
+      last4: paymentMethod.last4 || '****'
+    }
+  }
+}
+
+function buildInstallmentSchedulePayload({ flow, installment, context }) {
+  const contactName = flow.contact_name || flow.contact_email || flow.contact_phone || 'Cliente'
+  const currency = flow.currency || CURRENCY_DEFAULT
+  const concept = flow.concept || 'Plan de parcialidades'
+  const sequence = Number(installment.sequence || 1)
+
+  return {
+    name: `${concept} - parcialidad ${sequence}`,
+    title: 'PAGO PROGRAMADO',
+    currency,
+    businessDetails: context.businessDetails,
+    contactDetails: {
+      id: flow.contact_id,
+      name: contactName,
+      email: flow.contact_email || '',
+      phoneNo: flow.contact_phone || ''
+    },
+    sentTo: {
+      email: flow.contact_email ? [flow.contact_email] : [],
+      phoneNo: flow.contact_phone ? [flow.contact_phone] : []
+    },
+    schedule: {
+      executeAt: buildScheduleExecuteAt(installment.due_date)
+    },
+    liveMode: context.liveMode,
+    items: [
+      {
+        name: `Parcialidad ${sequence}`,
+        description: concept,
+        amount: normalizeAmount(installment.amount),
+        qty: 1,
+        currency,
+        type: 'one_time'
+      }
+    ],
+    discount: {
+      value: 0,
+      type: 'percentage'
+    },
+    paymentMethods: {
+      stripe: {
+        enableBankDebitOnly: false
+      }
+    }
+  }
+}
+
+async function scheduleAutomaticInstallmentsForFlow(flow, paymentMethod, existingClient = null) {
+  if (!Number(flow.remaining_automatic)) return []
+
+  const installments = await db.all(
+    `SELECT *
+     FROM installment_payments
+     WHERE flow_id = ?
+       AND automatic = 1
+       AND status IN ('pending_card_authorization', 'scheduled', 'schedule_failed')
+       AND (ghl_schedule_status IS NULL OR ghl_schedule_status != 'scheduled')
+     ORDER BY sequence ASC`,
+    [flow.id]
+  )
+
+  if (installments.length === 0) return []
+
+  const ghlClient = existingClient || await getGHLClient()
+  const context = await getInvoiceSendContext()
+  const autoPayment = buildAutoPayment(paymentMethod)
+  const scheduled = []
+
+  for (const installment of installments) {
+    let scheduleId = installment.ghl_schedule_id
+
+    try {
+      if (!scheduleId) {
+        const schedule = await ghlClient.createInvoiceSchedule(
+          buildInstallmentSchedulePayload({ flow, installment, context })
+        )
+        scheduleId = schedule?._id || schedule?.id
+
+        if (!scheduleId) {
+          throw new Error('HighLevel no devolvió ID del schedule')
+        }
+
+        await db.run(
+          `UPDATE installment_payments
+           SET ghl_schedule_id = ?, ghl_schedule_status = 'draft', updated_at = CURRENT_TIMESTAMP
+           WHERE id = ?`,
+          [scheduleId, installment.id]
+        )
+      }
+
+      await ghlClient.manageInvoiceScheduleAutoPayment(scheduleId, {
+        liveMode: context.liveMode,
+        autoPayment
+      })
+
+      await ghlClient.scheduleInvoiceSchedule(scheduleId, {
+        liveMode: context.liveMode,
+        autoPayment
+      })
+
+      await db.run(
+        `UPDATE installment_payments
+         SET status = 'scheduled',
+             ghl_schedule_status = 'scheduled',
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+        [installment.id]
+      )
+
+      scheduled.push({
+        installmentId: installment.id,
+        scheduleId,
+        sequence: installment.sequence
+      })
+    } catch (error) {
+      await db.run(
+        `UPDATE installment_payments
+         SET ghl_schedule_status = 'schedule_failed',
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+        [installment.id]
+      )
+
+      throw new Error(`No se pudo programar la parcialidad ${installment.sequence} en HighLevel: ${error.message}`)
+    }
+  }
+
+  return scheduled
 }
 
 async function updateFlowState(flowId, state, stateHistory, fields = {}) {
@@ -394,7 +581,8 @@ export async function createInstallmentPaymentFlow(payload) {
   const firstPaymentIsOffline = firstPaymentEnabled && OFFLINE_METHODS.has(firstPaymentMethod)
   const firstPaymentIsCard = firstPaymentEnabled && CARD_METHODS.has(firstPaymentMethod)
   const { cardSetupAmount } = await getPaymentFlowConfig()
-  const alreadyHasAuthorizedCard = remainingAutomatic ? await contactHasAuthorizedCard(contact) : false
+  const authorizedCard = remainingAutomatic ? await getAuthorizedPaymentMethod(contact) : null
+  const alreadyHasAuthorizedCard = Boolean(authorizedCard)
   const cardSetupRequired = remainingAutomatic && !alreadyHasAuthorizedCard && (!firstPaymentEnabled || firstPaymentIsOffline)
 
   let stateHistory = addState([], PAYMENT_FLOW_STATES.DRAFT)
@@ -571,9 +759,10 @@ export async function createInstallmentPaymentFlow(payload) {
 
     stateHistory = addState(stateHistory, PAYMENT_FLOW_STATES.CARD_SETUP_LINK_SENT)
     stateHistory = addState(stateHistory, PAYMENT_FLOW_STATES.WAITING_CARD_AUTHORIZATION)
+    const cardSetupStatus = sent.sendMethod === 'none' ? 'link_generated' : 'sent'
 
     await updateFlowState(flowId, PAYMENT_FLOW_STATES.WAITING_CARD_AUTHORIZATION, stateHistory, {
-      card_setup_status: 'sent',
+      card_setup_status: cardSetupStatus,
       card_setup_invoice_id: invoiceId,
       card_setup_payment_link: sent.paymentLink
     })
@@ -586,6 +775,9 @@ export async function createInstallmentPaymentFlow(payload) {
   }
 
   if (remainingAutomatic && alreadyHasAuthorizedCard && !firstPaymentIsCard) {
+    const createdFlow = await db.get('SELECT * FROM payment_flows WHERE id = ?', [flowId])
+    const installmentSchedules = await scheduleAutomaticInstallmentsForFlow(createdFlow, authorizedCard, ghlClient)
+
     stateHistory = addState(stateHistory, PAYMENT_FLOW_STATES.CARD_AUTHORIZED)
     stateHistory = addState(stateHistory, PAYMENT_FLOW_STATES.INSTALLMENT_PLAN_CREATED)
     stateHistory = addState(stateHistory, PAYMENT_FLOW_STATES.INSTALLMENT_PLAN_ACTIVE)
@@ -597,15 +789,9 @@ export async function createInstallmentPaymentFlow(payload) {
       installment_plan_active_at: now
     })
 
-    await db.run(
-      `UPDATE installment_payments
-       SET status = 'scheduled', updated_at = CURRENT_TIMESTAMP
-       WHERE flow_id = ? AND automatic = 1`,
-      [flowId]
-    )
-
     response.currentState = PAYMENT_FLOW_STATES.INSTALLMENT_PLAN_ACTIVE
     response.stateHistory = stateHistory
+    response.installmentSchedules = installmentSchedules
   }
 
   if (!remainingAutomatic && !firstPaymentIsCard) {
@@ -635,11 +821,13 @@ export async function createInstallmentPaymentFlow(payload) {
 }
 
 async function activateFlowIfReady(flow) {
-  const hasSavedCard = await contactHasAuthorizedCard(flow)
+  const authorizedCard = await getAuthorizedPaymentMethod(flow)
 
-  if (!hasSavedCard) {
+  if (!authorizedCard) {
     return false
   }
+
+  await scheduleAutomaticInstallmentsForFlow(flow, authorizedCard)
 
   const currentHistory = safeJsonParse(flow.state_history, [])
   let stateHistory = addState(currentHistory, PAYMENT_FLOW_STATES.CARD_AUTHORIZED)
@@ -652,13 +840,6 @@ async function activateFlowIfReady(flow) {
     installment_plan_created_at: now,
     installment_plan_active_at: now
   })
-
-  await db.run(
-    `UPDATE installment_payments
-     SET status = 'scheduled', updated_at = CURRENT_TIMESTAMP
-     WHERE flow_id = ? AND automatic = 1 AND status = 'pending_card_authorization'`,
-    [flow.id]
-  )
 
   logger.info(`Flujo de parcialidades activado con tarjeta autorizada: ${flow.id}`)
   return true
