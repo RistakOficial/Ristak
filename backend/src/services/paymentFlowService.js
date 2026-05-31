@@ -110,6 +110,133 @@ function amountsMatch(left, right, tolerance = 0.01) {
   return Math.abs(normalizeAmount(left) - normalizeAmount(right)) <= tolerance
 }
 
+function combineTextSections(...sections) {
+  return sections
+    .map(section => String(section || '').trim())
+    .filter(Boolean)
+    .join('\n\n')
+}
+
+function formatCurrencyAmount(amount, currency = CURRENCY_DEFAULT) {
+  return new Intl.NumberFormat('es-MX', {
+    style: 'currency',
+    currency,
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2
+  }).format(normalizeAmount(amount))
+}
+
+function formatPercentValue(value) {
+  const percentage = Number(value)
+  if (!Number.isFinite(percentage)) return null
+  return `${Number.isInteger(percentage) ? percentage : percentage.toFixed(2).replace(/\.?0+$/, '')}%`
+}
+
+function formatPlanDate(value, timezone = DEFAULT_PAYMENT_TIMEZONE) {
+  const date = DateTime.fromISO(normalizeDateOnly(value), { zone: resolveScheduleTimezone(timezone) })
+  return date.isValid ? date.toFormat('dd/LL/yyyy') : normalizeDateOnly(value)
+}
+
+function paymentOrdinalLabel(index) {
+  if (index === 1) return '1er'
+  if (index === 3) return '3er'
+  return `${index}o`
+}
+
+function frequencyLabel(frequency, count) {
+  const plural = count === 1 ? '' : 's'
+  const labels = {
+    weekly: `semanal${plural === 's' ? 'es' : ''}`,
+    biweekly: `quincenal${plural === 's' ? 'es' : ''}`,
+    monthly: `mensual${plural === 's' ? 'es' : ''}`,
+    custom: `personalizado${plural}`
+  }
+
+  return labels[frequency] || labels.custom
+}
+
+function getPlanFeePercentage(flow) {
+  const metadata = safeJsonParse(flow?.metadata, {})
+  const value = (
+    metadata.installmentFeePercentage ??
+    metadata.paymentPlanFeePercentage ??
+    metadata.planFeePercentage ??
+    metadata.financingPercentage ??
+    metadata.surchargePercentage ??
+    null
+  )
+  const percentage = Number(value)
+  return Number.isFinite(percentage) && percentage > 0 ? percentage : null
+}
+
+function getPaymentPercentage({ explicitPercentage, amount, totalAmount }) {
+  if (explicitPercentage !== null && explicitPercentage !== undefined && explicitPercentage !== '') {
+    return Number(explicitPercentage)
+  }
+
+  if (totalAmount > 0) {
+    return normalizeAmount((normalizeAmount(amount) / totalAmount) * 100)
+  }
+
+  return null
+}
+
+function buildPaymentPlanSummary(flow, installments = [], options = {}) {
+  if (!flow) return ''
+
+  const currency = flow.currency || CURRENCY_DEFAULT
+  const timezone = options.timezone || DEFAULT_PAYMENT_TIMEZONE
+  const totalAmount = normalizeAmount(flow.total_amount || flow.totalAmount)
+  const frequency = options.frequency || safeJsonParse(flow.metadata, {}).remainingFrequency || installments[0]?.frequency || 'custom'
+  const payments = []
+
+  if (normalizeAmount(flow.first_payment_amount) > 0 && flow.first_payment_status !== 'not_required') {
+    const firstPaymentPercentage = flow.first_payment_type === 'percentage'
+      ? Number(flow.first_payment_value)
+      : getPaymentPercentage({
+        explicitPercentage: null,
+        amount: flow.first_payment_amount,
+        totalAmount
+      })
+
+    payments.push({
+      amount: normalizeAmount(flow.first_payment_amount),
+      percentage: firstPaymentPercentage,
+      date: flow.first_payment_date || todayDateOnly(timezone)
+    })
+  }
+
+  for (const installment of installments) {
+    payments.push({
+      amount: normalizeAmount(installment.amount),
+      percentage: getPaymentPercentage({
+        explicitPercentage: installment.percentage,
+        amount: installment.amount,
+        totalAmount
+      }),
+      date: installment.due_date || installment.dueDate
+    })
+  }
+
+  if (payments.length === 0) return ''
+
+  const feePercentage = getPlanFeePercentage(flow)
+  const header = [
+    `${payments.length} pago${payments.length === 1 ? '' : 's'} ${frequencyLabel(frequency, payments.length)}${feePercentage ? ` (+${formatPercentValue(feePercentage)})` : ''}`,
+    `Total: ${formatCurrencyAmount(totalAmount, currency)}`
+  ]
+
+  const detailLines = payments.flatMap((payment, index) => {
+    const percentLabel = formatPercentValue(payment.percentage)
+    return [
+      `${paymentOrdinalLabel(index + 1)} pago - ${formatPlanDate(payment.date, timezone)}${percentLabel ? ` - ${percentLabel}` : ''}`,
+      formatCurrencyAmount(payment.amount, currency)
+    ]
+  })
+
+  return [...header, ...detailLines].join('\n')
+}
+
 function normalizeOptionalBoolean(value) {
   if (typeof value === 'boolean') return value
   if (value === undefined || value === null || value === '') return null
@@ -476,11 +603,12 @@ async function getAuthorizedPaymentMethod(contactOrFlow, options = {}) {
   return await findStoredGhlPaymentMethodForContact(contactId, liveMode)
 }
 
-function buildInvoicePayload({ basePayload, contact, amount, currency, concept, title, dueDate }) {
+function buildInvoicePayload({ basePayload, contact, amount, currency, concept, title, dueDate, summaryDetails }) {
   const contactName = contact.name || contact.email || contact.phone || 'Cliente'
   const businessDetails = basePayload?.businessDetails || { name: 'Mi Negocio' }
-  const termsNotes = basePayload?.termsNotes
+  const termsNotes = combineTextSections(basePayload?.termsNotes, summaryDetails)
   const invoiceDates = resolveInvoiceDates(dueDate, basePayload?.dueDate, basePayload?.timezone)
+  const itemDescription = combineTextSections(concept || title || 'Pago', summaryDetails)
 
   return {
     name: concept || title || 'Pago',
@@ -496,7 +624,7 @@ function buildInvoicePayload({ basePayload, contact, amount, currency, concept, 
     items: [
       {
         name: title || concept || 'Pago',
-        description: concept || title || 'Pago',
+        description: itemDescription,
         amount,
         qty: 1,
         currency
@@ -564,7 +692,7 @@ async function insertLocalInvoicePayment({ invoice, contactId, fallbackAmount, f
   )
 }
 
-async function createInvoice({ ghlClient, basePayload, contact, amount, currency, concept, title, dueDate }) {
+async function createInvoice({ ghlClient, basePayload, contact, amount, currency, concept, title, dueDate, summaryDetails }) {
   const context = await getInvoiceSendContext()
   const payload = buildInvoicePayload({
     basePayload: {
@@ -576,7 +704,8 @@ async function createInvoice({ ghlClient, basePayload, contact, amount, currency
     currency,
     concept,
     title,
-    dueDate
+    dueDate,
+    summaryDetails
   })
 
   if (!basePayload?.businessDetails) {
@@ -587,8 +716,10 @@ async function createInvoice({ ghlClient, basePayload, contact, amount, currency
     payload.title = context.invoiceTitle
   }
 
-  if (!payload.termsNotes && context.termsNotes) {
-    payload.termsNotes = context.termsNotes
+  if (!payload.termsNotes && (context.termsNotes || summaryDetails)) {
+    payload.termsNotes = combineTextSections(context.termsNotes, summaryDetails)
+  } else if (payload.termsNotes && summaryDetails && context.termsNotes && !payload.termsNotes.includes(context.termsNotes)) {
+    payload.termsNotes = combineTextSections(context.termsNotes, payload.termsNotes)
   }
 
   payload.liveMode = context.liveMode
@@ -772,19 +903,23 @@ function buildAutoPayment(paymentMethod, options = {}) {
   return autoPayment
 }
 
-function buildInstallmentSchedulePayload({ flow, installment, context }) {
+function buildInstallmentSchedulePayload({ flow, installment, context, planSummary }) {
   const contactName = flow.contact_name || flow.contact_email || flow.contact_phone || 'Cliente'
   const currency = flow.currency || CURRENCY_DEFAULT
   const concept = flow.concept || 'Plan de parcialidades'
   const sequence = Number(installment.sequence || 1)
   const amount = normalizeAmount(installment.amount)
+  const description = combineTextSections(
+    `${concept} - parcialidad ${sequence}`,
+    planSummary
+  )
 
   return {
     name: `${concept} - parcialidad ${sequence}`,
     title: 'PAGO PROGRAMADO',
     currency,
     total: amount,
-    termsNotes: context.termsNotes || '',
+    termsNotes: combineTextSections(context.termsNotes, planSummary),
     ...(context.invoiceNumberPrefix && { invoiceNumberPrefix: context.invoiceNumberPrefix }),
     businessDetails: context.businessDetails,
     contactDetails: {
@@ -804,7 +939,7 @@ function buildInstallmentSchedulePayload({ flow, installment, context }) {
     items: [
       {
         name: `Parcialidad ${sequence}`,
-        description: concept,
+        description,
         amount,
         qty: 1,
         currency,
@@ -821,6 +956,33 @@ function buildInstallmentSchedulePayload({ flow, installment, context }) {
       }
     }
   }
+}
+
+function isGhlScheduleNotFoundError(error) {
+  const message = String(error?.message || '').toLowerCase()
+  return message.includes('404') && message.includes('invoice schedule not found')
+}
+
+async function createDraftInstallmentSchedule({ ghlClient, flow, installment, context, planSummary }) {
+  const schedulePayload = buildInstallmentSchedulePayload({ flow, installment, context, planSummary })
+  logger.info(`Creando schedule GHL para flujo ${flow.id}, parcialidad ${installment.sequence}: amount=${schedulePayload.total}, executeAt=${schedulePayload.schedule?.executeAt}, live=${schedulePayload.liveMode}`)
+
+  const schedule = await ghlClient.createInvoiceSchedule(schedulePayload)
+  const scheduleId = extractScheduleId(schedule)
+
+  if (!scheduleId) {
+    throw new Error(`HighLevel no devolvió ID del schedule: ${Object.keys(schedule || {}).join(', ') || 'respuesta vacía'}`)
+  }
+
+  await db.run(
+    `UPDATE installment_payments
+     SET ghl_schedule_id = ?, ghl_schedule_status = 'draft', notes = NULL, updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?`,
+    [scheduleId, installment.id]
+  )
+  logger.info(`Schedule GHL creado para flujo ${flow.id}, parcialidad ${installment.sequence}: ${scheduleId}`)
+
+  return scheduleId
 }
 
 async function scheduleAutomaticInstallmentsForFlow(flow, paymentMethod, existingClient = null) {
@@ -843,8 +1005,19 @@ async function scheduleAutomaticInstallmentsForFlow(flow, paymentMethod, existin
 
   if (installments.length === 0) return []
 
+  const allFlowInstallments = await db.all(
+    `SELECT *
+     FROM installment_payments
+     WHERE flow_id = ?
+     ORDER BY sequence ASC`,
+    [flow.id]
+  )
+
   const ghlClient = existingClient || await getGHLClient()
   const context = await getInvoiceSendContext()
+  const planSummary = buildPaymentPlanSummary(flow, allFlowInstallments, {
+    timezone: context.timezone
+  })
   const scheduled = []
   const resolvedAutoPaymentType = resolveAutoPaymentType(paymentMethod)
 
@@ -853,6 +1026,7 @@ async function scheduleAutomaticInstallmentsForFlow(flow, paymentMethod, existin
 
   for (const installment of installments) {
     let scheduleId = installment.ghl_schedule_id
+    let recreatedMissingSchedule = false
     const autoPayment = buildAutoPayment(paymentMethod, {
       amount: installment.amount,
       currency: flow.currency || CURRENCY_DEFAULT
@@ -860,28 +1034,32 @@ async function scheduleAutomaticInstallmentsForFlow(flow, paymentMethod, existin
 
     try {
       if (!scheduleId) {
-        const schedulePayload = buildInstallmentSchedulePayload({ flow, installment, context })
-        logger.info(`Creando schedule GHL para flujo ${flow.id}, parcialidad ${installment.sequence}: amount=${schedulePayload.total}, executeAt=${schedulePayload.schedule?.executeAt}, live=${schedulePayload.liveMode}`)
-        const schedule = await ghlClient.createInvoiceSchedule(schedulePayload)
-        scheduleId = extractScheduleId(schedule)
-
-        if (!scheduleId) {
-          throw new Error(`HighLevel no devolvió ID del schedule: ${Object.keys(schedule || {}).join(', ') || 'respuesta vacía'}`)
-        }
-
-        await db.run(
-          `UPDATE installment_payments
-           SET ghl_schedule_id = ?, ghl_schedule_status = 'draft', updated_at = CURRENT_TIMESTAMP
-           WHERE id = ?`,
-          [scheduleId, installment.id]
-        )
-        logger.info(`Schedule GHL creado para flujo ${flow.id}, parcialidad ${installment.sequence}: ${scheduleId}`)
+        scheduleId = await createDraftInstallmentSchedule({ ghlClient, flow, installment, context, planSummary })
       }
 
-      await ghlClient.scheduleInvoiceSchedule(scheduleId, {
-        liveMode: context.liveMode,
-        autoPayment
-      })
+      while (true) {
+        try {
+          await ghlClient.scheduleInvoiceSchedule(scheduleId, {
+            liveMode: context.liveMode,
+            autoPayment
+          })
+          break
+        } catch (error) {
+          if (!isGhlScheduleNotFoundError(error) || recreatedMissingSchedule) {
+            throw error
+          }
+
+          recreatedMissingSchedule = true
+          logger.warn(`Schedule GHL ${scheduleId} ya no existe para flujo ${flow.id}, parcialidad ${installment.sequence}; recreando`)
+          await db.run(
+            `UPDATE installment_payments
+             SET ghl_schedule_id = NULL, ghl_schedule_status = 'schedule_failed', notes = ?, updated_at = CURRENT_TIMESTAMP
+             WHERE id = ?`,
+            ['GHL schedule missing; recreating draft', installment.id]
+          )
+          scheduleId = await createDraftInstallmentSchedule({ ghlClient, flow, installment, context, planSummary })
+        }
+      }
 
       await db.run(
         `UPDATE installment_payments
@@ -1075,6 +1253,7 @@ export async function createInstallmentPaymentFlow(payload) {
       JSON.stringify({
         channels: payload.channels || {},
         remainingFrequency: payload.remainingFrequency || 'custom',
+        installmentFeePercentage: payload.installmentFeePercentage ?? payload.paymentPlanFeePercentage ?? payload.planFeePercentage ?? payload.financingPercentage ?? payload.surchargePercentage,
         source: payload.source || 'record_payment_modal'
       })
     ]
@@ -1084,6 +1263,18 @@ export async function createInstallmentPaymentFlow(payload) {
     flowId,
     payments: remainingPayments,
     automatic: remainingAutomatic
+  })
+
+  const flowForSummary = await db.get('SELECT * FROM payment_flows WHERE id = ?', [flowId])
+  const installmentsForSummary = await db.all(
+    `SELECT *
+     FROM installment_payments
+     WHERE flow_id = ?
+     ORDER BY sequence ASC`,
+    [flowId]
+  )
+  const planSummary = buildPaymentPlanSummary(flowForSummary, installmentsForSummary, {
+    frequency: payload.remainingFrequency || 'custom'
   })
 
   const ghlClient = await getGHLClient()
@@ -1108,7 +1299,8 @@ export async function createInstallmentPaymentFlow(payload) {
       currency,
       concept: `${concept} - primer pago`,
       title: 'Primer pago',
-      dueDate: firstPaymentDate
+      dueDate: firstPaymentDate,
+      summaryDetails: planSummary
     })
     const invoiceId = invoice.id || invoice._id
 
@@ -1166,7 +1358,8 @@ export async function createInstallmentPaymentFlow(payload) {
       currency,
       concept: `${concept} - primer pago con tarjeta`,
       title: 'Primer pago con tarjeta',
-      dueDate: firstPaymentDate
+      dueDate: firstPaymentDate,
+      summaryDetails: planSummary
     })
     const invoiceId = invoice.id || invoice._id
     const sent = await sendInvoice({
@@ -1204,7 +1397,11 @@ export async function createInstallmentPaymentFlow(payload) {
       currency,
       concept: 'Domiciliación de tarjeta',
       title: 'Autorización de tarjeta',
-      dueDate: todayDateOnly()
+      dueDate: todayDateOnly(),
+      summaryDetails: combineTextSections(
+        'Este cobro autoriza la tarjeta y no descuenta saldo del plan.',
+        planSummary
+      )
     })
     const invoiceId = invoice.id || invoice._id
     const sent = await sendInvoice({
