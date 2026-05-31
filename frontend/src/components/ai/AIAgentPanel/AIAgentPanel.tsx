@@ -145,7 +145,8 @@ type VisualChart = {
 }
 
 type AIAgentPanelProps = {
-  variant?: 'floating' | 'embedded'
+  variant?: 'floating' | 'embedded' | 'docked'
+  onOpenChange?: (open: boolean) => void
 }
 
 function getStoredOpenState() {
@@ -1179,10 +1180,11 @@ function renderAttachmentList(
   )
 }
 
-export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating' }) => {
+export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating', onOpenChange }) => {
   const location = useLocation()
   const { showToast } = useNotification()
   const embedded = variant === 'embedded'
+  const docked = variant === 'docked'
   const [open, setOpen] = useState(() => embedded || getStoredOpenState())
   const [status, setStatus] = useState<AIAgentConfigStatus>(emptyStatus)
   const [form, setForm] = useState<AIAgentConfigInput>(emptyForm)
@@ -1294,6 +1296,10 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
   }, [messages, sending, savingConfig, visible])
+
+  useEffect(() => {
+    onOpenChange?.(visible)
+  }, [onOpenChange, visible])
 
   useEffect(() => {
     const textarea = textareaRef.current
@@ -1861,8 +1867,12 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
   const closedButtonLabel = unreadReplies
     ? `Abrir agente AI, ${unreadReplies} respuesta nueva`
     : 'Abrir agente AI'
-  const rootClassName = embedded ? styles.embeddedRoot : styles.floatingRoot
-  const windowClassName = embedded ? `${styles.window} ${styles.embeddedWindow}` : styles.window
+  const rootClassName = embedded ? styles.embeddedRoot : docked ? styles.dockedRoot : styles.floatingRoot
+  const windowClassName = embedded
+    ? `${styles.window} ${styles.embeddedWindow}`
+    : docked
+      ? `${styles.window} ${styles.dockedWindow}`
+      : styles.window
   const textComposerClassName = attachments.length
     ? `${styles.textComposer} ${styles.textComposerWithAttachments}`
     : styles.textComposer
@@ -2165,6 +2175,7 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
           className={floatingButtonClassName}
           onClick={() => setOpenState(true)}
           aria-label={closedButtonLabel}
+          title={closedButtonLabel}
         >
           <>
             <MessageCircle size={18} />

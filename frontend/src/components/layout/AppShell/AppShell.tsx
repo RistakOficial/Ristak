@@ -7,6 +7,17 @@ import { SyncProgressBar } from '@/components/common/SyncProgressBar'
 import { AIAgentPanel } from '@/components/ai'
 import { useAuth } from '@/contexts/AuthContext'
 import { useDomainFeatureSync } from '@/hooks'
+import styles from './AppShell.module.css'
+
+const AI_AGENT_FLOATING_OPEN_KEY = 'ristak.aiAgentFloating.open'
+
+function getInitialAIAgentOpenState() {
+  try {
+    return window.localStorage.getItem(AI_AGENT_FLOATING_OPEN_KEY) === 'true'
+  } catch {
+    return false
+  }
+}
 
 export const AppShell: React.FC = () => {
   const navigate = useNavigate()
@@ -14,6 +25,7 @@ export const AppShell: React.FC = () => {
   const [syncProgressVisible, setSyncProgressVisible] = useState(false)
   const [locationName, setLocationName] = useState<string>('Mi Negocio')
   const [locationLogo, setLocationLogo] = useState<string | null>(null)
+  const [aiAgentOpen, setAIAgentOpen] = useState(getInitialAIAgentOpenState)
 
   // Asegurar que las configuraciones sensibles al dominio estén sincronizadas
   useDomainFeatureSync()
@@ -82,19 +94,23 @@ export const AppShell: React.FC = () => {
     <>
       {syncProgressVisible && <SyncProgressBar onClose={handleProgressBarClose} />}
 
-      <div className="relative transition-all duration-300 ease-in-out">
-        <Layout
-          sidebar={<Sidebar locationName={locationName} locationLogo={locationLogo} />}
-        >
-          <div className="flex flex-col min-h-full">
-            <Header onLogout={handleLogout} />
-            <div className="flex-1 overflow-auto">
-              <Outlet />
+      <div className={`${styles.shell} ${aiAgentOpen ? styles.shellWithAIAgent : ''}`}>
+        <div className={styles.mainPane}>
+          <Layout
+            sidebar={<Sidebar locationName={locationName} locationLogo={locationLogo} />}
+          >
+            <div className="flex flex-col min-h-full">
+              <Header onLogout={handleLogout} />
+              <div className="flex-1 overflow-auto">
+                <Outlet />
+              </div>
             </div>
-          </div>
-        </Layout>
+          </Layout>
+        </div>
 
-        <AIAgentPanel />
+        <div className={styles.aiAgentSlot}>
+          <AIAgentPanel variant="docked" onOpenChange={setAIAgentOpen} />
+        </div>
       </div>
     </>
   )
