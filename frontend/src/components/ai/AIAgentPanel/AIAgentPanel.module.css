@@ -788,78 +788,51 @@
   align-self: flex-start;
   display: inline-flex;
   align-items: center;
-  gap: 9px;
+  gap: 8px;
   width: fit-content;
   max-width: 88%;
-  padding: 2px 0;
+  padding: 4px 0;
 }
 
 .thinkingAura {
-  position: relative;
-  display: grid;
-  place-items: center;
-  width: 27px;
-  height: 27px;
-  flex: 0 0 auto;
-  border-radius: 999px;
-  color: #ffffff;
-  background:
-    radial-gradient(circle at 28% 22%, rgba(255, 255, 255, 0.95), transparent 19px),
-    linear-gradient(135deg, #10b981 0%, #3b82f6 46%, #a855f7 100%);
-  box-shadow:
-    0 10px 22px rgba(59, 130, 246, 0.22),
-    0 0 0 1px rgba(255, 255, 255, 0.18) inset;
-  animation: thinkingAuraPulse 1.8s ease-in-out infinite;
+  display: none;
 }
 
 .thinkingAura::after {
-  position: absolute;
-  inset: -5px;
-  border-radius: inherit;
-  background: linear-gradient(135deg, rgba(16, 185, 129, 0.24), rgba(168, 85, 247, 0.2));
-  content: '';
-  filter: blur(8px);
-  z-index: -1;
+  content: none;
 }
 
 .thinkingBubble {
   position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  min-height: 39px;
-  padding: 12px 15px;
+  gap: 6px;
+  min-height: 30px;
+  padding: 9px 13px;
   overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--color-border-light) 82%, rgba(59, 130, 246, 0.24));
+  border: 1px solid rgba(148, 163, 184, 0.16);
   border-radius: 999px;
-  background:
-    linear-gradient(135deg, rgba(255, 255, 255, 0.92), rgba(248, 250, 252, 0.72)),
-    linear-gradient(135deg, rgba(16, 185, 129, 0.12), rgba(59, 130, 246, 0.12), rgba(168, 85, 247, 0.1));
-  box-shadow:
-    0 14px 28px rgba(15, 23, 42, 0.06),
-    0 0 0 1px rgba(255, 255, 255, 0.7) inset;
+  background: color-mix(in srgb, var(--color-background-secondary) 88%, var(--color-background-primary) 12%);
+  box-shadow: none;
 }
 
 .thinkingBubble::before {
   position: absolute;
-  top: -35%;
-  bottom: -35%;
-  left: -45%;
-  width: 40%;
+  inset: 0;
+  border-radius: inherit;
   content: '';
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.62), transparent);
-  transform: rotate(18deg);
-  animation: thinkingSheen 2.2s ease-in-out infinite;
+  background: linear-gradient(90deg, transparent, rgba(var(--color-primary-rgb), 0.08), transparent);
+  opacity: 0;
+  animation: thinkingSweep 1.8s ease-in-out infinite;
 }
 
 .thinkingDot {
   position: relative;
-  width: 7px;
-  height: 7px;
+  width: 6px;
+  height: 6px;
   border-radius: 999px;
-  background: linear-gradient(135deg, #10b981, #3b82f6 52%, #a855f7);
-  box-shadow: 0 0 12px rgba(59, 130, 246, 0.42);
-  animation: thinkingDotBounce 1.15s ease-in-out infinite;
+  background: var(--color-primary);
+  animation: thinkingDotPulse 1.15s ease-in-out infinite;
 }
 
 .thinkingDot:nth-child(2) {
@@ -870,50 +843,39 @@
   animation-delay: 0.32s;
 }
 
-@keyframes thinkingDotBounce {
+@keyframes thinkingDotPulse {
   0%,
   80%,
   100% {
-    opacity: 0.38;
-    transform: translateY(0) scale(0.88);
+    opacity: 0.32;
+    transform: scale(0.82);
   }
 
   40% {
-    opacity: 1;
-    transform: translateY(-5px) scale(1.08);
-  }
-}
-
-@keyframes thinkingAuraPulse {
-  0%,
-  100% {
+    opacity: 0.95;
     transform: scale(1);
   }
-
-  50% {
-    transform: scale(1.06);
-  }
 }
 
-@keyframes thinkingSheen {
+@keyframes thinkingSweep {
   0% {
-    transform: translateX(0) rotate(18deg);
+    opacity: 0;
+    transform: translateX(-65%);
   }
 
-  58%,
+  45% {
+    opacity: 1;
+  }
+
   100% {
-    transform: translateX(360%) rotate(18deg);
+    opacity: 0;
+    transform: translateX(65%);
   }
 }
 
 :global(body.dark) .thinkingBubble {
   border-color: rgba(148, 163, 184, 0.16);
-  background:
-    linear-gradient(135deg, rgba(23, 23, 21, 0.9), rgba(12, 13, 12, 0.78)),
-    linear-gradient(135deg, rgba(16, 185, 129, 0.18), rgba(59, 130, 246, 0.14), rgba(168, 85, 247, 0.16));
-  box-shadow:
-    0 16px 32px rgba(0, 0, 0, 0.24),
-    0 0 0 1px rgba(255, 255, 255, 0.04) inset;
+  background: color-mix(in srgb, var(--color-background-secondary) 84%, var(--color-background-primary) 16%);
 }
 
 .composer {
