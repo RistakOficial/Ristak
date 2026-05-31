@@ -1369,3 +1369,77 @@ export async function activatePendingPaymentFlowsForContact(contactId) {
 
   return activated
 }
+
+export async function repairPendingPaymentFlows(limit = 25) {
+  const flows = await db.all(
+    `SELECT *
+     FROM payment_flows
+     WHERE remaining_automatic = 1
+       AND current_state IN (?, ?, ?)
+     ORDER BY updated_at ASC
+     LIMIT ?`,
+    [
+      PAYMENT_FLOW_STATES.WAITING_CARD_AUTHORIZATION,
+      PAYMENT_FLOW_STATES.CARD_SETUP_LINK_SENT,
+      PAYMENT_FLOW_STATES.FIRST_PAYMENT_PENDING,
+      limit
+    ]
+  )
+
+  let repaired = 0
+
+  for (const flow of flows) {
+    try {
+      const invoiceId = getPaidAuthorizationInvoiceId(flow)
+
+      if (invoiceId) {
+        const didActivate = await activateFlowIfReady(flow)
+        if (didActivate) repaired++
+        continue
+      }
+
+      const candidates = [
+        {
+          invoiceId: flow.first_payment_invoice_id,
+          target: 'first_payment',
+          alreadyPaid: flow.first_payment_status === 'paid'
+        },
+        {
+          invoiceId: flow.card_setup_invoice_id,
+          target: 'card_setup',
+          alreadyPaid: flow.card_setup_status === 'paid'
+        }
+      ].filter(candidate => candidate.invoiceId && !candidate.alreadyPaid)
+
+      for (const candidate of candidates) {
+        const payment = await db.get(
+          `SELECT amount, description, status
+           FROM payments
+           WHERE ghl_invoice_id = ? OR id = ?
+           LIMIT 1`,
+          [candidate.invoiceId, candidate.invoiceId]
+        )
+
+        if (!payment || !['paid', 'succeeded', 'completed'].includes(normalizeText(payment.status))) {
+          continue
+        }
+
+        await markPaymentFlowInvoicePaid(candidate.invoiceId, {
+          contactId: flow.contact_id,
+          amount: payment.amount,
+          description: payment.description
+        })
+        repaired++
+        break
+      }
+    } catch (error) {
+      logger.error(`No se pudo reparar flujo de parcialidades ${flow.id}: ${error.message}`)
+    }
+  }
+
+  if (repaired > 0) {
+    logger.info(`Reparación de parcialidades activó ${repaired} flujo(s) pendiente(s)`)
+  }
+
+  return repaired
+}

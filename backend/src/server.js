@@ -11,6 +11,7 @@ import { startHighLevelSyncCron } from './jobs/highlevelSync.cron.js'
 import { startMetaVersionCron } from './jobs/metaVersionCron.js'
 import { initializeVersion } from './services/metaVersionService.js'
 import { verifyAndUpdateWebhooks } from './startup/webhookVerification.js'
+import { repairPendingPaymentFlows } from './services/paymentFlowService.js'
 
 // Force redeploy to ensure latest logs are active
 
@@ -126,6 +127,10 @@ app.listen(PORT, async () => {
 
   // Verificar y actualizar webhooks en producción
   await verifyAndUpdateWebhooks()
+
+  repairPendingPaymentFlows().catch(error => {
+    logger.error(`No se pudo ejecutar reparación inicial de parcialidades: ${error.message}`)
+  })
 
   // Iniciar cron jobs
   startMetaSyncCron()              // Sincroniza anuncios de Meta Ads cada hora
