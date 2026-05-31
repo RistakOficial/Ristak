@@ -14,6 +14,7 @@ import { logger } from '../utils/logger.js'
 const GHL_BASE_URL = 'https://services.leadconnectorhq.com'
 const GHL_API_VERSION = '2021-07-28'
 const GHL_INVOICE_SCHEDULE_API_VERSION = '2023-02-21'
+const GHL_INVOICE_SCHEDULE_AUTOPAY_API_VERSION = '2021-07-28'
 const MAX_RETRIES = 3
 const RETRY_DELAY = 1000 // 1 segundo
 const MAX_429_RETRIES = 5
@@ -517,12 +518,12 @@ class GHLClient {
       id: data.id || scheduleId
     }
 
-    logger.info(`Configurando autopago para schedule: ${scheduleId}`)
+    logger.info(`Configurando autopago para schedule: ${scheduleId} (Version ${GHL_INVOICE_SCHEDULE_AUTOPAY_API_VERSION})`)
 
     return this.request(`/invoices/schedule/${scheduleId}/auto-payment`, {
       method: 'POST',
       body,
-      version: GHL_INVOICE_SCHEDULE_API_VERSION
+      version: GHL_INVOICE_SCHEDULE_AUTOPAY_API_VERSION
     })
   }
 
@@ -537,12 +538,12 @@ class GHLClient {
       altType: 'location'
     }
 
-    logger.info(`Activando invoice schedule: ${scheduleId}`)
+    logger.info(`Activando invoice schedule: ${scheduleId} (Version ${GHL_INVOICE_SCHEDULE_AUTOPAY_API_VERSION})`)
 
     return this.request(`/invoices/schedule/${scheduleId}/schedule`, {
       method: 'POST',
       body,
-      version: GHL_INVOICE_SCHEDULE_API_VERSION
+      version: GHL_INVOICE_SCHEDULE_AUTOPAY_API_VERSION
     })
   }
 

@@ -745,6 +745,7 @@ function buildAutoPayment(paymentMethod) {
   const type = resolveAutoPaymentType(paymentMethod)
   const autoPayment = {
     enable: true,
+    type,
     paymentMethodId: paymentMethod.paymentMethodId,
     customerId: paymentMethod.customerId,
   }
@@ -754,8 +755,6 @@ function buildAutoPayment(paymentMethod) {
       brand: paymentMethod.brand || 'card',
       last4: paymentMethod.last4 || '****'
     }
-  } else {
-    autoPayment.type = type
   }
 
   if (paymentMethod.cardId) {
@@ -842,7 +841,7 @@ async function scheduleAutomaticInstallmentsForFlow(flow, paymentMethod, existin
   const scheduled = []
 
   logger.info(`Programando ${installments.length} parcialidad(es) automáticas para flujo ${flow.id}`)
-  logger.info(`Autopago GHL para flujo ${flow.id}: customer=${maskIdentifier(paymentMethod.customerId)}, method=${maskIdentifier(paymentMethod.paymentMethodId)}, resolvedType=${resolveAutoPaymentType(paymentMethod)}, sentType=${autoPayment.type || 'omitted'}, rawType=${paymentMethod.type || 'n/a'}, card=${paymentMethod.brand || 'card'} ${paymentMethod.last4 || '****'}, live=${context.liveMode}`)
+  logger.info(`Autopago GHL para flujo ${flow.id}: customer=${maskIdentifier(paymentMethod.customerId)}, method=${maskIdentifier(paymentMethod.paymentMethodId)}, type=${autoPayment.type}, rawType=${paymentMethod.type || 'n/a'}, card=${paymentMethod.brand || 'card'} ${paymentMethod.last4 || '****'}, live=${context.liveMode}`)
 
   for (const installment of installments) {
     let scheduleId = installment.ghl_schedule_id
