@@ -539,23 +539,108 @@ function isLikelyReadOnlyMetaAdsToolName(toolName) {
     normalized.includes('benchmark')
 }
 
-function hasExplicitMetaAdsExecutionConfirmation(messages) {
+const AFFIRMATIVE_INTENT_STEMS = [
+  'si',
+  'sip',
+  'simon',
+  'ok',
+  'yes',
+  'yeah',
+  'yep',
+  'confirm',
+  'autoriz',
+  'aprob',
+  'acept',
+  'afirm',
+  'correct',
+  'claro',
+  'dale',
+  'adelante',
+  'proced',
+  'ejecut',
+  'continua',
+  'haz',
+  'va',
+  'sale',
+  'listo',
+  'hecho',
+  'perfect',
+  'jal',
+  'arre'
+]
+
+const EXECUTION_INTENT_STEMS = [
+  'confirm',
+  'autoriz',
+  'aprob',
+  'proced',
+  'ejecut',
+  'continua',
+  'haz',
+  'dale',
+  'adelante'
+]
+
+function userRejectedOrDeferredExecution(userText) {
+  const normalized = normalizeText(userText)
+
+  return /(\bno\b|\bnel\b|\bnop\b|\bnegativo\b|\bcancel\b|\bcancela\b|\bespera\b|\baguanta\b|\bdeten\b|\bdetener\b|\balto\b|\bstop\b|\bpausa\b|\bno lo hagas\b|\bno procedas\b|\btodavia no\b|\baun no\b|\bmejor no\b)/.test(normalized) ||
+    /(\bpero\b|\baunque\b|\bexcepto\b|\bsolo si\b|\bsiempre que\b|\bprimero\b|\bantes\b.*\b(cambia|corrige|ajusta|modifica)\b|\b(cambia|corrige|ajusta|modifica)\b)/.test(normalized)
+}
+
+function textHasAnyStem(text, stems) {
+  const tokens = normalizeText(text)
+    .replace(/[^a-z0-9ñ\s]/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean)
+
+  return tokens.some(token => stems.some(stem => token === stem || token.startsWith(stem)))
+}
+
+function isAffirmativeExecutionIntent(userText) {
+  const normalized = normalizeText(userText)
+  if (!normalized || userRejectedOrDeferredExecution(normalized)) return false
+
+  const tokens = normalized
+    .replace(/[^a-z0-9ñ\s]/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean)
+  const isBriefResponse = tokens.length <= 12 && normalized.length <= 100
+
+  if (/\bsin problema\b|\bme parece bien\b|\bestoy de acuerdo\b|\bpor mi esta bien\b/.test(normalized)) {
+    return true
+  }
+
+  if (textHasAnyStem(normalized, EXECUTION_INTENT_STEMS)) {
+    return true
+  }
+
+  return isBriefResponse && textHasAnyStem(normalized, AFFIRMATIVE_INTENT_STEMS)
+}
+
+function assistantAskedForExecutionConfirmation(previousAssistantText, contextPattern) {
+  const normalized = normalizeText(previousAssistantText)
+  const askedForConfirmation = /(confirm|autoriz|aprob|proced|ejecut|continu|segur|aceptas|deseas|quieres|puedo|antes de)/.test(normalized)
+
+  return askedForConfirmation && (!contextPattern || contextPattern.test(normalized))
+}
+
+function hasUserConfirmedExecution(messages, { contextPattern } = {}) {
   const latestUserIndex = findLatestUserMessageIndex(messages)
   if (latestUserIndex < 0) return false
 
   const latestUserText = normalizeText(getMessageText(messages[latestUserIndex]))
   const previousAssistantText = normalizeText(getPreviousAssistantMessageText(messages, latestUserIndex))
 
-  if (/(no|cancel|cancela|espera|aguanta|deten|detener|no lo hagas|no procedas)/.test(latestUserText)) {
-    return false
-  }
+  if (!assistantAskedForExecutionConfirmation(previousAssistantText, contextPattern)) return false
 
-  const assistantAskedForMetaAdsConfirmation = /(confirm|autoriz|procedo|confirmas|confirma)/.test(previousAssistantText) &&
-    /(meta|ads|anuncio|anuncios|campana|campanas|campaign|adset|conjunto|audiencia|publico|público|presupuesto|budget|pausar|apagar|reactivar|crear|editar|modificar)/.test(previousAssistantText)
+  return isAffirmativeExecutionIntent(latestUserText)
+}
 
-  if (!assistantAskedForMetaAdsConfirmation) return false
-
-  return /(\bconfirmo\b|\bconfirmado\b|\bautorizo\b|\bautorizado\b|\bsi\b.*\b(hazlo|procede|procedele|apaga|pausa|crea|modifica|actualiza|edita)\b|\bsí\b.*\b(hazlo|procede|procédele|apaga|pausa|crea|modifica|actualiza|edita)\b|\badelante\b|\bdale\b|\bprocede\b|\bprocedele\b|\bva\b)/.test(latestUserText)
+function hasExplicitMetaAdsExecutionConfirmation(messages) {
+  return hasUserConfirmedExecution(messages, {
+    contextPattern: /(meta|ads|anuncio|anuncios|campana|campanas|campaign|adset|conjunto|audiencia|publico|público|presupuesto|budget|pausar|apagar|reactivar|crear|editar|modificar)/
+  })
 }
 
 function buildMetaAdsApprovalOptions(requests = []) {
@@ -594,7 +679,7 @@ function buildMetaAdsApprovalText(requests = []) {
 
   lines.push('')
   lines.push('No voy a usar Meta para reportar leads, citas, ventas, ingresos, ROAS o rentabilidad. Esa decisión sale de Ristak/DB.')
-  lines.push('Si está correcto, responde: "Confirmo y autorizo ejecutar esta acción de Meta Ads."')
+  lines.push('Si está correcto, responde con una aprobación clara. No necesitas usar una frase exacta.')
 
   return lines.join('\n')
 }
@@ -927,20 +1012,9 @@ function getPreviousAssistantMessageText(messages, beforeIndex) {
 }
 
 function hasExplicitPaymentExecutionConfirmation(messages) {
-  const latestUserIndex = findLatestUserMessageIndex(messages)
-  if (latestUserIndex < 0) return false
-
-  const latestUserText = normalizeText(getMessageText(messages[latestUserIndex]))
-  const previousAssistantText = normalizeText(getPreviousAssistantMessageText(messages, latestUserIndex))
-
-  const assistantAskedForConfirmation = /(confirm|autoriz|procedo|antes de cobrar|antes de registrar|antes de programar|confirmas|confirma)/.test(previousAssistantText)
-  if (!assistantAskedForConfirmation) return false
-
-  if (/(no|cancel|cancela|espera|aguanta|deten|detener|no lo hagas|no procedas)/.test(latestUserText)) {
-    return false
-  }
-
-  return /(\bconfirmo\b|\bconfirmado\b|\bautorizo\b|\bautorizado\b|\bsi\b|\bsip\b|\bsimon\b|\bsale\b|\bok\b|\bokay\b|\bva\b|\bdale\b|\badelante\b|\bprocede\b|\bprocedele\b|\bsi\b.*\b(hazlo|procede|procedele|cobralo|cobrale|programalo|registralo|envialo)\b)/.test(latestUserText)
+  return hasUserConfirmedExecution(messages, {
+    contextPattern: /(dinero|cobr|pago|registr|program|link|tarjeta|invoice|factura|domicili|monto|transfer|deposit)/
+  })
 }
 
 function getLatestUserText(messages) {
@@ -1003,7 +1077,7 @@ function buildPaymentConfirmationRequiredOutput({ action, summary = {}, clarific
       'No ejecutes la acción todavía.',
       'Antes de tocar dinero, resume contacto, monto, concepto, método, fechas y qué pasará si no hay tarjeta guardada.',
       'El contacto debe mostrarse con nombre y email o teléfono cuando existan; si no hay email/teléfono, muestra el ID.',
-      'Pide una confirmación explícita tipo "Confirmo y autorizo ejecutar este cobro/plan".',
+      'Pide una confirmación explícita sin imponer una frase exacta; una aprobación clara después del resumen es suficiente.',
       'Si falta método o no está claro si será transferencia, depósito, registro manual, link de pago o domiciliación, pregunta eso antes de confirmar.'
     ].join(' ')
   }
@@ -4217,7 +4291,8 @@ async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, ru
     'HighLevel puede hacer lecturas y cambios reales según los scopes del token configurado: contactos, tags, custom fields, conversaciones/mensajes, workflows, calendarios/citas, oportunidades, productos, pagos, invoices, usuarios, ubicaciones, social posting, blogs, plantillas y cualquier endpoint disponible por API.',
     'Respeta SIEMPRE la configuración de pagos de Ristak incluida en "Conexión HighLevel para acciones en CRM". Si paymentMode es "test", toda acción de pago debe ejecutarse en modo prueba/liveMode false y debes avisar en la respuesta con una frase corta: "Modo prueba activo: este pago no es real". Si paymentMode es "live", no metas advertencias de modo.',
     'Cuando una herramienta devuelva paymentModeWarning, incluye esa advertencia de forma visible y breve en tu respuesta final. No la ocultes.',
-    'Regla de seguridad absoluta para dinero: NUNCA ejecutes cobros, registros de pago, links enviados, domiciliaciones, invoices o planes en la primera respuesta del usuario. Una orden como "cóbrale a Raúl..." expresa intención, NO autorización final. Primero prepara el resumen y pide confirmación explícita; sólo después de que el usuario responda algo como "Confirmo y autorizo..." puedes ejecutar la herramienta.',
+    'Regla de seguridad absoluta para dinero: NUNCA ejecutes cobros, registros de pago, links enviados, domiciliaciones, invoices o planes en la primera respuesta del usuario. Una orden como "cóbrale a Raúl..." expresa intención, NO autorización final. Primero prepara el resumen y pide confirmación explícita; después acepta una aprobación natural y clara del usuario sin exigir una frase exacta.',
+    'No hagas doble confirmación si el usuario ya respondió afirmativamente al resumen de cobro o acción. Si responde con una condición, cambio, duda o negación, no ejecutes y aclara lo pendiente.',
     'Si una herramienta de pagos devuelve confirmationRequired, NO digas que ya cobraste, enviaste, registraste o programaste. Presenta el resumen con contacto, monto, concepto, método, fechas, modo prueba/en vivo y consecuencias si no hay tarjeta guardada; luego pide confirmación.',
     'En toda confirmación u opción de contacto para cobros, muestra el contacto con nombre y al menos email o teléfono cuando existan. Nunca confirmes sólo por nombre si puedes mostrar correo/celular; sirve para validar que no se cobre al contacto equivocado.',
     'Para productos/precios de GoHighLevel usa lookup_highlevel_products antes de crear un cobro sólo si el usuario dice explícitamente "producto", "producto guardado", "precio de GHL", nombra un producto como producto, o pide ver productos/precios. No inventes productos ni precios.',
