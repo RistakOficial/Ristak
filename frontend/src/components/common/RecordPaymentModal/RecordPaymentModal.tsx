@@ -72,6 +72,7 @@ const EMAIL_SEND_METHODS = new Set<SendMethod>(['email', 'email_whatsapp', 'emai
 const PHONE_SEND_METHODS = new Set<SendMethod>(['whatsapp', 'sms', 'email_whatsapp', 'email_sms', 'all'])
 const SMS_SEND_METHODS = new Set<SendMethod>(['sms', 'email_sms', 'all'])
 const WHATSAPP_SEND_METHODS = new Set<SendMethod>(['whatsapp', 'email_whatsapp', 'all'])
+const DEFAULT_SEND_METHOD: SendMethod = 'all'
 
 const getSendMethodOptions = (contact: Contact | null) => {
   const hasEmail = Boolean(contact?.email)
@@ -95,6 +96,10 @@ const getSendMethodOptions = (contact: Contact | null) => {
 
   return options
 }
+
+const getDefaultSendMethod = (options: Array<{ value: SendMethod; label: string }>) => (
+  options.find(option => option.value === DEFAULT_SEND_METHOD)?.value || options[0]?.value || DEFAULT_SEND_METHOD
+)
 
 const getSendMethodLabel = (method: SendMethod) => {
   const labels: Record<SendMethod, string> = {
@@ -327,7 +332,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const [invoicePayload, setInvoicePayload] = useState<Record<string, any> | null>(null)
   const [invoiceSummary, setInvoiceSummary] = useState<InvoiceSummary | null>(null)
   const [paymentOption, setPaymentOption] = useState<PaymentOption>('send')
-  const [sendMethod, setSendMethod] = useState<SendMethod>('whatsapp')
+  const [sendMethod, setSendMethod] = useState<SendMethod>(DEFAULT_SEND_METHOD)
   const [checkingCards, setCheckingCards] = useState(false)
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([])
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<string | null>(null)
@@ -379,7 +384,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   useEffect(() => {
     if (sendMethodOptions.length === 0) return
     if (!selectedSendMethodOption) {
-      setSendMethod(sendMethodOptions[0].value)
+      setSendMethod(getDefaultSendMethod(sendMethodOptions))
     }
   }, [sendMethodOptions, selectedSendMethodOption])
 
@@ -414,7 +419,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     setInvoicePayload(null)
     setInvoiceSummary(null)
     setPaymentOption('send')
-    setSendMethod('whatsapp')
+    setSendMethod(DEFAULT_SEND_METHOD)
     setCheckingCards(false)
     setPaymentMethods([])
     setSelectedPaymentMethod(null)
@@ -637,14 +642,17 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
   const handleSelectContact = (contact: Contact) => {
     // Solo guardar los datos primitivos del contacto para evitar referencias circulares
-    setSelectedContact({
+    const nextContact = {
       id: contact.id,
       name: contact.name || '',
       email: contact.email || '',
       phone: contact.phone || '',
       firstName: contact.firstName || '',
       lastName: contact.lastName || ''
-    })
+    }
+
+    setSelectedContact(nextContact)
+    setSendMethod(getDefaultSendMethod(getSendMethodOptions(nextContact)))
     setSearchQuery('')
     setShowContactDropdown(false)
     setContacts([])
