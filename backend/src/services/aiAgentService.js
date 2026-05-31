@@ -52,7 +52,15 @@ const isPostgres = Boolean(process.env.DATABASE_URL)
 const META_ADS_MCP_READ_ONLY_TOOL_NAMES = [
   'ads_get_ad_accounts',
   'ads_get_ad_entities',
+  'ads_get_audiences',
+  'ads_get_custom_audience',
+  'ads_get_custom_audience_details',
+  'ads_get_custom_audiences',
+  'ads_get_lookalike_audiences',
   'ads_get_pages_for_business',
+  'ads_get_saved_audiences',
+  'ads_get_targeting',
+  'ads_get_targeting_search',
   'ads_catalog_get_catalogs',
   'ads_catalog_get_details',
   'ads_catalog_get_diagnostics',
@@ -587,6 +595,92 @@ function buildMetaAdsApprovalText(requests = []) {
   lines.push('Si está correcto, responde: "Confirmo y autorizo ejecutar esta acción de Meta Ads."')
 
   return lines.join('\n')
+}
+
+function isMetaAdsBusinessMetricRequest(question) {
+  const normalized = normalizeText(question)
+
+  return /(lead|leads|prospect|interesad|cita|citas|asistencia|show|venta|ventas|cliente|clientes|ingreso|ingresos|revenue|sales|roas|retorno|rentab|utilidad|ganancia|cac|ticket|ltv|conversion|conversi|resultado|resultados|generando|generaron|jala|funciona|performance|rendimiento)/.test(normalized)
+}
+
+function isMetaAdsAudienceRequest(question) {
+  const normalized = normalizeText(question)
+
+  return /(publico|público|publicos|públicos|audiencia|audiencias|custom audience|custom audiences|lookalike|similar|similares|exclusion|exclusión|exclusiones|excluir|inclui|segmentacion|segmentación|targeting|retargeting)/.test(normalized)
+}
+
+function isMetaAdsEntityRequest(question) {
+  const normalized = normalizeText(question)
+
+  return /(meta ads|facebook ads|ads manager|administrador de anuncios|campan|campaign|adset|conjunto|anuncio|ad\b|creative|creativo|presupuesto|budget|pixel|catalog|catálogo|catalogo|dataset|business manager|cuenta publicitaria|ad account|publico|público|audiencia|lookalike|retargeting|segmentacion|segmentación|targeting)/.test(normalized)
+}
+
+function isMetaAdsInventoryVerb(question) {
+  const normalized = normalizeText(question)
+
+  return /(que|qué|cual|cuál|cuales|cuáles|tengo|tenemos|hay|lista|listame|muestra|muéstrame|ver|ve|dame|enseña|ensena|existen|creados|actuales|configurados|configuradas|incluidos|excluidos)/.test(normalized)
+}
+
+function isMetaAdsMutationVerb(question) {
+  const normalized = normalizeText(question)
+
+  return /(crea|crear|haz|hacer|apaga|apagar|pausa|pausar|reactiva|reactivar|reanuda|reanudar|modifica|modificar|edita|editar|cambia|cambiar|sube|subir|baja|bajar|ajusta|ajustar|duplica|duplicar|agrega|agregar|añade|anade|quita|quitar|excluye|excluir|incluye|incluir|asigna|asignar|mueve|mover|borra|borrar|elimina|eliminar|publica|publicar)/.test(normalized)
+}
+
+function isMetaAdsDiagnosticRequest(question) {
+  const normalized = normalizeText(question)
+
+  return isMetaAdsEntityRequest(question) &&
+    /(diagnost|error|errores|rechaz|politica|política|learning|aprendizaje|entrega|delivery|subasta|auction|benchmark|benchmarks|overlap|solapamiento|fatiga|frecuencia|calidad|quality|limitad|pacing|por que|por qué|problema|alerta|issue)/.test(normalized)
+}
+
+function needsRistakCohortForMetaAdsOperation(question) {
+  const normalized = normalizeText(question)
+
+  return isMetaAdsAudienceRequest(question) &&
+    isMetaAdsMutationVerb(question) &&
+    /(contactos|clientes|leads|prospectos|compraron|pagaron|citas|asistieron|no compraron|base|lista|csv|crm|ghl|ristak|db|segmento|cohorte)/.test(normalized)
+}
+
+function isMetaAdsManagerInventoryRequest(question) {
+  return isMetaAdsEntityRequest(question) &&
+    isMetaAdsInventoryVerb(question) &&
+    !isMetaAdsBusinessMetricRequest(question)
+}
+
+function isMetaAdsOperationalRequest(question) {
+  return isMetaAdsManagerInventoryRequest(question) ||
+    isMetaAdsDiagnosticRequest(question) ||
+    (isMetaAdsEntityRequest(question) && isMetaAdsMutationVerb(question))
+}
+
+function shouldSkipDbResearchForMetaAds(question) {
+  return isMetaAdsOperationalRequest(question) && !needsRistakCohortForMetaAdsOperation(question)
+}
+
+function buildMetaAdsMcpUnavailableReply(metaAdsConnection = {}) {
+  const reason = metaAdsConnection?.enabled === false
+    ? 'Meta Ads MCP está desactivado por configuración.'
+    : 'Meta Ads MCP no está conectado o no tiene token utilizable.'
+
+  return {
+    reply: [
+      'Eso se tiene que consultar directo en Meta Ads Manager mediante el MCP.',
+      '',
+      reason,
+      '',
+      'No voy a inventar públicos personalizados usando GHL, fuentes, sesiones o cohortes de la DB, porque eso no son públicos reales de Meta.'
+    ].join('\n'),
+    model: 'local-meta-ads-router',
+    usage: null,
+    sources: [],
+    clarificationOptions: [],
+    debug: {
+      metaAdsOperationalIntent: true,
+      metaAdsMcpEnabled: Boolean(metaAdsConnection?.enabled),
+      metaAdsMcpConfigured: Boolean(metaAdsConnection?.configured)
+    }
+  }
 }
 
 function cleanHighLevelPath(path) {
@@ -3672,18 +3766,25 @@ function prepareQueryResultsForReply(queryResults) {
   return successfulResults
 }
 
-async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, runtimeContext, plan, queryResults, agentConfig, highLevelConnection, metaAdsConnection }) {
+async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, runtimeContext, plan, queryResults, agentConfig, highLevelConnection, metaAdsConnection, metaAdsOperationalIntent = false, metaAdsDbResearchSkipped = false }) {
   const model = normalizeAIAgentModel(agentConfig?.model)
-  const modelQueryResults = prepareQueryResultsForReply(queryResults)
-  const webSearchTools = buildWebSearchTools(agentConfig, runtimeContext)
+  const modelQueryResults = metaAdsDbResearchSkipped ? [] : prepareQueryResultsForReply(queryResults)
+  const webSearchTools = metaAdsOperationalIntent ? [] : buildWebSearchTools(agentConfig, runtimeContext)
   const latestUserMessage = getLatestUserMessage(messages)
-  const highLevelTools = buildHighLevelTools(highLevelConnection, {
-    paymentActionRequest: isPaymentActionRequest(latestUserMessage)
-  })
+  const highLevelTools = metaAdsOperationalIntent
+    ? []
+    : buildHighLevelTools(highLevelConnection, {
+        paymentActionRequest: isPaymentActionRequest(latestUserMessage)
+      })
   const metaAdsTools = buildMetaAdsTools(metaAdsConnection)
   const agentTools = [...webSearchTools, ...highLevelTools, ...metaAdsTools]
   const toolsRequireActionLoop = highLevelTools.length > 0 || metaAdsTools.length > 0
   const responseBehaviorInstructions = buildResponseBehaviorInstructions(agentConfig, latestUserMessage)
+
+  if (metaAdsOperationalIntent && !metaAdsTools.length) {
+    return buildMetaAdsMcpUnavailableReply(metaAdsConnection)
+  }
+
   const instructions = [
     'Eres el Agente AI interno de Ristak.',
     'Responde como analista senior de crecimiento y rentabilidad que asesora al dueño del negocio, pero no conviertas cada respuesta en asesoría si el usuario sólo pidió un dato.',
@@ -3717,7 +3818,9 @@ async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, ru
     'No concluyas ni recomiendes con datos parciales. Si el usuario pidió un rango (ej. últimos 90 días), responde con TODO ese rango, no solo el mes actual. Si te falta data para decidir, consíguela antes de recomendar; no inventes ni des veredictos a medias.',
     'Sé decisivo con los datos: cuando pregunten por campañas, entrega de una vez el ranking por ROAS con ingresos atribuidos. Da acciones como escalar/cortar presupuesto sólo si el usuario pregunta qué hacer, pide recomendaciones o el modo de recomendaciones lo permite.',
     'Meta Ads MCP está permitido SOLO para operación y diagnóstico de Ads Manager: crear, duplicar, editar, pausar, reactivar o apagar campañas/adsets/anuncios; modificar presupuestos; crear/editar públicos personalizados, similares, inclusiones, exclusiones; revisar problemas de entrega, catálogos, datasets, políticas, learning, subasta, benchmarks y oportunidades de Meta.',
+    'Si el usuario pregunta "qué públicos personalizados tengo", "qué audiencias tengo", "qué públicos hay", "qué campañas/adsets/anuncios tengo activos", "qué presupuestos tengo" o cualquier inventario/configuración de Ads Manager, DEBES consultar Meta Ads MCP. No contestes desde DB, HighLevel, fuentes, sesiones ni nombres de campañas sincronizadas.',
     'PROHIBIDO usar Meta Ads MCP como fuente de resultados de negocio. Nunca reportes desde MCP cifras de leads, prospectos, citas, asistencias, ventas, ingresos, ROAS atribuido, utilidad, CAC, clientes o rentabilidad. Esas métricas SIEMPRE salen de la DB de Ristak y del modelo de atribución interno.',
+    'PROHIBIDO usar DB, HighLevel o GHL como fuente para inventario real de Meta Ads Manager: públicos personalizados, audiencias, públicos similares, exclusiones, campañas activas, adsets activos, anuncios activos, presupuestos, catálogos, datasets, pixels o estado de delivery. Si Meta Ads MCP falla, di que no pudiste consultar Meta Ads; no rellenes con cohortes internas.',
     'Si una herramienta de Meta devuelve métricas de resultados, ignóralas para la respuesta de negocio. Puedes usar sólo contexto operativo no disponible en la DB: errores, estado de entrega, learning phase, pacing, limitaciones de presupuesto, calidad, políticas, audiencia, solapamiento, subasta, benchmark externo o diagnóstico de cuenta.',
     'Antes de ejecutar cambios reales en Meta Ads (crear, editar, pausar, apagar, reactivar, duplicar, cambiar presupuesto, agregar/quitar/excluir públicos, modificar audiencia o publicar), pide confirmación explícita si el sistema te la solicita. No digas que ejecutaste una acción si sólo está pendiente de confirmación.',
     'NO uses la herramienta de busqueda web cuando la pregunta sea analisis interno del negocio: ventas, campanas, pagos, citas, contactos, ROAS, rentabilidad, conteos, tendencias o cualquier cosa que se pueda contestar con la DB. En esos casos responde solo con la data interna y sin citar enlaces externos.',
@@ -3781,11 +3884,20 @@ async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, ru
     'Definiciones de negocio usadas:',
     BUSINESS_DEFINITIONS,
     '',
+    'Routing de Meta Ads para esta respuesta:',
+    JSON.stringify({
+      metaAdsOperationalIntent,
+      dbResearchSkipped: metaAdsDbResearchSkipped,
+      rule: metaAdsOperationalIntent
+        ? 'Usar Meta Ads MCP para inventario/operación. No usar DB/GHL como sustituto de Ads Manager.'
+        : 'Usar DB para resultados de negocio; usar Meta MCP sólo si hace falta operación/diagnóstico de Ads Manager.'
+    }, null, 2),
+    '',
     'Plan de investigación de la IA:',
     JSON.stringify(plan, null, 2),
     '',
     'Resultados de consultas ejecutadas en DB:',
-    JSON.stringify(modelQueryResults, null, 2),
+    metaAdsDbResearchSkipped ? 'Omitidos: solicitud operativa/inventario de Meta Ads. Consultar Meta Ads MCP.' : JSON.stringify(modelQueryResults, null, 2),
     '',
     'Contexto de vista actual:',
     JSON.stringify(buildSafeViewContext(viewContext), null, 2),
@@ -3819,6 +3931,19 @@ async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, ru
           include: webSearchTools.length ? ['web_search_call.action.sources'] : []
         })
   } catch (error) {
+    if (metaAdsOperationalIntent) {
+      return {
+        ...buildMetaAdsMcpUnavailableReply(metaAdsConnection),
+        reply: [
+          'No pude consultar Meta Ads MCP en este intento.',
+          '',
+          cleanText(error.message || 'Error desconocido al llamar Meta Ads MCP.', 300),
+          '',
+          'No voy a reemplazar esa consulta con datos de GHL o DB, porque públicos personalizados y configuración de Ads Manager tienen que salir directo de Meta.'
+        ].join('\n')
+      }
+    }
+
     const fallbackTools = [...highLevelTools]
     const fallbackNeedsActionLoop = highLevelTools.length > 0
     const fallbackInstructions = [
@@ -5311,19 +5436,26 @@ function buildModelInput(messages, viewContext, databaseContext, directFacts) {
 
 export async function createAgentReply({ apiKey, messages, viewContext }) {
   const runtimeContext = await getAgentRuntimeContext()
-  const mentionedContact = await resolveMentionedContactForAgent({
-    messages,
-    runtimeContext
-  })
+  const latestUserMessage = getLatestUserMessage(messages)
+  const metaAdsOperationalIntent = isMetaAdsOperationalRequest(latestUserMessage)
+  const metaAdsDbResearchSkipped = shouldSkipDbResearchForMetaAds(latestUserMessage)
+  const mentionedContact = metaAdsDbResearchSkipped
+    ? null
+    : await resolveMentionedContactForAgent({
+        messages,
+        runtimeContext
+      })
 
   if (mentionedContact?.clarificationReply) {
     return mentionedContact.clarificationReply
   }
 
-  const clarificationReply = await createClarificationReply({
-    messages,
-    runtimeContext
-  })
+  const clarificationReply = metaAdsDbResearchSkipped
+    ? null
+    : await createClarificationReply({
+        messages,
+        runtimeContext
+      })
 
   if (clarificationReply) {
     return clarificationReply
@@ -5332,10 +5464,17 @@ export async function createAgentReply({ apiKey, messages, viewContext }) {
   const agentConfig = await getAIAgentConfig()
   const highLevelConnection = await getHighLevelAgentConnection()
   const metaAdsConnection = await getMetaAdsAgentConnection()
-  const coreQueries = await buildCoreResearchQueries(runtimeContext)
+
+  if (metaAdsOperationalIntent && !metaAdsConnection?.configured) {
+    return buildMetaAdsMcpUnavailableReply(metaAdsConnection)
+  }
+
+  const coreQueries = metaAdsDbResearchSkipped ? [] : await buildCoreResearchQueries(runtimeContext)
   const corePlan = {
     assumptions: [
-      'Se consultó un mapa base de la DB antes de planear la respuesta.'
+      metaAdsDbResearchSkipped
+        ? 'Solicitud operativa/inventario de Meta Ads: se omitió el mapa base de DB para no confundir públicos o configuración real de Ads Manager con cohortes internas.'
+        : 'Se consultó un mapa base de la DB antes de planear la respuesta.'
     ],
     queries: coreQueries
   }
@@ -5344,17 +5483,26 @@ export async function createAgentReply({ apiKey, messages, viewContext }) {
     ...contactLookupResults,
     ...await executeQueryPlan(corePlan)
   ]
-  const modelPlan = await createQueryPlan(apiKey, {
-    messages,
-    viewContext: viewContext || {},
-    runtimeContext,
-    databaseContextResults: coreResults,
-    agentConfig
-  })
-  const plan = await augmentQueryPlanWithAutomaticResearch(modelPlan, {
-    runtimeContext,
-    coreQueries
-  })
+  const modelPlan = metaAdsDbResearchSkipped
+    ? {
+        assumptions: [
+          'La pregunta debe contestarse con Meta Ads MCP, no con SQL.'
+        ],
+        queries: []
+      }
+    : await createQueryPlan(apiKey, {
+        messages,
+        viewContext: viewContext || {},
+        runtimeContext,
+        databaseContextResults: coreResults,
+        agentConfig
+      })
+  const plan = metaAdsDbResearchSkipped
+    ? modelPlan
+    : await augmentQueryPlanWithAutomaticResearch(modelPlan, {
+        runtimeContext,
+        coreQueries
+      })
 
   const coreQueryNames = new Set(coreQueries.map(getQueryName))
   const modelQueries = plan.queries.filter(query => !coreQueryNames.has(getQueryName(query)))
@@ -5400,7 +5548,9 @@ export async function createAgentReply({ apiKey, messages, viewContext }) {
     queryResults,
     agentConfig,
     highLevelConnection,
-    metaAdsConnection
+    metaAdsConnection,
+    metaAdsOperationalIntent,
+    metaAdsDbResearchSkipped
   })
 
   if (!result.reply) {
