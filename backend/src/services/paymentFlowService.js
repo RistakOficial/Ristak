@@ -1,4 +1,5 @@
 import { randomBytes } from 'crypto'
+import { DateTime } from 'luxon'
 import { db } from '../config/database.js'
 import { getGHLClient } from './ghlClient.js'
 import { buildInvoicePaymentUrl } from '../utils/paymentUrl.js'
@@ -23,6 +24,7 @@ export const PAYMENT_FLOW_STATES = {
 }
 
 const DEFAULT_CARD_SETUP_AMOUNT = 25
+const DEFAULT_PAYMENT_TIMEZONE = 'America/Mexico_City'
 const OFFLINE_METHODS = new Set(['cash', 'bank_transfer', 'transfer', 'deposit', 'offline', 'manual', 'check', 'other'])
 const CARD_METHODS = new Set(['card', 'payment_link', 'direct_card', 'saved_card'])
 const CURRENCY_DEFAULT = 'MXN'
@@ -80,7 +82,11 @@ function pickSendMethod(contact, channels = {}) {
 }
 
 async function getInvoiceSendContext() {
-  const config = await db.get('SELECT location_data, ghl_invoice_mode FROM highlevel_config LIMIT 1')
+  const config = await db.get(`
+    SELECT location_data, ghl_invoice_mode, invoice_title, invoice_terms_notes
+    FROM highlevel_config
+    LIMIT 1
+  `)
 
   if (!config || !config.location_data) {
     throw new Error('Configura tu cuenta de HighLevel antes de enviar cobros')
@@ -103,6 +109,9 @@ async function getInvoiceSendContext() {
   return {
     domain: locationData?.domain || null,
     liveMode: normalizeGhlInvoiceMode(config.ghl_invoice_mode) === 'live',
+    timezone: locationData?.timezone || DEFAULT_PAYMENT_TIMEZONE,
+    invoiceTitle: config.invoice_title || 'PAGO',
+    termsNotes: config.invoice_terms_notes || null,
     businessDetails,
     sentFrom: {
       fromName,
@@ -259,6 +268,19 @@ async function createInvoice({ ghlClient, basePayload, contact, amount, currency
     dueDate
   })
   const context = await getInvoiceSendContext()
+
+  if (!basePayload?.businessDetails) {
+    payload.businessDetails = context.businessDetails
+  }
+
+  if (!basePayload?.title && context.invoiceTitle) {
+    payload.title = context.invoiceTitle
+  }
+
+  if (!payload.termsNotes && context.termsNotes) {
+    payload.termsNotes = context.termsNotes
+  }
+
   payload.liveMode = context.liveMode
 
   const response = await ghlClient.createInvoice(payload)
@@ -316,14 +338,22 @@ async function sendInvoice({ ghlClient, invoiceId, contact, channels, forceAllAv
   }
 }
 
-function buildScheduleExecuteAt(dueDate) {
-  const date = normalizeDateOnly(dueDate)
-  const scheduledAt = new Date(`${date}T09:00:00.000Z`)
-  const minimumFutureAt = new Date(Date.now() + 5 * 60 * 1000)
+function resolveScheduleTimezone(timezone) {
+  const zone = timezone || DEFAULT_PAYMENT_TIMEZONE
+  return DateTime.now().setZone(zone).isValid ? zone : DEFAULT_PAYMENT_TIMEZONE
+}
 
-  return scheduledAt > minimumFutureAt
-    ? scheduledAt.toISOString()
-    : minimumFutureAt.toISOString()
+function buildScheduleExecuteAt(dueDate, timezone = DEFAULT_PAYMENT_TIMEZONE) {
+  const date = normalizeDateOnly(dueDate)
+  const zone = resolveScheduleTimezone(timezone)
+  const scheduledAt = DateTime.fromISO(`${date}T09:00:00`, { zone }).toUTC()
+  const minimumFutureAt = DateTime.utc().plus({ minutes: 5 })
+
+  const executeAt = scheduledAt.isValid && scheduledAt.toMillis() > minimumFutureAt.toMillis()
+    ? scheduledAt
+    : minimumFutureAt
+
+  return executeAt.toISO({ suppressMilliseconds: false })
 }
 
 function buildAutoPayment(paymentMethod) {
@@ -361,7 +391,7 @@ function buildInstallmentSchedulePayload({ flow, installment, context }) {
       phoneNo: flow.contact_phone ? [flow.contact_phone] : []
     },
     schedule: {
-      executeAt: buildScheduleExecuteAt(installment.due_date)
+      executeAt: buildScheduleExecuteAt(installment.due_date, context.timezone)
     },
     liveMode: context.liveMode,
     items: [
@@ -625,7 +655,7 @@ export async function createInstallmentPaymentFlow(payload) {
       JSON.stringify({
         channels: payload.channels || {},
         remainingFrequency: payload.remainingFrequency || 'custom',
-        source: 'record_payment_modal'
+        source: payload.source || 'record_payment_modal'
       })
     ]
   )

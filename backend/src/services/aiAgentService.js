@@ -2,6 +2,8 @@ import { db, getHighLevelConfig } from '../config/database.js'
 import { decrypt, encrypt } from '../utils/encryption.js'
 import { resolveDateRangeWithGHLTimezone } from '../utils/dateUtils.js'
 import { buildHiddenContactsCondition, getHiddenContactFilters } from '../utils/hiddenContactsFilter.js'
+import { getGHLClient } from './ghlClient.js'
+import { createInstallmentPaymentFlow } from './paymentFlowService.js'
 import { DateTime } from 'luxon'
 
 const OPENAI_API_URL = 'https://api.openai.com/v1'
@@ -22,6 +24,8 @@ const BUSINESS_PROFILE_LIMIT = 6000
 const WEB_SEARCH_DOMAIN_LIMIT = 20
 const CLARIFICATION_OPTION_LIMIT = 5
 const MAX_TOOL_ROUNDS = 6
+const DEFAULT_PAYMENT_CURRENCY = 'MXN'
+const DEFAULT_PAYMENT_TIMEZONE = 'America/Mexico_City'
 const isPostgres = Boolean(process.env.DATABASE_URL)
 
 const paidStatuses = "('paid','succeeded','success','completed','complete')"
@@ -402,6 +406,500 @@ function buildHighLevelToolContext(highLevelConnection) {
   }, 3000)
 }
 
+function normalizePaymentAmount(value) {
+  const amount = Number(String(value ?? '').replace(/[^0-9.-]/g, ''))
+  if (!Number.isFinite(amount)) return 0
+  return Math.round(amount * 100) / 100
+}
+
+function normalizeDateOnlyInput(value) {
+  if (!value) return null
+
+  const date = String(value).trim().split('T')[0]
+  const parsed = DateTime.fromISO(date)
+
+  return parsed.isValid ? date : null
+}
+
+function normalizePaymentMethod(value) {
+  const normalized = normalizeText(value || '')
+
+  if (!normalized) return ''
+  if (/(transfer|transferencia|spei|bank|banco)/.test(normalized)) return 'bank_transfer'
+  if (/(efectivo|cash)/.test(normalized)) return 'cash'
+  if (/(deposit|deposito)/.test(normalized)) return 'deposit'
+  if (/(tarjeta|card|link|stripe|domicili)/.test(normalized)) return 'card'
+  if (/(manual|offline)/.test(normalized)) return 'manual'
+  if (/(cheque|check)/.test(normalized)) return 'check'
+
+  return normalized
+}
+
+function normalizeInstallmentType(value) {
+  const normalized = normalizeText(value || '')
+  return /(percent|porcentaje|%)/.test(normalized) ? 'percentage' : 'amount'
+}
+
+function normalizeRemainingFrequency(value) {
+  const normalized = normalizeText(value || '')
+
+  if (/(semana|weekly)/.test(normalized)) return 'weekly'
+  if (/(quincena|biweek|cada 15|15 dias)/.test(normalized)) return 'biweekly'
+  if (/(mes|mensual|monthly)/.test(normalized)) return 'monthly'
+
+  return 'custom'
+}
+
+function addFrequencyToDate(date, frequency, step, timezone = DEFAULT_PAYMENT_TIMEZONE) {
+  const zone = DateTime.now().setZone(timezone).isValid ? timezone : DEFAULT_PAYMENT_TIMEZONE
+  const base = DateTime.fromISO(date || DateTime.now().setZone(zone).toISODate(), { zone })
+
+  if (frequency === 'weekly') return base.plus({ weeks: step }).toISODate()
+  if (frequency === 'biweekly') return base.plus({ days: 14 * step }).toISODate()
+  return base.plus({ months: step }).toISODate()
+}
+
+function splitAmountAcrossPayments(total, count) {
+  const safeCount = Math.max(0, Number(count || 0))
+  if (!safeCount) return []
+
+  const base = Math.floor((normalizePaymentAmount(total) / safeCount) * 100) / 100
+  return Array.from({ length: safeCount }, (_, index) => {
+    if (index === safeCount - 1) {
+      return normalizePaymentAmount(total - base * (safeCount - 1))
+    }
+
+    return normalizePaymentAmount(base)
+  })
+}
+
+function normalizeGhlContact(contact = {}) {
+  const raw = contact.contact || contact
+  const firstName = raw.firstName || raw.first_name || ''
+  const lastName = raw.lastName || raw.last_name || ''
+  const fullName = raw.name || raw.fullName || raw.full_name || `${firstName} ${lastName}`.trim()
+
+  return {
+    id: raw.id || raw._id || raw.contactId || raw.contact_id || '',
+    name: fullName || raw.email || raw.phone || 'Sin nombre',
+    email: raw.email || '',
+    phone: raw.phone || raw.phoneNo || raw.phone_no || '',
+    firstName,
+    lastName
+  }
+}
+
+function normalizeDbContact(row = {}) {
+  const fullName = row.full_name || `${row.first_name || ''} ${row.last_name || ''}`.trim()
+
+  return {
+    id: row.id || '',
+    name: fullName || row.email || row.phone || 'Sin nombre',
+    email: row.email || '',
+    phone: row.phone || '',
+    firstName: row.first_name || '',
+    lastName: row.last_name || '',
+    createdAt: row.created_at || null,
+    totalPaid: Number(row.total_paid || 0)
+  }
+}
+
+function dedupeContacts(contacts) {
+  const seen = new Set()
+  const deduped = []
+
+  for (const contact of contacts) {
+    if (!contact?.id || seen.has(contact.id)) continue
+    seen.add(contact.id)
+    deduped.push(contact)
+  }
+
+  return deduped
+}
+
+function extractContactIdFromText(value) {
+  const text = String(value || '')
+  const match = text.match(/\bID:\s*([A-Za-z0-9_-]{6,})/i)
+  return match?.[1] || ''
+}
+
+function contactMatchesExactly(contact, hint) {
+  const normalizedHint = normalizeText(hint)
+  const hintDigits = String(hint || '').replace(/\D/g, '')
+  const phoneDigits = String(contact.phone || '').replace(/\D/g, '')
+
+  return Boolean(
+    contact.id === hint ||
+    normalizeText(contact.email) === normalizedHint ||
+    normalizeText(contact.name) === normalizedHint ||
+    (hintDigits.length >= 7 && phoneDigits.endsWith(hintDigits))
+  )
+}
+
+function buildPaymentContactOptions(contacts) {
+  return contacts.slice(0, CLARIFICATION_OPTION_LIMIT).map((contact) => {
+    const label = cleanText(contact.name || contact.email || contact.phone || contact.id, 80)
+    const description = [
+      contact.email ? `Email: ${cleanText(contact.email, 40)}` : '',
+      contact.phone ? `Tel: ${cleanText(contact.phone, 28)}` : '',
+      contact.createdAt ? `Entró: ${formatOptionDate(contact.createdAt, { timezone: DEFAULT_PAYMENT_TIMEZONE })}` : ''
+    ].filter(Boolean).join(' · ')
+
+    return {
+      label,
+      description,
+      value: `Usa el contacto "${label}" (ID: ${contact.id}) para crear el pago parcializado que te pedí en mi mensaje anterior.`
+    }
+  })
+}
+
+async function searchLocalPaymentContacts(hint) {
+  const cleanHint = cleanText(hint, 160)
+  if (!cleanHint) return []
+
+  const like = `%${cleanHint}%`
+  const digits = cleanHint.replace(/\D/g, '')
+  const phoneLike = digits ? `%${digits}%` : '__no_phone_match__'
+
+  const rows = await safeAll(`
+    SELECT id, full_name, first_name, last_name, email, phone, created_at, total_paid
+    FROM contacts
+    WHERE id = ?
+       OR LOWER(COALESCE(full_name, '')) LIKE LOWER(?)
+       OR LOWER(COALESCE(email, '')) LIKE LOWER(?)
+       OR REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(phone, ''), ' ', ''), '-', ''), '(', ''), ')', '') LIKE ?
+    ORDER BY
+      CASE WHEN id = ? THEN 0 ELSE 1 END,
+      COALESCE(updated_at, created_at) DESC
+    LIMIT 8
+  `, [cleanHint, like, like, phoneLike, cleanHint])
+
+  return rows.map(normalizeDbContact)
+}
+
+async function searchHighLevelPaymentContacts(args) {
+  const hint = cleanText(args.contactHint || args.contactName || args.contactEmail || args.contactPhone || '', 160)
+  if (!hint) return []
+
+  try {
+    const ghlClient = await getGHLClient()
+    const digits = hint.replace(/\D/g, '')
+    const response = await ghlClient.searchContacts({
+      query: hint,
+      email: hint.includes('@') ? hint : undefined,
+      phone: digits.length >= 7 ? hint : undefined,
+      limit: 8
+    })
+
+    return (response.contacts || []).map(normalizeGhlContact)
+  } catch {
+    return []
+  }
+}
+
+async function getPaymentContactById(contactId) {
+  if (!contactId) return null
+
+  try {
+    const ghlClient = await getGHLClient()
+    const response = await ghlClient.getContact(contactId)
+    const contact = normalizeGhlContact(response?.contact || response)
+    if (contact.id) return contact
+  } catch {
+    // Fall back to the local synchronized contact table.
+  }
+
+  const row = await safeGet(`
+    SELECT id, full_name, first_name, last_name, email, phone, created_at, total_paid
+    FROM contacts
+    WHERE id = ?
+    LIMIT 1
+  `, [contactId])
+
+  return row?.id ? normalizeDbContact(row) : null
+}
+
+async function resolvePaymentContact(args) {
+  const contactArg = args.contact && typeof args.contact === 'object' ? args.contact : {}
+  const contactId = cleanText(args.contactId || contactArg.id || extractContactIdFromText(args.contactHint), 120)
+
+  if (contactId) {
+    const contact = await getPaymentContactById(contactId)
+    if (contact?.id) return { contact }
+
+    return {
+      error: `No encontré un contacto con ID ${contactId}.`
+    }
+  }
+
+  const hint = cleanText(
+    args.contactHint ||
+    args.contactName ||
+    args.contactEmail ||
+    args.contactPhone ||
+    contactArg.name ||
+    contactArg.email ||
+    contactArg.phone ||
+    '',
+    160
+  )
+
+  if (!hint) {
+    return {
+      error: 'Falta identificar el contacto.',
+      missingFields: ['contacto']
+    }
+  }
+
+  const contacts = dedupeContacts([
+    ...await searchLocalPaymentContacts(hint),
+    ...await searchHighLevelPaymentContacts({
+      ...args,
+      contactHint: hint
+    })
+  ])
+
+  if (contacts.length === 0) {
+    return {
+      error: `No encontré contactos para "${hint}".`,
+      missingFields: ['contacto']
+    }
+  }
+
+  const exactMatches = contacts.filter(contact => contactMatchesExactly(contact, hint))
+  if (exactMatches.length === 1) return { contact: exactMatches[0] }
+  if (contacts.length === 1) return { contact: contacts[0] }
+
+  return {
+    error: 'Encontré varios contactos posibles. Necesito que elijas uno antes de crear el cobro.',
+    clarificationOptions: buildPaymentContactOptions(contacts)
+  }
+}
+
+function buildPaymentChannels(args = {}) {
+  const deliveryMode = normalizeText(args.deliveryMode || args.linkDeliveryMode || '')
+
+  if (deliveryMode === 'generate' || /(solo generar|generar link|copiar)/.test(deliveryMode)) {
+    return { email: false, sms: false, whatsapp: false }
+  }
+
+  if (args.channels && typeof args.channels === 'object') {
+    return {
+      email: args.channels.email !== false,
+      sms: args.channels.sms !== false,
+      whatsapp: args.channels.whatsapp !== false
+    }
+  }
+
+  return {}
+}
+
+function resolveFirstPayment(args, totalAmount, timezone = DEFAULT_PAYMENT_TIMEZONE) {
+  const firstPayment = args.firstPayment && typeof args.firstPayment === 'object' ? args.firstPayment : {}
+  const hasFirstPaymentData = Object.keys(firstPayment).length > 0 || args.firstPaymentAmount || args.firstPaymentPercentage
+  const enabled = firstPayment.enabled === false ? false : hasFirstPaymentData
+
+  if (!enabled) {
+    return {
+      enabled: false,
+      amount: 0,
+      type: 'none',
+      value: 0,
+      date: null,
+      method: 'none'
+    }
+  }
+
+  const type = normalizeInstallmentType(firstPayment.type || (firstPayment.percentage || args.firstPaymentPercentage ? 'percentage' : 'amount'))
+  const value = normalizePaymentAmount(firstPayment.value ?? firstPayment.percentage ?? args.firstPaymentPercentage ?? firstPayment.amount ?? args.firstPaymentAmount)
+  const explicitAmount = normalizePaymentAmount(firstPayment.amount ?? args.firstPaymentAmount)
+  const amount = explicitAmount > 0
+    ? explicitAmount
+    : type === 'percentage'
+      ? normalizePaymentAmount(totalAmount * (value / 100))
+      : value
+  const method = normalizePaymentMethod(firstPayment.method || args.firstPaymentMethod)
+
+  return {
+    enabled,
+    type,
+    value,
+    amount,
+    date: normalizeDateOnlyInput(firstPayment.date || args.firstPaymentDate) || DateTime.now().setZone(timezone).toISODate(),
+    method,
+    reference: cleanText(firstPayment.reference || args.firstPaymentReference || '', 160) || null,
+    notes: cleanText(firstPayment.notes || args.firstPaymentNotes || '', 500) || null,
+    methodProvided: Boolean(firstPayment.method || args.firstPaymentMethod)
+  }
+}
+
+function resolveRemainingPayments(args, totalAmount, firstPayment, timezone = DEFAULT_PAYMENT_TIMEZONE) {
+  const frequency = normalizeRemainingFrequency(args.remainingFrequency || args.frequency || 'monthly')
+  const rawPayments = Array.isArray(args.remainingPayments) ? args.remainingPayments : []
+  const baseDate = normalizeDateOnlyInput(
+    args.remainingStartDate ||
+    args.firstChargeDate ||
+    args.nextPaymentDate
+  )
+  const anchorDate = baseDate || firstPayment.date || DateTime.now().setZone(timezone).toISODate()
+  const missingDates = []
+
+  if (rawPayments.length > 0) {
+    const payments = rawPayments.map((payment, index) => {
+      const type = normalizeInstallmentType(payment.type || (payment.percentage !== undefined ? 'percentage' : 'amount'))
+      const value = normalizePaymentAmount(payment.value ?? payment.percentage ?? payment.amount)
+      const amount = normalizePaymentAmount(payment.amount) > 0
+        ? normalizePaymentAmount(payment.amount)
+        : type === 'percentage'
+          ? normalizePaymentAmount(totalAmount * (value / 100))
+          : value
+      const dueDate = normalizeDateOnlyInput(payment.dueDate || payment.due_date) ||
+        (frequency !== 'custom' || baseDate ? addFrequencyToDate(anchorDate, frequency === 'custom' ? 'monthly' : frequency, baseDate ? index : index + 1, timezone) : null)
+
+      if (!dueDate) missingDates.push(index + 1)
+
+      return {
+        sequence: Number(payment.sequence || index + 1),
+        type,
+        value,
+        amount,
+        percentage: type === 'percentage' ? value : totalAmount > 0 ? normalizePaymentAmount((amount / totalAmount) * 100) : null,
+        dueDate,
+        frequency,
+        notes: cleanText(payment.notes || '', 240) || null
+      }
+    })
+
+    return { payments, frequency, missingDates }
+  }
+
+  const count = Number(args.remainingPaymentCount || args.paymentCount || args.installmentCount || args.remainingCount || 0)
+  if (!Number.isFinite(count) || count <= 0) {
+    return { payments: [], frequency, missingDates: [] }
+  }
+
+  const remainingTotal = normalizePaymentAmount(totalAmount - normalizePaymentAmount(firstPayment.amount))
+  const amounts = splitAmountAcrossPayments(remainingTotal, count)
+  const payments = amounts.map((amount, index) => ({
+    sequence: index + 1,
+    type: 'amount',
+    value: amount,
+    amount,
+    percentage: totalAmount > 0 ? normalizePaymentAmount((amount / totalAmount) * 100) : null,
+    dueDate: addFrequencyToDate(anchorDate, frequency === 'custom' ? 'monthly' : frequency, baseDate ? index : index + 1, timezone),
+    frequency,
+    notes: null
+  }))
+
+  return { payments, frequency, missingDates: [] }
+}
+
+async function executeCreateInstallmentPaymentFlow(args = {}, highLevelConnection) {
+  if (!highLevelConnection?.configured) {
+    return {
+      ok: false,
+      error: 'HighLevel no está configurado. Configura primero la integración de Go High Level.'
+    }
+  }
+
+  const resolvedContact = await resolvePaymentContact(args)
+  if (!resolvedContact.contact) {
+    return {
+      ok: false,
+      error: resolvedContact.error || 'Falta identificar el contacto.',
+      missingFields: resolvedContact.missingFields || [],
+      clarificationOptions: resolvedContact.clarificationOptions || []
+    }
+  }
+
+  const totalAmount = normalizePaymentAmount(args.totalAmount || args.amount || args.total)
+  const currency = cleanText(args.currency || DEFAULT_PAYMENT_CURRENCY, 12).toUpperCase() || DEFAULT_PAYMENT_CURRENCY
+
+  if (totalAmount <= 0) {
+    return {
+      ok: false,
+      error: 'Falta el total a cobrar o el monto no es válido.',
+      missingFields: ['totalAmount']
+    }
+  }
+
+  const paymentTimezone = highLevelConnection.locationData?.timezone || DEFAULT_PAYMENT_TIMEZONE
+  const firstPayment = resolveFirstPayment(args, totalAmount, paymentTimezone)
+  const missingFields = []
+
+  if (firstPayment.enabled && firstPayment.amount <= 0) {
+    missingFields.push('monto del primer pago')
+  }
+
+  if (firstPayment.enabled && !firstPayment.methodProvided) {
+    missingFields.push('método del primer pago')
+  }
+
+  const remaining = resolveRemainingPayments(args, totalAmount, firstPayment, paymentTimezone)
+  if (remaining.payments.length === 0) {
+    missingFields.push('pagos restantes')
+  }
+
+  if (remaining.missingDates.length) {
+    missingFields.push(`fecha de parcialidad ${remaining.missingDates.join(', ')}`)
+  }
+
+  if (missingFields.length) {
+    return {
+      ok: false,
+      error: `Faltan datos para crear el plan: ${missingFields.join(', ')}.`,
+      missingFields
+    }
+  }
+
+  const contact = resolvedContact.contact
+  const concept = cleanText(args.concept || args.description || `Pago parcializado - ${contact.name}`, 240)
+  const remainingAutomatic = args.remainingAutomatic === false || args.automatic === false ? false : true
+
+  const result = await createInstallmentPaymentFlow({
+    contact,
+    totalAmount,
+    currency,
+    description: concept,
+    concept,
+    firstPayment,
+    remainingAutomatic,
+    remainingFrequency: remaining.frequency,
+    remainingPayments: remaining.payments,
+    channels: buildPaymentChannels(args),
+    source: 'ai_agent'
+  })
+
+  return {
+    ok: true,
+    action: 'create_installment_payment_flow',
+    message: 'Flujo de parcialidades creado con la lógica interna de Ristak.',
+    summary: {
+      contact: {
+        id: contact.id,
+        name: contact.name,
+        email: contact.email || null,
+        phone: contact.phone || null
+      },
+      totalAmount,
+      currency,
+      firstPayment: {
+        amount: firstPayment.amount,
+        method: firstPayment.method,
+        date: firstPayment.date
+      },
+      remainingAutomatic,
+      remainingPayments: remaining.payments.map((payment) => ({
+        sequence: payment.sequence,
+        amount: payment.amount,
+        dueDate: payment.dueDate,
+        automatic: remainingAutomatic
+      }))
+    },
+    result
+  }
+}
+
 function buildHighLevelTools(highLevelConnection) {
   if (!highLevelConnection?.configured) return []
 
@@ -413,6 +911,70 @@ function buildHighLevelTools(highLevelConnection) {
       server_url: HIGHLEVEL_MCP_SERVER_URL,
       authorization: highLevelConnection.token,
       require_approval: 'never'
+    },
+    {
+      type: 'function',
+      name: 'create_installment_payment_flow',
+      description: 'Crea un cobro por parcialidades usando la lógica interna segura de Ristak. Úsala para órdenes como cobrar un total con primer pago por transferencia/tarjeta y domiciliar el resto. Esta herramienta registra primer pago offline, genera/envía link de domiciliación de tarjeta si hace falta y sólo programa los cobros automáticos cuando la tarjeta queda autorizada.',
+      parameters: {
+        type: 'object',
+        properties: {
+          contactId: { type: ['string', 'null'], description: 'ID exacto del contacto si ya se conoce.' },
+          contactHint: { type: ['string', 'null'], description: 'Nombre, teléfono o email del contacto cuando no hay ID exacto.' },
+          totalAmount: { type: ['number', 'null'], description: 'Total del plan completo.' },
+          currency: { type: ['string', 'null'], description: 'Moneda, normalmente MXN.' },
+          concept: { type: ['string', 'null'], description: 'Concepto del cobro/invoice.' },
+          firstPayment: {
+            type: ['object', 'null'],
+            description: 'Primer pago o anticipo.',
+            properties: {
+              enabled: { type: ['boolean', 'null'] },
+              type: { type: ['string', 'null'], enum: ['percentage', 'amount', null] },
+              value: { type: ['number', 'null'], description: 'Porcentaje o monto según type.' },
+              percentage: { type: ['number', 'null'] },
+              amount: { type: ['number', 'null'] },
+              date: { type: ['string', 'null'], description: 'Fecha YYYY-MM-DD. Si es hoy, usa la fecha local actual.' },
+              method: { type: ['string', 'null'], enum: ['bank_transfer', 'transfer', 'cash', 'deposit', 'card', 'payment_link', 'direct_card', 'manual', 'offline', 'check', 'other', null] },
+              reference: { type: ['string', 'null'] },
+              notes: { type: ['string', 'null'] }
+            },
+            additionalProperties: true
+          },
+          remainingAutomatic: { type: ['boolean', 'null'], description: 'true si el resto debe domiciliarse/cobrarse automático.' },
+          remainingFrequency: { type: ['string', 'null'], enum: ['weekly', 'biweekly', 'monthly', 'custom', null] },
+          remainingPaymentCount: { type: ['number', 'null'], description: 'Número de parcialidades restantes si se repartirán en partes iguales.' },
+          remainingStartDate: { type: ['string', 'null'], description: 'Fecha YYYY-MM-DD del primer cobro restante. Si se omite, se calcula desde el primer pago según frecuencia.' },
+          remainingPayments: {
+            type: ['array', 'null'],
+            description: 'Parcialidades restantes. Si no se manda, se generan con remainingPaymentCount.',
+            items: {
+              type: 'object',
+              properties: {
+                sequence: { type: ['number', 'null'] },
+                type: { type: ['string', 'null'], enum: ['percentage', 'amount', null] },
+                value: { type: ['number', 'null'] },
+                percentage: { type: ['number', 'null'] },
+                amount: { type: ['number', 'null'] },
+                dueDate: { type: ['string', 'null'] },
+                notes: { type: ['string', 'null'] }
+              },
+              additionalProperties: true
+            }
+          },
+          deliveryMode: { type: ['string', 'null'], enum: ['send', 'generate', null], description: 'send para enviar links al cliente. generate para sólo generar link.' },
+          channels: {
+            type: ['object', 'null'],
+            properties: {
+              email: { type: ['boolean', 'null'] },
+              sms: { type: ['boolean', 'null'] },
+              whatsapp: { type: ['boolean', 'null'] }
+            },
+            additionalProperties: false
+          }
+        },
+        additionalProperties: true
+      },
+      strict: false
     },
     {
       type: 'function',
@@ -713,6 +1275,7 @@ async function callOpenAIResponseWithActionTools(apiKey, {
   let currentInput = input
   let previousResponseId = null
   let latestData = null
+  let latestClarificationOptions = []
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
     latestData = await callOpenAIResponseRaw(apiKey, {
@@ -736,7 +1299,8 @@ async function callOpenAIResponseWithActionTools(apiKey, {
       return {
         text,
         data: latestData,
-        sources: extractResponseSources(latestData)
+        sources: extractResponseSources(latestData),
+        clarificationOptions: latestClarificationOptions
       }
     }
 
@@ -748,6 +1312,8 @@ async function callOpenAIResponseWithActionTools(apiKey, {
       try {
         if (call.name === 'highlevel_rest_request') {
           output = await executeHighLevelRestRequest(call.arguments, highLevelConnection)
+        } else if (call.name === 'create_installment_payment_flow') {
+          output = await executeCreateInstallmentPaymentFlow(call.arguments, highLevelConnection)
         } else {
           output = {
             ok: false,
@@ -759,6 +1325,10 @@ async function callOpenAIResponseWithActionTools(apiKey, {
           ok: false,
           error: error.message || 'Error ejecutando herramienta'
         }
+      }
+
+      if (Array.isArray(output?.clarificationOptions) && output.clarificationOptions.length) {
+        latestClarificationOptions = output.clarificationOptions
       }
 
       outputs.push({
@@ -1621,6 +2191,11 @@ async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, ru
     'Cuando uses informacion externa, cita los enlaces dentro del texto de la respuesta (no como lista al final) y conectalos con los datos internos del negocio.',
     'También puedes controlar Go High Level directamente cuando el usuario pida acciones de CRM. Usa primero el MCP oficial de HighLevel; si no existe herramienta MCP para algo, usa highlevel_rest_request con endpoints oficiales documentados.',
     'HighLevel puede hacer lecturas y cambios reales según los scopes del token configurado: contactos, tags, custom fields, conversaciones/mensajes, workflows, calendarios/citas, oportunidades, productos, pagos, invoices, usuarios, ubicaciones, social posting, blogs, plantillas y cualquier endpoint disponible por API.',
+    'Para cobros por parcialidades, pagos iniciales, domiciliación o planes automáticos, NO uses MCP ni highlevel_rest_request directamente. Usa siempre la herramienta create_installment_payment_flow porque esa respeta la lógica interna de Ristak.',
+    'Regla de parcialidades de Ristak: si el primer pago es transferencia/efectivo/manual, se crea invoice del primer pago, se registra como pagado manualmente y se envía/genera un link separado de domiciliación de tarjeta. Ese link de domiciliación no reduce el saldo del plan. Los cobros automáticos restantes sólo se programan cuando el webhook confirme tarjeta autorizada.',
+    'Si el primer pago es tarjeta/link, ese primer pago autoriza la tarjeta y el plan automático se activa sólo después de confirmarse el pago y guardarse la tarjeta. Si el contacto ya tiene tarjeta guardada, el plan puede quedar programado directo.',
+    'Cuando el usuario diga algo como "cóbrale 78,500, 40% hoy por transferencia y lo demás en dos meses domiciliado", interpreta: total 78500, primer pago 40%, método bank_transfer, remainingAutomatic true, remainingPaymentCount 2, remainingFrequency monthly. Calcula los montos y fechas tú mismo usando la fecha local actual.',
+    'Antes de ejecutar un cobro, identifica el contacto exacto. Si create_installment_payment_flow devuelve opciones de contacto, pregunta cuál es y muestra esas opciones como botones. Si faltan monto total, método del primer pago, número de parcialidades o fechas indispensables, pregunta sólo eso.',
     'Si el usuario pide una acción clara en HighLevel y tienes datos suficientes, ejecútala. Si falta identificar contacto, workflow, invoice, producto, calendario, monto, fecha o canal, pregunta sólo eso y ofrece opciones cuando existan.',
     'Para cambios destructivos, pagos, envíos de mensajes, workflows, citas o movimientos de oportunidad, primero asegúrate de que el registro exacto esté identificado. No ejecutes sobre coincidencias ambiguas.',
     'No digas que sólo tienes acceso a la DB si HighLevel está conectado; úsalo para leer o modificar el CRM cuando la petición lo requiera. No reveles token, headers ni secretos.',
@@ -1706,13 +2281,14 @@ async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, ru
     })
   }
 
-  const { text, data, sources } = response
+  const { text, data, sources, clarificationOptions } = response
 
   return {
     reply: stripMarkdown(text),
     model: data?.model || DEFAULT_MODEL,
     usage: data?.usage || null,
     sources,
+    clarificationOptions: Array.isArray(clarificationOptions) ? clarificationOptions : [],
     debug: {
       queryCount: queryResults.length,
       highLevelToolsEnabled: highLevelTools.length > 0
