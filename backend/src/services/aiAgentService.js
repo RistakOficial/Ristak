@@ -793,7 +793,7 @@ function isMetaAdsAudienceRequest(question) {
 function isMetaAdsEntityRequest(question) {
   const normalized = normalizeText(question)
 
-  return /(meta ads|facebook ads|ads manager|administrador de anuncios|campan|campaign|adset|conjunto|anuncio|ad\b|creative|creativo|presupuesto|budget|pixel|catalog|catálogo|catalogo|dataset|business manager|cuenta publicitaria|ad account|publico|público|audiencia|lookalike|retargeting|segmentacion|segmentación|targeting)/.test(normalized)
+  return /(meta ads|facebook ads|ads manager|administrador de anuncios|campan|campaign|adset|conjunto|anunci|ad\b|creative|creativo|presupuesto|budget|pixel|catalog|catálogo|catalogo|dataset|business manager|cuenta publicitaria|ad account|publicidad|publico|público|audiencia|lookalike|retargeting|segmentacion|segmentación|targeting)/.test(normalized)
 }
 
 function isMetaAdsInventoryVerb(question) {
@@ -5654,7 +5654,7 @@ function buildLocalSupervisorRoute(messages) {
   else if (/(workflow|flujo|automatizacion|automatización)/.test(normalized)) domain = 'workflows'
   else if (/(cita|agenda|calendario|appointment)/.test(normalized)) domain = 'appointments'
   else if (/(contacto|cliente|lead|prospecto|paciente|persona)/.test(normalized)) domain = 'contacts'
-  else if (/(campan|anuncio|meta ads|facebook|instagram|roas|publicidad)/.test(normalized)) domain = 'campaigns'
+  else if (/(campan|anunci|meta ads|facebook|instagram|roas|publicidad|rentab)/.test(normalized)) domain = 'campaigns'
   else if (/(mercado|tendencia|competidor|competencia|noticia|online|internet)/.test(normalized)) domain = 'web_research'
   else if (continuation && hasPreviousPaymentContext(messages)) domain = 'payments'
 
@@ -6996,7 +6996,7 @@ function getLatestUserMessage(messages) {
 function detectClarificationEntity(question) {
   const normalized = normalizeText(question)
 
-  if (/(anuncio|ad\b|creative|creativo)/.test(normalized)) return 'ad'
+  if (/(anunci|ad\b|creative|creativo)/.test(normalized)) return 'ad'
   if (/(adset|conjunto)/.test(normalized)) return 'adset'
   if (/(campan|publicidad|meta ads|facebook|instagram)/.test(normalized)) return 'campaign'
   if (/(cita|agenda|appointment|show|asistencia)/.test(normalized)) return 'appointment'
@@ -7025,8 +7025,8 @@ function looksAmbiguousForEntity(question) {
 
 function hasLikelySpecificEntityReference(question) {
   const normalized = normalizeText(question)
-    .replace(/\b(campan\w*|publicidad|meta|facebook|instagram|ads?|anuncio\w*|adset|conjunto\w*|cita\w*|agenda\w*|appointment\w*|pago\w*|venta\w*|compra\w*|transaccion\w*|factura\w*|contacto\w*|prospect\w*|lead\w*|interesad\w*|cliente\w*|paciente\w*|persona\w*|fuente\w*|canal\w*|origen\w*|trafico)\b/g, ' ')
-    .replace(/\b(como|cual|que|tal|fue|va|van|del|de|la|el|los|las|mis|mi|un|una|unos|unas|este|esta|ese|esa|aquel|aquella|ultimo|ultima|ultimos|ultimas|reciente|recientes|info|informacion|datos|resultado|rendimiento|revisa|analiza|quiero|dame|dime|ver|saber|sobre|para|por|con|sin|hoy|ayer|semana|mes|ano|anio|enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\b/g, ' ')
+    .replace(/\b(campan\w*|publicidad|meta|facebook|instagram|ads?|anunci\w*|adset|conjunto\w*|cita\w*|agenda\w*|appointment\w*|pago\w*|venta\w*|compra\w*|transaccion\w*|factura\w*|contacto\w*|prospect\w*|lead\w*|interesad\w*|cliente\w*|paciente\w*|persona\w*|fuente\w*|canal\w*|origen\w*|trafico)\b/g, ' ')
+    .replace(/\b(como|cual|que|tal|fue|ha|sido|va|van|del|de|la|el|los|las|mis|mi|un|una|unos|unas|este|esta|ese|esa|aquel|aquella|ultimo|ultima|ultimos|ultimas|reciente|recientes|info|informacion|datos|resultado|rendimiento|rentab\w*|mas|más|mejor|peor|todo|toda|todos|todas|revisa|analiza|quiero|dame|dime|ver|saber|sobre|para|por|con|sin|hoy|ayer|semana|mes|ano|anio|enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\b/g, ' ')
 
   const specificTokens = normalized
     .split(/[^a-z0-9]+/)
@@ -7267,6 +7267,10 @@ function shouldAttemptContactLookup(question) {
   if (['campaign', 'adset', 'ad', 'source'].includes(entity)) return false
 
   const normalized = normalizeText(question)
+  if (entity !== 'contact' && (isBroadComparisonQuestion(question) || isMetaAdsBusinessMetricRequest(question) || isMetaAdsEntityRequest(question))) {
+    return false
+  }
+
   return Boolean(
     hasLikelySpecificEntityReference(question) ||
     /(busca|buscar|encuentra|contacto|cliente|lead|prospect|paciente|persona|correo|telefono|cobr|pago|cita)/.test(normalized)
