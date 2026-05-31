@@ -437,6 +437,18 @@ function hasExplicitChannelSelection(channels = {}) {
   ))
 }
 
+function assertAiAgentSendablePaymentChannel(payload = {}, contact = {}, actionLabel = 'el cobro') {
+  if (payload.source !== 'ai_agent') return
+
+  if (!hasExplicitChannelSelection(payload.channels)) {
+    throw new Error(`Antes de crear ${actionLabel}, el Agente AI debe pedir y recibir un canal de envío real: correo, WhatsApp, SMS o todos.`)
+  }
+
+  if (pickSendMethod(contact, payload.channels) === 'none') {
+    throw new Error(`No se puede crear ${actionLabel} desde el Agente AI sin un correo o teléfono válido para enviar el enlace.`)
+  }
+}
+
 async function getInvoiceSendContext() {
   const config = await db.get(`
     SELECT location_data, ghl_invoice_mode, invoice_title, invoice_terms_notes, invoice_number_prefix
@@ -857,6 +869,8 @@ export async function createSinglePaymentLink(payload) {
   if (amount <= 0) {
     throw new Error('El monto del link de pago debe ser mayor a 0')
   }
+
+  assertAiAgentSendablePaymentChannel(payload, contact, 'el link de pago')
 
   const ghlClient = await getGHLClient()
   const invoice = await createInvoice({
@@ -1701,6 +1715,14 @@ export async function createInstallmentPaymentFlow(payload) {
     forceNewCardAuthorization ||
     (!alreadyHasAuthorizedCard && (!firstPaymentEnabled || firstPaymentIsOffline))
   )
+
+  if (firstPaymentIsCard || cardSetupRequired) {
+    assertAiAgentSendablePaymentChannel(
+      payload,
+      contact,
+      firstPaymentIsCard ? 'el primer pago con tarjeta' : 'la domiciliación de tarjeta'
+    )
+  }
 
   let stateHistory = addState([], PAYMENT_FLOW_STATES.DRAFT)
 
