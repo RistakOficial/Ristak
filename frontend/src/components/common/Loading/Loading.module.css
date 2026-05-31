@@ -285,7 +285,7 @@
   background:
     linear-gradient(var(--skeleton-border) 1px, transparent 1px),
     linear-gradient(90deg, var(--skeleton-border) 1px, transparent 1px),
-    color-mix(in srgb, var(--skeleton-base) 42%, transparent);
+    var(--skeleton-card);
   background-size: 100% 25%, 16.66% 100%, auto;
 }
 
@@ -379,14 +379,6 @@
 /* Dark mode adjustments */
 :global(body.dark) .fullScreenContainer {
   background: var(--color-bg-primary);
-}
-
-:global(body.dark) .skeletonPage {
-  --skeleton-highlight: color-mix(in srgb, var(--color-primary) 28%, rgba(255, 255, 255, 0.16) 72%);
-}
-
-:global(body.light) .skeletonPage {
-  --skeleton-highlight: color-mix(in srgb, var(--color-primary) 14%, rgba(255, 255, 255, 0.86) 86%);
 }
 
 :global(body.dark) .spinner {

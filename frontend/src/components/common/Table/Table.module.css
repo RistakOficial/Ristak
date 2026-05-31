@@ -344,14 +344,6 @@
   width: 74%;
 }
 
-:global(body.dark) .container {
-  --table-skeleton-highlight: color-mix(in srgb, var(--color-primary) 28%, rgba(255, 255, 255, 0.16) 72%);
-}
-
-:global(body.light) .container {
-  --table-skeleton-highlight: color-mix(in srgb, var(--color-primary) 14%, rgba(255, 255, 255, 0.86) 86%);
-}
-
 @keyframes skeletonShimmer {
   100% {
     transform: translateX(110%);

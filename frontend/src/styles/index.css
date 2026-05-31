@@ -15,11 +15,12 @@
   --color-bg-primary: var(--color-background-primary);
   --app-page-max: 104rem;
   --app-page-wide-max: var(--app-page-max);
-  --app-skeleton-card: var(--design-card-bg, color-mix(in srgb, var(--color-background-secondary) 90%, var(--color-primary) 6%));
+  --app-skeleton-card: var(--design-card-bg, color-mix(in srgb, var(--color-background-secondary) 94%, var(--color-primary) 6%));
   --app-skeleton-border: var(--design-card-border, rgba(148, 163, 184, 0.18));
-  --app-skeleton-base: color-mix(in srgb, var(--color-primary) 14%, var(--app-skeleton-card) 86%);
-  --app-skeleton-muted: color-mix(in srgb, var(--color-primary) 20%, var(--app-skeleton-card) 80%);
-  --app-skeleton-highlight: color-mix(in srgb, var(--color-primary) 18%, rgba(255, 255, 255, 0.72) 82%);
+  --app-skeleton-surface: color-mix(in srgb, var(--app-skeleton-card) 92%, var(--color-primary) 8%);
+  --app-skeleton-base: color-mix(in srgb, var(--color-primary) 11%, var(--app-skeleton-card) 89%);
+  --app-skeleton-muted: color-mix(in srgb, var(--color-primary) 16%, var(--app-skeleton-card) 84%);
+  --app-skeleton-highlight: color-mix(in srgb, var(--app-skeleton-card) 72%, rgba(255, 255, 255, 0.86) 28%);
 
   /* Default (fallback) to dark theme tokens */
   --color-background-primary: #0a0b0d;
@@ -127,6 +128,10 @@ body.light {
   --effect-glassMorphism-border: 1px solid rgba(229, 231, 235, 0.5);
 
   --table-row-even: rgba(0, 0, 0, 0.015);
+}
+
+body.dark {
+  --app-skeleton-highlight: color-mix(in srgb, var(--app-skeleton-card) 72%, rgba(255, 255, 255, 0.18) 28%);
 }
 
 @layer base {
@@ -888,6 +893,12 @@ body[data-design-preset] {
   --design-table-border: rgba(148, 163, 184, 0.18);
   --design-table-header-font: inherit;
   --design-table-header-spacing: 0.025em;
+  --app-skeleton-card: var(--design-card-bg);
+  --app-skeleton-border: var(--design-card-border);
+  --app-skeleton-surface: color-mix(in srgb, var(--design-card-bg) 92%, var(--color-primary) 8%);
+  --app-skeleton-base: color-mix(in srgb, var(--color-primary) 11%, var(--design-card-bg) 89%);
+  --app-skeleton-muted: color-mix(in srgb, var(--color-primary) 16%, var(--design-card-bg) 84%);
+  --app-skeleton-highlight: color-mix(in srgb, var(--design-card-bg) 72%, rgba(255, 255, 255, 0.86) 28%);
   --color-bg-primary: var(--color-background-primary);
   background: var(--color-background-primary);
 }
@@ -1126,6 +1137,10 @@ body.dark[data-design-preset='editorial'] {
   --design-table-border: rgba(255, 255, 255, 0.08);
   --design-table-header-font: var(--font-mono);
   --design-table-header-spacing: 0.12em;
+}
+
+body.dark[data-design-preset] {
+  --app-skeleton-highlight: color-mix(in srgb, var(--design-card-bg) 72%, rgba(255, 255, 255, 0.18) 28%);
 }
 
 body[data-design-preset] [data-ristak-layout] {
