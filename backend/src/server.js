@@ -34,10 +34,12 @@ import costsRoutes from './routes/costs.routes.js'
 import maintenanceRoutes from './routes/maintenance.routes.js'
 import authRoutes from './routes/auth.routes.js'
 import apiAccessRoutes from './routes/apiAccess.routes.js'
+import oauthRoutes from './routes/oauth.routes.js'
 import hiddenContactsRoutes from './routes/hiddenContacts.routes.js'
 import aiAgentRoutes from './routes/aiAgent.routes.js'
 import searchRoutes from './routes/search.routes.js'
 import externalRoutes from './routes/external.routes.js'
+import mcpRoutes from './routes/mcp.routes.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -63,6 +65,7 @@ app.get('/api/health', (req, res) => {
 })
 
 // API Routes
+app.use('/', oauthRoutes)
 app.use('/api/auth', authRoutes)
 app.use('/api/api-access', apiAccessRoutes)
 app.use('/api/reports', reportsRoutes)
@@ -83,6 +86,7 @@ app.use('/api/hidden-contacts', hiddenContactsRoutes)
 app.use('/api/ai-agent', aiAgentRoutes)
 app.use('/api/search', searchRoutes)
 app.use('/api/external', externalRoutes)
+app.use('/api/mcp', mcpRoutes)
 app.use('/webhook', webhooksRoutes)
 app.use('/webhooks', webhooksRoutes) // Alias para webhooks con 's'
 

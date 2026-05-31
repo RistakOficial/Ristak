@@ -29,6 +29,14 @@ Ristak exposes token-protected endpoints under `/api/external` for authorized ex
    https://YOUR_RENDER_DOMAIN/api/external/openapi.json
    ```
 
+6. Use this MCP server URL if the external client expects MCP instead of OpenAPI:
+
+   ```text
+   https://YOUR_RENDER_DOMAIN/api/mcp
+   ```
+
+   MCP clients that require OAuth should use the built-in OAuth discovery endpoints. The authorization screen asks for a Ristak API token and exchanges it for OAuth access credentials.
+
 ## Available endpoints
 
 ### Credential management
@@ -36,6 +44,17 @@ Ristak exposes token-protected endpoints under `/api/external` for authorized ex
 - `GET /api/api-access`
 - `POST /api/api-access/token/rotate`
 - `DELETE /api/api-access/token`
+
+### MCP and OAuth
+
+- `POST /api/mcp`
+- `GET /api/mcp`
+- `GET /.well-known/oauth-protected-resource`
+- `GET /.well-known/oauth-authorization-server`
+- `POST /api/oauth/register`
+- `GET /api/oauth/authorize`
+- `POST /api/oauth/authorize`
+- `POST /api/oauth/token`
 
 ### External data API
 

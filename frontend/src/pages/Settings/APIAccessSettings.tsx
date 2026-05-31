@@ -28,6 +28,7 @@ export const APIAccessSettings: React.FC = () => {
   const origin = API_URL || window.location.origin
   const externalApiBaseUrl = `${origin}/api/external`
   const externalApiSpecUrl = `${externalApiBaseUrl}/openapi.json`
+  const mcpServerUrl = `${origin}/api/mcp`
 
   const authHeaders = () => {
     const token = localStorage.getItem('auth_token')
@@ -199,6 +200,7 @@ export const APIAccessSettings: React.FC = () => {
           <div style={{ display: 'grid', gap: '1rem', marginBottom: '1rem' }}>
             <ReadonlyField label="Endpoint base" value={externalApiBaseUrl} onCopy={() => copyText(externalApiBaseUrl, 'endpoint base')} />
             <ReadonlyField label="OpenAPI" value={externalApiSpecUrl} onCopy={() => copyText(externalApiSpecUrl, 'OpenAPI')} />
+            <ReadonlyField label="MCP server" value={mcpServerUrl} onCopy={() => copyText(mcpServerUrl, 'MCP server')} />
           </div>
 
           {newApiToken && (
