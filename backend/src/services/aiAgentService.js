@@ -632,6 +632,58 @@ function resolveOffsetDate(source, anchorDate, timezone = DEFAULT_PAYMENT_TIMEZO
   return null
 }
 
+function resolvePeriodOffsetDate(source, anchorDate, interval, timezone = DEFAULT_PAYMENT_TIMEZONE) {
+  const periodOffset = normalizeInteger(
+    source.afterPeriods ||
+    source.afterPaymentPeriods ||
+    source.periodOffset ||
+    source.periodsAfterFirstPayment ||
+    source.chargePeriod ||
+    source.paymentPeriod ||
+    source.monthNumber ||
+    source.paymentMonth ||
+    source.chargeMonth
+  )
+
+  return periodOffset > 0
+    ? addIntervalToDate(anchorDate, interval, periodOffset, timezone)
+    : null
+}
+
+function resolvePaymentPeriodOffset(source, fallbackIndex, interval = {}) {
+  const explicitOffset = normalizeInteger(
+    source.afterPeriods ||
+    source.afterPaymentPeriods ||
+    source.periodOffset ||
+    source.periodsAfterFirstPayment ||
+    source.chargePeriod ||
+    source.paymentPeriod ||
+    source.monthNumber ||
+    source.paymentMonth ||
+    source.chargeMonth
+  )
+
+  if (explicitOffset > 0) return explicitOffset
+
+  const intervalCount = Math.max(1, Number(interval.count || 1))
+  if (interval.unit === 'months') {
+    const afterMonths = normalizeInteger(source.afterMonths || source.chargeAfterMonths || source.delayMonths)
+    if (afterMonths > 0) return Math.ceil(afterMonths / intervalCount)
+  }
+
+  if (interval.unit === 'weeks') {
+    const afterWeeks = normalizeInteger(source.afterWeeks || source.chargeAfterWeeks || source.delayWeeks)
+    if (afterWeeks > 0) return Math.ceil(afterWeeks / intervalCount)
+  }
+
+  if (interval.unit === 'days') {
+    const afterDays = normalizeInteger(source.afterDays || source.chargeAfterDays || source.delayDays)
+    if (afterDays > 0) return Math.ceil(afterDays / intervalCount)
+  }
+
+  return fallbackIndex + 1
+}
+
 function splitAmountAcrossPayments(total, count) {
   const safeCount = Math.max(0, Number(count || 0))
   if (!safeCount) return []
@@ -643,6 +695,71 @@ function splitAmountAcrossPayments(total, count) {
     }
 
     return normalizePaymentAmount(base)
+  })
+}
+
+function normalizePaymentNumberList(value) {
+  if (Array.isArray(value)) {
+    return value.map(normalizePaymentAmount).filter(number => number > 0)
+  }
+
+  if (typeof value === 'string') {
+    return value
+      .split(/[,/|]+/)
+      .map(normalizePaymentAmount)
+      .filter(number => number > 0)
+  }
+
+  return []
+}
+
+function isNoChargePayment(payment = {}) {
+  const type = normalizeText(payment.type || payment.kind || payment.action || '')
+  return Boolean(
+    payment.noCharge === true ||
+    payment.skip === true ||
+    payment.skipPayment === true ||
+    payment.grace === true ||
+    ['skip', 'no_charge', 'nocharge', 'grace', 'sin_cobro', 'sin pago', 'sin_pago'].includes(type)
+  )
+}
+
+function isRemainingPayment(payment = {}) {
+  const type = normalizeText(payment.type || payment.kind || payment.action || '')
+  return Boolean(
+    payment.remaining === true ||
+    payment.remainder === true ||
+    payment.rest === true ||
+    payment.balance === true ||
+    ['remaining', 'remainder', 'restante', 'saldo', 'balance'].includes(type)
+  )
+}
+
+function buildListBasedRemainingPayments(args, totalAmount, firstPayment, anchorDate, scheduleStartDate, interval, frequency, timezone) {
+  const percentageList = normalizePaymentNumberList(args.remainingPercentages || args.paymentPercentages || args.percentages)
+  const amountList = normalizePaymentNumberList(args.remainingAmounts || args.paymentAmounts || args.amounts)
+  const sourceList = percentageList.length ? percentageList : amountList
+
+  if (!sourceList.length) return []
+
+  return sourceList.map((value, index) => {
+    const type = percentageList.length ? 'percentage' : 'amount'
+    const amount = type === 'percentage'
+      ? normalizePaymentAmount(totalAmount * (value / 100))
+      : normalizePaymentAmount(value)
+
+    return {
+      sequence: index + 1,
+      type,
+      value,
+      amount,
+      percentage: type === 'percentage' ? value : totalAmount > 0 ? normalizePaymentAmount((amount / totalAmount) * 100) : null,
+      dueDate: scheduleStartDate
+        ? addIntervalToDate(scheduleStartDate, interval, index, timezone)
+        : addIntervalToDate(anchorDate || firstPayment.date, interval, index + 1, timezone),
+      frequency,
+      notes: null
+    }
   })
 }
 
@@ -932,37 +1049,83 @@ function resolveRemainingPayments(args, totalAmount, firstPayment, timezone = DE
   const relativeStartDate = resolveOffsetDate(args, firstPayment.date || DateTime.now().setZone(timezone).toISODate(), timezone)
   const scheduleStartDate = baseDate || relativeStartDate
   const missingDates = []
+  const remainingTotal = normalizePaymentAmount(totalAmount - normalizePaymentAmount(firstPayment.amount))
 
   if (rawPayments.length > 0) {
-    const payments = rawPayments.map((payment, index) => {
-      const type = normalizeInstallmentType(payment.type || (payment.percentage !== undefined ? 'percentage' : 'amount'))
+    const payments = []
+    let allocatedAmount = 0
+    let lastPeriodOffset = 0
+
+    rawPayments.forEach((payment, index) => {
+      const periodOffset = resolvePaymentPeriodOffset(payment, index, interval)
+      lastPeriodOffset = Math.max(lastPeriodOffset, periodOffset)
+
+      if (isNoChargePayment(payment)) return
+
+      const isRemaining = isRemainingPayment(payment)
+      const type = isRemaining ? 'amount' : normalizeInstallmentType(payment.type || (payment.percentage !== undefined ? 'percentage' : 'amount'))
       const value = normalizePaymentAmount(payment.value ?? payment.percentage ?? payment.amount)
-      const amount = normalizePaymentAmount(payment.amount) > 0
-        ? normalizePaymentAmount(payment.amount)
-        : type === 'percentage'
-          ? normalizePaymentAmount(totalAmount * (value / 100))
-          : value
+      const explicitAmount = normalizePaymentAmount(payment.amount)
+      const amount = isRemaining
+        ? normalizePaymentAmount(remainingTotal - allocatedAmount)
+        : explicitAmount > 0
+          ? explicitAmount
+          : type === 'percentage'
+            ? normalizePaymentAmount(totalAmount * (value / 100))
+            : value
       const dueDate = normalizeDateOnlyInput(payment.dueDate || payment.due_date) ||
         resolveOffsetDate(payment, firstPayment.date || DateTime.now().setZone(timezone).toISODate(), timezone) ||
+        resolvePeriodOffsetDate(payment, firstPayment.date || DateTime.now().setZone(timezone).toISODate(), interval, timezone) ||
         (frequency !== 'custom' || scheduleStartDate
           ? addIntervalToDate(scheduleStartDate || anchorDate, interval, scheduleStartDate ? index : index + 1, timezone)
           : null)
 
       if (!dueDate) missingDates.push(index + 1)
 
-      return {
-        sequence: Number(payment.sequence || index + 1),
+      allocatedAmount = normalizePaymentAmount(allocatedAmount + amount)
+      payments.push({
+        sequence: Number(payment.sequence || payments.length + 1),
         type,
-        value,
+        value: isRemaining ? amount : value,
         amount,
         percentage: type === 'percentage' ? value : totalAmount > 0 ? normalizePaymentAmount((amount / totalAmount) * 100) : null,
         dueDate,
         frequency,
         notes: cleanText(payment.notes || '', 240) || null
-      }
+      })
     })
 
+    const splitRemainingCount = normalizeInteger(
+      args.splitRemainingPaymentCount ||
+      args.splitRemainderPaymentCount ||
+      args.remainingEqualPaymentCount ||
+      args.equalRemainingPaymentCount ||
+      args.remainderPaymentCount
+    )
+
+    if (splitRemainingCount > 0) {
+      const unallocatedAmount = normalizePaymentAmount(remainingTotal - allocatedAmount)
+      const splitAmounts = splitAmountAcrossPayments(unallocatedAmount, splitRemainingCount)
+      splitAmounts.forEach((amount, index) => {
+        payments.push({
+          sequence: payments.length + 1,
+          type: 'amount',
+          value: amount,
+          amount,
+          percentage: totalAmount > 0 ? normalizePaymentAmount((amount / totalAmount) * 100) : null,
+          dueDate: addIntervalToDate(firstPayment.date || anchorDate, interval, lastPeriodOffset + index + 1, timezone),
+          frequency,
+          notes: null
+        })
+      })
+    }
+
     return { payments, frequency, missingDates }
+  }
+
+  const listBasedPayments = buildListBasedRemainingPayments(args, totalAmount, firstPayment, anchorDate, scheduleStartDate, interval, frequency, timezone)
+  if (listBasedPayments.length > 0) {
+    return { payments: listBasedPayments, frequency, missingDates }
   }
 
   const collectInLastPeriods = normalizeInteger(args.collectInLastPeriods || args.lastPaymentPeriods || args.lastPeriods || args.collectPeriods)
@@ -978,7 +1141,6 @@ function resolveRemainingPayments(args, totalAmount, firstPayment, timezone = DE
     return { payments: [], frequency, missingDates: [] }
   }
 
-  const remainingTotal = normalizePaymentAmount(totalAmount - normalizePaymentAmount(firstPayment.amount))
   const amounts = splitAmountAcrossPayments(remainingTotal, count)
   const skipFirstPeriods = normalizeInteger(
     args.skipFirstPeriods ||
@@ -1409,6 +1571,8 @@ function buildHighLevelTools(highLevelConnection, options = {}) {
           remainingIntervalUnit: { type: ['string', 'null'], enum: ['days', 'weeks', 'months', null], description: 'Unidad entre cobros restantes cuando el usuario diga cada N días/semanas/meses.' },
           remainingIntervalCount: { type: ['number', 'null'], description: 'Cantidad de unidades entre cobros restantes.' },
           remainingPaymentCount: { type: ['number', 'null'], description: 'Número de parcialidades restantes si se repartirán en partes iguales.' },
+          remainingPercentages: { type: ['array', 'null'], items: { type: 'number' }, description: 'Lista simple de porcentajes restantes, por ejemplo [30,30]. Cada porcentaje se calcula sobre el total del plan.' },
+          remainingAmounts: { type: ['array', 'null'], items: { type: 'number' }, description: 'Lista simple de montos restantes, por ejemplo [20000,20000,40000].' },
           remainingStartDate: { type: ['string', 'null'], description: 'Fecha YYYY-MM-DD del primer cobro restante. Si se omite, se calcula desde el primer pago según frecuencia.' },
           chargeAfterDays: { type: ['number', 'null'], description: 'Usa esto cuando el primer cobro restante sea en N días, por ejemplo "en dos semanas" usa chargeAfterWeeks: 2.' },
           chargeAfterWeeks: { type: ['number', 'null'], description: 'Usa esto cuando el primer cobro restante sea en N semanas.' },
@@ -1416,14 +1580,15 @@ function buildHighLevelTools(highLevelConnection, options = {}) {
           deferMonths: { type: ['number', 'null'], description: 'Meses totales del diferido cuando el usuario diga diferir en N meses.' },
           skipFirstPeriods: { type: ['number', 'null'], description: 'Periodos iniciales sin cobro, por ejemplo "no cobrar los primeros 2 meses".' },
           collectInLastPeriods: { type: ['number', 'null'], description: 'Número de periodos finales donde sí se cobra, por ejemplo "cobrar en los últimos 4 meses".' },
+          splitRemainingPaymentCount: { type: ['number', 'null'], description: 'Cuando ya hay pagos personalizados y el usuario pide dividir el saldo restante en N pagos iguales.' },
           remainingPayments: {
             type: ['array', 'null'],
-            description: 'Parcialidades restantes. Si no se manda, se generan con remainingPaymentCount.',
+            description: 'Parcialidades restantes reales. No incluyas meses sin cobro como monto 0; usa skip/noCharge sólo para representar huecos o usa afterMonths/afterPeriods en el siguiente cobro real.',
             items: {
               type: 'object',
               properties: {
                 sequence: { type: ['number', 'null'] },
-                type: { type: ['string', 'null'], enum: ['percentage', 'amount', null] },
+                type: { type: ['string', 'null'], enum: ['percentage', 'amount', 'remaining', 'skip', 'no_charge', null] },
                 value: { type: ['number', 'null'] },
                 percentage: { type: ['number', 'null'] },
                 amount: { type: ['number', 'null'] },
@@ -1431,6 +1596,12 @@ function buildHighLevelTools(highLevelConnection, options = {}) {
                 afterDays: { type: ['number', 'null'], description: 'Fecha relativa desde el primer pago.' },
                 afterWeeks: { type: ['number', 'null'], description: 'Fecha relativa desde el primer pago.' },
                 afterMonths: { type: ['number', 'null'], description: 'Fecha relativa desde el primer pago.' },
+                afterPeriods: { type: ['number', 'null'], description: 'Número de periodos de la frecuencia después del primer pago; útil para saltar meses sin cobro.' },
+                periodOffset: { type: ['number', 'null'], description: 'Alias de afterPeriods.' },
+                noCharge: { type: ['boolean', 'null'], description: 'true para marcar un periodo sin cobro si el modelo necesita conservar el hueco.' },
+                skip: { type: ['boolean', 'null'], description: 'true para saltar este periodo sin crear parcialidad.' },
+                remaining: { type: ['boolean', 'null'], description: 'true si este pago debe tomar todo el saldo restante del plan.' },
+                remainder: { type: ['boolean', 'null'], description: 'Alias de remaining.' },
                 notes: { type: ['string', 'null'] }
               },
               additionalProperties: true
@@ -2724,9 +2895,14 @@ async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, ru
     'Para registrar un pago manual/offline sobre un invoice existente, NO uses MCP ni highlevel_rest_request directamente. Usa record_invoice_payment porque fuerza el modo de pagos configurado en Ristak.',
     'Regla de parcialidades de Ristak: si el primer pago es transferencia/efectivo/manual, se crea invoice del primer pago, se registra como pagado manualmente y se envía/genera un link separado de domiciliación de tarjeta. Ese link de domiciliación no reduce el saldo del plan. Los cobros automáticos restantes sólo se programan cuando el webhook confirme tarjeta autorizada.',
     'Si el primer pago es tarjeta/link, ese primer pago autoriza la tarjeta y el plan automático se activa sólo después de confirmarse el pago y guardarse la tarjeta. Si el contacto ya tiene tarjeta guardada, el plan puede quedar programado directo.',
-    'Cuando el usuario diga algo como "cóbrale 78,500, 40% hoy por transferencia y lo demás en dos meses domiciliado", interpreta: total 78500, primer pago 40%, método bank_transfer, remainingAutomatic true, remainingPaymentCount 2, remainingFrequency monthly. Calcula los montos y fechas tú mismo usando la fecha local actual.',
-    'Variaciones de parcialidades que debes resolver tú: "150 mil, 20% ahorita, diferido en 6 meses, no cobrar los primeros 2, cobrar en los últimos 4" = total 150000, firstPayment 20%, remainingAutomatic true, deferMonths 6, skipFirstPeriods 2, collectInLastPeriods 4. "38,500 al 50/50 en un mes" = total 38500, primer pago 50% y una parcialidad restante en un mes; si no dice cómo se paga el primer 50%, pregunta sólo el método. "30 mil, 20 mil hoy por transferencia y el resto domiciliado en dos semanas" = total 30000, firstPayment amount 20000, method bank_transfer, remainingPaymentCount 1, chargeAfterWeeks 2, remainingAutomatic true.',
-    'Si el usuario da un plan de pago suficientemente claro, calcula montos, fechas y número de parcialidades sin preguntarle otra vez. Pregunta sólo cuando falte algo indispensable como contacto exacto, total, método del primer pago o fecha/cantidad imposible de inferir.',
+    'Cuando el usuario pida parcialidades en lenguaje natural, primero convierte mentalmente el plan a una tabla interna: total, primer pago, método del primer pago, pagos restantes reales, fecha relativa o absoluta de cada pago, frecuencia y remainingAutomatic. Luego llama create_installment_payment_flow con datos ya calculados.',
+    'Los porcentajes de parcialidades se calculan sobre el TOTAL del plan salvo que el usuario diga explícitamente "del saldo/restante". Ejemplo: 78,500 con 40/30/30 = 31,400 hoy, 23,550 en un mes, 23,550 en dos meses. Para eso usa firstPayment percentage 40 y remainingPercentages [30,30] o remainingPayments explícitos.',
+    'No crees pagos de $0 para meses sin cobro. Si el usuario dice "el próximo mes no cobres y el siguiente cobra 20%", el primer cobro restante va con afterMonths: 2. Si luego dice "pasan dos meses sin cobrar y en el otro cobra el restante", usa afterMonths acumulado y el último payment con remaining:true o amount calculado.',
+    'Para planes variables usa remainingPayments explícito. Ejemplo: "60% ahorita, próximo mes nada, siguiente 20%, pasan dos meses sin cobro y luego lo restante" = firstPayment 60%, remainingPayments: [{type:"percentage", value:20, afterMonths:2}, {type:"remaining", remaining:true, afterMonths:5}].',
+    'Para planes equitativos usa remainingPaymentCount. Ejemplo: "100,000, 20,000 ahorita por transferencia y el resto en 6 meses" = total 100000, firstPayment amount 20000, method bank_transfer, remainingPaymentCount 6, remainingFrequency monthly, remainingAutomatic true. El backend divide 80,000 entre 6 y ajusta centavos en el último pago.',
+    'Para mezclas de pagos personalizados y saldo dividido usa splitRemainingPaymentCount. Ejemplo: "50,000 ahorita, un mes sin cobro, luego 25% y el saldo en 3 pagos iguales" = firstPayment 50000, primer pago restante {type:"percentage", value:25, afterMonths:2}, splitRemainingPaymentCount 3.',
+    'Cuando el usuario diga "en N meses" o "diferido a N meses", si todos los pagos restantes son iguales usa deferMonths/skipFirstPeriods/collectInLastPeriods; si hay montos o porcentajes distintos usa remainingPayments con afterMonths/afterPeriods. Calcula fechas usando la fecha local actual del negocio.',
+    'Si el usuario da un plan de pago suficientemente claro, calcula montos, porcentajes, fechas y número de parcialidades sin preguntarle otra vez. Pregunta sólo cuando falte algo indispensable como contacto exacto, total, método del primer pago o una fecha/cantidad imposible de inferir.',
     'Antes de ejecutar un cobro, identifica el contacto exacto. Si create_single_payment_link o create_installment_payment_flow devuelve opciones de contacto, pregunta cuál es y muestra esas opciones como botones. Si faltan monto total, método del primer pago, número de parcialidades o fechas indispensables, pregunta sólo eso.',
     'Si el usuario pide una acción clara en HighLevel y tienes datos suficientes, ejecútala. Si falta identificar contacto, workflow, invoice, producto, calendario, monto, fecha o canal, pregunta sólo eso y ofrece opciones cuando existan.',
     'Para cambios destructivos, pagos, envíos de mensajes, workflows, citas o movimientos de oportunidad, primero asegúrate de que el registro exacto esté identificado. No ejecutes sobre coincidencias ambiguas.',
