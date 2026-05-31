@@ -1,9 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
-import { ArrowLeft, Copy, ExternalLink, Server, Terminal } from 'lucide-react'
-import { Card } from '@/components/common'
+import { ArrowLeft, Copy, Database, ExternalLink, KeyRound, Network, RefreshCw, Server } from 'lucide-react'
 import { useNotification } from '@/contexts/NotificationContext'
-import styles from './Settings.module.css'
+import styles from './APIDocumentation.module.css'
 
 const API_URL = import.meta.env.VITE_API_URL || ''
 const HTTP_METHODS = ['get', 'post', 'put', 'patch', 'delete'] as const
@@ -12,11 +10,6 @@ interface OpenApiParameter {
   name: string
   in: string
   required?: boolean
-  schema?: {
-    type?: string
-    format?: string
-    enum?: string[]
-  }
 }
 
 interface OpenApiOperation {
@@ -26,17 +19,20 @@ interface OpenApiOperation {
 }
 
 interface OpenApiSpec {
-  info?: {
-    title?: string
-    version?: string
-    description?: string
-  }
   paths?: Record<string, Partial<Record<typeof HTTP_METHODS[number], OpenApiOperation>>>
 }
 
 interface ApiOperation extends OpenApiOperation {
   method: string
   path: string
+}
+
+const methodOrder: Record<string, number> = {
+  GET: 1,
+  POST: 2,
+  PUT: 3,
+  PATCH: 4,
+  DELETE: 5
 }
 
 export const APIDocumentation: React.FC = () => {
@@ -46,7 +42,6 @@ export const APIDocumentation: React.FC = () => {
   const [loadError, setLoadError] = useState('')
 
   const origin = API_URL || window.location.origin
-  const docsUrl = `${window.location.origin}/settings/api-docs`
   const externalApiBaseUrl = `${origin}/api/external`
   const openApiUrl = `${externalApiBaseUrl}/openapi.json`
   const mcpServerUrl = `${origin}/api/mcp`
@@ -54,12 +49,14 @@ export const APIDocumentation: React.FC = () => {
   const operations = useMemo<ApiOperation[]>(() => {
     if (!spec?.paths) return []
 
-    return Object.entries(spec.paths).flatMap(([path, pathItem]) =>
-      HTTP_METHODS.flatMap((method) => {
-        const operation = pathItem?.[method]
-        return operation ? [{ ...operation, method: method.toUpperCase(), path }] : []
-      })
-    )
+    return Object.entries(spec.paths)
+      .flatMap(([path, pathItem]) =>
+        HTTP_METHODS.flatMap((method) => {
+          const operation = pathItem?.[method]
+          return operation ? [{ ...operation, method: method.toUpperCase(), path }] : []
+        })
+      )
+      .sort((a, b) => a.path.localeCompare(b.path) || methodOrder[a.method] - methodOrder[b.method])
   }, [spec])
 
   const copyText = async (value: string, label: string) => {
@@ -82,10 +79,7 @@ export const APIDocumentation: React.FC = () => {
         const response = await fetch(openApiUrl)
         const data = await response.json()
 
-        if (!response.ok) {
-          throw new Error(data?.error || 'No se pudo cargar OpenAPI')
-        }
-
+        if (!response.ok) throw new Error(data?.error || 'No se pudo cargar OpenAPI')
         if (active) setSpec(data)
       } catch (error: any) {
         if (active) setLoadError(error.message || 'No se pudo cargar la documentación')
@@ -102,252 +96,195 @@ export const APIDocumentation: React.FC = () => {
   }, [openApiUrl])
 
   return (
-    <div className={styles.settingsContent}>
-      <div className={styles.settingsSection}>
-        <Link
-          to="/settings/api-access"
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: '0.5rem',
-            color: 'var(--color-text-secondary)',
-            textDecoration: 'none',
-            fontSize: '0.875rem',
-            marginBottom: '1rem'
-          }}
-        >
+    <main className={styles.page}>
+      <header className={styles.header}>
+        <a href="/settings/api-access" className={styles.backLink}>
           <ArrowLeft size={16} />
           Acceso API
-        </Link>
+        </a>
 
-        <h2 className={styles.sectionTitle}>Documentación API</h2>
-        <p className={styles.sectionDescription}>
-          Referencia para conectar sistemas externos a Ristak por REST o MCP.
-        </p>
+        <div className={styles.headerGrid}>
+          <div>
+            <p className={styles.kicker}>Ristak API Docs</p>
+            <h1 className={styles.title}>Documentación API</h1>
+            <p className={styles.subtitle}>
+              Conecta sistemas externos para leer, crear, actualizar y borrar datos. Ristak actúa como intermediario y espejo de GoHighLevel para los recursos sincronizados.
+            </p>
+          </div>
 
-        <div style={{ display: 'grid', gap: '1rem', marginTop: '1.5rem' }}>
-          <Card variant="glass" padding="lg">
-            <SectionTitle icon={<Server size={18} />} title="Direcciones" />
-            <div style={{ display: 'grid', gap: '0.875rem' }}>
-              <ReadonlyField label="Documentación" value={docsUrl} onCopy={() => copyText(docsUrl, 'documentación API')} />
-              <ReadonlyField label="REST API base" value={externalApiBaseUrl} onCopy={() => copyText(externalApiBaseUrl, 'REST API base')} />
-              <ReadonlyField label="OpenAPI JSON" value={openApiUrl} onCopy={() => copyText(openApiUrl, 'OpenAPI JSON')} external />
-              <ReadonlyField label="MCP server" value={mcpServerUrl} onCopy={() => copyText(mcpServerUrl, 'MCP server')} />
-            </div>
-          </Card>
+          <div className={styles.quickLinks}>
+            <DocLink label="REST base" value={externalApiBaseUrl} onCopy={() => copyText(externalApiBaseUrl, 'REST base')} />
+            <DocLink label="MCP server" value={mcpServerUrl} onCopy={() => copyText(mcpServerUrl, 'MCP server')} />
+            <a className={styles.openApiLink} href={openApiUrl} target="_blank" rel="noreferrer">
+              OpenAPI JSON
+              <ExternalLink size={15} />
+            </a>
+          </div>
+        </div>
+      </header>
 
-          <Card variant="glass" padding="lg">
-            <SectionTitle icon={<Terminal size={18} />} title="Autenticación" />
-            <div style={{ display: 'grid', gap: '1rem' }}>
-              <CodeBlock
-                label="REST"
-                value={`Authorization: Bearer <RISTAK_API_TOKEN>`}
-                onCopy={() => copyText('Authorization: Bearer <RISTAK_API_TOKEN>', 'header REST')}
-              />
-              <CodeBlock
-                label="Ejemplo REST"
-                value={`curl -H "Authorization: Bearer <RISTAK_API_TOKEN>" "${externalApiBaseUrl}/me"`}
-                onCopy={() => copyText(`curl -H "Authorization: Bearer <RISTAK_API_TOKEN>" "${externalApiBaseUrl}/me"`, 'ejemplo REST')}
-              />
-              <CodeBlock
-                label="MCP discovery"
-                value={`POST ${mcpServerUrl}
+      <section className={styles.layout}>
+        <aside className={styles.sidebar}>
+          <a href="#auth">Autenticación</a>
+          <a href="#data">Base de datos</a>
+          <a href="#sync">Espejo GoHighLevel</a>
+          <a href="#mcp">MCP</a>
+          <a href="#endpoints">Endpoints</a>
+        </aside>
+
+        <div className={styles.content}>
+          <Section id="auth" icon={<KeyRound size={18} />} title="Autenticación">
+            <p>
+              REST usa el API token generado en Acceso API. En cada request manda el header:
+            </p>
+            <CodeBlock
+              value="Authorization: Bearer <RISTAK_API_TOKEN>"
+              onCopy={() => copyText('Authorization: Bearer <RISTAK_API_TOKEN>', 'header de autenticación')}
+            />
+            <CodeBlock
+              label="Probar credenciales"
+              value={`curl -H "Authorization: Bearer <RISTAK_API_TOKEN>" "${externalApiBaseUrl}/me"`}
+              onCopy={() => copyText(`curl -H "Authorization: Bearer <RISTAK_API_TOKEN>" "${externalApiBaseUrl}/me"`, 'ejemplo curl')}
+            />
+          </Section>
+
+          <Section id="data" icon={<Database size={18} />} title="Base de datos">
+            <p>
+              La API de datos permite explorar tablas, consultar filas y hacer mutaciones. Las tablas sensibles de configuración se bloquean y columnas tipo token, password, secret o hash se redactan.
+            </p>
+            <EndpointExample method="GET" path="/api/external/data/tables" description="Lista tablas, columnas, columnas redactadas, columnas escribibles y modo de sincronización." />
+            <EndpointExample method="GET" path="/api/external/data/{table}" description="Consulta filas con limit, offset, search, orderBy, orderDirection y filtros por columna." />
+            <EndpointExample method="POST" path="/api/external/data/{table}" description="Crea una fila con los campos permitidos." />
+            <EndpointExample method="PATCH" path="/api/external/data/{table}/{id}" description="Actualiza parcialmente una fila por id o keyColumn." />
+            <EndpointExample method="DELETE" path="/api/external/data/{table}/{id}" description="Elimina una fila por id o keyColumn." />
+            <CodeBlock
+              label="Actualizar una fila"
+              value={`curl -X PATCH "${externalApiBaseUrl}/data/contacts/<CONTACT_ID>" \\
+  -H "Authorization: Bearer <RISTAK_API_TOKEN>" \\
+  -H "Content-Type: application/json" \\
+  -d '{"full_name":"Nombre Nuevo","email":"nuevo@dominio.com"}'`}
+              onCopy={() => copyText(`curl -X PATCH "${externalApiBaseUrl}/data/contacts/<CONTACT_ID>" \\
+  -H "Authorization: Bearer <RISTAK_API_TOKEN>" \\
+  -H "Content-Type: application/json" \\
+  -d '{"full_name":"Nombre Nuevo","email":"nuevo@dominio.com"}'`, 'ejemplo de actualización')}
+            />
+          </Section>
+
+          <Section id="sync" icon={<RefreshCw size={18} />} title="Espejo GoHighLevel">
+            <p>
+              Para contactos, Ristak usa escritura directa: primero modifica GoHighLevel y después actualiza la copia local. Si GoHighLevel falla, la mutación falla para evitar que el espejo quede desfasado.
+            </p>
+            <EndpointExample method="POST" path="/api/external/contacts" description="Crea contacto en GoHighLevel y guarda el espejo local." />
+            <EndpointExample method="PUT" path="/api/external/contacts/{id}" description="Reemplaza/actualiza contacto en GoHighLevel y Ristak." />
+            <EndpointExample method="PATCH" path="/api/external/contacts/{id}" description="Actualiza parcialmente contacto en GoHighLevel y Ristak." />
+            <EndpointExample method="DELETE" path="/api/external/contacts/{id}" description="Elimina contacto en GoHighLevel y Ristak." />
+            <EndpointExample method="POST" path="/api/external/highlevel/request" description="Proxy avanzado para cualquier endpoint de GoHighLevel: GET, POST, PUT, PATCH o DELETE." />
+            <CodeBlock
+              label="Proxy directo a GoHighLevel"
+              value={`curl -X POST "${externalApiBaseUrl}/highlevel/request" \\
+  -H "Authorization: Bearer <RISTAK_API_TOKEN>" \\
+  -H "Content-Type: application/json" \\
+  -d '{"method":"PUT","path":"/contacts/<CONTACT_ID>","body":{"name":"Nombre Nuevo"}}'`}
+              onCopy={() => copyText(`curl -X POST "${externalApiBaseUrl}/highlevel/request" \\
+  -H "Authorization: Bearer <RISTAK_API_TOKEN>" \\
+  -H "Content-Type: application/json" \\
+  -d '{"method":"PUT","path":"/contacts/<CONTACT_ID>","body":{"name":"Nombre Nuevo"}}'`, 'ejemplo GoHighLevel proxy')}
+            />
+          </Section>
+
+          <Section id="mcp" icon={<Network size={18} />} title="MCP">
+            <p>
+              El servidor MCP expone herramientas para explorar datos de Ristak y proxificar el MCP oficial de GoHighLevel. La lista exacta se descubre con `tools/list`.
+            </p>
+            <CodeBlock
+              value={`POST ${mcpServerUrl}
 Authorization: Bearer <OAUTH_ACCESS_TOKEN>
 Content-Type: application/json
 
 {"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`}
-                onCopy={() => copyText(`POST ${mcpServerUrl}
+              onCopy={() => copyText(`POST ${mcpServerUrl}
 Authorization: Bearer <OAUTH_ACCESS_TOKEN>
 Content-Type: application/json
 
 {"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`, 'ejemplo MCP')}
-              />
-              <p style={{ margin: 0, color: 'var(--color-text-tertiary)', fontSize: '0.875rem', lineHeight: 1.55 }}>
-                REST usa el API token de Ristak. MCP usa OAuth: el cliente descubre la configuración desde el servidor MCP y el usuario autoriza con su API token.
-              </p>
+            />
+            <div className={styles.toolGrid}>
+              <Tool name="list_data_tables" text="Lista tablas y columnas disponibles." />
+              <Tool name="query_data_table" text="Consulta filas con filtros y paginación." />
+              <Tool name="ghl_mcp__*" text="Tools oficiales de GoHighLevel prefijadas por Ristak." />
+              <Tool name="ghl_mcp_call_tool" text="Fallback para ejecutar cualquier tool MCP de GoHighLevel por nombre." />
             </div>
-          </Card>
+          </Section>
 
-          <Card variant="glass" padding="lg">
-            <SectionTitle icon={<ExternalLink size={18} />} title="REST endpoints" />
-            {isLoading && (
-              <p style={{ margin: 0, color: 'var(--color-text-tertiary)', fontSize: '0.875rem' }}>
-                Cargando documentación...
-              </p>
-            )}
-
-            {!isLoading && loadError && (
-              <p style={{ margin: 0, color: 'var(--color-status-error)', fontSize: '0.875rem' }}>
-                {loadError}
-              </p>
-            )}
-
+          <Section id="endpoints" icon={<Server size={18} />} title="Referencia de endpoints">
+            {isLoading && <p>Cargando schema OpenAPI...</p>}
+            {!isLoading && loadError && <p className={styles.error}>{loadError}</p>}
             {!isLoading && !loadError && (
-              <div style={{ display: 'grid', gap: '0.75rem' }}>
-                <p style={{ margin: 0, color: 'var(--color-text-tertiary)', fontSize: '0.875rem', lineHeight: 1.55 }}>
-                  Esta lista sale directo del schema OpenAPI publicado por el backend.
-                </p>
+              <div className={styles.endpointList}>
                 {operations.map((operation) => (
                   <EndpointRow key={`${operation.method}:${operation.path}`} operation={operation} />
                 ))}
               </div>
             )}
-          </Card>
-
-          <Card variant="glass" padding="lg">
-            <SectionTitle icon={<Server size={18} />} title="MCP tools" />
-            <div style={{ display: 'grid', gap: '0.75rem' }}>
-              <ToolRow name="list_data_tables" description="Lista tablas y columnas disponibles de la base de datos, bloqueando tablas sensibles." />
-              <ToolRow name="query_data_table" description="Consulta filas individuales de cualquier tabla expuesta con filtros, búsqueda, orden y paginación." />
-              <ToolRow name="ghl_mcp__*" description="Herramientas del MCP oficial de GoHighLevel proxificadas por Ristak cuando HighLevel está configurado." />
-              <ToolRow name="ghl_mcp_call_tool" description="Fallback para ejecutar una herramienta original del MCP de GoHighLevel por nombre." />
-              <p style={{ margin: 0, color: 'var(--color-text-tertiary)', fontSize: '0.875rem', lineHeight: 1.55 }}>
-                La lista exacta de tools MCP se obtiene con `tools/list`, porque GoHighLevel puede cambiar lo disponible del lado upstream.
-              </p>
-            </div>
-          </Card>
+          </Section>
         </div>
-      </div>
-    </div>
+      </section>
+    </main>
   )
 }
 
-const SectionTitle: React.FC<{ icon: React.ReactNode; title: string }> = ({ icon, title }) => (
-  <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', marginBottom: '1rem' }}>
-    <span style={{ color: 'var(--color-primary)', lineHeight: 0 }}>{icon}</span>
-    <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 600, color: 'var(--color-text-primary)' }}>
-      {title}
-    </h3>
+const Section: React.FC<{ id: string; icon: React.ReactNode; title: string; children: React.ReactNode }> = ({ id, icon, title, children }) => (
+  <section id={id} className={styles.section}>
+    <div className={styles.sectionHeader}>
+      <span>{icon}</span>
+      <h2>{title}</h2>
+    </div>
+    {children}
+  </section>
+)
+
+const DocLink: React.FC<{ label: string; value: string; onCopy: () => void }> = ({ label, value, onCopy }) => (
+  <div className={styles.docLink}>
+    <span>{label}</span>
+    <code>{value}</code>
+    <button type="button" onClick={onCopy} aria-label={`Copiar ${label}`}>
+      <Copy size={15} />
+    </button>
   </div>
 )
 
-const ReadonlyField: React.FC<{
-  label: string
-  value: string
-  onCopy: () => void
-  external?: boolean
-}> = ({ label, value, onCopy, external = false }) => (
-  <div>
-    <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--color-text-tertiary)', marginBottom: '0.375rem' }}>
-      {label}
-    </label>
-    <div style={{ display: 'flex', gap: '0.625rem', alignItems: 'center' }}>
-      <input
-        type="text"
-        value={value}
-        readOnly
-        style={{
-          width: '100%',
-          minWidth: 0,
-          height: '2.5rem',
-          padding: '0 0.875rem',
-          background: 'rgba(148, 163, 184, 0.06)',
-          border: '1px solid rgba(148, 163, 184, 0.18)',
-          borderRadius: '0.625rem',
-          color: 'var(--color-text-primary)',
-          fontSize: '0.8125rem'
-        }}
-      />
-      {external && (
-        <a
-          href={value}
-          target="_blank"
-          rel="noreferrer"
-          aria-label={`Abrir ${label}`}
-          style={{ color: 'var(--color-text-secondary)', lineHeight: 0, padding: '0.5rem' }}
-        >
-          <ExternalLink size={17} />
-        </a>
-      )}
-      <button
-        type="button"
-        onClick={onCopy}
-        aria-label={`Copiar ${label}`}
-        style={{
-          border: '1px solid rgba(148, 163, 184, 0.18)',
-          background: 'rgba(148, 163, 184, 0.08)',
-          color: 'var(--color-text-secondary)',
-          borderRadius: '0.625rem',
-          cursor: 'pointer',
-          padding: '0.625rem',
-          lineHeight: 0
-        }}
-      >
-        <Copy size={17} />
+const CodeBlock: React.FC<{ label?: string; value: string; onCopy: () => void }> = ({ label, value, onCopy }) => (
+  <div className={styles.codeBlock}>
+    <div className={styles.codeHeader}>
+      <span>{label || 'Ejemplo'}</span>
+      <button type="button" onClick={onCopy} aria-label={`Copiar ${label || 'ejemplo'}`}>
+        <Copy size={15} />
       </button>
     </div>
+    <pre><code>{value}</code></pre>
   </div>
 )
 
-const CodeBlock: React.FC<{ label: string; value: string; onCopy: () => void }> = ({ label, value, onCopy }) => (
-  <div>
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', marginBottom: '0.375rem' }}>
-      <span style={{ fontSize: '0.75rem', color: 'var(--color-text-tertiary)' }}>{label}</span>
-      <button
-        type="button"
-        onClick={onCopy}
-        aria-label={`Copiar ${label}`}
-        style={{
-          border: 0,
-          background: 'transparent',
-          color: 'var(--color-text-secondary)',
-          cursor: 'pointer',
-          lineHeight: 0,
-          padding: '0.25rem'
-        }}
-      >
-        <Copy size={16} />
-      </button>
-    </div>
-    <pre style={{
-      margin: 0,
-      padding: '0.875rem',
-      overflowX: 'auto',
-      background: 'rgba(15, 23, 42, 0.92)',
-      color: '#e5e7eb',
-      borderRadius: '0.625rem',
-      fontSize: '0.8125rem',
-      lineHeight: 1.55
-    }}>
-      <code>{value}</code>
-    </pre>
+const EndpointExample: React.FC<{ method: string; path: string; description: string }> = ({ method, path, description }) => (
+  <div className={styles.endpointExample}>
+    <Method method={method} />
+    <code>{path}</code>
+    <span>{description}</span>
   </div>
 )
 
 const EndpointRow: React.FC<{ operation: ApiOperation }> = ({ operation }) => (
-  <div style={{
-    border: '1px solid rgba(148, 163, 184, 0.16)',
-    borderRadius: '0.75rem',
-    padding: '0.875rem 1rem',
-    background: 'rgba(148, 163, 184, 0.05)'
-  }}>
-    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-      <MethodBadge method={operation.method} />
-      <code style={{ color: 'var(--color-text-primary)', fontSize: '0.875rem', wordBreak: 'break-all' }}>
-        {operation.path}
-      </code>
+  <div className={styles.endpointRow}>
+    <div className={styles.endpointLine}>
+      <Method method={operation.method} />
+      <code>{operation.path}</code>
     </div>
-    <p style={{ margin: '0.5rem 0 0 0', color: 'var(--color-text-secondary)', fontSize: '0.875rem', lineHeight: 1.5 }}>
-      {operation.summary || operation.operationId || 'Endpoint REST'}
-    </p>
+    <p>{operation.summary || operation.operationId || 'Endpoint REST'}</p>
     {!!operation.parameters?.length && (
-      <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.625rem' }}>
-        {operation.parameters.map((parameter) => (
-          <span
-            key={`${operation.method}:${operation.path}:${parameter.in}:${parameter.name}`}
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '0.25rem',
-              padding: '0.25rem 0.5rem',
-              borderRadius: '999px',
-              background: 'rgba(148, 163, 184, 0.1)',
-              color: 'var(--color-text-tertiary)',
-              fontSize: '0.75rem'
-            }}
-          >
-            {parameter.name}
-            <span style={{ opacity: 0.75 }}>({parameter.in}{parameter.required ? ', req' : ''})</span>
+      <div className={styles.paramList}>
+        {operation.parameters.map(parameter => (
+          <span key={`${operation.method}:${operation.path}:${parameter.in}:${parameter.name}`}>
+            {parameter.name} <em>{parameter.in}{parameter.required ? ', req' : ''}</em>
           </span>
         ))}
       </div>
@@ -355,41 +292,13 @@ const EndpointRow: React.FC<{ operation: ApiOperation }> = ({ operation }) => (
   </div>
 )
 
-const MethodBadge: React.FC<{ method: string }> = ({ method }) => {
-  const colors: Record<string, string> = {
-    GET: '#22c55e',
-    POST: '#3b82f6',
-    PUT: '#f59e0b',
-    PATCH: '#a855f7',
-    DELETE: '#ef4444'
-  }
+const Method: React.FC<{ method: string }> = ({ method }) => (
+  <span className={`${styles.method} ${styles[`method${method}`] || ''}`}>{method}</span>
+)
 
-  return (
-    <span style={{
-      minWidth: '4.25rem',
-      textAlign: 'center',
-      padding: '0.25rem 0.5rem',
-      borderRadius: '0.5rem',
-      color: colors[method] || 'var(--color-text-primary)',
-      background: `${colors[method] || '#94a3b8'}18`,
-      fontSize: '0.75rem',
-      fontWeight: 700
-    }}>
-      {method}
-    </span>
-  )
-}
-
-const ToolRow: React.FC<{ name: string; description: string }> = ({ name, description }) => (
-  <div style={{
-    border: '1px solid rgba(148, 163, 184, 0.16)',
-    borderRadius: '0.75rem',
-    padding: '0.875rem 1rem',
-    background: 'rgba(148, 163, 184, 0.05)'
-  }}>
-    <code style={{ color: 'var(--color-text-primary)', fontSize: '0.875rem' }}>{name}</code>
-    <p style={{ margin: '0.5rem 0 0 0', color: 'var(--color-text-secondary)', fontSize: '0.875rem', lineHeight: 1.5 }}>
-      {description}
-    </p>
+const Tool: React.FC<{ name: string; text: string }> = ({ name, text }) => (
+  <div className={styles.tool}>
+    <code>{name}</code>
+    <span>{text}</span>
   </div>
 )

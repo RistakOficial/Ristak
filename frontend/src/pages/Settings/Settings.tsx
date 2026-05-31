@@ -10,7 +10,6 @@ import { CalendarsConfiguration } from './CalendarsConfiguration'
 import { AccountSettings } from './AccountSettings'
 import { AIAgentSettings } from './AIAgentSettings'
 import { APIAccessSettings } from './APIAccessSettings'
-import { APIDocumentation } from './APIDocumentation'
 import { useTheme } from '@/contexts/ThemeContext'
 import styles from './Settings.module.css'
 
@@ -107,7 +106,6 @@ export const Settings: React.FC = () => {
           <Route path="payments" element={<PaymentsConfiguration />} />
           <Route path="ai-agent" element={<AIAgentSettings />} />
           <Route path="api-access" element={<APIAccessSettings />} />
-          <Route path="api-docs" element={<APIDocumentation />} />
           <Route path="account" element={<AccountSettings />} />
         </Routes>
       </div>

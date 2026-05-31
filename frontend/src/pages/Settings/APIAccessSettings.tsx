@@ -1,5 +1,4 @@
 import React, { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
 import { ArrowRight, BookOpen, Copy, KeyRound, RefreshCw, Trash2 } from 'lucide-react'
 import { Button, Card } from '@/components/common'
 import { useAuth } from '@/contexts/AuthContext'
@@ -229,8 +228,10 @@ export const APIAccessSettings: React.FC = () => {
             </Button>
           </div>
 
-          <Link
-            to="/settings/api-docs"
+          <a
+            href="/api-docs"
+            target="_blank"
+            rel="noreferrer"
             style={{
               display: 'flex',
               alignItems: 'center',
@@ -257,7 +258,7 @@ export const APIAccessSettings: React.FC = () => {
               </span>
             </span>
             <ArrowRight size={18} style={{ flexShrink: 0 }} />
-          </Link>
+          </a>
         </Card>
       </div>
     </div>

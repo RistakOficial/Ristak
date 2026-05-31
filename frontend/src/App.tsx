@@ -13,6 +13,7 @@ import { Campaigns } from '@/pages/Campaigns'
 import { Transactions } from '@/pages/Transactions'
 import { Contacts } from '@/pages/Contacts'
 import { Settings } from '@/pages/Settings'
+import { APIDocumentation } from '@/pages/Settings/APIDocumentation'
 import { Appointments } from '@/pages/Appointments'
 import { Analytics } from '@/pages/Analytics'
 import { PhoneAgentChat } from '@/pages/PhoneAgentChat'
@@ -95,6 +96,14 @@ const AppWithNotifications: React.FC = () => {
             element={
               <ProtectedRoute>
                 <PhoneAgentChat />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/api-docs"
+            element={
+              <ProtectedRoute>
+                <APIDocumentation />
               </ProtectedRoute>
             }
           />
