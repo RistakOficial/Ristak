@@ -9,7 +9,6 @@ import {
   X,
   DollarSign,
   Link as LinkIcon,
-  CreditCard,
   Check,
   AlertCircle,
   Send,
@@ -38,7 +37,7 @@ const normalizeAmount = (value: string | number): number => {
   return Math.round(parsed * 100) / 100
 }
 
-type PaymentOption = 'send' | 'saved' | 'manual'
+type PaymentOption = 'send' | 'manual'
 type PaymentMode = 'single' | 'partial'
 type InstallmentValueType = 'percentage' | 'amount'
 type FirstPaymentMethod = '' | 'cash' | 'bank_transfer' | 'deposit' | 'card'
@@ -154,15 +153,6 @@ interface ManualPaymentData {
   paymentMethod: string
   reference: string
   notes: string
-}
-
-interface PaymentMethod {
-  id: string
-  brand: string
-  last4: string
-  expMonth: number
-  expYear: number
-  createdAt: string | null
 }
 
 const defaultManualPaymentData = (): ManualPaymentData => ({
@@ -337,16 +327,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const [invoiceSummary, setInvoiceSummary] = useState<InvoiceSummary | null>(null)
   const [paymentOption, setPaymentOption] = useState<PaymentOption>('send')
   const [sendMethod, setSendMethod] = useState<SendMethod>(DEFAULT_SEND_METHOD)
-  const [checkingCards, setCheckingCards] = useState(false)
-  const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([])
-  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<string | null>(null)
-  const [customerId, setCustomerId] = useState<string | null>(null)
   const [manualPaymentData, setManualPaymentData] = useState<ManualPaymentData>(defaultManualPaymentData)
   const [transferInfoUrl, setTransferInfoUrl] = useState<string | null>(null)
-
-  // Stripe connection status
-  const [stripeConnected, setStripeConnected] = useState(false)
-  const [checkingStripe, setCheckingStripe] = useState(true)
 
   const { showToast } = useNotification()
 
@@ -374,12 +356,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   )
   const partialPlanTotal = normalizeAmount(firstPaymentAmount + remainingTotalAmount)
   const partialPlanDifference = normalizeAmount(totalAmount - partialPlanTotal)
-  const hasSavedCardForContact = paymentMethods.length > 0
   const firstPaymentMethodMissing = paymentMode === 'partial' && firstPaymentEnabled && !firstPaymentMethod
   const partialNeedsCardAuthorization = paymentMode === 'partial' && remainingAutomatic && (
-    !hasSavedCardForContact && (!firstPaymentEnabled || isOfflineFirstPaymentMethod(firstPaymentMethod))
-  )
-  const partialUsesSavedCardWithoutLink = paymentMode === 'partial' && hasSavedCardForContact && (
     !firstPaymentEnabled || isOfflineFirstPaymentMethod(firstPaymentMethod)
   )
   const sendMethodOptions = useMemo(() => getSendMethodOptions(selectedContact), [selectedContact?.email, selectedContact?.phone])
@@ -424,10 +402,6 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     setInvoiceSummary(null)
     setPaymentOption('send')
     setSendMethod(DEFAULT_SEND_METHOD)
-    setCheckingCards(false)
-    setPaymentMethods([])
-    setSelectedPaymentMethod(null)
-    setCustomerId(null)
     setManualPaymentData(defaultManualPaymentData())
   }
 
@@ -462,23 +436,6 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     }
   }
 
-  const checkStripeConnection = async () => {
-    setCheckingStripe(true)
-    try {
-      const response = await fetch('/api/highlevel/stripe-config')
-      if (response.ok) {
-        const data = await response.json()
-        setStripeConnected(data.configured || false)
-      } else {
-        setStripeConnected(false)
-      }
-    } catch (error) {
-      setStripeConnected(false)
-    } finally {
-      setCheckingStripe(false)
-    }
-  }
-
   useEffect(() => {
     if (!isOpen) {
       resetForm()
@@ -487,7 +444,6 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
     resetForm()
     loadConfig()
-    checkStripeConnection()
   }, [isOpen])
 
   // Search contacts
@@ -593,11 +549,6 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     remainingInstallments.length,
     totalAmount
   ])
-
-  useEffect(() => {
-    if (paymentMode !== 'partial' || !selectedContact || !stripeConnected) return
-    loadPaymentMethods(selectedContact.id, true)
-  }, [paymentMode, selectedContact?.id, stripeConnected])
 
   const loadProducts = async () => {
     setLoadingProducts(true)
@@ -834,11 +785,6 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     }
 
     if (paymentMode === 'partial') {
-      if (!stripeConnected) {
-        showToast('error', 'Configura Stripe antes de crear parcialidades automáticas')
-        return
-      }
-
       if (totalAmount <= 0) {
         showToast('error', 'Ingresa un total válido para el plan')
         return
@@ -954,66 +900,14 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         return
       }
 
-      setPaymentMethods([])
-      setSelectedPaymentMethod(null)
-      setCustomerId(null)
       setManualPaymentData(defaultManualPaymentData())
-
-      // Si Stripe no está conectado, ir directo a pago manual
-      if (!stripeConnected) {
-        setPaymentOption('manual')
-      } else {
-        setPaymentOption('send')
-      }
+      setPaymentOption('send')
 
       setStep('options')
     } catch (error: any) {
       showToast('error', error.message || 'No se pudo preparar el invoice')
     } finally {
       setLoading(false)
-    }
-  }
-
-  const loadPaymentMethods = async (contactId: string, silent = false) => {
-    setCheckingCards(true)
-    try {
-      const response = await fetch(`/api/payment-methods/contact/${contactId}`)
-
-      // Verificar que la respuesta es válida
-      if (!response.ok) {
-        // Intentar parsear el error si es JSON
-        try {
-          const errorData = await response.json()
-          throw new Error(errorData.error || `Error HTTP ${response.status}`)
-        } catch {
-          throw new Error(`Error al cargar tarjetas (${response.status})`)
-        }
-      }
-
-      const data = await response.json()
-
-      // Verificar que success sea true (si existe)
-      if (data.success === false) {
-        throw new Error(data.error || 'Error al obtener tarjetas guardadas')
-      }
-
-      const methods = data.paymentMethods || []
-      setPaymentMethods(methods)
-      setCustomerId(data.customerId || null)
-      setSelectedPaymentMethod(methods.length > 0 ? methods[0].id : null)
-
-      // Mostrar mensaje informativo si no hay tarjetas
-      // Si no hay tarjetas y llega mensaje informativo, simplemente continuamos sin mostrar logs
-    } catch (error: any) {
-      // No mostrar toast de error si simplemente no hay tarjetas
-      if (!silent && !error.message.includes('no ha pagado con tarjeta')) {
-        showToast('warning', 'No se pudieron cargar las tarjetas guardadas')
-      }
-      setPaymentMethods([])
-      setCustomerId(null)
-      setSelectedPaymentMethod(null)
-    } finally {
-      setCheckingCards(false)
     }
   }
 
@@ -1030,13 +924,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
     try {
       if (paymentMode === 'partial') {
-        const channels = partialUsesSavedCardWithoutLink
-          ? {
-              email: false,
-              sms: false,
-              whatsapp: false
-            }
-          : paymentOption === 'send'
+        const channels = paymentOption === 'send'
           ? {
               email: EMAIL_SEND_METHODS.has(effectiveSendMethod),
               sms: SMS_SEND_METHODS.has(effectiveSendMethod),
@@ -1140,32 +1028,6 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           const successMessage = `Enlace enviado por ${getSendMethodLabel(effectiveSendMethod)} correctamente`
 
           showToast('success', 'Éxito', successMessage)
-          break
-        }
-        case 'saved': {
-          if (!selectedPaymentMethod || !customerId) {
-            throw new Error('Selecciona una tarjeta para continuar')
-          }
-
-          const response = await fetch('/api/payment-methods/charge', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              contactId: invoiceSummary.contactId,
-              paymentMethodId: selectedPaymentMethod,
-              amount: invoiceSummary.amount,
-              currency: invoiceSummary.currency,
-              invoiceId,
-              description: invoiceSummary.description
-            })
-          })
-
-          const data = await response.json()
-          if (!response.ok) {
-            throw new Error(data.error || 'No se pudo procesar el pago con tarjeta guardada')
-          }
-
-          showToast('success', 'Éxito', 'Pago procesado exitosamente')
           break
         }
         case 'manual': {
@@ -1641,11 +1503,9 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
             <div className={styles.authorizationNotice}>
               <AlertCircle size={16} />
               <span>
-                {hasSavedCardForContact
-                  ? 'Este cliente ya tiene tarjeta guardada. El plan automático puede quedar activo después de crear el cobro.'
-                  : partialNeedsCardAuthorization
-                    ? `Si no hay tarjeta guardada, se enviará un cobro separado de ${formatCurrency(cardSetupAmount, currency)} para domiciliar. El plan no se activa hasta que esa tarjeta quede autorizada.`
-                    : 'El primer pago con tarjeta autoriza la tarjeta. El plan no se activa hasta que ese pago sea exitoso y la tarjeta quede guardada.'}
+                {partialNeedsCardAuthorization
+                  ? `GoHighLevel validará si existe una tarjeta guardada. Si no existe, se enviará un cobro separado de ${formatCurrency(cardSetupAmount, currency)} para domiciliar. El plan no se activa hasta que esa tarjeta quede autorizada.`
+                  : 'El primer pago con tarjeta autoriza la tarjeta en GoHighLevel. El plan no se activa hasta que ese pago sea exitoso y la tarjeta quede guardada.'}
               </span>
             </div>
 
@@ -1694,11 +1554,9 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     if (!invoiceSummary) return null
 
     if (paymentMode === 'partial') {
-      const authorizationLabel = hasSavedCardForContact
-        ? 'El cliente ya tiene tarjeta guardada; no necesita link de domiciliación.'
-        : partialNeedsCardAuthorization
-          ? `Se usará el link de domiciliación por ${formatCurrency(cardSetupAmount, invoiceSummary.currency)} si no existe tarjeta guardada.`
-          : 'El primer pago con tarjeta funcionará como autorización.'
+      const authorizationLabel = partialNeedsCardAuthorization
+        ? `GoHighLevel usará tarjeta guardada si existe; si no, enviará domiciliación por ${formatCurrency(cardSetupAmount, invoiceSummary.currency)}.`
+        : 'El primer pago con tarjeta funcionará como autorización.'
 
       return (
         <div className={styles.optionsContent}>
@@ -1734,63 +1592,49 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
             </div>
           </div>
 
-          {partialUsesSavedCardWithoutLink ? (
-            <div className={styles.authorizationNotice}>
-              <ShieldCheck size={16} />
-              <span>Al crear el cobro, el plan quedará activo con la tarjeta guardada del cliente.</span>
-            </div>
-          ) : (
-            <div className={styles.paymentOptions}>
-              <div
-                className={`${styles.optionButton} ${paymentOption === 'send' ? styles.optionButtonActive : ''}`}
-                onClick={() => setPaymentOption('send')}
-              >
-                <div className={styles.optionInfo}>
-                  <div className={styles.optionIcon}>
-                    <Send size={18} />
-                  </div>
-                  <div>
-                    <p>Enviar enlace por</p>
-                    <span>
-                      {(!selectedContact?.email && !selectedContact?.phone) ? (
-                        <span style={{ color: 'var(--color-status-error)' }}>Sin email ni teléfono</span>
-                      ) : (
-                        'Usa los canales del contacto'
-                      )}
-                    </span>
+          <div className={styles.paymentOptions}>
+            <div
+              className={`${styles.optionButton} ${paymentOption === 'send' ? styles.optionButtonActive : ''}`}
+              onClick={() => setPaymentOption('send')}
+            >
+              <div className={styles.optionInfo}>
+                <div className={styles.optionIcon}>
+                  <Send size={18} />
+                </div>
+                <div>
+                  <p>Enviar enlace por</p>
+                  <span>
+                    {(!selectedContact?.email && !selectedContact?.phone) ? (
+                      <span style={{ color: 'var(--color-status-error)' }}>Sin email ni teléfono</span>
+                    ) : (
+                      'Usa los canales del contacto'
+                    )}
+                  </span>
+                </div>
+              </div>
+
+              {paymentOption === 'send' && (
+                <div className={styles.optionAction}>
+                  <Check size={18} className={styles.optionCheck} />
+                  <div className={styles.sendMethodSelector} onClick={(e) => e.stopPropagation()}>
+                    {sendMethodOptions.length === 0 ? (
+                      <div className={styles.noOptionsMessage}>
+                        <AlertCircle size={14} />
+                        <span>El contacto no tiene email ni teléfono</span>
+                      </div>
+                    ) : (
+                      <CustomSelect
+                        value={sendMethod}
+                        onChange={(value) => setSendMethod(value as SendMethod)}
+                        options={sendMethodOptions}
+                        portal
+                      />
+                    )}
                   </div>
                 </div>
-
-                {paymentOption === 'send' && (
-                  <div className={styles.optionAction}>
-                    <Check size={18} className={styles.optionCheck} />
-                    <div className={styles.sendMethodSelector} onClick={(e) => e.stopPropagation()}>
-                      {sendMethodOptions.length === 0 ? (
-                        <div className={styles.noOptionsMessage}>
-                          <AlertCircle size={14} />
-                          <span>El contacto no tiene email ni teléfono</span>
-                        </div>
-                      ) : (
-                        <CustomSelect
-                          value={sendMethod}
-                          onChange={(value) => setSendMethod(value as SendMethod)}
-                          options={sendMethodOptions}
-                          portal
-                        />
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
+              )}
             </div>
-          )}
-
-          {checkingCards && (
-            <div className={styles.cardLoading}>
-              <Loader2 size={16} className={styles.processingIcon} />
-              <span>Verificando tarjetas guardadas...</span>
-            </div>
-          )}
+          </div>
         </div>
       )
     }
@@ -1877,35 +1721,6 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
             )}
           </div>
 
-          {/* Cobrar tarjeta guardada */}
-          {stripeConnected && (
-            <button
-              type="button"
-              className={`${styles.optionButton} ${paymentOption === 'saved' ? styles.optionButtonActive : ''}`}
-              onClick={() => {
-                setPaymentOption('saved')
-                loadPaymentMethods(invoiceSummary.contactId)
-              }}
-            >
-              <div className={styles.optionInfo}>
-                <div className={styles.optionIcon}>
-                  <CreditCard size={18} />
-                </div>
-                <div>
-                  <p>Cobrar tarjeta guardada</p>
-                  <span>
-                    {checkingCards
-                      ? 'Verificando tarjetas...'
-                      : paymentMethods.length > 0
-                        ? `${paymentMethods.length} tarjeta${paymentMethods.length > 1 ? 's' : ''} disponible${paymentMethods.length > 1 ? 's' : ''}`
-                        : 'Comprueba si el cliente tiene tarjetas guardadas'}
-                  </span>
-                </div>
-              </div>
-              {paymentOption === 'saved' && <Check size={18} className={styles.optionCheck} />}
-            </button>
-          )}
-
           {/* Registrar pago manual */}
           <button
             type="button"
@@ -1924,37 +1739,6 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
             {paymentOption === 'manual' && <Check size={18} className={styles.optionCheck} />}
           </button>
         </div>
-
-        {/* Mostrar lista de tarjetas cuando se selecciona 'saved' */}
-        {paymentOption === 'saved' && (
-          <div className={styles.cardList}>
-            {checkingCards ? (
-              <div className={styles.cardLoading}>
-                <Loader2 size={16} className={styles.processingIcon} />
-                <span>Buscando tarjetas guardadas...</span>
-              </div>
-            ) : paymentMethods.length > 0 ? (
-              paymentMethods.map((pm) => (
-                <button
-                  key={pm.id}
-                  type="button"
-                  className={`${styles.cardButton} ${selectedPaymentMethod === pm.id ? styles.cardButtonActive : ''}`}
-                  onClick={() => setSelectedPaymentMethod(pm.id)}
-                >
-                  <div>
-                    <p>{pm.brand?.toUpperCase()} •••• {pm.last4}</p>
-                    <span>Vence {pm.expMonth}/{pm.expYear}</span>
-                  </div>
-                  {selectedPaymentMethod === pm.id && <Check size={16} />}
-                </button>
-              ))
-            ) : (
-              <div className={styles.cardEmpty}>
-                Este cliente no tiene tarjetas guardadas en Stripe.
-              </div>
-            )}
-          </div>
-        )}
 
         {paymentOption === 'manual' && (
           <div className={styles.manualFields}>
@@ -2053,16 +1837,11 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     }
 
     if (step === 'options') {
-      const isPartialSavedCardPlan = paymentMode === 'partial' && partialUsesSavedCardWithoutLink
-      const requiresDeliveryChannel = paymentOption === 'send' && !isPartialSavedCardPlan
+      const requiresDeliveryChannel = paymentOption === 'send'
       const lacksDeliveryChannel = requiresDeliveryChannel && !selectedContact?.email && !selectedContact?.phone
-      const confirmLabel = isPartialSavedCardPlan
-        ? 'Crear plan'
-        : paymentOption === 'send'
-          ? paymentMode === 'partial' ? 'Crear y enviar enlace' : 'Enviar enlace'
-          : paymentOption === 'saved'
-            ? 'Cobrar tarjeta'
-            : 'Registrar pago'
+      const confirmLabel = paymentOption === 'send'
+        ? paymentMode === 'partial' ? 'Crear y enviar enlace' : 'Enviar enlace'
+        : 'Registrar pago'
 
       return (
         <div className={styles.footer}>
@@ -2073,9 +1852,6 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
               setInvoicePayload(null)
               setInvoiceSummary(null)
               setPaymentOption('send')
-              setPaymentMethods([])
-              setSelectedPaymentMethod(null)
-              setCustomerId(null)
             }}
             disabled={loading}
           >
@@ -2087,14 +1863,11 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
               onClick={() => handleConfirm()}
               disabled={
                 loading ||
-                (paymentOption === 'saved' && (!selectedPaymentMethod || checkingCards)) ||
                 lacksDeliveryChannel
               }
               title={
                 lacksDeliveryChannel
                   ? 'El contacto no tiene email ni teléfono para enviar el enlace'
-                  : paymentOption === 'saved' && !selectedPaymentMethod
-                  ? 'Selecciona una tarjeta para continuar'
                   : undefined
               }
             >
@@ -2153,7 +1926,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       onClose={onClose}
       title={
         step === 'options'
-          ? (stripeConnected ? 'Elige cómo cobrar' : 'Registrar pago manual')
+          ? 'Elige cómo cobrar'
           : paymentMode === 'partial' ? 'Registrar cobro parcial' : 'Registrar nuevo cobro'
       }
       size="md"

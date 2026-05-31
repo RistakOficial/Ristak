@@ -536,7 +536,7 @@ body.dark .dropdownMenu {
   }
 }
 
-/* Estilos específicos para Stripe Toggle */
+/* Toggle de modo de pagos */
 .toggleContainer {
   display: flex;
   align-items: center;

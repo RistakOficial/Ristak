@@ -26,12 +26,8 @@ import {
   sendInvoice,
   syncInvoice,
   text2Pay,
-  getContactPaymentMethods,
-  chargeSavedPaymentMethod,
   searchContacts,
   getContactById,
-  saveStripeConfig,
-  getStripeConfig,
   saveInvoiceConfig,
   getLocationUsers,
   getUsersByIds
@@ -62,10 +58,6 @@ router.get('/contacts/:id', getContactById)
 router.get('/users', getLocationUsers)
 router.post('/users/by-ids', getUsersByIds)
 
-// Stripe Configuration
-router.post('/stripe-config', saveStripeConfig)
-router.get('/stripe-config', getStripeConfig)
-
 // Invoice/Payment Configuration
 router.post('/invoice-config', saveInvoiceConfig)
 
@@ -83,7 +75,5 @@ router.post('/invoices/:invoiceId/send', sendInvoice)
 router.post('/invoices/:invoiceId/record-payment', recordPayment)
 router.post('/invoices/:invoiceId/sync', syncInvoice)
 router.post('/text2pay', text2Pay)
-router.get('/payment-methods/contact/:contactId', getContactPaymentMethods)
-router.post('/payment-methods/charge', chargeSavedPaymentMethod)
 
 export default router

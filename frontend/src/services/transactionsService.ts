@@ -9,7 +9,7 @@ export interface Transaction {
   phone?: string
   amount: number
   currency?: string
-  method: 'card' | 'transfer' | 'cash' | 'paypal' | 'stripe' | 'other' | 'bank_transfer' | 'check'
+  method: 'card' | 'transfer' | 'cash' | 'paypal' | 'other' | 'bank_transfer' | 'check'
   status: 'draft' | 'sent' | 'paid' | 'pending' | 'overdue' | 'partial' | 'void' | 'refunded' | 'failed' | 'deleted'
   paymentMode?: 'live' | 'test'
   reference?: string

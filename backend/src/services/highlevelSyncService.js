@@ -220,7 +220,7 @@ async function collectPaginatedData({
 }
 
 function normalizePaymentRecord(raw = {}) {
-  const id = raw._id || raw.id || raw.transactionId || raw.paymentId || raw.stripePaymentId || raw.invoicePaymentId
+  const id = raw._id || raw.id || raw.transactionId || raw.paymentId || raw.invoicePaymentId
   const contactId = raw.contactId || raw.contact?.id
 
   const amount = typeof raw.amount === 'number'

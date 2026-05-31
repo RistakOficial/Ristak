@@ -1567,7 +1567,6 @@ export const Transactions: React.FC = () => {
                   <option value="transfer">Transferencia</option>
                   <option value="cash">Efectivo</option>
                   <option value="paypal">PayPal</option>
-                  <option value="stripe">Stripe</option>
                   <option value="other">Otro</option>
                 </select>
               </div>

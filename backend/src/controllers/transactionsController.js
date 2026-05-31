@@ -24,7 +24,6 @@ const VALID_TRANSACTION_STATUSES = new Set([
 
 const PAYMENT_METHOD_TO_GHL_MODE = {
   card: 'card',
-  stripe: 'card',
   transfer: 'bank_transfer',
   bank_transfer: 'bank_transfer',
   cash: 'cash',

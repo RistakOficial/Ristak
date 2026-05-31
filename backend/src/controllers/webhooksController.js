@@ -2,7 +2,6 @@ import { db } from '../config/database.js';
 import { logger } from '../utils/logger.js';
 import { updateSingleContactStats } from '../utils/updateContactsStats.js';
 import { recordAttendanceAttributionSignal } from '../services/appointmentsMerge.js';
-import * as stripeService from '../services/stripeService.js';
 import {
   activatePendingPaymentFlowsForContact,
   markPaymentFlowInvoicePaid
@@ -33,12 +32,6 @@ function extractInvoiceWebhookId(data) {
     invoice.invoiceId,
     invoice.invoice_id
   );
-}
-
-function normalizeStripeObjectId(value) {
-  if (!value) return null;
-  if (typeof value === 'string') return value;
-  return value.id || value._id || null;
 }
 
 function extractPaymentWebhookPayload(data) {
@@ -557,69 +550,6 @@ export const handlePaymentWebhook = async (req, res) => {
           logger.info(`✅ ${activatedFlows} flujo(s) de parcialidades activado(s) por pago webhook para contacto ${contactId}`);
         }
       }
-    }
-
-    // Guardar payment method si viene info de Stripe en el webhook
-    try {
-      const chargeSnapshot = payment.chargeSnapshot || payment.charge_snapshot || {};
-      let paymentMethodData = firstValue(
-        chargeSnapshot.payment_method,
-        chargeSnapshot.paymentMethod,
-        payment.payment_method,
-        payment.paymentMethod,
-        payment.payment_method_details,
-        payment.paymentMethodDetails
-      );
-      const stripeCustomerId = normalizeStripeObjectId(firstValue(
-        chargeSnapshot.customer,
-        chargeSnapshot.customerId,
-        payment.customer?.id,
-        payment.customerId,
-        payment.customer_id
-      ));
-      let stripePaymentMethodId = normalizeStripeObjectId(paymentMethodData);
-
-      if (stripeCustomerId && stripePaymentMethodId) {
-        // Obtener location_id
-        const config = await db.get('SELECT location_id FROM highlevel_config LIMIT 1');
-
-        if (config && config.location_id) {
-          if (typeof paymentMethodData === 'string') {
-            paymentMethodData = await stripeService.getPaymentMethod(config.location_id, paymentMethodData);
-          }
-
-          // Obtener datos del contacto
-          const contact = await db.get('SELECT full_name, email FROM contacts WHERE id = ?', [contactId]);
-
-          stripePaymentMethodId = normalizeStripeObjectId(paymentMethodData) || stripePaymentMethodId;
-          const card = paymentMethodData.card || {};
-
-          // Guardar payment method
-          await stripeService.savePaymentMethod({
-            locationId: config.location_id,
-            contactId: contactId,
-            contactName: contact?.full_name || payment.customer?.name || 'Sin nombre',
-            contactEmail: contact?.email || payment.customer?.email,
-            stripeCustomerId,
-            stripePaymentMethodId,
-            brand: card.brand || 'unknown',
-            last4: card.last4 || '****',
-            expMonth: card.exp_month || 12,
-            expYear: card.exp_year || 2099,
-            isDefault: false
-          });
-
-          logger.info(`💳 Payment method guardado automáticamente para contacto ${contactId}`);
-
-          const activatedFlows = await activatePendingPaymentFlowsForContact(contactId);
-          if (activatedFlows > 0) {
-            logger.info(`✅ ${activatedFlows} flujo(s) de parcialidades activado(s) para contacto ${contactId}`);
-          }
-        }
-      }
-    } catch (error) {
-      // No fallar el webhook si no se pudo guardar el payment method
-      logger.warn(`⚠️  No se pudo guardar payment method del webhook: ${error.message}`);
     }
 
     logger.info(`✅ Pago ${paymentId} procesado exitosamente para contacto ${contactId}`);

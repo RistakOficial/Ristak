@@ -73,7 +73,6 @@ export type { ModalType } from './Modal'
 
 // Componentes de sistema
 export { StorageAlert } from './StorageAlert'
-export { TestModeBanner } from './TestModeBanner'
 
 // Componentes de tracking
 export { SessionsTable } from './SessionsTable/SessionsTable'

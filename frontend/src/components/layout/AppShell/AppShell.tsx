@@ -4,7 +4,6 @@ import { Layout } from '@/components/layout/Layout'
 import { Sidebar } from '@/components/layout/Sidebar'
 import { Header } from '@/components/layout/Header'
 import { SyncProgressBar } from '@/components/common/SyncProgressBar'
-import { TestModeBanner } from '@/components/common/TestModeBanner'
 import { AIAgentPanel } from '@/components/ai'
 import { useAuth } from '@/contexts/AuthContext'
 import { useDomainFeatureSync } from '@/hooks'
@@ -88,7 +87,6 @@ export const AppShell: React.FC = () => {
           sidebar={<Sidebar locationName={locationName} locationLogo={locationLogo} />}
         >
           <div className="flex flex-col min-h-full">
-            <TestModeBanner />
             <Header onLogout={handleLogout} />
             <div className="flex-1 overflow-auto">
               <Outlet />
