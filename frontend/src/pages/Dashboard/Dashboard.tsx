@@ -468,10 +468,12 @@ export const Dashboard: React.FC = () => {
   // Sistema híbrido de configuración
   const [showAnalyticsConfig] = useAppConfig<string | number | boolean>('show_analytics', '1')
   const [chartPeriodConfig, setChartPeriodConfig] = useAppConfig<string>('dashboard_chart_period', 'last12')
+  const [showFunnelVisitorsConfig, setShowFunnelVisitorsConfig, savingFunnelVisitorsConfig] = useAppConfig<string | number | boolean>('dashboard_show_funnel_visitors', '1')
   const chartPeriodPreference = normalizeChartPeriodPreference(chartPeriodConfig)
 
   // FORZAR analyticsEnabled a false si estamos en dominio .onrender.com
   const analyticsEnabled = isRenderDomain ? false : parseAnalyticsFlag(showAnalyticsConfig)
+  const showFunnelVisitors = analyticsEnabled && parseAnalyticsFlag(showFunnelVisitorsConfig)
 
   const [metrics, setMetrics] = useState<DashboardMetrics | null>(null)
   const [chartData, setChartData] = useState<ChartData[]>([])
@@ -509,6 +511,12 @@ export const Dashboard: React.FC = () => {
     if (analyticsEnabled) return funnelData
     return funnelData.filter((stage) => stage.stage?.trim().toLowerCase() !== 'visitantes')
   }, [analyticsEnabled, funnelData])
+
+  const handleFunnelVisitorsVisibilityChange = React.useCallback((nextShowVisitors: boolean) => {
+    setShowFunnelVisitorsConfig(nextShowVisitors ? '1' : '0').catch((error) => {
+      console.error('Error guardando visibilidad de visitantes del embudo:', error)
+    })
+  }, [setShowFunnelVisitorsConfig])
 
   const chartsGridClass = analyticsEnabled ? 'grid gap-4 lg:grid-cols-2' : 'grid gap-4'
   const calendarRangeDays = React.useMemo(
@@ -1659,10 +1667,12 @@ export const Dashboard: React.FC = () => {
           <ConversionFunnelChart
             data={funnelChartData}
             loading={funnelLoading}
-            showVisitors={analyticsEnabled}
+            showVisitors={showFunnelVisitors}
             scope={funnelScope}
             onScopeChange={setFunnelScope}
             onStageClick={handleFunnelStageClick}
+            onVisitorsVisibilityChange={analyticsEnabled ? handleFunnelVisitorsVisibilityChange : undefined}
+            visitorsVisibilityLoading={savingFunnelVisitorsConfig}
           />
           {analyticsEnabled && (
             <TrafficSourcesChart

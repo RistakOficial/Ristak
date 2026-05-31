@@ -1,7 +1,7 @@
 import React from 'react'
 import { Card } from '../Card'
 import { HelpTooltip } from '../HelpTooltip'
-import { Users, UserCheck, Calendar, DollarSign, Layers, Target, MousePointerClick, CheckCircle2 } from 'lucide-react'
+import { Users, UserCheck, Calendar, DollarSign, Layers, Target, MousePointerClick, CheckCircle2, Eye, EyeOff } from 'lucide-react'
 import { useLabels } from '@/contexts/LabelsContext'
 import styles from './ConversionFunnelChart.module.css'
 
@@ -20,6 +20,8 @@ interface ConversionFunnelChartProps {
   scope?: ScopeType
   onScopeChange?: (scope: ScopeType) => void
   onStageClick?: (stage: FunnelStage) => void
+  onVisitorsVisibilityChange?: (showVisitors: boolean) => void
+  visitorsVisibilityLoading?: boolean
 }
 
 export const ConversionFunnelChart: React.FC<ConversionFunnelChartProps> = ({
@@ -28,9 +30,12 @@ export const ConversionFunnelChart: React.FC<ConversionFunnelChartProps> = ({
   showVisitors = true,
   scope = 'all',
   onScopeChange,
-  onStageClick
+  onStageClick,
+  onVisitorsVisibilityChange,
+  visitorsVisibilityLoading = false
 }) => {
   const { labels } = useLabels()
+  const visitorsToggleEnabled = Boolean(onVisitorsVisibilityChange)
 
   const scopeOptions = [
     {
@@ -105,10 +110,29 @@ export const ConversionFunnelChart: React.FC<ConversionFunnelChartProps> = ({
   const attendancesValue = getStageValue(['asistencias'])
   const customersValue = getStageValue([labels.customers, 'clientes', 'customers'])
 
+  const updateVisitorsVisibility = (nextShowVisitors: boolean) => {
+    if (visitorsVisibilityLoading) return
+    onVisitorsVisibilityChange?.(nextShowVisitors)
+  }
+
   return (
     <Card variant="glass" className={styles.container} data-ristak-chart="funnel">
       <div className={styles.header}>
-        <h3 className={styles.title}>Conversiones</h3>
+        <div className={styles.titleGroup}>
+          <h3 className={styles.title}>Conversiones</h3>
+          {visitorsToggleEnabled && !showVisitors && (
+            <button
+              type="button"
+              className={`${styles.visibilityButton} ${styles.titleVisibilityButton}`}
+              onClick={() => updateVisitorsVisibility(true)}
+              disabled={visitorsVisibilityLoading}
+              aria-label="Mostrar visitantes"
+              title="Mostrar visitantes"
+            >
+              <EyeOff size={16} />
+            </button>
+          )}
+        </div>
         {onScopeChange && (
           <div className={styles.scopeSelector} data-ristak-scope-selector>
             {scopeOptions.map((option) => {
@@ -156,14 +180,23 @@ export const ConversionFunnelChart: React.FC<ConversionFunnelChartProps> = ({
               ? ((item.value / safeData[index - 1].value) * 100).toFixed(1)
               : '100'
             const Icon = item.icon ?? Users
+            const isVisitorsStage = item.stage?.trim().toLowerCase() === 'visitantes'
+            const isStageInteractive = Boolean(onStageClick)
 
             return (
               <div key={item.stage} className={styles.stageContainer}>
-                <button
-                  type="button"
+                <div
                   className={`${styles.stageContent} ${onStageClick ? styles.stageButton : ''}`}
                   onClick={() => onStageClick?.(item)}
-                  disabled={!onStageClick}
+                  role={isStageInteractive ? 'button' : undefined}
+                  tabIndex={isStageInteractive ? 0 : undefined}
+                  onKeyDown={(event) => {
+                    if (!isStageInteractive) return
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault()
+                      onStageClick?.(item)
+                    }
+                  }}
                 >
                   <div className={styles.iconContainer}>
                     <Icon className={styles.icon} />
@@ -171,7 +204,25 @@ export const ConversionFunnelChart: React.FC<ConversionFunnelChartProps> = ({
 
                   <div className={styles.stageInfo}>
                     <div className={styles.stageHeader}>
-                      <span className={styles.stageName}>{item.stage}</span>
+                      <div className={styles.stageLabelGroup}>
+                        <span className={styles.stageName}>{item.stage}</span>
+                        {visitorsToggleEnabled && showVisitors && isVisitorsStage && (
+                          <button
+                            type="button"
+                            className={`${styles.visibilityButton} ${styles.stageVisibilityButton}`}
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              updateVisitorsVisibility(false)
+                            }}
+                            onKeyDown={(event) => event.stopPropagation()}
+                            disabled={visitorsVisibilityLoading}
+                            aria-label="Ocultar visitantes"
+                            title="Ocultar visitantes"
+                          >
+                            <Eye size={15} />
+                          </button>
+                        )}
+                      </div>
                       <div className={styles.stageValues}>
                         <span className={styles.stageValue}>
                           {item.value.toLocaleString()}
@@ -191,7 +242,7 @@ export const ConversionFunnelChart: React.FC<ConversionFunnelChartProps> = ({
                       />
                     </div>
                   </div>
-                </button>
+                </div>
 
                 {index < safeData.length - 1 && (
                   <div className={styles.connector} />

@@ -221,6 +221,16 @@ async function initTables() {
       // Ignore si ya existe
     }
 
+    try {
+      await db.run(`
+        INSERT INTO app_config (config_key, config_value)
+        VALUES ('dashboard_show_funnel_visitors', '1')
+        ON CONFLICT (config_key) DO NOTHING
+      `)
+    } catch (err) {
+      // Ignore si ya existe
+    }
+
     // Tabla de contactos
     await db.run(`
       CREATE TABLE IF NOT EXISTS contacts (

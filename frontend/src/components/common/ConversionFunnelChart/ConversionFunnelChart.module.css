@@ -18,6 +18,50 @@
   margin: 0;
 }
 
+.titleGroup {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  min-width: 0;
+}
+
+.visibilityButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  padding: 0;
+  border: 0;
+  border-radius: 9999px;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition:
+    background-color 0.16s ease,
+    color 0.16s ease;
+}
+
+.visibilityButton:hover:not(:disabled) {
+  color: var(--color-text-secondary);
+  background-color: var(--design-chart-panel-bg, var(--color-background-secondary));
+}
+
+.visibilityButton:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.visibilityButton:disabled {
+  cursor: progress;
+  opacity: 0.55;
+}
+
+.titleVisibilityButton {
+  margin-top: 0.0625rem;
+}
+
 .scopeSelector {
   display: flex;
   align-items: center;
@@ -204,6 +248,19 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.stageLabelGroup {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.stageVisibilityButton {
+  width: 1.5rem;
+  height: 1.5rem;
+  color: var(--color-text-tertiary);
 }
 
 .stageValues {
