@@ -1,10 +1,13 @@
-import { db } from '../config/database.js'
+import { db, getHighLevelConfig } from '../config/database.js'
 import { decrypt, encrypt } from '../utils/encryption.js'
 import { resolveDateRangeWithGHLTimezone } from '../utils/dateUtils.js'
 import { buildHiddenContactsCondition, getHiddenContactFilters } from '../utils/hiddenContactsFilter.js'
 import { DateTime } from 'luxon'
 
 const OPENAI_API_URL = 'https://api.openai.com/v1'
+const HIGHLEVEL_API_BASE_URL = process.env.GHL_API_BASE_URL || 'https://services.leadconnectorhq.com'
+const HIGHLEVEL_MCP_SERVER_URL = process.env.GHL_MCP_SERVER_URL || 'https://services.leadconnectorhq.com/mcp/'
+const HIGHLEVEL_API_VERSION = process.env.GHL_API_VERSION || '2021-07-28'
 const DEFAULT_MODEL = process.env.OPENAI_AGENT_MODEL || 'gpt-5.2'
 const REQUEST_TIMEOUT_MS = 45000
 const BUSINESS_CONTEXT_LIMIT = 12000
@@ -17,6 +20,7 @@ const MAX_AGENT_ROWS = 200
 const BUSINESS_PROFILE_LIMIT = 6000
 const WEB_SEARCH_DOMAIN_LIMIT = 20
 const CLARIFICATION_OPTION_LIMIT = 5
+const MAX_TOOL_ROUNDS = 6
 const isPostgres = Boolean(process.env.DATABASE_URL)
 
 const paidStatuses = "('paid','succeeded','success','completed','complete')"
@@ -156,6 +160,18 @@ function stripMarkdown(value) {
     .trim()
 }
 
+function safeStringify(value, maxLength = 12000) {
+  let text
+
+  try {
+    text = JSON.stringify(value, null, 2)
+  } catch {
+    text = String(value)
+  }
+
+  return text.length > maxLength ? `${text.slice(0, maxLength)}... [truncado]` : text
+}
+
 function maskApiKey(apiKey) {
   if (!apiKey || apiKey.length < 12) return 'sk-...'
 
@@ -265,6 +281,222 @@ function extractResponseSources(responseData) {
   }
 
   return sources.slice(0, 8)
+}
+
+function extractFunctionCalls(responseData) {
+  if (!Array.isArray(responseData?.output)) return []
+
+  return responseData.output
+    .filter((item) => item?.type === 'function_call' && typeof item.name === 'string')
+    .map((item) => {
+      let parsedArguments = {}
+
+      if (typeof item.arguments === 'string' && item.arguments.trim()) {
+        try {
+          parsedArguments = JSON.parse(item.arguments)
+        } catch {
+          parsedArguments = { raw: item.arguments }
+        }
+      } else if (item.arguments && typeof item.arguments === 'object') {
+        parsedArguments = item.arguments
+      }
+
+      return {
+        name: item.name,
+        callId: item.call_id,
+        arguments: parsedArguments
+      }
+    })
+    .filter((call) => call.callId)
+}
+
+function cleanHighLevelPath(path) {
+  const value = String(path || '').trim()
+
+  if (!value) {
+    throw new Error('Falta el path de HighLevel.')
+  }
+
+  if (/^https?:\/\//i.test(value)) {
+    throw new Error('Usa sólo paths de HighLevel como /contacts/. No se permiten URLs completas.')
+  }
+
+  const cleanPath = value.startsWith('/') ? value : `/${value}`
+
+  if (cleanPath.includes('..')) {
+    throw new Error('Path inválido para HighLevel.')
+  }
+
+  return cleanPath
+}
+
+function appendQueryParams(url, query = {}) {
+  if (!query || typeof query !== 'object' || Array.isArray(query)) return
+
+  Object.entries(query).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === '') return
+
+    if (Array.isArray(value)) {
+      value.forEach((item) => {
+        if (item !== undefined && item !== null) {
+          url.searchParams.append(key, String(item))
+        }
+      })
+      return
+    }
+
+    if (typeof value === 'object') {
+      url.searchParams.append(key, JSON.stringify(value))
+      return
+    }
+
+    url.searchParams.append(key, String(value))
+  })
+}
+
+async function getHighLevelAgentConnection() {
+  const config = await getHighLevelConfig()
+
+  if (!config?.api_token || !config?.location_id) {
+    return {
+      configured: false,
+      token: null,
+      locationId: null,
+      locationData: null
+    }
+  }
+
+  return {
+    configured: true,
+    token: String(config.api_token).trim(),
+    locationId: String(config.location_id).trim(),
+    locationData: parseLocationData(config.location_data)
+  }
+}
+
+function buildHighLevelToolContext(highLevelConnection) {
+  if (!highLevelConnection?.configured) {
+    return 'HighLevel no está conectado en Configuración. Para ejecutar acciones en Go High Level, primero configura locationId y Private Integration Token/API token.'
+  }
+
+  return safeStringify({
+    connected: true,
+    locationId: highLevelConnection.locationId,
+    locationName: highLevelConnection.locationData?.name || highLevelConnection.locationData?.business?.name || null,
+    timezone: highLevelConnection.locationData?.timezone || null,
+    mcpServer: HIGHLEVEL_MCP_SERVER_URL,
+    restBaseUrl: HIGHLEVEL_API_BASE_URL,
+    token: 'configurado_no_mostrar'
+  }, 3000)
+}
+
+function buildHighLevelTools(highLevelConnection) {
+  if (!highLevelConnection?.configured) return []
+
+  return [
+    {
+      type: 'mcp',
+      server_label: 'highlevel',
+      server_description: 'Official HighLevel MCP server for CRM, contacts, conversations, calendars, opportunities, payments, locations, social posting, blogs, email templates and related operations.',
+      server_url: HIGHLEVEL_MCP_SERVER_URL,
+      authorization: highLevelConnection.token,
+      require_approval: 'never'
+    },
+    {
+      type: 'function',
+      name: 'highlevel_rest_request',
+      description: 'Fallback para ejecutar endpoints REST documentados de HighLevel cuando el MCP oficial no exponga la acción necesaria. Usa sólo paths bajo services.leadconnectorhq.com, por ejemplo /contacts/, /contacts/search, /conversations/messages, /calendars/events/appointments, /products/, /invoices/. Puede leer y modificar HighLevel si el token tiene scope.',
+      parameters: {
+        type: 'object',
+        properties: {
+          method: {
+            type: 'string',
+            enum: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
+            description: 'Método HTTP del endpoint de HighLevel.'
+          },
+          path: {
+            type: 'string',
+            description: 'Path de HighLevel empezando con /. Nunca uses URL completa.'
+          },
+          query: {
+            type: ['object', 'null'],
+            description: 'Query params. Incluye locationId si el endpoint lo requiere.',
+            additionalProperties: true
+          },
+          body: {
+            type: ['object', 'array', 'null'],
+            description: 'Body JSON para POST/PUT/PATCH/DELETE.'
+          },
+          version: {
+            type: ['string', 'null'],
+            description: 'Header Version opcional. Usa 2021-07-28 por defecto, o 2023-02-21 si el endpoint lo requiere.'
+          }
+        },
+        required: ['method', 'path', 'query', 'body', 'version'],
+        additionalProperties: false
+      },
+      strict: false
+    }
+  ]
+}
+
+async function executeHighLevelRestRequest(args = {}, highLevelConnection) {
+  if (!highLevelConnection?.configured) {
+    return {
+      ok: false,
+      error: 'HighLevel no está configurado.'
+    }
+  }
+
+  const method = String(args.method || 'GET').toUpperCase()
+  const allowedMethods = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE'])
+
+  if (!allowedMethods.has(method)) {
+    throw new Error(`Método HighLevel no soportado: ${method}`)
+  }
+
+  const cleanPath = cleanHighLevelPath(args.path)
+  const url = new URL(`${HIGHLEVEL_API_BASE_URL}${cleanPath}`)
+  appendQueryParams(url, args.query)
+
+  const body = args.body === undefined ? null : args.body
+  const headers = {
+    Accept: 'application/json',
+    Authorization: `Bearer ${highLevelConnection.token}`,
+    Version: args.version || HIGHLEVEL_API_VERSION
+  }
+
+  if (method !== 'GET') {
+    headers['Content-Type'] = 'application/json'
+  }
+
+  const response = await fetchWithTimeout(url.toString(), {
+    method,
+    headers,
+    body: method === 'GET' ? undefined : JSON.stringify(body || {})
+  })
+
+  const contentType = response.headers.get('content-type') || ''
+  let payload
+
+  if (contentType.includes('application/json')) {
+    try {
+      payload = await response.json()
+    } catch {
+      payload = null
+    }
+  } else {
+    payload = await response.text().catch(() => '')
+  }
+
+  return {
+    ok: response.ok,
+    status: response.status,
+    method,
+    path: cleanPath,
+    response: payload,
+    error: response.ok ? null : cleanText(typeof payload === 'string' ? payload : safeStringify(payload), 4000)
+  }
 }
 
 function parseJsonObject(text) {
@@ -389,7 +621,7 @@ function buildWebSearchTools(config, runtimeContext) {
   return [tool]
 }
 
-async function callOpenAIResponse(apiKey, { instructions, input, maxOutputTokens = 1200, tools = [], include = [] }) {
+async function callOpenAIResponseRaw(apiKey, { instructions, input, maxOutputTokens = 1200, tools = [], include = [], previousResponseId = null }) {
   const body = {
     model: DEFAULT_MODEL,
     instructions,
@@ -397,9 +629,15 @@ async function callOpenAIResponse(apiKey, { instructions, input, maxOutputTokens
     max_output_tokens: maxOutputTokens
   }
 
+  if (previousResponseId) {
+    body.previous_response_id = previousResponseId
+  }
+
   if (tools.length) {
     body.tools = tools
     body.tool_choice = 'auto'
+    body.parallel_tool_calls = false
+    body.store = true
   }
 
   if (include.length) {
@@ -427,6 +665,18 @@ async function callOpenAIResponse(apiKey, { instructions, input, maxOutputTokens
     throw new Error(getOpenAIErrorMessage(data, 'OpenAI no pudo generar la respuesta'))
   }
 
+  return data
+}
+
+async function callOpenAIResponse(apiKey, { instructions, input, maxOutputTokens = 1200, tools = [], include = [] }) {
+  const data = await callOpenAIResponseRaw(apiKey, {
+    instructions,
+    input,
+    maxOutputTokens,
+    tools,
+    include
+  })
+
   const text = extractResponseText(data)
 
   if (!text) {
@@ -438,6 +688,79 @@ async function callOpenAIResponse(apiKey, { instructions, input, maxOutputTokens
     data,
     sources: extractResponseSources(data)
   }
+}
+
+async function callOpenAIResponseWithActionTools(apiKey, {
+  instructions,
+  input,
+  maxOutputTokens = 1800,
+  tools = [],
+  include = [],
+  highLevelConnection
+}) {
+  let currentInput = input
+  let previousResponseId = null
+  let latestData = null
+
+  for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
+    latestData = await callOpenAIResponseRaw(apiKey, {
+      instructions,
+      input: currentInput,
+      maxOutputTokens,
+      tools,
+      include,
+      previousResponseId
+    })
+
+    const functionCalls = extractFunctionCalls(latestData)
+
+    if (!functionCalls.length) {
+      const text = extractResponseText(latestData)
+
+      if (!text) {
+        throw new Error('OpenAI respondió sin texto utilizable')
+      }
+
+      return {
+        text,
+        data: latestData,
+        sources: extractResponseSources(latestData)
+      }
+    }
+
+    const outputs = []
+
+    for (const call of functionCalls) {
+      let output
+
+      try {
+        if (call.name === 'highlevel_rest_request') {
+          output = await executeHighLevelRestRequest(call.arguments, highLevelConnection)
+        } else {
+          output = {
+            ok: false,
+            error: `Tool no soportada por Ristak: ${call.name}`
+          }
+        }
+      } catch (error) {
+        output = {
+          ok: false,
+          error: error.message || 'Error ejecutando herramienta'
+        }
+      }
+
+      outputs.push({
+        type: 'function_call_output',
+        call_id: call.callId,
+        output: safeStringify(output)
+      })
+    }
+
+    previousResponseId = latestData?.id || previousResponseId
+    currentInput = outputs
+  }
+
+  throw new Error('El agente excedió el límite de acciones contra HighLevel.')
 }
 
 async function getAgentRuntimeContext() {
@@ -1248,9 +1571,11 @@ function prepareQueryResultsForReply(queryResults) {
   return successfulResults
 }
 
-async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, runtimeContext, plan, queryResults, agentConfig }) {
+async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, runtimeContext, plan, queryResults, agentConfig, highLevelConnection }) {
   const modelQueryResults = prepareQueryResultsForReply(queryResults)
   const webSearchTools = buildWebSearchTools(agentConfig, runtimeContext)
+  const highLevelTools = buildHighLevelTools(highLevelConnection)
+  const agentTools = [...webSearchTools, ...highLevelTools]
   const instructions = [
     'Eres el Agente AI interno de Ristak.',
     'Responde como analista senior de crecimiento y rentabilidad que asesora al dueño del negocio: orientado a escalar utilidad, ROI y éxito, pero en lenguaje simple y claro, sin jerga técnica, sin sarcasmo y sin burlas.',
@@ -1282,6 +1607,11 @@ async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, ru
     'NO uses la herramienta de busqueda web cuando la pregunta sea analisis interno del negocio: ventas, campanas, pagos, citas, contactos, ROAS, rentabilidad, conteos, tendencias o cualquier cosa que se pueda contestar con la DB. En esos casos responde solo con la data interna y sin citar enlaces externos.',
     'Usa la busqueda web SOLO cuando el usuario pida explicitamente ideas o contexto externo: estrategia de mercado, benchmarks de la industria, tendencias del sector, contexto social, cultural, politico, geografico, regulatorio, competidores externos, noticias o temporada. Si tienes duda, asume que es pregunta interna y no busques.',
     'Cuando uses informacion externa, cita los enlaces dentro del texto de la respuesta (no como lista al final) y conectalos con los datos internos del negocio.',
+    'También puedes controlar Go High Level directamente cuando el usuario pida acciones de CRM. Usa primero el MCP oficial de HighLevel; si no existe herramienta MCP para algo, usa highlevel_rest_request con endpoints oficiales documentados.',
+    'HighLevel puede hacer lecturas y cambios reales según los scopes del token configurado: contactos, tags, custom fields, conversaciones/mensajes, workflows, calendarios/citas, oportunidades, productos, pagos, invoices, usuarios, ubicaciones, social posting, blogs, plantillas y cualquier endpoint disponible por API.',
+    'Si el usuario pide una acción clara en HighLevel y tienes datos suficientes, ejecútala. Si falta identificar contacto, workflow, invoice, producto, calendario, monto, fecha o canal, pregunta sólo eso y ofrece opciones cuando existan.',
+    'Para cambios destructivos, pagos, envíos de mensajes, workflows, citas o movimientos de oportunidad, primero asegúrate de que el registro exacto esté identificado. No ejecutes sobre coincidencias ambiguas.',
+    'No digas que sólo tienes acceso a la DB si HighLevel está conectado; úsalo para leer o modificar el CRM cuando la petición lo requiera. No reveles token, headers ni secretos.',
     'Si los resultados incluyen historico_negocio_por_mes o historico_rango_disponible, sí tienes datos históricos de la DB. No digas que sólo tienes el snapshot, la vista o el mes actual.',
     'Si los resultados incluyen campañas_ultimos_90_dias o campañas_por_mes, YA tienes la rentabilidad por campaña calculada desde la DB con la lógica de Publicidad (gasto, leads, citas, asistencias, ventas, ingresos atribuidos, utilidad y ROAS). Úsalos directo. NUNCA digas "no la puedo sacar", "solo tengo el corte del mes" ni que falta el rango completo: para los últimos ~90 días usa campañas_ultimos_90_dias (ya viene ordenado por utilidad) y para cualquier otro rango suma los meses pedidos de campañas_por_mes.',
     'Si el usuario pide comparación histórica, explica la evolución con los meses reales disponibles y menciona desde qué mes arranca el dato.',
@@ -1299,6 +1629,9 @@ async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, ru
     '',
     'Contexto configurado del negocio:',
     buildBusinessProfileContext(agentConfig),
+    '',
+    'Conexión HighLevel para acciones en CRM:',
+    buildHighLevelToolContext(highLevelConnection),
     '',
     'Definiciones de negocio usadas:',
     BUSINESS_DEFINITIONS,
@@ -1321,17 +1654,37 @@ async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, ru
   let response
 
   try {
-    response = await callOpenAIResponse(apiKey, {
+    response = highLevelTools.length
+      ? await callOpenAIResponseWithActionTools(apiKey, {
+          instructions,
+          input,
+          maxOutputTokens: webSearchTools.length ? 2200 : 1800,
+          tools: agentTools,
+          include: webSearchTools.length ? ['web_search_call.action.sources'] : [],
+          highLevelConnection
+        })
+      : await callOpenAIResponse(apiKey, {
       instructions,
       input,
       maxOutputTokens: webSearchTools.length ? 1800 : 1400,
-      tools: webSearchTools,
+      tools: agentTools,
       include: webSearchTools.length ? ['web_search_call.action.sources'] : []
     })
   } catch (error) {
     if (!webSearchTools.length) throw error
 
-    response = await callOpenAIResponse(apiKey, {
+    response = highLevelTools.length
+      ? await callOpenAIResponseWithActionTools(apiKey, {
+          instructions: [
+            instructions,
+            'La busqueda online no estuvo disponible en este intento. Responde con DB, vista actual, contexto configurado y herramientas de HighLevel, sin inventar contexto externo.'
+          ].join('\n'),
+          input,
+          maxOutputTokens: 1800,
+          tools: highLevelTools,
+          highLevelConnection
+        })
+      : await callOpenAIResponse(apiKey, {
       instructions: [
         instructions,
         'La busqueda online no estuvo disponible en este intento. Responde con DB, vista actual y contexto configurado, sin inventar contexto externo.'
@@ -1349,7 +1702,8 @@ async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, ru
     usage: data?.usage || null,
     sources,
     debug: {
-      queryCount: queryResults.length
+      queryCount: queryResults.length,
+      highLevelToolsEnabled: highLevelTools.length > 0
     }
   }
 }
@@ -2405,6 +2759,7 @@ export async function createAgentReply({ apiKey, messages, viewContext }) {
   }
 
   const agentConfig = await getAIAgentConfig()
+  const highLevelConnection = await getHighLevelAgentConnection()
   const coreQueries = await buildCoreResearchQueries(runtimeContext)
   const corePlan = {
     assumptions: [
@@ -2467,7 +2822,8 @@ export async function createAgentReply({ apiKey, messages, viewContext }) {
     runtimeContext,
     plan: finalPlan,
     queryResults,
-    agentConfig
+    agentConfig,
+    highLevelConnection
   })
 
   if (!result.reply) {
