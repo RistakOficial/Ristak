@@ -857,6 +857,219 @@ function buildScheduleExecuteAt(dueDate, timezone = DEFAULT_PAYMENT_TIMEZONE) {
     .toFormat("yyyy-MM-dd'T'HH:mm:ss'Z'")
 }
 
+function getScheduleStart(dueDate, timezone = DEFAULT_PAYMENT_TIMEZONE) {
+  const zone = resolveScheduleTimezone(timezone)
+  const executeAt = buildScheduleExecuteAt(dueDate, timezone)
+  const localStart = DateTime.fromISO(executeAt, { zone: 'utc' }).setZone(zone)
+
+  return {
+    executeAt,
+    startDate: localStart.toISODate(),
+    startTime: localStart.set({ millisecond: 0 }).toFormat('HH:mm:ss')
+  }
+}
+
+function parseInstallmentDate(installment, timezone = DEFAULT_PAYMENT_TIMEZONE) {
+  const rawDate = installment.due_date || installment.dueDate
+  if (!rawDate) return null
+
+  const date = DateTime.fromISO(normalizeDateOnly(rawDate), {
+    zone: resolveScheduleTimezone(timezone)
+  })
+
+  return date.isValid ? date.startOf('day') : null
+}
+
+function isLastDayOfMonth(date) {
+  return date?.isValid && date.day === date.endOf('month').day
+}
+
+function datesMatch(left, right) {
+  return Boolean(left?.isValid && right?.isValid && left.toISODate() === right.toISODate())
+}
+
+function expectedMonthlyDate(firstDate, index, interval) {
+  const expected = firstDate.plus({ months: index * interval })
+  return isLastDayOfMonth(firstDate) ? expected.endOf('month').startOf('day') : expected.startOf('day')
+}
+
+function matchesMonthlyCadence(dates, interval = 1) {
+  if (dates.length < 2 || dates.some(date => !date?.isValid)) return false
+
+  return dates.every((date, index) => (
+    index === 0 || datesMatch(date, expectedMonthlyDate(dates[0], index, interval))
+  ))
+}
+
+function matchesDayCadence(dates, days) {
+  if (dates.length < 2 || dates.some(date => !date?.isValid)) return false
+
+  return dates.every((date, index) => (
+    index === 0 || datesMatch(date, dates[0].plus({ days: days * index }).startOf('day'))
+  ))
+}
+
+function dayOfWeekCode(date) {
+  const codes = ['mo', 'tu', 'we', 'th', 'fr', 'sa', 'su']
+  return codes[(date.weekday || 1) - 1]
+}
+
+function monthOfYearCode(date) {
+  const codes = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec']
+  return codes[(date.month || 1) - 1]
+}
+
+function getMonthlyDayOfMonth(date) {
+  if (isLastDayOfMonth(date)) return -1
+  return date.day <= 28 ? date.day : undefined
+}
+
+function buildRecurrenceFromDates(installments, frequency, timezone = DEFAULT_PAYMENT_TIMEZONE) {
+  if (!installments || installments.length < 2) return null
+
+  const dates = installments.map(installment => parseInstallmentDate(installment, timezone))
+  if (dates.some(date => !date?.isValid)) return null
+
+  const normalizedFrequency = normalizeText(frequency || installments[0]?.frequency || 'custom')
+  let recurrence = null
+
+  if (normalizedFrequency === 'monthly' && matchesMonthlyCadence(dates, 1)) {
+    recurrence = { intervalType: 'monthly', interval: 1 }
+  } else if (normalizedFrequency === 'weekly' && matchesDayCadence(dates, 7)) {
+    recurrence = { intervalType: 'weekly', interval: 1 }
+  } else if (normalizedFrequency === 'biweekly' && matchesDayCadence(dates, 14)) {
+    recurrence = { intervalType: 'weekly', interval: 2 }
+  } else if (normalizedFrequency === 'daily' && matchesDayCadence(dates, 1)) {
+    recurrence = { intervalType: 'daily', interval: 1 }
+  } else if (normalizedFrequency === 'yearly' && matchesMonthlyCadence(dates, 12)) {
+    recurrence = { intervalType: 'yearly', interval: 1 }
+  } else if (normalizedFrequency === 'custom') {
+    if (matchesMonthlyCadence(dates, 1)) {
+      recurrence = { intervalType: 'monthly', interval: 1 }
+    } else if (matchesDayCadence(dates, 14)) {
+      recurrence = { intervalType: 'weekly', interval: 2 }
+    } else if (matchesDayCadence(dates, 7)) {
+      recurrence = { intervalType: 'weekly', interval: 1 }
+    } else if (matchesDayCadence(dates, 1)) {
+      recurrence = { intervalType: 'daily', interval: 1 }
+    } else if (matchesMonthlyCadence(dates, 12)) {
+      recurrence = { intervalType: 'yearly', interval: 1 }
+    }
+  }
+
+  if (!recurrence) return null
+
+  if (recurrence.intervalType === 'monthly' || recurrence.intervalType === 'yearly') {
+    const dayOfMonth = getMonthlyDayOfMonth(dates[0])
+    if (dayOfMonth !== undefined) {
+      recurrence.dayOfMonth = dayOfMonth
+    }
+  }
+
+  if (recurrence.intervalType === 'weekly') {
+    recurrence.dayOfWeek = dayOfWeekCode(dates[0])
+  }
+
+  if (recurrence.intervalType === 'yearly') {
+    recurrence.monthOfYear = monthOfYearCode(dates[0])
+  }
+
+  return recurrence
+}
+
+function sameInstallmentAmount(left, right) {
+  return amountsMatch(left?.amount, right?.amount)
+}
+
+function createSingleInstallmentScheduleGroup(installment, timezone = DEFAULT_PAYMENT_TIMEZONE) {
+  return {
+    installments: [installment],
+    amount: normalizeAmount(installment.amount),
+    frequency: installment.frequency || 'custom',
+    recurrence: null,
+    schedule: {
+      executeAt: buildScheduleExecuteAt(installment.due_date, timezone)
+    }
+  }
+}
+
+function createStoredInstallmentScheduleGroup(installments, timezone = DEFAULT_PAYMENT_TIMEZONE) {
+  const firstInstallment = installments[0]
+
+  return {
+    installments,
+    amount: normalizeAmount(firstInstallment.amount),
+    frequency: firstInstallment.frequency || 'custom',
+    recurrence: null,
+    schedule: {
+      executeAt: buildScheduleExecuteAt(firstInstallment.due_date, timezone)
+    },
+    scheduleId: firstInstallment.ghl_schedule_id
+  }
+}
+
+function createRecurringInstallmentScheduleGroup(installments, recurrence, timezone = DEFAULT_PAYMENT_TIMEZONE) {
+  const firstInstallment = installments[0]
+  const start = getScheduleStart(firstInstallment.due_date, timezone)
+
+  return {
+    installments,
+    amount: normalizeAmount(firstInstallment.amount),
+    frequency: firstInstallment.frequency || 'custom',
+    recurrence,
+    schedule: {
+      executeAt: start.executeAt,
+      rrule: {
+        ...recurrence,
+        startDate: start.startDate,
+        startTime: start.startTime,
+        count: installments.length,
+        endType: 'count'
+      }
+    }
+  }
+}
+
+function buildNewInstallmentScheduleGroups(installments, timezone = DEFAULT_PAYMENT_TIMEZONE) {
+  const groups = []
+  let index = 0
+
+  while (index < installments.length) {
+    const start = installments[index]
+
+    if (start.ghl_schedule_id) {
+      const sameSchedule = []
+      while (index < installments.length && installments[index].ghl_schedule_id === start.ghl_schedule_id) {
+        sameSchedule.push(installments[index])
+        index++
+      }
+      groups.push(createStoredInstallmentScheduleGroup(sameSchedule, timezone))
+      continue
+    }
+
+    const amountRun = []
+    while (
+      index < installments.length &&
+      !installments[index].ghl_schedule_id &&
+      sameInstallmentAmount(start, installments[index])
+    ) {
+      amountRun.push(installments[index])
+      index++
+    }
+
+    const recurrence = buildRecurrenceFromDates(amountRun, start.frequency, timezone)
+    if (recurrence) {
+      groups.push(createRecurringInstallmentScheduleGroup(amountRun, recurrence, timezone))
+    } else {
+      amountRun.forEach(installment => {
+        groups.push(createSingleInstallmentScheduleGroup(installment, timezone))
+      })
+    }
+  }
+
+  return groups
+}
+
 function resolveAutoPaymentType(paymentMethod = {}) {
   const rawType = normalizeText(paymentMethod.type)
   const hasCardFingerprint = Boolean(paymentMethod.cardId || paymentMethod.brand || paymentMethod.last4 || String(paymentMethod.paymentMethodId || '').startsWith('pm_'))
@@ -911,14 +1124,19 @@ function buildAutoPayment(paymentMethod, options = {}) {
   return autoPayment
 }
 
-function buildInstallmentSchedulePayload({ flow, installment, context, planSummary }) {
+function buildInstallmentSchedulePayload({ flow, group, context, planSummary }) {
   const contactName = flow.contact_name || flow.contact_email || flow.contact_phone || 'Cliente'
   const currency = flow.currency || CURRENCY_DEFAULT
   const concept = flow.concept || 'Plan de parcialidades'
-  const sequence = Number(installment.sequence || 1)
-  const paymentNumber = getInstallmentPaymentNumber(flow, installment)
-  const paymentLabel = `Pago ${paymentNumber}`
-  const amount = normalizeAmount(installment.amount)
+  const installments = group.installments
+  const firstInstallment = installments[0]
+  const lastInstallment = installments[installments.length - 1]
+  const firstPaymentNumber = getInstallmentPaymentNumber(flow, firstInstallment)
+  const lastPaymentNumber = getInstallmentPaymentNumber(flow, lastInstallment)
+  const paymentLabel = installments.length === 1
+    ? `Pago ${firstPaymentNumber}`
+    : `Pagos ${firstPaymentNumber}-${lastPaymentNumber}`
+  const amount = normalizeAmount(group.amount)
   const description = combineTextSections(
     `${concept} - ${paymentLabel}`,
     planSummary
@@ -942,9 +1160,7 @@ function buildInstallmentSchedulePayload({ flow, installment, context, planSumma
       email: flow.contact_email ? [flow.contact_email] : [],
       phoneNo: flow.contact_phone ? [flow.contact_phone] : []
     },
-    schedule: {
-      executeAt: buildScheduleExecuteAt(installment.due_date, context.timezone)
-    },
+    schedule: group.schedule,
     liveMode: context.liveMode,
     items: [
       {
@@ -973,9 +1189,11 @@ function isGhlScheduleNotFoundError(error) {
   return message.includes('404') && message.includes('invoice schedule not found')
 }
 
-async function createDraftInstallmentSchedule({ ghlClient, flow, installment, context, planSummary }) {
-  const schedulePayload = buildInstallmentSchedulePayload({ flow, installment, context, planSummary })
-  logger.info(`Creando schedule GHL para flujo ${flow.id}, parcialidad ${installment.sequence}: amount=${schedulePayload.total}, executeAt=${schedulePayload.schedule?.executeAt}, live=${schedulePayload.liveMode}`)
+async function createDraftInstallmentSchedule({ ghlClient, flow, group, context, planSummary }) {
+  const schedulePayload = buildInstallmentSchedulePayload({ flow, group, context, planSummary })
+  const installmentIds = group.installments.map(installment => installment.id)
+  const sequenceLabel = group.installments.map(installment => installment.sequence).join(',')
+  logger.info(`Creando schedule GHL para flujo ${flow.id}, parcialidad(es) ${sequenceLabel}: amount=${schedulePayload.total}, executeAt=${schedulePayload.schedule?.executeAt}, recurrence=${schedulePayload.schedule?.rrule ? JSON.stringify(schedulePayload.schedule.rrule) : 'none'}, live=${schedulePayload.liveMode}`)
 
   const schedule = await ghlClient.createInvoiceSchedule(schedulePayload)
   const scheduleId = extractScheduleId(schedule)
@@ -984,29 +1202,34 @@ async function createDraftInstallmentSchedule({ ghlClient, flow, installment, co
     throw new Error(`HighLevel no devolvió ID del schedule: ${Object.keys(schedule || {}).join(', ') || 'respuesta vacía'}`)
   }
 
-  await db.run(
-    `UPDATE installment_payments
-     SET ghl_schedule_id = ?, ghl_schedule_status = 'draft', notes = NULL, updated_at = CURRENT_TIMESTAMP
-     WHERE id = ?`,
-    [scheduleId, installment.id]
-  )
-  logger.info(`Schedule GHL creado para flujo ${flow.id}, parcialidad ${installment.sequence}: ${scheduleId}`)
+  for (const installmentId of installmentIds) {
+    await db.run(
+      `UPDATE installment_payments
+       SET ghl_schedule_id = ?, ghl_schedule_status = 'draft', notes = NULL, updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [scheduleId, installmentId]
+    )
+  }
+  logger.info(`Schedule GHL creado para flujo ${flow.id}, parcialidad(es) ${sequenceLabel}: ${scheduleId}`)
 
   return scheduleId
 }
 
-async function markInstallmentScheduleMissing(installment, scheduleId) {
-  await db.run(
-    `UPDATE installment_payments
-     SET status = 'cancelled',
-         automatic = 0,
-         ghl_schedule_id = NULL,
-         ghl_schedule_status = 'not_found',
-         notes = ?,
-         updated_at = CURRENT_TIMESTAMP
-     WHERE id = ?`,
-    [`GHL schedule ${scheduleId || 'sin_id'} no existe; se detuvo reintento automático`, installment.id]
-  )
+async function markInstallmentScheduleMissing(group, scheduleId) {
+  const installmentIds = group.installments.map(installment => installment.id)
+  for (const installmentId of installmentIds) {
+    await db.run(
+      `UPDATE installment_payments
+       SET status = 'cancelled',
+           automatic = 0,
+           ghl_schedule_id = NULL,
+           ghl_schedule_status = 'not_found',
+           notes = ?,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [`GHL schedule ${scheduleId || 'sin_id'} no existe; se detuvo reintento automático`, installmentId]
+    )
+  }
 }
 
 async function getAutomaticInstallmentCounts(flowId) {
@@ -1060,21 +1283,24 @@ async function scheduleAutomaticInstallmentsForFlow(flow, paymentMethod, existin
   })
   const scheduled = []
   const resolvedAutoPaymentType = resolveAutoPaymentType(paymentMethod)
+  const scheduleGroups = buildNewInstallmentScheduleGroups(installments, context.timezone)
 
-  logger.info(`Programando ${installments.length} parcialidad(es) automáticas para flujo ${flow.id}`)
+  logger.info(`Programando ${installments.length} parcialidad(es) automática(s) en ${scheduleGroups.length} schedule(s) GHL para flujo ${flow.id}`)
   logger.info(`Autopago GHL para flujo ${flow.id}: customer=${maskIdentifier(paymentMethod.customerId)}, method=${maskIdentifier(paymentMethod.paymentMethodId)}, type=${resolvedAutoPaymentType}, rawType=${paymentMethod.type || 'n/a'}, card=${paymentMethod.brand || 'card'} ${paymentMethod.last4 || '****'}, live=${context.liveMode}`)
 
-  for (const installment of installments) {
-    let scheduleId = installment.ghl_schedule_id
+  for (const group of scheduleGroups) {
+    let scheduleId = group.scheduleId || group.installments[0]?.ghl_schedule_id
     const hadStoredScheduleId = Boolean(scheduleId)
     const autoPayment = buildAutoPayment(paymentMethod, {
-      amount: installment.amount,
+      amount: group.amount,
       currency: flow.currency || CURRENCY_DEFAULT
     })
+    const sequenceLabel = group.installments.map(installment => installment.sequence).join(',')
+    const installmentIds = group.installments.map(installment => installment.id)
 
     try {
       if (!scheduleId) {
-        scheduleId = await createDraftInstallmentSchedule({ ghlClient, flow, installment, context, planSummary })
+        scheduleId = await createDraftInstallmentSchedule({ ghlClient, flow, group, context, planSummary })
       }
 
       try {
@@ -1084,41 +1310,48 @@ async function scheduleAutomaticInstallmentsForFlow(flow, paymentMethod, existin
         })
       } catch (error) {
         if (isGhlScheduleNotFoundError(error) && hadStoredScheduleId) {
-          await markInstallmentScheduleMissing(installment, scheduleId)
-          logger.warn(`Schedule GHL ${scheduleId} ya no existe para flujo ${flow.id}, parcialidad ${installment.sequence}; se limpió y no se reintentará`)
+          await markInstallmentScheduleMissing(group, scheduleId)
+          logger.warn(`Schedule GHL ${scheduleId} ya no existe para flujo ${flow.id}, parcialidad(es) ${sequenceLabel}; se limpió y no se reintentará`)
           continue
         }
 
         throw error
       }
 
-      await db.run(
-        `UPDATE installment_payments
-         SET status = 'scheduled',
-             ghl_schedule_status = 'scheduled',
-             updated_at = CURRENT_TIMESTAMP
-         WHERE id = ?`,
-        [installment.id]
-      )
+      for (const installmentId of installmentIds) {
+        await db.run(
+          `UPDATE installment_payments
+           SET status = 'scheduled',
+               ghl_schedule_id = ?,
+               ghl_schedule_status = 'scheduled',
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = ?`,
+          [scheduleId, installmentId]
+        )
+      }
 
       scheduled.push({
-        installmentId: installment.id,
+        installmentIds,
         scheduleId,
-        sequence: installment.sequence
+        sequences: group.installments.map(installment => installment.sequence),
+        recurring: Boolean(group.recurrence),
+        count: group.installments.length
       })
     } catch (error) {
       const scheduleError = `GHL schedule failed: ${error.message}`.slice(0, 800)
-      await db.run(
-        `UPDATE installment_payments
-         SET ghl_schedule_status = 'schedule_failed',
-             notes = ?,
-             updated_at = CURRENT_TIMESTAMP
-         WHERE id = ?`,
-        [scheduleError, installment.id]
-      )
+      for (const installmentId of installmentIds) {
+        await db.run(
+          `UPDATE installment_payments
+           SET ghl_schedule_status = 'schedule_failed',
+               notes = ?,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = ?`,
+          [scheduleError, installmentId]
+        )
+      }
 
-      logger.error(`Falló programación GHL para flujo ${flow.id}, parcialidad ${installment.sequence}: ${error.message}`)
-      throw new Error(`No se pudo programar la parcialidad ${installment.sequence} en HighLevel: ${error.message}`)
+      logger.error(`Falló programación GHL para flujo ${flow.id}, parcialidad(es) ${sequenceLabel}: ${error.message}`)
+      throw new Error(`No se pudo programar la(s) parcialidad(es) ${sequenceLabel} en HighLevel: ${error.message}`)
     }
   }
 
