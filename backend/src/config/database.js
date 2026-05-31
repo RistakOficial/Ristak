@@ -731,6 +731,14 @@ async function initTables() {
       }
 
       try {
+        await db.run('ALTER TABLE highlevel_config ADD COLUMN ghl_invoice_mode TEXT DEFAULT \'live\'')
+      } catch (err) {
+        if (!err.message.includes('duplicate column') && !err.message.includes('already exists')) {
+          throw err
+        }
+      }
+
+      try {
         await db.run('ALTER TABLE installment_payments ADD COLUMN ghl_schedule_id TEXT')
       } catch (err) {
         if (!err.message.includes('duplicate column') && !err.message.includes('already exists')) {

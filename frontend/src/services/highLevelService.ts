@@ -5,6 +5,8 @@ export interface HighLevelConfig {
   locationId?: string
   hasToken?: boolean
   apiTokenPreview?: string
+  ghlInvoiceMode?: 'live' | 'test'
+  ghlInvoiceLiveMode?: boolean
 }
 
 class HighLevelService {

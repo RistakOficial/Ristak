@@ -314,6 +314,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const [invoiceTermsNotes, setInvoiceTermsNotes] = useState<string | null>(null)
   const [invoiceDueDays, setInvoiceDueDays] = useState(7)
   const [cardSetupAmount, setCardSetupAmount] = useState(25)
+  const [ghlInvoiceMode, setGhlInvoiceMode] = useState<'live' | 'test'>('live')
 
   // Product charge
   const [products, setProducts] = useState<Product[]>([])
@@ -450,6 +451,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       setInvoiceTermsNotes(config.invoiceTermsNotes || null)
       setInvoiceDueDays(config.invoiceDueDays || 7)
       setCardSetupAmount(config.cardSetupAmount || 25)
+      setGhlInvoiceMode(config.ghlInvoiceMode === 'test' ? 'test' : 'live')
       setTransferInfoUrl(config.transferInfoUrl || null)
     } catch (error) {
     }
@@ -794,7 +796,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       items,
       issueDate: new Date().toISOString().split('T')[0],
       dueDate,
-      liveMode: true,
+      liveMode: ghlInvoiceMode === 'live',
       ...(includeIVA && {
         tax: {
           name: 'IVA',

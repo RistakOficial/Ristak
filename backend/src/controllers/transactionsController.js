@@ -33,6 +33,17 @@ const PAYMENT_METHOD_TO_GHL_MODE = {
   other: 'other'
 }
 
+const normalizeGhlInvoiceMode = mode => mode === 'test' ? 'test' : 'live'
+
+async function getGhlInvoiceLiveMode() {
+  try {
+    const config = await db.get('SELECT ghl_invoice_mode FROM highlevel_config LIMIT 1')
+    return normalizeGhlInvoiceMode(config?.ghl_invoice_mode) === 'live'
+  } catch {
+    return true
+  }
+}
+
 const normalizeStatus = (status) => {
   if (!status) return status
   const normalized = String(status).toLowerCase()
@@ -811,7 +822,9 @@ export const sendTransaction = async (req, res) => {
     // Enviar en HighLevel si tiene invoice asociado
     if (transaction.ghl_invoice_id) {
       const ghlClient = await getGHLClient()
-      await ghlClient.sendInvoice(transaction.ghl_invoice_id)
+      await ghlClient.sendInvoice(transaction.ghl_invoice_id, {
+        liveMode: await getGhlInvoiceLiveMode()
+      })
     } else {
       throw new Error('No se puede enviar: el pago no tiene invoice asociado')
     }

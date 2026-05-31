@@ -27,6 +27,10 @@ const OFFLINE_METHODS = new Set(['cash', 'bank_transfer', 'transfer', 'deposit',
 const CARD_METHODS = new Set(['card', 'payment_link', 'direct_card', 'saved_card'])
 const CURRENCY_DEFAULT = 'MXN'
 
+function normalizeGhlInvoiceMode(mode) {
+  return mode === 'test' ? 'test' : 'live'
+}
+
 function createId(prefix) {
   return `${prefix}_${Date.now()}_${randomBytes(6).toString('hex')}`
 }
@@ -76,7 +80,7 @@ function pickSendMethod(contact, channels = {}) {
 }
 
 async function getInvoiceSendContext() {
-  const config = await db.get('SELECT location_data, stripe_mode FROM highlevel_config LIMIT 1')
+  const config = await db.get('SELECT location_data, ghl_invoice_mode FROM highlevel_config LIMIT 1')
 
   if (!config || !config.location_data) {
     throw new Error('Configura tu cuenta de HighLevel antes de enviar cobros')
@@ -98,7 +102,7 @@ async function getInvoiceSendContext() {
 
   return {
     domain: locationData?.domain || null,
-    liveMode: config.stripe_mode ? config.stripe_mode === 'live' : true,
+    liveMode: normalizeGhlInvoiceMode(config.ghl_invoice_mode) === 'live',
     businessDetails,
     sentFrom: {
       fromName,
@@ -254,6 +258,8 @@ async function createInvoice({ ghlClient, basePayload, contact, amount, currency
     title,
     dueDate
   })
+  const context = await getInvoiceSendContext()
+  payload.liveMode = context.liveMode
 
   const response = await ghlClient.createInvoice(payload)
   const invoice = response.invoice || response

@@ -27,6 +27,7 @@ export const PaymentsConfiguration: React.FC = () => {
   const [paymentTermsNotes, setPaymentTermsNotes] = useState('')
   const [transferInfoUrl, setTransferInfoUrl] = useState('')
   const [cardSetupAmount, setCardSetupAmount] = useState(25)
+  const [ghlInvoiceMode, setGhlInvoiceMode] = useState<'live' | 'test'>('live')
   const [loadingPaymentConfig, setLoadingPaymentConfig] = useState(false)
 
   useEffect(() => {
@@ -148,6 +149,7 @@ export const PaymentsConfiguration: React.FC = () => {
       if (config.invoiceTermsNotes) setPaymentTermsNotes(config.invoiceTermsNotes)
       if (config.transferInfoUrl) setTransferInfoUrl(config.transferInfoUrl)
       if (config.cardSetupAmount) setCardSetupAmount(Number(config.cardSetupAmount))
+      setGhlInvoiceMode(config.ghlInvoiceMode === 'test' ? 'test' : 'live')
     } catch (error) {
       // Error silencioso - usar valores por defecto
     }
@@ -167,7 +169,8 @@ export const PaymentsConfiguration: React.FC = () => {
           invoiceTermsNotes: paymentTermsNotes.trim() || null,
           invoiceDueDays: paymentDueDays,
           transferInfoUrl: transferInfoUrl.trim() || null,
-          cardSetupAmount
+          cardSetupAmount,
+          ghlInvoiceMode
         })
       })
 
@@ -401,6 +404,31 @@ export const PaymentsConfiguration: React.FC = () => {
           </p>
 
           <div className={styles.sectionContent}>
+            <div className={styles.formField}>
+              <label className={styles.label}>Modo de GoHighLevel Invoices</label>
+              <div className={styles.toggleContainer}>
+                <span className={`${styles.toggleLabel} ${ghlInvoiceMode === 'test' ? styles.toggleLabelActive : ''}`}>
+                  Prueba
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setGhlInvoiceMode(ghlInvoiceMode === 'live' ? 'test' : 'live')}
+                  className={`${styles.toggle} ${ghlInvoiceMode === 'live' ? styles.toggleActive : ''}`}
+                  disabled={loadingPaymentConfig}
+                  aria-pressed={ghlInvoiceMode === 'live'}
+                  aria-label="Cambiar modo de GoHighLevel invoices"
+                >
+                  <span className={styles.toggleThumb} />
+                </button>
+                <span className={`${styles.toggleLabel} ${ghlInvoiceMode === 'live' ? styles.toggleLabelActive : ''}`}>
+                  En vivo
+                </span>
+              </div>
+              <p className={styles.hint}>
+                En modo prueba, los invoices, links y parcialidades de GoHighLevel se crean con liveMode desactivado para simular pagos.
+              </p>
+            </div>
+
             {/* Título del documento */}
             <div className={styles.formField}>
               <label className={styles.label}>Título del Documento</label>

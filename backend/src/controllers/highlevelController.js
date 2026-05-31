@@ -14,6 +14,21 @@ import {
 } from '../services/stripeService.js';
 import { createInstallmentPaymentFlow } from '../services/paymentFlowService.js';
 
+const normalizeGhlInvoiceMode = (mode) => mode === 'test' ? 'test' : 'live';
+
+async function getGhlInvoiceMode() {
+  try {
+    const config = await db.get('SELECT ghl_invoice_mode FROM highlevel_config LIMIT 1');
+    return normalizeGhlInvoiceMode(config?.ghl_invoice_mode);
+  } catch {
+    return 'live';
+  }
+}
+
+async function getGhlInvoiceLiveMode() {
+  return (await getGhlInvoiceMode()) === 'live';
+}
+
 /**
  * Prueba la conexión con HighLevel
  */
@@ -202,7 +217,7 @@ export const getConfig = async (req, res) => {
     let config;
     try {
       config = await db.get(
-        'SELECT location_id, api_token, location_data, created_at, invoice_title, invoice_number_prefix, invoice_terms_notes, invoice_due_days, transfer_info_url, card_setup_amount FROM highlevel_config LIMIT 1'
+        'SELECT location_id, api_token, location_data, created_at, invoice_title, invoice_number_prefix, invoice_terms_notes, invoice_due_days, transfer_info_url, card_setup_amount, ghl_invoice_mode FROM highlevel_config LIMIT 1'
       );
     } catch (selectError) {
       // Si falla (columnas no existen), usar SELECT básico
@@ -258,7 +273,9 @@ export const getConfig = async (req, res) => {
       invoiceTermsNotes: config.invoice_terms_notes || null,
       invoiceDueDays: config.invoice_due_days || 7,
       transferInfoUrl: config.transfer_info_url || null,
-      cardSetupAmount: config.card_setup_amount || 25
+      cardSetupAmount: config.card_setup_amount || 25,
+      ghlInvoiceMode: normalizeGhlInvoiceMode(config.ghl_invoice_mode),
+      ghlInvoiceLiveMode: normalizeGhlInvoiceMode(config.ghl_invoice_mode) === 'live'
     });
 
   } catch (error) {
@@ -741,6 +758,7 @@ export const listPrices = async (req, res) => {
 export const createInvoice = async (req, res) => {
   try {
     const invoiceData = req.body;
+    invoiceData.liveMode = await getGhlInvoiceLiveMode();
 
     // PASO 1: Crear invoice en HighLevel
     const ghlClient = await getGHLClient();
@@ -823,7 +841,7 @@ export const sendInvoice = async (req, res) => {
       });
     }
 
-    const config = await db.get('SELECT location_data, stripe_mode FROM highlevel_config LIMIT 1');
+    const config = await db.get('SELECT location_data, ghl_invoice_mode FROM highlevel_config LIMIT 1');
     if (!config || !config.location_data) {
       return res.status(400).json({
         success: false,
@@ -844,11 +862,7 @@ export const sendInvoice = async (req, res) => {
       });
     }
 
-    // Obtener modo de Stripe (si está configurado)
-    let liveMode = true; // Default
-    if (config.stripe_mode) {
-      liveMode = config.stripe_mode === 'live';
-    }
+    const liveMode = normalizeGhlInvoiceMode(config.ghl_invoice_mode) === 'live';
 
     const ghlClient = await getGHLClient();
     await ghlClient.sendInvoice(invoiceId, {
@@ -1530,7 +1544,8 @@ export const getStripeConfig = async (req, res) => {
  */
 export const saveInvoiceConfig = async (req, res) => {
   try {
-    const { invoiceTitle, invoiceNumberPrefix, invoiceTermsNotes, invoiceDueDays, transferInfoUrl, cardSetupAmount } = req.body;
+    const { invoiceTitle, invoiceNumberPrefix, invoiceTermsNotes, invoiceDueDays, transferInfoUrl, cardSetupAmount, ghlInvoiceMode } = req.body;
+    const requestedGhlInvoiceMode = ['test', 'live'].includes(ghlInvoiceMode) ? ghlInvoiceMode : null;
 
     // Validaciones básicas
     if (!invoiceTitle || !invoiceNumberPrefix) {
@@ -1556,7 +1571,12 @@ export const saveInvoiceConfig = async (req, res) => {
     }
 
     // Verificar que existe config de HighLevel
-    const config = await db.get('SELECT id, location_id FROM highlevel_config LIMIT 1');
+    let config;
+    try {
+      config = await db.get('SELECT id, location_id, ghl_invoice_mode FROM highlevel_config LIMIT 1');
+    } catch {
+      config = await db.get('SELECT id, location_id FROM highlevel_config LIMIT 1');
+    }
 
     if (!config || !config.location_id) {
       return res.status(400).json({
@@ -1564,6 +1584,8 @@ export const saveInvoiceConfig = async (req, res) => {
         error: 'Primero debes configurar tu cuenta de HighLevel'
       });
     }
+
+    const normalizedGhlInvoiceMode = requestedGhlInvoiceMode || normalizeGhlInvoiceMode(config.ghl_invoice_mode);
 
     // Intentar UPDATE con las columnas de invoice
     const updateSQL = `
@@ -1573,7 +1595,8 @@ export const saveInvoiceConfig = async (req, res) => {
           invoice_terms_notes = ?,
           invoice_due_days = ?,
           transfer_info_url = ?,
-          card_setup_amount = ?
+          card_setup_amount = ?,
+          ghl_invoice_mode = ?
       WHERE location_id = ?
     `;
 
@@ -1584,6 +1607,7 @@ export const saveInvoiceConfig = async (req, res) => {
       parseInt(invoiceDueDays),
       transferInfoUrl?.trim() || null,
       Math.round(parsedCardSetupAmount * 100) / 100,
+      normalizedGhlInvoiceMode,
       config.location_id
     ];
 
@@ -1643,6 +1667,15 @@ export const saveInvoiceConfig = async (req, res) => {
         try {
           await db.run('ALTER TABLE highlevel_config ADD COLUMN card_setup_amount REAL DEFAULT 25');
           logger.success('✅ Columna card_setup_amount agregada');
+        } catch (e) {
+          if (!e.message.includes('duplicate column') && !e.message.includes('already exists')) {
+            throw e;
+          }
+        }
+
+        try {
+          await db.run('ALTER TABLE highlevel_config ADD COLUMN ghl_invoice_mode TEXT DEFAULT \'live\'');
+          logger.success('✅ Columna ghl_invoice_mode agregada');
         } catch (e) {
           if (!e.message.includes('duplicate column') && !e.message.includes('already exists')) {
             throw e;
