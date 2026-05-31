@@ -1284,9 +1284,25 @@ function getPreviousAssistantMessageText(messages, beforeIndex) {
 }
 
 function hasExplicitPaymentExecutionConfirmation(messages) {
-  return hasUserConfirmedExecution(messages, {
-    contextPattern: /(dinero|cobr|pago|registr|program|link|tarjeta|invoice|factura|domicili|monto|transfer|deposit)/
-  })
+  const latestUserIndex = findLatestUserMessageIndex(messages)
+  if (latestUserIndex < 0) return false
+
+  const latestUserText = normalizeText(getMessageText(messages[latestUserIndex]))
+  const previousAssistantText = normalizeText(getPreviousAssistantMessageText(messages, latestUserIndex))
+
+  if (!isAffirmativeExecutionIntent(latestUserText)) return false
+  if (!/(dinero|cobr|pago|registr|program|link|tarjeta|invoice|factura|domicili|monto|transfer|deposit)/.test(previousAssistantText)) return false
+
+  // Evita ejecutar cuando el usuario sólo confirma un dato suelto como total,
+  // número de pagos, fecha u opción. Para tocar dinero, el mensaje anterior
+  // debe haber pedido autorización operativa, no una aclaración parcial.
+  if (/(confirmame|confírmame|confirma)\s+(?:el\s+|la\s+|los\s+|las\s+)?(?:total|monto|fecha|opcion|opción|numero|número|pagos restantes|parcialidades)/.test(previousAssistantText)) {
+    return false
+  }
+
+  const assistantRequestedExecution = /(autoriza|autorizas|autorizo|autorizacion|autorización|ejecut|proced|tocar dinero|se programe y se ejecute|programar(?:lo|la)?(?:\s+y\s+ejecutar)?|mand(?:a|o|ar|e).*link|env(?:ia|io|ío|iar).*link|registrar.*pago|crear.*(?:plan|cobro|link|invoice|factura))/.test(previousAssistantText)
+
+  return assistantRequestedExecution
 }
 
 function getLatestUserText(messages) {
@@ -1307,6 +1323,363 @@ function userExplicitlyNamedPaymentMethod(messages) {
 function userRequestedScheduledPayment(messages) {
   const normalized = normalizeText(getLatestUserText(messages))
   return /(programa|programale|prográmale|agenda|agendale|agéndale|calendariza|scheduled|schedule|para el|el \d{1,2} de|dentro de|a partir de|hasta)/.test(normalized)
+}
+
+const PAYMENT_MONTHS = {
+  enero: 1,
+  febrero: 2,
+  marzo: 3,
+  abril: 4,
+  mayo: 5,
+  junio: 6,
+  julio: 7,
+  agosto: 8,
+  septiembre: 9,
+  setiembre: 9,
+  octubre: 10,
+  noviembre: 11,
+  diciembre: 12
+}
+
+function getPaymentConversationText(messages, limit = MESSAGE_HISTORY_LIMIT) {
+  const safeMessages = Array.isArray(messages) ? messages.slice(-limit) : []
+
+  return safeMessages
+    .map((message) => `${message?.role === 'assistant' ? 'Agente' : 'Usuario'}: ${getMessageText(message)}`)
+    .filter(Boolean)
+    .join('\n')
+}
+
+function resolvePaymentDateOnly(value, timezone = DEFAULT_PAYMENT_TIMEZONE) {
+  const directDate = normalizeDateOnlyInput(value)
+  if (directDate) return directDate
+
+  const zone = DateTime.now().setZone(timezone).isValid ? timezone : DEFAULT_PAYMENT_TIMEZONE
+  const parsed = DateTime.fromJSDate(new Date(String(value || '')), { zone })
+  return parsed.isValid ? parsed.toISODate() : null
+}
+
+function parseNaturalPaymentDateFromText(text, timezone = DEFAULT_PAYMENT_TIMEZONE) {
+  const normalized = normalizeText(text)
+  const zone = DateTime.now().setZone(timezone).isValid ? timezone : DEFAULT_PAYMENT_TIMEZONE
+  const today = DateTime.now().setZone(zone).startOf('day')
+  const isoMatches = [...String(text || '').matchAll(/\b(20\d{2}-\d{2}-\d{2})\b/g)]
+
+  for (let index = isoMatches.length - 1; index >= 0; index -= 1) {
+    const date = resolvePaymentDateOnly(isoMatches[index][1], zone)
+    if (date) return date
+  }
+
+  const slashMatches = [...normalized.matchAll(/\b(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2,4}))?\b/g)]
+  for (let index = slashMatches.length - 1; index >= 0; index -= 1) {
+    const [, dayText, monthText, yearText] = slashMatches[index]
+    const day = Number(dayText)
+    const month = Number(monthText)
+    const rawYear = yearText ? Number(yearText) : today.year
+    const year = rawYear < 100 ? 2000 + rawYear : rawYear
+    let date = DateTime.fromObject({ year, month, day }, { zone }).startOf('day')
+
+    if (!yearText && date.isValid && date < today) date = date.plus({ years: 1 })
+    if (date.isValid) return date.toISODate()
+  }
+
+  const monthNames = Object.keys(PAYMENT_MONTHS).join('|')
+  const naturalDatePattern = new RegExp(`\\b(\\d{1,2})\\s+(?:de\\s+)?(${monthNames})(?:\\s+(?:de|del)?\\s*(20\\d{2}))?\\b`, 'g')
+  const naturalMatches = [...normalized.matchAll(naturalDatePattern)]
+
+  for (let index = naturalMatches.length - 1; index >= 0; index -= 1) {
+    const [, dayText, monthName, yearText] = naturalMatches[index]
+    const year = yearText ? Number(yearText) : today.year
+    let date = DateTime.fromObject({
+      year,
+      month: PAYMENT_MONTHS[monthName],
+      day: Number(dayText)
+    }, { zone }).startOf('day')
+
+    if (!yearText && date.isValid && date < today) date = date.plus({ years: 1 })
+    if (date.isValid) return date.toISODate()
+  }
+
+  if (/\bmanana\b|\bmañana\b/.test(normalized)) return today.plus({ days: 1 }).toISODate()
+  if (/\bhoy\b|\bahora\b|\bahorita\b/.test(normalized)) return today.toISODate()
+
+  return null
+}
+
+function extractPaymentAmountFromText(text) {
+  const matches = []
+  const patterns = [
+    /\$\s*([0-9]+(?:[.,][0-9]+)?)/g,
+    /\b([0-9]+(?:[.,][0-9]+)?)\s*(?:mxn|m\.?n\.?|pesos?|peso)\b/g
+  ]
+
+  for (const pattern of patterns) {
+    for (const match of String(text || '').matchAll(pattern)) {
+      const amount = normalizePaymentAmount(match[1])
+      if (amount > 0) matches.push(amount)
+    }
+  }
+
+  return matches.length ? matches[matches.length - 1] : 0
+}
+
+function extractPaymentCurrencyFromText(text) {
+  const normalized = normalizeText(text)
+  if (/\busd\b|\bdolar(?:es)?\b|\bdólar(?:es)?\b/.test(normalized)) return 'USD'
+  return DEFAULT_PAYMENT_CURRENCY
+}
+
+function extractPaymentConceptFromText(text) {
+  const rawText = String(text || '')
+  const explicitMatch = rawText.match(/concepto\s*[:：]\s*[“"']?([^"'\n”]+)[”"']?/i)
+  if (explicitMatch?.[1]) return cleanText(explicitMatch[1], 180)
+
+  const quotedMatch = rawText.match(/concepto\s+[“"']([^"'\n”]+)[”"']/i)
+  if (quotedMatch?.[1]) return cleanText(quotedMatch[1], 180)
+
+  return 'Cobro programado'
+}
+
+function extractPaymentContactHintFromConversation(messages) {
+  const safeMessages = Array.isArray(messages) ? messages : []
+
+  for (let index = safeMessages.length - 1; index >= 0; index -= 1) {
+    if (safeMessages[index]?.role === 'assistant') continue
+
+    const term = extractContactLookupTerm(getMessageText(safeMessages[index]))
+    if (term) return term
+  }
+
+  const conversationText = getPaymentConversationText(messages)
+  const contactSummaryMatch = conversationText.match(/contacto\s*[:：]\s*([^(\n,]+)(?:\(|,|\n|$)/i)
+  if (contactSummaryMatch?.[1]) return cleanContactLookupTerm(contactSummaryMatch[1])
+
+  return ''
+}
+
+function getStoredCardPreferenceFromText(text) {
+  const normalized = normalizeText(text)
+
+  if (/(otra tarjeta|nueva tarjeta|otro metodo|otro método|mandar link|manda link|autorizar otra|autoriza otra)/.test(normalized)) {
+    return 'new_card'
+  }
+
+  if (/(tarjeta guardada|tarjeta ya guardada|guardada|visa\s+\d{4}|mastercard\s+\d{4}|amex\s+\d{4}|usar tarjeta|usa la tarjeta|stored card|saved card)/.test(normalized)) {
+    return 'stored_card'
+  }
+
+  return null
+}
+
+function getStoredCardPreferenceFromConversation(messages = []) {
+  const safeMessages = Array.isArray(messages) ? messages : []
+
+  for (let index = safeMessages.length - 1; index >= 0; index -= 1) {
+    const message = safeMessages[index]
+    const text = getMessageText(message)
+    const preference = getStoredCardPreferenceFromText(text)
+    if (!preference) continue
+
+    if (message?.role !== 'assistant') return preference
+
+    const normalized = normalizeText(text)
+    const looksLikeChoiceList = /(usar otra tarjeta|opcion|opción|elige|elijas|respóndeme|respondeme|1, 2 o 3)/.test(normalized)
+    if (!looksLikeChoiceList) return preference
+  }
+
+  return null
+}
+
+function hasAutomaticStoredCardPaymentIntent(text) {
+  const normalized = normalizeText(text)
+  return /(automatic|automatico|automático|domicili|tarjeta guardada|tarjeta ya guardada|cargo automatic|cargar a tarjeta|usar tarjeta|usa la tarjeta|visa\s+\d{4}|mastercard\s+\d{4})/.test(normalized)
+}
+
+function getTopLevelScheduledPaymentDate(args = {}, messages = [], timezone = DEFAULT_PAYMENT_TIMEZONE) {
+  const directDate = resolvePaymentDateOnly(
+    args.dueDate ||
+    args.due_date ||
+    args.paymentDate ||
+    args.payment_date ||
+    args.chargeDate ||
+    args.charge_date ||
+    args.scheduledDate ||
+    args.scheduleDate ||
+    args.date ||
+    args.executeDate ||
+    args.executionDate ||
+    args.firstChargeDate ||
+    args.nextPaymentDate ||
+    args.remainingStartDate,
+    timezone
+  )
+
+  if (directDate) return directDate
+
+  return parseNaturalPaymentDateFromText(getPaymentConversationText(messages), timezone)
+}
+
+function hasRemainingPaymentShape(args = {}) {
+  return (
+    (Array.isArray(args.remainingPayments) && args.remainingPayments.length > 0) ||
+    normalizePaymentNumberList(args.remainingPercentages || args.paymentPercentages || args.percentages).length > 0 ||
+    normalizePaymentNumberList(args.remainingAmounts || args.paymentAmounts || args.amounts).length > 0 ||
+    normalizeInteger(
+      args.remainingPaymentCount ||
+      args.paymentCount ||
+      args.installmentCount ||
+      args.remainingCount ||
+      args.remainingInstallments ||
+      args.collectInLastPeriods ||
+      args.lastPaymentPeriods ||
+      args.lastPeriods ||
+      args.collectPeriods
+    ) > 0
+  )
+}
+
+function getFirstPaymentAmountFromArgs(args = {}) {
+  const firstPayment = args.firstPayment && typeof args.firstPayment === 'object' ? args.firstPayment : {}
+  return normalizePaymentAmount(
+    firstPayment.amount ??
+    args.firstPaymentAmount ??
+    args.downPaymentAmount ??
+    args.initialPaymentAmount ??
+    args.upfrontPaymentAmount
+  )
+}
+
+function hasExplicitFirstPayment(args = {}) {
+  const firstPayment = args.firstPayment && typeof args.firstPayment === 'object' ? args.firstPayment : null
+  if (firstPayment?.enabled === false) return false
+
+  return Boolean(
+    firstPayment ||
+    args.firstPaymentAmount ||
+    args.downPaymentAmount ||
+    args.initialPaymentAmount ||
+    args.upfrontPaymentAmount ||
+    args.firstPaymentPercentage ||
+    args.downPaymentPercentage ||
+    args.initialPaymentPercentage ||
+    args.upfrontPaymentPercentage
+  )
+}
+
+function enrichInstallmentPaymentArgs(inputArgs = {}, messages = [], timezone = DEFAULT_PAYMENT_TIMEZONE) {
+  const args = {
+    ...inputArgs,
+    ...(inputArgs.firstPayment && typeof inputArgs.firstPayment === 'object'
+      ? { firstPayment: { ...inputArgs.firstPayment } }
+      : {})
+  }
+  const conversationText = getPaymentConversationText(messages)
+  const scheduledDate = getTopLevelScheduledPaymentDate(args, messages, timezone)
+  const conversationAmount = extractPaymentAmountFromText(conversationText)
+  const totalAmount = normalizePaymentAmount(args.totalAmount || args.amount || args.total || getProductPaymentAmount(args) || conversationAmount)
+  const firstPaymentAmount = getFirstPaymentAmountFromArgs(args)
+  const remainingAmount = normalizePaymentAmount(totalAmount - firstPaymentAmount)
+  const cardPreference = normalizeStoredCardPreference(args) || getStoredCardPreferenceFromConversation(messages)
+  const contactHint = extractPaymentContactHintFromConversation(messages)
+
+  if (!args.totalAmount && !args.total && !args.amount && conversationAmount > 0) {
+    args.totalAmount = conversationAmount
+  }
+
+  if (!args.currency) {
+    args.currency = extractPaymentCurrencyFromText(conversationText)
+  }
+
+  if (!args.concept && !args.description) {
+    args.concept = extractPaymentConceptFromText(conversationText)
+  }
+
+  if (!args.contactId && !args.contactName && !args.contactHint && contactHint) {
+    args.contactName = contactHint
+  }
+
+  if (cardPreference && !args.cardAuthorizationPreference) {
+    args.cardAuthorizationPreference = cardPreference
+    args.useStoredCard = cardPreference === 'stored_card'
+    args.forceCardSetup = cardPreference === 'new_card'
+  }
+
+  if (args.remainingAutomatic === undefined && args.automatic === undefined && hasAutomaticStoredCardPaymentIntent(conversationText)) {
+    args.remainingAutomatic = true
+  }
+
+  if (scheduledDate && !args.remainingStartDate && !args.firstChargeDate && !args.nextPaymentDate) {
+    args.remainingStartDate = scheduledDate
+  }
+
+  if (scheduledDate && !hasExplicitFirstPayment(args) && !args.firstPayment) {
+    args.firstPayment = { enabled: false }
+  }
+
+  if (Array.isArray(args.remainingPayments) && args.remainingPayments.length === 1) {
+    args.remainingPayments = args.remainingPayments.map((payment) => ({
+      ...payment,
+      type: payment.type || 'amount',
+      amount: normalizePaymentAmount(payment.amount || payment.value) > 0
+        ? normalizePaymentAmount(payment.amount || payment.value)
+        : remainingAmount || totalAmount,
+      dueDate: payment.dueDate || payment.due_date || scheduledDate || null
+    }))
+  }
+
+  if (
+    scheduledDate &&
+    totalAmount > 0 &&
+    !hasRemainingPaymentShape(args)
+  ) {
+    args.remainingFrequency = args.remainingFrequency || 'custom'
+    args.remainingPayments = [{
+      sequence: 1,
+      type: 'amount',
+      amount: remainingAmount || totalAmount,
+      dueDate: scheduledDate
+    }]
+  }
+
+  return args
+}
+
+function buildConfirmedScheduledPaymentArgsFromConversation(messages = [], runtimeContext = {}) {
+  const timezone = runtimeContext.timezone || DEFAULT_PAYMENT_TIMEZONE
+  const conversationText = getPaymentConversationText(messages)
+  const amount = extractPaymentAmountFromText(conversationText)
+  const dueDate = parseNaturalPaymentDateFromText(conversationText, timezone)
+  const contactHint = extractPaymentContactHintFromConversation(messages)
+  const cardPreference = getStoredCardPreferenceFromConversation(messages)
+
+  if (!amount || !dueDate || !contactHint || !hasAutomaticStoredCardPaymentIntent(conversationText)) {
+    return null
+  }
+
+  return {
+    contactName: contactHint,
+    totalAmount: amount,
+    currency: extractPaymentCurrencyFromText(conversationText),
+    concept: extractPaymentConceptFromText(conversationText),
+    firstPayment: { enabled: false },
+    remainingAutomatic: true,
+    remainingFrequency: 'custom',
+    remainingStartDate: dueDate,
+    remainingPayments: [
+      {
+        sequence: 1,
+        type: 'amount',
+        amount,
+        dueDate
+      }
+    ],
+    ...(cardPreference && {
+      cardAuthorizationPreference: cardPreference,
+      useStoredCard: cardPreference === 'stored_card',
+      forceCardSetup: cardPreference === 'new_card'
+    }),
+    deliveryMode: 'send'
+  }
 }
 
 function isHighLevelPaymentRestMutation(call = {}) {
@@ -2874,6 +3247,9 @@ async function executeCreateInstallmentPaymentFlow(args = {}, highLevelConnectio
     }
   }
 
+  const paymentTimezone = highLevelConnection.locationData?.timezone || DEFAULT_PAYMENT_TIMEZONE
+  args = enrichInstallmentPaymentArgs(args, context.messages, paymentTimezone)
+
   const resolvedContact = await resolvePaymentContact(args)
   if (!resolvedContact.contact) {
     return {
@@ -2896,7 +3272,6 @@ async function executeCreateInstallmentPaymentFlow(args = {}, highLevelConnectio
     }
   }
 
-  const paymentTimezone = highLevelConnection.locationData?.timezone || DEFAULT_PAYMENT_TIMEZONE
   const firstPayment = resolveFirstPayment(args, totalAmount, paymentTimezone)
   const contact = resolvedContact.contact
   const concept = buildProductConcept(args, `Pago parcializado - ${contact.name}`)
@@ -3456,6 +3831,103 @@ async function executeRecordInvoicePayment(args = {}, highLevelConnection, conte
       paymentMode
     },
     result
+  }
+}
+
+function formatContactSummary(contact = {}) {
+  return [
+    contact.name || contact.id || 'Contacto',
+    contact.email || '',
+    contact.phone || ''
+  ].filter(Boolean).join(' | ')
+}
+
+function formatScheduledPaymentExecutionReply(output = {}) {
+  const summary = output.summary || {}
+  const result = output.result || {}
+  const firstPayment = summary.firstPayment || {}
+  const remainingPayments = Array.isArray(summary.remainingPayments) ? summary.remainingPayments : []
+  const firstScheduledPayment = remainingPayments[0] || {}
+  const card = summary.storedCard || {}
+  const cardLabel = card.available
+    ? [card.brand || 'tarjeta', card.last4 ? `****${card.last4}` : ''].filter(Boolean).join(' ')
+    : 'tarjeta/autorización pendiente'
+  const scheduleIds = Array.isArray(result.installmentSchedules)
+    ? result.installmentSchedules.map((schedule) => schedule.scheduleId).filter(Boolean)
+    : []
+  const currentState = result.currentState || 'creado'
+  const statusLabel = currentState === 'installment_plan_active'
+    ? 'programado y activo'
+    : currentState === 'waiting_card_authorization'
+      ? 'creado, esperando autorización de tarjeta'
+      : currentState
+  const lines = [
+    'Listo. Ya ejecuté el flujo real de pagos en Ristak/HighLevel.',
+    '',
+    `Contacto: ${formatContactSummary(summary.contact)}`,
+    `Monto: ${formatPaymentMoney(summary.totalAmount || firstScheduledPayment.amount || firstPayment.amount, summary.currency || DEFAULT_PAYMENT_CURRENCY)}`,
+    `Fecha: ${firstScheduledPayment.dueDate || firstPayment.date || 'sin fecha'}`,
+    `Método: ${summary.remainingAutomatic ? `cargo automático con ${cardLabel}` : firstPayment.method || 'manual'}`,
+    `Estado: ${statusLabel}`,
+    result.flowId ? `Flow ID: ${result.flowId}` : '',
+    scheduleIds.length ? `Schedule GHL: ${scheduleIds.join(', ')}` : '',
+    result.cardSetupPaymentLink ? `Link de autorización: ${result.cardSetupPaymentLink}` : '',
+    output.paymentModeWarning || ''
+  ].filter(Boolean)
+
+  return lines.join('\n')
+}
+
+function formatPaymentExecutionFailureReply(output = {}) {
+  const lines = [
+    `No ejecuté el cobro todavía: ${output.error || 'faltan datos para ejecutar el pago.'}`
+  ]
+
+  if (Array.isArray(output.missingFields) && output.missingFields.length) {
+    lines.push(`Falta: ${output.missingFields.join(', ')}.`)
+  }
+
+  return lines.join('\n')
+}
+
+async function tryExecuteConfirmedScheduledPaymentFromConversation({ messages, highLevelConnection, runtimeContext }) {
+  if (!highLevelConnection?.configured) return null
+  if (!hasExplicitPaymentExecutionConfirmation(messages)) return null
+
+  const args = buildConfirmedScheduledPaymentArgsFromConversation(messages, runtimeContext)
+  if (!args) return null
+
+  try {
+    const output = await executeCreateInstallmentPaymentFlow(args, highLevelConnection, { messages })
+
+    return {
+      reply: output.ok
+        ? formatScheduledPaymentExecutionReply(output)
+        : formatPaymentExecutionFailureReply(output),
+      model: 'local-payment-executor',
+      usage: null,
+      sources: [],
+      clarificationOptions: Array.isArray(output.clarificationOptions) ? output.clarificationOptions : [],
+      debug: {
+        paymentDirectExecution: true,
+        action: output.action || 'create_installment_payment_flow',
+        ok: Boolean(output.ok)
+      }
+    }
+  } catch (error) {
+    logger.error(`Error ejecutando pago confirmado desde conversación: ${error.message}`)
+    return {
+      reply: `No pude ejecutar el cobro confirmado: ${error.message || 'error desconocido'}`,
+      model: 'local-payment-executor',
+      usage: null,
+      sources: [],
+      clarificationOptions: [],
+      debug: {
+        paymentDirectExecution: true,
+        action: 'create_installment_payment_flow',
+        ok: false
+      }
+    }
   }
 }
 
@@ -5951,7 +6423,6 @@ function buildContactLookupQueryResult(contactResolution) {
   }
 }
 
-
 function buildResolvedContactResearchQueries(contactResolution) {
   const contactId = cleanText(contactResolution?.contact?.id || '', 160)
   if (!contactId) return []
@@ -7308,6 +7779,16 @@ export async function createAgentReply({ apiKey, messages, viewContext }) {
 
   const agentConfig = await getAIAgentConfig()
   const highLevelConnection = await getHighLevelAgentConnection()
+
+  const confirmedPaymentExecution = await tryExecuteConfirmedScheduledPaymentFromConversation({
+    messages,
+    highLevelConnection,
+    runtimeContext
+  })
+  if (confirmedPaymentExecution) {
+    return confirmedPaymentExecution
+  }
+
   const metaAdsConnection = await getMetaAdsAgentConnection()
 
   if (metaAdsOperationalIntent && !metaAdsConnection?.configured) {
