@@ -92,6 +92,14 @@ interface SortableItemProps {
   onNavigate?: () => void
 }
 
+const getNavLinkClasses = (isActive: boolean, extraClasses?: string) => cn(
+  'flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors',
+  isActive
+    ? 'bg-[rgba(148,163,184,0.16)] text-[var(--color-text-primary)] dark:shadow-[0_10px_20px_-16px_rgba(15,23,42,0.45)]'
+    : 'text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] hover:bg-[rgba(148,163,184,0.12)]',
+  extraClasses
+)
+
 const NavigationItem: React.FC<NavigationItemProps> = ({ item, isActive, onNavigate }) => {
   const Icon = item.icon
 
@@ -110,12 +118,9 @@ const NavigationItem: React.FC<NavigationItemProps> = ({ item, isActive, onNavig
       onClick={() => {
         onNavigate?.()
       }}
-      className={cn(
-        'flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium',
-        isActive
-          ? 'glass text-[var(--color-text-primary)]'
-          : 'text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] glass-hover'
-      )}
+      data-ristak-sidebar-nav-item
+      data-active={isActive ? 'true' : undefined}
+      className={getNavLinkClasses(isActive)}
     >
       <Icon className="h-5 w-5 flex-shrink-0" />
       <span>{item.name}</span>
@@ -160,13 +165,9 @@ const SortableItem: React.FC<SortableItemProps> = ({ item, isActive, isDragging,
           }
           onNavigate?.()
         }}
-        className={cn(
-          'flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium',
-          isSortableDragging && 'opacity-50',
-          isActive
-            ? 'glass text-[var(--color-text-primary)]'
-            : 'text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] glass-hover'
-        )}
+        data-ristak-sidebar-nav-item
+        data-active={isActive ? 'true' : undefined}
+        className={getNavLinkClasses(isActive, isSortableDragging ? 'opacity-50' : undefined)}
       >
         {isEditMode && (
           <button
@@ -471,12 +472,9 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, locationName, loca
         <Link
           to="/settings"
           onClick={handleNavigate}
-          className={cn(
-            'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium',
-            location.pathname.startsWith('/settings')
-              ? 'glass text-[var(--color-text-primary)]'
-              : 'text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] glass-hover'
-          )}
+          data-ristak-sidebar-nav-item
+          data-active={location.pathname.startsWith('/settings') ? 'true' : undefined}
+          className={getNavLinkClasses(location.pathname.startsWith('/settings'))}
         >
           <Settings className="w-5 h-5" />
           Configuración

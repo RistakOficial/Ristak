@@ -1243,6 +1243,21 @@ body[data-design-preset]:not([data-design-preset='classic']) [data-ristak-tablis
   box-shadow: none !important;
 }
 
+body[data-design-preset]:not([data-design-preset='classic']) [data-ristak-sidebar-nav-item] {
+  border-radius: calc(var(--design-control-radius) - 0.25rem) !important;
+}
+
+body[data-design-preset]:not([data-design-preset='classic']) [data-ristak-sidebar-nav-item]:not([data-active='true']):hover {
+  background: rgba(148, 163, 184, 0.12) !important;
+  color: var(--color-text-primary) !important;
+}
+
+body[data-design-preset]:not([data-design-preset='classic']) [data-ristak-sidebar-nav-item][data-active='true'] {
+  background: rgba(var(--color-primary-rgb), 0.18) !important;
+  color: var(--color-text-primary) !important;
+  box-shadow: none !important;
+}
+
 body[data-design-preset]:not([data-design-preset='classic']) [class*='scopeSelector'] {
   width: fit-content;
   max-width: 100%;
