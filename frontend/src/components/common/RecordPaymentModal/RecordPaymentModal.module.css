@@ -726,6 +726,8 @@ body.dark .summaryBadge,
   display: flex;
   flex-direction: column;
   gap: 12px;
+  position: relative;
+  z-index: 2;
 }
 
 .optionButton {
@@ -740,6 +742,8 @@ body.dark .summaryBadge,
   gap: 16px;
   cursor: pointer;
   transition: all 0.18s ease;
+  overflow: visible;
+  position: relative;
 }
 
 .optionButton:hover {
@@ -749,12 +753,27 @@ body.dark .summaryBadge,
 .optionButtonActive {
   border-color: var(--color-primary);
   background: rgba(var(--color-primary-rgb), 0.12);
+  z-index: 4;
+}
+
+.optionAction {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.optionCheck {
+  color: var(--color-primary);
+  flex-shrink: 0;
 }
 
 /* Selector de método de envío integrado */
 .sendMethodSelector {
-  margin-top: 12px;
-  max-width: 220px;
+  width: 224px;
+  max-width: 224px;
+  flex: 0 0 224px;
 }
 
 /* Mensaje cuando no hay opciones de envío */
@@ -824,6 +843,7 @@ body.dark .tooltipInfo {
   align-items: center;
   gap: 12px;
   text-align: left;
+  min-width: 0;
 }
 
 .optionInfo p {
@@ -1116,6 +1136,22 @@ body.dark .tooltipInfo {
 
   .summaryNoteValue {
     max-width: 100%;
+  }
+
+  .optionButton {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .optionAction {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .sendMethodSelector {
+    width: 100%;
+    max-width: none;
+    flex: 1 1 auto;
   }
 }
 

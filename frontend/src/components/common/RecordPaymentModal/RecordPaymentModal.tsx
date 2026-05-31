@@ -22,10 +22,12 @@ import {
 } from 'lucide-react'
 import styles from './RecordPaymentModal.module.css'
 import { useNotification } from '@/contexts/NotificationContext'
-import { formatCurrency } from '@/utils/format'
+import { formatCurrency as formatMxCurrency } from '@/utils/format'
 import { highLevelService } from '@/services/highLevelService'
 
 const IVA_RATE = 0.16
+
+const formatCurrency = (value: number, _currency = 'MXN'): string => formatMxCurrency(value)
 
 const normalizeAmount = (value: string | number): number => {
   if (typeof value === 'number') {
@@ -42,6 +44,8 @@ type PaymentMode = 'single' | 'partial'
 type InstallmentValueType = 'percentage' | 'amount'
 type FirstPaymentMethod = 'cash' | 'bank_transfer' | 'deposit' | 'card'
 type RemainingFrequency = 'custom' | 'weekly' | 'biweekly' | 'monthly'
+type SendMethod = 'whatsapp' | 'sms' | 'email' | 'email_whatsapp' | 'email_sms' | 'all'
+type InvoiceSendMethod = 'email' | 'sms' | 'both'
 
 interface InstallmentDraft {
   id: string
@@ -63,6 +67,53 @@ interface Contact {
   phone: string
   firstName?: string
   lastName?: string
+}
+
+const EMAIL_SEND_METHODS = new Set<SendMethod>(['email', 'email_whatsapp', 'email_sms', 'all'])
+const PHONE_SEND_METHODS = new Set<SendMethod>(['whatsapp', 'sms', 'email_whatsapp', 'email_sms', 'all'])
+const SMS_SEND_METHODS = new Set<SendMethod>(['sms', 'email_sms', 'all'])
+const WHATSAPP_SEND_METHODS = new Set<SendMethod>(['whatsapp', 'email_whatsapp', 'all'])
+
+const getSendMethodOptions = (contact: Contact | null) => {
+  const hasEmail = Boolean(contact?.email)
+  const hasPhone = Boolean(contact?.phone)
+  const options: Array<{ value: SendMethod; label: string }> = []
+
+  if (hasPhone) {
+    options.push({ value: 'whatsapp', label: 'WhatsApp' })
+    options.push({ value: 'sms', label: 'SMS' })
+  }
+
+  if (hasEmail) {
+    options.push({ value: 'email', label: 'Email' })
+  }
+
+  if (hasEmail && hasPhone) {
+    options.push({ value: 'email_whatsapp', label: 'Email + WhatsApp' })
+    options.push({ value: 'email_sms', label: 'Email + SMS' })
+    options.push({ value: 'all', label: 'Todos' })
+  }
+
+  return options
+}
+
+const getSendMethodLabel = (method: SendMethod) => {
+  const labels: Record<SendMethod, string> = {
+    whatsapp: 'WhatsApp',
+    sms: 'SMS',
+    email: 'email',
+    email_whatsapp: 'email y WhatsApp',
+    email_sms: 'email y SMS',
+    all: 'todos los canales'
+  }
+
+  return labels[method]
+}
+
+const toInvoiceSendMethod = (method: SendMethod): InvoiceSendMethod => {
+  if (method === 'email') return 'email'
+  if (method === 'sms' || method === 'whatsapp') return 'sms'
+  return 'both'
 }
 
 interface Product {
@@ -276,7 +327,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const [invoicePayload, setInvoicePayload] = useState<Record<string, any> | null>(null)
   const [invoiceSummary, setInvoiceSummary] = useState<InvoiceSummary | null>(null)
   const [paymentOption, setPaymentOption] = useState<PaymentOption>('generate')
-  const [sendMethod, setSendMethod] = useState<'email' | 'sms' | 'both'>('sms')
+  const [sendMethod, setSendMethod] = useState<SendMethod>('whatsapp')
   const [checkingCards, setCheckingCards] = useState(false)
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([])
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<string | null>(null)
@@ -323,6 +374,15 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const partialUsesSavedCardWithoutLink = paymentMode === 'partial' && hasSavedCardForContact && (
     !firstPaymentEnabled || isOfflineFirstPaymentMethod(firstPaymentMethod)
   )
+  const sendMethodOptions = useMemo(() => getSendMethodOptions(selectedContact), [selectedContact?.email, selectedContact?.phone])
+  const selectedSendMethodOption = sendMethodOptions.find(option => option.value === sendMethod)
+
+  useEffect(() => {
+    if (sendMethodOptions.length === 0) return
+    if (!selectedSendMethodOption) {
+      setSendMethod(sendMethodOptions[0].value)
+    }
+  }, [sendMethodOptions, selectedSendMethodOption])
 
   const resetForm = () => {
     setStep('form')
@@ -355,7 +415,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     setInvoicePayload(null)
     setInvoiceSummary(null)
     setPaymentOption('generate')
-    setSendMethod('sms')
+    setSendMethod('whatsapp')
     setCheckingCards(false)
     setPaymentMethods([])
     setSelectedPaymentMethod(null)
@@ -951,14 +1011,13 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     }
   }
 
-  const handleConfirm = async (customSendMethod?: 'email' | 'sms' | 'both') => {
+  const handleConfirm = async () => {
     if (!invoiceSummary || !invoicePayload) {
       showToast('error', 'No se pudo procesar el pago. Intenta nuevamente.')
       return
     }
 
-    // Usar customSendMethod si se proporciona, de lo contrario usar el estado
-    const effectiveSendMethod = customSendMethod || sendMethod
+    const effectiveSendMethod = sendMethod
 
     setLoading(true)
     setStep('processing')
@@ -967,9 +1026,9 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       if (paymentMode === 'partial') {
         const channels = paymentOption === 'send'
           ? {
-              email: effectiveSendMethod === 'email' || effectiveSendMethod === 'both',
-              sms: effectiveSendMethod === 'sms' || effectiveSendMethod === 'both',
-              whatsapp: effectiveSendMethod === 'sms' || effectiveSendMethod === 'both'
+              email: EMAIL_SEND_METHODS.has(effectiveSendMethod),
+              sms: SMS_SEND_METHODS.has(effectiveSendMethod),
+              whatsapp: WHATSAPP_SEND_METHODS.has(effectiveSendMethod)
             }
           : {
               email: false,
@@ -1078,27 +1137,18 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         }
 
         case 'send': {
-          // Validar que tenga teléfono si se va a enviar por WhatsApp
-          if ((effectiveSendMethod === 'sms' || effectiveSendMethod === 'both') && !selectedContact?.phone) {
-            throw new Error('El contacto no tiene teléfono registrado. No se puede enviar por WhatsApp.')
+          if (PHONE_SEND_METHODS.has(effectiveSendMethod) && !selectedContact?.phone) {
+            throw new Error(`El contacto no tiene teléfono registrado. No se puede enviar por ${getSendMethodLabel(effectiveSendMethod)}.`)
           }
 
-          // Validar que tenga email si se va a enviar por email
-          if ((effectiveSendMethod === 'email' || effectiveSendMethod === 'both') && !selectedContact?.email) {
+          if (EMAIL_SEND_METHODS.has(effectiveSendMethod) && !selectedContact?.email) {
             throw new Error('El contacto no tiene email registrado. No se puede enviar por correo.')
           }
 
           // Enviar enlace por el método seleccionado
-          await highLevelService.sendInvoice(invoiceId, effectiveSendMethod)
+          await highLevelService.sendInvoice(invoiceId, toInvoiceSendMethod(effectiveSendMethod))
 
-          let successMessage = 'Enlace de pago enviado al cliente'
-          if (effectiveSendMethod === 'email') {
-            successMessage = 'Enlace enviado por email correctamente'
-          } else if (effectiveSendMethod === 'sms') {
-            successMessage = 'Enlace enviado por WhatsApp correctamente'
-          } else if (effectiveSendMethod === 'both') {
-            successMessage = 'Enlace enviado por email y WhatsApp correctamente'
-          }
+          const successMessage = `Enlace enviado por ${getSendMethodLabel(effectiveSendMethod)} correctamente`
 
           showToast('success', 'Éxito', successMessage)
           break
@@ -1701,7 +1751,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                     <span>Copia el enlace de primer pago o domiciliación</span>
                   </div>
                 </div>
-                {paymentOption === 'generate' && <Check size={18} />}
+                {paymentOption === 'generate' && <Check size={18} className={styles.optionCheck} />}
               </button>
 
               <div
@@ -1723,47 +1773,25 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                     </span>
                   </div>
                 </div>
-                {paymentOption === 'send' && <Check size={18} />}
 
                 {paymentOption === 'send' && (
-                  <div className={styles.sendMethodSelector} onClick={(e) => e.stopPropagation()}>
-                    {(() => {
-                      const availableOptions = []
-                      const hasEmail = selectedContact?.email
-                      const hasPhone = selectedContact?.phone
-
-                      if (hasPhone) {
-                        availableOptions.push({ value: 'sms', label: 'WhatsApp' })
-                      }
-                      if (hasEmail) {
-                        availableOptions.push({ value: 'email', label: 'Email' })
-                      }
-                      if (hasEmail && hasPhone) {
-                        availableOptions.push({ value: 'both', label: 'Email y WhatsApp' })
-                      }
-
-                      if (availableOptions.length === 0) {
-                        return (
-                          <div className={styles.noOptionsMessage}>
-                            <AlertCircle size={14} />
-                            <span>El contacto no tiene email ni teléfono</span>
-                          </div>
-                        )
-                      }
-
-                      const currentMethodAvailable = availableOptions.some(opt => opt.value === sendMethod)
-                      if (!currentMethodAvailable && availableOptions.length > 0) {
-                        setSendMethod(availableOptions[0].value as 'email' | 'sms' | 'both')
-                      }
-
-                      return (
+                  <div className={styles.optionAction}>
+                    <Check size={18} className={styles.optionCheck} />
+                    <div className={styles.sendMethodSelector} onClick={(e) => e.stopPropagation()}>
+                      {sendMethodOptions.length === 0 ? (
+                        <div className={styles.noOptionsMessage}>
+                          <AlertCircle size={14} />
+                          <span>El contacto no tiene email ni teléfono</span>
+                        </div>
+                      ) : (
                         <CustomSelect
                           value={sendMethod}
-                          onChange={(value) => setSendMethod(value as 'email' | 'sms' | 'both')}
-                          options={availableOptions}
+                          onChange={(value) => setSendMethod(value as SendMethod)}
+                          options={sendMethodOptions}
+                          portal
                         />
-                      )
-                    })()}
+                      )}
+                    </div>
                   </div>
                 )}
               </div>
@@ -1834,7 +1862,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                 <span>Copia el enlace para enviarlo tú mismo</span>
               </div>
             </div>
-            {paymentOption === 'generate' && <Check size={18} />}
+            {paymentOption === 'generate' && <Check size={18} className={styles.optionCheck} />}
           </button>
 
           {/* Opción 2: Enviar enlace de pago por... (con selector integrado) */}
@@ -1857,51 +1885,25 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                 </span>
               </div>
             </div>
-            {paymentOption === 'send' && <Check size={18} />}
-
             {/* Selector integrado en el mismo botón */}
             {paymentOption === 'send' && (
-              <div className={styles.sendMethodSelector} onClick={(e) => e.stopPropagation()}>
-                {(() => {
-                  // Construir opciones dinámicamente según los datos del contacto
-                  const availableOptions = []
-                  const hasEmail = selectedContact?.email
-                  const hasPhone = selectedContact?.phone
-
-                  if (hasPhone) {
-                    availableOptions.push({ value: 'sms', label: 'WhatsApp' })
-                  }
-                  if (hasEmail) {
-                    availableOptions.push({ value: 'email', label: 'Email' })
-                  }
-                  if (hasEmail && hasPhone) {
-                    availableOptions.push({ value: 'both', label: 'Email y WhatsApp' })
-                  }
-
-                  // Si no hay opciones disponibles, mostrar mensaje
-                  if (availableOptions.length === 0) {
-                    return (
-                      <div className={styles.noOptionsMessage}>
-                        <AlertCircle size={14} />
-                        <span>El contacto no tiene email ni teléfono</span>
-                      </div>
-                    )
-                  }
-
-                  // Si el sendMethod actual no está disponible, resetear
-                  const currentMethodAvailable = availableOptions.some(opt => opt.value === sendMethod)
-                  if (!currentMethodAvailable && availableOptions.length > 0) {
-                    setSendMethod(availableOptions[0].value as 'email' | 'sms' | 'both')
-                  }
-
-                  return (
+              <div className={styles.optionAction}>
+                <Check size={18} className={styles.optionCheck} />
+                <div className={styles.sendMethodSelector} onClick={(e) => e.stopPropagation()}>
+                  {sendMethodOptions.length === 0 ? (
+                    <div className={styles.noOptionsMessage}>
+                      <AlertCircle size={14} />
+                      <span>El contacto no tiene email ni teléfono</span>
+                    </div>
+                  ) : (
                     <CustomSelect
                       value={sendMethod}
-                      onChange={(value) => setSendMethod(value as 'email' | 'sms' | 'both')}
-                      options={availableOptions}
+                      onChange={(value) => setSendMethod(value as SendMethod)}
+                      options={sendMethodOptions}
+                      portal
                     />
-                  )
-                })()}
+                  )}
+                </div>
               </div>
             )}
           </div>
@@ -1931,7 +1933,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                   </span>
                 </div>
               </div>
-              {paymentOption === 'saved' && <Check size={18} />}
+              {paymentOption === 'saved' && <Check size={18} className={styles.optionCheck} />}
             </button>
           )}
 
@@ -1950,7 +1952,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                 <span>Marca el invoice como pagado (efectivo, transferencia, etc.)</span>
               </div>
             </div>
-            {paymentOption === 'manual' && <Check size={18} />}
+            {paymentOption === 'manual' && <Check size={18} className={styles.optionCheck} />}
           </button>
         </div>
 
@@ -2102,7 +2104,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           <div className={styles.confirmButtonWrapper}>
             <Button
               variant="primary"
-              onClick={handleConfirm}
+              onClick={() => handleConfirm()}
               disabled={
                 loading ||
                 (paymentOption === 'saved' && (!selectedPaymentMethod || checkingCards)) ||
