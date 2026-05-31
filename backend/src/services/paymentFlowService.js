@@ -357,6 +357,54 @@ async function sendInvoice({ ghlClient, invoiceId, contact, channels, forceAllAv
   }
 }
 
+export async function createSinglePaymentLink(payload) {
+  const contact = payload.contact || {}
+  const amount = normalizeAmount(payload.amount || payload.totalAmount)
+  const currency = payload.currency || CURRENCY_DEFAULT
+  const concept = payload.description || payload.concept || payload.title || 'Pago'
+  const title = payload.title || concept || 'Pago'
+
+  if (!contact.id) {
+    throw new Error('Selecciona un cliente para crear el link de pago')
+  }
+
+  if (amount <= 0) {
+    throw new Error('El monto del link de pago debe ser mayor a 0')
+  }
+
+  const ghlClient = await getGHLClient()
+  const invoice = await createInvoice({
+    ghlClient,
+    basePayload: payload.invoicePayload,
+    contact,
+    amount,
+    currency,
+    concept,
+    title,
+    dueDate: payload.dueDate
+  })
+  const invoiceId = invoice.id || invoice._id
+  const sent = await sendInvoice({
+    ghlClient,
+    invoiceId,
+    contact,
+    channels: payload.channels || {},
+    forceAllAvailable: payload.forceAllAvailable === true
+  })
+
+  logger.info(`Link de pago creado desde ${payload.source || 'app'} para contacto ${contact.id}: ${amount} ${currency}`)
+
+  return {
+    invoiceId,
+    invoiceNumber: invoice.invoiceNumber || null,
+    paymentLink: sent.paymentLink,
+    sendMethod: sent.sendMethod,
+    amount,
+    currency,
+    status: sent.sendMethod === 'none' ? 'draft' : 'sent'
+  }
+}
+
 function resolveScheduleTimezone(timezone) {
   const zone = timezone || DEFAULT_PAYMENT_TIMEZONE
   return DateTime.now().setZone(zone).isValid ? zone : DEFAULT_PAYMENT_TIMEZONE

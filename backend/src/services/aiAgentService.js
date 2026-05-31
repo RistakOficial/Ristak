@@ -3,7 +3,7 @@ import { decrypt, encrypt } from '../utils/encryption.js'
 import { resolveDateRangeWithGHLTimezone } from '../utils/dateUtils.js'
 import { buildHiddenContactsCondition, getHiddenContactFilters } from '../utils/hiddenContactsFilter.js'
 import { getGHLClient } from './ghlClient.js'
-import { createInstallmentPaymentFlow } from './paymentFlowService.js'
+import { createInstallmentPaymentFlow, createSinglePaymentLink } from './paymentFlowService.js'
 import { DateTime } from 'luxon'
 
 const OPENAI_API_URL = 'https://api.openai.com/v1'
@@ -459,6 +459,65 @@ function addFrequencyToDate(date, frequency, step, timezone = DEFAULT_PAYMENT_TI
   return base.plus({ months: step }).toISODate()
 }
 
+function normalizeInteger(value) {
+  const number = Number(value)
+  if (!Number.isFinite(number)) return 0
+  return Math.max(0, Math.floor(number))
+}
+
+function normalizeIntervalUnit(value, frequency = 'monthly') {
+  const normalized = normalizeText(value || '')
+
+  if (/(dia|dias|day|days)/.test(normalized)) return 'days'
+  if (/(semana|semanas|week|weeks)/.test(normalized)) return 'weeks'
+  if (/(mes|meses|month|months)/.test(normalized)) return 'months'
+  if (frequency === 'weekly') return 'weeks'
+  if (frequency === 'biweekly') return 'days'
+
+  return 'months'
+}
+
+function resolveRemainingInterval(args, frequency) {
+  const explicitCount = normalizeInteger(args.remainingIntervalCount || args.intervalCount)
+  const explicitUnit = args.remainingIntervalUnit || args.intervalUnit
+
+  if (explicitUnit) {
+    return {
+      unit: normalizeIntervalUnit(explicitUnit, frequency),
+      count: explicitCount || 1
+    }
+  }
+
+  if (frequency === 'weekly') return { unit: 'weeks', count: 1 }
+  if (frequency === 'biweekly') return { unit: 'days', count: 14 }
+
+  return { unit: 'months', count: explicitCount || 1 }
+}
+
+function addIntervalToDate(date, interval, step, timezone = DEFAULT_PAYMENT_TIMEZONE) {
+  const zone = DateTime.now().setZone(timezone).isValid ? timezone : DEFAULT_PAYMENT_TIMEZONE
+  const base = DateTime.fromISO(date || DateTime.now().setZone(zone).toISODate(), { zone })
+  const multiplier = Math.max(0, Number(step || 0))
+  const count = Math.max(1, Number(interval?.count || 1)) * multiplier
+  const unit = interval?.unit || 'months'
+
+  if (unit === 'days') return base.plus({ days: count }).toISODate()
+  if (unit === 'weeks') return base.plus({ weeks: count }).toISODate()
+  return base.plus({ months: count }).toISODate()
+}
+
+function resolveOffsetDate(source, anchorDate, timezone = DEFAULT_PAYMENT_TIMEZONE) {
+  const afterDays = normalizeInteger(source.afterDays || source.chargeAfterDays || source.delayDays)
+  const afterWeeks = normalizeInteger(source.afterWeeks || source.chargeAfterWeeks || source.delayWeeks)
+  const afterMonths = normalizeInteger(source.afterMonths || source.chargeAfterMonths || source.delayMonths)
+
+  if (afterDays > 0) return addIntervalToDate(anchorDate, { unit: 'days', count: afterDays }, 1, timezone)
+  if (afterWeeks > 0) return addIntervalToDate(anchorDate, { unit: 'weeks', count: afterWeeks }, 1, timezone)
+  if (afterMonths > 0) return addIntervalToDate(anchorDate, { unit: 'months', count: afterMonths }, 1, timezone)
+
+  return null
+}
+
 function splitAmountAcrossPayments(total, count) {
   const safeCount = Math.max(0, Number(count || 0))
   if (!safeCount) return []
@@ -548,7 +607,7 @@ function buildPaymentContactOptions(contacts) {
     return {
       label,
       description,
-      value: `Usa el contacto "${label}" (ID: ${contact.id}) para crear el pago parcializado que te pedí en mi mensaje anterior.`
+      value: `Usa el contacto "${label}" (ID: ${contact.id}) para crear el cobro que te pedí en mi mensaje anterior.`
     }
   })
 }
@@ -695,8 +754,21 @@ function buildPaymentChannels(args = {}) {
 }
 
 function resolveFirstPayment(args, totalAmount, timezone = DEFAULT_PAYMENT_TIMEZONE) {
-  const firstPayment = args.firstPayment && typeof args.firstPayment === 'object' ? args.firstPayment : {}
-  const hasFirstPaymentData = Object.keys(firstPayment).length > 0 || args.firstPaymentAmount || args.firstPaymentPercentage
+  const aliasPayment = args.downPayment && typeof args.downPayment === 'object'
+    ? args.downPayment
+    : args.initialPayment && typeof args.initialPayment === 'object'
+      ? args.initialPayment
+      : args.upfrontPayment && typeof args.upfrontPayment === 'object'
+        ? args.upfrontPayment
+        : {}
+  const firstPayment = {
+    ...aliasPayment,
+    ...(args.firstPayment && typeof args.firstPayment === 'object' ? args.firstPayment : {})
+  }
+  const rootAmount = args.firstPaymentAmount ?? args.downPaymentAmount ?? args.initialPaymentAmount ?? args.upfrontPaymentAmount
+  const rootPercentage = args.firstPaymentPercentage ?? args.downPaymentPercentage ?? args.initialPaymentPercentage ?? args.upfrontPaymentPercentage
+  const rootMethod = args.firstPaymentMethod ?? args.downPaymentMethod ?? args.initialPaymentMethod ?? args.upfrontPaymentMethod
+  const hasFirstPaymentData = Object.keys(firstPayment).length > 0 || rootAmount || rootPercentage
   const enabled = firstPayment.enabled === false ? false : hasFirstPaymentData
 
   if (!enabled) {
@@ -710,31 +782,32 @@ function resolveFirstPayment(args, totalAmount, timezone = DEFAULT_PAYMENT_TIMEZ
     }
   }
 
-  const type = normalizeInstallmentType(firstPayment.type || (firstPayment.percentage || args.firstPaymentPercentage ? 'percentage' : 'amount'))
-  const value = normalizePaymentAmount(firstPayment.value ?? firstPayment.percentage ?? args.firstPaymentPercentage ?? firstPayment.amount ?? args.firstPaymentAmount)
-  const explicitAmount = normalizePaymentAmount(firstPayment.amount ?? args.firstPaymentAmount)
+  const type = normalizeInstallmentType(firstPayment.type || (firstPayment.percentage || rootPercentage ? 'percentage' : 'amount'))
+  const value = normalizePaymentAmount(firstPayment.value ?? firstPayment.percentage ?? rootPercentage ?? firstPayment.amount ?? rootAmount)
+  const explicitAmount = normalizePaymentAmount(firstPayment.amount ?? rootAmount)
   const amount = explicitAmount > 0
     ? explicitAmount
     : type === 'percentage'
       ? normalizePaymentAmount(totalAmount * (value / 100))
       : value
-  const method = normalizePaymentMethod(firstPayment.method || args.firstPaymentMethod)
+  const method = normalizePaymentMethod(firstPayment.method || rootMethod)
 
   return {
     enabled,
     type,
     value,
     amount,
-    date: normalizeDateOnlyInput(firstPayment.date || args.firstPaymentDate) || DateTime.now().setZone(timezone).toISODate(),
+    date: normalizeDateOnlyInput(firstPayment.date || args.firstPaymentDate || args.downPaymentDate || args.initialPaymentDate) || DateTime.now().setZone(timezone).toISODate(),
     method,
     reference: cleanText(firstPayment.reference || args.firstPaymentReference || '', 160) || null,
     notes: cleanText(firstPayment.notes || args.firstPaymentNotes || '', 500) || null,
-    methodProvided: Boolean(firstPayment.method || args.firstPaymentMethod)
+    methodProvided: Boolean(firstPayment.method || rootMethod)
   }
 }
 
 function resolveRemainingPayments(args, totalAmount, firstPayment, timezone = DEFAULT_PAYMENT_TIMEZONE) {
   const frequency = normalizeRemainingFrequency(args.remainingFrequency || args.frequency || 'monthly')
+  const interval = resolveRemainingInterval(args, frequency)
   const rawPayments = Array.isArray(args.remainingPayments) ? args.remainingPayments : []
   const baseDate = normalizeDateOnlyInput(
     args.remainingStartDate ||
@@ -742,6 +815,8 @@ function resolveRemainingPayments(args, totalAmount, firstPayment, timezone = DE
     args.nextPaymentDate
   )
   const anchorDate = baseDate || firstPayment.date || DateTime.now().setZone(timezone).toISODate()
+  const relativeStartDate = resolveOffsetDate(args, firstPayment.date || DateTime.now().setZone(timezone).toISODate(), timezone)
+  const scheduleStartDate = baseDate || relativeStartDate
   const missingDates = []
 
   if (rawPayments.length > 0) {
@@ -754,7 +829,10 @@ function resolveRemainingPayments(args, totalAmount, firstPayment, timezone = DE
           ? normalizePaymentAmount(totalAmount * (value / 100))
           : value
       const dueDate = normalizeDateOnlyInput(payment.dueDate || payment.due_date) ||
-        (frequency !== 'custom' || baseDate ? addFrequencyToDate(anchorDate, frequency === 'custom' ? 'monthly' : frequency, baseDate ? index : index + 1, timezone) : null)
+        resolveOffsetDate(payment, firstPayment.date || DateTime.now().setZone(timezone).toISODate(), timezone) ||
+        (frequency !== 'custom' || scheduleStartDate
+          ? addIntervalToDate(scheduleStartDate || anchorDate, interval, scheduleStartDate ? index : index + 1, timezone)
+          : null)
 
       if (!dueDate) missingDates.push(index + 1)
 
@@ -773,20 +851,43 @@ function resolveRemainingPayments(args, totalAmount, firstPayment, timezone = DE
     return { payments, frequency, missingDates }
   }
 
-  const count = Number(args.remainingPaymentCount || args.paymentCount || args.installmentCount || args.remainingCount || 0)
-  if (!Number.isFinite(count) || count <= 0) {
+  const collectInLastPeriods = normalizeInteger(args.collectInLastPeriods || args.lastPaymentPeriods || args.lastPeriods || args.collectPeriods)
+  const explicitCount = normalizeInteger(
+    args.remainingPaymentCount ||
+    args.paymentCount ||
+    args.installmentCount ||
+    args.remainingCount ||
+    args.remainingInstallments
+  )
+  const count = collectInLastPeriods || explicitCount
+  if (count <= 0) {
     return { payments: [], frequency, missingDates: [] }
   }
 
   const remainingTotal = normalizePaymentAmount(totalAmount - normalizePaymentAmount(firstPayment.amount))
   const amounts = splitAmountAcrossPayments(remainingTotal, count)
+  const skipFirstPeriods = normalizeInteger(
+    args.skipFirstPeriods ||
+    args.skipPeriods ||
+    args.skipFirstPaymentPeriods ||
+    args.gracePeriods ||
+    args.noChargePeriods
+  )
+  const deferMonths = normalizeInteger(args.deferMonths || args.deferredMonths || args.totalDeferredMonths)
+  const deferredSkipPeriods = skipFirstPeriods || (deferMonths > 0
+    ? Math.max(0, deferMonths - (collectInLastPeriods || count))
+    : 0)
   const payments = amounts.map((amount, index) => ({
     sequence: index + 1,
     type: 'amount',
     value: amount,
     amount,
     percentage: totalAmount > 0 ? normalizePaymentAmount((amount / totalAmount) * 100) : null,
-    dueDate: addFrequencyToDate(anchorDate, frequency === 'custom' ? 'monthly' : frequency, baseDate ? index : index + 1, timezone),
+    dueDate: scheduleStartDate
+      ? addIntervalToDate(scheduleStartDate, interval, index, timezone)
+      : deferMonths > 0 && (deferredSkipPeriods > 0 || collectInLastPeriods > 0)
+        ? addIntervalToDate(firstPayment.date || anchorDate, { unit: 'months', count: 1 }, deferredSkipPeriods + index + 1, timezone)
+        : addIntervalToDate(anchorDate, interval, index + 1, timezone),
     frequency,
     notes: null
   }))
@@ -900,6 +1001,78 @@ async function executeCreateInstallmentPaymentFlow(args = {}, highLevelConnectio
   }
 }
 
+async function executeCreateSinglePaymentLink(args = {}, highLevelConnection) {
+  if (!highLevelConnection?.configured) {
+    return {
+      ok: false,
+      error: 'HighLevel no está configurado. Configura primero la integración de Go High Level.'
+    }
+  }
+
+  const resolvedContact = await resolvePaymentContact(args)
+  if (!resolvedContact.contact) {
+    return {
+      ok: false,
+      error: resolvedContact.error || 'Falta identificar el contacto.',
+      missingFields: resolvedContact.missingFields || [],
+      clarificationOptions: resolvedContact.clarificationOptions || []
+    }
+  }
+
+  const amount = normalizePaymentAmount(args.amount || args.totalAmount || args.total)
+  const currency = cleanText(args.currency || DEFAULT_PAYMENT_CURRENCY, 12).toUpperCase() || DEFAULT_PAYMENT_CURRENCY
+
+  if (amount <= 0) {
+    return {
+      ok: false,
+      error: 'Falta el monto a cobrar o el monto no es válido.',
+      missingFields: ['amount']
+    }
+  }
+
+  const paymentTimezone = highLevelConnection.locationData?.timezone || DEFAULT_PAYMENT_TIMEZONE
+  const contact = resolvedContact.contact
+  const concept = cleanText(args.concept || args.description || `Pago - ${contact.name}`, 240)
+  const dueDate = normalizeDateOnlyInput(args.dueDate || args.paymentDate || args.chargeDate) ||
+    resolveOffsetDate(args, DateTime.now().setZone(paymentTimezone).toISODate(), paymentTimezone) ||
+    DateTime.now().setZone(paymentTimezone).toISODate()
+
+  const result = await createSinglePaymentLink({
+    contact,
+    amount,
+    currency,
+    description: concept,
+    concept,
+    title: cleanText(args.title || concept, 180),
+    dueDate,
+    channels: buildPaymentChannels(args),
+    forceAllAvailable: args.forceAllAvailable === true,
+    source: 'ai_agent'
+  })
+
+  return {
+    ok: true,
+    action: 'create_single_payment_link',
+    message: result.sendMethod === 'none'
+      ? 'Link de pago creado con la lógica interna de Ristak.'
+      : 'Link de pago creado y enviado con la lógica interna de Ristak.',
+    summary: {
+      contact: {
+        id: contact.id,
+        name: contact.name,
+        email: contact.email || null,
+        phone: contact.phone || null
+      },
+      amount,
+      currency,
+      dueDate,
+      delivery: result.sendMethod,
+      paymentLink: result.paymentLink
+    },
+    result
+  }
+}
+
 function buildHighLevelTools(highLevelConnection) {
   if (!highLevelConnection?.configured) return []
 
@@ -911,6 +1084,39 @@ function buildHighLevelTools(highLevelConnection) {
       server_url: HIGHLEVEL_MCP_SERVER_URL,
       authorization: highLevelConnection.token,
       require_approval: 'never'
+    },
+    {
+      type: 'function',
+      name: 'create_single_payment_link',
+      description: 'Crea y opcionalmente envía un link de pago único usando la lógica interna de Ristak/HighLevel. Úsala para órdenes como "mándale link de pago", "cóbrale X", "genera invoice por X" cuando NO sea plan de parcialidades.',
+      parameters: {
+        type: 'object',
+        properties: {
+          contactId: { type: ['string', 'null'], description: 'ID exacto del contacto si ya se conoce.' },
+          contactHint: { type: ['string', 'null'], description: 'Nombre, teléfono o email del contacto cuando no hay ID exacto.' },
+          amount: { type: ['number', 'null'], description: 'Monto único a cobrar.' },
+          totalAmount: { type: ['number', 'null'], description: 'Alias de amount si el usuario dice total.' },
+          currency: { type: ['string', 'null'], description: 'Moneda, normalmente MXN.' },
+          concept: { type: ['string', 'null'], description: 'Concepto del cobro/invoice.' },
+          title: { type: ['string', 'null'], description: 'Título visible del invoice.' },
+          dueDate: { type: ['string', 'null'], description: 'Fecha límite YYYY-MM-DD. Si es hoy, usa la fecha local actual.' },
+          chargeAfterDays: { type: ['number', 'null'], description: 'Usa esto si el usuario dice que el pago se cobrará en N días.' },
+          chargeAfterWeeks: { type: ['number', 'null'], description: 'Usa esto si el usuario dice que el pago se cobrará en N semanas.' },
+          chargeAfterMonths: { type: ['number', 'null'], description: 'Usa esto si el usuario dice que el pago se cobrará en N meses.' },
+          deliveryMode: { type: ['string', 'null'], enum: ['send', 'generate', null], description: 'send para enviar al cliente. generate para sólo generar link.' },
+          channels: {
+            type: ['object', 'null'],
+            properties: {
+              email: { type: ['boolean', 'null'] },
+              sms: { type: ['boolean', 'null'] },
+              whatsapp: { type: ['boolean', 'null'] }
+            },
+            additionalProperties: false
+          }
+        },
+        additionalProperties: true
+      },
+      strict: false
     },
     {
       type: 'function',
@@ -940,10 +1146,22 @@ function buildHighLevelTools(highLevelConnection) {
             },
             additionalProperties: true
           },
+          downPaymentAmount: { type: ['number', 'null'], description: 'Alias de firstPayment.amount cuando el usuario diga anticipo/pago inicial en monto.' },
+          downPaymentPercentage: { type: ['number', 'null'], description: 'Alias de firstPayment.percentage cuando el usuario diga anticipo/pago inicial en porcentaje.' },
+          initialPaymentAmount: { type: ['number', 'null'], description: 'Alias de firstPayment.amount.' },
+          initialPaymentPercentage: { type: ['number', 'null'], description: 'Alias de firstPayment.percentage.' },
           remainingAutomatic: { type: ['boolean', 'null'], description: 'true si el resto debe domiciliarse/cobrarse automático.' },
           remainingFrequency: { type: ['string', 'null'], enum: ['weekly', 'biweekly', 'monthly', 'custom', null] },
+          remainingIntervalUnit: { type: ['string', 'null'], enum: ['days', 'weeks', 'months', null], description: 'Unidad entre cobros restantes cuando el usuario diga cada N días/semanas/meses.' },
+          remainingIntervalCount: { type: ['number', 'null'], description: 'Cantidad de unidades entre cobros restantes.' },
           remainingPaymentCount: { type: ['number', 'null'], description: 'Número de parcialidades restantes si se repartirán en partes iguales.' },
           remainingStartDate: { type: ['string', 'null'], description: 'Fecha YYYY-MM-DD del primer cobro restante. Si se omite, se calcula desde el primer pago según frecuencia.' },
+          chargeAfterDays: { type: ['number', 'null'], description: 'Usa esto cuando el primer cobro restante sea en N días, por ejemplo "en dos semanas" usa chargeAfterWeeks: 2.' },
+          chargeAfterWeeks: { type: ['number', 'null'], description: 'Usa esto cuando el primer cobro restante sea en N semanas.' },
+          chargeAfterMonths: { type: ['number', 'null'], description: 'Usa esto cuando el primer cobro restante sea en N meses.' },
+          deferMonths: { type: ['number', 'null'], description: 'Meses totales del diferido cuando el usuario diga diferir en N meses.' },
+          skipFirstPeriods: { type: ['number', 'null'], description: 'Periodos iniciales sin cobro, por ejemplo "no cobrar los primeros 2 meses".' },
+          collectInLastPeriods: { type: ['number', 'null'], description: 'Número de periodos finales donde sí se cobra, por ejemplo "cobrar en los últimos 4 meses".' },
           remainingPayments: {
             type: ['array', 'null'],
             description: 'Parcialidades restantes. Si no se manda, se generan con remainingPaymentCount.',
@@ -956,6 +1174,9 @@ function buildHighLevelTools(highLevelConnection) {
                 percentage: { type: ['number', 'null'] },
                 amount: { type: ['number', 'null'] },
                 dueDate: { type: ['string', 'null'] },
+                afterDays: { type: ['number', 'null'], description: 'Fecha relativa desde el primer pago.' },
+                afterWeeks: { type: ['number', 'null'], description: 'Fecha relativa desde el primer pago.' },
+                afterMonths: { type: ['number', 'null'], description: 'Fecha relativa desde el primer pago.' },
                 notes: { type: ['string', 'null'] }
               },
               additionalProperties: true
@@ -1312,6 +1533,8 @@ async function callOpenAIResponseWithActionTools(apiKey, {
       try {
         if (call.name === 'highlevel_rest_request') {
           output = await executeHighLevelRestRequest(call.arguments, highLevelConnection)
+        } else if (call.name === 'create_single_payment_link') {
+          output = await executeCreateSinglePaymentLink(call.arguments, highLevelConnection)
         } else if (call.name === 'create_installment_payment_flow') {
           output = await executeCreateInstallmentPaymentFlow(call.arguments, highLevelConnection)
         } else {
@@ -2191,11 +2414,14 @@ async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, ru
     'Cuando uses informacion externa, cita los enlaces dentro del texto de la respuesta (no como lista al final) y conectalos con los datos internos del negocio.',
     'También puedes controlar Go High Level directamente cuando el usuario pida acciones de CRM. Usa primero el MCP oficial de HighLevel; si no existe herramienta MCP para algo, usa highlevel_rest_request con endpoints oficiales documentados.',
     'HighLevel puede hacer lecturas y cambios reales según los scopes del token configurado: contactos, tags, custom fields, conversaciones/mensajes, workflows, calendarios/citas, oportunidades, productos, pagos, invoices, usuarios, ubicaciones, social posting, blogs, plantillas y cualquier endpoint disponible por API.',
+    'Para links o pagos únicos, NO uses MCP ni highlevel_rest_request directamente. Usa create_single_payment_link. Ejemplos: "mándale link de pago", "cóbrale 30,000", "genera invoice por 15 mil". Si el usuario dice "mándale", deliveryMode=send; si dice "solo genera", deliveryMode=generate.',
     'Para cobros por parcialidades, pagos iniciales, domiciliación o planes automáticos, NO uses MCP ni highlevel_rest_request directamente. Usa siempre la herramienta create_installment_payment_flow porque esa respeta la lógica interna de Ristak.',
     'Regla de parcialidades de Ristak: si el primer pago es transferencia/efectivo/manual, se crea invoice del primer pago, se registra como pagado manualmente y se envía/genera un link separado de domiciliación de tarjeta. Ese link de domiciliación no reduce el saldo del plan. Los cobros automáticos restantes sólo se programan cuando el webhook confirme tarjeta autorizada.',
     'Si el primer pago es tarjeta/link, ese primer pago autoriza la tarjeta y el plan automático se activa sólo después de confirmarse el pago y guardarse la tarjeta. Si el contacto ya tiene tarjeta guardada, el plan puede quedar programado directo.',
     'Cuando el usuario diga algo como "cóbrale 78,500, 40% hoy por transferencia y lo demás en dos meses domiciliado", interpreta: total 78500, primer pago 40%, método bank_transfer, remainingAutomatic true, remainingPaymentCount 2, remainingFrequency monthly. Calcula los montos y fechas tú mismo usando la fecha local actual.',
-    'Antes de ejecutar un cobro, identifica el contacto exacto. Si create_installment_payment_flow devuelve opciones de contacto, pregunta cuál es y muestra esas opciones como botones. Si faltan monto total, método del primer pago, número de parcialidades o fechas indispensables, pregunta sólo eso.',
+    'Variaciones de parcialidades que debes resolver tú: "150 mil, 20% ahorita, diferido en 6 meses, no cobrar los primeros 2, cobrar en los últimos 4" = total 150000, firstPayment 20%, remainingAutomatic true, deferMonths 6, skipFirstPeriods 2, collectInLastPeriods 4. "38,500 al 50/50 en un mes" = total 38500, primer pago 50% y una parcialidad restante en un mes; si no dice cómo se paga el primer 50%, pregunta sólo el método. "30 mil, 20 mil hoy por transferencia y el resto domiciliado en dos semanas" = total 30000, firstPayment amount 20000, method bank_transfer, remainingPaymentCount 1, chargeAfterWeeks 2, remainingAutomatic true.',
+    'Si el usuario da un plan de pago suficientemente claro, calcula montos, fechas y número de parcialidades sin preguntarle otra vez. Pregunta sólo cuando falte algo indispensable como contacto exacto, total, método del primer pago o fecha/cantidad imposible de inferir.',
+    'Antes de ejecutar un cobro, identifica el contacto exacto. Si create_single_payment_link o create_installment_payment_flow devuelve opciones de contacto, pregunta cuál es y muestra esas opciones como botones. Si faltan monto total, método del primer pago, número de parcialidades o fechas indispensables, pregunta sólo eso.',
     'Si el usuario pide una acción clara en HighLevel y tienes datos suficientes, ejecútala. Si falta identificar contacto, workflow, invoice, producto, calendario, monto, fecha o canal, pregunta sólo eso y ofrece opciones cuando existan.',
     'Para cambios destructivos, pagos, envíos de mensajes, workflows, citas o movimientos de oportunidad, primero asegúrate de que el registro exacto esté identificado. No ejecutes sobre coincidencias ambiguas.',
     'No digas que sólo tienes acceso a la DB si HighLevel está conectado; úsalo para leer o modificar el CRM cuando la petición lo requiera. No reveles token, headers ni secretos.',
