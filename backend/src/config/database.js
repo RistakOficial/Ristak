@@ -543,9 +543,10 @@ async function initTables() {
 
     // Agregar columnas que puedan faltar en tablas existentes
     try {
-      // Agregar ghl_invoice_id a payments (UNIQUE para evitar duplicados)
+      // Agregar ghl_invoice_id a payments. SQLite no permite ADD COLUMN con UNIQUE
+      // en tablas existentes; el índice se crea después si la columna existe.
       try {
-        await db.run('ALTER TABLE payments ADD COLUMN ghl_invoice_id TEXT UNIQUE')
+        await db.run('ALTER TABLE payments ADD COLUMN ghl_invoice_id TEXT')
       } catch (err) {
         if (!err.message.includes('duplicate column name') && !err.message.includes('already exists')) {
           throw err

@@ -2117,6 +2117,46 @@ async function getStoredCardStatusForContact(contactId, paymentMode = PAYMENT_MO
   }
 }
 
+async function executeLookupContactPaymentProfile(args = {}, highLevelConnection = {}) {
+  if (!highLevelConnection?.configured) {
+    return {
+      ok: false,
+      error: 'HighLevel no está configurado. Configura primero la integración de Go High Level.'
+    }
+  }
+
+  const resolvedContact = await resolvePaymentContact(args)
+  if (!resolvedContact.contact) {
+    return {
+      ok: false,
+      error: resolvedContact.error || 'Falta identificar el contacto.',
+      missingFields: resolvedContact.missingFields || [],
+      clarificationOptions: resolvedContact.clarificationOptions || []
+    }
+  }
+
+  const contact = resolvedContact.contact
+  const paymentMode = normalizePaymentMode(highLevelConnection.paymentMode, PAYMENT_MODE_LIVE)
+  const storedCardStatus = await getStoredCardStatusForContact(contact.id, paymentMode)
+
+  return {
+    ok: true,
+    action: 'lookup_contact_payment_profile',
+    contact: {
+      id: contact.id,
+      name: contact.name,
+      email: contact.email || null,
+      phone: contact.phone || null
+    },
+    storedCard: {
+      available: storedCardStatus.hasAuthorizedCard,
+      paymentMode: storedCardStatus.paymentMode,
+      brand: storedCardStatus.brand || null,
+      last4: storedCardStatus.last4 || null
+    }
+  }
+}
+
 function resolveFirstPayment(args, totalAmount, timezone = DEFAULT_PAYMENT_TIMEZONE) {
   const aliasPayment = args.downPayment && typeof args.downPayment === 'object'
     ? args.downPayment
@@ -2916,6 +2956,23 @@ function buildHighLevelTools(highLevelConnection, options = {}) {
   tools.push(
     {
       type: 'function',
+      name: 'lookup_contact_payment_profile',
+      description: 'Busca un contacto por nombre/email/teléfono/ID y devuelve su perfil de pagos en Ristak, incluyendo si tiene tarjeta guardada/autorizada para el modo de pago actual. Úsala para preguntas como "¿Raúl Gómez tiene tarjeta guardada?" o antes de decidir si un pago futuro puede ir con tarjeta guardada.',
+      parameters: {
+        type: 'object',
+        properties: {
+          contactId: { type: ['string', 'null'], description: 'ID exacto del contacto si ya se conoce.' },
+          contactName: { type: ['string', 'null'], description: 'Sólo el nombre limpio del contacto. Ejemplo: "Raúl Gómez".' },
+          contactHint: { type: ['string', 'null'], description: 'Nombre, email o teléfono limpio del contacto. No metas la instrucción completa aquí.' },
+          contactEmail: { type: ['string', 'null'], description: 'Email del contacto si el usuario lo dio.' },
+          contactPhone: { type: ['string', 'null'], description: 'Teléfono del contacto si el usuario lo dio.' }
+        },
+        additionalProperties: true
+      },
+      strict: false
+    },
+    {
+      type: 'function',
       name: 'lookup_highlevel_products',
       description: 'Busca y lista productos/precios guardados en GoHighLevel de forma segura y de sólo lectura. Úsala sólo cuando el usuario mencione explícitamente producto, producto guardado, precio de GHL o quiera ver productos/precios. No la uses para cobros normales con monto, número o descripción libre. Si hay productos parecidos o varios precios, devuelve opciones para que el usuario elija.',
       parameters: {
@@ -3494,7 +3551,9 @@ async function callOpenAIResponseWithActionTools(apiKey, {
       let output
 
       try {
-        if (call.name === 'lookup_highlevel_products') {
+        if (call.name === 'lookup_contact_payment_profile') {
+          output = await executeLookupContactPaymentProfile(call.arguments, highLevelConnection)
+        } else if (call.name === 'lookup_highlevel_products') {
           output = await executeLookupHighLevelProducts(call.arguments, highLevelConnection)
         } else if (call.name === 'highlevel_rest_request' && requiresPaymentExecutionConfirmation(call) && !hasExplicitPaymentExecutionConfirmation(messages)) {
           output = buildPaymentConfirmationRequiredOutput({
@@ -3623,7 +3682,7 @@ function isPaymentConversationContinuation(messages) {
 
   const latestUserText = normalizeText(getMessageText(messages[latestUserIndex]))
   return isConversationalFollowUp(messages) ||
-    /(cobr|pago|program|agenda|fecha|junio|julio|agosto|septiembre|octubre|noviembre|diciembre|enero|febrero|marzo|abril|mayo|domicili|tarjeta|link|transfer|deposit|efectivo|parcial|difer|mensual|semanal|\b\d{1,2}\b)/.test(latestUserText)
+    /(cobr|pago|program|agenda|fecha|concepto|descripcion|descripción|prueba|test|modo|confirm|autoriz|guardad|junio|julio|agosto|septiembre|octubre|noviembre|diciembre|enero|febrero|marzo|abril|mayo|domicili|tarjeta|link|transfer|deposit|efectivo|parcial|difer|mensual|semanal|\b\d{1,2}\b)/.test(latestUserText)
 }
 
 function buildLocalSupervisorRoute(messages) {
@@ -3669,17 +3728,28 @@ function buildLocalSupervisorRoute(messages) {
 }
 
 function normalizeSupervisorRoute(route = {}, fallback = {}) {
-  const domain = normalizeSupervisorDomain(route.domain || route.specialist || fallback.domain)
+  const fallbackDomain = normalizeSupervisorDomain(fallback.domain)
+  const fallbackForcesPayment = fallbackDomain === 'payments' &&
+    fallback.requiresPaymentTools === true &&
+    (fallback.action === 'mutate' || fallback.continuation === true || fallback.requiresDbResearch === false)
+  const domain = fallbackForcesPayment
+    ? 'payments'
+    : normalizeSupervisorDomain(route.domain || route.specialist || fallback.domain)
   const action = normalizeText(route.action || fallback.action || 'answer')
   const normalizedAction = ['read', 'mutate', 'answer', 'continue', 'clarify'].includes(action) ? action : 'answer'
   const continuation = route.continuation === true || fallback.continuation === true
   const requiresPaymentTools = route.requiresPaymentTools === true || fallback.requiresPaymentTools === true || domain === 'payments'
   const requiresHighLevelTools = route.requiresHighLevelTools === true || fallback.requiresHighLevelTools === true || HIGHLEVEL_AGENT_DOMAINS.has(domain)
   const metaAdsOperationalIntent = route.metaAdsOperationalIntent === true || fallback.metaAdsOperationalIntent === true || domain === 'meta_ads_operations'
-  const defaultDbResearch = !metaAdsOperationalIntent && !(requiresHighLevelTools && normalizedAction === 'mutate')
+  const operationalToolRoute = fallback.requiresDbResearch === false ||
+    (requiresHighLevelTools && normalizedAction === 'mutate') ||
+    (requiresPaymentTools && (continuation || normalizedAction === 'mutate' || fallback.action === 'mutate'))
+  const defaultDbResearch = !metaAdsOperationalIntent && !operationalToolRoute
   const requiresDbResearch = route.requiresDbResearch === false
     ? false
-    : route.requiresDbResearch === true
+    : operationalToolRoute
+      ? false
+      : route.requiresDbResearch === true
       ? true
       : fallback.requiresDbResearch === false
         ? false
@@ -3816,6 +3886,7 @@ const SPECIALIST_PROMPTS = {
     'Especialista Pagos:',
     'Maneja links de pago, invoices, pagos manuales, parcialidades, domiciliación, tarjeta guardada y cambios a un plan previo.',
     'Si el usuario corrige una orden previa ("sí, pero el 10 de junio"), conserva contacto, monto, moneda y concepto anteriores; cambia sólo lo nuevo.',
+    'Si el usuario pregunta si un contacto tiene tarjeta guardada, o si una continuación depende de tarjeta guardada, usa lookup_contact_payment_profile con el contacto limpio antes de responder. No contestes "sí" o "no" de memoria.',
     'Para pagos únicos inmediatos usa create_single_payment_link. Para fechas futuras, parcialidades, domiciliación o cargos automáticos usa create_installment_payment_flow. Para pagos offline usa record_contact_payment o record_invoice_payment.',
     'No mandes frases de seguimiento como contactName/contactHint; extrae el contacto limpio desde el mensaje actual o desde la conversación anterior.'
   ].join('\n'),
