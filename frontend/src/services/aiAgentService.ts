@@ -82,6 +82,10 @@ export interface AIAgentTranscriptionResult {
   model: string
 }
 
+type AIAgentRequestOptions = {
+  signal?: AbortSignal
+}
+
 const API_BASE_URL = import.meta.env.VITE_API_URL || ''
 
 function getAuthHeaders(includeContentType = true): HeadersInit {
@@ -135,9 +139,14 @@ export const aiAgentService = {
     })
   },
 
-  sendMessage(messages: AIAgentMessage[], viewContext: AIAgentViewContext): Promise<AIAgentChatResult> {
+  sendMessage(
+    messages: AIAgentMessage[],
+    viewContext: AIAgentViewContext,
+    options: AIAgentRequestOptions = {}
+  ): Promise<AIAgentChatResult> {
     return request<AIAgentChatResult>('/chat', {
       method: 'POST',
+      signal: options.signal,
       body: JSON.stringify({ messages, viewContext })
     })
   },

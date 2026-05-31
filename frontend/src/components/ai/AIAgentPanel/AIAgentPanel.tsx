@@ -667,6 +667,8 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
   const [voiceError, setVoiceError] = useState('')
   const askedOnboardingRef = useRef(false)
   const messagesRef = useRef(messages)
+  const activeChatRequestRef = useRef<{ id: number; controller: AbortController } | null>(null)
+  const chatRequestSeqRef = useRef(0)
   const previousMessageCountRef = useRef(messages.length)
   const endRef = useRef<HTMLDivElement | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
@@ -688,6 +690,10 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
   const formattedVoiceElapsed = useMemo(() => formatVoiceDuration(voiceElapsed), [voiceElapsed])
   const visible = embedded || open
   const paymentTestMode = paymentMode === 'test'
+
+  const focusComposer = () => {
+    window.requestAnimationFrame(() => textareaRef.current?.focus())
+  }
 
   const emitConfigChange = (nextStatus: AIAgentConfigStatus) => {
     window.dispatchEvent(new CustomEvent('ai-agent-config-changed', {
@@ -912,10 +918,11 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
   const sendMessage = async (overrideText?: string) => {
     const text = (overrideText ?? input).trim()
 
-    if (!text || sending || savingConfig) return
+    if (!text || savingConfig) return
 
     const userMessage = createMessage('user', text)
     setInput('')
+    focusComposer()
 
     if (nextOnboardingQuestion) {
       await saveOnboardingAnswer(text, userMessage)
@@ -928,8 +935,16 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
         userMessage,
         createMessage('assistant', 'Ya puedo guardar contexto del negocio, pero para responder con IA necesito que pegues tu API key de OpenAI en la tarjeta de configuración.')
       ])
+      focusComposer()
       return
     }
+
+    activeChatRequestRef.current?.controller.abort()
+
+    const controller = new AbortController()
+    const requestId = chatRequestSeqRef.current + 1
+    chatRequestSeqRef.current = requestId
+    activeChatRequestRef.current = { id: requestId, controller }
 
     const nextMessages = [...messagesRef.current, userMessage]
 
@@ -937,19 +952,29 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
     setSending(true)
 
     try {
-      const result = await aiAgentService.sendMessage(nextMessages, getViewContext())
+      const result = await aiAgentService.sendMessage(nextMessages, getViewContext(), {
+        signal: controller.signal
+      })
+
+      if (activeChatRequestRef.current?.id !== requestId) return
+
       setMessages((current) => [
         ...current,
         createMessage('assistant', result.reply, result.sources, result.clarificationOptions)
       ])
     } catch (error: any) {
+      if (error?.name === 'AbortError' || activeChatRequestRef.current?.id !== requestId) return
+
       setMessages((current) => [
         ...current,
         createMessage('assistant', `No pude responder ahorita. ${error?.message || 'Revisa la configuración del Agente AI.'}`)
       ])
     } finally {
-      setSending(false)
-      textareaRef.current?.focus()
+      if (activeChatRequestRef.current?.id === requestId) {
+        activeChatRequestRef.current = null
+        setSending(false)
+        focusComposer()
+      }
     }
   }
 
@@ -1083,7 +1108,7 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
   }
 
   const startVoiceRecording = async () => {
-    if (voiceIsActive || sending || savingConfig) return
+    if (voiceIsActive || savingConfig) return
 
     if (!status.configured) {
       setVoiceErrorMessage('Conecta OpenAI para transcribir mensajes de voz.')
@@ -1173,6 +1198,8 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
 
   useEffect(() => {
     return () => {
+      activeChatRequestRef.current?.controller.abort()
+      activeChatRequestRef.current = null
       voiceIgnoreEndRef.current = true
       voiceEndActionRef.current = null
       if (mediaRecorderRef.current?.state === 'recording') {
@@ -1191,8 +1218,12 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
   }
 
   const clearChat = () => {
+    activeChatRequestRef.current?.controller.abort()
+    activeChatRequestRef.current = null
+    setSending(false)
     askedOnboardingRef.current = businessContextLoaded
     setMessages([])
+    focusComposer()
   }
 
   const floatingButtonClassName = `${styles.floatingButton} ${unreadReplies ? styles.floatingButtonUnread : ''}`
@@ -1234,7 +1265,7 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
                 type="button"
                 className={styles.iconButton}
                 onClick={clearChat}
-                disabled={!messages.length || sending || savingConfig}
+                disabled={!messages.length || savingConfig}
                 aria-label="Limpiar chat"
                 title="Limpiar chat"
               >
@@ -1310,7 +1341,7 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
                         type="button"
                         className={styles.suggestionButton}
                         onClick={() => sendMessage(suggestion)}
-                        disabled={sending || savingConfig}
+                        disabled={savingConfig}
                       >
                         <Sparkles size={13} /> {suggestion}
                       </button>
@@ -1337,7 +1368,7 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
                             type="button"
                             className={styles.optionButton}
                             onClick={() => sendMessage(option.value)}
-                            disabled={sending || savingConfig}
+                            disabled={savingConfig}
                           >
                             <span className={styles.optionLabel}>{option.label}</span>
                             {option.description && (
@@ -1422,7 +1453,7 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
                   type="button"
                   className={styles.micButton}
                   onClick={startVoiceRecording}
-                  disabled={sending || savingConfig}
+                  disabled={savingConfig}
                   aria-label="Dictar mensaje por voz"
                   title="Dictar mensaje por voz"
                 >
@@ -1435,14 +1466,14 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
                   placeholder={nextOnboardingQuestion ? 'Responde para guardar contexto...' : status.configured ? 'Pregunta algo del negocio...' : 'Pega el token arriba o cuéntame del negocio...'}
                   onChange={(event) => setInput(event.target.value)}
                   onKeyDown={handleKeyDown}
-                  disabled={sending || savingConfig}
+                  disabled={savingConfig}
                   rows={1}
                 />
                 <button
                   type="button"
                   className={styles.sendButton}
                   onClick={() => sendMessage()}
-                  disabled={!input.trim() || sending || savingConfig}
+                  disabled={!input.trim() || savingConfig}
                   aria-label="Enviar mensaje"
                 >
                   {embedded ? <ArrowUp size={20} /> : <SendHorizonal size={17} />}
