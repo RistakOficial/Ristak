@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
-import { ArrowUp, Bot, Eraser, File as FileIcon, FileText, Image as ImageIcon, KeyRound, MessageCircle, Mic, Paperclip, Pause, SendHorizonal, Sparkles, Video as VideoIcon, X } from 'lucide-react'
+import { ArrowUp, Bot, Check, Copy, Eraser, File as FileIcon, FileText, Image as ImageIcon, KeyRound, MessageCircle, Mic, Paperclip, Pause, SendHorizonal, Sparkles, Video as VideoIcon, X } from 'lucide-react'
 import { aiAgentService, type AIAgentAttachment, type AIAgentAttachmentKind, type AIAgentBusinessContextField, type AIAgentClarificationOption, type AIAgentConfigInput, type AIAgentConfigStatus, type AIAgentMessage, type AIAgentViewContext } from '@/services/aiAgentService'
+import { useNotification } from '@/contexts/NotificationContext'
 import styles from './AIAgentPanel.module.css'
 
 const AI_AGENT_FLOATING_OPEN_KEY = 'ristak.aiAgentFloating.open'
@@ -459,6 +460,121 @@ function buildAttachmentPrompt(attachments: AIAgentAttachment[]) {
   if (!attachments.length) return ''
   const files = attachments.length === 1 ? 'este archivo adjunto' : 'estos archivos adjuntos'
   return `Analiza ${files} y dime qué ves.`
+}
+
+function formatTranscriptTimestamp(value?: string | null) {
+  if (!value) return ''
+
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+
+  return new Intl.DateTimeFormat('es-MX', {
+    dateStyle: 'medium',
+    timeStyle: 'short'
+  }).format(date)
+}
+
+function formatTranscriptAttachments(attachments?: AIAgentAttachment[]) {
+  if (!attachments?.length) return []
+
+  return [
+    '',
+    '**Adjuntos**',
+    ...attachments.map((attachment) => `- ${attachment.name} (${attachment.kind}, ${formatFileSize(attachment.size)})`)
+  ]
+}
+
+function formatTranscriptSources(sources?: AIAgentMessage['sources']) {
+  if (!sources?.length) return []
+
+  return [
+    '',
+    '**Fuentes**',
+    ...sources.map((source) => `- ${source.title || source.url}: ${source.url}`)
+  ]
+}
+
+function formatTranscriptClarifications(options?: AIAgentClarificationOption[]) {
+  if (!options?.length) return []
+
+  return [
+    '',
+    '**Opciones ofrecidas por el agente**',
+    ...options.map((option) => {
+      const description = option.description ? ` - ${option.description}` : ''
+      return `- ${option.label}${description}`
+    })
+  ]
+}
+
+function buildChatTranscript(
+  messages: AIAgentMessage[],
+  context: {
+    panelTitle: string
+    routeLabel: string
+    path: string
+    pageTitle: string
+    copiedAt: string
+  }
+) {
+  const lines = [
+    `# Conversación exportada de ${context.panelTitle}`,
+    '',
+    `Copiado: ${formatTranscriptTimestamp(context.copiedAt)} (${context.copiedAt})`,
+    `Pantalla: ${context.routeLabel}`,
+    `Ruta: ${context.path}`,
+    `Título de página: ${context.pageTitle}`,
+    `Mensajes: ${messages.length}`,
+    '',
+    'Pega este transcript en Codex u otra plataforma para revisar el diálogo completo, detectar errores y mantener claro quién dijo qué.',
+    '',
+    '## Diálogo'
+  ]
+
+  messages.forEach((message, index) => {
+    const roleLabel = message.role === 'user' ? 'Usuario' : 'Agente AI'
+    const timestamp = formatTranscriptTimestamp(message.createdAt)
+    const content = message.content.trim() || '[Mensaje vacío]'
+
+    lines.push(
+      '',
+      `### ${index + 1}. ${roleLabel}${timestamp ? ` - ${timestamp}` : ''}`,
+      '',
+      content,
+      ...formatTranscriptAttachments(message.attachments),
+      ...formatTranscriptClarifications(message.clarificationOptions),
+      ...formatTranscriptSources(message.sources)
+    )
+  })
+
+  return `${lines.join('\n').replace(/\n{3,}/g, '\n\n').trimEnd()}\n`
+}
+
+async function copyTextToClipboard(text: string) {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text)
+      return
+    } catch {
+      // Fall back to the selection-based copy path below.
+    }
+  }
+
+  const textarea = document.createElement('textarea')
+  textarea.value = text
+  textarea.setAttribute('readonly', '')
+  textarea.style.position = 'fixed'
+  textarea.style.top = '0'
+  textarea.style.left = '-9999px'
+  document.body.appendChild(textarea)
+  textarea.select()
+
+  const copied = document.execCommand('copy')
+  textarea.remove()
+
+  if (!copied) {
+    throw new Error('No se pudo copiar al portapapeles.')
+  }
 }
 
 function getAttachmentIcon(kind: AIAgentAttachmentKind) {
@@ -1065,6 +1181,7 @@ function renderAttachmentList(
 
 export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating' }) => {
   const location = useLocation()
+  const { showToast } = useNotification()
   const embedded = variant === 'embedded'
   const [open, setOpen] = useState(() => embedded || getStoredOpenState())
   const [status, setStatus] = useState<AIAgentConfigStatus>(emptyStatus)
@@ -1083,6 +1200,8 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
   const [voiceElapsed, setVoiceElapsed] = useState(0)
   const [voiceTranscript, setVoiceTranscript] = useState('')
   const [voiceError, setVoiceError] = useState('')
+  const [copyingChat, setCopyingChat] = useState(false)
+  const [chatCopied, setChatCopied] = useState(false)
   const askedOnboardingRef = useRef(false)
   const messagesRef = useRef(messages)
   const activeChatRequestRef = useRef<{ id: number; controller: AbortController } | null>(null)
@@ -1103,6 +1222,7 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
   const voiceHadErrorRef = useRef(false)
   const voiceIgnoreEndRef = useRef(false)
   const lastVoiceWaveUpdateRef = useRef(0)
+  const copyFeedbackTimeoutRef = useRef<number | null>(null)
 
   const nextOnboardingQuestion = useMemo(() => getNextOnboardingQuestion(form), [form])
   const businessContextLoaded = hasBusinessContext(form)
@@ -1677,6 +1797,9 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
       }
       mediaRecorderRef.current = null
       stopVoiceMeter()
+      if (copyFeedbackTimeoutRef.current !== null) {
+        window.clearTimeout(copyFeedbackTimeoutRef.current)
+      }
       attachmentsRef.current.forEach(revokeAttachmentPreview)
       messagesRef.current.forEach((message) => message.attachments?.forEach(revokeAttachmentPreview))
     }
@@ -1686,6 +1809,40 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault()
       sendMessage()
+    }
+  }
+
+  const copyChat = async () => {
+    const currentMessages = messagesRef.current
+    if (!currentMessages.length || copyingChat) return
+
+    setCopyingChat(true)
+
+    try {
+      const transcript = buildChatTranscript(currentMessages, {
+        panelTitle,
+        routeLabel: getRouteLabel(location.pathname),
+        path: location.pathname,
+        pageTitle: document.title || 'Ristak',
+        copiedAt: new Date().toISOString()
+      })
+
+      await copyTextToClipboard(transcript)
+      setChatCopied(true)
+      showToast('success', 'Chat copiado', 'Listo: quedó en formato de conversación para pegarlo donde quieras.')
+
+      if (copyFeedbackTimeoutRef.current !== null) {
+        window.clearTimeout(copyFeedbackTimeoutRef.current)
+      }
+
+      copyFeedbackTimeoutRef.current = window.setTimeout(() => {
+        setChatCopied(false)
+        copyFeedbackTimeoutRef.current = null
+      }, 2200)
+    } catch {
+      showToast('error', 'No se pudo copiar', 'Tu navegador bloqueó el portapapeles. Inténtalo otra vez.')
+    } finally {
+      setCopyingChat(false)
     }
   }
 
@@ -1733,6 +1890,16 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
             </div>
 
             <div className={styles.headerActions}>
+              <button
+                type="button"
+                className={`${styles.iconButton} ${chatCopied ? styles.iconButtonSuccess : ''}`}
+                onClick={copyChat}
+                disabled={!messages.length || copyingChat}
+                aria-label={chatCopied ? 'Chat copiado' : 'Copiar chat'}
+                title={chatCopied ? 'Chat copiado' : 'Copiar chat en formato Codex'}
+              >
+                {chatCopied ? <Check size={16} /> : <Copy size={16} />}
+              </button>
               <button
                 type="button"
                 className={styles.iconButton}
