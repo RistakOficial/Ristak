@@ -119,6 +119,8 @@ interface TableProps<T> {
   loadingVariant?: 'skeleton' | 'spinner'
   focusedRowKey?: string | null
   rowClassName?: (item: T) => string | undefined
+  toolbarStart?: React.ReactNode
+  searchPosition?: 'left' | 'right'
 }
 
 export function Table<T extends Record<string, any>>({
@@ -141,7 +143,9 @@ export function Table<T extends Record<string, any>>({
   initialSortOrder = 'asc',
   loadingVariant = 'skeleton',
   focusedRowKey,
-  rowClassName
+  rowClassName,
+  toolbarStart,
+  searchPosition = 'left'
 }: TableProps<T>) {
   // Sistema híbrido de configuración de tablas
   const [savedTableConfig, updateTableConfig] = useTableConfig(tableId || 'default')
@@ -355,6 +359,13 @@ export function Table<T extends Record<string, any>>({
   const totalPages = Math.ceil(filteredData.length / pageSize)
 
   useEffect(() => {
+    const safeTotalPages = Math.max(totalPages, 1)
+    if (currentPage > safeTotalPages) {
+      setCurrentPage(safeTotalPages)
+    }
+  }, [currentPage, totalPages])
+
+  useEffect(() => {
     if (!focusedRowKey || !paginated) return
 
     const focusedIndex = filteredData.findIndex((item) => keyExtractor(item) === focusedRowKey)
@@ -371,6 +382,19 @@ export function Table<T extends Record<string, any>>({
       setSortOrder('asc')
     }
   }
+
+  const searchControl = searchable ? (
+    <div className={styles.searchContainer}>
+      <Search size={18} className={styles.searchIcon} />
+      <input
+        type="text"
+        className={styles.searchInput}
+        placeholder={searchPlaceholder}
+        value={searchTerm}
+        onChange={(e) => setSearchTerm(e.target.value)}
+      />
+    </div>
+  ) : null
 
   if (loading && loadingVariant === 'spinner') {
     return (
@@ -428,18 +452,9 @@ export function Table<T extends Record<string, any>>({
     <div className={styles.container} data-ristak-table>
       <div className={styles.tableHeader}>
         <div className={styles.leftControls}>
-          {searchable && (
-            <div className={styles.searchContainer}>
-              <Search size={18} className={styles.searchIcon} />
-              <input
-                type="text"
-                className={styles.searchInput}
-                placeholder={searchPlaceholder}
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-              />
-            </div>
-          )}
+          {toolbarStart}
+
+          {searchPosition === 'left' && searchControl}
 
           {filters && onFilterChange && (
             <TabList
@@ -451,6 +466,8 @@ export function Table<T extends Record<string, any>>({
         </div>
 
         <div className={styles.tableActions}>
+          {searchPosition === 'right' && searchControl}
+
           <button
             className={`${styles.actionButton} ${editMode ? styles.active : ''}`}
             onClick={() => setEditMode(!editMode)}

@@ -65,6 +65,7 @@ interface TreeFilterProps {
     countries?: Array<{ name: string; count: number }>
     placements?: Array<{ name: string; count: number }>
     conversions?: Array<{ stage: string; name: string; count: number }>
+    statuses?: Array<{ name: string; value?: string; count: number }>
     adsHierarchy?: Array<AdHierarchyNode>
   }
   selectedFilters: Record<string, string[]>
@@ -116,6 +117,22 @@ export function TreeFilter({
   // Construir el árbol de filtros basado en los datos disponibles
   const filterTree = useMemo<FilterNode[]>(() => {
     const tree: FilterNode[] = []
+
+    // Categoría: Estado
+    if (availableData.statuses?.length) {
+      tree.push({
+        id: 'statuses',
+        label: 'Estado',
+        icon: Layers,
+        children: availableData.statuses.map(status => ({
+          id: `status_${status.value || status.name}`,
+          label: status.name,
+          field: 'status',
+          value: status.value || status.name,
+          count: status.count
+        }))
+      })
+    }
 
     // Categoría: Conversión
     if (availableData.conversions?.length) {

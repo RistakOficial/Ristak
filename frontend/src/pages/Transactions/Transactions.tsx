@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useMemo, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useSearchParams } from 'react-router-dom'
-import { KpiCard, Card, Button, Table, DateRangePicker, ContactSearchInput, PageContainer, TabList, RecordPaymentModal, Badge, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, Loading } from '@/components/common'
+import { KpiCard, Card, Button, Table, DateRangePicker, ContactSearchInput, PageContainer, TabList, TreeFilter, RecordPaymentModal, Badge, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, Loading } from '@/components/common'
 import type { Column, BadgeVariant } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
 import { Contact } from '@/types'
@@ -42,6 +42,7 @@ interface ModalData {
 }
 
 type PaymentsTableTab = 'transactions' | 'payment-plans'
+type StatusFilters = Record<string, string[]>
 
 interface PaymentPlanModalData {
   plan: PaymentPlan | null
@@ -116,6 +117,32 @@ const MONTH_OPTIONS = [
   { value: 'oct', label: 'Octubre' },
   { value: 'nov', label: 'Noviembre' },
   { value: 'dec', label: 'Diciembre' }
+]
+
+const TRANSACTION_STATUS_ORDER = [
+  'draft',
+  'sent',
+  'pending',
+  'paid',
+  'partial',
+  'overdue',
+  'void',
+  'refunded',
+  'failed',
+  'deleted'
+]
+
+const PAYMENT_PLAN_STATUS_ORDER = [
+  'active',
+  'scheduled',
+  'pending',
+  'sent',
+  'draft',
+  'paused',
+  'cancelled',
+  'completed',
+  'failed',
+  'deleted'
 ]
 
 const getDayOfWeekCode = (date: Date) => {
@@ -259,6 +286,8 @@ export const Transactions: React.FC = () => {
     monthlyMode: 'dayOfMonth'
   })
   const [paymentTableTab, setPaymentTableTab] = useState<PaymentsTableTab>('transactions')
+  const [transactionStatusFilters, setTransactionStatusFilters] = useState<StatusFilters>({})
+  const [paymentPlanStatusFilters, setPaymentPlanStatusFilters] = useState<StatusFilters>({})
   const [viewMode, setViewMode] = useState<'all' | 'by-date'>('all') // Por defecto 'all' (Todos)
   const [showRecordPaymentModal, setShowRecordPaymentModal] = useState(false)
   const [isClient, setIsClient] = useState(false)
@@ -1182,7 +1211,9 @@ export const Transactions: React.FC = () => {
     cancelled: { label: 'Cancelado', variant: 'error' },
     canceled: { label: 'Cancelado', variant: 'error' },
     completed: { label: 'Completado', variant: 'success' },
-    failed: { label: 'Fallido', variant: 'error' }
+    failed: { label: 'Fallido', variant: 'error' },
+    inactive: { label: 'Inactivo', variant: 'neutral' },
+    deleted: { label: 'Eliminado', variant: 'neutral' }
   }
 
   const getPlanStatusBadge = (status?: string) => {
@@ -1192,11 +1223,93 @@ export const Transactions: React.FC = () => {
   }
 
   const getNormalizedPlanStatus = (plan: PaymentPlan) => String(plan.status || 'active').toLowerCase()
+  const getPlanFilterStatus = (plan: PaymentPlan) => {
+    const status = getNormalizedPlanStatus(plan)
+    if (status === 'canceled') return 'cancelled'
+    if (status === 'complete') return 'completed'
+    return status
+  }
   const isPlanDeleted = (plan: PaymentPlan) => getNormalizedPlanStatus(plan) === 'deleted'
   const canActivatePaymentPlan = (plan: PaymentPlan) => ['draft', 'paused', 'inactive', 'pending'].includes(getNormalizedPlanStatus(plan))
   const canPausePaymentPlan = (plan: PaymentPlan) => ['active', 'scheduled', 'pending', 'sent'].includes(getNormalizedPlanStatus(plan))
   const canCancelPaymentPlan = (plan: PaymentPlan) => !['cancelled', 'canceled', 'completed', 'complete', 'deleted'].includes(getNormalizedPlanStatus(plan))
   const canDeletePaymentPlan = (plan: PaymentPlan) => !isPlanDeleted(plan)
+
+  const transactionStatusFilterData = useMemo(() => {
+    const counts = transactions.reduce<Record<string, number>>((acc, transaction) => {
+      const status = String(transaction.status || '').toLowerCase()
+      if (!status) return acc
+      acc[status] = (acc[status] || 0) + 1
+      return acc
+    }, {})
+
+    const orderedStatuses = [
+      ...TRANSACTION_STATUS_ORDER.filter(status => counts[status]),
+      ...Object.keys(counts).filter(status => !TRANSACTION_STATUS_ORDER.includes(status)).sort()
+    ]
+
+    return {
+      statuses: orderedStatuses.map(status => ({
+        name: STATUS_BADGES[status]?.label || status,
+        value: status,
+        count: counts[status]
+      }))
+    }
+  }, [transactions])
+
+  const paymentPlanStatusFilterData = useMemo(() => {
+    const counts = paymentPlans.reduce<Record<string, number>>((acc, plan) => {
+      const status = getPlanFilterStatus(plan)
+      if (!status) return acc
+      acc[status] = (acc[status] || 0) + 1
+      return acc
+    }, {})
+
+    const orderedStatuses = [
+      ...PAYMENT_PLAN_STATUS_ORDER.filter(status => counts[status]),
+      ...Object.keys(counts).filter(status => !PAYMENT_PLAN_STATUS_ORDER.includes(status)).sort()
+    ]
+
+    return {
+      statuses: orderedStatuses.map(status => ({
+        name: planStatusBadges[status]?.label || status,
+        value: status,
+        count: counts[status]
+      }))
+    }
+  }, [paymentPlans])
+
+  const filteredTransactions = useMemo(() => {
+    const selectedStatuses = transactionStatusFilters.status || []
+    if (!selectedStatuses.length) return transactions
+
+    return transactions.filter(transaction =>
+      selectedStatuses.includes(String(transaction.status || '').toLowerCase())
+    )
+  }, [transactionStatusFilters, transactions])
+
+  const filteredPaymentPlans = useMemo(() => {
+    const selectedStatuses = paymentPlanStatusFilters.status || []
+    if (!selectedStatuses.length) return paymentPlans
+
+    return paymentPlans.filter(plan => selectedStatuses.includes(getPlanFilterStatus(plan)))
+  }, [paymentPlanStatusFilters, paymentPlans])
+
+  const activeStatusFilters = paymentTableTab === 'payment-plans'
+    ? paymentPlanStatusFilters
+    : transactionStatusFilters
+  const activeStatusFilterData = paymentTableTab === 'payment-plans'
+    ? paymentPlanStatusFilterData
+    : transactionStatusFilterData
+
+  const handleStatusFilterChange = (filters: StatusFilters) => {
+    if (paymentTableTab === 'payment-plans') {
+      setPaymentPlanStatusFilters(filters)
+      return
+    }
+
+    setTransactionStatusFilters(filters)
+  }
 
   const paymentTableTabs = [
     { label: 'Transacciones', value: 'transactions' },
@@ -1470,7 +1583,7 @@ export const Transactions: React.FC = () => {
           <Table
             key="transactions_table"
             initialColumns={columns}
-            data={transactions}
+            data={filteredTransactions}
             keyExtractor={(item) => item.id}
             emptyMessage="No hay pagos disponibles"
             loading={loading}
@@ -1481,6 +1594,14 @@ export const Transactions: React.FC = () => {
             filters={paymentTableTabs}
             activeFilter={paymentTableTab}
             onFilterChange={handlePaymentTableTabChange}
+            toolbarStart={(
+              <TreeFilter
+                availableData={activeStatusFilterData}
+                selectedFilters={activeStatusFilters}
+                onFilterChange={handleStatusFilterChange}
+              />
+            )}
+            searchPosition="right"
             tableId="transactions"
             initialSortBy="date"
             initialSortOrder="desc"
@@ -1489,7 +1610,7 @@ export const Transactions: React.FC = () => {
           <Table
             key="payment_plans_table"
             initialColumns={paymentPlanColumns}
-            data={paymentPlans}
+            data={filteredPaymentPlans}
             keyExtractor={(item) => item.id}
             onRowClick={handleOpenPaymentPlan}
             emptyMessage="No hay planes de pago"
@@ -1501,6 +1622,14 @@ export const Transactions: React.FC = () => {
             filters={paymentTableTabs}
             activeFilter={paymentTableTab}
             onFilterChange={handlePaymentTableTabChange}
+            toolbarStart={(
+              <TreeFilter
+                availableData={activeStatusFilterData}
+                selectedFilters={activeStatusFilters}
+                onFilterChange={handleStatusFilterChange}
+              />
+            )}
+            searchPosition="right"
             tableId="payment_plans"
             initialSortBy="sortDate"
             initialSortOrder="desc"

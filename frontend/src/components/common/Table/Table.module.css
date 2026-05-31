@@ -67,8 +67,15 @@
 
 .tableActions {
   display: flex;
+  align-items: center;
   gap: var(--spacing-sm);
   position: relative;
+  margin-left: auto;
+}
+
+.tableActions .searchContainer {
+  flex: 0 1 420px;
+  width: clamp(260px, 32vw, 420px);
 }
 
 .actionGroup {
@@ -347,6 +354,23 @@
 @keyframes skeletonShimmer {
   100% {
     transform: translateX(110%);
+  }
+}
+
+@media (max-width: 768px) {
+  .tableHeader {
+    align-items: stretch;
+  }
+
+  .leftControls,
+  .tableActions {
+    width: 100%;
+  }
+
+  .tableActions .searchContainer {
+    min-width: 0;
+    width: auto;
+    flex: 1;
   }
 }
 
