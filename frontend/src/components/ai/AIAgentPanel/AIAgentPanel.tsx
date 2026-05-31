@@ -1360,9 +1360,20 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
                 ))}
 
                 {(sending || savingConfig) && (
-                  <div className={styles.loading}>
-                    <span className={styles.spinner} />
-                    {savingConfig ? 'Guardando configuración...' : 'Analizando datos...'}
+                  <div
+                    className={styles.thinkingMessage}
+                    role="status"
+                    aria-label={savingConfig ? 'Guardando configuración' : 'Ristak AI está pensando'}
+                    title={savingConfig ? 'Guardando configuración' : 'Pensando'}
+                  >
+                    <span className={styles.thinkingAura} aria-hidden="true">
+                      <Sparkles size={13} />
+                    </span>
+                    <span className={styles.thinkingBubble} aria-hidden="true">
+                      <span className={styles.thinkingDot} />
+                      <span className={styles.thinkingDot} />
+                      <span className={styles.thinkingDot} />
+                    </span>
                   </div>
                 )}
                 <div ref={endRef} />
