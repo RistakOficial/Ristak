@@ -468,7 +468,9 @@ export const Dashboard: React.FC = () => {
   // Sistema híbrido de configuración
   const [showAnalyticsConfig] = useAppConfig<string | number | boolean>('show_analytics', '1')
   const [chartPeriodConfig, setChartPeriodConfig] = useAppConfig<string>('dashboard_chart_period', 'last12')
-  const [showFunnelVisitorsConfig, setShowFunnelVisitorsConfig, savingFunnelVisitorsConfig] = useAppConfig<string | number | boolean>('dashboard_show_funnel_visitors', '1')
+  const [showFunnelVisitorsConfig, setShowFunnelVisitorsConfig, savingFunnelVisitorsConfig] = useAppConfig<string | number | boolean>('dashboard_show_funnel_visitors', '1', {
+    cacheFirst: false
+  })
   const chartPeriodPreference = normalizeChartPeriodPreference(chartPeriodConfig)
 
   // FORZAR analyticsEnabled a false si estamos en dominio .onrender.com

@@ -12,7 +12,7 @@ const SYNC_EVENT = 'config-sync'
 
 interface ConfigOptions {
   syncOnMount?: boolean // Sincronizar con DB al montar (default: true)
-  cacheFirst?: boolean // Leer cache primero (default: true)
+  cacheFirst?: boolean // Usar localStorage como cache (default: true)
 }
 
 /**
@@ -71,8 +71,9 @@ export function useAppConfig<T = string>(
           // Solo actualizar si es diferente del cache
           setValue((current) => {
             if (JSON.stringify(current) !== JSON.stringify(parsed)) {
-              // Sincronizar cache con DB
-              localStorage.setItem(`${CONFIG_PREFIX}${key}`, JSON.stringify(parsed))
+              if (cacheFirst) {
+                localStorage.setItem(`${CONFIG_PREFIX}${key}`, JSON.stringify(parsed))
+              }
               return parsed
             }
             return current
@@ -88,7 +89,7 @@ export function useAppConfig<T = string>(
     return () => {
       mountedRef.current = false
     }
-  }, [key, syncOnMount]) // Removido defaultValue de deps
+  }, [key, syncOnMount, cacheFirst]) // Removido defaultValue de deps
 
   // Escuchar cambios desde otros componentes
   useEffect(() => {
@@ -122,8 +123,10 @@ export function useAppConfig<T = string>(
         throw new Error('Failed to save config')
       }
 
-      // 2. Actualizar cache local
-      localStorage.setItem(`${CONFIG_PREFIX}${key}`, JSON.stringify(newValue))
+      // 2. Actualizar cache local si esta config lo permite
+      if (cacheFirst) {
+        localStorage.setItem(`${CONFIG_PREFIX}${key}`, JSON.stringify(newValue))
+      }
 
       // 3. Actualizar estado local
       if (mountedRef.current) {
@@ -141,7 +144,7 @@ export function useAppConfig<T = string>(
         setSyncing(false)
       }
     }
-  }, [key])
+  }, [key, cacheFirst])
 
   return [value, updateValue, syncing]
 }
