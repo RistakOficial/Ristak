@@ -247,6 +247,16 @@ class GHLClient {
     })
   }
 
+  async listCustomFields({ model = 'contact' } = {}) {
+    logger.info(`Obteniendo custom fields de HighLevel para locationId: ${this.locationId}`)
+
+    return this.request(`/locations/${this.locationId}/customFields`, {
+      params: {
+        ...(model ? { model } : {})
+      }
+    })
+  }
+
   async createContact({ name, email, phone }) {
     // Separar nombre completo en firstName y lastName
     const nameParts = name.trim().split(' ')
