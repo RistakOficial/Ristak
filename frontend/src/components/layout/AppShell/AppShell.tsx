@@ -6,15 +6,16 @@ import { Header } from '@/components/layout/Header'
 import { SyncProgressBar } from '@/components/common/SyncProgressBar'
 import { AIAgentPanel } from '@/components/ai'
 import { useAuth } from '@/contexts/AuthContext'
-import { useDomainFeatureSync } from '@/hooks'
+import { useAppConfig, useDomainFeatureSync } from '@/hooks'
 import styles from './AppShell.module.css'
 
 const AI_AGENT_FLOATING_OPEN_KEY = 'ristak.aiAgentFloating.open'
-const AI_AGENT_WIDTH_KEY = 'ristak.aiAgentDock.width'
+const AI_AGENT_WIDTH_CONFIG_KEY = 'ai_agent_dock_width'
+const AI_AGENT_LEGACY_WIDTH_KEY = 'ristak.aiAgentDock.width'
 const AI_AGENT_MIN_WIDTH = 360
-const AI_AGENT_DEFAULT_WIDTH = 560
-const AI_AGENT_MAX_WIDTH = 780
-const AI_AGENT_MIN_MAIN_WIDTH = 560
+const AI_AGENT_DEFAULT_WIDTH = 640
+const AI_AGENT_MAX_WIDTH = 1600
+const AI_AGENT_MIN_MAIN_WIDTH = 320
 
 function getInitialAIAgentOpenState() {
   try {
@@ -38,24 +39,22 @@ function clampAIAgentWidth(width: number, viewportWidth = getViewportWidth()) {
 
 function getInitialAIAgentWidth() {
   try {
-    const storedWidth = Number(window.localStorage.getItem(AI_AGENT_WIDTH_KEY))
+    const cachedWidth = JSON.parse(window.localStorage.getItem(`rstk_config_${AI_AGENT_WIDTH_CONFIG_KEY}`) || 'null')
+    const legacyWidth = Number(window.localStorage.getItem(AI_AGENT_LEGACY_WIDTH_KEY))
+    const storedWidth = Number(cachedWidth || legacyWidth)
     return clampAIAgentWidth(Number.isFinite(storedWidth) && storedWidth > 0 ? storedWidth : AI_AGENT_DEFAULT_WIDTH)
   } catch {
     return clampAIAgentWidth(AI_AGENT_DEFAULT_WIDTH)
   }
 }
 
-function saveAIAgentWidth(width: number) {
-  try {
-    window.localStorage.setItem(AI_AGENT_WIDTH_KEY, String(width))
-  } catch {
-    // localStorage can fail in private or restricted browser contexts.
-  }
-}
-
 export const AppShell: React.FC = () => {
   const navigate = useNavigate()
   const { logout } = useAuth()
+  const [persistedAIAgentWidth, savePersistedAIAgentWidth] = useAppConfig<number>(
+    AI_AGENT_WIDTH_CONFIG_KEY,
+    getInitialAIAgentWidth()
+  )
   const [syncProgressVisible, setSyncProgressVisible] = useState(false)
   const [locationName, setLocationName] = useState<string>('Mi Negocio')
   const [locationLogo, setLocationLogo] = useState<string | null>(null)
@@ -63,6 +62,8 @@ export const AppShell: React.FC = () => {
   const [aiAgentWidth, setAIAgentWidth] = useState(getInitialAIAgentWidth)
   const [aiAgentResizing, setAIAgentResizing] = useState(false)
   const resizePointerIdRef = useRef<number | null>(null)
+  const aiAgentWidthRef = useRef(aiAgentWidth)
+  const lastSavedAIAgentWidthRef = useRef(aiAgentWidth)
 
   // Asegurar que las configuraciones sensibles al dominio estén sincronizadas
   useDomainFeatureSync()
@@ -122,8 +123,10 @@ export const AppShell: React.FC = () => {
     const handleResize = () => {
       setAIAgentWidth((currentWidth) => {
         const nextWidth = clampAIAgentWidth(currentWidth)
+        aiAgentWidthRef.current = nextWidth
         if (nextWidth !== currentWidth) {
-          saveAIAgentWidth(nextWidth)
+          lastSavedAIAgentWidthRef.current = nextWidth
+          void savePersistedAIAgentWidth(nextWidth).catch(() => undefined)
         }
         return nextWidth
       })
@@ -131,7 +134,16 @@ export const AppShell: React.FC = () => {
 
     window.addEventListener('resize', handleResize)
     return () => window.removeEventListener('resize', handleResize)
-  }, [])
+  }, [savePersistedAIAgentWidth])
+
+  useEffect(() => {
+    if (aiAgentResizing) return
+
+    const nextWidth = clampAIAgentWidth(Number(persistedAIAgentWidth) || AI_AGENT_DEFAULT_WIDTH)
+    aiAgentWidthRef.current = nextWidth
+    lastSavedAIAgentWidthRef.current = nextWidth
+    setAIAgentWidth(nextWidth)
+  }, [aiAgentResizing, persistedAIAgentWidth])
 
   const handleLogout = () => {
     logout()
@@ -144,8 +156,16 @@ export const AppShell: React.FC = () => {
 
   const resizeAIAgentPanel = (clientX: number) => {
     const nextWidth = clampAIAgentWidth(window.innerWidth - clientX)
+    aiAgentWidthRef.current = nextWidth
     setAIAgentWidth(nextWidth)
-    saveAIAgentWidth(nextWidth)
+  }
+
+  const saveAIAgentWidth = (width: number) => {
+    const nextWidth = clampAIAgentWidth(width)
+    if (nextWidth === lastSavedAIAgentWidthRef.current) return
+
+    lastSavedAIAgentWidthRef.current = nextWidth
+    void savePersistedAIAgentWidth(nextWidth).catch(() => undefined)
   }
 
   const handleResizePointerDown = (event: React.PointerEvent<HTMLButtonElement>) => {
@@ -165,7 +185,10 @@ export const AppShell: React.FC = () => {
     if (resizePointerIdRef.current !== event.pointerId) return
     resizePointerIdRef.current = null
     setAIAgentResizing(false)
-    event.currentTarget.releasePointerCapture(event.pointerId)
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+    saveAIAgentWidth(aiAgentWidthRef.current)
   }
 
   const handleResizeKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
@@ -183,6 +206,7 @@ export const AppShell: React.FC = () => {
         : aiAgentWidth + (event.key === 'ArrowLeft' ? step : -step)
     const clampedWidth = clampAIAgentWidth(nextWidth)
 
+    aiAgentWidthRef.current = clampedWidth
     setAIAgentWidth(clampedWidth)
     saveAIAgentWidth(clampedWidth)
   }
