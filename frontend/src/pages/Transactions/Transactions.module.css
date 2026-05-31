@@ -251,6 +251,18 @@
   color: var(--color-text-primary);
 }
 
+.checkboxRow {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-sm);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.checkboxRow input {
+  margin-top: 0.2rem;
+}
+
 .formGroup > input,
 .formGroup > select,
 .formGroup > textarea,

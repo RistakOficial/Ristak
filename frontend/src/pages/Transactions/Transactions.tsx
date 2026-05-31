@@ -51,6 +51,10 @@ interface PaymentPlanCreateModalData {
   open: boolean
   selectedContact: Contact | null
   saving: boolean
+  scheduleMode: 'recurring' | 'one_time'
+  frequency: 'daily' | 'weekly' | 'monthly' | 'yearly'
+  endType: 'never' | 'count' | 'by'
+  monthlyMode: 'dayOfMonth' | 'weekOfMonth'
 }
 
 const toDateInputValue = (value?: string | null): string => {
@@ -86,6 +90,31 @@ const normalizeScheduleTime = (value: string) => {
   return time.length === 5 ? `${time}:00` : time
 }
 
+const WEEKDAY_OPTIONS = [
+  { value: 'mo', label: 'Lunes' },
+  { value: 'tu', label: 'Martes' },
+  { value: 'we', label: 'Miércoles' },
+  { value: 'th', label: 'Jueves' },
+  { value: 'fr', label: 'Viernes' },
+  { value: 'sa', label: 'Sábado' },
+  { value: 'su', label: 'Domingo' }
+]
+
+const MONTH_OPTIONS = [
+  { value: 'jan', label: 'Enero' },
+  { value: 'feb', label: 'Febrero' },
+  { value: 'mar', label: 'Marzo' },
+  { value: 'apr', label: 'Abril' },
+  { value: 'may', label: 'Mayo' },
+  { value: 'jun', label: 'Junio' },
+  { value: 'jul', label: 'Julio' },
+  { value: 'aug', label: 'Agosto' },
+  { value: 'sep', label: 'Septiembre' },
+  { value: 'oct', label: 'Octubre' },
+  { value: 'nov', label: 'Noviembre' },
+  { value: 'dec', label: 'Diciembre' }
+]
+
 const getDayOfWeekCode = (date: Date) => {
   const codes = ['su', 'mo', 'tu', 'we', 'th', 'fr', 'sa']
   return codes[date.getDay()]
@@ -100,34 +129,96 @@ const isLastDayOfMonth = (date: Date) => {
   return date.getDate() === new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate()
 }
 
-const buildPaymentPlanSchedule = (startDate: string, startTime: string, frequency: string, count: number) => {
+interface PaymentPlanScheduleOptions {
+  scheduleMode: 'recurring' | 'one_time'
+  startDate: string
+  startTime: string
+  frequency: string
+  interval: number
+  endType: string
+  count: number
+  endDate: string
+  endTime: string
+  dayOfWeek: string
+  dayOfMonth: string
+  numOfWeek: string
+  monthOfYear: string
+  monthlyMode: string
+  daysBefore: number
+  useStartAsPrimaryUserAccepted: boolean
+}
+
+const buildPaymentPlanSchedule = ({
+  scheduleMode,
+  startDate,
+  startTime,
+  frequency,
+  interval,
+  endType,
+  count,
+  endDate,
+  endTime,
+  dayOfWeek,
+  dayOfMonth,
+  numOfWeek,
+  monthOfYear,
+  monthlyMode,
+  daysBefore,
+  useStartAsPrimaryUserAccepted
+}: PaymentPlanScheduleOptions) => {
   const localStart = new Date(`${startDate}T${startTime || getDefaultScheduleTime()}`)
   const dateOnly = new Date(`${startDate}T00:00:00`)
-  const normalizedFrequency = frequency === 'biweekly' ? 'weekly' : frequency
-  const interval = frequency === 'biweekly' ? 2 : 1
-  const rrule: Record<string, any> = {
-    intervalType: normalizedFrequency,
-    interval,
-    startDate,
-    startTime: normalizeScheduleTime(startTime),
-    endType: 'count',
-    count
-  }
+  const normalizedInterval = Number.isFinite(interval) && interval > 0 ? interval : 1
 
-  if (normalizedFrequency === 'weekly') {
-    rrule.dayOfWeek = getDayOfWeekCode(dateOnly)
-  }
-
-  if (normalizedFrequency === 'monthly' || normalizedFrequency === 'yearly') {
-    if (isLastDayOfMonth(dateOnly)) {
-      rrule.dayOfMonth = -1
-    } else if (dateOnly.getDate() <= 28) {
-      rrule.dayOfMonth = dateOnly.getDate()
+  if (scheduleMode === 'one_time') {
+    return {
+      executeAt: localStart.toISOString()
     }
   }
 
-  if (normalizedFrequency === 'yearly') {
-    rrule.monthOfYear = getMonthOfYearCode(dateOnly)
+  const rrule: Record<string, any> = {
+    intervalType: frequency,
+    interval: normalizedInterval,
+    startDate,
+    startTime: normalizeScheduleTime(startTime)
+  }
+
+  if (endType === 'count') {
+    rrule.endType = 'count'
+    rrule.count = count
+  } else if (endType === 'by') {
+    rrule.endType = 'by'
+    rrule.endDate = endDate
+    if (endTime) rrule.endTime = normalizeScheduleTime(endTime)
+  }
+
+  if (daysBefore > 0) {
+    rrule.daysBefore = daysBefore
+  }
+
+  if (useStartAsPrimaryUserAccepted) {
+    rrule.useStartAsPrimaryUserAccepted = true
+  }
+
+  if (frequency === 'weekly') {
+    rrule.dayOfWeek = dayOfWeek || getDayOfWeekCode(dateOnly)
+  }
+
+  if (frequency === 'monthly' || frequency === 'yearly') {
+    if (monthlyMode === 'weekOfMonth') {
+      rrule.dayOfWeek = dayOfWeek || getDayOfWeekCode(dateOnly)
+      rrule.numOfWeek = Number(numOfWeek || 1)
+    } else if (dayOfMonth) {
+      rrule.dayOfMonth = Number(dayOfMonth)
+    } else if (isLastDayOfMonth(dateOnly)) {
+      rrule.dayOfMonth = -1
+    } else {
+      rrule.dayOfMonth = Math.min(dateOnly.getDate(), 28)
+    }
+  }
+
+  if (frequency === 'yearly') {
+    rrule.monthOfYear = monthOfYear || getMonthOfYearCode(dateOnly)
   }
 
   return {
@@ -157,7 +248,11 @@ export const Transactions: React.FC = () => {
   const [paymentPlanCreateModal, setPaymentPlanCreateModal] = useState<PaymentPlanCreateModalData>({
     open: false,
     selectedContact: null,
-    saving: false
+    saving: false,
+    scheduleMode: 'recurring',
+    frequency: 'monthly',
+    endType: 'never',
+    monthlyMode: 'dayOfMonth'
   })
   const [paymentTableTab, setPaymentTableTab] = useState<PaymentsTableTab>('transactions')
   const [viewMode, setViewMode] = useState<'all' | 'by-date'>('all') // Por defecto 'all' (Todos)
@@ -303,7 +398,11 @@ export const Transactions: React.FC = () => {
     setPaymentPlanCreateModal({
       open: true,
       selectedContact: null,
-      saving: false
+      saving: false,
+      scheduleMode: 'recurring',
+      frequency: 'monthly',
+      endType: 'never',
+      monthlyMode: 'dayOfMonth'
     })
   }
 
@@ -311,7 +410,11 @@ export const Transactions: React.FC = () => {
     setPaymentPlanCreateModal({
       open: false,
       selectedContact: null,
-      saving: false
+      saving: false,
+      scheduleMode: 'recurring',
+      frequency: 'monthly',
+      endType: 'never',
+      monthlyMode: 'dayOfMonth'
     })
   }
 
@@ -355,14 +458,12 @@ export const Transactions: React.FC = () => {
 
     const name = String(formData.get('name') || '').trim()
     const title = String(formData.get('title') || '').trim()
-    const currency = String(formData.get('currency') || '').trim().toUpperCase()
     const amount = parseFloat(String(formData.get('total') || ''))
     const executeAt = String(formData.get('executeAt') || '').trim()
     const termsNotes = String(formData.get('termsNotes') || '').trim()
 
     if (name) payload.name = name
     if (title) payload.title = title
-    if (currency) payload.currency = currency
     if (Number.isFinite(amount) && amount > 0) payload.total = amount
     payload.termsNotes = termsNotes || null
 
@@ -404,20 +505,55 @@ export const Transactions: React.FC = () => {
     const count = parseInt(String(formData.get('count') || ''), 10)
     const startDate = String(formData.get('startDate') || '').trim()
     const startTime = String(formData.get('startTime') || getDefaultScheduleTime()).trim()
+    const scheduleMode = String(formData.get('scheduleMode') || 'recurring') as 'recurring' | 'one_time'
     const frequency = String(formData.get('frequency') || 'monthly')
-    const currency = String(formData.get('currency') || 'MXN').trim().toUpperCase()
+    const interval = parseInt(String(formData.get('interval') || '1'), 10)
+    const endType = String(formData.get('endType') || 'never')
+    const endDate = String(formData.get('endDate') || '').trim()
+    const endTime = String(formData.get('endTime') || '').trim()
+    const dayOfWeek = String(formData.get('dayOfWeek') || '').trim()
+    const dayOfMonth = String(formData.get('dayOfMonth') || '').trim()
+    const numOfWeek = String(formData.get('numOfWeek') || '').trim()
+    const monthOfYear = String(formData.get('monthOfYear') || '').trim()
+    const monthlyMode = String(formData.get('monthlyMode') || 'dayOfMonth')
+    const daysBefore = parseInt(String(formData.get('daysBefore') || '0'), 10)
+    const useStartAsPrimaryUserAccepted = formData.get('useStartAsPrimaryUserAccepted') === 'on'
     const title = String(formData.get('title') || 'PLAN DE PAGO').trim()
     const rawName = String(formData.get('name') || '').trim()
     const description = String(formData.get('description') || '').trim()
     const termsNotes = String(formData.get('termsNotes') || '').trim()
+    const advancedJson = String(formData.get('advancedJson') || '').trim()
+
+    let advancedPayload: Record<string, any> = {}
+    if (advancedJson) {
+      try {
+        advancedPayload = JSON.parse(advancedJson)
+        if (!advancedPayload || typeof advancedPayload !== 'object' || Array.isArray(advancedPayload)) {
+          throw new Error('invalid')
+        }
+      } catch {
+        showToast('error', 'JSON avanzado inválido', 'Revisa los datos avanzados de HighLevel antes de crear el plan.')
+        return
+      }
+    }
 
     if (!Number.isFinite(amount) || amount <= 0) {
       showToast('error', 'Monto inválido', 'El monto por cobro debe ser mayor a cero.')
       return
     }
 
-    if (!Number.isFinite(count) || count < 1) {
+    if (scheduleMode === 'recurring' && endType === 'count' && (!Number.isFinite(count) || count < 1)) {
       showToast('error', 'Número de cobros inválido', 'Pon al menos un cobro para programar el plan.')
+      return
+    }
+
+    if (scheduleMode === 'recurring' && (!Number.isFinite(interval) || interval < 1)) {
+      showToast('error', 'Intervalo inválido', 'El intervalo de recurrencia debe ser mayor a cero.')
+      return
+    }
+
+    if (scheduleMode === 'recurring' && endType === 'by' && !endDate) {
+      showToast('error', 'Fecha final requerida', 'Elige la fecha final o cambia el plan a cobro indefinido.')
       return
     }
 
@@ -428,15 +564,36 @@ export const Transactions: React.FC = () => {
 
     const contactName = formatName(contact.name || contact.email || contact.phone || 'Cliente')
     const name = rawName || `${description || 'Plan de pago'} - ${contactName}`
-    const schedule = buildPaymentPlanSchedule(startDate, startTime, frequency, count)
+    const schedule = buildPaymentPlanSchedule({
+      scheduleMode,
+      startDate,
+      startTime,
+      frequency,
+      interval,
+      endType,
+      count,
+      endDate,
+      endTime,
+      dayOfWeek,
+      dayOfMonth,
+      numOfWeek,
+      monthOfYear,
+      monthlyMode,
+      daysBefore: Number.isFinite(daysBefore) ? daysBefore : 0,
+      useStartAsPrimaryUserAccepted
+    })
     const email = contact.email || ''
     const phone = contact.phone || ''
 
-    const payload = {
+    const basePayload = {
       name,
       title,
-      currency,
       total: amount,
+      amountDue: amount,
+      amountPaid: 0,
+      status: 'draft',
+      issueDate: startDate,
+      dueDate: startDate,
       termsNotes: termsNotes || null,
       contactDetails: {
         id: contact.id,
@@ -455,7 +612,6 @@ export const Transactions: React.FC = () => {
           description: description || name,
           amount,
           qty: 1,
-          currency,
           type: 'one_time'
         }
       ],
@@ -468,6 +624,24 @@ export const Transactions: React.FC = () => {
           enableBankDebitOnly: false
         }
       }
+    }
+
+    const payload = {
+      ...basePayload,
+      ...advancedPayload,
+      contactDetails: {
+        ...basePayload.contactDetails,
+        ...(advancedPayload.contactDetails || {})
+      },
+      sentTo: {
+        ...basePayload.sentTo,
+        ...(advancedPayload.sentTo || {})
+      },
+      schedule: {
+        ...basePayload.schedule,
+        ...(advancedPayload.schedule || {})
+      },
+      items: advancedPayload.items || basePayload.items
     }
 
     setPaymentPlanCreateModal(prev => ({ ...prev, saving: true }))
@@ -1369,40 +1543,211 @@ export const Transactions: React.FC = () => {
                   </div>
                 </div>
                 <div className={styles.formGroup}>
-                  <label>Moneda</label>
-                  <select name="currency" defaultValue="MXN">
-                    <option value="MXN">MXN</option>
-                    <option value="USD">USD</option>
+                  <label>Tipo de programación</label>
+                  <select
+                    name="scheduleMode"
+                    value={paymentPlanCreateModal.scheduleMode}
+                    onChange={(event) => setPaymentPlanCreateModal(prev => ({
+                      ...prev,
+                      scheduleMode: event.target.value as PaymentPlanCreateModalData['scheduleMode']
+                    }))}
+                  >
+                    <option value="recurring">Recurrente</option>
+                    <option value="one_time">Fecha específica</option>
                   </select>
                 </div>
               </div>
 
-              <div className={styles.formGrid}>
-                <div className={styles.formGroup}>
-                  <label>Recurrencia</label>
-                  <select name="frequency" defaultValue="monthly">
-                    <option value="weekly">Semanal</option>
-                    <option value="biweekly">Quincenal</option>
-                    <option value="monthly">Mensual</option>
-                    <option value="yearly">Anual</option>
-                  </select>
-                </div>
-                <div className={styles.formGroup}>
-                  <label>Número de cobros</label>
-                  <input
-                    name="count"
-                    type="number"
-                    min="1"
-                    max="240"
-                    defaultValue="12"
-                    required
-                  />
-                </div>
-              </div>
+              {paymentPlanCreateModal.scheduleMode === 'recurring' && (
+                <>
+                  <div className={styles.formGrid}>
+                    <div className={styles.formGroup}>
+                      <label>Recurrencia</label>
+                      <select
+                        name="frequency"
+                        value={paymentPlanCreateModal.frequency}
+                        onChange={(event) => setPaymentPlanCreateModal(prev => ({
+                          ...prev,
+                          frequency: event.target.value as PaymentPlanCreateModalData['frequency']
+                        }))}
+                      >
+                        <option value="daily">Diario</option>
+                        <option value="weekly">Semanal</option>
+                        <option value="monthly">Mensual</option>
+                        <option value="yearly">Anual</option>
+                      </select>
+                    </div>
+                    <div className={styles.formGroup}>
+                      <label>Intervalo</label>
+                      <input
+                        name="interval"
+                        type="number"
+                        min="1"
+                        defaultValue="1"
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  <div className={styles.formGrid}>
+                    <div className={styles.formGroup}>
+                      <label>Termina</label>
+                      <select
+                        name="endType"
+                        value={paymentPlanCreateModal.endType}
+                        onChange={(event) => setPaymentPlanCreateModal(prev => ({
+                          ...prev,
+                          endType: event.target.value as PaymentPlanCreateModalData['endType']
+                        }))}
+                      >
+                        <option value="never">Nunca</option>
+                        <option value="count">Después de N cobros</option>
+                        <option value="by">En una fecha</option>
+                      </select>
+                    </div>
+                    {paymentPlanCreateModal.endType === 'count' && (
+                      <div className={styles.formGroup}>
+                        <label>Número de cobros</label>
+                        <input
+                          name="count"
+                          type="number"
+                          min="1"
+                          max="9999"
+                          defaultValue="12"
+                          required
+                        />
+                      </div>
+                    )}
+                    {paymentPlanCreateModal.endType === 'by' && (
+                      <div className={styles.formGroup}>
+                        <label>Fecha final</label>
+                        <input
+                          name="endDate"
+                          type="date"
+                          required
+                        />
+                      </div>
+                    )}
+                  </div>
+
+                  {paymentPlanCreateModal.endType === 'by' && (
+                    <div className={styles.formGrid}>
+                      <div className={styles.formGroup}>
+                        <label>Hora final</label>
+                        <input
+                          name="endTime"
+                          type="time"
+                        />
+                      </div>
+                      <div className={styles.formGroup}>
+                        <label>Días antes de generar</label>
+                        <input
+                          name="daysBefore"
+                          type="number"
+                          min="0"
+                          defaultValue="0"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {paymentPlanCreateModal.endType !== 'by' && (
+                    <div className={styles.formGroup}>
+                      <label>Días antes de generar</label>
+                      <input
+                        name="daysBefore"
+                        type="number"
+                        min="0"
+                        defaultValue="0"
+                      />
+                    </div>
+                  )}
+
+                  {paymentPlanCreateModal.frequency === 'weekly' && (
+                    <div className={styles.formGroup}>
+                      <label>Día de la semana</label>
+                      <select name="dayOfWeek" defaultValue="mo">
+                        {WEEKDAY_OPTIONS.map(option => (
+                          <option key={option.value} value={option.value}>{option.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  {(paymentPlanCreateModal.frequency === 'monthly' || paymentPlanCreateModal.frequency === 'yearly') && (
+                    <>
+                      <div className={styles.formGrid}>
+                        <div className={styles.formGroup}>
+                          <label>Regla mensual</label>
+                          <select
+                            name="monthlyMode"
+                            value={paymentPlanCreateModal.monthlyMode}
+                            onChange={(event) => setPaymentPlanCreateModal(prev => ({
+                              ...prev,
+                              monthlyMode: event.target.value as PaymentPlanCreateModalData['monthlyMode']
+                            }))}
+                          >
+                            <option value="dayOfMonth">Día del mes</option>
+                            <option value="weekOfMonth">Semana del mes</option>
+                          </select>
+                        </div>
+                        {paymentPlanCreateModal.frequency === 'yearly' && (
+                          <div className={styles.formGroup}>
+                            <label>Mes del año</label>
+                            <select name="monthOfYear" defaultValue="jan">
+                              {MONTH_OPTIONS.map(option => (
+                                <option key={option.value} value={option.value}>{option.label}</option>
+                              ))}
+                            </select>
+                          </div>
+                        )}
+                      </div>
+
+                      {paymentPlanCreateModal.monthlyMode === 'dayOfMonth' ? (
+                        <div className={styles.formGroup}>
+                          <label>Día del mes</label>
+                          <select name="dayOfMonth" defaultValue="1">
+                            <option value="-1">Último día del mes</option>
+                            {Array.from({ length: 28 }).map((_, index) => (
+                              <option key={index + 1} value={index + 1}>{index + 1}</option>
+                            ))}
+                          </select>
+                        </div>
+                      ) : (
+                        <div className={styles.formGrid}>
+                          <div className={styles.formGroup}>
+                            <label>Semana del mes</label>
+                            <select name="numOfWeek" defaultValue="1">
+                              <option value="1">Primera</option>
+                              <option value="2">Segunda</option>
+                              <option value="3">Tercera</option>
+                              <option value="4">Cuarta</option>
+                              <option value="-1">Última</option>
+                            </select>
+                          </div>
+                          <div className={styles.formGroup}>
+                            <label>Día de la semana</label>
+                            <select name="dayOfWeek" defaultValue="mo">
+                              {WEEKDAY_OPTIONS.map(option => (
+                                <option key={option.value} value={option.value}>{option.label}</option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  )}
+
+                  <label className={styles.checkboxRow}>
+                    <input name="useStartAsPrimaryUserAccepted" type="checkbox" />
+                    <span>Usar fecha de inicio como fecha aceptada por el usuario principal</span>
+                  </label>
+                </>
+              )}
 
               <div className={styles.formGrid}>
                 <div className={styles.formGroup}>
-                  <label>Fecha de inicio</label>
+                  <label>{paymentPlanCreateModal.scheduleMode === 'one_time' ? 'Fecha específica' : 'Fecha de inicio'}</label>
                   <input
                     name="startDate"
                     type="date"
@@ -1411,7 +1756,7 @@ export const Transactions: React.FC = () => {
                   />
                 </div>
                 <div className={styles.formGroup}>
-                  <label>Hora de envío</label>
+                  <label>Hora de cobro / envío</label>
                   <input
                     name="startTime"
                     type="time"
@@ -1437,6 +1782,17 @@ export const Transactions: React.FC = () => {
                   name="termsNotes"
                   rows={4}
                   placeholder="Notas que irán en la factura recurrente"
+                />
+              </div>
+
+              <div className={styles.formGroup}>
+                <label>Datos avanzados de HighLevel (JSON opcional)</label>
+                <textarea
+                  name="advancedJson"
+                  rows={5}
+                  className={styles.rawJsonTextarea}
+                  placeholder='{"schedule":{"rrule":{"endType":"by"}}}'
+                  spellCheck={false}
                 />
               </div>
 
@@ -1527,13 +1883,6 @@ export const Transactions: React.FC = () => {
                       className={styles.amountInput}
                     />
                   </div>
-                </div>
-                <div className={styles.formGroup}>
-                  <label>Moneda</label>
-                  <select name="currency" defaultValue={paymentPlanModal.plan.currency || 'MXN'}>
-                    <option value="MXN">MXN</option>
-                    <option value="USD">USD</option>
-                  </select>
                 </div>
                 <div className={styles.formGroup}>
                   <label>Próximo cobro / ejecución</label>

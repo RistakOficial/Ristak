@@ -271,6 +271,44 @@ async function initTables() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_payments_date ON payments(date)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_payments_status ON payments(status)')
 
+    // Tabla local de planes de pago / invoice schedules de HighLevel.
+    // GoHighLevel sigue siendo la integración activa, pero guardamos un espejo local
+    // para reportes, respaldo y lectura cuando GHL no esté disponible.
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS payment_plans (
+        id TEXT PRIMARY KEY,
+        ghl_schedule_id TEXT UNIQUE,
+        contact_id TEXT,
+        contact_name TEXT,
+        email TEXT,
+        phone TEXT,
+        name TEXT,
+        title TEXT,
+        status TEXT,
+        total REAL DEFAULT 0,
+        currency TEXT,
+        description TEXT,
+        recurrence_label TEXT,
+        start_date DATETIME,
+        next_run_at DATETIME,
+        end_date DATETIME,
+        live_mode INTEGER,
+        item_count INTEGER DEFAULT 0,
+        schedule_json TEXT,
+        raw_json TEXT,
+        source TEXT DEFAULT 'ghl',
+        last_synced_at DATETIME,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE SET NULL
+      )
+    `)
+
+    await db.run('CREATE INDEX IF NOT EXISTS idx_payment_plans_contact ON payment_plans(contact_id)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_payment_plans_status ON payment_plans(status)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_payment_plans_next_run ON payment_plans(next_run_at)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_payment_plans_updated ON payment_plans(updated_at)')
+
     // Tabla de citas
     await db.run(`
       CREATE TABLE IF NOT EXISTS appointments (

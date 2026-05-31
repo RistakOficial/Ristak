@@ -42,6 +42,45 @@ async function getGhlInvoiceLiveMode() {
   return (await getGhlInvoiceMode()) === 'live';
 }
 
+async function getGhlInvoiceScheduleContext() {
+  const config = await db.get(`
+    SELECT location_data, ghl_invoice_mode, invoice_title, invoice_terms_notes, invoice_number_prefix
+    FROM highlevel_config
+    LIMIT 1
+  `);
+
+  const locationData = config?.location_data
+    ? safeJsonParse(config.location_data, {})
+    : {};
+  const business = locationData?.business || {};
+
+  return {
+    liveMode: normalizeGhlInvoiceMode(config?.ghl_invoice_mode) === 'live',
+    currency: firstDefined(
+      locationData?.currency,
+      locationData?.currencyCode,
+      locationData?.currency_code,
+      business?.currency,
+      business?.currencyCode,
+      'MXN'
+    ),
+    invoiceTitle: config?.invoice_title || 'PLAN DE PAGO',
+    termsNotes: config?.invoice_terms_notes || null,
+    invoiceNumberPrefix: config?.invoice_number_prefix || null,
+    businessDetails: {
+      name: business.name || locationData?.name || 'Mi Negocio',
+      phoneNo: business.phone || locationData?.phone || '',
+      website: business.website || locationData?.website || '',
+      address: business.address || locationData?.address || '',
+      city: business.city || locationData?.city || '',
+      state: business.state || locationData?.state || '',
+      country: business.country || locationData?.country || '',
+      countryCode: business.countryCode || locationData?.countryCode || '',
+      postalCode: business.postalCode || locationData?.postalCode || ''
+    }
+  };
+}
+
 /**
  * Prueba la conexión con HighLevel
  */
@@ -1335,6 +1374,152 @@ function normalizeInvoiceSchedule(schedule = {}) {
   };
 }
 
+function safeJsonParse(value, fallback = null) {
+  if (!value) return fallback;
+  if (typeof value === 'object') return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return fallback;
+  }
+}
+
+function booleanToDb(value) {
+  if (value === undefined || value === null) return null;
+  return value ? 1 : 0;
+}
+
+function dbToBoolean(value) {
+  if (value === undefined || value === null) return undefined;
+  return Boolean(value);
+}
+
+async function persistLocalInvoiceSchedule(schedule) {
+  if (!schedule?.id) return;
+
+  const raw = schedule.raw && typeof schedule.raw === 'object' ? schedule.raw : schedule;
+  const scheduleConfig = resolveScheduleObject(raw);
+
+  try {
+    await db.run(
+      `INSERT INTO payment_plans (
+        id, ghl_schedule_id, contact_id, contact_name, email, phone,
+        name, title, status, total, currency, description, recurrence_label,
+        start_date, next_run_at, end_date, live_mode, item_count,
+        schedule_json, raw_json, source, last_synced_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ghl', CURRENT_TIMESTAMP, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
+      ON CONFLICT(id) DO UPDATE SET
+        ghl_schedule_id = excluded.ghl_schedule_id,
+        contact_id = excluded.contact_id,
+        contact_name = excluded.contact_name,
+        email = excluded.email,
+        phone = excluded.phone,
+        name = excluded.name,
+        title = excluded.title,
+        status = excluded.status,
+        total = excluded.total,
+        currency = excluded.currency,
+        description = excluded.description,
+        recurrence_label = excluded.recurrence_label,
+        start_date = excluded.start_date,
+        next_run_at = excluded.next_run_at,
+        end_date = excluded.end_date,
+        live_mode = excluded.live_mode,
+        item_count = excluded.item_count,
+        schedule_json = excluded.schedule_json,
+        raw_json = excluded.raw_json,
+        source = excluded.source,
+        last_synced_at = CURRENT_TIMESTAMP,
+        updated_at = CURRENT_TIMESTAMP`,
+      [
+        schedule.id,
+        schedule.id,
+        schedule.contactId || null,
+        schedule.contactName || null,
+        schedule.email || null,
+        schedule.phone || null,
+        schedule.name || null,
+        schedule.title || null,
+        schedule.status || null,
+        Number(schedule.total || 0),
+        schedule.currency || null,
+        schedule.description || null,
+        schedule.recurrenceLabel || null,
+        schedule.startDate || null,
+        schedule.nextRunAt || null,
+        schedule.endDate || null,
+        booleanToDb(schedule.liveMode),
+        Number(schedule.itemCount || 0),
+        JSON.stringify(scheduleConfig || {}),
+        JSON.stringify(raw || {}),
+        schedule.createdAt || null
+      ]
+    );
+  } catch (error) {
+    logger.warn(`No se pudo guardar plan de pago local ${schedule.id}: ${error.message}`);
+  }
+}
+
+async function persistLocalInvoiceSchedules(schedules = []) {
+  for (const schedule of schedules) {
+    await persistLocalInvoiceSchedule(schedule);
+  }
+}
+
+function paymentPlanFromRow(row = {}) {
+  const raw = safeJsonParse(row.raw_json, {});
+
+  return {
+    id: row.id || row.ghl_schedule_id,
+    name: row.name || row.title || 'Plan de pago',
+    title: row.title || row.name || 'Plan de pago',
+    status: row.status || 'active',
+    total: Number(row.total || 0),
+    currency: row.currency || 'MXN',
+    contactId: row.contact_id || undefined,
+    contactName: row.contact_name || '',
+    email: row.email || '',
+    phone: row.phone || '',
+    description: row.description || '',
+    startDate: row.start_date || undefined,
+    nextRunAt: row.next_run_at || undefined,
+    endDate: row.end_date || undefined,
+    recurrenceLabel: row.recurrence_label || 'Sin recurrencia',
+    liveMode: dbToBoolean(row.live_mode),
+    itemCount: Number(row.item_count || 0),
+    createdAt: row.created_at || undefined,
+    updatedAt: row.updated_at || undefined,
+    sortDate: row.next_run_at || row.updated_at || row.created_at,
+    raw: raw && Object.keys(raw).length ? raw : {
+      id: row.id || row.ghl_schedule_id,
+      schedule: safeJsonParse(row.schedule_json, {})
+    }
+  };
+}
+
+async function listLocalInvoiceSchedules({ activeOnly = false } = {}) {
+  const where = activeOnly
+    ? `WHERE LOWER(COALESCE(status, 'active')) NOT IN (${Array.from(INACTIVE_INVOICE_SCHEDULE_STATUSES).map(() => '?').join(', ')})`
+    : '';
+  const params = activeOnly ? Array.from(INACTIVE_INVOICE_SCHEDULE_STATUSES) : [];
+  const rows = await db.all(
+    `SELECT * FROM payment_plans ${where}
+     ORDER BY COALESCE(next_run_at, updated_at, created_at) DESC`,
+    params
+  );
+
+  return rows.map(paymentPlanFromRow);
+}
+
+async function getLocalInvoiceSchedule(scheduleId) {
+  const row = await db.get(
+    'SELECT * FROM payment_plans WHERE id = ? OR ghl_schedule_id = ? LIMIT 1',
+    [scheduleId, scheduleId]
+  );
+
+  return row ? paymentPlanFromRow(row) : null;
+}
+
 function sanitizeInvoiceSchedulePayload(payload = {}) {
   const sanitized = { ...payload };
   delete sanitized.raw;
@@ -1350,10 +1535,26 @@ export const createInvoiceSchedule = async (req, res) => {
     const rawPayload = req.body?.payload && typeof req.body.payload === 'object'
       ? req.body.payload
       : req.body;
-    const liveMode = await getGhlInvoiceLiveMode();
+    const context = await getGhlInvoiceScheduleContext();
+    const currency = String(firstDefined(rawPayload?.currency, context.currency, 'MXN')).toUpperCase();
+    const items = toArray(firstDefined(rawPayload?.items, rawPayload?.invoiceItems)).map(item => ({
+      ...item,
+      currency: item.currency || currency
+    }));
     const payload = sanitizeInvoiceSchedulePayload({
       ...rawPayload,
-      liveMode: rawPayload?.liveMode !== undefined ? rawPayload.liveMode : liveMode
+      status: rawPayload?.status || 'draft',
+      liveMode: rawPayload?.liveMode !== undefined ? rawPayload.liveMode : context.liveMode,
+      currency,
+      title: rawPayload?.title || context.invoiceTitle,
+      termsNotes: firstDefined(rawPayload?.termsNotes, context.termsNotes),
+      ...(context.invoiceNumberPrefix && !rawPayload?.invoiceNumberPrefix ? { invoiceNumberPrefix: context.invoiceNumberPrefix } : {}),
+      businessDetails: rawPayload?.businessDetails || context.businessDetails,
+      amountPaid: numberOrNull(rawPayload?.amountPaid) || 0,
+      amountDue: numberOrNull(rawPayload?.amountDue) || Number(rawPayload?.total || 0),
+      issueDate: rawPayload?.issueDate || rawPayload?.schedule?.rrule?.startDate || String(rawPayload?.schedule?.executeAt || '').slice(0, 10),
+      dueDate: rawPayload?.dueDate || rawPayload?.schedule?.rrule?.startDate || String(rawPayload?.schedule?.executeAt || '').slice(0, 10),
+      ...(items.length ? { items, invoiceItems: rawPayload?.invoiceItems || items } : {})
     });
     const shouldSchedule = req.body?.scheduleNow !== false;
 
@@ -1420,12 +1621,15 @@ export const createInvoiceSchedule = async (req, res) => {
       }
     }
 
+    const normalizedSchedule = normalizeInvoiceSchedule(schedule || {
+      ...payload,
+      id: scheduleId
+    });
+    await persistLocalInvoiceSchedule(normalizedSchedule);
+
     res.json({
       success: true,
-      data: normalizeInvoiceSchedule(schedule || {
-        ...payload,
-        id: scheduleId
-      })
+      data: normalizedSchedule
     });
   } catch (error) {
     logger.error(`Error creando invoice schedule: ${error.message}`);
@@ -1463,12 +1667,31 @@ export const listInvoiceSchedules = async (req, res) => {
       .filter(schedule => schedule.id)
       .sort((left, right) => timestamp(right.sortDate) - timestamp(left.sortDate));
 
+    await persistLocalInvoiceSchedules(data);
+
     res.json({
       success: true,
       data
     });
   } catch (error) {
-    logger.error(`Error listando invoice schedules: ${error.message}`);
+    logger.warn(`No se pudo sincronizar invoice schedules desde GHL; usando cache local si existe: ${error.message}`);
+
+    try {
+      const data = await listLocalInvoiceSchedules({
+        activeOnly: req.query.activeOnly === 'true'
+      });
+
+      if (data.length > 0) {
+        return res.json({
+          success: true,
+          data,
+          source: 'local_cache'
+        });
+      }
+    } catch (localError) {
+      logger.error(`Error leyendo cache local de invoice schedules: ${localError.message}`);
+    }
+
     res.status(500).json({
       success: false,
       error: error.message || 'Error al obtener planes de pago'
@@ -1498,12 +1721,29 @@ export const getInvoiceSchedule = async (req, res) => {
       });
     }
 
+    const normalizedSchedule = normalizeInvoiceSchedule(schedule);
+    await persistLocalInvoiceSchedule(normalizedSchedule);
+
     res.json({
       success: true,
-      data: normalizeInvoiceSchedule(schedule)
+      data: normalizedSchedule
     });
   } catch (error) {
-    logger.error(`Error obteniendo invoice schedule ${req.params.scheduleId}: ${error.message}`);
+    logger.warn(`No se pudo obtener invoice schedule ${req.params.scheduleId} desde GHL; intentando cache local: ${error.message}`);
+
+    try {
+      const localSchedule = await getLocalInvoiceSchedule(req.params.scheduleId);
+      if (localSchedule) {
+        return res.json({
+          success: true,
+          data: localSchedule,
+          source: 'local_cache'
+        });
+      }
+    } catch (localError) {
+      logger.error(`Error leyendo plan local ${req.params.scheduleId}: ${localError.message}`);
+    }
+
     res.status(500).json({
       success: false,
       error: error.message || 'Error al obtener plan de pago'
@@ -1557,9 +1797,12 @@ export const updateInvoiceSchedule = async (req, res) => {
       schedule = extractScheduleFromResponse(detailResponse);
     }
 
+    const normalizedSchedule = normalizeInvoiceSchedule(schedule || payload);
+    await persistLocalInvoiceSchedule(normalizedSchedule);
+
     res.json({
       success: true,
-      data: normalizeInvoiceSchedule(schedule || payload)
+      data: normalizedSchedule
     });
   } catch (error) {
     logger.error(`Error actualizando invoice schedule ${req.params.scheduleId}: ${error.message}`);
