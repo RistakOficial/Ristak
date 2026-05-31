@@ -28,6 +28,8 @@ const CLARIFICATION_OPTION_LIMIT = 5
 const MAX_TOOL_ROUNDS = 6
 const DEFAULT_PAYMENT_CURRENCY = 'MXN'
 const DEFAULT_PAYMENT_TIMEZONE = 'America/Mexico_City'
+const DEFAULT_AI_RESPONSE_STYLE = 'direct'
+const DEFAULT_AI_RECOMMENDATION_MODE = 'on_request'
 const isPostgres = Boolean(process.env.DATABASE_URL)
 
 const paidStatuses = "('paid','succeeded','success','completed','complete')"
@@ -2062,6 +2064,83 @@ function buildSafeViewContext(viewContext) {
   }
 }
 
+function normalizeAIAgentResponseStyle(value) {
+  const normalized = normalizeText(value)
+  if (['direct', 'balanced', 'advisor'].includes(normalized)) return normalized
+  if (/(directo|concreto|breve|corto)/.test(normalized)) return 'direct'
+  if (/(asesor|estrateg|consultor|recomend)/.test(normalized)) return 'advisor'
+  if (/(balance|normal|medio)/.test(normalized)) return 'balanced'
+  return DEFAULT_AI_RESPONSE_STYLE
+}
+
+function normalizeAIAgentRecommendationMode(value) {
+  const normalized = normalizeText(value)
+  if (['on_request', 'when_useful', 'proactive'].includes(normalized)) return normalized
+  if (/(solo|pid|request|ask|explicit)/.test(normalized)) return 'on_request'
+  if (/(riesgo|util|important|critical|cuando)/.test(normalized)) return 'when_useful'
+  if (/(siempre|proactiv|asesor)/.test(normalized)) return 'proactive'
+  return DEFAULT_AI_RECOMMENDATION_MODE
+}
+
+function getResponseStyleLabel(value) {
+  const style = normalizeAIAgentResponseStyle(value)
+  if (style === 'advisor') return 'Asesor estratégico'
+  if (style === 'balanced') return 'Balanceado'
+  return 'Directo al dato'
+}
+
+function getRecommendationModeLabel(value) {
+  const mode = normalizeAIAgentRecommendationMode(value)
+  if (mode === 'proactive') return 'Proactivas'
+  if (mode === 'when_useful') return 'Sólo si hay algo importante'
+  return 'Sólo cuando el usuario las pida'
+}
+
+function isRecommendationRequest(message) {
+  const text = normalizeText(message)
+  return /(recomiend|recomendacion|recomendaciones|que hago|qué hago|que harias|qué harías|siguiente accion|siguiente acción|accion recomendada|acción recomendada|plan|estrategia|optimiza|optimizar|mejorar|oportunidad|riesgo|riesgos|analiza|analisis|análisis|diagnostic|diagnóstico|que ves|qué ves|consejo|asesora|asesoria|asesoría|deberia|debería|conviene|escala|escalar|pausa|pausar|corta|cortar)/i.test(text)
+}
+
+function buildResponseBehaviorInstructions(config, latestUserMessage = '') {
+  const responseStyle = normalizeAIAgentResponseStyle(config?.response_style)
+  const recommendationMode = normalizeAIAgentRecommendationMode(config?.recommendation_mode)
+  const recommendationRequested = isRecommendationRequest(latestUserMessage)
+  const lines = [
+    `Configuración de respuesta del usuario: estilo=${responseStyle}; recomendaciones=${recommendationMode}.`,
+    'Regla principal: responde exactamente lo que el usuario preguntó. La calidad, tamaño y profundidad de la respuesta deben seguir la calidad, tamaño y profundidad de la pregunta.',
+    'Si el usuario pide un dato específico, entrega ese dato primero y no agregues secciones extra de negocio, moralejas, consejos ni siguientes acciones.'
+  ]
+
+  if (responseStyle === 'direct') {
+    lines.push(
+      'Modo Directo: usa respuestas cortas. Para una métrica o ganador: 1 frase inicial + tabla compacta sólo si hay varias métricas + una observación máxima si evita malinterpretar el dato.',
+      'No uses "Qué significa", "Siguiente acción", "Acción recomendada", planes, recomendaciones ni contexto amplio salvo que el usuario lo pida explícitamente.'
+    )
+  } else if (responseStyle === 'balanced') {
+    lines.push(
+      'Modo Balanceado: responde el dato y agrega una lectura breve sólo cuando aporte claridad. Mantén máximo una recomendación corta si el usuario pidió criterio o si hay un riesgo evidente.'
+    )
+  } else {
+    lines.push(
+      'Modo Asesor estratégico: puedes explicar más, conectar con contexto del negocio y recomendar acciones, pero sin ignorar la pregunta concreta.'
+    )
+  }
+
+  if (recommendationMode === 'on_request' && !recommendationRequested) {
+    lines.push('Recomendaciones bloqueadas para esta respuesta: el usuario no las pidió explícitamente. Puedes usar "Observación:" sólo si hay una alerta crítica o una aclaración indispensable.')
+  } else if (recommendationMode === 'when_useful' && !recommendationRequested) {
+    lines.push('No des recomendaciones por rutina. Sólo agrega una acción si detectas un riesgo alto, una oportunidad muy clara o un error que pueda costar dinero.')
+  } else if (recommendationMode === 'proactive') {
+    lines.push('Puedes agregar recomendaciones proactivas cuando ayuden, pero primero responde el dato pedido y manténlas breves.')
+  } else {
+    lines.push('El usuario pidió criterio/recomendación: puedes incluir lectura, recomendaciones y siguiente acción, manteniendo claridad y sin alargar de más.')
+  }
+
+  lines.push('Para preguntas como "cuál campaña fue más rentable", responde la ganadora y el ranking/métricas necesarias. No recomiendes escalar, pausar o cortar presupuesto salvo que pregunte qué hacer.')
+
+  return lines.join('\n')
+}
+
 function buildBusinessProfileContext(config) {
   if (!config) return 'Sin contexto de negocio configurado.'
 
@@ -2072,6 +2151,8 @@ function buildBusinessProfileContext(config) {
     ['Zona geografica', config.location_context],
     ['Competidores o referencias', config.competitors_context],
     ['Tono, prioridades y restricciones', config.brand_voice],
+    ['Estilo de respuesta', getResponseStyleLabel(config.response_style)],
+    ['Politica de recomendaciones', getRecommendationModeLabel(config.recommendation_mode)],
     ['Dominios preferidos para investigar', config.research_domains],
     ['Investigacion online', config.web_search_enabled ? 'Activada' : 'Desactivada']
   ]
@@ -2854,35 +2935,37 @@ async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, ru
     paymentActionRequest: isPaymentActionRequest(latestUserMessage)
   })
   const agentTools = [...webSearchTools, ...highLevelTools]
+  const responseBehaviorInstructions = buildResponseBehaviorInstructions(agentConfig, latestUserMessage)
   const instructions = [
     'Eres el Agente AI interno de Ristak.',
-    'Responde como analista senior de crecimiento y rentabilidad que asesora al dueño del negocio: orientado a escalar utilidad, ROI y éxito, pero en lenguaje simple y claro, sin jerga técnica, sin sarcasmo y sin burlas.',
+    'Responde como analista senior de crecimiento y rentabilidad que asesora al dueño del negocio, pero no conviertas cada respuesta en asesoría si el usuario sólo pidió un dato.',
+    responseBehaviorInstructions,
     'Tu respuesta debe ser friendly, directa y visual: una idea por bloque, líneas cortas, aire entre secciones y cero datos amontonados en un párrafo largo.',
-    'Empieza con la respuesta concreta en lenguaje natural. Si hay métricas importantes o comparativos, muéstralas en tabla. Luego explica qué significa para el negocio y termina con una acción recomendada si aplica.',
+    'Empieza con la respuesta concreta en lenguaje natural. Si hay métricas importantes o comparativos, muéstralas en tabla. Sólo explica qué significa o recomienda una acción cuando el usuario haya pedido criterio, análisis o recomendaciones.',
     'Evita jerga técnica. Si usas ROAS, CAC, atribución, cohort o términos parecidos, explícalos en palabras simples o usa una frase equivalente.',
     'Para preguntas de campañas o anuncios, sí da el ranking por ROAS (ganadora primero) con ingresos atribuidos y utilidad por campaña; para otras preguntas, muestra primero el ganador o el dato clave y evita rankings innecesariamente largos.',
     'Cuando el usuario pida información de un registro específico o una lista de contactos, citas, pagos, campañas, anuncios o fuentes, NO respondas en un párrafo largo. Preséntalo con líneas cortas, labels claros, negritas y espacios entre bloques.',
     'Puedes usar Markdown ligero porque el chat lo renderiza bonito: **negritas**, listas numeradas y tablas simples de 2 columnas. No uses encabezados # ni tablas enormes. Deja una línea en blanco entre bloques importantes.',
     'No conviertas explicaciones normales, conclusiones, contexto, notas, fechas/hora local, "dato útil" o recomendaciones en fichas pesadas ni tablas. Déjalas como párrafos cortos o listas limpias; usa tablas sólo para métricas, registros repetidos y comparativos donde realmente faciliten leer.',
     'Nunca muestres la fecha/hora local o el timezone en la respuesta salvo que el usuario lo pida explícitamente. Es contexto interno, no contenido visual para el chat.',
-    'Para campañas o comparativos de métricas, usa este estilo obligatorio: frase corta inicial, línea destacada con 🏆 y el ganador en **negritas**, periodo, tabla de Métrica/Resultado, ranking corto, conclusión y siguiente acción.',
+    'Para campañas o comparativos de métricas, usa este estilo: frase corta inicial, línea destacada con 🏆 y el ganador en **negritas**, periodo y tabla/ranking corto si ayuda. Conclusión y siguiente acción sólo si el usuario pidió interpretación o recomendaciones.',
     'En rankings usa siempre formato Markdown con punto: "1.", "2.", "3.". Nunca uses "1)" ni metas rankings pegados a párrafos.',
     'No juntes métricas distintas en una sola línea con pipes o barras, por ejemplo evita "Leads: 46 | Ventas: 9". Si son 3 o más métricas importantes, usa tabla; si son 1 o 2 datos simples, usa texto normal.',
-    'Para campañas rentables usa esta estructura visual: "Tu campaña más rentable es:", línea "🏆 **Nombre de campaña**", "Periodo: ...", tabla "| Métrica | Resultado |", bloque "**Ranking por ROAS**" y cierre "**Conclusión:** ...".',
+    'Para campañas rentables usa esta estructura visual: "Tu campaña más rentable es:", línea "🏆 **Nombre de campaña**", "Periodo: ...", tabla "| Métrica | Resultado |" y bloque "**Ranking por ROAS**" si hay varias campañas. No agregues cierre de recomendación si no lo pidió.',
     'Cuando ayude a entender una comparación o tendencia, puedes agregar una gráfica visual breve con este formato exacto y sólo 3 a 8 valores: ```ristak-chart\\ntype: bar\\ntitle: ROAS por campaña\\nRetargeting | 18.36x | highlight\\nVideo Error | 6.51x\\n``` o type: line para evolución mensual. Usa "highlight" para el dato que quieras subrayar/circular visualmente. No uses este bloque si no aporta claridad.',
-    'Formato recomendado para un contacto: "**Contacto**\\nNombre: ...\\nTeléfono: ...\\nFecha de entrada: ...\\nOrigen: ...\\nCampaña/anuncio: ...\\nCitas: ...\\nPagos: ...\\nEstado: ...\\n\\n**Lectura de negocio:** ...\\n**Siguiente acción:** ...".',
-    'Formato recomendado para pagos, citas o campañas: empieza con "**Resumen**", luego usa tabla sólo si hay varias métricas/campos clave; si son pocos datos, usa labels en texto normal. Después "**Qué significa:**" y "**Siguiente acción:**".',
+    'Formato recomendado para un contacto: "**Contacto**\\nNombre: ...\\nTeléfono: ...\\nFecha de entrada: ...\\nOrigen: ...\\nCampaña/anuncio: ...\\nCitas: ...\\nPagos: ...\\nEstado: ...". Agrega lectura o siguiente acción sólo si el usuario lo pidió.',
+    'Formato recomendado para pagos, citas o campañas: empieza con "**Resumen**", luego usa tabla sólo si hay varias métricas/campos clave; si son pocos datos, usa labels en texto normal. Agrega "**Qué significa:**" o "**Siguiente acción:**" sólo cuando se pida análisis/recomendación.',
     'Usa máximo un emoji visual cuando ayude a orientar (ej. 🏆 para ganador). No llenes la respuesta de símbolos.',
     'Si son varios registros, muestra máximo 5 en formato escaneable y cierra con el total o la lectura principal. Si hay más, di cuántos faltan sin pedir permiso para seguir.',
     'No metas notas de criterio largas. Si hace falta una aclaración, que sea una frase corta al final.',
-    'Si calculas porcentajes o diferencias, tradúcelos a significado de negocio.',
-    'Usa el contexto configurado del negocio para que tus recomendaciones entiendan mercado, nicho, cliente ideal, zona, cultura local, competencia y prioridades.',
+    'Si calculas porcentajes o diferencias, tradúcelos a significado de negocio sólo cuando el usuario pidió interpretación o cuando el número pueda confundirse.',
+    'Usa el contexto configurado del negocio para interpretar datos y para recomendaciones cuando el usuario las pida; no lo uses como excusa para alargar respuestas simples.',
     'Cuando el usuario pregunte si una campaña o anuncio está generando citas, ventas o ingresos, SÍ puedes responderlo con el modelo de atribución de Publicidad (attribution_ad_id + fecha de creación del contacto). Nunca digas que no se puede saber, que falta amarrar la venta, ni pidas UTMs o una ventana de pago. La venta y el ingreso se atribuyen al día en que se creó el contacto, no a la fecha del pago.',
     'Evalúa campañas y anuncios SIEMPRE por retorno vs gasto (ROAS = ingresos atribuidos ÷ gasto) y por utilidad (ingresos atribuidos − gasto). NUNCA juzgues, pauses o escales una campaña por CPC, CPM, CTR, clicks, likes o alcance: esas son diagnósticas. Un click caro con ROAS alto es ganador; un click barato sin ventas es perdedor.',
     'El ROAS de publicidad usa ingresos ATRIBUIDOS a los anuncios, no los ingresos totales del negocio. No mezcles el ingreso total del negocio con el gasto de ads para sacar ROAS.',
     'Sé coherente en toda la conversación: usa el mismo criterio (ROAS/utilidad) siempre y no te contradigas. Si en un mensaje anterior juzgaste una campaña con datos parciales o con una métrica secundaria (ej. CPC), y ahora tienes datos completos, corrige explícito y re-evalúa por ROAS/utilidad.',
     'No concluyas ni recomiendes con datos parciales. Si el usuario pidió un rango (ej. últimos 90 días), responde con TODO ese rango, no solo el mes actual. Si te falta data para decidir, consíguela antes de recomendar; no inventes ni des veredictos a medias.',
-    'Sé decisivo y proactivo: cuando pregunten por campañas, entrega de una vez el ranking por ROAS con ingresos atribuidos y la acción clara (cuál escalar con más presupuesto, cuál cortar) y el impacto esperado en utilidad. No ofrezcas "¿quieres que lo saque?": sácalo y preséntalo.',
+    'Sé decisivo con los datos: cuando pregunten por campañas, entrega de una vez el ranking por ROAS con ingresos atribuidos. Da acciones como escalar/cortar presupuesto sólo si el usuario pregunta qué hacer, pide recomendaciones o el modo de recomendaciones lo permite.',
     'NO uses la herramienta de busqueda web cuando la pregunta sea analisis interno del negocio: ventas, campanas, pagos, citas, contactos, ROAS, rentabilidad, conteos, tendencias o cualquier cosa que se pueda contestar con la DB. En esos casos responde solo con la data interna y sin citar enlaces externos.',
     'Usa la busqueda web SOLO cuando el usuario pida explicitamente ideas o contexto externo: estrategia de mercado, benchmarks de la industria, tendencias del sector, contexto social, cultural, politico, geografico, regulatorio, competidores externos, noticias o temporada. Si tienes duda, asume que es pregunta interna y no busques.',
     'Cuando uses informacion externa, cita los enlaces dentro del texto de la respuesta (no como lista al final) y conectalos con los datos internos del negocio.',
@@ -3642,6 +3725,8 @@ export async function getAIAgentConfig() {
       competitors_context,
       brand_voice,
       research_domains,
+      response_style,
+      recommendation_mode,
       web_search_enabled,
       updated_at
     FROM ai_agent_config
@@ -3665,6 +3750,8 @@ export async function getAIAgentStatus() {
       competitorsContext: config?.competitors_context || '',
       brandVoice: config?.brand_voice || '',
       researchDomains: config?.research_domains || '',
+      responseStyle: normalizeAIAgentResponseStyle(config?.response_style),
+      recommendationMode: normalizeAIAgentRecommendationMode(config?.recommendation_mode),
       webSearchEnabled: toBooleanValue(config?.web_search_enabled),
       updatedAt: config?.updated_at || null
     }
@@ -3689,6 +3776,8 @@ export async function getAIAgentStatus() {
     competitorsContext: config.competitors_context || '',
     brandVoice: config.brand_voice || '',
     researchDomains: config.research_domains || '',
+    responseStyle: normalizeAIAgentResponseStyle(config.response_style),
+    recommendationMode: normalizeAIAgentRecommendationMode(config.recommendation_mode),
     webSearchEnabled: toBooleanValue(config.web_search_enabled),
     updatedAt: config.updated_at || null
   }
@@ -3703,6 +3792,8 @@ export async function saveAIAgentConfig({
   competitorsContext,
   brandVoice,
   researchDomains,
+  responseStyle,
+  recommendationMode,
   webSearchEnabled
 } = {}) {
   const encryptedKey = apiKey ? encrypt(apiKey) : null
@@ -3719,10 +3810,12 @@ export async function saveAIAgentConfig({
       competitors_context,
       brand_voice,
       research_domains,
+      response_style,
+      recommendation_mode,
       web_search_enabled,
       updated_at
     )
-    VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
     ON CONFLICT(id) DO UPDATE SET
       openai_api_key_encrypted = COALESCE(excluded.openai_api_key_encrypted, ai_agent_config.openai_api_key_encrypted),
       model = excluded.model,
@@ -3733,6 +3826,8 @@ export async function saveAIAgentConfig({
       competitors_context = excluded.competitors_context,
       brand_voice = excluded.brand_voice,
       research_domains = excluded.research_domains,
+      response_style = excluded.response_style,
+      recommendation_mode = excluded.recommendation_mode,
       web_search_enabled = excluded.web_search_enabled,
       updated_at = CURRENT_TIMESTAMP
   `, [
@@ -3745,6 +3840,8 @@ export async function saveAIAgentConfig({
     cleanConfigText(competitorsContext),
     cleanConfigText(brandVoice),
     cleanConfigText(researchDomains, 1500),
+    normalizeAIAgentResponseStyle(responseStyle),
+    normalizeAIAgentRecommendationMode(recommendationMode),
     webSearchEnabled ? 1 : 0
   ])
 

@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { Bot, CheckCircle, Database, Eye, EyeOff, Globe2, KeyRound, MessageCircle, Save, Sparkles, Trash2, XCircle } from 'lucide-react'
 import { Button, Card } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
-import { aiAgentService, type AIAgentConfigStatus } from '@/services/aiAgentService'
+import { aiAgentService, type AIAgentConfigStatus, type AIAgentRecommendationMode, type AIAgentResponseStyle } from '@/services/aiAgentService'
 import styles from './AIAgentSettings.module.css'
 
 const emptyStatus: AIAgentConfigStatus = {
@@ -16,6 +16,8 @@ const emptyStatus: AIAgentConfigStatus = {
   competitorsContext: '',
   brandVoice: '',
   researchDomains: '',
+  responseStyle: 'direct',
+  recommendationMode: 'on_request',
   webSearchEnabled: false,
   updatedAt: null
 }
@@ -28,8 +30,54 @@ const emptyForm = {
   competitorsContext: '',
   brandVoice: '',
   researchDomains: '',
+  responseStyle: 'direct' as AIAgentResponseStyle,
+  recommendationMode: 'on_request' as AIAgentRecommendationMode,
   webSearchEnabled: false
 }
+
+const responseStyleOptions: Array<{
+  value: AIAgentResponseStyle
+  label: string
+  description: string
+}> = [
+  {
+    value: 'direct',
+    label: 'Directo al dato',
+    description: 'Contesta exactamente lo preguntado y no se extiende.'
+  },
+  {
+    value: 'balanced',
+    label: 'Balanceado',
+    description: 'Dato primero, con una lectura breve cuando aporte.'
+  },
+  {
+    value: 'advisor',
+    label: 'Asesor',
+    description: 'Más contexto y criterio estratégico por defecto.'
+  }
+]
+
+const recommendationModeOptions: Array<{
+  value: AIAgentRecommendationMode
+  label: string
+  description: string
+}> = [
+  {
+    value: 'on_request',
+    label: 'Sólo si las pido',
+    description: 'No da acciones ni consejos si sólo pediste un dato.'
+  },
+  {
+    value: 'when_useful',
+    label: 'Si hay algo importante',
+    description: 'Recomienda sólo ante riesgos u oportunidades claras.'
+  },
+  {
+    value: 'proactive',
+    label: 'Proactivas',
+    description: 'Puede sugerir acciones aunque no las pidas.'
+  }
+]
 
 export const AIAgentSettings: React.FC = () => {
   const { showToast, showConfirm } = useNotification()
@@ -60,6 +108,8 @@ export const AIAgentSettings: React.FC = () => {
         competitorsContext: nextStatus.competitorsContext || '',
         brandVoice: nextStatus.brandVoice || '',
         researchDomains: nextStatus.researchDomains || '',
+        responseStyle: nextStatus.responseStyle || 'direct',
+        recommendationMode: nextStatus.recommendationMode || 'on_request',
         webSearchEnabled: Boolean(nextStatus.webSearchEnabled)
       })
     } catch (error: any) {
@@ -271,6 +321,50 @@ export const AIAgentSettings: React.FC = () => {
         </div>
 
         <div className={styles.section} style={{ marginTop: 22 }}>
+          <h3 className={styles.sectionTitle}>Comportamiento de respuestas</h3>
+          <div className={styles.behaviorGrid}>
+            <div className={styles.field}>
+              <label className={styles.label}>Estilo por defecto</label>
+              <div className={styles.optionGroup}>
+                {responseStyleOptions.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    className={`${styles.optionButton} ${form.responseStyle === option.value ? styles.optionButtonActive : ''}`}
+                    onClick={() => updateField('responseStyle', option.value)}
+                    disabled={saving || loading}
+                  >
+                    <span className={styles.optionLabel}>{option.label}</span>
+                    <span className={styles.optionDescription}>{option.description}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className={styles.field}>
+              <label className={styles.label}>Recomendaciones</label>
+              <div className={styles.optionGroup}>
+                {recommendationModeOptions.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    className={`${styles.optionButton} ${form.recommendationMode === option.value ? styles.optionButtonActive : ''}`}
+                    onClick={() => updateField('recommendationMode', option.value)}
+                    disabled={saving || loading}
+                  >
+                    <span className={styles.optionLabel}>{option.label}</span>
+                    <span className={styles.optionDescription}>{option.description}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+          <p className={styles.helper}>
+            En modo directo, si preguntas “cuál campaña es más rentable”, el agente responde el dato y las métricas necesarias. Sólo se pone consultor si se lo pides.
+          </p>
+        </div>
+
+        <div className={styles.section} style={{ marginTop: 22 }}>
           <h3 className={styles.sectionTitle}>Investigación online</h3>
           <label className={styles.toggleRow}>
             <input
@@ -332,6 +426,18 @@ export const AIAgentSettings: React.FC = () => {
                 <span className={styles.detailValue}>
                   <Globe2 size={15} />
                   {status.webSearchEnabled ? 'Activada' : 'Desactivada'}
+                </span>
+              </div>
+              <div className={styles.detailItem}>
+                <span className={styles.detailLabel}>Respuesta</span>
+                <span className={styles.detailValue}>
+                  {status.responseStyle === 'advisor' ? 'Asesor' : status.responseStyle === 'balanced' ? 'Balanceado' : 'Directo'}
+                </span>
+              </div>
+              <div className={styles.detailItem}>
+                <span className={styles.detailLabel}>Recomendaciones</span>
+                <span className={styles.detailValue}>
+                  {status.recommendationMode === 'proactive' ? 'Proactivas' : status.recommendationMode === 'when_useful' ? 'Si son importantes' : 'Sólo si las pides'}
                 </span>
               </div>
             </div>

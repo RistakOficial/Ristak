@@ -45,6 +45,8 @@ const emptyStatus: AIAgentConfigStatus = {
   competitorsContext: '',
   brandVoice: '',
   researchDomains: '',
+  responseStyle: 'direct',
+  recommendationMode: 'on_request',
   webSearchEnabled: false,
   updatedAt: null
 }
@@ -57,6 +59,8 @@ const emptyForm: AIAgentConfigInput = {
   competitorsContext: '',
   brandVoice: '',
   researchDomains: '',
+  responseStyle: 'direct',
+  recommendationMode: 'on_request',
   webSearchEnabled: false
 }
 
@@ -173,6 +177,8 @@ function statusToForm(status: AIAgentConfigStatus): AIAgentConfigInput {
     competitorsContext: status.competitorsContext || '',
     brandVoice: status.brandVoice || '',
     researchDomains: status.researchDomains || '',
+    responseStyle: status.responseStyle || 'direct',
+    recommendationMode: status.recommendationMode || 'on_request',
     webSearchEnabled: Boolean(status.webSearchEnabled)
   }
 }

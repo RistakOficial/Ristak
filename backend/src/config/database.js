@@ -180,6 +180,8 @@ async function initTables() {
         competitors_context TEXT,
         brand_voice TEXT,
         research_domains TEXT,
+        response_style TEXT DEFAULT 'direct',
+        recommendation_mode TEXT DEFAULT 'on_request',
         web_search_enabled INTEGER DEFAULT 0,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -194,6 +196,8 @@ async function initTables() {
       ['competitors_context', 'TEXT'],
       ['brand_voice', 'TEXT'],
       ['research_domains', 'TEXT'],
+      ['response_style', "TEXT DEFAULT 'direct'"],
+      ['recommendation_mode', "TEXT DEFAULT 'on_request'"],
       ['web_search_enabled', 'INTEGER DEFAULT 0']
     ]
 

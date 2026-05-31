@@ -57,6 +57,8 @@ export async function saveConfig(req, res) {
       competitorsContext: req.body?.competitorsContext,
       brandVoice: req.body?.brandVoice,
       researchDomains: req.body?.researchDomains,
+      responseStyle: req.body?.responseStyle,
+      recommendationMode: req.body?.recommendationMode,
       webSearchEnabled: Boolean(req.body?.webSearchEnabled)
     })
 

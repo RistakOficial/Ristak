@@ -1,4 +1,6 @@
 export type AIAgentRole = 'user' | 'assistant'
+export type AIAgentResponseStyle = 'direct' | 'balanced' | 'advisor'
+export type AIAgentRecommendationMode = 'on_request' | 'when_useful' | 'proactive'
 
 export interface AIAgentMessage {
   id?: string
@@ -29,6 +31,8 @@ export interface AIAgentConfigStatus {
   competitorsContext: string
   brandVoice: string
   researchDomains: string
+  responseStyle: AIAgentResponseStyle
+  recommendationMode: AIAgentRecommendationMode
   webSearchEnabled: boolean
   updatedAt: string | null
 }
@@ -42,6 +46,8 @@ export interface AIAgentConfigInput {
   competitorsContext: string
   brandVoice: string
   researchDomains: string
+  responseStyle: AIAgentResponseStyle
+  recommendationMode: AIAgentRecommendationMode
   webSearchEnabled: boolean
 }
 

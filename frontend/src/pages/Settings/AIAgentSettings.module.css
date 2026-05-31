@@ -205,6 +205,58 @@
   gap: 12px;
 }
 
+.behaviorGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.optionGroup {
+  display: grid;
+  gap: 8px;
+}
+
+.optionButton {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  background: rgba(148, 163, 184, 0.05);
+  color: var(--color-text-secondary);
+  text-align: left;
+  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+
+.optionButton:hover:not(:disabled) {
+  border-color: rgba(100, 116, 139, 0.35);
+  background: rgba(148, 163, 184, 0.08);
+}
+
+.optionButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.68;
+}
+
+.optionButtonActive {
+  border-color: rgba(16, 185, 129, 0.38);
+  background: rgba(16, 185, 129, 0.1);
+  color: var(--color-text-primary);
+}
+
+.optionLabel {
+  font-size: 13px;
+  font-weight: 750;
+  color: var(--color-text-primary);
+}
+
+.optionDescription {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--color-text-tertiary);
+}
+
 .toggleRow {
   display: flex;
   align-items: flex-start;
@@ -303,6 +355,7 @@
 
   .detailsGrid,
   .contextGrid,
+  .behaviorGrid,
   .capabilities {
     grid-template-columns: 1fr;
   }
