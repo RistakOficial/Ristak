@@ -202,7 +202,7 @@ export const Campaigns: React.FC = () => {
   const [expandedCampaigns, setExpandedCampaigns] = useState<Set<string>>(new Set())
   const [expandedAdSets, setExpandedAdSets] = useState<Set<string>>(new Set())
   const [viewMode, setViewMode] = useState<'campaigns' | 'winners'>('campaigns')
-  const [winnersCategory, setWinnersCategory] = useState<'campaigns' | 'adsets' | 'ads'>('campaigns')
+  const [winnersCategory, setWinnersCategory] = useState<'campaigns' | 'adsets' | 'ads'>('ads')
   const [campaignSummary, setCampaignSummary] = useState<CampaignsReport['summary'] | null>(null)
   const [selectedChart, setSelectedChart] = useState<ChartView>('revenue')
 
@@ -1995,7 +1995,15 @@ export const Campaigns: React.FC = () => {
             <button
               type="button"
               className={styles.viewToggleButton}
-              onClick={() => setViewMode(viewMode === 'campaigns' ? 'winners' : 'campaigns')}
+              onClick={() => {
+                if (viewMode === 'campaigns') {
+                  setWinnersCategory('ads')
+                  setViewMode('winners')
+                  return
+                }
+
+                setViewMode('campaigns')
+              }}
               aria-pressed={viewMode === 'winners'}
             >
               <Trophy size={16} />
