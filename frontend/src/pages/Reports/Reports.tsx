@@ -1106,12 +1106,15 @@ interface BusinessExpenseCellProps {
   value: number
   row: TableRow
   saving: boolean
-  onCommit: (row: TableRow, value: string) => void
+  onCommit: (row: TableRow, value: string) => Promise<number | null>
 }
 
 const formatBusinessExpenseDraft = (value: number) => {
   if (!Number.isFinite(value) || value <= 0) return ''
-  return roundCurrencyValue(value).toFixed(2)
+  return new Intl.NumberFormat('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  }).format(roundCurrencyValue(value))
 }
 
 const BusinessExpenseCell: React.FC<BusinessExpenseCellProps> = ({ value, row, saving, onCommit }) => {
@@ -1124,8 +1127,11 @@ const BusinessExpenseCell: React.FC<BusinessExpenseCellProps> = ({ value, row, s
     }
   }, [value, focused])
 
-  const handleCommit = () => {
-    onCommit(row, draft)
+  const handleCommit = async () => {
+    const savedAmount = await onCommit(row, draft)
+    if (savedAmount !== null) {
+      setDraft(formatBusinessExpenseDraft(savedAmount))
+    }
   }
 
   return (
@@ -1147,7 +1153,7 @@ const BusinessExpenseCell: React.FC<BusinessExpenseCellProps> = ({ value, row, s
         onKeyDown={(event) => {
           if (event.key === 'Enter') {
             event.preventDefault()
-            handleCommit()
+            void handleCommit()
           }
           if (event.key === 'Escape') {
             event.preventDefault()
@@ -1176,7 +1182,7 @@ export const Reports: React.FC = () => {
   const [showAnalyticsConfig] = useAppConfig<string | number | boolean>('show_analytics', '1')
   const [manualBusinessExpensesEnabledConfig] = useAppConfig<string | number | boolean>(
     MANUAL_BUSINESS_EXPENSES_CONFIG_KEY,
-    '1'
+    '0'
   )
 
   // FORZAR valores si estamos en dominio .onrender.com
@@ -1389,12 +1395,12 @@ export const Reports: React.FC = () => {
     calculateManualBusinessExpensesForRange(apiRange, manualBusinessExpenses)
   ), [apiRange, manualBusinessExpenses])
 
-  const handleSaveBusinessExpense = useCallback(async (row: TableRow, rawValue: string) => {
+  const handleSaveBusinessExpense = useCallback(async (row: TableRow, rawValue: string): Promise<number | null> => {
     const amount = parseManualExpenseInput(rawValue)
 
     if (amount === null) {
       showToast('warning', 'Gasto inválido', 'Ingresa un monto positivo')
-      return
+      return null
     }
 
     const periodStart = getManualExpensePeriodStart(row.date, viewType)
@@ -1421,9 +1427,12 @@ export const Reports: React.FC = () => {
       })
     } catch (error: any) {
       showToast('error', 'No se pudo guardar el gasto', error?.message || 'Intenta nuevamente')
+      return null
     } finally {
       setSavingManualBusinessExpenseKey(null)
     }
+
+    return amount
   }, [showToast, viewType])
 
   const tableData: TableRow[] = useMemo(() => (

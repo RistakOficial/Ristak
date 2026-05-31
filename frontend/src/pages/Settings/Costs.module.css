@@ -85,6 +85,7 @@ body.dark .iconWrapper {
 .switchControl {
   position: relative;
   display: inline-flex;
+  align-items: center;
   width: 48px;
   height: 28px;
   flex: 0 0 auto;
@@ -92,16 +93,19 @@ body.dark .iconWrapper {
 
 .switchControl input {
   position: absolute;
+  inset: 0;
   opacity: 0;
-  pointer-events: none;
+  cursor: pointer;
 }
 
 .switchTrack {
   position: relative;
+  display: block;
   width: 100%;
   height: 100%;
+  box-sizing: border-box;
   border-radius: 999px;
-  background: var(--color-border);
+  background: #cbd5e1;
   cursor: pointer;
   transition: background 0.2s ease;
 }
@@ -120,11 +124,15 @@ body.dark .iconWrapper {
 }
 
 .switchControl input:checked + .switchTrack {
-  background: var(--color-primary);
+  background: #047857;
 }
 
 .switchControl input:checked + .switchTrack::before {
   transform: translateX(20px);
+}
+
+.switchControl input:focus-visible + .switchTrack {
+  box-shadow: 0 0 0 3px rgba(4, 120, 87, 0.18);
 }
 
 .switchControl input:disabled + .switchTrack {

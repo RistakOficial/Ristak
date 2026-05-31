@@ -15,6 +15,8 @@ const REPORT_TABLE_CONFIG_KEYS = REPORT_TYPES.flatMap((reportType) => (
   REPORT_VIEW_TYPES.map((viewType) => `table_reports_metrics_${reportType}_${viewType}`)
 ))
 
+type TableColumnConfig = { id: string; visible?: boolean; order?: number }
+
 const parseConfigFlag = (value: unknown) => {
   if (typeof value === 'string') {
     const normalized = value.trim().toLowerCase()
@@ -26,7 +28,7 @@ const parseConfigFlag = (value: unknown) => {
   return Boolean(value)
 }
 
-const parseTableConfig = (value: unknown): Array<{ id: string; visible?: boolean }> => {
+const parseTableConfig = (value: unknown): TableColumnConfig[] => {
   if (Array.isArray(value)) return value
 
   if (typeof value === 'string' && value.trim()) {
@@ -41,6 +43,47 @@ const parseTableConfig = (value: unknown): Array<{ id: string; visible?: boolean
   return []
 }
 
+const normalizeTableConfigOrder = (config: TableColumnConfig[]) => (
+  config.map((column, index) => ({
+    ...column,
+    visible: column.visible !== false,
+    order: index
+  }))
+)
+
+const setManualExpenseColumnVisibilityInConfig = (
+  config: TableColumnConfig[],
+  visible: boolean
+) => {
+  const currentConfig = normalizeTableConfigOrder(config)
+  const existingIndex = currentConfig.findIndex((column) => column.id === MANUAL_BUSINESS_EXPENSES_COLUMN_KEY)
+
+  if (existingIndex >= 0) {
+    currentConfig[existingIndex] = {
+      ...currentConfig[existingIndex],
+      visible
+    }
+    return normalizeTableConfigOrder(currentConfig)
+  }
+
+  const manualColumn = {
+    id: MANUAL_BUSINESS_EXPENSES_COLUMN_KEY,
+    visible,
+    order: 1
+  }
+  const dateIndex = currentConfig.findIndex((column) => column.id === 'date')
+  const spendIndex = currentConfig.findIndex((column) => column.id === 'spend')
+  const insertIndex = dateIndex >= 0
+    ? dateIndex + 1
+    : spendIndex >= 0
+      ? spendIndex
+      : Math.min(1, currentConfig.length)
+
+  const nextConfig = [...currentConfig]
+  nextConfig.splice(insertIndex, 0, manualColumn)
+  return normalizeTableConfigOrder(nextConfig)
+}
+
 export const Costs: React.FC = () => {
   const { showToast, showConfirm } = useNotification()
 
@@ -49,8 +92,9 @@ export const Costs: React.FC = () => {
   const [showModal, setShowModal] = useState(false)
   const [editingCost, setEditingCost] = useState<Cost | null>(null)
   const [manualBusinessExpensesEnabled, setManualBusinessExpensesEnabled, syncingManualBusinessExpenses] =
-    useAppConfig<string | number | boolean>(MANUAL_BUSINESS_EXPENSES_CONFIG_KEY, '1')
-  const [manualExpenseColumnAvailable, setManualExpenseColumnAvailable] = useState(false)
+    useAppConfig<string | number | boolean>(MANUAL_BUSINESS_EXPENSES_CONFIG_KEY, '0')
+  const [manualExpenseColumnVisible, setManualExpenseColumnVisible] = useState(false)
+  const [savingManualExpenseToggle, setSavingManualExpenseToggle] = useState(false)
 
   // Form state
   const [name, setName] = useState('')
@@ -62,10 +106,10 @@ export const Costs: React.FC = () => {
 
   useEffect(() => {
     loadCosts()
-    loadManualExpenseColumnAvailability()
+    loadManualExpenseColumnVisibility()
   }, [])
 
-  const loadManualExpenseColumnAvailability = useCallback(async () => {
+  const loadManualExpenseColumnVisibility = useCallback(async () => {
     try {
       const keysParam = REPORT_TABLE_CONFIG_KEYS.join(',')
       const response = await fetch(`/api/config?keys=${keysParam}`)
@@ -79,17 +123,58 @@ export const Costs: React.FC = () => {
         ))
       ))
 
-      setManualExpenseColumnAvailable(hasVisibleManualExpenseColumn)
+      setManualExpenseColumnVisible(hasVisibleManualExpenseColumn)
     } catch {
-      setManualExpenseColumnAvailable(false)
+      setManualExpenseColumnVisible(false)
     }
   }, [])
 
+  const updateManualExpenseColumnVisibility = async (visible: boolean) => {
+    const keysParam = REPORT_TABLE_CONFIG_KEYS.join(',')
+    const response = await fetch(`/api/config?keys=${keysParam}`)
+    if (!response.ok) throw new Error('No se pudo leer la configuración de columnas')
+
+    const data = await response.json()
+    const currentConfig = data.config || {}
+    const updates: Record<string, string> = {}
+    const nextConfigs: Record<string, TableColumnConfig[]> = {}
+
+    REPORT_TABLE_CONFIG_KEYS.forEach((key) => {
+      const nextConfig = setManualExpenseColumnVisibilityInConfig(parseTableConfig(currentConfig[key]), visible)
+      nextConfigs[key] = nextConfig
+      updates[key] = JSON.stringify(nextConfig)
+    })
+
+    const saveResponse = await fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ config: updates })
+    })
+
+    if (!saveResponse.ok) throw new Error('No se pudo guardar la configuración de columnas')
+
+    Object.entries(nextConfigs).forEach(([key, nextConfig]) => {
+      try {
+        localStorage.setItem(`rstk_config_${key}`, JSON.stringify(nextConfig))
+        window.dispatchEvent(new CustomEvent('config-sync', {
+          detail: { key, value: nextConfig }
+        }))
+      } catch {
+        // localStorage puede fallar en modos privados; la DB sigue siendo la fuente de verdad.
+      }
+    })
+  }
+
   const handleManualBusinessExpensesToggle = async (checked: boolean) => {
+    setSavingManualExpenseToggle(true)
     try {
+      await updateManualExpenseColumnVisibility(checked)
       await setManualBusinessExpensesEnabled(checked ? '1' : '0')
+      setManualExpenseColumnVisible(checked)
     } catch (error: any) {
       showToast('error', 'No se pudo guardar la configuración', error?.message || 'Intenta nuevamente')
+    } finally {
+      setSavingManualExpenseToggle(false)
     }
   }
 
@@ -228,25 +313,23 @@ export const Costs: React.FC = () => {
           </Button>
         </div>
 
-        {manualExpenseColumnAvailable && (
-          <div className={styles.manualReportToggle}>
-            <div className={styles.manualReportToggleText}>
-              <span className={styles.manualReportToggleTitle}>Costos manuales en reporte</span>
-              <span className={styles.manualReportToggleState}>
-                {parseConfigFlag(manualBusinessExpensesEnabled) ? 'Activo' : 'Inactivo'}
-              </span>
-            </div>
-            <label className={styles.switchControl}>
-              <input
-                type="checkbox"
-                checked={parseConfigFlag(manualBusinessExpensesEnabled)}
-                disabled={syncingManualBusinessExpenses}
-                onChange={(event) => handleManualBusinessExpensesToggle(event.target.checked)}
-              />
-              <span className={styles.switchTrack} />
-            </label>
+        <div className={styles.manualReportToggle}>
+          <div className={styles.manualReportToggleText}>
+            <span className={styles.manualReportToggleTitle}>Costos manuales en reporte</span>
+            <span className={styles.manualReportToggleState}>
+              {parseConfigFlag(manualBusinessExpensesEnabled) && manualExpenseColumnVisible ? 'Activo' : 'Inactivo'}
+            </span>
           </div>
-        )}
+          <label className={styles.switchControl}>
+            <input
+              type="checkbox"
+              checked={parseConfigFlag(manualBusinessExpensesEnabled) && manualExpenseColumnVisible}
+              disabled={syncingManualBusinessExpenses || savingManualExpenseToggle}
+              onChange={(event) => handleManualBusinessExpensesToggle(event.target.checked)}
+            />
+            <span className={styles.switchTrack} />
+          </label>
+        </div>
 
         {loading ? (
           <div className={styles.loadingContainer}>

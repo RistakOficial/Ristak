@@ -234,7 +234,7 @@ async function initTables() {
     try {
       await db.run(`
         INSERT INTO app_config (config_key, config_value)
-        VALUES ('report_manual_business_expenses_enabled', '1')
+        VALUES ('report_manual_business_expenses_enabled', '0')
         ON CONFLICT (config_key) DO NOTHING
       `)
     } catch (err) {
