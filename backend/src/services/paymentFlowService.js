@@ -4,6 +4,7 @@ import { db } from '../config/database.js'
 import { getGHLClient } from './ghlClient.js'
 import { buildInvoicePaymentUrl } from '../utils/paymentUrl.js'
 import { getInvoicePaymentMode } from '../utils/paymentMode.js'
+import { updateSingleContactStats } from '../utils/updateContactsStats.js'
 import { logger } from '../utils/logger.js'
 
 export const PAYMENT_FLOW_STATES = {
@@ -879,6 +880,103 @@ export async function createSinglePaymentLink(payload) {
     amount,
     currency,
     status: sent.sendMethod === 'none' ? 'draft' : 'sent'
+  }
+}
+
+function normalizeOfflineRecordMethod(value) {
+  const normalized = normalizeText(value || 'cash')
+
+  if (/(transfer|spei|bank|banco)/.test(normalized)) return 'bank_transfer'
+  if (/(deposit|deposito)/.test(normalized)) return 'deposit'
+  if (/(cheque|check)/.test(normalized)) return 'check'
+  if (/(manual|offline)/.test(normalized)) return 'manual'
+  if (/(otro|other)/.test(normalized)) return 'other'
+
+  return 'cash'
+}
+
+export async function createOfflineContactPayment(payload) {
+  const contact = payload.contact || {}
+  const amount = normalizeAmount(payload.amount || payload.totalAmount)
+  const currency = payload.currency || CURRENCY_DEFAULT
+  const concept = payload.description || payload.concept || payload.title || 'Pago registrado'
+  const title = payload.title || concept || 'Pago registrado'
+  const paymentMethod = normalizeOfflineRecordMethod(payload.paymentMethod || payload.method)
+  const paymentDate = normalizeDateOnly(payload.paymentDate || payload.fulfilledAt || payload.date || new Date().toISOString(), payload.timezone)
+  const { liveMode } = await getPaymentFlowConfig()
+
+  if (!contact.id) {
+    throw new Error('Selecciona un cliente para registrar el pago')
+  }
+
+  if (amount <= 0) {
+    throw new Error('El monto del pago debe ser mayor a 0')
+  }
+
+  const ghlClient = await getGHLClient()
+  const invoice = await createInvoice({
+    ghlClient,
+    basePayload: payload.invoicePayload,
+    contact,
+    amount,
+    currency,
+    concept,
+    title,
+    dueDate: paymentDate,
+    summaryDetails: payload.notes || null
+  })
+  const invoiceId = invoice.id || invoice._id
+  const methodLabels = {
+    cash: 'Efectivo',
+    bank_transfer: 'Transferencia',
+    deposit: 'Depósito',
+    check: 'Cheque',
+    manual: 'Manual',
+    other: 'Otro'
+  }
+
+  await ghlClient.recordPayment(invoiceId, {
+    amount,
+    currency,
+    fulfilledAt: paymentDate,
+    note: [
+      'Pago registrado desde Ristak',
+      `Método: ${methodLabels[paymentMethod] || paymentMethod}`,
+      payload.reference ? `Referencia: ${payload.reference}` : '',
+      payload.notes ? `Notas: ${payload.notes}` : ''
+    ].filter(Boolean).join('\n'),
+    mode: paymentMethod,
+    liveMode
+  })
+
+  await db.run(
+    `UPDATE payments
+     SET status = 'paid',
+         payment_method = ?,
+         reference = ?,
+         date = ?,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE ghl_invoice_id = ?`,
+    [
+      paymentMethod,
+      payload.reference || null,
+      paymentDate,
+      invoiceId
+    ]
+  )
+
+  await updateSingleContactStats(contact.id)
+  logger.info(`Pago offline registrado desde ${payload.source || 'app'} para contacto ${contact.id}: ${amount} ${currency}`)
+
+  return {
+    invoiceId,
+    invoiceNumber: invoice.invoiceNumber || null,
+    amount,
+    currency,
+    status: 'paid',
+    paymentMethod,
+    paymentDate,
+    paymentMode: liveMode ? 'live' : 'test'
   }
 }
 

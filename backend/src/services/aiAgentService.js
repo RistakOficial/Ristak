@@ -4,7 +4,7 @@ import { resolveDateRangeWithGHLTimezone } from '../utils/dateUtils.js'
 import { buildHiddenContactsCondition, getHiddenContactFilters } from '../utils/hiddenContactsFilter.js'
 import { getGHLClient } from './ghlClient.js'
 import { getMetaConfig } from './metaAdsService.js'
-import { createInstallmentPaymentFlow, createSinglePaymentLink } from './paymentFlowService.js'
+import { createInstallmentPaymentFlow, createOfflineContactPayment, createSinglePaymentLink } from './paymentFlowService.js'
 import { PAYMENT_MODE_LIVE, PAYMENT_MODE_TEST, normalizePaymentMode, nonTestPaymentCondition } from '../utils/paymentMode.js'
 import { logger } from '../utils/logger.js'
 import {
@@ -964,6 +964,7 @@ function buildMetaAdsTools(metaAdsConnection) {
 const PAYMENT_MUTATION_TOOL_NAMES = new Set([
   'create_single_payment_link',
   'create_installment_payment_flow',
+  'record_contact_payment',
   'record_invoice_payment'
 ])
 
@@ -1777,7 +1778,7 @@ async function executeLookupHighLevelProducts(args = {}, highLevelConnection) {
 }
 
 async function searchLocalPaymentContacts(hint) {
-  const cleanHint = cleanText(extractContactLookupTerm(hint) || hint, 160)
+  const cleanHint = cleanText(hint, 160)
   if (!cleanHint) return []
 
   const searchClause = buildContactSearchClause('contacts', cleanHint)
@@ -1797,8 +1798,8 @@ async function searchLocalPaymentContacts(hint) {
 }
 
 async function searchHighLevelPaymentContacts(args) {
-  const rawHint = args.contactHint || args.contactName || args.contactEmail || args.contactPhone || ''
-  const hint = cleanText(extractContactLookupTerm(rawHint) || rawHint, 160)
+  const rawHint = args.contactName || args.contactHint || args.contactEmail || args.contactPhone || ''
+  const hint = cleanText(rawHint, 160)
   if (!hint) return []
 
   try {
@@ -1853,17 +1854,17 @@ async function resolvePaymentContact(args) {
   }
 
   const hint = cleanText(
-    args.contactHint ||
     args.contactName ||
-    args.contactEmail ||
-    args.contactPhone ||
     contactArg.name ||
+    args.contactEmail ||
     contactArg.email ||
+    args.contactPhone ||
     contactArg.phone ||
+    args.contactHint ||
     '',
     160
   )
-  const lookupHint = cleanText(extractContactLookupTerm(hint) || hint, 160)
+  const lookupHint = cleanText(hint, 160)
 
   if (!lookupHint) {
     return {
@@ -2569,6 +2570,105 @@ async function executeCreateSinglePaymentLink(args = {}, highLevelConnection, co
   }
 }
 
+async function executeRecordContactPayment(args = {}, highLevelConnection, context = {}) {
+  if (!highLevelConnection?.configured) {
+    return {
+      ok: false,
+      error: 'HighLevel no está configurado. Configura primero la integración de Go High Level.'
+    }
+  }
+
+  const resolvedContact = await resolvePaymentContact(args)
+  if (!resolvedContact.contact) {
+    return {
+      ok: false,
+      error: resolvedContact.error || 'Falta identificar el contacto.',
+      missingFields: resolvedContact.missingFields || [],
+      clarificationOptions: resolvedContact.clarificationOptions || []
+    }
+  }
+
+  const amount = normalizePaymentAmount(args.amount || args.totalAmount || args.total)
+  const currency = cleanText(args.currency || DEFAULT_PAYMENT_CURRENCY, 12).toUpperCase() || DEFAULT_PAYMENT_CURRENCY
+
+  if (amount <= 0) {
+    return {
+      ok: false,
+      error: 'Falta el monto a registrar o el monto no es válido.',
+      missingFields: ['amount']
+    }
+  }
+
+  const contact = resolvedContact.contact
+  const normalizedMethod = normalizePaymentMethod(args.paymentMethod || args.method || 'cash') || 'cash'
+  const paymentDate = args.paymentDate || args.fulfilledAt || args.date || new Date().toISOString()
+  const concept = cleanText(args.concept || args.title || args.description || `Pago - ${contact.name}`, 180)
+  const paymentMode = normalizePaymentMode(highLevelConnection.paymentMode, PAYMENT_MODE_LIVE)
+
+  if (!hasExplicitPaymentExecutionConfirmation(context.messages)) {
+    return buildPaymentConfirmationRequiredOutput({
+      action: 'record_contact_payment',
+      summary: {
+        contact: {
+          id: contact.id,
+          name: contact.name,
+          email: contact.email || null,
+          phone: contact.phone || null
+        },
+        amount,
+        currency,
+        concept,
+        paymentDate,
+        paymentMethod: normalizedMethod,
+        reference: cleanText(args.reference || '', 160) || null,
+        paymentMode
+      },
+      clarificationOptions: buildPaymentConfirmationOptions('este registro de pago')
+    })
+  }
+
+  const result = await createOfflineContactPayment({
+    contact,
+    amount,
+    currency,
+    concept,
+    title: concept,
+    paymentDate,
+    timezone: highLevelConnection.locationData?.timezone || DEFAULT_PAYMENT_TIMEZONE,
+    paymentMethod: normalizedMethod,
+    reference: cleanText(args.reference || '', 160) || null,
+    notes: cleanText(args.notes || '', 500) || null,
+    source: 'ai_agent'
+  })
+
+  return {
+    ok: true,
+    action: 'record_contact_payment',
+    paymentMode,
+    paymentModeWarning: getPaymentModeWarning(paymentMode),
+    message: paymentMode === PAYMENT_MODE_TEST
+      ? 'Pago registrado en modo prueba con la configuración actual de Ristak.'
+      : 'Pago registrado con la configuración actual de Ristak.',
+    summary: {
+      contact: {
+        id: contact.id,
+        name: contact.name,
+        email: contact.email || null,
+        phone: contact.phone || null
+      },
+      amount,
+      currency,
+      concept,
+      paymentDate,
+      paymentMethod: normalizedMethod,
+      paymentMode,
+      invoiceId: result.invoiceId,
+      invoiceNumber: result.invoiceNumber || null
+    },
+    result
+  }
+}
+
 async function executeRecordInvoicePayment(args = {}, highLevelConnection, context = {}) {
   if (!highLevelConnection?.configured) {
     return {
@@ -2758,7 +2858,8 @@ function buildHighLevelTools(highLevelConnection, options = {}) {
         type: 'object',
         properties: {
           contactId: { type: ['string', 'null'], description: 'ID exacto del contacto si ya se conoce.' },
-          contactHint: { type: ['string', 'null'], description: 'Nombre, teléfono o email del contacto cuando no hay ID exacto.' },
+          contactName: { type: ['string', 'null'], description: 'Sólo el nombre del contacto que mencionó el usuario, sin verbos, monto, método, producto ni concepto. Ejemplo: "Raúl Gómez".' },
+          contactHint: { type: ['string', 'null'], description: 'Nombre, teléfono o email del contacto cuando no hay ID exacto. No metas la instrucción completa aquí.' },
           amount: { type: ['number', 'null'], description: 'Monto único a cobrar.' },
           totalAmount: { type: ['number', 'null'], description: 'Alias de amount si el usuario dice total.' },
           currency: { type: ['string', 'null'], description: 'Moneda, normalmente MXN.' },
@@ -2798,7 +2899,8 @@ function buildHighLevelTools(highLevelConnection, options = {}) {
         type: 'object',
         properties: {
           contactId: { type: ['string', 'null'], description: 'ID exacto del contacto si ya se conoce.' },
-          contactHint: { type: ['string', 'null'], description: 'Nombre, teléfono o email del contacto cuando no hay ID exacto.' },
+          contactName: { type: ['string', 'null'], description: 'Sólo el nombre del contacto que mencionó el usuario, sin verbos, monto, método, producto ni concepto. Ejemplo: "Raúl Gómez".' },
+          contactHint: { type: ['string', 'null'], description: 'Nombre, teléfono o email del contacto cuando no hay ID exacto. No metas la instrucción completa aquí.' },
           totalAmount: { type: ['number', 'null'], description: 'Total del plan completo.' },
           currency: { type: ['string', 'null'], description: 'Moneda, normalmente MXN.' },
           concept: { type: ['string', 'null'], description: 'Concepto del cobro/invoice.' },
@@ -2890,8 +2992,30 @@ function buildHighLevelTools(highLevelConnection, options = {}) {
     },
     {
       type: 'function',
+      name: 'record_contact_payment',
+      description: 'Registra un pago manual/offline para un contacto cuando el usuario da contacto y monto, sin necesidad de invoice ID previo. Úsala para frases como "registra un pago de 10 pesos a Raúl Gómez por transferencia". Crea el invoice, registra el pago y actualiza Ristak, siempre pidiendo confirmación primero.',
+      parameters: {
+        type: 'object',
+        properties: {
+          contactId: { type: ['string', 'null'], description: 'ID exacto del contacto si ya se conoce.' },
+          contactName: { type: ['string', 'null'], description: 'Sólo el nombre del contacto que mencionó el usuario, sin verbos, monto, método ni concepto. Ejemplo: "Raúl Gómez".' },
+          contactHint: { type: ['string', 'null'], description: 'Nombre, teléfono o email del contacto cuando no hay ID exacto. No metas la instrucción completa aquí.' },
+          amount: { type: ['number', 'null'], description: 'Monto pagado.' },
+          currency: { type: ['string', 'null'], description: 'Moneda, normalmente MXN.' },
+          concept: { type: ['string', 'null'], description: 'Concepto del pago/invoice si el usuario lo dio. Si no, usa una descripción corta como "Pago registrado".' },
+          paymentDate: { type: ['string', 'null'], description: 'Fecha del pago o timestamp ISO. Si es hoy, usa la fecha local actual.' },
+          paymentMethod: { type: ['string', 'null'], enum: ['cash', 'transfer', 'bank_transfer', 'deposit', 'manual', 'offline', 'check', 'other', null] },
+          reference: { type: ['string', 'null'], description: 'Referencia bancaria, folio o comprobante.' },
+          notes: { type: ['string', 'null'], description: 'Notas internas del pago.' }
+        },
+        additionalProperties: true
+      },
+      strict: false
+    },
+    {
+      type: 'function',
       name: 'record_invoice_payment',
-      description: 'Registra un pago manual/offline sobre un invoice existente usando la configuración de pagos de Ristak. Úsala para órdenes como "registra este pago", "marca el invoice como pagado" o "ya pagó por transferencia". Respeta automáticamente modo prueba/en vivo.',
+      description: 'Registra un pago manual/offline sobre un invoice existente usando la configuración de pagos de Ristak. Úsala sólo cuando el usuario ya dio o eligió un invoice ID. Si el usuario dice "registra un pago a [contacto]" sin invoice ID, usa record_contact_payment.',
       parameters: {
         type: 'object',
         properties: {
@@ -3304,6 +3428,8 @@ async function callOpenAIResponseWithActionTools(apiKey, {
           output = await executeCreateSinglePaymentLink(call.arguments, highLevelConnection, { messages })
         } else if (call.name === 'create_installment_payment_flow') {
           output = await executeCreateInstallmentPaymentFlow(call.arguments, highLevelConnection, { messages })
+        } else if (call.name === 'record_contact_payment') {
+          output = await executeRecordContactPayment(call.arguments, highLevelConnection, { messages })
         } else if (call.name === 'record_invoice_payment') {
           output = await executeRecordInvoicePayment(call.arguments, highLevelConnection, { messages })
         } else {
@@ -4247,10 +4373,11 @@ async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, ru
   const modelQueryResults = metaAdsDbResearchSkipped ? [] : prepareQueryResultsForReply(queryResults)
   const webSearchTools = metaAdsOperationalIntent ? [] : buildWebSearchTools(agentConfig, runtimeContext)
   const latestUserMessage = getLatestUserMessage(messages)
+  const paymentActionRequest = isPaymentActionRequest(latestUserMessage)
   const highLevelTools = metaAdsOperationalIntent
     ? []
     : buildHighLevelTools(highLevelConnection, {
-        paymentActionRequest: isPaymentActionRequest(latestUserMessage)
+        paymentActionRequest
       })
   const metaAdsTools = buildMetaAdsTools(metaAdsConnection)
   const agentTools = [...webSearchTools, ...highLevelTools, ...metaAdsTools]
@@ -4316,9 +4443,10 @@ async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, ru
     'Cuando el usuario elija un producto/precio de GHL, prepara el cobro con el nombre del producto como concepto, el precio elegido como monto si no dio otro monto, e incluye producto, precio, correo/teléfono del contacto y modo prueba/en vivo en el resumen antes de pedir confirmación.',
     'Si el usuario pide "cóbrale ahorita" y NO especifica método, no inventes transferencia ni tarjeta. Usa create_installment_payment_flow con el método vacío cuando hay plan futuro: si Ristak detecta tarjeta guardada, te devolverá opciones para elegir misma tarjeta u otra; si no detecta tarjeta, te devolverá opciones para preguntar si manda link, registra transferencia/depósito/manual o cancela.',
     'Si el usuario sí especifica método, respétalo: tarjeta/link significa cobrar o enviar primer pago para autorizar tarjeta; transferencia/depósito/efectivo/manual significa registrar el primer pago offline y mandar domiciliación cuando haya pagos automáticos restantes.',
+    'En herramientas de pago, si el usuario menciona a una persona por nombre, manda ese nombre limpio en contactName. Ejemplo: "Registra un pago de 10 pesos a Raúl Gómez por transferencia" => contactName="Raúl Gómez", amount=10, paymentMethod="bank_transfer". No metas verbos, monto, método, producto ni concepto dentro de contactName/contactHint.',
     'Para links o pagos únicos inmediatos sin fecha futura, NO uses MCP ni highlevel_rest_request directamente. Usa create_single_payment_link. Ejemplos: "mándale link de pago", "cóbrale 30,000", "genera invoice por 15 mil". Si el usuario dice "mándale", deliveryMode=send; si dice "solo genera", deliveryMode=generate. Si el usuario dice "programa", "agenda", "para el día X", "el 10 de junio", "dentro de N días/semanas/meses" o cualquier fecha futura, NO uses create_single_payment_link: usa create_installment_payment_flow.',
     'Para cobros por parcialidades, pagos iniciales, domiciliación, cargos automáticos futuros o cualquier plan que dependa de tarjeta guardada, NO uses MCP ni highlevel_rest_request directamente. Usa siempre la herramienta create_installment_payment_flow porque esa respeta la lógica interna de Ristak.',
-    'Para registrar un pago manual/offline sobre un invoice existente, NO uses MCP ni highlevel_rest_request directamente. Usa record_invoice_payment porque fuerza el modo de pagos configurado en Ristak.',
+    'Para registrar un pago manual/offline a un contacto sin invoice ID, NO uses MCP ni highlevel_rest_request directamente. Usa record_contact_payment. Si el usuario ya dio un invoice ID existente, usa record_invoice_payment.',
     'Regla de parcialidades de Ristak: si el primer pago es transferencia/efectivo/manual, se crea invoice del primer pago, se registra como pagado manualmente y se envía/genera un link separado de domiciliación de tarjeta. Ese link de domiciliación no reduce el saldo del plan. Los cobros automáticos restantes sólo se programan cuando el webhook confirme tarjeta autorizada.',
     'Si el primer pago es tarjeta/link, ese primer pago autoriza la tarjeta y el plan automático se activa sólo después de confirmarse el pago y guardarse la tarjeta. Si el contacto ya tiene tarjeta guardada, el plan puede quedar programado directo.',
     'Nunca le preguntes al usuario si el contacto tiene tarjeta guardada para un plan automático. Tú manda remainingAutomatic true y deja que el backend de Ristak busque la última tarjeta guardada en GoHighLevel/Ristak. Si no existe tarjeta autorizada, Ristak manda automáticamente el link/cobro de domiciliación; si existe tarjeta y el usuario no eligió, pregunta si usar la misma tarjeta guardada o mandar link para autorizar otra antes de programar.',
@@ -6056,7 +6184,8 @@ export async function createAgentReply({ apiKey, messages, viewContext }) {
   const latestUserMessage = getLatestUserMessage(messages)
   const metaAdsOperationalIntent = isMetaAdsOperationalRequest(latestUserMessage)
   const metaAdsDbResearchSkipped = shouldSkipDbResearchForMetaAds(latestUserMessage)
-  const mentionedContact = metaAdsDbResearchSkipped
+  const paymentActionRequest = isPaymentActionRequest(latestUserMessage)
+  const mentionedContact = metaAdsDbResearchSkipped || paymentActionRequest
     ? null
     : await resolveMentionedContactForAgent({
         messages,
@@ -6067,7 +6196,7 @@ export async function createAgentReply({ apiKey, messages, viewContext }) {
     return mentionedContact.clarificationReply
   }
 
-  const clarificationReply = metaAdsDbResearchSkipped
+  const clarificationReply = metaAdsDbResearchSkipped || paymentActionRequest
     ? null
     : await createClarificationReply({
         messages,
