@@ -41,7 +41,7 @@ const normalizeAmount = (value: string | number): number => {
 type PaymentOption = 'send' | 'saved' | 'manual'
 type PaymentMode = 'single' | 'partial'
 type InstallmentValueType = 'percentage' | 'amount'
-type FirstPaymentMethod = 'cash' | 'bank_transfer' | 'deposit' | 'card'
+type FirstPaymentMethod = '' | 'cash' | 'bank_transfer' | 'deposit' | 'card'
 type RemainingFrequency = 'custom' | 'weekly' | 'biweekly' | 'monthly'
 type SendMethod = 'whatsapp' | 'sms' | 'email' | 'email_whatsapp' | 'email_sms' | 'all'
 type InvoiceSendMethod = 'email' | 'sms' | 'both'
@@ -292,7 +292,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const [firstPaymentType, setFirstPaymentType] = useState<InstallmentValueType>('percentage')
   const [firstPaymentValue, setFirstPaymentValue] = useState('40')
   const [firstPaymentDate, setFirstPaymentDate] = useState(toDateInputValue(new Date()))
-  const [firstPaymentMethod, setFirstPaymentMethod] = useState<FirstPaymentMethod>('bank_transfer')
+  const [firstPaymentMethod, setFirstPaymentMethod] = useState<FirstPaymentMethod>('')
   const [remainingAutomatic, setRemainingAutomatic] = useState(true)
   const [remainingFrequency, setRemainingFrequency] = useState<RemainingFrequency>('monthly')
   const [remainingInstallments, setRemainingInstallments] = useState<InstallmentDraft[]>(defaultPartialInstallments)
@@ -366,6 +366,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const partialPlanTotal = normalizeAmount(firstPaymentAmount + remainingTotalAmount)
   const partialPlanDifference = normalizeAmount(totalAmount - partialPlanTotal)
   const hasSavedCardForContact = paymentMethods.length > 0
+  const firstPaymentMethodMissing = paymentMode === 'partial' && firstPaymentEnabled && !firstPaymentMethod
   const partialNeedsCardAuthorization = paymentMode === 'partial' && remainingAutomatic && (
     !hasSavedCardForContact && (!firstPaymentEnabled || isOfflineFirstPaymentMethod(firstPaymentMethod))
   )
@@ -400,7 +401,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     setFirstPaymentType('percentage')
     setFirstPaymentValue('40')
     setFirstPaymentDate(toDateInputValue(new Date()))
-    setFirstPaymentMethod('bank_transfer')
+    setFirstPaymentMethod('')
     setRemainingAutomatic(true)
     setRemainingFrequency('monthly')
     setRemainingInstallments(defaultPartialInstallments())
@@ -833,6 +834,11 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
       if (firstPaymentEnabled && firstPaymentAmount <= 0) {
         showToast('error', 'Configura un primer pago mayor a 0')
+        return
+      }
+
+      if (firstPaymentMethodMissing) {
+        showToast('error', 'Selecciona un método de pago para el primer pago')
         return
       }
 
@@ -1301,7 +1307,13 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                 { value: 'partial', label: 'Parcialidades' }
               ]}
               activeTab={paymentMode}
-              onTabChange={(value) => setPaymentMode(value as PaymentMode)}
+              onTabChange={(value) => {
+                const nextPaymentMode = value as PaymentMode
+                if (nextPaymentMode === 'partial' && paymentMode !== 'partial') {
+                  setFirstPaymentMethod('')
+                }
+                setPaymentMode(nextPaymentMode)
+              }}
               variant="compact"
               className={styles.fullWidthTabList}
             />
@@ -1507,13 +1519,21 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                       <select
                         value={firstPaymentMethod}
                         onChange={(e) => setFirstPaymentMethod(e.target.value as FirstPaymentMethod)}
-                        className={styles.select}
+                        className={`${styles.select} ${firstPaymentMethodMissing ? styles.selectError : ''}`}
+                        aria-invalid={firstPaymentMethodMissing}
                       >
+                        <option value="" disabled>Seleccionar método de pago</option>
                         <option value="bank_transfer">Transferencia</option>
                         <option value="cash">Efectivo</option>
                         <option value="deposit">Depósito</option>
                         <option value="card">Tarjeta / link</option>
                       </select>
+                      {firstPaymentMethodMissing && (
+                        <div className={styles.fieldWarning} role="alert">
+                          <AlertCircle size={14} />
+                          <span>Selecciona el método de pago antes de continuar</span>
+                        </div>
+                      )}
                     </div>
                   </div>
                   <div className={styles.partialAmountPreview}>
@@ -2099,7 +2119,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         <Button
           variant="primary"
           onClick={handleContinue}
-          disabled={loading}
+          disabled={loading || firstPaymentMethodMissing}
+          title={firstPaymentMethodMissing ? 'Selecciona un método de pago para continuar' : undefined}
         >
           {loading ? (
             <>

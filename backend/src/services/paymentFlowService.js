@@ -911,7 +911,10 @@ function validateInstallmentFlowPayload(payload) {
     throw new Error(`Las parcialidades suman ${planTotal.toFixed(2)} ${currency}, pero el total a cobrar es ${totalAmount.toFixed(2)} ${currency}`)
   }
 
-  const firstPaymentMethod = firstPaymentEnabled ? (firstPayment.method || 'bank_transfer') : 'none'
+  const firstPaymentMethod = firstPaymentEnabled ? firstPayment.method : 'none'
+  if (firstPaymentEnabled && !firstPaymentMethod) {
+    throw new Error('Selecciona un método de pago para el primer pago')
+  }
 
   return {
     contact,
