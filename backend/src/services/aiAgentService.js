@@ -1121,6 +1121,20 @@ function getPreviousAssistantMessageText(messages, beforeIndex) {
   return ''
 }
 
+function paymentConfirmationTextIncludesChange(text = '') {
+  const normalized = normalizeText(text)
+  if (!normalized || !isAffirmativeExecutionIntent(normalized)) return false
+
+  const startsLikeConfirmation = /^(si|sí|ok|va|dale|listo|confirmo|autorizo|correcto|perfecto)\b/.test(normalized)
+  if (!startsLikeConfirmation) return false
+
+  const hasChangeConnector = /(pero|solo|sólo|nada mas|nada más|nom[aá]s|antes|primero|tambien|también|adem[aá]s|mejor|excepto|con cambio|modific|cambi|ajust|corrig|edit|agreg|añad|anad|pon|ponle|ponlo|quita|quít|actualiz)/.test(normalized)
+  const hasPaymentField = /(descripcion|descripción|concepto|nota|referencia|monto|cantidad|total|iva|fecha|dia|día|mes|ultimo|último|primer|parcial|pago|cobro|tarjeta|link|canal|whatsapp|sms|correo|email|transfer|deposit|dep[oó]sito|efectivo|manual)/.test(normalized)
+  const answersAChoice = /^(?:si|sí|ok|va|dale|listo)[,.\s]+(?:por|con|en|a)\s+(?:whatsapp|sms|correo|email|tarjeta|link|transfer|transferencia|deposit|dep[oó]sito|efectivo|manual|todos|todas)/.test(normalized)
+
+  return (hasChangeConnector && hasPaymentField) || answersAChoice
+}
+
 function hasExplicitPaymentExecutionConfirmation(messages) {
   const latestUserIndex = findLatestUserMessageIndex(messages)
   if (latestUserIndex < 0) return false
@@ -1129,6 +1143,7 @@ function hasExplicitPaymentExecutionConfirmation(messages) {
   const previousAssistantText = normalizeText(getPreviousAssistantMessageText(messages, latestUserIndex))
 
   if (!isAffirmativeExecutionIntent(latestUserText)) return false
+  if (paymentConfirmationTextIncludesChange(latestUserText)) return false
   if (!/(dinero|cobr|pago|registr|program|link|tarjeta|invoice|factura|domicili|monto|transfer|deposit)/.test(previousAssistantText)) return false
 
   // Evita ejecutar cuando el usuario sólo confirma un dato suelto como total,
@@ -4788,8 +4803,13 @@ async function executeCreateInstallmentPaymentFlow(args = {}, highLevelConnectio
     }
   }
 
-  const serviceFirstPayment = firstPaymentUsesStoredCard ? { enabled: false } : firstPayment
-  const serviceRemainingPayments = firstPaymentUsesStoredCard
+  const firstPaymentStoredCardDate = DateTime.fromISO(firstPayment.date || DateTime.now().setZone(paymentTimezone).toISODate(), { zone: paymentTimezone }).startOf('day')
+  const firstPaymentStoredCardShouldRecordNow = firstPaymentUsesStoredCard && (
+    !firstPaymentStoredCardDate.isValid ||
+    firstPaymentStoredCardDate <= DateTime.now().setZone(paymentTimezone).startOf('day')
+  )
+  const serviceFirstPayment = firstPaymentUsesStoredCard && !firstPaymentStoredCardShouldRecordNow ? { enabled: false } : firstPayment
+  const serviceRemainingPayments = firstPaymentUsesStoredCard && !firstPaymentStoredCardShouldRecordNow
     ? [
         {
           sequence: 1,
@@ -4842,7 +4862,9 @@ async function executeCreateInstallmentPaymentFlow(args = {}, highLevelConnectio
         cardAuthorizationBehavior: storedCardPreference === 'new_card'
           ? 'No se usará la tarjeta guardada; Ristak enviará link de autorización/domiciliación y programará el cobro cuando esa nueva tarjeta quede confirmada.'
           : storedCardPreference === 'stored_card' || firstPaymentUsesStoredCard
-            ? 'Se usará la tarjeta guardada/autorizada para programar los cobros automáticos sin enviar link.'
+            ? firstPaymentStoredCardShouldRecordNow
+              ? 'Se registrará el primer pago con la tarjeta guardada/autorizada y se programarán los cobros restantes sin enviar link.'
+              : 'Se programarán todos los cobros con la tarjeta guardada/autorizada sin enviar link.'
             : null,
         delivery: deliveryRequired ? getPaymentDeliveryLabel(deliverySelection.method) : 'no requiere envío de link',
         cardSetupWillBeRequired,
@@ -4915,7 +4937,7 @@ async function executeCreateInstallmentPaymentFlow(args = {}, highLevelConnectio
       cardAuthorizationBehavior: storedCardPreference === 'new_card'
         ? 'Se envió/creó autorización para otra tarjeta antes de programar el cobro.'
         : storedCardPreference === 'stored_card' || firstPaymentUsesStoredCard
-          ? 'Se programó usando la tarjeta guardada.'
+          ? 'Se registró/programó usando la tarjeta guardada.'
           : null,
       delivery: deliveryRequired ? getPaymentDeliveryLabel(deliverySelection.method) : null,
       cardSetupWillBeRequired,
@@ -5073,35 +5095,58 @@ async function executeCreateSinglePaymentLink(args = {}, highLevelConnection, co
       })
     }
 
-    const result = await createInstallmentPaymentFlow({
-      contact,
-      totalAmount: amount,
-      currency,
-      description: concept,
-      concept,
-      firstPayment: { enabled: false },
-      remainingAutomatic: true,
-      remainingFrequency: 'custom',
-      remainingPayments: [
-        {
-          sequence: 1,
-          type: 'amount',
+    const dueDateForStoredCard = DateTime.fromISO(dueDate, { zone: paymentTimezone }).startOf('day')
+    const storedCardChargeIsDueNow = !dueDateForStoredCard.isValid ||
+      dueDateForStoredCard <= DateTime.now().setZone(paymentTimezone).startOf('day')
+    const result = storedCardChargeIsDueNow
+      ? await createOfflineContactPayment({
+          contact,
           amount,
-          percentage: null,
-          dueDate
-        }
-      ],
-      useStoredCard: true,
-      cardAuthorizationPreference: 'stored_card',
-      source: 'ai_agent'
-    })
+          currency,
+          concept,
+          title: concept,
+          paymentDate: dueDate,
+          timezone: paymentTimezone,
+          paymentMethod: 'card',
+          notes: [
+            'Cobro registrado por el Agente AI usando tarjeta guardada/autorizada.',
+            storedCardStatus.brand || storedCardStatus.last4
+              ? `Tarjeta: ${storedCardStatus.brand || 'card'} ${storedCardStatus.last4 || '****'}`
+              : ''
+          ].filter(Boolean).join('\n'),
+          source: 'ai_agent'
+        })
+      : await createInstallmentPaymentFlow({
+          contact,
+          totalAmount: amount,
+          currency,
+          description: concept,
+          concept,
+          firstPayment: { enabled: false },
+          remainingAutomatic: true,
+          remainingFrequency: 'custom',
+          remainingPayments: [
+            {
+              sequence: 1,
+              type: 'amount',
+              amount,
+              percentage: null,
+              dueDate
+            }
+          ],
+          useStoredCard: true,
+          cardAuthorizationPreference: 'stored_card',
+          source: 'ai_agent'
+        })
 
     return {
       ok: true,
       action: 'charge_single_payment_with_stored_card',
       paymentMode: highLevelConnection.paymentMode,
       paymentModeWarning: getPaymentModeWarning(highLevelConnection.paymentMode),
-      message: 'Cobro único programado con la tarjeta guardada usando la lógica interna de Ristak.',
+      message: storedCardChargeIsDueNow
+        ? 'Cobro único registrado con la tarjeta guardada usando la lógica interna de Ristak.'
+        : 'Cobro único programado con la tarjeta guardada usando la lógica interna de Ristak.',
       summary: {
         contact: {
           id: contact.id,
@@ -6541,10 +6586,12 @@ const PAYMENT_WORKFLOW_PROMPT = [
   '- No uses highlevel_rest_request para crear invoices, enviar invoices, registrar pagos, schedules ni payments. Las únicas herramientas válidas para mutar dinero son create_single_payment_link, create_installment_payment_flow, record_contact_payment y record_invoice_payment.',
   '- Si el usuario ya dio todos los datos, usa las herramientas internas y avanza; no repitas preguntas nomás por protocolo.',
   '- Si falta algo indispensable, pregunta una sola cosa a la vez. No hagas listas de varias preguntas pendientes.',
+  '- Si después del resumen el usuario responde afirmativamente pero agrega cambios como "pero", "solo pon", "cambia", "agrega descripción", "mejor por WhatsApp", "con tarjeta guardada", etc., eso NO es confirmación final. Actualiza el plan con la herramienta interna y vuelve a pedir confirmación con el resumen nuevo.',
+  '- Sólo ejecuta cuando el último mensaje sea una autorización limpia sobre el resumen vigente, por ejemplo "sí, confirmar", "sí, dale", "confirmo" o el botón de confirmación, sin cambios extra.',
   '- Cobro único con tarjeta: si no hay tarjeta guardada/autorizada, el link de pago es obligatorio y debes pedir canal de envío si falta. Si sí hay tarjeta guardada, pregunta una sola vez si se cobra la tarjeta guardada o se manda link.',
   '- Cobro único offline/manual por transferencia, depósito, efectivo, cheque u otro: registra el pago offline con record_contact_payment. No mandes link.',
   '- Parcialidades con primer pago offline y resto automático/domiciliado: registra el primer pago offline y, si falta tarjeta guardada, manda link de domiciliación/autorización; nunca dejes el plan automático sólo registrado offline sin tarjeta.',
-  '- Parcialidades o cobros programados con tarjeta guardada: programa el cargo con esa tarjeta y no mandes link, salvo que el usuario pida usar otra tarjeta.',
+  '- Parcialidades con tarjeta guardada: si el primer pago es hoy/ahorita, regístralo como pagado con método card y programa sólo los restantes con la tarjeta guardada; si el primer pago es futuro, prográmalo con la tarjeta guardada. No mandes link salvo que el usuario pida usar otra tarjeta.',
   '- Parcialidades o cobros programados sin tarjeta guardada: manda link de primer pago o domiciliación según corresponda y pide canal de envío si falta.',
   '- Antes de ejecutar cualquier acción de dinero, muestra resumen corto y pide confirmación explícita. Después de que el usuario confirme, ejecuta sin volver a preguntar lo mismo.'
 ].join('\n')
