@@ -1206,21 +1206,25 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
     : 'Abrir agente AI'
   const rootClassName = embedded ? styles.embeddedRoot : styles.floatingRoot
   const windowClassName = embedded ? `${styles.window} ${styles.embeddedWindow}` : styles.window
+  const panelTitle = embedded ? 'Ristak AI' : 'Agente AI'
+  const statusLabel = status.configured
+    ? embedded ? 'Listo para ayudarte' : 'Conectado a OpenAI'
+    : 'Configúralo aquí mismo'
 
   return (
     <div className={rootClassName}>
       {visible && (
-        <section className={windowClassName} aria-label="Agente AI">
+        <section className={windowClassName} aria-label={panelTitle}>
           <header className={styles.header}>
             <div className={styles.identity}>
               <div className={styles.avatar}>
                 <Bot size={19} />
               </div>
               <div className={styles.titleBlock}>
-                <h2 className={styles.title}>Agente AI</h2>
+                <h2 className={styles.title}>{panelTitle}</h2>
                 <div className={styles.subtitle}>
                   <span className={status.configured ? styles.statusDot : styles.statusDotMuted} />
-                  <span>{status.configured ? 'Conectado a OpenAI' : 'Configúralo aquí mismo'}</span>
+                  <span>{statusLabel}</span>
                 </div>
               </div>
             </div>
