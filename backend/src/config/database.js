@@ -505,7 +505,6 @@ async function initTables() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_installment_payments_flow ON installment_payments(flow_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_installment_payments_status ON installment_payments(status)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_installment_payments_due_date ON installment_payments(due_date)')
-    await db.run('CREATE INDEX IF NOT EXISTS idx_installment_payments_schedule ON installment_payments(ghl_schedule_id)')
 
     // Agregar columnas que puedan faltar en tablas existentes
     try {
@@ -743,6 +742,14 @@ async function initTables() {
         await db.run('ALTER TABLE installment_payments ADD COLUMN ghl_schedule_status TEXT')
       } catch (err) {
         if (!err.message.includes('duplicate column') && !err.message.includes('already exists')) {
+          throw err
+        }
+      }
+
+      try {
+        await db.run('CREATE INDEX IF NOT EXISTS idx_installment_payments_schedule ON installment_payments(ghl_schedule_id)')
+      } catch (err) {
+        if (!err.message.includes('already exists') && !err.message.includes('no such column') && !err.message.includes('does not exist')) {
           throw err
         }
       }
