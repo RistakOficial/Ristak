@@ -356,6 +356,14 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   )
   const partialPlanTotal = normalizeAmount(firstPaymentAmount + remainingTotalAmount)
   const partialPlanDifference = normalizeAmount(totalAmount - partialPlanTotal)
+  const partialAllocatedPct = totalAmount > 0
+    ? Math.min(100, Math.max(0, (partialPlanTotal / totalAmount) * 100))
+    : 0
+  const partialPlanStatus: 'ok' | 'under' | 'over' = Math.abs(partialPlanDifference) <= 0.5
+    ? 'ok'
+    : partialPlanDifference > 0
+      ? 'under'
+      : 'over'
   const firstPaymentMethodMissing = paymentMode === 'partial' && firstPaymentEnabled && !firstPaymentMethod
   const partialNeedsCardAuthorization = paymentMode === 'partial' && remainingAutomatic && (
     !firstPaymentEnabled || isOfflineFirstPaymentMethod(firstPaymentMethod)
@@ -1310,25 +1318,31 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         </div>
 
         {paymentMode === 'partial' && (
-          <div className={styles.partialSection}>
-            <div className={styles.partialHeader}>
-              <div>
+          <div className={styles.planSection}>
+            <div className={styles.planIntro}>
+              <div className={styles.planIntroText}>
                 <p>Plan de parcialidades</p>
-                <span>Primer pago, pagos restantes y autorización de tarjeta.</span>
+                <span>Define el enganche y los cobros automáticos hasta cubrir el total.</span>
               </div>
-              <span className={styles.summaryBadge}>Parcial</span>
+              <div className={styles.planTotalChip}>
+                <span>Total a financiar</span>
+                <strong>{formatCurrency(totalAmount, currency)}</strong>
+              </div>
             </div>
 
-            <div className={styles.partialBlock}>
-              <div className={styles.partialBlockHeader}>
-                <div className={styles.partialBlockTitle}>
-                  <DollarSign size={16} />
-                  <span>Primer pago</span>
+            <div className={styles.planStep}>
+              <div className={styles.planStepHead}>
+                <div className={styles.planStepTitle}>
+                  <span className={styles.stepNumber}>1</span>
+                  <div>
+                    <p>Primer pago</p>
+                    <span>El enganche con el que arranca el plan.</span>
+                  </div>
                 </div>
                 <TabList
                   tabs={[
-                    { value: 'yes', label: 'Con primer pago' },
-                    { value: 'no', label: 'Sin primer pago' }
+                    { value: 'yes', label: 'Con enganche' },
+                    { value: 'no', label: 'Sin enganche' }
                   ]}
                   activeTab={firstPaymentEnabled ? 'yes' : 'no'}
                   onTabChange={(value) => {
@@ -1340,10 +1354,10 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
               </div>
 
               {firstPaymentEnabled && (
-                <>
-                  <div className={styles.partialGrid}>
+                <div className={styles.planStepBody}>
+                  <div className={styles.fieldGrid}>
                     <div className={styles.manualField}>
-                      <label>Tipo</label>
+                      <label>Tipo de valor</label>
                       <select
                         value={firstPaymentType}
                         onChange={(e) => {
@@ -1389,135 +1403,198 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                       </div>
                     </div>
                     <div className={styles.manualField}>
-                      <label>Método</label>
+                      <label>Método de pago</label>
                       <select
                         value={firstPaymentMethod}
                         onChange={(e) => setFirstPaymentMethod(e.target.value as FirstPaymentMethod)}
                         className={`${styles.select} ${firstPaymentMethodMissing ? styles.selectError : ''}`}
                         aria-invalid={firstPaymentMethodMissing}
                       >
-                        <option value="" disabled>Seleccionar método de pago</option>
+                        <option value="" disabled>Seleccionar método</option>
                         <option value="bank_transfer">Transferencia</option>
                         <option value="cash">Efectivo</option>
                         <option value="deposit">Depósito</option>
                         <option value="card">Tarjeta / link</option>
                       </select>
-                      {firstPaymentMethodMissing && (
-                        <div className={styles.fieldWarning} role="alert">
-                          <AlertCircle size={14} />
-                          <span>Selecciona el método de pago antes de continuar</span>
-                        </div>
-                      )}
                     </div>
                   </div>
-                  <div className={styles.partialAmountPreview}>
-                    <span>Primer pago calculado</span>
+                  {firstPaymentMethodMissing && (
+                    <div className={styles.fieldWarning} role="alert">
+                      <AlertCircle size={14} />
+                      <span>Selecciona el método de pago antes de continuar</span>
+                    </div>
+                  )}
+                  <div className={styles.calcChip}>
+                    <span>Monto del enganche</span>
                     <strong>{formatCurrency(firstPaymentAmount, currency)}</strong>
                   </div>
-                </>
+                </div>
               )}
             </div>
 
-            <div className={styles.partialBlock}>
-              <div className={styles.partialBlockHeader}>
-                <div className={styles.partialBlockTitle}>
-                  <ShieldCheck size={16} />
-                  <span>Pagos restantes</span>
+            <div className={styles.planStep}>
+              <div className={styles.planStepHead}>
+                <div className={styles.planStepTitle}>
+                  <span className={styles.stepNumber}>2</span>
+                  <div>
+                    <p>Pagos restantes</p>
+                    <span>Se cobran solos a la tarjeta del cliente.</span>
+                  </div>
                 </div>
-                <span className={styles.partialPill}>Automáticos</span>
+                <span className={styles.autoTag}>
+                  <ShieldCheck size={13} />
+                  Automáticos
+                </span>
               </div>
 
-              <div className={styles.partialGrid}>
-                <div className={styles.manualField}>
-                  <label>Frecuencia</label>
-                  <select
-                    value={remainingFrequency}
-                    onChange={(e) => setRemainingFrequency(e.target.value as RemainingFrequency)}
-                    className={styles.select}
-                  >
-                    <option value="monthly">Mensual</option>
-                    <option value="biweekly">Quincenal</option>
-                    <option value="weekly">Semanal</option>
-                    <option value="custom">Personalizada</option>
-                  </select>
-                </div>
-                <div className={styles.partialAmountPreview}>
-                  <span>Restante calculado</span>
-                  <strong>{formatCurrency(remainingTotalAmount, currency)}</strong>
-                </div>
-              </div>
-
-              <div className={styles.installmentList}>
-                {resolvedRemainingInstallments.map((installment) => (
-                  <div key={installment.id} className={styles.installmentRow}>
-                    <div className={styles.installmentSequence}>{installment.sequence}</div>
+              <div className={styles.planStepBody}>
+                <div className={styles.fieldGrid}>
+                  <div className={styles.manualField}>
+                    <label>Frecuencia de cobro</label>
                     <select
-                      value={installment.type}
-                      onChange={(e) => updateRemainingInstallment(installment.id, { type: e.target.value as InstallmentValueType })}
+                      value={remainingFrequency}
+                      onChange={(e) => setRemainingFrequency(e.target.value as RemainingFrequency)}
                       className={styles.select}
                     >
-                      <option value="percentage">%</option>
-                      <option value="amount">$</option>
+                      <option value="monthly">Mensual</option>
+                      <option value="biweekly">Quincenal</option>
+                      <option value="weekly">Semanal</option>
+                      <option value="custom">Personalizada</option>
                     </select>
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      value={installment.value}
-                      onChange={(e) => updateRemainingInstallment(installment.id, { value: e.target.value })}
-                      className={styles.input}
-                      aria-label={`Monto de parcialidad ${installment.sequence}`}
-                    />
-                    <input
-                      type="date"
-                      value={installment.dueDate}
-                      onChange={(e) => updateRemainingInstallment(installment.id, { dueDate: e.target.value })}
-                      className={styles.input}
-                      disabled={remainingFrequency !== 'custom'}
-                      aria-label={`Fecha de parcialidad ${installment.sequence}`}
-                    />
-                    <div className={styles.installmentAmount}>{formatCurrency(installment.amount, currency)}</div>
-                    <button
-                      type="button"
-                      className={styles.iconButton}
-                      onClick={() => removeRemainingInstallment(installment.id)}
-                      disabled={remainingInstallments.length <= 1}
-                      title="Eliminar parcialidad"
-                    >
-                      <Trash2 size={16} />
-                    </button>
                   </div>
-                ))}
-              </div>
+                  <div className={styles.calcChip}>
+                    <span>Suma de pagos restantes</span>
+                    <strong>{formatCurrency(remainingTotalAmount, currency)}</strong>
+                  </div>
+                </div>
 
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={addRemainingInstallment}
-              >
-                <Plus size={14} />
-                Agregar pago
-              </Button>
+                <p className={styles.planHint}>
+                  {remainingFrequency === 'custom'
+                    ? 'Ajusta el monto y la fecha de cada pago. El valor en % o $ se aplica sobre el total.'
+                    : 'Las fechas se calculan automáticamente. Cambia a “Personalizada” para editarlas a mano.'}
+                </p>
+
+                <div className={styles.installmentTable}>
+                  <div className={styles.installmentHead}>
+                    <span>#</span>
+                    <span>Tipo</span>
+                    <span>Valor</span>
+                    <span>Fecha de cobro</span>
+                    <span className={styles.alignRight}>Monto</span>
+                    <span aria-hidden="true" />
+                  </div>
+
+                  <div className={styles.installmentList}>
+                    {resolvedRemainingInstallments.map((installment) => (
+                      <div key={installment.id} className={styles.installmentRow}>
+                        <div className={styles.installmentSeq}>{installment.sequence}</div>
+                        <label className={styles.installmentCell}>
+                          <span className={styles.cellLabel}>Tipo</span>
+                          <select
+                            value={installment.type}
+                            onChange={(e) => updateRemainingInstallment(installment.id, { type: e.target.value as InstallmentValueType })}
+                            className={styles.select}
+                          >
+                            <option value="percentage">%</option>
+                            <option value="amount">$</option>
+                          </select>
+                        </label>
+                        <label className={styles.installmentCell}>
+                          <span className={styles.cellLabel}>Valor</span>
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            value={installment.value}
+                            onChange={(e) => updateRemainingInstallment(installment.id, { value: e.target.value })}
+                            className={styles.input}
+                            aria-label={`Valor de parcialidad ${installment.sequence}`}
+                          />
+                        </label>
+                        <label className={`${styles.installmentCell} ${styles.installmentDate}`}>
+                          <span className={styles.cellLabel}>Fecha de cobro</span>
+                          <input
+                            type="date"
+                            value={installment.dueDate}
+                            onChange={(e) => updateRemainingInstallment(installment.id, { dueDate: e.target.value })}
+                            className={styles.input}
+                            disabled={remainingFrequency !== 'custom'}
+                            aria-label={`Fecha de parcialidad ${installment.sequence}`}
+                          />
+                        </label>
+                        <div className={styles.installmentMonto}>
+                          <span className={styles.cellLabel}>Monto</span>
+                          <strong>{formatCurrency(installment.amount, currency)}</strong>
+                        </div>
+                        <button
+                          type="button"
+                          className={`${styles.iconButton} ${styles.installmentDelete}`}
+                          onClick={() => removeRemainingInstallment(installment.id)}
+                          disabled={remainingInstallments.length <= 1}
+                          title="Eliminar parcialidad"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  className={styles.addInstallment}
+                  onClick={addRemainingInstallment}
+                >
+                  <Plus size={16} />
+                  Agregar pago
+                </button>
+              </div>
+            </div>
+
+            <div className={`${styles.allocation} ${
+              partialPlanStatus === 'ok'
+                ? styles.allocationOk
+                : partialPlanStatus === 'under'
+                  ? styles.allocationWarn
+                  : styles.allocationError
+            }`}>
+              <div className={styles.allocationTop}>
+                <span>Asignado al plan</span>
+                <strong>
+                  {formatCurrency(partialPlanTotal, currency)}
+                  <em> / {formatCurrency(totalAmount, currency)}</em>
+                </strong>
+              </div>
+              <div className={styles.allocationBar}>
+                <div className={styles.allocationFill} style={{ width: `${partialAllocatedPct}%` }} />
+              </div>
+              <div className={styles.allocationStatus}>
+                {partialPlanStatus === 'ok' ? (
+                  <>
+                    <Check size={15} />
+                    <span>El plan cuadra con el total a cobrar.</span>
+                  </>
+                ) : partialPlanStatus === 'under' ? (
+                  <>
+                    <AlertCircle size={15} />
+                    <span>Faltan {formatCurrency(partialPlanDifference, currency)} por asignar.</span>
+                  </>
+                ) : (
+                  <>
+                    <AlertCircle size={15} />
+                    <span>Te excediste {formatCurrency(Math.abs(partialPlanDifference), currency)} del total.</span>
+                  </>
+                )}
+              </div>
             </div>
 
             <div className={styles.authorizationNotice}>
-              <AlertCircle size={16} />
+              <ShieldCheck size={16} />
               <span>
                 {partialNeedsCardAuthorization
                   ? `GoHighLevel validará si existe una tarjeta guardada. Si no existe, se enviará un cobro separado de ${formatCurrency(cardSetupAmount, currency)} para domiciliar. El plan no se activa hasta que esa tarjeta quede autorizada.`
                   : 'El primer pago con tarjeta autoriza la tarjeta en GoHighLevel. El plan no se activa hasta que ese pago sea exitoso y la tarjeta quede guardada.'}
               </span>
-            </div>
-
-            <div className={styles.partialTotals}>
-              <div>
-                <span>Total planificado</span>
-                <strong>{formatCurrency(partialPlanTotal, currency)}</strong>
-              </div>
-              <div className={Math.abs(partialPlanDifference) > 0.5 ? styles.partialDifferenceError : styles.partialDifferenceOk}>
-                <span>Diferencia</span>
-                <strong>{formatCurrency(partialPlanDifference, currency)}</strong>
-              </div>
             </div>
           </div>
         )}

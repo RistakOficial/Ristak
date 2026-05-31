@@ -347,46 +347,74 @@
   padding-left: 36px;
 }
 
-.partialSection {
+/* ===== Plan de parcialidades ===== */
+.planSection {
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  padding: 16px;
+  gap: 16px;
+  padding: 18px;
   border: 1px solid var(--color-border);
-  border-radius: 12px;
+  border-radius: 14px;
   background: var(--color-surface);
 }
 
-.partialHeader {
+.planIntro {
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
+  align-items: center;
   gap: 16px;
+  flex-wrap: wrap;
 }
 
-.partialHeader p {
+.planIntroText p {
   margin: 0 0 4px 0;
   font-size: 15px;
   font-weight: 700;
   color: var(--color-text-primary);
 }
 
-.partialHeader span {
+.planIntroText span {
   font-size: 12px;
+  color: var(--color-text-tertiary);
+  line-height: 1.4;
+}
+
+.planTotalChip {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 14px;
+  border-radius: 10px;
+  background: rgba(var(--color-primary-rgb), 0.08);
+  border: 1px solid rgba(var(--color-primary-rgb), 0.18);
+  text-align: right;
+}
+
+.planTotalChip span {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
   color: var(--color-text-tertiary);
 }
 
-.partialBlock {
+.planTotalChip strong {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+/* Numbered step block */
+.planStep {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 14px;
-  border: 1px dashed var(--color-border);
-  border-radius: 10px;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
   background: var(--color-background);
 }
 
-.partialBlockHeader {
+.planStepHead {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -394,54 +422,123 @@
   flex-wrap: wrap;
 }
 
-.partialBlockTitle {
+.planStepTitle {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 13px;
+  gap: 10px;
+  min-width: 0;
+}
+
+.planStepTitle p {
+  margin: 0;
+  font-size: 14px;
   font-weight: 700;
   color: var(--color-text-primary);
 }
 
-.partialBlockTitle svg {
-  color: var(--color-primary);
+.planStepTitle > div > span {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
 }
 
-.partialPill {
+.stepNumber {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 26px;
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  background: var(--color-primary);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.autoTag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   padding: 5px 10px;
   border-radius: 999px;
   background: rgba(var(--color-primary-rgb), 0.1);
-  color: var(--color-text-primary);
+  color: var(--color-primary);
   font-size: 12px;
   font-weight: 700;
 }
 
-.partialGrid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+.planStepBody {
+  display: flex;
+  flex-direction: column;
   gap: 12px;
 }
 
-.partialAmountPreview {
+.fieldGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.planHint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  line-height: 1.45;
+}
+
+/* Highlighted computed value */
+.calcChip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: rgba(var(--color-primary-rgb), 0.06);
+  border: 1px solid rgba(var(--color-primary-rgb), 0.14);
+}
+
+.calcChip span {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.calcChip strong {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+/* Installment table with column headers */
+.installmentTable {
   display: flex;
   flex-direction: column;
-  justify-content: center;
-  gap: 4px;
-  min-height: 42px;
-  padding: 10px 12px;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  background: var(--color-surface);
+  gap: 6px;
 }
 
-.partialAmountPreview span {
-  font-size: 11px;
+.installmentHead,
+.installmentRow {
+  display: grid;
+  grid-template-columns: 34px 70px minmax(60px, 1fr) 150px minmax(86px, auto) 36px;
+  gap: 8px;
+  align-items: center;
+}
+
+.installmentHead {
+  padding: 0 4px 2px;
+}
+
+.installmentHead span {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
   color: var(--color-text-tertiary);
+  white-space: nowrap;
 }
 
-.partialAmountPreview strong {
-  font-size: 15px;
-  color: var(--color-text-primary);
+.alignRight {
+  text-align: right;
 }
 
 .installmentList {
@@ -450,19 +547,12 @@
   gap: 8px;
 }
 
-.installmentRow {
-  display: grid;
-  grid-template-columns: 32px 74px minmax(88px, 1fr) minmax(136px, 1.2fr) minmax(92px, auto) 36px;
-  gap: 8px;
-  align-items: center;
-}
-
-.installmentSequence {
+.installmentSeq {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  width: 30px;
+  height: 30px;
   border-radius: 8px;
   background: rgba(var(--color-primary-rgb), 0.1);
   color: var(--color-primary);
@@ -470,12 +560,54 @@
   font-weight: 700;
 }
 
-.installmentAmount {
-  min-width: 92px;
+.installmentCell {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.cellLabel {
+  display: none;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-tertiary);
+}
+
+.installmentMonto {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  text-align: right;
+}
+
+.installmentMonto strong {
   font-size: 13px;
   font-weight: 700;
   color: var(--color-text-primary);
-  text-align: right;
+}
+
+.addInstallment {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 11px;
+  border: 1px dashed var(--color-border);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--color-primary);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.addInstallment:hover {
+  border-color: var(--color-primary);
+  background: rgba(var(--color-primary-rgb), 0.06);
 }
 
 .iconButton {
@@ -556,42 +688,101 @@
   margin-top: 1px;
 }
 
-.partialTotals {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+/* Allocation / balance indicator */
+.allocation {
+  display: flex;
+  flex-direction: column;
   gap: 10px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  border: 1px solid var(--color-border);
+  background: var(--color-background);
 }
 
-.partialTotals > div {
+.allocationOk {
+  border-color: rgba(34, 197, 94, 0.4);
+  background: rgba(34, 197, 94, 0.06);
+}
+
+.allocationWarn {
+  border-color: rgba(245, 158, 11, 0.4);
+  background: rgba(245, 158, 11, 0.07);
+}
+
+.allocationError {
+  border-color: rgba(239, 68, 68, 0.4);
+  background: rgba(239, 68, 68, 0.07);
+}
+
+.allocationTop {
   display: flex;
   justify-content: space-between;
+  align-items: baseline;
   gap: 12px;
-  padding: 10px 12px;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  background: var(--color-background);
-  font-size: 13px;
 }
 
-.partialTotals span {
-  color: var(--color-text-tertiary);
+.allocationTop span {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
 }
 
-.partialTotals strong {
+.allocationTop strong {
+  font-size: 15px;
+  font-weight: 700;
   color: var(--color-text-primary);
 }
 
-.partialDifferenceOk strong {
+.allocationTop em {
+  font-style: normal;
+  font-weight: 600;
+  color: var(--color-text-tertiary);
+}
+
+.allocationBar {
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.2);
+  overflow: hidden;
+}
+
+.allocationFill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--color-status-success);
+  transition: width 0.2s ease;
+}
+
+.allocationWarn .allocationFill {
+  background: var(--color-status-warning);
+}
+
+.allocationError .allocationFill {
+  background: var(--color-status-error);
+}
+
+.allocationStatus {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.allocationOk .allocationStatus {
   color: var(--color-status-success);
 }
 
-.partialDifferenceError {
-  border-color: rgba(239, 68, 68, 0.35) !important;
-  background: rgba(239, 68, 68, 0.08) !important;
+.allocationWarn .allocationStatus {
+  color: var(--color-status-warning);
 }
 
-.partialDifferenceError strong {
+.allocationError .allocationStatus {
   color: var(--color-status-error);
+}
+
+.allocationStatus svg {
+  flex: 0 0 auto;
 }
 
 .summaryCard {
@@ -971,6 +1162,12 @@ body.dark .tooltipInfo {
   gap: 8px;
 }
 
+.manualField label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
 .manualTransferInfo {
   display: flex;
   flex-direction: column;
@@ -1138,22 +1335,53 @@ body.dark .tooltipInfo {
     grid-template-columns: 1fr;
   }
 
+  .fieldGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .installmentHead {
+    display: none;
+  }
+
   .installmentRow {
-    grid-template-columns: 32px 74px 1fr;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    padding: 12px;
+    border: 1px solid var(--color-border);
+    border-radius: 10px;
+    background: var(--color-surface);
+    align-items: end;
   }
 
-  .installmentRow input[type="date"],
-  .installmentAmount,
-  .installmentRow .iconButton {
-    grid-column: span 3;
+  .installmentSeq {
+    grid-column: 1 / -1;
+    justify-self: start;
   }
 
-  .installmentAmount {
+  .cellLabel {
+    display: block;
+  }
+
+  .installmentDate {
+    grid-column: 1 / -1;
+  }
+
+  .installmentMonto {
+    grid-column: 1 / -1;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
     text-align: left;
+    padding-top: 8px;
+    border-top: 1px dashed var(--color-border);
   }
 
-  .channelGrid,
-  .partialTotals {
+  .installmentDelete {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+
+  .channelGrid {
     grid-template-columns: 1fr;
   }
 
@@ -1195,12 +1423,19 @@ body.dark .tooltipInfo {
     grid-template-columns: 1fr;
   }
 
-  .partialBlockHeader {
+  .planIntro {
+    flex-direction: column;
     align-items: stretch;
   }
 
-  .partialBlockHeader > * {
-    width: 100%;
+  .planTotalChip {
+    text-align: left;
+  }
+
+  .planStepHead {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
   }
 }
 
