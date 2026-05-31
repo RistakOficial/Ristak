@@ -1,9 +1,29 @@
 import React, { useState, FormEvent } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { Lock, User, Terminal, Copy, Check } from 'lucide-react'
 import { Button } from '@/components/common'
 import { useAuth } from '@/contexts/AuthContext'
 import styles from './Login.module.css'
+
+type RedirectLocation = {
+  pathname?: string
+  search?: string
+  hash?: string
+}
+
+type LoginLocationState = {
+  from?: RedirectLocation
+} | null
+
+function getRedirectPath(from?: RedirectLocation) {
+  const pathname = from?.pathname
+
+  if (!pathname?.startsWith('/') || pathname === '/login' || pathname === '/setup') {
+    return '/dashboard'
+  }
+
+  return `${pathname}${from.search || ''}${from.hash || ''}`
+}
 
 export const Login: React.FC = () => {
   const [username, setUsername] = useState('')
@@ -14,7 +34,9 @@ export const Login: React.FC = () => {
   const [copied, setCopied] = useState(false)
 
   const { login } = useAuth()
+  const location = useLocation()
   const navigate = useNavigate()
+  const redirectPath = getRedirectPath((location.state as LoginLocationState)?.from)
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
@@ -29,7 +51,7 @@ export const Login: React.FC = () => {
 
     try {
       await login(username, password)
-      navigate('/dashboard')
+      navigate(redirectPath, { replace: true })
     } catch (err: any) {
       setError(err.message || 'Usuario o contraseña incorrectos')
     } finally {

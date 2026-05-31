@@ -1,9 +1,29 @@
 import React, { useState, FormEvent } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { Lock, User, UserPlus } from 'lucide-react'
 import { Button } from '@/components/common'
 import { useAuth } from '@/contexts/AuthContext'
 import styles from './Login.module.css'
+
+type RedirectLocation = {
+  pathname?: string
+  search?: string
+  hash?: string
+}
+
+type SetupLocationState = {
+  from?: RedirectLocation
+} | null
+
+function getRedirectPath(from?: RedirectLocation) {
+  const pathname = from?.pathname
+
+  if (!pathname?.startsWith('/') || pathname === '/login' || pathname === '/setup') {
+    return '/dashboard'
+  }
+
+  return `${pathname}${from.search || ''}${from.hash || ''}`
+}
 
 export const Setup: React.FC = () => {
   const [username, setUsername] = useState('')
@@ -13,11 +33,13 @@ export const Setup: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false)
 
   const { setupAccount, needsSetup } = useAuth()
+  const location = useLocation()
   const navigate = useNavigate()
+  const redirectPath = getRedirectPath((location.state as SetupLocationState)?.from)
 
   // Si ya hay usuarios creados, redirigir a login
   if (!needsSetup) {
-    navigate('/login', { replace: true })
+    navigate('/login', { replace: true, state: location.state })
     return null
   }
 
@@ -50,7 +72,7 @@ export const Setup: React.FC = () => {
 
     try {
       await setupAccount(username, password)
-      navigate('/dashboard', { replace: true })
+      navigate(redirectPath, { replace: true })
     } catch (err: any) {
       setError(err.message || 'Error al crear usuario')
     } finally {
