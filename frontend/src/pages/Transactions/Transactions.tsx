@@ -169,7 +169,7 @@ export const Transactions: React.FC = () => {
     setSyncing(true)
     try {
       if (paymentTableTab === 'payment-plans') {
-        showToast('info', 'Actualizando planes de pago', 'Consultando facturas recurrentes activas en HighLevel...')
+        showToast('info', 'Actualizando planes de pago', 'Consultando facturas recurrentes en HighLevel...')
         await fetchPaymentPlans()
         showToast('success', 'Planes actualizados', 'La lista de planes de pago se actualizó desde HighLevel')
         return
@@ -971,7 +971,7 @@ export const Transactions: React.FC = () => {
             data={paymentPlans}
             keyExtractor={(item) => item.id}
             onRowClick={handleOpenPaymentPlan}
-            emptyMessage="No hay planes de pago activos"
+            emptyMessage="No hay planes de pago"
             loading={paymentPlansLoading}
             searchable={true}
             searchPlaceholder="Buscar planes de pago..."

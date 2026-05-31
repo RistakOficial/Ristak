@@ -1347,7 +1347,7 @@ function sanitizeInvoiceSchedulePayload(payload = {}) {
 
 export const listInvoiceSchedules = async (req, res) => {
   try {
-    const includeInactive = req.query.includeInactive === 'true';
+    const activeOnly = req.query.activeOnly === 'true';
     const requestedLimit = Number(req.query.limit);
     const singlePage = Number.isFinite(requestedLimit) && requestedLimit > 0;
     const limit = Math.min(singlePage ? requestedLimit : 100, 100);
@@ -1367,7 +1367,7 @@ export const listInvoiceSchedules = async (req, res) => {
     }
 
     const data = schedules
-      .filter(schedule => includeInactive || isActiveInvoiceSchedule(schedule))
+      .filter(schedule => !activeOnly || isActiveInvoiceSchedule(schedule))
       .map(normalizeInvoiceSchedule)
       .filter(schedule => schedule.id)
       .sort((left, right) => timestamp(right.sortDate) - timestamp(left.sortDate));
