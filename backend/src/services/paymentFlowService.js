@@ -40,9 +40,34 @@ function normalizeAmount(value) {
   return Math.round(amount * 100) / 100
 }
 
-function normalizeDateOnly(value) {
-  if (!value) return DateTime.now().setZone(DEFAULT_PAYMENT_TIMEZONE).toISODate()
-  return String(value).split('T')[0]
+function normalizeDateOnly(value, timezone = DEFAULT_PAYMENT_TIMEZONE) {
+  const zone = resolveScheduleTimezone(timezone)
+  if (!value) return DateTime.now().setZone(zone).toISODate()
+
+  if (value instanceof Date) {
+    const date = DateTime.fromJSDate(value, { zone: 'utc' }).setZone(zone)
+    return date.isValid ? date.toISODate() : DateTime.now().setZone(zone).toISODate()
+  }
+
+  if (typeof value === 'object' && typeof value.toISOString === 'function') {
+    const date = DateTime.fromISO(value.toISOString(), { zone: 'utc' }).setZone(zone)
+    return date.isValid ? date.toISODate() : DateTime.now().setZone(zone).toISODate()
+  }
+
+  const text = String(value).trim()
+  const dateOnlyMatch = text.match(/^(\d{4}-\d{2}-\d{2})/)
+  if (dateOnlyMatch) return dateOnlyMatch[1]
+
+  const isoDate = DateTime.fromISO(text, { setZone: true })
+  if (isoDate.isValid) return isoDate.setZone(zone).toISODate()
+
+  const jsDate = new Date(text)
+  if (!Number.isNaN(jsDate.getTime())) {
+    const parsedDate = DateTime.fromJSDate(jsDate, { zone: 'utc' }).setZone(zone)
+    if (parsedDate.isValid) return parsedDate.toISODate()
+  }
+
+  return DateTime.now().setZone(zone).toISODate()
 }
 
 function todayDateOnly(timezone = DEFAULT_PAYMENT_TIMEZONE) {
@@ -52,7 +77,7 @@ function todayDateOnly(timezone = DEFAULT_PAYMENT_TIMEZONE) {
 
 function resolveInvoiceDates(dueDate, fallbackDueDate, timezone = DEFAULT_PAYMENT_TIMEZONE) {
   const issueDate = todayDateOnly(timezone)
-  const requestedDueDate = normalizeDateOnly(dueDate || fallbackDueDate || issueDate)
+  const requestedDueDate = normalizeDateOnly(dueDate || fallbackDueDate || issueDate, timezone)
 
   return {
     issueDate,
@@ -133,8 +158,9 @@ function formatPercentValue(value) {
 }
 
 function formatPlanDate(value, timezone = DEFAULT_PAYMENT_TIMEZONE) {
-  const date = DateTime.fromISO(normalizeDateOnly(value), { zone: resolveScheduleTimezone(timezone) })
-  return date.isValid ? date.toFormat('dd/LL/yyyy') : normalizeDateOnly(value)
+  const normalizedDate = normalizeDateOnly(value, timezone)
+  const date = DateTime.fromISO(normalizedDate, { zone: resolveScheduleTimezone(timezone) })
+  return date.isValid ? date.toFormat('dd/LL/yyyy') : normalizedDate
 }
 
 function paymentOrdinalLabel(index) {
@@ -842,7 +868,7 @@ function resolveScheduleTimezone(timezone) {
 }
 
 function buildScheduleExecuteAt(dueDate, timezone = DEFAULT_PAYMENT_TIMEZONE) {
-  const date = normalizeDateOnly(dueDate)
+  const date = normalizeDateOnly(dueDate, timezone)
   const zone = resolveScheduleTimezone(timezone)
   const scheduledAt = DateTime.fromISO(`${date}T09:00:00`, { zone }).toUTC()
   const minimumFutureAt = DateTime.utc().plus({ minutes: 5 })
@@ -884,11 +910,11 @@ function getEffectiveInstallmentDueDate(flow, installment, timezone = DEFAULT_PA
   const firstPaymentDate = flow?.first_payment_date || flow?.firstPaymentDate
 
   if (!hasFirstPlanPayment(flow) || !firstPaymentDate || sequence <= 0) {
-    return normalizeDateOnly(installment.due_date || installment.dueDate)
+    return normalizeDateOnly(installment.due_date || installment.dueDate, timezone)
   }
 
-  const baseDate = DateTime.fromISO(normalizeDateOnly(firstPaymentDate), { zone }).startOf('day')
-  if (!baseDate.isValid) return normalizeDateOnly(installment.due_date || installment.dueDate)
+  const baseDate = DateTime.fromISO(normalizeDateOnly(firstPaymentDate, timezone), { zone }).startOf('day')
+  if (!baseDate.isValid) return normalizeDateOnly(installment.due_date || installment.dueDate, timezone)
 
   if (frequency === 'monthly') {
     return addMonthsClamped(baseDate, sequence).toISODate()
@@ -910,7 +936,7 @@ function getEffectiveInstallmentDueDate(flow, installment, timezone = DEFAULT_PA
     return addMonthsClamped(baseDate, 12 * sequence).toISODate()
   }
 
-  return normalizeDateOnly(installment.due_date || installment.dueDate)
+  return normalizeDateOnly(installment.due_date || installment.dueDate, timezone)
 }
 
 function withEffectiveInstallmentDates(flow, installments, timezone = DEFAULT_PAYMENT_TIMEZONE) {
@@ -924,7 +950,7 @@ function parseInstallmentDate(installment, timezone = DEFAULT_PAYMENT_TIMEZONE) 
   const rawDate = getInstallmentDueDateValue(installment)
   if (!rawDate) return null
 
-  const date = DateTime.fromISO(normalizeDateOnly(rawDate), {
+  const date = DateTime.fromISO(normalizeDateOnly(rawDate, timezone), {
     zone: resolveScheduleTimezone(timezone)
   })
 
