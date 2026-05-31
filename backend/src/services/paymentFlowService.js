@@ -144,6 +144,19 @@ function getTransactionInvoiceId(transaction, chargeSnapshot = {}) {
 function isSuccessfulGhlTransaction(transaction, chargeSnapshot = {}) {
   const transactionStatus = normalizeText(transaction.status)
   const chargeStatus = normalizeText(chargeSnapshot.status)
+  const liveMode = normalizeOptionalBoolean(
+    transaction.liveMode ??
+    transaction.live_mode ??
+    chargeSnapshot.livemode ??
+    chargeSnapshot.liveMode
+  )
+  const chargeSucceeded = ['paid', 'succeeded', 'captured', 'complete', 'completed', 'success'].includes(chargeStatus)
+
+  // En test mode GHL puede devolver la transacción como refunded aunque el charge
+  // haya autorizado la tarjeta correctamente. Para producción, refunded sigue bloqueado.
+  if (transactionStatus === 'refunded' && liveMode === false && chargeSucceeded) {
+    return true
+  }
 
   if (['failed', 'declined', 'canceled', 'cancelled', 'void', 'refunded'].includes(transactionStatus)) {
     return false
@@ -153,7 +166,7 @@ function isSuccessfulGhlTransaction(transaction, chargeSnapshot = {}) {
     return true
   }
 
-  return ['paid', 'succeeded', 'captured', 'complete', 'completed', 'success'].includes(chargeStatus)
+  return chargeSucceeded
 }
 
 function extractGhlPaymentMethodFromTransaction(transaction, authorizationInvoiceId = null) {
@@ -376,12 +389,33 @@ async function findGhlPaymentMethodFromInvoice({ ghlClient, invoiceId, contactId
       if (method) return method
     }
 
+    if (attempt === 0 && candidates.length > 0) {
+      const statuses = candidates.map((transaction) => {
+        const chargeSnapshot = maybeJsonObject(transaction.chargeSnapshot || transaction.charge_snapshot)
+        const liveMode = normalizeOptionalBoolean(transaction.liveMode ?? transaction.live_mode ?? chargeSnapshot.livemode ?? chargeSnapshot.liveMode)
+        return `${normalizeText(transaction.status) || 'sin_status'}/${normalizeText(chargeSnapshot.status) || 'sin_charge'}${liveMode === false ? '/test' : liveMode === true ? '/live' : ''}`
+      })
+      logger.warn(`GHL devolvió transacciones sin paymentMethod utilizable para invoice ${invoiceId}: ${statuses.join(', ')}`)
+    }
+
     if (attempt < 2) {
       await new Promise(resolve => setTimeout(resolve, 1500))
     }
   }
 
   return null
+}
+
+function extractScheduleId(response) {
+  return (
+    response?._id ||
+    response?.id ||
+    response?.schedule?._id ||
+    response?.schedule?.id ||
+    response?.data?._id ||
+    response?.data?.id ||
+    null
+  )
 }
 
 async function findStoredGhlPaymentMethodForContact(contactId, expectedLiveMode) {
@@ -774,10 +808,10 @@ async function scheduleAutomaticInstallmentsForFlow(flow, paymentMethod, existin
         const schedule = await ghlClient.createInvoiceSchedule(
           buildInstallmentSchedulePayload({ flow, installment, context })
         )
-        scheduleId = schedule?._id || schedule?.id
+        scheduleId = extractScheduleId(schedule)
 
         if (!scheduleId) {
-          throw new Error('HighLevel no devolvió ID del schedule')
+          throw new Error(`HighLevel no devolvió ID del schedule: ${Object.keys(schedule || {}).join(', ') || 'respuesta vacía'}`)
         }
 
         await db.run(
