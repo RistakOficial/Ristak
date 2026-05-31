@@ -5,6 +5,8 @@ import {
   getCampaignsReport,
   getSummary,
   getMetrics,
+  getManualBusinessExpenses,
+  upsertManualBusinessExpense,
   getContactsList,
   getTransactionsList
 } from '../controllers/reportsController.js';
@@ -12,6 +14,8 @@ import {
 const router = express.Router();
 
 router.get('/metrics', getMetrics);
+router.get('/manual-business-expenses', getManualBusinessExpenses);
+router.put('/manual-business-expenses', upsertManualBusinessExpense);
 router.get('/contacts/list', getContactsList);
 router.get('/transactions', getTransactionsList);
 router.get('/contacts', getContactsReport);

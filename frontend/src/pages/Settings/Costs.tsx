@@ -1,10 +1,45 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { Card, Button } from '@/components/common'
 import { Plus, X, Pencil, DollarSign, Loader2, TrendingDown } from 'lucide-react'
 import { useNotification } from '@/contexts/NotificationContext'
 import { costsService, type Cost, type CreateCostDto } from '@/services/costsService'
+import { useAppConfig } from '@/hooks'
 import styles from './Costs.module.css'
+
+const MANUAL_BUSINESS_EXPENSES_CONFIG_KEY = 'report_manual_business_expenses_enabled'
+const MANUAL_BUSINESS_EXPENSES_COLUMN_KEY = 'businessExpenses'
+const REPORT_TYPES = ['cashflow', 'attribution', 'campaigns']
+const REPORT_VIEW_TYPES = ['day', 'month', 'year']
+const REPORT_TABLE_CONFIG_KEYS = REPORT_TYPES.flatMap((reportType) => (
+  REPORT_VIEW_TYPES.map((viewType) => `table_reports_metrics_${reportType}_${viewType}`)
+))
+
+const parseConfigFlag = (value: unknown) => {
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase()
+    return normalized === '1' || normalized === 'true' || normalized === 'yes'
+  }
+
+  if (typeof value === 'number') return value === 1
+
+  return Boolean(value)
+}
+
+const parseTableConfig = (value: unknown): Array<{ id: string; visible?: boolean }> => {
+  if (Array.isArray(value)) return value
+
+  if (typeof value === 'string' && value.trim()) {
+    try {
+      const parsed = JSON.parse(value)
+      return Array.isArray(parsed) ? parsed : []
+    } catch {
+      return []
+    }
+  }
+
+  return []
+}
 
 export const Costs: React.FC = () => {
   const { showToast, showConfirm } = useNotification()
@@ -13,6 +48,9 @@ export const Costs: React.FC = () => {
   const [loading, setLoading] = useState(false)
   const [showModal, setShowModal] = useState(false)
   const [editingCost, setEditingCost] = useState<Cost | null>(null)
+  const [manualBusinessExpensesEnabled, setManualBusinessExpensesEnabled, syncingManualBusinessExpenses] =
+    useAppConfig<string | number | boolean>(MANUAL_BUSINESS_EXPENSES_CONFIG_KEY, '1')
+  const [manualExpenseColumnAvailable, setManualExpenseColumnAvailable] = useState(false)
 
   // Form state
   const [name, setName] = useState('')
@@ -24,7 +62,36 @@ export const Costs: React.FC = () => {
 
   useEffect(() => {
     loadCosts()
+    loadManualExpenseColumnAvailability()
   }, [])
+
+  const loadManualExpenseColumnAvailability = useCallback(async () => {
+    try {
+      const keysParam = REPORT_TABLE_CONFIG_KEYS.join(',')
+      const response = await fetch(`/api/config?keys=${keysParam}`)
+      if (!response.ok) return
+
+      const data = await response.json()
+      const config = data.config || {}
+      const hasVisibleManualExpenseColumn = REPORT_TABLE_CONFIG_KEYS.some((key) => (
+        parseTableConfig(config[key]).some((column) => (
+          column.id === MANUAL_BUSINESS_EXPENSES_COLUMN_KEY && column.visible === true
+        ))
+      ))
+
+      setManualExpenseColumnAvailable(hasVisibleManualExpenseColumn)
+    } catch {
+      setManualExpenseColumnAvailable(false)
+    }
+  }, [])
+
+  const handleManualBusinessExpensesToggle = async (checked: boolean) => {
+    try {
+      await setManualBusinessExpensesEnabled(checked ? '1' : '0')
+    } catch (error: any) {
+      showToast('error', 'No se pudo guardar la configuración', error?.message || 'Intenta nuevamente')
+    }
+  }
 
   const loadCosts = async () => {
     setLoading(true)
@@ -160,6 +227,26 @@ export const Costs: React.FC = () => {
             Agregar costo
           </Button>
         </div>
+
+        {manualExpenseColumnAvailable && (
+          <div className={styles.manualReportToggle}>
+            <div className={styles.manualReportToggleText}>
+              <span className={styles.manualReportToggleTitle}>Costos manuales en reporte</span>
+              <span className={styles.manualReportToggleState}>
+                {parseConfigFlag(manualBusinessExpensesEnabled) ? 'Activo' : 'Inactivo'}
+              </span>
+            </div>
+            <label className={styles.switchControl}>
+              <input
+                type="checkbox"
+                checked={parseConfigFlag(manualBusinessExpensesEnabled)}
+                disabled={syncingManualBusinessExpenses}
+                onChange={(event) => handleManualBusinessExpensesToggle(event.target.checked)}
+              />
+              <span className={styles.switchTrack} />
+            </label>
+          </div>
+        )}
 
         {loading ? (
           <div className={styles.loadingContainer}>

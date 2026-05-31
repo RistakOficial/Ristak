@@ -22,10 +22,11 @@ import {
   type ReportsSummary,
   type ReportMetricRow,
   type ContactListItem,
-  type ReportRange
+  type ReportRange,
+  type ManualBusinessExpense
 } from '@/services/reportsService'
 import { formatCurrency, formatNumber, formatRoas, formatDate, formatDateToISO, parseLocalDateString } from '@/utils/format'
-import { useAppConfig, useChartHover, useIsRenderDomain, useMetaTimezone } from '@/hooks'
+import { useAppConfig, useChartHover, useIsRenderDomain, useMetaTimezone, useTableConfig } from '@/hooks'
 import { DEFAULT_BAR_RADIUS, getTopRoundedBarPath } from '@/components/common/chartShapes'
 import { ChartTooltip } from '@/components/common/ChartTooltip/ChartTooltip'
 import styles from './Reports.module.css'
@@ -61,6 +62,10 @@ const monthNamesShort = [
   'jul', 'ago', 'sept', 'oct', 'nov', 'dic'
 ]
 
+const MANUAL_BUSINESS_EXPENSES_COLUMN_KEY = 'businessExpenses'
+const MANUAL_BUSINESS_EXPENSES_CONFIG_KEY = 'report_manual_business_expenses_enabled'
+const MS_PER_DAY = 24 * 60 * 60 * 1000
+
 type ViewType = 'day' | 'month' | 'year'
 type ReportType = 'cashflow' | 'attribution' | 'campaigns'
 type DisplayMode = 'table' | 'metrics'
@@ -74,6 +79,7 @@ type TableRow = {
   profit: number
   revenue: number
   spend: number
+  businessExpenses: number
   sales: number
   transactions: number
   new_customers: number
@@ -251,6 +257,97 @@ const resolvePeriodRange = (period: string, viewType: ViewType) => {
   return { from: `${year}-01-01`, to: `${year}-12-31` }
 }
 
+const parseDateKeyParts = (value: string) => {
+  const sanitized = value.includes('T') ? value.split('T')[0] : value
+  const [yearRaw, monthRaw = '01', dayRaw = '01'] = sanitized.split('-')
+  const year = Number(yearRaw)
+  const month = Number(monthRaw)
+  const day = Number(dayRaw)
+
+  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) {
+    return null
+  }
+
+  return { year, month, day }
+}
+
+const toUtcDayIndex = (value: string) => {
+  const parts = parseDateKeyParts(value)
+  if (!parts) return null
+  return Math.floor(Date.UTC(parts.year, parts.month - 1, parts.day) / MS_PER_DAY)
+}
+
+const getLastDayOfMonth = (year: number, month: number) => new Date(Date.UTC(year, month, 0)).getUTCDate()
+
+const getManualExpenseRange = (expense: ManualBusinessExpense) => {
+  const parts = parseDateKeyParts(expense.period_start)
+  if (!parts) return null
+
+  if (expense.period_type === 'day') {
+    return { from: expense.period_start, to: expense.period_start }
+  }
+
+  if (expense.period_type === 'month') {
+    const month = String(parts.month).padStart(2, '0')
+    const lastDay = String(getLastDayOfMonth(parts.year, parts.month)).padStart(2, '0')
+    return { from: `${parts.year}-${month}-01`, to: `${parts.year}-${month}-${lastDay}` }
+  }
+
+  return { from: `${parts.year}-01-01`, to: `${parts.year}-12-31` }
+}
+
+const roundCurrencyValue = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100
+
+const calculateManualBusinessExpensesForRange = (
+  targetRange: { from: string; to: string },
+  expenses: ManualBusinessExpense[]
+) => {
+  const targetStart = toUtcDayIndex(targetRange.from)
+  const targetEnd = toUtcDayIndex(targetRange.to)
+
+  if (targetStart === null || targetEnd === null) return 0
+
+  const total = expenses.reduce((sum, expense) => {
+    const amount = Number(expense.amount || 0)
+    if (!Number.isFinite(amount) || amount <= 0) return sum
+
+    const sourceRange = getManualExpenseRange(expense)
+    if (!sourceRange) return sum
+
+    const sourceStart = toUtcDayIndex(sourceRange.from)
+    const sourceEnd = toUtcDayIndex(sourceRange.to)
+    if (sourceStart === null || sourceEnd === null || sourceEnd < sourceStart) return sum
+
+    const overlapStart = Math.max(targetStart, sourceStart)
+    const overlapEnd = Math.min(targetEnd, sourceEnd)
+    if (overlapEnd < overlapStart) return sum
+
+    const sourceDays = sourceEnd - sourceStart + 1
+    const overlapDays = overlapEnd - overlapStart + 1
+    return sum + (amount * overlapDays) / sourceDays
+  }, 0)
+
+  return roundCurrencyValue(total)
+}
+
+const getManualExpensePeriodStart = (period: string, viewType: ViewType) => {
+  if (viewType === 'day') return period
+  if (viewType === 'month') return `${period}-01`
+  return `${period}-01-01`
+}
+
+const getManualExpenseRecordKey = (periodType: ViewType, periodStart: string) => `${periodType}:${periodStart}`
+
+const parseManualExpenseInput = (value: string) => {
+  const normalized = value.replace(/[$,\s]/g, '')
+  if (!normalized) return 0
+
+  const amount = Number(normalized)
+  if (!Number.isFinite(amount) || amount < 0) return null
+
+  return roundCurrencyValue(amount)
+}
+
 const computeRangeForView = (
   viewType: ViewType,
   baseRange: { start: Date; end: Date },
@@ -293,6 +390,8 @@ interface MetricsGridProps {
   reportType: ReportType
   showVisitors: boolean
   viewType: ViewType
+  businessExpensesByPeriod?: Record<string, number>
+  applyManualBusinessExpenses?: boolean
 }
 
 // Componentes de gráfico personalizados con tooltip del Dashboard
@@ -750,22 +849,36 @@ const SimpleAreaChart: React.FC<SimpleAreaChartProps> = ({ data, dataKeys, forma
   )
 }
 
-const MetricsGrid: React.FC<MetricsGridProps> = ({ metrics, loading, reportType, showVisitors, viewType }) => {
+const MetricsGrid: React.FC<MetricsGridProps> = ({
+  metrics,
+  loading,
+  reportType,
+  showVisitors,
+  viewType,
+  businessExpensesByPeriod = {},
+  applyManualBusinessExpenses = false
+}) => {
   const timezoneInfo = useMetaTimezone()
   const { labels } = useLabels()
-  const totals = metrics.reduce((acc, m) => ({
-    spend: acc.spend + m.spend,
-    revenue: acc.revenue + m.revenue,
-    leads: acc.leads + m.leads,
-    sales: acc.sales + m.sales,
-    clicks: acc.clicks + m.clicks,
-    visitors: acc.visitors + m.visitors,
-    appointments: acc.appointments + m.appointments,
-    attendances: acc.attendances + (m.attendances || 0),
-    new_customers: acc.new_customers + m.new_customers
-  }), {
+  const totals = metrics.reduce((acc, m) => {
+    const businessExpenses = applyManualBusinessExpenses ? (businessExpensesByPeriod[m.date] || 0) : 0
+
+    return {
+      spend: acc.spend + m.spend,
+      revenue: acc.revenue + m.revenue,
+      businessExpenses: acc.businessExpenses + businessExpenses,
+      leads: acc.leads + m.leads,
+      sales: acc.sales + m.sales,
+      clicks: acc.clicks + m.clicks,
+      visitors: acc.visitors + m.visitors,
+      appointments: acc.appointments + m.appointments,
+      attendances: acc.attendances + (m.attendances || 0),
+      new_customers: acc.new_customers + m.new_customers
+    }
+  }, {
     spend: 0,
     revenue: 0,
+    businessExpenses: 0,
     leads: 0,
     sales: 0,
     clicks: 0,
@@ -775,9 +888,9 @@ const MetricsGrid: React.FC<MetricsGridProps> = ({ metrics, loading, reportType,
     new_customers: 0
   })
 
-  const profit = totals.revenue - totals.spend
+  const profit = totals.revenue - totals.spend - totals.businessExpenses
   const roas = totals.spend > 0 ? totals.revenue / totals.spend : 0
-  const roi = totals.spend > 0 ? ((totals.revenue - totals.spend) / totals.spend) * 100 : 0
+  const roi = totals.spend > 0 ? (profit / totals.spend) * 100 : 0
   const cpc = totals.clicks > 0 ? totals.spend / totals.clicks : 0
   const epc = totals.clicks > 0 ? totals.revenue / totals.clicks : 0
   const cpl = totals.leads > 0 ? totals.spend / totals.leads : 0
@@ -801,25 +914,30 @@ const MetricsGrid: React.FC<MetricsGridProps> = ({ metrics, loading, reportType,
       const dateA = new Date(a.date).getTime()
       const dateB = new Date(b.date).getTime()
       return dateA - dateB // Orden ascendente
-    }).map(m => ({
-      // Ajustar fecha con timezone de Meta si hay discrepancia
-      label: formatPeriodLabel(
-        timezoneInfo.adjustMetaDateToLocal ? timezoneInfo.adjustMetaDateToLocal(m.date) : m.date,
-        viewType,
-        { includeYear: false }
-      ),
-      clicks: m.clicks,
-      visitors: m.visitors,
-      leads: m.leads,
-      appointments: m.appointments,
-      attendances: m.attendances || 0,
-      sales: m.sales,
-      new_customers: m.new_customers,
-      revenue: m.revenue,
-      spend: m.spend,
-      profit: m.revenue - m.spend
-    }))
-  }, [metrics, timezoneInfo, viewType])
+    }).map(m => {
+      const businessExpenses = applyManualBusinessExpenses ? (businessExpensesByPeriod[m.date] || 0) : 0
+
+      return {
+        // Ajustar fecha con timezone de Meta si hay discrepancia
+        label: formatPeriodLabel(
+          timezoneInfo.adjustMetaDateToLocal ? timezoneInfo.adjustMetaDateToLocal(m.date) : m.date,
+          viewType,
+          { includeYear: false }
+        ),
+        clicks: m.clicks,
+        visitors: m.visitors,
+        leads: m.leads,
+        appointments: m.appointments,
+        attendances: m.attendances || 0,
+        sales: m.sales,
+        new_customers: m.new_customers,
+        revenue: m.revenue,
+        spend: m.spend,
+        businessExpenses,
+        profit: m.revenue - m.spend - businessExpenses
+      }
+    })
+  }, [metrics, timezoneInfo, viewType, businessExpensesByPeriod, applyManualBusinessExpenses])
 
   const trafficItems = [
     { label: 'Clicks', value: formatNumber(totals.clicks) },
@@ -910,6 +1028,7 @@ const MetricsGrid: React.FC<MetricsGridProps> = ({ metrics, loading, reportType,
       items: [
         { label: 'Ingresos', value: formatCurrency(totals.revenue) },
         { label: 'Gasto en Anuncios', value: formatCurrency(totals.spend) },
+        ...(applyManualBusinessExpenses ? [{ label: 'Gastos de negocio', value: formatCurrency(totals.businessExpenses) }] : []),
         { label: 'Ganancias Netas', value: formatCurrency(profit) },
         { label: 'Transacciones', value: formatNumber(totals.sales) },
         { label: 'Retorno de Inversión', value: `${roas.toFixed(2)}x` },
@@ -927,7 +1046,7 @@ const MetricsGrid: React.FC<MetricsGridProps> = ({ metrics, loading, reportType,
         />
       )
     }
-  ], [chartData, trafficItems, trafficKeys, labels, totals, reportType, profit, roas, roi, cac, aov, transactionsPerCustomer, cpl, epl, cpa, cpaAttendance, interesadoToAppt, apptToAttendance, attendanceToSale, attendanceToCustomer, salesLabel])
+  ], [chartData, trafficItems, trafficKeys, labels, totals, reportType, profit, roas, roi, cac, aov, transactionsPerCustomer, cpl, epl, cpa, cpaAttendance, interesadoToAppt, apptToAttendance, attendanceToSale, attendanceToCustomer, salesLabel, applyManualBusinessExpenses])
 
   // Filtrar la tarjeta de "Tráfico" si showVisitors es false (dominio .onrender.com)
   const metricGroups = showVisitors
@@ -983,6 +1102,64 @@ const mapContactsToModalData = (contacts: ContactListItem[]): ContactListItem[] 
     created_at: contact.created_at || (contact as any).createdAt
   }))
 
+interface BusinessExpenseCellProps {
+  value: number
+  row: TableRow
+  saving: boolean
+  onCommit: (row: TableRow, value: string) => void
+}
+
+const formatBusinessExpenseDraft = (value: number) => {
+  if (!Number.isFinite(value) || value <= 0) return ''
+  return roundCurrencyValue(value).toFixed(2)
+}
+
+const BusinessExpenseCell: React.FC<BusinessExpenseCellProps> = ({ value, row, saving, onCommit }) => {
+  const [draft, setDraft] = React.useState(formatBusinessExpenseDraft(value))
+  const [focused, setFocused] = React.useState(false)
+
+  React.useEffect(() => {
+    if (!focused) {
+      setDraft(formatBusinessExpenseDraft(value))
+    }
+  }, [value, focused])
+
+  const handleCommit = () => {
+    onCommit(row, draft)
+  }
+
+  return (
+    <div className={styles.businessExpenseInputShell} onClick={(event) => event.stopPropagation()}>
+      <span className={styles.businessExpensePrefix}>$</span>
+      <input
+        className={styles.businessExpenseInput}
+        value={draft}
+        inputMode="decimal"
+        aria-label={`Gastos de negocio para ${row.displayDate}`}
+        placeholder="0.00"
+        disabled={saving}
+        onFocus={() => setFocused(true)}
+        onBlur={() => {
+          setFocused(false)
+          setDraft(formatBusinessExpenseDraft(value))
+        }}
+        onChange={(event) => setDraft(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') {
+            event.preventDefault()
+            handleCommit()
+          }
+          if (event.key === 'Escape') {
+            event.preventDefault()
+            setDraft(formatBusinessExpenseDraft(value))
+            event.currentTarget.blur()
+          }
+        }}
+      />
+    </div>
+  )
+}
+
 export const Reports: React.FC = () => {
   const { dateRange, setDateRange } = useDateRange()
   const { showToast } = useNotification()
@@ -997,6 +1174,10 @@ export const Reports: React.FC = () => {
   // Sistema híbrido de configuración
   const [visitorSourceConfig] = useAppConfig<'platform' | 'tracking'>('visitor_source', 'platform')
   const [showAnalyticsConfig] = useAppConfig<string | number | boolean>('show_analytics', '1')
+  const [manualBusinessExpensesEnabledConfig] = useAppConfig<string | number | boolean>(
+    MANUAL_BUSINESS_EXPENSES_CONFIG_KEY,
+    '1'
+  )
 
   // FORZAR valores si estamos en dominio .onrender.com
   const visitorSource = isRenderDomain ? 'platform' : visitorSourceConfig
@@ -1076,6 +1257,19 @@ export const Reports: React.FC = () => {
   // 'attribution' = agrupa por fecha de creación del contacto (todos los contactos)
   // 'campaigns' = agrupa por fecha de creación del contacto (solo con ad_id)
   const scopeParam = reportType === 'campaigns' ? 'campaigns' : reportType === 'attribution' ? 'attribution' : 'all'
+  const reportsTableId = `reports_metrics_${reportType}_${viewType}`
+  const [reportsTableConfig] = useTableConfig<Array<{ id: string; visible: boolean; order?: number }>>(reportsTableId)
+
+  const manualBusinessExpensesEnabled = parseAnalyticsFlag(manualBusinessExpensesEnabledConfig)
+  const manualBusinessExpensesColumnVisible = useMemo(() => {
+    if (!Array.isArray(reportsTableConfig)) return false
+    const columnConfig = reportsTableConfig.find((column) => column.id === MANUAL_BUSINESS_EXPENSES_COLUMN_KEY)
+    return Boolean(columnConfig?.visible)
+  }, [reportsTableConfig])
+  const applyManualBusinessExpenses = manualBusinessExpensesEnabled && manualBusinessExpensesColumnVisible
+
+  const [manualBusinessExpenses, setManualBusinessExpenses] = useState<ManualBusinessExpense[]>([])
+  const [savingManualBusinessExpenseKey, setSavingManualBusinessExpenseKey] = useState<string | null>(null)
 
   useEffect(() => {
     const fetchMetrics = async () => {
@@ -1152,6 +1346,19 @@ export const Reports: React.FC = () => {
     fetchSummary()
   }, [apiRange.from, apiRange.to, scopeParam, dateRange])
 
+  const loadManualBusinessExpenses = useCallback(async () => {
+    try {
+      const expenses = await reportsService.getManualBusinessExpenses()
+      setManualBusinessExpenses(expenses)
+    } catch {
+      setManualBusinessExpenses([])
+    }
+  }, [])
+
+  useEffect(() => {
+    loadManualBusinessExpenses()
+  }, [loadManualBusinessExpenses])
+
   useEffect(() => {
     setModalState(prev => ({
       ...prev,
@@ -1165,9 +1372,64 @@ export const Reports: React.FC = () => {
     ? new Date(apiRange.from).getFullYear() !== new Date(apiRange.to).getFullYear()
     : true
 
+  const businessExpensesByPeriod = useMemo(() => {
+    const expensesByPeriod: Record<string, number> = {}
+
+    metrics.forEach((item) => {
+      expensesByPeriod[item.date] = calculateManualBusinessExpensesForRange(
+        resolvePeriodRange(item.date, viewType),
+        manualBusinessExpenses
+      )
+    })
+
+    return expensesByPeriod
+  }, [metrics, viewType, manualBusinessExpenses])
+
+  const manualBusinessExpensesTotalForRange = useMemo(() => (
+    calculateManualBusinessExpensesForRange(apiRange, manualBusinessExpenses)
+  ), [apiRange, manualBusinessExpenses])
+
+  const handleSaveBusinessExpense = useCallback(async (row: TableRow, rawValue: string) => {
+    const amount = parseManualExpenseInput(rawValue)
+
+    if (amount === null) {
+      showToast('warning', 'Gasto inválido', 'Ingresa un monto positivo')
+      return
+    }
+
+    const periodStart = getManualExpensePeriodStart(row.date, viewType)
+    const expenseKey = getManualExpenseRecordKey(viewType, periodStart)
+
+    setSavingManualBusinessExpenseKey(expenseKey)
+    try {
+      const result = await reportsService.saveManualBusinessExpense({
+        period_type: viewType,
+        period_start: periodStart,
+        amount
+      })
+
+      setManualBusinessExpenses((current) => {
+        const next = current.filter((expense) => (
+          getManualExpenseRecordKey(expense.period_type, expense.period_start) !== expenseKey
+        ))
+
+        if (result.expense) {
+          next.push(result.expense)
+        }
+
+        return next
+      })
+    } catch (error: any) {
+      showToast('error', 'No se pudo guardar el gasto', error?.message || 'Intenta nuevamente')
+    } finally {
+      setSavingManualBusinessExpenseKey(null)
+    }
+  }, [showToast, viewType])
+
   const tableData: TableRow[] = useMemo(() => (
     metrics.map((item, index) => {
-      const profit = item.revenue - item.spend
+      const businessExpenses = businessExpensesByPeriod[item.date] || 0
+      const profit = item.revenue - item.spend - (applyManualBusinessExpenses ? businessExpenses : 0)
       const cpc = item.clicks > 0 ? item.spend / item.clicks : 0
       const cpv = item.visitors > 0 ? item.spend / item.visitors : 0
       const cpl = item.leads > 0 ? item.spend / item.leads : 0
@@ -1193,6 +1455,7 @@ export const Reports: React.FC = () => {
         profit,
         revenue: item.revenue,
         spend: item.spend,
+        businessExpenses,
         sales: item.sales,
         transactions: item.sales, // En vista "Todos" sales es el conteo de transacciones
         new_customers: item.new_customers,
@@ -1221,7 +1484,7 @@ export const Reports: React.FC = () => {
       const dateB = new Date(b.date).getTime()
       return dateB - dateA
     })
-  ), [metrics, viewType, includeYearForTable])
+  ), [metrics, viewType, includeYearForTable, timezoneInfo, businessExpensesByPeriod, applyManualBusinessExpenses])
 
   const handleOpenModal = React.useCallback(async (
     type: ModalType,
@@ -1411,6 +1674,26 @@ export const Reports: React.FC = () => {
         header: viewType === 'year' ? 'Año' : viewType === 'month' ? 'Mes' : 'Fecha',
         sortable: true,
         render: (_value, row) => <span className={styles.dateCell}>{row.displayDate}</span>
+      },
+      {
+        key: MANUAL_BUSINESS_EXPENSES_COLUMN_KEY,
+        header: 'Gastos de negocio',
+        sortable: true,
+        visible: false,
+        width: '160px',
+        render: (value: number, row) => {
+          const periodStart = getManualExpensePeriodStart(row.date, viewType)
+          const expenseKey = getManualExpenseRecordKey(viewType, periodStart)
+
+          return (
+            <BusinessExpenseCell
+              value={value}
+              row={row}
+              saving={savingManualBusinessExpenseKey === expenseKey}
+              onCommit={handleSaveBusinessExpense}
+            />
+          )
+        }
       },
       {
         key: 'spend',
@@ -1695,7 +1978,12 @@ export const Reports: React.FC = () => {
     }
 
     return filteredColumns
-  }, [reportType, viewType, visitorSource, handleOpenModal, handleOpenVisitorsModal, handleOpenTransactionsModal, labels.lead, labels.leads, labels.customer, labels.customers, analyticsEnabled])
+  }, [reportType, viewType, visitorSource, handleOpenModal, handleOpenVisitorsModal, handleOpenTransactionsModal, handleSaveBusinessExpense, savingManualBusinessExpenseKey, labels.lead, labels.leads, labels.customer, labels.customers, analyticsEnabled])
+
+  const appliedManualBusinessExpensesTotal = applyManualBusinessExpenses ? manualBusinessExpensesTotalForRange : 0
+  const summaryProfit = summary
+    ? summary.payments.totalRevenue - summary.campaigns.spend - appliedManualBusinessExpensesTotal
+    : 0
 
   const summaryCards = summary ? [
     {
@@ -1707,9 +1995,9 @@ export const Reports: React.FC = () => {
     },
     {
       label: 'Ganancia',
-      value: formatCurrency(summary.payments.totalRevenue - summary.campaigns.spend),
+      value: formatCurrency(summaryProfit),
       delta: calcDelta(
-        summary.payments.totalRevenue - summary.campaigns.spend,
+        summaryProfit,
         summary.payments.totalRevenuePrev - summary.campaigns.spendPrev
       ),
       deltaLabel: 'vs anterior',
@@ -1883,7 +2171,7 @@ export const Reports: React.FC = () => {
             pageSize={25}
             searchable
             searchPlaceholder="Buscar períodos..."
-            tableId={`reports_metrics_${reportType}_${viewType}`}
+            tableId={reportsTableId}
             emptyMessage={loadingMetrics ? 'Cargando métricas...' : 'No hay datos para el rango seleccionado'}
           />
         </Card>
@@ -1894,6 +2182,8 @@ export const Reports: React.FC = () => {
           reportType={reportType}
           showVisitors={analyticsEnabled}
           viewType={viewType}
+          businessExpensesByPeriod={businessExpensesByPeriod}
+          applyManualBusinessExpenses={applyManualBusinessExpenses}
         />
       )}
 

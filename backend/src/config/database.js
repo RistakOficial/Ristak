@@ -231,6 +231,16 @@ async function initTables() {
       // Ignore si ya existe
     }
 
+    try {
+      await db.run(`
+        INSERT INTO app_config (config_key, config_value)
+        VALUES ('report_manual_business_expenses_enabled', '1')
+        ON CONFLICT (config_key) DO NOTHING
+      `)
+    } catch (err) {
+      // Ignore si ya existe
+    }
+
     // Tabla de contactos
     await db.run(`
       CREATE TABLE IF NOT EXISTS contacts (
@@ -1096,6 +1106,19 @@ async function initTables() {
 
     await db.run('CREATE INDEX IF NOT EXISTS idx_costs_type ON costs(type)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_costs_active ON costs(is_active)')
+
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS report_manual_business_expenses (
+        period_type TEXT NOT NULL,
+        period_start TEXT NOT NULL,
+        amount REAL NOT NULL DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (period_type, period_start)
+      )
+    `)
+
+    await db.run('CREATE INDEX IF NOT EXISTS idx_report_manual_business_expenses_period ON report_manual_business_expenses(period_type, period_start)')
 
     logger.success('Todas las tablas inicializadas correctamente')
   } catch (error) {

@@ -98,6 +98,12 @@ export interface ReportMetricRow {
   profit: number
 }
 
+export interface ManualBusinessExpense {
+  period_type: GroupBy
+  period_start: string
+  amount: number
+}
+
 export interface ContactPaymentDetail {
   id: string
   amount: number
@@ -223,6 +229,15 @@ class ReportsService {
     if (params.scope) query.scope = params.scope
 
     return apiClient.get<ReportsSummary>('/reports/summary', { params: query })
+  }
+
+  async getManualBusinessExpenses(): Promise<ManualBusinessExpense[]> {
+    const response = await apiClient.get<{ expenses: ManualBusinessExpense[] }>('/reports/manual-business-expenses')
+    return response.expenses || []
+  }
+
+  async saveManualBusinessExpense(input: ManualBusinessExpense): Promise<{ expense: ManualBusinessExpense | null }> {
+    return apiClient.put<{ expense: ManualBusinessExpense | null }>('/reports/manual-business-expenses', input)
   }
 }
 

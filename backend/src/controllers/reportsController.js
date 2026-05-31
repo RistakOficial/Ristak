@@ -1,4 +1,5 @@
 import { logger } from '../utils/logger.js'
+import { db } from '../config/database.js'
 import {
   buildContactStats,
   buildContactTimeline,
@@ -15,6 +16,39 @@ const buildRangePayload = (range) => ({
   end: range.endUtc,
   timezone: range.appliedTimezone,
   filtered: range.isFiltered
+})
+
+const MANUAL_BUSINESS_EXPENSE_PERIODS = new Set(['day', 'month', 'year'])
+
+const normalizeManualBusinessExpensePeriodStart = (periodType, periodStart) => {
+  const raw = String(periodStart || '').trim()
+
+  if (periodType === 'day') {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return null
+    return raw
+  }
+
+  if (periodType === 'month') {
+    const match = raw.match(/^(\d{4})-(\d{2})(?:-\d{2})?$/)
+    if (!match) return null
+    const month = Number(match[2])
+    if (month < 1 || month > 12) return null
+    return `${match[1]}-${match[2]}-01`
+  }
+
+  if (periodType === 'year') {
+    const match = raw.match(/^(\d{4})(?:-\d{2}-\d{2})?$/)
+    if (!match) return null
+    return `${match[1]}-01-01`
+  }
+
+  return null
+}
+
+const normalizeManualBusinessExpenseRow = (row) => ({
+  period_type: row.period_type,
+  period_start: row.period_start,
+  amount: Number(row.amount || 0)
 })
 
 export const getContactsReport = async (req, res) => {
@@ -160,6 +194,100 @@ export const getMetrics = async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Error al obtener métricas'
+    })
+  }
+}
+
+export const getManualBusinessExpenses = async (req, res) => {
+  try {
+    const expenses = await db.all(`
+      SELECT period_type, period_start, amount
+      FROM report_manual_business_expenses
+      ORDER BY period_start ASC, period_type ASC
+    `)
+
+    res.json({
+      success: true,
+      data: {
+        expenses: expenses.map(normalizeManualBusinessExpenseRow)
+      }
+    })
+  } catch (error) {
+    logger.error(`Error en getManualBusinessExpenses: ${error.message}`)
+    res.status(500).json({
+      success: false,
+      error: 'Error al obtener gastos manuales de negocio'
+    })
+  }
+}
+
+export const upsertManualBusinessExpense = async (req, res) => {
+  try {
+    const { period_type, period_start, amount } = req.body || {}
+    const periodType = String(period_type || '').trim()
+
+    if (!MANUAL_BUSINESS_EXPENSE_PERIODS.has(periodType)) {
+      return res.status(400).json({
+        success: false,
+        error: 'period_type debe ser "day", "month" o "year"'
+      })
+    }
+
+    const normalizedPeriodStart = normalizeManualBusinessExpensePeriodStart(periodType, period_start)
+    if (!normalizedPeriodStart) {
+      return res.status(400).json({
+        success: false,
+        error: 'period_start no tiene un formato válido para el periodo'
+      })
+    }
+
+    const numericAmount = Number(amount)
+    if (!Number.isFinite(numericAmount) || numericAmount < 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'amount debe ser un número positivo'
+      })
+    }
+
+    if (numericAmount === 0) {
+      await db.run(`
+        DELETE FROM report_manual_business_expenses
+        WHERE period_type = ? AND period_start = ?
+      `, [periodType, normalizedPeriodStart])
+
+      return res.json({
+        success: true,
+        data: {
+          expense: null
+        }
+      })
+    }
+
+    await db.run(`
+      INSERT INTO report_manual_business_expenses (period_type, period_start, amount, created_at, updated_at)
+      VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      ON CONFLICT(period_type, period_start) DO UPDATE SET
+        amount = excluded.amount,
+        updated_at = CURRENT_TIMESTAMP
+    `, [periodType, normalizedPeriodStart, numericAmount])
+
+    const expense = await db.get(`
+      SELECT period_type, period_start, amount
+      FROM report_manual_business_expenses
+      WHERE period_type = ? AND period_start = ?
+    `, [periodType, normalizedPeriodStart])
+
+    res.json({
+      success: true,
+      data: {
+        expense: normalizeManualBusinessExpenseRow(expense)
+      }
+    })
+  } catch (error) {
+    logger.error(`Error en upsertManualBusinessExpense: ${error.message}`)
+    res.status(500).json({
+      success: false,
+      error: 'Error al guardar gasto manual de negocio'
     })
   }
 }
