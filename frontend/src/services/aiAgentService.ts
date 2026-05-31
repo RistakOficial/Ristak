@@ -39,6 +39,7 @@ export interface AIAgentConfigStatus {
 
 export interface AIAgentConfigInput {
   apiKey?: string
+  model: string
   businessContext: string
   marketContext: string
   idealCustomer: string

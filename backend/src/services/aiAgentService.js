@@ -12,7 +12,7 @@ const OPENAI_API_URL = 'https://api.openai.com/v1'
 const HIGHLEVEL_API_BASE_URL = process.env.GHL_API_BASE_URL || 'https://services.leadconnectorhq.com'
 const HIGHLEVEL_MCP_SERVER_URL = process.env.GHL_MCP_SERVER_URL || 'https://services.leadconnectorhq.com/mcp/'
 const HIGHLEVEL_API_VERSION = process.env.GHL_API_VERSION || '2021-07-28'
-const DEFAULT_MODEL = process.env.OPENAI_AGENT_MODEL || 'gpt-5.2'
+const DEFAULT_MODEL = process.env.OPENAI_AGENT_MODEL || 'gpt-5.5'
 const DEFAULT_TRANSCRIPTION_MODEL = process.env.OPENAI_TRANSCRIPTION_MODEL || 'gpt-4o-mini-transcribe'
 const REQUEST_TIMEOUT_MS = 45000
 const BUSINESS_CONTEXT_LIMIT = 12000
@@ -30,6 +30,7 @@ const DEFAULT_PAYMENT_CURRENCY = 'MXN'
 const DEFAULT_PAYMENT_TIMEZONE = 'America/Mexico_City'
 const DEFAULT_AI_RESPONSE_STYLE = 'direct'
 const DEFAULT_AI_RECOMMENDATION_MODE = 'on_request'
+const AI_MODEL_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,99}$/
 const isPostgres = Boolean(process.env.DATABASE_URL)
 
 const paidStatuses = "('paid','succeeded','success','completed','complete')"
@@ -1874,9 +1875,14 @@ function buildWebSearchTools(config, runtimeContext) {
   return [tool]
 }
 
-async function callOpenAIResponseRaw(apiKey, { instructions, input, maxOutputTokens = 1200, tools = [], include = [], previousResponseId = null }) {
+function normalizeAIAgentModel(value) {
+  const model = cleanText(String(value || ''), 100).trim()
+  return AI_MODEL_ID_PATTERN.test(model) ? model : DEFAULT_MODEL
+}
+
+async function callOpenAIResponseRaw(apiKey, { model = DEFAULT_MODEL, instructions, input, maxOutputTokens = 1200, tools = [], include = [], previousResponseId = null }) {
   const body = {
-    model: DEFAULT_MODEL,
+    model: normalizeAIAgentModel(model),
     instructions,
     input,
     max_output_tokens: maxOutputTokens
@@ -1921,8 +1927,9 @@ async function callOpenAIResponseRaw(apiKey, { instructions, input, maxOutputTok
   return data
 }
 
-async function callOpenAIResponse(apiKey, { instructions, input, maxOutputTokens = 1200, tools = [], include = [] }) {
+async function callOpenAIResponse(apiKey, { model = DEFAULT_MODEL, instructions, input, maxOutputTokens = 1200, tools = [], include = [] }) {
   const data = await callOpenAIResponseRaw(apiKey, {
+    model,
     instructions,
     input,
     maxOutputTokens,
@@ -1944,6 +1951,7 @@ async function callOpenAIResponse(apiKey, { instructions, input, maxOutputTokens
 }
 
 async function callOpenAIResponseWithActionTools(apiKey, {
+  model = DEFAULT_MODEL,
   instructions,
   input,
   maxOutputTokens = 1800,
@@ -1958,6 +1966,7 @@ async function callOpenAIResponseWithActionTools(apiKey, {
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
     latestData = await callOpenAIResponseRaw(apiKey, {
+      model,
       instructions,
       input: currentInput,
       maxOutputTokens,
@@ -2700,6 +2709,7 @@ async function executeAgentQuery(query) {
 }
 
 async function createQueryPlan(apiKey, { messages, viewContext, runtimeContext, databaseContextResults = [], agentConfig }) {
+  const model = normalizeAIAgentModel(agentConfig?.model)
   const instructions = [
     'Eres un analista senior de datos para Ristak.',
     'Tu trabajo es decidir qué consultas SQL de sólo lectura necesitas para responder la última pregunta del usuario.',
@@ -2746,6 +2756,7 @@ async function createQueryPlan(apiKey, { messages, viewContext, runtimeContext, 
 
   try {
     const { text } = await callOpenAIResponse(apiKey, {
+      model,
       instructions,
       input,
       maxOutputTokens: 2200
@@ -2794,6 +2805,7 @@ function filterNewQueries(queries, existingNames, limit) {
 }
 
 async function createRepairQueryPlan(apiKey, { messages, viewContext, runtimeContext, plan, queryResults, agentConfig }) {
+  const model = normalizeAIAgentModel(agentConfig?.model)
   const failedResults = (Array.isArray(queryResults) ? queryResults : []).filter(result => result?.error)
 
   if (!failedResults.length) {
@@ -2856,6 +2868,7 @@ async function createRepairQueryPlan(apiKey, { messages, viewContext, runtimeCon
 
   try {
     const { text } = await callOpenAIResponse(apiKey, {
+      model,
       instructions,
       input,
       maxOutputTokens: 1600
@@ -2928,6 +2941,7 @@ function prepareQueryResultsForReply(queryResults) {
 }
 
 async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, runtimeContext, plan, queryResults, agentConfig, highLevelConnection }) {
+  const model = normalizeAIAgentModel(agentConfig?.model)
   const modelQueryResults = prepareQueryResultsForReply(queryResults)
   const webSearchTools = buildWebSearchTools(agentConfig, runtimeContext)
   const latestUserMessage = getLatestUserMessage(messages)
@@ -3037,6 +3051,7 @@ async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, ru
   try {
     response = highLevelTools.length
       ? await callOpenAIResponseWithActionTools(apiKey, {
+          model,
           instructions,
           input,
           maxOutputTokens: webSearchTools.length ? 2200 : 1800,
@@ -3045,17 +3060,19 @@ async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, ru
           highLevelConnection
         })
       : await callOpenAIResponse(apiKey, {
-      instructions,
-      input,
-      maxOutputTokens: webSearchTools.length ? 1800 : 1400,
-      tools: agentTools,
-      include: webSearchTools.length ? ['web_search_call.action.sources'] : []
-    })
+          model,
+          instructions,
+          input,
+          maxOutputTokens: webSearchTools.length ? 1800 : 1400,
+          tools: agentTools,
+          include: webSearchTools.length ? ['web_search_call.action.sources'] : []
+        })
   } catch (error) {
     if (!webSearchTools.length) throw error
 
     response = highLevelTools.length
       ? await callOpenAIResponseWithActionTools(apiKey, {
+          model,
           instructions: [
             instructions,
             'La busqueda online no estuvo disponible en este intento. Responde con DB, vista actual, contexto configurado y herramientas de HighLevel, sin inventar contexto externo.'
@@ -3066,20 +3083,21 @@ async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, ru
           highLevelConnection
         })
       : await callOpenAIResponse(apiKey, {
-      instructions: [
-        instructions,
-        'La busqueda online no estuvo disponible en este intento. Responde con DB, vista actual y contexto configurado, sin inventar contexto externo.'
-      ].join('\n'),
-      input,
-      maxOutputTokens: 1400
-    })
+          model,
+          instructions: [
+            instructions,
+            'La busqueda online no estuvo disponible en este intento. Responde con DB, vista actual y contexto configurado, sin inventar contexto externo.'
+          ].join('\n'),
+          input,
+          maxOutputTokens: 1400
+        })
   }
 
   const { text, data, sources, clarificationOptions } = response
 
   return {
     reply: stripMarkdown(text),
-    model: data?.model || DEFAULT_MODEL,
+    model: data?.model || model,
     usage: data?.usage || null,
     sources,
     clarificationOptions: Array.isArray(clarificationOptions) ? clarificationOptions : [],
@@ -3741,7 +3759,7 @@ export async function getAIAgentStatus() {
   if (!config?.openai_api_key_encrypted) {
     return {
       configured: false,
-      model: DEFAULT_MODEL,
+      model: normalizeAIAgentModel(config?.model),
       tokenPreview: null,
       businessContext: config?.business_context || '',
       marketContext: config?.market_context || '',
@@ -3767,7 +3785,7 @@ export async function getAIAgentStatus() {
 
   return {
     configured: true,
-    model: config.model || DEFAULT_MODEL,
+    model: normalizeAIAgentModel(config.model),
     tokenPreview,
     businessContext: config.business_context || '',
     marketContext: config.market_context || '',
@@ -3793,6 +3811,7 @@ export async function saveAIAgentConfig({
   brandVoice,
   researchDomains,
   responseStyle,
+  model,
   recommendationMode,
   webSearchEnabled
 } = {}) {
@@ -3832,7 +3851,7 @@ export async function saveAIAgentConfig({
       updated_at = CURRENT_TIMESTAMP
   `, [
     encryptedKey,
-    DEFAULT_MODEL,
+    normalizeAIAgentModel(model),
     cleanConfigText(businessContext),
     cleanConfigText(marketContext),
     cleanConfigText(idealCustomer),

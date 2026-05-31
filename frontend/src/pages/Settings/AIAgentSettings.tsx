@@ -5,9 +5,11 @@ import { useNotification } from '@/contexts/NotificationContext'
 import { aiAgentService, type AIAgentConfigStatus, type AIAgentRecommendationMode, type AIAgentResponseStyle } from '@/services/aiAgentService'
 import styles from './AIAgentSettings.module.css'
 
+const DEFAULT_AI_MODEL = 'gpt-5.5'
+
 const emptyStatus: AIAgentConfigStatus = {
   configured: false,
-  model: 'gpt-5.2',
+  model: DEFAULT_AI_MODEL,
   tokenPreview: null,
   businessContext: '',
   marketContext: '',
@@ -23,6 +25,7 @@ const emptyStatus: AIAgentConfigStatus = {
 }
 
 const emptyForm = {
+  model: DEFAULT_AI_MODEL,
   businessContext: '',
   marketContext: '',
   idealCustomer: '',
@@ -34,6 +37,29 @@ const emptyForm = {
   recommendationMode: 'on_request' as AIAgentRecommendationMode,
   webSearchEnabled: false
 }
+
+const modelPresetOptions = [
+  {
+    value: 'gpt-5.5',
+    label: 'GPT-5.5',
+    description: 'Más potente para análisis, criterio y tareas complejas.'
+  },
+  {
+    value: 'gpt-5.4',
+    label: 'GPT-5.4',
+    description: 'Muy fuerte, con mejor balance de costo que 5.5.'
+  },
+  {
+    value: 'gpt-5.4-mini',
+    label: 'GPT-5.4 mini',
+    description: 'Más rápido y barato para respuestas simples.'
+  },
+  {
+    value: 'chat-latest',
+    label: 'ChatGPT actual',
+    description: 'Modelo instantáneo usado por ChatGPT; puede cambiar con el tiempo.'
+  }
+]
 
 const responseStyleOptions: Array<{
   value: AIAgentResponseStyle
@@ -101,6 +127,7 @@ export const AIAgentSettings: React.FC = () => {
       const nextStatus = await aiAgentService.getConfig()
       setStatus(nextStatus)
       setForm({
+        model: nextStatus.model || DEFAULT_AI_MODEL,
         businessContext: nextStatus.businessContext || '',
         marketContext: nextStatus.marketContext || '',
         idealCustomer: nextStatus.idealCustomer || '',
@@ -129,6 +156,9 @@ export const AIAgentSettings: React.FC = () => {
       [field]: value
     }))
   }
+
+  const selectedModelPreset = modelPresetOptions.find((option) => option.value === form.model)
+  const modelSelectValue = selectedModelPreset ? form.model : 'custom'
 
   const handleSave = async () => {
     setSaving(true)
@@ -240,6 +270,51 @@ export const AIAgentSettings: React.FC = () => {
             <p className={styles.helper}>
               El token se valida con OpenAI y se guarda cifrado en el backend. Nunca se manda de regreso al navegador.
             </p>
+          </div>
+        </div>
+
+        <div className={styles.section} style={{ marginTop: 22 }}>
+          <h3 className={styles.sectionTitle}>Modelo de ChatGPT</h3>
+          <div className={styles.modelGrid}>
+            <div className={styles.field}>
+              <label className={styles.label}>Modelo principal</label>
+              <select
+                className={styles.select}
+                value={modelSelectValue}
+                onChange={(event) => {
+                  const value = event.target.value
+                  updateField('model', value === 'custom' ? '' : value)
+                }}
+                disabled={saving || loading}
+              >
+                {modelPresetOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+                <option value="custom">Modelo personalizado</option>
+              </select>
+              <p className={styles.helper}>
+                {selectedModelPreset?.description || 'Úsalo si OpenAI te habilitó un modelo específico o un snapshot.'}
+              </p>
+            </div>
+
+            {modelSelectValue === 'custom' && (
+              <div className={styles.field}>
+                <label className={styles.label}>ID del modelo</label>
+                <input
+                  className={`${styles.input} ${styles.inputPlain}`}
+                  value={form.model}
+                  placeholder="Ej. gpt-5.5-2026-04-23"
+                  autoComplete="off"
+                  onChange={(event) => updateField('model', event.target.value)}
+                  disabled={saving || loading}
+                />
+                <p className={styles.helper}>
+                  Si tu API key no tiene acceso a ese modelo, OpenAI lo rechazará al usar el chat.
+                </p>
+              </div>
+            )}
           </div>
         </div>
 

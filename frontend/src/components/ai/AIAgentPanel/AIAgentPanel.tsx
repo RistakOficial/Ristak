@@ -11,6 +11,7 @@ const PAYMENT_CONFIG_CHANGED_EVENT = 'ristak-payment-config-changed'
 const VOICE_WAVE_BAR_COUNT = 128
 const VOICE_WAVE_MIN_HEIGHT = 4
 const VOICE_WAVE_MAX_HEIGHT = 30
+const DEFAULT_AI_MODEL = 'gpt-5.5'
 
 type VoiceCaptureState = 'idle' | 'recording' | 'finalizing'
 type VoiceEndAction = 'draft' | 'send'
@@ -36,7 +37,7 @@ const routeLabels: Record<string, string> = {
 
 const emptyStatus: AIAgentConfigStatus = {
   configured: false,
-  model: 'gpt-5.2',
+  model: DEFAULT_AI_MODEL,
   tokenPreview: null,
   businessContext: '',
   marketContext: '',
@@ -52,6 +53,7 @@ const emptyStatus: AIAgentConfigStatus = {
 }
 
 const emptyForm: AIAgentConfigInput = {
+  model: DEFAULT_AI_MODEL,
   businessContext: '',
   marketContext: '',
   idealCustomer: '',
@@ -170,6 +172,7 @@ function collectVisibleText() {
 
 function statusToForm(status: AIAgentConfigStatus): AIAgentConfigInput {
   return {
+    model: status.model || DEFAULT_AI_MODEL,
     businessContext: status.businessContext || '',
     marketContext: status.marketContext || '',
     idealCustomer: status.idealCustomer || '',
