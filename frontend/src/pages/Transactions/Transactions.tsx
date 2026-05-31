@@ -48,7 +48,6 @@ interface PaymentPlanModalData {
   plan: PaymentPlan | null
   loading: boolean
   saving: boolean
-  rawJson: string
 }
 
 interface PaymentPlanCreateModalData {
@@ -273,8 +272,7 @@ export const Transactions: React.FC = () => {
   const [paymentPlanModal, setPaymentPlanModal] = useState<PaymentPlanModalData>({
     plan: null,
     loading: false,
-    saving: false,
-    rawJson: ''
+    saving: false
   })
   const [paymentPlanCreateModal, setPaymentPlanCreateModal] = useState<PaymentPlanCreateModalData>({
     open: false,
@@ -422,8 +420,7 @@ export const Transactions: React.FC = () => {
     setPaymentPlanModal({
       plan: null,
       loading: false,
-      saving: false,
-      rawJson: ''
+      saving: false
     })
   }
 
@@ -455,8 +452,7 @@ export const Transactions: React.FC = () => {
     setPaymentPlanModal({
       plan,
       loading: true,
-      saving: false,
-      rawJson: JSON.stringify(getPlanPayload(plan), null, 2)
+      saving: false
     })
 
     try {
@@ -464,8 +460,7 @@ export const Transactions: React.FC = () => {
       setPaymentPlanModal({
         plan: detailedPlan,
         loading: false,
-        saving: false,
-        rawJson: JSON.stringify(getPlanPayload(detailedPlan), null, 2)
+        saving: false
       })
     } catch (error) {
       setPaymentPlanModal(prev => ({ ...prev, loading: false }))
@@ -476,19 +471,7 @@ export const Transactions: React.FC = () => {
   const handleSavePaymentPlan = async (formData: FormData) => {
     if (!paymentPlanModal.plan) return
 
-    let payload: Record<string, any>
-    try {
-      payload = JSON.parse(paymentPlanModal.rawJson || '{}')
-    } catch {
-      showToast('error', 'JSON inválido', 'Revisa el bloque de datos avanzados del plan antes de guardar.')
-      return
-    }
-
-    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
-      showToast('error', 'Datos inválidos', 'La plantilla del plan debe ser un objeto JSON.')
-      return
-    }
-
+    const payload: Record<string, any> = { ...getPlanPayload(paymentPlanModal.plan) }
     const name = String(formData.get('name') || '').trim()
     const title = String(formData.get('title') || '').trim()
     const amount = parseFloat(String(formData.get('total') || ''))
@@ -502,7 +485,7 @@ export const Transactions: React.FC = () => {
 
     if (executeAt) {
       payload.schedule = payload.schedule && typeof payload.schedule === 'object'
-        ? payload.schedule
+        ? { ...payload.schedule }
         : {}
       payload.schedule.executeAt = new Date(executeAt).toISOString()
     }
@@ -528,8 +511,7 @@ export const Transactions: React.FC = () => {
 
       return {
         ...prev,
-        plan: updatedPlan,
-        rawJson: JSON.stringify(getPlanPayload(updatedPlan), null, 2)
+        plan: updatedPlan
       }
     })
   }
@@ -621,20 +603,6 @@ export const Transactions: React.FC = () => {
     const rawName = String(formData.get('name') || '').trim()
     const description = String(formData.get('description') || '').trim()
     const termsNotes = String(formData.get('termsNotes') || '').trim()
-    const advancedJson = String(formData.get('advancedJson') || '').trim()
-
-    let advancedPayload: Record<string, any> = {}
-    if (advancedJson) {
-      try {
-        advancedPayload = JSON.parse(advancedJson)
-        if (!advancedPayload || typeof advancedPayload !== 'object' || Array.isArray(advancedPayload)) {
-          throw new Error('invalid')
-        }
-      } catch {
-        showToast('error', 'JSON avanzado inválido', 'Revisa los datos avanzados de HighLevel antes de crear el plan.')
-        return
-      }
-    }
 
     if (!Number.isFinite(amount) || amount <= 0) {
       showToast('error', 'Monto inválido', 'El monto por cobro debe ser mayor a cero.')
@@ -684,7 +652,7 @@ export const Transactions: React.FC = () => {
     const email = contact.email || ''
     const phone = contact.phone || ''
 
-    const basePayload = {
+    const payload = {
       name,
       title,
       total: amount,
@@ -723,24 +691,6 @@ export const Transactions: React.FC = () => {
           enableBankDebitOnly: false
         }
       }
-    }
-
-    const payload = {
-      ...basePayload,
-      ...advancedPayload,
-      contactDetails: {
-        ...basePayload.contactDetails,
-        ...(advancedPayload.contactDetails || {})
-      },
-      sentTo: {
-        ...basePayload.sentTo,
-        ...(advancedPayload.sentTo || {})
-      },
-      schedule: {
-        ...basePayload.schedule,
-        ...(advancedPayload.schedule || {})
-      },
-      items: advancedPayload.items || basePayload.items
     }
 
     setPaymentPlanCreateModal(prev => ({ ...prev, saving: true }))
@@ -1782,16 +1732,16 @@ export const Transactions: React.FC = () => {
               e.preventDefault()
               handleCreatePaymentPlan(new FormData(e.currentTarget))
             }}>
-              <div className={styles.formGroup}>
-                <ContactSearchInput
-                  value={paymentPlanCreateModal.selectedContact}
-                  onChange={(contact) => setPaymentPlanCreateModal(prev => ({ ...prev, selectedContact: contact }))}
-                  placeholder="Buscar contacto por nombre, email o teléfono"
-                  required
-                />
-              </div>
+              <div className={styles.paymentPlanFormGrid}>
+                <div className={`${styles.formGroup} ${styles.fullWidth}`}>
+                  <ContactSearchInput
+                    value={paymentPlanCreateModal.selectedContact}
+                    onChange={(contact) => setPaymentPlanCreateModal(prev => ({ ...prev, selectedContact: contact }))}
+                    placeholder="Buscar contacto por nombre, email o teléfono"
+                    required
+                  />
+                </div>
 
-              <div className={styles.formGrid}>
                 <div className={styles.formGroup}>
                   <label>Nombre del plan</label>
                   <input
@@ -1809,9 +1759,7 @@ export const Transactions: React.FC = () => {
                     required
                   />
                 </div>
-              </div>
 
-              <div className={styles.formGrid}>
                 <div className={styles.formGroup}>
                   <label>Monto por cobro</label>
                   <div className={styles.inputWithIcon}>
@@ -1841,11 +1789,9 @@ export const Transactions: React.FC = () => {
                     <option value="one_time">Fecha específica</option>
                   </select>
                 </div>
-              </div>
 
-              {paymentPlanCreateModal.scheduleMode === 'recurring' && (
-                <>
-                  <div className={styles.formGrid}>
+                {paymentPlanCreateModal.scheduleMode === 'recurring' && (
+                  <>
                     <div className={styles.formGroup}>
                       <label>Recurrencia</label>
                       <select
@@ -1872,9 +1818,7 @@ export const Transactions: React.FC = () => {
                         required
                       />
                     </div>
-                  </div>
 
-                  <div className={styles.formGrid}>
                     <div className={styles.formGroup}>
                       <label>Termina</label>
                       <select
@@ -1904,41 +1848,26 @@ export const Transactions: React.FC = () => {
                       </div>
                     )}
                     {paymentPlanCreateModal.endType === 'by' && (
-                      <div className={styles.formGroup}>
-                        <label>Fecha final</label>
-                        <input
-                          name="endDate"
-                          type="date"
-                          required
-                        />
-                      </div>
+                      <>
+                        <div className={styles.formGroup}>
+                          <label>Fecha final</label>
+                          <input
+                            name="endDate"
+                            type="date"
+                            required
+                          />
+                        </div>
+                        <div className={styles.formGroup}>
+                          <label>Hora final</label>
+                          <input
+                            name="endTime"
+                            type="time"
+                          />
+                        </div>
+                      </>
                     )}
-                  </div>
-
-                  {paymentPlanCreateModal.endType === 'by' && (
-                    <div className={styles.formGrid}>
-                      <div className={styles.formGroup}>
-                        <label>Hora final</label>
-                        <input
-                          name="endTime"
-                          type="time"
-                        />
-                      </div>
-                      <div className={styles.formGroup}>
-                        <label>Días antes de generar</label>
-                        <input
-                          name="daysBefore"
-                          type="number"
-                          min="0"
-                          defaultValue="0"
-                        />
-                      </div>
-                    </div>
-                  )}
-
-                  {paymentPlanCreateModal.endType !== 'by' && (
                     <div className={styles.formGroup}>
-                      <label>Días antes de generar</label>
+                      <label>Enviar factura días antes del cobro</label>
                       <input
                         name="daysBefore"
                         type="number"
@@ -1946,22 +1875,20 @@ export const Transactions: React.FC = () => {
                         defaultValue="0"
                       />
                     </div>
-                  )}
 
-                  {paymentPlanCreateModal.frequency === 'weekly' && (
-                    <div className={styles.formGroup}>
-                      <label>Día de la semana</label>
-                      <select name="dayOfWeek" defaultValue="mo">
-                        {WEEKDAY_OPTIONS.map(option => (
-                          <option key={option.value} value={option.value}>{option.label}</option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
+                    {paymentPlanCreateModal.frequency === 'weekly' && (
+                      <div className={styles.formGroup}>
+                        <label>Día de la semana</label>
+                        <select name="dayOfWeek" defaultValue="mo">
+                          {WEEKDAY_OPTIONS.map(option => (
+                            <option key={option.value} value={option.value}>{option.label}</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
 
-                  {(paymentPlanCreateModal.frequency === 'monthly' || paymentPlanCreateModal.frequency === 'yearly') && (
-                    <>
-                      <div className={styles.formGrid}>
+                    {(paymentPlanCreateModal.frequency === 'monthly' || paymentPlanCreateModal.frequency === 'yearly') && (
+                      <>
                         <div className={styles.formGroup}>
                           <label>Regla mensual</label>
                           <select
@@ -1986,51 +1913,49 @@ export const Transactions: React.FC = () => {
                             </select>
                           </div>
                         )}
-                      </div>
 
-                      {paymentPlanCreateModal.monthlyMode === 'dayOfMonth' ? (
-                        <div className={styles.formGroup}>
-                          <label>Día del mes</label>
-                          <select name="dayOfMonth" defaultValue="1">
-                            <option value="-1">Último día del mes</option>
-                            {Array.from({ length: 28 }).map((_, index) => (
-                              <option key={index + 1} value={index + 1}>{index + 1}</option>
-                            ))}
-                          </select>
-                        </div>
-                      ) : (
-                        <div className={styles.formGrid}>
+                        {paymentPlanCreateModal.monthlyMode === 'dayOfMonth' ? (
                           <div className={styles.formGroup}>
-                            <label>Semana del mes</label>
-                            <select name="numOfWeek" defaultValue="1">
-                              <option value="1">Primera</option>
-                              <option value="2">Segunda</option>
-                              <option value="3">Tercera</option>
-                              <option value="4">Cuarta</option>
-                              <option value="-1">Última</option>
-                            </select>
-                          </div>
-                          <div className={styles.formGroup}>
-                            <label>Día de la semana</label>
-                            <select name="dayOfWeek" defaultValue="mo">
-                              {WEEKDAY_OPTIONS.map(option => (
-                                <option key={option.value} value={option.value}>{option.label}</option>
+                            <label>Día del mes</label>
+                            <select name="dayOfMonth" defaultValue="1">
+                              <option value="-1">Último día del mes</option>
+                              {Array.from({ length: 28 }).map((_, index) => (
+                                <option key={index + 1} value={index + 1}>{index + 1}</option>
                               ))}
                             </select>
                           </div>
-                        </div>
-                      )}
-                    </>
-                  )}
+                        ) : (
+                          <>
+                            <div className={styles.formGroup}>
+                              <label>Semana del mes</label>
+                              <select name="numOfWeek" defaultValue="1">
+                                <option value="1">Primera</option>
+                                <option value="2">Segunda</option>
+                                <option value="3">Tercera</option>
+                                <option value="4">Cuarta</option>
+                                <option value="-1">Última</option>
+                              </select>
+                            </div>
+                            <div className={styles.formGroup}>
+                              <label>Día de la semana</label>
+                              <select name="dayOfWeek" defaultValue="mo">
+                                {WEEKDAY_OPTIONS.map(option => (
+                                  <option key={option.value} value={option.value}>{option.label}</option>
+                                ))}
+                              </select>
+                            </div>
+                          </>
+                        )}
+                      </>
+                    )}
 
-                  <label className={styles.checkboxRow}>
-                    <input name="useStartAsPrimaryUserAccepted" type="checkbox" />
-                    <span>Usar fecha de inicio como fecha aceptada por el usuario principal</span>
-                  </label>
-                </>
-              )}
+                    <label className={`${styles.checkboxRow} ${styles.fullWidth}`}>
+                      <input name="useStartAsPrimaryUserAccepted" type="checkbox" />
+                      <span>Usar fecha de inicio como fecha aceptada por el usuario principal</span>
+                    </label>
+                  </>
+                )}
 
-              <div className={styles.formGrid}>
                 <div className={styles.formGroup}>
                   <label>{paymentPlanCreateModal.scheduleMode === 'one_time' ? 'Fecha específica' : 'Fecha de inicio'}</label>
                   <input
@@ -2049,36 +1974,25 @@ export const Transactions: React.FC = () => {
                     required
                   />
                 </div>
-              </div>
 
-              <div className={styles.formGroup}>
-                <label>Concepto / descripción</label>
-                <input
-                  name="description"
-                  type="text"
-                  placeholder="Mensualidad, asesoría, mantenimiento..."
-                  required
-                />
-              </div>
+                <div className={`${styles.formGroup} ${styles.fullWidth}`}>
+                  <label>Concepto / descripción</label>
+                  <input
+                    name="description"
+                    type="text"
+                    placeholder="Mensualidad, asesoría, mantenimiento..."
+                    required
+                  />
+                </div>
 
-              <div className={styles.formGroup}>
-                <label>Términos / notas</label>
-                <textarea
-                  name="termsNotes"
-                  rows={4}
-                  placeholder="Notas que irán en la factura recurrente"
-                />
-              </div>
-
-              <div className={styles.formGroup}>
-                <label>Datos avanzados de HighLevel (JSON opcional)</label>
-                <textarea
-                  name="advancedJson"
-                  rows={5}
-                  className={styles.rawJsonTextarea}
-                  placeholder='{"schedule":{"rrule":{"endType":"by"}}}'
-                  spellCheck={false}
-                />
+                <div className={`${styles.formGroup} ${styles.fullWidth}`}>
+                  <label>Términos / notas</label>
+                  <textarea
+                    name="termsNotes"
+                    rows={4}
+                    placeholder="Notas que irán en la factura recurrente"
+                  />
+                </div>
               </div>
 
               <div className={styles.formActions}>
@@ -2139,60 +2053,53 @@ export const Transactions: React.FC = () => {
                   </div>
                 </div>
 
-                <div className={styles.formGroup}>
-                  <label>Nombre del plan</label>
-                  <input
-                    name="name"
-                    type="text"
-                    defaultValue={paymentPlanModal.plan.name || paymentPlanModal.plan.title || ''}
-                  />
-                </div>
-                <div className={styles.formGroup}>
-                  <label>Título de factura</label>
-                  <input
-                    name="title"
-                    type="text"
-                    defaultValue={paymentPlanModal.plan.title || paymentPlanModal.plan.name || ''}
-                  />
-                </div>
-                <div className={styles.formGroup}>
-                  <label>Monto</label>
-                  <div className={styles.inputWithIcon}>
-                    <span className={styles.inputIcon}>$</span>
+                <div className={styles.paymentPlanFormGrid}>
+                  <div className={styles.formGroup}>
+                    <label>Nombre del plan</label>
                     <input
-                      name="total"
+                      name="name"
                       type="text"
-                      pattern="[0-9]*[.]?[0-9]+"
-                      inputMode="decimal"
-                      defaultValue={paymentPlanModal.plan.total}
-                      className={styles.amountInput}
+                      defaultValue={paymentPlanModal.plan.name || paymentPlanModal.plan.title || ''}
                     />
                   </div>
-                </div>
-                <div className={styles.formGroup}>
-                  <label>Próximo cobro / ejecución</label>
-                  <input
-                    name="executeAt"
-                    type="datetime-local"
-                    defaultValue={toDateTimeInputValue(paymentPlanModal.plan.nextRunAt || paymentPlanModal.plan.startDate)}
-                  />
-                </div>
-                <div className={styles.formGroup}>
-                  <label>Términos / notas</label>
-                  <textarea
-                    name="termsNotes"
-                    rows={4}
-                    defaultValue={getPlanTermsNotes(paymentPlanModal.plan)}
-                  />
-                </div>
-                <div className={styles.formGroup}>
-                  <label>Datos avanzados de la plantilla</label>
-                  <textarea
-                    className={styles.rawJsonTextarea}
-                    value={paymentPlanModal.rawJson}
-                    onChange={(event) => setPaymentPlanModal(prev => ({ ...prev, rawJson: event.target.value }))}
-                    spellCheck={false}
-                  />
+                  <div className={styles.formGroup}>
+                    <label>Título de factura</label>
+                    <input
+                      name="title"
+                      type="text"
+                      defaultValue={paymentPlanModal.plan.title || paymentPlanModal.plan.name || ''}
+                    />
+                  </div>
+                  <div className={styles.formGroup}>
+                    <label>Monto</label>
+                    <div className={styles.inputWithIcon}>
+                      <span className={styles.inputIcon}>$</span>
+                      <input
+                        name="total"
+                        type="text"
+                        pattern="[0-9]*[.]?[0-9]+"
+                        inputMode="decimal"
+                        defaultValue={paymentPlanModal.plan.total}
+                        className={styles.amountInput}
+                      />
+                    </div>
+                  </div>
+                  <div className={styles.formGroup}>
+                    <label>Próximo cobro / ejecución</label>
+                    <input
+                      name="executeAt"
+                      type="datetime-local"
+                      defaultValue={toDateTimeInputValue(paymentPlanModal.plan.nextRunAt || paymentPlanModal.plan.startDate)}
+                    />
+                  </div>
+                  <div className={`${styles.formGroup} ${styles.fullWidth}`}>
+                    <label>Términos / notas</label>
+                    <textarea
+                      name="termsNotes"
+                      rows={4}
+                      defaultValue={getPlanTermsNotes(paymentPlanModal.plan)}
+                    />
+                  </div>
                 </div>
                 <div className={styles.formActions}>
                   <Button type="button" variant="ghost" onClick={closePaymentPlanModal}>
