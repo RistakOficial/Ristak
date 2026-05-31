@@ -1266,6 +1266,14 @@ export const Transactions: React.FC = () => {
     { label: 'Planes de pago', value: 'payment-plans' }
   ]
 
+  const statusFilterControl = (
+    <TreeFilter
+      availableData={activeStatusFilterData}
+      selectedFilters={activeStatusFilters}
+      onFilterChange={handleStatusFilterChange}
+    />
+  )
+
   const paymentPlanColumns: Column<PaymentPlan>[] = [
     {
       key: 'sortDate',
@@ -1452,6 +1460,7 @@ export const Transactions: React.FC = () => {
                 onTabChange={(value) => setViewMode(value as 'all' | 'by-date')}
                 variant="compact"
               />
+              {statusFilterControl}
               {viewMode === 'by-date' && (
                 <DateRangePicker
                   startDate={formatDateToISO(dateRange.start)}
@@ -1465,7 +1474,9 @@ export const Transactions: React.FC = () => {
               )}
             </div>
           ) : (
-            <div className={styles.dateFilters} />
+            <div className={styles.dateFilters}>
+              {statusFilterControl}
+            </div>
           )}
           <div className={styles.actions}>
             <Button
@@ -1544,14 +1555,7 @@ export const Transactions: React.FC = () => {
             filters={paymentTableTabs}
             activeFilter={paymentTableTab}
             onFilterChange={handlePaymentTableTabChange}
-            toolbarStart={(
-              <TreeFilter
-                availableData={activeStatusFilterData}
-                selectedFilters={activeStatusFilters}
-                onFilterChange={handleStatusFilterChange}
-              />
-            )}
-            searchPosition="right"
+            searchPosition="left"
             tableId="transactions"
             initialSortBy="date"
             initialSortOrder="desc"
@@ -1572,14 +1576,7 @@ export const Transactions: React.FC = () => {
             filters={paymentTableTabs}
             activeFilter={paymentTableTab}
             onFilterChange={handlePaymentTableTabChange}
-            toolbarStart={(
-              <TreeFilter
-                availableData={activeStatusFilterData}
-                selectedFilters={activeStatusFilters}
-                onFilterChange={handleStatusFilterChange}
-              />
-            )}
-            searchPosition="right"
+            searchPosition="left"
             tableId="payment_plans"
             initialSortBy="sortDate"
             initialSortOrder="desc"

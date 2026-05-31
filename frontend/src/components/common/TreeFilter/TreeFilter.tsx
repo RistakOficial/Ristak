@@ -274,6 +274,13 @@ export function TreeFilter({
     return tree
   }, [availableData])
 
+  const singleCategoryId = filterTree.length === 1 ? filterTree[0]?.id ?? null : null
+
+  useEffect(() => {
+    if (!isOpen || !singleCategoryId || showSearchResults) return
+    setHoveredCategory(singleCategoryId)
+  }, [isOpen, showSearchResults, singleCategoryId])
+
   // Manejar hover con delay para evitar flicker
   const handleCategoryHover = (categoryId: string) => {
     if (hoverTimeoutRef.current) {
@@ -288,6 +295,12 @@ export function TreeFilter({
     if (hoverTimeoutRef.current) {
       clearTimeout(hoverTimeoutRef.current)
     }
+
+    if (singleCategoryId) {
+      setHoveredCategory(singleCategoryId)
+      return
+    }
+
     hoverTimeoutRef.current = setTimeout(() => {
       setHoveredCategory(null)
     }, 150)
@@ -335,7 +348,7 @@ export function TreeFilter({
 
   const handleClearAllFilters = () => {
     onFilterChange({})
-    setHoveredCategory(null)
+    setHoveredCategory(singleCategoryId)
     setShowSearchResults(false)
     setSearchTerm('')
   }
@@ -392,7 +405,27 @@ export function TreeFilter({
       setHoveredCategory(null)
     } else {
       setShowSearchResults(false)
+      setHoveredCategory(singleCategoryId)
     }
+  }
+
+  const handleToggleOpen = () => {
+    const nextOpen = !isOpen
+
+    if (hoverTimeoutRef.current) {
+      clearTimeout(hoverTimeoutRef.current)
+    }
+
+    setIsOpen(nextOpen)
+
+    if (nextOpen) {
+      setHoveredCategory(singleCategoryId)
+      return
+    }
+
+    setHoveredCategory(null)
+    setShowSearchResults(false)
+    setSearchTerm('')
   }
 
   return (
@@ -400,7 +433,7 @@ export function TreeFilter({
       {/* Botón principal */}
       <HelpTooltip content={filterTooltip}>
         <button
-          onClick={() => setIsOpen(!isOpen)}
+          onClick={handleToggleOpen}
           className={`
             flex items-center gap-2 px-3 py-2
             rounded-lg transition-all duration-200
