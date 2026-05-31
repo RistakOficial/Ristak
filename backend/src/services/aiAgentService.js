@@ -5832,6 +5832,7 @@ const SPECIALIST_PROMPTS = {
   campaigns: [
     'Especialista Publicidad Analítica:',
     'Evalúa campañas por utilidad y ROAS: ingresos atribuidos dividido entre gasto, usando attribution_ad_id + fecha de creación del contacto contra meta_ads.ad_id/date.',
+    'Si el usuario pide anuncio/ad/anunciación específico, usa resultados por ad_id/ad_name; no contestes con campaign_name aunque tenga nombre parecido.',
     'CPC, CPM, CTR, clicks y alcance son diagnósticos, no veredicto de rentabilidad.',
     'Si el usuario pide meses específicos por nombre, responde con ese rango calendario exacto; no uses últimos 90 días como sustituto.',
     'Si piden públicos, campañas activas, presupuestos o configuración real de Ads Manager, eso no es analítica: debe ir por Meta Ads MCP.'
@@ -6363,6 +6364,87 @@ async function buildCampaignPerformanceQueries(runtimeContext) {
       params: [ninetyDaysAgo, ninetyDaysAgo]
     },
     {
+      name: 'anuncios_todo_historico',
+      purpose: 'Rentabilidad por anuncio específico/ad_id en todo el histórico con la atribución oficial de Publicidad. Usa esta consulta cuando el usuario pida "anuncio", "ad" o "anunciación" más rentable; NO sustituyas por campaña.',
+      sql: `
+        WITH gasto_ad AS (
+          SELECT
+            m.ad_id AS ad_id,
+            MAX(NULLIF(m.ad_name, '')) AS ad_name,
+            MAX(NULLIF(m.adset_name, '')) AS adset_name,
+            MAX(NULLIF(m.campaign_name, '')) AS campaign_name,
+            COALESCE(SUM(m.spend), 0) AS gasto,
+            COALESCE(SUM(m.clicks), 0) AS clicks,
+            COALESCE(SUM(m.reach), 0) AS alcance
+          FROM meta_ads m
+          WHERE m.ad_id IS NOT NULL
+            AND m.ad_id != ''
+          GROUP BY m.ad_id
+        ),
+        contactos_atribuidos AS (
+          SELECT DISTINCT
+            ma.ad_id AS ad_id,
+            c.id AS contact_id,
+            c.created_at AS created_at,
+            COALESCE(c.purchases_count, 0) AS purchases_count,
+            COALESCE(c.total_paid, 0) AS total_paid
+          FROM contacts c
+          JOIN meta_ads ma
+            ON ma.ad_id = c.attribution_ad_id
+           AND DATE(ma.date) = DATE(c.created_at)
+          WHERE ${contactWhere.join(' AND ')}
+        ),
+        ingresos_ad AS (
+          SELECT
+            ca.ad_id AS ad_id,
+            COUNT(DISTINCT ca.contact_id) AS leads,
+            COUNT(DISTINCT CASE WHEN EXISTS (
+              SELECT 1 FROM appointments a WHERE a.contact_id = ca.contact_id
+            ) THEN ca.contact_id END) AS citas,
+            COUNT(DISTINCT CASE WHEN
+              EXISTS (
+                SELECT 1
+                FROM appointment_attendance_signals aas
+                WHERE aas.contact_id = ca.contact_id
+              )
+              OR EXISTS (
+                SELECT 1
+                FROM appointments a2
+                WHERE a2.contact_id = ca.contact_id
+                  AND LOWER(COALESCE(a2.appointment_status, a2.status, '')) IN ('showed', 'attended', 'completed', 'complete')
+              )
+              OR ca.purchases_count > 0
+              OR ca.total_paid > 0
+            THEN ca.contact_id END) AS asistencias,
+            COUNT(DISTINCT CASE WHEN ca.purchases_count > 0 OR ca.total_paid > 0 THEN ca.contact_id END) AS ventas,
+            COALESCE(SUM(ca.total_paid), 0) AS ingresos_atribuidos
+          FROM contactos_atribuidos ca
+          GROUP BY ca.ad_id
+        )
+        SELECT
+          g.ad_id AS ad_id,
+          COALESCE(g.ad_name, g.ad_id) AS anuncio,
+          g.adset_name AS conjunto_anuncios,
+          g.campaign_name AS campana,
+          COALESCE(i.leads, 0) AS leads,
+          COALESCE(i.citas, 0) AS citas,
+          COALESCE(i.asistencias, 0) AS asistencias,
+          COALESCE(i.ventas, 0) AS ventas,
+          COALESCE(i.ingresos_atribuidos, 0) AS ingresos_atribuidos,
+          g.gasto AS gasto,
+          COALESCE(i.ingresos_atribuidos, 0) - g.gasto AS utilidad,
+          CASE WHEN g.gasto > 0
+            THEN COALESCE(i.ingresos_atribuidos, 0) / g.gasto
+            ELSE NULL
+          END AS roas
+        FROM gasto_ad g
+        LEFT JOIN ingresos_ad i ON i.ad_id = g.ad_id
+        ORDER BY utilidad DESC
+        LIMIT 100
+      `,
+      params: []
+    },
+    {
       name: 'campañas_por_mes',
       purpose: 'Desempeño por campaña y por mes en todo el histórico usando la atribución oficial de Publicidad: contacto creado + ad_id activo ese mismo día. Trae gasto, leads, citas, asistencias, ventas, ingresos atribuidos y utilidad para comparar cualquier rango.',
       sql: `
@@ -6566,10 +6648,11 @@ async function createQueryPlan(apiKey, { messages, viewContext, runtimeContext, 
     'Puedes investigar con criterio propio: fechas raras, comparativos, cohorts, fuentes como Facebook/Meta, embudos, CAC, ROAS, inversión, asistencia, ventas, etc.',
     'No uses presets rígidos. Si el usuario pide algo ambiguo, haz la interpretación más útil según las definiciones del dashboard y deja la suposición en assumptions.',
     'Si el último mensaje es un seguimiento corto como "intenta de nuevo", "otra vez", "ahora sí", "dale", "continúa" o similar, interpreta la intención usando la conversación anterior. No lo trates como una búsqueda nueva, nombre de contacto o entidad nueva.',
-    'Ya se ejecutó un mapa base de la DB con rangos, histórico mensual, rentabilidad por campaña (campañas_ultimos_90_dias y campañas_por_mes) y valores comunes. Úsalo para decidir consultas específicas sin repetir lo que ya está cubierto.',
+    'Ya se ejecutó un mapa base de la DB con rangos, histórico mensual, rentabilidad por campaña (campañas_ultimos_90_dias y campañas_por_mes), rentabilidad por anuncio específico (anuncios_todo_historico) y valores comunes. Úsalo para decidir consultas específicas sin repetir lo que ya está cubierto.',
     'Si los resultados base incluyen contacto_resuelto_por_nombre, usa ese contact_id exacto para cualquier consulta del contacto. No vuelvas a buscar por nombre ni elijas otro contacto.',
     'Cuando necesites buscar un contacto por nombre y no tengas contact_id, usa busqueda tipo contiene y tolerante a acentos: compara contra full_name, first_name + last_name, email, phone e id. Si salen varios contactos plausibles, pregunta cuál es antes de responder o ejecutar acciones.',
     'Para medir resultados de una campaña o anuncio (leads, citas, asistencias, ventas, ingresos, ROAS), usa el modelo de atribución de Publicidad: une contacts.attribution_ad_id con meta_ads.ad_id, atribuye por contacts.created_at, valida que el anuncio existiera ese día (EXISTS en meta_ads con la misma fecha) y suma contacts.total_paid como ingreso. No uses payments.date ni ventanas de pago para atribuir a campañas.',
+    'Si el usuario pide anuncio/ad/anunciación específico, usa anuncios_todo_historico y responde con columnas anuncio, ad_id, conjunto_anuncios y campana. No respondas con campana como si fuera anuncio.',
     'Si la pregunta es sobre campañas/anuncios o su rendimiento (ROAS, retorno, rentabilidad, cuál jala, cuál escalar): el mapa base YA trae campañas_ultimos_90_dias (gasto, leads, citas, asistencias, ventas, ingresos atribuidos, utilidad y ROAS de los últimos ~90 días) y campañas_por_mes (lo mismo desglosado por mes para todo el histórico). NO repitas esas consultas. Sólo genera SQL extra si el usuario pide un corte que esas no cubren (ej. una campaña específica por nombre, un rango exacto de fechas distinto, o desglose por adset/anuncio); en ese caso usa el modelo de atribución: gasto = SUM(meta_ads.spend), leads/citas/asistencias/ventas/ingresos atribuidos por contacts.created_at y validación de meta_ads por el mismo ad_id y la misma fecha. Nunca dejes que la respuesta concluya con solo el mes actual cuando el usuario pidió un rango mayor.',
     'Si el usuario menciona meses por nombre ("febrero y marzo", "desde febrero", "marzo a mayo"), eso es un rango calendario explícito del año aplicable; no lo sustituyas por últimos 90 días. Usa campañas_por_mes si alcanza o genera SQL con fechas absolutas de esos meses.',
     'Genera consultas específicas para la pregunta aunque el usuario use palabras raras, incompletas o casuales. Traduce intención de negocio a datos.',
@@ -6780,6 +6863,7 @@ function isCoreHistoricalResult(result) {
     'historico_rango_disponible',
     'historico_negocio_por_mes',
     'campañas_ultimos_90_dias',
+    'anuncios_todo_historico',
     'campañas_por_mes'
   ].includes(result?.name)
 }
