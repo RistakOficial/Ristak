@@ -894,9 +894,9 @@
 
 .thinkingMessage {
   align-self: flex-start;
-  display: inline-flex;
-  align-items: center;
-  gap: 9px;
+  display: inline-grid;
+  justify-items: start;
+  gap: 5px;
   width: fit-content;
   max-width: 88%;
   padding: 6px 0;
@@ -908,43 +908,42 @@
   background:
     linear-gradient(
       105deg,
-      color-mix(in srgb, var(--color-text-tertiary) 78%, transparent) 0%,
-      var(--color-text-primary) 28%,
-      #06b6d4 42%,
-      rgba(255, 255, 255, 0.95) 51%,
-      #8b5cf6 62%,
-      var(--color-text-primary) 82%,
-      color-mix(in srgb, var(--color-text-tertiary) 78%, transparent) 100%
+      var(--color-text-tertiary) 0%,
+      var(--color-text-secondary) 34%,
+      var(--color-text-primary) 50%,
+      var(--color-text-secondary) 66%,
+      var(--color-text-tertiary) 100%
     );
   background-clip: text;
-  background-size: 260% 100%;
+  background-size: 220% 100%;
   color: transparent;
-  font-size: 13px;
-  font-weight: 820;
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 620;
   letter-spacing: 0;
-  line-height: 1.2;
+  line-height: 1.45;
   -webkit-background-clip: text;
-  animation: thinkingTextShimmer 1.75s ease-in-out infinite;
+  animation: thinkingTextShimmer 2s ease-in-out infinite;
 }
 
 .thinkingDots {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   flex-shrink: 0;
+  padding-left: 1px;
 }
 
 .thinkingDot {
   position: relative;
-  width: 7px;
-  height: 7px;
+  width: 6px;
+  height: 6px;
   border-radius: 999px;
-  background: linear-gradient(135deg, #06b6d4 0%, #8b5cf6 38%, #f97316 70%, #22c55e 100%);
-  background-size: 240% 240%;
-  box-shadow: 0 0 10px color-mix(in srgb, var(--color-primary) 35%, transparent);
+  background: linear-gradient(135deg, var(--color-text-muted) 0%, var(--color-text-tertiary) 48%, var(--color-text-primary) 100%);
+  background-size: 220% 220%;
   animation:
-    thinkingDotPulse 1.15s ease-in-out infinite,
-    thinkingDotGradient 1.6s linear infinite;
+    thinkingDotPulse 1.2s ease-in-out infinite,
+    thinkingDotGradient 1.9s ease-in-out infinite;
 }
 
 .thinkingDot:nth-child(2) {
