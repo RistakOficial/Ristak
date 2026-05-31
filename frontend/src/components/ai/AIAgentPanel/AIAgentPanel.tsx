@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
-import { Bot, Eraser, KeyRound, MessageCircle, Mic, Pause, SendHorizonal, Sparkles, X } from 'lucide-react'
+import { ArrowUp, Bot, Eraser, KeyRound, MessageCircle, Mic, Pause, SendHorizonal, Sparkles, X } from 'lucide-react'
 import { aiAgentService, type AIAgentClarificationOption, type AIAgentConfigInput, type AIAgentConfigStatus, type AIAgentMessage, type AIAgentViewContext } from '@/services/aiAgentService'
 import styles from './AIAgentPanel.module.css'
 
@@ -738,6 +738,14 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
   }, [messages, sending, savingConfig, visible])
 
   useEffect(() => {
+    const textarea = textareaRef.current
+    if (!textarea) return
+
+    textarea.style.height = 'auto'
+    textarea.style.height = `${Math.min(textarea.scrollHeight, embedded ? 132 : 160)}px`
+  }, [embedded, input, nextOnboardingQuestion, status.configured])
+
+  useEffect(() => {
     if (embedded) {
       setUnreadReplies(0)
       previousMessageCountRef.current = messages.length
@@ -1390,7 +1398,7 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
                   disabled={!input.trim() || sending || savingConfig}
                   aria-label="Enviar mensaje"
                 >
-                  <SendHorizonal size={17} />
+                  {embedded ? <ArrowUp size={20} /> : <SendHorizonal size={17} />}
                 </button>
               </div>
             )}
