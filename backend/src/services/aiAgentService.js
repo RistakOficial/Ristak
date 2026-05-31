@@ -297,6 +297,42 @@ function isMarkdownTableDivider(line) {
   return /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(String(line || ''))
 }
 
+function isDataTableHeaderCell(value) {
+  return /^(metrica|metricas|resultado|resultados|campo|detalle|valor|concepto|monto|fecha|estado|contacto|cliente|prospecto|lead|cita|pago|campana|campaña|anuncio|fuente|canal|ingreso|ingresos|gasto|utilidad|roas|ventas|compras|clics|clicks|cpc|ctr|conversion|conversiones|telefono|email|correo)$/i.test(normalizeMarkdownLabel(value))
+}
+
+function isConversationalTable(rows) {
+  if (!Array.isArray(rows) || rows.length < 2 || rows.length > 3) return false
+  if (!rows.every(row => Array.isArray(row) && row.length === 2)) return false
+
+  const [header] = rows
+  const headerLooksLikeData = header.every(isDataTableHeaderCell)
+  if (headerLooksLikeData) return false
+
+  const allCells = rows.flat().map(cell => cleanText(String(cell || '').replace(/\*\*/g, ''), 220))
+  const combined = normalizeText(allCells.join(' '))
+  const hasConversationalLanguage = /(confirm|confirma|confirmame|quieres|prefieres|puede|puedo|para registr|entonces|si ya|si tiene|manual|offline|automatic|automatica|automático|tarjeta guardada|porfa|dime|solo necesito|nada mas|nada más)/.test(combined)
+  const hasNumericDataDensity = /(roas|ingreso|gasto|utilidad|ventas|compras|leads|prospectos|citas|clics|cpc|ctr|\$|%|\bx\b)/.test(combined)
+
+  return hasConversationalLanguage && !hasNumericDataDensity
+}
+
+function formatConversationalTableRows(rows) {
+  return rows
+    .map(([label, text]) => {
+      const cleanLabel = cleanText(String(label || '').replace(/\*\*/g, ''), 120)
+      const cleanValue = cleanText(String(text || ''), 600)
+
+      if (!cleanLabel) return cleanValue
+      if (/^(si|sí|no|ok|perfecto|claro|listo)$/i.test(normalizeMarkdownLabel(cleanLabel))) {
+        return `${cleanLabel}, ${cleanValue.charAt(0).toLowerCase()}${cleanValue.slice(1)}`
+      }
+
+      return `**${cleanLabel}:** ${cleanValue}`
+    })
+    .filter(Boolean)
+}
+
 function normalizeLightweightMarkdownBlocks(value) {
   const lines = String(value || '').replace(/\r\n/g, '\n').split('\n')
   const output = []
@@ -317,6 +353,11 @@ function normalizeLightweightMarkdownBlocks(value) {
         .filter((tableLine) => !isMarkdownTableDivider(tableLine))
         .map(parseMarkdownTableRow)
       const [, ...bodyRows] = rows
+
+      if (isConversationalTable(rows)) {
+        output.push(...formatConversationalTableRows(rows))
+        continue
+      }
 
       if (bodyRows.length === 1 && bodyRows[0]?.length === 2) {
         const [label, text] = bodyRows[0]
@@ -3729,7 +3770,9 @@ const BASE_SPECIALIST_PROMPT = [
   'El usuario ve un solo chat, pero internamente trabajas como un especialista elegido por el gerente.',
   'Usa la conversación completa, la vista actual, la DB y las herramientas disponibles. No reinicies contexto por mirar sólo el último mensaje.',
   'Piensa con criterio propio: si el usuario pide datos, investiga; si pide una acción, identifica registros exactos; si falta algo indispensable, pregunta sólo eso.',
-  'Responde en español natural, directo y útil para un dueño de negocio.'
+  'Responde en español natural, directo y útil para un dueño de negocio.',
+  'No uses tablas, contenedores, bloques tipo ficha ni gráficos para aclaraciones normales, preguntas de confirmación, explicaciones cortas o respuestas conversacionales.',
+  'Usa tablas/gráficos sólo cuando el usuario pida data o cuando haya varias métricas/registros/comparativos difíciles de leer en texto: contactos, citas, pagos, campañas, rankings, históricos o listas repetidas.'
 ].join('\n')
 
 const SOURCE_ROUTING_PROMPT = [
@@ -3887,7 +3930,7 @@ function buildResponseBehaviorInstructions(config, latestUserMessage = '') {
 
   if (responseStyle === 'direct') {
     lines.push(
-      'Modo Directo: usa respuestas cortas. Para una métrica o ganador: 1 frase inicial + tabla compacta sólo si hay varias métricas + una observación máxima si evita malinterpretar el dato.',
+      'Modo Directo: usa respuestas cortas. Para una métrica o ganador: 1 frase inicial + tabla compacta sólo si hay varias métricas reales + una observación máxima si evita malinterpretar el dato.',
       'No uses "Qué significa", "Siguiente acción", "Acción recomendada", planes, recomendaciones ni contexto amplio salvo que el usuario lo pida explícitamente.'
     )
   } else if (responseStyle === 'balanced') {
@@ -3911,6 +3954,7 @@ function buildResponseBehaviorInstructions(config, latestUserMessage = '') {
   }
 
   lines.push('Para preguntas como "cuál campaña fue más rentable", responde la ganadora y el ranking/métricas necesarias. No recomiendes escalar, pausar o cortar presupuesto salvo que pregunte qué hacer.')
+  lines.push('Formato visual: no uses tablas para decir "sí", confirmar entendimiento, pedir método/concepto, preguntar si usa tarjeta guardada o explicar una decisión simple. Eso va en párrafos cortos o bullets normales.')
 
   return lines.join('\n')
 }
