@@ -45,12 +45,16 @@ function normalizeDateOnly(value, timezone = DEFAULT_PAYMENT_TIMEZONE) {
   if (!value) return DateTime.now().setZone(zone).toISODate()
 
   if (value instanceof Date) {
-    const date = DateTime.fromJSDate(value, { zone: 'utc' }).setZone(zone)
+    const date = DateTime.fromJSDate(value, { zone: 'utc' })
     return date.isValid ? date.toISODate() : DateTime.now().setZone(zone).toISODate()
   }
 
   if (typeof value === 'object' && typeof value.toISOString === 'function') {
-    const date = DateTime.fromISO(value.toISOString(), { zone: 'utc' }).setZone(zone)
+    const isoText = value.toISOString()
+    const dateOnlyMatch = isoText.match(/^(\d{4}-\d{2}-\d{2})/)
+    if (dateOnlyMatch) return dateOnlyMatch[1]
+
+    const date = DateTime.fromISO(isoText, { zone: 'utc' })
     return date.isValid ? date.toISODate() : DateTime.now().setZone(zone).toISODate()
   }
 
@@ -1095,12 +1099,12 @@ function createRecurringInstallmentScheduleGroup(installments, recurrence, timez
     frequency: firstInstallment.frequency || 'custom',
     recurrence,
     schedule: {
-      executeAt: start.executeAt,
       rrule: {
         ...recurrence,
         startDate: start.startDate,
         startTime: start.startTime,
         count: installments.length,
+        daysBefore: 0,
         endType: 'count'
       }
     }
@@ -1270,7 +1274,10 @@ async function createDraftInstallmentSchedule({ ghlClient, flow, group, context,
   const schedulePayload = buildInstallmentSchedulePayload({ flow, group, context, planSummary })
   const installmentIds = group.installments.map(installment => installment.id)
   const sequenceLabel = group.installments.map(installment => installment.sequence).join(',')
-  logger.info(`Creando schedule GHL para flujo ${flow.id}, parcialidad(es) ${sequenceLabel}: amount=${schedulePayload.total}, executeAt=${schedulePayload.schedule?.executeAt}, recurrence=${schedulePayload.schedule?.rrule ? JSON.stringify(schedulePayload.schedule.rrule) : 'none'}, live=${schedulePayload.liveMode}`)
+  const scheduleTiming = schedulePayload.schedule?.rrule
+    ? `rrule=${JSON.stringify(schedulePayload.schedule.rrule)}`
+    : `executeAt=${schedulePayload.schedule?.executeAt}`
+  logger.info(`Creando schedule GHL para flujo ${flow.id}, parcialidad(es) ${sequenceLabel}: amount=${schedulePayload.total}, ${scheduleTiming}, live=${schedulePayload.liveMode}`)
 
   const schedule = await ghlClient.createInvoiceSchedule(schedulePayload)
   const scheduleId = extractScheduleId(schedule)
