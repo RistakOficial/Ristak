@@ -1887,17 +1887,32 @@ async function resolvePaymentContact(args) {
     }
   }
 
+  const contactTokens = getContactLookupTokens(lookupHint)
   const exactMatches = contacts.filter(contact => contactMatchesExactly(contact, lookupHint))
   if (exactMatches.length === 1) return { contact: exactMatches[0] }
-  if (contacts.length === 1) return { contact: contacts[0] }
 
-  const contactTokens = getContactLookupTokens(lookupHint)
-  const strictNameMatches = contacts.filter(contact => contactMatchesAllNameTokens(contact, contactTokens))
-  if (strictNameMatches.length === 1) return { contact: strictNameMatches[0] }
+  const strictNameMatches = contacts.filter(contact => contactNameContainsLookup(contact, contactTokens))
+  if (requiresStrictNameContains(contactTokens)) {
+    if (strictNameMatches.length === 1) return { contact: strictNameMatches[0] }
+
+    if (strictNameMatches.length === 0) {
+      return {
+        error: `No encontré contactos que contengan "${lookupHint}".`,
+        missingFields: ['contacto']
+      }
+    }
+
+    return {
+      error: 'Encontré varios contactos posibles. Necesito que elijas uno antes de crear el cobro.',
+      clarificationOptions: buildPaymentContactOptions(strictNameMatches)
+    }
+  }
+
+  if (contacts.length === 1) return { contact: contacts[0] }
 
   return {
     error: 'Encontré varios contactos posibles. Necesito que elijas uno antes de crear el cobro.',
-    clarificationOptions: buildPaymentContactOptions(strictNameMatches.length ? strictNameMatches : contacts)
+    clarificationOptions: buildPaymentContactOptions(contacts)
   }
 }
 
@@ -4546,14 +4561,14 @@ const CONTACT_LOOKUP_STOP_WORDS = new Set([
   'hoy',
   'info', 'informacion', 'la', 'las', 'lead', 'leads', 'le', 'les', 'link', 'lo',
   'los', 'manda', 'mandale', 'mandar', 'me', 'mes', 'meses', 'mi', 'mis', 'mxn', 'necesito', 'nombre',
-  'numero', 'paciente', 'pacientes', 'pago', 'pagos', 'para', 'peso', 'pesos', 'persona', 'personas',
-  'por', 'prospecto', 'prospectos', 'que', 'quien', 'revisa', 'saber', 'sobre',
+  'numero', 'paciente', 'pacientes', 'pago', 'pagos', 'para', 'apra', 'peso', 'pesos', 'persona', 'personas',
+  'por', 'producto', 'programa', 'programale', 'prospecto', 'prospectos', 'que', 'quien', 'revisa', 'saber', 'sobre',
   'su', 'sus', 'telefono', 'tiene', 'tienen', 'tuvo', 'un', 'una', 'usd', 'venta', 'ventas',
-  'ver', 'quiero', 'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio',
+  'ver', 'quiero', 'anticipo', 'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio',
   'agosto', 'septiembre', 'setiembre', 'octubre', 'noviembre', 'diciembre'
 ])
 
-const CONTACT_LOOKUP_LEADING_WORDS_PATTERN = /^(?:a|al|el|la|los|las|contacto|cliente|lead|prospecto|paciente|persona)\s+/i
+const CONTACT_LOOKUP_LEADING_WORDS_PATTERN = /^(?:a|al|el|la|los|las|contacto|cliente|lead|prospecto|paciente|persona|para|apra)\s+/i
 const CONTACT_LOOKUP_TRAILING_WORDS_PATTERN = /\s+(?:y|para|que|cobrale|cobrarle|cobrele|cobra|cobrar|manda|mandale|enviar|enviale|hazle|programale|ponle|agendale|creale|generale|registra|registrale|ahora|ahorita|hoy|manana|mañana|durante|por|cada|desde|hasta)\b.*$/i
 
 function cleanContactLookupTerm(value) {
@@ -4576,7 +4591,8 @@ function extractContactLookupTerm(question) {
   const normalizedQuestion = normalizeSearchText(question, 360)
   const patterns = [
     /\b(?:buscame|busca|buscar|encuentrame|encuentra|revisa|dame)\s+(.+?)(?=\s+(?:y|para|con|que|cobrale|cobrarle|cobrele|cobra|mandale|enviale|hazle|programale|agendale|creale|generale|registrale)\b|$)/i,
-    /\b(?:cobrale|cobrarle|cobrele|cobra|mandale|enviale|hazle|programale|agendale|creale|generale|registrale)\s+(.+?)(?=\s+(?:\d|\$|mxn|usd|peso|pesos|dolar|dolares|hoy|ahora|ahorita|manana|mañana|el\s+\d|durante|por|cada|desde|hasta)\b|$)/i,
+    /\b(?:programa|programale|agendale|agenda|calendariza)\s+(?:(?:un|una)\s+)?(?:(?:pago|cobro|invoice|factura|link)\s+)?(?:(?:a|al|para|apra)\s+)?(.+?)(?=\s+(?:\d|\$|mxn|usd|peso|pesos|dolar|dolares|hoy|ahora|ahorita|manana|mañana|el\s+\d|durante|por|cada|desde|hasta|del\s+producto|producto|concepto)\b|$)/i,
+    /\b(?:cobrale|cobrarle|cobrele|cobra|mandale|enviale|hazle|programale|agendale|creale|generale|registrale)\s+(?:(?:a|al|para|apra)\s+)?(.+?)(?=\s+(?:\d|\$|mxn|usd|peso|pesos|dolar|dolares|hoy|ahora|ahorita|manana|mañana|el\s+\d|durante|por|cada|desde|hasta)\b|$)/i,
     /\b(?:contacto|cliente|lead|prospecto|paciente|persona)\s+(?:de\s+|llamad[oa]\s+|con\s+nombre\s+)?(.+?)(?=\s+(?:y|para|con|que|cobrale|cobrarle|cobrele|cobra|mandale|enviale|hazle|programale|agendale|\d|\$|mxn|usd|peso|pesos)\b|$)/i
   ]
 
@@ -4623,13 +4639,21 @@ function getContactLookupTokens(question) {
   return tokens.slice(0, 6)
 }
 
-function contactMatchesAllNameTokens(contact, tokens = []) {
-  const name = normalizeSearchText(contact.name || contact.label || '', 240)
-  const meaningfulTokens = tokens
+function getMeaningfulContactNameTokens(tokens = []) {
+  return tokens
     .map(token => normalizeSearchText(token, 80))
     .filter(token => token.length >= 2 && !token.includes('@') && !/^\d+$/.test(token))
+}
 
-  return meaningfulTokens.length >= 2 && meaningfulTokens.every(token => name.includes(token))
+function requiresStrictNameContains(tokens = []) {
+  return getMeaningfulContactNameTokens(tokens).length >= 2
+}
+
+function contactNameContainsLookup(contact, tokens = []) {
+  const name = normalizeSearchText(contact.name || contact.label || '', 240)
+  const lookupPhrase = getMeaningfulContactNameTokens(tokens).join(' ')
+
+  return lookupPhrase.length >= 3 && name.includes(lookupPhrase)
 }
 
 function shouldAttemptContactLookup(question) {
@@ -4779,12 +4803,15 @@ async function searchMentionedContacts(question, runtimeContext) {
     ...await searchHighLevelLookupContacts(term)
   ])
   if (!contacts.length) return { term, contacts: [] }
-  const strictNameMatches = contacts.filter(contact => contactMatchesAllNameTokens(contact, tokens))
+  const strictNameMatches = contacts.filter(contact => contactNameContainsLookup(contact, tokens))
+  const finalContacts = requiresStrictNameContains(tokens)
+    ? strictNameMatches
+    : strictNameMatches.length ? strictNameMatches : contacts
 
   return {
     term,
-    contacts: strictNameMatches.length ? strictNameMatches : contacts,
-    options: buildContactClarificationOptionsFromContacts(strictNameMatches.length ? strictNameMatches : contacts, runtimeContext)
+    contacts: finalContacts,
+    options: buildContactClarificationOptionsFromContacts(finalContacts, runtimeContext)
   }
 }
 
@@ -4817,7 +4844,25 @@ async function resolveMentionedContactForAgent({ messages, runtimeContext }) {
   if (!question || isClarificationSelection(question)) return null
 
   const lookup = await searchMentionedContacts(question, runtimeContext)
-  if (!lookup?.contacts?.length) return null
+  if (!lookup) return null
+
+  if (!lookup.contacts?.length) {
+    return {
+      term: lookup.term,
+      clarificationReply: {
+        reply: `No encontré ningún contacto que contenga "${lookup.term}" en nombre, email, teléfono o ID.`,
+        model: 'local-contact-lookup',
+        usage: null,
+        sources: [],
+        clarificationOptions: [],
+        debug: {
+          clarificationEntity: 'contact',
+          optionCount: 0,
+          searchTerm: lookup.term
+        }
+      }
+    }
+  }
 
   const exactMatches = lookup.contacts.filter(contact => contactMatchesExactly(contact, lookup.term))
   const contacts = exactMatches.length ? exactMatches : lookup.contacts
