@@ -927,8 +927,8 @@ export const Transactions: React.FC = () => {
   ]
 
   const planStatusBadges: Record<string, { label: string; variant: BadgeVariant }> = {
-    active: { label: 'Activo', variant: 'success' },
-    scheduled: { label: 'Programado', variant: 'info' },
+    active: { label: 'Activo', variant: 'info' },
+    scheduled: { label: 'Programado', variant: 'warning' },
     pending: { label: 'Pendiente', variant: 'warning' },
     sent: { label: 'Enviado', variant: 'info' },
     draft: { label: 'Borrador', variant: 'neutral' },
