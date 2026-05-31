@@ -40,6 +40,8 @@ const MAX_AGENT_ROWS = 200
 const BUSINESS_PROFILE_LIMIT = 6000
 const WEB_SEARCH_DOMAIN_LIMIT = 20
 const CLARIFICATION_OPTION_LIMIT = 5
+const PRODUCT_LOOKUP_LIMIT = 50
+const PRODUCT_PRICE_OPTION_LIMIT = 5
 const MAX_TOOL_ROUNDS = 6
 const DEFAULT_PAYMENT_CURRENCY = 'MXN'
 const DEFAULT_PAYMENT_TIMEZONE = 'America/Mexico_City'
@@ -1000,6 +1002,7 @@ function buildPaymentConfirmationRequiredOutput({ action, summary = {}, clarific
     confirmationPrompt: [
       'No ejecutes la acción todavía.',
       'Antes de tocar dinero, resume contacto, monto, concepto, método, fechas y qué pasará si no hay tarjeta guardada.',
+      'El contacto debe mostrarse con nombre y email o teléfono cuando existan; si no hay email/teléfono, muestra el ID.',
       'Pide una confirmación explícita tipo "Confirmo y autorizo ejecutar este cobro/plan".',
       'Si falta método o no está claro si será transferencia, depósito, registro manual, link de pago o domiciliación, pregunta eso antes de confirmar.'
     ].join(' ')
@@ -1372,8 +1375,13 @@ function dedupeContacts(contacts) {
   const deduped = []
 
   for (const contact of contacts) {
-    if (!contact?.id || seen.has(contact.id)) continue
-    seen.add(contact.id)
+    const id = cleanText(contact?.id || '', 160)
+    const email = normalizeText(contact?.email || '')
+    const phone = normalizePhoneDigits(contact?.phone || '')
+    const key = id || (email ? `email:${email}` : phone ? `phone:${phone}` : '')
+
+    if (!key || seen.has(key)) continue
+    seen.add(key)
     deduped.push(contact)
   }
 
@@ -1407,13 +1415,291 @@ function buildPaymentContactOptions(contacts) {
       contact.phone ? `Tel: ${cleanText(contact.phone, 28)}` : '',
       contact.createdAt ? `Entró: ${formatOptionDate(contact.createdAt, { timezone: DEFAULT_PAYMENT_TIMEZONE })}` : ''
     ].filter(Boolean).join(' · ')
+    const identityParts = [
+      contact.email ? `email: ${cleanText(contact.email, 80)}` : '',
+      contact.phone ? `tel: ${cleanText(contact.phone, 40)}` : '',
+      contact.createdAt ? `entrada: ${formatOptionDate(contact.createdAt, { timezone: DEFAULT_PAYMENT_TIMEZONE })}` : ''
+    ].filter(Boolean).join(', ')
 
     return {
       label,
       description,
-      value: `Usa el contacto "${label}" (ID: ${contact.id}) para crear el cobro que te pedí en mi mensaje anterior.`
+      value: `Usa el contacto "${label}" (ID: ${contact.id}${identityParts ? `, ${identityParts}` : ''}) para crear el cobro que te pedí en mi mensaje anterior.`
     }
   })
+}
+
+function extractArrayPayload(response, keys = []) {
+  if (Array.isArray(response)) return response
+
+  for (const key of keys) {
+    if (Array.isArray(response?.[key])) return response[key]
+  }
+
+  const data = response?.data
+  if (Array.isArray(data)) return data
+
+  for (const key of keys) {
+    if (Array.isArray(data?.[key])) return data[key]
+  }
+
+  return []
+}
+
+function getRecordId(record = {}, aliases = []) {
+  const raw = record || {}
+  const id = raw.id || raw._id || aliases.map(alias => raw[alias]).find(Boolean)
+  return cleanText(String(id || ''), 180)
+}
+
+function normalizeGhlProduct(rawProduct = {}) {
+  const product = rawProduct?.product || rawProduct || {}
+  const id = getRecordId(product, ['productId', 'product_id'])
+  const name = cleanText(String(
+    product.name ||
+    product.title ||
+    product.productName ||
+    product.displayName ||
+    id ||
+    'Producto sin nombre'
+  ), 180)
+
+  return {
+    id,
+    name,
+    description: cleanText(String(product.description || product.shortDescription || product.details || ''), 500),
+    status: cleanText(String(product.status || (product.active === false || product.isActive === false ? 'inactive' : '')), 80),
+    currency: cleanText(String(product.currency || product.defaultCurrency || DEFAULT_PAYMENT_CURRENCY), 12).toUpperCase() || DEFAULT_PAYMENT_CURRENCY
+  }
+}
+
+function normalizeGhlPrice(rawPrice = {}) {
+  const price = rawPrice?.price || rawPrice || {}
+  const id = getRecordId(price, ['priceId', 'price_id'])
+  const amount = normalizePaymentAmount(
+    price.amount ??
+    price.price ??
+    price.unitAmount ??
+    price.unit_amount ??
+    price.unit_amount_decimal ??
+    price.value ??
+    0
+  )
+  const currency = cleanText(String(price.currency || price.currencyCode || DEFAULT_PAYMENT_CURRENCY), 12).toUpperCase() || DEFAULT_PAYMENT_CURRENCY
+
+  return {
+    id,
+    name: cleanText(String(price.name || price.nickname || price.label || 'Precio'), 180),
+    amount,
+    currency,
+    type: cleanText(String(price.type || price.pricingType || price.recurring?.interval || ''), 80),
+    interval: cleanText(String(price.recurring?.interval || price.interval || ''), 80),
+    intervalCount: Number(price.recurring?.intervalCount || price.intervalCount || price.interval_count || 0) || null
+  }
+}
+
+function formatPaymentMoney(amount, currency = DEFAULT_PAYMENT_CURRENCY) {
+  try {
+    return new Intl.NumberFormat('es-MX', {
+      style: 'currency',
+      currency: currency || DEFAULT_PAYMENT_CURRENCY,
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    }).format(Number(amount || 0))
+  } catch {
+    return `${formatCurrency(amount)} ${currency || DEFAULT_PAYMENT_CURRENCY}`
+  }
+}
+
+function formatProductPrice(price) {
+  if (!price) return ''
+  const cadence = price.interval ? ` / ${price.intervalCount && price.intervalCount > 1 ? `${price.intervalCount} ` : ''}${price.interval}` : ''
+  return `${price.name || 'Precio'}: ${formatPaymentMoney(price.amount, price.currency)}${cadence}`
+}
+
+function scoreProductMatch(product, query) {
+  const normalizedQuery = normalizeText(query)
+  if (!normalizedQuery) return 0
+
+  const haystack = normalizeText([
+    product.name,
+    product.description,
+    product.id
+  ].filter(Boolean).join(' '))
+
+  if (!haystack) return Number.POSITIVE_INFINITY
+  if (haystack === normalizedQuery || normalizeText(product.name) === normalizedQuery) return 0
+  if (normalizeText(product.name).startsWith(normalizedQuery)) return 1
+  if (haystack.includes(normalizedQuery)) return 2
+
+  const tokens = normalizedQuery.split(/\s+/).filter(token => token.length > 1)
+  if (tokens.length && tokens.every(token => haystack.includes(token))) return 3
+  if (tokens.some(token => token.length > 3 && haystack.includes(token))) return 5
+
+  return Number.POSITIVE_INFINITY
+}
+
+function buildProductOptions(products) {
+  return products.slice(0, CLARIFICATION_OPTION_LIMIT).map((product) => {
+    const pricePreview = Array.isArray(product.prices) && product.prices.length
+      ? product.prices.slice(0, 3).map(formatProductPrice).join(' · ')
+      : 'Sin precios cargados'
+    const firstPrice = Array.isArray(product.prices) && product.prices.length === 1 ? product.prices[0] : null
+    const label = cleanText(product.name || product.id || 'Producto', 80)
+
+    return {
+      label,
+      description: [
+        pricePreview,
+        product.description ? cleanText(product.description, 90) : ''
+      ].filter(Boolean).join(' · '),
+      value: firstPrice
+        ? `Usa el producto "${product.name}" (producto ID: ${product.id}) con el precio "${firstPrice.name}" (precio ID: ${firstPrice.id}) por ${formatPaymentMoney(firstPrice.amount, firstPrice.currency)} para el cobro anterior.`
+        : `Usa el producto "${product.name}" (producto ID: ${product.id}) para el cobro anterior y muéstrame sus precios antes de cobrar.`
+    }
+  })
+}
+
+function buildProductPriceOptions(product, prices) {
+  const priceOptions = prices.slice(0, PRODUCT_PRICE_OPTION_LIMIT).map((price) => ({
+    label: cleanText(`${price.name || 'Precio'} · ${formatPaymentMoney(price.amount, price.currency)}`, 80),
+    description: [
+      product.name ? `Producto: ${cleanText(product.name, 48)}` : '',
+      price.interval ? `Recurrencia: ${price.intervalCount || 1} ${price.interval}` : '',
+      price.id ? `ID: ${cleanText(price.id, 40)}` : ''
+    ].filter(Boolean).join(' · '),
+    value: `Usa el producto "${product.name}" (producto ID: ${product.id}) con el precio "${price.name}" (precio ID: ${price.id}) por ${formatPaymentMoney(price.amount, price.currency)} para el cobro anterior.`
+  }))
+
+  return [
+    ...priceOptions,
+    {
+      label: 'Otro precio',
+      description: `Usa "${cleanText(product.name, 52)}" pero con monto personalizado.`,
+      value: `Usa el producto "${product.name}" (producto ID: ${product.id}) pero con otro precio; pregúntame el monto si no lo di.`
+    }
+  ]
+}
+
+async function loadGhlProductPrices(ghlClient, productId) {
+  if (!productId) return []
+
+  const response = await ghlClient.listPrices(productId)
+  return extractArrayPayload(response, ['prices', 'data', 'items', 'results'])
+    .map(normalizeGhlPrice)
+    .filter(price => price.id || price.amount > 0 || price.name)
+}
+
+async function executeLookupHighLevelProducts(args = {}, highLevelConnection) {
+  if (!highLevelConnection?.configured) {
+    return {
+      ok: false,
+      error: 'HighLevel no está configurado. Configura primero la integración de Go High Level.'
+    }
+  }
+
+  const ghlClient = await getGHLClient()
+  const limit = Math.min(100, Math.max(1, Number(args.limit || PRODUCT_LOOKUP_LIMIT)))
+  const query = cleanText(String(args.query || args.productHint || args.productName || args.name || ''), 180)
+  const productId = cleanText(String(args.productId || args.product_id || ''), 180)
+  const priceId = cleanText(String(args.priceId || args.price_id || ''), 180)
+  const includePrices = args.includePrices !== false
+  const response = await ghlClient.listProducts({ limit })
+  let products = extractArrayPayload(response, ['products', 'data', 'items', 'results'])
+    .map(normalizeGhlProduct)
+    .filter(product => product.id || product.name)
+
+  if (productId) {
+    let selectedProduct = products.find(product => product.id === productId)
+
+    if (!selectedProduct) {
+      try {
+        const productResponse = await ghlClient.getProduct(productId)
+        selectedProduct = normalizeGhlProduct(productResponse.product || productResponse.data || productResponse)
+      } catch {
+        selectedProduct = null
+      }
+    }
+
+    products = selectedProduct ? [selectedProduct] : []
+  } else if (query) {
+    products = products
+      .map(product => ({ product, score: scoreProductMatch(product, query) }))
+      .filter(item => Number.isFinite(item.score))
+      .sort((a, b) => a.score - b.score || a.product.name.localeCompare(b.product.name))
+      .map(item => item.product)
+  }
+
+  if (!products.length) {
+    return {
+      ok: false,
+      error: query || productId
+        ? `No encontré productos de HighLevel que coincidan con "${query || productId}".`
+        : 'No encontré productos de HighLevel.',
+      products: []
+    }
+  }
+
+  const selectedProducts = products.slice(0, query || productId ? 8 : CLARIFICATION_OPTION_LIMIT)
+  const productsWithPrices = []
+
+  for (const product of selectedProducts) {
+    let prices = []
+    let priceError = null
+
+    if (includePrices && product.id) {
+      try {
+        prices = await loadGhlProductPrices(ghlClient, product.id)
+      } catch (error) {
+        priceError = cleanText(error.message || 'No se pudieron cargar precios', 240)
+      }
+    }
+
+    productsWithPrices.push({
+      ...product,
+      prices,
+      priceError
+    })
+  }
+
+  const selectedProduct = productsWithPrices.length === 1 ? productsWithPrices[0] : null
+  const selectedPrice = selectedProduct && priceId
+    ? selectedProduct.prices.find(price => price.id === priceId) || null
+    : null
+
+  if ((query || productId) && productsWithPrices.length > 1) {
+    return {
+      ok: false,
+      error: 'Encontré varios productos parecidos en HighLevel. Necesito que elijas cuál usar antes de preparar el cobro.',
+      needsProductSelection: true,
+      products: productsWithPrices,
+      clarificationOptions: buildProductOptions(productsWithPrices)
+    }
+  }
+
+  if (selectedProduct && includePrices && !selectedPrice && selectedProduct.prices.length > 1) {
+    return {
+      ok: true,
+      needsPriceSelection: true,
+      message: 'Producto encontrado. Elige si uso uno de sus precios guardados o un precio personalizado.',
+      product: selectedProduct,
+      prices: selectedProduct.prices,
+      clarificationOptions: buildProductPriceOptions(selectedProduct, selectedProduct.prices)
+    }
+  }
+
+  return {
+    ok: true,
+    message: selectedProduct
+      ? 'Producto de HighLevel encontrado.'
+      : 'Productos de HighLevel encontrados.',
+    product: selectedProduct,
+    products: productsWithPrices,
+    price: selectedPrice || (selectedProduct?.prices?.length === 1 ? selectedProduct.prices[0] : null),
+    clarificationOptions: selectedProduct
+      ? buildProductPriceOptions(selectedProduct, selectedProduct.prices)
+      : buildProductOptions(productsWithPrices)
+  }
 }
 
 async function searchLocalPaymentContacts(hint) {
@@ -1557,6 +1843,65 @@ function buildPaymentChannels(args = {}) {
   }
 
   return {}
+}
+
+function getProductPaymentAmount(args = {}) {
+  const candidates = [
+    args.productAmount,
+    args.productPrice,
+    args.priceAmount,
+    args.selectedPriceAmount,
+    args.ghlPriceAmount
+  ]
+
+  for (const candidate of candidates) {
+    const amount = normalizePaymentAmount(candidate)
+    if (amount > 0) return amount
+  }
+
+  return 0
+}
+
+function getProductPaymentCurrency(args = {}) {
+  return cleanText(String(
+    args.productCurrency ||
+    args.priceCurrency ||
+    args.ghlPriceCurrency ||
+    args.currency ||
+    DEFAULT_PAYMENT_CURRENCY
+  ), 12).toUpperCase() || DEFAULT_PAYMENT_CURRENCY
+}
+
+function getPaymentProductSummary(args = {}) {
+  const productId = cleanText(String(args.productId || args.product_id || ''), 180)
+  const productName = cleanText(String(args.productName || args.product_name || args.product || ''), 180)
+  const priceId = cleanText(String(args.priceId || args.price_id || ''), 180)
+  const priceName = cleanText(String(args.priceName || args.price_name || ''), 180)
+  const amount = getProductPaymentAmount(args)
+  const currency = getProductPaymentCurrency(args)
+
+  if (!productId && !productName && !priceId && !priceName && amount <= 0) return null
+
+  return {
+    productId: productId || null,
+    productName: productName || null,
+    priceId: priceId || null,
+    priceName: priceName || null,
+    priceAmount: amount > 0 ? amount : null,
+    currency
+  }
+}
+
+function buildProductConcept(args = {}, fallback) {
+  return cleanText(
+    args.concept ||
+    args.description ||
+    args.productName ||
+    args.product ||
+    fallback ||
+    'Pago',
+    240
+  )
 }
 
 async function getStoredCardStatusForContact(contactId, paymentMode = PAYMENT_MODE_LIVE) {
@@ -1796,8 +2141,9 @@ async function executeCreateInstallmentPaymentFlow(args = {}, highLevelConnectio
     }
   }
 
-  const totalAmount = normalizePaymentAmount(args.totalAmount || args.amount || args.total)
-  const currency = cleanText(args.currency || DEFAULT_PAYMENT_CURRENCY, 12).toUpperCase() || DEFAULT_PAYMENT_CURRENCY
+  const productSummary = getPaymentProductSummary(args)
+  const totalAmount = normalizePaymentAmount(args.totalAmount || args.amount || args.total || getProductPaymentAmount(args))
+  const currency = getProductPaymentCurrency(args)
 
   if (totalAmount <= 0) {
     return {
@@ -1810,7 +2156,7 @@ async function executeCreateInstallmentPaymentFlow(args = {}, highLevelConnectio
   const paymentTimezone = highLevelConnection.locationData?.timezone || DEFAULT_PAYMENT_TIMEZONE
   const firstPayment = resolveFirstPayment(args, totalAmount, paymentTimezone)
   const contact = resolvedContact.contact
-  const concept = cleanText(args.concept || args.description || `Pago parcializado - ${contact.name}`, 240)
+  const concept = buildProductConcept(args, `Pago parcializado - ${contact.name}`)
   const remainingAutomatic = args.remainingAutomatic === false || args.automatic === false ? false : true
   const storedCardStatus = remainingAutomatic
     ? await getStoredCardStatusForContact(contact.id, highLevelConnection.paymentMode)
@@ -1905,6 +2251,7 @@ async function executeCreateInstallmentPaymentFlow(args = {}, highLevelConnectio
           email: contact.email || null,
           phone: contact.phone || null
         },
+        product: productSummary,
         totalAmount,
         currency,
         concept,
@@ -1973,6 +2320,7 @@ async function executeCreateInstallmentPaymentFlow(args = {}, highLevelConnectio
         email: contact.email || null,
         phone: contact.phone || null
       },
+      product: productSummary,
       totalAmount,
       currency,
       paymentMode: highLevelConnection.paymentMode,
@@ -2024,8 +2372,9 @@ async function executeCreateSinglePaymentLink(args = {}, highLevelConnection, co
     }
   }
 
-  const amount = normalizePaymentAmount(args.amount || args.totalAmount || args.total)
-  const currency = cleanText(args.currency || DEFAULT_PAYMENT_CURRENCY, 12).toUpperCase() || DEFAULT_PAYMENT_CURRENCY
+  const productSummary = getPaymentProductSummary(args)
+  const amount = normalizePaymentAmount(args.amount || args.totalAmount || args.total || getProductPaymentAmount(args))
+  const currency = getProductPaymentCurrency(args)
 
   if (amount <= 0) {
     return {
@@ -2037,7 +2386,7 @@ async function executeCreateSinglePaymentLink(args = {}, highLevelConnection, co
 
   const paymentTimezone = highLevelConnection.locationData?.timezone || DEFAULT_PAYMENT_TIMEZONE
   const contact = resolvedContact.contact
-  const concept = cleanText(args.concept || args.description || `Pago - ${contact.name}`, 240)
+  const concept = buildProductConcept(args, `Pago - ${contact.name}`)
   const dueDate = normalizeDateOnlyInput(args.dueDate || args.paymentDate || args.chargeDate) ||
     resolveOffsetDate(args, DateTime.now().setZone(paymentTimezone).toISODate(), paymentTimezone) ||
     DateTime.now().setZone(paymentTimezone).toISODate()
@@ -2054,6 +2403,7 @@ async function executeCreateSinglePaymentLink(args = {}, highLevelConnection, co
         totalAmount: amount,
         currency,
         concept,
+        product: productSummary,
         firstPayment: { enabled: false },
         remainingAutomatic: true,
         remainingFrequency: 'custom',
@@ -2079,6 +2429,7 @@ async function executeCreateSinglePaymentLink(args = {}, highLevelConnection, co
           email: contact.email || null,
           phone: contact.phone || null
         },
+        product: productSummary,
         amount,
         currency,
         concept,
@@ -2117,6 +2468,7 @@ async function executeCreateSinglePaymentLink(args = {}, highLevelConnection, co
         email: contact.email || null,
         phone: contact.phone || null
       },
+      product: productSummary,
       amount,
       currency,
       dueDate,
@@ -2292,6 +2644,25 @@ function buildHighLevelTools(highLevelConnection, options = {}) {
   tools.push(
     {
       type: 'function',
+      name: 'lookup_highlevel_products',
+      description: 'Busca y lista productos/precios guardados en GoHighLevel de forma segura y de sólo lectura. Úsala antes de cobrar cuando el usuario mencione producto, producto guardado, precio de GHL o quiera ver productos/precios. Si hay productos parecidos o varios precios, devuelve opciones para que el usuario elija.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: ['string', 'null'], description: 'Texto para buscar producto por nombre, descripción o ID. Déjalo vacío para listar productos.' },
+          productHint: { type: ['string', 'null'], description: 'Alias de query cuando el usuario dio un nombre aproximado de producto.' },
+          productName: { type: ['string', 'null'], description: 'Nombre exacto o aproximado del producto.' },
+          productId: { type: ['string', 'null'], description: 'ID exacto del producto de GHL si ya se conoce.' },
+          priceId: { type: ['string', 'null'], description: 'ID exacto del precio de GHL si ya se conoce.' },
+          includePrices: { type: ['boolean', 'null'], description: 'true para incluir precios del producto. Por defecto true.' },
+          limit: { type: ['number', 'null'], description: 'Máximo de productos a consultar, por defecto 50.' }
+        },
+        additionalProperties: true
+      },
+      strict: false
+    },
+    {
+      type: 'function',
       name: 'create_single_payment_link',
       description: 'Crea y opcionalmente envía un link de pago único usando la lógica interna de Ristak/HighLevel. Úsala para órdenes como "mándale link de pago", "cóbrale X", "genera invoice por X" sólo cuando sea cobro inmediato o link normal. No la uses para pagos programados con fecha futura; ahí usa create_installment_payment_flow.',
       parameters: {
@@ -2304,6 +2675,13 @@ function buildHighLevelTools(highLevelConnection, options = {}) {
           currency: { type: ['string', 'null'], description: 'Moneda, normalmente MXN.' },
           concept: { type: ['string', 'null'], description: 'Concepto del cobro/invoice.' },
           title: { type: ['string', 'null'], description: 'Título visible del invoice.' },
+          productId: { type: ['string', 'null'], description: 'ID del producto de GHL cuando el cobro viene de producto guardado.' },
+          productName: { type: ['string', 'null'], description: 'Nombre del producto de GHL seleccionado.' },
+          priceId: { type: ['string', 'null'], description: 'ID del precio de GHL seleccionado.' },
+          priceName: { type: ['string', 'null'], description: 'Nombre del precio de GHL seleccionado.' },
+          productPrice: { type: ['number', 'null'], description: 'Precio del producto seleccionado si el usuario quiere cobrar el precio guardado.' },
+          priceAmount: { type: ['number', 'null'], description: 'Alias de productPrice.' },
+          priceCurrency: { type: ['string', 'null'], description: 'Moneda del precio seleccionado.' },
           dueDate: { type: ['string', 'null'], description: 'Fecha límite YYYY-MM-DD. Si es hoy, usa la fecha local actual.' },
           chargeAfterDays: { type: ['number', 'null'], description: 'Usa esto si el usuario dice que el pago se cobrará en N días.' },
           chargeAfterWeeks: { type: ['number', 'null'], description: 'Usa esto si el usuario dice que el pago se cobrará en N semanas.' },
@@ -2335,6 +2713,13 @@ function buildHighLevelTools(highLevelConnection, options = {}) {
           totalAmount: { type: ['number', 'null'], description: 'Total del plan completo.' },
           currency: { type: ['string', 'null'], description: 'Moneda, normalmente MXN.' },
           concept: { type: ['string', 'null'], description: 'Concepto del cobro/invoice.' },
+          productId: { type: ['string', 'null'], description: 'ID del producto de GHL cuando el plan viene de producto guardado.' },
+          productName: { type: ['string', 'null'], description: 'Nombre del producto de GHL seleccionado.' },
+          priceId: { type: ['string', 'null'], description: 'ID del precio de GHL seleccionado.' },
+          priceName: { type: ['string', 'null'], description: 'Nombre del precio de GHL seleccionado.' },
+          productPrice: { type: ['number', 'null'], description: 'Precio total del producto seleccionado si el usuario quiere usar el precio guardado como total del plan.' },
+          priceAmount: { type: ['number', 'null'], description: 'Alias de productPrice.' },
+          priceCurrency: { type: ['string', 'null'], description: 'Moneda del precio seleccionado.' },
           firstPayment: {
             type: ['object', 'null'],
             description: 'Primer pago o anticipo. No inventes method: card sólo porque el usuario dijo "cóbrale"; si no mencionó tarjeta/link/transferencia/depósito/manual, deja method vacío para que Ristak detecte tarjeta guardada o pida el método.',
@@ -2813,7 +3198,9 @@ async function callOpenAIResponseWithActionTools(apiKey, {
       let output
 
       try {
-        if (call.name === 'highlevel_rest_request' && requiresPaymentExecutionConfirmation(call) && !hasExplicitPaymentExecutionConfirmation(messages)) {
+        if (call.name === 'lookup_highlevel_products') {
+          output = await executeLookupHighLevelProducts(call.arguments, highLevelConnection)
+        } else if (call.name === 'highlevel_rest_request' && requiresPaymentExecutionConfirmation(call) && !hasExplicitPaymentExecutionConfirmation(messages)) {
           output = buildPaymentConfirmationRequiredOutput({
             action: 'highlevel_rest_request',
             summary: {
@@ -3832,6 +4219,10 @@ async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, ru
     'Cuando una herramienta devuelva paymentModeWarning, incluye esa advertencia de forma visible y breve en tu respuesta final. No la ocultes.',
     'Regla de seguridad absoluta para dinero: NUNCA ejecutes cobros, registros de pago, links enviados, domiciliaciones, invoices o planes en la primera respuesta del usuario. Una orden como "cóbrale a Raúl..." expresa intención, NO autorización final. Primero prepara el resumen y pide confirmación explícita; sólo después de que el usuario responda algo como "Confirmo y autorizo..." puedes ejecutar la herramienta.',
     'Si una herramienta de pagos devuelve confirmationRequired, NO digas que ya cobraste, enviaste, registraste o programaste. Presenta el resumen con contacto, monto, concepto, método, fechas, modo prueba/en vivo y consecuencias si no hay tarjeta guardada; luego pide confirmación.',
+    'En toda confirmación u opción de contacto para cobros, muestra el contacto con nombre y al menos email o teléfono cuando existan. Nunca confirmes sólo por nombre si puedes mostrar correo/celular; sirve para validar que no se cobre al contacto equivocado.',
+    'Para productos/precios de GoHighLevel usa lookup_highlevel_products antes de crear un cobro si el usuario dice "producto", "producto guardado", "precio de GHL" o pide ver productos. No inventes productos ni precios.',
+    'Si el usuario pide registrar/cobrar un producto sin decir cuál, lista productos de GHL con sus precios disponibles y pregunta cuál. Si hay productos similares o nombres parecidos, pregunta cuál producto usar. Si el producto tiene varios precios, pregunta si usa el precio guardado o un precio personalizado. Si el usuario da un monto distinto, usa ese monto como precio personalizado pero conserva el producto como concepto.',
+    'Cuando el usuario elija un producto/precio de GHL, prepara el cobro con el nombre del producto como concepto, el precio elegido como monto si no dio otro monto, e incluye producto, precio, correo/teléfono del contacto y modo prueba/en vivo en el resumen antes de pedir confirmación.',
     'Si el usuario pide "cóbrale ahorita" y NO especifica método, no inventes transferencia ni tarjeta. Usa create_installment_payment_flow con el método vacío cuando hay plan futuro: si Ristak detecta tarjeta guardada, te devolverá opciones para elegir misma tarjeta u otra; si no detecta tarjeta, te devolverá opciones para preguntar si manda link, registra transferencia/depósito/manual o cancela.',
     'Si el usuario sí especifica método, respétalo: tarjeta/link significa cobrar o enviar primer pago para autorizar tarjeta; transferencia/depósito/efectivo/manual significa registrar el primer pago offline y mandar domiciliación cuando haya pagos automáticos restantes.',
     'Para links o pagos únicos inmediatos sin fecha futura, NO uses MCP ni highlevel_rest_request directamente. Usa create_single_payment_link. Ejemplos: "mándale link de pago", "cóbrale 30,000", "genera invoice por 15 mil". Si el usuario dice "mándale", deliveryMode=send; si dice "solo genera", deliveryMode=generate. Si el usuario dice "programa", "agenda", "para el día X", "el 10 de junio", "dentro de N días/semanas/meses" o cualquier fecha futura, NO uses create_single_payment_link: usa create_installment_payment_flow.',
