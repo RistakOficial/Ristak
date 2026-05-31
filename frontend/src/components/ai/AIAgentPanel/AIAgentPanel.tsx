@@ -6,7 +6,7 @@ import styles from './AIAgentPanel.module.css'
 
 const AI_AGENT_FLOATING_OPEN_KEY = 'ristak.aiAgentFloating.open'
 const LEGACY_AI_AGENT_MESSAGES_KEY = 'ristak.aiAgentFloating.messages'
-const VOICE_WAVE_BAR_COUNT = 64
+const VOICE_WAVE_BAR_COUNT = 128
 const VOICE_WAVE_MIN_HEIGHT = 4
 const VOICE_WAVE_MAX_HEIGHT = 30
 

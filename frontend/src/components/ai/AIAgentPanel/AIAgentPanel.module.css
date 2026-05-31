@@ -883,12 +883,11 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto auto;
   align-items: center;
-  gap: 9px;
+  gap: 10px;
   min-height: 50px;
-  padding: 6px 6px 6px 13px;
-  border: 1px solid rgba(148, 163, 184, 0.22);
-  border-radius: 999px;
-  background: var(--color-background-primary);
+  padding: 0;
+  border: 0;
+  background: transparent;
 }
 
 .voiceWaveArea {
@@ -903,7 +902,7 @@
   position: relative;
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 1px;
   width: 100%;
   height: 34px;
   min-width: 0;
@@ -926,12 +925,13 @@
   position: relative;
   z-index: 1;
   display: block;
-  width: 2px;
+  width: auto;
   height: var(--voice-bar-height);
   min-height: 3px;
   border-radius: 999px;
   background: var(--color-text-primary);
-  flex: 0 0 2px;
+  flex: 1 1 0;
+  min-width: 1px;
   transition: height 0.08s linear;
 }
 
@@ -1040,7 +1040,7 @@
     grid-template-columns: minmax(0, 1fr) auto auto auto;
     gap: 7px;
     min-height: 46px;
-    padding: 5px 5px 5px 11px;
+    padding: 0;
   }
 
   .voicePauseButton,
