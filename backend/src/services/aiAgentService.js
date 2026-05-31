@@ -781,7 +781,7 @@ function buildMetaAdsApprovalText(requests = []) {
 function isMetaAdsBusinessMetricRequest(question) {
   const normalized = normalizeText(question)
 
-  return /(lead|leads|prospect|interesad|cita|citas|asistencia|show|venta|ventas|cliente|clientes|ingreso|ingresos|revenue|sales|roas|retorno|rentab|utilidad|ganancia|cac|ticket|ltv|conversion|conversi|resultado|resultados|generando|generaron|jala|funciona|performance|rendimiento)/.test(normalized)
+  return /(lead|leads|prospect|interesad|cita|citas|asistencia|show|venta|ventas|cliente|clientes|ingreso|ingresos|revenue|sales|roas|retorno|rentab|utilidad|ganancia|cac|ticket|ltv|conversion|conversi|resultado|resultados|generando|generaron|jala|funciona|performance|rendimiento|mejor|peor|top|ranking|ganador|ganadora|perdedor|perdedora|escalar|cortar|optimizar|conviene|deberia|debería|recomend)/.test(normalized)
 }
 
 function isMetaAdsAudienceRequest(question) {
@@ -836,7 +836,9 @@ function isMetaAdsOperationalRequest(question) {
 }
 
 function shouldSkipDbResearchForMetaAds(question) {
-  return isMetaAdsOperationalRequest(question) && !needsRistakCohortForMetaAdsOperation(question)
+  return isMetaAdsOperationalRequest(question) &&
+    !isMetaAdsBusinessMetricRequest(question) &&
+    !needsRistakCohortForMetaAdsOperation(question)
 }
 
 function buildMetaAdsMcpUnavailableReply(metaAdsConnection = {}) {
@@ -1050,8 +1052,7 @@ function buildMetaAdsTools(metaAdsConnection) {
       never: {
         tool_names: META_ADS_MCP_READ_ONLY_TOOL_NAMES
       }
-    },
-    defer_loading: true
+    }
   }]
 }
 
@@ -4245,7 +4246,7 @@ function buildLocalSupervisorRoute(messages) {
 
   let domain = 'analytics'
 
-  if (isMetaAdsOperationalRequest(latestUserMessage)) domain = 'meta_ads_operations'
+  if (isMetaAdsOperationalRequest(latestUserMessage) && !(isMetaAdsBusinessMetricRequest(latestUserMessage) && !isMetaAdsMutationVerb(latestUserMessage))) domain = 'meta_ads_operations'
   else if (paymentIntent) domain = 'payments'
   else if (/(workflow|flujo|automatizacion|automatización)/.test(normalized)) domain = 'workflows'
   else if (/(cita|agenda|calendario|appointment)/.test(normalized)) domain = 'appointments'
@@ -4338,8 +4339,8 @@ async function createSupervisorRoute(apiKey, { messages, viewContext, runtimeCon
     'contacts: buscar, crear, editar o revisar contactos/personas/leads.',
     'appointments: citas, calendarios, reagendar, cancelar o programar citas.',
     'workflows: meter/sacar contactos de workflows o revisar automatizaciones.',
-    'campaigns: resultados internos de publicidad, ROAS, inversión, rentabilidad, leads, citas o ventas atribuidas.',
-    'meta_ads_operations: inventario o cambios reales en Ads Manager como públicos, campañas activas, presupuestos, pausar/reactivar/crear anuncios.',
+    'campaigns: resultados internos de publicidad, ROAS, inversión, rentabilidad, leads, citas o ventas atribuidas. Preguntas como "mejor campaña", "peor campaña", "top campañas", "ranking", "cuál campaña conviene escalar/cortar" van aquí porque requieren DB de Ristak.',
+    'meta_ads_operations: inventario o cambios reales en Ads Manager como públicos, audiencias, campañas activas, presupuestos, pausar/reactivar/crear anuncios. No uses este dominio para rendimiento/rentabilidad aunque mencione campañas.',
     'web_research: contexto externo, mercado, cultura, política, geografía, noticias, competidores o benchmarks externos.',
     'Si el usuario dice algo como "sí pero mejor...", "más bien...", "entonces hazlo...", "intenta de nuevo", "ahora el 10 de junio", interprétalo contra el mensaje anterior. No lo conviertas en nombre de contacto.',
     'Si el usuario pide una acción sobre "el de la última cita", "la próxima cita", "este contacto" o una referencia parecida, enruta al dominio de la acción (pagos, citas, workflows, mensajes, oportunidades) y marca requiresHighLevelTools=true.',
@@ -7149,13 +7150,32 @@ function buildModelInput(messages, viewContext, databaseContext, directFacts) {
 export async function createAgentReply({ apiKey, messages, viewContext }) {
   const runtimeContext = await getAgentRuntimeContext()
   const latestUserMessage = getLatestUserMessage(messages)
-  const supervisorRoute = await createSupervisorRoute(apiKey, {
+  let supervisorRoute = await createSupervisorRoute(apiKey, {
     messages,
     viewContext: viewContext || {},
     runtimeContext
   })
-  const metaAdsOperationalIntent = Boolean(supervisorRoute.metaAdsOperationalIntent) || isMetaAdsOperationalRequest(latestUserMessage)
-  const metaAdsDbResearchSkipped = supervisorRoute.domain === 'meta_ads_operations' || shouldSkipDbResearchForMetaAds(latestUserMessage)
+  const metaAdsBusinessMetricIntent = isMetaAdsBusinessMetricRequest(latestUserMessage)
+  const metaAdsMutationIntent = isMetaAdsMutationVerb(latestUserMessage)
+
+  if (metaAdsBusinessMetricIntent && !metaAdsMutationIntent && isMetaAdsEntityRequest(latestUserMessage)) {
+    supervisorRoute = {
+      ...supervisorRoute,
+      domain: 'campaigns',
+      specialist: getSupervisorSpecialistLabel('campaigns'),
+      action: supervisorRoute.action === 'mutate' ? 'read' : supervisorRoute.action,
+      requiresDbResearch: true,
+      requiresHighLevelTools: false,
+      requiresPaymentTools: false,
+      metaAdsOperationalIntent: false,
+      reason: 'Consulta de rendimiento/rentabilidad de campañas: fuente obligatoria DB de Ristak.'
+    }
+  }
+
+  const metaAdsOperationalIntent = (Boolean(supervisorRoute.metaAdsOperationalIntent) || isMetaAdsOperationalRequest(latestUserMessage)) &&
+    !(metaAdsBusinessMetricIntent && !metaAdsMutationIntent)
+  const metaAdsDbResearchSkipped = !metaAdsBusinessMetricIntent &&
+    (supervisorRoute.domain === 'meta_ads_operations' || shouldSkipDbResearchForMetaAds(latestUserMessage))
 
   const agentConfig = await getAIAgentConfig()
   const highLevelConnection = await getHighLevelAgentConnection()
