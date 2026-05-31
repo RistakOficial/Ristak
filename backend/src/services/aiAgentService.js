@@ -6136,8 +6136,67 @@ const CONTACT_LOOKUP_STOP_WORDS = new Set([
   'agosto', 'septiembre', 'setiembre', 'octubre', 'noviembre', 'diciembre'
 ])
 
+const CONTACT_LOOKUP_COMMAND_WORDS = [
+  'busca',
+  'buscame',
+  'buscar',
+  'encuentra',
+  'encuentrame',
+  'revisa',
+  'dame',
+  'muestrame',
+  'muestreame',
+  'ensename',
+  'pásame',
+  'pasame'
+].map(word => normalizeSearchText(word, 40))
+
 const CONTACT_LOOKUP_LEADING_WORDS_PATTERN = /^(?:a|al|el|la|los|las|contacto|cliente|lead|prospecto|paciente|persona|para|apra)\s+/i
 const CONTACT_LOOKUP_TRAILING_WORDS_PATTERN = /\s+(?:y|para|que|cobrale|cobrarle|cobrele|cobra|cobrar|manda|mandale|enviar|enviale|hazle|programale|ponle|agendale|creale|generale|registra|registrale|ahora|ahorita|hoy|manana|mañana|durante|por|cada|desde|hasta)\b.*$/i
+
+function getBoundedEditDistance(left, right, maxDistance = 2) {
+  const a = normalizeSearchText(left, 80)
+  const b = normalizeSearchText(right, 80)
+
+  if (a === b) return 0
+  if (!a || !b) return maxDistance + 1
+  if (Math.abs(a.length - b.length) > maxDistance) return maxDistance + 1
+
+  let previous = Array.from({ length: b.length + 1 }, (_, index) => index)
+
+  for (let row = 1; row <= a.length; row += 1) {
+    const current = [row]
+    let rowMinimum = current[0]
+
+    for (let column = 1; column <= b.length; column += 1) {
+      const substitutionCost = a[row - 1] === b[column - 1] ? 0 : 1
+      const value = Math.min(
+        previous[column] + 1,
+        current[column - 1] + 1,
+        previous[column - 1] + substitutionCost
+      )
+
+      current[column] = value
+      rowMinimum = Math.min(rowMinimum, value)
+    }
+
+    if (rowMinimum > maxDistance) return maxDistance + 1
+    previous = current
+  }
+
+  return previous[b.length]
+}
+
+function isLikelyContactLookupCommandToken(normalizedToken, rawIndex, acceptedTokenCount) {
+  if (acceptedTokenCount > 0 || rawIndex > 3 || normalizedToken.length < 4) return false
+
+  return CONTACT_LOOKUP_COMMAND_WORDS.some((command) => {
+    if (normalizedToken[0] !== command[0]) return false
+
+    const maxDistance = command.length >= 6 ? 2 : 1
+    return getBoundedEditDistance(normalizedToken, command, maxDistance) <= maxDistance
+  })
+}
 
 function cleanContactLookupTerm(value) {
   let term = normalizeSearchText(value, 180)
@@ -6181,12 +6240,13 @@ function getContactLookupTokens(question) {
   const matches = cleanText(question, 360).match(/[\p{L}\p{N}@._+-]+/gu) || []
   const tokens = []
 
-  for (const rawToken of matches) {
+  for (const [index, rawToken] of matches.entries()) {
     const token = rawToken.trim()
     const normalized = normalizeSearchText(token, 80)
     const digits = normalizePhoneDigits(token)
 
     if (!normalized) continue
+    if (isLikelyContactLookupCommandToken(normalized, index, tokens.length)) continue
     if (token.includes('@')) {
       tokens.push(token)
       continue
@@ -6229,7 +6289,22 @@ function contactNameContainsLookup(contact, tokens = []) {
   const lookupPhrase = lookupTokens.join(' ')
 
   if (lookupPhrase.length >= 3 && searchable.includes(lookupPhrase)) return true
-  return lookupTokens.length >= 2 && lookupTokens.every(token => searchable.includes(token))
+  if (lookupTokens.length < 2) return lookupTokens.some(token => searchable.includes(token))
+
+  const contactTokens = searchable
+    .split(/[^a-z0-9]+/)
+    .map(token => token.trim())
+    .filter(token => token.length >= 2)
+
+  return lookupTokens.every((lookupToken) => {
+    if (searchable.includes(lookupToken)) return true
+
+    const maxDistance = lookupToken.length >= 9 ? 2 : 1
+    return contactTokens.some((contactToken) => {
+      if (Math.abs(contactToken.length - lookupToken.length) > maxDistance) return false
+      return getBoundedEditDistance(contactToken, lookupToken, maxDistance) <= maxDistance
+    })
+  })
 }
 
 function shouldAttemptContactLookup(question) {
@@ -6275,6 +6350,57 @@ function mapGhlContactLookup(contact = {}) {
     purchasesCount: 0,
     lastPurchaseDate: null
   }
+}
+
+async function searchLocalFuzzyLookupContacts(tokens = [], term = '') {
+  const nameTokens = getMeaningfulContactNameTokens(tokens)
+  if (nameTokens.length < 2) return []
+
+  const fullNameExpression = `COALESCE(c.full_name, '') || ' ' || COALESCE(c.first_name, '') || ' ' || COALESCE(c.last_name, '')`
+  const foldedFullName = textFoldExpression(fullNameExpression)
+  const exactTokenParams = buildFoldedTokenParams(nameTokens)
+  const prefixParams = nameTokens
+    .filter(token => token.length >= 4)
+    .map(token => `%${token.slice(0, 3)}%`)
+  const tokenConditions = [
+    ...exactTokenParams.map(() => `${foldedFullName} LIKE ?`),
+    ...prefixParams.map(() => `${foldedFullName} LIKE ?`)
+  ]
+
+  if (!tokenConditions.length) return []
+
+  const rows = await safeAll(`
+    SELECT
+      c.id,
+      c.full_name,
+      c.first_name,
+      c.last_name,
+      c.email,
+      c.phone,
+      c.source,
+      c.created_at,
+      c.total_paid,
+      c.purchases_count,
+      c.last_purchase_date
+    FROM contacts c
+    WHERE ${tokenConditions.join(' OR ')}
+    ORDER BY
+      CASE
+        WHEN ${foldedFullName} = ? THEN 0
+        WHEN ${foldedFullName} LIKE ? THEN 1
+        ELSE 2
+      END,
+      COALESCE(c.total_paid, 0) DESC,
+      COALESCE(c.updated_at, c.created_at) DESC
+    LIMIT 80
+  `, [
+    ...exactTokenParams,
+    ...prefixParams,
+    normalizeSearchText(term, 160),
+    containsPattern(term, 160) || '__no_text_match__'
+  ])
+
+  return rows.map(mapContactLookupRow).filter(contact => contact.id)
 }
 
 async function searchHighLevelLookupContacts(term) {
@@ -6382,8 +6508,10 @@ async function searchMentionedContacts(question, runtimeContext) {
     phoneLike
   ])
 
+  const fuzzyRows = await searchLocalFuzzyLookupContacts(tokens, term)
   const contacts = dedupeContacts([
     ...rows.map(mapContactLookupRow).filter(contact => contact.id),
+    ...fuzzyRows,
     ...await searchHighLevelLookupContacts(term)
   ])
   if (!contacts.length) return { term, contacts: [] }
