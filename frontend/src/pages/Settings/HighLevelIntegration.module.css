@@ -2688,6 +2688,17 @@ textarea.input {
   color: var(--color-status-error);
 }
 
+@media (max-width: 1180px) {
+  .metaWorkspace {
+    grid-template-columns: 1fr;
+  }
+
+  .metaSideColumn {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 @media (max-width: 900px) {
   .headerContent,
   .sectionHeader,
