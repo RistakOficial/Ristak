@@ -2967,6 +2967,60 @@ function buildPaymentConfirmationRequiredOutput({ action, summary = {}, clarific
   }
 }
 
+function buildInstallmentPlanScheduleRows({ firstPayment = {}, remainingPayments = [] } = {}) {
+  const rows = []
+
+  if (firstPayment?.enabled) {
+    rows.push({
+      sequence: 1,
+      date: firstPayment.date || null,
+      amount: normalizePaymentAmount(firstPayment.amount)
+    })
+  }
+
+  for (const payment of Array.isArray(remainingPayments) ? remainingPayments : []) {
+    rows.push({
+      sequence: rows.length + 1,
+      date: payment?.dueDate || null,
+      amount: normalizePaymentAmount(payment?.amount)
+    })
+  }
+
+  return rows
+}
+
+function buildInstallmentPlanPreviewOutput({ contact = {}, totalAmount, currency, concept, product = null, firstPayment = {}, remainingPayments = [] } = {}) {
+  const schedule = buildInstallmentPlanScheduleRows({ firstPayment, remainingPayments })
+
+  return {
+    ok: false,
+    error: 'Antes de seguir hay que especificarle al usuario cómo queda el plan de pagos y que lo confirme.',
+    planPreviewConfirmationRequired: true,
+    confirmationRequired: true,
+    action: 'create_installment_payment_flow',
+    summary: {
+      contact: {
+        id: contact.id,
+        name: contact.name,
+        email: contact.email || null,
+        phone: contact.phone || null
+      },
+      product,
+      totalAmount,
+      currency,
+      concept,
+      schedule
+    },
+    confirmationPrompt: [
+      'Todavía NO preguntes método de pago, tarjeta guardada ni canal de envío, y no crees ni programes nada.',
+      'Primero especifica cómo queda el plan de pagos: muestra una tabla Markdown compacta con columnas #, fecha exacta y monto, usando fechas absolutas (nunca "en un mes" ni "hoy" sin fecha), y debajo el total del plan.',
+      'El contacto va con nombre y email o teléfono cuando existan; si no hay ninguno, muestra su ID.',
+      'Cierra pidiendo que confirme el plan con tono amigable y corto, por ejemplo: "¿Así te late el plan o le movemos algo?". No uses palabras como "ejecutar", "autorizar" ni "proceder".',
+      'Sólo cuando el usuario confirme el plan seguimos con el método de pago (tarjeta guardada o link).'
+    ].join(' ')
+  }
+}
+
 function getScheduledPaymentChangeIntent(messages = []) {
   const text = normalizeText(getLatestUserText(messages))
   if (!text) return ''
@@ -8474,8 +8528,29 @@ async function executeCreateInstallmentPaymentFlow(args = {}, highLevelConnectio
     missingFields.push(`fecha de parcialidad ${remaining.missingDates.join(', ')}`)
   }
 
-  if (missingFields.length) {
-    const nextMissingField = missingFields[0]
+  // Para planes de parcialidades, el primer paso es especificarle al usuario cómo queda el
+  // plan (fechas, montos, total) y pedir que lo confirme, antes de preguntar método de pago
+  // o tarjeta. El método del primer pago se resuelve después de confirmar el plan, así que no
+  // bloquea esta vista previa; los datos que sí cambian el plan (montos, fechas, número de
+  // cobros) siguen siendo obligatorios antes de mostrarlo.
+  const previewExpectedChargeCount = estimateMinimumPaymentChargeCount(context.messages)
+  const previewActualChargeCount = (firstPayment.enabled ? 1 : 0) + remaining.payments.length
+  const previewPlannedTotal = normalizePaymentAmount(
+    (firstPayment.enabled ? firstPayment.amount : 0) +
+    remaining.payments.reduce((sum, payment) => sum + normalizePaymentAmount(payment.amount), 0)
+  )
+  const previewScheduleIsComplete =
+    !(previewExpectedChargeCount > 0 && previewActualChargeCount < previewExpectedChargeCount) &&
+    !(previewPlannedTotal > 0 && totalAmount > 0 && Math.abs(previewPlannedTotal - totalAmount) >= 0.01)
+  const planPreviewWillFire = previewActualChargeCount >= 2 &&
+    previewScheduleIsComplete &&
+    !hasExplicitPaymentExecutionConfirmation(context.messages)
+  const blockingMissingFields = planPreviewWillFire
+    ? missingFields.filter(field => field !== 'método del primer pago')
+    : missingFields
+
+  if (blockingMissingFields.length) {
+    const nextMissingField = blockingMissingFields[0]
 
     return {
       ok: false,
@@ -8492,6 +8567,18 @@ async function executeCreateInstallmentPaymentFlow(args = {}, highLevelConnectio
         ? attachPaymentContactMemoryToOptions(buildFirstPaymentMethodClarificationOptions(storedCardStatus), { contact })
         : []
     }
+  }
+
+  if (planPreviewWillFire) {
+    return buildInstallmentPlanPreviewOutput({
+      contact,
+      totalAmount,
+      currency,
+      concept,
+      product: productSummary,
+      firstPayment,
+      remainingPayments: remaining.payments
+    })
   }
 
   if (
@@ -11660,6 +11747,7 @@ const PAYMENT_WORKFLOW_PROMPT = [
   '- Si falta algo indispensable, pregunta una sola cosa a la vez. No hagas listas de varias preguntas pendientes.',
   '- Cuando el usuario elija una opción/botón del flujo, trátala como respuesta válida al paso actual. Avanza con una respuesta corta y no vuelvas a pegar el resumen completo salvo que sea la revisión final.',
   '- En planes de parcialidades, cobros programados o calendarios raros, el resumen de confirmación debe incluir una tabla Markdown compacta con cada cobro: #, fecha exacta, monto, método/acción y estado/envío. Esto sí es excepción a la regla general de evitar tablas.',
+  '- En un plan de parcialidades, el primer paso después de armar el plan es especificarle al usuario cómo queda (tabla con #, fecha exacta y monto, más el total) y pedir que confirme el plan. No preguntes método de pago, tarjeta guardada ni canal de envío hasta que el plan esté confirmado. Si la herramienta devuelve planPreviewConfirmationRequired, muestra el plan y pide confirmarlo sin preguntar todavía por la tarjeta.',
   '- Para parcialidades nunca respondas sólo "hoy, en 1 mes y en 2 meses"; calcula y muestra fechas absolutas usando la fecha/hora local disponible.',
   '- Descompón la frase del usuario por tramos temporales. "Por N meses" crea N cobros; si después dice "te esperas un mes, le vuelves a cobrar" eso agrega otro cobro; y si luego dice "te esperas otro mes y le vuelves a cobrar, pero esta vez 20" agrega otro cobro final de 20. No mezcles el cobro final con el último mes de la serie.',
   '- Si create_installment_payment_flow devuelve scheduleIncomplete, NO muestres ese plan ni pidas confirmación. Corrige la lista de cobros y vuelve a llamar la herramienta con todos los cobros reales y el total recalculado.',
