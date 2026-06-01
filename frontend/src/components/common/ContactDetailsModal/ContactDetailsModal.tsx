@@ -547,6 +547,8 @@ export function ContactDetailsModal({
                           const isComplex = isComplexCustomField(field)
                           const fieldInputId = `custom-field-${selectedContact.id}-${index}`
                           const fieldValue = customFieldDrafts[identity] ?? formatCustomFieldDraft(field.value)
+                          const originalValue = formatCustomFieldDraft(field.value)
+                          const hasChanges = fieldValue !== originalValue
 
                           return (
                             <div key={identity} className={styles.customFieldRow}>
@@ -559,11 +561,11 @@ export function ContactDetailsModal({
                                 )}
                               </label>
 
-                              <div className={styles.customFieldInputGroup}>
+                              <div className={`${styles.customFieldControl} ${isComplex ? styles.customFieldControlMultiline : ''}`}>
                                 {isComplex ? (
                                   <textarea
                                     id={fieldInputId}
-                                    className={styles.customFieldTextarea}
+                                    className={`${styles.customFieldTextarea} ${hasChanges ? styles.customFieldInputWithButton : ''}`}
                                     value={fieldValue}
                                     onChange={(event) => updateCustomFieldDraft(field, index, event.target.value)}
                                     rows={4}
@@ -572,19 +574,13 @@ export function ContactDetailsModal({
                                 ) : (
                                   <input
                                     id={fieldInputId}
-                                    className={styles.customFieldInput}
+                                    className={`${styles.customFieldInput} ${hasChanges ? styles.customFieldInputWithButton : ''}`}
                                     value={fieldValue}
                                     onChange={(event) => updateCustomFieldDraft(field, index, event.target.value)}
-                                    onKeyDown={(event) => {
-                                      if (event.key === 'Enter') {
-                                        event.preventDefault()
-                                        saveCustomField(field, index)
-                                      }
-                                    }}
                                     readOnly={!onUpdateCustomFields}
                                   />
                                 )}
-                                {onUpdateCustomFields && (
+                                {onUpdateCustomFields && hasChanges && (
                                   <button
                                     type="button"
                                     className={styles.customFieldSaveButton}

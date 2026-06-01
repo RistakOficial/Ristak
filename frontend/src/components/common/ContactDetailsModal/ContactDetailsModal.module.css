@@ -637,11 +637,9 @@
   letter-spacing: 0;
 }
 
-.customFieldInputGroup {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 0.5rem;
-  align-items: start;
+.customFieldControl {
+  position: relative;
+  min-width: 0;
 }
 
 .customFieldInput,
@@ -661,6 +659,10 @@
 
 .customFieldInput {
   height: 38px;
+}
+
+.customFieldInputWithButton {
+  padding-right: 6.25rem;
 }
 
 .customFieldTextarea {
@@ -683,13 +685,17 @@
 }
 
 .customFieldSaveButton {
-  height: 38px;
-  padding: 0 0.875rem;
-  border: 1px solid rgba(var(--color-primary-rgb), 0.34);
-  border-radius: 6px;
-  background: rgba(var(--color-primary-rgb), 0.08);
+  position: absolute;
+  top: 50%;
+  right: 0.375rem;
+  transform: translateY(-50%);
+  height: 28px;
+  padding: 0 0.625rem;
+  border: 1px solid rgba(var(--color-primary-rgb), 0.28);
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--color-background, #fff) 86%, rgba(var(--color-primary-rgb), 0.12));
   color: var(--color-primary);
-  font-size: 0.8125rem;
+  font-size: 0.75rem;
   font-weight: 600;
   font-family: inherit;
   white-space: nowrap;
@@ -697,9 +703,14 @@
   transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
 }
 
+.customFieldControlMultiline .customFieldSaveButton {
+  top: 0.375rem;
+  transform: none;
+}
+
 .customFieldSaveButton:hover:not(:disabled) {
   border-color: rgba(var(--color-primary-rgb), 0.5);
-  background: rgba(var(--color-primary-rgb), 0.14);
+  background: color-mix(in srgb, var(--color-background, #fff) 78%, rgba(var(--color-primary-rgb), 0.2));
 }
 
 .customFieldSaveButton:disabled {
@@ -1007,11 +1018,8 @@
     gap: 0.375rem;
   }
 
-  .customFieldInputGroup {
-    grid-template-columns: 1fr;
-  }
-
   .customFieldSaveButton {
-    justify-self: flex-end;
+    height: 26px;
+    padding: 0 0.5rem;
   }
 }
