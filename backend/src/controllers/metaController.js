@@ -15,10 +15,110 @@ import {
   getContactsWithAppointmentsHybrid,
   getContactsWithShowedAppointmentsHybrid
 } from '../services/appointmentsMerge.js';
+import {
+  buildContactKey,
+  buildDedupExpression
+} from '../services/analyticsService.js';
 import { fetchAndSaveMetaConfig } from '../services/highlevelSyncService.js';
 import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js';
 import { API_URLS } from '../config/constants.js';
 import fetch from 'node-fetch';
+
+const SUCCESS_PAYMENT_STATUSES = new Set([
+  'succeeded',
+  'paid',
+  'completed',
+  'complete',
+  'fulfilled',
+  'success'
+]);
+
+const REFUND_PAYMENT_STATUSES = new Set(['refunded', 'refund']);
+
+function createContactMetricAccumulator() {
+  return {
+    interestedKeys: new Set(),
+    saleKeys: new Set(),
+    appointmentKeys: new Set(),
+    attendanceKeys: new Set(),
+    contactIdsByKey: new Map()
+  };
+}
+
+function resolveMetricContactKey(contact) {
+  return buildContactKey(contact) || `id::${String(contact?.contact_id || contact?.id || '')}`;
+}
+
+function addContactIdForMetricKey(metrics, key, contactId) {
+  if (!contactId) return;
+  const ids = metrics.contactIdsByKey.get(key) || new Set();
+  ids.add(contactId);
+  metrics.contactIdsByKey.set(key, ids);
+}
+
+function addContactToMetrics(metrics, contact, options = {}) {
+  const contactId = contact?.contact_id || contact?.id;
+  if (!contactId) return;
+
+  const key = resolveMetricContactKey(contact);
+  metrics.interestedKeys.add(key);
+
+  if (options.sale) {
+    metrics.saleKeys.add(key);
+  }
+
+  if (options.appointment) {
+    metrics.appointmentKeys.add(key);
+  }
+
+  if (options.attendance) {
+    metrics.attendanceKeys.add(key);
+  }
+
+  addContactIdForMetricKey(metrics, key, contactId);
+}
+
+function mergeContactMetrics(target, source) {
+  source.interestedKeys.forEach(key => target.interestedKeys.add(key));
+  source.saleKeys.forEach(key => target.saleKeys.add(key));
+  source.appointmentKeys.forEach(key => target.appointmentKeys.add(key));
+  source.attendanceKeys.forEach(key => target.attendanceKeys.add(key));
+
+  source.contactIdsByKey.forEach((ids, key) => {
+    const targetIds = target.contactIdsByKey.get(key) || new Set();
+    ids.forEach(id => targetIds.add(id));
+    target.contactIdsByKey.set(key, targetIds);
+  });
+}
+
+function calculateMetricRevenue(metrics, financialsByContactId) {
+  let revenue = 0;
+
+  metrics.contactIdsByKey.forEach((contactIds) => {
+    let bestStoredLtv = 0;
+    let successfulPaymentsTotal = 0;
+
+    contactIds.forEach((contactId) => {
+      const financials = financialsByContactId.get(contactId) || { totalPaid: 0, paymentTotal: 0 };
+      bestStoredLtv = Math.max(bestStoredLtv, financials.totalPaid || 0);
+      successfulPaymentsTotal += financials.paymentTotal || 0;
+    });
+
+    revenue += Math.max(bestStoredLtv, successfulPaymentsTotal);
+  });
+
+  return revenue;
+}
+
+function materializeContactMetrics(metrics, financialsByContactId) {
+  return {
+    leads: metrics.interestedKeys.size,
+    sales: metrics.saleKeys.size,
+    appointments: metrics.appointmentKeys.size,
+    attendances: metrics.attendanceKeys.size,
+    revenue: calculateMetricRevenue(metrics, financialsByContactId)
+  };
+}
 
 /**
  * Obtiene los calendarios configurados para atribución
@@ -502,12 +602,16 @@ export const getCampaigns = async (req, res) => {
 
     // PASO 1: Obtener configuración de HighLevel y cargar TODOS los eventos (híbrido DB + API)
     const config = await db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1');
-    const contactsWithAppointments = config && config.api_token
-      ? await getContactsWithAppointmentsHybrid(config.location_id, config.api_token)
-      : new Set();
+    const attributionCalendarIds = await getAttributionCalendarIds();
+    const contactsWithAppointments = await getContactsWithAppointmentsHybrid(
+      config?.location_id,
+      config?.api_token,
+      attributionCalendarIds
+    );
     const contactsWithAttendances = await getContactsWithShowedAppointmentsHybrid(
       config?.location_id,
-      config?.api_token
+      config?.api_token,
+      attributionCalendarIds
     );
 
     logger.info(`📊 ${contactsWithAppointments.size} contactos con citas (híbrido DB + API - Campaigns)`);
@@ -522,6 +626,8 @@ export const getCampaigns = async (req, res) => {
       SELECT
         c.attribution_ad_id as ad_id,
         c.id as contact_id,
+        c.email,
+        c.phone,
         c.purchases_count,
         c.total_paid
       FROM contacts c
@@ -545,40 +651,60 @@ export const getCampaigns = async (req, res) => {
     const metricsMap = {};
     contactsRaw.forEach(c => {
       if (!metricsMap[c.ad_id]) {
-        metricsMap[c.ad_id] = {
-          interesados: new Set(),
-          ventas: new Set(),
-          citas: new Set(),
-          asistencias: new Set(),
-          revenue: 0
-        };
+        metricsMap[c.ad_id] = createContactMetricAccumulator();
       }
 
-      metricsMap[c.ad_id].interesados.add(c.contact_id);
-
-      if (c.purchases_count > 0) {
-        metricsMap[c.ad_id].ventas.add(c.contact_id);
-      }
-
-      if (contactsWithAppointments.has(c.contact_id)) {
-        metricsMap[c.ad_id].citas.add(c.contact_id);
-      }
-
-      if (contactsWithAttendances.has(c.contact_id)) {
-        metricsMap[c.ad_id].asistencias.add(c.contact_id);
-      }
-
-      metricsMap[c.ad_id].revenue += parseFloat(c.total_paid || 0);
+      addContactToMetrics(metricsMap[c.ad_id], c, {
+        sale: Number(c.purchases_count || 0) > 0,
+        appointment: contactsWithAppointments.has(c.contact_id),
+        attendance: contactsWithAttendances.has(c.contact_id)
+      });
     });
+
+    const financialsByContactId = new Map();
+    const contactIdsForFinancials = [...new Set(contactsRaw.map(contact => contact.contact_id).filter(Boolean))];
+
+    contactsRaw.forEach(contact => {
+      financialsByContactId.set(contact.contact_id, {
+        totalPaid: Number(contact.total_paid || 0),
+        paymentTotal: 0
+      });
+    });
+
+    if (contactIdsForFinancials.length > 0) {
+      const paymentPlaceholders = contactIdsForFinancials.map(() => '?').join(',');
+      const paymentRows = await db.all(`
+        SELECT contact_id, amount, status, payment_mode
+        FROM payments
+        WHERE contact_id IN (${paymentPlaceholders})
+      `, contactIdsForFinancials);
+
+      paymentRows.forEach(payment => {
+        const contactId = payment.contact_id;
+        const financials = financialsByContactId.get(contactId) || { totalPaid: 0, paymentTotal: 0 };
+        const status = String(payment.status || '').toLowerCase();
+        const amount = Number(payment.amount || 0);
+        const paymentMode = String(payment.payment_mode || 'live').toLowerCase();
+
+        if (paymentMode === 'test') {
+          financialsByContactId.set(contactId, financials);
+          return;
+        }
+
+        if (SUCCESS_PAYMENT_STATUSES.has(status)) {
+          financials.paymentTotal += amount;
+        } else if (REFUND_PAYMENT_STATUSES.has(status)) {
+          financials.paymentTotal -= amount;
+        }
+
+        financialsByContactId.set(contactId, financials);
+      });
+    }
 
     // Convertir a formato esperado
     const contactsData = Object.keys(metricsMap).map(ad_id => ({
       ad_id,
-      interesados: metricsMap[ad_id].interesados.size,
-      ventas: metricsMap[ad_id].ventas.size,
-      citas: metricsMap[ad_id].citas.size,
-      asistencias: metricsMap[ad_id].asistencias.size,
-      revenue: metricsMap[ad_id].revenue
+      ...materializeContactMetrics(metricsMap[ad_id], financialsByContactId)
     }));
 
     // Obtener todos los ad_ids que tienen contactos en el período
@@ -617,14 +743,14 @@ export const getCampaigns = async (req, res) => {
     const rows = await db.all(aggregationQuery, aggregationParams);
     await hydrateMissingCreativeMedia(rows);
 
-    // Crear un mapa de ad_id -> {interesados, ventas, citas, asistencias, revenue}
+    // Crear un mapa de ad_id -> métricas deduplicadas de contactos
     const contactsMap = {};
     contactsData.forEach(row => {
       contactsMap[row.ad_id] = {
-        interesados: parseInt(row.interesados) || 0,
-        ventas: parseInt(row.ventas) || 0,
-        citas: parseInt(row.citas) || 0,
-        asistencias: parseInt(row.asistencias) || 0,
+        leads: parseInt(row.leads) || 0,
+        sales: parseInt(row.sales) || 0,
+        appointments: parseInt(row.appointments) || 0,
+        attendances: parseInt(row.attendances) || 0,
         revenue: parseFloat(row.revenue) || 0
       };
     });
@@ -651,7 +777,8 @@ export const getCampaigns = async (req, res) => {
           appointments: 0,
           attendances: 0,
           visitors: 0,
-          adsets: {}
+          adsets: {},
+          _contactMetrics: createContactMetricAccumulator()
         };
       }
 
@@ -675,14 +802,16 @@ export const getCampaigns = async (req, res) => {
           appointments: 0,
           attendances: 0,
           visitors: 0,
-          ads: []
+          ads: [],
+          _contactMetrics: createContactMetricAccumulator()
         };
       }
 
       const adset = campaign.adsets[row.adset_id];
 
       // Obtener datos de contactos para este ad
-      const contactData = contactsMap[row.ad_id] || { interesados: 0, ventas: 0, citas: 0, asistencias: 0, revenue: 0 };
+      const adMetrics = metricsMap[row.ad_id] || createContactMetricAccumulator();
+      const contactData = contactsMap[row.ad_id] || { leads: 0, sales: 0, appointments: 0, attendances: 0, revenue: 0 };
 
       // Agregar ad
       adset.ads.push({
@@ -703,36 +832,35 @@ export const getCampaigns = async (req, res) => {
         impressions: 0,
         revenue: contactData.revenue,
         roas: parseFloat(row.spend) > 0 ? contactData.revenue / parseFloat(row.spend) : 0,
-        sales: contactData.ventas,
-        leads: contactData.interesados,
-        appointments: contactData.citas,
-        attendances: contactData.asistencias
+        sales: contactData.sales,
+        leads: contactData.leads,
+        appointments: contactData.appointments,
+        attendances: contactData.attendances
       });
 
       // Sumar a adset
       adset.spend += parseFloat(row.spend) || 0;
       adset.reach += parseInt(row.reach) || 0;
       adset.clicks += parseInt(row.clicks) || 0;
-      adset.revenue += contactData.revenue;
-      adset.sales += contactData.ventas;
-      adset.leads += contactData.interesados;
-      adset.appointments = (adset.appointments || 0) + contactData.citas;
-      adset.attendances = (adset.attendances || 0) + contactData.asistencias;
+      mergeContactMetrics(adset._contactMetrics, adMetrics);
 
       // Sumar a campaña
       campaign.spend += parseFloat(row.spend) || 0;
       campaign.reach += parseInt(row.reach) || 0;
       campaign.clicks += parseInt(row.clicks) || 0;
-      campaign.revenue += contactData.revenue;
-      campaign.sales += contactData.ventas;
-      campaign.leads += contactData.interesados;
-      campaign.appointments = (campaign.appointments || 0) + contactData.citas;
-      campaign.attendances = (campaign.attendances || 0) + contactData.asistencias;
+      mergeContactMetrics(campaign._contactMetrics, adMetrics);
     });
 
     // Convertir objetos a arrays y calcular promedios
     const campaignsArray = Object.values(campaigns).map(campaign => {
       const adsets = Object.values(campaign.adsets);
+
+      const campaignContactData = materializeContactMetrics(campaign._contactMetrics, financialsByContactId);
+      campaign.revenue = campaignContactData.revenue;
+      campaign.sales = campaignContactData.sales;
+      campaign.leads = campaignContactData.leads;
+      campaign.appointments = campaignContactData.appointments;
+      campaign.attendances = campaignContactData.attendances;
 
       // Calcular CPC/CPM promedio para la campaña
       if (adsets.length > 0) {
@@ -750,13 +878,22 @@ export const getCampaigns = async (req, res) => {
 
       // Calcular CPC/CPM/ROAS promedio para cada adset
       adsets.forEach(adset => {
+        const adsetContactData = materializeContactMetrics(adset._contactMetrics, financialsByContactId);
+        adset.revenue = adsetContactData.revenue;
+        adset.sales = adsetContactData.sales;
+        adset.leads = adsetContactData.leads;
+        adset.appointments = adsetContactData.appointments;
+        adset.attendances = adsetContactData.attendances;
+
         if (adset.ads.length > 0) {
           adset.cpc = adset.ads.reduce((sum, ad) => sum + (ad.cpc || 0), 0) / adset.ads.length;
           adset.cpm = adset.ads.reduce((sum, ad) => sum + (ad.cpm || 0), 0) / adset.ads.length;
         }
         // Calcular ROAS para el adset
         adset.roas = adset.spend > 0 ? adset.revenue / adset.spend : 0;
+        delete adset._contactMetrics;
       });
+      delete campaign._contactMetrics;
 
       return {
         ...campaign,
@@ -978,22 +1115,22 @@ export const getContactsByType = async (req, res) => {
       const adIdsQuery = `
         SELECT DISTINCT ad_id
         FROM meta_ads
-        WHERE adset_id = $1
-        AND date >= $2
-        AND date <= $3
+        WHERE adset_id = ?
+        AND date >= ?
+        AND date <= ?
       `;
-      const adIds = await db.all(adIdsQuery, [adset_id, range.startUtc, range.endUtc]);
+      const adIds = await db.all(adIdsQuery, [adset_id, adsStart, adsEnd]);
       adIdsList = adIds.map(row => row.ad_id);
     } else if (campaign_id) {
       // Obtener ads de la campaña que tienen actividad en el rango de fechas
       const adIdsQuery = `
         SELECT DISTINCT ad_id
         FROM meta_ads
-        WHERE campaign_id = $1
-        AND date >= $2
-        AND date <= $3
+        WHERE campaign_id = ?
+        AND date >= ?
+        AND date <= ?
       `;
-      const adIds = await db.all(adIdsQuery, [campaign_id, range.startUtc, range.endUtc]);
+      const adIds = await db.all(adIdsQuery, [campaign_id, adsStart, adsEnd]);
       adIdsList = adIds.map(row => row.ad_id);
     } else {
       return res.status(400).json({
@@ -1026,9 +1163,9 @@ export const getContactsByType = async (req, res) => {
         c.total_paid,
         c.purchases_count,
         c.created_at,
-        ma.campaign_name,
-        ma.adset_name,
-        ma.ad_name
+        MAX(ma.campaign_name) as campaign_name,
+        MAX(ma.adset_name) as adset_name,
+        MAX(ma.ad_name) as ad_name
       FROM contacts c
       LEFT JOIN meta_ads ma ON ma.ad_id = c.attribution_ad_id AND ma.date::date = c.created_at::date
       WHERE c.attribution_ad_id IN (${placeholders})
@@ -1046,7 +1183,18 @@ export const getContactsByType = async (req, res) => {
       contactsQuery += ' AND purchases_count > 0';
     }
 
-    contactsQuery += ' ORDER BY c.created_at DESC';
+    contactsQuery += `
+      GROUP BY c.id,
+               c.full_name,
+               c.email,
+               c.phone,
+               c.attribution_ad_id,
+               c.attribution_ad_name,
+               c.total_paid,
+               c.purchases_count,
+               c.created_at
+      ORDER BY c.created_at DESC
+    `;
 
     const contactsParams = [...adIdsList, range.startUtc, range.endUtc];
     let contacts = await db.all(contactsQuery, contactsParams);
@@ -1054,11 +1202,10 @@ export const getContactsByType = async (req, res) => {
     // Si type === 'appointments' o 'attendances', filtrar usando híbrido DB + API
     if (type === 'appointments' || type === 'attendances') {
       const config = await db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1');
+      const attributionCalendarIds = await getAttributionCalendarIds();
       const contactIdsWithMetric = type === 'attendances'
-        ? await getContactsWithShowedAppointmentsHybrid(config?.location_id, config?.api_token)
-        : config && config.api_token
-          ? await getContactsWithAppointmentsHybrid(config.location_id, config.api_token)
-          : new Set();
+        ? await getContactsWithShowedAppointmentsHybrid(config?.location_id, config?.api_token, attributionCalendarIds)
+        : await getContactsWithAppointmentsHybrid(config?.location_id, config?.api_token, attributionCalendarIds);
 
       logger.info(`📊 Filtrando ${contacts.length} contactos por ${type} (${contactIdsWithMetric.size} encontrados - híbrido DB + API)`);
 
@@ -1075,9 +1222,11 @@ export const getContactsByType = async (req, res) => {
     if (contactIds.length > 0) {
       const placeholders = contactIds.map(() => '?').join(',');
       const attendanceConfig = await db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1');
+      const attributionCalendarIds = await getAttributionCalendarIds();
       contactsWithAttendances = await getContactsWithShowedAppointmentsHybrid(
         attendanceConfig?.location_id,
-        attendanceConfig?.api_token
+        attendanceConfig?.api_token,
+        attributionCalendarIds
       );
 
       // IMPORTANTE: NO filtrar pagos por rango de fechas
@@ -1325,11 +1474,13 @@ export const getLeadsOverTime = async (req, res) => {
     const hiddenFilters = await getHiddenContactFilters();
     const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'contacts', false);
     const hiddenConditionC = buildHiddenContactsCondition(hiddenFilters, 'c', false);
+    const dedupExprContacts = buildDedupExpression('contacts');
+    const dedupExprC = buildDedupExpression('c');
 
     // Query para obtener leads (contactos únicos) por fecha de creación
     const leadsQuery = `SELECT
         TO_CHAR(created_at::date, 'YYYY-MM-DD') as day,
-        COUNT(DISTINCT id) as leads
+        COUNT(DISTINCT ${dedupExprContacts}) as leads
        FROM contacts
        WHERE attribution_ad_id IS NOT NULL
          AND attribution_ad_id != ''
@@ -1349,7 +1500,7 @@ export const getLeadsOverTime = async (req, res) => {
       const calendarPlaceholders = attributionCalendarIds.map((_, i) => `$${i + 3}`).join(',');
       appointmentsQuery = `SELECT
           TO_CHAR(c.created_at::date, 'YYYY-MM-DD') as day,
-          COUNT(DISTINCT c.id) as appointments
+          COUNT(DISTINCT ${dedupExprC}) as appointments
          FROM contacts c
          INNER JOIN appointments a ON c.id = a.contact_id
          WHERE c.attribution_ad_id IS NOT NULL
@@ -1365,7 +1516,7 @@ export const getLeadsOverTime = async (req, res) => {
       // Sin filtro de calendario
       appointmentsQuery = `SELECT
           TO_CHAR(c.created_at::date, 'YYYY-MM-DD') as day,
-          COUNT(DISTINCT c.id) as appointments
+          COUNT(DISTINCT ${dedupExprC}) as appointments
          FROM contacts c
          INNER JOIN appointments a ON c.id = a.contact_id
          WHERE c.attribution_ad_id IS NOT NULL
@@ -1438,6 +1589,8 @@ export const getAppointmentsOverTime = async (req, res) => {
     const hiddenFilters = await getHiddenContactFilters();
     const hiddenConditionC = buildHiddenContactsCondition(hiddenFilters, 'c', false);
     const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'contacts', false);
+    const dedupExprC = buildDedupExpression('c');
+    const dedupExprContacts = buildDedupExpression('contacts');
 
     // Query para obtener contactos únicos con citas por fecha de creación
     // Filtrar por calendarios de atribución configurados
@@ -1449,7 +1602,7 @@ export const getAppointmentsOverTime = async (req, res) => {
       const calendarPlaceholders = attributionCalendarIds.map((_, i) => `$${i + 3}`).join(',');
       appointmentsQuery = `SELECT
           TO_CHAR(c.created_at::date, 'YYYY-MM-DD') as day,
-          COUNT(DISTINCT c.id) as appointments
+          COUNT(DISTINCT ${dedupExprC}) as appointments
          FROM contacts c
          INNER JOIN appointments a ON c.id = a.contact_id
          WHERE c.attribution_ad_id IS NOT NULL
@@ -1465,7 +1618,7 @@ export const getAppointmentsOverTime = async (req, res) => {
       // Sin filtro de calendario
       appointmentsQuery = `SELECT
           TO_CHAR(c.created_at::date, 'YYYY-MM-DD') as day,
-          COUNT(DISTINCT c.id) as appointments
+          COUNT(DISTINCT ${dedupExprC}) as appointments
          FROM contacts c
          INNER JOIN appointments a ON c.id = a.contact_id
          WHERE c.attribution_ad_id IS NOT NULL
@@ -1480,7 +1633,7 @@ export const getAppointmentsOverTime = async (req, res) => {
     // Query para obtener ventas (contactos con purchases_count > 0) por fecha de creación
     const salesQuery = `SELECT
         TO_CHAR(created_at::date, 'YYYY-MM-DD') as day,
-        COUNT(DISTINCT id) as sales
+        COUNT(DISTINCT ${dedupExprContacts}) as sales
        FROM contacts
        WHERE attribution_ad_id IS NOT NULL
          AND attribution_ad_id != ''
@@ -1551,23 +1704,24 @@ export const getVisitorsOverTime = async (req, res) => {
     // Aplicar filtro de contactos ocultos
     const hiddenFilters = await getHiddenContactFilters();
     const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'contacts', false);
+    const dedupExprContacts = buildDedupExpression('contacts');
 
     // Query para obtener visitantes únicos por fecha desde sessions
     const visitorsQuery = `SELECT
-        TO_CHAR(created_at::date, 'YYYY-MM-DD') as day,
+        TO_CHAR(started_at::date, 'YYYY-MM-DD') as day,
         COUNT(DISTINCT visitor_id) as visitors
        FROM sessions
        WHERE ad_id IS NOT NULL
          AND ad_id != ''
-         AND created_at::date >= $1::date
-         AND created_at::date < ($2::date + INTERVAL '1 day')
+         AND started_at::date >= $1::date
+         AND started_at::date < ($2::date + INTERVAL '1 day')
        GROUP BY day
        ORDER BY day`;
 
     // Query para obtener leads (contactos únicos) por fecha de creación
     const leadsQuery = `SELECT
         TO_CHAR(created_at::date, 'YYYY-MM-DD') as day,
-        COUNT(DISTINCT id) as leads
+        COUNT(DISTINCT ${dedupExprContacts}) as leads
        FROM contacts
        WHERE attribution_ad_id IS NOT NULL
          AND attribution_ad_id != ''
@@ -1637,22 +1791,23 @@ export const getFunnelMetrics = async (req, res) => {
     // Aplicar filtro de contactos ocultos
     const hiddenFilters = await getHiddenContactFilters();
     const hiddenConditionC = buildHiddenContactsCondition(hiddenFilters, 'c', false);
+    const dedupExprC = buildDedupExpression('c');
 
     // Query para visitantes únicos CON ad_id (columna correcta en sessions)
     const visitorsQuery = `SELECT
-        TO_CHAR(created_at::date, 'YYYY-MM-DD') as day,
+        TO_CHAR(started_at::date, 'YYYY-MM-DD') as day,
         COUNT(DISTINCT visitor_id) as visitors
        FROM sessions
        WHERE ad_id IS NOT NULL
          AND ad_id != ''
-         AND created_at::date >= $1::date
-         AND created_at::date < ($2::date + INTERVAL '1 day')
+         AND started_at::date >= $1::date
+         AND started_at::date < ($2::date + INTERVAL '1 day')
        GROUP BY day`;
 
     // Query para leads CON attribution_ad_id validando que el anuncio existiera ese día en Meta
     const leadsQuery = `SELECT
         TO_CHAR(c.created_at::date, 'YYYY-MM-DD') as day,
-        COUNT(DISTINCT c.id) as leads
+        COUNT(DISTINCT ${dedupExprC}) as leads
        FROM contacts c
        WHERE c.attribution_ad_id IS NOT NULL
          AND c.attribution_ad_id != ''
@@ -1676,7 +1831,7 @@ export const getFunnelMetrics = async (req, res) => {
       const calendarPlaceholders = attributionCalendarIds.map((_, i) => `$${i + 3}`).join(',');
       appointmentsQuery = `SELECT
           TO_CHAR(c.created_at::date, 'YYYY-MM-DD') as day,
-          COUNT(DISTINCT c.id) as appointments
+          COUNT(DISTINCT ${dedupExprC}) as appointments
          FROM contacts c
          INNER JOIN appointments a ON c.id = a.contact_id
          WHERE c.attribution_ad_id IS NOT NULL
@@ -1696,7 +1851,7 @@ export const getFunnelMetrics = async (req, res) => {
       // Sin filtro de calendario
       appointmentsQuery = `SELECT
           TO_CHAR(c.created_at::date, 'YYYY-MM-DD') as day,
-          COUNT(DISTINCT c.id) as appointments
+          COUNT(DISTINCT ${dedupExprC}) as appointments
          FROM contacts c
          INNER JOIN appointments a ON c.id = a.contact_id
          WHERE c.attribution_ad_id IS NOT NULL
@@ -1715,7 +1870,7 @@ export const getFunnelMetrics = async (req, res) => {
     // Query para ventas CON attribution_ad_id validando que el anuncio existiera ese día
     const salesQuery = `SELECT
         TO_CHAR(c.created_at::date, 'YYYY-MM-DD') as day,
-        COUNT(DISTINCT c.id) as sales
+        COUNT(DISTINCT ${dedupExprC}) as sales
        FROM contacts c
        WHERE c.attribution_ad_id IS NOT NULL
          AND c.attribution_ad_id != ''

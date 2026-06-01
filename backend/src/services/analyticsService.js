@@ -67,7 +67,7 @@ const SUCCESS_PAYMENT_STATUSES = [
   'success'
 ]
 
-function normalizePhoneValue(phone) {
+export function normalizePhoneValue(phone) {
   if (!phone) {
     return null
   }
@@ -81,7 +81,7 @@ function normalizePhoneValue(phone) {
   return digits.slice(-10)
 }
 
-function buildContactKey(contact) {
+export function buildContactKey(contact) {
   // Prioridad 1: Email (más único y estable que teléfono)
   const email = contact?.email?.toLowerCase().trim()
   if (email && email.includes('@')) {
@@ -109,24 +109,26 @@ function buildContactKey(contact) {
  * @param {string} tableAlias - Alias de la tabla (ej: 'c', 'contacts')
  * @returns {string} - Expresión SQL CASE
  */
-function buildDedupExpression(tableAlias = '') {
+export function buildDedupExpression(tableAlias = '') {
   const prefix = tableAlias ? `${tableAlias}.` : ''
 
   if (isPostgres) {
+    const phoneDigitsExpr = `REGEXP_REPLACE(COALESCE(${prefix}phone, ''), '[^0-9]', '', 'g')`
     return `CASE
       WHEN ${prefix}email IS NOT NULL AND ${prefix}email LIKE '%@%'
         THEN CONCAT('email::', LOWER(TRIM(${prefix}email)))
-      WHEN ${prefix}phone IS NOT NULL AND LENGTH(${prefix}phone) >= 10
-        THEN CONCAT('phone::', SUBSTRING(${prefix}phone FROM '.{10}$'))
+      WHEN ${prefix}phone IS NOT NULL AND LENGTH(${phoneDigitsExpr}) >= 10
+        THEN CONCAT('phone::', RIGHT(${phoneDigitsExpr}, 10))
       ELSE CONCAT('id::', ${prefix}id::text)
     END`
   } else {
     // SQLite
+    const phoneDigitsExpr = `REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(${prefix}phone, ''), ' ', ''), '-', ''), '(', ''), ')', ''), '+', ''), '.', ''), '/', '')`
     return `CASE
       WHEN ${prefix}email IS NOT NULL AND ${prefix}email LIKE '%@%'
         THEN 'email::' || LOWER(TRIM(${prefix}email))
-      WHEN ${prefix}phone IS NOT NULL AND LENGTH(${prefix}phone) >= 10
-        THEN 'phone::' || SUBSTR(${prefix}phone, -10)
+      WHEN ${prefix}phone IS NOT NULL AND LENGTH(${phoneDigitsExpr}) >= 10
+        THEN 'phone::' || SUBSTR(${phoneDigitsExpr}, -10)
       ELSE 'id::' || ${prefix}id
     END`
   }
@@ -1056,7 +1058,7 @@ export async function buildReportMetrics ({ startDate, endDate, groupBy = 'day',
     const paymentsQuery = `
       SELECT
         ${paymentGroupExpr} as period,
-        COUNT(DISTINCT ${contactDedupExpr}) as unique_sales,
+        COUNT(*) as sales_count,
         COALESCE(SUM(p.amount), 0) as revenue
       FROM payments p
       LEFT JOIN contacts c ON c.id = p.contact_id
@@ -1071,7 +1073,7 @@ export async function buildReportMetrics ({ startDate, endDate, groupBy = 'day',
       const period = row.period
       const bucket = ensureBucket(period)
       bucket.revenue += Number(row.revenue || 0)
-      bucket.sales += Number(row.unique_sales || 0)
+      bucket.sales += Number(row.sales_count || 0)
     })
   } else {
     const paymentParams = []
@@ -1422,23 +1424,24 @@ export async function buildContactsList ({ startDate, endDate, type = 'interesad
         appointmentConditions.push(hiddenConditionC)
       }
 
-      // Filtrar por calendarios de atribución configurados
-      const attributionCalendarIds = await getAttributionCalendarIds()
-      if (attributionCalendarIds && attributionCalendarIds.length > 0) {
-        const calendarPlaceholders = attributionCalendarIds.map(() => '?').join(',')
-        appointmentConditions.push(`a.calendar_id IN (${calendarPlaceholders})`)
-        appointmentParams.push(...attributionCalendarIds)
-      }
-
       const appointmentWhere = appointmentConditions.length ? `WHERE ${appointmentConditions.join(' AND ')}` : ''
-      const appointmentsQuery = `
+      const appointmentCandidatesQuery = `
         SELECT DISTINCT c.id as contact_id
         FROM contacts c
-        INNER JOIN appointments a ON a.contact_id = c.id
         ${appointmentWhere}
       `
-      const appointmentContacts = await db.all(appointmentsQuery, appointmentParams)
-      contactIds = appointmentContacts.map(row => row.contact_id)
+      const appointmentCandidates = await db.all(appointmentCandidatesQuery, appointmentParams)
+      const config = await db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1')
+      const attributionCalendarIds = await getAttributionCalendarIds()
+      const contactsWithAppointments = await getContactsWithAppointmentsHybrid(
+        config?.location_id,
+        config?.api_token,
+        attributionCalendarIds
+      )
+
+      contactIds = appointmentCandidates
+        .map(row => row.contact_id)
+        .filter(contactId => contactsWithAppointments.has(contactId))
     } else {
       // Vista "Todos": Híbrido DB + API filtrado por dateAdded
       const config = await db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1')
@@ -1573,11 +1576,11 @@ export async function buildContactsList ({ startDate, endDate, type = 'interesad
         contacts.attribution_ad_id,
         contacts.attribution_ad_name,
         contacts.source,
-        meta_ads.campaign_id,
-        meta_ads.campaign_name,
-        meta_ads.adset_id,
-        meta_ads.adset_name,
-        meta_ads.ad_name as meta_ad_name
+        MAX(meta_ads.campaign_id) as campaign_id,
+        MAX(meta_ads.campaign_name) as campaign_name,
+        MAX(meta_ads.adset_id) as adset_id,
+        MAX(meta_ads.adset_name) as adset_name,
+        MAX(meta_ads.ad_name) as meta_ad_name
       FROM contacts
       LEFT JOIN meta_ads ON meta_ads.ad_id = contacts.attribution_ad_id
       WHERE contacts.id IN (${placeholders})${additionalWhere}
@@ -1590,12 +1593,7 @@ export async function buildContactsList ({ startDate, endDate, type = 'interesad
                contacts.purchases_count,
                contacts.attribution_ad_id,
                contacts.attribution_ad_name,
-               contacts.source,
-               meta_ads.campaign_id,
-               meta_ads.campaign_name,
-               meta_ads.adset_id,
-               meta_ads.adset_name,
-               meta_ads.ad_name
+               contacts.source
       ORDER BY contacts.created_at DESC
     `
     contacts = await db.all(contactsQuery, contactIds)

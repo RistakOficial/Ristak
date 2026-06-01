@@ -4,6 +4,7 @@ import { getHighLevelConfig, getAppConfig, setAppConfig, db } from '../config/da
 import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js'
 import { resolveDateRangeWithGHLTimezone } from '../utils/dateUtils.js'
 import { getContactsWithShowedAppointmentsHybrid } from '../services/appointmentsMerge.js'
+import { getGroupExpression } from '../services/analyticsService.js'
 import fetch from 'node-fetch'
 
 const isPostgres = Boolean(process.env.DATABASE_URL)
@@ -1261,8 +1262,8 @@ export async function getVisitorsByAd(req, res) {
         COUNT(*) as total_pageviews
       FROM sessions
       WHERE ad_id IS NOT NULL
-        AND created_at >= $1
-        AND created_at <= $2
+        AND started_at >= $1
+        AND started_at <= $2
       GROUP BY ad_id
     `
 
@@ -1308,144 +1309,63 @@ export async function getVisitorsByPeriod(req, res) {
     const hiddenFilters = await getHiddenContactFilters()
     const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false)
 
-    let query = ''
-
-    // Definir el formato de agrupación según el tipo
-    if (!useContactAttribution) {
-      // Vista "Todos": Agrupa por fecha de sesión (started_at), todos los visitantes
-      switch (groupBy) {
-        case 'day':
-          query = `
-            SELECT
-              TO_CHAR(started_at::date, 'YYYY-MM-DD') as period,
-              COUNT(DISTINCT visitor_id) as unique_visitors
-            FROM sessions
-            WHERE started_at >= $1 AND started_at <= $2
-            GROUP BY TO_CHAR(started_at::date, 'YYYY-MM-DD')
-            ORDER BY period ASC
-          `
-          break
-
-        case 'week':
-          query = `
-            SELECT
-              TO_CHAR(started_at, 'YYYY-"W"IW') as period,
-              COUNT(DISTINCT visitor_id) as unique_visitors
-            FROM sessions
-            WHERE started_at >= $1 AND started_at <= $2
-            GROUP BY TO_CHAR(started_at, 'YYYY-"W"IW')
-            ORDER BY period ASC
-          `
-          break
-
-        case 'month':
-          query = `
-            SELECT
-              TO_CHAR(started_at, 'YYYY-MM') as period,
-              COUNT(DISTINCT visitor_id) as unique_visitors
-            FROM sessions
-            WHERE started_at >= $1 AND started_at <= $2
-            GROUP BY TO_CHAR(started_at, 'YYYY-MM')
-            ORDER BY period ASC
-          `
-          break
-
-        case 'year':
-          query = `
-            SELECT
-              TO_CHAR(started_at, 'YYYY') as period,
-              COUNT(DISTINCT visitor_id) as unique_visitors
-            FROM sessions
-            WHERE started_at >= $1 AND started_at <= $2
-            GROUP BY TO_CHAR(started_at, 'YYYY')
-            ORDER BY period ASC
-          `
-          break
-
-        default:
-          return res.status(400).json({ error: 'Invalid groupBy value' })
-      }
-    } else {
-      // Vista "Último toque" / "Último toque desde anuncio": Agrupa por fecha de creación del contacto
-      // Solo visitantes que SE CONVIRTIERON en contacto
-      const attributionFilter = isAttributed
-        ? `AND c.attribution_ad_id IS NOT NULL
-           AND EXISTS (
-             SELECT 1 FROM meta_ads ma
-             WHERE ma.ad_id = c.attribution_ad_id
-               AND (ma.date)::date = (c.created_at)::date
-           )`
-        : ''
-
-      const hiddenFilter = hiddenCondition ? `AND ${hiddenCondition}` : ''
-
-      switch (groupBy) {
-        case 'day':
-          query = `
-            SELECT
-              TO_CHAR(c.created_at::date, 'YYYY-MM-DD') as period,
-              COUNT(DISTINCT s.visitor_id) as unique_visitors
-            FROM sessions s
-            INNER JOIN contacts c ON c.id = s.contact_id
-            WHERE c.created_at >= $1 AND c.created_at <= $2
-              ${attributionFilter}
-              ${hiddenFilter}
-            GROUP BY TO_CHAR(c.created_at::date, 'YYYY-MM-DD')
-            ORDER BY period ASC
-          `
-          break
-
-        case 'week':
-          query = `
-            SELECT
-              TO_CHAR(c.created_at, 'YYYY-"W"IW') as period,
-              COUNT(DISTINCT s.visitor_id) as unique_visitors
-            FROM sessions s
-            INNER JOIN contacts c ON c.id = s.contact_id
-            WHERE c.created_at >= $1 AND c.created_at <= $2
-              ${attributionFilter}
-              ${hiddenFilter}
-            GROUP BY TO_CHAR(c.created_at, 'YYYY-"W"IW')
-            ORDER BY period ASC
-          `
-          break
-
-        case 'month':
-          query = `
-            SELECT
-              TO_CHAR(c.created_at, 'YYYY-MM') as period,
-              COUNT(DISTINCT s.visitor_id) as unique_visitors
-            FROM sessions s
-            INNER JOIN contacts c ON c.id = s.contact_id
-            WHERE c.created_at >= $1 AND c.created_at <= $2
-              ${attributionFilter}
-              ${hiddenFilter}
-            GROUP BY TO_CHAR(c.created_at, 'YYYY-MM')
-            ORDER BY period ASC
-          `
-          break
-
-        case 'year':
-          query = `
-            SELECT
-              TO_CHAR(c.created_at, 'YYYY') as period,
-              COUNT(DISTINCT s.visitor_id) as unique_visitors
-            FROM sessions s
-            INNER JOIN contacts c ON c.id = s.contact_id
-            WHERE c.created_at >= $1 AND c.created_at <= $2
-              ${attributionFilter}
-              ${hiddenFilter}
-            GROUP BY TO_CHAR(c.created_at, 'YYYY')
-            ORDER BY period ASC
-          `
-          break
-
-        default:
-          return res.status(400).json({ error: 'Invalid groupBy value' })
-      }
+    if (!['day', 'week', 'month', 'year'].includes(groupBy)) {
+      return res.status(400).json({ error: 'Invalid groupBy value' })
     }
 
-    const rows = await db.all(query, [range.startUtc, range.endUtc])
+    const buildWeekExpression = (column) => {
+      const safeTimezone = (range.appliedTimezone || 'UTC').replace(/'/g, "''")
+      if (!isPostgres) {
+        return `strftime('%Y-W%W', datetime(${column}, '-6 hours'))`
+      }
+      const columnExpr = `((${column})::timestamptz AT TIME ZONE 'UTC' AT TIME ZONE '${safeTimezone}')`
+      return `TO_CHAR(${columnExpr}, 'YYYY-"W"IW')`
+    }
+
+    const groupExpression = groupBy === 'week'
+      ? buildWeekExpression(useContactAttribution ? 'c.created_at' : 's.started_at')
+      : getGroupExpression(useContactAttribution ? 'c.created_at' : 's.started_at', groupBy, range.appliedTimezone)
+
+    const params = [range.startUtc, range.endUtc]
+    const conditions = useContactAttribution
+      ? ['c.created_at >= ?', 'c.created_at <= ?']
+      : ['s.started_at >= ?', 's.started_at <= ?']
+
+    if (useContactAttribution && hiddenCondition) {
+      conditions.push(hiddenCondition)
+    }
+
+    if (useContactAttribution && isAttributed) {
+      conditions.push('c.attribution_ad_id IS NOT NULL')
+      conditions.push(`EXISTS (
+        SELECT 1 FROM meta_ads ma
+        WHERE ma.ad_id = c.attribution_ad_id
+          AND (ma.date)::date = (c.created_at)::date
+      )`)
+    }
+
+    const query = useContactAttribution
+      ? `
+        SELECT
+          ${groupExpression} as period,
+          COUNT(DISTINCT s.visitor_id) as unique_visitors
+        FROM sessions s
+        INNER JOIN contacts c ON c.id = s.contact_id
+        WHERE ${conditions.join(' AND ')}
+        GROUP BY period
+        ORDER BY period ASC
+      `
+      : `
+        SELECT
+          ${groupExpression} as period,
+          COUNT(DISTINCT s.visitor_id) as unique_visitors
+        FROM sessions s
+        WHERE ${conditions.join(' AND ')}
+        GROUP BY period
+        ORDER BY period ASC
+      `
+
+    const rows = await db.all(query, params)
 
     logger.info(`Visitantes por período obtenidos: ${rows.length} períodos con visitas (scope: ${scope})`)
 
