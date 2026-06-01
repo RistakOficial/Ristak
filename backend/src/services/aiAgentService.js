@@ -1784,10 +1784,10 @@ function isOperationalPaymentRequest(messages = []) {
 }
 
 function paymentConversationRequiresInstallmentFlow(messages = []) {
-  const normalized = normalizeText(getPaymentConversationText(messages))
+  const normalized = normalizeText(getPaymentUserConversationText(messages) || getPaymentConversationText(messages))
   if (!normalized) return false
 
-  return /(parcial|parcialidad|parcialidades|plan de pagos|plan de cobros|domicili|pagos restantes|cobros restantes|saldo restante|resto automatic|resto automático|cargos futuros|cobros futuros|programa.*(?:pago|cobro|cargo)|programar.*(?:pago|cobro|cargo)|(?:durante|por)\s+(?:\d+|un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce)\s+mes(?:es)?)/.test(normalized)
+  return /(parcial|parcialidad|parcialidades|plan de pagos|plan de cobros|domicili|pagos restantes|cobros restantes|saldo restante|resto automatic|resto automatico|cargos futuros|cobros futuros|programa.*(?:pago|cobro|cargo)|programar.*(?:pago|cobro|cargo)|(?:durante|por|en\s+(?:los\s+)?siguientes|siguientes)\s+(?:\d+|un|uno|una|su|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce)\s+(?:dia|dias|semana|semanas|mes|meses)|(?:esper|sin\s+(?:cobro|pago)|no\s+(?:se\s+)?cobr).{0,120}(?:cobr|pago|cargo))/.test(normalized)
 }
 
 const PAYMENT_MONTHS = {
@@ -1819,6 +1819,10 @@ const PAYMENT_MONTHS = {
   diciembre: 12,
   dic: 12
 }
+
+const PAYMENT_COUNT_TOKEN = '(\\d+|un|uno|una|su|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce)'
+const PAYMENT_PERIOD_UNIT_TOKEN = '(dia|dias|semana|semanas|mes|meses)'
+const PAYMENT_AMOUNT_TEXT_PATTERN = '([0-9]+(?:[.,][0-9]+)?)(?:\\s*(mil))?(?:\\s*(?:mxn|m\\.?n\\.?|pesos?|peso))?'
 
 function isPaymentTaskText(value) {
   const normalized = normalizeText(value)
@@ -1859,6 +1863,16 @@ function getPaymentConversationText(messages, limit = MESSAGE_HISTORY_LIMIT) {
 
   return safeMessages
     .map((message) => `${message?.role === 'assistant' ? 'Agente' : 'Usuario'}: ${getMessageText(message)}`)
+    .filter(Boolean)
+    .join('\n')
+}
+
+function getPaymentUserConversationText(messages, limit = MESSAGE_HISTORY_LIMIT) {
+  const safeMessages = getPaymentRelevantMessages(messages, limit)
+
+  return safeMessages
+    .filter((message) => message?.role !== 'assistant')
+    .map((message) => getMessageText(message))
     .filter(Boolean)
     .join('\n')
 }
@@ -1983,21 +1997,51 @@ function resolveMonthOnlyPaymentDate(monthInfo, candidate, timezone = DEFAULT_PA
   return date.isValid ? date.toISODate() : null
 }
 
-function extractPaymentAmountFromText(text) {
-  const matches = []
-  const patterns = [
-    /\$\s*([0-9]+(?:[.,][0-9]+)?)/g,
-    /\b([0-9]+(?:[.,][0-9]+)?)\s*(?:mxn|m\.?n\.?|pesos?|peso)\b/g
-  ]
+function normalizePaymentAmountFromTextParts(numberText, scaleText = '') {
+  const amount = normalizePaymentAmount(numberText)
+  if (amount <= 0) return 0
 
-  for (const pattern of patterns) {
-    for (const match of String(text || '').matchAll(pattern)) {
-      const amount = normalizePaymentAmount(match[1])
-      if (amount > 0) matches.push(amount)
-    }
+  return normalizeText(scaleText) === 'mil' && amount < 1000
+    ? normalizePaymentAmount(amount * 1000)
+    : amount
+}
+
+function getPaymentAmountMatchesFromText(text, { requireMoneyMarker = false } = {}) {
+  const source = String(text || '')
+  const matches = []
+  const pattern = new RegExp(`\\$?\\s*${PAYMENT_AMOUNT_TEXT_PATTERN}`, 'gi')
+  let match
+
+  while ((match = pattern.exec(source)) !== null) {
+    const raw = match[0] || ''
+    const amount = normalizePaymentAmountFromTextParts(match[1], match[2])
+    if (amount <= 0) continue
+
+    const hasMoneyMarker = raw.includes('$') ||
+      Boolean(match[2]) ||
+      /\b(?:mxn|m\.?n\.?|pesos?|peso)\b/i.test(raw) ||
+      /[.,]\d{3}\b/.test(raw)
+    const followingText = source.slice(pattern.lastIndex, pattern.lastIndex + 18)
+
+    if (requireMoneyMarker && !hasMoneyMarker) continue
+    if (!hasMoneyMarker && /\b(?:dia|dias|semana|semanas|mes|meses)\b/i.test(followingText)) continue
+
+    matches.push({
+      amount,
+      index: match.index,
+      end: pattern.lastIndex,
+      raw: raw.trim(),
+      hasMoneyMarker
+    })
   }
 
-  return matches.length ? matches[matches.length - 1] : 0
+  return matches
+}
+
+function extractPaymentAmountFromText(text) {
+  const matches = getPaymentAmountMatchesFromText(text, { requireMoneyMarker: true })
+
+  return matches.length ? matches[matches.length - 1].amount : 0
 }
 
 function extractPaymentCurrencyFromText(text) {
@@ -2193,42 +2237,287 @@ function getTopLevelScheduledPaymentDate(args = {}, messages = [], timezone = DE
 
   if (directDate) return directDate
 
-  return parseNaturalPaymentDateFromText(getPaymentConversationText(messages), timezone)
+  return parseNaturalPaymentDateFromText(getPaymentUserConversationText(messages), timezone)
 }
 
 function extractRecurringAmountPlanFromText(text, timezone = DEFAULT_PAYMENT_TIMEZONE) {
   const normalized = normalizeText(text)
-  if (!normalized || !/(durante|por)\s+/.test(normalized) || !/(mes|mensual)/.test(normalized)) return null
+  if (!normalized || !/(durante|por|siguientes)\s+/.test(normalized) || !/(mes|mensual|semana|dia)/.test(normalized)) return null
 
-  const countToken = '(\\d+|un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce)'
-  const amountToken = '([0-9]+(?:[.,][0-9]+)?)'
-  const patterns = [
-    new RegExp(`(?:a|de|por)?\\s*${amountToken}\\s*(?:mxn|m\\.?n\\.?|pesos?|peso)\\b.{0,120}\\b(?:durante|por)\\s+${countToken}\\s+mes(?:es)?`, 'i'),
-    new RegExp(`\\b(?:durante|por)\\s+${countToken}\\s+mes(?:es)?\\b.{0,120}${amountToken}\\s*(?:mxn|m\\.?n\\.?|pesos?|peso)`, 'i')
-  ]
+  const [segment] = extractPaymentSeriesSegmentsFromText(normalized)
+  if (!segment?.amount || !segment?.count) return null
 
-  for (const pattern of patterns) {
-    const match = normalized.match(pattern)
-    if (!match) continue
+  return {
+    amount: segment.amount,
+    count: segment.count,
+    startDate: parseNaturalPaymentDateFromText(text, timezone),
+    frequency: segment.frequency,
+    interval: segment.interval
+  }
+}
 
-    const firstNumber = normalizePaymentAmount(match[1])
-    const secondNumber = parseSmallSpanishCount(match[2]) || normalizePaymentAmount(match[2])
-    const reversed = pattern === patterns[1]
-    const amount = reversed ? normalizePaymentAmount(match[2]) : firstNumber
-    const count = reversed ? parseSmallSpanishCount(match[1]) || normalizeInteger(match[1]) : secondNumber
-    const startDate = parseNaturalPaymentDateFromText(text, timezone)
+function getPaymentPeriodUnit(value) {
+  const normalized = normalizeText(value)
 
-    if (amount > 0 && count > 0) {
+  if (/dia|dias/.test(normalized)) return 'days'
+  if (/semana|semanas/.test(normalized)) return 'weeks'
+  return 'months'
+}
+
+function getPaymentFrequencyForIntervalUnit(unit) {
+  if (unit === 'weeks') return 'weekly'
+  if (unit === 'months') return 'monthly'
+  return 'custom'
+}
+
+function getPaymentWaitLabel(wait = {}) {
+  const count = normalizeInteger(wait.count) || 1
+  const unit = wait.unit === 'days'
+    ? count === 1 ? 'dia' : 'dias'
+    : wait.unit === 'weeks'
+      ? count === 1 ? 'semana' : 'semanas'
+      : count === 1 ? 'mes' : 'meses'
+
+  return `${count} ${unit}`
+}
+
+function truncateBeforeNextPaymentPlanBoundary(text) {
+  const boundaryMatch = String(text || '').match(/\b(?:te\s+)?(?:vas\s+a\s+)?esper|sin\s+(?:cobro|pago)|no\s+(?:se\s+)?cobr|\b(?:luego|despues|posteriormente|entonces|al\s+final)\s+(?:le\s+)?(?:vuelv|vas\s+a\s+cobr|cobr|cargo|pago)|\bhasta\s+\w+/i)
+  if (!boundaryMatch) return text
+
+  return text.slice(0, boundaryMatch.index)
+}
+
+function extractImmediatePaymentFromText(text, timezone = DEFAULT_PAYMENT_TIMEZONE) {
+  const normalized = normalizeText(text)
+  if (!/\b(?:en este momento|ahorita|ahora|hoy)\b/.test(normalized)) return null
+
+  const zone = DateTime.now().setZone(timezone).isValid ? timezone : DEFAULT_PAYMENT_TIMEZONE
+  const today = DateTime.now().setZone(zone).toISODate()
+  const immediatePattern = /\b(?:en este momento|ahorita|ahora|hoy)\b/gi
+  let match
+
+  while ((match = immediatePattern.exec(normalized)) !== null) {
+    const windowStart = Math.max(0, match.index - 120)
+    const windowEnd = Math.min(normalized.length, match.index + match[0].length + 120)
+    const windowText = normalized.slice(windowStart, windowEnd)
+    const amounts = getPaymentAmountMatchesFromText(windowText)
+    if (!amounts.length) continue
+
+    const immediateIndex = match.index - windowStart
+    const beforeAmounts = amounts.filter((amountMatch) => amountMatch.end <= immediateIndex)
+    const afterAmounts = amounts.filter((amountMatch) => amountMatch.index >= immediateIndex)
+    const selected = beforeAmounts[beforeAmounts.length - 1] || afterAmounts[0]
+
+    if (selected?.amount > 0 && (selected.hasMoneyMarker || /(cobr|cargo|pago|program)/.test(windowText))) {
       return {
-        amount,
-        count,
-        startDate,
-        frequency: 'monthly'
+        amount: selected.amount,
+        date: today,
+        index: windowStart + selected.index,
+        end: windowStart + selected.end
       }
     }
   }
 
   return null
+}
+
+function extractPaymentSeriesSegmentsFromText(text) {
+  const normalized = normalizeText(text)
+  const segments = []
+  const durationPattern = new RegExp(`\\b(?:durante|por|en\\s+(?:los\\s+)?siguientes|los\\s+siguientes|siguientes)\\s+${PAYMENT_COUNT_TOKEN}\\s+${PAYMENT_PERIOD_UNIT_TOKEN}\\b`, 'gi')
+  let match
+
+  while ((match = durationPattern.exec(normalized)) !== null) {
+    const count = parseSmallSpanishCount(match[1]) || normalizeInteger(match[1])
+    const unit = getPaymentPeriodUnit(match[2])
+    if (count <= 0) continue
+
+    const afterWindow = truncateBeforeNextPaymentPlanBoundary(normalized.slice(durationPattern.lastIndex, durationPattern.lastIndex + 160))
+    const beforeWindow = normalized.slice(Math.max(0, match.index - 160), match.index)
+    const afterAmounts = getPaymentAmountMatchesFromText(afterWindow)
+    const beforeAmounts = getPaymentAmountMatchesFromText(beforeWindow)
+    const selectedAmount = afterAmounts[0] || beforeAmounts[beforeAmounts.length - 1]
+    const amount = normalizePaymentAmount(selectedAmount?.amount)
+    if (amount <= 0) continue
+
+    segments.push({
+      amount,
+      count,
+      unit,
+      interval: { unit, count: 1 },
+      frequency: getPaymentFrequencyForIntervalUnit(unit),
+      index: match.index,
+      end: afterAmounts[0]
+        ? durationPattern.lastIndex + afterAmounts[0].end
+        : durationPattern.lastIndex
+    })
+  }
+
+  return segments.sort((left, right) => left.index - right.index)
+}
+
+function extractPaymentWaitSegment(text, startIndex = 0) {
+  const normalized = normalizeText(text)
+  const searchStart = Math.max(0, startIndex)
+  const searchText = normalized.slice(searchStart)
+  const monthNames = Object.keys(PAYMENT_MONTHS).join('|')
+  const candidates = []
+  const patterns = [
+    new RegExp(`\\b(?:te\\s+)?(?:vas\\s+a\\s+)?esper(?:a|as|ar|ate|amos|en)?(?:\\s+a)?\\s+(?:por\\s+)?${PAYMENT_COUNT_TOKEN}\\s+${PAYMENT_PERIOD_UNIT_TOKEN}\\b`, 'gi'),
+    new RegExp(`\\b${PAYMENT_COUNT_TOKEN}\\s+${PAYMENT_PERIOD_UNIT_TOKEN}\\s+(?:sin\\s+(?:cobro|pago|cargo)|no\\s+(?:se\\s+)?(?:cobra|cobras|cobrar|cobre))\\b`, 'gi')
+  ]
+
+  for (const pattern of patterns) {
+    let match
+    while ((match = pattern.exec(searchText)) !== null) {
+      const count = parseSmallSpanishCount(match[1]) || normalizeInteger(match[1])
+      const unit = getPaymentPeriodUnit(match[2])
+      if (count <= 0) continue
+
+      candidates.push({
+        count,
+        unit,
+        index: searchStart + match.index,
+        end: searchStart + pattern.lastIndex
+      })
+    }
+  }
+
+  const monthWaitPattern = new RegExp(`\\b(?:te\\s+)?(?:vas\\s+a\\s+)?esper(?:a|as|ar|ate)?\\s+(${monthNames})\\b.{0,90}\\bno\\s+(?:se\\s+)?(?:cobra|cobras|cobrar|cobre)\\b`, 'gi')
+  let monthMatch
+  while ((monthMatch = monthWaitPattern.exec(searchText)) !== null) {
+    candidates.push({
+      count: 1,
+      unit: 'months',
+      explicitNoChargeMonth: PAYMENT_MONTHS[monthMatch[1]],
+      index: searchStart + monthMatch.index,
+      end: searchStart + monthWaitPattern.lastIndex
+    })
+  }
+
+  return candidates.sort((left, right) => left.index - right.index)[0] || null
+}
+
+function extractFinalPaymentAmountAfterWait(text, waitEnd = 0) {
+  const normalized = normalizeText(text)
+  const afterText = normalized.slice(waitEnd, waitEnd + 260)
+  const chargeMatch = afterText.match(/\b(?:cobr\w*|carg\w*|pag\w*|program\w*)\b/i)
+
+  if (chargeMatch) {
+    const chargeWindow = truncateBeforeNextPaymentPlanBoundary(afterText.slice(chargeMatch.index, chargeMatch.index + 160))
+    const [amountMatch] = getPaymentAmountMatchesFromText(chargeWindow)
+    if (amountMatch?.amount > 0) return amountMatch.amount
+  }
+
+  if (/\b(?:luego|despues|posteriormente|entonces|al\s+final|ultimo|ultima|hasta)\b/.test(afterText)) {
+    const [amountMatch] = getPaymentAmountMatchesFromText(afterText.slice(0, 160))
+    if (amountMatch?.amount > 0) return amountMatch.amount
+  }
+
+  return 0
+}
+
+function resolveExplicitFinalDateAfterWait(text, waitEnd, lastChargeDate, timezone = DEFAULT_PAYMENT_TIMEZONE) {
+  const afterText = normalizeText(text).slice(waitEnd, waitEnd + 180)
+  const monthInfo = parsePaymentMonthOnlyFromText(afterText, timezone)
+  const explicitDate = resolveMonthOnlyPaymentDate(monthInfo, { dueDate: lastChargeDate }, timezone)
+  if (!explicitDate || !lastChargeDate) return explicitDate
+
+  const zone = DateTime.now().setZone(timezone).isValid ? timezone : DEFAULT_PAYMENT_TIMEZONE
+  const explicitDateTime = DateTime.fromISO(explicitDate, { zone }).startOf('day')
+  const lastDateTime = DateTime.fromISO(lastChargeDate, { zone }).startOf('day')
+
+  return explicitDateTime.isValid && lastDateTime.isValid && explicitDateTime > lastDateTime
+    ? explicitDate
+    : null
+}
+
+function extractIrregularPaymentScheduleFromText(text, timezone = DEFAULT_PAYMENT_TIMEZONE) {
+  const normalized = normalizeText(text)
+  if (!normalized || !/(esper|sin\s+(?:cobro|pago)|no\s+(?:se\s+)?cobr)/.test(normalized)) return null
+
+  const immediatePayment = extractImmediatePaymentFromText(normalized, timezone)
+  const seriesSegments = extractPaymentSeriesSegmentsFromText(normalized)
+  const waitSearchStart = seriesSegments.length
+    ? seriesSegments[seriesSegments.length - 1].end
+    : immediatePayment?.end || 0
+  const waitSegment = extractPaymentWaitSegment(normalized, waitSearchStart) || extractPaymentWaitSegment(normalized, 0)
+  if (!waitSegment) return null
+
+  const finalAmount = extractFinalPaymentAmountAfterWait(normalized, waitSegment.end)
+  if (!immediatePayment && seriesSegments.length === 0 && finalAmount <= 0) return null
+
+  const zone = DateTime.now().setZone(timezone).isValid ? timezone : DEFAULT_PAYMENT_TIMEZONE
+  const today = DateTime.now().setZone(zone).toISODate()
+  const anchorDate = immediatePayment?.date ||
+    parseNaturalPaymentDateFromText(normalized, timezone) ||
+    today
+  const primaryInterval = seriesSegments[0]?.interval || { unit: waitSegment.unit || 'months', count: 1 }
+  const frequency = getPaymentFrequencyForIntervalUnit(primaryInterval.unit)
+  const firstPayment = immediatePayment?.amount > 0
+    ? {
+        enabled: true,
+        type: 'amount',
+        value: immediatePayment.amount,
+        amount: immediatePayment.amount,
+        date: anchorDate
+      }
+    : null
+  const remainingPayments = []
+  let periodOffset = 0
+  let lastChargeDate = anchorDate
+
+  for (const segment of seriesSegments.filter((item) => item.index < waitSegment.index)) {
+    const interval = segment.interval || primaryInterval
+
+    for (let index = 1; index <= segment.count; index += 1) {
+      const dueDate = addIntervalToDate(anchorDate, interval, periodOffset + index, timezone)
+      remainingPayments.push({
+        sequence: remainingPayments.length + 1,
+        type: 'amount',
+        value: segment.amount,
+        amount: segment.amount,
+        dueDate
+      })
+      lastChargeDate = dueDate
+    }
+
+    periodOffset += segment.count
+  }
+
+  if (finalAmount > 0) {
+    const explicitFinalDate = resolveExplicitFinalDateAfterWait(normalized, waitSegment.end, lastChargeDate, timezone)
+    const waitMatchesCadence = waitSegment.unit === primaryInterval.unit
+    const finalDate = explicitFinalDate || (waitMatchesCadence && periodOffset > 0
+      ? addIntervalToDate(anchorDate, primaryInterval, periodOffset + waitSegment.count + 1, timezone)
+      : addIntervalToDate(lastChargeDate, { unit: waitSegment.unit, count: waitSegment.count }, 1, timezone))
+
+    remainingPayments.push({
+      sequence: remainingPayments.length + 1,
+      type: 'amount',
+      value: finalAmount,
+      amount: finalAmount,
+      dueDate: finalDate,
+      notes: `Despues de esperar ${getPaymentWaitLabel(waitSegment)} sin cobro.`
+    })
+  }
+
+  const totalAmount = normalizePaymentAmount(
+    (firstPayment?.amount || 0) +
+    remainingPayments.reduce((sum, payment) => sum + normalizePaymentAmount(payment.amount), 0)
+  )
+
+  if (totalAmount <= 0 || remainingPayments.length === 0) return null
+
+  return {
+    totalAmount,
+    firstPayment,
+    remainingPayments,
+    remainingFrequency: frequency,
+    remainingIntervalUnit: primaryInterval.unit,
+    remainingIntervalCount: primaryInterval.count || 1
+  }
 }
 
 function hasRemainingPaymentShape(args = {}) {
@@ -2287,15 +2576,44 @@ function enrichInstallmentPaymentArgs(inputArgs = {}, messages = [], timezone = 
       : {})
   }
   const conversationText = getPaymentConversationText(messages)
+  const userConversationText = getPaymentUserConversationText(messages) || conversationText
   const scheduledDate = getTopLevelScheduledPaymentDate(args, messages, timezone)
-  const conversationAmount = extractPaymentAmountFromText(conversationText)
-  const recurringAmountPlan = extractRecurringAmountPlanFromText(conversationText, timezone)
+  const conversationAmount = extractPaymentAmountFromText(userConversationText)
+  const recurringAmountPlan = extractRecurringAmountPlanFromText(userConversationText, timezone)
+  const irregularSchedulePlan = extractIrregularPaymentScheduleFromText(userConversationText, timezone)
+
+  if (irregularSchedulePlan) {
+    args.totalAmount = irregularSchedulePlan.totalAmount
+    if (irregularSchedulePlan.firstPayment) {
+      args.firstPayment = {
+        ...(args.firstPayment && typeof args.firstPayment === 'object' ? args.firstPayment : {}),
+        ...irregularSchedulePlan.firstPayment
+      }
+    } else if (!hasExplicitFirstPayment(args)) {
+      args.firstPayment = { enabled: false }
+    }
+    args.remainingPayments = irregularSchedulePlan.remainingPayments
+    args.remainingFrequency = irregularSchedulePlan.remainingFrequency
+    args.remainingIntervalUnit = irregularSchedulePlan.remainingIntervalUnit
+    args.remainingIntervalCount = irregularSchedulePlan.remainingIntervalCount
+    delete args.remainingAmounts
+    delete args.paymentAmounts
+    delete args.amounts
+    delete args.remainingPaymentCount
+    delete args.paymentCount
+    delete args.installmentCount
+    delete args.remainingCount
+    delete args.collectInLastPeriods
+    delete args.skipFirstPeriods
+    delete args.deferMonths
+  }
+
   const totalAmount = normalizePaymentAmount(args.totalAmount || args.amount || args.total || getProductPaymentAmount(args) || conversationAmount)
   const firstPaymentAmount = getFirstPaymentAmountFromArgs(args)
   const remainingAmount = normalizePaymentAmount(totalAmount - firstPaymentAmount)
   const cardPreference = resolveStoredCardPreference(args, messages)
   const contactHint = extractPaymentContactHintFromConversation(messages)
-  const productHint = extractPaymentProductHintFromText(conversationText)
+  const productHint = extractPaymentProductHintFromText(userConversationText) || extractPaymentProductHintFromText(conversationText)
 
   if (!args.totalAmount && !args.total && !args.amount && conversationAmount > 0) {
     args.totalAmount = conversationAmount
@@ -2320,11 +2638,11 @@ function enrichInstallmentPaymentArgs(inputArgs = {}, messages = [], timezone = 
   }
 
   if (!args.currency) {
-    args.currency = extractPaymentCurrencyFromText(conversationText)
+    args.currency = extractPaymentCurrencyFromText(userConversationText)
   }
 
   if (!args.concept && !args.description) {
-    args.concept = extractPaymentConceptFromText(conversationText)
+    args.concept = extractPaymentConceptFromText(userConversationText)
   }
 
   if (!args.contactId && !args.contactName && !args.contactHint && contactHint) {
@@ -2345,11 +2663,17 @@ function enrichInstallmentPaymentArgs(inputArgs = {}, messages = [], timezone = 
     args.forceCardSetup = cardPreference === 'new_card'
   }
 
-  if (args.remainingAutomatic === undefined && args.automatic === undefined && hasAutomaticStoredCardPaymentIntent(conversationText)) {
+  if (args.remainingAutomatic === undefined && args.automatic === undefined && hasAutomaticStoredCardPaymentIntent(userConversationText)) {
     args.remainingAutomatic = true
   }
 
-  if (scheduledDate && !args.remainingStartDate && !args.firstChargeDate && !args.nextPaymentDate) {
+  if (
+    scheduledDate &&
+    !args.remainingStartDate &&
+    !args.firstChargeDate &&
+    !args.nextPaymentDate &&
+    !(Array.isArray(args.remainingPayments) && args.remainingPayments.length > 0)
+  ) {
     args.remainingStartDate = scheduledDate
   }
 
@@ -3043,7 +3367,8 @@ function buildInstallmentPlanScheduleRows({ firstPayment = {}, remainingPayments
     rows.push({
       sequence: 1,
       date: firstPayment.date || null,
-      amount: normalizePaymentAmount(firstPayment.amount)
+      amount: normalizePaymentAmount(firstPayment.amount),
+      notes: cleanText(firstPayment.notes || '', 240) || null
     })
   }
 
@@ -3051,7 +3376,8 @@ function buildInstallmentPlanScheduleRows({ firstPayment = {}, remainingPayments
     rows.push({
       sequence: rows.length + 1,
       date: payment?.dueDate || null,
-      amount: normalizePaymentAmount(payment?.amount)
+      amount: normalizePaymentAmount(payment?.amount),
+      notes: cleanText(payment?.notes || '', 240) || null
     })
   }
 
@@ -3083,6 +3409,7 @@ function buildInstallmentPlanPreviewOutput({ contact = {}, totalAmount, currency
     confirmationPrompt: [
       'Todavía NO preguntes método de pago, tarjeta guardada ni canal de envío, y no crees ni programes nada.',
       'Primero especifica cómo queda el plan de pagos: muestra una tabla Markdown compacta con columnas #, fecha exacta y monto, usando fechas absolutas (nunca "en un mes" ni "hoy" sin fecha), y debajo el total del plan.',
+      'Si el plan trae notas de espera o saltos sin cobro, menciónalas en una línea corta debajo de la tabla; nunca las conviertas en una parcialidad de $0.',
       'El contacto va con nombre y email o teléfono cuando existan; si no hay ninguno, muestra su ID.',
       'Cierra pidiendo que confirme el plan con tono amigable y corto, por ejemplo: "¿Así te late el plan o le movemos algo?". No uses palabras como "ejecutar", "autorizar" ni "proceder".',
       'Sólo cuando el usuario confirme el plan seguimos con el método de pago (tarjeta guardada o link).'
@@ -3994,6 +4321,7 @@ function parseSmallSpanishCount(value) {
     un: 1,
     uno: 1,
     una: 1,
+    su: 1,
     dos: 2,
     tres: 3,
     cuatro: 4,
@@ -4002,7 +4330,9 @@ function parseSmallSpanishCount(value) {
     siete: 7,
     ocho: 8,
     nueve: 9,
-    diez: 10
+    diez: 10,
+    once: 11,
+    doce: 12
   }
 
   return words[normalized] || 0
@@ -4010,14 +4340,13 @@ function parseSmallSpanishCount(value) {
 
 function estimateMinimumPaymentChargeCountFromText(value) {
   const normalized = normalizeText(value)
-  if (!/(cobr|cubr|cargo|pago|program)/.test(normalized) || !/(mes|sucesivamente|parcial|program)/.test(normalized)) return 0
+  if (!/(cobr|cubr|cargo|pago|program)/.test(normalized) || !/(dia|semana|mes|sucesivamente|parcial|program)/.test(normalized)) return 0
 
   let expectedCount = 0
   const immediateChargePattern = /(?:cobr|cubr|cargo|pago|program).{0,100}(?:en este momento|ahorita|hoy)|(?:en este momento|ahorita|hoy).{0,100}(?:cobr|cubr|cargo|pago|program)/
   if (immediateChargePattern.test(normalized)) expectedCount += 1
 
-  const countToken = '(\\d+|un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)'
-  const seriesPattern = new RegExp(`(?:asi\\s+sucesivamente\\s+por|sucesivamente\\s+por|durante|por)\\s+${countToken}\\s+mes(?:es)?`, 'g')
+  const seriesPattern = new RegExp(`(?:asi\\s+sucesivamente\\s+por|sucesivamente\\s+por|durante|por|en\\s+(?:los\\s+)?siguientes|siguientes)\\s+${PAYMENT_COUNT_TOKEN}\\s+(?:dia|dias|semana|semanas|mes|meses)`, 'g')
   let lastSeriesEnd = -1
   let match
 
@@ -4032,7 +4361,9 @@ function estimateMinimumPaymentChargeCountFromText(value) {
   const afterSeriesText = lastSeriesEnd >= 0 ? normalized.slice(lastSeriesEnd) : normalized
   const laterChargePatterns = [
     /\b(?:le\s+)?(?:vuelves?|vuelve|volver(?:as)?|otra vez|de nuevo)(?=.{0,60}\b(?:cobr|cubr)\w*)/g,
-    /\b(?:luego|despues|después|posteriormente|entonces|al final|mas tarde|más tarde)(?=.{0,90}\b(?:cobr|cubr|cargo|pago|program)\w*)/g
+    /\b(?:luego|despues|posteriormente|entonces|al final|mas tarde)(?=.{0,90}\b(?:cobr|cubr|cargo|pago|program)\w*)/g,
+    /\b(?:ultimo|ultima|final)(?=.{0,90}\b(?:cobr|cubr|cargo|pago|program)\w*)/g,
+    /\bhasta\s+\w+(?=.{0,90}\b(?:cobr|cubr|cargo|pago|program)\w*)/g
   ]
 
   for (const pattern of laterChargePatterns) {
@@ -4044,7 +4375,7 @@ function estimateMinimumPaymentChargeCountFromText(value) {
 }
 
 function estimateMinimumPaymentChargeCount(messages = []) {
-  return estimateMinimumPaymentChargeCountFromText(getPaymentConversationText(messages))
+  return estimateMinimumPaymentChargeCountFromText(getPaymentUserConversationText(messages) || getPaymentConversationText(messages))
 }
 
 function normalizeIntervalUnit(value, frequency = 'monthly') {
@@ -10267,7 +10598,7 @@ function buildHighLevelTools(highLevelConnection, options = {}) {
     {
       type: 'function',
       name: 'create_installment_payment_flow',
-      description: 'Crea un cobro por parcialidades, domiciliación o cargos automáticos futuros usando la lógica interna segura de Ristak. Úsala para planes con o sin primer pago, cargos programados a tarjeta guardada, pagos programados únicos con fecha futura, órdenes de domiciliar el resto o cargos futuros como "el 10 de junio cobra 100" o "en un año cobra X y tres meses después Y". Si el cobro es de producto y falta producto, precio o fecha/momento, la herramienta preguntará el dato faltante y conservará lo ya dicho. Si el usuario dice "10 ahorita y luego el mismo día durante los siguientes 3 meses", eso es firstPayment hoy por 10 y remainingPayments mensuales futuros, no 3 cobros hoy. Si dice "espera un mes y luego cobra", salta ese periodo con afterMonths/afterPeriods; no crees pagos de 0. En instrucciones compuestas, cuenta cada tramo: "por dos meses" son 2 cobros reales y cada "le vuelves a cobrar" posterior es otro cobro adicional; si el último dice "esta vez 20", ese 20 no reemplaza el mes anterior, es el último cobro extra. Si el usuario pide "hacer una nueva" en un hilo donde ya se resolvió contacto, reutiliza el contactId de la memoria operacional. Esta herramienta detecta tarjeta guardada en Ristak/GoHighLevel; si el primer pago es transferencia/depósito/manual lo registra offline, y si el resto es automático y falta tarjeta, envía domiciliación. Si hay tarjeta guardada no manda domiciliación salvo que el usuario pida otra tarjeta. Si se necesita enviar link de primer pago o domiciliación y el usuario no eligió canal, pregunta all/email/sms/whatsapp antes de completar el cobro. generate/none no es válido para domiciliación o tarjeta porque el formulario real requiere envío. Nunca completa el cobro sin que el usuario diga que sí al resumen.',
+      description: 'Crea un cobro por parcialidades, domiciliación o cargos automáticos futuros usando la lógica interna segura de Ristak. Úsala para planes con o sin primer pago, cargos programados a tarjeta guardada, pagos programados únicos con fecha futura, órdenes de domiciliar el resto o cargos futuros como "el 10 de junio cobra 100" o "en un año cobra X y tres meses después Y". Si el cobro es de producto y falta producto, precio o fecha/momento, la herramienta preguntará el dato faltante y conservará lo ya dicho. Si el usuario dice "10 ahorita y luego el mismo día durante los siguientes 3 meses", eso es firstPayment hoy por 10 y remainingPayments mensuales futuros, no 3 cobros hoy. Si dice "espera un mes/dos semanas y luego cobra", ese intervalo es sin cobro: salta el periodo o fecha correspondiente con afterMonths/afterWeeks/afterDays/afterPeriods; no crees pagos de 0. En instrucciones compuestas, cuenta cada tramo: "por dos meses" son 2 cobros reales y cada "le vuelves a cobrar" posterior es otro cobro adicional; si el último dice "esta vez 20", ese 20 no reemplaza el mes anterior, es el último cobro extra. Si el usuario pide "hacer una nueva" en un hilo donde ya se resolvió contacto, reutiliza el contactId de la memoria operacional. Esta herramienta detecta tarjeta guardada en Ristak/GoHighLevel; si el primer pago es transferencia/depósito/manual lo registra offline, y si el resto es automático y falta tarjeta, envía domiciliación. Si hay tarjeta guardada no manda domiciliación salvo que el usuario pida otra tarjeta. Si se necesita enviar link de primer pago o domiciliación y el usuario no eligió canal, pregunta all/email/sms/whatsapp antes de completar el cobro. generate/none no es válido para domiciliación o tarjeta porque el formulario real requiere envío. Nunca completa el cobro sin que el usuario diga que sí al resumen.',
       parameters: {
         type: 'object',
         properties: {
@@ -11964,7 +12295,8 @@ const UNIFIED_CAPABILITY_PROMPT = [
   '- Si el usuario corrige o cancela un cobro ya programado, primero resuelve si va a modificar/cancelar el schedule existente o crear uno nuevo. No dupliques cobros por una corrección de fecha/monto.',
   '- Para transferencia, depósito, efectivo o manual registra el pago offline con la herramienta interna. Si además hay parcialidades automáticas y falta tarjeta guardada, el backend debe enviar link de domiciliación por el canal confirmado; si ya hay tarjeta guardada, no mandes domiciliación salvo que pidan otra tarjeta.',
   '- En planes de pago, "ahorita/hoy y luego el mismo día durante los siguientes N meses" significa primer pago hoy y pagos mensuales futuros; no lo conviertas en N cobros hoy.',
-  '- Si el plan dice "espera un mes y luego cobra", representa el mes sin cobro saltando el periodo; no crees parcialidades de $0.',
+  '- Si el plan dice "espera un mes/dos semanas y luego cobra", ese intervalo es sin cobro: salta ese mes, semana o dia antes del siguiente cargo real; no crees parcialidades de $0.',
+  '- En cadencia mensual, "espera un mes" significa que el siguiente mes calendario queda sin cobro y el cargo posterior cae en el siguiente periodo. Ejemplo: pagos en julio/agosto/septiembre, espera octubre, ultimo cobro en noviembre.',
   '- Si el usuario dice "haz una nueva", "crea otra" o "no borres nada" dentro de un hilo de pago, crea un nuevo flujo con el contacto ya resuelto en la memoria operacional; no vuelvas a pedir email/teléfono/ID si ya existe contactId.',
   '- Para contactos no hagas búsquedas preventivas. Busca contacto sólo si el usuario pide un contacto/persona/cliente/lead o si una acción necesita identificar exactamente a alguien.',
   '- Nunca pases la frase completa del usuario como contactName/contactHint. Extrae sólo nombre, email, teléfono o ID; si no existe un dato limpio, pregunta por el dato que falta.',
