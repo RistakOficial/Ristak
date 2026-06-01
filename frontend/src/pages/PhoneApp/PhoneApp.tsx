@@ -383,7 +383,7 @@ export const PhoneApp: React.FC = () => {
   }, [])
 
   useEffect(() => {
-    if (accessState !== 'allowed' || !activeSectionId) return
+    if (accessState !== 'allowed') return
 
     const html = document.documentElement
     const body = document.body
@@ -422,7 +422,7 @@ export const PhoneApp: React.FC = () => {
   }, [accessState])
 
   useEffect(() => {
-    if (accessState !== 'allowed') return
+    if (accessState !== 'allowed' || !activeSectionId) return
 
     let cancelled = false
 
