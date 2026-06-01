@@ -54,6 +54,10 @@
   gap: 10px;
 }
 
+.headerMain > div {
+  min-width: 0;
+}
+
 .brandMark {
   display: inline-flex;
   align-items: center;
@@ -72,11 +76,14 @@
 .headerMain h1 {
   margin: 2px 0 0;
   color: var(--color-text-primary);
-  font-size: clamp(24px, 7vw, 32px);
+  font-size: clamp(22px, 6.2vw, 30px);
   font-weight: 850;
   line-height: 1.08;
   letter-spacing: 0;
-  overflow-wrap: anywhere;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  overflow-wrap: normal;
 }
 
 .eyebrow {
@@ -810,17 +817,20 @@
 .settingsShell {
   display: grid;
   gap: 12px;
+  min-width: 0;
 }
 
 .settingsSwitcher {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
-  position: sticky;
-  top: 0;
-  z-index: 2;
-  padding: 0 0 4px;
-  background: color-mix(in srgb, var(--color-background-primary) 92%, transparent);
+  position: relative;
+  z-index: 1;
+  min-width: 0;
+  margin: -14px -14px 0;
+  padding: 10px 14px 8px;
+  background: color-mix(in srgb, var(--color-background-primary) 96%, var(--color-background-secondary) 4%);
+  border-bottom: 1px solid rgba(148, 163, 184, 0.1);
 }
 
 .settingsSwitchButton {
@@ -846,6 +856,7 @@
 
 .embeddedSettings {
   min-width: 0;
+  overflow: hidden;
 }
 
 .embeddedSettings :global(.space-y-6),
@@ -857,6 +868,7 @@
 .embeddedSettings :global(input),
 .embeddedSettings :global(select),
 .embeddedSettings :global(textarea) {
+  min-width: 0;
   max-width: 100%;
 }
 
@@ -864,6 +876,14 @@
   .header {
     gap: 9px;
     padding-inline: 10px;
+  }
+
+  .headerMain {
+    gap: 8px;
+  }
+
+  .headerMain h1 {
+    font-size: clamp(20px, 5.9vw, 26px);
   }
 
   .brandMark {
@@ -883,6 +903,11 @@
   .periodPanel,
   .sectionTabs,
   .content {
+    padding-inline: 10px;
+  }
+
+  .settingsSwitcher {
+    margin-inline: -10px;
     padding-inline: 10px;
   }
 

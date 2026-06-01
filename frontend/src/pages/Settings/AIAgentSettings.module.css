@@ -524,3 +524,123 @@
     justify-content: stretch;
   }
 }
+
+@media (max-width: 640px) {
+  .container {
+    min-width: 0;
+    gap: 12px;
+  }
+
+  .container :global([data-ristak-card]) {
+    min-width: 0;
+    padding: 16px !important;
+    border-radius: 10px !important;
+  }
+
+  .header {
+    gap: 12px;
+    padding-bottom: 14px;
+  }
+
+  .headerLeft {
+    align-items: center;
+    min-width: 0;
+    gap: 10px;
+  }
+
+  .headerLeft > div:last-child {
+    min-width: 0;
+  }
+
+  .iconBox {
+    width: 40px;
+    height: 40px;
+  }
+
+  .title {
+    font-size: 17px;
+    line-height: 1.2;
+  }
+
+  .description {
+    max-width: 100%;
+    font-size: 13px;
+    line-height: 1.45;
+  }
+
+  .settingsGrid {
+    gap: 12px;
+    margin-top: 14px;
+  }
+
+  .section {
+    min-width: 0;
+    gap: 10px;
+    margin-top: 20px;
+  }
+
+  .sectionHeading {
+    min-width: 0;
+    align-items: flex-start;
+  }
+
+  .sectionTitle {
+    min-width: 0;
+    line-height: 1.25;
+  }
+
+  .field,
+  .fieldWide,
+  .inputWrap {
+    min-width: 0;
+  }
+
+  .input,
+  .select,
+  .textarea {
+    min-width: 0;
+    max-width: 100%;
+    font-size: 16px;
+  }
+
+  .textarea {
+    display: block;
+    min-height: 154px;
+    overflow-y: auto;
+    resize: vertical;
+  }
+
+  .businessContextTextarea {
+    min-height: 176px;
+  }
+
+  .actionTextarea {
+    min-height: 228px;
+  }
+
+  .inlineToggle {
+    align-items: flex-start;
+    gap: 9px;
+    font-size: 15px;
+    line-height: 1.35;
+  }
+
+  .inlineToggle span {
+    min-width: 0;
+    align-items: flex-start;
+  }
+}
+
+@media (max-width: 390px) {
+  .container :global([data-ristak-card]) {
+    padding: 14px !important;
+  }
+
+  .tokenInput {
+    padding-right: 118px;
+  }
+
+  .inlineActionButton {
+    padding-inline: 8px;
+  }
+}
