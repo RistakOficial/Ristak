@@ -4764,6 +4764,12 @@ function estimateMinimumPaymentChargeCountFromText(value) {
   const normalized = normalizeText(value)
   if (!/(cobr|cubr|cargo|pago|program)/.test(normalized) || !/(dia|semana|mes|sucesivamente|parcial|program)/.test(normalized)) return 0
 
+  const irregularSchedule = extractIrregularPaymentScheduleFromText(normalized)
+  if (irregularSchedule) {
+    return (irregularSchedule.firstPayment?.enabled ? 1 : 0) +
+      (Array.isArray(irregularSchedule.remainingPayments) ? irregularSchedule.remainingPayments.length : 0)
+  }
+
   let expectedCount = 0
   const immediateChargePattern = /(?:cobr|cubr|cargo|pago|program).{0,100}(?:en este momento|ahorita|hoy)|(?:en este momento|ahorita|hoy).{0,100}(?:cobr|cubr|cargo|pago|program)/
   if (immediateChargePattern.test(normalized)) expectedCount += 1
@@ -9296,7 +9302,7 @@ async function executeCreateInstallmentPaymentFlow(args = {}, highLevelConnectio
           }
         : null,
       responseInstructions: pendingPlanSummary
-        ? 'Pregunta sólo cuál contacto es. Si mencionas el plan pendiente, usa summary.schedule exactamente; no cambies fechas, no quites el primer pago de hoy y no conviertas los periodos de espera en cobros.'
+        ? 'Pregunta sólo cuál contacto es. Si mencionas el plan pendiente, muéstralo en tabla Markdown compacta usando summary.schedule exactamente; no cambies fechas, no quites el primer pago de hoy y no conviertas los periodos de espera en cobros.'
         : ''
     }
   }
@@ -12779,7 +12785,7 @@ const PAYMENT_WORKFLOW_PROMPT = [
   '- Si falta algo indispensable, pregunta una sola cosa a la vez. No hagas listas de varias preguntas pendientes.',
   '- Cuando el usuario elija una opción/botón del flujo, trátala como respuesta válida al paso actual. Avanza con una respuesta corta y no vuelvas a pegar el resumen completo salvo que sea la revisión final.',
   '- En planes de parcialidades, cobros programados o calendarios raros, el resumen de confirmación debe incluir una tabla Markdown compacta con cada cobro: #, fecha exacta, monto, método/acción y estado/envío. Esto sí es excepción a la regla general de evitar tablas.',
-  '- En un plan de parcialidades, el primer paso después de armar el plan es especificarle al usuario cómo queda (tabla con #, fecha exacta y monto, más el total) y pedir que confirme el plan. No preguntes método de pago, tarjeta guardada ni canal de envío hasta que el plan esté confirmado. Si la herramienta devuelve planPreviewConfirmationRequired, muestra el plan y pide confirmarlo sin preguntar todavía por la tarjeta.',
+  '- En un plan de parcialidades, el primer paso después de armar el plan es especificarle al usuario cómo queda (tabla con #, fecha exacta y monto, más el total) y pedir que confirme el plan. No uses lista numerada ni texto corrido para visualizar el calendario. No preguntes método de pago, tarjeta guardada ni canal de envío hasta que el plan esté confirmado. Si la herramienta devuelve planPreviewConfirmationRequired, muestra el plan y pide confirmarlo sin preguntar todavía por la tarjeta.',
   '- Para parcialidades nunca respondas sólo "hoy, en 1 mes y en 2 meses"; calcula y muestra fechas absolutas usando la fecha/hora local disponible.',
   '- Descompón la frase del usuario por tramos temporales. "Por N meses" crea N cobros; si después dice "te esperas un mes, le vuelves a cobrar" eso agrega otro cobro; y si luego dice "te esperas otro mes y le vuelves a cobrar, pero esta vez 20" agrega otro cobro final de 20. No mezcles el cobro final con el último mes de la serie.',
   '- En cadencia mensual, "ahorita 50, te esperes un mes y luego en el siguiente cobras otra vez 50" significa: hoy 50, el siguiente mes queda sin cobro, y el otro mes cobra 50. No lo conviertas en dos cobros futuros.',
