@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { Lock, Save, User } from 'lucide-react'
+import { CheckCircle, Lock, Save, User } from 'lucide-react'
 import { Button, Card } from '@/components/common'
 import { useAuth } from '@/contexts/AuthContext'
 import { useNotification } from '@/contexts/NotificationContext'
@@ -119,13 +119,28 @@ export const AccountSettings: React.FC = () => {
 
   return (
     <div className={styles.settingsContent}>
-      <div className={styles.settingsSection}>
-        <h2 className={styles.sectionTitle}>Información de la cuenta</h2>
-        <p className={styles.sectionDescription}>
-          Gestiona tu nombre de usuario y contraseña
-        </p>
+      <Card>
+        <div className={styles.panelHeader}>
+          <div className={styles.panelHeaderLeft}>
+            <div className={styles.iconBox}>
+              <User size={22} />
+            </div>
+            <div>
+              <h2 className={styles.panelTitle}>Cuenta</h2>
+              <p className={styles.panelDescription}>
+                Gestiona tu nombre de usuario y contraseña
+              </p>
+            </div>
+          </div>
+          <div className={styles.panelHeaderActions}>
+            <div className={styles.statusConnected}>
+              <CheckCircle size={15} />
+              Administrador
+            </div>
+          </div>
+        </div>
 
-        <Card variant="glass" padding="lg" style={{ marginTop: '1.5rem' }}>
+        <div className={styles.panelSection}>
           {/* Información actual */}
           <div style={{ marginBottom: '2rem' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1rem' }}>
@@ -388,8 +403,8 @@ export const AccountSettings: React.FC = () => {
               </Button>
             </div>
           </div>
-        </Card>
-      </div>
+        </div>
+      </Card>
     </div>
   )
 }

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { ArrowRight, BookOpen, Copy, KeyRound, RefreshCw, Trash2 } from 'lucide-react'
+import { ArrowRight, BookOpen, CheckCircle, Copy, KeyRound, RefreshCw, Trash2, XCircle } from 'lucide-react'
 import { Button, Card } from '@/components/common'
 import { useAuth } from '@/contexts/AuthContext'
 import { useNotification } from '@/contexts/NotificationContext'
@@ -155,13 +155,28 @@ export const APIAccessSettings: React.FC = () => {
 
   return (
     <div className={styles.settingsContent}>
-      <div className={styles.settingsSection}>
-        <h2 className={styles.sectionTitle}>Acceso API</h2>
-        <p className={styles.sectionDescription}>
-          Configura credenciales para sistemas externos
-        </p>
+      <Card>
+        <div className={styles.panelHeader}>
+          <div className={styles.panelHeaderLeft}>
+            <div className={styles.iconBox}>
+              <KeyRound size={22} />
+            </div>
+            <div>
+              <h2 className={styles.panelTitle}>Acceso API</h2>
+              <p className={styles.panelDescription}>
+                Configura credenciales para sistemas externos
+              </p>
+            </div>
+          </div>
+          <div className={styles.panelHeaderActions}>
+            <div className={apiTokenMetadata?.hasToken ? styles.statusConnected : styles.statusDisconnected}>
+              {apiTokenMetadata?.hasToken ? <CheckCircle size={15} /> : <XCircle size={15} />}
+              {apiTokenMetadata?.hasToken ? 'Token activo' : 'Sin token'}
+            </div>
+          </div>
+        </div>
 
-        <Card variant="glass" padding="lg" style={{ marginTop: '1.5rem' }}>
+        <div className={styles.panelSection}>
           <div style={{ marginBottom: '1.25rem' }}>
             <h3 style={{
               fontSize: '1rem',
@@ -259,8 +274,8 @@ export const APIAccessSettings: React.FC = () => {
             </span>
             <ArrowRight size={18} style={{ flexShrink: 0 }} />
           </a>
-        </Card>
-      </div>
+        </div>
+      </Card>
     </div>
   )
 }
