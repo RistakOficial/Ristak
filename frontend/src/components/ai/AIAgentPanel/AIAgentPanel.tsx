@@ -56,21 +56,15 @@ type AIAgentAttachmentDraft = AIAgentAttachment & {
 
 const quickActions = [
   {
-    label: 'ROI de anuncios',
-    description: 'ROAS, utilidad y qué campañas escalar o cortar.',
-    prompt: 'Analiza el retorno de inversión de mis anuncios: gasto, ingresos atribuidos, ROAS, utilidad y qué campañas debo escalar, mantener o cortar.',
-    Icon: TrendingUp
-  },
-  {
     label: 'Cobrar cliente',
-    description: 'Busca el contacto y prepara el cobro correcto.',
-    prompt: 'Quiero cobrarle a un cliente. Ayúdame a encontrar el contacto correcto y dime qué datos te faltan para enviar link de pago o cobrar con tarjeta guardada.',
+    description: 'Arranca el flujo para cobrar más rápido.',
+    prompt: 'Quiero cobrarle a un cliente. Inicia el flujo de cobro: identifica el contacto correcto, revisa si tiene tarjeta guardada o cobros previos, confirma monto, concepto y método recomendado, y dime la forma más rápida de enviar link de pago o cobrar con tarjeta guardada.',
     Icon: CreditCard
   },
   {
     label: 'Agendar cita',
-    description: 'Encuentra al contacto y prepara la cita.',
-    prompt: 'Quiero agendar una cita. Ayúdame a encontrar el contacto correcto, revisar el calendario y dime qué fecha, hora y duración necesitas.',
+    description: 'Resuelve contacto, calendario y horario.',
+    prompt: 'Quiero agendar una cita. Inicia el flujo de agenda: identifica el contacto correcto, revisa el calendario disponible y confirma fecha, hora, duración, notas y cualquier dato faltante antes de crearla.',
     Icon: CalendarPlus
   },
   {
@@ -78,6 +72,12 @@ const quickActions = [
     description: 'Resuelve contacto y workflow antes de ejecutar.',
     prompt: 'Quiero mandar a un contacto a un workflow. Ayúdame a encontrar el contacto correcto y seleccionar el workflow adecuado antes de ejecutarlo.',
     Icon: GitBranch
+  },
+  {
+    label: 'Anuncios rentables',
+    description: 'Mejor y peor campaña con recomendaciones.',
+    prompt: 'Analiza mis anuncios empezando por la campaña que ahorita está siendo más rentable. Usa el rango visible actual si existe; si no, revisa el periodo reciente más útil. Primero dime la campaña más rentable y por qué con ROAS, utilidad, ingresos atribuidos y gasto. Después dime la campaña menos rentable y qué está fallando. Cierra con recomendaciones concretas para escalar, mantener, optimizar o cortar campañas, adsets y anuncios.',
+    Icon: TrendingUp
   }
 ]
 
