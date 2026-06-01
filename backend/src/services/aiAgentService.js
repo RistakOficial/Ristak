@@ -2417,6 +2417,276 @@ function buildHighLevelActionConfirmationRequiredOutput(call = {}) {
   }
 }
 
+function buildHighLevelMcpActionConfirmationRequiredOutput(request = {}) {
+  const toolName = cleanText(request.name || 'acción de GoHighLevel', 120)
+
+  return {
+    ok: false,
+    action: 'highlevel_mcp_request',
+    confirmationRequired: true,
+    error: 'Antes de hacer el cambio en GoHighLevel hay que confirmar que así está bien.',
+    summary: {
+      tool: toolName,
+      arguments: request.arguments || null
+    },
+    confirmationPrompt: [
+      'No hagas la acción todavía.',
+      'Resume en lenguaje humano qué acción de GoHighLevel se va a hacer, sobre qué recurso exacto y con qué datos.',
+      'Si falta una entidad exacta, un ID, un texto, una fecha, un archivo, un workflow, un pipeline, una oportunidad, un usuario, un canal o cualquier dato requerido por la tool, pregunta sólo ese dato.',
+      'No muestres payloads ni nombres técnicos salvo que el usuario los pida o sean necesarios para distinguir opciones.',
+      'Pide permiso con tono natural y corto. Cierra con algo como: "Entonces, solo para confirmar, ¿quieres que lo deje así?"'
+    ].join(' '),
+    clarificationOptions: buildHighLevelActionConfirmationOptions(toolName)
+  }
+}
+
+const HIGHLEVEL_GENERIC_PLACEHOLDER_VALUES = new Set([
+  'id',
+  'contactid',
+  'contact_id',
+  'workflowid',
+  'workflow_id',
+  'calendarid',
+  'calendar_id',
+  'pipelineid',
+  'pipeline_id',
+  'opportunityid',
+  'opportunity_id',
+  'userid',
+  'user_id',
+  'locationid',
+  'location_id',
+  'string',
+  'number',
+  'boolean',
+  'object',
+  'array',
+  'valor',
+  'value',
+  'nombre',
+  'name',
+  'texto',
+  'text',
+  'example',
+  'sample',
+  'placeholder',
+  'unknown',
+  'desconocido',
+  'pendiente',
+  'tbd',
+  'todo',
+  'n/a',
+  'na',
+  'null',
+  'undefined'
+])
+
+function isHighLevelPlaceholderValue(value) {
+  if (value === undefined || value === null) return true
+  if (typeof value !== 'string') return false
+
+  const raw = value.trim()
+  if (!raw) return true
+  const normalized = normalizeText(raw)
+
+  return HIGHLEVEL_GENERIC_PLACEHOLDER_VALUES.has(normalized) ||
+    /^[:{<[]?[a-z_]*(id|name|nombre|value|valor|text|texto)[>}:\]]?$/i.test(raw) ||
+    /^\{\{[^}]+\}\}$/.test(raw)
+}
+
+function collectHighLevelPlaceholderFields(value, prefix = 'body', depth = 0) {
+  if (depth > 5) return []
+  if (value === undefined) return []
+  if (value === null) return depth === 0 ? [prefix] : []
+
+  if (isHighLevelPlaceholderValue(value)) return [prefix]
+
+  if (Array.isArray(value)) {
+    return value.flatMap((item, index) =>
+      collectHighLevelPlaceholderFields(item, `${prefix}[${index}]`, depth + 1)
+    )
+  }
+
+  if (value && typeof value === 'object') {
+    return Object.entries(value).flatMap(([key, nestedValue]) =>
+      collectHighLevelPlaceholderFields(nestedValue, `${prefix}.${key}`, depth + 1)
+    )
+  }
+
+  return []
+}
+
+function collectHighLevelPathPlaceholderFields(path) {
+  return String(path || '')
+    .split('/')
+    .map(segment => decodeURIComponent(segment || '').trim())
+    .filter(Boolean)
+    .filter(segment => isHighLevelPlaceholderValue(segment))
+    .map(segment => `path.${segment}`)
+}
+
+function hasMeaningfulHighLevelBodyContent(body, highLevelConnection = {}) {
+  if (!highLevelRequestBodyHasContent(body)) return false
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return true
+
+  const autoLocationValues = new Set([
+    cleanText(highLevelConnection.locationId || '', 200),
+    'locationId',
+    'location_id',
+    'altId'
+  ].filter(Boolean))
+
+  return Object.entries(body).some(([key, value]) => {
+    if (['locationId', 'location_id', 'altId'].includes(key) && autoLocationValues.has(String(value || ''))) {
+      return false
+    }
+    return value !== undefined && value !== null && value !== ''
+  })
+}
+
+function buildHighLevelRestReadinessMissingOutput({
+  method,
+  path,
+  endpoint,
+  missingFields = [],
+  question = '',
+  reason = ''
+} = {}) {
+  const safeMissingFields = Array.isArray(missingFields)
+    ? missingFields.map(field => cleanText(String(field), 120)).filter(Boolean)
+    : []
+
+  return {
+    ok: false,
+    action: 'highlevel_rest_request',
+    readinessRequired: true,
+    error: question || reason || 'Falta completar datos indispensables antes de hacer esa acción en GoHighLevel.',
+    method,
+    path,
+    missingFields: safeMissingFields.length ? safeMissingFields : ['datos requeridos'],
+    endpoint: compactHighLevelEndpoint(endpoint),
+    questionHint: question || 'Pregunta una sola cosa en lenguaje humano; no pidas payloads ni parámetros técnicos.'
+  }
+}
+
+async function evaluateHighLevelRestMutationReadiness(apiKey, {
+  model = DEFAULT_MODEL,
+  restArguments = {},
+  highLevelConnection = {},
+  messages = [],
+  runtimeContext = {}
+} = {}) {
+  const method = String(restArguments.method || 'GET').toUpperCase()
+  if (method === 'GET') return null
+
+  let requestedPath
+  try {
+    requestedPath = cleanHighLevelPath(restArguments.path || '')
+  } catch {
+    return null
+  }
+
+  const pathWithDefaults = replaceHighLevelPathDefaults(requestedPath, highLevelConnection)
+  const unresolvedPathParams = getUnresolvedHighLevelPathParams(pathWithDefaults)
+  const endpoint = findHighLevelEndpoint({ method, path: pathWithDefaults }) ||
+    findHighLevelEndpoint({ method, path: requestedPath })
+
+  if (unresolvedPathParams.length || !endpoint) return null
+
+  const query = restArguments.query && typeof restArguments.query === 'object' && !Array.isArray(restArguments.query)
+    ? restArguments.query
+    : {}
+  const body = restArguments.body === undefined ? null : restArguments.body
+  const bodyPlaceholderFields = endpoint.requestBody?.required || body !== null
+    ? collectHighLevelPlaceholderFields(body, 'body')
+    : []
+  const placeholderFields = [
+    ...collectHighLevelPathPlaceholderFields(pathWithDefaults),
+    ...collectHighLevelPlaceholderFields(query, 'query'),
+    ...bodyPlaceholderFields
+  ].filter(field => !/(?:^|\.)locationId$|(?:^|\.)location_id$|(?:^|\.)altId$/.test(field))
+
+  if (placeholderFields.length) {
+    return buildHighLevelRestReadinessMissingOutput({
+      method,
+      path: pathWithDefaults,
+      endpoint,
+      missingFields: placeholderFields.slice(0, 4),
+      question: 'Me falta un dato real para completar esa acción en GoHighLevel.'
+    })
+  }
+
+  if (endpoint.requestBody?.required && !hasMeaningfulHighLevelBodyContent(body, highLevelConnection)) {
+    return buildHighLevelRestReadinessMissingOutput({
+      method,
+      path: pathWithDefaults,
+      endpoint,
+      missingFields: ['datos del cambio'],
+      question: '¿Qué datos exactos quieres usar para ese cambio en GoHighLevel?'
+    })
+  }
+
+  try {
+    const { text } = await callOpenAIResponse(apiKey, {
+      model,
+      maxOutputTokens: 700,
+      instructions: [
+        'Eres una compuerta de completitud para mutaciones REST de GoHighLevel dentro de Ristak.',
+        'Tu trabajo NO es pedir confirmación final. Sólo decides si el request ya tiene todos los datos indispensables para la acción específica.',
+        'No bloquees por campos opcionales ni porque falte permiso humano; la confirmación final la maneja otra guarda.',
+        'Bloquea si falta identificar el recurso exacto, falta un ID requerido, falta el valor/texto/fecha/archivo/canal/estado que se va a crear o cambiar, o si el body/query trae placeholders, valores genéricos o inferencias no sustentadas por la conversación.',
+        'Usa el endpoint documentado para inferir los requisitos mínimos. Si el endpoint requiere body, debe haber datos reales del cambio, no body vacío ni sólo locationId.',
+        'Si bloqueas, pregunta UNA sola cosa en español conversacional, sin endpoints, payloads ni nombres técnicos salvo que sean indispensables para distinguir opciones.',
+        'Devuelve sólo JSON válido: {"ready":true,"missingFields":[],"question":"","reason":"..."} o {"ready":false,"missingFields":["..."],"question":"...","reason":"..."}'
+      ].join('\n'),
+      input: [
+        `Fecha/hora local: ${runtimeContext.nowIso || ''}`,
+        '',
+        'Conversación reciente:',
+        buildConversationText(messages) || 'Sin mensajes previos.',
+        '',
+        'Endpoint documentado de HighLevel:',
+        JSON.stringify(compactHighLevelEndpoint(endpoint), null, 2),
+        '',
+        'Request preparado por el agente:',
+        JSON.stringify({
+          method,
+          path: pathWithDefaults,
+          query,
+          body
+        }, null, 2),
+        '',
+        'Decide si faltan datos indispensables antes de permitir la mutación.'
+      ].join('\n')
+    })
+
+    const parsed = parseJsonObject(text)
+    if (parsed.ready !== false) return null
+
+    const missingFields = Array.isArray(parsed.missingFields)
+      ? parsed.missingFields.map(field => cleanText(String(field), 120)).filter(Boolean)
+      : []
+    const question = cleanText(parsed.question || '', 500)
+    const reason = cleanText(parsed.reason || '', 500)
+
+    if (!missingFields.length && /(confirm|permiso|autoriza|autoriz|ejecut)/i.test(`${question} ${reason}`)) {
+      return null
+    }
+
+    return buildHighLevelRestReadinessMissingOutput({
+      method,
+      path: pathWithDefaults,
+      endpoint,
+      missingFields,
+      question,
+      reason
+    })
+  } catch (error) {
+    logger.warn(`No se pudo evaluar completitud REST de HighLevel: ${error.message}`)
+    return null
+  }
+}
+
 function requiresPaymentExecutionConfirmation(call = {}) {
   return PAYMENT_MUTATION_TOOL_NAMES.has(call.name) || isHighLevelPaymentRestMutation(call)
 }
@@ -9451,7 +9721,7 @@ function buildHighLevelTools(highLevelConnection, options = {}) {
       server_description: 'Official HighLevel MCP server for CRM operations: contacts, conversations, calendars, appointments, opportunities, workflows, media storage, files/images/assets, locations, social posting, blogs, email templates and related operations. For payment or invoice mutations, use the internal Ristak payment tools instead.',
       server_url: HIGHLEVEL_MCP_SERVER_URL,
       authorization: highLevelConnection.token,
-      require_approval: options.customActionIntent ? 'always' : 'never'
+      require_approval: 'always'
     })
   }
 
@@ -10462,18 +10732,17 @@ async function callOpenAIResponseWithActionTools(apiKey, {
     const outputs = []
 
     for (const request of mcpApprovalRequests) {
-      const customActionMcpMutation = Boolean(agentRoute?.customActionIntent) &&
-        isLikelyHighLevelMcpMutation(request)
-      const contactVerificationOutput = customActionMcpMutation
+      const highLevelMcpMutation = isLikelyHighLevelMcpMutation(request)
+      const contactVerificationOutput = highLevelMcpMutation
         ? await buildContactVerificationForHighLevelMcpMutation(request, { messages })
         : null
-      const blockCustomActionMutation = customActionMcpMutation &&
+      const blockHighLevelMcpMutation = highLevelMcpMutation &&
         (Boolean(contactVerificationOutput) || !hasExplicitHighLevelActionConfirmation(messages))
 
       outputs.push({
         type: 'mcp_approval_response',
         approval_request_id: request.id,
-        approve: !blockCustomActionMutation
+        approve: !blockHighLevelMcpMutation
       })
 
       if (contactVerificationOutput?.clarificationOptions?.length) {
@@ -10487,8 +10756,19 @@ async function callOpenAIResponseWithActionTools(apiKey, {
           contactVerificationRequired: true,
           contacts: contactVerificationOutput.contacts || []
         })
-      } else if (blockCustomActionMutation) {
-        latestClarificationOptions = buildHighLevelActionConfirmationOptions('GoHighLevel')
+      } else if (blockHighLevelMcpMutation) {
+        const confirmationOutput = buildHighLevelMcpActionConfirmationRequiredOutput(request)
+        latestClarificationOptions = confirmationOutput.clarificationOptions
+        appendUniqueActionEvidence(actionEvidence, seenActionEvidence, {
+          type: 'mcp_guard',
+          tool: request.name || 'mcp_tool',
+          ok: false,
+          action: confirmationOutput.action,
+          error: confirmationOutput.error,
+          confirmationRequired: true,
+          summary: confirmationOutput.summary,
+          clarificationOptions: confirmationOutput.clarificationOptions
+        })
       }
     }
 
@@ -10563,9 +10843,20 @@ async function callOpenAIResponseWithActionTools(apiKey, {
             const contactVerificationOutput = restMutation
               ? await buildContactVerificationForHighLevelRestMutation(restArguments, { messages })
               : null
+            const readinessOutput = restMutation && !contactVerificationOutput
+              ? await evaluateHighLevelRestMutationReadiness(apiKey, {
+                  model,
+                  restArguments,
+                  highLevelConnection,
+                  messages,
+                  runtimeContext
+                })
+              : null
 
             if (contactVerificationOutput) {
               output = contactVerificationOutput
+            } else if (readinessOutput) {
+              output = readinessOutput
             } else if (requiresContactUpdateConfirmation(restCall) && !hasExplicitContactUpdateConfirmation(messages)) {
               output = buildContactUpdateConfirmationRequiredOutput({
                 contact: {
@@ -11080,8 +11371,9 @@ const UNIFIED_CAPABILITY_PROMPT = [
   `- Catálogo REST oficial de Sub-Account cargado: ${HIGHLEVEL_ENDPOINT_CATALOG_SUMMARY}.`,
   '- Si el último mensaje menciona explícitamente GoHighLevel, GoHi Level, HighLevel o GHL y pide buscar, consultar, hacer GET/POST/PUT/PATCH/DELETE, crear o actualizar algo, usa herramientas reales de HighLevel en ese turno. Si el usuario no dice HighLevel pero pide de forma operativa un recurso claramente propio del catálogo, también usa HighLevel.',
   '- Antes de escoger herramienta, arma mentalmente un marco semántico: intención (leer/crear/actualizar/eliminar/enviar/cobrar), recurso canónico de negocio, alcance, filtros, IDs necesarios, riesgo y si es lectura o escritura. No uses una lista cerrada de frases; entiende jerga, diminutivos, errores de escritura, nombres informales y contexto de conversación.',
+  '- Para cualquier escritura en GoHighLevel, primero investiga qué requiere el request: recurso exacto, endpoint/tool, IDs de path, query requerida, body requerido, valores a crear/cambiar, archivos/canales/fechas si aplican y confirmación humana. El usuario puede dar datos en cualquier orden; conserva lo dicho y pregunta sólo el siguiente dato faltante.',
   '- Prioriza HighLevel MCP porque lista y llama tools oficiales. Si el MCP no expone lo necesario, interpreta semánticamente la intención, usa lookup_highlevel_endpoint con términos canónicos de HighLevel para encontrar el método/path documentado y luego highlevel_rest_request. No contestes desde la DB local salvo que el usuario pida Ristak/DB/reportes.',
-  '- highlevel_rest_request rechaza rutas que no estén en el catálogo Sub-Account; si devuelve sugerencias, elige una ruta sugerida o pregunta el dato faltante.',
+  '- highlevel_rest_request rechaza rutas que no estén en el catálogo Sub-Account y también bloquea escrituras con datos incompletos. Si devuelve missingFields, requestBodyRequired, readinessRequired o sugerencias, pregunta ese dato faltante; no improvises body, IDs ni valores.',
   '- Para usuarios no técnicos, no pidas que digan endpoint, método, ID técnico o nombre exacto del módulo si tú puedes inferirlo. Traduce el pedido a términos canónicos de HighLevel y busca el endpoint.',
   '- Si el usuario pide listar, ver, revisar, buscar, traer o hacer GET de un recurso de HighLevel, es lectura. Ejecuta lookup_highlevel_endpoint y luego highlevel_rest_request GET. No pidas contacto, email, teléfono ni ID salvo que el endpoint elegido tenga contactId u otro ID obligatorio en el path.',
   '- Para citas/calendarios operativos usa manage_highlevel_appointment antes que MCP o highlevel_rest_request. Operaciones: lookup_slots, create, reschedule, cancel, confirm, showed, noshow y delete.',
