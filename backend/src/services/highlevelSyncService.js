@@ -4,9 +4,9 @@
  */
 
 import fetch from 'node-fetch'
-import { db, setAppConfig } from '../config/database.js'
+import { db, setAppConfig, getAppConfig } from '../config/database.js'
 import { logger } from '../utils/logger.js'
-import { syncMetaAds } from './metaAdsService.js'
+import { getMetaConfig, saveMetaConfig, syncMetaAds } from './metaAdsService.js'
 import { updateContactsStats } from '../utils/updateContactsStats.js'
 import {
   fetchHighLevelContactCustomFieldDefinitions,
@@ -16,6 +16,15 @@ import { hasContactCustomFieldsPayload } from '../utils/contactCustomFields.js'
 
 const HIGHLEVEL_BASE_URL = 'https://services.leadconnectorhq.com'
 const HIGHLEVEL_API_VERSION = '2021-07-28'
+const MASKED_SECRET_PREFIX = '***'
+const META_CUSTOM_VALUE_FIELDS = [
+  { key: 'adAccountId', names: ['Facebook - Ad Account ID'] },
+  { key: 'accessToken', names: ['Facebook - App Access Token'], secret: true },
+  { key: 'pixelId', names: ['Facebook - Pixel ID', 'pixel_id'] },
+  { key: 'pageId', names: ['Facebook - Page ID'] },
+  { key: 'pixelApiToken', names: ['Facebook - Pixel API Token'], secret: true },
+  { key: 'whatsappBusinessAccountId', names: ['Facebook - WhatsApp Business Account ID', 'WhatsApp Business Account ID', 'WABA ID'] }
+]
 
 // Variable global para trackear el estado de sincronización
 let syncProgress = {
@@ -96,6 +105,140 @@ function buildHighLevelUrl(pathOrUrl, params = {}) {
   })
 
   return url.toString()
+}
+
+function cleanString(value) {
+  if (value === null || value === undefined) return ''
+  return String(value).trim()
+}
+
+function isMaskedSecret(value) {
+  return cleanString(value).startsWith(MASKED_SECRET_PREFIX)
+}
+
+function maskSecret(value) {
+  const cleanValue = cleanString(value)
+  return cleanValue ? `${MASKED_SECRET_PREFIX}${cleanValue.slice(-8)}` : ''
+}
+
+function normalizeAdAccountId(value) {
+  return cleanString(value).replace(/^act_/i, '')
+}
+
+function isNonEmptyUnmasked(value) {
+  const cleanValue = cleanString(value)
+  return Boolean(cleanValue) && !isMaskedSecret(cleanValue)
+}
+
+function getCustomValue(customValues = [], names = []) {
+  for (const name of names) {
+    const match = customValues.find(customValue => customValue.name === name)
+    const value = cleanString(match?.value)
+    if (value) return value
+  }
+
+  return ''
+}
+
+function extractMetaCredentialsFromCustomValues(customValues = [], options = {}) {
+  const maskSecrets = options.maskSecrets === true
+  const credentials = {}
+
+  META_CUSTOM_VALUE_FIELDS.forEach(field => {
+    const value = getCustomValue(customValues, field.names)
+    credentials[field.key] = field.secret && maskSecrets ? maskSecret(value) : value
+  })
+
+  credentials.adAccountId = normalizeAdAccountId(credentials.adAccountId)
+
+  return credentials
+}
+
+function hasRequiredMetaCredentials(credentials = {}) {
+  credentials = credentials || {}
+  return Boolean(
+    normalizeAdAccountId(credentials.adAccountId) &&
+    isNonEmptyUnmasked(credentials.accessToken)
+  )
+}
+
+function hasAnyMetaCredential(credentials = {}) {
+  credentials = credentials || {}
+  return META_CUSTOM_VALUE_FIELDS.some(field => Boolean(cleanString(credentials[field.key])))
+}
+
+function buildLocalMetaCredentials(metaConfig = {}, whatsappBusinessAccountId = '') {
+  if (!metaConfig) return null
+
+  return {
+    adAccountId: normalizeAdAccountId(metaConfig.ad_account_id),
+    accessToken: cleanString(metaConfig.access_token),
+    pixelId: cleanString(metaConfig.pixel_id),
+    pageId: cleanString(metaConfig.page_id),
+    pixelApiToken: cleanString(metaConfig.pixel_api_token),
+    whatsappBusinessAccountId: cleanString(whatsappBusinessAccountId)
+  }
+}
+
+function maskMetaCredentials(credentials = {}) {
+  credentials = credentials || {}
+  return {
+    adAccountId: normalizeAdAccountId(credentials.adAccountId),
+    accessToken: maskSecret(credentials.accessToken),
+    pixelId: cleanString(credentials.pixelId),
+    pageId: cleanString(credentials.pageId),
+    pixelApiToken: maskSecret(credentials.pixelApiToken),
+    whatsappBusinessAccountId: cleanString(credentials.whatsappBusinessAccountId)
+  }
+}
+
+function mergeMetaCredentials(primary = {}, fallback = {}) {
+  primary = primary || {}
+  fallback = fallback || {}
+  return {
+    adAccountId: normalizeAdAccountId(primary.adAccountId || fallback.adAccountId),
+    accessToken: cleanString(primary.accessToken || fallback.accessToken),
+    pixelId: cleanString(primary.pixelId || fallback.pixelId),
+    pageId: cleanString(primary.pageId || fallback.pageId),
+    pixelApiToken: cleanString(primary.pixelApiToken || fallback.pixelApiToken),
+    whatsappBusinessAccountId: cleanString(primary.whatsappBusinessAccountId || fallback.whatsappBusinessAccountId)
+  }
+}
+
+function credentialsMissingValues(target = {}, source = {}) {
+  target = target || {}
+  source = source || {}
+  return ['pixelId', 'pageId', 'pixelApiToken', 'whatsappBusinessAccountId'].some(key =>
+    !cleanString(target[key]) && cleanString(source[key])
+  )
+}
+
+async function fetchHighLevelCustomValues(locationId, apiToken) {
+  const response = await fetch(`${HIGHLEVEL_BASE_URL}/locations/${locationId}/customValues`, {
+    headers: {
+      'Authorization': `Bearer ${apiToken}`,
+      'Version': HIGHLEVEL_API_VERSION
+    }
+  })
+
+  if (!response.ok) {
+    throw new Error(`No se pudieron obtener custom values de HighLevel (${response.status})`)
+  }
+
+  const data = await response.json()
+  return data.customValues || []
+}
+
+async function getLocalMetaCredentials() {
+  const [metaConfig, whatsappBusinessAccountId] = await Promise.all([
+    getMetaConfig().catch(error => {
+      logger.warn(`No se pudo leer Meta local para reconciliación: ${error.message}`)
+      return null
+    }),
+    getAppConfig('meta_whatsapp_business_account_id').catch(() => '')
+  ])
+
+  return buildLocalMetaCredentials(metaConfig, whatsappBusinessAccountId)
 }
 
 function getPaginationHints(data = {}) {
@@ -995,8 +1138,13 @@ async function setupHighLevelWebhooks(locationId, apiToken, baseUrl) {
     }
   }
 
-  // Obtener custom values de Meta/Facebook si existen
-  await fetchAndSaveMetaConfig(locationId, apiToken)
+  // Reconciliar Meta/Facebook si existe localmente o dentro de HighLevel.
+  const reconciliation = await reconcileMetaBusinessWithHighLevel(locationId, apiToken, { prefer: 'local' })
+  if (reconciliation.success) {
+    logger.info(`Reconciliación Meta/HighLevel: ${reconciliation.action} - ${reconciliation.message}`)
+  } else {
+    logger.warn(`No se pudo reconciliar Meta/HighLevel: ${reconciliation.message}`)
+  }
 }
 
 /**
@@ -1028,14 +1176,12 @@ export async function saveMetaCustomValues(locationId, apiToken, metaCredentials
     const existingCustomValues = data.customValues || []
 
     // Mapeo de campos (System User - solo necesita Access Token + Ad Account + Pixel + Page ID + Pixel API Token)
-    const fieldsToSave = [
-      { key: 'adAccountId', name: 'Facebook - Ad Account ID', value: metaCredentials.adAccountId },
-      { key: 'accessToken', name: 'Facebook - App Access Token', value: metaCredentials.accessToken },
-      { key: 'pixelId', name: 'Facebook - Pixel ID', value: metaCredentials.pixelId },
-      { key: 'pageId', name: 'Facebook - Page ID', value: metaCredentials.pageId },
-      { key: 'pixelApiToken', name: 'Facebook - Pixel API Token', value: metaCredentials.pixelApiToken },
-      { key: 'whatsappBusinessAccountId', name: 'Facebook - WhatsApp Business Account ID', value: metaCredentials.whatsappBusinessAccountId }
-    ]
+    const fieldsToSave = META_CUSTOM_VALUE_FIELDS.map(field => ({
+      key: field.key,
+      name: field.names[0],
+      value: metaCredentials[field.key],
+      secret: field.secret === true
+    }))
 
     const results = []
 
@@ -1043,6 +1189,11 @@ export async function saveMetaCustomValues(locationId, apiToken, metaCredentials
       // Si el valor está vacío o es null, saltar (no guardar)
       if (!field.value || field.value.trim() === '') {
         logger.info(`Saltando ${field.name} (vacío)`)
+        continue
+      }
+
+      if (field.secret && isMaskedSecret(field.value)) {
+        logger.info(`Saltando ${field.name} (enmascarado)`)
         continue
       }
 
@@ -1120,28 +1271,176 @@ export async function saveMetaCustomValues(locationId, apiToken, metaCredentials
 }
 
 /**
+ * Reconciliación inteligente Meta <-> HighLevel.
+ * - Si Meta local existe y HighLevel no tiene valores de Meta, empuja local a HighLevel.
+ * - Si HighLevel tiene valores completos y Meta local no existe, configura Meta local.
+ * - Si ambos existen con el mismo core, rellena campos opcionales faltantes sin borrar nada.
+ * - Si ambos existen y el core difiere, gana la fuente indicada por `prefer`.
+ */
+export async function reconcileMetaBusinessWithHighLevel(locationId, apiToken, options = {}) {
+  const prefer = options.prefer === 'highlevel' ? 'highlevel' : 'local'
+  const result = {
+    success: true,
+    action: 'none',
+    savedInHighLevel: false,
+    savedInLocal: false,
+    localConfigured: false,
+    highLevelConfigured: false,
+    highLevelHasAnyMetaValue: false,
+    message: 'Sin cambios de Meta Business'
+  }
+
+  try {
+    if (!locationId || !apiToken) {
+      result.success = false
+      result.message = 'HighLevel no está configurado'
+      return result
+    }
+
+    const [customValues, localCredentials] = await Promise.all([
+      fetchHighLevelCustomValues(locationId, apiToken).catch(error => {
+        logger.warn(`No se pudieron leer custom values para reconciliar Meta: ${error.message}`)
+        return []
+      }),
+      getLocalMetaCredentials()
+    ])
+
+    const highLevelCredentials = extractMetaCredentialsFromCustomValues(customValues, { maskSecrets: false })
+    const localComplete = hasRequiredMetaCredentials(localCredentials)
+    const highLevelComplete = hasRequiredMetaCredentials(highLevelCredentials)
+
+    result.localConfigured = localComplete
+    result.highLevelConfigured = highLevelComplete
+    result.highLevelHasAnyMetaValue = hasAnyMetaCredential(highLevelCredentials)
+
+    if (!localComplete && !highLevelComplete) {
+      result.action = result.highLevelHasAnyMetaValue ? 'skipped_incomplete_highlevel' : 'none'
+      result.message = result.highLevelHasAnyMetaValue
+        ? 'HighLevel tiene datos de Meta incompletos; no se alteró la configuración local'
+        : 'No hay configuración de Meta para reconciliar'
+      return result
+    }
+
+    if (localComplete && !highLevelComplete) {
+      await saveMetaCustomValues(locationId, apiToken, localCredentials)
+      result.action = 'local_to_highlevel'
+      result.savedInHighLevel = true
+      result.message = 'Meta local sincronizado hacia HighLevel'
+      return result
+    }
+
+    if (highLevelComplete && !localComplete) {
+      const credentialsToSave = mergeMetaCredentials(highLevelCredentials)
+      await saveMetaConfig(
+        credentialsToSave.adAccountId,
+        credentialsToSave.accessToken,
+        credentialsToSave.pixelId || null,
+        credentialsToSave.pixelApiToken || null,
+        credentialsToSave.pageId || null
+      )
+
+      if (credentialsToSave.whatsappBusinessAccountId) {
+        await setAppConfig('meta_whatsapp_business_account_id', credentialsToSave.whatsappBusinessAccountId)
+      }
+
+      result.action = 'highlevel_to_local'
+      result.savedInLocal = true
+      result.message = 'Meta configurado localmente desde HighLevel'
+      return result
+    }
+
+    const sameCore =
+      normalizeAdAccountId(localCredentials.adAccountId) === normalizeAdAccountId(highLevelCredentials.adAccountId) &&
+      cleanString(localCredentials.accessToken) === cleanString(highLevelCredentials.accessToken)
+
+    if (sameCore) {
+      const localNeedsUpdate = credentialsMissingValues(localCredentials, highLevelCredentials)
+      const highLevelNeedsUpdate = credentialsMissingValues(highLevelCredentials, localCredentials)
+
+      if (localNeedsUpdate) {
+        const mergedLocal = mergeMetaCredentials(localCredentials, highLevelCredentials)
+        await saveMetaConfig(
+          mergedLocal.adAccountId,
+          mergedLocal.accessToken,
+          mergedLocal.pixelId || null,
+          mergedLocal.pixelApiToken || null,
+          mergedLocal.pageId || null
+        )
+
+        if (mergedLocal.whatsappBusinessAccountId) {
+          await setAppConfig('meta_whatsapp_business_account_id', mergedLocal.whatsappBusinessAccountId)
+        }
+
+        result.savedInLocal = true
+      }
+
+      if (highLevelNeedsUpdate) {
+        const mergedHighLevel = mergeMetaCredentials(localCredentials, highLevelCredentials)
+        await saveMetaCustomValues(locationId, apiToken, mergedHighLevel)
+        result.savedInHighLevel = true
+      }
+
+      if (result.savedInLocal && result.savedInHighLevel) {
+        result.action = 'merged_both'
+        result.message = 'Meta y HighLevel quedaron completados en ambos lados'
+      } else if (result.savedInLocal) {
+        result.action = 'highlevel_completed_local'
+        result.message = 'HighLevel completó campos faltantes de Meta local'
+      } else if (result.savedInHighLevel) {
+        result.action = 'local_completed_highlevel'
+        result.message = 'Meta local completó campos faltantes en HighLevel'
+      } else {
+        result.action = 'already_synced'
+        result.message = 'Meta y HighLevel ya estaban sincronizados'
+      }
+
+      return result
+    }
+
+    if (prefer === 'highlevel') {
+      const credentialsToSave = mergeMetaCredentials(highLevelCredentials, localCredentials)
+      await saveMetaConfig(
+        credentialsToSave.adAccountId,
+        credentialsToSave.accessToken,
+        credentialsToSave.pixelId || null,
+        credentialsToSave.pixelApiToken || null,
+        credentialsToSave.pageId || null
+      )
+
+      if (credentialsToSave.whatsappBusinessAccountId) {
+        await setAppConfig('meta_whatsapp_business_account_id', credentialsToSave.whatsappBusinessAccountId)
+      }
+
+      result.action = 'highlevel_to_local_conflict'
+      result.savedInLocal = true
+      result.message = 'HighLevel reemplazó la configuración local de Meta por preferencia explícita'
+      return result
+    }
+
+    await saveMetaCustomValues(locationId, apiToken, localCredentials)
+    result.action = 'local_to_highlevel_conflict'
+    result.savedInHighLevel = true
+    result.message = 'Meta local se mantuvo y se sincronizó hacia HighLevel'
+    return result
+  } catch (error) {
+    logger.error(`Error reconciliando Meta Business con HighLevel: ${error.message}`)
+    return {
+      ...result,
+      success: false,
+      action: 'error',
+      message: error.message
+    }
+  }
+}
+
+/**
  * Obtiene custom values de Meta desde HighLevel y los devuelve
  */
 export async function fetchAndSaveMetaConfig(locationId, apiToken) {
   try {
     logger.info('Buscando configuración de Meta en custom values de HighLevel...')
 
-    const url = `https://services.leadconnectorhq.com/locations/${locationId}/customValues`
-
-    const response = await fetch(url, {
-      headers: {
-        'Authorization': `Bearer ${apiToken}`,
-        'Version': '2021-07-28'
-      }
-    })
-
-    if (!response.ok) {
-      logger.warn('No se pudieron obtener custom values de HighLevel')
-      return null
-    }
-
-    const data = await response.json()
-    const customValues = data.customValues || []
+    const customValues = await fetchHighLevelCustomValues(locationId, apiToken)
 
     // Debug: Ver todos los custom values recibidos
     logger.info(`Total de custom values encontrados: ${customValues.length}`)
@@ -1149,36 +1448,19 @@ export async function fetchAndSaveMetaConfig(locationId, apiToken) {
       logger.info('Custom values disponibles:', customValues.map(cv => cv.name).join(', '))
     }
 
-    // Buscar los custom values de Facebook (con los nombres reales de HighLevel)
-    // System User - solo necesita Access Token + Ad Account ID + Pixel ID + Page ID + Pixel API Token
-    const fbAdAccountId = customValues.find(cv => cv.name === 'Facebook - Ad Account ID')?.value
-    const fbAccessToken = customValues.find(cv => cv.name === 'Facebook - App Access Token')?.value
-    // Soportar ambos nombres para pixel (nuevo: "Facebook - Pixel ID", legacy: "pixel_id")
-    const fbPixelId = customValues.find(cv => cv.name === 'Facebook - Pixel ID')?.value ||
-                      customValues.find(cv => cv.name === 'pixel_id')?.value
-    const fbPageId = customValues.find(cv => cv.name === 'Facebook - Page ID')?.value
-    const fbPixelApiToken = customValues.find(cv => cv.name === 'Facebook - Pixel API Token')?.value
-    const fbWhatsappBusinessAccountId = customValues.find(cv => cv.name === 'Facebook - WhatsApp Business Account ID')?.value ||
-                                        customValues.find(cv => cv.name === 'WhatsApp Business Account ID')?.value ||
-                                        customValues.find(cv => cv.name === 'WABA ID')?.value
+    const rawCredentials = extractMetaCredentialsFromCustomValues(customValues, { maskSecrets: false })
+    const maskedCredentials = maskMetaCredentials(rawCredentials)
 
     // Debug: Ver qué valores se encontraron
-    logger.info(`Valores encontrados - AdAccountId: ${fbAdAccountId ? 'SÍ' : 'NO'}, AccessToken: ${fbAccessToken ? 'SÍ' : 'NO'}, PixelId: ${fbPixelId ? 'SÍ' : 'NO'}, PageId: ${fbPageId ? 'SÍ' : 'NO'}, PixelApiToken: ${fbPixelApiToken ? 'SÍ' : 'NO'}, WABA: ${fbWhatsappBusinessAccountId ? 'SÍ' : 'NO'}`)
+    logger.info(`Valores encontrados - AdAccountId: ${rawCredentials.adAccountId ? 'SÍ' : 'NO'}, AccessToken: ${rawCredentials.accessToken ? 'SÍ' : 'NO'}, PixelId: ${rawCredentials.pixelId ? 'SÍ' : 'NO'}, PageId: ${rawCredentials.pageId ? 'SÍ' : 'NO'}, PixelApiToken: ${rawCredentials.pixelApiToken ? 'SÍ' : 'NO'}, WABA: ${rawCredentials.whatsappBusinessAccountId ? 'SÍ' : 'NO'}`)
 
-    if (fbWhatsappBusinessAccountId) {
-      await setAppConfig('meta_whatsapp_business_account_id', fbWhatsappBusinessAccountId)
+    if (rawCredentials.whatsappBusinessAccountId) {
+      await setAppConfig('meta_whatsapp_business_account_id', rawCredentials.whatsappBusinessAccountId)
     }
 
     // Devolver los valores encontrados (enmascarar tokens para seguridad)
     // Solo se muestran los últimos 8 caracteres, el resto se oculta con ***
-    return {
-      adAccountId: fbAdAccountId || '',
-      accessToken: fbAccessToken ? '***' + fbAccessToken.slice(-8) : '',
-      pixelId: fbPixelId || '',
-      pageId: fbPageId || '',
-      pixelApiToken: fbPixelApiToken ? '***' + fbPixelApiToken.slice(-8) : '',
-      whatsappBusinessAccountId: fbWhatsappBusinessAccountId || ''
-    }
+    return maskedCredentials
   } catch (error) {
     logger.error('Error obteniendo config de Meta desde HighLevel:', error.message)
     return null

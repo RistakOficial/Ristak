@@ -19,7 +19,11 @@ import {
   buildContactKey,
   buildDedupExpression
 } from '../services/analyticsService.js';
-import { fetchAndSaveMetaConfig } from '../services/highlevelSyncService.js';
+import {
+  fetchAndSaveMetaConfig,
+  reconcileMetaBusinessWithHighLevel,
+  saveMetaCustomValues
+} from '../services/highlevelSyncService.js';
 import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js';
 import { API_URLS } from '../config/constants.js';
 import fetch from 'node-fetch';
@@ -36,6 +40,40 @@ const SUCCESS_PAYMENT_STATUSES = new Set([
 const REFUND_PAYMENT_STATUSES = new Set(['refunded', 'refund']);
 
 const isPostgres = Boolean(process.env.DATABASE_URL);
+const MASKED_SECRET_PREFIX = '***';
+
+function cleanString(value) {
+  if (value === null || value === undefined) return '';
+  return String(value).trim();
+}
+
+function isMaskedSecret(value) {
+  return cleanString(value).startsWith(MASKED_SECRET_PREFIX);
+}
+
+function maskSecret(value) {
+  const cleanValue = cleanString(value);
+  return cleanValue ? `${MASKED_SECRET_PREFIX}${cleanValue.slice(-8)}` : '';
+}
+
+function normalizeMetaAdAccountId(value) {
+  return cleanString(value).replace(/^act_/i, '');
+}
+
+function hasUsableLocalMetaConfig(metaConfig) {
+  return Boolean(metaConfig?.ad_account_id && metaConfig?.access_token);
+}
+
+function toMaskedMetaCredentials(metaConfig = {}, whatsappBusinessAccountId = '') {
+  return {
+    adAccountId: normalizeMetaAdAccountId(metaConfig.ad_account_id),
+    accessToken: maskSecret(metaConfig.access_token),
+    pixelId: cleanString(metaConfig.pixel_id),
+    pageId: cleanString(metaConfig.page_id),
+    pixelApiToken: maskSecret(metaConfig.pixel_api_token),
+    whatsappBusinessAccountId: cleanString(whatsappBusinessAccountId)
+  };
+}
 
 function timestampDateExpression(column, timezone = 'UTC') {
   if (!isPostgres) {
@@ -2003,38 +2041,86 @@ export const getFunnelMetrics = async (req, res) => {
  */
 export const getMetaCustomValues = async (req, res) => {
   try {
-    logger.info('Obteniendo custom values de Meta desde HighLevel...');
+    logger.info('Obteniendo configuración de Meta desde HighLevel o DB local...');
 
-    // 1. Obtener configuración de HighLevel
     const hlConfig = await db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1');
+    const localMetaConfig = await getMetaConfig().catch(error => {
+      logger.warn(`No se pudo leer Meta local: ${error.message}`);
+      return null;
+    });
 
-    if (!hlConfig || !hlConfig.location_id || !hlConfig.api_token) {
-      return res.status(400).json({
-        success: false,
-        error: 'No hay configuración de HighLevel. Primero debes conectar HighLevel en Settings.'
-      });
+    if (hlConfig?.location_id && hlConfig?.api_token) {
+      const reconciliation = await reconcileMetaBusinessWithHighLevel(
+        hlConfig.location_id,
+        hlConfig.api_token,
+        { prefer: 'local' }
+      );
+
+      logger.info(`Reconciliación Meta/HighLevel al cargar Settings: ${reconciliation.action} - ${reconciliation.message}`);
+
+      const metaCustomValues = await fetchAndSaveMetaConfig(hlConfig.location_id, hlConfig.api_token);
+      const refreshedLocalConfig = await getMetaConfig().catch(() => null);
+
+      if (metaCustomValues && (
+        metaCustomValues.adAccountId ||
+        metaCustomValues.accessToken ||
+        metaCustomValues.pixelId ||
+        metaCustomValues.pageId ||
+        metaCustomValues.pixelApiToken ||
+        metaCustomValues.whatsappBusinessAccountId
+      )) {
+        return res.json({
+          success: true,
+          data: metaCustomValues,
+          source: 'highlevel',
+          reconciliation
+        });
+      }
+
+      if (hasUsableLocalMetaConfig(refreshedLocalConfig)) {
+        const whatsappBusinessAccountId = await db.get(
+          'SELECT config_value FROM app_config WHERE config_key = ?',
+          ['meta_whatsapp_business_account_id']
+        );
+
+        return res.json({
+          success: true,
+          data: toMaskedMetaCredentials(refreshedLocalConfig, whatsappBusinessAccountId?.config_value),
+          source: 'local',
+          reconciliation
+        });
+      }
     }
 
-    // 2. Buscar custom values de Meta en HighLevel
-    const metaCustomValues = await fetchAndSaveMetaConfig(hlConfig.location_id, hlConfig.api_token);
+    if (hasUsableLocalMetaConfig(localMetaConfig)) {
+      const whatsappBusinessAccountId = await db.get(
+        'SELECT config_value FROM app_config WHERE config_key = ?',
+        ['meta_whatsapp_business_account_id']
+      );
 
-    if (!metaCustomValues) {
       return res.json({
         success: true,
-        data: {
-          adAccountId: '',
-          accessToken: '',
-          pixelId: '',
-          pageId: '',
-          pixelApiToken: '',
-          whatsappBusinessAccountId: ''
+        data: toMaskedMetaCredentials(localMetaConfig, whatsappBusinessAccountId?.config_value),
+        source: 'local',
+        reconciliation: {
+          success: true,
+          action: 'local_only',
+          message: 'HighLevel no está configurado; usando Meta local'
         }
       });
     }
 
     res.json({
       success: true,
-      data: metaCustomValues
+      data: {
+        adAccountId: '',
+        accessToken: '',
+        pixelId: '',
+        pageId: '',
+        pixelApiToken: '',
+        whatsappBusinessAccountId: ''
+      },
+      source: 'empty'
     });
 
   } catch (error) {
@@ -2047,14 +2133,14 @@ export const getMetaCustomValues = async (req, res) => {
 };
 
 /**
- * Guarda credenciales de Meta en HighLevel y luego sincroniza
+ * Guarda credenciales de Meta localmente y las sincroniza con HighLevel si existe
  * USA System User Token (no requiere App ID ni App Secret)
  */
 export const saveAndSyncMeta = async (req, res) => {
   try {
     const { adAccountId, accessToken, pixelId, pageId, pixelApiToken, whatsappBusinessAccountId } = req.body;
 
-    logger.info('Guardando credenciales de Meta en HighLevel...');
+    logger.info('Guardando credenciales de Meta Business...');
 
     // 1. Validar que al menos tengamos ad_account_id y access_token
     if (!adAccountId || !accessToken) {
@@ -2064,56 +2150,28 @@ export const saveAndSyncMeta = async (req, res) => {
       });
     }
 
-    // 2. Obtener configuración de HighLevel
-    const hlConfig = await db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1');
-
-    if (!hlConfig || !hlConfig.location_id || !hlConfig.api_token) {
-      return res.status(400).json({
-        success: false,
-        error: 'No hay configuración de HighLevel. Primero debes conectar HighLevel en Settings.'
-      });
-    }
-
-    // 3. Importar función de guardado
-    const { saveMetaCustomValues } = await import('../services/highlevelSyncService.js');
-
-    // 4. Guardar en HighLevel Custom Values (System User - solo necesita Access Token + Ad Account + Pixel + Page ID + Pixel API Token)
-    const saveResult = await saveMetaCustomValues(hlConfig.location_id, hlConfig.api_token, {
-      adAccountId,
-      accessToken,
-      pixelId: pixelId || '',
-      pageId: pageId || '',
-      pixelApiToken: pixelApiToken || '',
-      whatsappBusinessAccountId: whatsappBusinessAccountId || ''
+    const existingMetaConfig = await getMetaConfig().catch(error => {
+      logger.warn(`No se pudo leer configuración previa de Meta: ${error.message}`);
+      return null;
     });
 
-    if (!saveResult.success) {
-      return res.status(500).json({
+    const effectiveAccessToken = isMaskedSecret(accessToken)
+      ? existingMetaConfig?.access_token
+      : accessToken;
+    const effectivePixelApiToken = isMaskedSecret(pixelApiToken)
+      ? existingMetaConfig?.pixel_api_token
+      : pixelApiToken;
+
+    if (!effectiveAccessToken) {
+      return res.status(400).json({
         success: false,
-        error: 'Error al guardar credenciales en HighLevel'
+        error: 'El Access Token está enmascarado y no existe un token local para reutilizar. Pega el token completo.'
       });
     }
 
-    logger.info('Credenciales guardadas en HighLevel exitosamente');
-
-    // 5. Guardar en meta_config local (encriptado)
-    await saveMetaConfig(
-      adAccountId,
-      accessToken,
-      pixelId || null,
-      pixelApiToken || null,
-      pageId || null
-    );
-
-    if (whatsappBusinessAccountId) {
-      await setAppConfig('meta_whatsapp_business_account_id', whatsappBusinessAccountId);
-    }
-
-    logger.info('Credenciales guardadas en base de datos local');
-
-    // 6. Validar que las credenciales funcionen
+    // 2. Validar que las credenciales funcionen antes de persistir
     logger.info('Validando credenciales de Meta...');
-    const validation = await verifyMetaToken(accessToken);
+    const validation = await verifyMetaToken(effectiveAccessToken);
 
     if (!validation.valid) {
       return res.status(400).json({
@@ -2124,7 +2182,60 @@ export const saveAndSyncMeta = async (req, res) => {
 
     logger.info('Credenciales de Meta validadas exitosamente');
 
-    // 7. Iniciar sincronización de anuncios (últimos 7 días)
+    const normalizedAdAccountId = normalizeMetaAdAccountId(adAccountId);
+    const normalizedPixelId = cleanString(pixelId);
+    const normalizedPageId = cleanString(pageId);
+    const normalizedWhatsappBusinessAccountId = cleanString(whatsappBusinessAccountId);
+
+    // 3. Guardar en meta_config local (encriptado)
+    await saveMetaConfig(
+      normalizedAdAccountId,
+      effectiveAccessToken,
+      normalizedPixelId || null,
+      cleanString(effectivePixelApiToken) || null,
+      normalizedPageId || null
+    );
+
+    if (normalizedWhatsappBusinessAccountId) {
+      await setAppConfig('meta_whatsapp_business_account_id', normalizedWhatsappBusinessAccountId);
+    }
+
+    logger.info('Credenciales guardadas en base de datos local');
+
+    // 4. Si HighLevel ya existe, empujar Meta hacia sus Custom Values. Si no, no bloquear.
+    const hlConfig = await db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1');
+    let highLevelSyncResult = {
+      success: false,
+      skipped: true,
+      message: 'HighLevel no está configurado; Meta quedó guardado localmente'
+    };
+
+    if (hlConfig?.location_id && hlConfig?.api_token) {
+      try {
+        highLevelSyncResult = await saveMetaCustomValues(hlConfig.location_id, hlConfig.api_token, {
+          adAccountId: normalizedAdAccountId,
+          accessToken: effectiveAccessToken,
+          pixelId: normalizedPixelId || '',
+          pageId: normalizedPageId || '',
+          pixelApiToken: cleanString(effectivePixelApiToken) || '',
+          whatsappBusinessAccountId: normalizedWhatsappBusinessAccountId || ''
+        });
+
+        logger.info(`Credenciales de Meta sincronizadas hacia HighLevel: ${highLevelSyncResult.message}`);
+      } catch (highLevelError) {
+        highLevelSyncResult = {
+          success: false,
+          skipped: false,
+          error: highLevelError.message,
+          message: 'Meta se guardó localmente, pero no se pudo actualizar HighLevel'
+        };
+        logger.warn(`Meta local guardado, pero falló sync a HighLevel: ${highLevelError.message}`);
+      }
+    } else {
+      logger.info('HighLevel no configurado. Meta se guardó sólo en DB local.');
+    }
+
+    // 5. Iniciar sincronización de anuncios (últimos 7 días)
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - 7);
     const startDateStr = startDate.toISOString().split('T')[0];
@@ -2138,7 +2249,7 @@ export const saveAndSyncMeta = async (req, res) => {
 
     // 8. Si tenemos dominio personalizado (NO estamos en .onrender.com), sincronizar snippet automáticamente
     const isRenderDomain = req.headers.host?.includes('onrender.com')
-    if (!isRenderDomain && req.headers.host && pixelId) {
+    if (!isRenderDomain && req.headers.host && normalizedPixelId) {
       // Leer preferencia del usuario: ¿quiere incluir Meta Pixel en el snippet?
       // Default: true (ON por default)
       const { getAppConfig } = await import('../config/database.js')
@@ -2148,7 +2259,7 @@ export const saveAndSyncMeta = async (req, res) => {
         : (includeMetaPixelPref === '1' || includeMetaPixelPref === 1 || includeMetaPixelPref === true || includeMetaPixelPref === 'true')
 
       if (includeMetaPixel) {
-        logger.info(`Dominio personalizado detectado (${req.headers.host}), sincronizando snippet con Meta Pixel ${pixelId}...`)
+        logger.info(`Dominio personalizado detectado (${req.headers.host}), sincronizando snippet con Meta Pixel ${normalizedPixelId}...`)
 
         // Importar la función de configuración de tracking
         const { configureTracking } = await import('./trackingController.js')
@@ -2175,12 +2286,12 @@ export const saveAndSyncMeta = async (req, res) => {
           logger.warn(`⚠️ Error sincronizando snippet automáticamente: ${err.message}`)
         })
       } else {
-        logger.info(`Usuario configuró Meta Pixel (${pixelId}) pero tiene DESACTIVADA la inclusión en snippet (include_meta_pixel = false)`)
+        logger.info(`Usuario configuró Meta Pixel (${normalizedPixelId}) pero tiene DESACTIVADA la inclusión en snippet (include_meta_pixel = false)`)
         logger.info('NO se auto-sincronizará el snippet. El usuario puede activar el switch en Settings → Meta Ads')
       }
     } else if (isRenderDomain) {
       logger.info('Dominio .onrender.com detectado, NO sincronizando snippet (requiere dominio personalizado)')
-    } else if (!pixelId) {
+    } else if (!normalizedPixelId) {
       logger.info('No se proporcionó Pixel ID, snippet NO incluirá Meta Pixel')
     }
 
@@ -2188,8 +2299,9 @@ export const saveAndSyncMeta = async (req, res) => {
       success: true,
       message: 'Credenciales guardadas y sincronización iniciada exitosamente',
       data: {
-        savedInHighLevel: saveResult.success,
-        adAccountId: adAccountId,
+        savedInHighLevel: highLevelSyncResult.success === true,
+        highLevelSync: highLevelSyncResult,
+        adAccountId: normalizedAdAccountId,
         tokenValid: validation.valid,
         syncStarted: true
       }
@@ -2234,45 +2346,17 @@ export const syncFromHighLevel = async (req, res) => {
       });
     }
 
-    // 3. Guardar en base de datos local (necesitamos tokens SIN enmascarar)
-    // Volver a obtener los valores SIN enmascarar desde HighLevel
-    const response = await fetch(
-      `https://services.leadconnectorhq.com/locations/${hlConfig.location_id}/customValues`,
-      {
-        headers: {
-          'Authorization': `Bearer ${hlConfig.api_token}`,
-          'Version': '2021-07-28'
-        }
-      }
+    const reconciliation = await reconcileMetaBusinessWithHighLevel(
+      hlConfig.location_id,
+      hlConfig.api_token,
+      { prefer: 'highlevel' }
     );
 
-    const data = await response.json();
-    const customValues = data.customValues || [];
-
-    const fbAdAccountId = customValues.find(cv => cv.name === 'Facebook - Ad Account ID')?.value;
-    const fbAccessToken = customValues.find(cv => cv.name === 'Facebook - App Access Token')?.value;
-    const fbPixelId = customValues.find(cv => cv.name === 'Facebook - Pixel ID')?.value;
-    const fbPageId = customValues.find(cv => cv.name === 'Facebook - Page ID')?.value;
-    const fbPixelApiToken = customValues.find(cv => cv.name === 'Facebook - Pixel API Token')?.value;
-    const fbWhatsappBusinessAccountId = customValues.find(cv => cv.name === 'Facebook - WhatsApp Business Account ID')?.value ||
-      customValues.find(cv => cv.name === 'WhatsApp Business Account ID')?.value ||
-      customValues.find(cv => cv.name === 'WABA ID')?.value;
-
-    // Guardar en DB local (tokens SIN enmascarar)
-    if (fbAdAccountId && fbAccessToken) {
-      await saveMetaConfig(
-        fbAdAccountId,
-        fbAccessToken,
-        fbPixelId || null,
-        fbPixelApiToken || null,
-        fbPageId || null
-      );
-      logger.info('Credenciales de Meta guardadas en base de datos local');
-    }
-
-    if (fbWhatsappBusinessAccountId) {
-      await setAppConfig('meta_whatsapp_business_account_id', fbWhatsappBusinessAccountId);
-      logger.info('WhatsApp Business Account ID guardado en app_config');
+    if (!reconciliation.success) {
+      return res.status(500).json({
+        success: false,
+        error: `No se pudo sincronizar Meta desde HighLevel: ${reconciliation.message}`
+      });
     }
 
     // 4. Verificar si se guardaron las credenciales
@@ -2318,7 +2402,8 @@ export const syncFromHighLevel = async (req, res) => {
       data: {
         adAccountId: metaConfig.ad_account_id,
         tokenValid: validation.valid,
-        syncStarted: true
+        syncStarted: true,
+        reconciliation
       }
     });
 

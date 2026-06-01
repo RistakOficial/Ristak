@@ -64,13 +64,21 @@ export const getStatus = async (req, res) => {
       }
     }
 
+    const metaConfig = await db.get(
+      'SELECT ad_account_id, access_token, pixel_id FROM meta_config LIMIT 1'
+    );
+
+    const metaStatus = {
+      configured: Boolean(metaConfig?.ad_account_id && metaConfig?.access_token),
+      connected: Boolean(metaConfig?.ad_account_id && metaConfig?.access_token),
+      adAccountId: metaConfig?.ad_account_id || null,
+      pixelId: metaConfig?.pixel_id || null
+    };
+
     // Respuesta con estructura mejorada
     res.json({
       highlevel: highlevelStatus,
-      meta: {
-        connected: false,
-        configured: false
-      }
+      meta: metaStatus
     });
 
   } catch (error) {
