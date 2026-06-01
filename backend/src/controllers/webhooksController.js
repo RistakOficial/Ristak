@@ -12,12 +12,8 @@ import {
   triggerWhatsappAppointmentBookedEvent,
   triggerWhatsappFirstPurchaseEvent
 } from '../services/metaWhatsappEventsService.js';
-import { fetchHighLevelContactCustomFieldDefinitions } from '../services/highlevelCustomFieldsService.js';
-import {
-  hasContactCustomFieldsPayload,
-  normalizeContactCustomFields,
-  serializeContactCustomFieldsForDb
-} from '../utils/contactCustomFields.js';
+import { resolveHighLevelContactCustomFields } from '../services/highlevelCustomFieldsService.js';
+import { hasContactCustomFieldsPayload } from '../utils/contactCustomFields.js';
 
 function firstValue(...values) {
   return values.find(value => value !== undefined && value !== null && value !== '');
@@ -350,18 +346,19 @@ export const handleContactWebhook = async (req, res) => {
       }
     }
 
-    const hasCustomFields = hasContactCustomFieldsPayload(data);
-    let customFieldsJson = null;
-    if (hasCustomFields) {
-      const config = await db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1');
-      const customFieldDefinitions = await fetchHighLevelContactCustomFieldDefinitions({
-        apiToken: config?.api_token,
-        locationId: config?.location_id || data.locationId || data.location_id
-      });
-      customFieldsJson = serializeContactCustomFieldsForDb(
-        normalizeContactCustomFields(data, customFieldDefinitions)
-      );
-    }
+    const config = await db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1');
+    const customFieldsResult = await resolveHighLevelContactCustomFields({
+      contact: {
+        ...data,
+        id: contactId
+      },
+      apiToken: config?.api_token,
+      locationId: config?.location_id || data.locationId || data.location_id,
+      fetchDetailWhenEmpty: !hasContactCustomFieldsPayload(data)
+    });
+    const customFieldsJson = customFieldsResult.customFields.length > 0
+      ? customFieldsResult.customFieldsJson
+      : null;
 
     const usePostgres = process.env.DATABASE_URL ? true : false;
 

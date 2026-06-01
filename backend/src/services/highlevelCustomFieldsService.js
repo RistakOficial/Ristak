@@ -1,6 +1,10 @@
 import fetch from 'node-fetch'
 import { logger } from '../utils/logger.js'
-import { normalizeCustomFieldDefinition } from '../utils/contactCustomFields.js'
+import {
+  normalizeContactCustomFields,
+  normalizeCustomFieldDefinition,
+  serializeContactCustomFieldsForDb
+} from '../utils/contactCustomFields.js'
 
 const HIGHLEVEL_BASE_URL = 'https://services.leadconnectorhq.com'
 const HIGHLEVEL_API_VERSION = '2021-07-28'
@@ -72,5 +76,70 @@ export async function fetchHighLevelContactCustomFieldDefinitions({
   } catch (error) {
     logger.warn(`No se pudieron cargar definiciones de custom fields de HighLevel: ${error.message}`)
     return cached?.fields || []
+  }
+}
+
+export async function fetchHighLevelContactDetailForCustomFields({
+  apiToken,
+  contactId
+} = {}) {
+  if (!apiToken || !contactId) return null
+
+  try {
+    const response = await fetch(`${HIGHLEVEL_BASE_URL}/contacts/${contactId}`, {
+      headers: {
+        Authorization: `Bearer ${apiToken}`,
+        Version: HIGHLEVEL_API_VERSION,
+        Accept: 'application/json'
+      }
+    })
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => '')
+      logger.warn(`No se pudo obtener detalle de contacto ${contactId} para custom fields (${response.status}): ${errorText.slice(0, 200)}`)
+      return null
+    }
+
+    const data = await response.json()
+    return data.contact || data
+  } catch (error) {
+    logger.warn(`No se pudo cargar detalle de contacto ${contactId} para custom fields: ${error.message}`)
+    return null
+  }
+}
+
+export async function resolveHighLevelContactCustomFields({
+  contact = {},
+  apiToken,
+  locationId,
+  definitions = null,
+  fetchDetailWhenEmpty = true
+} = {}) {
+  const customFieldDefinitions = Array.isArray(definitions)
+    ? definitions
+    : await fetchHighLevelContactCustomFieldDefinitions({ apiToken, locationId })
+
+  let enrichedContact = contact
+  let customFields = normalizeContactCustomFields(enrichedContact, customFieldDefinitions)
+
+  if (fetchDetailWhenEmpty && customFields.length === 0 && contact?.id && apiToken) {
+    const detailContact = await fetchHighLevelContactDetailForCustomFields({
+      apiToken,
+      contactId: contact.id
+    })
+
+    if (detailContact) {
+      enrichedContact = {
+        ...contact,
+        ...detailContact
+      }
+      customFields = normalizeContactCustomFields(enrichedContact, customFieldDefinitions)
+    }
+  }
+
+  return {
+    contact: enrichedContact,
+    customFields,
+    customFieldsJson: serializeContactCustomFieldsForDb(customFields)
   }
 }

@@ -8,12 +8,11 @@ import { db, setAppConfig } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 import { syncMetaAds } from './metaAdsService.js'
 import { updateContactsStats } from '../utils/updateContactsStats.js'
-import { fetchHighLevelContactCustomFieldDefinitions } from './highlevelCustomFieldsService.js'
 import {
-  hasContactCustomFieldsPayload,
-  normalizeContactCustomFields,
-  serializeContactCustomFieldsForDb
-} from '../utils/contactCustomFields.js'
+  fetchHighLevelContactCustomFieldDefinitions,
+  resolveHighLevelContactCustomFields
+} from './highlevelCustomFieldsService.js'
+import { hasContactCustomFieldsPayload } from '../utils/contactCustomFields.js'
 
 const HIGHLEVEL_BASE_URL = 'https://services.leadconnectorhq.com'
 const HIGHLEVEL_API_VERSION = '2021-07-28'
@@ -408,17 +407,15 @@ async function ensureContactExists(contactId, apiToken, usePostgres, locationId)
     }
 
     const contactData = await contactRes.json()
-    const contact = contactData.contact || contactData
-    const hasCustomFields = hasContactCustomFieldsPayload(contact)
-    const customFieldDefinitions = hasCustomFields
-      ? await fetchHighLevelContactCustomFieldDefinitions({
-          apiToken,
-          locationId: locationId || contact.locationId || contact.location_id || ''
-        })
-      : []
-    const customFieldsJson = hasCustomFields
-      ? serializeContactCustomFieldsForDb(normalizeContactCustomFields(contact, customFieldDefinitions))
-      : null
+    const rawContact = contactData.contact || contactData
+    const customFieldsResult = await resolveHighLevelContactCustomFields({
+      contact: rawContact,
+      apiToken,
+      locationId: locationId || rawContact.locationId || rawContact.location_id || '',
+      fetchDetailWhenEmpty: false
+    })
+    const contact = customFieldsResult.contact
+    const customFieldsJson = customFieldsResult.customFieldsJson
 
     // HighLevel puede enviar atribución en dos lugares: attributions[] o attributionSource
     // IMPORTANTE: SIEMPRE usar FIRST attribution, NUNCA lastAttributionSource
@@ -587,16 +584,22 @@ async function syncHighLevelContacts(locationId, apiToken) {
   const usePostgres = process.env.DATABASE_URL ? true : false
   const customFieldDefinitions = await fetchHighLevelContactCustomFieldDefinitions({ apiToken, locationId })
 
-  for (const contact of allContacts) {
+  for (const rawContact of allContacts) {
     try {
+      const customFieldsResult = await resolveHighLevelContactCustomFields({
+        contact: rawContact,
+        apiToken,
+        locationId,
+        definitions: customFieldDefinitions,
+        fetchDetailWhenEmpty: !hasContactCustomFieldsPayload(rawContact)
+      })
+      const contact = customFieldsResult.contact
+      const customFieldsJson = customFieldsResult.customFieldsJson
+
       // HighLevel puede enviar atribución en dos lugares: attributions[] o attributionSource
       // IMPORTANTE: SIEMPRE usar FIRST attribution, NUNCA lastAttributionSource
       const attribution = contact.attributions?.find(a => a.isFirst) || {}
       const attributionSource = contact.attributionSource || {}  // Solo FIRST attribution
-      const hasCustomFields = hasContactCustomFieldsPayload(contact)
-      const customFieldsJson = hasCustomFields
-        ? serializeContactCustomFieldsForDb(normalizeContactCustomFields(contact, customFieldDefinitions))
-        : null
 
       // Buscar visitor_id en sessions por email (si existe)
       let visitorId = null

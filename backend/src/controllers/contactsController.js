@@ -309,6 +309,7 @@ export const getContacts = async (req, res) => {
         source: c.source,
         ad_name: c.attribution_ad_name,
         ad_id: c.attribution_ad_id,
+        customFields: parseContactCustomFields(c.custom_fields),
         firstSession: firstSession ? {
           started_at: firstSession.started_at,
           page_url: firstSession.page_url,
