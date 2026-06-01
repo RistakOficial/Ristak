@@ -11345,12 +11345,45 @@ function previousAssistantAskedForContactChoice(messages = [], userIndex = -1) {
   return false
 }
 
+function extractExplicitContactIdentifier(question = '') {
+  const tokens = cleanText(question, 360).match(/[\p{L}\p{N}@._+-]+/gu) || []
+  for (const rawToken of tokens) {
+    const token = rawToken.trim()
+    if (token.includes('@')) return token
+    if (normalizePhoneDigits(token).length >= 7) return token
+  }
+
+  const id = extractContactIdFromText(question)
+  return id || ''
+}
+
+function latestMessageExpressesFreshIntent(question = '') {
+  const normalized = normalizeText(question)
+  if (!normalized) return false
+
+  if (isExplicitLatestMessageTopicSwitch(question)) return true
+  if (userRejectedOrDeferredExecution(normalized)) return true
+
+  return /(quiero|quisiera|gustaria|gustaría|quisi|necesito|ocupo|interesa|prefiero|deseo|mejor\b|ayudame|ayúdame|podrias|podrías|podria|podría|puedes|cobr|agend|program|factur|invoice|crea|crear|registr|actualiz|modific|cambi|mand|envi|mete|saca|asign|aplic|ejecut|activ|reactiv|dale|darle|dales|ponle|poner|agreg|quita|acceso|workflow|flujo|domicili)/.test(normalized)
+}
+
 function extractCustomActionContactLookupHint(question = '', { allowBareContact = false } = {}) {
+  // 1. A name structurally tied to a contact/action verb is the only reliable signal.
   const strictTerm = normalizeContactLookupHint(extractContactLookupTerm(question))
   if (strictTerm) return strictTerm
 
+  // 2. An explicit email, phone or HighLevel ID anywhere in the message is also valid.
+  const explicitIdentifier = extractExplicitContactIdentifier(question)
+  if (explicitIdentifier) return explicitIdentifier
+
   const normalized = normalizeText(question)
   if (!normalized) return ''
+
+  // 3. No contact was actually named. If the message instead expresses a new request,
+  // a correction, a rejection or a topic switch, never fabricate a contact search from
+  // its leftover words: defer to the agent so it re-reads the conversation (including the
+  // already-resolved active contact in memory) and re-decides what to do.
+  if (latestMessageExpressesFreshIntent(question)) return ''
 
   const contactActionContext = /(contacto|cliente|lead|persona|programa|acceso|workflow|flujo|cita|calendario|appointment|pago|suscripcion|suscripción|oportunidad|pipeline|mensaje|conversacion|conversación|tag|nota)/.test(normalized)
   const hasPersonPreposition = /\b(?:a|al|para|con|de)\s+[\p{L}\p{M}@._+-]{2,}/iu.test(question)
@@ -11358,6 +11391,8 @@ function extractCustomActionContactLookupHint(question = '', { allowBareContact 
 
   const tokens = getContactLookupTokens(question)
   if (!tokens.length) return ''
+  // Only treat the remainder as a contact when it still looks like a name, not stray words.
+  if (!getMeaningfulContactNameTokens(tokens).length) return ''
 
   return tokens.slice(0, 5).join(' ')
 }
