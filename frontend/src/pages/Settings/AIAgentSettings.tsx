@@ -153,11 +153,8 @@ function normalizeStatus(status: AIAgentConfigStatus): AIAgentConfigStatus {
   }
 }
 
-function getConfigSignature(form: typeof emptyForm, apiKey: string) {
-  return JSON.stringify({
-    ...form,
-    apiKey: apiKey.trim()
-  })
+function getConfigSignature(form: typeof emptyForm) {
+  return JSON.stringify(form)
 }
 
 function isApiKeyReady(apiKey: string) {
@@ -215,6 +212,8 @@ export const AIAgentSettings: React.FC = () => {
   const [form, setForm] = useState(emptyForm)
   const [apiKey, setApiKey] = useState('')
   const [showApiKey, setShowApiKey] = useState(false)
+  const [isEditingApiKey, setIsEditingApiKey] = useState(false)
+  const [savingApiKey, setSavingApiKey] = useState(false)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [saveState, setSaveState] = useState<SaveState>('idle')
@@ -223,7 +222,7 @@ export const AIAgentSettings: React.FC = () => {
   const hydratedRef = useRef(false)
   const autosaveTimerRef = useRef<number | null>(null)
   const activeSaveIdRef = useRef(0)
-  const lastSavedSignatureRef = useRef(getConfigSignature(emptyForm, ''))
+  const lastSavedSignatureRef = useRef(getConfigSignature(emptyForm))
 
   const emitConfigChange = (nextStatus: AIAgentConfigStatus) => {
     window.dispatchEvent(new CustomEvent('ai-agent-config-changed', {
@@ -239,7 +238,10 @@ export const AIAgentSettings: React.FC = () => {
       const nextForm = statusToForm(nextStatus)
       setStatus(nextStatus)
       setForm(nextForm)
-      lastSavedSignatureRef.current = getConfigSignature(nextForm, '')
+      setApiKey('')
+      setShowApiKey(false)
+      setIsEditingApiKey(false)
+      lastSavedSignatureRef.current = getConfigSignature(nextForm)
       setSaveState('saved')
       setSaveError('')
     } catch (error: any) {
@@ -262,10 +264,12 @@ export const AIAgentSettings: React.FC = () => {
   }
 
   const selectedModel = modelOptions.find((option) => option.value === form.model) || modelOptions[0]
-  const apiKeyNeedsMore = Boolean(apiKey.trim() && !isApiKeyReady(apiKey))
+  const apiKeyNeedsMore = isEditingApiKey && Boolean(apiKey.trim() && !isApiKeyReady(apiKey))
   const saveStatusText = loading
     ? 'Cargando...'
-    : saveState === 'saving'
+    : savingApiKey
+      ? 'Guardando token...'
+      : saveState === 'saving'
       ? 'Guardando...'
       : apiKeyNeedsMore
         ? 'Completa el token para guardarlo'
@@ -291,16 +295,7 @@ export const AIAgentSettings: React.FC = () => {
       autosaveTimerRef.current = null
     }
 
-    const trimmedApiKey = apiKey.trim()
-    const apiKeyReady = isApiKeyReady(trimmedApiKey)
-    const apiKeyForSave = apiKeyReady ? trimmedApiKey : ''
-    const signature = getConfigSignature(form, apiKeyForSave)
-
-    if (trimmedApiKey && !apiKeyReady && signature === lastSavedSignatureRef.current) {
-      setSaveState('pending')
-      setSaveError('')
-      return
-    }
+    const signature = getConfigSignature(form)
 
     if (signature === lastSavedSignatureRef.current) {
       setSaveState('saved')
@@ -319,7 +314,6 @@ export const AIAgentSettings: React.FC = () => {
 
       try {
         const nextStatus = normalizeStatus(await aiAgentService.saveConfig({
-          apiKey: apiKeyForSave || undefined,
           ...form
         }))
 
@@ -328,13 +322,8 @@ export const AIAgentSettings: React.FC = () => {
         const nextForm = statusToForm(nextStatus)
         setStatus(nextStatus)
         emitConfigChange(nextStatus)
-        lastSavedSignatureRef.current = getConfigSignature(nextForm, '')
+        lastSavedSignatureRef.current = getConfigSignature(nextForm)
         setSaveState('saved')
-
-        if (apiKeyForSave) {
-          setApiKey('')
-          setShowApiKey(false)
-        }
       } catch (error: any) {
         if (activeSaveIdRef.current !== saveId) return
 
@@ -355,7 +344,72 @@ export const AIAgentSettings: React.FC = () => {
         autosaveTimerRef.current = null
       }
     }
-  }, [apiKey, form, loading, disconnecting, showToast])
+  }, [form, loading, disconnecting, showToast])
+
+  const handleStartApiKeyEdit = () => {
+    setApiKey('')
+    setShowApiKey(false)
+    setIsEditingApiKey(true)
+    setSaveError('')
+  }
+
+  const handleSaveApiKey = async () => {
+    const trimmedApiKey = apiKey.trim()
+
+    if (!trimmedApiKey) {
+      showToast('error', 'Token requerido', 'Pega el API token completo para reemplazarlo.')
+      return
+    }
+
+    if (!isApiKeyReady(trimmedApiKey)) {
+      showToast('error', 'Token incompleto', 'El token debe iniciar con sk- y tener el largo completo.')
+      return
+    }
+
+    if (autosaveTimerRef.current !== null) {
+      window.clearTimeout(autosaveTimerRef.current)
+      autosaveTimerRef.current = null
+    }
+
+    const saveId = activeSaveIdRef.current + 1
+    activeSaveIdRef.current = saveId
+    setSaving(true)
+    setSavingApiKey(true)
+    setSaveState('saving')
+    setSaveError('')
+
+    try {
+      const nextStatus = normalizeStatus(await aiAgentService.saveConfig({
+        apiKey: trimmedApiKey,
+        ...form
+      }))
+
+      if (activeSaveIdRef.current !== saveId) return
+
+      const nextForm = statusToForm(nextStatus)
+      setStatus(nextStatus)
+      setForm(nextForm)
+      emitConfigChange(nextStatus)
+      lastSavedSignatureRef.current = getConfigSignature(nextForm)
+      setApiKey('')
+      setShowApiKey(false)
+      setIsEditingApiKey(false)
+      setSaveState('saved')
+      showToast('success', 'Token actualizado', 'El agente AI ya quedó usando el token nuevo.')
+    } catch (error: any) {
+      if (activeSaveIdRef.current !== saveId) return
+
+      const message = error?.message || 'No se pudo actualizar el token del agente'
+      setSaveState('error')
+      setSaveError(message)
+      showToast('error', 'No se pudo guardar', message)
+    } finally {
+      if (activeSaveIdRef.current === saveId) {
+        setSaving(false)
+        setSavingApiKey(false)
+      }
+    }
+  }
 
   const disconnect = async () => {
     setDisconnecting(true)
@@ -364,7 +418,9 @@ export const AIAgentSettings: React.FC = () => {
       setStatus(emptyStatus)
       setForm(emptyForm)
       setApiKey('')
-      lastSavedSignatureRef.current = getConfigSignature(emptyForm, '')
+      setShowApiKey(false)
+      setIsEditingApiKey(false)
+      lastSavedSignatureRef.current = getConfigSignature(emptyForm)
       setSaveState('saved')
       setSaveError('')
       emitConfigChange(emptyStatus)
@@ -439,26 +495,54 @@ export const AIAgentSettings: React.FC = () => {
             <label className={styles.label}>API Token</label>
             <div className={styles.inputWrap}>
               <input
-                className={styles.input}
-                type={showApiKey ? 'text' : 'password'}
-                value={apiKey}
-                placeholder={status.configured ? 'Nueva key para reemplazar' : 'sk-...'}
+                className={`${styles.input} ${styles.tokenInput} ${!isEditingApiKey ? styles.inputReadOnly : ''}`}
+                type={isEditingApiKey && showApiKey ? 'text' : 'password'}
+                value={isEditingApiKey ? apiKey : status.configured ? 'token-configurado' : ''}
+                placeholder={status.configured ? 'Token configurado' : 'Sin token configurado'}
                 autoComplete="off"
-                onChange={(event) => setApiKey(event.target.value)}
+                onChange={(event) => {
+                  if (isEditingApiKey) {
+                    setApiKey(event.target.value)
+                  }
+                }}
+                readOnly={!isEditingApiKey}
                 disabled={loading || disconnecting}
               />
-              <button
-                type="button"
-                className={styles.iconButton}
-                onClick={() => setShowApiKey((current) => !current)}
-                aria-label={showApiKey ? 'Ocultar token' : 'Mostrar token'}
-                disabled={loading || disconnecting}
-              >
-                {showApiKey ? <EyeOff size={16} /> : <Eye size={16} />}
-              </button>
+              <div className={styles.inputActions}>
+                {isEditingApiKey && (
+                  <button
+                    type="button"
+                    className={styles.iconButton}
+                    onClick={() => setShowApiKey((current) => !current)}
+                    aria-label={showApiKey ? 'Ocultar token' : 'Mostrar token'}
+                    disabled={loading || disconnecting || savingApiKey}
+                  >
+                    {showApiKey ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className={styles.inlineActionButton}
+                  onClick={isEditingApiKey ? handleSaveApiKey : handleStartApiKeyEdit}
+                  disabled={
+                    loading ||
+                    disconnecting ||
+                    savingApiKey ||
+                    (isEditingApiKey && (!apiKey.trim() || !isApiKeyReady(apiKey)))
+                  }
+                >
+                  {isEditingApiKey ? 'Guardar' : 'Cambiar'}
+                </button>
+              </div>
             </div>
             <p className={styles.helper}>
-              {status.tokenPreview ? `Actual: ${status.tokenPreview}` : 'Se guarda al completar la key.'}
+              {isEditingApiKey
+                ? apiKeyNeedsMore
+                  ? 'El token debe iniciar con sk- y estar completo.'
+                  : 'Pega el token nuevo y guárdalo manualmente.'
+                : status.tokenPreview
+                  ? `Actual: ${status.tokenPreview}`
+                  : 'Pulsa Cambiar para configurar el token.'}
             </p>
           </div>
 

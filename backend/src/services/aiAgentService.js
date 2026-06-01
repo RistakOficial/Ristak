@@ -935,7 +935,7 @@ function appendSelectedClarificationContext(message, visibleText) {
   return [
     text,
     '',
-    '[Selección de botón interna: úsala como contexto oculto y no la repitas al usuario]',
+    '[Selección de botón interna: úsala como contexto oculto]',
     ...lines
   ].filter((line) => line !== '').join('\n')
 }
@@ -1755,7 +1755,7 @@ function buildPaymentConfirmationOptions(actionLabel = 'esta acción de pago', s
     {
       label: 'Sí, confirmar',
       description: `Autoriza ${actionLabel} con los datos resumidos.`,
-      value: `Confirmo y autorizo ejecutar ${actionLabel} con los datos resumidos.${contactMemoryText ? ` ${contactMemoryText}` : ''}`
+      value: `Confirmación final: sí, confirmo y autorizo ejecutar ahora ${actionLabel} con los datos resumidos.${contactMemoryText ? ` ${contactMemoryText}` : ''}`
     },
     {
       label: 'No, no confirmar',
@@ -1776,6 +1776,7 @@ function buildPaymentConfirmationRequiredOutput({ action, summary = {}, clarific
     confirmationPrompt: [
       'No ejecutes la acción todavía.',
       'Antes de tocar dinero, resume contacto, monto, concepto, método, fechas, canal de envío si aplica y qué pasará si no hay tarjeta guardada.',
+      'Si es plan de parcialidades, cobros programados o fechas raras, muestra una tabla Markdown compacta con columnas: #, fecha exacta, monto, método/acción y estado/envío. No uses fechas relativas como "en un mes" si puedes resolver la fecha.',
       'El contacto debe mostrarse con nombre y email o teléfono cuando existan; si no hay email/teléfono, muestra el ID.',
       'Pide una confirmación explícita sin imponer una frase exacta; una aprobación clara después del resumen es suficiente.',
       'Si falta método o no está claro si será transferencia, depósito, registro manual, link de pago o domiciliación, pregunta eso antes de confirmar.',
@@ -6585,7 +6586,7 @@ const BASE_SPECIALIST_PROMPT = [
   'Piensa con criterio propio: si el usuario sólo conversa, responde directo; si pide datos internos, investiga en DB; si pide una acción, identifica registros exactos; si falta algo indispensable, pregunta sólo eso.',
   'Entiende referencias humanas normales: "el de la última cita", "la próxima cita", "este contacto", "ese workflow", "la conversación anterior" no son nombres literales. Resuelve primero la entidad real y luego ejecuta.',
   'Responde en español natural, directo y útil para un dueño de negocio.',
-  'Si el último mensaje viene de un botón/opción, usa el valor interno como contexto oculto: no lo repitas, no lo cites y responde compacto, normalmente 1 a 3 líneas.',
+  'Si el último mensaje viene de un botón/opción, usa el valor interno como contexto oculto: no lo repitas ni lo cites. Responde compacto, excepto cuando el paso requiere mostrar una tabla de parcialidades para confirmar fechas y montos.',
   'No uses tablas, contenedores, bloques tipo ficha ni gráficos para aclaraciones normales, preguntas de confirmación, explicaciones cortas o respuestas conversacionales.',
   'Usa tablas/gráficos sólo cuando el usuario pida data o cuando haya varias métricas/registros/comparativos difíciles de leer en texto: contactos, citas, pagos, campañas, rankings, históricos o listas repetidas.'
 ].join('\n')
@@ -6630,8 +6631,10 @@ const PAYMENT_WORKFLOW_PROMPT = [
   '- Si el usuario ya dio todos los datos, usa las herramientas internas y avanza; no repitas preguntas nomás por protocolo.',
   '- Si falta algo indispensable, pregunta una sola cosa a la vez. No hagas listas de varias preguntas pendientes.',
   '- Cuando el usuario elija una opción/botón del flujo, trátala como respuesta válida al paso actual. Avanza con una respuesta corta y no vuelvas a pegar el resumen completo salvo que sea la confirmación final obligatoria.',
+  '- En planes de parcialidades, cobros programados o calendarios raros, el resumen de confirmación debe incluir una tabla Markdown compacta con cada cobro: #, fecha exacta, monto, método/acción y estado/envío. Esto sí es excepción a la regla general de evitar tablas.',
+  '- Para parcialidades nunca respondas sólo "hoy, en 1 mes y en 2 meses"; calcula y muestra fechas absolutas usando la fecha/hora local disponible.',
   '- Si después del resumen el usuario responde afirmativamente pero agrega cambios como "pero", "solo pon", "cambia", "agrega descripción", "mejor por WhatsApp", "con tarjeta guardada", etc., eso NO es confirmación final. Actualiza el plan con la herramienta interna y vuelve a pedir confirmación con el resumen nuevo.',
-  '- Sólo ejecuta cuando el último mensaje sea una autorización limpia sobre el resumen vigente, por ejemplo "sí, confirmar", "sí, dale", "confirmo" o el botón de confirmación, sin cambios extra.',
+  '- Sólo ejecuta cuando el último mensaje sea una autorización limpia sobre el resumen vigente, por ejemplo "sí, confirmar", "sí, dale", "confirmo" o el botón de confirmación, sin cambios extra. "Sí, confirmar" y el botón con valor interno de confirmación final significan ejecutar ahora; no pidas "sí, ejecutar" después.',
   '- Cobro único con tarjeta: si no hay tarjeta guardada/autorizada, el link de pago es obligatorio y debes pedir canal de envío si falta. Si sí hay tarjeta guardada, pregunta una sola vez si se cobra la tarjeta guardada o se manda link.',
   '- Cobro único offline/manual por transferencia, depósito, efectivo, cheque u otro: registra el pago offline con record_contact_payment. No mandes link.',
   '- Parcialidades con primer pago offline y resto automático/domiciliado: registra el primer pago offline y, si falta tarjeta guardada, manda link de domiciliación/autorización; nunca dejes el plan automático sólo registrado offline sin tarjeta.',
@@ -6737,7 +6740,7 @@ function buildResponseBehaviorInstructions(config, latestUserMessage = '') {
   }
 
   lines.push('Para preguntas como "cuál campaña fue más rentable", responde la ganadora y el ranking/métricas necesarias. No recomiendes escalar, pausar o cortar presupuesto salvo que pregunte qué hacer.')
-  lines.push('Formato visual: no uses tablas para decir "sí", confirmar entendimiento, pedir método/concepto, preguntar si usa tarjeta guardada o explicar una decisión simple. Eso va en párrafos cortos o bullets normales.')
+  lines.push('Formato visual: no uses tablas para decir "sí", confirmar entendimiento, pedir método/concepto, preguntar si usa tarjeta guardada o explicar una decisión simple. Excepción: en planes de parcialidades o cobros programados, usa tabla compacta para fechas exactas y montos.')
 
   return lines.join('\n')
 }
@@ -7725,6 +7728,9 @@ async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, ru
     latestMessageFromButton
       ? 'El último mensaje del usuario vino de un botón. Usa el valor interno para operar, pero contesta breve y no repitas el payload oculto.'
       : 'No aplica: el último mensaje no vino de un botón.',
+    latestMessageFromButton && /confirmacion final|confirmo y autorizo ejecutar/.test(normalizeText(getMessageText(latestUserMessageObject)))
+      ? 'Si el botón fue "Sí, confirmar" en un flujo de pago, cuenta como autorización final: llama la herramienta interna y no pidas otra frase como "sí, ejecutar".'
+      : '',
     '',
     'Conversación:',
     buildConversationText(messages) || 'Sin mensajes previos.',
@@ -7790,7 +7796,7 @@ async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, ru
   try {
     response = await callAgentModelWithAttachmentFallback({
       inputValue: responseInput,
-      maxOutputTokens: latestMessageFromButton && !webSearchTools.length ? 900 : webSearchTools.length ? 2200 : 1800
+      maxOutputTokens: latestMessageFromButton && !paymentOperationRequest && !webSearchTools.length ? 900 : webSearchTools.length ? 2200 : 1800
     })
   } catch (error) {
     const fallbackTools = [...highLevelTools]
@@ -7808,7 +7814,7 @@ async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, ru
       toolsValue: fallbackTools,
       includeValue: [],
       needsActionLoop: fallbackNeedsActionLoop,
-      maxOutputTokens: latestMessageFromButton ? 900 : fallbackNeedsActionLoop ? 1800 : 1400
+      maxOutputTokens: latestMessageFromButton && !paymentOperationRequest ? 900 : fallbackNeedsActionLoop ? 1800 : 1400
     })
   }
 
@@ -9200,7 +9206,7 @@ function buildInstructions() {
     'Eres el Agente AI interno de Ristak, una app para administrar un negocio con datos de HighLevel, pagos, citas, contactos, publicidad, tracking web y reportes.',
     'Tu trabajo es ayudar a administrar mejor el negocio: analizar datos, explicar lo que el usuario está viendo, detectar riesgos, encontrar oportunidades y proponer acciones concretas.',
     'Responde siempre en español claro, directo y accionable.',
-    'No uses Markdown pesado: sin encabezados con #, sin negritas con ** y sin tablas. Para contactos, citas, pagos, campañas o listas de registros, usa fichas con labels claros, saltos de línea y bloques tipo Resumen, Qué significa y Siguiente acción.',
+    'No uses Markdown pesado: sin encabezados con # ni negritas con **. Evita tablas salvo cuando haya varias métricas/registros o cuando un plan de parcialidades/cobros programados necesite fechas exactas y montos.',
     'Cuando haya CONSULTAS DIRECTAS A DB, usa esas cifras como fuente principal porque vienen de SQL ejecutado para la pregunta del usuario.',
     'Para prospectos/leads/interesados, usa este criterio: contactos nuevos creados en el rango solicitado, aplicando filtros de contactos ocultos.',
     'Si el usuario dice "este mes", usa mes calendario actual, no últimos 30 días.',
