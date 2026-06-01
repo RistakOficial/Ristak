@@ -746,6 +746,55 @@ function buildPaymentNotCompletedGuardReply(actionEvidence = []) {
   return 'Todavía no quedó creado. No recibí confirmación real del backend de pagos, así que no voy a decir que quedó.'
 }
 
+function getLatestPendingActionEvidence(actionEvidence = []) {
+  if (!Array.isArray(actionEvidence)) return null
+
+  return actionEvidence
+    .slice()
+    .reverse()
+    .find(evidence =>
+      evidence?.confirmationRequired ||
+      evidence?.contactVerificationRequired ||
+      (Array.isArray(evidence?.missingFields) && evidence.missingFields.length > 0)
+    ) || null
+}
+
+function claimsCrmActionWasCompleted(reply = '') {
+  const normalized = normalizeText(reply)
+  if (!normalized) return false
+  if (/(todavia no|todavía no|no quedo|no quedó|pendiente|falta|solo para confirmar|quieres|confirmas|antes de|me falta|no se hizo|no se actualizo|no se actualizó|no se agendo|no se agendó)/.test(normalized)) {
+    return false
+  }
+
+  return /(listo|ya quedo|ya quedó|quedo|quedó|creado|creada|se creo|se creó|actualizado|actualizada|se actualizo|se actualizó|modificado|modificada|se modifico|se modificó|agendado|agendada|se agendo|se agendó|reprogramado|reprogramada|cancelado|cancelada|eliminado|eliminada|metido|metida|enviado|enviada|se envio|se envió)/.test(normalized) &&
+    /(contacto|cliente|lead|persona|campo|dato|cita|agenda|appointment|workflow|flujo|tag|nota|mensaje|oportunidad|pipeline|highlevel|gohighlevel|ghl)/.test(normalized)
+}
+
+function buildActionNotCompletedGuardReply(actionEvidence = []) {
+  const latestEvidence = getLatestPendingActionEvidence(actionEvidence)
+  const latestMissingField = Array.isArray(latestEvidence?.missingFields)
+    ? cleanText(latestEvidence.missingFields[0], 80)
+    : ''
+
+  if (latestEvidence?.contactVerificationRequired) {
+    return 'Todavía no quedó hecho. Primero necesito confirmar el contacto exacto para no tocar a la persona equivocada.'
+  }
+
+  if (latestEvidence?.confirmationRequired) {
+    return 'Todavía no quedó hecho. Entonces, solo para confirmar, ¿quieres que lo deje así?'
+  }
+
+  if (latestMissingField) {
+    return `Todavía no quedó hecho. Me falta ${latestMissingField}.`
+  }
+
+  if (latestEvidence?.error) {
+    return `Todavía no quedó hecho: ${cleanText(latestEvidence.error, 240)}`
+  }
+
+  return 'Todavía no quedó hecho. Me falta confirmar el último resumen antes de hacer el cambio.'
+}
+
 function buildAgentMemoryPayload({
   actionEvidence = [],
   paymentOperationalMemory = null,
@@ -824,11 +873,31 @@ const EXECUTION_INTENT_STEMS = [
   'adelante'
 ]
 
+function userAddsOrChangesPendingAction(userText) {
+  const normalized = normalizeText(userText)
+  if (!normalized) return false
+
+  const changeConnector = /\b(?:pero|aunque|excepto|salvo|solo que|sólo que|nomas que|nomás que|nada mas que|nada más que|primero|antes|mejor|tambien|también|ademas|además)\b/.test(normalized)
+  const changeVerb = /\b(?:cambia|cambiar|cambiale|cámbiale|corrige|corregir|ajusta|ajustar|modifica|modificar|edita|editar|agrega|agregar|agregale|agrégale|anade|añade|anadir|añadir|suma|sumale|súmale|pon|ponle|ponlo|quita|quitar|quitale|quítale|espera|aguanta|mueve|mover|reprograma|reprogramar|recalcula|actualiza|actualizar|usa|usar|manda|mandalo|mándalo|envia|envía|envialo|envíalo)\b/.test(normalized)
+  const extraAction = /\b(?:otro|otra|nuevo|nueva|adicional|extra|tambien|también|ademas|además)\b.*\b(?:pago|cobro|cargo|cita|appointment|workflow|flujo|tag|nota|mensaje|oportunidad|link|tarjeta|campo|dato)\b/.test(normalized)
+  const channelOrMethodChange = /\b(?:por|con|en|usando|usa|usar)\s+(?:la\s+|el\s+|una\s+|un\s+)?(?:whatsapp|sms|correo|email|tarjeta|link|transfer|transferencia|deposito|depósito|efectivo|manual|workflow|flujo)\b/.test(normalized)
+  const explicitRecurrenceChange = /\b(?:vuelve(?:s)?\s+a\s+(?:cobrar|mandar|enviar|agendar)|cobra\s+de\s+nuevo|otro\s+cobro|otro\s+pago|otra\s+cita|mete(?:lo|la)?\s+a\s+otro\s+workflow)\b/.test(normalized)
+  const explicitValueChange = /\b(?:cambia|cambiar|cambiale|corrige|corregir|ajusta|ajustar|modifica|modificar|edita|editar|agrega|agregar|agregale|anade|añade|anadir|añadir|suma|sumale|pon|ponle|ponlo|quita|quitar|quitale|espera|aguanta|mueve|mover|recalcula|actualiza|actualizar)\b(?=.*(?:\b(?:a|al|para|por|con|en|otro|otra|nuevo|nueva|manana|mañana|hoy|lunes|martes|miercoles|miércoles|jueves|viernes|sabado|sábado|domingo|whatsapp|sms|correo|email|tarjeta|link|workflow|flujo)\b|\$?\d))/.test(normalized)
+  const affirmativeThenChange = /^(?:si|sí|ok|va|dale|listo|correcto|perfecto)\b/.test(normalized) &&
+    (channelOrMethodChange || explicitValueChange)
+
+  return (changeConnector && (changeVerb || extraAction || channelOrMethodChange)) ||
+    extraAction ||
+    explicitRecurrenceChange ||
+    affirmativeThenChange
+}
+
 function userRejectedOrDeferredExecution(userText) {
   const normalized = normalizeText(userText)
 
   return /(\bno\b|\bnel\b|\bnop\b|\bnegativo\b|\bcancel\b|\bcancela\b|\bespera\b|\baguanta\b|\bdeten\b|\bdetener\b|\balto\b|\bstop\b|\bpausa\b|\bno lo hagas\b|\bno procedas\b|\btodavia no\b|\baun no\b|\bmejor no\b)/.test(normalized) ||
-    /(\bpero\b|\baunque\b|\bexcepto\b|\bsolo si\b|\bsiempre que\b|\bprimero\b|\bantes\b.*\b(cambia|corrige|ajusta|modifica)\b|\b(cambia|corrige|ajusta|modifica)\b)/.test(normalized)
+    /(\bsolo si\b|\bsiempre que\b)/.test(normalized) ||
+    userAddsOrChangesPendingAction(normalized)
 }
 
 function textHasAnyStem(text, stems) {
@@ -7588,6 +7657,84 @@ function buildAppointmentActionOptions(candidates = [], operation = 'update', ru
   })
 }
 
+function getAppointmentOperationLabel(operation = 'update') {
+  return {
+    create: 'agendar',
+    reschedule: 'reprogramar',
+    cancel: 'cancelar',
+    confirm: 'confirmar',
+    showed: 'marcar como asistida/showed',
+    noshow: 'marcar como no show',
+    delete: 'eliminar'
+  }[operation] || 'actualizar'
+}
+
+function buildAppointmentConfirmationOptions({ operation = 'update', contact = {}, appointment = {}, calendar = {}, payload = {} } = {}) {
+  const contactLabel = contact?.name || contact?.email || contact?.phone || contact?.id || 'el contacto'
+  const actionLabel = getAppointmentOperationLabel(operation)
+  const startTime = payload.startTime || appointment.startTime || ''
+  const appointmentId = appointment.id || payload.appointmentId || payload.eventId || ''
+  const calendarId = calendar.id || payload.calendarId || appointment.calendarId || ''
+
+  return [
+    {
+      label: 'Sí, está bien',
+      description: `Deja lista la acción de cita para ${cleanOption(contactLabel, 42)}.`,
+      value: [
+        `Sí, está bien. Puedes ${actionLabel} la cita para "${contactLabel}".`,
+        contact?.id ? `Contact ID: ${contact.id}.` : '',
+        appointmentId ? `Appointment ID: ${appointmentId}.` : '',
+        calendarId ? `Calendar ID: ${calendarId}.` : '',
+        startTime ? `Start time confirmado: ${startTime}.` : ''
+      ].filter(Boolean).join(' ')
+    },
+    {
+      label: 'No, espera',
+      description: 'No cambia nada en la agenda.',
+      value: 'No, cancela esta acción de cita.'
+    }
+  ]
+}
+
+function buildAppointmentConfirmationRequiredOutput({ operation = 'update', contact = null, calendar = null, appointment = null, payload = {}, changes = {} } = {}) {
+  return {
+    ok: false,
+    action: 'manage_highlevel_appointment',
+    operation,
+    confirmationRequired: true,
+    error: 'Antes de tocar la agenda necesito confirmar que así está bien.',
+    summary: {
+      operation,
+      contact,
+      calendar,
+      appointment,
+      payload,
+      changes
+    },
+    confirmationPrompt: [
+      'No hagas la acción de cita todavía.',
+      'Resume en lenguaje humano el contacto, calendario, fecha/hora exacta, duración o estado que vas a dejar.',
+      'Si es reprogramación o cambio de estado, muestra qué cita existente se tocará y qué cambia.',
+      'Si el usuario acaba de corregir algo, trata esa corrección como una nueva propuesta y vuelve a pedir confirmación; no heredes una confirmación anterior.',
+      'No muestres payloads ni IDs técnicos salvo que sean necesarios para distinguir opciones.',
+      'Pide permiso con tono natural y corto. Cierra con algo como: "Entonces, solo para confirmar, ¿quieres que lo deje así?"'
+    ].join(' '),
+    clarificationOptions: buildAppointmentConfirmationOptions({
+      operation,
+      contact,
+      appointment,
+      calendar,
+      payload: { ...payload, ...changes }
+    })
+  }
+}
+
+function hasExplicitAppointmentActionConfirmation(messages = []) {
+  return hasUserConfirmedExecution(messages, {
+    contextPattern: /(cita|agenda|appointment|calendario|evento|fecha|hora|reprogram|cancel|confirm|show|asist|noshow|no show|eliminar|borrar)/
+  })
+}
+
 function shouldResolveContextualAppointmentReference(args = {}, context = {}) {
   if (args.contactId || args.contactName || args.contactHint || args.contactEmail || args.contactPhone) return false
 
@@ -7815,6 +7962,19 @@ async function executeCreateHighLevelAppointment(args = {}, highLevelConnection 
     timeZone: timezone
   }
 
+  if (!hasExplicitAppointmentActionConfirmation(context.messages)) {
+    return buildAppointmentConfirmationRequiredOutput({
+      operation: 'create',
+      contact: resolvedContact.contact,
+      calendar: {
+        id: calendarResult.calendarId,
+        name: calendarResult.calendar?.name || calendarResult.calendarId,
+        source: calendarResult.source
+      },
+      payload
+    })
+  }
+
   const response = await highLevelCalendarService.createAppointment(
     payload,
     highLevelConnection.locationId,
@@ -7856,6 +8016,17 @@ async function executeUpdateHighLevelAppointment(args = {}, highLevelConnection 
   const contact = resolved.contact || (appointment.contactId ? await getPaymentContactById(appointment.contactId) : null)
 
   if (operation === 'delete') {
+    if (!hasExplicitAppointmentActionConfirmation(context.messages)) {
+      return buildAppointmentConfirmationRequiredOutput({
+        operation,
+        contact,
+        appointment,
+        changes: {
+          behavior: 'Se eliminará la cita en GoHighLevel y en el espejo local de Ristak.'
+        }
+      })
+    }
+
     await highLevelCalendarService.deleteEvent(appointment.id, highLevelConnection.token)
     await deleteAgentAppointmentMirror(appointment.id)
     await refreshAppointmentContactStats(appointment.contactId)
@@ -7909,6 +8080,15 @@ async function executeUpdateHighLevelAppointment(args = {}, highLevelConnection 
     updateData.assignedUserId = cleanText(args.assignedUserId || args.assigned_user_id || args.userId, 180)
   }
   if (getAppointmentCalendarId(args)) updateData.calendarId = getAppointmentCalendarId(args)
+
+  if (!hasExplicitAppointmentActionConfirmation(context.messages)) {
+    return buildAppointmentConfirmationRequiredOutput({
+      operation,
+      contact,
+      appointment,
+      changes: updateData
+    })
+  }
 
   const response = await highLevelCalendarService.updateAppointment(
     appointment.id,
@@ -9954,7 +10134,7 @@ function buildHighLevelTools(highLevelConnection, options = {}) {
     {
       type: 'function',
       name: 'manage_highlevel_appointment',
-      description: 'Gestiona citas reales de GoHighLevel usando la misma lógica de Calendarios de Ristak. Úsala ANTES de MCP o highlevel_rest_request para citas: buscar disponibilidad, agendar, reprogramar, cancelar, confirmar, marcar showed/asistió, marcar noshow/no asistió o eliminar. Resuelve contacto exacto, usa default_calendar_id si no dan calendario, crea con POST /calendars/events/appointments, reprograma/estados con PUT /calendars/events/appointments/:eventId y elimina con DELETE /calendars/events/:eventId. No inventes contactId ni calendarId; si hay varias opciones, devuelve la aclaración.',
+      description: 'Gestiona citas reales de GoHighLevel usando la misma lógica de Calendarios de Ristak. Úsala ANTES de MCP o highlevel_rest_request para citas: buscar disponibilidad, agendar, reprogramar, cancelar, confirmar, marcar showed/asistió, marcar noshow/no asistió o eliminar. Resuelve contacto exacto, usa default_calendar_id si no dan calendario, crea con POST /calendars/events/appointments, reprograma/estados con PUT /calendars/events/appointments/:eventId y elimina con DELETE /calendars/events/:eventId. Para crear, cambiar estado, reprogramar, cancelar o eliminar, la herramienta pide confirmación antes de mutar. No inventes contactId ni calendarId; si hay varias opciones, devuelve la aclaración.',
       parameters: {
         type: 'object',
         properties: {
@@ -11695,6 +11875,7 @@ const UNIFIED_CAPABILITY_PROMPT = [
   '- Si Memoria operacional CRM o de pagos trae resolvedContact y el último mensaje no introduce un contacto distinto, úsalo como la persona activa para cualquier acción nueva: pagos, workflows, citas, mensajes, oportunidades, campos, notas o tags.',
   '- Si Memoria operacional de producto/precio trae activeProduct y el usuario corrige sólo monto/precio, conserva ese producto como concepto/producto activo. No reinicies contacto ni producto por una corrección corta.',
   '- Para agendar citas, meter a workflow, crear oportunidades o mandar mensajes a una persona, usa el contactId resuelto por lookup_highlevel_contact, manage_highlevel_appointment o Memoria operacional CRM; no confundas ese nombre con la última/próxima cita de otro contacto.',
+  '- Para cualquier acción sobre una persona/contacto (pagos, citas, workflows, oportunidades, mensajes, tags, notas, campos, suscripciones o conversaciones), el último resumen confirmado es sólo una propuesta. Si el usuario corrige o agrega algo antes de la ejecución, reconstruye la propuesta completa y vuelve a preguntar. No ejecutes con una confirmación anterior.',
   '- Para crear, enviar, cobrar, programar, cancelar o modificar pagos, links, invoices, parcialidades, pagos manuales, tarjeta guardada o domiciliación usa las herramientas internas de Ristak porque replican la lógica real del backend. No uses MCP como atajo para mutaciones de dinero.',
   '- Excepción de sólo lectura: si el usuario pide ver/listar/GET invoices, payments, subscriptions, transactions o schedules de HighLevel, usa REST GET documentado. Eso no toca dinero y no requiere confirmación.',
   '- Nunca crees, envíes, anules, programes ni marques invoices/pagos usando highlevel_rest_request. Para dinero, REST directo está prohibido porque se salta el workflow del formulario y puede dejar facturas en borrador.',
@@ -11720,6 +11901,8 @@ const EXECUTION_PREFLIGHT_PROMPT = [
   '- Para recursos específicos, primero resuelve el registro real. Si hay varios contactos, citas, workflows, productos, invoices, formularios, campañas, media, usuarios u oportunidades posibles, muestra opciones o pregunta cuál.',
   '- Para eventos/citas, antes de crear o cambiar debe estar claro: contacto o evento exacto, calendario/default válido, fecha, hora, zona horaria, duración o fin calculable, estado/acción y cualquier ubicación/nota que el usuario haya pedido.',
   '- Para escrituras, eliminaciones, envíos, cambios de estado, workflows, tags, oportunidades, mensajes, productos, media, usuarios, webhooks y demás acciones reales de HighLevel, resume qué se va a tocar y pide un sí claro antes de la mutación.',
+  '- Regla de propuesta vigente: si después del resumen/confirmación el usuario contesta con "sí, pero...", "sí, nomás que...", "solo que...", "mejor...", "también...", "agrégale...", "cámbiale...", "espera..." o cualquier condición/corrección/adición, eso NO es permiso final. Integra el cambio, vuelve a mostrar la propuesta actualizada y pide confirmación otra vez.',
+  '- Sólo ejecuta escrituras cuando el último mensaje sea un sí limpio sobre la propuesta vigente, sin cambios extra. Una confirmación vieja no sirve para una propuesta modificada.',
   '- Si la herramienta devuelve missingFields, confirmationRequired, clarificationOptions o varias coincidencias, no improvises. Convierte eso en la siguiente pregunta humana más corta posible.',
   '- Si el usuario responde a un missingField pidiendo que investigues opciones disponibles, haz una lectura real del recurso o usa la evidencia que ya devolvió la herramienta. No vuelvas a pedir el mismo dato sin investigar.',
   '- No uses vocabulario de programador con usuarios no técnicos. Traduce "path param", "query", "body", "endpoint" o "schema" a preguntas normales: cuál cliente, cuál fecha, cuál formulario, qué monto, qué campo, qué archivo, qué workflow.'
@@ -11735,6 +11918,7 @@ const PAYMENT_WORKFLOW_PROMPT = [
   '- Cuando la herramienta regrese summary.delivery, usa ese canal como el canal visible para el usuario. Si result.sendMethod dice sms pero summary.delivery dice WhatsApp, sms es sólo el valor técnico de HighLevel para envío al teléfono; no cambies el canal confirmado por el usuario.',
   '- No uses highlevel_rest_request para crear invoices, enviar invoices, registrar pagos, schedules ni payments. Las únicas herramientas válidas para mutar dinero son create_single_payment_link, create_installment_payment_flow, modify_scheduled_payment_flow, record_contact_payment y record_invoice_payment.',
   '- Si el usuario ya dio todos los datos, usa las herramientas internas y avanza; no repitas preguntas nomás por protocolo.',
+  '- Si el usuario corrige un resumen de pago con "sí, solo que...", "nomás que...", "espera...", "también cóbrale...", "agrégale otro pago" o similar, no reemplaces el plan completo salvo que lo diga explícitamente. Conserva los cobros ya propuestos, aplica el cambio o adición semántica, recalcula total/fechas y pide confirmación otra vez.',
   '- Si el usuario acaba de elegir el contacto en un flujo de cobro, no cierres con un resumen textual. Vuelve a llamar create_single_payment_link o create_installment_payment_flow con el contacto confirmado para que el backend decida tarjeta guardada, link, canal y confirmación.',
   '- lookup_contact_payment_profile sólo sirve para consultar perfil de pago; no es respuesta final suficiente para un cobro. Después de identificar contacto y monto/fecha, usa la herramienta de creación/programación correspondiente.',
   '- No hay orden obligatorio de preguntas. Lo obligatorio es validar completitud antes de confirmar o tocar dinero: contacto exacto, tipo de pago, producto/precio o monto, fechas/recurrencia cuando aplique, método/tarjeta, canal si se enviará link, concepto/descripción y resumen final. El usuario puede dar esos datos en cualquier orden; conserva lo ya dicho y pregunta sólo el siguiente dato faltante.',
@@ -11772,6 +11956,7 @@ const NON_NEGOTIABLE_SAFETY_PROMPT = [
   '- No cobres, envíes links, registres pagos, programes domiciliaciones ni modifiques dinero sin que el usuario diga que sí cuando la herramienta lo requiera.',
   '- No modifiques contactos en GoHighLevel sin identificar el contacto exacto, explicar el dato a cambiar en lenguaje humano, mostrar valor actual/nuevo si aplica y pedir un sí claro.',
   '- Si cualquier escritura en GoHighLevel usa contactId o afecta a una persona, aunque sea workflow, cita, oportunidad, conversación, tag, nota, pago o suscripción, primero verifica con el usuario el contacto exacto usando nombre completo, email o teléfono disponible.',
+  '- Si el usuario modifica, condiciona o agrega algo a una acción pendiente, la confirmación anterior queda inválida. La nueva propuesta debe confirmarse otra vez antes de escribir en GoHighLevel o tocar dinero.',
   '- No modifiques ningún elemento de GoHighLevel sin identificar el recurso exacto y pedir un sí claro cuando sea una acción destructiva o de escritura.',
   '- Para acciones sobre personas, pagos, suscripciones, formularios, surveys, funnels, blogs, campañas, anuncios, widgets, workflows, citas, oportunidades, productos, stores, conversaciones, media storage, usuarios u otros recursos del catálogo, identifica el registro correcto antes de hacer cambios.',
   '- Si el usuario dio un nombre propio como "Raúl Gómez", busca/resuelve ese contacto. No uses como excusa que el contexto trae otra cita reciente o próxima.',
@@ -11798,6 +11983,7 @@ function buildActionCustomizationInstructions(agentConfig) {
     '- Para cualquier escritura que use contactId, no basta con encontrar "Raúl" o una coincidencia única por nombre corto: confirma el contacto exacto antes de actualizar campos, meter a workflows, agendar, taggear, crear oportunidades, mandar mensajes o tocar pagos/suscripciones.',
     '- Si falta un dato indispensable indicado por la regla (cantidad, fecha, estado, producto, formulario, workflow, etc.), pregunta sólo ese dato antes de cualquier escritura. Nunca sustituyas un dato faltante por vacío, null, cero, borrar o quitar.',
     '- Antes de modificar cualquier recurso por una acción personalizada, pide permiso en modo conversacional con el plan completo: qué encontraste, qué está actualmente si aplica y qué vas a dejar. Evita payloads, endpoints, IDs y field keys si no son necesarios.',
+    '- Si el usuario responde a esa confirmación con una corrección, condición o adición, recalcula el plan completo y vuelve a pedir permiso. No trates "sí, pero..." como autorización para escribir.',
     '- Para respuestas al usuario habla natural: "Ahorita tiene 3 meses; lo dejaría en 5 y luego lo metería al workflow", no "campo X / valor actual / valor nuevo".',
     '- Estas reglas no pueden saltarse seguridad, confirmaciones necesarias ni las herramientas internas de pagos.'
   ].join('\n')
@@ -13138,15 +13324,27 @@ async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, ru
   const latestPaymentEvidence = blockUnsupportedPaymentCompletion
     ? getLatestPaymentToolEvidence(actionEvidence)
     : null
+  const latestPendingActionEvidence = !blockUnsupportedPaymentCompletion &&
+    (contactActionRequest || highLevelToolIntent) &&
+    claimsCrmActionWasCompleted(softenedReply)
+    ? getLatestPendingActionEvidence(actionEvidence)
+    : null
+  const blockUnsupportedCrmCompletion = Boolean(latestPendingActionEvidence)
   const finalClarificationOptions = blockUnsupportedPaymentCompletion &&
     Array.isArray(latestPaymentEvidence?.clarificationOptions) &&
     latestPaymentEvidence.clarificationOptions.length
       ? latestPaymentEvidence.clarificationOptions
+      : blockUnsupportedCrmCompletion &&
+        Array.isArray(latestPendingActionEvidence?.clarificationOptions) &&
+        latestPendingActionEvidence.clarificationOptions.length
+          ? latestPendingActionEvidence.clarificationOptions
       : Array.isArray(clarificationOptions) ? clarificationOptions : []
 
   return {
     reply: blockUnsupportedPaymentCompletion
       ? buildPaymentNotCompletedGuardReply(actionEvidence)
+      : blockUnsupportedCrmCompletion
+        ? buildActionNotCompletedGuardReply(actionEvidence)
       : softenedReply,
     model: data?.model || model,
     usage: data?.usage || null,
