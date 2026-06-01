@@ -1,9 +1,12 @@
-import { db, getHighLevelConfig } from '../config/database.js'
+import { db, getAppConfig, getHighLevelConfig } from '../config/database.js'
 import { decrypt, encrypt } from '../utils/encryption.js'
 import { resolveDateRangeWithGHLTimezone } from '../utils/dateUtils.js'
 import { buildHiddenContactsCondition, getHiddenContactFilters } from '../utils/hiddenContactsFilter.js'
 import { getGHLClient } from './ghlClient.js'
+import * as highLevelCalendarService from './highlevelCalendarService.js'
 import { cancelScheduledInstallmentPayment, createInstallmentPaymentFlow, createOfflineContactPayment, createSinglePaymentLink, updateScheduledInstallmentPayment } from './paymentFlowService.js'
+import { recordAttendanceAttributionSignal } from './appointmentsMerge.js'
+import { triggerWhatsappAppointmentBookedEvent } from './metaWhatsappEventsService.js'
 import { PAYMENT_MODE_LIVE, PAYMENT_MODE_TEST, normalizePaymentMode, nonTestPaymentCondition } from '../utils/paymentMode.js'
 import { logger } from '../utils/logger.js'
 import {
@@ -13,6 +16,16 @@ import {
 } from '../utils/searchText.js'
 import { updateSingleContactStats } from '../utils/updateContactsStats.js'
 import { DateTime } from 'luxon'
+import {
+  addHighLevelEndpointQueryDefaults,
+  compactHighLevelEndpoint,
+  findHighLevelEndpoint,
+  getHighLevelEndpointCatalogSummary,
+  getUnresolvedHighLevelPathParams,
+  lookupHighLevelEndpoint,
+  replaceHighLevelPathDefaults,
+  searchHighLevelEndpoints
+} from './highlevelApiCatalog.js'
 
 const OPENAI_API_URL = 'https://api.openai.com/v1'
 const HIGHLEVEL_API_BASE_URL = process.env.GHL_API_BASE_URL || 'https://services.leadconnectorhq.com'
@@ -39,6 +52,8 @@ const MAX_ATTACHMENT_DATA_CHARS = 12_000_000
 const MAX_ATTACHMENT_TEXT_CHARS = 18_000
 const DEFAULT_PAYMENT_CURRENCY = 'MXN'
 const DEFAULT_PAYMENT_TIMEZONE = 'America/Mexico_City'
+const DEFAULT_APPOINTMENT_TIMEZONE = 'America/Mexico_City'
+const DEFAULT_APPOINTMENT_DURATION_MINUTES = 60
 const DEFAULT_AI_RESPONSE_STYLE = 'direct'
 const DEFAULT_AI_RECOMMENDATION_MODE = 'on_request'
 const LEGACY_BUSINESS_CONTEXT_FIELDS = [
@@ -844,6 +859,7 @@ const HIGHLEVEL_API_RESOURCE_CATALOG_TEXT = [
   'LC Phone', 'Products/Prices', 'Proposals', 'SaaS', 'Snapshots', 'Social Planner',
   'Store/Ecommerce', 'Surveys', 'Users', 'Voice AI', 'Workflows', 'Webhooks'
 ].join(', ')
+const HIGHLEVEL_ENDPOINT_CATALOG_SUMMARY = getHighLevelEndpointCatalogSummary()
 const HIGHLEVEL_API_RESOURCE_PATTERN = new RegExp(`(?:^|\\b)(?:${buildAliasPattern(HIGHLEVEL_API_RESOURCE_ALIASES)})(?:\\b|$)`)
 const HIGHLEVEL_OPERATION_WORD_PATTERN = /\b(?:busca|buscar|buscame|encuentra|revisa|consulta|consultar|muestra|listar|lista|trae|traeme|tráeme|obten|obtiene|obtener|get|post|put|patch|delete|crea|crear|actualiza|modifica|cambia|manda|envia|envía|agenda|agendar|calendariza|ejecuta|haz|hacer|agrega|agregar|quita|quitar|remueve|remover|elimina|eliminar|sube|subir|descarga|descargar|abre|abrir|lee|leer|ver)\b/
 const HIGHLEVEL_PAYMENT_RESOURCE_PATTERN = /\b(?:payment|payments|invoice|invoices|subscription|subscriptions|transaction|transactions|pago|pagos|factura|facturas|recibo|recibos)\b/
@@ -2295,6 +2311,7 @@ const PAYMENT_CONTACT_TOOL_NAMES = new Set([
 const CRM_CONTACT_TOOL_NAMES = new Set([
   'lookup_highlevel_contact',
   'update_highlevel_contact_field',
+  'manage_highlevel_appointment',
   'highlevel_rest_request'
 ])
 
@@ -5684,6 +5701,993 @@ async function executeLookupBusinessReference(args = {}, context = {}) {
   }
 }
 
+const APPOINTMENT_STATUS_ALIASES = {
+  pending: 'confirmed',
+  pendiente: 'confirmed',
+  confirmed: 'confirmed',
+  confirmada: 'confirmed',
+  confirmado: 'confirmed',
+  confirmar: 'confirmed',
+  cancelled: 'cancelled',
+  canceled: 'cancelled',
+  cancelada: 'cancelled',
+  cancelado: 'cancelled',
+  cancelar: 'cancelled',
+  showed: 'showed',
+  show: 'showed',
+  asistio: 'showed',
+  asistió: 'showed',
+  asistencia: 'showed',
+  presentada: 'showed',
+  presentado: 'showed',
+  noshow: 'noshow',
+  no_show: 'noshow',
+  'no-show': 'noshow',
+  noasistio: 'noshow',
+  no_asistio: 'noshow',
+  faltante: 'noshow',
+  rescheduled: 'confirmed',
+  reprogramada: 'confirmed',
+  reprogramado: 'confirmed'
+}
+
+function normalizeAppointmentOperation(value = '') {
+  const normalized = normalizeText(value).replace(/\s+/g, '_')
+  if (!normalized) return ''
+
+  if (/^(lookup_slots|free_slots|availability|disponibilidad|horarios|slots|buscar_horarios)$/.test(normalized)) {
+    return 'lookup_slots'
+  }
+
+  if (/(slot|horario|disponibilidad|hueco|espacio)/.test(normalized) && /(busca|buscar|ver|consulta|revisa|mostrar|disponible)/.test(normalized)) {
+    return 'lookup_slots'
+  }
+
+  if (/(reprogram|reschedul|mover|cambiar.*(?:fecha|hora)|nueva_fecha|nuevo_horario)/.test(normalized)) return 'reschedule'
+  if (/(cancel|cancell|anular|marcar.*cancel)/.test(normalized)) return 'cancel'
+  if (/(confirm|marcar.*confirm)/.test(normalized)) return 'confirm'
+  if (/(no_?show|noshow|no_asist|no_llego|no_llegó|falto|faltó)/.test(normalized)) return 'noshow'
+  if (/(showed|asist|llego|llegó|present|marcar.*show)/.test(normalized)) return 'showed'
+  if (/(delete|elimin|borrar|quita|remueve)/.test(normalized)) return 'delete'
+  if (/(create|crear|agenda|agendar|book|programa|programar|calendariza|nueva_cita)/.test(normalized)) return 'create'
+
+  return ''
+}
+
+function normalizeAgentAppointmentStatus(status, fallback = 'confirmed') {
+  const normalized = normalizeText(status).replace(/\s+/g, '_')
+  if (!normalized) return fallback
+  return APPOINTMENT_STATUS_ALIASES[normalized] || fallback
+}
+
+function getAppointmentStatusForOperation(operation, args = {}) {
+  if (operation === 'cancel') return 'cancelled'
+  if (operation === 'confirm') return 'confirmed'
+  if (operation === 'showed') return 'showed'
+  if (operation === 'noshow') return 'noshow'
+  if (operation === 'reschedule') return 'confirmed'
+  return normalizeAgentAppointmentStatus(args.appointmentStatus || args.status || args.appointment_status, 'confirmed')
+}
+
+function getAppointmentTimezone(args = {}, highLevelConnection = {}, runtimeContext = {}) {
+  const candidate = cleanText(
+    args.timeZone ||
+    args.timezone ||
+    args.time_zone ||
+    runtimeContext.timezone ||
+    highLevelConnection.locationData?.timezone ||
+    DEFAULT_APPOINTMENT_TIMEZONE,
+    80
+  )
+
+  return DateTime.now().setZone(candidate).isValid ? candidate : DEFAULT_APPOINTMENT_TIMEZONE
+}
+
+function hasExplicitTimezoneOffset(value = '') {
+  return /(?:z|[+-]\d{2}:?\d{2})$/i.test(String(value || '').trim())
+}
+
+function normalizeAppointmentDateTime(value, timezone = DEFAULT_APPOINTMENT_TIMEZONE) {
+  if (!value) return ''
+
+  const raw = String(value).trim()
+  const zone = DateTime.now().setZone(timezone).isValid ? timezone : DEFAULT_APPOINTMENT_TIMEZONE
+  let parsed = null
+
+  if (/^\d{13}$/.test(raw)) {
+    parsed = DateTime.fromMillis(Number(raw), { zone })
+  } else if (/^\d{10}$/.test(raw)) {
+    parsed = DateTime.fromSeconds(Number(raw), { zone })
+  } else if (hasExplicitTimezoneOffset(raw)) {
+    parsed = DateTime.fromISO(raw, { setZone: true })
+  } else {
+    parsed = DateTime.fromISO(raw, { zone })
+  }
+
+  if (!parsed?.isValid) {
+    const date = new Date(raw)
+    if (!Number.isNaN(date.getTime())) {
+      parsed = DateTime.fromJSDate(date, { zone })
+    }
+  }
+
+  return parsed?.isValid ? parsed.toISO({ suppressMilliseconds: true }) : ''
+}
+
+function normalizeAppointmentDateOnly(value, timezone = DEFAULT_APPOINTMENT_TIMEZONE, fallback = null) {
+  if (!value) return fallback
+
+  const raw = String(value).trim()
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw
+
+  const iso = normalizeAppointmentDateTime(raw, timezone)
+  if (!iso) return fallback
+
+  const parsed = DateTime.fromISO(iso, { setZone: true }).setZone(timezone)
+  return parsed.isValid ? parsed.toISODate() : fallback
+}
+
+function getAppointmentDurationMinutes(calendar = {}) {
+  const rawValue = Number(
+    calendar.slotDuration ||
+    calendar.slot_duration ||
+    calendar.appointmentDuration ||
+    calendar.appointment_duration ||
+    calendar.duration ||
+    DEFAULT_APPOINTMENT_DURATION_MINUTES
+  )
+  const value = Number.isFinite(rawValue) && rawValue > 0 ? rawValue : DEFAULT_APPOINTMENT_DURATION_MINUTES
+  const unit = normalizeText(calendar.slotDurationUnit || calendar.slot_duration_unit || calendar.durationUnit || 'mins')
+
+  if (/hour|hora/.test(unit)) return value * 60
+  if (/day|dia|día/.test(unit)) return value * 24 * 60
+  return value
+}
+
+function addAppointmentDuration(startTime, minutes, timezone) {
+  const parsed = DateTime.fromISO(startTime, { setZone: true })
+  const base = parsed.isValid ? parsed : DateTime.fromISO(startTime, { zone: timezone })
+  return base.isValid
+    ? base.plus({ minutes }).toISO({ suppressMilliseconds: true })
+    : ''
+}
+
+function getAppointmentCalendarId(args = {}) {
+  return cleanText(
+    args.calendarId ||
+    args.calendar_id ||
+    args.calendar?.id ||
+    args.calendar?.calendarId ||
+    '',
+    180
+  )
+}
+
+function getAppointmentCalendarName(args = {}) {
+  return cleanText(
+    args.calendarName ||
+    args.calendar_name ||
+    args.calendar?.name ||
+    args.calendar ||
+    '',
+    180
+  )
+}
+
+function unwrapCalendarPayload(response = {}) {
+  return response?.calendar || response?.data?.calendar || response?.data || response || {}
+}
+
+function normalizeCalendarForAgent(rawCalendar = {}) {
+  const calendar = unwrapCalendarPayload(rawCalendar)
+  const id = cleanText(calendar.id || calendar._id || calendar.calendarId || calendar.calendar_id || '', 180)
+  if (!id) return null
+
+  const teamMembers = Array.isArray(calendar.teamMembers)
+    ? calendar.teamMembers
+    : Array.isArray(calendar.team_members)
+      ? calendar.team_members
+      : []
+
+  return {
+    ...calendar,
+    id,
+    name: cleanText(calendar.name || calendar.title || calendar.calendarName || id, 180),
+    teamMembers
+  }
+}
+
+function getFirstCalendarTeamMemberId(calendar = {}) {
+  const members = Array.isArray(calendar.teamMembers) ? calendar.teamMembers : []
+  for (const member of members) {
+    const userId = cleanText(member.userId || member.user_id || member.id || member.user?.id || '', 180)
+    if (userId) return userId
+  }
+  return ''
+}
+
+function buildCalendarChoiceOptions(calendars = []) {
+  return calendars.slice(0, CLARIFICATION_OPTION_LIMIT).map((calendar) => ({
+    label: cleanOption(calendar.name || calendar.id || 'Calendario'),
+    description: [
+      calendar.id ? `ID: ${cleanOption(calendar.id, 42)}` : '',
+      getAppointmentDurationMinutes(calendar) ? `Duracion: ${getAppointmentDurationMinutes(calendar)} min` : ''
+    ].filter(Boolean).join(' · '),
+    value: `Usa el calendario "${calendar.name || calendar.id}" (calendar ID: ${calendar.id}) para la cita.`
+  }))
+}
+
+async function getDefaultAppointmentCalendarId() {
+  const value = cleanText(await getAppConfig('default_calendar_id'), 220)
+  if (!value) return ''
+
+  try {
+    const parsed = JSON.parse(value)
+    if (typeof parsed === 'string') return cleanText(parsed, 180)
+  } catch {
+    // default_calendar_id se guarda como string plano en la app.
+  }
+
+  return value
+}
+
+async function loadAgentCalendars(highLevelConnection = {}) {
+  const calendars = await highLevelCalendarService.getCalendars(
+    highLevelConnection.locationId,
+    highLevelConnection.token
+  )
+
+  return calendars.map(normalizeCalendarForAgent).filter(Boolean)
+}
+
+async function loadAgentCalendar(calendarId, highLevelConnection = {}) {
+  if (!calendarId) return null
+
+  try {
+    const response = await highLevelCalendarService.getCalendar(calendarId, highLevelConnection.token)
+    return normalizeCalendarForAgent(response)
+  } catch (error) {
+    logger.warn(`No se pudo cargar calendario ${calendarId}: ${error.message}`)
+    return { id: calendarId, name: calendarId, teamMembers: [] }
+  }
+}
+
+async function resolveAppointmentCalendar(args = {}, highLevelConnection = {}) {
+  const explicitCalendarId = getAppointmentCalendarId(args)
+  if (explicitCalendarId) {
+    const calendar = await loadAgentCalendar(explicitCalendarId, highLevelConnection)
+    return {
+      calendarId: explicitCalendarId,
+      calendar,
+      source: 'argument'
+    }
+  }
+
+  const calendarName = getAppointmentCalendarName(args)
+  const defaultCalendarId = await getDefaultAppointmentCalendarId()
+  const calendars = calendarName || !defaultCalendarId
+    ? await loadAgentCalendars(highLevelConnection)
+    : []
+
+  if (calendarName && calendars.length) {
+    const normalizedName = normalizeText(calendarName)
+    const match = calendars.find(calendar => normalizeText(calendar.name) === normalizedName) ||
+      calendars.find(calendar => normalizeText(calendar.name).includes(normalizedName))
+
+    if (match?.id) {
+      return {
+        calendarId: match.id,
+        calendar: match,
+        source: 'calendar_name'
+      }
+    }
+  }
+
+  if (defaultCalendarId) {
+    const calendar = await loadAgentCalendar(defaultCalendarId, highLevelConnection)
+    return {
+      calendarId: defaultCalendarId,
+      calendar,
+      source: 'default_calendar_id'
+    }
+  }
+
+  if (calendars.length === 1) {
+    return {
+      calendarId: calendars[0].id,
+      calendar: calendars[0],
+      source: 'only_calendar'
+    }
+  }
+
+  return {
+    ok: false,
+    action: 'manage_highlevel_appointment',
+    calendarSelectionRequired: true,
+    error: calendars.length
+      ? 'Hay varios calendarios disponibles. Necesito que elijas uno o configures default_calendar_id.'
+      : 'No encontré calendarios disponibles en HighLevel para esta ubicación.',
+    missingFields: ['calendarId'],
+    calendars,
+    clarificationOptions: buildCalendarChoiceOptions(calendars)
+  }
+}
+
+function getAppointmentIdFromArgs(args = {}, context = {}) {
+  const direct = cleanText(
+    args.appointmentId ||
+    args.appointment_id ||
+    args.eventId ||
+    args.event_id ||
+    args.id ||
+    args.appointment?.id ||
+    args.event?.id ||
+    '',
+    180
+  )
+  if (direct) return direct
+
+  const text = [
+    args.referenceText,
+    args.appointmentHint,
+    args.hint,
+    getLatestUserText(context.messages)
+  ].filter(Boolean).join(' ')
+
+  return cleanText(
+    text.match(/(?:appointment|cita|evento|event)\s*(?:id)?\s*[:#-]?\s*([A-Za-z0-9_-]{8,})/i)?.[1] || '',
+    180
+  )
+}
+
+function unwrapAppointmentPayload(response = {}) {
+  return response?.appointment ||
+    response?.event ||
+    response?.data?.appointment ||
+    response?.data?.event ||
+    response?.data ||
+    response ||
+    {}
+}
+
+function normalizeAgentAppointmentRecord(rawAppointment = {}, fallback = {}) {
+  const appointment = unwrapAppointmentPayload(rawAppointment)
+  const id = cleanText(
+    appointment.id ||
+    appointment._id ||
+    appointment.eventId ||
+    appointment.event_id ||
+    appointment.appointmentId ||
+    appointment.appointment_id ||
+    fallback.id ||
+    fallback.appointmentId ||
+    '',
+    180
+  )
+
+  if (!id) return null
+
+  const contactId = cleanText(
+    appointment.contactId ||
+    appointment.contact_id ||
+    fallback.contactId ||
+    fallback.contact_id ||
+    '',
+    180
+  )
+  const appointmentStatus = normalizeAgentAppointmentStatus(
+    appointment.appointmentStatus ||
+    appointment.appointment_status ||
+    appointment.status ||
+    fallback.appointmentStatus ||
+    fallback.appointment_status ||
+    fallback.status,
+    'confirmed'
+  )
+
+  return {
+    id,
+    calendarId: cleanText(appointment.calendarId || appointment.calendar_id || fallback.calendarId || fallback.calendar_id || '', 180) || null,
+    contactId: contactId || null,
+    locationId: cleanText(appointment.locationId || appointment.location_id || fallback.locationId || fallback.location_id || '', 180) || null,
+    title: cleanText(appointment.title || fallback.title || 'Cita', 240),
+    status: cleanText(appointment.status || fallback.status || appointmentStatus, 80) || appointmentStatus,
+    appointmentStatus,
+    assignedUserId: cleanText(appointment.assignedUserId || appointment.assigned_user_id || fallback.assignedUserId || fallback.assigned_user_id || '', 180) || null,
+    notes: cleanText(appointment.notes || appointment.description || fallback.notes || fallback.description || '', 1000) || null,
+    address: cleanText(appointment.address || fallback.address || '', 500) || null,
+    startTime: appointment.startTime || appointment.start_time || fallback.startTime || fallback.start_time || null,
+    endTime: appointment.endTime || appointment.end_time || fallback.endTime || fallback.end_time || appointment.startTime || fallback.startTime || null,
+    dateAdded: appointment.dateAdded || appointment.date_added || fallback.dateAdded || fallback.date_added || new Date().toISOString(),
+    dateUpdated: appointment.dateUpdated || appointment.date_updated || fallback.dateUpdated || fallback.date_updated || new Date().toISOString()
+  }
+}
+
+async function upsertAgentAppointmentMirror(rawAppointment = {}, fallback = {}) {
+  const appointment = normalizeAgentAppointmentRecord(rawAppointment, fallback)
+  if (!appointment?.id) return null
+
+  await db.run(
+    `INSERT INTO appointments (
+       id, calendar_id, contact_id, location_id, title, status,
+       appointment_status, assigned_user_id, notes, address,
+       start_time, end_time, date_added, date_updated
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT (id) DO UPDATE SET
+       calendar_id = COALESCE(excluded.calendar_id, appointments.calendar_id),
+       contact_id = COALESCE(excluded.contact_id, appointments.contact_id),
+       location_id = COALESCE(excluded.location_id, appointments.location_id),
+       title = COALESCE(excluded.title, appointments.title),
+       status = COALESCE(excluded.status, appointments.status),
+       appointment_status = COALESCE(excluded.appointment_status, appointments.appointment_status),
+       assigned_user_id = COALESCE(excluded.assigned_user_id, appointments.assigned_user_id),
+       notes = COALESCE(excluded.notes, appointments.notes),
+       address = COALESCE(excluded.address, appointments.address),
+       start_time = COALESCE(excluded.start_time, appointments.start_time),
+       end_time = COALESCE(excluded.end_time, appointments.end_time),
+       date_added = COALESCE(appointments.date_added, excluded.date_added),
+       date_updated = excluded.date_updated`,
+    [
+      appointment.id,
+      appointment.calendarId,
+      appointment.contactId,
+      appointment.locationId,
+      appointment.title,
+      appointment.status,
+      appointment.appointmentStatus,
+      appointment.assignedUserId,
+      appointment.notes,
+      appointment.address,
+      appointment.startTime,
+      appointment.endTime,
+      appointment.dateAdded,
+      appointment.dateUpdated
+    ]
+  )
+
+  return appointment
+}
+
+async function deleteAgentAppointmentMirror(appointmentId) {
+  if (!appointmentId) return false
+  await db.run('DELETE FROM appointments WHERE id = ?', [appointmentId])
+  return true
+}
+
+function normalizeAgentAppointmentRow(row = {}) {
+  if (!row?.appointment_id) return null
+
+  const contactName = row.contact_full_name || `${row.contact_first_name || ''} ${row.contact_last_name || ''}`.trim()
+  return {
+    appointment: {
+      id: row.appointment_id,
+      calendarId: row.calendar_id || null,
+      contactId: row.contact_id || null,
+      locationId: row.location_id || null,
+      title: row.title || null,
+      status: row.status || null,
+      appointmentStatus: row.appointment_status || row.status || null,
+      assignedUserId: row.assigned_user_id || null,
+      notes: row.notes || null,
+      address: row.address || null,
+      startTime: row.start_time || null,
+      endTime: row.end_time || null,
+      dateAdded: row.date_added || null,
+      dateUpdated: row.date_updated || null
+    },
+    contact: row.contact_id
+      ? {
+          id: row.contact_id,
+          name: contactName || row.contact_email || row.contact_phone || row.contact_id,
+          email: row.contact_email || null,
+          phone: row.contact_phone || null
+        }
+      : null
+  }
+}
+
+function buildAgentAppointmentSelect(whereSql, orderSql = 'a.start_time ASC', limit = 8) {
+  return `
+    SELECT
+      a.id AS appointment_id,
+      a.calendar_id,
+      a.contact_id,
+      a.location_id,
+      a.title,
+      a.status,
+      a.appointment_status,
+      a.assigned_user_id,
+      a.notes,
+      a.address,
+      a.start_time,
+      a.end_time,
+      a.date_added,
+      a.date_updated,
+      c.full_name AS contact_full_name,
+      c.first_name AS contact_first_name,
+      c.last_name AS contact_last_name,
+      c.email AS contact_email,
+      c.phone AS contact_phone
+    FROM appointments a
+    LEFT JOIN contacts c ON c.id = a.contact_id
+    WHERE ${whereSql}
+    ORDER BY ${orderSql}
+    LIMIT ${limit}
+  `
+}
+
+async function getAgentAppointmentById(appointmentId) {
+  const row = await safeGet(buildAgentAppointmentSelect('a.id = ?', 'COALESCE(a.date_updated, a.start_time, a.date_added) DESC', 1), [appointmentId], null)
+  return normalizeAgentAppointmentRow(row)
+}
+
+async function getAgentAppointmentCandidatesForContact(contactId, runtimeContext = {}) {
+  if (!contactId) return []
+
+  const nowIso = runtimeContext.nowIso || DateTime.now().toISO()
+  const rows = await safeAll(buildAgentAppointmentSelect(
+    'a.contact_id = ?',
+    `CASE WHEN a.start_time >= ? THEN 0 ELSE 1 END ASC,
+     CASE WHEN a.start_time >= ? THEN a.start_time END ASC,
+     COALESCE(a.start_time, a.date_updated, a.date_added) DESC`,
+    8
+  ), [contactId, nowIso, nowIso])
+
+  return rows.map(normalizeAgentAppointmentRow).filter(Boolean)
+}
+
+function isInactiveAppointmentStatus(status = '') {
+  return /cancel|cancelled|canceled|invalid/i.test(String(status || ''))
+}
+
+function chooseAgentAppointmentCandidate(candidates = [], operation = '', runtimeContext = {}) {
+  if (!candidates.length) return null
+
+  const nowIso = runtimeContext.nowIso || DateTime.now().toISO()
+  const active = candidates.filter(candidate => !isInactiveAppointmentStatus(candidate.appointment?.appointmentStatus || candidate.appointment?.status))
+  const pool = active.length ? active : candidates
+
+  if (['reschedule', 'cancel', 'confirm'].includes(operation)) {
+    const upcoming = pool.filter(candidate => candidate.appointment?.startTime && candidate.appointment.startTime >= nowIso)
+    if (upcoming.length === 1) return upcoming[0]
+    if (upcoming.length > 1) return null
+  }
+
+  return pool.length === 1 ? pool[0] : null
+}
+
+function buildAppointmentActionOptions(candidates = [], operation = 'update', runtimeContext = {}) {
+  const actionText = {
+    reschedule: 'reprogramar',
+    cancel: 'cancelar',
+    confirm: 'confirmar',
+    showed: 'marcar como showed/asistio',
+    noshow: 'marcar como no show',
+    delete: 'eliminar'
+  }[operation] || 'actualizar'
+
+  return candidates.slice(0, CLARIFICATION_OPTION_LIMIT).map((candidate) => {
+    const appointment = candidate.appointment || {}
+    const contact = candidate.contact || {}
+    const label = cleanOption(appointment.title || contact.name || appointment.id || 'Cita')
+    const description = [
+      appointment.startTime ? `Fecha: ${formatOptionDate(appointment.startTime, runtimeContext)}` : '',
+      appointment.appointmentStatus || appointment.status ? `Estado: ${cleanOption(appointment.appointmentStatus || appointment.status, 30)}` : '',
+      contact.email ? `Email: ${cleanOption(contact.email, 42)}` : '',
+      contact.phone ? `Tel: ${cleanOption(contact.phone, 28)}` : ''
+    ].filter(Boolean).join(' · ')
+
+    return {
+      label,
+      description,
+      value: `Usa la cita "${label}" (appointment ID: ${appointment.id}) para ${actionText}. Contact ID: ${contact.id || appointment.contactId || ''}.`
+    }
+  })
+}
+
+function shouldResolveContextualAppointmentReference(args = {}, context = {}) {
+  if (args.contactId || args.contactName || args.contactHint || args.contactEmail || args.contactPhone) return false
+
+  const text = normalizeText([
+    args.referenceType,
+    args.referenceText,
+    args.appointmentHint,
+    args.hint,
+    getLatestUserText(context.messages)
+  ].filter(Boolean).join(' '))
+
+  return /(ultima|ultimo|recient|anterior|pasad|proxim|siguient|futur|pendient|esta|este|esa|ese|actual).*(cita|agenda|appointment)|(?:cita|agenda|appointment).*(ultima|ultimo|recient|anterior|pasad|proxim|siguient|futur|pendient|esta|este|esa|ese|actual)/.test(text)
+}
+
+async function resolveAppointmentForAgent(args = {}, highLevelConnection = {}, context = {}, operation = 'update') {
+  const runtimeContext = context.runtimeContext || {}
+  const appointmentId = getAppointmentIdFromArgs(args, context)
+
+  if (appointmentId) {
+    const local = await getAgentAppointmentById(appointmentId)
+    if (local?.appointment?.id) return local
+
+    try {
+      const remote = await highLevelCalendarService.getAppointment(appointmentId, highLevelConnection.token)
+      const mirrored = await upsertAgentAppointmentMirror(remote, {
+        id: appointmentId,
+        locationId: highLevelConnection.locationId
+      })
+
+      return {
+        appointment: mirrored || normalizeAgentAppointmentRecord(remote, { id: appointmentId }),
+        contact: mirrored?.contactId
+          ? await getPaymentContactById(mirrored.contactId)
+          : null
+      }
+    } catch (error) {
+      return {
+        ok: false,
+        action: 'manage_highlevel_appointment',
+        operation,
+        error: `No encontré la cita ${appointmentId} ni local ni en HighLevel: ${error.message}`,
+        missingFields: ['appointmentId']
+      }
+    }
+  }
+
+  if (shouldResolveContextualAppointmentReference(args, context)) {
+    const referenceText = cleanText(args.referenceText || args.appointmentHint || args.hint || getLatestUserText(context.messages), 260)
+    const candidates = await getAppointmentReferenceCandidates(runtimeContext)
+    const selected = chooseAppointmentReferenceCandidate(candidates, referenceText, args.referenceType || 'appointment')
+
+    if (selected?.appointment?.id) {
+      return {
+        appointment: selected.appointment,
+        contact: selected.contact || null
+      }
+    }
+
+    return {
+      ok: false,
+      action: 'manage_highlevel_appointment',
+      operation,
+      appointmentSelectionRequired: candidates.length > 1,
+      error: candidates.length
+        ? 'Encontré varias citas contextuales. Necesito que elijas cuál tocar.'
+        : 'No encontré citas locales para resolver esa referencia. Pásame el appointment/event ID o primero sincroniza calendarios.',
+      missingFields: candidates.length ? ['appointmentId exacto'] : ['appointmentId'],
+      appointments: candidates.map(candidate => candidate.appointment),
+      clarificationOptions: buildAppointmentActionOptions(candidates, operation, runtimeContext)
+    }
+  }
+
+  const resolvedContact = await resolveHighLevelContactForAgent(args, context, {
+    actionText: 'modificar esta cita',
+    missingContactError: 'Falta identificar el contacto de la cita.'
+  })
+
+  if (!resolvedContact.contact) {
+    return {
+      ok: false,
+      action: 'manage_highlevel_appointment',
+      operation,
+      error: resolvedContact.error || 'Falta identificar el contacto de la cita.',
+      missingFields: resolvedContact.missingFields || ['contacto'],
+      clarificationOptions: resolvedContact.clarificationOptions || []
+    }
+  }
+
+  const candidates = await getAgentAppointmentCandidatesForContact(resolvedContact.contact.id, runtimeContext)
+  const selected = chooseAgentAppointmentCandidate(candidates, operation, runtimeContext)
+
+  if (!selected?.appointment?.id) {
+    return {
+      ok: false,
+      action: 'manage_highlevel_appointment',
+      operation,
+      appointmentSelectionRequired: candidates.length > 1,
+      error: candidates.length
+        ? 'Encontré varias citas para ese contacto. Necesito que elijas cuál tocar.'
+        : 'No encontré una cita local para ese contacto. Pásame el appointment/event ID o primero sincroniza calendarios.',
+      missingFields: candidates.length ? ['appointmentId exacto'] : ['appointmentId'],
+      contact: resolvedContact.contact,
+      appointments: candidates.map(candidate => candidate.appointment),
+      clarificationOptions: buildAppointmentActionOptions(candidates, operation, runtimeContext)
+    }
+  }
+
+  return selected
+}
+
+async function refreshAppointmentContactStats(contactId) {
+  if (!contactId) return
+
+  try {
+    await updateSingleContactStats(contactId)
+  } catch (error) {
+    logger.warn(`No se pudieron refrescar stats del contacto ${contactId} tras cita: ${error.message}`)
+  }
+}
+
+async function executeLookupAppointmentSlots(args = {}, highLevelConnection = {}, context = {}) {
+  const runtimeContext = context.runtimeContext || {}
+  const timezone = getAppointmentTimezone(args, highLevelConnection, runtimeContext)
+  const calendarResult = await resolveAppointmentCalendar(args, highLevelConnection)
+
+  if (!calendarResult.calendarId) return calendarResult
+
+  const today = DateTime.now().setZone(timezone).toISODate()
+  const startDate = normalizeAppointmentDateOnly(args.startDate || args.date || args.startTime, timezone, today)
+  const endDate = normalizeAppointmentDateOnly(
+    args.endDate || args.dateEnd || args.endTime,
+    timezone,
+    DateTime.fromISO(startDate, { zone: timezone }).plus({ days: 7 }).toISODate()
+  )
+
+  const slots = await highLevelCalendarService.getFreeSlots(
+    calendarResult.calendarId,
+    startDate,
+    endDate,
+    highLevelConnection.token,
+    timezone
+  )
+
+  return {
+    ok: true,
+    action: 'manage_highlevel_appointment',
+    operation: 'lookup_slots',
+    endpoint: 'GET /calendars/:calendarId/free-slots',
+    calendar: {
+      id: calendarResult.calendarId,
+      name: calendarResult.calendar?.name || calendarResult.calendarId,
+      source: calendarResult.source
+    },
+    timezone,
+    startDate,
+    endDate,
+    slots
+  }
+}
+
+async function executeCreateHighLevelAppointment(args = {}, highLevelConnection = {}, context = {}) {
+  const runtimeContext = context.runtimeContext || {}
+  const timezone = getAppointmentTimezone(args, highLevelConnection, runtimeContext)
+  const resolvedContact = await resolveHighLevelContactForAgent(args, context, {
+    actionText: 'agendar esta cita',
+    missingContactError: 'Falta identificar a quién se le va a agendar la cita.'
+  })
+
+  if (!resolvedContact.contact) {
+    return {
+      ok: false,
+      action: 'manage_highlevel_appointment',
+      operation: 'create',
+      error: resolvedContact.error || 'Falta identificar el contacto.',
+      missingFields: resolvedContact.missingFields || ['contacto'],
+      clarificationOptions: resolvedContact.clarificationOptions || []
+    }
+  }
+
+  const calendarResult = await resolveAppointmentCalendar(args, highLevelConnection)
+  if (!calendarResult.calendarId) return calendarResult
+
+  const startTime = normalizeAppointmentDateTime(
+    args.startTime || args.start_time || args.startsAt || args.dateTime || args.datetime || args.date,
+    timezone
+  )
+
+  if (!startTime) {
+    return {
+      ok: false,
+      action: 'manage_highlevel_appointment',
+      operation: 'create',
+      error: 'Falta fecha y hora de inicio para agendar la cita.',
+      missingFields: ['startTime']
+    }
+  }
+
+  const durationMinutes = getAppointmentDurationMinutes(calendarResult.calendar)
+  const endTime = normalizeAppointmentDateTime(args.endTime || args.end_time || args.endsAt, timezone) ||
+    addAppointmentDuration(startTime, durationMinutes, timezone)
+
+  if (!endTime || DateTime.fromISO(endTime, { setZone: true }) <= DateTime.fromISO(startTime, { setZone: true })) {
+    return {
+      ok: false,
+      action: 'manage_highlevel_appointment',
+      operation: 'create',
+      error: 'La fecha de fin de la cita debe ser posterior al inicio.',
+      missingFields: ['endTime valido']
+    }
+  }
+
+  const assignedUserId = cleanText(args.assignedUserId || args.assigned_user_id || args.userId || '', 180) ||
+    getFirstCalendarTeamMemberId(calendarResult.calendar)
+  const appointmentStatus = getAppointmentStatusForOperation('create', args)
+  const payload = {
+    calendarId: calendarResult.calendarId,
+    contactId: resolvedContact.contact.id,
+    startTime,
+    endTime,
+    title: cleanText(args.title || args.name || args.subject || 'Cita', 240),
+    appointmentStatus,
+    assignedUserId: assignedUserId || undefined,
+    address: cleanText(args.address || args.location || '', 500) || undefined,
+    notes: cleanText(args.notes || args.description || '', 1000) || undefined,
+    timeZone: timezone
+  }
+
+  const response = await highLevelCalendarService.createAppointment(
+    payload,
+    highLevelConnection.locationId,
+    highLevelConnection.token
+  )
+  const appointment = await upsertAgentAppointmentMirror(response, {
+    ...payload,
+    locationId: highLevelConnection.locationId,
+    appointmentStatus
+  })
+
+  await triggerWhatsappAppointmentBookedEvent(resolvedContact.contact.id)
+  await refreshAppointmentContactStats(resolvedContact.contact.id)
+
+  return {
+    ok: true,
+    action: 'manage_highlevel_appointment',
+    operation: 'create',
+    endpoint: 'POST /calendars/events/appointments',
+    contact: resolvedContact.contact,
+    calendar: {
+      id: calendarResult.calendarId,
+      name: calendarResult.calendar?.name || calendarResult.calendarId,
+      source: calendarResult.source
+    },
+    appointment,
+    response
+  }
+}
+
+async function executeUpdateHighLevelAppointment(args = {}, highLevelConnection = {}, context = {}, operation = 'reschedule') {
+  const runtimeContext = context.runtimeContext || {}
+  const timezone = getAppointmentTimezone(args, highLevelConnection, runtimeContext)
+  const resolved = await resolveAppointmentForAgent(args, highLevelConnection, context, operation)
+
+  if (!resolved?.appointment?.id) return resolved
+
+  const appointment = resolved.appointment
+  const contact = resolved.contact || (appointment.contactId ? await getPaymentContactById(appointment.contactId) : null)
+
+  if (operation === 'delete') {
+    await highLevelCalendarService.deleteEvent(appointment.id, highLevelConnection.token)
+    await deleteAgentAppointmentMirror(appointment.id)
+    await refreshAppointmentContactStats(appointment.contactId)
+
+    return {
+      ok: true,
+      action: 'manage_highlevel_appointment',
+      operation,
+      endpoint: 'DELETE /calendars/events/:eventId',
+      appointment,
+      contact,
+      deleted: true
+    }
+  }
+
+  const updateData = {}
+  if (operation === 'reschedule') {
+    const startTime = normalizeAppointmentDateTime(
+      args.startTime || args.start_time || args.newStartTime || args.new_start_time || args.dateTime || args.datetime || args.date,
+      timezone
+    )
+
+    if (!startTime) {
+      return {
+        ok: false,
+        action: 'manage_highlevel_appointment',
+        operation,
+        error: 'Falta la nueva fecha y hora para reprogramar la cita.',
+        missingFields: ['startTime']
+      }
+    }
+
+    const existingStart = appointment.startTime ? DateTime.fromISO(appointment.startTime, { setZone: true }) : null
+    const existingEnd = appointment.endTime ? DateTime.fromISO(appointment.endTime, { setZone: true }) : null
+    const existingDuration = existingStart?.isValid && existingEnd?.isValid && existingEnd > existingStart
+      ? Math.max(1, Math.round(existingEnd.diff(existingStart, 'minutes').minutes))
+      : DEFAULT_APPOINTMENT_DURATION_MINUTES
+
+    updateData.startTime = startTime
+    updateData.endTime = normalizeAppointmentDateTime(args.endTime || args.end_time || args.newEndTime || args.new_end_time, timezone) ||
+      addAppointmentDuration(startTime, existingDuration, timezone)
+    updateData.appointmentStatus = 'confirmed'
+  } else {
+    updateData.appointmentStatus = getAppointmentStatusForOperation(operation, args)
+  }
+
+  if (args.title || args.name || args.subject) updateData.title = cleanText(args.title || args.name || args.subject, 240)
+  if (args.notes || args.description) updateData.notes = cleanText(args.notes || args.description, 1000)
+  if (args.address || args.location) updateData.address = cleanText(args.address || args.location, 500)
+  if (args.assignedUserId || args.assigned_user_id || args.userId) {
+    updateData.assignedUserId = cleanText(args.assignedUserId || args.assigned_user_id || args.userId, 180)
+  }
+  if (getAppointmentCalendarId(args)) updateData.calendarId = getAppointmentCalendarId(args)
+
+  const response = await highLevelCalendarService.updateAppointment(
+    appointment.id,
+    updateData,
+    highLevelConnection.token
+  )
+  const mirrored = await upsertAgentAppointmentMirror(response, {
+    ...appointment,
+    ...updateData,
+    id: appointment.id,
+    contactId: appointment.contactId || contact?.id || null,
+    locationId: appointment.locationId || highLevelConnection.locationId,
+    appointmentStatus: updateData.appointmentStatus || appointment.appointmentStatus
+  })
+
+  if (operation === 'showed' && (mirrored?.contactId || contact?.id)) {
+    await recordAttendanceAttributionSignal({
+      contactId: mirrored?.contactId || contact.id,
+      appointmentId: appointment.id,
+      source: 'ai_agent_showed'
+    })
+  }
+
+  await refreshAppointmentContactStats(mirrored?.contactId || contact?.id || appointment.contactId)
+
+  return {
+    ok: true,
+    action: 'manage_highlevel_appointment',
+    operation,
+    endpoint: 'PUT /calendars/events/appointments/:eventId',
+    contact,
+    appointment: mirrored,
+    response
+  }
+}
+
+async function executeManageHighLevelAppointment(args = {}, highLevelConnection = {}, context = {}) {
+  if (!highLevelConnection?.configured) {
+    return {
+      ok: false,
+      action: 'manage_highlevel_appointment',
+      error: 'HighLevel no está configurado. Configura primero la integración de Go High Level.'
+    }
+  }
+
+  const operation = normalizeAppointmentOperation(
+    args.operation ||
+    args.action ||
+    args.mode ||
+    args.intent ||
+    getLatestUserText(context.messages)
+  )
+
+  if (!operation) {
+    return {
+      ok: false,
+      action: 'manage_highlevel_appointment',
+      error: 'Falta la operación de cita: lookup_slots, create, reschedule, cancel, confirm, showed, noshow o delete.',
+      missingFields: ['operation']
+    }
+  }
+
+  if (operation === 'lookup_slots') {
+    return executeLookupAppointmentSlots(args, highLevelConnection, context)
+  }
+
+  if (operation === 'create') {
+    return executeCreateHighLevelAppointment(args, highLevelConnection, context)
+  }
+
+  if (['reschedule', 'cancel', 'confirm', 'showed', 'noshow', 'delete'].includes(operation)) {
+    return executeUpdateHighLevelAppointment(args, highLevelConnection, context, operation)
+  }
+
+  return {
+    ok: false,
+    action: 'manage_highlevel_appointment',
+    error: `Operación de cita no soportada: ${operation}`,
+    missingFields: ['operation valida']
+  }
+}
+
 async function buildOperationalReferenceContext({ runtimeContext = {}, viewContext = {}, highLevelConnection = {} } = {}) {
   const [appointmentCandidates, currentContact] = await Promise.all([
     getAppointmentReferenceCandidates(runtimeContext),
@@ -7544,6 +8548,48 @@ function buildHighLevelTools(highLevelConnection, options = {}) {
     },
     {
       type: 'function',
+      name: 'manage_highlevel_appointment',
+      description: 'Gestiona citas reales de GoHighLevel usando la misma lógica de Calendarios de Ristak. Úsala ANTES de MCP o highlevel_rest_request para citas: buscar disponibilidad, agendar, reprogramar, cancelar, confirmar, marcar showed/asistió, marcar noshow/no asistió o eliminar. Resuelve contacto exacto, usa default_calendar_id si no dan calendario, crea con POST /calendars/events/appointments, reprograma/estados con PUT /calendars/events/appointments/:eventId y elimina con DELETE /calendars/events/:eventId. No inventes contactId ni calendarId; si hay varias opciones, devuelve la aclaración.',
+      parameters: {
+        type: 'object',
+        properties: {
+          operation: {
+            type: 'string',
+            enum: ['lookup_slots', 'create', 'reschedule', 'cancel', 'confirm', 'showed', 'noshow', 'delete'],
+            description: 'Operación solicitada sobre citas.'
+          },
+          contactId: { type: ['string', 'null'], description: 'ID exacto del contacto si ya se conoce.' },
+          contactName: { type: ['string', 'null'], description: 'Nombre limpio del contacto. No metas la instrucción completa.' },
+          contactHint: { type: ['string', 'null'], description: 'Nombre, email, teléfono o pista limpia del contacto.' },
+          contactEmail: { type: ['string', 'null'], description: 'Email del contacto si el usuario lo dio.' },
+          contactPhone: { type: ['string', 'null'], description: 'Teléfono del contacto si el usuario lo dio.' },
+          appointmentId: { type: ['string', 'null'], description: 'ID de la cita/appointment/event cuando ya se conoce.' },
+          eventId: { type: ['string', 'null'], description: 'Alias de appointmentId.' },
+          appointmentHint: { type: ['string', 'null'], description: 'Pista contextual para elegir una cita del contacto.' },
+          calendarId: { type: ['string', 'null'], description: 'ID del calendario. Si falta, se usa default_calendar_id o se piden opciones.' },
+          calendarName: { type: ['string', 'null'], description: 'Nombre del calendario si no se conoce el ID.' },
+          assignedUserId: { type: ['string', 'null'], description: 'Usuario asignado si aplica. Si falta, se usa el primer team member del calendario.' },
+          startTime: { type: ['string', 'null'], description: 'Inicio ISO con zona/offset para crear o reprogramar.' },
+          endTime: { type: ['string', 'null'], description: 'Fin ISO con zona/offset. Si falta, se calcula con duración del calendario.' },
+          startDate: { type: ['string', 'null'], description: 'Fecha YYYY-MM-DD inicial para buscar disponibilidad.' },
+          endDate: { type: ['string', 'null'], description: 'Fecha YYYY-MM-DD final para buscar disponibilidad.' },
+          date: { type: ['string', 'null'], description: 'Fecha o fecha-hora cuando el usuario la dio en un solo campo.' },
+          timeZone: { type: ['string', 'null'], description: 'Zona horaria IANA, por ejemplo America/Mexico_City.' },
+          title: { type: ['string', 'null'], description: 'Título de la cita.' },
+          notes: { type: ['string', 'null'], description: 'Notas/description de la cita.' },
+          address: { type: ['string', 'null'], description: 'Dirección o ubicación custom.' },
+          appointmentStatus: {
+            type: ['string', 'null'],
+            enum: ['confirmed', 'pending', 'cancelled', 'showed', 'noshow', 'rescheduled', null],
+            description: 'Estado deseado; pending/rescheduled se mandan a GHL como confirmed.'
+          }
+        },
+        additionalProperties: true
+      },
+      strict: false
+    },
+    {
+      type: 'function',
       name: 'create_single_payment_link',
       description: 'Crea y envía un link de pago único usando la lógica interna de Ristak/HighLevel, o cobra tarjeta guardada si el usuario eligió esa opción. Úsala para órdenes como "mándale link de pago", "cóbrale X", "genera invoice por X" sólo cuando sea cobro inmediato o link normal. Si el usuario pide tarjeta directa y el contacto tiene tarjeta guardada, la herramienta preguntará si cobra la guardada o manda link; si no tiene tarjeta, el link es obligatorio. Si el usuario no eligió canal de envío (all/email/sms/whatsapp) la herramienta debe preguntar antes de crear/enviar, porque un invoice de tarjeta no debe quedarse como borrador por accidente. No uses generate/none para links de tarjeta: el formulario real requiere envío por canal. No la uses para pagos programados con fecha futura; ahí usa create_installment_payment_flow.',
       parameters: {
@@ -7759,8 +8805,45 @@ function buildHighLevelTools(highLevelConnection, options = {}) {
     },
     {
       type: 'function',
+      name: 'lookup_highlevel_endpoint',
+      description: `Busca en el catalogo REST oficial de HighLevel Sub-Account antes de llamar REST. Usala cuando necesites saber que GET/POST/PUT/PATCH/DELETE hacer, confirmar el path exacto, ver parametros obligatorios, scopes o version. Catalogo cargado: ${HIGHLEVEL_ENDPOINT_CATALOG_SUMMARY}. No ejecuta cambios; solo devuelve rutas documentadas.`,
+      parameters: {
+        type: 'object',
+        properties: {
+          query: {
+            type: ['string', 'null'],
+            description: 'Intencion o recurso en lenguaje natural: "crear contacto", "listar workflows", "shipping rates", "form submissions", etc.'
+          },
+          method: {
+            type: ['string', 'null'],
+            enum: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', null],
+            description: 'Metodo HTTP si ya se conoce.'
+          },
+          path: {
+            type: ['string', 'null'],
+            description: 'Path tentativo o real empezando con /. Sirve para validar rutas con parametros como /contacts/abc.'
+          },
+          app: {
+            type: ['string', 'null'],
+            description: 'Modulo/app opcional: contacts, calendars, conversations, products, store, ad-manager, etc.'
+          },
+          tag: {
+            type: ['string', 'null'],
+            description: 'Tag opcional del OpenAPI.'
+          },
+          limit: {
+            type: ['number', 'null'],
+            description: 'Maximo de coincidencias, por defecto 10.'
+          }
+        },
+        additionalProperties: false
+      },
+      strict: false
+    },
+    {
+      type: 'function',
       name: 'highlevel_rest_request',
-      description: 'Fallback para llamar endpoints REST documentados de HighLevel cuando el MCP oficial no exponga la acción necesaria. Usa sólo paths bajo services.leadconnectorhq.com. Cubre el catálogo API de HighLevel: ad manager/anuncios, affiliate manager, AI agent studio, associations, blogs, brand boards, business/companies, campaigns, chat widget, contactos, tasks, tags, notes, followers, workflows, calendarios/citas/servicios, conversaciones/mensajes/email, oportunidades/pipelines, forms/form submissions/uploads, surveys, funnels/pages, trigger links, media storage/files/folders/assets, custom fields v2, custom values de location, custom menus, custom objects, knowledge base, productos/precios, tiendas/ecommerce, usuarios, phone/voice AI, social planner, snapshots, proposals, invoices/pagos/subscriptions y webhooks. Puede leer y modificar HighLevel si el token tiene scope; locationId se agrega automáticamente en query/body para rutas location-scoped cuando falta. Las mutaciones derivadas de personalización de acciones deben pedirse de forma conversacional antes de hacerlas.',
+      description: `Fallback para llamar endpoints REST documentados de HighLevel cuando el MCP oficial no exponga la acción necesaria. Usa sólo paths bajo services.leadconnectorhq.com y sólo rutas existentes en el catálogo oficial Sub-Account (${HIGHLEVEL_ENDPOINT_CATALOG_SUMMARY}). Si no sabes el path exacto, llama primero lookup_highlevel_endpoint. Cubre ad manager/anuncios, affiliate manager, AI agent studio, associations, blogs, brand boards, business/companies, campaigns, chat widget, contactos, tasks, tags, notes, followers, workflows, calendarios/citas/servicios, conversaciones/mensajes/email, oportunidades/pipelines, forms/form submissions/uploads, surveys, funnels/pages, trigger links, media storage/files/folders/assets, custom fields v2, custom values de location, custom menus, custom objects, knowledge base, productos/precios, tiendas/ecommerce, usuarios, phone/voice AI, social planner, store/ecommerce, proposals, invoices/pagos/subscriptions y webhooks. Puede leer y modificar HighLevel si el token tiene scope; locationId/altId se agrega automáticamente cuando el endpoint documentado lo requiere. Las mutaciones derivadas de personalización de acciones deben pedirse de forma conversacional antes de hacerlas.`,
       parameters: {
         type: 'object',
         properties: {
@@ -7812,10 +8895,55 @@ async function executeHighLevelRestRequest(args = {}, highLevelConnection) {
     throw new Error(`Método HighLevel no soportado: ${method}`)
   }
 
-  const cleanPath = cleanHighLevelPath(args.path)
+  const requestedPath = cleanHighLevelPath(args.path)
+  const pathWithDefaults = replaceHighLevelPathDefaults(requestedPath, highLevelConnection)
+  const unresolvedPathParams = getUnresolvedHighLevelPathParams(pathWithDefaults)
+  const catalogEndpoint = findHighLevelEndpoint({ method, path: pathWithDefaults }) ||
+    findHighLevelEndpoint({ method, path: requestedPath })
+
+  if (unresolvedPathParams.length) {
+    return {
+      ok: false,
+      action: 'highlevel_rest_request',
+      error: 'El path de HighLevel todavía trae parámetros sin resolver. Necesito IDs reales antes de llamar la API.',
+      method,
+      path: requestedPath,
+      unresolvedPathParams,
+      endpoint: compactHighLevelEndpoint(catalogEndpoint),
+      suggestions: searchHighLevelEndpoints({
+        method,
+        path: requestedPath,
+        query: requestedPath,
+        limit: 8
+      })
+    }
+  }
+
+  if (!catalogEndpoint) {
+    return {
+      ok: false,
+      action: 'highlevel_rest_request',
+      error: 'Ese método/path no existe en el catálogo oficial de endpoints Sub-Account de HighLevel cargado en Ristak.',
+      attempted: {
+        method,
+        path: requestedPath
+      },
+      catalog: HIGHLEVEL_ENDPOINT_CATALOG_SUMMARY,
+      suggestions: searchHighLevelEndpoints({
+        method,
+        path: requestedPath,
+        query: requestedPath,
+        limit: 10
+      })
+    }
+  }
+
+  const cleanPath = pathWithDefaults
   const url = new URL(`${HIGHLEVEL_API_BASE_URL}${cleanPath}`)
+  const baseQuery = args.query && typeof args.query === 'object' && !Array.isArray(args.query) ? args.query : {}
+  const queryWithEndpointDefaults = addHighLevelEndpointQueryDefaults(baseQuery, catalogEndpoint, highLevelConnection)
   const query = addLocationIdToHighLevelQuery(
-    args.query && typeof args.query === 'object' && !Array.isArray(args.query) ? args.query : {},
+    queryWithEndpointDefaults,
     cleanPath,
     highLevelConnection
   )
@@ -7837,7 +8965,7 @@ async function executeHighLevelRestRequest(args = {}, highLevelConnection) {
   const headers = {
     Accept: 'application/json',
     Authorization: `Bearer ${highLevelConnection.token}`,
-    Version: args.version || HIGHLEVEL_API_VERSION
+    Version: args.version || catalogEndpoint.version || HIGHLEVEL_API_VERSION
   }
 
   if (method !== 'GET') {
@@ -7868,6 +8996,7 @@ async function executeHighLevelRestRequest(args = {}, highLevelConnection) {
     status: response.status,
     method,
     path: cleanPath,
+    endpoint: compactHighLevelEndpoint(catalogEndpoint),
     paymentMode: forcePaymentMode ? highLevelConnection.paymentMode : undefined,
     paymentModeWarning: forcePaymentMode ? getPaymentModeWarning(highLevelConnection.paymentMode) : null,
     response: payload,
@@ -8342,6 +9471,17 @@ async function callOpenAIResponseWithActionTools(apiKey, {
           })
         } else if (call.name === 'lookup_highlevel_products') {
           output = await executeLookupHighLevelProducts(call.arguments, highLevelConnection)
+        } else if (call.name === 'lookup_highlevel_endpoint') {
+          output = lookupHighLevelEndpoint(call.arguments)
+        } else if (call.name === 'manage_highlevel_appointment') {
+          output = await executeManageHighLevelAppointment(call.arguments, highLevelConnection, {
+            runtimeContext,
+            viewContext,
+            messages,
+            agentRoute,
+            operationalMemory,
+            resolvedCrmContact: operationalMemory.crmContact
+          })
         } else if (call.name === 'highlevel_rest_request') {
           const restArguments = attachResolvedCrmContactToHighLevelRequest(call.arguments, operationalMemory.crmContact)
           const restCall = {
@@ -8839,12 +9979,17 @@ const UNIFIED_CAPABILITY_PROMPT = [
   '- Para analítica interna del negocio usa la DB de Ristak y los resultados SQL disponibles. Esto incluye campañas/anuncios sincronizados, ROAS, utilidad, pagos, citas, contactos, ventas, fuentes, cohortes e históricos.',
   '- Para GoHighLevel usa HighLevel MCP o highlevel_rest_request cuando el usuario pida recursos/acciones de CRM: media storage, imágenes, archivos, workflows, calendarios, citas, conversaciones, oportunidades, productos, tags, custom fields, usuarios o ubicaciones.',
   `- Catálogo HighLevel cubierto por rutas/MCP/REST: ${HIGHLEVEL_API_RESOURCE_CATALOG_TEXT}.`,
+  `- Catálogo REST oficial de Sub-Account cargado: ${HIGHLEVEL_ENDPOINT_CATALOG_SUMMARY}.`,
   '- Si el último mensaje menciona explícitamente GoHighLevel, GoHi Level, HighLevel o GHL y pide buscar, consultar, hacer GET/POST/PUT/PATCH/DELETE, crear o actualizar algo, usa herramientas reales de HighLevel en ese turno. Si el usuario no dice HighLevel pero pide de forma operativa un recurso claramente propio del catálogo (form submissions, custom values, trigger links, media storage, blogs, funnels, surveys, store, workflows, tasks, notes, tags, etc.), también usa HighLevel.',
-  '- Prioriza HighLevel MCP porque lista y llama tools oficiales. Si el MCP no expone lo necesario, usa highlevel_rest_request con el path documentado. No contestes desde la DB local salvo que el usuario pida Ristak/DB/reportes.',
+  '- Prioriza HighLevel MCP porque lista y llama tools oficiales. Si el MCP no expone lo necesario, usa lookup_highlevel_endpoint para encontrar el método/path documentado y luego highlevel_rest_request. No contestes desde la DB local salvo que el usuario pida Ristak/DB/reportes.',
+  '- highlevel_rest_request rechaza rutas que no estén en el catálogo Sub-Account; si devuelve sugerencias, elige una ruta sugerida o pregunta el dato faltante.',
+  '- Para citas/calendarios operativos usa manage_highlevel_appointment antes que MCP o highlevel_rest_request. Operaciones: lookup_slots, create, reschedule, cancel, confirm, showed, noshow y delete.',
+  '- Contrato de citas GHL: agendar = POST /calendars/events/appointments; reprogramar/confirmar/cancelar/showed/noshow = PUT /calendars/events/appointments/:eventId con appointmentStatus o startTime/endTime; eliminar de verdad = DELETE /calendars/events/:eventId.',
+  '- Si el usuario pide agendar y no dio hora exacta, primero busca disponibilidad con lookup_slots. Si no dio calendarId, usa el calendario predeterminado de Ristak; si hay varios y no hay default, pide que elija.',
   '- Si una acción de CRM menciona un nombre de persona/contacto, primero resuelve ese nombre contra DB/GHL y usa el contactId real. No le pidas ID, correo o teléfono al usuario si Memoria operacional CRM ya trae resolvedContact.',
   '- Si Memoria operacional CRM o de pagos trae resolvedContact y el último mensaje no introduce un contacto distinto, úsalo como la persona activa para cualquier acción nueva: pagos, workflows, citas, mensajes, oportunidades, campos, notas o tags.',
   '- Si Memoria operacional de producto/precio trae activeProduct y el usuario corrige sólo monto/precio, conserva ese producto como concepto/producto activo. No reinicies contacto ni producto por una corrección corta.',
-  '- Para agendar citas, meter a workflow, crear oportunidades o mandar mensajes a una persona, usa el contactId resuelto por lookup_highlevel_contact o Memoria operacional CRM; no confundas ese nombre con la última/próxima cita de otro contacto.',
+  '- Para agendar citas, meter a workflow, crear oportunidades o mandar mensajes a una persona, usa el contactId resuelto por lookup_highlevel_contact, manage_highlevel_appointment o Memoria operacional CRM; no confundas ese nombre con la última/próxima cita de otro contacto.',
   '- Para pagos, links, invoices, parcialidades, pagos manuales, tarjeta guardada o domiciliación usa las herramientas internas de Ristak porque replican la lógica real del backend. No uses MCP como atajo para mutaciones de dinero.',
   '- Nunca crees, envíes, anules, programes ni marques invoices/pagos usando highlevel_rest_request. Para dinero, REST directo está prohibido porque se salta el workflow del formulario y puede dejar facturas en borrador.',
   '- Para links/invoices con tarjeta o domiciliación no inventes canal de envío. Si el usuario no eligió todos/correo/WhatsApp/SMS, la herramienta debe pedirlo antes de crear/enviar para no dejar invoices en borrador.',
@@ -10096,6 +11241,7 @@ async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, ru
     '',
     'Catálogo HighLevel que debe enrutar a MCP/REST cuando el usuario lo pida:',
     HIGHLEVEL_API_RESOURCE_CATALOG_TEXT,
+    HIGHLEVEL_ENDPOINT_CATALOG_SUMMARY,
     '',
     'Contexto operacional para referencias del usuario:',
     operationalReferenceContext ? JSON.stringify(operationalReferenceContext, null, 2) : 'No aplica para esta ruta.',

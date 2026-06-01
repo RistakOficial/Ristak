@@ -648,6 +648,24 @@ export async function updateAppointment(eventId, updateData, accessToken) {
   try {
     logger.info(`[HighLevel Calendar] Actualizando cita: ${eventId}`);
 
+    const payload = {
+      ...updateData
+    };
+
+    if (payload.appointment_status && !payload.appointmentStatus) {
+      payload.appointmentStatus = payload.appointment_status;
+      delete payload.appointment_status;
+    }
+
+    if (payload.appointmentStatus) {
+      payload.appointmentStatus = mapAppointmentStatus(payload.appointmentStatus);
+    }
+
+    if (payload.notes && !payload.description) {
+      payload.description = payload.notes;
+      delete payload.notes;
+    }
+
     const response = await fetchWithTimeout(
       `${GHL_API_BASE}/calendars/events/appointments/${eventId}`,
       {
@@ -658,7 +676,7 @@ export async function updateAppointment(eventId, updateData, accessToken) {
           'Version': API_VERSION,
           'Authorization': `Bearer ${accessToken}`
         },
-        body: JSON.stringify(updateData)
+        body: JSON.stringify(payload)
       }
     );
 

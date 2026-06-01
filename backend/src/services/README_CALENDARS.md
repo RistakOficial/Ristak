@@ -89,7 +89,7 @@ Crea una cita. El servicio mapea estados no soportados por HighLevel:
 
 ### `updateAppointment(eventId, updateData, accessToken)`
 
-Actualiza una cita.
+Actualiza una cita. El servicio tambien normaliza `appointmentStatus` para que `pending` y `rescheduled` no se manden crudos a HighLevel.
 
 ### `deleteEvent(eventId, accessToken)`
 
@@ -148,6 +148,23 @@ Config:
 - `frontend/src/pages/Settings/CalendarsConfiguration.tsx`
 - `app_config.default_calendar_id`
 - `app_config.attribution_calendar_ids`
+
+## IA Agente
+
+`backend/src/services/aiAgentService.js` expone la herramienta interna `manage_highlevel_appointment` para que el agente no tenga que improvisar REST directo.
+
+Operaciones soportadas:
+
+- `lookup_slots`: busca disponibilidad con `/calendars/:calendarId/free-slots`.
+- `create`: agenda con `POST /calendars/events/appointments`.
+- `reschedule`: mueve fecha/hora con `PUT /calendars/events/appointments/:eventId`.
+- `cancel`: marca `appointmentStatus = cancelled`.
+- `confirm`: marca `appointmentStatus = confirmed`.
+- `showed`: marca `appointmentStatus = showed` y registra senal de asistencia local.
+- `noshow`: marca `appointmentStatus = noshow`.
+- `delete`: elimina el evento con `DELETE /calendars/events/:eventId`.
+
+La herramienta resuelve contacto por DB/GHL, usa `default_calendar_id` cuando no se proporciona calendario, calcula `endTime` con la duracion del calendario si falta, guarda espejo local en `appointments` y dispara el evento WhatsApp de cita agendada al crear.
 
 ## Referencias
 

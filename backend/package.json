@@ -6,7 +6,8 @@
   "type": "module",
   "scripts": {
     "start": "node src/server.js",
-    "dev": "node --watch src/server.js"
+    "dev": "node --watch src/server.js",
+    "sync:ghl-catalog": "node scripts/sync-highlevel-endpoint-catalog.mjs ../tmp/highlevel-api-docs src/data/highlevelEndpointCatalog.js"
   },
   "dependencies": {
     "cors": "^2.8.5",
