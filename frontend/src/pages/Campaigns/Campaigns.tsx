@@ -1969,7 +1969,7 @@ export const Campaigns: React.FC = () => {
   }, [campaignSummary, calculateDelta])
 
   if (loading && campaigns.length === 0) {
-    return <Loading message="Cargando campañas..." kpiCount={5} />
+    return <Loading message="Cargando campañas..." page="campaigns" />
   }
 
   return (

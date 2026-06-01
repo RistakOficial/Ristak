@@ -146,7 +146,7 @@ export const CalendarsConfiguration: React.FC = () => {
   }
 
   if (loadingCalendars) {
-    return <Loading message="Cargando calendarios..." kpiCount={0} />
+    return <Loading message="Cargando calendarios..." page="calendar-settings" />
   }
 
   if (calendars.length === 0) {

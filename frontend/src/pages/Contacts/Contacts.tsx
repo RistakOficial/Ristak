@@ -1111,7 +1111,7 @@ export const Contacts: React.FC = () => {
   }
 
   if (loading && contacts.length === 0) {
-    return <Loading message="Cargando contactos..." kpiCount={4} />
+    return <Loading message="Cargando contactos..." page="contacts" />
   }
 
   return (

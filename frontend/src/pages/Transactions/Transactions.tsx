@@ -1417,7 +1417,7 @@ export const Transactions: React.FC = () => {
   }
 
   if (paymentTableTab === 'transactions' && loading && transactions.length === 0) {
-    return <Loading message="Cargando pagos..." kpiCount={4} />
+    return <Loading message="Cargando pagos..." page="transactions" />
   }
 
   const lockedContactName = modal.transaction?.contactName || modal.selectedContact?.name || 'Sin nombre'

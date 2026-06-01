@@ -1125,7 +1125,7 @@ export const Appointments: React.FC = () => {
   }
 
   if (loading && calendars.length === 0) {
-    return <Loading message="Cargando calendarios..." kpiCount={4} />
+    return <Loading message="Cargando calendarios..." page="appointments" />
   }
 
   return (
