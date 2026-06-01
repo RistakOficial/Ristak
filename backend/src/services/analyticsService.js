@@ -37,11 +37,18 @@ async function getAttributionCalendarIds() {
   }
 }
 
-function attributionMatchCondition(alias = 'contacts', dateColumn = 'created_at') {
+function timestampDateExpression(column, timezone = 'UTC') {
+  if (!isPostgres) {
+    return `DATE(${column})`
+  }
+
+  const safeTimezone = String(timezone || 'UTC').replace(/'/g, "''")
+  return `(${column} AT TIME ZONE '${safeTimezone}')::date`
+}
+
+function attributionMatchCondition(alias = 'contacts', dateColumn = 'created_at', timezone = 'UTC') {
   const prefix = alias ? `${alias}.` : ''
-  const contactDateExpr = isPostgres
-    ? `(${prefix}${dateColumn})::date`
-    : `DATE(${prefix}${dateColumn})`
+  const contactDateExpr = timestampDateExpression(`${prefix}${dateColumn}`, timezone)
   const adDateExpr = isPostgres ? '(ma.date)::date' : 'DATE(ma.date)'
   return `${prefix}attribution_ad_id IS NOT NULL AND EXISTS (
     SELECT 1 FROM meta_ads ma
@@ -207,7 +214,7 @@ export async function buildContactStats ({ startDate, endDate, scope = 'all' } =
   }
 
   if (scopeAttributed) {
-    filters.push(attributionMatchCondition('contacts'))
+    filters.push(attributionMatchCondition('contacts', 'created_at', range.appliedTimezone))
   }
 
   // Aplicar filtro de contactos ocultos
@@ -229,7 +236,7 @@ export async function buildContactStats ({ startDate, endDate, scope = 'all' } =
     const previousFilters = ['created_at BETWEEN ? AND ?']
     const previousParams = [previousRange.startUtc, previousRange.endUtc]
     if (scopeAttributed) {
-      previousFilters.push(attributionMatchCondition('contacts'))
+      previousFilters.push(attributionMatchCondition('contacts', 'created_at', range.appliedTimezone))
     }
     if (hiddenCondition) {
       previousFilters.push(hiddenCondition)
@@ -279,7 +286,7 @@ export async function buildContactTimeline ({ startDate, endDate, scope = 'all' 
   }
 
   if (scopeAttributed) {
-    filters.push(attributionMatchCondition('contacts'))
+    filters.push(attributionMatchCondition('contacts', 'created_at', timezone))
   }
 
   // Aplicar filtro de contactos ocultos
@@ -347,7 +354,7 @@ export async function buildTransactionStats ({ startDate, endDate, scope = 'all'
     contactConditions.push(hiddenCondition.replace('AND ', ''))
   }
   if (scopeAttributed) {
-    contactConditions.push(attributionMatchCondition('c'))
+    contactConditions.push(attributionMatchCondition('c', 'created_at', range.appliedTimezone))
   }
 
   if (contactConditions.length > 0) {
@@ -434,7 +441,7 @@ export async function buildTransactionSummary ({ startDate, endDate, scope = 'al
     contactConditions.push(hiddenCondition.replace('AND ', ''))
   }
   if (scopeAttributed) {
-    contactConditions.push(attributionMatchCondition('c'))
+    contactConditions.push(attributionMatchCondition('c', 'created_at', range.appliedTimezone))
   }
 
   // Usar TODOS los status válidos de pago (no solo 'succeeded')
@@ -569,7 +576,7 @@ export async function buildCampaignSummary ({ startDate, endDate } = {}) {
       [adsStart, adsEnd]
     ) || { spend: 0, clicks: 0, reach: 0 }
 
-    const contactConditions = [attributionMatchCondition('contacts'), 'created_at >= ?', 'created_at <= ?']
+    const contactConditions = [attributionMatchCondition('contacts', 'created_at', range.appliedTimezone), 'created_at >= ?', 'created_at <= ?']
     if (hiddenCondition) contactConditions.push(hiddenCondition)
 
     contactsTotals = await db.get(
@@ -603,7 +610,7 @@ export async function buildCampaignSummary ({ startDate, endDate } = {}) {
         [adsPrevStart, adsPrevEnd]
       ) || { spend: 0, clicks: 0, reach: 0 }
 
-      const prevContactConditions = [attributionMatchCondition('contacts'), 'created_at >= ?', 'created_at <= ?']
+      const prevContactConditions = [attributionMatchCondition('contacts', 'created_at', range.appliedTimezone), 'created_at >= ?', 'created_at <= ?']
       if (hiddenCondition) prevContactConditions.push(hiddenCondition)
 
       contactsTotalsPrev = await db.get(
@@ -627,7 +634,7 @@ export async function buildCampaignSummary ({ startDate, endDate } = {}) {
       FROM meta_ads`
     ) || { spend: 0, clicks: 0, reach: 0 }
 
-    const allContactConditions = [attributionMatchCondition('contacts')]
+    const allContactConditions = [attributionMatchCondition('contacts', 'created_at', range.appliedTimezone)]
     if (hiddenCondition) allContactConditions.push(hiddenCondition)
 
     contactsTotals = await db.get(
@@ -660,7 +667,7 @@ export async function buildCampaignSummary ({ startDate, endDate } = {}) {
         [adsPrevStart, adsPrevEnd]
       ) || { spend: 0, clicks: 0, reach: 0 }
 
-      const fallbackContactConditions = [attributionMatchCondition('contacts'), 'created_at >= ?', 'created_at <= ?']
+      const fallbackContactConditions = [attributionMatchCondition('contacts', 'created_at', range.appliedTimezone), 'created_at >= ?', 'created_at <= ?']
       if (hiddenCondition) fallbackContactConditions.push(hiddenCondition)
 
       contactsTotalsPrev = await db.get(
@@ -722,7 +729,10 @@ export function getGroupExpression(column, groupBy, timezone = 'America/Mexico_C
   }
 
   const safeTimezone = (timezone || 'UTC').replace(/'/g, "''")
-  const columnExpr = `((${column})::timestamptz AT TIME ZONE 'UTC' AT TIME ZONE '${safeTimezone}')`
+  const isDateOnlyColumn = column === 'meta_ads.date'
+  const columnExpr = isDateOnlyColumn
+    ? `(${column})::date`
+    : `(${column} AT TIME ZONE '${safeTimezone}')`
 
   if (groupBy === 'year') {
     return `TO_CHAR(${columnExpr}, 'YYYY')`
@@ -752,6 +762,32 @@ function buildRangeConditions(column, range, params) {
   return conditions
 }
 
+function getPeriodKeyFromDate(value, groupBy, timezone) {
+  if (!value) {
+    return null
+  }
+
+  const date = value instanceof Date ? value : new Date(value)
+  if (Number.isNaN(date.getTime())) {
+    return null
+  }
+
+  const zonedDate = DateTime.fromJSDate(date, { zone: 'utc' }).setZone(timezone || 'UTC')
+  if (!zonedDate.isValid) {
+    return null
+  }
+
+  if (groupBy === 'year') {
+    return zonedDate.toFormat('yyyy')
+  }
+
+  if (groupBy === 'month') {
+    return zonedDate.toFormat('yyyy-MM')
+  }
+
+  return zonedDate.toFormat('yyyy-MM-dd')
+}
+
 export async function buildReportMetrics ({ startDate, endDate, groupBy = 'day', scope = 'all' } = {}) {
   const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate })
   // scope = 'all' → agrupa por fecha del evento (pagos, citas reales)
@@ -776,7 +812,7 @@ export async function buildReportMetrics ({ startDate, endDate, groupBy = 'day',
   const contactConditions = buildRangeConditions('created_at', range, contactParams)
 
   if (isAttributed) {
-    contactConditions.push(attributionMatchCondition('contacts'))
+    contactConditions.push(attributionMatchCondition('contacts', 'created_at', timezone))
   }
 
   // Aplicar filtro de contactos ocultos
@@ -901,32 +937,43 @@ export async function buildReportMetrics ({ startDate, endDate, groupBy = 'day',
       return dateAdded >= start && dateAdded <= end
     })
 
-    // Agrupar por período y deduplicar contactos
-    let matchedContacts = 0
-    let unmatchedContacts = 0
-    appointmentsInRange.forEach(apt => {
-      const dateAdded = new Date(apt.dateAdded)
-      let periodKey
+    const appointmentContactIds = [...new Set(appointmentsInRange.map(apt => apt.contactId).filter(Boolean))]
+    const appointmentContactsMap = new Map()
 
-      if (groupBy === 'month') {
-        periodKey = `${dateAdded.getFullYear()}-${String(dateAdded.getMonth() + 1).padStart(2, '0')}`
-      } else if (groupBy === 'year') {
-        periodKey = `${dateAdded.getFullYear()}`
-      } else {
-        periodKey = `${dateAdded.getFullYear()}-${String(dateAdded.getMonth() + 1).padStart(2, '0')}-${String(dateAdded.getDate()).padStart(2, '0')}`
+    if (appointmentContactIds.length > 0) {
+      const placeholders = appointmentContactIds.map(() => '?').join(',')
+      const appointmentContactConditions = [`contacts.id IN (${placeholders})`]
+      const appointmentContactParams = [...appointmentContactIds]
+
+      if (hiddenCondition) {
+        appointmentContactConditions.push(hiddenCondition)
       }
+
+      const appointmentContactRows = await db.all(`
+        SELECT
+          contacts.id as contact_id,
+          contacts.email,
+          contacts.phone
+        FROM contacts
+        WHERE ${appointmentContactConditions.join(' AND ')}
+      `, appointmentContactParams)
+
+      appointmentContactRows.forEach(contact => {
+        appointmentContactsMap.set(contact.contact_id, contact)
+      })
+    }
+
+    // Agrupar por período y deduplicar contactos con la misma base que usa el modal.
+    appointmentsInRange.forEach(apt => {
+      const periodKey = getPeriodKeyFromDate(apt.dateAdded, groupBy, timezone)
+      if (!periodKey) return
 
       const bucket = ensureBucket(periodKey)
+      const contact = appointmentContactsMap.get(apt.contactId)
+      if (!contact) return
 
-      // Buscar contacto para deduplicar
-      const contact = contactsRaw.find(c => c.contact_id === apt.contactId)
-      if (contact) {
-        matchedContacts++
-        const baseKey = buildContactKey(contact) ?? `contact-${contactKeyFallback++}`
-        bucket.appointmentsSet.add(baseKey)
-      } else {
-        unmatchedContacts++
-      }
+      const baseKey = buildContactKey(contact) ?? `contact-${contactKeyFallback++}`
+      bucket.appointmentsSet.add(baseKey)
     })
   }
 
@@ -1080,7 +1127,7 @@ export async function buildReportMetrics ({ startDate, endDate, groupBy = 'day',
     const paymentConditions = buildRangeConditions('c.created_at', range, paymentParams)
 
     if (isAttributed) {
-      paymentConditions.push(attributionMatchCondition('c'))
+      paymentConditions.push(attributionMatchCondition('c', 'created_at', timezone))
     }
 
     applySuccessStatusFilter(paymentConditions, paymentParams, 'p')
@@ -1186,7 +1233,7 @@ export async function buildReportMetrics ({ startDate, endDate, groupBy = 'day',
     const visitorsConditions = buildRangeConditions('c.created_at', range, visitorsParams)
 
     if (isAttributed) {
-      visitorsConditions.push(attributionMatchCondition('c'))
+      visitorsConditions.push(attributionMatchCondition('c', 'created_at', timezone))
     }
 
     const visitorsWhere = visitorsConditions.length ? `WHERE ${visitorsConditions.join(' AND ')}` : ''
@@ -1337,7 +1384,7 @@ export async function buildContactsList ({ startDate, endDate, type = 'interesad
       const paymentParams = []
       const paymentConditions = buildRangeConditions('c.created_at', range, paymentParams)
       if (scopeAttributed) {
-        paymentConditions.push(attributionMatchCondition('c'))
+        paymentConditions.push(attributionMatchCondition('c', 'created_at', range.appliedTimezone))
       }
       // CRÍTICO: Filtrar solo pagos exitosos (consistente con la tabla)
       applySuccessStatusFilter(paymentConditions, paymentParams, 'p')
@@ -1368,7 +1415,7 @@ export async function buildContactsList ({ startDate, endDate, type = 'interesad
       if (scopeAttributed) {
         paymentConditions.push(`contact_id IN (
           SELECT c.id FROM contacts c
-          WHERE ${attributionMatchCondition('c')}
+          WHERE ${attributionMatchCondition('c', 'created_at', range.appliedTimezone)}
         )`)
       }
       // CRÍTICO: Filtrar solo pagos exitosos (consistente con la tabla)
@@ -1390,7 +1437,7 @@ export async function buildContactsList ({ startDate, endDate, type = 'interesad
     const attendanceParams = []
     const attendanceConditions = buildRangeConditions('c.created_at', range, attendanceParams)
     if (scopeAttributed) {
-      attendanceConditions.push(attributionMatchCondition('c'))
+      attendanceConditions.push(attributionMatchCondition('c', 'created_at', range.appliedTimezone))
     }
     if (hiddenConditionC) {
       attendanceConditions.push(hiddenConditionC)
@@ -1418,7 +1465,7 @@ export async function buildContactsList ({ startDate, endDate, type = 'interesad
       const appointmentParams = []
       const appointmentConditions = buildRangeConditions('c.created_at', range, appointmentParams)
       if (scopeAttributed) {
-        appointmentConditions.push(attributionMatchCondition('c'))
+        appointmentConditions.push(attributionMatchCondition('c', 'created_at', range.appliedTimezone))
       }
       if (hiddenConditionC) {
         appointmentConditions.push(hiddenConditionC)
@@ -1532,7 +1579,7 @@ export async function buildContactsList ({ startDate, endDate, type = 'interesad
         contactConditions.push('purchases_count > 0')
       }
       if (scopeAttributed) {
-        contactConditions.push(attributionMatchCondition('contacts'))
+        contactConditions.push(attributionMatchCondition('contacts', 'created_at', range.appliedTimezone))
       }
       if (hiddenCondition) {
         contactConditions.push(hiddenCondition)
@@ -1557,7 +1604,7 @@ export async function buildContactsList ({ startDate, endDate, type = 'interesad
     const placeholders = contactIds.map(() => '?').join(',')
     const additionalConditions = []
     if (scopeAttributed) {
-      additionalConditions.push(attributionMatchCondition('contacts'))
+      additionalConditions.push(attributionMatchCondition('contacts', 'created_at', range.appliedTimezone))
     }
     if (hiddenCondition) {
       additionalConditions.push(hiddenCondition)

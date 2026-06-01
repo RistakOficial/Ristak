@@ -1318,7 +1318,7 @@ export async function getVisitorsByPeriod(req, res) {
       if (!isPostgres) {
         return `strftime('%Y-W%W', datetime(${column}, '-6 hours'))`
       }
-      const columnExpr = `((${column})::timestamptz AT TIME ZONE 'UTC' AT TIME ZONE '${safeTimezone}')`
+      const columnExpr = `(${column} AT TIME ZONE '${safeTimezone}')`
       return `TO_CHAR(${columnExpr}, 'YYYY-"W"IW')`
     }
 

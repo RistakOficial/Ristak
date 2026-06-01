@@ -35,6 +35,33 @@ const SUCCESS_PAYMENT_STATUSES = new Set([
 
 const REFUND_PAYMENT_STATUSES = new Set(['refunded', 'refund']);
 
+const isPostgres = Boolean(process.env.DATABASE_URL);
+
+function timestampDateExpression(column, timezone = 'UTC') {
+  if (!isPostgres) {
+    return `DATE(${column})`;
+  }
+
+  const safeTimezone = String(timezone || 'UTC').replace(/'/g, "''");
+  return `(${column} AT TIME ZONE '${safeTimezone}')::date`;
+}
+
+function timestampDayExpression(column, timezone = 'UTC') {
+  if (!isPostgres) {
+    return `DATE(${column})`;
+  }
+
+  return `TO_CHAR(${timestampDateExpression(column, timezone)}, 'YYYY-MM-DD')`;
+}
+
+function metaDateExpression(column) {
+  return isPostgres ? `(${column})::date` : `DATE(${column})`;
+}
+
+function metaSameLocalDayCondition(metaDateColumn, timestampColumn, timezone = 'UTC') {
+  return `${metaDateExpression(metaDateColumn)} = ${timestampDateExpression(timestampColumn, timezone)}`;
+}
+
 function createContactMetricAccumulator() {
   return {
     interestedKeys: new Set(),
@@ -621,6 +648,7 @@ export const getCampaigns = async (req, res) => {
     // IMPORTANTE: Solo contar contactos cuyo attribution_ad_id tenga registro en meta_ads en la misma fecha
     const hiddenFilters = await getHiddenContactFilters();
     const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false);
+    const contactMetaSameDay = metaSameLocalDayCondition('ma.date', 'c.created_at', range.appliedTimezone);
 
     const contactsQuery = `
       SELECT
@@ -637,7 +665,7 @@ export const getCampaigns = async (req, res) => {
       AND EXISTS (
         SELECT 1 FROM meta_ads ma
         WHERE ma.ad_id = c.attribution_ad_id
-          AND DATE(ma.date) = DATE(c.created_at)
+          AND ${contactMetaSameDay}
       )
       ${hiddenCondition ? `AND ${hiddenCondition}` : ''}
     `;
@@ -960,20 +988,23 @@ export const getSpendOverTime = async (req, res) => {
     // VALIDACIÓN: Solo cuenta si el anuncio EXISTIÓ en Meta ese mismo día
     const hiddenFilters = await getHiddenContactFilters();
     const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false);
+    const contactCreatedDate = timestampDateExpression('c.created_at', range.appliedTimezone);
+    const contactCreatedDay = timestampDayExpression('c.created_at', range.appliedTimezone);
+    const contactMetaSameDay = metaSameLocalDayCondition('ma.date', 'c.created_at', range.appliedTimezone);
 
     const revenueQuery = `
       SELECT
-        TO_CHAR(c.created_at::date, 'YYYY-MM-DD') as day,
+        ${contactCreatedDay} as day,
         SUM(c.total_paid) as revenue
       FROM contacts c
       WHERE c.attribution_ad_id IS NOT NULL
         AND c.attribution_ad_id != ''
-        AND c.created_at::date >= $1::date
-        AND c.created_at::date < ($2::date + INTERVAL '1 day')
+        AND ${contactCreatedDate} >= $1::date
+        AND ${contactCreatedDate} < ($2::date + INTERVAL '1 day')
         AND EXISTS (
           SELECT 1 FROM meta_ads ma
           WHERE ma.ad_id = c.attribution_ad_id
-            AND ma.date::date = c.created_at::date
+            AND ${contactMetaSameDay}
         )
         ${hiddenCondition ? `AND ${hiddenCondition}` : ''}
       GROUP BY day
@@ -1150,6 +1181,8 @@ export const getContactsByType = async (req, res) => {
     // IMPORTANTE: Validar que attribution_ad_id exista en meta_ads con fecha coincidente
     const hiddenFilters = await getHiddenContactFilters();
     const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false);
+    const contactMetaSameDay = metaSameLocalDayCondition('ma.date', 'c.created_at', range.appliedTimezone);
+    const contactMetaSameDayForExists = metaSameLocalDayCondition('ma2.date', 'c.created_at', range.appliedTimezone);
 
     const placeholders = adIdsList.map(() => '?').join(',');
     let contactsQuery = `
@@ -1167,14 +1200,14 @@ export const getContactsByType = async (req, res) => {
         MAX(ma.adset_name) as adset_name,
         MAX(ma.ad_name) as ad_name
       FROM contacts c
-      LEFT JOIN meta_ads ma ON ma.ad_id = c.attribution_ad_id AND ma.date::date = c.created_at::date
+      LEFT JOIN meta_ads ma ON ma.ad_id = c.attribution_ad_id AND ${contactMetaSameDay}
       WHERE c.attribution_ad_id IN (${placeholders})
       AND c.created_at >= ?
       AND c.created_at <= ?
       AND EXISTS (
         SELECT 1 FROM meta_ads ma2
         WHERE ma2.ad_id = c.attribution_ad_id
-          AND ma2.date::date = c.created_at::date
+          AND ${contactMetaSameDayForExists}
       )
       ${hiddenCondition ? `AND ${hiddenCondition}` : ''}
     `;
@@ -1476,16 +1509,20 @@ export const getLeadsOverTime = async (req, res) => {
     const hiddenConditionC = buildHiddenContactsCondition(hiddenFilters, 'c', false);
     const dedupExprContacts = buildDedupExpression('contacts');
     const dedupExprC = buildDedupExpression('c');
+    const contactsCreatedDate = timestampDateExpression('contacts.created_at', range.appliedTimezone);
+    const contactsCreatedDay = timestampDayExpression('contacts.created_at', range.appliedTimezone);
+    const cCreatedDate = timestampDateExpression('c.created_at', range.appliedTimezone);
+    const cCreatedDay = timestampDayExpression('c.created_at', range.appliedTimezone);
 
     // Query para obtener leads (contactos únicos) por fecha de creación
     const leadsQuery = `SELECT
-        TO_CHAR(created_at::date, 'YYYY-MM-DD') as day,
+        ${contactsCreatedDay} as day,
         COUNT(DISTINCT ${dedupExprContacts}) as leads
        FROM contacts
        WHERE attribution_ad_id IS NOT NULL
          AND attribution_ad_id != ''
-         AND created_at::date >= $1::date
-         AND created_at::date < ($2::date + INTERVAL '1 day')
+         AND ${contactsCreatedDate} >= $1::date
+         AND ${contactsCreatedDate} < ($2::date + INTERVAL '1 day')
          ${hiddenCondition ? `AND ${hiddenCondition}` : ''}
        GROUP BY day
        ORDER BY day`;
@@ -1499,14 +1536,14 @@ export const getLeadsOverTime = async (req, res) => {
     if (attributionCalendarIds && attributionCalendarIds.length > 0) {
       const calendarPlaceholders = attributionCalendarIds.map((_, i) => `$${i + 3}`).join(',');
       appointmentsQuery = `SELECT
-          TO_CHAR(c.created_at::date, 'YYYY-MM-DD') as day,
+          ${cCreatedDay} as day,
           COUNT(DISTINCT ${dedupExprC}) as appointments
          FROM contacts c
          INNER JOIN appointments a ON c.id = a.contact_id
          WHERE c.attribution_ad_id IS NOT NULL
            AND c.attribution_ad_id != ''
-           AND c.created_at::date >= $1::date
-           AND c.created_at::date < ($2::date + INTERVAL '1 day')
+           AND ${cCreatedDate} >= $1::date
+           AND ${cCreatedDate} < ($2::date + INTERVAL '1 day')
            AND a.calendar_id IN (${calendarPlaceholders})
            ${hiddenConditionC ? `AND ${hiddenConditionC}` : ''}
          GROUP BY day
@@ -1515,14 +1552,14 @@ export const getLeadsOverTime = async (req, res) => {
     } else {
       // Sin filtro de calendario
       appointmentsQuery = `SELECT
-          TO_CHAR(c.created_at::date, 'YYYY-MM-DD') as day,
+          ${cCreatedDay} as day,
           COUNT(DISTINCT ${dedupExprC}) as appointments
          FROM contacts c
          INNER JOIN appointments a ON c.id = a.contact_id
          WHERE c.attribution_ad_id IS NOT NULL
            AND c.attribution_ad_id != ''
-           AND c.created_at::date >= $1::date
-           AND c.created_at::date < ($2::date + INTERVAL '1 day')
+           AND ${cCreatedDate} >= $1::date
+           AND ${cCreatedDate} < ($2::date + INTERVAL '1 day')
            ${hiddenConditionC ? `AND ${hiddenConditionC}` : ''}
          GROUP BY day
          ORDER BY day`;
@@ -1591,6 +1628,10 @@ export const getAppointmentsOverTime = async (req, res) => {
     const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'contacts', false);
     const dedupExprC = buildDedupExpression('c');
     const dedupExprContacts = buildDedupExpression('contacts');
+    const cCreatedDate = timestampDateExpression('c.created_at', range.appliedTimezone);
+    const cCreatedDay = timestampDayExpression('c.created_at', range.appliedTimezone);
+    const contactsCreatedDate = timestampDateExpression('contacts.created_at', range.appliedTimezone);
+    const contactsCreatedDay = timestampDayExpression('contacts.created_at', range.appliedTimezone);
 
     // Query para obtener contactos únicos con citas por fecha de creación
     // Filtrar por calendarios de atribución configurados
@@ -1601,14 +1642,14 @@ export const getAppointmentsOverTime = async (req, res) => {
     if (attributionCalendarIds && attributionCalendarIds.length > 0) {
       const calendarPlaceholders = attributionCalendarIds.map((_, i) => `$${i + 3}`).join(',');
       appointmentsQuery = `SELECT
-          TO_CHAR(c.created_at::date, 'YYYY-MM-DD') as day,
+          ${cCreatedDay} as day,
           COUNT(DISTINCT ${dedupExprC}) as appointments
          FROM contacts c
          INNER JOIN appointments a ON c.id = a.contact_id
          WHERE c.attribution_ad_id IS NOT NULL
            AND c.attribution_ad_id != ''
-           AND c.created_at::date >= $1::date
-           AND c.created_at::date < ($2::date + INTERVAL '1 day')
+           AND ${cCreatedDate} >= $1::date
+           AND ${cCreatedDate} < ($2::date + INTERVAL '1 day')
            AND a.calendar_id IN (${calendarPlaceholders})
            ${hiddenConditionC ? `AND ${hiddenConditionC}` : ''}
          GROUP BY day
@@ -1617,14 +1658,14 @@ export const getAppointmentsOverTime = async (req, res) => {
     } else {
       // Sin filtro de calendario
       appointmentsQuery = `SELECT
-          TO_CHAR(c.created_at::date, 'YYYY-MM-DD') as day,
+          ${cCreatedDay} as day,
           COUNT(DISTINCT ${dedupExprC}) as appointments
          FROM contacts c
          INNER JOIN appointments a ON c.id = a.contact_id
          WHERE c.attribution_ad_id IS NOT NULL
            AND c.attribution_ad_id != ''
-           AND c.created_at::date >= $1::date
-           AND c.created_at::date < ($2::date + INTERVAL '1 day')
+           AND ${cCreatedDate} >= $1::date
+           AND ${cCreatedDate} < ($2::date + INTERVAL '1 day')
            ${hiddenConditionC ? `AND ${hiddenConditionC}` : ''}
          GROUP BY day
          ORDER BY day`;
@@ -1632,14 +1673,14 @@ export const getAppointmentsOverTime = async (req, res) => {
 
     // Query para obtener ventas (contactos con purchases_count > 0) por fecha de creación
     const salesQuery = `SELECT
-        TO_CHAR(created_at::date, 'YYYY-MM-DD') as day,
+        ${contactsCreatedDay} as day,
         COUNT(DISTINCT ${dedupExprContacts}) as sales
        FROM contacts
        WHERE attribution_ad_id IS NOT NULL
          AND attribution_ad_id != ''
          AND purchases_count > 0
-         AND created_at::date >= $1::date
-         AND created_at::date < ($2::date + INTERVAL '1 day')
+         AND ${contactsCreatedDate} >= $1::date
+         AND ${contactsCreatedDate} < ($2::date + INTERVAL '1 day')
          ${hiddenCondition ? `AND ${hiddenCondition}` : ''}
        GROUP BY day
        ORDER BY day`;
@@ -1705,28 +1746,32 @@ export const getVisitorsOverTime = async (req, res) => {
     const hiddenFilters = await getHiddenContactFilters();
     const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'contacts', false);
     const dedupExprContacts = buildDedupExpression('contacts');
+    const startedDate = timestampDateExpression('started_at', range.appliedTimezone);
+    const startedDay = timestampDayExpression('started_at', range.appliedTimezone);
+    const contactsCreatedDate = timestampDateExpression('contacts.created_at', range.appliedTimezone);
+    const contactsCreatedDay = timestampDayExpression('contacts.created_at', range.appliedTimezone);
 
     // Query para obtener visitantes únicos por fecha desde sessions
     const visitorsQuery = `SELECT
-        TO_CHAR(started_at::date, 'YYYY-MM-DD') as day,
+        ${startedDay} as day,
         COUNT(DISTINCT visitor_id) as visitors
        FROM sessions
        WHERE ad_id IS NOT NULL
          AND ad_id != ''
-         AND started_at::date >= $1::date
-         AND started_at::date < ($2::date + INTERVAL '1 day')
+         AND ${startedDate} >= $1::date
+         AND ${startedDate} < ($2::date + INTERVAL '1 day')
        GROUP BY day
        ORDER BY day`;
 
     // Query para obtener leads (contactos únicos) por fecha de creación
     const leadsQuery = `SELECT
-        TO_CHAR(created_at::date, 'YYYY-MM-DD') as day,
+        ${contactsCreatedDay} as day,
         COUNT(DISTINCT ${dedupExprContacts}) as leads
        FROM contacts
        WHERE attribution_ad_id IS NOT NULL
          AND attribution_ad_id != ''
-         AND created_at::date >= $1::date
-         AND created_at::date < ($2::date + INTERVAL '1 day')
+         AND ${contactsCreatedDate} >= $1::date
+         AND ${contactsCreatedDate} < ($2::date + INTERVAL '1 day')
          ${hiddenCondition ? `AND ${hiddenCondition}` : ''}
        GROUP BY day
        ORDER BY day`;
@@ -1792,31 +1837,36 @@ export const getFunnelMetrics = async (req, res) => {
     const hiddenFilters = await getHiddenContactFilters();
     const hiddenConditionC = buildHiddenContactsCondition(hiddenFilters, 'c', false);
     const dedupExprC = buildDedupExpression('c');
+    const startedDate = timestampDateExpression('started_at', range.appliedTimezone);
+    const startedDay = timestampDayExpression('started_at', range.appliedTimezone);
+    const cCreatedDate = timestampDateExpression('c.created_at', range.appliedTimezone);
+    const cCreatedDay = timestampDayExpression('c.created_at', range.appliedTimezone);
+    const cMetaSameDay = metaSameLocalDayCondition('ma.date', 'c.created_at', range.appliedTimezone);
 
     // Query para visitantes únicos CON ad_id (columna correcta en sessions)
     const visitorsQuery = `SELECT
-        TO_CHAR(started_at::date, 'YYYY-MM-DD') as day,
+        ${startedDay} as day,
         COUNT(DISTINCT visitor_id) as visitors
        FROM sessions
        WHERE ad_id IS NOT NULL
          AND ad_id != ''
-         AND started_at::date >= $1::date
-         AND started_at::date < ($2::date + INTERVAL '1 day')
+         AND ${startedDate} >= $1::date
+         AND ${startedDate} < ($2::date + INTERVAL '1 day')
        GROUP BY day`;
 
     // Query para leads CON attribution_ad_id validando que el anuncio existiera ese día en Meta
     const leadsQuery = `SELECT
-        TO_CHAR(c.created_at::date, 'YYYY-MM-DD') as day,
+        ${cCreatedDay} as day,
         COUNT(DISTINCT ${dedupExprC}) as leads
        FROM contacts c
        WHERE c.attribution_ad_id IS NOT NULL
          AND c.attribution_ad_id != ''
-         AND c.created_at::date >= $1::date
-         AND c.created_at::date < ($2::date + INTERVAL '1 day')
+         AND ${cCreatedDate} >= $1::date
+         AND ${cCreatedDate} < ($2::date + INTERVAL '1 day')
          AND EXISTS (
            SELECT 1 FROM meta_ads ma
            WHERE ma.ad_id = c.attribution_ad_id
-             AND ma.date::date = c.created_at::date
+             AND ${cMetaSameDay}
          )
          ${hiddenConditionC ? `AND ${hiddenConditionC}` : ''}
        GROUP BY day`;
@@ -1830,19 +1880,19 @@ export const getFunnelMetrics = async (req, res) => {
     if (attributionCalendarIds && attributionCalendarIds.length > 0) {
       const calendarPlaceholders = attributionCalendarIds.map((_, i) => `$${i + 3}`).join(',');
       appointmentsQuery = `SELECT
-          TO_CHAR(c.created_at::date, 'YYYY-MM-DD') as day,
+          ${cCreatedDay} as day,
           COUNT(DISTINCT ${dedupExprC}) as appointments
          FROM contacts c
          INNER JOIN appointments a ON c.id = a.contact_id
          WHERE c.attribution_ad_id IS NOT NULL
            AND c.attribution_ad_id != ''
-           AND c.created_at::date >= $1::date
-           AND c.created_at::date < ($2::date + INTERVAL '1 day')
+           AND ${cCreatedDate} >= $1::date
+           AND ${cCreatedDate} < ($2::date + INTERVAL '1 day')
            AND a.calendar_id IN (${calendarPlaceholders})
            AND EXISTS (
              SELECT 1 FROM meta_ads ma
              WHERE ma.ad_id = c.attribution_ad_id
-               AND ma.date::date = c.created_at::date
+               AND ${cMetaSameDay}
            )
            ${hiddenConditionC ? `AND ${hiddenConditionC}` : ''}
          GROUP BY day`;
@@ -1850,18 +1900,18 @@ export const getFunnelMetrics = async (req, res) => {
     } else {
       // Sin filtro de calendario
       appointmentsQuery = `SELECT
-          TO_CHAR(c.created_at::date, 'YYYY-MM-DD') as day,
+          ${cCreatedDay} as day,
           COUNT(DISTINCT ${dedupExprC}) as appointments
          FROM contacts c
          INNER JOIN appointments a ON c.id = a.contact_id
          WHERE c.attribution_ad_id IS NOT NULL
            AND c.attribution_ad_id != ''
-           AND c.created_at::date >= $1::date
-           AND c.created_at::date < ($2::date + INTERVAL '1 day')
+           AND ${cCreatedDate} >= $1::date
+           AND ${cCreatedDate} < ($2::date + INTERVAL '1 day')
            AND EXISTS (
              SELECT 1 FROM meta_ads ma
              WHERE ma.ad_id = c.attribution_ad_id
-               AND ma.date::date = c.created_at::date
+               AND ${cMetaSameDay}
            )
            ${hiddenConditionC ? `AND ${hiddenConditionC}` : ''}
          GROUP BY day`;
@@ -1869,18 +1919,18 @@ export const getFunnelMetrics = async (req, res) => {
 
     // Query para ventas CON attribution_ad_id validando que el anuncio existiera ese día
     const salesQuery = `SELECT
-        TO_CHAR(c.created_at::date, 'YYYY-MM-DD') as day,
+        ${cCreatedDay} as day,
         COUNT(DISTINCT ${dedupExprC}) as sales
        FROM contacts c
        WHERE c.attribution_ad_id IS NOT NULL
          AND c.attribution_ad_id != ''
          AND c.purchases_count > 0
-         AND c.created_at::date >= $1::date
-         AND c.created_at::date < ($2::date + INTERVAL '1 day')
+         AND ${cCreatedDate} >= $1::date
+         AND ${cCreatedDate} < ($2::date + INTERVAL '1 day')
          AND EXISTS (
            SELECT 1 FROM meta_ads ma
            WHERE ma.ad_id = c.attribution_ad_id
-             AND ma.date::date = c.created_at::date
+             AND ${cMetaSameDay}
          )
          ${hiddenConditionC ? `AND ${hiddenConditionC}` : ''}
        GROUP BY day`;
