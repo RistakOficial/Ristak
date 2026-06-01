@@ -2167,10 +2167,24 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
   const clearChat = () => {
     activeChatRequestRef.current?.controller.abort()
     activeChatRequestRef.current = null
+    chatRequestSeqRef.current += 1
     setSending(false)
     askedOnboardingRef.current = businessContextLoaded
+    attachmentsRef.current.forEach(revokeAttachmentPreview)
     messagesRef.current.forEach((message) => message.attachments?.forEach(revokeAttachmentPreview))
+    messagesRef.current = []
+    attachmentsRef.current = []
+    previousMessageCountRef.current = 0
+    if (copyFeedbackTimeoutRef.current !== null) {
+      window.clearTimeout(copyFeedbackTimeoutRef.current)
+      copyFeedbackTimeoutRef.current = null
+    }
     setMessages([])
+    setAttachments([])
+    setInput('')
+    setUnreadReplies(0)
+    setChatCopied(false)
+    setCopyingChat(false)
     setAttachmentError('')
     focusComposer()
   }

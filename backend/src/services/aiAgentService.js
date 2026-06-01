@@ -70,8 +70,10 @@ const ACTION_CUSTOMIZATION_STOPWORDS = new Set([
   'cuando', 'cada', 'veces', 'alguna', 'algun', 'alguna', 'sobre', 'para', 'como', 'este', 'esta',
   'esto', 'hacer', 'hagas', 'hacerlo', 'accion', 'acciones', 'ejecucion', 'ejecuciones', 'usuario',
   'cliente', 'clientes', 'contacto', 'contactos', 'persona', 'personas', 'buscar', 'busca', 'debe',
-  'debes', 'tiene', 'tengo', 'quiero', 'necesito', 'entonces', 'automaticamente', 'automatica',
-  'automatico', 'valor', 'valores', 'campo', 'campos', 'custom', 'workflow', 'highlevel', 'gohighlevel'
+  'debes', 'debera', 'deberas', 'tiene', 'tengo', 'quiero', 'necesito', 'entonces', 'antes',
+  'despues', 'automaticamente', 'automatica', 'automatico', 'valor', 'valores', 'campo', 'campos',
+  'custom', 'workflow', 'highlevel', 'gohighlevel', 'numero', 'numeros', 'solo', 'unicamente',
+  'texto', 'adicional', 'adicionales', 'indique', 'indiques', 'mes', 'meses'
 ])
 const isPostgres = Boolean(process.env.DATABASE_URL)
 
@@ -9699,6 +9701,17 @@ function shouldUsePaymentBackendForLatestMessage(messages = []) {
     /(pago|pagos|payment|payments|charge|charges|cobr|invoice|invoices|factura|recibo|link de pago|payment link|parcial|parcialidad|parcialidades|subscription|subscriptions|transaction|transactions|domicili|tarjeta|transfer|deposit|efectivo|mensualidad|cargo|cargos)/.test(normalized)
 }
 
+function isExplicitLatestMessageTopicSwitch(question = '') {
+  const normalized = normalizeText(question)
+  if (!normalized) return false
+
+  const hasSwitchCue = /^(?:no|nop|nel|espera|aguanta|cambiando de tema|otra cosa|ahora|oye|por cierto|aprovechando)\b/.test(normalized) ||
+    /\b(?:cambiando de tema|otra cosa|por cierto|aprovechando)\b/.test(normalized)
+  const hasFreshRequest = /\b(?:necesito|quiero|ayudame|ayúdame|busca|buscame|búscame|dame|muestra|revisa|registra|registrar|crea|crear|haz|hacer|mete|meter|agenda|agendar|manda|envia|envía|cobr|pago|pagos|factura|invoice|funnel|embudo|workflow|flujo|campan|campañ|anunci|contacto|cliente|calendario|cita|highlevel|go\s*high\s*level|ghl)\b/.test(normalized)
+
+  return hasSwitchCue && hasFreshRequest
+}
+
 function shouldUseContactMutationSafety(question) {
   const normalized = normalizeText(question)
 
@@ -9729,17 +9742,34 @@ function extractActionCustomizationKeywords(actionCustomizations) {
   const normalized = normalizeText(actionCustomizations)
 
   return normalized
-    .split(/[^a-z0-9_]+/i)
+    .split(/[^a-z0-9]+/i)
     .map((word) => word.trim())
     .filter((word) => word.length >= 4 && !ACTION_CUSTOMIZATION_STOPWORDS.has(word))
     .slice(0, ACTION_CUSTOMIZATION_KEYWORD_LIMIT)
 }
 
 function sharesActionCustomizationKeyword(question, actionCustomizations) {
-  const normalizedQuestion = normalizeText(question)
+  const questionTokens = new Set(
+    normalizeText(question)
+      .split(/[^a-z0-9]+/i)
+      .map((word) => word.trim())
+      .filter(Boolean)
+  )
   const keywords = extractActionCustomizationKeywords(actionCustomizations)
 
-  return keywords.some((keyword) => normalizedQuestion.includes(keyword))
+  return keywords.some((keyword) => {
+    if (questionTokens.has(keyword)) return true
+
+    const singularKeyword = keyword.endsWith('s') ? keyword.slice(0, -1) : keyword
+    if (singularKeyword !== keyword && questionTokens.has(singularKeyword)) return true
+
+    return Array.from(questionTokens).some((token) => {
+      const singularToken = token.endsWith('s') ? token.slice(0, -1) : token
+      if (singularToken === keyword || singularToken === singularKeyword) return true
+
+      return token.length >= 6 && keyword.startsWith(token)
+    })
+  })
 }
 
 function isConfiguredActionExecutionRequest(question, agentConfig) {
@@ -9748,10 +9778,10 @@ function isConfiguredActionExecutionRequest(question, agentConfig) {
 
   if (!actionCustomizations || !normalized) return false
 
-  const hasActionVerb = /(accion|acción|ejecut|haz|hacer|aplica|aplicar|dale|darle|dales|dar|pon|ponle|poner|agrega|agregar|anade|añade|quita|quitar|mete|meter|saca|sacar|asigna|asignar|actualiza|actualizar|modifica|modificar|cambia|cambiar|registra|registrar|manda|mandar|envia|enviar|crea|crear|inicia|iniciar|activa|activar|desactiva|desactivar)/.test(normalized)
-  const hasOperationalTarget = /(contacto|cliente|lead|persona|programa|workflow|flujo|campo|custom|tag|nota|oportunidad|pipeline|calendario|cita|pago|suscripcion|suscripción|formulario|survey|encuesta|funnel|embudo|blog|campan|campañ|anuncio|ad manager|widget|chat|conversacion|conversación|email|producto|tienda|store|media|archivo|folder|usuario|company|compania|compañia|business|snapshot|proposal|propuesta|course|curso|knowledge|trigger link|sub.?account|location|highlevel|gohighlevel|ghl)/.test(normalized)
+  const hasActionVerb = /(accion|acción|ejecut|haz|hacer|aplica|aplicar|dale|darle|dales|dar|pon|ponle|poner|agrega|agregar|anade|añade|quita|quitar|mete|meter|saca|sacar|asigna|asignar|actualiza|actualizar|modifica|modificar|cambia|cambiar|registra|registrar|manda|mandar|envia|enviar|crea|crear|inicia|iniciar|activa|activar|reactiva|reactivar|restaura|restaurar|desactiva|desactivar)/.test(normalized)
+  const matchesConfiguredAction = sharesActionCustomizationKeyword(normalized, actionCustomizations)
 
-  return hasActionVerb && (hasOperationalTarget || sharesActionCustomizationKeyword(normalized, actionCustomizations))
+  return hasActionVerb && matchesConfiguredAction
 }
 
 function isConfiguredActionConversationContinuation(messages = [], agentConfig = null) {
@@ -9762,6 +9792,8 @@ function isConfiguredActionConversationContinuation(messages = [], agentConfig =
   if (latestUserIndex < 1) return false
 
   const latestUserText = normalizeText(getMessageText(messages[latestUserIndex]))
+  if (isExplicitLatestMessageTopicSwitch(latestUserText)) return false
+
   const previousText = messages
     .slice(Math.max(0, latestUserIndex - 8), latestUserIndex)
     .map(message => getMessageText(message))
@@ -9912,9 +9944,12 @@ function shouldUseInternalDatabaseContext(question, messages = []) {
 function buildUnifiedAgentRoute({ messages = [], latestUserMessage = '', agentConfig = null } = {}) {
   const normalized = normalizeText(latestUserMessage)
   const highLevelToolIntent = isExplicitHighLevelToolRequest(latestUserMessage)
-  const customActionIntent = isConfiguredActionExecutionRequest(latestUserMessage, agentConfig) ||
-    isConfiguredActionConversationContinuation(messages, agentConfig)
   const paymentBackendOnly = shouldUsePaymentBackendForLatestMessage(messages)
+  const latestCustomActionExecution = isConfiguredActionExecutionRequest(latestUserMessage, agentConfig)
+  const customActionContinuation = !paymentBackendOnly &&
+    !isExplicitLatestMessageTopicSwitch(latestUserMessage) &&
+    isConfiguredActionConversationContinuation(messages, agentConfig)
+  const customActionIntent = latestCustomActionExecution || customActionContinuation
   const contactMutationSafety = shouldUseContactMutationSafety(latestUserMessage)
   const requiresDbResearch = !paymentBackendOnly && !highLevelToolIntent && !customActionIntent && shouldUseInternalDatabaseContext(latestUserMessage, messages)
   const highLevelOperationalIntent = !paymentBackendOnly && (
@@ -9952,6 +9987,7 @@ const BASE_SPECIALIST_PROMPT = [
   'Eres Ristak AI, un agente interno del negocio.',
   'El usuario ve un solo chat y tú operas como un agente unificado, sin clasificador previo ni rol fijo.',
   'Usa la conversación completa, la vista actual, la DB y las herramientas disponibles. No reinicies contexto por mirar sólo el último mensaje, pero sí permite cambios normales de tema como lo haría un humano.',
+  'El último mensaje del usuario manda sobre la acción activa. El historial sirve como memoria para retomar hilos si el usuario los menciona, no como permiso para arrastrar una tarea vieja cuando el usuario ya pidió otra cosa.',
   'Piensa con criterio propio: si el usuario sólo conversa, responde directo; si pide datos internos, investiga en DB; si pide una acción, identifica registros exactos; si falta algo indispensable, pregunta sólo eso.',
   'Entiende referencias humanas normales: "el de la última cita", "la próxima cita", "este contacto", "ese workflow", "la conversación anterior" no son nombres literales. Resuelve primero la entidad real y luego ejecuta.',
   'Si una persona/recurso quedó activo en la memoria operacional y el usuario luego dice "por cierto", "también", "a él/ella", "cóbrale", "mételo", "mándale" o pide otra acción sin nombrar a alguien nuevo, reutiliza esa entidad activa. No vuelvas a pedir cuál homónimo es sólo porque hay nombres parecidos.',
