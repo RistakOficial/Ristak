@@ -14,7 +14,7 @@ import {
 import { getGHLClient } from '../services/ghlClient.js'
 import { getHighLevelConfig } from '../config/database.js'
 import { verifyOAuthAccessToken } from '../utils/oauthTokens.js'
-import { buildContactSearchClause } from '../utils/searchText.js'
+import { buildContactSearchClause, buildContactSearchRank } from '../utils/searchText.js'
 import { nonTestPaymentCondition } from '../utils/paymentMode.js'
 import { logger } from '../utils/logger.js'
 
@@ -404,6 +404,7 @@ async function searchContacts(args = {}) {
   }
 
   const searchClause = buildContactSearchClause('c', query)
+  const searchRank = buildContactSearchRank('c', query)
   const rows = await db.all(
     `SELECT
        c.id,
@@ -416,9 +417,9 @@ async function searchContacts(args = {}) {
        c.created_at
      FROM contacts c
      WHERE ${searchClause.condition}
-     ORDER BY c.created_at DESC
+     ORDER BY ${searchRank.expression} DESC, c.created_at DESC
      LIMIT ?`,
-    [...searchClause.params, limit]
+    [...searchClause.params, ...searchRank.params, limit]
   )
 
   return {

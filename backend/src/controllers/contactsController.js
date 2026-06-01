@@ -6,7 +6,7 @@ import { buildContactStats } from '../services/analyticsService.js'
 import { getGHLClient } from '../services/ghlClient.js'
 import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js'
 import { nonTestPaymentCondition } from '../utils/paymentMode.js'
-import { buildContactSearchClause } from '../utils/searchText.js'
+import { buildContactSearchClause, buildContactSearchRank } from '../utils/searchText.js'
 import {
   buildHighLevelCustomFieldsPayload,
   mergeContactCustomFields,
@@ -140,6 +140,11 @@ export const getContacts = async (req, res) => {
     const safeSortBy = sortableColumns.has(sortBy) ? sortBy : 'created_at'
     const orderDirection = String(sortOrder).toUpperCase() === 'ASC' ? 'ASC' : 'DESC'
 
+    const searchRank = search ? buildContactSearchRank('c', search) : null
+    const orderBy = searchRank
+      ? `${searchRank.expression} DESC, ${safeSortBy} ${orderDirection}`
+      : `${safeSortBy} ${orderDirection}`
+
     const contactsQuery = `
       WITH payment_stats AS (
         SELECT
@@ -194,11 +199,11 @@ export const getContacts = async (req, res) => {
       FROM contacts c
       LEFT JOIN payment_stats ps ON ps.contact_id = c.id
       ${mainWhereClause}
-      ORDER BY ${safeSortBy} ${orderDirection}
+      ORDER BY ${orderBy}
       LIMIT ? OFFSET ?
     `
 
-    const contactsParams = [...params, limitNumber, offset]
+    const contactsParams = [...params, ...(searchRank?.params ?? []), limitNumber, offset]
     const contacts = await db.all(contactsQuery, contactsParams)
 
     const firstSessionsByContact = new Map()
@@ -746,6 +751,7 @@ export const searchContacts = async (req, res) => {
     }
 
     const searchClause = buildContactSearchClause('c', q)
+    const searchRank = buildContactSearchRank('c', q)
 
     const contacts = await db.all(
       `WITH payment_stats AS (
@@ -797,8 +803,9 @@ export const searchContacts = async (req, res) => {
       FROM contacts c
       LEFT JOIN payment_stats ps ON ps.contact_id = c.id
       WHERE ${searchClause.condition}
+      ORDER BY ${searchRank.expression} DESC, c.created_at DESC
       LIMIT 20`,
-      searchClause.params
+      [...searchClause.params, ...searchRank.params]
     )
 
     // Mapear campos de base de datos a nombres esperados por frontend

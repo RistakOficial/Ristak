@@ -1039,6 +1039,13 @@ export const Contacts: React.FC = () => {
       key: 'status',
       header: 'Estado',
       render: (_value, item) => getStatusBadge(item),
+      searchValue: (value, item) => [
+        value,
+        getContactStageBadge({
+          ...item,
+          hasAttendedAppointment: hasAttendedAppointment(item)
+        }, labels)?.text
+      ],
       sortable: true
     },
     {
@@ -1061,6 +1068,7 @@ export const Contacts: React.FC = () => {
     {
       key: 'id',
       header: 'Acciones',
+      searchable: false,
       render: (_, item) => {
         // Contar acciones disponibles
         const actions = []

@@ -2,6 +2,7 @@ import { db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 import {
   buildContactSearchClause,
+  buildContactSearchRank,
   containsPattern,
   textFoldExpression
 } from '../utils/searchText.js'
@@ -73,6 +74,10 @@ export const globalSearch = async (req, res) => {
       includeSource: true,
       includeAdName: true
     })
+    const contactSearchRank = buildContactSearchRank('c', rawQuery, {
+      includeSource: true,
+      includeAdName: true
+    })
     const basicContactSearchClause = buildContactSearchClause('c', rawQuery)
 
     const [
@@ -98,9 +103,9 @@ export const globalSearch = async (req, res) => {
           (SELECT COUNT(*) > 0 FROM appointments WHERE contact_id = c.id) AS has_appointments
         FROM contacts c
         WHERE ${contactSearchClause.condition}
-        ORDER BY c.created_at DESC
+        ORDER BY ${contactSearchRank.expression} DESC, c.created_at DESC
         LIMIT ?`,
-        [...contactSearchClause.params, CATEGORY_LIMIT]
+        [...contactSearchClause.params, ...contactSearchRank.params, CATEGORY_LIMIT]
       )),
       runCategoryQuery('citas', () => db.all(
         `SELECT

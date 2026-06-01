@@ -19,6 +19,8 @@ export interface Column<T> {
   key: string
   header: string
   render?: (value: any, item: T) => React.ReactNode
+  searchValue?: (value: any, item: T) => unknown | unknown[]
+  searchable?: boolean
   sortable?: boolean
   visible?: boolean
   width?: string
@@ -97,6 +99,20 @@ function enforceFixedColumnPositions<T>(columns: Column<T>[], defaultColumns: Co
   })
 
   return normalizedColumns
+}
+
+function getSearchValues<T extends Record<string, any>>(item: T, columns: Column<T>[]) {
+  const searchableColumns = columns.filter(column => column.searchable !== false)
+
+  if (searchableColumns.length === 0) {
+    return Object.values(item)
+  }
+
+  return searchableColumns.flatMap(column => {
+    const rawValue = item[column.key]
+    const searchValue = column.searchValue ? column.searchValue(rawValue, item) : rawValue
+    return Array.isArray(searchValue) ? searchValue : [searchValue]
+  })
 }
 
 interface TableProps<T> {
@@ -325,7 +341,7 @@ export function Table<T extends Record<string, any>>({
 
     if (searchTerm) {
       filtered = filtered.filter(item =>
-        Object.values(item).some(value =>
+        getSearchValues(item, columns).some(value =>
           searchTextIncludes(value, searchTerm)
         )
       )
@@ -347,7 +363,7 @@ export function Table<T extends Record<string, any>>({
     }
 
     return filtered
-  }, [data, searchTerm, sortBy, sortOrder])
+  }, [columns, data, searchTerm, sortBy, sortOrder])
 
   const paginatedData = useMemo(() => {
     if (!paginated) return filteredData
