@@ -5,6 +5,7 @@ import { getGHLClient } from './ghlClient.js'
 import { buildInvoicePaymentUrl } from '../utils/paymentUrl.js'
 import { getInvoicePaymentMode } from '../utils/paymentMode.js'
 import { updateSingleContactStats } from '../utils/updateContactsStats.js'
+import { combineInvoiceTextSections, formatInvoiceMultilineText } from '../utils/invoiceTextFormatter.js'
 import { logger } from '../utils/logger.js'
 
 export const PAYMENT_FLOW_STATES = {
@@ -157,10 +158,7 @@ function amountsMatch(left, right, tolerance = 0.01) {
 }
 
 function combineTextSections(...sections) {
-  return sections
-    .map(section => String(section || '').trim())
-    .filter(Boolean)
-    .join('\n\n')
+  return combineInvoiceTextSections(...sections)
 }
 
 function formatCurrencyAmount(amount, currency = CURRENCY_DEFAULT) {
@@ -484,7 +482,7 @@ async function getInvoiceSendContext() {
     liveMode: normalizeGhlInvoiceMode(config.ghl_invoice_mode) === 'live',
     timezone: locationData?.timezone || DEFAULT_PAYMENT_TIMEZONE,
     invoiceTitle: config.invoice_title || 'PAGO',
-    termsNotes: config.invoice_terms_notes || null,
+    termsNotes: formatInvoiceMultilineText(config.invoice_terms_notes || null),
     invoiceNumberPrefix: config.invoice_number_prefix || null,
     businessDetails,
     sentFrom: {

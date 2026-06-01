@@ -10,6 +10,7 @@
 import fetch from 'node-fetch'
 import { getHighLevelConfig } from '../config/database.js'
 import { logger } from '../utils/logger.js'
+import { formatInvoiceMultilineText, formatInvoicePayloadText } from '../utils/invoiceTextFormatter.js'
 
 const GHL_BASE_URL = 'https://services.leadconnectorhq.com'
 const GHL_API_VERSION = '2021-07-28'
@@ -97,10 +98,12 @@ function normalizeInvoiceBusinessDetails(businessDetails = {}) {
 }
 
 function normalizeInvoicePayload(data = {}) {
+  const formatted = formatInvoicePayloadText(data)
+
   return {
-    ...data,
-    ...(data.businessDetails && {
-      businessDetails: normalizeInvoiceBusinessDetails(data.businessDetails)
+    ...formatted,
+    ...(formatted.businessDetails && {
+      businessDetails: normalizeInvoiceBusinessDetails(formatted.businessDetails)
     })
   }
 }
@@ -428,7 +431,7 @@ class GHLClient {
       altType: 'location',
       amount: amount,
       ...(currency ? { currency } : {}),
-      notes: note || '',
+      notes: formatInvoiceMultilineText(note || ''),
       fulfilledAt: fulfilledAt || new Date().toISOString(),
       mode,
       liveMode,
@@ -671,7 +674,7 @@ class GHLClient {
 
   async updateInvoice(invoiceId, data) {
     const body = {
-      ...data,
+      ...normalizeInvoicePayload(data),
       altId: this.locationId,
       altType: 'location',
     }

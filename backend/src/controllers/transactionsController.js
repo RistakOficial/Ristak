@@ -8,6 +8,7 @@ import { syncInvoices, syncAllInvoices, getInvoicesFromDB } from '../services/in
 import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js'
 import { updateSingleContactStats } from '../utils/updateContactsStats.js'
 import { triggerWhatsappFirstPurchaseEvent } from '../services/metaWhatsappEventsService.js'
+import { formatInvoiceMultilineText, formatInvoiceSingleLineText } from '../utils/invoiceTextFormatter.js'
 
 const SUCCESS_PAYMENT_STATUSES = new Set(['succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success'])
 const VALID_TRANSACTION_STATUSES = new Set([
@@ -97,6 +98,8 @@ const getInvoiceItems = (invoice) => {
 const buildInvoiceItemsForAmount = ({ invoice, amount, currency, description }) => {
   const items = getInvoiceItems(invoice)
   const firstItem = items[0] || {}
+  const itemName = formatInvoiceSingleLineText(description || firstItem.name || invoice.name || invoice.title || 'Pago') || 'Pago'
+  const itemDescription = formatInvoiceMultilineText(description || firstItem.description || firstItem.name || invoice.name || invoice.title || 'Pago') || itemName
   const rawTaxRate = Number(invoice.tax?.rate || 0)
   const taxRate = Number.isFinite(rawTaxRate) && rawTaxRate > 0 ? rawTaxRate : 0
   const subtotal = taxRate > 0
@@ -106,8 +109,8 @@ const buildInvoiceItemsForAmount = ({ invoice, amount, currency, description }) 
 
   const nextItem = {
     ...firstItem,
-    name: description || firstItem.name || invoice.name || invoice.title || 'Pago',
-    description: description || firstItem.description || firstItem.name || invoice.name || invoice.title || 'Pago',
+    name: itemName,
+    description: itemDescription,
     amount: subtotal,
     qty: firstItem.qty || 1,
     currency
@@ -128,15 +131,17 @@ const buildInvoiceItemsForAmount = ({ invoice, amount, currency, description }) 
 const buildInvoiceUpdatePayload = ({ invoice, transaction, updates }) => {
   const amount = updates.amount ?? Number(transaction.amount || invoice.total || invoice.amount || 0)
   const currency = updates.currency || transaction.currency || invoice.currency || 'MXN'
-  const description = updates.description ?? transaction.description ?? invoice.name ?? invoice.title ?? 'Pago'
+  const rawDescription = updates.description ?? transaction.description ?? invoice.name ?? invoice.title ?? 'Pago'
+  const description = formatInvoiceMultilineText(rawDescription) || 'Pago'
+  const invoiceName = formatInvoiceSingleLineText(rawDescription) || 'Pago'
   const issueDate = toDateOnly(updates.date || transaction.date || invoice.issueDate || invoice.createdAt)
   const dueDate = toDateOnly(updates.dueDate || transaction.due_date || invoice.dueDate)
   const currentItems = getInvoiceItems(invoice)
   const invoiceItemData = buildInvoiceItemsForAmount({ invoice, amount, currency, description })
 
   const payload = {
-    name: description,
-    title: invoice.title || description,
+    name: invoiceName,
+    title: formatInvoiceSingleLineText(invoice.title || invoiceName) || invoiceName,
     currency,
     contactDetails: {
       ...(invoice.contactDetails || {}),
@@ -153,14 +158,14 @@ const buildInvoiceUpdatePayload = ({ invoice, transaction, updates }) => {
   if (issueDate) payload.issueDate = issueDate
   if (dueDate) payload.dueDate = dueDate
   if (invoiceItemData.tax) payload.tax = invoiceItemData.tax
-  if (invoice.termsNotes) payload.termsNotes = invoice.termsNotes
+  if (invoice.termsNotes) payload.termsNotes = formatInvoiceMultilineText(invoice.termsNotes)
 
   if (!updates.amount && currentItems.length > 0) {
     payload.items = currentItems.map((item, index) => index === 0
       ? {
           ...item,
-          name: description || item.name,
-          description: description || item.description || item.name,
+          name: formatInvoiceSingleLineText(rawDescription || item.name) || item.name,
+          description: description || formatInvoiceMultilineText(item.description || item.name),
           currency: item.currency || currency
         }
       : item

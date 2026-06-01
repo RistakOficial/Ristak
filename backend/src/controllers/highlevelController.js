@@ -7,6 +7,7 @@ import { API_URLS } from '../config/constants.js';
 import { getGHLClient } from '../services/ghlClient.js';
 import { buildInvoicePaymentUrl } from '../utils/paymentUrl.js';
 import { createInstallmentPaymentFlow } from '../services/paymentFlowService.js';
+import { formatInvoiceMultilineText, formatInvoicePayloadText } from '../utils/invoiceTextFormatter.js';
 
 const normalizeGhlInvoiceMode = (mode) => mode === 'test' ? 'test' : 'live';
 const INACTIVE_INVOICE_SCHEDULE_STATUSES = new Set([
@@ -59,7 +60,7 @@ async function getGhlInvoiceScheduleContext() {
       'MXN'
     ),
     invoiceTitle: config?.invoice_title || 'PLAN DE PAGO',
-    termsNotes: config?.invoice_terms_notes || null,
+    termsNotes: formatInvoiceMultilineText(config?.invoice_terms_notes || null),
     invoiceNumberPrefix: config?.invoice_number_prefix || null,
     businessDetails: {
       name: business.name || locationData?.name || 'Mi Negocio',
@@ -316,7 +317,7 @@ export const getConfig = async (req, res) => {
       domain: locationDataRaw?.domain || null,
       invoiceTitle: config.invoice_title || 'PAGO',
       invoiceNumberPrefix: config.invoice_number_prefix || 'INV-',
-      invoiceTermsNotes: config.invoice_terms_notes || null,
+      invoiceTermsNotes: formatInvoiceMultilineText(config.invoice_terms_notes || null) || null,
       invoiceDueDays: config.invoice_due_days || 7,
       transferInfoUrl: config.transfer_info_url || null,
       cardSetupAmount: config.card_setup_amount || 25,
@@ -803,10 +804,12 @@ export const listPrices = async (req, res) => {
  */
 export const createInvoice = async (req, res) => {
   try {
-    const invoiceData = req.body;
     const liveMode = await getGhlInvoiceLiveMode();
     const paymentMode = liveMode ? 'live' : 'test';
-    invoiceData.liveMode = liveMode;
+    const invoiceData = formatInvoicePayloadText({
+      ...(req.body || {}),
+      liveMode
+    });
 
     // PASO 1: Crear invoice en HighLevel
     const ghlClient = await getGHLClient();
@@ -1608,7 +1611,7 @@ export const createInvoiceSchedule = async (req, res) => {
       ...item,
       currency: item.currency || currency
     }));
-    const payload = sanitizeInvoiceSchedulePayload({
+    const payload = formatInvoicePayloadText(sanitizeInvoiceSchedulePayload({
       ...rawPayload,
       status: rawPayload?.status || 'draft',
       liveMode: rawPayload?.liveMode !== undefined ? rawPayload.liveMode : context.liveMode,
@@ -1622,7 +1625,7 @@ export const createInvoiceSchedule = async (req, res) => {
       issueDate: rawPayload?.issueDate || rawPayload?.schedule?.rrule?.startDate || String(rawPayload?.schedule?.executeAt || '').slice(0, 10),
       dueDate: rawPayload?.dueDate || rawPayload?.schedule?.rrule?.startDate || String(rawPayload?.schedule?.executeAt || '').slice(0, 10),
       ...(items.length ? { items, invoiceItems: rawPayload?.invoiceItems || items } : {})
-    });
+    }));
     const shouldSchedule = req.body?.scheduleNow !== false;
 
     if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
@@ -2141,7 +2144,7 @@ export const saveInvoiceConfig = async (req, res) => {
     const values = [
       invoiceTitle.trim(),
       invoiceNumberPrefix.trim(),
-      invoiceTermsNotes?.trim() || null,
+      formatInvoiceMultilineText(invoiceTermsNotes) || null,
       parseInt(invoiceDueDays),
       transferInfoUrl?.trim() || null,
       Math.round(parsedCardSetupAmount * 100) / 100,
