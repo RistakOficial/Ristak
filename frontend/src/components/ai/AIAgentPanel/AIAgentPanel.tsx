@@ -2393,11 +2393,6 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
                     <span className={styles.thinkingText}>
                       {thinkingAction}
                     </span>
-                    <span className={styles.thinkingDots} aria-hidden="true">
-                      <span className={styles.thinkingDot} />
-                      <span className={styles.thinkingDot} />
-                      <span className={styles.thinkingDot} />
-                    </span>
                   </div>
                 )}
                 <div ref={endRef} />
