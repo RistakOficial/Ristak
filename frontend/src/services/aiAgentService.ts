@@ -33,11 +33,26 @@ export interface AIAgentContactMemory {
   storedCard?: unknown
 }
 
+export interface AIAgentProductMemory {
+  id?: string
+  name?: string
+  description?: string
+  currency?: string
+  price?: {
+    id?: string
+    name?: string
+    amount?: number
+    currency?: string
+  } | null
+}
+
 export interface AIAgentMessageMemory {
   version: number
   generatedAt?: string
   activeContact?: AIAgentContactMemory | null
   contacts?: AIAgentContactMemory[]
+  activeProduct?: AIAgentProductMemory | null
+  products?: AIAgentProductMemory[]
 }
 
 export interface AIAgentMessage {

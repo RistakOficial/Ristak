@@ -566,6 +566,8 @@ function buildFunctionToolEvidence(call = {}, output = {}) {
     method: output?.method || args.method || null,
     path: output?.path || args.path || null,
     contact: output?.contact || output?.summary?.contact || null,
+    product: output?.product || output?.summary?.product || null,
+    price: output?.price || output?.summary?.price || null,
     summary: output?.summary || null,
     response: compactActionEvidenceValue(output?.response || output?.result, 1800)
   }
@@ -623,28 +625,43 @@ function getContactFromActionEvidence(evidence = {}) {
     normalizeOperationalContact(evidence.summary?.client)
 }
 
+function getProductFromActionEvidence(evidence = {}) {
+  return normalizeOperationalProduct(evidence.product || evidence.summary?.product, evidence.price || evidence.summary?.price)
+}
+
 function buildAgentMemoryPayload({
   actionEvidence = [],
   paymentOperationalMemory = null,
   crmOperationalMemory = null,
+  productOperationalMemory = null,
   runtimeContext = {}
 } = {}) {
   const evidenceContacts = Array.isArray(actionEvidence)
     ? actionEvidence.slice().reverse().map(getContactFromActionEvidence)
+    : []
+  const evidenceProducts = Array.isArray(actionEvidence)
+    ? actionEvidence.slice().reverse().map(getProductFromActionEvidence)
     : []
   const contacts = dedupeOperationalContacts([
     ...evidenceContacts,
     paymentOperationalMemory?.resolvedContact,
     crmOperationalMemory?.resolvedContact
   ])
+  const products = dedupeOperationalProducts(evidenceProducts)
+  const rememberedProducts = dedupeOperationalProducts([
+    ...products,
+    productOperationalMemory?.activeProduct
+  ])
 
-  if (!contacts.length) return null
+  if (!contacts.length && !rememberedProducts.length) return null
 
   return {
     version: 1,
     generatedAt: runtimeContext.nowIso || DateTime.now().toISO(),
     activeContact: contacts[0],
-    contacts
+    contacts,
+    activeProduct: rememberedProducts[0],
+    products: rememberedProducts
   }
 }
 
@@ -1844,10 +1861,11 @@ function hasExplicitFirstPayment(args = {}) {
 }
 
 function enrichInstallmentPaymentArgs(inputArgs = {}, messages = [], timezone = DEFAULT_PAYMENT_TIMEZONE) {
+  const productEnrichedArgs = applyPaymentProductMemory(inputArgs, messages)
   const args = {
-    ...inputArgs,
-    ...(inputArgs.firstPayment && typeof inputArgs.firstPayment === 'object'
-      ? { firstPayment: { ...inputArgs.firstPayment } }
+    ...productEnrichedArgs,
+    ...(productEnrichedArgs.firstPayment && typeof productEnrichedArgs.firstPayment === 'object'
+      ? { firstPayment: { ...productEnrichedArgs.firstPayment } }
       : {})
   }
   const conversationText = getPaymentConversationText(messages)
@@ -2094,6 +2112,47 @@ function getContactsFromAgentMemory(memory = {}) {
   ].filter(Boolean)
 }
 
+function normalizeOperationalProduct(product = {}, price = null) {
+  if (!product || typeof product !== 'object') return null
+
+  const id = cleanText(product.id || product.productId || product.product_id || '', 180)
+  const name = cleanText(product.name || product.title || product.productName || product.label || '', 180)
+  if (!id && !name) return null
+
+  const rawPrice = price && typeof price === 'object' ? price : product.price
+  const normalizedPrice = rawPrice && typeof rawPrice === 'object'
+    ? {
+        id: cleanText(rawPrice.id || rawPrice.priceId || rawPrice.price_id || '', 180),
+        name: cleanText(rawPrice.name || rawPrice.nickname || rawPrice.label || '', 180),
+        amount: normalizePaymentAmount(rawPrice.amount ?? rawPrice.price ?? rawPrice.value),
+        currency: cleanText(String(rawPrice.currency || rawPrice.currencyCode || product.currency || DEFAULT_PAYMENT_CURRENCY), 12).toUpperCase() || DEFAULT_PAYMENT_CURRENCY
+      }
+    : null
+
+  return {
+    id,
+    name,
+    description: cleanText(product.description || '', 300),
+    currency: cleanText(String(product.currency || normalizedPrice?.currency || DEFAULT_PAYMENT_CURRENCY), 12).toUpperCase() || DEFAULT_PAYMENT_CURRENCY,
+    price: normalizedPrice && (normalizedPrice.id || normalizedPrice.name || normalizedPrice.amount > 0)
+      ? normalizedPrice
+      : null
+  }
+}
+
+function getProductsFromAgentMemory(memory = {}) {
+  if (!memory || typeof memory !== 'object') return []
+
+  return [
+    normalizeOperationalProduct(memory.activeProduct),
+    ...(
+      Array.isArray(memory.products)
+        ? memory.products.map(product => normalizeOperationalProduct(product))
+        : []
+    )
+  ].filter(Boolean)
+}
+
 function dedupeOperationalContacts(contacts = []) {
   const seen = new Set()
   const deduped = []
@@ -2103,6 +2162,22 @@ function dedupeOperationalContacts(contacts = []) {
     if (!normalized?.id || seen.has(normalized.id)) continue
 
     seen.add(normalized.id)
+    deduped.push(normalized)
+  }
+
+  return deduped
+}
+
+function dedupeOperationalProducts(products = []) {
+  const seen = new Set()
+  const deduped = []
+
+  for (const product of products) {
+    const normalized = normalizeOperationalProduct(product)
+    const key = normalized?.id || (normalized?.name ? `name:${normalizeText(normalized.name)}` : '')
+    if (!key || seen.has(key)) continue
+
+    seen.add(key)
     deduped.push(normalized)
   }
 
@@ -2122,6 +2197,21 @@ function getRecentAgentMemoryContacts(messages = [], limit = 16) {
 
 function getRecentAgentMemoryContactId(messages = []) {
   return getRecentAgentMemoryContacts(messages)[0]?.id || ''
+}
+
+function getRecentAgentMemoryProducts(messages = [], limit = 16) {
+  const safeMessages = Array.isArray(messages) ? messages.slice(-limit).reverse() : []
+  const products = []
+
+  for (const message of safeMessages) {
+    products.push(...getProductsFromAgentMemory(getMessageAgentMemory(message)))
+  }
+
+  return dedupeOperationalProducts(products)
+}
+
+function getRecentAgentMemoryProduct(messages = []) {
+  return getRecentAgentMemoryProducts(messages)[0] || null
 }
 
 const PAYMENT_CONTACT_TOOL_NAMES = new Set([
@@ -4567,6 +4657,86 @@ function getPaymentProductSummary(args = {}) {
   }
 }
 
+function hasPaymentProductArgs(args = {}) {
+  return Boolean(
+    cleanText(String(args.productId || args.product_id || ''), 180) ||
+    cleanText(String(args.productName || args.product_name || args.product || ''), 180) ||
+    cleanText(String(args.priceId || args.price_id || ''), 180) ||
+    cleanText(String(args.priceName || args.price_name || ''), 180)
+  )
+}
+
+function extractRecentPaymentProductFromConversation(messages = [], limit = 12) {
+  const safeMessages = Array.isArray(messages) ? messages.slice(-limit).reverse() : []
+  const patterns = [
+    /producto\s+["“”']([^"“”'\n]+)["“”']/i,
+    /producto\s+([A-ZÁÉÍÓÚÜÑ][\p{L}\p{M}\d'._-]+(?:\s+[A-ZÁÉÍÓÚÜÑ][\p{L}\p{M}\d'._-]+){0,4})/iu,
+    /usa\s+el\s+producto\s+["“”']([^"“”'\n]+)["“”']/i,
+    /producto\s*[:：]\s*([^·\n]+)/i
+  ]
+
+  for (const message of safeMessages) {
+    const text = stripMarkdown(getMessageWithOptionsText(message)).replace(/\s+/g, ' ').trim()
+    if (!text) continue
+
+    const productId = cleanText(text.match(/producto\s+ID\s*:\s*([A-Za-z0-9_-]{6,})/i)?.[1] || '', 180)
+    const priceId = cleanText(text.match(/precio\s+ID\s*:\s*([A-Za-z0-9_-]{6,})/i)?.[1] || '', 180)
+    const priceAmount = normalizePaymentAmount(text.match(/\$\s*([0-9]+(?:[.,][0-9]+)?)/)?.[1])
+
+    for (const pattern of patterns) {
+      const match = text.match(pattern)
+      const productName = cleanText(match?.[1] || '', 180)
+      if (!productName || /(?:guardado|precio|personalizado|parecidos|encontrado|no coincide)/i.test(productName)) continue
+
+      return normalizeOperationalProduct({
+        id: productId,
+        name: productName,
+        price: priceId || priceAmount > 0
+          ? {
+              id: priceId,
+              amount: priceAmount,
+              currency: extractPaymentCurrencyFromText(text)
+            }
+          : null
+      })
+    }
+  }
+
+  return null
+}
+
+function getRecentPaymentProduct(messages = []) {
+  return getRecentAgentMemoryProduct(messages) || extractRecentPaymentProductFromConversation(messages)
+}
+
+function shouldReuseProductMemoryForPayment(messages = []) {
+  const latest = normalizeText(getLatestUserText(messages))
+  if (!latest) return false
+  if (/(producto|precio guardado|precio personalizado|otro precio|monto personalizado)/.test(latest)) return true
+
+  const previousText = normalizeText(getRecentConversationTextBeforeLatestUser(messages, 8))
+  const latestLooksLikePriceCorrection = /(^|\b)(no|nel|mejor|corrige|corrígelo|cambia|cámbialo|dejalo|déjalo|usa|cobrale|cóbrale|cobraselo|cóbraselo|por)\b/.test(latest) &&
+    /(precio|monto|\$\s*\d|\d+(?:[.,]\d+)?\s*(?:mxn|pesos?))/.test(latest)
+  const previousHadProductChoice = /(producto|precio guardado|monto personalizado|otro precio|producto id|precio id)/.test(previousText)
+  const hasRememberedProduct = Boolean(getRecentAgentMemoryProduct(messages) || extractRecentPaymentProductFromConversation(messages))
+
+  return latestLooksLikePriceCorrection && (previousHadProductChoice || hasRememberedProduct)
+}
+
+function applyPaymentProductMemory(args = {}, messages = []) {
+  if (hasPaymentProductArgs(args) || !shouldReuseProductMemoryForPayment(messages)) return args
+
+  const product = getRecentPaymentProduct(messages)
+  if (!product) return args
+
+  return {
+    ...args,
+    ...(product.id ? { productId: product.id } : {}),
+    ...(product.name ? { productName: product.name } : {}),
+    ...(product.currency ? { priceCurrency: product.currency } : {})
+  }
+}
+
 function buildProductConcept(args = {}, fallback) {
   return cleanText(
     args.concept ||
@@ -5024,6 +5194,16 @@ async function buildPaymentOperationalMemory({ messages = [], highLevelConnectio
         }
       : null,
     rule: 'Si resolvedContact existe y el usuario sigue hablando de la misma persona, usa ese contactId aunque cambie de CRM a pagos. Si sólo hay contactHint, busca coincidencias reales en DB/GHL antes de pedir más datos.'
+  }
+}
+
+function buildProductOperationalMemory({ messages = [] } = {}) {
+  const activeProduct = getRecentPaymentProduct(messages)
+  if (!activeProduct) return null
+
+  return {
+    activeProduct,
+    rule: 'Si activeProduct existe y el usuario corrige monto/precio con frases como "no, por 20 pesos" u "otro precio", conserva ese producto y usa el nuevo monto personalizado. No vuelvas a pedir el contacto ni el producto salvo que nombre otro.'
   }
 }
 
@@ -5740,6 +5920,8 @@ async function executeCreateSinglePaymentLink(args = {}, highLevelConnection, co
       error: 'HighLevel no está configurado. Configura primero la integración de Go High Level.'
     }
   }
+
+  args = applyPaymentProductMemory(args, context.messages)
 
   const resolvedContact = await resolvePaymentContact(args, context)
   if (!resolvedContact.contact) {
@@ -7505,6 +7687,7 @@ const UNIFIED_CAPABILITY_PROMPT = [
   '- Prioriza HighLevel MCP porque lista y llama tools oficiales. Si el MCP no expone lo necesario, usa highlevel_rest_request con el path documentado. No contestes desde la DB local salvo que el usuario pida Ristak/DB/reportes.',
   '- Si una acción de CRM menciona un nombre de persona/contacto, primero resuelve ese nombre contra DB/GHL y usa el contactId real. No le pidas ID, correo o teléfono al usuario si Memoria operacional CRM ya trae resolvedContact.',
   '- Si Memoria operacional CRM o de pagos trae resolvedContact y el último mensaje no introduce un contacto distinto, úsalo como la persona activa para cualquier acción nueva: pagos, workflows, citas, mensajes, oportunidades, campos, notas o tags.',
+  '- Si Memoria operacional de producto/precio trae activeProduct y el usuario corrige sólo monto/precio, conserva ese producto como concepto/producto activo. No reinicies contacto ni producto por una corrección corta.',
   '- Para agendar citas, meter a workflow, crear oportunidades o mandar mensajes a una persona, usa el contactId resuelto por lookup_highlevel_contact o Memoria operacional CRM; no confundas ese nombre con la última/próxima cita de otro contacto.',
   '- Para pagos, links, invoices, parcialidades, pagos manuales, tarjeta guardada o domiciliación usa las herramientas internas de Ristak porque replican la lógica real del backend. No uses MCP como atajo para mutaciones de dinero.',
   '- Nunca crees, envíes, anules, programes ni marques invoices/pagos usando highlevel_rest_request. Para dinero, REST directo está prohibido porque se salta el workflow del formulario y puede dejar facturas en borrador.',
@@ -7536,6 +7719,7 @@ const PAYMENT_WORKFLOW_PROMPT = [
   '- Descompón la frase del usuario por tramos temporales. "Por N meses" crea N cobros; si después dice "te esperas un mes, le vuelves a cobrar" eso agrega otro cobro; y si luego dice "te esperas otro mes y le vuelves a cobrar, pero esta vez 20" agrega otro cobro final de 20. No mezcles el cobro final con el último mes de la serie.',
   '- Si create_installment_payment_flow devuelve scheduleIncomplete, NO muestres ese plan ni pidas confirmación. Corrige la lista de cobros y vuelve a llamar la herramienta con todos los cobros reales y el total recalculado.',
   '- Si después del resumen el usuario responde afirmativamente pero agrega cambios como "pero", "solo pon", "cambia", "agrega descripción", "mejor por WhatsApp", "con tarjeta guardada", etc., eso NO es confirmación final. Actualiza el plan con la herramienta interna y vuelve a pedir confirmación con el resumen nuevo.',
+  '- Si el usuario ya eligió producto y luego corrige "no, cóbraselo por 20 pesos" o "mejor otro precio", conserva contacto, fecha y producto; sólo cambia el monto/precio a personalizado y sigue el flujo de tarjeta/envío que toque.',
   '- Sólo ejecuta cuando el último mensaje sea una autorización limpia sobre el resumen vigente, por ejemplo "sí, confirmar", "sí, dale", "confirmo" o el botón de confirmación, sin cambios extra. "Sí, confirmar" y el botón con valor interno de confirmación final significan ejecutar ahora; no pidas "sí, ejecutar" después.',
   '- Cobro único con tarjeta: si no hay tarjeta guardada/autorizada, el link de pago es obligatorio y debes pedir canal de envío si falta. Si sí hay tarjeta guardada, pregunta una sola vez si se cobra la tarjeta guardada o se manda link.',
   '- Cobro único offline/manual por transferencia, depósito, efectivo, cheque u otro: registra el pago offline con record_contact_payment. No mandes link.',
@@ -8648,6 +8832,9 @@ async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, ru
         highLevelConnection
       })
     : null
+  const productOperationalMemory = agentRoute?.requiresHighLevelTools || agentRoute?.requiresPaymentTools
+    ? buildProductOperationalMemory({ messages })
+    : null
 
   if (metaAdsOperationalIntent) {
     return buildMetaAdsOperationsUnavailableReply()
@@ -8682,6 +8869,9 @@ async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, ru
     '',
     'Memoria operacional CRM:',
     crmOperationalMemory ? JSON.stringify(crmOperationalMemory, null, 2) : 'No aplica para esta ruta.',
+    '',
+    'Memoria operacional de producto/precio:',
+    productOperationalMemory ? JSON.stringify(productOperationalMemory, null, 2) : 'No aplica para esta ruta.',
     '',
     'Estado de Meta Ads operativo en la app:',
     buildMetaAdsOperationsContext(),
@@ -8823,6 +9013,7 @@ async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, ru
       actionEvidence,
       paymentOperationalMemory,
       crmOperationalMemory,
+      productOperationalMemory,
       runtimeContext
     }),
     clarificationOptions: Array.isArray(clarificationOptions) ? clarificationOptions : [],
