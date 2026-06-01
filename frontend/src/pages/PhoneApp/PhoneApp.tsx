@@ -743,10 +743,6 @@ export const PhoneApp: React.FC = () => {
   return (
     <main className={styles.phonePage} aria-label="Aplicación móvil de Ristak">
       <div className={styles.phoneFrame}>
-        <div className={styles.deviceChrome} aria-hidden="true">
-          <span className={styles.dynamicIsland} />
-        </div>
-
         <header className={styles.header}>
           <div className={styles.headerMain}>
             <span className={styles.brandMark}>R</span>
