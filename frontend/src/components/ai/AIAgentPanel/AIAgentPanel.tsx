@@ -212,6 +212,129 @@ function stripCitationArtifacts(value: string) {
     .replace(/\s+([.,;:!?])/g, '$1')
 }
 
+function normalizeClarificationText(value: string) {
+  return stripCitationArtifacts(value)
+    .replace(/\[[^\]]+\]\([^)]+\)/g, '$1')
+    .replace(/[`*_~]/g, '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+}
+
+function isMarkdownListLine(line: string) {
+  return /^\s*(?:[-*•]\s+|\d+[.)]\s+)/.test(line)
+}
+
+function stripMarkdownListMarker(line: string) {
+  return line.trim().replace(/^(?:[-*•]\s+|\d+[.)]\s+)/, '')
+}
+
+function optionAppearsInLine(line: string, options: AIAgentClarificationOption[]) {
+  const normalizedLine = normalizeClarificationText(stripMarkdownListMarker(line))
+  if (!normalizedLine) return false
+
+  return options.some((option) => {
+    const normalizedLabel = normalizeClarificationText(option.label)
+    if (normalizedLabel.length < 2) return false
+    if (normalizedLine.includes(normalizedLabel)) return true
+
+    const words = normalizedLabel.split(' ').filter((word) => word.length > 2)
+    if (words.length < 2) return false
+
+    const matches = words.filter((word) => normalizedLine.includes(word)).length
+    return matches >= 2 && matches / words.length >= 0.6
+  })
+}
+
+function removeDanglingOptionsHeading(lines: string[]) {
+  let lastContentIndex = -1
+
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    if (lines[index].trim()) {
+      lastContentIndex = index
+      break
+    }
+  }
+
+  if (lastContentIndex < 0) return
+
+  const normalized = normalizeClarificationText(lines[lastContentIndex].replace(/:$/, ''))
+  const genericOptionHeadings = new Set([
+    'opciones',
+    'opciones disponibles',
+    'estas opciones',
+    'elige una opcion',
+    'elige una',
+    'selecciona una opcion',
+    'selecciona una'
+  ])
+
+  if (genericOptionHeadings.has(normalized)) {
+    lines.splice(lastContentIndex, lines.length - lastContentIndex)
+  }
+}
+
+function stripClarificationOptionLists(content: string, options?: AIAgentClarificationOption[]) {
+  if (!options?.length) return stripCitationArtifacts(content)
+
+  const lines = stripCitationArtifacts(content).replace(/\r\n/g, '\n').split('\n')
+  const output: string[] = []
+
+  for (let index = 0; index < lines.length;) {
+    if (!isMarkdownListLine(lines[index])) {
+      output.push(lines[index])
+      index += 1
+      continue
+    }
+
+    const block: string[] = []
+    let blockMentionsOptions = false
+
+    while (index < lines.length) {
+      const line = lines[index]
+
+      if (isMarkdownListLine(line)) {
+        block.push(line)
+        blockMentionsOptions = blockMentionsOptions || optionAppearsInLine(line, options)
+        index += 1
+        continue
+      }
+
+      if (block.length && line.trim() && /^\s{2,}\S/.test(line)) {
+        block.push(line)
+        index += 1
+        continue
+      }
+
+      break
+    }
+
+    if (blockMentionsOptions) {
+      removeDanglingOptionsHeading(output)
+      continue
+    }
+
+    output.push(...block)
+  }
+
+  const cleaned = output
+    .join('\n')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+
+  if (cleaned) return cleaned
+  return options.length === 1 ? 'Selecciona esta opción:' : 'Selecciona una opción:'
+}
+
+function getDisplayMessageContent(message: AIAgentMessage) {
+  return message.role === 'assistant'
+    ? stripClarificationOptionLists(message.content, message.clarificationOptions)
+    : message.content
+}
+
 function createMessage(
   role: AIAgentMessage['role'],
   content: string,
@@ -221,10 +344,14 @@ function createMessage(
   selectedClarificationOption?: AIAgentMessage['selectedClarificationOption'],
   agentMemory?: AIAgentMessage['agentMemory']
 ): AIAgentMessage {
+  const cleanContent = role === 'assistant'
+    ? stripClarificationOptionLists(content, clarificationOptions)
+    : content
+
   return {
     id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
     role,
-    content: role === 'assistant' ? stripCitationArtifacts(content) : content,
+    content: cleanContent,
     ...(attachments?.length ? { attachments } : {}),
     ...(agentMemory ? { agentMemory } : {}),
     ...(selectedClarificationOption ? { selectedClarificationOption } : {}),
@@ -676,8 +803,8 @@ function buildChatTranscript(
   messages.forEach((message, index) => {
     const roleLabel = message.role === 'user' ? 'Usuario' : 'Agente AI'
     const timestamp = formatTranscriptTimestamp(message.createdAt)
-    const rawContent = message.content.trim()
-    const content = (message.role === 'assistant' ? stripCitationArtifacts(rawContent) : rawContent) || '[Mensaje vacío]'
+    const rawContent = getDisplayMessageContent(message).trim()
+    const content = rawContent || '[Mensaje vacío]'
 
     lines.push(
       '',
@@ -2193,7 +2320,7 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
                       {message.role === 'user' ? 'Tú' : 'Agente'}
                     </span>
                     {Boolean(message.attachments?.length) && renderAttachmentList(message.attachments || [])}
-                    <div className={styles.bubble}>{renderMessageContent(message.content)}</div>
+                    <div className={styles.bubble}>{renderMessageContent(getDisplayMessageContent(message))}</div>
                     {message.role === 'assistant' && Boolean(message.clarificationOptions?.length) && (
                       <div className={styles.optionButtons} aria-label="Opciones para aclarar la pregunta">
                         {message.clarificationOptions?.map((option, optionIndex) => (
