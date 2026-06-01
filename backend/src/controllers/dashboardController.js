@@ -962,8 +962,10 @@ export const getFinancialOverview = async (req, res) => {
     const hiddenFilters = await getHiddenContactFilters();
     const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false);
 
-    // Usar getGroupExpression() con timezone dinámico
-    const dayExpression = getGroupExpression('date', 'day', timezone);
+    // Usar getGroupExpression() con timezone dinámico.
+    // payments.date es timestamp, meta_ads.date es TEXT YYYY-MM-DD.
+    const paymentDayExpression = getGroupExpression('date', 'day', timezone);
+    const spendDayExpression = getGroupExpression('meta_ads.date', 'day', timezone);
 
     let revenueQuery = '';
     let revenueParams = [];
@@ -972,7 +974,7 @@ export const getFinancialOverview = async (req, res) => {
       // Vista "Todos": ingresos por fecha real de pago
       revenueQuery = `
         SELECT
-          ${dayExpression.replace(/\bdate\b/g, 'p.date')} as day,
+          ${paymentDayExpression.replace(/\bdate\b/g, 'p.date')} as day,
           COALESCE(SUM(p.amount), 0) as revenue
         FROM payments p
         LEFT JOIN contacts c ON c.id = p.contact_id
@@ -1011,7 +1013,7 @@ export const getFinancialOverview = async (req, res) => {
     // Query para TODOS los gastos de publicidad
     const spendQuery = `
       SELECT
-        ${dayExpression} as day,
+        ${spendDayExpression} as day,
         SUM(spend) as spend
       FROM meta_ads
       WHERE date >= $1 AND date <= $2
