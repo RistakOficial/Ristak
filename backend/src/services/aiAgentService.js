@@ -3780,6 +3780,16 @@ function userExplicitlySelectedContact(messages = [], contact = {}, { allowRecen
   if (messageExplicitlyReferencesContact(latestMessage, contact)) return true
 
   const latestUserText = getMessageText(latestMessage)
+  const normalizedLatestUserText = normalizeText(latestUserText)
+  const normalizedContactName = normalizeText(contact.name || '')
+  if (
+    normalizedContactName &&
+    normalizedLatestUserText === normalizedContactName &&
+    previousAssistantOptionsReferenceContact(messages, latestUserIndex, contact)
+  ) {
+    return true
+  }
+
   if (
     isAffirmativeExecutionIntent(latestUserText) &&
     previousAssistantOptionsReferenceContact(messages, latestUserIndex, contact)
@@ -3831,14 +3841,36 @@ function buildContactVerificationRequiredOutput({ contacts = [], actionText = 'h
     contacts: safeContacts,
     responseGuidance: [
       'No ejecutes nada todavía.',
-      'Pregunta de forma conversacional cuál contacto es.',
+      safeContacts.length > 1
+        ? 'Muestra primero los contactos más parecidos y pide que elija uno.'
+        : 'Pide confirmar si ese es el contacto correcto.',
       'Muestra nombre, apellido, correo o teléfono cuando existan.',
+      'Debajo de las opciones, agrega una línea diciendo que si no es ninguno puede pasar email, celular o ID de HighLevel.',
       'No digas que ya actualizaste, agregaste, metiste a workflow, taggeaste o ejecutaste algo.'
     ].join(' '),
     clarificationOptions: buildContactActionOptions(safeContacts, {
       actionText,
       includeUpdateLanguage: true
     })
+  }
+}
+
+function buildNoContactMatchesOutput({ lookupHint = '' } = {}) {
+  return {
+    ok: false,
+    action: 'verify_contact_before_action',
+    contactVerificationRequired: true,
+    contactLookupAttempted: true,
+    error: lookupHint
+      ? `Busqué contactos parecidos a "${lookupHint}", pero no encontré coincidencias claras.`
+      : 'Busqué el contacto, pero no encontré coincidencias claras.',
+    missingFields: ['contacto'],
+    responseGuidance: [
+      'No pidas nombre completo/ID/teléfono como primer paso si todavía no intentaste buscar; aquí ya se intentó buscar.',
+      'Dile al usuario que no encontraste coincidencias claras.',
+      'Pide una pista más concreta en tono natural: email, celular o ID de HighLevel.'
+    ].join(' '),
+    clarificationOptions: []
   }
 }
 
@@ -3983,6 +4015,10 @@ async function resolveHighLevelContactForAgent(args = {}, context = {}, options 
   ])
 
   if (!contacts.length) {
+    if (options.requireContactVerification) {
+      return buildNoContactMatchesOutput({ lookupHint })
+    }
+
     return {
       error: `No encontré contactos para "${lookupHint}".`,
       missingFields: ['contacto']
@@ -3991,6 +4027,39 @@ async function resolveHighLevelContactForAgent(args = {}, context = {}, options 
 
   const contactTokens = getContactLookupTokens(lookupHint)
   const exactMatches = contacts.filter(contact => contactMatchesExactly(contact, lookupHint))
+  const strictNameMatches = contacts.filter(contact => contactNameContainsLookup(contact, contactTokens))
+  const lookupIsUniqueIdentifier = Boolean(
+    extractContactIdFromText(lookupHint) ||
+    /@/.test(lookupHint) ||
+    normalizePhoneDigits(lookupHint).length >= 7
+  )
+  const exactSelectedContact = exactMatches.length === 1 &&
+    options.requireContactVerification &&
+    userExplicitlySelectedContact(context.messages, exactMatches[0], {
+      allowRecentSelection: shouldAllowPriorContactVerification(context.messages, lookupHint)
+    })
+
+  if (exactSelectedContact) {
+    return { contact: exactMatches[0] }
+  }
+
+  if (!lookupIsUniqueIdentifier && strictNameMatches.length > 1) {
+    if (options.requireContactVerification) {
+      return buildContactVerificationRequiredOutput({
+        contacts: strictNameMatches,
+        actionText: options.actionText || 'hacer esta acción'
+      })
+    }
+
+    return {
+      error: options.ambiguousContactError || 'Encontré varios contactos posibles. Necesito que elijas cuál antes de tocar datos del contacto.',
+      clarificationOptions: buildContactActionOptions(strictNameMatches, {
+        actionText: options.actionText || 'revisar ese contacto',
+        includeUpdateLanguage: Boolean(options.includeUpdateLanguage)
+      })
+    }
+  }
+
   if (exactMatches.length === 1) {
     if (
       options.requireContactVerification &&
@@ -4007,7 +4076,6 @@ async function resolveHighLevelContactForAgent(args = {}, context = {}, options 
     return { contact: exactMatches[0] }
   }
 
-  const strictNameMatches = contacts.filter(contact => contactNameContainsLookup(contact, contactTokens))
   const candidates = requiresStrictNameContains(contactTokens)
     ? strictNameMatches
     : strictNameMatches.length ? strictNameMatches : contacts
@@ -4029,10 +4097,21 @@ async function resolveHighLevelContactForAgent(args = {}, context = {}, options 
   }
 
   if (!candidates.length) {
+    if (options.requireContactVerification) {
+      return buildNoContactMatchesOutput({ lookupHint })
+    }
+
     return {
       error: `No encontré contactos que contengan "${lookupHint}".`,
       missingFields: ['contacto']
     }
+  }
+
+  if (options.requireContactVerification) {
+    return buildContactVerificationRequiredOutput({
+      contacts: candidates,
+      actionText: options.actionText || 'hacer esta acción'
+    })
   }
 
   return {
@@ -8044,10 +8123,100 @@ function isConfiguredActionConversationContinuation(messages = [], agentConfig =
     .join('\n')
 
   if (!sharesActionCustomizationKeyword(previousText, actionCustomizations)) return false
+  const previousAskedForContactChoice = /(contactos?\s+(?:parecidos|posibles)|elige\s+cu[aá]l|cu[aá]l\s+contacto|cu[aá]l\s+cliente|contacto\s+exacto|si\s+no\s+es\s+ninguno|email,\s*celular\s+o\s+id|correo\s+o\s+tel[eé]fono)/.test(normalizeText(previousText))
+  const latestLooksLikeContactChoice = /^\s*(?:\d{1,2}|[\p{L}\p{M}0-9@._+\-\s]{2,140})\s*$/u.test(getMessageText(messages[latestUserIndex])) &&
+    (/^\s*\d{1,2}\s*$/.test(latestUserText) || getContactLookupTokens(latestUserText).length > 0)
+
+  if (previousAskedForContactChoice && latestLooksLikeContactChoice) return true
 
   return isAffirmativeExecutionIntent(latestUserText) ||
     /^(?:solo\s+)?(?:\d+(?:[.,]\d+)?|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)\s*(?:mes|meses|dia|dias|día|días|semana|semanas|ano|anos|año|años)?\b/.test(latestUserText) ||
     /^(?:solo|nada mas|nom[aá]s|por|durante|para)\b/.test(latestUserText)
+}
+
+function previousAssistantAskedForContactChoice(messages = [], userIndex = -1) {
+  if (userIndex <= 0) return false
+
+  for (let index = userIndex - 1; index >= 0; index -= 1) {
+    const message = messages[index]
+    if (message?.role !== 'assistant') continue
+
+    const text = normalizeText(getMessageWithOptionsText(message))
+    return /(contactos?\s+(?:parecidos|posibles)|elige\s+cu[aá]l|cu[aá]l\s+contacto|cu[aá]l\s+cliente|contacto\s+exacto|si\s+no\s+es\s+ninguno|email,\s*celular\s+o\s+id|correo\s+o\s+tel[eé]fono)/.test(text)
+  }
+
+  return false
+}
+
+function extractCustomActionContactLookupHint(question = '', { allowBareContact = false } = {}) {
+  const strictTerm = normalizeContactLookupHint(extractContactLookupTerm(question))
+  if (strictTerm) return strictTerm
+
+  const normalized = normalizeText(question)
+  if (!normalized) return ''
+
+  const contactActionContext = /(contacto|cliente|lead|persona|programa|acceso|workflow|flujo|cita|calendario|appointment|pago|suscripcion|suscripción|oportunidad|pipeline|mensaje|conversacion|conversación|tag|nota)/.test(normalized)
+  const hasPersonPreposition = /\b(?:a|al|para|con|de)\s+[\p{L}\p{M}@._+-]{2,}/iu.test(question)
+  if (!allowBareContact && (!contactActionContext || !hasPersonPreposition)) return ''
+
+  const tokens = getContactLookupTokens(question)
+  if (!tokens.length) return ''
+
+  return tokens.slice(0, 5).join(' ')
+}
+
+function getCustomActionContactLookupHint(messages = [], latestUserMessage = '') {
+  const latestUserIndex = findLatestUserMessageIndex(messages)
+  const latestMessage = latestUserIndex >= 0 ? messages[latestUserIndex] : null
+  const latestUserText = latestUserMessage || getMessageText(latestMessage)
+
+  return extractCustomActionContactLookupHint(latestUserText, {
+    allowBareContact: previousAssistantAskedForContactChoice(messages, latestUserIndex)
+  })
+}
+
+function shouldLookupContactBeforeCustomActionReadiness(messages = [], latestUserMessage = '') {
+  const latestUserIndex = findLatestUserMessageIndex(messages)
+  const latestMessage = latestUserIndex >= 0 ? messages[latestUserIndex] : null
+  const latestUserText = latestUserMessage || getMessageText(latestMessage)
+
+  if (!latestUserText) return false
+  if (messageHasSelectedClarificationOption(latestMessage)) return false
+  if (isAffirmativeExecutionIntent(latestUserText)) return false
+
+  return Boolean(getCustomActionContactLookupHint(messages, latestUserText))
+}
+
+function buildContactLookupFirstReply(resolvedContact = {}, lookupHint = '') {
+  const contacts = dedupeContacts(resolvedContact.contacts || [])
+  const fallbackLine = 'Si no es ninguno, pásame su email, celular o ID de HighLevel y lo busco más fino.'
+
+  if (contacts.length > 1) {
+    return [
+      `Encontré estos contactos parecidos a "${cleanText(lookupHint, 80)}". Elige cuál es y sigo con la acción.`,
+      '',
+      fallbackLine
+    ].join('\n')
+  }
+
+  if (contacts.length === 1) {
+    const contact = contacts[0]
+    const identity = [
+      contact.email ? `correo ${contact.email}` : '',
+      contact.phone ? `teléfono ${contact.phone}` : ''
+    ].filter(Boolean).join(' y ')
+
+    return [
+      `Encontré a ${contact.name || 'este contacto'}${identity ? ` con ${identity}` : ''}. Confírmame si es la persona correcta y sigo con la acción.`,
+      '',
+      fallbackLine
+    ].join('\n')
+  }
+
+  return [
+    resolvedContact.error || `Busqué contactos parecidos a "${cleanText(lookupHint, 80)}", pero no encontré coincidencias claras.`,
+    'Pásame su email, celular o ID de HighLevel y lo busco más fino.'
+  ].join('\n')
 }
 
 function getRecentConversationTextBeforeLatestUser(messages = [], limit = 8) {
@@ -8243,6 +8412,7 @@ function buildActionCustomizationInstructions(agentConfig) {
     '- En la respuesta final, sólo afirma como completado lo que tenga evidencia de herramienta/API de este turno. Si un paso no tiene respuesta de API, dilo como pendiente/no confirmado y no lo inventes.',
     '- Si la regla menciona tokens tipo {{contact.campo}} o cualquier identificador técnico, úsalo para buscar/operar internamente; no lo muestres salvo que el usuario pida detalles técnicos.',
     '- Si la acción involucra contacto, cita, pago, suscripción, formulario, survey, funnel, blog, campaña, anuncio, widget, conversación, oportunidad, producto, tienda, workflow, media, usuario u otro recurso, resuelve primero el registro exacto en GoHighLevel/API. Si salen varios, pide que elija.',
+    '- Cuando el usuario mencione un contacto/persona con cualquier pista, aunque sea parcial, busca primero y muestra los contactos más parecidos. No pidas ID/email/teléfono antes de intentar coincidencias; eso sólo va como alternativa si ninguna opción sirve.',
     '- Para cualquier escritura que use contactId, no basta con encontrar "Raúl" o una coincidencia única por nombre corto: confirma el contacto exacto antes de actualizar campos, meter a workflows, agendar, taggear, crear oportunidades, mandar mensajes o tocar pagos/suscripciones.',
     '- Si falta un dato indispensable indicado por la regla (cantidad, fecha, estado, producto, formulario, workflow, etc.), pregunta sólo ese dato antes de cualquier escritura. Nunca sustituyas un dato faltante por vacío, null, cero, borrar o quitar.',
     '- Antes de modificar cualquier recurso por una acción personalizada, pide permiso en modo conversacional con el plan completo: qué encontraste, qué está actualmente si aplica y qué vas a dejar. Evita payloads, endpoints, IDs y field keys si no son necesarios.',
@@ -8334,6 +8504,8 @@ async function evaluateCustomActionReadiness(apiKey, {
         'Tu trabajo es decidir si el último mensaje puede avanzar a herramientas/API o si falta un dato indispensable.',
         'Lee la personalización como instrucciones operativas. Si la regla dice que sin cierto dato se debe preguntar antes de cualquier acción, debes bloquear herramientas.',
         'Esto aplica a todo el catálogo de HighLevel: contactos, citas, pagos, suscripciones, formularios, surveys, funnels, blogs, campañas, anuncios, widgets, productos, oportunidades, usuarios, workflows, media storage, etc.',
+        'Orden obligatorio cuando la acción involucra contacto/persona: si el usuario ya dio una pista de contacto, primero debe buscarse y verificarse el contacto. No bloquees por cantidad, fecha u otro dato hasta que el contacto esté resuelto o descartado.',
+        'Nunca pidas "nombre completo, ID, teléfono o correo" como primer paso si ya hay una pista como nombre parcial. Primero deja que herramientas/API busquen coincidencias y muestren recomendaciones.',
         'Usa la conversación completa. Si el usuario dio el dato en un seguimiento como "solo 1 mes", considéralo presente.',
         'Si bloqueas, formula UNA sola pregunta conversacional y corta. No confirmes, no digas que ya hiciste algo y no menciones endpoints/payloads/IDs técnicos.',
         'Devuelve únicamente JSON válido con este formato: {"applies":true,"ready":false,"missingFields":["..."],"question":"...","reason":"..."}',
@@ -9669,7 +9841,7 @@ const CONTACT_LOOKUP_STOP_WORDS = new Set([
   'clientes', 'cita', 'citas', 'cobra', 'cobrale', 'cobrar', 'cobrarle', 'cobre', 'cobrele', 'cobro', 'cobros', 'como',
   'con', 'contacto', 'contactos', 'correo', 'cual', 'cuando', 'cuanto', 'cuantos',
   'cambia', 'cambiar', 'cambiale', 'cámbiale', 'actualiza', 'actualizar', 'actualizale', 'actualízale',
-  'dame', 'dato', 'datos', 'de', 'del', 'desde', 'despues', 'después', 'dia', 'día', 'dime', 'domingo', 'donde', 'dolar', 'dolares', 'durante', 'el', 'ella',
+  'da', 'dale', 'dales', 'dar', 'darle', 'dame', 'dato', 'datos', 'de', 'del', 'desde', 'despues', 'después', 'dia', 'día', 'dime', 'domingo', 'donde', 'dolar', 'dolares', 'durante', 'el', 'ella',
   'ejecuta', 'ejecutalo', 'ejecútalo', 'ejecutar', 'ejecuto',
   'en', 'encuentra', 'encuentrame', 'ese', 'esa', 'esperar', 'esta', 'este', 'factura', 'facturas', 'fecha',
   'extra', 'favor', 'hacer', 'haz', 'hoy',
@@ -9691,6 +9863,9 @@ const CONTACT_LOOKUP_COMMAND_WORDS = [
   'buscar',
   'cambia',
   'crea',
+  'da',
+  'dale',
+  'darle',
   'encuentra',
   'encuentrame',
   'hacer',
@@ -9779,7 +9954,7 @@ function extractContactLookupTerm(question) {
     /\b(?:plan\s+de\s+pagos|plan\s+de\s+cobros|payment\s+plan)\s+(?:(?:a|al|para|apra|de)\s+)?(.+?)(?=\s+(?:le\s+vamos|vamos|le\s+voy|voy|le\s+van|van|le\s+cobr|cobr|con|por|de\s+\d|\d|\$|mxn|usd|peso|pesos|dolar|dolares|hoy|ahora|ahorita|manana|mañana|luego|despues|después|y\s+luego|y\s+despues|y\s+después)\b|$)/i,
     /\b(?:buscame|busca|buscar|encuentrame|encuentra|revisa|dame)\s+(.+?)(?=\s+(?:y|para|con|que|cobrale|cobrarle|cobrele|cobra|mandale|enviale|hazle|programale|agendale|creale|generale|registrale|registra|actualizale|actualiza|cambiale|cambia|modificale|modifica|metele|mete)\b|$)/i,
     /\b(?:programa|programame|progr[aá]mame|programale|progr[aá]male|agendale|ag[eé]ndale|agenda|agendar|agendarme|ag[eé]ndame|calendariza)\s+(?:(?:un|una)\s+)?(?:(?:pago|cobro|invoice|factura|link|cita|appointment|consulta|reuni[oó]n)\s+)?(?:(?:a|al|para|apra|con)\s+)?(.+?)(?=\s+(?:\d|\$|mxn|usd|peso|pesos|dolar|dolares|hoy|ahora|ahorita|manana|mañana|el\s+\d|el\s+d[ií]a|d[ií]a|a\s+las|las\s+\d|lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|domingo|durante|por|cada|desde|hasta|del\s+producto|producto|concepto)\b|$)/i,
-    /\b(?:cobrale|cobrarle|cobrele|cobra|mandale|enviale|hazle|programale|agendale|creale|generale|registrale|registra|actualizale|actualiza|cambiale|cambia|modificale|modifica|metele|mete)\s+(?:(?:un|una|el|la)\s+)?(?:(?:pago|cobro|invoice|factura|link|workflow|flujo|campo|dato)\s+)?(?:(?:a|al|para|apra|de)\s+)?(.+?)(?=\s+(?:\d|\$|mxn|usd|peso|pesos|dolar|dolares|hoy|ahora|ahorita|manana|mañana|el\s+\d|durante|por|cada|desde|hasta|con\s+valor|a\s+valor)\b|$)/i,
+    /\b(?:cobrale|cobrarle|cobrele|cobra|dale|darle|dales|da|mandale|enviale|hazle|programale|agendale|creale|generale|registrale|registra|actualizale|actualiza|cambiale|cambia|modificale|modifica|metele|mete)\s+(?:(?:un|una|el|la)\s+)?(?:(?:pago|cobro|invoice|factura|link|workflow|flujo|campo|dato|acceso|programa)\s+)?(?:(?:a|al|para|apra|de)\s+)?(.+?)(?=\s+(?:\d|\$|mxn|usd|peso|pesos|dolar|dolares|hoy|ahora|ahorita|manana|mañana|el\s+\d|durante|por|cada|desde|hasta|con\s+valor|a\s+valor)\b|$)/i,
     /\b(?:contacto|cliente|lead|prospecto|paciente|persona)\s+(?:de\s+|llamad[oa]\s+|con\s+nombre\s+)?(.+?)(?=\s+(?:y|para|con|que|cobrale|cobrarle|cobrele|cobra|mandale|enviale|hazle|programale|agendale|registrale|registra|actualizale|actualiza|cambiale|cambia|modificale|modifica|metele|mete|\d|\$|mxn|usd|peso|pesos)\b|$)/i
   ]
 
@@ -11102,8 +11277,61 @@ export async function createAgentReply({ apiKey, messages, viewContext, userId =
     latestUserMessage,
     agentConfig
   })
+  const highLevelConnection = await getHighLevelAgentConnection()
+  let customActionVerifiedContact = null
 
   if (agentRoute?.customActionIntent) {
+    const latestUserIndex = findLatestUserMessageIndex(messages)
+    const latestUserMessageObject = latestUserIndex >= 0 ? messages[latestUserIndex] : null
+    const selectedContactId = extractContactIdFromText([
+      getSelectedClarificationOption(latestUserMessageObject)?.value,
+      getSelectedClarificationOption(latestUserMessageObject)?.description,
+      getSelectedClarificationOption(latestUserMessageObject)?.label,
+      getMessageText(latestUserMessageObject)
+    ].filter(Boolean).join(' '))
+    if (selectedContactId) {
+      customActionVerifiedContact = normalizeOperationalContact(await getPaymentContactById(selectedContactId))
+    }
+
+    if (shouldLookupContactBeforeCustomActionReadiness(messages, latestUserMessage)) {
+      const lookupHint = getCustomActionContactLookupHint(messages, latestUserMessage)
+      const resolvedContact = await resolveHighLevelContactForAgent(
+        { contactHint: lookupHint },
+        { messages, viewContext },
+        {
+          actionText: 'hacer esa acción',
+          includeUpdateLanguage: true,
+          ambiguousContactError: 'Encontré varios contactos parecidos. Elige cuál es antes de seguir.',
+          requireContactVerification: true
+        }
+      )
+
+      if (!resolvedContact.contact) {
+        return {
+          reply: buildContactLookupFirstReply(resolvedContact, lookupHint),
+          model: normalizeAIAgentModel(agentConfig?.model),
+          sources: [],
+          clarificationOptions: Array.isArray(resolvedContact.clarificationOptions)
+            ? resolvedContact.clarificationOptions
+            : [],
+          usage: null,
+          debug: {
+            queryCount: 0,
+            highLevelToolsEnabled: Boolean(highLevelConnection?.configured),
+            metaAdsOperationsEnabled: false,
+            agentRoute,
+            customActionContactLookupFirst: {
+              lookupHint,
+              contactVerificationRequired: Boolean(resolvedContact.contactVerificationRequired),
+              contactLookupAttempted: Boolean(resolvedContact.contactLookupAttempted)
+            }
+          }
+        }
+      }
+
+      customActionVerifiedContact = normalizeOperationalContact(resolvedContact.contact) || customActionVerifiedContact
+    }
+
     const preflight = await evaluateCustomActionReadiness(apiKey, {
       model: normalizeAIAgentModel(agentConfig?.model),
       agentConfig,
@@ -11119,6 +11347,14 @@ export async function createAgentReply({ apiKey, messages, viewContext, userId =
         sources: [],
         clarificationOptions: [],
         usage: null,
+        agentMemory: customActionVerifiedContact
+          ? {
+              version: 1,
+              generatedAt: runtimeContext.nowIso || DateTime.now().toISO(),
+              activeContact: customActionVerifiedContact,
+              contacts: [customActionVerifiedContact]
+            }
+          : null,
         debug: {
           queryCount: 0,
           highLevelToolsEnabled: false,
@@ -11134,8 +11370,6 @@ export async function createAgentReply({ apiKey, messages, viewContext, userId =
     ? false
     : shouldSkipDbResearchForMetaAds(latestUserMessage)
   const metaAdsDbResearchSkipped = metaAdsOperationalIntent
-
-  const highLevelConnection = await getHighLevelAgentConnection()
 
   if (metaAdsOperationalIntent) {
     return buildMetaAdsOperationsUnavailableReply()
