@@ -600,9 +600,11 @@ function buildFunctionToolEvidence(call = {}, output = {}) {
     tool: call.name || 'unknown_tool',
     ok: output?.ok === true,
     action: output?.action || null,
+    redirectTool: output?.redirectTool || null,
     confirmationRequired: Boolean(output?.confirmationRequired),
     contactVerificationRequired: Boolean(output?.contactVerificationRequired),
     missingFields: Array.isArray(output?.missingFields) ? output.missingFields : [],
+    clarificationOptions: Array.isArray(output?.clarificationOptions) ? output.clarificationOptions : [],
     error: output?.error || null,
     status: output?.status || null,
     method: output?.method || args.method || null,
@@ -669,6 +671,63 @@ function getContactFromActionEvidence(evidence = {}) {
 
 function getProductFromActionEvidence(evidence = {}) {
   return normalizeOperationalProduct(evidence.product || evidence.summary?.product, evidence.price || evidence.summary?.price)
+}
+
+function hasSuccessfulPaymentMutationEvidence(actionEvidence = []) {
+  return Array.isArray(actionEvidence) &&
+    actionEvidence.some(evidence =>
+      evidence?.ok === true &&
+      PAYMENT_MUTATION_TOOL_NAMES.has(evidence.tool) &&
+      !evidence.confirmationRequired
+    )
+}
+
+function getLatestPaymentToolEvidence(actionEvidence = []) {
+  if (!Array.isArray(actionEvidence)) return null
+
+  return actionEvidence
+    .slice()
+    .reverse()
+    .find(evidence =>
+      PAYMENT_OPERATION_ALLOWED_TOOL_NAMES.has(evidence?.tool) ||
+      PAYMENT_MUTATION_TOOL_NAMES.has(evidence?.tool)
+    ) || null
+}
+
+function claimsPaymentWasCompleted(reply = '') {
+  const normalized = normalizeText(reply)
+  if (!normalized) return false
+  if (/(todavia no|todavía no|no quedo|no quedó|pendiente|falta|solo para confirmar|quieres|confirmas|antes de|me falta|no se ejecuto|no se ejecutó)/.test(normalized)) {
+    return false
+  }
+
+  return /(listo|ya quedo|ya quedó|quedo|quedó|creado|creada|se creo|se creó|programado|programada|se programo|se programó|registrado|registrada|se registro|se registró|cobrado|cobrada|se cobro|se cobró|enviado|enviada|se envio|se envió)/.test(normalized) &&
+    /(pago|cobro|invoice|factura|flujo|link|enlace|tarjeta|program)/.test(normalized)
+}
+
+function buildPaymentNotCompletedGuardReply(actionEvidence = []) {
+  const latestEvidence = getLatestPaymentToolEvidence(actionEvidence)
+  const latestMissingField = Array.isArray(latestEvidence?.missingFields)
+    ? cleanText(latestEvidence.missingFields[0], 80)
+    : ''
+
+  if (latestEvidence?.confirmationRequired) {
+    return 'Todavía no quedó creado. Entonces, solo para confirmar, ¿quieres que lo deje así?'
+  }
+
+  if (latestEvidence?.redirectTool) {
+    return 'Todavía no quedó creado. Para cambiar un cobro existente hay que modificar ese schedule, no crear otro encima.'
+  }
+
+  if (latestMissingField) {
+    return `Todavía no quedó creado. Me falta ${latestMissingField}.`
+  }
+
+  if (latestEvidence?.error) {
+    return `Todavía no quedó creado: ${cleanText(latestEvidence.error, 240)}`
+  }
+
+  return 'Todavía no quedó creado. No recibí confirmación real del backend de pagos, así que no voy a decir que quedó.'
 }
 
 function buildAgentMemoryPayload({
@@ -1617,7 +1676,7 @@ function paymentConversationRequiresInstallmentFlow(messages = []) {
   const normalized = normalizeText(getPaymentConversationText(messages))
   if (!normalized) return false
 
-  return /(parcial|parcialidad|parcialidades|plan de pagos|plan de cobros|domicili|pagos restantes|cobros restantes|saldo restante|resto automatic|resto automático|cargos futuros|cobros futuros|programa.*(?:pago|cobro|cargo)|programar.*(?:pago|cobro|cargo))/.test(normalized)
+  return /(parcial|parcialidad|parcialidades|plan de pagos|plan de cobros|domicili|pagos restantes|cobros restantes|saldo restante|resto automatic|resto automático|cargos futuros|cobros futuros|programa.*(?:pago|cobro|cargo)|programar.*(?:pago|cobro|cargo)|(?:durante|por)\s+(?:\d+|un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce)\s+mes(?:es)?)/.test(normalized)
 }
 
 const PAYMENT_MONTHS = {
@@ -1856,6 +1915,43 @@ function extractPaymentConceptFromText(text) {
   return 'Cobro programado'
 }
 
+function cleanPaymentProductHint(value) {
+  let hint = cleanText(String(value || '').replace(/[“”"']/g, ' '), 220)
+  if (!hint) return ''
+
+  hint = hint
+    .replace(/\b(?:a|por|de)\s*\$?\s*\d+(?:[.,]\d+)?\s*(?:mxn|m\.?n\.?|pesos?|peso)\b.*$/i, '')
+    .replace(/\b(?:durante|desde|a\s+partir\s+de|cada|por\s+\d+\s+mes(?:es)?|con\s+tarjeta|tarjeta\s+guardada|tarjeta\s+nueva|link|enlace|correo|email|whatsapp|sms)\b.*$/i, '')
+    .replace(/[.,;:]+$/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+  hint = hint.replace(/\b(?:para|a|de|por|con|el|la|los|las)\s*$/i, '').trim()
+
+  return cleanText(hint, 180)
+}
+
+function extractPaymentProductHintFromText(text) {
+  const rawText = String(text || '')
+  const patterns = [
+    /\bproducto\s+(?:de|del|llamado|llamada|nombre|que\s+se\s+llama)\s+["“”']?([^"“”'\n.,;]+)["“”']?/i,
+    /\b(?:usa|usar|con|cobra(?:le)?|c[oó]brale)\s+(?:el\s+)?producto\s+["“”']?([^"“”'\n.,;]+)["“”']?/i,
+    /\bproducto\s*[:：]\s*([^·\n.,;]+)/i
+  ]
+
+  for (const pattern of patterns) {
+    const match = rawText.match(pattern)
+    const hint = cleanPaymentProductHint(match?.[1] || '')
+    if (!hint) continue
+
+    const normalized = normalizeText(hint)
+    if (/^(guardado|precio|personalizado|otro precio|productos disponibles)$/.test(normalized)) continue
+    return cleanText(hint, 180)
+  }
+
+  return ''
+}
+
 function hasUsablePaymentContactHint(value) {
   const hint = cleanText(value, 220)
   if (!hint) return false
@@ -1989,6 +2085,41 @@ function getTopLevelScheduledPaymentDate(args = {}, messages = [], timezone = DE
   return parseNaturalPaymentDateFromText(getPaymentConversationText(messages), timezone)
 }
 
+function extractRecurringAmountPlanFromText(text, timezone = DEFAULT_PAYMENT_TIMEZONE) {
+  const normalized = normalizeText(text)
+  if (!normalized || !/(durante|por)\s+/.test(normalized) || !/(mes|mensual)/.test(normalized)) return null
+
+  const countToken = '(\\d+|un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce)'
+  const amountToken = '([0-9]+(?:[.,][0-9]+)?)'
+  const patterns = [
+    new RegExp(`(?:a|de|por)?\\s*${amountToken}\\s*(?:mxn|m\\.?n\\.?|pesos?|peso)\\b.{0,120}\\b(?:durante|por)\\s+${countToken}\\s+mes(?:es)?`, 'i'),
+    new RegExp(`\\b(?:durante|por)\\s+${countToken}\\s+mes(?:es)?\\b.{0,120}${amountToken}\\s*(?:mxn|m\\.?n\\.?|pesos?|peso)`, 'i')
+  ]
+
+  for (const pattern of patterns) {
+    const match = normalized.match(pattern)
+    if (!match) continue
+
+    const firstNumber = normalizePaymentAmount(match[1])
+    const secondNumber = parseSmallSpanishCount(match[2]) || normalizePaymentAmount(match[2])
+    const reversed = pattern === patterns[1]
+    const amount = reversed ? normalizePaymentAmount(match[2]) : firstNumber
+    const count = reversed ? parseSmallSpanishCount(match[1]) || normalizeInteger(match[1]) : secondNumber
+    const startDate = parseNaturalPaymentDateFromText(text, timezone)
+
+    if (amount > 0 && count > 0) {
+      return {
+        amount,
+        count,
+        startDate,
+        frequency: 'monthly'
+      }
+    }
+  }
+
+  return null
+}
+
 function hasRemainingPaymentShape(args = {}) {
   return (
     (Array.isArray(args.remainingPayments) && args.remainingPayments.length > 0) ||
@@ -2047,14 +2178,34 @@ function enrichInstallmentPaymentArgs(inputArgs = {}, messages = [], timezone = 
   const conversationText = getPaymentConversationText(messages)
   const scheduledDate = getTopLevelScheduledPaymentDate(args, messages, timezone)
   const conversationAmount = extractPaymentAmountFromText(conversationText)
+  const recurringAmountPlan = extractRecurringAmountPlanFromText(conversationText, timezone)
   const totalAmount = normalizePaymentAmount(args.totalAmount || args.amount || args.total || getProductPaymentAmount(args) || conversationAmount)
   const firstPaymentAmount = getFirstPaymentAmountFromArgs(args)
   const remainingAmount = normalizePaymentAmount(totalAmount - firstPaymentAmount)
   const cardPreference = resolveStoredCardPreference(args, messages)
   const contactHint = extractPaymentContactHintFromConversation(messages)
+  const productHint = extractPaymentProductHintFromText(conversationText)
 
   if (!args.totalAmount && !args.total && !args.amount && conversationAmount > 0) {
     args.totalAmount = conversationAmount
+  }
+
+  if (recurringAmountPlan && recurringAmountPlan.count > 1) {
+    const hasCustomRemainingAmounts = normalizePaymentNumberList(args.remainingAmounts || args.paymentAmounts || args.amounts).length > 0
+    const hasExplicitRemainingPayments = Array.isArray(args.remainingPayments) && args.remainingPayments.length > 0
+
+    if (!hasExplicitRemainingPayments && !hasCustomRemainingAmounts) {
+      args.totalAmount = normalizePaymentAmount(recurringAmountPlan.amount * recurringAmountPlan.count)
+      args.remainingAmounts = Array.from({ length: recurringAmountPlan.count }, () => recurringAmountPlan.amount)
+      args.remainingPaymentCount = recurringAmountPlan.count
+      args.remainingFrequency = args.remainingFrequency || recurringAmountPlan.frequency
+      if (recurringAmountPlan.startDate && !args.remainingStartDate) {
+        args.remainingStartDate = recurringAmountPlan.startDate
+      }
+      if (!hasExplicitFirstPayment(args) && !args.firstPayment) {
+        args.firstPayment = { enabled: false }
+      }
+    }
   }
 
   if (!args.currency) {
@@ -2067,6 +2218,14 @@ function enrichInstallmentPaymentArgs(inputArgs = {}, messages = [], timezone = 
 
   if (!args.contactId && !args.contactName && !args.contactHint && contactHint) {
     args.contactName = contactHint
+  }
+
+  if (!args.productId && !args.productName && !args.product && productHint) {
+    args.productName = productHint
+  }
+
+  if (!args.description && productHint && (!args.concept || normalizeText(args.concept) === 'cobro programado')) {
+    args.concept = productHint
   }
 
   if (cardPreference && !args.cardAuthorizationPreference) {
@@ -3895,10 +4054,33 @@ async function executeLookupHighLevelProducts(args = {}, highLevelConnection) {
   const productId = cleanText(String(args.productId || args.product_id || ''), 180)
   const priceId = cleanText(String(args.priceId || args.price_id || ''), 180)
   const includePrices = args.includePrices !== false
-  const response = await ghlClient.listProducts({ limit })
-  let products = extractArrayPayload(response, ['products', 'data', 'items', 'results'])
-    .map(normalizeGhlProduct)
-    .filter(product => product.id || product.name)
+  const pageLimit = Math.min(100, Math.max(1, Number(args.pageLimit || limit)))
+  const maxPages = query || productId
+    ? 5
+    : Math.max(1, Math.ceil(limit / pageLimit))
+  const startOffset = Math.max(0, normalizeInteger(args.offset || 0))
+  const seenProducts = new Set()
+  let products = []
+
+  for (let page = 0; page < maxPages; page += 1) {
+    const response = await ghlClient.listProducts({
+      limit: pageLimit,
+      offset: startOffset + (page * pageLimit)
+    })
+    const pageProducts = extractArrayPayload(response, ['products', 'data', 'items', 'results'])
+      .map(normalizeGhlProduct)
+      .filter(product => product.id || product.name)
+
+    for (const product of pageProducts) {
+      const key = product.id || normalizeText(product.name)
+      if (!key || seenProducts.has(key)) continue
+      seenProducts.add(key)
+      products.push(product)
+    }
+
+    if (pageProducts.length < pageLimit) break
+    if (!query && !productId && products.length >= limit) break
+  }
 
   if (productId) {
     let selectedProduct = products.find(product => product.id === productId)
@@ -5777,6 +5959,7 @@ function getRecentPaymentProduct(messages = []) {
 function shouldReuseProductMemoryForPayment(messages = []) {
   const latest = normalizeText(getLatestUserText(messages))
   if (!latest) return false
+  if (/(otro\s+producto|producto\s+(?:de|del|llamado|llamada)\s+[\p{L}\p{M}\d])/u.test(latest)) return true
   if (/(producto|precio guardado|precio personalizado|otro precio|monto personalizado)/.test(latest)) return true
 
   const previousText = normalizeText(getRecentConversationTextBeforeLatestUser(messages, 8))
@@ -5785,7 +5968,13 @@ function shouldReuseProductMemoryForPayment(messages = []) {
   const previousHadProductChoice = /(producto|precio guardado|monto personalizado|otro precio|producto id|precio id)/.test(previousText)
   const hasRememberedProduct = Boolean(getRecentAgentMemoryProduct(messages) || extractRecentPaymentProductFromConversation(messages))
 
-  return latestLooksLikePriceCorrection && (previousHadProductChoice || hasRememberedProduct)
+  if (latestLooksLikePriceCorrection && (previousHadProductChoice || hasRememberedProduct)) return true
+
+  return hasRememberedProduct &&
+    previousHadProductChoice &&
+    hasPreviousPaymentContext(messages) &&
+    isPaymentConversationContinuation(messages) &&
+    !/(otro\s+producto|producto\s+(?:de|del|llamado|llamada)\s+[\p{L}\p{M}\d])/u.test(latest)
 }
 
 function applyPaymentProductMemory(args = {}, messages = []) {
@@ -5803,15 +5992,118 @@ function applyPaymentProductMemory(args = {}, messages = []) {
 }
 
 function buildProductConcept(args = {}, fallback) {
+  const explicitConcept = cleanText(args.concept || args.description || '', 240)
+  const productConcept = cleanText(args.productName || args.product || '', 240)
+
+  if (productConcept && (!explicitConcept || normalizeText(explicitConcept) === 'cobro programado')) {
+    return productConcept
+  }
+
   return cleanText(
-    args.concept ||
-    args.description ||
+    explicitConcept ||
     args.productName ||
     args.product ||
     fallback ||
     'Pago',
     240
   )
+}
+
+function hasCustomPaymentAmount(args = {}, messages = []) {
+  return normalizePaymentAmount(
+    args.amount ||
+    args.totalAmount ||
+    args.total ||
+    args.customAmount ||
+    extractPaymentAmountFromText(getPaymentConversationText(messages))
+  ) > 0
+}
+
+async function resolvePaymentProductArgs(args = {}, highLevelConnection = {}, messages = []) {
+  const productId = cleanText(String(args.productId || args.product_id || ''), 180)
+  const productName = cleanText(String(args.productName || args.product_name || args.product || ''), 180)
+  const productHint = productName || extractPaymentProductHintFromText(getPaymentConversationText(messages))
+
+  if (productId || !productHint) {
+    return { ok: true, args }
+  }
+
+  const useCustomAmount = hasCustomPaymentAmount(args, messages)
+  const lookup = await executeLookupHighLevelProducts({
+    productName: productHint,
+    includePrices: !useCustomAmount,
+    limit: PRODUCT_LOOKUP_LIMIT
+  }, highLevelConnection)
+
+  if (!lookup.ok && lookup.clarificationOptions?.length) {
+    return {
+      ok: false,
+      output: {
+        ...lookup,
+        action: 'lookup_highlevel_products',
+        missingFields: ['producto'],
+        askOneAtATime: true
+      }
+    }
+  }
+
+  if (!lookup.ok) {
+    return {
+      ok: false,
+      output: {
+        ok: false,
+        action: 'lookup_highlevel_products',
+        error: lookup.error || `No encontré el producto "${productHint}" en HighLevel.`,
+        missingFields: ['producto']
+      }
+    }
+  }
+
+  const products = Array.isArray(lookup.products) ? lookup.products : []
+  const selectedProduct = lookup.product || (products.length === 1 ? products[0] : null)
+
+  if (!selectedProduct?.id && !selectedProduct?.name) {
+    return {
+      ok: false,
+      output: {
+        ...lookup,
+        action: 'lookup_highlevel_products',
+        error: 'Encontré productos, pero necesito que elijas cuál usar para este cobro.',
+        missingFields: ['producto'],
+        askOneAtATime: true
+      }
+    }
+  }
+
+  if (!useCustomAmount && lookup.needsPriceSelection && lookup.clarificationOptions?.length) {
+    return {
+      ok: false,
+      output: {
+        ...lookup,
+        action: 'lookup_highlevel_products',
+        missingFields: ['precio'],
+        askOneAtATime: true
+      }
+    }
+  }
+
+  const selectedPrice = !useCustomAmount
+    ? lookup.price || (Array.isArray(selectedProduct.prices) && selectedProduct.prices.length === 1 ? selectedProduct.prices[0] : null)
+    : null
+
+  return {
+    ok: true,
+    args: {
+      ...args,
+      productId: selectedProduct.id || args.productId,
+      productName: selectedProduct.name || productHint,
+      ...(selectedPrice?.id ? { priceId: selectedPrice.id } : {}),
+      ...(selectedPrice?.name ? { priceName: selectedPrice.name } : {}),
+      ...(selectedPrice?.amount > 0 ? { productPrice: selectedPrice.amount } : {}),
+      priceCurrency: selectedPrice?.currency || selectedProduct.currency || args.priceCurrency || args.currency || DEFAULT_PAYMENT_CURRENCY
+    },
+    product: normalizeOperationalProduct(selectedProduct, selectedPrice)
+  }
 }
 
 async function getStoredCardStatusForContact(contactId, paymentMode = PAYMENT_MODE_LIVE) {
@@ -7528,6 +7820,11 @@ async function executeCreateInstallmentPaymentFlow(args = {}, highLevelConnectio
 
   const paymentTimezone = highLevelConnection.locationData?.timezone || DEFAULT_PAYMENT_TIMEZONE
   args = enrichInstallmentPaymentArgs(args, context.messages, paymentTimezone)
+  const productResolution = await resolvePaymentProductArgs(args, highLevelConnection, context.messages)
+  if (!productResolution.ok) {
+    return productResolution.output
+  }
+  args = productResolution.args
 
   const resolvedContact = await resolvePaymentContact(args, context)
   if (!resolvedContact.contact) {
@@ -8055,6 +8352,11 @@ async function executeCreateSinglePaymentLink(args = {}, highLevelConnection, co
   }
 
   args = applyPaymentProductMemory(args, context.messages)
+  const productResolution = await resolvePaymentProductArgs(args, highLevelConnection, context.messages)
+  if (!productResolution.ok) {
+    return productResolution.output
+  }
+  args = productResolution.args
 
   const resolvedContact = await resolvePaymentContact(args, context)
   if (!resolvedContact.contact) {
@@ -9068,7 +9370,7 @@ function buildHighLevelTools(highLevelConnection, options = {}) {
     {
       type: 'function',
       name: 'lookup_highlevel_products',
-      description: 'Busca y lista productos/precios guardados en GoHighLevel de forma segura y de sólo lectura. Úsala sólo cuando el usuario mencione explícitamente producto, producto guardado, precio de GHL o quiera ver productos/precios. No la uses para cobros normales con monto, número o descripción libre. Si hay productos parecidos o varios precios, devuelve opciones para que el usuario elija.',
+      description: 'Busca y lista productos/precios guardados en GoHighLevel de forma segura y de sólo lectura. Úsala cuando el usuario mencione explícitamente producto, producto guardado, precio de GHL o quiera ver productos/precios. No la uses para cobros normales con monto, número o descripción libre. En flujos de cobro, este lookup nunca es respuesta final: después de elegir producto/precio u "otro precio", continúa con create_single_payment_link o create_installment_payment_flow. Si hay productos parecidos o varios precios, devuelve opciones para que el usuario elija.',
       parameters: {
         type: 'object',
         properties: {
@@ -10615,6 +10917,9 @@ const PAYMENT_WORKFLOW_PROMPT = [
   '- Si el usuario ya dio todos los datos, usa las herramientas internas y avanza; no repitas preguntas nomás por protocolo.',
   '- Si el usuario acaba de elegir el contacto en un flujo de cobro, no cierres con un resumen textual. Vuelve a llamar create_single_payment_link o create_installment_payment_flow con el contacto confirmado para que el backend decida tarjeta guardada, link, canal y confirmación.',
   '- lookup_contact_payment_profile sólo sirve para consultar perfil de pago; no es respuesta final suficiente para un cobro. Después de identificar contacto y monto/fecha, usa la herramienta de creación/programación correspondiente.',
+  '- Si el usuario menciona "producto de X", "producto X" o corrige "no, el producto...", conserva contacto/fechas/monto y resuelve ese producto de HighLevel antes de pedir tarjeta o confirmación final. La búsqueda de producto no es el final del flujo.',
+  '- Si el usuario elige "otro precio" o da un monto personalizado para un producto, usa ese producto con el monto personalizado y continúa con create_single_payment_link o create_installment_payment_flow; no te quedes sólo en lookup_highlevel_products.',
+  '- Nunca digas "listo", "quedó", "se creó", "se programó", "se envió" o "se cobró" si la última herramienta de pago no devolvió ok:true de una mutación real. Si sólo hubo búsqueda, aclaración o error, di que todavía no quedó creado y pregunta el siguiente dato.',
   '- Si falta algo indispensable, pregunta una sola cosa a la vez. No hagas listas de varias preguntas pendientes.',
   '- Cuando el usuario elija una opción/botón del flujo, trátala como respuesta válida al paso actual. Avanza con una respuesta corta y no vuelvas a pegar el resumen completo salvo que sea la revisión final.',
   '- En planes de parcialidades, cobros programados o calendarios raros, el resumen de confirmación debe incluir una tabla Markdown compacta con cada cobro: #, fecha exacta, monto, método/acción y estado/envío. Esto sí es excepción a la regla general de evitar tablas.',
@@ -11775,6 +12080,7 @@ async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, ru
   const paymentOperationRequest = paymentActionRequest && isOperationalPaymentRequest(messages)
   const highLevelToolIntent = Boolean(agentRoute?.highLevelToolIntent)
   const internalDatabaseAnswer = Boolean(agentRoute?.requiresDbResearch || modelQueryResults.length)
+  const paymentFinalConfirmationRequest = paymentOperationRequest && hasExplicitPaymentExecutionConfirmation(messages)
   const webSearchTools = metaAdsOperationalIntent || internalDatabaseAnswer || paymentOperationRequest || contactActionRequest || highLevelToolIntent
     ? []
     : buildWebSearchTools(agentConfig, runtimeContext)
@@ -11787,8 +12093,11 @@ async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, ru
         customActionIntent: Boolean(agentRoute?.customActionIntent),
         restReadIntent: Boolean(agentRoute?.highLevelRestReadIntent)
       })
+  const paymentToolNames = paymentFinalConfirmationRequest
+    ? PAYMENT_MUTATION_TOOL_NAMES
+    : PAYMENT_OPERATION_ALLOWED_TOOL_NAMES
   const highLevelTools = paymentOperationRequest
-    ? rawHighLevelTools.filter(tool => tool?.type === 'function' && PAYMENT_OPERATION_ALLOWED_TOOL_NAMES.has(tool.name))
+    ? rawHighLevelTools.filter(tool => tool?.type === 'function' && paymentToolNames.has(tool.name))
     : rawHighLevelTools
   const agentTools = [...webSearchTools, ...highLevelTools]
   const toolsRequireActionLoop = highLevelTools.length > 0
@@ -11987,9 +12296,23 @@ async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, ru
         runtimeContext
       })
     : text
+  const softenedReply = softenConfirmationLanguage(stripMarkdown(groundedText))
+  const blockUnsupportedPaymentCompletion = paymentOperationRequest &&
+    claimsPaymentWasCompleted(softenedReply) &&
+    !hasSuccessfulPaymentMutationEvidence(actionEvidence)
+  const latestPaymentEvidence = blockUnsupportedPaymentCompletion
+    ? getLatestPaymentToolEvidence(actionEvidence)
+    : null
+  const finalClarificationOptions = blockUnsupportedPaymentCompletion &&
+    Array.isArray(latestPaymentEvidence?.clarificationOptions) &&
+    latestPaymentEvidence.clarificationOptions.length
+      ? latestPaymentEvidence.clarificationOptions
+      : Array.isArray(clarificationOptions) ? clarificationOptions : []
 
   return {
-    reply: softenConfirmationLanguage(stripMarkdown(groundedText)),
+    reply: blockUnsupportedPaymentCompletion
+      ? buildPaymentNotCompletedGuardReply(actionEvidence)
+      : softenedReply,
     model: data?.model || model,
     usage: data?.usage || null,
     sources,
@@ -12000,7 +12323,7 @@ async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, ru
       productOperationalMemory,
       runtimeContext
     }),
-    clarificationOptions: Array.isArray(clarificationOptions) ? clarificationOptions : [],
+    clarificationOptions: finalClarificationOptions,
     debug: {
       queryCount: queryResults.length,
       highLevelToolsEnabled: highLevelTools.length > 0,
