@@ -10,6 +10,8 @@ const LEGACY_AI_AGENT_MESSAGES_KEY = 'ristak.aiAgentFloating.messages'
 const VOICE_WAVE_BAR_COUNT = 128
 const VOICE_WAVE_MIN_HEIGHT = 4
 const VOICE_WAVE_MAX_HEIGHT = 30
+const VOICE_WAVE_SILENCE_THRESHOLD = 4
+const VOICE_WAVE_SIGNAL_RANGE = 30
 const DEFAULT_AI_MODEL = 'gpt-5.5'
 const MAX_ATTACHMENTS = 8
 const MAX_DIRECT_ATTACHMENT_BYTES = 8 * 1024 * 1024
@@ -501,10 +503,17 @@ function prepareConfigForSave(config: AIAgentConfigInput): AIAgentConfigInput {
 }
 
 function createInitialVoiceBars() {
-  return Array.from({ length: VOICE_WAVE_BAR_COUNT }, (_, index) => {
-    const wave = Math.sin(index * 0.75) * 0.5 + 0.5
-    return Math.round(VOICE_WAVE_MIN_HEIGHT + wave * 8)
-  })
+  return Array.from({ length: VOICE_WAVE_BAR_COUNT }, () => VOICE_WAVE_MIN_HEIGHT)
+}
+
+function getVoiceBarHeight(samples: Uint8Array) {
+  const average = samples.reduce((sum, value) => sum + Math.abs(value - 128), 0) / samples.length
+  const gatedLevel = average <= VOICE_WAVE_SILENCE_THRESHOLD
+    ? 0
+    : Math.min(1, (average - VOICE_WAVE_SILENCE_THRESHOLD) / VOICE_WAVE_SIGNAL_RANGE)
+  const responsiveLevel = Math.sqrt(gatedLevel)
+
+  return Math.round(VOICE_WAVE_MIN_HEIGHT + responsiveLevel * (VOICE_WAVE_MAX_HEIGHT - VOICE_WAVE_MIN_HEIGHT))
 }
 
 function formatVoiceDuration(totalSeconds: number) {
@@ -1928,15 +1937,14 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
     audioContextRef.current = audioContext
     audioSourceRef.current = source
     analyserRef.current = analyser
+    lastVoiceWaveUpdateRef.current = 0
 
     const drawWave = (timestamp: number) => {
       if (!analyserRef.current) return
 
       if (timestamp - lastVoiceWaveUpdateRef.current > 55) {
         analyserRef.current.getByteTimeDomainData(samples)
-        const average = samples.reduce((sum, value) => sum + Math.abs(value - 128), 0) / samples.length
-        const normalized = Math.min(1, average / 34)
-        const nextHeight = Math.round(VOICE_WAVE_MIN_HEIGHT + normalized * (VOICE_WAVE_MAX_HEIGHT - VOICE_WAVE_MIN_HEIGHT))
+        const nextHeight = getVoiceBarHeight(samples)
 
         setVoiceBars((current) => [...current.slice(1), nextHeight])
         lastVoiceWaveUpdateRef.current = timestamp
