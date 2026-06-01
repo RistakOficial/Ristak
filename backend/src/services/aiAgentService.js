@@ -6799,16 +6799,17 @@ function buildContactCustomFieldsReply({ contact = {}, fields = [], customFields
   ].filter(line => line !== null).join('\n')
 }
 
-async function createReadOnlyContactFieldsReplyIfApplicable({
+async function createPreflightContactFieldsReplyIfApplicable({
   latestUserMessage = '',
   messages = [],
   viewContext = {},
   runtimeContext = {},
   agentConfig = null,
   highLevelConnection = {},
-  agentRoute = null
+  agentRoute = null,
+  preflightDecision = null
 } = {}) {
-  if (!isReadOnlyHighLevelContactFieldRequest(latestUserMessage)) return null
+  if (!preflightRequestsReadOnlyContactFields(preflightDecision)) return null
 
   const model = normalizeAIAgentModel(agentConfig?.model)
 
@@ -6829,7 +6830,8 @@ async function createReadOnlyContactFieldsReplyIfApplicable({
     }
   }
 
-  const lookupHint = normalizeContactLookupHint(extractContactLookupTerm(latestUserMessage)) ||
+  const lookupHint = normalizeContactLookupHint(preflightDecision?.contactHint || '') ||
+    normalizeContactLookupHint(extractContactLookupTerm(latestUserMessage)) ||
     extractExplicitContactIdentifier(latestUserMessage)
   const contactArgs = lookupHint
     ? { contactHint: lookupHint }
@@ -11781,6 +11783,119 @@ function parseJsonObject(text) {
   }
 }
 
+function normalizePreflightString(value, maxLength = 120) {
+  return cleanText(String(value || ''), maxLength)
+    .toLowerCase()
+    .replace(/\s+/g, '_')
+}
+
+function normalizeAgentPreflightDecision(value = {}) {
+  const raw = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+  const sourceOfTruth = normalizePreflightString(raw.sourceOfTruth || raw.source || raw.dataSource, 80)
+  const action = normalizePreflightString(raw.action || raw.intentType || raw.operationType, 60)
+  const resource = normalizePreflightString(raw.resource || raw.canonicalResource || raw.entityType, 80)
+  const nextAction = normalizePreflightString(raw.nextAction || raw.next_step || raw.route, 100)
+  const confidence = Number(raw.confidence)
+
+  return {
+    intentSummary: cleanText(raw.intentSummary || raw.summary || raw.userGoal || '', 300),
+    action: ['answer', 'read', 'mutate', 'clarify'].includes(action) ? action : 'answer',
+    sourceOfTruth: ['none', 'ristak_db', 'highlevel', 'web', 'user'].includes(sourceOfTruth) ? sourceOfTruth : 'none',
+    resource,
+    nextAction,
+    isMutation: Boolean(raw.isMutation),
+    shouldUseTools: Boolean(raw.shouldUseTools),
+    shouldAskUser: Boolean(raw.shouldAskUser),
+    contactHint: cleanText(raw.contactHint || raw.contactName || raw.personHint || '', 180),
+    resourceHint: cleanText(raw.resourceHint || raw.objectHint || raw.recordHint || '', 180),
+    fieldFocus: normalizePreflightString(raw.fieldFocus || raw.fieldScope || raw.focus, 100),
+    missingCriticalData: Array.isArray(raw.missingCriticalData)
+      ? raw.missingCriticalData.map(item => cleanText(item, 80)).filter(Boolean).slice(0, 6)
+      : [],
+    riskLevel: normalizePreflightString(raw.riskLevel || raw.risk, 40),
+    rationaleSummary: cleanText(raw.rationaleSummary || raw.reason || raw.why || '', 360),
+    confidence: Number.isFinite(confidence) ? Math.max(0, Math.min(1, confidence)) : 0
+  }
+}
+
+async function createAgentPreflightDecision(apiKey, {
+  model = DEFAULT_MODEL,
+  messages = [],
+  latestUserMessage = '',
+  viewContext = {},
+  runtimeContext = {},
+  agentConfig = null
+} = {}) {
+  const instructions = [
+    'Eres el preflight cognitivo de Ristak AI.',
+    'Antes de cualquier herramienta o pregunta, interpreta el último mensaje con la conversación completa.',
+    'Razona internamente: objetivo real, entidades, fuente correcta, datos faltantes, riesgo y siguiente paso útil.',
+    'No devuelvas cadena de pensamiento. Devuelve sólo JSON válido, sin markdown.',
+    'No copies la frase del usuario como búsqueda si hay una entidad limpia dentro. Separa persona/recurso de la tarea.',
+    'Si el usuario pide una lectura de datos de un contacto en GoHighLevel, la fuente es highlevel, el recurso es contact y el siguiente paso debe resolver el contacto antes de pedir más datos.',
+    'Para escrituras reales de CRM, dinero, citas, workflows, mensajes o datos personales, marca isMutation=true y pide confirmación si faltan IDs/valores críticos.',
+    'Campos permitidos del JSON:',
+    JSON.stringify({
+      intentSummary: 'una frase corta',
+      action: 'answer | read | mutate | clarify',
+      sourceOfTruth: 'none | ristak_db | highlevel | web | user',
+      resource: 'contact | contact_fields | workflow | appointment | payment | campaign | product | conversation | general | etc',
+      nextAction: 'answer_directly | query_database | call_highlevel_tools | lookup_contact_fields | ask_user',
+      isMutation: false,
+      shouldUseTools: false,
+      shouldAskUser: false,
+      contactHint: 'nombre/email/teléfono/ID limpio si existe',
+      resourceHint: 'otro recurso limpio si existe',
+      fieldFocus: 'custom_fields | standard_fields | all_fields | none',
+      missingCriticalData: [],
+      riskLevel: 'low | medium | high',
+      rationaleSummary: 'por qué esta ruta, sin pasos internos',
+      confidence: 0.0
+    })
+  ].join('\n')
+
+  const input = [
+    `Fecha/hora local: ${runtimeContext.nowIso || ''}`,
+    `Timezone: ${runtimeContext.timezone || ''}`,
+    '',
+    'Contexto de negocio configurado:',
+    buildBusinessProfileContext(agentConfig),
+    '',
+    'Personalización de acciones configurada:',
+    getConfiguredActionCustomizations(agentConfig) || 'Sin personalización de acciones configurada.',
+    '',
+    'Capacidades/fuentes disponibles:',
+    '- ristak_db: análisis interno, pagos registrados, citas, campañas sincronizadas, contactos, reporting.',
+    '- highlevel: CRM operativo real, contactos, custom fields, workflows, citas, mensajes, oportunidades, productos, invoices.',
+    '- web: contexto externo si el usuario lo pide.',
+    '',
+    'Contexto de vista:',
+    JSON.stringify(buildSafeViewContext(viewContext), null, 2),
+    '',
+    'Conversación:',
+    buildConversationText(messages) || 'Sin mensajes previos.',
+    '',
+    `Último mensaje a interpretar: ${latestUserMessage}`
+  ].join('\n')
+
+  try {
+    const { text } = await callOpenAIResponse(apiKey, {
+      model,
+      instructions,
+      input,
+      maxOutputTokens: 700,
+      temperature: 0.1,
+      topP: 0.8,
+      reasoning: { effort: 'low' }
+    })
+
+    return normalizeAgentPreflightDecision(parseJsonObject(text))
+  } catch (error) {
+    logger.warn(`Preflight cognitivo del agente no disponible, usando fallback determinista: ${error.message}`)
+    return null
+  }
+}
+
 function getDefaultRiskPlan(runtimeContext) {
   return {
     assumptions: [
@@ -12517,18 +12632,21 @@ function isExplicitHighLevelToolRequest(question) {
   return isHighLevelOperationalResourceRequest(normalized)
 }
 
-function isReadOnlyHighLevelContactFieldRequest(question = '') {
-  const normalized = normalizeText(question)
-  if (!normalized) return false
+function preflightRequestsReadOnlyContactFields(preflightDecision = null) {
+  if (!preflightDecision) return false
 
-  const mentionsContactScope = /\b(?:contacto|contactos|cliente|clientes|lead|leads|prospecto|prospectos|paciente|pacientes|persona|personas)\b/.test(normalized)
-  const mentionsFieldScope = /\b(?:campo|campos|dato|datos|custom field|custom fields|campos personalizados|campo personalizado)\b/.test(normalized)
-  const readIntent = /\b(?:dame|muestra|mu[eé]strame|lista|listar|listame|l[ií]stame|trae|tr[aá]eme|revisa|consulta|consultar|busca|buscar|ver|lee|leer|ense[nñ]a|ense[nñ]ame|cuales|cu[aá]les|que|qu[eé])\b/.test(normalized)
-  const highLevelScope = mentionsHighLevel(normalized) || /\b(?:ghl|gohighlevel|go high level|highlevel)\b/.test(normalized)
-  const writesContactData = /\b(?:actualiza|actualizar|modifica|modificar|cambia|cambiar|ponle|poner|quita|quitar|agrega|agregar|crea|crear|manda|mandar|envia|enviar|agenda|agendar|cobra|cobrar|registra|registrar|elimina|eliminar|borra|borrar)\b/.test(normalized) ||
-    /\b(?:mete|meter|metele|m[eé]tele|saca|sacar)\s+(?:a|al|del|de)\b/.test(normalized)
+  const resource = normalizePreflightString(preflightDecision.resource, 80)
+  const nextAction = normalizePreflightString(preflightDecision.nextAction, 100)
+  const fieldFocus = normalizePreflightString(preflightDecision.fieldFocus, 100)
 
-  return mentionsContactScope && mentionsFieldScope && readIntent && highLevelScope && !writesContactData
+  return preflightDecision.sourceOfTruth === 'highlevel' &&
+    preflightDecision.action === 'read' &&
+    !preflightDecision.isMutation &&
+    (
+      nextAction === 'lookup_contact_fields' ||
+      ['contact_fields', 'custom_fields'].includes(resource) ||
+      (resource === 'contact' && ['custom_fields', 'standard_fields', 'all_fields', 'fields'].includes(fieldFocus))
+    )
 }
 
 function getConfiguredActionCustomizations(agentConfig) {
@@ -12810,14 +12928,22 @@ function shouldUseInternalDatabaseContext(question, messages = []) {
   return businessEntity && analysisIntent
 }
 
-function buildUnifiedAgentRoute({ messages = [], latestUserMessage = '', agentConfig = null } = {}) {
+function buildUnifiedAgentRoute({ messages = [], latestUserMessage = '', agentConfig = null, preflightDecision = null } = {}) {
   const normalized = normalizeText(latestUserMessage)
-  const readOnlyContactFieldRequest = isReadOnlyHighLevelContactFieldRequest(latestUserMessage)
+  const preflight = preflightDecision ? normalizeAgentPreflightDecision(preflightDecision) : null
+  const modelHasDecision = Boolean(preflight && preflight.confidence >= 0.45)
+  const readOnlyContactFieldRequest = preflightRequestsReadOnlyContactFields(preflight)
+  const modelRequestsHighLevel = modelHasDecision && preflight.sourceOfTruth === 'highlevel' && (preflight.shouldUseTools || preflight.action !== 'answer')
+  const modelRequestsDb = modelHasDecision && preflight.sourceOfTruth === 'ristak_db'
+  const modelRequestsPayment = modelHasDecision && (preflight.resource === 'payment' || preflight.nextAction === 'payment_tools')
+  const modelRequestsClarification = modelHasDecision && (preflight.action === 'clarify' || preflight.shouldAskUser)
+  const modelRequestsMutation = modelHasDecision && (preflight.action === 'mutate' || preflight.isMutation)
+  const modelRequestsRead = modelHasDecision && (preflight.action === 'read' || preflight.nextAction === 'query_database' || preflight.nextAction === 'call_highlevel_tools')
   const highLevelRestReadIntent = isHighLevelRestReadCatalogRequest(latestUserMessage, messages)
   const highLevelContinuation = isHighLevelOperationalConversationContinuation(messages)
   const contactMutationContinuation = isContactMutationConversationContinuation(messages)
-  const highLevelToolIntent = readOnlyContactFieldRequest || highLevelRestReadIntent || isExplicitHighLevelToolRequest(latestUserMessage) || highLevelContinuation
-  const paymentBackendOnly = shouldUsePaymentBackendForLatestMessage(messages)
+  const highLevelToolIntent = modelRequestsHighLevel || readOnlyContactFieldRequest || highLevelRestReadIntent || isExplicitHighLevelToolRequest(latestUserMessage) || highLevelContinuation
+  const paymentBackendOnly = modelRequestsPayment || shouldUsePaymentBackendForLatestMessage(messages)
   const latestCustomActionExecution = !readOnlyContactFieldRequest && isConfiguredActionExecutionRequest(latestUserMessage, agentConfig)
   const customActionContinuation = !paymentBackendOnly &&
     !readOnlyContactFieldRequest &&
@@ -12825,19 +12951,20 @@ function buildUnifiedAgentRoute({ messages = [], latestUserMessage = '', agentCo
     isConfiguredActionConversationContinuation(messages, agentConfig)
   const customActionIntent = latestCustomActionExecution || customActionContinuation
   const contactMutationSafety = shouldUseContactMutationSafety(latestUserMessage) || contactMutationContinuation
-  const requiresDbResearch = !paymentBackendOnly && !highLevelToolIntent && !customActionIntent && shouldUseInternalDatabaseContext(latestUserMessage, messages)
+  const requiresDbResearch = modelRequestsDb || (!paymentBackendOnly && !highLevelToolIntent && !customActionIntent && shouldUseInternalDatabaseContext(latestUserMessage, messages))
   const highLevelOperationalIntent = !paymentBackendOnly && (
     highLevelToolIntent ||
     customActionIntent ||
     (!requiresDbResearch &&
       /(workflow|flujo|automatizacion|automatización|cita|calendario|appointment|oportunidad|pipeline|mensaje|conversacion|conversación|media storage|archivo|imagen|folder|tag|producto|precio|contacto|cliente|lead|campo personalizado|custom field).*(busca|revisa|analiza|cambia|actualiza|modifica|mete|saca|crea|agenda|agenda[r]?|calendariza|manda|envia|envía|haz|hacer)|(?:busca|revisa|analiza|cambia|actualiza|modifica|mete|saca|crea|agenda|agendar|calendariza|manda|envia|envía|haz|hacer).*(workflow|flujo|automatizacion|automatización|cita|calendario|appointment|oportunidad|pipeline|mensaje|conversacion|conversación|media storage|archivo|imagen|folder|tag|producto|precio|contacto|cliente|lead|campo personalizado|custom field)/.test(normalized))
   )
-  const mutationIntent = !readOnlyContactFieldRequest && (paymentBackendOnly ||
+  const mutationIntent = !readOnlyContactFieldRequest && (modelRequestsMutation || paymentBackendOnly ||
     (!highLevelRestReadIntent && (
       contactMutationSafety ||
       /(agrega|actualiza|modifica|cambia|crea|genera|registra|agenda|cancela|manda|envia|mete|saca|pausa|reactiva|send|create|update|delete|programa|domicili|ejecuta|hazlo)/.test(normalized)
     )))
   const readIntent = requiresDbResearch ||
+    modelRequestsRead ||
     readOnlyContactFieldRequest ||
     highLevelRestReadIntent ||
     /(cual|cuál|cuanto|cuánto|cuantos|cuántos|dame|muestra|busca|revisa|analiza|info|informacion|información|datos|ultimo|último|reciente|historial|tuvo|tiene|existe|aparece|trae|tráeme)/.test(normalized)
@@ -12845,7 +12972,7 @@ function buildUnifiedAgentRoute({ messages = [], latestUserMessage = '', agentCo
   return {
     domain: 'general',
     specialist: 'Agente unificado',
-    action: mutationIntent ? 'mutate' : readIntent ? 'read' : 'answer',
+    action: modelRequestsClarification ? 'clarify' : mutationIntent ? 'mutate' : readIntent ? 'read' : 'answer',
     continuation: isConversationalFollowUp(messages),
     requiresDbResearch,
     requiresHighLevelTools: paymentBackendOnly || contactMutationSafety || highLevelOperationalIntent,
@@ -12857,10 +12984,13 @@ function buildUnifiedAgentRoute({ messages = [], latestUserMessage = '', agentCo
     readOnlyContactFieldRequest,
     customActionIntent,
     highLevelContinuation,
+    preflightDecision: preflight,
     metaAdsOperationalIntent: false,
     skipLocalShortcuts: true,
-    confidence: 1,
-    reason: 'Arquitectura unificada: sin clasificador previo ni lookup local preventivo.'
+    confidence: modelHasDecision ? preflight.confidence : 1,
+    reason: modelHasDecision
+      ? `Preflight IA: ${preflight.rationaleSummary || preflight.intentSummary || 'ruta inferida por modelo'}`
+      : 'Fallback determinista: preflight IA no disponible o con baja confianza.'
   }
 }
 
@@ -15948,21 +16078,31 @@ export async function createAgentReply({ apiKey, messages, viewContext, userId =
   const runtimeContext = await getAgentRuntimeContext()
   const latestUserMessage = getLatestUserMessage(messages)
   const agentConfig = await getAIAgentConfig({ userId })
+  const preflightDecision = await createAgentPreflightDecision(apiKey, {
+    model: normalizeAIAgentModel(agentConfig?.model),
+    messages,
+    latestUserMessage,
+    viewContext,
+    runtimeContext,
+    agentConfig
+  })
   const agentRoute = buildUnifiedAgentRoute({
     messages,
     latestUserMessage,
-    agentConfig
+    agentConfig,
+    preflightDecision
   })
   const highLevelConnection = await getHighLevelAgentConnection()
   let customActionVerifiedContact = null
-  const readOnlyContactFieldsReply = await createReadOnlyContactFieldsReplyIfApplicable({
+  const readOnlyContactFieldsReply = await createPreflightContactFieldsReplyIfApplicable({
     latestUserMessage,
     messages,
     viewContext,
     runtimeContext,
     agentConfig,
     highLevelConnection,
-    agentRoute
+    agentRoute,
+    preflightDecision
   })
 
   if (readOnlyContactFieldsReply) {
