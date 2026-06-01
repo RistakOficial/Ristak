@@ -470,3 +470,164 @@ body.dark .select:focus {
     text-align: center;
   }
 }
+
+/* Compact settings refresh */
+.container {
+  gap: 0;
+  max-width: 1280px;
+  padding: var(--spacing-2xl) 0 4rem;
+}
+
+.header {
+  margin-bottom: 18px;
+}
+
+.title {
+  font-size: 24px;
+  font-weight: 750;
+  color: var(--color-text-primary);
+}
+
+.subtitle {
+  max-width: 720px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.tabs {
+  gap: 6px;
+  margin-bottom: 18px;
+  padding: 6px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 12px;
+  background: rgba(148, 163, 184, 0.055);
+}
+
+.tab {
+  height: 38px;
+  gap: 8px;
+  margin-bottom: 0;
+  padding: 0 12px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.tab:hover {
+  color: var(--color-text-primary);
+  background: rgba(148, 163, 184, 0.08);
+}
+
+[data-theme="dark"] .tab:hover,
+body.dark .tab:hover {
+  background: rgba(148, 163, 184, 0.08);
+}
+
+.tabActive {
+  color: var(--color-text-primary);
+  border-color: rgba(148, 163, 184, 0.2);
+  background: var(--color-background-primary);
+  box-shadow: 0 8px 20px -16px rgba(15, 23, 42, 0.45);
+}
+
+.tabActive:hover {
+  background: var(--color-background-primary);
+}
+
+.mainContent {
+  gap: 18px;
+}
+
+.settingsContent {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  width: 100%;
+  padding-bottom: 24px;
+}
+
+.settingsSection {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.settingsSection > [data-ristak-card] {
+  margin-top: 12px !important;
+}
+
+.sectionTitle {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.25;
+  color: var(--color-text-primary);
+}
+
+.sectionDescription {
+  margin: 6px 0 0;
+  max-width: 720px;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--color-text-secondary);
+}
+
+.fieldRow {
+  gap: 14px;
+}
+
+.field {
+  gap: 7px;
+}
+
+.label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--color-text-tertiary);
+}
+
+.input,
+.select {
+  height: 42px;
+  padding: 0 12px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 8px;
+  background: var(--color-background-primary);
+  color: var(--color-text-primary);
+  font-size: 14px;
+}
+
+.input:focus,
+.select:focus {
+  border-color: rgba(100, 116, 139, 0.55);
+  box-shadow: 0 0 0 3px rgba(100, 116, 139, 0.12);
+}
+
+.infoBox {
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 8px;
+  background: rgba(148, 163, 184, 0.055);
+}
+
+@media (max-width: 900px) {
+  .tabs {
+    border-radius: 10px;
+  }
+
+  .tab {
+    height: 36px;
+    padding: 0 10px;
+  }
+}
+
+@media (max-width: 768px) {
+  .container {
+    padding: 20px 0 4rem;
+  }
+
+  .fieldRow {
+    grid-template-columns: 1fr;
+  }
+}

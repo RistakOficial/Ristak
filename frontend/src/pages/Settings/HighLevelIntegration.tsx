@@ -333,9 +333,12 @@ export const HighLevelIntegration: React.FC = () => {
                   style={{ height: '100%', width: 'auto', objectFit: 'contain' }}
                 />
               </div>
-              <p className={styles.pageSubtitle}>
-                Sincroniza contactos, pagos y citas con tu cuenta
-              </p>
+              <div>
+                <h2 className={styles.pageTitle}>HighLevel</h2>
+                <p className={styles.pageSubtitle}>
+                  Sincroniza contactos, pagos y citas con tu cuenta
+                </p>
+              </div>
             </div>
             <div className={styles.headerRight}>
               {checkingStatus ? (

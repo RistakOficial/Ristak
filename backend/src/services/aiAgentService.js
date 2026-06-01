@@ -904,12 +904,52 @@ const STANDARD_CONTACT_FIELD_DEFINITIONS = [
   { type: 'standard', key: 'dnd', label: 'No molestar', aliases: ['dnd', 'no molestar', 'do not disturb'] }
 ]
 
+function getSelectedClarificationOption(message) {
+  const option = message?.selectedClarificationOption
+  if (!option || typeof option !== 'object') return null
+
+  const label = cleanText(option.label, 300)
+  const description = cleanText(option.description, 500)
+  const value = cleanText(option.value, 1800)
+
+  if (!label && !description && !value) return null
+
+  return { label, description, value }
+}
+
+function appendSelectedClarificationContext(message, visibleText) {
+  const option = getSelectedClarificationOption(message)
+  const text = typeof visibleText === 'string' ? visibleText : String(visibleText || '')
+
+  if (!option) return text
+
+  const normalizedText = normalizeText(text)
+  const lines = [
+    option.label ? `Botón visible: ${option.label}` : '',
+    option.description ? `Descripción visible: ${option.description}` : '',
+    option.value && normalizeText(option.value) !== normalizedText ? `Valor interno: ${option.value}` : ''
+  ].filter(Boolean)
+
+  if (!lines.length) return text
+
+  return [
+    text,
+    '',
+    '[Selección de botón interna: úsala como contexto oculto y no la repitas al usuario]',
+    ...lines
+  ].filter((line) => line !== '').join('\n')
+}
+
+function messageHasSelectedClarificationOption(message) {
+  return Boolean(getSelectedClarificationOption(message))
+}
+
 function getMessageText(message) {
   if (!message) return ''
-  if (typeof message.content === 'string') return message.content
+  if (typeof message.content === 'string') return appendSelectedClarificationContext(message, message.content)
 
   if (Array.isArray(message.content)) {
-    return message.content
+    const text = message.content
       .map((part) => {
         if (typeof part === 'string') return part
         if (typeof part?.text === 'string') return part.text
@@ -918,9 +958,11 @@ function getMessageText(message) {
       })
       .filter(Boolean)
       .join(' ')
+
+    return appendSelectedClarificationContext(message, text)
   }
 
-  return String(message.content || '')
+  return appendSelectedClarificationContext(message, String(message.content || ''))
 }
 
 function normalizeAttachmentKind(value) {
@@ -6404,7 +6446,7 @@ function buildConversationText(messages) {
   return safeMessages
     .map((message) => {
       const role = message?.role === 'assistant' ? 'Agente' : 'Usuario'
-      const text = cleanText(String(message?.content || ''), 1800)
+      const text = cleanText(getMessageText(message), 1800)
       const attachmentsText = buildAttachmentsText(getMessageAttachments(message), false)
       return `${role}: ${text}${attachmentsText ? `\n${attachmentsText}` : ''}`
     })
@@ -6543,6 +6585,7 @@ const BASE_SPECIALIST_PROMPT = [
   'Piensa con criterio propio: si el usuario sólo conversa, responde directo; si pide datos internos, investiga en DB; si pide una acción, identifica registros exactos; si falta algo indispensable, pregunta sólo eso.',
   'Entiende referencias humanas normales: "el de la última cita", "la próxima cita", "este contacto", "ese workflow", "la conversación anterior" no son nombres literales. Resuelve primero la entidad real y luego ejecuta.',
   'Responde en español natural, directo y útil para un dueño de negocio.',
+  'Si el último mensaje viene de un botón/opción, usa el valor interno como contexto oculto: no lo repitas, no lo cites y responde compacto, normalmente 1 a 3 líneas.',
   'No uses tablas, contenedores, bloques tipo ficha ni gráficos para aclaraciones normales, preguntas de confirmación, explicaciones cortas o respuestas conversacionales.',
   'Usa tablas/gráficos sólo cuando el usuario pida data o cuando haya varias métricas/registros/comparativos difíciles de leer en texto: contactos, citas, pagos, campañas, rankings, históricos o listas repetidas.'
 ].join('\n')
@@ -6586,6 +6629,7 @@ const PAYMENT_WORKFLOW_PROMPT = [
   '- No uses highlevel_rest_request para crear invoices, enviar invoices, registrar pagos, schedules ni payments. Las únicas herramientas válidas para mutar dinero son create_single_payment_link, create_installment_payment_flow, record_contact_payment y record_invoice_payment.',
   '- Si el usuario ya dio todos los datos, usa las herramientas internas y avanza; no repitas preguntas nomás por protocolo.',
   '- Si falta algo indispensable, pregunta una sola cosa a la vez. No hagas listas de varias preguntas pendientes.',
+  '- Cuando el usuario elija una opción/botón del flujo, trátala como respuesta válida al paso actual. Avanza con una respuesta corta y no vuelvas a pegar el resumen completo salvo que sea la confirmación final obligatoria.',
   '- Si después del resumen el usuario responde afirmativamente pero agrega cambios como "pero", "solo pon", "cambia", "agrega descripción", "mejor por WhatsApp", "con tarjeta guardada", etc., eso NO es confirmación final. Actualiza el plan con la herramienta interna y vuelve a pedir confirmación con el resumen nuevo.',
   '- Sólo ejecuta cuando el último mensaje sea una autorización limpia sobre el resumen vigente, por ejemplo "sí, confirmar", "sí, dale", "confirmo" o el botón de confirmación, sin cambios extra.',
   '- Cobro único con tarjeta: si no hay tarjeta guardada/autorizada, el link de pago es obligatorio y debes pedir canal de envío si falta. Si sí hay tarjeta guardada, pregunta una sola vez si se cobra la tarjeta guardada o se manda link.',
@@ -7581,7 +7625,10 @@ function prepareQueryResultsForReply(queryResults) {
 async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, runtimeContext, plan, queryResults, agentConfig, highLevelConnection, agentRoute, metaAdsOperationalIntent = false, metaAdsDbResearchSkipped = false }) {
   const model = normalizeAIAgentModel(agentConfig?.model)
   const modelQueryResults = metaAdsDbResearchSkipped ? [] : prepareQueryResultsForReply(queryResults)
+  const latestUserMessageObject = getLatestUserMessageObject(messages)
   const latestUserMessage = getLatestUserMessage(messages)
+  const latestMessageFromButton = latestUserMessageObject?.role === 'user' &&
+    messageHasSelectedClarificationOption(latestUserMessageObject)
   const paymentActionRequest = Boolean(agentRoute?.paymentBackendOnly || agentRoute?.requiresPaymentTools) ||
     agentRoute?.domain === 'payments'
   const contactActionRequest = Boolean(agentRoute?.contactMutationSafety) ||
@@ -7674,6 +7721,11 @@ async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, ru
     'Contexto de vista actual:',
     JSON.stringify(buildSafeViewContext(viewContext), null, 2),
     '',
+    'Regla de interacción rápida:',
+    latestMessageFromButton
+      ? 'El último mensaje del usuario vino de un botón. Usa el valor interno para operar, pero contesta breve y no repitas el payload oculto.'
+      : 'No aplica: el último mensaje no vino de un botón.',
+    '',
     'Conversación:',
     buildConversationText(messages) || 'Sin mensajes previos.',
     '',
@@ -7738,7 +7790,7 @@ async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, ru
   try {
     response = await callAgentModelWithAttachmentFallback({
       inputValue: responseInput,
-      maxOutputTokens: webSearchTools.length ? 2200 : 1800
+      maxOutputTokens: latestMessageFromButton && !webSearchTools.length ? 900 : webSearchTools.length ? 2200 : 1800
     })
   } catch (error) {
     const fallbackTools = [...highLevelTools]
@@ -7756,7 +7808,7 @@ async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, ru
       toolsValue: fallbackTools,
       includeValue: [],
       needsActionLoop: fallbackNeedsActionLoop,
-      maxOutputTokens: fallbackNeedsActionLoop ? 1800 : 1400
+      maxOutputTokens: latestMessageFromButton ? 900 : fallbackNeedsActionLoop ? 1800 : 1400
     })
   }
 
@@ -7782,8 +7834,8 @@ function getLatestUserMessage(messages) {
 
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index]
-    if (message?.role === 'user' && typeof message.content === 'string') {
-      return message.content
+    if (message?.role === 'user') {
+      return getMessageText(message)
     }
   }
 

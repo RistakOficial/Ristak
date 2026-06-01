@@ -472,3 +472,249 @@ body.dark .select:focus {
     max-height: 100vh;
   }
 }
+
+/* Compact settings refresh: match Agente AI */
+.container {
+  width: 100%;
+  max-width: 100%;
+  margin: 0;
+  padding: 0 0 24px;
+}
+
+.card {
+  padding: 24px !important;
+}
+
+.header {
+  align-items: flex-start;
+  gap: 18px;
+  margin-bottom: 18px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.16);
+}
+
+.titleSection {
+  gap: 14px;
+  min-width: 0;
+}
+
+.iconWrapper {
+  width: 42px;
+  height: 42px;
+  border-radius: 8px;
+  color: var(--color-text-primary);
+  background: rgba(148, 163, 184, 0.12);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+body.dark .iconWrapper {
+  color: var(--color-text-primary);
+  background: rgba(148, 163, 184, 0.12);
+}
+
+.title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.subtitle {
+  max-width: 720px;
+  margin: 6px 0 0;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.manualReportToggle {
+  min-height: 58px;
+  margin-bottom: 18px;
+  padding: 12px 14px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 8px;
+  background: rgba(148, 163, 184, 0.055);
+}
+
+.manualReportToggleTitle {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.manualReportToggleState {
+  font-size: 12px;
+}
+
+.switchControl {
+  width: 44px;
+  height: 24px;
+}
+
+.switchTrack::before {
+  top: 4px;
+  left: 4px;
+  width: 16px;
+  height: 16px;
+}
+
+.switchControl input:checked + .switchTrack::before {
+  transform: translateX(20px);
+}
+
+.switchControl input:checked + .switchTrack {
+  background: var(--color-status-success);
+}
+
+.costsGrid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.costChip {
+  padding: 14px;
+  border-width: 1px;
+  border-radius: 8px;
+  background: rgba(148, 163, 184, 0.045);
+}
+
+.costChip:hover {
+  transform: none;
+  background: rgba(148, 163, 184, 0.07);
+}
+
+.costHeader {
+  margin-bottom: 10px;
+}
+
+.costName {
+  font-size: 14px;
+  font-weight: 750;
+}
+
+.costValue {
+  color: var(--color-text-primary);
+  font-size: 22px;
+}
+
+body.dark .costValue {
+  color: var(--color-text-primary);
+}
+
+.costActions {
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(148, 163, 184, 0.16);
+}
+
+.actionButton {
+  width: 30px;
+  height: 30px;
+  border-radius: 7px;
+  border-color: rgba(148, 163, 184, 0.18);
+  background: rgba(148, 163, 184, 0.055);
+}
+
+.loadingContainer,
+.emptyState {
+  min-height: 260px;
+  padding: 42px 20px;
+}
+
+.emptyState h3 {
+  font-size: 16px;
+}
+
+.modal {
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 12px;
+  background: var(--color-background-primary);
+}
+
+.modalHeader {
+  padding: 20px 20px 14px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.16);
+}
+
+.modalHeader h3 {
+  font-size: 18px;
+}
+
+.modalBody {
+  padding: 20px;
+}
+
+.modalFooter {
+  padding: 14px 20px 20px;
+  border-top: 1px solid rgba(148, 163, 184, 0.16);
+}
+
+.formGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin-bottom: 14px;
+}
+
+.formGroup label {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+
+.input,
+.select {
+  min-height: 42px;
+  padding: 0 12px;
+  border-color: rgba(148, 163, 184, 0.22);
+  border-radius: 8px;
+  background: var(--color-background-primary);
+  font-size: 14px;
+}
+
+.input:focus,
+.select:focus {
+  border-color: rgba(100, 116, 139, 0.55);
+  box-shadow: 0 0 0 3px rgba(100, 116, 139, 0.12);
+}
+
+.radioGroup {
+  min-height: 42px;
+  align-items: center;
+}
+
+.radioLabel {
+  flex-direction: row;
+  margin: 0 !important;
+  font-size: 13px !important;
+  letter-spacing: 0 !important;
+  text-transform: none !important;
+  color: var(--color-text-secondary) !important;
+}
+
+@media (max-width: 900px) {
+  .header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .costsGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 768px) {
+  .container {
+    padding: 0 0 24px;
+  }
+
+  .card {
+    padding: 18px !important;
+  }
+
+  .modal {
+    max-height: calc(100vh - 24px);
+    border-radius: 12px;
+  }
+}

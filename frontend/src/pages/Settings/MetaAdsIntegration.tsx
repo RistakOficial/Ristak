@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { Card, Button } from '@/components/common'
-import { RefreshCw, Save, Trash2 } from 'lucide-react'
+import { CheckCircle, RefreshCw, Save, Trash2, XCircle } from 'lucide-react'
 import { SiWhatsapp } from 'react-icons/si'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useTheme } from '@/contexts/ThemeContext'
@@ -550,30 +550,44 @@ export const MetaAdsIntegration: React.FC = () => {
     }
   }
 
+  const isMetaConfigured = Boolean(credentials.accessToken && credentials.adAccountId)
+
   return (
     <div className={styles.integrationContainer}>
       <Card className={styles.mainCard}>
         {/* Header */}
         <div className={styles.pageHeader}>
           <div className={styles.headerContent}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '8px' }}>
-              <img
-                src={theme === 'light'
-                  ? 'https://img.icons8.com/fluency/96/meta.png'
-                  : 'https://img.icons8.com/ios-filled/150/FFFFFF/meta.png'
-                }
-                alt="Meta"
-                style={{
-                  width: '60px',
-                  height: '60px',
-                  borderRadius: '12px'
-                }}
-              />
-              <h2 className={styles.pageTitle} style={{ margin: 0 }}>Meta Ads</h2>
+            <div className={styles.headerLeft}>
+              <div className={styles.logoContainer}>
+                <img
+                  src={theme === 'light'
+                    ? 'https://img.icons8.com/fluency/96/meta.png'
+                    : 'https://img.icons8.com/ios-filled/150/FFFFFF/meta.png'
+                  }
+                  alt="Meta"
+                />
+              </div>
+              <div>
+                <h2 className={styles.pageTitle}>Meta Ads</h2>
+                <p className={styles.pageSubtitle}>
+                  Conecta tu cuenta de anuncios de Facebook
+                </p>
+              </div>
             </div>
-            <p className={styles.pageSubtitle}>
-              Conecta tu cuenta de anuncios de Facebook
-            </p>
+            <div className={styles.headerRight}>
+              {isMetaConfigured ? (
+                <div className={styles.statusConnected}>
+                  <CheckCircle size={16} />
+                  <span>Configurado</span>
+                </div>
+              ) : (
+                <div className={styles.statusDisconnected}>
+                  <XCircle size={16} />
+                  <span>No configurado</span>
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
@@ -622,23 +636,12 @@ export const MetaAdsIntegration: React.FC = () => {
                           className={styles.formInput}
                         />
                         {!realAccessToken && !isLoadingAccounts && (
-                          <div style={{ marginTop: '12px', display: 'flex', justifyContent: 'center' }}>
+                          <div className={styles.formActions}>
                             <Button
+                              type="button"
+                              variant="primary"
                               onClick={handleContinueWithToken}
                               disabled={isSavingToken || !credentials.accessToken || credentials.accessToken.length < 50}
-                              style={{
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '8px',
-                                padding: '10px 20px',
-                                fontSize: '14px',
-                                backgroundColor: '#0866FF',
-                                color: 'white',
-                                border: 'none',
-                                borderRadius: '6px',
-                                cursor: (isSavingToken || !credentials.accessToken || credentials.accessToken.length < 50) ? 'not-allowed' : 'pointer',
-                                opacity: (isSavingToken || !credentials.accessToken || credentials.accessToken.length < 50) ? 0.6 : 1
-                              }}
                             >
                               {isSavingToken ? 'Guardando...' : 'Continuar'}
                             </Button>
@@ -799,28 +802,16 @@ export const MetaAdsIntegration: React.FC = () => {
                           placeholder="Pega aquí el token generado desde Events Manager"
                           className={styles.formInput}
                         />
-                        <div style={{ marginTop: '12px', display: 'flex', justifyContent: 'center' }}>
-                          <button
+                        <div className={styles.formActions}>
+                          <Button
                             type="button"
+                            variant="primary"
                             onClick={handleSavePixelApiToken}
                             disabled={isSavingPixelToken || !credentials.pixelApiToken}
-                            style={{
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '8px',
-                              padding: '10px 20px',
-                              fontSize: '14px',
-                              backgroundColor: '#10b981',
-                              color: 'white',
-                              border: 'none',
-                              borderRadius: '6px',
-                              cursor: (isSavingPixelToken || !credentials.pixelApiToken) ? 'not-allowed' : 'pointer',
-                              opacity: (isSavingPixelToken || !credentials.pixelApiToken) ? 0.6 : 1
-                            }}
                           >
                             <RefreshCw size={16} className={isSavingPixelToken ? styles.spinning : ''} />
                             {isSavingPixelToken ? 'Guardando...' : 'Guardar Pixel API Token'}
-                          </button>
+                          </Button>
                         </div>
                       </>
                     )}
@@ -897,28 +888,16 @@ export const MetaAdsIntegration: React.FC = () => {
                           placeholder="1234567890123456"
                           className={styles.formInput}
                         />
-                        <div style={{ marginTop: '12px', display: 'flex', justifyContent: 'center' }}>
-                          <button
+                        <div className={styles.formActions}>
+                          <Button
                             type="button"
+                            variant="primary"
                             onClick={handleSavePageId}
                             disabled={isSavingPageId || !credentials.pageId}
-                            style={{
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '8px',
-                              padding: '10px 20px',
-                              fontSize: '14px',
-                              backgroundColor: '#10b981',
-                              color: 'white',
-                              border: 'none',
-                              borderRadius: '6px',
-                              cursor: (isSavingPageId || !credentials.pageId) ? 'not-allowed' : 'pointer',
-                              opacity: (isSavingPageId || !credentials.pageId) ? 0.6 : 1
-                            }}
                           >
                             <RefreshCw size={16} className={isSavingPageId ? styles.spinning : ''} />
                             {isSavingPageId ? 'Guardando...' : 'Guardar Page ID'}
-                          </button>
+                          </Button>
                         </div>
                       </>
                     )}
@@ -934,30 +913,16 @@ export const MetaAdsIntegration: React.FC = () => {
                     <p className={styles.formHint} style={{ marginBottom: '16px' }}>
                       Sincroniza manualmente los datos de Meta Ads (últimos 35 meses). La sincronización automática ocurre cada hora.
                     </p>
-                    <div style={{ display: 'flex', justifyContent: 'center' }}>
-                      <button
+                    <div className={styles.formActions}>
+                      <Button
                         type="button"
+                        variant="primary"
                         onClick={handleSyncMetaAds}
                         disabled={isSyncingMetaAds}
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '8px',
-                          padding: '12px 24px',
-                          fontSize: '14px',
-                          fontWeight: 500,
-                          backgroundColor: '#0866FF',
-                          color: 'white',
-                          border: 'none',
-                          borderRadius: '6px',
-                          cursor: isSyncingMetaAds ? 'not-allowed' : 'pointer',
-                          opacity: isSyncingMetaAds ? 0.6 : 1,
-                          transition: 'all 0.2s ease'
-                        }}
                       >
                         <RefreshCw size={18} className={isSyncingMetaAds ? styles.spinning : ''} />
                         {isSyncingMetaAds ? 'Sincronizando...' : 'Sincronizar datos de Meta Ads'}
-                      </button>
+                      </Button>
                     </div>
                   </div>
                 )}

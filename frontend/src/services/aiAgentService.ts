@@ -26,12 +26,20 @@ export interface AIAgentMessage {
   role: AIAgentRole
   content: string
   attachments?: AIAgentAttachment[]
+  selectedClarificationOption?: AIAgentSelectedClarificationOption
   sources?: Array<{
     title: string
     url: string
   }>
   clarificationOptions?: AIAgentClarificationOption[]
   createdAt?: string
+}
+
+export interface AIAgentSelectedClarificationOption {
+  label: string
+  value: string
+  description?: string
+  assistantMessageId?: string
 }
 
 export interface AIAgentClarificationOption {

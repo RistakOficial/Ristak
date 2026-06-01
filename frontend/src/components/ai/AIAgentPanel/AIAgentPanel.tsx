@@ -191,13 +191,15 @@ function createMessage(
   content: string,
   sources?: AIAgentMessage['sources'],
   clarificationOptions?: AIAgentClarificationOption[],
-  attachments?: AIAgentAttachment[]
+  attachments?: AIAgentAttachment[],
+  selectedClarificationOption?: AIAgentMessage['selectedClarificationOption']
 ): AIAgentMessage {
   return {
     id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
     role,
     content,
     ...(attachments?.length ? { attachments } : {}),
+    ...(selectedClarificationOption ? { selectedClarificationOption } : {}),
     sources,
     clarificationOptions,
     createdAt: new Date().toISOString()
@@ -1592,7 +1594,10 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
     return true
   }
 
-  const sendMessage = async (overrideText?: string) => {
+  const sendMessage = async (
+    overrideText?: string,
+    selectedClarificationOption?: AIAgentMessage['selectedClarificationOption']
+  ) => {
     const messageAttachments = overrideText === undefined ? [...attachmentsRef.current] : []
     const text = (overrideText ?? input).trim()
     const messageText = text || buildAttachmentPrompt(messageAttachments)
@@ -1604,7 +1609,14 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
       return
     }
 
-    const userMessage = createMessage('user', messageText, undefined, undefined, messageAttachments)
+    const userMessage = createMessage(
+      'user',
+      messageText,
+      undefined,
+      undefined,
+      messageAttachments,
+      selectedClarificationOption
+    )
     setInput('')
     setAttachments([])
     setAttachmentError('')
@@ -1662,6 +1674,17 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
         focusComposer()
       }
     }
+  }
+
+  const handleClarificationOptionClick = (assistantMessage: AIAgentMessage, option: AIAgentClarificationOption) => {
+    const visibleLabel = option.label.trim() || 'Seleccionado'
+
+    sendMessage(visibleLabel, {
+      label: visibleLabel,
+      value: option.value,
+      ...(option.description ? { description: option.description } : {}),
+      ...(assistantMessage.id ? { assistantMessageId: assistantMessage.id } : {})
+    })
   }
 
   const stopVoiceMeter = () => {
@@ -2095,12 +2118,12 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
                     <div className={styles.bubble}>{renderMessageContent(message.content)}</div>
                     {message.role === 'assistant' && Boolean(message.clarificationOptions?.length) && (
                       <div className={styles.optionButtons} aria-label="Opciones para aclarar la pregunta">
-                        {message.clarificationOptions?.map((option) => (
+                        {message.clarificationOptions?.map((option, optionIndex) => (
                           <button
-                            key={`${message.id}-${option.value}`}
+                            key={`${message.id}-${optionIndex}-${option.label}`}
                             type="button"
                             className={styles.optionButton}
-                            onClick={() => sendMessage(option.value)}
+                            onClick={() => handleClarificationOptionClick(message, option)}
                             disabled={savingConfig}
                           >
                             <span className={styles.optionLabel}>{option.label}</span>

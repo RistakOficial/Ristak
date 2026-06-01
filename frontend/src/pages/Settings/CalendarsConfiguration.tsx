@@ -156,12 +156,15 @@ export const CalendarsConfiguration: React.FC = () => {
           <div className={styles.pageHeader}>
             <div className={styles.headerContent}>
               <div className={styles.headerLeft}>
-                <div className={styles.logoContainer}>
-                  <Calendar size={32} style={{ color: 'var(--color-text-secondary)' }} />
-                </div>
+              <div className={styles.logoContainer}>
+                <Calendar size={32} style={{ color: 'var(--color-text-secondary)' }} />
+              </div>
+              <div>
+                <h2 className={styles.pageTitle}>Calendarios</h2>
                 <p className={styles.pageSubtitle}>
                   No hay calendarios disponibles
                 </p>
+              </div>
               </div>
               <div className={styles.headerRight}>
                 <div className={styles.statusDisconnected}>

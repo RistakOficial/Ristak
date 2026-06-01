@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { Card, Button } from '@/components/common'
-import { Loader2 } from 'lucide-react'
+import { CheckCircle, CreditCard, Loader2 } from 'lucide-react'
 import { useNotification } from '@/contexts/NotificationContext'
 import styles from './HighLevelIntegration.module.css'
 
@@ -79,10 +79,21 @@ export const PaymentsConfiguration: React.FC = () => {
         <div className={styles.pageHeader}>
           <div className={styles.headerContent}>
             <div className={styles.headerLeft}>
-              <h2 className={styles.pageTitle}>Configuración de Pagos</h2>
-              <p className={styles.pageSubtitle}>
-                Ristak usa GoHighLevel como fuente de cobros, links, domiciliación y parcialidades.
-              </p>
+              <div className={styles.logoContainer}>
+                <CreditCard size={22} />
+              </div>
+              <div>
+                <h2 className={styles.pageTitle}>Pagos</h2>
+                <p className={styles.pageSubtitle}>
+                  Ristak usa GoHighLevel como fuente de cobros, links, domiciliación y parcialidades.
+                </p>
+              </div>
+            </div>
+            <div className={styles.headerRight}>
+              <div className={styles.statusConnected}>
+                <CheckCircle size={16} />
+                <span>Plantilla activa</span>
+              </div>
             </div>
           </div>
         </div>
