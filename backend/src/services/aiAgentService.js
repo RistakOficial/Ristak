@@ -1830,6 +1830,33 @@ function isPaymentTaskText(value) {
   return /(pago|pagos|cobr|invoice|factura|recibo|link de pago|parcial|parcialidad|parcialidades|plan de pagos|plan de cobros|domicili|tarjeta|transfer|deposit|efectivo|mensualidad|cargo|cargos|monto|mxn|\$\s*\d)/.test(normalized)
 }
 
+function isPaymentChoiceOnlyText(value) {
+  const normalized = normalizeText(value)
+  if (!normalized) return false
+  const tokens = normalized
+    .replace(/[^a-z0-9ñ\s]/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean)
+  const isBriefResponse = tokens.length <= 6 && normalized.length <= 80
+
+  if (isBriefResponse && /^(?:si|sí|ok|va|dale|listo|confirmo|confirmar|autorizo|autorizar|correcto|perfecto|hazlo|hazlo asi|hazlo así|ejecuta|adelante|asi es|así es)(?:\b|$)/.test(normalized)) {
+    return true
+  }
+
+  return /^(?:usar|usa|cobrar|cobra|programar|programa)?\s*(?:la\s+|el\s+|una\s+|un\s+)?(?:tarjeta guardada|tarjeta ya guardada|otra tarjeta|tarjeta nueva|link|enlace|whatsapp|sms|correo|email|transferencia|deposito|depósito|efectivo|manual)\s*$/.test(normalized) ||
+    /^(?:cancelar|cancela|no|nop|nel|mejor no)$/.test(normalized)
+}
+
+function getPaymentInstructionUserText(messages, limit = MESSAGE_HISTORY_LIMIT) {
+  const safeMessages = Array.isArray(messages) ? messages.slice(-limit) : []
+
+  return safeMessages
+    .filter((message) => message?.role !== 'assistant')
+    .map((message) => getMessageText(message))
+    .filter((text) => isPaymentTaskText(text) && !isPaymentChoiceOnlyText(text))
+    .join('\n')
+}
+
 function getPaymentRelevantMessages(messages, limit = MESSAGE_HISTORY_LIMIT) {
   const safeMessages = Array.isArray(messages) ? messages : []
   const latestUserIndex = findLatestUserMessageIndex(safeMessages)
@@ -1843,7 +1870,7 @@ function getPaymentRelevantMessages(messages, limit = MESSAGE_HISTORY_LIMIT) {
     const message = safeMessages[index]
     const text = getMessageText(message)
 
-    if (message?.role !== 'assistant' && isPaymentTaskText(text) && !isAffirmativeExecutionIntent(text)) {
+    if (message?.role !== 'assistant' && isPaymentTaskText(text) && !isPaymentChoiceOnlyText(text)) {
       startIndex = index
       foundPaymentStart = true
       continue
@@ -2672,34 +2699,24 @@ function extractSequentialIrregularPaymentScheduleFromText(text, timezone = DEFA
       }
     : null
   const remainingPayments = []
-  let cursorPeriods = 0
   let lastChargeDate = anchorDate
   let pendingWaitNote = ''
+  let hasSeenWait = false
 
   for (const event of events) {
     if (event.kind === 'wait') {
       pendingWaitNote = `Despues de esperar ${getPaymentWaitLabel(event)} sin cobro.`
-
-      if (event.unit === primaryInterval.unit) {
-        cursorPeriods += normalizeInteger(event.count) || 1
-        lastChargeDate = addIntervalToDate(anchorDate, primaryInterval, cursorPeriods, timezone)
-      } else {
-        lastChargeDate = addIntervalToDate(lastChargeDate, { unit: event.unit, count: event.count }, 1, timezone)
-      }
+      lastChargeDate = addIntervalToDate(lastChargeDate, { unit: event.unit, count: event.count }, 1, timezone)
+      hasSeenWait = true
 
       continue
     }
 
     if (event.kind === 'relative') {
       const offset = normalizeInteger(event.count) || 1
-      let dueDate
-
-      if (event.unit === primaryInterval.unit) {
-        cursorPeriods += offset
-        dueDate = addIntervalToDate(anchorDate, primaryInterval, cursorPeriods, timezone)
-      } else {
-        dueDate = addIntervalToDate(lastChargeDate, { unit: event.unit, count: offset }, 1, timezone)
-      }
+      const dueDate = !hasSeenWait
+        ? addIntervalToDate(anchorDate, { unit: event.unit, count: offset }, 1, timezone)
+        : addIntervalToDate(lastChargeDate, { unit: event.unit, count: offset }, 1, timezone)
 
       addSequentialPaymentRow({
         rows: remainingPayments,
@@ -2717,14 +2734,7 @@ function extractSequentialIrregularPaymentScheduleFromText(text, timezone = DEFA
       const interval = event.interval || primaryInterval
 
       for (let index = 0; index < count; index += 1) {
-        let dueDate
-
-        if (interval.unit === primaryInterval.unit) {
-          cursorPeriods += interval.count || 1
-          dueDate = addIntervalToDate(anchorDate, primaryInterval, cursorPeriods, timezone)
-        } else {
-          dueDate = addIntervalToDate(lastChargeDate, interval, 1, timezone)
-        }
+        const dueDate = addIntervalToDate(lastChargeDate, interval, 1, timezone)
 
         addSequentialPaymentRow({
           rows: remainingPayments,
@@ -2740,14 +2750,7 @@ function extractSequentialIrregularPaymentScheduleFromText(text, timezone = DEFA
     }
 
     if (event.kind === 'standalone') {
-      let dueDate
-
-      if (primaryInterval.unit === 'months' || primaryInterval.unit === 'weeks' || primaryInterval.unit === 'days') {
-        cursorPeriods += 1
-        dueDate = addIntervalToDate(anchorDate, primaryInterval, cursorPeriods, timezone)
-      } else {
-        dueDate = addIntervalToDate(lastChargeDate, primaryInterval, 1, timezone)
-      }
+      const dueDate = addIntervalToDate(lastChargeDate, primaryInterval, 1, timezone)
 
       addSequentialPaymentRow({
         rows: remainingPayments,
@@ -2964,10 +2967,13 @@ function enrichInstallmentPaymentArgs(inputArgs = {}, messages = [], timezone = 
   }
   const conversationText = getPaymentConversationText(messages)
   const userConversationText = getPaymentUserConversationText(messages) || conversationText
+  const instructionUserText = getPaymentInstructionUserText(messages)
+  const paymentInstructionText = instructionUserText || userConversationText || conversationText
   const scheduledDate = getTopLevelScheduledPaymentDate(args, messages, timezone)
-  const conversationAmount = extractPaymentAmountFromText(userConversationText)
-  const recurringAmountPlan = extractRecurringAmountPlanFromText(userConversationText, timezone)
-  const irregularSchedulePlan = extractIrregularPaymentScheduleFromText(userConversationText, timezone)
+  const conversationAmount = extractPaymentAmountFromText(paymentInstructionText)
+  const recurringAmountPlan = extractRecurringAmountPlanFromText(paymentInstructionText, timezone)
+  const irregularSchedulePlan = extractIrregularPaymentScheduleFromText(userConversationText, timezone) ||
+    extractIrregularPaymentScheduleFromText(paymentInstructionText, timezone)
 
   if (irregularSchedulePlan) {
     args.totalAmount = irregularSchedulePlan.totalAmount
@@ -3000,7 +3006,7 @@ function enrichInstallmentPaymentArgs(inputArgs = {}, messages = [], timezone = 
   const remainingAmount = normalizePaymentAmount(totalAmount - firstPaymentAmount)
   const cardPreference = resolveStoredCardPreference(args, messages)
   const contactHint = extractPaymentContactHintFromConversation(messages)
-  const productHint = extractPaymentProductHintFromText(userConversationText) || extractPaymentProductHintFromText(conversationText)
+  const productHint = extractPaymentProductHintFromText(paymentInstructionText) || extractPaymentProductHintFromText(conversationText)
 
   if (!args.totalAmount && !args.total && !args.amount && conversationAmount > 0) {
     args.totalAmount = conversationAmount
@@ -3025,11 +3031,11 @@ function enrichInstallmentPaymentArgs(inputArgs = {}, messages = [], timezone = 
   }
 
   if (!args.currency) {
-    args.currency = extractPaymentCurrencyFromText(userConversationText)
+    args.currency = extractPaymentCurrencyFromText(paymentInstructionText)
   }
 
   if (!args.concept && !args.description) {
-    args.concept = extractPaymentConceptFromText(userConversationText)
+    args.concept = extractPaymentConceptFromText(paymentInstructionText)
   }
 
   if (!args.contactId && !args.contactName && !args.contactHint && contactHint) {
@@ -3050,7 +3056,7 @@ function enrichInstallmentPaymentArgs(inputArgs = {}, messages = [], timezone = 
     args.forceCardSetup = cardPreference === 'new_card'
   }
 
-  if (args.remainingAutomatic === undefined && args.automatic === undefined && hasAutomaticStoredCardPaymentIntent(userConversationText)) {
+  if (args.remainingAutomatic === undefined && args.automatic === undefined && hasAutomaticStoredCardPaymentIntent(paymentInstructionText)) {
     args.remainingAutomatic = true
   }
 
