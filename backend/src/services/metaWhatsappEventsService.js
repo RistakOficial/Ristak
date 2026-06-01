@@ -463,18 +463,6 @@ async function sendMetaWhatsappEvent({
     return { sent: false, reason: 'missing_ctwa_clid' }
   }
 
-  if (!userData.whatsapp_business_account_id) {
-    await logMetaEvent({
-      contactId,
-      eventType,
-      metaEventName,
-      eventId,
-      status: 'skipped',
-      errorMessage: 'Falta WhatsApp Business Account ID para Meta Business Messaging'
-    })
-    return { sent: false, reason: 'missing_whatsapp_business_account_id' }
-  }
-
   const enrichedCustomData = buildBusinessMessagingCustomData(customData, contact, whatsappAttribution)
   const payload = {
     data: [
