@@ -2024,7 +2024,7 @@ function getPaymentAmountMatchesFromText(text, { requireMoneyMarker = false } = 
     const followingText = source.slice(pattern.lastIndex, pattern.lastIndex + 18)
 
     if (requireMoneyMarker && !hasMoneyMarker) continue
-    if (!hasMoneyMarker && /\b(?:dia|dias|semana|semanas|mes|meses)\b/i.test(followingText)) continue
+    if (!hasMoneyMarker && /^\s*(?:dia|dias|semana|semanas|mes|meses)\b/i.test(followingText)) continue
 
     matches.push({
       amount,
