@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
-import { ArrowUp, Bot, Check, Copy, Eraser, File as FileIcon, FileText, Image as ImageIcon, KeyRound, MessageCircle, Mic, Paperclip, Pause, SendHorizonal, Sparkles, Video as VideoIcon, X } from 'lucide-react'
+import { ArrowUp, Bot, CalendarPlus, Check, Copy, CreditCard, Eraser, File as FileIcon, FileText, GitBranch, Image as ImageIcon, KeyRound, MessageCircle, Mic, Paperclip, Pause, SendHorizonal, Sparkles, TrendingUp, Video as VideoIcon, X } from 'lucide-react'
 import { aiAgentService, type AIAgentAttachment, type AIAgentAttachmentKind, type AIAgentBusinessContextField, type AIAgentClarificationOption, type AIAgentConfigInput, type AIAgentConfigStatus, type AIAgentMessage, type AIAgentViewContext } from '@/services/aiAgentService'
 import { useNotification } from '@/contexts/NotificationContext'
 import styles from './AIAgentPanel.module.css'
@@ -49,11 +49,31 @@ type AIAgentAttachmentDraft = AIAgentAttachment & {
   previewUrl?: string
 }
 
-const suggestions = [
-  'Dime que debería revisar hoy del negocio.',
-  'Explícame esta vista y detecta algo importante.',
-  'Qué oportunidades ves para vender más?',
-  'Qué riesgos ves en pagos, citas o campañas?'
+const quickActions = [
+  {
+    label: 'ROI de anuncios',
+    description: 'ROAS, utilidad y qué campañas escalar o cortar.',
+    prompt: 'Analiza el retorno de inversión de mis anuncios: gasto, ingresos atribuidos, ROAS, utilidad y qué campañas debo escalar, mantener o cortar.',
+    Icon: TrendingUp
+  },
+  {
+    label: 'Cobrar cliente',
+    description: 'Busca el contacto y prepara el cobro correcto.',
+    prompt: 'Quiero cobrarle a un cliente. Ayúdame a encontrar el contacto correcto y dime qué datos te faltan para enviar link de pago o cobrar con tarjeta guardada.',
+    Icon: CreditCard
+  },
+  {
+    label: 'Agendar cita',
+    description: 'Encuentra al contacto y prepara la cita.',
+    prompt: 'Quiero agendar una cita. Ayúdame a encontrar el contacto correcto, revisar el calendario y dime qué fecha, hora y duración necesitas.',
+    Icon: CalendarPlus
+  },
+  {
+    label: 'Mandar a workflow',
+    description: 'Resuelve contacto y workflow antes de ejecutar.',
+    prompt: 'Quiero mandar a un contacto a un workflow. Ayúdame a encontrar el contacto correcto y seleccionar el workflow adecuado antes de ejecutarlo.',
+    Icon: GitBranch
+  }
 ]
 
 const routeLabels: Record<string, string> = {
@@ -2090,15 +2110,21 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
                 </p>
                 {status.configured && (
                   <div className={styles.suggestions}>
-                    {suggestions.map((suggestion) => (
+                    {quickActions.map(({ label, description, prompt, Icon }) => (
                       <button
-                        key={suggestion}
+                        key={label}
                         type="button"
                         className={styles.suggestionButton}
-                        onClick={() => sendMessage(suggestion)}
+                        onClick={() => sendMessage(prompt)}
                         disabled={savingConfig}
                       >
-                        <Sparkles size={13} /> {suggestion}
+                        <span className={styles.suggestionIcon}>
+                          <Icon size={16} />
+                        </span>
+                        <span className={styles.suggestionCopy}>
+                          <span className={styles.suggestionLabel}>{label}</span>
+                          <span className={styles.suggestionDescription}>{description}</span>
+                        </span>
                       </button>
                     ))}
                   </div>

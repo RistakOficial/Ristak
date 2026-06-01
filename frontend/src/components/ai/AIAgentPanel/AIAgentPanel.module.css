@@ -359,20 +359,21 @@
 }
 
 .suggestions {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
 }
 
 .suggestionButton {
-  width: 100%;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: flex-start;
+  gap: 10px;
   padding: 12px 14px;
   border: 1px solid rgba(148, 163, 184, 0.18);
   border-radius: 8px;
   background: rgba(148, 163, 184, 0.06);
-  color: var(--color-text-secondary);
-  font-size: 14px;
-  line-height: 1.45;
+  color: var(--color-text-primary);
   text-align: left;
   transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
 }
@@ -381,6 +382,37 @@
   color: var(--color-text-primary);
   background: rgba(148, 163, 184, 0.1);
   border-color: rgba(148, 163, 184, 0.28);
+}
+
+.suggestionIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--color-text-primary) 8%, transparent);
+  color: var(--color-text-primary);
+  flex-shrink: 0;
+}
+
+.suggestionCopy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 3px;
+}
+
+.suggestionLabel {
+  font-size: 13px;
+  font-weight: 780;
+  line-height: 1.25;
+}
+
+.suggestionDescription {
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  line-height: 1.35;
 }
 
 .messages {
@@ -1365,6 +1397,10 @@
 
   .setupButton {
     width: 100%;
+  }
+
+  .suggestions {
+    grid-template-columns: 1fr;
   }
 
   .floatingButton {

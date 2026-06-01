@@ -1785,6 +1785,60 @@ function buildPaymentConfirmationRequiredOutput({ action, summary = {}, clarific
   }
 }
 
+function buildPaymentScheduleIncompleteOutput({
+  contact,
+  totalAmount,
+  currency,
+  firstPayment,
+  remainingPayments,
+  expectedChargeCount,
+  actualChargeCount,
+  plannedTotal,
+  reason
+} = {}) {
+  return {
+    ok: false,
+    scheduleIncomplete: true,
+    error: reason || 'El calendario de cobros parece incompleto frente a la instrucción original del usuario.',
+    expectedChargeCount,
+    actualChargeCount,
+    plannedTotal,
+    declaredTotalAmount: totalAmount,
+    currency,
+    contact: contact
+      ? {
+          id: contact.id,
+          name: contact.name,
+          email: contact.email || null,
+          phone: contact.phone || null
+        }
+      : null,
+    parsedSchedule: {
+      firstPayment: firstPayment?.enabled
+        ? {
+            amount: firstPayment.amount,
+            date: firstPayment.date,
+            method: firstPayment.method
+          }
+        : null,
+      remainingPayments: Array.isArray(remainingPayments)
+        ? remainingPayments.map((payment) => ({
+            sequence: payment.sequence,
+            amount: payment.amount,
+            dueDate: payment.dueDate
+          }))
+        : []
+    },
+    repairInstructions: [
+      'No muestres este calendario ni pidas confirmación todavía.',
+      'Vuelve a llamar create_installment_payment_flow corrigiendo la lista remainingPayments.',
+      'Cada frase "por N meses" agrega N cobros reales, y cada frase posterior como "le vuelves a cobrar" agrega otro cobro real.',
+      'Si el último cobro cambia de monto, no reemplaza uno anterior: es un cobro adicional.',
+      'Recalcula totalAmount como la suma de todos los cobros reales.'
+    ].join(' ')
+  }
+}
+
 function buildFirstPaymentMethodClarificationOptions(storedCardStatus = {}) {
   const options = []
 
@@ -2006,6 +2060,61 @@ function normalizeInteger(value) {
   const number = Number(value)
   if (!Number.isFinite(number)) return 0
   return Math.max(0, Math.floor(number))
+}
+
+function parseSmallSpanishCount(value) {
+  const normalized = normalizeText(value)
+  const directNumber = normalizeInteger(normalized)
+  if (directNumber > 0) return directNumber
+
+  const words = {
+    un: 1,
+    uno: 1,
+    una: 1,
+    dos: 2,
+    tres: 3,
+    cuatro: 4,
+    cinco: 5,
+    seis: 6,
+    siete: 7,
+    ocho: 8,
+    nueve: 9,
+    diez: 10
+  }
+
+  return words[normalized] || 0
+}
+
+function estimateMinimumPaymentChargeCountFromText(value) {
+  const normalized = normalizeText(value)
+  if (!/(cobr|cubr|cargo|pago|program)/.test(normalized) || !/(mes|sucesivamente|parcial|program)/.test(normalized)) return 0
+
+  let expectedCount = 0
+  const immediateChargePattern = /(?:cobr|cubr|cargo|pago|program).{0,100}(?:en este momento|ahorita|hoy)|(?:en este momento|ahorita|hoy).{0,100}(?:cobr|cubr|cargo|pago|program)/
+  if (immediateChargePattern.test(normalized)) expectedCount += 1
+
+  const countToken = '(\\d+|un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)'
+  const seriesPattern = new RegExp(`(?:asi\\s+sucesivamente\\s+por|sucesivamente\\s+por|durante|por)\\s+${countToken}\\s+mes(?:es)?`, 'g')
+  let lastSeriesEnd = -1
+  let match
+
+  while ((match = seriesPattern.exec(normalized)) !== null) {
+    const seriesCount = parseSmallSpanishCount(match[1])
+    if (seriesCount > 0) {
+      expectedCount += seriesCount
+      lastSeriesEnd = Math.max(lastSeriesEnd, match.index + match[0].length)
+    }
+  }
+
+  const afterSeriesText = lastSeriesEnd >= 0 ? normalized.slice(lastSeriesEnd) : normalized
+  const laterChargeMatches = [...afterSeriesText.matchAll(/\b(?:le\s+)?(?:vuelves?|vuelve|volver(?:as)?|otra vez|de nuevo)(?=.{0,60}\b(?:cobr|cubr)\w*)/g)]
+  expectedCount += laterChargeMatches.length
+
+  return expectedCount >= 4 ? expectedCount : 0
+}
+
+function estimateMinimumPaymentChargeCount(messages = []) {
+  return estimateMinimumPaymentChargeCountFromText(getPaymentConversationText(messages))
 }
 
 function normalizeIntervalUnit(value, frequency = 'monthly') {
@@ -4870,6 +4979,40 @@ async function executeCreateInstallmentPaymentFlow(args = {}, highLevelConnectio
         }))
       ]
     : remaining.payments
+  const expectedChargeCount = estimateMinimumPaymentChargeCount(context.messages)
+  const actualChargeCount = (firstPayment.enabled ? 1 : 0) + remaining.payments.length
+  const plannedTotal = normalizePaymentAmount(
+    (firstPayment.enabled ? firstPayment.amount : 0) +
+    remaining.payments.reduce((sum, payment) => sum + normalizePaymentAmount(payment.amount), 0)
+  )
+
+  if (expectedChargeCount > 0 && actualChargeCount < expectedChargeCount) {
+    return buildPaymentScheduleIncompleteOutput({
+      contact,
+      totalAmount,
+      currency,
+      firstPayment,
+      remainingPayments: remaining.payments,
+      expectedChargeCount,
+      actualChargeCount,
+      plannedTotal,
+      reason: `La instrucción original sugiere al menos ${expectedChargeCount} cobros reales, pero el plan armado trae ${actualChargeCount}.`
+    })
+  }
+
+  if (plannedTotal > 0 && totalAmount > 0 && Math.abs(plannedTotal - totalAmount) >= 0.01) {
+    return buildPaymentScheduleIncompleteOutput({
+      contact,
+      totalAmount,
+      currency,
+      firstPayment,
+      remainingPayments: remaining.payments,
+      expectedChargeCount: expectedChargeCount || actualChargeCount,
+      actualChargeCount,
+      plannedTotal,
+      reason: `La suma de los cobros (${plannedTotal} ${currency}) no coincide con el total declarado (${totalAmount} ${currency}).`
+    })
+  }
 
   if (!hasExplicitPaymentExecutionConfirmation(context.messages)) {
     return buildPaymentConfirmationRequiredOutput({
@@ -5749,7 +5892,7 @@ function buildHighLevelTools(highLevelConnection, options = {}) {
     {
       type: 'function',
       name: 'create_installment_payment_flow',
-      description: 'Crea un cobro por parcialidades, domiciliación o cargos automáticos futuros usando la lógica interna segura de Ristak. Úsala para planes con o sin primer pago, cargos programados a tarjeta guardada, pagos programados únicos con fecha futura, órdenes de domiciliar el resto o cargos futuros como "el 10 de junio cobra 100" o "en un año cobra X y tres meses después Y". Si el usuario dice "10 ahorita y luego el mismo día durante los siguientes 3 meses", eso es firstPayment hoy por 10 y remainingPayments mensuales futuros, no 3 cobros hoy. Si dice "espera un mes y luego cobra", salta ese periodo con afterMonths/afterPeriods; no crees pagos de 0. Si el usuario pide "hacer una nueva" en un hilo donde ya se resolvió contacto, reutiliza el contactId de la memoria operacional. Esta herramienta detecta tarjeta guardada en Ristak/GoHighLevel; si el primer pago es transferencia/depósito/manual lo registra offline, y si el resto es automático y falta tarjeta, envía domiciliación. Si hay tarjeta guardada no manda domiciliación salvo que el usuario pida otra tarjeta. Si se necesita enviar link de primer pago o domiciliación y el usuario no eligió canal, pregunta all/email/sms/whatsapp antes de ejecutar. generate/none no es válido para domiciliación o tarjeta porque el formulario real requiere envío. Nunca se ejecuta sin confirmación explícita previa del usuario.',
+      description: 'Crea un cobro por parcialidades, domiciliación o cargos automáticos futuros usando la lógica interna segura de Ristak. Úsala para planes con o sin primer pago, cargos programados a tarjeta guardada, pagos programados únicos con fecha futura, órdenes de domiciliar el resto o cargos futuros como "el 10 de junio cobra 100" o "en un año cobra X y tres meses después Y". Si el usuario dice "10 ahorita y luego el mismo día durante los siguientes 3 meses", eso es firstPayment hoy por 10 y remainingPayments mensuales futuros, no 3 cobros hoy. Si dice "espera un mes y luego cobra", salta ese periodo con afterMonths/afterPeriods; no crees pagos de 0. En instrucciones compuestas, cuenta cada tramo: "por dos meses" son 2 cobros reales y cada "le vuelves a cobrar" posterior es otro cobro adicional; si el último dice "esta vez 20", ese 20 no reemplaza el mes anterior, es el último cobro extra. Si el usuario pide "hacer una nueva" en un hilo donde ya se resolvió contacto, reutiliza el contactId de la memoria operacional. Esta herramienta detecta tarjeta guardada en Ristak/GoHighLevel; si el primer pago es transferencia/depósito/manual lo registra offline, y si el resto es automático y falta tarjeta, envía domiciliación. Si hay tarjeta guardada no manda domiciliación salvo que el usuario pida otra tarjeta. Si se necesita enviar link de primer pago o domiciliación y el usuario no eligió canal, pregunta all/email/sms/whatsapp antes de ejecutar. generate/none no es válido para domiciliación o tarjeta porque el formulario real requiere envío. Nunca se ejecuta sin confirmación explícita previa del usuario.',
       parameters: {
         type: 'object',
         properties: {
@@ -5806,7 +5949,7 @@ function buildHighLevelTools(highLevelConnection, options = {}) {
           splitRemainingPaymentCount: { type: ['number', 'null'], description: 'Cuando ya hay pagos personalizados y el usuario pide dividir el saldo restante en N pagos iguales.' },
           remainingPayments: {
             type: ['array', 'null'],
-            description: 'Parcialidades restantes reales. No incluyas meses sin cobro como monto 0; usa skip/noCharge sólo para representar huecos o usa afterMonths/afterPeriods en el siguiente cobro real.',
+            description: 'Parcialidades restantes reales. No incluyas meses sin cobro como monto 0; usa skip/noCharge sólo para representar huecos o usa afterMonths/afterPeriods en el siguiente cobro real. Si el usuario mezcla "por N meses" con más frases "vuelve a cobrar", crea un objeto separado por cada cobro real.',
             items: {
               type: 'object',
               properties: {
@@ -6633,6 +6776,8 @@ const PAYMENT_WORKFLOW_PROMPT = [
   '- Cuando el usuario elija una opción/botón del flujo, trátala como respuesta válida al paso actual. Avanza con una respuesta corta y no vuelvas a pegar el resumen completo salvo que sea la confirmación final obligatoria.',
   '- En planes de parcialidades, cobros programados o calendarios raros, el resumen de confirmación debe incluir una tabla Markdown compacta con cada cobro: #, fecha exacta, monto, método/acción y estado/envío. Esto sí es excepción a la regla general de evitar tablas.',
   '- Para parcialidades nunca respondas sólo "hoy, en 1 mes y en 2 meses"; calcula y muestra fechas absolutas usando la fecha/hora local disponible.',
+  '- Descompón la frase del usuario por tramos temporales. "Por N meses" crea N cobros; si después dice "te esperas un mes, le vuelves a cobrar" eso agrega otro cobro; y si luego dice "te esperas otro mes y le vuelves a cobrar, pero esta vez 20" agrega otro cobro final de 20. No mezcles el cobro final con el último mes de la serie.',
+  '- Si create_installment_payment_flow devuelve scheduleIncomplete, NO muestres ese plan ni pidas confirmación. Corrige la lista de cobros y vuelve a llamar la herramienta con todos los cobros reales y el total recalculado.',
   '- Si después del resumen el usuario responde afirmativamente pero agrega cambios como "pero", "solo pon", "cambia", "agrega descripción", "mejor por WhatsApp", "con tarjeta guardada", etc., eso NO es confirmación final. Actualiza el plan con la herramienta interna y vuelve a pedir confirmación con el resumen nuevo.',
   '- Sólo ejecuta cuando el último mensaje sea una autorización limpia sobre el resumen vigente, por ejemplo "sí, confirmar", "sí, dale", "confirmo" o el botón de confirmación, sin cambios extra. "Sí, confirmar" y el botón con valor interno de confirmación final significan ejecutar ahora; no pidas "sí, ejecutar" después.',
   '- Cobro único con tarjeta: si no hay tarjeta guardada/autorizada, el link de pago es obligatorio y debes pedir canal de envío si falta. Si sí hay tarjeta guardada, pregunta una sola vez si se cobra la tarjeta guardada o se manda link.',
