@@ -8,7 +8,6 @@ import {
   AlertCircle,
   Eye,
   EyeOff,
-  Copy,
   Check,
   RefreshCw,
   Trash2,
@@ -51,7 +50,6 @@ export const HighLevelIntegration: React.FC = () => {
   const [integrationStatus, setIntegrationStatus] = useState<IntegrationStatus | null>(null)
   const [ghlConfig, setGhlConfig] = useState<any>(null)
   const [isEditMode, setIsEditMode] = useState(false)
-  const [copiedScopes, setCopiedScopes] = useState<Set<string>>(new Set())
   const [showDisconnectModal, setShowDisconnectModal] = useState(false)
 
   // Estados para labels personalizados
@@ -94,34 +92,6 @@ export const HighLevelIntegration: React.FC = () => {
 
   const customerOptions = ['Cliente', 'Paciente', 'Proyecto', 'Miembro', 'Alumno']
   const leadOptions = ['Interesado', 'Prospecto', 'Mensaje', 'Lead', 'Consulta']
-
-  const scopes = [
-    'payments.readonly',
-    'payments.write',
-    'invoices.readonly',
-    'invoices.write',
-    'invoices/schedule.readonly',
-    'invoices/schedule.write',
-    'contacts.readonly',
-    'contacts.write',
-    'opportunities.readonly',
-    'opportunities.write',
-    'products.readonly',
-    'products.write',
-    'calendars.readonly',
-    'calendars.write',
-    'calendars/events.readonly',
-    'calendars/events.write',
-    'locations.readonly',
-    'businesses.readonly',
-    'businesses.write',
-    'calendars/resources.readonly',
-    'calendars/resources.write',
-    'conversations.readonly',
-    'conversations.write',
-    'conversations/message.readonly',
-    'conversations/message.write'
-  ]
 
   useEffect(() => {
     loadIntegrationStatus()
@@ -240,22 +210,6 @@ export const HighLevelIntegration: React.FC = () => {
       showToast('error', 'Error', error?.message || 'Error al sincronizar los datos')
     } finally {
       setCheckingStatus(false)
-    }
-  }
-
-  const copyScopeToClipboard = async (scope: string) => {
-    try {
-      await navigator.clipboard.writeText(scope)
-      setCopiedScopes(prev => new Set(prev).add(scope))
-      setTimeout(() => {
-        setCopiedScopes(prev => {
-          const newSet = new Set(prev)
-          newSet.delete(scope)
-          return newSet
-        })
-      }, 2000)
-    } catch (error) {
-      showToast('error', 'Error', 'No se pudo copiar al portapapeles')
     }
   }
 
@@ -505,33 +459,6 @@ export const HighLevelIntegration: React.FC = () => {
             </h3>
           </div>
 
-          {/* Scopes Requeridos - Visible siempre arriba */}
-          <div className={styles.infoBox} style={{ marginBottom: '24px' }}>
-            <div className={styles.infoBoxTitle}>
-              <Info size={16} />
-              <span>Scopes Requeridos para el API Token</span>
-            </div>
-            <p style={{ fontSize: '13px', color: 'var(--color-text-secondary)', marginBottom: '12px' }}>
-              Al crear tu API Token en HighLevel, asegúrate de seleccionar estos permisos:
-            </p>
-            <div className={styles.scopesGrid}>
-              {scopes.map((scope) => (
-                <div
-                  key={scope}
-                  className={`${styles.scopeItem} ${copiedScopes.has(scope) ? styles.scopeCopied : ''}`}
-                  onClick={() => copyScopeToClipboard(scope)}
-                >
-                  <span>{scope}</span>
-                  {copiedScopes.has(scope) ? (
-                    <Check size={14} />
-                  ) : (
-                    <Copy size={14} />
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-
           <div className={styles.setupSteps}>
             {/* Paso 1 */}
             <div className={styles.step}>
@@ -539,7 +466,7 @@ export const HighLevelIntegration: React.FC = () => {
               <div className={styles.stepContent}>
                 <h4 className={styles.stepTitle}>Obtén tu Location ID</h4>
                 <p className={styles.stepDescription}>
-                  Ve a tu cuenta de HighLevel, entra a Settings {'>'} Business Profile
+                  Ve a HighLevel, entra a Settings {'>'} Business Profile y busca el Location ID en la esquina superior derecha del primer contenedor, cerca de la zona donde aparece la foto o perfil.
                 </p>
                 <div className={styles.stepBody}>
                   <div className={styles.formGroup}>
@@ -565,9 +492,24 @@ export const HighLevelIntegration: React.FC = () => {
               <div className={styles.stepContent}>
                 <h4 className={styles.stepTitle}>Crea un API Token</h4>
                 <p className={styles.stepDescription}>
-                  En HighLevel, ve a Settings {'>'} Integrations {'>'} API Key y selecciona los scopes listados arriba
+                  Crea una integración privada en HighLevel, selecciona todos los ámbitos/scopes y copia el token generado.
                 </p>
                 <div className={styles.stepBody}>
+                  <div className={styles.stepGuidePanel}>
+                    <div className={styles.stepGuideTitle}>
+                      <Info size={15} />
+                      <span>Instrucciones para crear el token</span>
+                    </div>
+                    <ol className={styles.integrationGuide}>
+                      <li>En HighLevel ve a <strong>Settings {'>'} Integrations {'>'} Private Integrations</strong> / <strong>Integraciones privadas</strong>.</li>
+                      <li>Haz clic en <strong>Create new integration</strong> / <strong>Crear nueva integración</strong>.</li>
+                      <li>Escribe el nombre <strong>"Ristak"</strong>. La descripción es opcional.</li>
+                      <li>En <strong>Scopes</strong> o <strong>Ámbitos</strong>, abre la caja desplegable y selecciona <strong>Select all</strong> / <strong>Seleccionar todo</strong>.</li>
+                      <li>Baja hasta el final y haz clic en <strong>Create</strong> / <strong>Crear</strong>.</li>
+                      <li>Cuando aparezca el token largo, pulsa <strong>Copy</strong> / <strong>Copiar</strong>, cierra la confirmación y pega ese token aquí abajo.</li>
+                    </ol>
+                  </div>
+
                   <div className={styles.formGroup}>
                     <label className={styles.formLabel}>API Token</label>
                     <div className={styles.inputGroup}>
@@ -587,7 +529,7 @@ export const HighLevelIntegration: React.FC = () => {
                       </button>
                     </div>
                     <div className={styles.formHint}>
-                      El token generado con los permisos necesarios
+                      Pega aquí el token largo que HighLevel te mostró después de crear la integración.
                     </div>
                   </div>
                 </div>

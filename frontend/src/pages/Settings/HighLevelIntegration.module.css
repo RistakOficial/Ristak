@@ -368,6 +368,49 @@ body.dark .formInput:focus {
   color: var(--color-text-secondary);
 }
 
+.integrationGuide {
+  display: grid;
+  gap: 10px;
+  list-style: decimal;
+  margin: 12px 0 0;
+  padding-left: 22px;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.integrationGuide li::marker {
+  color: var(--color-text-primary);
+  font-weight: 700;
+}
+
+.integrationGuide li {
+  display: list-item;
+}
+
+.integrationGuide strong {
+  color: var(--color-text-primary);
+  font-weight: 750;
+}
+
+.stepGuidePanel {
+  padding: 12px;
+  margin-bottom: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 8px;
+  background: rgba(148, 163, 184, 0.055);
+}
+
+.stepGuideTitle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  color: var(--color-text-primary);
+  font-size: 13px;
+  font-weight: 750;
+}
+
 /* Labels customization */
 .labelsGrid {
   display: grid;
@@ -2095,6 +2138,49 @@ textarea.input {
   color: var(--color-text-primary);
 }
 
+.integrationGuide {
+  display: grid;
+  gap: 10px;
+  list-style: decimal;
+  margin: 12px 0 0;
+  padding-left: 22px;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.integrationGuide li::marker {
+  color: var(--color-text-primary);
+  font-weight: 700;
+}
+
+.integrationGuide li {
+  display: list-item;
+}
+
+.integrationGuide strong {
+  color: var(--color-text-primary);
+  font-weight: 750;
+}
+
+.stepGuidePanel {
+  padding: 12px;
+  margin-bottom: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 8px;
+  background: rgba(148, 163, 184, 0.055);
+}
+
+.stepGuideTitle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  color: var(--color-text-primary);
+  font-size: 13px;
+  font-weight: 750;
+}
+
 .successBox {
   border-color: rgba(16, 185, 129, 0.22);
   background: rgba(16, 185, 129, 0.08);
@@ -2107,7 +2193,7 @@ textarea.input {
 
 .setupSteps {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
   gap: 14px;
   margin: 0;
 }
