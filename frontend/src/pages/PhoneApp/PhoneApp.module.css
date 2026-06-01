@@ -1,10 +1,13 @@
 .phonePage {
+  --phone-frame-bg: color-mix(in srgb, var(--color-background-primary) 92%, #ffffff 8%);
+  --phone-header-bg: color-mix(in srgb, var(--color-background-secondary) 96%, var(--color-background-primary) 4%);
   position: fixed;
   inset: 0;
+  isolation: isolate;
   display: flex;
   align-items: stretch;
   justify-content: center;
-  width: 100%;
+  width: 100vw;
   max-width: 100%;
   height: 100dvh;
   min-height: 100dvh;
@@ -13,13 +16,26 @@
   background:
     linear-gradient(180deg, rgba(16, 185, 129, 0.08), transparent 34%),
     linear-gradient(135deg, rgba(245, 158, 11, 0.08), transparent 42%),
-    var(--color-background-primary);
-  overflow: hidden;
+    var(--phone-frame-bg);
+  overflow: visible;
   overscroll-behavior: none;
+}
+
+.phonePage::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 100%;
+  height: env(safe-area-inset-top, 0px);
+  background: var(--phone-header-bg);
+  pointer-events: none;
+  z-index: 0;
 }
 
 .phoneFrame {
   position: relative;
+  z-index: 1;
   isolation: isolate;
   display: grid;
   grid-template-rows: auto auto auto minmax(0, 1fr);
@@ -28,21 +44,11 @@
   height: 100dvh;
   min-height: 100dvh;
   max-height: 100dvh;
-  background: color-mix(in srgb, var(--color-background-primary) 92%, #ffffff 8%);
+  background: var(--phone-frame-bg);
   border-inline: 0;
   box-shadow: none;
   contain: size layout paint;
   overflow: hidden;
-}
-
-.phoneFrame::before {
-  content: '';
-  position: absolute;
-  inset: 0 0 auto;
-  height: calc(env(safe-area-inset-top) + 92px);
-  background: color-mix(in srgb, var(--color-background-secondary) 96%, var(--color-background-primary) 4%);
-  pointer-events: none;
-  z-index: 0;
 }
 
 .header {
@@ -56,7 +62,7 @@
   min-width: 0;
   min-height: calc(74px + env(safe-area-inset-top));
   padding: calc(env(safe-area-inset-top) + 14px) 14px 12px;
-  background: transparent;
+  background: var(--phone-header-bg);
   backdrop-filter: blur(16px);
   border-bottom: 1px solid rgba(148, 163, 184, 0.12);
 }
