@@ -12,7 +12,6 @@ import {
   MessageSquareText,
   RefreshCw,
   ShieldCheck,
-  XCircle
 } from 'lucide-react'
 import { SiWhatsapp } from 'react-icons/si'
 import {
@@ -192,6 +191,7 @@ export const WhatsAppCoexistence: React.FC = () => {
   const hasAppCredentials = Boolean(form.appId && (form.appSecret || config.appSecretConfigured))
   const hasConfigId = Boolean(form.embeddedSignupConfigId)
   const hasWebhookToken = Boolean(form.webhookVerifyToken || config.webhookVerifyTokenConfigured)
+  const isConnected = config.connectionStatus === 'connected'
   const isReadyToSave = Boolean(hasAppCredentials && hasConfigId && hasWebhookToken)
 
   const setupSteps = useMemo(() => ([
@@ -218,9 +218,9 @@ export const WhatsAppCoexistence: React.FC = () => {
     {
       title: 'Conectar',
       description: 'Abrir conexión',
-      done: config.connectionStatus === 'connected'
+      done: isConnected
     }
-  ]), [config.configured, config.connectionStatus, hasAppCredentials, hasConfigId, hasWebhookToken])
+  ]), [config.configured, hasAppCredentials, hasConfigId, hasWebhookToken, isConnected])
 
   const completedSteps = setupSteps.filter(step => step.done).length
   const canLaunchSignup = Boolean(
@@ -701,16 +701,18 @@ export const WhatsAppCoexistence: React.FC = () => {
                 </p>
               </div>
             </div>
-            <div className={styles.headerRight}>
-              <div className={getStatusClassName(config.connectionStatus)}>
-                {config.connectionStatus === 'connected' ? <CheckCircle size={16} /> : <XCircle size={16} />}
-                <span>{getStatusLabel(config.connectionStatus)}</span>
+            {isConnected && (
+              <div className={styles.headerRight}>
+                <div className={getStatusClassName(config.connectionStatus)}>
+                  <CheckCircle size={16} />
+                  <span>{getStatusLabel(config.connectionStatus)}</span>
+                </div>
               </div>
-            </div>
+            )}
           </div>
         </div>
 
-        <div className={styles.workspace}>
+        <div className={[styles.workspace, !isConnected ? styles.workspaceSetupOnly : ''].filter(Boolean).join(' ')}>
           <div className={styles.primaryColumn}>
             <section className={`${styles.section} ${styles.wizardSection}`}>
               <div className={styles.sectionHeader}>
@@ -771,7 +773,7 @@ export const WhatsAppCoexistence: React.FC = () => {
 
             </section>
 
-            {config.connectionStatus === 'connected' && (
+            {isConnected && (
               <section className={styles.section}>
                 <div className={styles.sectionHeader}>
                   <div>
@@ -808,49 +810,51 @@ export const WhatsAppCoexistence: React.FC = () => {
             )}
           </div>
 
-          <aside className={styles.statusRail}>
-            <div className={styles.railBlock}>
-              <div className={styles.railHeader}>
-                <ShieldCheck size={18} />
-                <span>Número</span>
-              </div>
-              <strong className={styles.railPrimaryValue}>{config.displayPhoneNumber || 'Pendiente'}</strong>
-              <span className={styles.railSecondaryValue}>{config.verifiedName || getStatusLabel(config.connectionStatus)}</span>
-              <div className={styles.railMeta}>
-                <span>WABA</span>
-                <strong>{config.wabaId || '-'}</strong>
-                <span>Phone ID</span>
-                <strong>{config.phoneNumberId || '-'}</strong>
-              </div>
-              <button
-                type="button"
-                className={styles.railButton}
-                onClick={handleRefreshStatus}
-                disabled={!config.businessTokenConfigured || isRefreshing}
-              >
-                <RefreshCw size={16} className={isRefreshing ? styles.spinning : ''} />
-                {isRefreshing ? 'Actualizando' : 'Actualizar'}
-              </button>
-            </div>
-
-            <div className={styles.railBlock}>
-              <div className={styles.railHeader}>
-                <MessageSquareText size={18} />
-                <span>Plantillas</span>
-              </div>
-              <span className={styles.railSecondaryValue}>Próximamente</span>
-            </div>
-
-            {sessionPayload && (
+          {isConnected && (
+            <aside className={styles.statusRail}>
               <div className={styles.railBlock}>
                 <div className={styles.railHeader}>
-                  <CheckCircle size={18} />
-                  <span>Último evento</span>
+                  <ShieldCheck size={18} />
+                  <span>Número</span>
                 </div>
-                <strong className={styles.railPrimaryValue}>{sessionPayload.event || 'Recibido'}</strong>
+                <strong className={styles.railPrimaryValue}>{config.displayPhoneNumber || 'Pendiente'}</strong>
+                <span className={styles.railSecondaryValue}>{config.verifiedName || getStatusLabel(config.connectionStatus)}</span>
+                <div className={styles.railMeta}>
+                  <span>WABA</span>
+                  <strong>{config.wabaId || '-'}</strong>
+                  <span>Phone ID</span>
+                  <strong>{config.phoneNumberId || '-'}</strong>
+                </div>
+                <button
+                  type="button"
+                  className={styles.railButton}
+                  onClick={handleRefreshStatus}
+                  disabled={!config.businessTokenConfigured || isRefreshing}
+                >
+                  <RefreshCw size={16} className={isRefreshing ? styles.spinning : ''} />
+                  {isRefreshing ? 'Actualizando' : 'Actualizar'}
+                </button>
               </div>
-            )}
-          </aside>
+
+              <div className={styles.railBlock}>
+                <div className={styles.railHeader}>
+                  <MessageSquareText size={18} />
+                  <span>Plantillas</span>
+                </div>
+                <span className={styles.railSecondaryValue}>Próximamente</span>
+              </div>
+
+              {sessionPayload && (
+                <div className={styles.railBlock}>
+                  <div className={styles.railHeader}>
+                    <CheckCircle size={18} />
+                    <span>Último evento</span>
+                  </div>
+                  <strong className={styles.railPrimaryValue}>{sessionPayload.event || 'Recibido'}</strong>
+                </div>
+              )}
+            </aside>
+          )}
         </div>
       </Card>
     </div>

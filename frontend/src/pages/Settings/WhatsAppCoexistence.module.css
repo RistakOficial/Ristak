@@ -103,6 +103,10 @@
   align-items: start;
 }
 
+.workspaceSetupOnly {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .primaryColumn {
   display: flex;
   flex-direction: column;
