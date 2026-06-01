@@ -6,56 +6,6 @@ import {
 const HTTP_METHODS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE'])
 const DEFAULT_LOOKUP_LIMIT = 10
 const MAX_LOOKUP_LIMIT = 30
-const ENDPOINT_QUERY_ALIASES = [
-  {
-    pattern: /\b(?:recurrente|recurrentes|recurrencia|recurrencias|recurring|schedule|schedules|programad[oa]s?|calendarizad[oa]s?|autopago|autopagos|auto\s*payment|auto\s*payments|domiciliacion|domiciliaciones|domiciliación|domiciliaciones|facturas?\s+(?:programad|recurrent)|invoices?\s+(?:schedule|schedules|recurring)|cobros?\s+(?:programad|recurrent)|pagos?\s+(?:programad|recurrent)|cargos?\s+(?:programad|recurrent))\b/i,
-    terms: 'invoice schedule invoices schedules recurring invoice recurring payment scheduled payment autopayment auto payment'
-  },
-  {
-    pattern: /\b(?:respuestas?|envios?|envíos?|submissions?|formularios?|forms?)\b/i,
-    terms: 'forms submissions form submissions uploaded files'
-  },
-  {
-    pattern: /\b(?:campos?\s+personalizados?|custom\s+fields?)\b/i,
-    terms: 'custom fields custom-fields fields'
-  },
-  {
-    pattern: /\b(?:valores?\s+personalizados?|custom\s+values?)\b/i,
-    terms: 'custom values locations custom values'
-  },
-  {
-    pattern: /\b(?:embudos?|funnels?|paginas?\s+de\s+embudo|páginas?\s+de\s+embudo)\b/i,
-    terms: 'funnels funnel pages'
-  },
-  {
-    pattern: /\b(?:archivos?|imagenes?|imágenes?|carpetas?|folders?|media|biblioteca)\b/i,
-    terms: 'media storage files folders upload files'
-  },
-  {
-    pattern: /\b(?:oportunidades?|opportunities?|pipelines?)\b/i,
-    terms: 'opportunities pipelines opportunity stages'
-  },
-  {
-    pattern: /\b(?:conversaciones?|mensajes?|messages?|emails?|correos?)\b/i,
-    terms: 'conversations messages email'
-  },
-  {
-    pattern: /\b(?:productos?|precios?|prices?)\b/i,
-    terms: 'products prices'
-  },
-  {
-    pattern: /\b(?:tiendas?|store|stores|ecommerce|ordenes?|órdenes?|orders?)\b/i,
-    terms: 'store ecommerce orders products'
-  },
-  {
-    pattern: /\b(?:usuarios?|users?|equipo|team)\b/i,
-    terms: 'users location users'
-  },
-  {
-    pattern: /\b(?:contactos?|clientes?|leads?)\b/i,
-    terms: 'contacts contact search'
-  }
-]
 
 function cleanText(value, maxLength = 1000) {
   const cleaned = String(value || '').replace(/\s+/g, ' ').trim()
@@ -67,16 +17,6 @@ function normalizeText(value) {
     .toLowerCase()
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
-}
-
-export function expandHighLevelEndpointSearchQuery(value = '') {
-  const original = cleanText(value, 2000)
-  const normalized = normalizeText(original)
-  const aliases = ENDPOINT_QUERY_ALIASES
-    .filter((alias) => alias.pattern.test(normalized))
-    .map((alias) => alias.terms)
-
-  return [original, ...aliases].filter(Boolean).join(' ')
 }
 
 function normalizePath(value) {
@@ -192,7 +132,7 @@ export function findHighLevelEndpoint({ method, path } = {}) {
 export function searchHighLevelEndpoints(args = {}) {
   const method = String(args.method || '').toUpperCase()
   const hasMethodFilter = HTTP_METHODS.has(method)
-  const query = normalizeText(expandHighLevelEndpointSearchQuery(args.query || ''))
+  const query = normalizeText(args.query || '')
   const app = normalizeText(args.app || args.module || '')
   const tag = normalizeText(args.tag || '')
   const path = normalizePath(args.path || '')

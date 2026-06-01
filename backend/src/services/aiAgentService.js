@@ -19,7 +19,6 @@ import { DateTime } from 'luxon'
 import {
   addHighLevelEndpointQueryDefaults,
   compactHighLevelEndpoint,
-  expandHighLevelEndpointSearchQuery,
   findHighLevelEndpoint,
   getHighLevelEndpointCatalogSummary,
   getUnresolvedHighLevelPathParams,
@@ -834,9 +833,7 @@ const HIGHLEVEL_API_RESOURCE_ALIASES = [
   'forms', 'form', 'formularios', 'formulario', 'form submissions', 'respuestas de formulario', 'envios de formulario',
   'surveys', 'survey', 'encuestas', 'encuesta',
   'funnels', 'funnel', 'embudos', 'embudo', 'funnel pages', 'paginas de embudo',
-  'invoice', 'invoices', 'facturas', 'invoice schedules', 'schedules de invoice', 'schedules de invoices',
-  'cobros programados', 'pagos programados', 'cobros recurrentes', 'pagos recurrentes',
-  'facturas programadas', 'facturas recurrentes', 'recurrentes', 'recurrencias', 'autopagos',
+  'invoice', 'invoices', 'facturas',
   'knowledge base', 'base de conocimiento',
   'trigger links', 'trigger link', 'links disparadores', 'enlaces disparadores',
   'locations', 'location', 'sub account', 'sub-account', 'ubicacion', 'ubicaciones', 'location custom values',
@@ -870,11 +867,7 @@ const HIGHLEVEL_OPERATION_WORD_PATTERN = /\b(?:busca|buscar|buscame|encuentra|re
 const HIGHLEVEL_PAYMENT_RESOURCE_PATTERN = /\b(?:payment|payments|invoice|invoices|subscription|subscriptions|transaction|transactions|pago|pagos|factura|facturas|recibo|recibos)\b/
 const HIGHLEVEL_READ_OPERATION_WORD_PATTERN = /\b(?:busca|buscar|buscame|encuentra|revisa|consulta|consultar|muestra|listar|lista|trae|traeme|tráeme|obten|obtiene|obtener|get|lee|leer|ver)\b/
 const HIGHLEVEL_PAYMENT_MUTATION_WORD_PATTERN = /\b(?:post|put|patch|delete|crea|crear|actualiza|modifica|cambia|manda|envia|envía|agenda|agendar|calendariza|ejecuta|haz|hacer|agrega|agregar|quita|quitar|remueve|remover|elimina|eliminar|cobra|cobrar|cobrale|charge|registra|registrar|programa|programar|domicili)\b/
-const HIGHLEVEL_REST_READ_RESOURCE_PATTERN = /\b(?:recurrente|recurrentes|recurrencia|recurrencias|recurring|schedule|schedules|programad[oa]s?|calendarizad[oa]s?|autopago|autopagos|auto\s*payment|auto\s*payments|facturas?\s+(?:programad|recurrent)|invoices?\s+(?:schedule|schedules|recurring)|cobros?\s+(?:programad|recurrent)|pagos?\s+(?:programad|recurrent)|cargos?\s+(?:programad|recurrent)|formularios?|forms?|submissions?|respuestas?|envios?|envíos?|campos?\s+personalizados?|custom\s+fields?|valores?\s+personalizados?|custom\s+values?|embudos?|funnels?|archivos?|imagenes?|imágenes?|carpetas?|media|oportunidades?|pipelines?|conversaciones?|mensajes?|productos?|precios?|tiendas?|stores?|usuarios?)\b/
 const HIGHLEVEL_REST_API_STYLE_PATTERN = /\b(?:get|api|endpoint|endpoints|rest|path|ruta|highlevel|go\s*high\s*level|gohighlevel|ghl)\b/
-const HIGHLEVEL_REST_READ_WORD_PATTERN = /\b(?:busca|buscar|buscame|búscame|encuentra|revisa|consulta|consultar|muestra|muéstrame|mostrar|listar|lista|listame|lístame|trae|traeme|tráeme|obten|obtiene|obtener|get|lee|leer|ver|ensena|enseña|enséñame|dame|todas|todos|cuantos|cuántos|cuales|cuáles)\b/
-const HIGHLEVEL_REST_INVENTORY_WORD_PATTERN = /\b(?:busca|buscar|buscame|búscame|encuentra|revisa|consulta|consultar|muestra|muéstrame|mostrar|listar|lista|listame|lístame|trae|traeme|tráeme|obten|obtiene|obtener|get|lee|leer|ver|ensena|enseña|enséñame|dame|todas|todos)\b/
-const HIGHLEVEL_REST_WRITE_WORD_PATTERN = /\b(?:post|put|patch|delete|crea|crear|actualiza|modifica|cambia|manda|envia|envía|agenda|agendar|calendariza|agrega|quitar|quita|remueve|elimina|cobra|cobrar|cobrale|charge|registra|registrar|programa|programar|domicili|cancela|cancelar)\b/
 
 function mentionsHighLevelResource(question) {
   return HIGHLEVEL_API_RESOURCE_PATTERN.test(normalizeText(question))
@@ -900,32 +893,12 @@ function isReadOnlyHighLevelPaymentApiRequest(question) {
     !HIGHLEVEL_PAYMENT_MUTATION_WORD_PATTERN.test(normalized)
 }
 
-function hasRecentHighLevelPaymentScheduleContext(messages = []) {
-  const previousText = normalizeText(getRecentConversationTextBeforeLatestUser(messages, 12))
-
-  return /(highlevel|ghl|invoice|factura|schedule|programad|recurrent|recurr|cobro|pago|tarjeta guardada|autopago|domicili)/.test(previousText)
-}
-
 function isHighLevelRestReadCatalogRequest(question, messages = []) {
   const normalized = normalizeText(question)
   if (!normalized) return false
 
-  const explicitGet = /\bget\b/.test(normalized)
-  const hasReadWord = explicitGet || HIGHLEVEL_REST_READ_WORD_PATTERN.test(normalized)
-  if (!hasReadWord) return false
-
-  const hasHumanEndpointResource = HIGHLEVEL_REST_READ_RESOURCE_PATTERN.test(normalized)
-  const hasCatalogResource = mentionsHighLevelResource(normalized) || hasHumanEndpointResource
-  const hasApiStyle = mentionsHighLevel(normalized) || HIGHLEVEL_REST_API_STYLE_PATTERN.test(normalized)
-  const readFromPreviousHighLevelPaymentContext = hasApiStyle && hasRecentHighLevelPaymentScheduleContext(messages)
-  const hasInventoryWord = explicitGet || HIGHLEVEL_REST_INVENTORY_WORD_PATTERN.test(normalized)
-  const looksLikeWrite = HIGHLEVEL_REST_WRITE_WORD_PATTERN.test(normalized) && !explicitGet
-
-  return !looksLikeWrite && (
-    (hasApiStyle && hasCatalogResource) ||
-    (hasHumanEndpointResource && hasInventoryWord) ||
-    readFromPreviousHighLevelPaymentContext
-  )
+  return /\bget\b/.test(normalized) &&
+    (mentionsHighLevel(normalized) || HIGHLEVEL_REST_API_STYLE_PATTERN.test(normalized) || mentionsHighLevelResource(normalized))
 }
 
 function isExplicitNonPaymentTopicSwitchText(value) {
@@ -1233,12 +1206,7 @@ function buildHighLevelEndpointIntentHint({ latestUserMessage = '', messages = [
     return 'No aplica para esta ruta.'
   }
 
-  const queryText = expandHighLevelEndpointSearchQuery([
-    latestUserMessage,
-    agentRoute?.highLevelRestReadIntent && hasRecentHighLevelPaymentScheduleContext(messages)
-      ? 'invoice schedule recurring invoices scheduled payments'
-      : ''
-  ].filter(Boolean).join(' '))
+  const queryText = cleanText(latestUserMessage, 1200)
   const method = agentRoute?.highLevelRestReadIntent ? 'GET' : null
   const suggestions = searchHighLevelEndpoints({
     query: queryText,
@@ -1249,11 +1217,12 @@ function buildHighLevelEndpointIntentHint({ latestUserMessage = '', messages = [
   return safeStringify({
     humanRequest: cleanText(latestUserMessage, 800),
     readOnlyRestIntent: Boolean(agentRoute?.highLevelRestReadIntent),
-    expandedQuery: queryText,
+    lexicalQuery: queryText,
     rule: [
-      'Si readOnlyRestIntent=true, usa lookup_highlevel_endpoint y highlevel_rest_request con GET.',
-      'No pidas contacto si el endpoint sugerido no tiene contactId como path param.',
-      'Para "recurrentes", "cobros programados", "pagos recurrentes", "facturas programadas" o "invoices schedules", el endpoint esperado normalmente es GET /invoices/schedule.'
+      'Usa estas sugerencias sólo como ayuda lexical, no como router final.',
+      'La IA debe traducir semánticamente lo que el usuario quiso hacer a recurso, operación y alcance canónicos antes de llamar lookup_highlevel_endpoint.',
+      'Si las sugerencias no capturan la intención humana, llama lookup_highlevel_endpoint con tu propia consulta canónica.',
+      'No pidas contacto si el endpoint elegido no tiene contactId como path param.'
     ].join(' '),
     suggestions
   }, 5000)
@@ -1275,6 +1244,11 @@ const PAYMENT_OPERATION_TOOL_NAMES = new Set([
   'lookup_business_reference',
   'lookup_contact_payment_profile',
   'lookup_highlevel_products'
+])
+const PAYMENT_OPERATION_ALLOWED_TOOL_NAMES = new Set([
+  ...PAYMENT_OPERATION_TOOL_NAMES,
+  'lookup_highlevel_endpoint',
+  'highlevel_rest_request'
 ])
 
 const PAYMENT_REST_MUTATION_PATH_PATTERN = /^\/(?:invoices|payments)\b/i
@@ -9385,13 +9359,13 @@ function buildHighLevelTools(highLevelConnection, options = {}) {
     {
       type: 'function',
       name: 'lookup_highlevel_endpoint',
-      description: `Busca en el catalogo REST oficial de HighLevel Sub-Account antes de llamar REST. Usala cuando necesites saber que GET/POST/PUT/PATCH/DELETE hacer, confirmar el path exacto, ver parametros obligatorios, scopes o version. Catalogo cargado: ${HIGHLEVEL_ENDPOINT_CATALOG_SUMMARY}. No ejecuta cambios; solo devuelve rutas documentadas.`,
+      description: `Busca en el catalogo REST oficial de HighLevel Sub-Account antes de llamar REST. Usala cuando necesites saber que GET/POST/PUT/PATCH/DELETE hacer, confirmar el path exacto, ver parametros obligatorios, scopes o version. Primero interpreta semanticamente la intencion del usuario y manda query con conceptos canonicos de HighLevel: recurso, operacion, estado/ciclo de vida y alcance. No dependas de copiar frases literales del usuario. Catalogo cargado: ${HIGHLEVEL_ENDPOINT_CATALOG_SUMMARY}. No ejecuta cambios; solo devuelve rutas documentadas.`,
       parameters: {
         type: 'object',
         properties: {
           query: {
             type: ['string', 'null'],
-            description: 'Intencion o recurso en lenguaje natural: "crear contacto", "listar workflows", "shipping rates", "form submissions", etc.'
+            description: 'Consulta canonica inferida por la IA para buscar el endpoint: recurso + operacion + alcance. No tiene que ser la frase literal del usuario.'
           },
           method: {
             type: ['string', 'null'],
@@ -10599,10 +10573,11 @@ const UNIFIED_CAPABILITY_PROMPT = [
   '- Para GoHighLevel usa HighLevel MCP o highlevel_rest_request cuando el usuario pida recursos/acciones de CRM: media storage, imágenes, archivos, workflows, calendarios, citas, conversaciones, oportunidades, productos, tags, custom fields, usuarios o ubicaciones.',
   `- Catálogo HighLevel cubierto por rutas/MCP/REST: ${HIGHLEVEL_API_RESOURCE_CATALOG_TEXT}.`,
   `- Catálogo REST oficial de Sub-Account cargado: ${HIGHLEVEL_ENDPOINT_CATALOG_SUMMARY}.`,
-  '- Si el último mensaje menciona explícitamente GoHighLevel, GoHi Level, HighLevel o GHL y pide buscar, consultar, hacer GET/POST/PUT/PATCH/DELETE, crear o actualizar algo, usa herramientas reales de HighLevel en ese turno. Si el usuario no dice HighLevel pero pide de forma operativa un recurso claramente propio del catálogo (form submissions, custom values, trigger links, media storage, blogs, funnels, surveys, store, workflows, tasks, notes, tags, etc.), también usa HighLevel.',
-  '- Prioriza HighLevel MCP porque lista y llama tools oficiales. Si el MCP no expone lo necesario, usa lookup_highlevel_endpoint para encontrar el método/path documentado y luego highlevel_rest_request. No contestes desde la DB local salvo que el usuario pida Ristak/DB/reportes.',
+  '- Si el último mensaje menciona explícitamente GoHighLevel, GoHi Level, HighLevel o GHL y pide buscar, consultar, hacer GET/POST/PUT/PATCH/DELETE, crear o actualizar algo, usa herramientas reales de HighLevel en ese turno. Si el usuario no dice HighLevel pero pide de forma operativa un recurso claramente propio del catálogo, también usa HighLevel.',
+  '- Antes de escoger herramienta, arma mentalmente un marco semántico: intención (leer/crear/actualizar/eliminar/enviar/cobrar), recurso canónico de negocio, alcance, filtros, IDs necesarios, riesgo y si es lectura o escritura. No uses una lista cerrada de frases; entiende jerga, diminutivos, errores de escritura, nombres informales y contexto de conversación.',
+  '- Prioriza HighLevel MCP porque lista y llama tools oficiales. Si el MCP no expone lo necesario, interpreta semánticamente la intención, usa lookup_highlevel_endpoint con términos canónicos de HighLevel para encontrar el método/path documentado y luego highlevel_rest_request. No contestes desde la DB local salvo que el usuario pida Ristak/DB/reportes.',
   '- highlevel_rest_request rechaza rutas que no estén en el catálogo Sub-Account; si devuelve sugerencias, elige una ruta sugerida o pregunta el dato faltante.',
-  '- Para usuarios no técnicos, traduce lenguaje humano a recursos HighLevel: "recurrentes", "cobros programados", "pagos recurrentes", "facturas programadas" o "invoices schedules" significan normalmente invoice schedules; busca GET /invoices/schedule. "Respuestas de formulario" significa form submissions; "archivos/imágenes/carpetas" significa media storage; "campos/valores personalizados" significa custom fields/custom values.',
+  '- Para usuarios no técnicos, no pidas que digan endpoint, método, ID técnico o nombre exacto del módulo si tú puedes inferirlo. Traduce el pedido a términos canónicos de HighLevel y busca el endpoint.',
   '- Si el usuario pide listar, ver, revisar, buscar, traer o hacer GET de un recurso de HighLevel, es lectura. Ejecuta lookup_highlevel_endpoint y luego highlevel_rest_request GET. No pidas contacto, email, teléfono ni ID salvo que el endpoint elegido tenga contactId u otro ID obligatorio en el path.',
   '- Para citas/calendarios operativos usa manage_highlevel_appointment antes que MCP o highlevel_rest_request. Operaciones: lookup_slots, create, reschedule, cancel, confirm, showed, noshow y delete.',
   '- Contrato de citas GHL: agendar = POST /calendars/events/appointments; reprogramar/confirmar/cancelar/showed/noshow = PUT /calendars/events/appointments/:eventId con appointmentStatus o startTime/endTime; eliminar de verdad = DELETE /calendars/events/:eventId.',
@@ -11813,7 +11788,7 @@ async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, ru
         restReadIntent: Boolean(agentRoute?.highLevelRestReadIntent)
       })
   const highLevelTools = paymentOperationRequest
-    ? rawHighLevelTools.filter(tool => tool?.type === 'function' && PAYMENT_OPERATION_TOOL_NAMES.has(tool.name))
+    ? rawHighLevelTools.filter(tool => tool?.type === 'function' && PAYMENT_OPERATION_ALLOWED_TOOL_NAMES.has(tool.name))
     : rawHighLevelTools
   const agentTools = [...webSearchTools, ...highLevelTools]
   const toolsRequireActionLoop = highLevelTools.length > 0
