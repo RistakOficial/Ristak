@@ -197,6 +197,14 @@ function cleanText(value, maxLength = 1000) {
   return cleaned.length > maxLength ? `${cleaned.slice(0, maxLength)}...` : cleaned
 }
 
+function stripCitationArtifacts(value) {
+  return String(value || '')
+    .replace(/\s*\uE200cite[^\uE201]*\uE201/g, '')
+    .replace(/\s*\u3010[^\u3011]*\u2020[^\u3011]*\u3011/g, '')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/\s+([.,;:!?])/g, '$1')
+}
+
 function normalizeText(value) {
   return cleanText(String(value || ''), 4000)
     .toLowerCase()
@@ -205,7 +213,7 @@ function normalizeText(value) {
 }
 
 function stripMarkdown(value) {
-  return normalizeLightweightMarkdownBlocks(value)
+  return normalizeLightweightMarkdownBlocks(stripCitationArtifacts(value))
     .replace(/^#{1,6}\s+/gm, '')
     .replace(/\n{3,}/g, '\n\n')
     .trim()
@@ -606,6 +614,38 @@ function appendUniqueActionEvidence(evidenceList, seenIds, evidence) {
   if (seenIds.has(key)) return
   seenIds.add(key)
   evidenceList.push(evidence)
+}
+
+function getContactFromActionEvidence(evidence = {}) {
+  return normalizeOperationalContact(evidence.contact) ||
+    normalizeOperationalContact(evidence.summary?.contact) ||
+    normalizeOperationalContact(evidence.summary?.customer) ||
+    normalizeOperationalContact(evidence.summary?.client)
+}
+
+function buildAgentMemoryPayload({
+  actionEvidence = [],
+  paymentOperationalMemory = null,
+  crmOperationalMemory = null,
+  runtimeContext = {}
+} = {}) {
+  const evidenceContacts = Array.isArray(actionEvidence)
+    ? actionEvidence.slice().reverse().map(getContactFromActionEvidence)
+    : []
+  const contacts = dedupeOperationalContacts([
+    ...evidenceContacts,
+    paymentOperationalMemory?.resolvedContact,
+    crmOperationalMemory?.resolvedContact
+  ])
+
+  if (!contacts.length) return null
+
+  return {
+    version: 1,
+    generatedAt: runtimeContext.nowIso || DateTime.now().toISO(),
+    activeContact: contacts[0],
+    contacts
+  }
 }
 
 const AFFIRMATIVE_INTENT_STEMS = [
@@ -2031,8 +2071,57 @@ function normalizeOperationalContact(contact = {}) {
     firstName: cleanText(contact.firstName || contact.first_name || '', 80),
     lastName: cleanText(contact.lastName || contact.last_name || '', 80),
     createdAt: contact.createdAt || contact.created_at || null,
-    totalPaid: Number(contact.totalPaid || contact.total_paid || 0)
+    totalPaid: Number(contact.totalPaid || contact.total_paid || 0),
+    storedCard: contact.storedCard && typeof contact.storedCard === 'object' ? contact.storedCard : null
   }
+}
+
+function getMessageAgentMemory(message = {}) {
+  const memory = message?.agentMemory || message?.memory
+  return memory && typeof memory === 'object' ? memory : null
+}
+
+function getContactsFromAgentMemory(memory = {}) {
+  if (!memory || typeof memory !== 'object') return []
+
+  return [
+    normalizeOperationalContact(memory.activeContact),
+    ...(
+      Array.isArray(memory.contacts)
+        ? memory.contacts.map(contact => normalizeOperationalContact(contact))
+        : []
+    )
+  ].filter(Boolean)
+}
+
+function dedupeOperationalContacts(contacts = []) {
+  const seen = new Set()
+  const deduped = []
+
+  for (const contact of contacts) {
+    const normalized = normalizeOperationalContact(contact)
+    if (!normalized?.id || seen.has(normalized.id)) continue
+
+    seen.add(normalized.id)
+    deduped.push(normalized)
+  }
+
+  return deduped
+}
+
+function getRecentAgentMemoryContacts(messages = [], limit = 16) {
+  const safeMessages = Array.isArray(messages) ? messages.slice(-limit).reverse() : []
+  const contacts = []
+
+  for (const message of safeMessages) {
+    contacts.push(...getContactsFromAgentMemory(getMessageAgentMemory(message)))
+  }
+
+  return dedupeOperationalContacts(contacts)
+}
+
+function getRecentAgentMemoryContactId(messages = []) {
+  return getRecentAgentMemoryContacts(messages)[0]?.id || ''
 }
 
 const PAYMENT_CONTACT_TOOL_NAMES = new Set([
@@ -3132,10 +3221,58 @@ function normalizeContactLookupHint(rawHint) {
   return cleaned
 }
 
+function extractRecentResolvedContactHintFromConversation(messages = [], limit = 18) {
+  const safeMessages = Array.isArray(messages) ? messages.slice(-limit).reverse() : []
+  const namePattern = `([A-ZÁÉÍÓÚÜÑ][\\p{L}\\p{M}'._-]+(?:\\s+[A-ZÁÉÍÓÚÜÑ][\\p{L}\\p{M}'._-]+){1,5})`
+  const contextualPatterns = [
+    new RegExp(`${namePattern}\\s+ya\\s+qued[oó]\\s+(?:ubicad[oa]|actualizad[oa]|metid[oa]|agregad[oa]|programad[oa]|registrad[oa])`, 'iu'),
+    new RegExp(`(?:se\\s+actualiz[oó]\\s+esto\\s+en|actualic[eé]|actualizado|actualizada|qued[oó]\\s+actualizado|qued[oó]\\s+actualizada)\\s+(?:en\\s+)?${namePattern}`, 'iu'),
+    new RegExp(`(?:contacto|cliente|lead|persona)\\s*[:：]\\s*${namePattern}`, 'iu'),
+    new RegExp(`(?:para|de|a)\\s+${namePattern}[^\\n.]{0,120}\\b(?:workflow|flujo|campo|dato|acceso|programa|cobro|pago|actualiz|qued[oó])`, 'iu')
+  ]
+
+  for (const message of safeMessages) {
+    const text = stripMarkdown(getMessageText(message)).replace(/\s+/g, ' ').trim()
+    if (!text) continue
+
+    for (const pattern of contextualPatterns) {
+      const match = text.match(pattern)
+      const term = cleanContactLookupTerm(match?.[1] || '')
+      const tokens = getContactLookupTokens(term)
+      if (tokens.length >= 2) return tokens.join(' ')
+    }
+  }
+
+  return ''
+}
+
+async function resolveUniqueExactContactFromLookupHint(hint) {
+  const lookupHint = normalizeContactLookupHint(hint)
+  if (!lookupHint) return null
+
+  const contacts = dedupeContacts([
+    ...await searchLocalPaymentContacts(lookupHint),
+    ...await searchHighLevelPaymentContacts({ contactHint: lookupHint })
+  ])
+
+  if (!contacts.length) return null
+
+  const normalizedHint = normalizeText(lookupHint)
+  const exactMatches = contacts.filter(contact => (
+    contactMatchesExactly(contact, lookupHint) ||
+    normalizeText(`${contact.firstName || ''} ${contact.lastName || ''}`.trim()) === normalizedHint
+  ))
+
+  return exactMatches.length === 1 ? exactMatches[0] : null
+}
+
 function getRecentConversationContactId(messages = [], { includeClarificationOptions = true } = {}) {
   const safeMessages = Array.isArray(messages) ? messages.slice(-8).reverse() : []
 
   for (const message of safeMessages) {
+    const memoryContactId = getContactsFromAgentMemory(getMessageAgentMemory(message))[0]?.id || ''
+    if (memoryContactId) return memoryContactId
+
     const textId = extractContactIdFromText(getMessageText(message))
     if (textId) return textId
 
@@ -4861,14 +4998,22 @@ async function buildPaymentOperationalMemory({ messages = [], highLevelConnectio
   const relevantPaymentMessages = getPaymentRelevantMessages(messages)
   const contactHint = extractPaymentContactHintFromConversation(relevantPaymentMessages) ||
     extractPaymentContactHintFromConversation(paymentMessages)
+  const contextualContactHint = contactHint ? '' : extractRecentResolvedContactHintFromConversation(messages)
   const resolvedFromHint = contactHint
     ? await resolvePaymentContact({ contactHint }, { messages: relevantPaymentMessages })
     : null
-  const contactId = resolvedFromHint?.contact?.id ? '' : getRecentPaymentConversationContactId(messages)
-  const contact = resolvedFromHint?.contact || (contactId ? await getPaymentContactById(contactId) : null)
+  const resolvedFromContext = !resolvedFromHint?.contact && contextualContactHint
+    ? await resolveUniqueExactContactFromLookupHint(contextualContactHint)
+    : null
+  const contactId = resolvedFromHint?.contact?.id || resolvedFromContext?.id
+    ? ''
+    : getRecentPaymentConversationContactId(messages) || getRecentAgentMemoryContactId(messages)
+  const contact = resolvedFromHint?.contact ||
+    resolvedFromContext ||
+    (contactId ? await getPaymentContactById(contactId) : null)
 
   return {
-    contactHint: contactHint || null,
+    contactHint: contactHint || contextualContactHint || null,
     resolvedContact: contact?.id
       ? {
           id: contact.id,
@@ -4878,7 +5023,7 @@ async function buildPaymentOperationalMemory({ messages = [], highLevelConnectio
           storedCard: await getStoredCardSummary(contact.id, highLevelConnection)
         }
       : null,
-    rule: 'Si resolvedContact existe y el usuario sigue hablando del mismo pago, usa ese contactId. Si sólo hay contactHint, busca coincidencias reales en DB/GHL antes de pedir más datos.'
+    rule: 'Si resolvedContact existe y el usuario sigue hablando de la misma persona, usa ese contactId aunque cambie de CRM a pagos. Si sólo hay contactHint, busca coincidencias reales en DB/GHL antes de pedir más datos.'
   }
 }
 
@@ -4899,11 +5044,21 @@ function shouldResolveCrmContactFromLatestMessage(message = '') {
 async function buildCrmOperationalMemory({ messages = [], viewContext = {}, highLevelConnection = {} } = {}) {
   const latestUserMessage = getLatestUserMessage(messages)
 
-  if (!highLevelConnection?.configured || !isCrmMemoryText(latestUserMessage)) {
+  if (!highLevelConnection?.configured) {
     return null
   }
 
-  const contactHint = normalizeContactLookupHint(extractContactLookupTerm(latestUserMessage))
+  const latestLooksLikeCrm = isCrmMemoryText(latestUserMessage)
+  const contextualContactHint = extractRecentResolvedContactHintFromConversation(messages)
+  const hasMemoryContact = Boolean(getRecentAgentMemoryContactId(messages) || getRecentCrmConversationContactId(messages))
+
+  if (!latestLooksLikeCrm && !contextualContactHint && !hasMemoryContact) {
+    return null
+  }
+
+  const contactHint = latestLooksLikeCrm
+    ? normalizeContactLookupHint(extractContactLookupTerm(latestUserMessage))
+    : ''
 
   const resolvedContact = contactHint
     ? await resolveHighLevelContactForAgent(
@@ -4918,12 +5073,17 @@ async function buildCrmOperationalMemory({ messages = [], viewContext = {}, high
         }
       )
     : null
-  const scopedContactId = resolvedContact?.contact?.id ? '' : getRecentCrmConversationContactId(messages)
+  const resolvedFromContext = !resolvedContact?.contact && contextualContactHint
+    ? await resolveUniqueExactContactFromLookupHint(contextualContactHint)
+    : null
+  const scopedContactId = resolvedContact?.contact?.id || resolvedFromContext?.id
+    ? ''
+    : getRecentCrmConversationContactId(messages) || getRecentAgentMemoryContactId(messages)
   const scopedContact = scopedContactId ? await getPaymentContactById(scopedContactId) : null
-  const contact = resolvedContact?.contact || scopedContact
+  const contact = resolvedContact?.contact || resolvedFromContext || scopedContact
 
   return {
-    contactHint,
+    contactHint: contactHint || contextualContactHint || null,
     resolvedContact: contact?.id
       ? {
           id: contact.id,
@@ -4935,7 +5095,7 @@ async function buildCrmOperationalMemory({ messages = [], viewContext = {}, high
       : null,
     error: contact ? null : resolvedContact?.error || 'No se pudo resolver el contacto por nombre ni recuperar un contacto CRM previo.',
     clarificationOptions: resolvedContact?.clarificationOptions || [],
-    rule: 'Para acciones de CRM sobre personas (citas, workflows, oportunidades, mensajes o cambios), si resolvedContact existe usa ese contactId. Si el usuario cambió de tema y volvió con una referencia contextual, usa la memoria CRM, no la memoria de pagos ni la última cita de otro hilo.'
+    rule: 'Para acciones de CRM sobre personas (citas, workflows, oportunidades, mensajes o cambios), si resolvedContact existe usa ese contactId. Si el usuario cambia de CRM a pagos o vuelve con "por cierto", "a él/ella", "ese contacto" o sin nuevo nombre, conserva la persona activa salvo que nombre a otra.'
   }
 }
 
@@ -6888,10 +7048,12 @@ async function callOpenAIResponseWithActionTools(apiKey, {
   const seenActionEvidence = new Set()
   const operationalMemory = {
     paymentContact: normalizeOperationalContact(initialOperationalMemory.paymentContact) ||
+      normalizeOperationalContact(initialOperationalMemory.crmContact) ||
       (getRecentPaymentConversationContactId(messages)
         ? await getRecentPaymentConversationContact(messages)
         : null),
-    crmContact: normalizeOperationalContact(initialOperationalMemory.crmContact),
+    crmContact: normalizeOperationalContact(initialOperationalMemory.crmContact) ||
+      normalizeOperationalContact(initialOperationalMemory.paymentContact),
     crmContactLocked: Boolean(normalizeOperationalContact(initialOperationalMemory.crmContact)?.id)
   }
 
@@ -7315,7 +7477,9 @@ const BASE_SPECIALIST_PROMPT = [
   'Usa la conversación completa, la vista actual, la DB y las herramientas disponibles. No reinicies contexto por mirar sólo el último mensaje, pero sí permite cambios normales de tema como lo haría un humano.',
   'Piensa con criterio propio: si el usuario sólo conversa, responde directo; si pide datos internos, investiga en DB; si pide una acción, identifica registros exactos; si falta algo indispensable, pregunta sólo eso.',
   'Entiende referencias humanas normales: "el de la última cita", "la próxima cita", "este contacto", "ese workflow", "la conversación anterior" no son nombres literales. Resuelve primero la entidad real y luego ejecuta.',
+  'Si una persona/recurso quedó activo en la memoria operacional y el usuario luego dice "por cierto", "también", "a él/ella", "cóbrale", "mételo", "mándale" o pide otra acción sin nombrar a alguien nuevo, reutiliza esa entidad activa. No vuelvas a pedir cuál homónimo es sólo porque hay nombres parecidos.',
   'Responde en español natural, directo y útil para un dueño de negocio.',
+  'No escribas marcadores internos de cita como turn0search0, cite o bloques raros; si hay fuentes, la app las mostrará fuera del texto.',
   'Si el último mensaje viene de un botón/opción, usa el valor interno como contexto oculto: no lo repitas ni lo cites. Responde compacto, excepto cuando el paso requiere mostrar una tabla de parcialidades para confirmar fechas y montos.',
   'No uses tablas, contenedores, bloques tipo ficha ni gráficos para aclaraciones normales, preguntas de confirmación, explicaciones cortas o respuestas conversacionales.',
   'Usa tablas/gráficos sólo cuando el usuario pida data o cuando haya varias métricas/registros/comparativos difíciles de leer en texto: contactos, citas, pagos, campañas, rankings, históricos o listas repetidas.'
@@ -7340,6 +7504,7 @@ const UNIFIED_CAPABILITY_PROMPT = [
   '- Si el último mensaje menciona explícitamente GoHighLevel, GoHi Level, HighLevel o GHL y pide buscar, consultar, hacer GET/POST/PUT/PATCH/DELETE, crear o actualizar algo, usa herramientas reales de HighLevel en ese turno. Si el usuario no dice HighLevel pero pide de forma operativa un recurso claramente propio del catálogo (form submissions, custom values, trigger links, media storage, blogs, funnels, surveys, store, workflows, tasks, notes, tags, etc.), también usa HighLevel.',
   '- Prioriza HighLevel MCP porque lista y llama tools oficiales. Si el MCP no expone lo necesario, usa highlevel_rest_request con el path documentado. No contestes desde la DB local salvo que el usuario pida Ristak/DB/reportes.',
   '- Si una acción de CRM menciona un nombre de persona/contacto, primero resuelve ese nombre contra DB/GHL y usa el contactId real. No le pidas ID, correo o teléfono al usuario si Memoria operacional CRM ya trae resolvedContact.',
+  '- Si Memoria operacional CRM o de pagos trae resolvedContact y el último mensaje no introduce un contacto distinto, úsalo como la persona activa para cualquier acción nueva: pagos, workflows, citas, mensajes, oportunidades, campos, notas o tags.',
   '- Para agendar citas, meter a workflow, crear oportunidades o mandar mensajes a una persona, usa el contactId resuelto por lookup_highlevel_contact o Memoria operacional CRM; no confundas ese nombre con la última/próxima cita de otro contacto.',
   '- Para pagos, links, invoices, parcialidades, pagos manuales, tarjeta guardada o domiciliación usa las herramientas internas de Ristak porque replican la lógica real del backend. No uses MCP como atajo para mutaciones de dinero.',
   '- Nunca crees, envíes, anules, programes ni marques invoices/pagos usando highlevel_rest_request. Para dinero, REST directo está prohibido porque se salta el workflow del formulario y puede dejar facturas en borrador.',
@@ -8447,7 +8612,8 @@ async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, ru
     (agentRoute?.domain === 'contacts' && agentRoute?.action === 'mutate')
   const paymentOperationRequest = paymentActionRequest && isOperationalPaymentRequest(messages)
   const highLevelToolIntent = Boolean(agentRoute?.highLevelToolIntent)
-  const webSearchTools = metaAdsOperationalIntent || paymentOperationRequest || contactActionRequest || highLevelToolIntent
+  const internalDatabaseAnswer = Boolean(agentRoute?.requiresDbResearch || modelQueryResults.length)
+  const webSearchTools = metaAdsOperationalIntent || internalDatabaseAnswer || paymentOperationRequest || contactActionRequest || highLevelToolIntent
     ? []
     : buildWebSearchTools(agentConfig, runtimeContext)
   const rawHighLevelTools = metaAdsOperationalIntent
@@ -8579,8 +8745,8 @@ async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, ru
           messages,
           agentRoute,
           initialOperationalMemory: {
-            paymentContact: paymentOperationalMemory?.resolvedContact || null,
-            crmContact: crmOperationalMemory?.resolvedContact || null
+            paymentContact: paymentOperationalMemory?.resolvedContact || crmOperationalMemory?.resolvedContact || null,
+            crmContact: crmOperationalMemory?.resolvedContact || paymentOperationalMemory?.resolvedContact || null
           },
           forceInitialToolCall: paymentOperationRequest || Boolean(highLevelToolIntent && highLevelTools.length && !paymentOperationRequest)
         })
@@ -8653,6 +8819,12 @@ async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, ru
     model: data?.model || model,
     usage: data?.usage || null,
     sources,
+    agentMemory: buildAgentMemoryPayload({
+      actionEvidence,
+      paymentOperationalMemory,
+      crmOperationalMemory,
+      runtimeContext
+    }),
     clarificationOptions: Array.isArray(clarificationOptions) ? clarificationOptions : [],
     debug: {
       queryCount: queryResults.length,

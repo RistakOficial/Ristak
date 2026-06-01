@@ -21,11 +21,31 @@ export interface AIAgentAttachment {
   thumbnailDataUrl?: string
 }
 
+export interface AIAgentContactMemory {
+  id: string
+  name?: string
+  email?: string
+  phone?: string
+  firstName?: string
+  lastName?: string
+  createdAt?: string | null
+  totalPaid?: number
+  storedCard?: unknown
+}
+
+export interface AIAgentMessageMemory {
+  version: number
+  generatedAt?: string
+  activeContact?: AIAgentContactMemory | null
+  contacts?: AIAgentContactMemory[]
+}
+
 export interface AIAgentMessage {
   id?: string
   role: AIAgentRole
   content: string
   attachments?: AIAgentAttachment[]
+  agentMemory?: AIAgentMessageMemory | null
   selectedClarificationOption?: AIAgentSelectedClarificationOption
   sources?: Array<{
     title: string
@@ -98,6 +118,7 @@ interface AIAgentChatResult {
   }>
   clarificationOptions?: AIAgentClarificationOption[]
   usage?: unknown
+  agentMemory?: AIAgentMessageMemory | null
 }
 
 interface AIAgentTranscriptionResult {

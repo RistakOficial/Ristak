@@ -210,13 +210,15 @@ function createMessage(
   sources?: AIAgentMessage['sources'],
   clarificationOptions?: AIAgentClarificationOption[],
   attachments?: AIAgentAttachment[],
-  selectedClarificationOption?: AIAgentMessage['selectedClarificationOption']
+  selectedClarificationOption?: AIAgentMessage['selectedClarificationOption'],
+  agentMemory?: AIAgentMessage['agentMemory']
 ): AIAgentMessage {
   return {
     id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
     role,
     content,
     ...(attachments?.length ? { attachments } : {}),
+    ...(agentMemory ? { agentMemory } : {}),
     ...(selectedClarificationOption ? { selectedClarificationOption } : {}),
     sources,
     clarificationOptions,
@@ -1719,7 +1721,7 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
 
       setMessages((current) => [
         ...current,
-        createMessage('assistant', result.reply, result.sources, result.clarificationOptions)
+        createMessage('assistant', result.reply, result.sources, result.clarificationOptions, undefined, undefined, result.agentMemory)
       ])
     } catch (error: any) {
       if (error?.name === 'AbortError' || activeChatRequestRef.current?.id !== requestId) return
