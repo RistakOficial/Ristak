@@ -35,8 +35,7 @@
   flex-shrink: 0;
 }
 
-.logoMark,
-.numberIcon {
+.logoMark {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -99,13 +98,16 @@
 
 .workspace {
   display: grid;
-  grid-template-columns: minmax(0, 1.35fr) minmax(330px, 0.85fr);
+  grid-template-columns: minmax(0, 1fr) 230px;
   gap: 18px;
   align-items: start;
 }
 
-.primaryColumn,
-.sideColumn {
+.workspaceSetupOnly {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.primaryColumn {
   display: flex;
   flex-direction: column;
   gap: 18px;
@@ -117,6 +119,10 @@
   border: 1px solid rgba(148, 163, 184, 0.16);
   border-radius: 8px;
   background: rgba(148, 163, 184, 0.04);
+}
+
+.wizardSection {
+  padding: 24px;
 }
 
 .sectionHeader,
@@ -154,23 +160,42 @@
   white-space: nowrap;
 }
 
-.progressList {
+.wizardShell {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: minmax(230px, 0.32fr) minmax(0, 1fr);
+  gap: 16px;
+  align-items: stretch;
+}
+
+.progressList {
+  display: flex;
+  flex-direction: column;
   gap: 8px;
-  margin-bottom: 16px;
 }
 
 .progressItem {
+  appearance: none;
+  -webkit-appearance: none;
   display: flex;
   align-items: center;
   min-width: 0;
   gap: 8px;
-  padding: 9px;
+  width: 100%;
+  padding: 10px;
   border: 1px solid rgba(148, 163, 184, 0.16);
   border-radius: 8px;
   color: var(--color-text-secondary);
   background: rgba(148, 163, 184, 0.045);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  transition: border-color var(--transition-base), background var(--transition-base);
+}
+
+.progressItem:hover,
+.progressActive {
+  border-color: rgba(34, 197, 94, 0.3);
+  background: rgba(34, 197, 94, 0.06);
 }
 
 .progressDot {
@@ -194,6 +219,13 @@
   background: rgba(16, 185, 129, 0.1);
 }
 
+.progressCopy {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
 .progressLabel {
   overflow: hidden;
   color: var(--color-text-primary);
@@ -204,11 +236,110 @@
   white-space: nowrap;
 }
 
+.progressDescription {
+  overflow: hidden;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .loadingState {
   padding: 34px 16px;
   color: var(--color-text-secondary);
   text-align: center;
   font-size: 13px;
+}
+
+.stepPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 500px;
+  padding: 24px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 8px;
+  background: var(--color-background);
+}
+
+.stepIntro {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.stepEyebrow {
+  color: #16a34a;
+  font-size: 11px;
+  font-weight: 820;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.stepTitle {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: 26px;
+  font-weight: 820;
+  line-height: 1.2;
+}
+
+.stepText {
+  max-width: 760px;
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+.stepHint {
+  margin: 0;
+  padding: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 8px;
+  color: var(--color-text-secondary);
+  background: rgba(148, 163, 184, 0.045);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.inlineDocLink,
+.docsListInline a {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  width: fit-content;
+  min-height: 34px;
+  padding: 0 10px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 8px;
+  color: var(--color-text-primary);
+  background: rgba(148, 163, 184, 0.055);
+  font-size: 13px;
+  font-weight: 720;
+  text-decoration: none;
+}
+
+.inlineDocLink:hover,
+.docsListInline a:hover {
+  border-color: rgba(34, 197, 94, 0.32);
+  color: #16a34a;
+}
+
+.guideList {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding-left: 22px;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.guideList li::marker {
+  color: var(--color-text-primary);
+  font-weight: 800;
 }
 
 .formGrid {
@@ -230,19 +361,19 @@
 
 .formLabel {
   color: var(--color-text-primary);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 720;
 }
 
 .formInput {
   width: 100%;
-  min-height: 42px;
+  min-height: 48px;
   padding: 0 12px;
   border: 1px solid rgba(148, 163, 184, 0.22);
   border-radius: 6px;
   color: var(--color-text-primary);
   background: var(--color-background);
-  font-size: 14px;
+  font-size: 15px;
   outline: none;
   transition: border-color var(--transition-base), box-shadow var(--transition-base);
 }
@@ -254,6 +385,16 @@
 
 .formInput::placeholder {
   color: var(--color-text-tertiary);
+}
+
+.notThisBox {
+  padding: 12px;
+  border: 1px solid rgba(245, 158, 11, 0.22);
+  border-radius: 8px;
+  color: var(--color-status-warning);
+  background: rgba(245, 158, 11, 0.08);
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 .inputActionRow {
@@ -273,6 +414,59 @@
   justify-content: flex-end;
   gap: 10px;
   margin-top: 16px;
+}
+
+.stepActions {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: auto;
+  padding-top: 14px;
+  border-top: 1px solid rgba(148, 163, 184, 0.16);
+}
+
+.reviewGrid,
+.connectionPanel {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.reviewGrid div,
+.connectionPanel div {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 8px;
+  background: rgba(148, 163, 184, 0.045);
+}
+
+.reviewGrid span,
+.connectionLabel {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  font-weight: 760;
+  text-transform: uppercase;
+}
+
+.reviewGrid strong,
+.connectionPanel strong {
+  overflow: hidden;
+  color: var(--color-text-primary);
+  font-size: 13px;
+  font-weight: 780;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.docsListInline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
 }
 
 .storageGrid {
@@ -358,29 +552,95 @@
   font-size: 11px;
 }
 
-.docsList {
-  display: grid;
-  gap: 8px;
+.statusRail {
+  position: sticky;
+  top: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
 }
 
-.docsList a {
+.railBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 8px;
+  background: rgba(148, 163, 184, 0.04);
+}
+
+.railHeader {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  min-height: 38px;
-  padding: 0 10px;
-  border: 1px solid rgba(148, 163, 184, 0.16);
+  gap: 8px;
+  color: #16a34a;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.railPrimaryValue {
+  overflow: hidden;
+  color: var(--color-text-primary);
+  font-size: 14px;
+  font-weight: 820;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.railSecondaryValue {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.railMeta {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 4px 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(148, 163, 184, 0.16);
+}
+
+.railMeta span {
+  color: var(--color-text-tertiary);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.railMeta strong {
+  overflow: hidden;
+  color: var(--color-text-primary);
+  font-size: 11px;
+  font-weight: 760;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.railButton {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 34px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
   border-radius: 8px;
   color: var(--color-text-primary);
   background: var(--color-background);
-  font-size: 13px;
-  font-weight: 720;
-  text-decoration: none;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 740;
 }
 
-.docsList a:hover {
-  border-color: rgba(34, 197, 94, 0.32);
-  color: #16a34a;
+.railButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
 }
 
 .spinning {
@@ -401,7 +661,8 @@
     grid-template-columns: 1fr;
   }
 
-  .sideColumn {
+  .statusRail {
+    position: static;
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -420,9 +681,12 @@
   }
 
   .progressList,
+  .wizardShell,
   .formGrid,
   .storageGrid,
-  .sideColumn {
+  .reviewGrid,
+  .connectionPanel,
+  .statusRail {
     grid-template-columns: 1fr;
   }
 }
@@ -445,13 +709,15 @@
   }
 
   .inputActionRow,
-  .actions {
+  .actions,
+  .stepActions {
     grid-template-columns: 1fr;
     flex-direction: column;
   }
 
   .inputActionRow button,
-  .actions button {
+  .actions button,
+  .stepActions button {
     width: 100%;
   }
 }

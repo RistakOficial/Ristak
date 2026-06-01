@@ -2,14 +2,16 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Button, Card } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
 import {
+  ArrowLeft,
+  ArrowRight,
   CheckCircle,
   Copy,
   ExternalLink,
   KeyRound,
   Link2,
+  MessageSquareText,
   RefreshCw,
   ShieldCheck,
-  XCircle
 } from 'lucide-react'
 import { SiWhatsapp } from 'react-icons/si'
 import {
@@ -40,6 +42,7 @@ type FacebookLoginResponse = {
 const DEFAULT_GRAPH_VERSION = 'v23.0'
 const COEXISTENCE_FEATURE_TYPE = 'whatsapp_business_app_onboarding'
 const COEXISTENCE_FINISH_EVENT = 'FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING'
+const META_DEVELOPERS_URL = 'https://developers.facebook.com/apps/'
 
 const emptyConfig: WhatsAppConfig = {
   configured: false,
@@ -180,16 +183,44 @@ export const WhatsAppCoexistence: React.FC = () => {
   const [isCompleting, setIsCompleting] = useState(false)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [sessionPayload, setSessionPayload] = useState<EmbeddedSignupPayload | null>(null)
+  const [activeStep, setActiveStep] = useState(0)
   const pendingCodeRef = useRef<string>('')
   const sessionPayloadRef = useRef<EmbeddedSignupPayload | null>(null)
   const completedCodeRef = useRef<string>('')
 
+  const hasAppCredentials = Boolean(form.appId && (form.appSecret || config.appSecretConfigured))
+  const hasConfigId = Boolean(form.embeddedSignupConfigId)
+  const hasWebhookToken = Boolean(form.webhookVerifyToken || config.webhookVerifyTokenConfigured)
+  const isConnected = config.connectionStatus === 'connected'
+  const isReadyToSave = Boolean(hasAppCredentials && hasConfigId && hasWebhookToken)
+
   const setupSteps = useMemo(() => ([
-    { label: 'Meta App', done: Boolean(form.appId && (form.appSecret || config.appSecretConfigured)) },
-    { label: 'Login config', done: Boolean(form.embeddedSignupConfigId) },
-    { label: 'Webhook', done: Boolean(form.webhookVerifyToken || config.webhookVerifyTokenConfigured) },
-    { label: 'Coexistence', done: config.connectionStatus === 'connected' }
-  ]), [config.appSecretConfigured, config.connectionStatus, config.webhookVerifyTokenConfigured, form])
+    {
+      title: 'Meta App',
+      description: 'App ID y App Secret',
+      done: hasAppCredentials
+    },
+    {
+      title: 'Configuration ID',
+      description: 'Facebook Login for Business',
+      done: hasConfigId
+    },
+    {
+      title: 'Webhook',
+      description: 'URL y verify token',
+      done: hasWebhookToken
+    },
+    {
+      title: 'Guardar',
+      description: 'Persistir datos seguros',
+      done: config.configured
+    },
+    {
+      title: 'Conectar',
+      description: 'Abrir conexión',
+      done: isConnected
+    }
+  ]), [config.configured, hasAppCredentials, hasConfigId, hasWebhookToken, isConnected])
 
   const completedSteps = setupSteps.filter(step => step.done).length
   const canLaunchSignup = Boolean(
@@ -198,6 +229,7 @@ export const WhatsAppCoexistence: React.FC = () => {
     form.embeddedSignupConfigId &&
     (form.appSecret || config.appSecretConfigured)
   )
+  const activeStepDone = setupSteps[activeStep]?.done === true
 
   useEffect(() => {
     loadConfig()
@@ -274,17 +306,17 @@ export const WhatsAppCoexistence: React.FC = () => {
   const handleSave = async () => {
     if (!form.appId || !form.embeddedSignupConfigId) {
       showToast('error', 'Datos incompletos', 'App ID y Configuration ID son requeridos')
-      return
+      return false
     }
 
     if (!form.appSecret && !config.appSecretConfigured) {
       showToast('error', 'App Secret requerido', 'Guarda el App Secret de Meta Developers')
-      return
+      return false
     }
 
     if (!form.webhookVerifyToken && !config.webhookVerifyTokenConfigured) {
       showToast('error', 'Verify token requerido', 'Define el token que usarás en el webhook de Meta')
-      return
+      return false
     }
 
     setIsSaving(true)
@@ -297,9 +329,11 @@ export const WhatsAppCoexistence: React.FC = () => {
         webhookVerifyToken: saved.webhookVerifyToken || prev.webhookVerifyToken,
         graphApiVersion: saved.graphApiVersion || prev.graphApiVersion
       }))
-      showToast('success', 'WhatsApp guardado', 'Configuración lista para Embedded Signup')
+      showToast('success', 'WhatsApp guardado', 'Configuración lista para conectar')
+      return true
     } catch (error) {
       showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo guardar')
+      return false
     } finally {
       setIsSaving(false)
     }
@@ -324,7 +358,8 @@ export const WhatsAppCoexistence: React.FC = () => {
       pendingCodeRef.current = ''
 
       if (result.config.connectionStatus === 'connected') {
-        showToast('success', 'Número conectado', 'WhatsApp quedó conectado en modo Coexistence')
+        setActiveStep(4)
+        showToast('success', 'Número conectado', 'WhatsApp quedó conectado')
       } else {
         showToast('warning', 'Revisa Meta', 'El token se guardó, pero falta confirmar WABA o Phone Number ID')
       }
@@ -355,7 +390,7 @@ export const WhatsAppCoexistence: React.FC = () => {
         const code = response.authResponse?.code
         if (!code) {
           setIsLaunching(false)
-          showToast('warning', 'Sin código', 'Meta no regresó el code de Embedded Signup')
+          showToast('warning', 'Sin código', 'Meta no regresó el código de conexión')
           return
         }
 
@@ -399,6 +434,62 @@ export const WhatsAppCoexistence: React.FC = () => {
     }
   }
 
+  const getStepBlockMessage = (stepIndex = activeStep) => {
+    if (stepIndex === 0 && !hasAppCredentials) {
+      return 'Primero pega el App ID y App Secret de tu Meta Developer App'
+    }
+
+    if (stepIndex === 1 && !hasConfigId) {
+      return 'Pega el Configuration ID de Facebook Login for Business'
+    }
+
+    if (stepIndex === 2 && !hasWebhookToken) {
+      return 'Define el verify token del webhook'
+    }
+
+    if (stepIndex === 3 && !config.configured) {
+      return 'Guarda la configuración antes de conectar WhatsApp'
+    }
+
+    return ''
+  }
+
+  const handleNextStep = () => {
+    if (activeStep < 3 && !activeStepDone) {
+      showToast('warning', 'Falta un dato', getStepBlockMessage())
+      return
+    }
+
+    if (activeStep === 3 && !config.configured) {
+      showToast('warning', 'Guarda primero', getStepBlockMessage())
+      return
+    }
+
+    setActiveStep(step => Math.min(step + 1, setupSteps.length - 1))
+  }
+
+  const handlePreviousStep = () => {
+    setActiveStep(step => Math.max(step - 1, 0))
+  }
+
+  const handleSelectStep = (stepIndex: number) => {
+    const firstIncompleteStepIndex = setupSteps.findIndex((step, index) => index < stepIndex && !step.done)
+
+    if (firstIncompleteStepIndex >= 0) {
+      showToast('warning', 'Completa este paso', getStepBlockMessage(firstIncompleteStepIndex))
+      return
+    }
+
+    setActiveStep(stepIndex)
+  }
+
+  const handleSaveAndContinue = async () => {
+    const saved = await handleSave()
+    if (saved) {
+      setActiveStep(4)
+    }
+  }
+
   const handleCopy = async (value: string, label: string) => {
     try {
       await navigator.clipboard.writeText(value)
@@ -406,6 +497,192 @@ export const WhatsAppCoexistence: React.FC = () => {
     } catch {
       showToast('error', 'Error', 'No se pudo copiar')
     }
+  }
+
+  const renderStepContent = () => {
+    if (activeStep === 0) {
+      return (
+        <>
+          <div className={styles.stepIntro}>
+            <span className={styles.stepEyebrow}>Paso 1</span>
+            <h3 className={styles.stepTitle}>Usa la misma Meta Developer App</h3>
+            <p className={styles.stepText}>
+              Abre tu app en Meta Developers. Si la app que usas para Meta Ads ya existe, puedes usar esa misma; lo importante es que tenga WhatsApp y Facebook Login for Business configurados.
+            </p>
+            <a className={styles.inlineDocLink} href={META_DEVELOPERS_URL} target="_blank" rel="noopener noreferrer">
+              Abrir Meta Developers
+              <ExternalLink size={14} />
+            </a>
+          </div>
+
+          <div className={styles.formGrid}>
+            <label className={styles.formGroup}>
+              <span className={styles.formLabel}>Meta App ID</span>
+              <input
+                className={styles.formInput}
+                value={form.appId}
+                onChange={(event) => handleInputChange('appId', event.target.value)}
+                placeholder="123456789012345"
+              />
+            </label>
+
+            <label className={styles.formGroup}>
+              <span className={styles.formLabel}>App Secret</span>
+              <input
+                className={styles.formInput}
+                value={form.appSecret}
+                onChange={(event) => handleInputChange('appSecret', event.target.value)}
+                placeholder={config.appSecretConfigured ? 'Ya guardado; pega uno nuevo sólo si quieres rotarlo' : 'Pega el App Secret'}
+                type="password"
+              />
+            </label>
+
+            <label className={styles.formGroup}>
+              <span className={styles.formLabel}>Graph API Version</span>
+              <input
+                className={styles.formInput}
+                value={form.graphApiVersion}
+                onChange={(event) => handleInputChange('graphApiVersion', event.target.value)}
+                placeholder="v23.0"
+              />
+            </label>
+          </div>
+        </>
+      )
+    }
+
+    if (activeStep === 1) {
+      return (
+        <>
+          <div className={styles.stepIntro}>
+            <span className={styles.stepEyebrow}>Paso 2</span>
+            <h3 className={styles.stepTitle}>Saca el Configuration ID</h3>
+            <p className={styles.stepText}>
+              En Meta Developers ve a Facebook Login for Business, entra a Configurations y crea una configuración para WhatsApp. El ID que aparece ahí va aquí.
+            </p>
+          </div>
+
+          <ol className={styles.guideList}>
+            <li>Meta Developers → tu App.</li>
+            <li>Facebook Login for Business → Configurations.</li>
+            <li>Create from template → WhatsApp.</li>
+            <li>Copia el Configuration ID.</li>
+          </ol>
+
+          <label className={`${styles.formGroup} ${styles.formGroupWide}`}>
+            <span className={styles.formLabel}>Configuration ID</span>
+            <input
+              className={styles.formInput}
+              value={form.embeddedSignupConfigId}
+              onChange={(event) => handleInputChange('embeddedSignupConfigId', event.target.value)}
+              placeholder="ID de la configuración de Facebook Login for Business"
+            />
+          </label>
+
+          <div className={styles.notThisBox}>
+            No pegues aquí WABA ID, Phone Number ID, Pixel ID ni Business Manager ID. Este campo es sólo el Configuration ID.
+          </div>
+        </>
+      )
+    }
+
+    if (activeStep === 2) {
+      return (
+        <>
+          <div className={styles.stepIntro}>
+            <span className={styles.stepEyebrow}>Paso 3</span>
+            <h3 className={styles.stepTitle}>Configura el webhook de WhatsApp</h3>
+            <p className={styles.stepText}>
+              En WhatsApp → Configuration pega esta callback URL y usa el mismo verify token que pongas aquí.
+            </p>
+          </div>
+
+          <label className={`${styles.formGroup} ${styles.formGroupWide}`}>
+            <span className={styles.formLabel}>Webhook callback URL</span>
+            <div className={styles.inputActionRow}>
+              <input
+                className={styles.formInput}
+                value={form.callbackUrl}
+                onChange={(event) => handleInputChange('callbackUrl', event.target.value)}
+              />
+              <Button type="button" variant="secondary" onClick={() => handleCopy(form.callbackUrl, 'Webhook URL copiado')}>
+                <Copy size={16} />
+                Copiar
+              </Button>
+            </div>
+          </label>
+
+          <label className={`${styles.formGroup} ${styles.formGroupWide}`}>
+            <span className={styles.formLabel}>Webhook verify token</span>
+            <input
+              className={styles.formInput}
+              value={form.webhookVerifyToken}
+              onChange={(event) => handleInputChange('webhookVerifyToken', event.target.value)}
+              placeholder={config.webhookVerifyTokenConfigured ? 'Ya guardado; pega uno nuevo sólo si quieres rotarlo' : 'Token privado para verificar el webhook'}
+            />
+          </label>
+
+          <p className={styles.stepHint}>
+            Después de verificar el webhook, Meta permitirá seleccionar los eventos de WhatsApp que enviaremos a esta estructura separada.
+          </p>
+        </>
+      )
+    }
+
+    if (activeStep === 3) {
+      return (
+        <>
+          <div className={styles.stepIntro}>
+            <span className={styles.stepEyebrow}>Paso 4</span>
+            <h3 className={styles.stepTitle}>Guarda la configuración</h3>
+            <p className={styles.stepText}>
+              Esto guarda App ID, App Secret, Configuration ID, versión de Graph API y webhook en la estructura dedicada de WhatsApp.
+            </p>
+          </div>
+
+          <div className={styles.reviewGrid}>
+            <div>
+              <span>Meta App</span>
+              <strong>{hasAppCredentials ? 'Lista' : 'Pendiente'}</strong>
+            </div>
+            <div>
+              <span>Configuration ID</span>
+              <strong>{hasConfigId ? 'Listo' : 'Pendiente'}</strong>
+            </div>
+            <div>
+              <span>Webhook</span>
+              <strong>{hasWebhookToken ? 'Listo' : 'Pendiente'}</strong>
+            </div>
+            <div>
+              <span>Estado guardado</span>
+              <strong>{config.configured ? 'Guardado' : 'Sin guardar'}</strong>
+            </div>
+          </div>
+
+          <Button type="button" variant="primary" onClick={handleSaveAndContinue} disabled={!isReadyToSave || isSaving || isLoading}>
+            <KeyRound size={16} className={isSaving ? styles.spinning : ''} />
+            {isSaving ? 'Guardando...' : config.configured ? 'Actualizar y continuar' : 'Guardar y continuar'}
+          </Button>
+        </>
+      )
+    }
+
+    return (
+      <>
+          <div className={styles.stepIntro}>
+            <span className={styles.stepEyebrow}>Paso 5</span>
+          <h3 className={styles.stepTitle}>Conecta el número de WhatsApp</h3>
+          <p className={styles.stepText}>
+            Ya está lista la configuración. Abre el flujo oficial de Meta y termina la conexión del número.
+          </p>
+        </div>
+
+        <Button type="button" variant="primary" onClick={handleLaunchSignup} disabled={!canLaunchSignup || isLaunching || isCompleting}>
+          <Link2 size={16} className={isLaunching || isCompleting ? styles.spinning : ''} />
+          {isCompleting ? 'Conectando...' : 'Conectar WhatsApp'}
+        </Button>
+      </>
+    )
   }
 
   return (
@@ -418,247 +695,166 @@ export const WhatsAppCoexistence: React.FC = () => {
                 <SiWhatsapp size={26} />
               </span>
               <div>
-                <h2 className={styles.pageTitle}>WhatsApp API Coexistence</h2>
+                <h2 className={styles.pageTitle}>Conectar WhatsApp API</h2>
                 <p className={styles.pageSubtitle}>
-                  Conecta un numero de WhatsApp Business App a Cloud API sin mezclar datos con CRM.
+                  Sigue el wizard y conecta el número sin mezclar datos con CRM.
                 </p>
               </div>
             </div>
-            <div className={styles.headerRight}>
-              <div className={getStatusClassName(config.connectionStatus)}>
-                {config.connectionStatus === 'connected' ? <CheckCircle size={16} /> : <XCircle size={16} />}
-                <span>{getStatusLabel(config.connectionStatus)}</span>
+            {isConnected && (
+              <div className={styles.headerRight}>
+                <div className={getStatusClassName(config.connectionStatus)}>
+                  <CheckCircle size={16} />
+                  <span>{getStatusLabel(config.connectionStatus)}</span>
+                </div>
               </div>
-            </div>
+            )}
           </div>
         </div>
 
-        <div className={styles.workspace}>
+        <div className={[styles.workspace, !isConnected ? styles.workspaceSetupOnly : ''].filter(Boolean).join(' ')}>
           <div className={styles.primaryColumn}>
-            <section className={styles.section}>
+            <section className={`${styles.section} ${styles.wizardSection}`}>
               <div className={styles.sectionHeader}>
                 <div>
-                  <h3 className={styles.sectionTitle}>Meta Developers</h3>
+                  <h3 className={styles.sectionTitle}>Wizard de conexión</h3>
                   <p className={styles.sectionDescription}>
-                    App, login configuration y webhook para Embedded Signup.
+                    Completa cada paso y al final conecta el número desde Meta.
                   </p>
                 </div>
-                <span className={styles.stepCount}>{completedSteps}/4 listo</span>
+                <span className={styles.stepCount}>{completedSteps}/5 listo</span>
               </div>
 
-              <div className={styles.progressList}>
-                {setupSteps.map((step, index) => (
-                  <div key={step.label} className={`${styles.progressItem} ${step.done ? styles.progressDone : ''}`}>
-                    <span className={styles.progressDot}>{step.done ? <CheckCircle size={13} /> : index + 1}</span>
-                    <span className={styles.progressLabel}>{step.label}</span>
-                  </div>
-                ))}
-              </div>
-
-              {isLoading ? (
-                <div className={styles.loadingState}>Cargando WhatsApp API...</div>
-              ) : (
-                <div className={styles.formGrid}>
-                  <label className={styles.formGroup}>
-                    <span className={styles.formLabel}>Meta App ID</span>
-                    <input
-                      className={styles.formInput}
-                      value={form.appId}
-                      onChange={(event) => handleInputChange('appId', event.target.value)}
-                      placeholder="123456789012345"
-                    />
-                  </label>
-
-                  <label className={styles.formGroup}>
-                    <span className={styles.formLabel}>App Secret</span>
-                    <input
-                      className={styles.formInput}
-                      value={form.appSecret}
-                      onChange={(event) => handleInputChange('appSecret', event.target.value)}
-                      placeholder="Pega el App Secret"
-                      type="password"
-                    />
-                  </label>
-
-                  <label className={styles.formGroup}>
-                    <span className={styles.formLabel}>Configuration ID</span>
-                    <input
-                      className={styles.formInput}
-                      value={form.embeddedSignupConfigId}
-                      onChange={(event) => handleInputChange('embeddedSignupConfigId', event.target.value)}
-                      placeholder="Facebook Login for Business configuration"
-                    />
-                  </label>
-
-                  <label className={styles.formGroup}>
-                    <span className={styles.formLabel}>Graph API Version</span>
-                    <input
-                      className={styles.formInput}
-                      value={form.graphApiVersion}
-                      onChange={(event) => handleInputChange('graphApiVersion', event.target.value)}
-                      placeholder="v23.0"
-                    />
-                  </label>
-
-                  <label className={`${styles.formGroup} ${styles.formGroupWide}`}>
-                    <span className={styles.formLabel}>Webhook verify token</span>
-                    <input
-                      className={styles.formInput}
-                      value={form.webhookVerifyToken}
-                      onChange={(event) => handleInputChange('webhookVerifyToken', event.target.value)}
-                      placeholder="Token privado para verificar el webhook"
-                    />
-                  </label>
-
-                  <label className={`${styles.formGroup} ${styles.formGroupWide}`}>
-                    <span className={styles.formLabel}>Webhook callback URL</span>
-                    <div className={styles.inputActionRow}>
-                      <input
-                        className={styles.formInput}
-                        value={form.callbackUrl}
-                        onChange={(event) => handleInputChange('callbackUrl', event.target.value)}
-                      />
-                      <Button type="button" variant="secondary" onClick={() => handleCopy(form.callbackUrl, 'Webhook URL copiado')}>
-                        <Copy size={16} />
-                        Copiar
-                      </Button>
-                    </div>
-                  </label>
+              <div className={styles.wizardShell}>
+                <div className={styles.progressList}>
+                  {setupSteps.map((step, index) => (
+                    <button
+                      key={step.title}
+                      type="button"
+                      className={[
+                        styles.progressItem,
+                        step.done ? styles.progressDone : '',
+                        index === activeStep ? styles.progressActive : ''
+                      ].filter(Boolean).join(' ')}
+                      onClick={() => handleSelectStep(index)}
+                    >
+                      <span className={styles.progressDot}>{step.done ? <CheckCircle size={13} /> : index + 1}</span>
+                      <span className={styles.progressCopy}>
+                        <span className={styles.progressLabel}>{step.title}</span>
+                        <span className={styles.progressDescription}>{step.description}</span>
+                      </span>
+                    </button>
+                  ))}
                 </div>
-              )}
 
-              <div className={styles.actions}>
-                <Button type="button" variant="secondary" onClick={handleSave} disabled={isSaving || isLoading}>
-                  <KeyRound size={16} className={isSaving ? styles.spinning : ''} />
-                  {isSaving ? 'Guardando...' : 'Guardar configuración'}
-                </Button>
-                <Button type="button" variant="primary" onClick={handleLaunchSignup} disabled={!canLaunchSignup || isLaunching || isCompleting}>
-                  <Link2 size={16} className={isLaunching || isCompleting ? styles.spinning : ''} />
-                  {isCompleting ? 'Conectando...' : 'Conectar número Coexistence'}
-                </Button>
+                <div className={styles.stepPanel}>
+                  {isLoading ? (
+                    <div className={styles.loadingState}>Cargando WhatsApp API...</div>
+                  ) : (
+                    <>
+                      {renderStepContent()}
+
+                      <div className={styles.stepActions}>
+                        <Button type="button" variant="secondary" onClick={handlePreviousStep} disabled={activeStep === 0}>
+                          <ArrowLeft size={16} />
+                          Atrás
+                        </Button>
+                        {activeStep < setupSteps.length - 1 && (
+                          <Button type="button" variant="secondary" onClick={handleNextStep}>
+                            Siguiente
+                            <ArrowRight size={16} />
+                          </Button>
+                        )}
+                      </div>
+                    </>
+                  )}
+                </div>
               </div>
+
             </section>
 
-            <section className={styles.section}>
-              <div className={styles.sectionHeader}>
-                <div>
-                  <h3 className={styles.sectionTitle}>Estructura WhatsApp separada</h3>
-                  <p className={styles.sectionDescription}>
-                    Almacenamiento dedicado para preparar chats, mensajes, contactos, numeros y webhooks.
-                  </p>
-                </div>
-              </div>
-
-              <div className={styles.storageGrid}>
-                <div className={styles.storageItem}>
-                  <span className={styles.storageValue}>{storage.phoneNumbers}</span>
-                  <span className={styles.storageLabel}>Números</span>
-                </div>
-                <div className={styles.storageItem}>
-                  <span className={styles.storageValue}>{storage.contacts}</span>
-                  <span className={styles.storageLabel}>Contactos WA</span>
-                </div>
-                <div className={styles.storageItem}>
-                  <span className={styles.storageValue}>{storage.chats}</span>
-                  <span className={styles.storageLabel}>Chats</span>
-                </div>
-                <div className={styles.storageItem}>
-                  <span className={styles.storageValue}>{storage.messages}</span>
-                  <span className={styles.storageLabel}>Mensajes</span>
-                </div>
-                <div className={styles.storageItem}>
-                  <span className={styles.storageValue}>{storage.webhookEvents}</span>
-                  <span className={styles.storageLabel}>Webhooks</span>
-                </div>
-              </div>
-            </section>
-          </div>
-
-          <div className={styles.sideColumn}>
-            <section className={styles.section}>
-              <div className={styles.numberHeader}>
-                <span className={styles.numberIcon} aria-hidden="true">
-                  <ShieldCheck size={22} />
-                </span>
-                <div>
-                  <h3 className={styles.sectionTitle}>Número conectado</h3>
-                  <p className={styles.sectionDescription}>Estado leído desde WhatsApp Business Platform.</p>
-                </div>
-              </div>
-
-              <div className={styles.infoList}>
-                <div className={styles.infoRow}>
-                  <span>WABA ID</span>
-                  <strong>{config.wabaId || 'Pendiente'}</strong>
-                </div>
-                <div className={styles.infoRow}>
-                  <span>Phone Number ID</span>
-                  <strong>{config.phoneNumberId || 'Pendiente'}</strong>
-                </div>
-                <div className={styles.infoRow}>
-                  <span>Número</span>
-                  <strong>{config.displayPhoneNumber || 'Pendiente'}</strong>
-                </div>
-                <div className={styles.infoRow}>
-                  <span>Nombre</span>
-                  <strong>{config.verifiedName || 'Pendiente'}</strong>
-                </div>
-                <div className={styles.infoRow}>
-                  <span>Coexistence</span>
-                  <strong>{config.isOnBizApp ? 'Activo' : 'Sin confirmar'}</strong>
-                </div>
-                <div className={styles.infoRow}>
-                  <span>Platform</span>
-                  <strong>{config.platformType || 'Pendiente'}</strong>
-                </div>
-              </div>
-
-              <Button type="button" variant="secondary" onClick={handleRefreshStatus} disabled={!config.businessTokenConfigured || isRefreshing} fullWidth>
-                <RefreshCw size={16} className={isRefreshing ? styles.spinning : ''} />
-                {isRefreshing ? 'Consultando...' : 'Actualizar estado'}
-              </Button>
-            </section>
-
-            <section className={styles.section}>
-              <div className={styles.sectionHeader}>
-                <div>
-                  <h3 className={styles.sectionTitle}>Campos webhook</h3>
-                  <p className={styles.sectionDescription}>Actívalos en WhatsApp &gt; Configuration.</p>
-                </div>
-              </div>
-
-              <div className={styles.fieldPills}>
-                <span>messages</span>
-                <span>message_template_status_update</span>
-                <span>account_update</span>
-                <span>history</span>
-                <span>smb_app_state_sync</span>
-                <span>smb_message_echoes</span>
-              </div>
-            </section>
-
-            <section className={styles.section}>
-              <div className={styles.docsList}>
-                <a href="https://developers.facebook.com/documentation/business-messaging/whatsapp/embedded-signup/implementation" target="_blank" rel="noopener noreferrer">
-                  Embedded Signup
-                  <ExternalLink size={14} />
-                </a>
-                <a href="https://developers.facebook.com/documentation/business-messaging/whatsapp/embedded-signup/onboarding-business-app-users" target="_blank" rel="noopener noreferrer">
-                  Coexistence
-                  <ExternalLink size={14} />
-                </a>
-              </div>
-            </section>
-
-            {sessionPayload && (
+            {isConnected && (
               <section className={styles.section}>
-                <div className={styles.infoRow}>
-                  <span>Último evento</span>
-                  <strong>{sessionPayload.event || 'WA_EMBEDDED_SIGNUP'}</strong>
+                <div className={styles.sectionHeader}>
+                  <div>
+                    <h3 className={styles.sectionTitle}>Estructura WhatsApp separada</h3>
+                    <p className={styles.sectionDescription}>
+                      Almacenamiento dedicado para chats, mensajes, contactos, números y webhooks.
+                    </p>
+                  </div>
+                </div>
+
+                <div className={styles.storageGrid}>
+                  <div className={styles.storageItem}>
+                    <span className={styles.storageValue}>{storage.phoneNumbers}</span>
+                    <span className={styles.storageLabel}>Números</span>
+                  </div>
+                  <div className={styles.storageItem}>
+                    <span className={styles.storageValue}>{storage.contacts}</span>
+                    <span className={styles.storageLabel}>Contactos WA</span>
+                  </div>
+                  <div className={styles.storageItem}>
+                    <span className={styles.storageValue}>{storage.chats}</span>
+                    <span className={styles.storageLabel}>Chats</span>
+                  </div>
+                  <div className={styles.storageItem}>
+                    <span className={styles.storageValue}>{storage.messages}</span>
+                    <span className={styles.storageLabel}>Mensajes</span>
+                  </div>
+                  <div className={styles.storageItem}>
+                    <span className={styles.storageValue}>{storage.webhookEvents}</span>
+                    <span className={styles.storageLabel}>Webhooks</span>
+                  </div>
                 </div>
               </section>
             )}
           </div>
+
+          {isConnected && (
+            <aside className={styles.statusRail}>
+              <div className={styles.railBlock}>
+                <div className={styles.railHeader}>
+                  <ShieldCheck size={18} />
+                  <span>Número</span>
+                </div>
+                <strong className={styles.railPrimaryValue}>{config.displayPhoneNumber || 'Pendiente'}</strong>
+                <span className={styles.railSecondaryValue}>{config.verifiedName || getStatusLabel(config.connectionStatus)}</span>
+                <div className={styles.railMeta}>
+                  <span>WABA</span>
+                  <strong>{config.wabaId || '-'}</strong>
+                  <span>Phone ID</span>
+                  <strong>{config.phoneNumberId || '-'}</strong>
+                </div>
+                <button
+                  type="button"
+                  className={styles.railButton}
+                  onClick={handleRefreshStatus}
+                  disabled={!config.businessTokenConfigured || isRefreshing}
+                >
+                  <RefreshCw size={16} className={isRefreshing ? styles.spinning : ''} />
+                  {isRefreshing ? 'Actualizando' : 'Actualizar'}
+                </button>
+              </div>
+
+              <div className={styles.railBlock}>
+                <div className={styles.railHeader}>
+                  <MessageSquareText size={18} />
+                  <span>Plantillas</span>
+                </div>
+                <span className={styles.railSecondaryValue}>Próximamente</span>
+              </div>
+
+              {sessionPayload && (
+                <div className={styles.railBlock}>
+                  <div className={styles.railHeader}>
+                    <CheckCircle size={18} />
+                    <span>Último evento</span>
+                  </div>
+                  <strong className={styles.railPrimaryValue}>{sessionPayload.event || 'Recibido'}</strong>
+                </div>
+              )}
+            </aside>
+          )}
         </div>
       </Card>
     </div>
