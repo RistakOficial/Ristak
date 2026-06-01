@@ -131,33 +131,21 @@ const emptyForm: AIAgentConfigInput = {
   webSearchEnabled: false
 }
 
+const legacyBusinessContextFields = [
+  { label: 'Mercado o nicho', key: 'marketContext' },
+  { label: 'Cliente ideal', key: 'idealCustomer' },
+  { label: 'Zona geográfica', key: 'locationContext' },
+  { label: 'Competidores o referencias', key: 'competitorsContext' },
+  { label: 'Tono, prioridades y reglas', key: 'brandVoice' }
+] as const
+
 const onboardingQuestions: Array<{
   field: AIAgentBusinessContextField
   question: string
 }> = [
   {
     field: 'businessContext',
-    question: 'Para darte recomendaciones con criterio, primero cuéntame qué vende tu negocio, cómo gana dinero y qué lo hace diferente.'
-  },
-  {
-    field: 'marketContext',
-    question: '¿En qué mercado o nicho compites? Por ejemplo: clínica estética, educación, real estate, servicios locales, consultoría, etc.'
-  },
-  {
-    field: 'idealCustomer',
-    question: '¿Quién es tu cliente ideal y qué problema quiere resolver cuando te compra?'
-  },
-  {
-    field: 'locationContext',
-    question: '¿En qué ciudad o zona vendes y qué detalles locales importan para el negocio?'
-  },
-  {
-    field: 'competitorsContext',
-    question: '¿Qué competidores, marcas de referencia o alternativas compara tu cliente antes de decidir?'
-  },
-  {
-    field: 'brandVoice',
-    question: '¿Cómo quieres que te recomiende la IA: agresivo, conservador, premium, directo, familiar? ¿Qué metas o reglas debe respetar?'
+    question: 'Para darte recomendaciones con criterio, cuéntame en un solo mensaje qué vendes, a quién le vendes, dónde operas, quién compite contigo, qué tono quieres y qué reglas debe respetar el agente.'
   }
 ]
 
@@ -333,12 +321,12 @@ function collectVisibleText() {
 function statusToForm(status: AIAgentConfigStatus): AIAgentConfigInput {
   return {
     model: status.model || DEFAULT_AI_MODEL,
-    businessContext: status.businessContext || '',
-    marketContext: status.marketContext || '',
-    idealCustomer: status.idealCustomer || '',
-    locationContext: status.locationContext || '',
-    competitorsContext: status.competitorsContext || '',
-    brandVoice: status.brandVoice || '',
+    businessContext: getUnifiedBusinessContext(status),
+    marketContext: '',
+    idealCustomer: '',
+    locationContext: '',
+    competitorsContext: '',
+    brandVoice: '',
     actionCustomizations: status.actionCustomizations || '',
     researchDomains: status.researchDomains || '',
     responseStyle: status.responseStyle || 'direct',
@@ -348,14 +336,30 @@ function statusToForm(status: AIAgentConfigStatus): AIAgentConfigInput {
 }
 
 function hasBusinessContext(form: AIAgentConfigInput) {
-  return Boolean(
-    form.businessContext.trim() ||
-    form.marketContext.trim() ||
-    form.idealCustomer.trim() ||
-    form.locationContext.trim() ||
-    form.competitorsContext.trim() ||
-    form.brandVoice.trim()
-  )
+  return Boolean(form.businessContext.trim())
+}
+
+function getUnifiedBusinessContext(status: AIAgentConfigStatus) {
+  const primaryContext = (status.businessContext || '').trim()
+  const legacyContext = legacyBusinessContextFields
+    .map(({ label, key }) => {
+      const value = String(status[key] || '').trim()
+      return value ? `${label}: ${value}` : ''
+    })
+    .filter(Boolean)
+
+  return [primaryContext, ...legacyContext].filter(Boolean).join('\n\n')
+}
+
+function prepareConfigForSave(config: AIAgentConfigInput): AIAgentConfigInput {
+  return {
+    ...config,
+    marketContext: '',
+    idealCustomer: '',
+    locationContext: '',
+    competitorsContext: '',
+    brandVoice: ''
+  }
 }
 
 function createInitialVoiceBars() {
@@ -1574,7 +1578,7 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
 
   const saveAgentConfig = async (nextConfig: AIAgentConfigInput, apiKey?: string) => {
     const nextStatus = await aiAgentService.saveConfig({
-      ...nextConfig,
+      ...prepareConfigForSave(nextConfig),
       apiKey: apiKey?.trim() || undefined
     })
     applyStatus(nextStatus)

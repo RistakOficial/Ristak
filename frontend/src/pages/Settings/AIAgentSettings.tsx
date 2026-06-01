@@ -43,6 +43,37 @@ const emptyForm = {
   webSearchEnabled: false
 }
 
+const legacyBusinessContextFields = [
+  { label: 'Mercado o nicho', key: 'marketContext' },
+  { label: 'Cliente ideal', key: 'idealCustomer' },
+  { label: 'Zona geográfica', key: 'locationContext' },
+  { label: 'Competidores o referencias', key: 'competitorsContext' },
+  { label: 'Tono, prioridades y reglas', key: 'brandVoice' }
+] as const
+
+function getUnifiedBusinessContext(status: AIAgentConfigStatus) {
+  const primaryContext = (status.businessContext || '').trim()
+  const legacyContext = legacyBusinessContextFields
+    .map(({ label, key }) => {
+      const value = String(status[key] || '').trim()
+      return value ? `${label}: ${value}` : ''
+    })
+    .filter(Boolean)
+
+  return [primaryContext, ...legacyContext].filter(Boolean).join('\n\n')
+}
+
+function prepareConfigForSave(form: typeof emptyForm) {
+  return {
+    ...form,
+    marketContext: '',
+    idealCustomer: '',
+    locationContext: '',
+    competitorsContext: '',
+    brandVoice: ''
+  }
+}
+
 const modelOptionGroups = [
   {
     label: 'GPT-5.5 y GPT-5.4',
@@ -135,12 +166,12 @@ function getKnownModel(value?: string | null) {
 function statusToForm(status: AIAgentConfigStatus) {
   return {
     model: getKnownModel(status.model),
-    businessContext: status.businessContext || '',
-    marketContext: status.marketContext || '',
-    idealCustomer: status.idealCustomer || '',
-    locationContext: status.locationContext || '',
-    competitorsContext: status.competitorsContext || '',
-    brandVoice: status.brandVoice || '',
+    businessContext: getUnifiedBusinessContext(status),
+    marketContext: '',
+    idealCustomer: '',
+    locationContext: '',
+    competitorsContext: '',
+    brandVoice: '',
     actionCustomizations: status.actionCustomizations || '',
     researchDomains: status.researchDomains || '',
     responseStyle: status.responseStyle || 'direct',
@@ -317,7 +348,7 @@ export const AIAgentSettings: React.FC = () => {
 
       try {
         const nextStatus = normalizeStatus(await aiAgentService.saveConfig({
-          ...form
+          ...prepareConfigForSave(form)
         }))
 
         if (activeSaveIdRef.current !== saveId) return
@@ -384,7 +415,7 @@ export const AIAgentSettings: React.FC = () => {
     try {
       const nextStatus = normalizeStatus(await aiAgentService.saveConfig({
         apiKey: trimmedApiKey,
-        ...form
+        ...prepareConfigForSave(form)
       }))
 
       if (activeSaveIdRef.current !== saveId) return
@@ -605,79 +636,15 @@ export const AIAgentSettings: React.FC = () => {
 
         <div className={styles.section}>
           <h3 className={styles.sectionTitle}>Contexto del negocio</h3>
-          <div className={styles.contextGrid}>
-            <div className={styles.fieldWide}>
-              <label className={styles.label}>Detalles del negocio</label>
-              <textarea
-                className={styles.textarea}
-                value={form.businessContext}
-                placeholder="Qué vendes, cómo operas, ticket promedio, diferenciadores..."
-                onChange={(event) => updateField('businessContext', event.target.value)}
-                disabled={loading || disconnecting}
-                rows={4}
-              />
-            </div>
-
-            <div className={styles.field}>
-              <label className={styles.label}>Mercado o nicho</label>
-              <textarea
-                className={styles.textarea}
-                value={form.marketContext}
-                placeholder="Nicho, industria, tipo de servicio..."
-                onChange={(event) => updateField('marketContext', event.target.value)}
-                disabled={loading || disconnecting}
-                rows={3}
-              />
-            </div>
-
-            <div className={styles.field}>
-              <label className={styles.label}>Cliente ideal</label>
-              <textarea
-                className={styles.textarea}
-                value={form.idealCustomer}
-                placeholder="Quién compra, dolores, objeciones, motivaciones..."
-                onChange={(event) => updateField('idealCustomer', event.target.value)}
-                disabled={loading || disconnecting}
-                rows={3}
-              />
-            </div>
-
-            <div className={styles.field}>
-              <label className={styles.label}>Zona geográfica</label>
-              <textarea
-                className={styles.textarea}
-                value={form.locationContext}
-                placeholder="Ciudad, país, zonas, temporadas, contexto local..."
-                onChange={(event) => updateField('locationContext', event.target.value)}
-                disabled={loading || disconnecting}
-                rows={3}
-              />
-            </div>
-
-            <div className={styles.field}>
-              <label className={styles.label}>Competidores o referencias</label>
-              <textarea
-                className={styles.textarea}
-                value={form.competitorsContext}
-                placeholder="Competidores, marcas de referencia, ventajas/desventajas..."
-                onChange={(event) => updateField('competitorsContext', event.target.value)}
-                disabled={loading || disconnecting}
-                rows={3}
-              />
-            </div>
-
-            <div className={styles.fieldWide}>
-              <label className={styles.label}>Tono, prioridades y reglas</label>
-              <textarea
-                className={styles.textarea}
-                value={form.brandVoice}
-                placeholder="Tono, prioridades, reglas y cosas que debe evitar..."
-                onChange={(event) => updateField('brandVoice', event.target.value)}
-                disabled={loading || disconnecting}
-                rows={3}
-              />
-            </div>
-          </div>
+          <textarea
+            className={`${styles.textarea} ${styles.businessContextTextarea}`}
+            value={form.businessContext}
+            aria-label="Contexto del negocio"
+            placeholder="Dime qué vendes, a quién le vendes, dónde operas, quién compite contigo, qué tono quieres y qué reglas debe respetar el agente."
+            onChange={(event) => updateField('businessContext', event.target.value)}
+            disabled={loading || disconnecting}
+            rows={8}
+          />
         </div>
 
         <div className={styles.section}>

@@ -41,6 +41,13 @@ const DEFAULT_PAYMENT_CURRENCY = 'MXN'
 const DEFAULT_PAYMENT_TIMEZONE = 'America/Mexico_City'
 const DEFAULT_AI_RESPONSE_STYLE = 'direct'
 const DEFAULT_AI_RECOMMENDATION_MODE = 'on_request'
+const LEGACY_BUSINESS_CONTEXT_FIELDS = [
+  { label: 'Mercado o nicho', camelField: 'marketContext', dbField: 'market_context' },
+  { label: 'Cliente ideal', camelField: 'idealCustomer', dbField: 'ideal_customer' },
+  { label: 'Zona geografica', camelField: 'locationContext', dbField: 'location_context' },
+  { label: 'Competidores o referencias', camelField: 'competitorsContext', dbField: 'competitors_context' },
+  { label: 'Tono, prioridades y reglas', camelField: 'brandVoice', dbField: 'brand_voice' }
+]
 const AI_MODEL_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,99}$/
 const ACTION_CUSTOMIZATION_LIMIT = 6000
 const ACTION_CUSTOMIZATION_KEYWORD_LIMIT = 80
@@ -7199,12 +7206,7 @@ function buildBusinessProfileContext(config) {
   if (!config) return 'Sin contexto de negocio configurado.'
 
   const fields = [
-    ['Detalles del negocio', config.business_context],
-    ['Mercado o nicho', config.market_context],
-    ['Cliente ideal', config.ideal_customer],
-    ['Zona geografica', config.location_context],
-    ['Competidores o referencias', config.competitors_context],
-    ['Tono, prioridades y restricciones', config.brand_voice],
+    ['Contexto del negocio', buildUnifiedBusinessContext(config)],
     ['Estilo de respuesta', getResponseStyleLabel(config.response_style)],
     ['Politica de recomendaciones', getRecommendationModeLabel(config.recommendation_mode)],
     ['Dominios preferidos para investigar', config.research_domains],
@@ -9123,6 +9125,28 @@ function cleanConfigText(value, maxLength = 3000) {
   return cleanText(String(value || ''), maxLength)
 }
 
+function readConfigField(source, camelField, dbField) {
+  return source?.[camelField] ?? source?.[dbField] ?? ''
+}
+
+function buildUnifiedBusinessContext(source = {}) {
+  const primaryContext = cleanConfigText(
+    readConfigField(source, 'businessContext', 'business_context'),
+    BUSINESS_CONTEXT_LIMIT
+  )
+  const legacyContext = LEGACY_BUSINESS_CONTEXT_FIELDS
+    .map(({ label, camelField, dbField }) => {
+      const value = cleanConfigText(readConfigField(source, camelField, dbField), 1800)
+      return value ? `${label}: ${value}` : ''
+    })
+    .filter(Boolean)
+
+  return cleanConfigText(
+    [primaryContext, ...legacyContext].filter(Boolean).join('\n\n'),
+    BUSINESS_CONTEXT_LIMIT
+  )
+}
+
 function normalizeUserId(value) {
   const numericValue = Number(value)
   return Number.isInteger(numericValue) && numericValue > 0 ? numericValue : null
@@ -9231,18 +9255,19 @@ export async function getAIAgentConfig({ userId } = {}) {
 
 export async function getAIAgentStatus({ userId } = {}) {
   const config = await getAIAgentConfig({ userId })
+  const businessContext = buildUnifiedBusinessContext(config)
 
   if (!config?.openai_api_key_encrypted) {
     return {
       configured: false,
       model: normalizeAIAgentModel(config?.model),
       tokenPreview: null,
-      businessContext: config?.business_context || '',
-      marketContext: config?.market_context || '',
-      idealCustomer: config?.ideal_customer || '',
-      locationContext: config?.location_context || '',
-      competitorsContext: config?.competitors_context || '',
-      brandVoice: config?.brand_voice || '',
+      businessContext,
+      marketContext: '',
+      idealCustomer: '',
+      locationContext: '',
+      competitorsContext: '',
+      brandVoice: '',
       actionCustomizations: config?.action_customizations || '',
       researchDomains: config?.research_domains || '',
       responseStyle: normalizeAIAgentResponseStyle(config?.response_style),
@@ -9264,12 +9289,12 @@ export async function getAIAgentStatus({ userId } = {}) {
     configured: true,
     model: normalizeAIAgentModel(config.model),
     tokenPreview,
-    businessContext: config.business_context || '',
-    marketContext: config.market_context || '',
-    idealCustomer: config.ideal_customer || '',
-    locationContext: config.location_context || '',
-    competitorsContext: config.competitors_context || '',
-    brandVoice: config.brand_voice || '',
+    businessContext,
+    marketContext: '',
+    idealCustomer: '',
+    locationContext: '',
+    competitorsContext: '',
+    brandVoice: '',
     actionCustomizations: config.action_customizations || '',
     researchDomains: config.research_domains || '',
     responseStyle: normalizeAIAgentResponseStyle(config.response_style),
@@ -9296,6 +9321,14 @@ export async function saveAIAgentConfig({
   webSearchEnabled
 } = {}) {
   const encryptedKey = apiKey ? encrypt(apiKey) : null
+  const unifiedBusinessContext = buildUnifiedBusinessContext({
+    businessContext,
+    marketContext,
+    idealCustomer,
+    locationContext,
+    competitorsContext,
+    brandVoice
+  })
 
   await db.run(`
     INSERT INTO ai_agent_config (
@@ -9332,12 +9365,12 @@ export async function saveAIAgentConfig({
   `, [
     encryptedKey,
     normalizeAIAgentModel(model),
-    cleanConfigText(businessContext),
-    cleanConfigText(marketContext),
-    cleanConfigText(idealCustomer),
-    cleanConfigText(locationContext),
-    cleanConfigText(competitorsContext),
-    cleanConfigText(brandVoice),
+    unifiedBusinessContext,
+    '',
+    '',
+    '',
+    '',
+    '',
     cleanConfigText(researchDomains, 1500),
     normalizeAIAgentResponseStyle(responseStyle),
     normalizeAIAgentRecommendationMode(recommendationMode),
@@ -9372,13 +9405,13 @@ export async function saveRefinedAIAgentBusinessContextAnswer({ field, answer } 
   }
 
   const config = await getAIAgentConfig()
-  const existingText = cleanConfigText(config?.[fieldDefinition.dbField] || '', 1800)
+  const existingText = buildUnifiedBusinessContext(config)
   const { text } = await callOpenAIResponse(apiKey, {
     model: normalizeAIAgentModel(config?.model),
     maxOutputTokens: 650,
     instructions: [
       'Eres editor de contexto de negocio para un agente AI dentro de Ristak.',
-      'Tu trabajo es convertir la respuesta cruda del usuario en texto claro, profesional y útil para guardar en configuración.',
+      'Tu trabajo es convertir la respuesta cruda del usuario en un solo bloque de contexto claro, profesional y útil para guardar en configuración.',
       'No inventes datos. No agregues números, ciudades, competidores, promesas ni públicos que el usuario no haya mencionado.',
       'Puedes ordenar, corregir redacción, quitar muletillas y unir con el texto existente si aporta continuidad.',
       'Si el dato nuevo contradice el texto existente, prioriza el dato nuevo sin hacer drama.',
@@ -9400,20 +9433,18 @@ export async function saveRefinedAIAgentBusinessContextAnswer({ field, answer } 
   }
 
   const nextConfig = {
-    businessContext: config?.business_context || '',
-    marketContext: config?.market_context || '',
-    idealCustomer: config?.ideal_customer || '',
-    locationContext: config?.location_context || '',
-    competitorsContext: config?.competitors_context || '',
-    brandVoice: config?.brand_voice || '',
+    businessContext: refinedText,
+    marketContext: '',
+    idealCustomer: '',
+    locationContext: '',
+    competitorsContext: '',
+    brandVoice: '',
     researchDomains: config?.research_domains || '',
     responseStyle: config?.response_style,
     model: config?.model,
     recommendationMode: config?.recommendation_mode,
     webSearchEnabled: toBooleanValue(config?.web_search_enabled)
   }
-
-  nextConfig[field] = refinedText
 
   const status = await saveAIAgentConfig(nextConfig)
 

@@ -220,6 +220,10 @@
   min-height: 168px;
 }
 
+.businessContextTextarea {
+  min-height: 190px;
+}
+
 .iconButton {
   position: absolute;
   top: 50%;
