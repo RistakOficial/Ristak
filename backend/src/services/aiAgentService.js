@@ -5726,7 +5726,7 @@ function buildHighLevelTools(highLevelConnection, options = {}) {
 
   const tools = []
 
-  if (!options.paymentActionRequest && !options.contactActionRequest) {
+  if (!options.paymentActionRequest && (!options.contactActionRequest || options.explicitHighLevelToolIntent)) {
     tools.push({
       type: 'mcp',
       server_label: 'highlevel',
@@ -6648,6 +6648,19 @@ function shouldUseContactMutationSafety(question) {
   return /(contacto|cliente|lead|prospecto|persona|campo personalizado|custom field|campo|dato).*(actualiza|modifica|cambia|editar|cambiale|actualizale|modificale|ponle|quitale)|(?:actualiza|modifica|cambia|editar|cambiale|actualizale|modificale|ponle|quitale).*(contacto|cliente|lead|prospecto|persona|campo personalizado|custom field|campo|dato|nombre|email|correo|telefono|ciudad|pagos totales|total paid)/.test(normalized)
 }
 
+function mentionsHighLevel(question) {
+  const normalized = normalizeText(question)
+
+  return /\b(?:go\s*high\s*level|gohighlevel|go\s*hi\s*level|gohi\s*level|high\s*level|highlevel|ghl)\b/.test(normalized)
+}
+
+function isExplicitHighLevelToolRequest(question) {
+  const normalized = normalizeText(question)
+  if (!mentionsHighLevel(normalized)) return false
+
+  return /(busca|buscar|buscame|encuentra|revisa|consulta|consultar|muestra|listar|lista|trae|traeme|tráeme|obten|obtiene|obtener|\bget\b|\bpost\b|\bput\b|\bpatch\b|\bdelete\b|crea|crear|actualiza|modifica|cambia|manda|envia|envía|agenda|agendar|calendariza|ejecuta|haz|hacer|contacto|contactos|cliente|clientes|lead|leads|workflow|flujo|automatizacion|automatización|calendario|calendarios|cita|citas|appointment|appointments|oportunidad|pipeline|conversacion|conversación|mensaje|tag|custom field|campo personalizado|producto|precio|media storage|archivo|imagen|folder|usuario|ubicacion|ubicación|location)/.test(normalized)
+}
+
 function getRecentConversationTextBeforeLatestUser(messages = [], limit = 8) {
   if (!Array.isArray(messages)) return ''
 
@@ -6694,11 +6707,15 @@ function shouldUseInternalDatabaseContext(question, messages = []) {
 
 function buildUnifiedAgentRoute({ messages = [], latestUserMessage = '' } = {}) {
   const normalized = normalizeText(latestUserMessage)
+  const explicitHighLevelToolIntent = isExplicitHighLevelToolRequest(latestUserMessage)
   const paymentBackendOnly = shouldUsePaymentBackendForLatestMessage(messages)
   const contactMutationSafety = shouldUseContactMutationSafety(latestUserMessage)
-  const requiresDbResearch = !paymentBackendOnly && shouldUseInternalDatabaseContext(latestUserMessage, messages)
-  const highLevelOperationalIntent = !paymentBackendOnly && !requiresDbResearch &&
-    /(workflow|flujo|automatizacion|automatización|cita|calendario|appointment|oportunidad|pipeline|mensaje|conversacion|conversación|media storage|archivo|imagen|folder|tag|producto|precio|contacto|cliente|lead|campo personalizado|custom field).*(busca|revisa|analiza|cambia|actualiza|modifica|mete|saca|crea|agenda|agenda[r]?|calendariza|manda|envia|envía|haz|hacer)|(?:busca|revisa|analiza|cambia|actualiza|modifica|mete|saca|crea|agenda|agendar|calendariza|manda|envia|envía|haz|hacer).*(workflow|flujo|automatizacion|automatización|cita|calendario|appointment|oportunidad|pipeline|mensaje|conversacion|conversación|media storage|archivo|imagen|folder|tag|producto|precio|contacto|cliente|lead|campo personalizado|custom field)/.test(normalized)
+  const requiresDbResearch = !paymentBackendOnly && !explicitHighLevelToolIntent && shouldUseInternalDatabaseContext(latestUserMessage, messages)
+  const highLevelOperationalIntent = !paymentBackendOnly && (
+    explicitHighLevelToolIntent ||
+    (!requiresDbResearch &&
+      /(workflow|flujo|automatizacion|automatización|cita|calendario|appointment|oportunidad|pipeline|mensaje|conversacion|conversación|media storage|archivo|imagen|folder|tag|producto|precio|contacto|cliente|lead|campo personalizado|custom field).*(busca|revisa|analiza|cambia|actualiza|modifica|mete|saca|crea|agenda|agenda[r]?|calendariza|manda|envia|envía|haz|hacer)|(?:busca|revisa|analiza|cambia|actualiza|modifica|mete|saca|crea|agenda|agendar|calendariza|manda|envia|envía|haz|hacer).*(workflow|flujo|automatizacion|automatización|cita|calendario|appointment|oportunidad|pipeline|mensaje|conversacion|conversación|media storage|archivo|imagen|folder|tag|producto|precio|contacto|cliente|lead|campo personalizado|custom field)/.test(normalized))
+  )
   const mutationIntent = paymentBackendOnly ||
     contactMutationSafety ||
     /(agrega|actualiza|modifica|cambia|crea|genera|registra|agenda|cancela|manda|envia|mete|saca|pausa|reactiva|send|create|update|delete|programa|domicili|ejecuta|hazlo)/.test(normalized)
@@ -6715,6 +6732,7 @@ function buildUnifiedAgentRoute({ messages = [], latestUserMessage = '' } = {}) 
     requiresPaymentTools: paymentBackendOnly,
     paymentBackendOnly,
     contactMutationSafety,
+    explicitHighLevelToolIntent,
     metaAdsOperationalIntent: false,
     skipLocalShortcuts: true,
     confidence: 1,
@@ -6749,6 +6767,7 @@ const UNIFIED_CAPABILITY_PROMPT = [
   '- Para conversación normal, ideas, redacción, chistes o preguntas generales que no requieren datos privados ni acciones externas, responde sin llamar herramientas.',
   '- Para analítica interna del negocio usa la DB de Ristak y los resultados SQL disponibles. Esto incluye campañas/anuncios sincronizados, ROAS, utilidad, pagos, citas, contactos, ventas, fuentes, cohortes e históricos.',
   '- Para GoHighLevel usa HighLevel MCP o highlevel_rest_request cuando el usuario pida recursos/acciones de CRM: media storage, imágenes, archivos, workflows, calendarios, citas, conversaciones, oportunidades, productos, tags, custom fields, usuarios o ubicaciones.',
+  '- Si el último mensaje menciona explícitamente GoHighLevel, GoHi Level, HighLevel o GHL y pide buscar, consultar, hacer GET/POST/PUT/PATCH/DELETE, crear o actualizar algo, usa herramientas reales de HighLevel en ese turno. Prioriza HighLevel MCP; si el MCP no expone lo necesario, usa highlevel_rest_request. No contestes desde la DB local salvo que el usuario pida Ristak/DB/reportes.',
   '- Si una acción de CRM menciona un nombre de persona/contacto, primero resuelve ese nombre contra DB/GHL y usa el contactId real. No le pidas ID, correo o teléfono al usuario si Memoria operacional CRM ya trae resolvedContact.',
   '- Para agendar citas, meter a workflow, crear oportunidades o mandar mensajes a una persona, usa el contactId resuelto por lookup_highlevel_contact o Memoria operacional CRM; no confundas ese nombre con la última/próxima cita de otro contacto.',
   '- Para pagos, links, invoices, parcialidades, pagos manuales, tarjeta guardada o domiciliación usa las herramientas internas de Ristak porque replican la lógica real del backend. No uses MCP como atajo para mutaciones de dinero.',
@@ -7789,7 +7808,8 @@ async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, ru
     ? []
     : buildHighLevelTools(highLevelConnection, {
         paymentActionRequest,
-        contactActionRequest
+        contactActionRequest,
+        explicitHighLevelToolIntent: Boolean(agentRoute?.explicitHighLevelToolIntent)
       })
   const highLevelTools = paymentOperationRequest
     ? rawHighLevelTools.filter(tool => tool?.type === 'function' && PAYMENT_OPERATION_TOOL_NAMES.has(tool.name))
@@ -7909,7 +7929,7 @@ async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, ru
             paymentContact: paymentOperationalMemory?.resolvedContact || null,
             crmContact: crmOperationalMemory?.resolvedContact || null
           },
-          forceInitialToolCall: paymentOperationRequest
+          forceInitialToolCall: paymentOperationRequest || Boolean(agentRoute?.explicitHighLevelToolIntent && highLevelTools.length && !paymentOperationRequest)
         })
       : await callOpenAIResponse(apiKey, {
           model,

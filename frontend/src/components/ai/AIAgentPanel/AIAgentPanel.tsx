@@ -153,10 +153,7 @@ const onboardingQuestions: Array<{
 ]
 
 const defaultThinkingActions = [
-  'Pensando',
-  'Comprobando datos',
-  'Leyendo contexto',
-  'Preparando respuesta'
+  'Pensando'
 ]
 
 const savingThinkingActions = [
@@ -250,33 +247,35 @@ function addThinkingAction(actions: string[], action: string) {
   }
 }
 
-function getThinkingActions(messages: AIAgentMessage[], pathname: string, savingConfig: boolean) {
-  if (savingConfig) {
-    return savingThinkingActions
-  }
+function normalizeThinkingSource(value: string) {
+  return value
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+}
 
-  const latestUserText = getLatestUserText(messages).toLowerCase()
-  const routeLabel = getRouteLabel(pathname).toLowerCase()
-  const source = `${latestUserText} ${routeLabel}`
-  const actions = ['Pensando']
+function addRelevantThinkingActions(actions: string[], source: string) {
+  if (/(go\s*high\s*level|gohighlevel|go\s*hi\s*level|gohi\s*level|high\s*level|highlevel|ghl)/.test(source)) {
+    addThinkingAction(actions, 'Consultando HighLevel')
+  }
 
   if (/(contacto|contactos|lead|leads|cliente|clientes|prospecto|prospectos|crm)/.test(source)) {
     addThinkingAction(actions, 'Buscando contactos')
     addThinkingAction(actions, 'Cruzando historial')
   }
 
-  if (/(pago|pagos|cobro|cobrar|venta|ventas|ingreso|ingresos|factura|facturar|link)/.test(source)) {
-    const isPaymentMutation = /(crea|crear|genera|generar|manda|mandar|envia|enviar|registra|registrar|programa|programar|cobra|cobrar)/.test(source)
+  if (/(pago|pagos|cobro|cobrar|cobr|venta|ventas|ingreso|ingresos|factura|facturar|invoice|link)/.test(source)) {
+    const isPaymentMutation = /(crea|crear|genera|generar|manda|mandar|envia|enviar|registra|registrar|programa|programar|cobra|cobrar|cobr)/.test(source)
     addThinkingAction(actions, isPaymentMutation ? 'Creando pago' : 'Revisando pagos')
     addThinkingAction(actions, 'Validando montos')
   }
 
-  if (/(cita|citas|agenda|appointment|asistencia|asistieron|showed)/.test(source)) {
+  if (/(cita|citas|agenda|agendar|calendario|calendar|appointment|asistencia|asistieron|showed)/.test(source)) {
     addThinkingAction(actions, 'Revisando citas')
-    addThinkingAction(actions, 'Comprobando asistencia')
+    addThinkingAction(actions, 'Comprobando calendario')
   }
 
-  if (/(campana|campaña|campanas|campañas|meta|facebook|ads|anuncio|anuncios|adset|publicidad|roas)/.test(source)) {
+  if (/(campana|campanas|meta|facebook|ads|anuncio|anuncios|adset|publicidad|roas)/.test(source)) {
     addThinkingAction(actions, 'Analizando campañas')
     addThinkingAction(actions, 'Midiendo rendimiento')
   }
@@ -284,8 +283,30 @@ function getThinkingActions(messages: AIAgentMessage[], pathname: string, saving
   if (/(dashboard|reporte|reportes|analitica|analiticas|analytics|metrica|metricas|datos)/.test(source)) {
     addThinkingAction(actions, 'Comprobando métricas')
   }
+}
 
-  addThinkingAction(actions, 'Preparando respuesta')
+function referencesCurrentView(source: string) {
+  return /(esto|esta pantalla|este panel|esta pagina|esta vista|aqui|lo que estoy viendo|lo de aqui|esta seccion|este dashboard)/.test(source)
+}
+
+function getThinkingActions(messages: AIAgentMessage[], pathname: string, savingConfig: boolean) {
+  if (savingConfig) {
+    return savingThinkingActions
+  }
+
+  const latestUserText = normalizeThinkingSource(getLatestUserText(messages))
+  const routeLabel = normalizeThinkingSource(getRouteLabel(pathname))
+  const actions = ['Pensando']
+
+  addRelevantThinkingActions(actions, latestUserText)
+
+  if (actions.length === 1 && referencesCurrentView(latestUserText)) {
+    addRelevantThinkingActions(actions, routeLabel)
+  }
+
+  if (actions.length > 1) {
+    addThinkingAction(actions, 'Preparando respuesta')
+  }
 
   return actions.length > 1 ? actions : defaultThinkingActions
 }
@@ -343,6 +364,7 @@ function formatVoiceDuration(totalSeconds: number) {
 
 function getAudioContextConstructor() {
   const audioWindow = window as Window & {
+    AudioContext?: typeof AudioContext
     webkitAudioContext?: typeof AudioContext
   }
 
