@@ -2357,6 +2357,71 @@ function extractPaymentSeriesSegmentsFromText(text) {
   return segments.sort((left, right) => left.index - right.index)
 }
 
+function extractRelativePaymentSegmentsBeforeWait(text, waitIndex = 0) {
+  const normalized = normalizeText(text)
+  const limit = Math.max(0, normalizeInteger(waitIndex) || 0)
+  const searchText = normalized.slice(0, limit || normalized.length)
+  const segments = []
+  const seen = new Set()
+
+  const addSegment = ({ match, count, unit }) => {
+    const afterWindow = truncateBeforeNextPaymentPlanBoundary(searchText.slice(match.end, match.end + 140))
+    const beforeWindow = searchText.slice(Math.max(0, match.index - 120), match.index)
+    const afterAmounts = getPaymentAmountMatchesFromText(afterWindow)
+    const beforeAmounts = getPaymentAmountMatchesFromText(beforeWindow)
+    const selectedAmount = afterAmounts[0] || beforeAmounts[beforeAmounts.length - 1]
+    const amount = normalizePaymentAmount(selectedAmount?.amount)
+    if (amount <= 0) return
+
+    const key = `${match.index}:${count}:${unit}:${amount}`
+    if (seen.has(key)) return
+    seen.add(key)
+
+    segments.push({
+      amount,
+      count,
+      unit,
+      interval: { unit, count: 1 },
+      frequency: getPaymentFrequencyForIntervalUnit(unit),
+      index: match.index,
+      end: afterAmounts[0]
+        ? match.end + afterAmounts[0].end
+        : match.end
+    })
+  }
+
+  const nextPeriodPattern = new RegExp(`\\b(?:el|al|en)?\\s*(?:proximo|siguiente)\\s+${PAYMENT_PERIOD_UNIT_TOKEN}\\b`, 'gi')
+  let nextMatch
+  while ((nextMatch = nextPeriodPattern.exec(searchText)) !== null) {
+    addSegment({
+      match: {
+        index: nextMatch.index,
+        end: nextPeriodPattern.lastIndex
+      },
+      count: 1,
+      unit: getPaymentPeriodUnit(nextMatch[1])
+    })
+  }
+
+  const explicitOffsetPattern = new RegExp(`\\b(?:en|a\\s+los?|dentro\\s+de)\\s+${PAYMENT_COUNT_TOKEN}\\s+${PAYMENT_PERIOD_UNIT_TOKEN}\\b`, 'gi')
+  let offsetMatch
+  while ((offsetMatch = explicitOffsetPattern.exec(searchText)) !== null) {
+    const count = parseSmallSpanishCount(offsetMatch[1]) || normalizeInteger(offsetMatch[1])
+    if (count <= 0) continue
+
+    addSegment({
+      match: {
+        index: offsetMatch.index,
+        end: explicitOffsetPattern.lastIndex
+      },
+      count,
+      unit: getPaymentPeriodUnit(offsetMatch[2])
+    })
+  }
+
+  return segments.sort((left, right) => left.index - right.index)
+}
+
 function extractPaymentWaitSegment(text, startIndex = 0) {
   const normalized = normalizeText(text)
   const searchStart = Math.max(0, startIndex)
@@ -2467,15 +2532,16 @@ function extractIrregularPaymentScheduleFromText(text, timezone = DEFAULT_PAYMEN
   const waitSegment = extractPaymentWaitSegment(normalized, waitSearchStart) || extractPaymentWaitSegment(normalized, 0)
   if (!waitSegment) return null
 
+  const relativePaymentSegments = extractRelativePaymentSegmentsBeforeWait(normalized, waitSegment.index)
   const finalAmount = extractFinalPaymentAmountAfterWait(normalized, waitSegment.end)
-  if (!immediatePayment && seriesSegments.length === 0 && finalAmount <= 0) return null
+  if (!immediatePayment && seriesSegments.length === 0 && relativePaymentSegments.length === 0 && finalAmount <= 0) return null
 
   const zone = DateTime.now().setZone(timezone).isValid ? timezone : DEFAULT_PAYMENT_TIMEZONE
   const today = DateTime.now().setZone(zone).toISODate()
   const anchorDate = immediatePayment?.date ||
     parseNaturalPaymentDateFromText(normalized, timezone) ||
     today
-  const primaryInterval = seriesSegments[0]?.interval || { unit: waitSegment.unit || 'months', count: 1 }
+  const primaryInterval = seriesSegments[0]?.interval || relativePaymentSegments[0]?.interval || { unit: waitSegment.unit || 'months', count: 1 }
   const frequency = getPaymentFrequencyForIntervalUnit(primaryInterval.unit)
   const firstPayment = immediatePayment?.amount > 0
     ? {
@@ -2490,8 +2556,41 @@ function extractIrregularPaymentScheduleFromText(text, timezone = DEFAULT_PAYMEN
   let periodOffset = 0
   let lastChargeDate = anchorDate
 
-  for (const segment of seriesSegments.filter((item) => item.index < waitSegment.index)) {
+  const preWaitSegments = [
+    ...seriesSegments
+      .filter((item) => item.index < waitSegment.index)
+      .map((item) => ({ ...item, kind: 'series' })),
+    ...relativePaymentSegments
+      .filter((item) => item.index < waitSegment.index)
+      .map((item) => ({ ...item, kind: 'relative' }))
+  ].sort((left, right) => left.index - right.index)
+
+  for (const segment of preWaitSegments) {
     const interval = segment.interval || primaryInterval
+
+    if (segment.kind === 'relative') {
+      const relativeOffset = segment.unit === primaryInterval.unit
+        ? Math.max(normalizeInteger(segment.count), periodOffset + (normalizeInteger(segment.count) <= periodOffset ? 1 : 0))
+        : normalizeInteger(segment.count)
+      const dueDate = segment.unit === primaryInterval.unit
+        ? addIntervalToDate(anchorDate, primaryInterval, relativeOffset, timezone)
+        : addIntervalToDate(anchorDate, { unit: segment.unit, count: segment.count }, 1, timezone)
+
+      remainingPayments.push({
+        sequence: remainingPayments.length + 1,
+        type: 'amount',
+        value: segment.amount,
+        amount: segment.amount,
+        dueDate
+      })
+      lastChargeDate = dueDate
+
+      if (segment.unit === primaryInterval.unit) {
+        periodOffset = Math.max(periodOffset, relativeOffset)
+      }
+
+      continue
+    }
 
     for (let index = 1; index <= segment.count; index += 1) {
       const dueDate = addIntervalToDate(anchorDate, interval, periodOffset + index, timezone)
@@ -10672,7 +10771,7 @@ function buildHighLevelTools(highLevelConnection, options = {}) {
     {
       type: 'function',
       name: 'create_installment_payment_flow',
-      description: 'Crea un cobro por parcialidades, domiciliación o cargos automáticos futuros usando la lógica interna segura de Ristak. Úsala para planes con o sin primer pago, cargos programados a tarjeta guardada, pagos programados únicos con fecha futura, órdenes de domiciliar el resto o cargos futuros como "el 10 de junio cobra 100" o "en un año cobra X y tres meses después Y". Interpreta intención humana, no sólo texto literal: "ahorita 50, te esperes un mes y luego en el siguiente cobras otra vez 50" significa primer pago hoy, un mes sin cobro y otro cargo real en el periodo posterior. Si el cobro es de producto y falta producto, precio o fecha/momento, la herramienta preguntará el dato faltante y conservará lo ya dicho. Si el usuario dice "10 ahorita y luego el mismo día durante los siguientes 3 meses", eso es firstPayment hoy por 10 y remainingPayments mensuales futuros, no 3 cobros hoy. Si dice "espera un mes/dos semanas y luego cobra", ese intervalo es sin cobro: salta el periodo o fecha correspondiente con afterMonths/afterWeeks/afterDays/afterPeriods; no crees pagos de 0. En instrucciones compuestas, cuenta cada tramo: "por dos meses" son 2 cobros reales y cada "le vuelves a cobrar" posterior es otro cobro adicional; si el último dice "esta vez 20", ese 20 no reemplaza el mes anterior, es el último cobro extra. Si el usuario pide "hacer una nueva" en un hilo donde ya se resolvió contacto, reutiliza el contactId de la memoria operacional. Esta herramienta detecta tarjeta guardada en Ristak/GoHighLevel; si el primer pago es transferencia/depósito/manual lo registra offline, y si el resto es automático y falta tarjeta, envía domiciliación. Si hay tarjeta guardada no manda domiciliación salvo que el usuario pida otra tarjeta. Si se necesita enviar link de primer pago o domiciliación y el usuario no eligió canal, pregunta all/email/sms/whatsapp antes de completar el cobro. generate/none no es válido para domiciliación o tarjeta porque el formulario real requiere envío. Nunca completa el cobro sin que el usuario diga que sí al resumen.',
+      description: 'Crea un cobro por parcialidades, domiciliación o cargos automáticos futuros usando la lógica interna segura de Ristak. Úsala para planes con o sin primer pago, cargos programados a tarjeta guardada, pagos programados únicos con fecha futura, órdenes de domiciliar el resto o cargos futuros como "el 10 de junio cobra 100" o "en un año cobra X y tres meses después Y". Interpreta intención humana, no sólo texto literal: "ahorita 50, te esperes un mes y luego en el siguiente cobras otra vez 50" significa primer pago hoy, un mes sin cobro y otro cargo real en el periodo posterior; "ahorita 10, próximo mes 20, te esperas un mes y luego el siguiente 20" significa hoy 10, próximo mes 20, un mes sin cobro y el último 20 al mes siguiente. Si el cobro es de producto y falta producto, precio o fecha/momento, la herramienta preguntará el dato faltante y conservará lo ya dicho. Si el usuario dice "10 ahorita y luego el mismo día durante los siguientes 3 meses", eso es firstPayment hoy por 10 y remainingPayments mensuales futuros, no 3 cobros hoy. Si dice "espera un mes/dos semanas y luego cobra", ese intervalo es sin cobro: salta el periodo o fecha correspondiente con afterMonths/afterWeeks/afterDays/afterPeriods; no crees pagos de 0. En instrucciones compuestas, cuenta cada tramo: "por dos meses" son 2 cobros reales y cada "le vuelves a cobrar" posterior es otro cobro adicional; si el último dice "esta vez 20", ese 20 no reemplaza el mes anterior, es el último cobro extra. Si el usuario pide "hacer una nueva" en un hilo donde ya se resolvió contacto, reutiliza el contactId de la memoria operacional. Esta herramienta detecta tarjeta guardada en Ristak/GoHighLevel; si el primer pago es transferencia/depósito/manual lo registra offline, y si el resto es automático y falta tarjeta, envía domiciliación. Si hay tarjeta guardada no manda domiciliación salvo que el usuario pida otra tarjeta. Si se necesita enviar link de primer pago o domiciliación y el usuario no eligió canal, pregunta all/email/sms/whatsapp antes de completar el cobro. generate/none no es válido para domiciliación o tarjeta porque el formulario real requiere envío. Nunca completa el cobro sin que el usuario diga que sí al resumen.',
       parameters: {
         type: 'object',
         properties: {
@@ -12424,6 +12523,7 @@ const PAYMENT_WORKFLOW_PROMPT = [
   '- Para parcialidades nunca respondas sólo "hoy, en 1 mes y en 2 meses"; calcula y muestra fechas absolutas usando la fecha/hora local disponible.',
   '- Descompón la frase del usuario por tramos temporales. "Por N meses" crea N cobros; si después dice "te esperas un mes, le vuelves a cobrar" eso agrega otro cobro; y si luego dice "te esperas otro mes y le vuelves a cobrar, pero esta vez 20" agrega otro cobro final de 20. No mezcles el cobro final con el último mes de la serie.',
   '- En cadencia mensual, "ahorita 50, te esperes un mes y luego en el siguiente cobras otra vez 50" significa: hoy 50, el siguiente mes queda sin cobro, y el otro mes cobra 50. No lo conviertas en dos cobros futuros.',
+  '- En cadencia mensual con un cobro intermedio, "ahorita 10, próximo mes 20, te esperas un mes y luego el siguiente 20" significa: hoy 10, próximo mes 20, el mes siguiente queda sin cobro, y el último 20 cae hasta el otro mes.',
   '- Si create_installment_payment_flow devuelve scheduleIncomplete, NO muestres ese plan ni pidas confirmación. Corrige la lista de cobros y vuelve a llamar la herramienta con todos los cobros reales y el total recalculado.',
   '- Si después del resumen el usuario responde afirmativamente pero agrega cambios como "pero", "solo pon", "cambia", "agrega descripción", "mejor por WhatsApp", "con tarjeta guardada", etc., eso NO es permiso final. Actualiza el plan con la herramienta interna y vuelve a pedir permiso con el resumen nuevo.',
   '- Si el usuario ya programó un cobro y luego dice "sabes qué", "mejor para otra fecha", "cámbialo", "mueve la fecha" o corrige monto/fecha/recurrencia/descripción/notas/términos/texto, NO crees otro cobro automáticamente. Usa modify_scheduled_payment_flow para modificar el schedule existente o preguntar si quiere crear otro dejando el anterior intacto cuando haya ambigüedad. Si sólo cambia el mes ("mejor para octubre"), conserva el día y año del schedule actual salvo que el usuario diga otro día/año. Si pide cancelar o eliminar el programado, usa esa misma herramienta con cancel_existing o delete_existing.',
