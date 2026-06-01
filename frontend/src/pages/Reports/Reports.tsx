@@ -1174,13 +1174,6 @@ const mapContactsToModalData = (contacts: ContactListItem[]): ContactListItem[] 
     created_at: contact.created_at || (contact as any).createdAt
   }))
 
-const StackedColumnHeader = ({ title, subtitle }: { title: string; subtitle: string }) => (
-  <div style={{ textAlign: 'center', lineHeight: '1.2' }}>
-    <div>{title}</div>
-    <div style={{ fontSize: '0.75em', opacity: 0.7 }}>({subtitle})</div>
-  </div>
-)
-
 interface BusinessExpenseCellProps {
   value: number
   row: TableRow
@@ -1220,7 +1213,7 @@ const BusinessExpenseCell: React.FC<BusinessExpenseCellProps> = ({ value, row, s
         className={styles.businessExpenseInput}
         value={draft}
         inputMode="decimal"
-        aria-label={`Gastos de negocio para ${row.displayDate}`}
+        aria-label={`Costos variables para ${row.displayDate}`}
         placeholder="0.00"
         disabled={saving}
         onFocus={() => setFocused(true)}
@@ -1808,7 +1801,7 @@ export const Reports: React.FC = () => {
       },
       {
         key: FIXED_BUSINESS_EXPENSES_COLUMN_KEY,
-        header: <StackedColumnHeader title="Gastos de negocio" subtitle="Gastos fijos" />,
+        header: 'Costos fijos',
         sortable: true,
         visible: true,
         width: '160px',
@@ -1816,7 +1809,7 @@ export const Reports: React.FC = () => {
       },
       {
         key: MANUAL_BUSINESS_EXPENSES_COLUMN_KEY,
-        header: <StackedColumnHeader title="Gastos de negocio" subtitle="Costos variables" />,
+        header: 'Costos variables',
         sortable: true,
         visible: false,
         width: '160px',
@@ -1836,7 +1829,7 @@ export const Reports: React.FC = () => {
       },
       {
         key: 'spend',
-        header: 'Invertido',
+        header: 'Invertido, anuncios',
         sortable: true,
         render: (value: number) => <span className={styles.secondaryText}>{formatCurrency(value)}</span>
       },
