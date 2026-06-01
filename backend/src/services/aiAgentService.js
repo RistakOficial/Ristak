@@ -584,6 +584,7 @@ function buildFunctionToolEvidence(call = {}, output = {}) {
     ok: output?.ok === true,
     action: output?.action || null,
     confirmationRequired: Boolean(output?.confirmationRequired),
+    contactVerificationRequired: Boolean(output?.contactVerificationRequired),
     missingFields: Array.isArray(output?.missingFields) ? output.missingFields : [],
     error: output?.error || null,
     status: output?.status || null,
@@ -7315,6 +7316,41 @@ async function buildContactVerificationForHighLevelRestMutation(args = {}, conte
   })
 }
 
+function extractContactIdFromHighLevelMcpRequest(request = {}) {
+  const args = request.arguments && typeof request.arguments === 'object' ? request.arguments : {}
+  const rawArguments = cleanText(request.rawArguments || safeStringify(args), 3000)
+  const rawMatch = rawArguments.match(/["']?(?:contactId|contact_id|customerId|customer_id)["']?\s*[:=]\s*["']?([A-Za-z0-9_-]{6,})/i)
+
+  return cleanText(
+    getContactIdFromHighLevelPayload(args) ||
+    getContactIdFromHighLevelPayload(args.body) ||
+    getContactIdFromHighLevelPayload(args.payload) ||
+    getContactIdFromHighLevelPayload(args.input) ||
+    rawMatch?.[1] ||
+    '',
+    180
+  )
+}
+
+async function buildContactVerificationForHighLevelMcpMutation(request = {}, context = {}) {
+  const contactId = extractContactIdFromHighLevelMcpRequest(request)
+  if (!contactId) return null
+
+  const contact = await getPaymentContactById(contactId)
+  if (!contact?.id) return null
+
+  if (userExplicitlySelectedContact(context.messages, contact, {
+    allowRecentSelection: shouldAllowPriorContactVerification(context.messages, '')
+  })) {
+    return null
+  }
+
+  return buildContactVerificationRequiredOutput({
+    contacts: [contact],
+    actionText: 'hacer este cambio en GoHighLevel'
+  })
+}
+
 function parseJsonObject(text) {
   const raw = String(text || '').trim()
 
@@ -7582,9 +7618,13 @@ async function callOpenAIResponseWithActionTools(apiKey, {
     const outputs = []
 
     for (const request of mcpApprovalRequests) {
-      const blockCustomActionMutation = Boolean(agentRoute?.customActionIntent) &&
-        isLikelyHighLevelMcpMutation(request) &&
-        !hasExplicitHighLevelActionConfirmation(messages)
+      const customActionMcpMutation = Boolean(agentRoute?.customActionIntent) &&
+        isLikelyHighLevelMcpMutation(request)
+      const contactVerificationOutput = customActionMcpMutation
+        ? await buildContactVerificationForHighLevelMcpMutation(request, { messages })
+        : null
+      const blockCustomActionMutation = customActionMcpMutation &&
+        (Boolean(contactVerificationOutput) || !hasExplicitHighLevelActionConfirmation(messages))
 
       outputs.push({
         type: 'mcp_approval_response',
@@ -7592,7 +7632,18 @@ async function callOpenAIResponseWithActionTools(apiKey, {
         approve: !blockCustomActionMutation
       })
 
-      if (blockCustomActionMutation) {
+      if (contactVerificationOutput?.clarificationOptions?.length) {
+        latestClarificationOptions = contactVerificationOutput.clarificationOptions
+        appendUniqueActionEvidence(actionEvidence, seenActionEvidence, {
+          type: 'mcp_guard',
+          tool: request.name || 'mcp_tool',
+          ok: false,
+          action: contactVerificationOutput.action,
+          error: contactVerificationOutput.error,
+          contactVerificationRequired: true,
+          contacts: contactVerificationOutput.contacts || []
+        })
+      } else if (blockCustomActionMutation) {
         latestClarificationOptions = buildHighLevelActionConfirmationOptions('GoHighLevel')
       }
     }
@@ -8158,6 +8209,7 @@ async function groundCustomActionReply(apiKey, {
         'Si la personalización pedía varios pasos, separa lo confirmado de lo pendiente/no confirmado.',
         'Un paso sólo está confirmado si hay evidencia con ok=true o una respuesta/status exitoso de herramienta/API.',
         'Si una herramienta pidió confirmación o reportó missingFields, ese paso NO está ejecutado.',
+        'Si la evidencia trae contactVerificationRequired=true, NO afirmes que se tocó GoHighLevel; pide confirmar el contacto exacto con nombre/email/teléfono disponibles.',
         'Mantén español conversacional, corto y claro. No muestres endpoints, payloads, IDs o field keys salvo que el usuario pida detalles técnicos.',
         'Devuelve sólo la respuesta corregida para el usuario.'
       ].join('\n'),
@@ -9535,7 +9587,7 @@ function cleanOption(value, maxLength = 90) {
 }
 
 const CONTACT_LOOKUP_STOP_WORDS = new Set([
-  'a', 'ahora', 'ahorita', 'al', 'algo', 'alguna', 'alguno', 'ante', 'ayer',
+  'a', 'acceso', 'ahora', 'ahorita', 'al', 'algo', 'alguna', 'alguno', 'ante', 'ayer',
   'autoriza', 'autorizo', 'autorizado', 'autorizada',
   'busca', 'buscalo', 'buscame', 'buscar', 'cliente',
   'clientes', 'cita', 'citas', 'cobra', 'cobrale', 'cobrar', 'cobrarle', 'cobre', 'cobrele', 'cobro', 'cobros', 'como',
@@ -9544,11 +9596,12 @@ const CONTACT_LOOKUP_STOP_WORDS = new Set([
   'dame', 'dato', 'datos', 'de', 'del', 'desde', 'despues', 'después', 'dia', 'día', 'dime', 'domingo', 'donde', 'dolar', 'dolares', 'durante', 'el', 'ella',
   'ejecuta', 'ejecutalo', 'ejecútalo', 'ejecutar', 'ejecuto',
   'en', 'encuentra', 'encuentrame', 'ese', 'esa', 'esperar', 'esta', 'este', 'factura', 'facturas', 'fecha',
-  'hacer', 'haz', 'hoy',
+  'extra', 'favor', 'hacer', 'haz', 'hoy',
   'info', 'informacion', 'jueves', 'la', 'las', 'lead', 'leads', 'le', 'les', 'link', 'lo', 'lunes',
   'listo', 'los', 'luego', 'manda', 'mandale', 'mandar', 'me', 'mes', 'meses', 'mete', 'meter', 'metele', 'métele', 'mi', 'mis', 'misma', 'mismo', 'modifica', 'modificar', 'modificale', 'modifícale', 'mxn', 'necesito', 'nombre',
   'martes', 'miercoles', 'miércoles', 'numero', 'oye', 'paciente', 'pacientes', 'pago', 'pagos', 'para', 'apra', 'plan', 'planes', 'peso', 'pesos', 'persona', 'personas',
-  'podria', 'podría', 'podrias', 'podrías', 'por', 'producto', 'programa', 'programale', 'prospecto', 'prospectos', 'que', 'quien', 'registra', 'registrar', 'registrale', 'regístrale', 'registrame', 'regístrame', 'revisa', 'saber', 'siguiente', 'sobre', 'sucesivamente',
+  'nuevo', 'nueva', 'nuevamente',
+  'podria', 'podría', 'podrias', 'podrías', 'por', 'porfa', 'porfavor', 'producto', 'programa', 'programale', 'prospecto', 'prospectos', 'que', 'quien', 'registra', 'registrar', 'registrale', 'regístrale', 'registrame', 'regístrame', 'restaura', 'restaurar', 'revisa', 'saber', 'siguiente', 'sobre', 'solamente', 'solo', 'sucesivamente',
   'si', 'sí', 'sabado', 'sábado', 'su', 'sus', 'tarde', 'telefono', 'tiene', 'tienen', 'tres', 'tuvo', 'un', 'una', 'uno', 'usd', 'venta', 'ventas', 'viernes',
   'vamos', 'ver', 'quiero', 'anticipo', 'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio',
   'agosto', 'septiembre', 'setiembre', 'octubre', 'noviembre', 'diciembre'
