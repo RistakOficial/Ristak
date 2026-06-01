@@ -612,14 +612,106 @@ function isPaymentContextText(value) {
   return /(pago|cobr|invoice|factura|tarjeta|domicili|payment_flow|payment_live_mode|confirmas que quieres|link de pago|parcialidad|plan de pagos|mxn)/.test(normalized)
 }
 
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function buildAliasPattern(aliases) {
+  return aliases
+    .map((alias) => normalizeText(alias))
+    .filter(Boolean)
+    .map((alias) => alias
+      .split(/\s+/)
+      .map(escapeRegExp)
+      .join('\\s+'))
+    .join('|')
+}
+
+const HIGHLEVEL_API_RESOURCE_ALIASES = [
+  'ad manager', 'ads manager', 'affiliate manager', 'afiliados',
+  'ai agent studio', 'associations', 'asociaciones',
+  'blogs', 'blog posts', 'articulos del blog', 'articulos de blog',
+  'brand boards', 'business', 'businesses', 'negocios',
+  'calendars', 'calendar', 'calendarios', 'calendario', 'calendar events', 'appointment notes', 'availability',
+  'chat widget', 'companies', 'companias', 'compañias', 'empresas',
+  'contacts', 'contactos', 'contact', 'contacto', 'leads', 'clientes',
+  'contact tasks', 'tasks', 'tareas', 'contact notes', 'notes', 'notas',
+  'tags', 'etiquetas', 'followers', 'seguidores',
+  'conversation ai', 'conversations', 'conversation', 'conversaciones', 'conversacion',
+  'messages', 'mensajes', 'email', 'emails', 'lc email',
+  'courses', 'cursos',
+  'custom fields', 'custom fields v2', 'campos personalizados', 'campo personalizado',
+  'custom values', 'custom value', 'valores personalizados', 'valor personalizado',
+  'custom menus', 'menus personalizados',
+  'forms', 'form', 'formularios', 'formulario', 'form submissions', 'respuestas de formulario', 'envios de formulario',
+  'surveys', 'survey', 'encuestas', 'encuesta',
+  'funnels', 'funnel', 'embudos', 'embudo', 'funnel pages', 'paginas de embudo',
+  'invoice', 'invoices', 'facturas',
+  'knowledge base', 'base de conocimiento',
+  'trigger links', 'trigger link', 'links disparadores', 'enlaces disparadores',
+  'locations', 'location', 'sub account', 'sub-account', 'ubicacion', 'ubicaciones', 'location custom values',
+  'media storage', 'medias', 'media library', 'archivos', 'imagenes', 'folders', 'carpetas',
+  'objects', 'custom objects', 'objetos personalizados',
+  'opportunities', 'opportunity', 'oportunidades', 'oportunidad', 'pipelines',
+  'payments', 'subscriptions', 'transactions',
+  'phone', 'lc phone', 'telefono',
+  'products', 'product', 'productos', 'producto', 'prices', 'precios',
+  'proposals', 'propuestas', 'saas', 'snapshots',
+  'social planner', 'social posts',
+  'store', 'stores', 'tienda', 'tiendas', 'ecommerce',
+  'users', 'usuarios', 'voice ai', 'workflows', 'workflow', 'flujos', 'flujo', 'automatizaciones',
+  'webhooks', 'webhook'
+]
+const HIGHLEVEL_API_RESOURCE_CATALOG_TEXT = [
+  'Ad Manager', 'Affiliate Manager', 'AI Agent Studio', 'Associations', 'Blogs', 'Brand Boards',
+  'Business/Companies', 'Calendars/Events/Services/Availability', 'Campaigns', 'Chat Widget',
+  'Contacts/Tasks/Appointments/Tags/Notes/Workflow/Bulk/Search/Followers',
+  'Conversation AI', 'Conversations/Email/Messages/Providers', 'Courses',
+  'Custom Fields V2', 'Custom Values de Location', 'Custom Menus', 'Forms/Submissions/Uploads',
+  'Funnels/Pages', 'Invoices', 'Knowledge Base', 'Trigger Links', 'Sub-Account/Location',
+  'Media Storage/Files/Folders', 'Custom Objects', 'Opportunities/Pipelines', 'Payments',
+  'LC Phone', 'Products/Prices', 'Proposals', 'SaaS', 'Snapshots', 'Social Planner',
+  'Store/Ecommerce', 'Surveys', 'Users', 'Voice AI', 'Workflows', 'Webhooks'
+].join(', ')
+const HIGHLEVEL_API_RESOURCE_PATTERN = new RegExp(`(?:^|\\b)(?:${buildAliasPattern(HIGHLEVEL_API_RESOURCE_ALIASES)})(?:\\b|$)`)
+const HIGHLEVEL_OPERATION_WORD_PATTERN = /\b(?:busca|buscar|buscame|encuentra|revisa|consulta|consultar|muestra|listar|lista|trae|traeme|tráeme|obten|obtiene|obtener|get|post|put|patch|delete|crea|crear|actualiza|modifica|cambia|manda|envia|envía|agenda|agendar|calendariza|ejecuta|haz|hacer|agrega|agregar|quita|quitar|remueve|remover|elimina|eliminar|sube|subir|descarga|descargar|abre|abrir|lee|leer|ver)\b/
+const HIGHLEVEL_PAYMENT_RESOURCE_PATTERN = /\b(?:payment|payments|invoice|invoices|subscription|subscriptions|transaction|transactions|pago|pagos|factura|facturas|recibo|recibos)\b/
+const HIGHLEVEL_READ_OPERATION_WORD_PATTERN = /\b(?:busca|buscar|buscame|encuentra|revisa|consulta|consultar|muestra|listar|lista|trae|traeme|tráeme|obten|obtiene|obtener|get|lee|leer|ver)\b/
+const HIGHLEVEL_PAYMENT_MUTATION_WORD_PATTERN = /\b(?:post|put|patch|delete|crea|crear|actualiza|modifica|cambia|manda|envia|envía|agenda|agendar|calendariza|ejecuta|haz|hacer|agrega|agregar|quita|quitar|remueve|remover|elimina|eliminar|cobra|cobrar|cobrale|charge|registra|registrar|programa|programar|domicili)\b/
+
+function mentionsHighLevelResource(question) {
+  return HIGHLEVEL_API_RESOURCE_PATTERN.test(normalizeText(question))
+}
+
+function hasHighLevelOperationVerb(question) {
+  return HIGHLEVEL_OPERATION_WORD_PATTERN.test(normalizeText(question))
+}
+
+function isHighLevelOperationalResourceRequest(question) {
+  const normalized = normalizeText(question)
+  if (!normalized || !mentionsHighLevelResource(normalized)) return false
+
+  return mentionsHighLevel(normalized) || hasHighLevelOperationVerb(normalized)
+}
+
+function isReadOnlyHighLevelPaymentApiRequest(question) {
+  const normalized = normalizeText(question)
+
+  return mentionsHighLevel(normalized) &&
+    HIGHLEVEL_PAYMENT_RESOURCE_PATTERN.test(normalized) &&
+    HIGHLEVEL_READ_OPERATION_WORD_PATTERN.test(normalized) &&
+    !HIGHLEVEL_PAYMENT_MUTATION_WORD_PATTERN.test(normalized)
+}
+
 function isExplicitNonPaymentTopicSwitchText(value) {
   const normalized = normalizeText(value)
   if (!normalized) return false
 
-  const mentionsPayment = /(pago|cobr|invoice|factura|tarjeta|domicili|link de pago|parcialidad|plan de pagos|mxn|\$\s*\d)/.test(normalized)
+  const mentionsPayment = /(pago|pagos|payment|payments|charge|charges|invoice|invoices|subscription|subscriptions|transaction|transactions|cobr|factura|tarjeta|domicili|link de pago|payment link|parcialidad|plan de pagos|mxn|\$\s*\d)/.test(normalized)
   const mentionsMetaOrCampaigns = isMetaAdsEntityRequest(normalized) ||
     /(campan|anunci|publicidad|facebook|instagram|roas|rentab)/.test(normalized)
-  const mentionsOtherCrmDomain = /(workflow|flujo|automatizacion|automatización|cita|calendario|appointment|oportunidad|pipeline|mensaje|conversacion|conversación|producto|precio|contacto|cliente|lead|campo personalizado|custom field|mercado|competidor|noticia|internet)/.test(normalized)
+  const mentionsOtherCrmDomain = isHighLevelOperationalResourceRequest(normalized) ||
+    /(workflow|flujo|automatizacion|automatización|cita|calendario|appointment|oportunidad|pipeline|mensaje|conversacion|conversación|producto|precio|contacto|cliente|lead|campo personalizado|custom field|mercado|competidor|noticia|internet)/.test(normalized)
 
   if (mentionsPayment && !mentionsMetaOrCampaigns) return false
   if (!mentionsMetaOrCampaigns && !mentionsOtherCrmDomain) return false
@@ -627,7 +719,8 @@ function isExplicitNonPaymentTopicSwitchText(value) {
   const strongSwitchCue = /(cambiando de tema|otra cosa|por cierto|aprovechando|se me ocurrio|se me ocurrió|hablando de|y de)/.test(normalized)
   const weakSwitchCue = /(ahora|oye|tambien|también)/.test(normalized)
   const directTask = /(cual|cuál|cuanto|cuánto|cuantos|cuántos|dame|muestra|busca|revisa|analiza|cambia|actualiza|modifica|mete|saca|crea|agenda|manda|envia|envía|haz|hacer)/.test(normalized)
-  const hardNonPaymentTask = /(workflow|flujo|automatizacion|automatización|oportunidad|pipeline|mensaje|conversacion|conversación|mercado|competidor|noticia|internet|cita|calendario|appointment|contacto|cliente|lead|campo personalizado|custom field).*(busca|revisa|analiza|cambia|actualiza|modifica|mete|saca|crea|agenda|manda|envia|envía|haz|hacer)|(?:busca|revisa|analiza|cambia|actualiza|modifica|mete|saca|crea|agenda|manda|envia|envía|haz|hacer).*(workflow|flujo|automatizacion|automatización|oportunidad|pipeline|mensaje|conversacion|conversación|mercado|competidor|noticia|internet|cita|calendario|appointment|contacto|cliente|lead|campo personalizado|custom field)/.test(normalized)
+  const hardNonPaymentTask = isHighLevelOperationalResourceRequest(normalized) ||
+    /(workflow|flujo|automatizacion|automatización|oportunidad|pipeline|mensaje|conversacion|conversación|mercado|competidor|noticia|internet|cita|calendario|appointment|contacto|cliente|lead|campo personalizado|custom field).*(busca|revisa|analiza|cambia|actualiza|modifica|mete|saca|crea|agenda|manda|envia|envía|haz|hacer)|(?:busca|revisa|analiza|cambia|actualiza|modifica|mete|saca|crea|agenda|manda|envia|envía|haz|hacer).*(workflow|flujo|automatizacion|automatización|oportunidad|pipeline|mensaje|conversacion|conversación|mercado|competidor|noticia|internet|cita|calendario|appointment|contacto|cliente|lead|campo personalizado|custom field)/.test(normalized)
   const paymentContinuationCue = mentionsPayment ||
     /(link|email|correo|sms|whatsapp|metodo|método|fecha|monto|concepto|mensual|semanal|quincenal|mismo dia|mismo día|ultimo dia|último día|fin de mes)/.test(normalized)
 
@@ -806,6 +899,57 @@ function appendQueryParams(url, query = {}) {
 
     url.searchParams.append(key, String(value))
   })
+}
+
+const HIGHLEVEL_LOCATION_SCOPED_PATH_PATTERN = /^\/(?:ad-manager|affiliate-manager|blogs|brand-boards|businesses|calendars?|campaigns|chat-widget|companies|contacts|conversations?|courses|custom-fields|emails?|forms?|funnels?|invoices?|knowledge-base|links|medias?|objects|opportunities|payments|products|proposals|snapshots|social-planner|stores?|surveys?|tasks?|users|voice-ai|workflows?|webhooks)\b/i
+
+function pathAlreadyContainsLocationId(path) {
+  return /^\/locations?\/[^/]+/i.test(String(path || ''))
+}
+
+function objectHasLocationId(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+
+  return Object.prototype.hasOwnProperty.call(value, 'locationId') ||
+    Object.prototype.hasOwnProperty.call(value, 'location_id') ||
+    Object.prototype.hasOwnProperty.call(value, 'altId')
+}
+
+function shouldAutoAttachHighLevelLocationId(path) {
+  return HIGHLEVEL_LOCATION_SCOPED_PATH_PATTERN.test(String(path || '')) &&
+    !pathAlreadyContainsLocationId(path)
+}
+
+function addLocationIdToHighLevelQuery(query = {}, path, highLevelConnection) {
+  if (!highLevelConnection?.locationId || !shouldAutoAttachHighLevelLocationId(path)) {
+    return query
+  }
+
+  if (objectHasLocationId(query)) return query
+
+  return {
+    ...query,
+    locationId: highLevelConnection.locationId
+  }
+}
+
+function addLocationIdToHighLevelBody(method, path, body, highLevelConnection) {
+  if (
+    method === 'GET' ||
+    !body ||
+    typeof body !== 'object' ||
+    Array.isArray(body) ||
+    !highLevelConnection?.locationId ||
+    !shouldAutoAttachHighLevelLocationId(path) ||
+    objectHasLocationId(body)
+  ) {
+    return body
+  }
+
+  return {
+    ...body,
+    locationId: highLevelConnection.locationId
+  }
 }
 
 async function getHighLevelAgentConnection() {
@@ -1224,9 +1368,10 @@ function userRequestedScheduledPayment(messages) {
 function isOperationalPaymentRequest(messages = []) {
   const latest = normalizeText(getLatestUserText(messages))
   if (!latest || isExplicitNonPaymentTopicSwitchText(latest)) return false
+  if (isReadOnlyHighLevelPaymentApiRequest(latest)) return false
 
   return hasExplicitPaymentExecutionConfirmation(messages) ||
-    /(pago|pagos|cobr|cobra|cóbra|cargo|cargar|registra|registrar|manda|mandar|envia|envía|enviar|genera|generar|crea|crear|haz|hacer|prepara|preparar|factura|invoice|recibo|programa|programar|domicili|parcialidad|parcialidades|plan de pagos|link de pago|enlace de pago|tarjeta guardada|tarjeta nueva|transfer|transferencia|deposit|depósito|deposito|efectivo)/.test(latest)
+    /(pago|pagos|payment|payments|charge|charges|cobr|cobra|cóbra|cargo|cargar|registra|registrar|manda|mandar|envia|envía|enviar|genera|generar|crea|crear|haz|hacer|prepara|preparar|factura|invoice|invoices|recibo|programa|programar|subscription|subscriptions|transaction|transactions|domicili|parcialidad|parcialidades|plan de pagos|link de pago|payment link|enlace de pago|tarjeta guardada|tarjeta nueva|transfer|transferencia|deposit|depósito|deposito|efectivo)/.test(latest)
 }
 
 function paymentConversationRequiresInstallmentFlow(messages = []) {
@@ -5726,7 +5871,7 @@ function buildHighLevelTools(highLevelConnection, options = {}) {
 
   const tools = []
 
-  if (!options.paymentActionRequest && (!options.contactActionRequest || options.explicitHighLevelToolIntent)) {
+  if (!options.paymentActionRequest && (!options.contactActionRequest || options.highLevelToolIntent)) {
     tools.push({
       type: 'mcp',
       server_label: 'highlevel',
@@ -6034,7 +6179,7 @@ function buildHighLevelTools(highLevelConnection, options = {}) {
     {
       type: 'function',
       name: 'highlevel_rest_request',
-      description: 'Fallback para ejecutar endpoints REST documentados de HighLevel cuando el MCP oficial no exponga la acción necesaria. Usa sólo paths bajo services.leadconnectorhq.com. Sirve para contactos, workflows, calendarios/citas, conversaciones/mensajes, oportunidades/pipelines, media storage, archivos, imágenes, folders, assets, tags, custom fields, tareas, productos, forms/surveys, usuarios, ubicaciones, invoices/pagos y demás endpoints oficiales disponibles por token. Puede leer y modificar HighLevel si el token tiene scope.',
+      description: 'Fallback para ejecutar endpoints REST documentados de HighLevel cuando el MCP oficial no exponga la acción necesaria. Usa sólo paths bajo services.leadconnectorhq.com. Cubre el catálogo API de HighLevel: contactos, tasks, tags, notes, followers, workflows, calendarios/citas/servicios, conversaciones/mensajes/email, chat widget, oportunidades/pipelines, forms/form submissions/uploads, surveys, funnels/pages, trigger links, media storage/files/folders/assets, custom fields v2, custom values de location, custom objects, blogs, knowledge base, productos/precios, tiendas/ecommerce, usuarios, companies/businesses, phone/voice AI, social planner, snapshots, proposals, invoices/pagos y webhooks. Puede leer y modificar HighLevel si el token tiene scope; locationId se agrega automáticamente en query/body para rutas de location cuando falta.',
       parameters: {
         type: 'object',
         properties: {
@@ -6049,7 +6194,7 @@ function buildHighLevelTools(highLevelConnection, options = {}) {
           },
           query: {
             type: ['object', 'null'],
-            description: 'Query params. Incluye locationId si el endpoint lo requiere.',
+            description: 'Query params. locationId se agrega automáticamente para rutas location-scoped cuando falta.',
             additionalProperties: true
           },
           body: {
@@ -6088,9 +6233,19 @@ async function executeHighLevelRestRequest(args = {}, highLevelConnection) {
 
   const cleanPath = cleanHighLevelPath(args.path)
   const url = new URL(`${HIGHLEVEL_API_BASE_URL}${cleanPath}`)
-  appendQueryParams(url, args.query)
+  const query = addLocationIdToHighLevelQuery(
+    args.query && typeof args.query === 'object' && !Array.isArray(args.query) ? args.query : {},
+    cleanPath,
+    highLevelConnection
+  )
+  appendQueryParams(url, query)
 
-  const body = args.body === undefined ? null : args.body
+  const body = addLocationIdToHighLevelBody(
+    method,
+    cleanPath,
+    args.body === undefined ? null : args.body,
+    highLevelConnection
+  )
   const forcePaymentMode = method !== 'GET' && /^\/(?:invoices|payments)\b/i.test(cleanPath)
   const requestBody = forcePaymentMode && body && typeof body === 'object' && !Array.isArray(body)
     ? {
@@ -6147,7 +6302,7 @@ function attachResolvedCrmContactToHighLevelRequest(args = {}, contact = null) {
   if (method === 'GET') return args
 
   const cleanPath = cleanHighLevelPath(args.path || '')
-  const shouldAttachContact = /^\/(?:calendars?|appointments?|opportunities|conversations|contacts)\b/i.test(cleanPath)
+  const shouldAttachContact = /^\/(?:calendars?|appointments?|opportunities|conversations?|contacts|tasks?|notes?|tags?|workflows?|forms?|surveys?)\b/i.test(cleanPath)
 
   if (!shouldAttachContact || !args.body || typeof args.body !== 'object' || Array.isArray(args.body)) {
     return args
@@ -6636,10 +6791,11 @@ function shouldUsePaymentBackendForLatestMessage(messages = []) {
   const normalized = normalizeText(latestUserMessage)
 
   if (!normalized || isExplicitNonPaymentTopicSwitchText(latestUserMessage)) return false
+  if (isReadOnlyHighLevelPaymentApiRequest(latestUserMessage)) return false
 
   return isPaymentConversationContinuation(messages) ||
     (hasPreviousPaymentContext(messages) && isAffirmativeExecutionIntent(normalized)) ||
-    /(pago|pagos|cobr|invoice|factura|recibo|link de pago|parcial|parcialidad|parcialidades|domicili|tarjeta|transfer|deposit|efectivo|mensualidad|cargo|cargos)/.test(normalized)
+    /(pago|pagos|payment|payments|charge|charges|cobr|invoice|invoices|factura|recibo|link de pago|payment link|parcial|parcialidad|parcialidades|subscription|subscriptions|transaction|transactions|domicili|tarjeta|transfer|deposit|efectivo|mensualidad|cargo|cargos)/.test(normalized)
 }
 
 function shouldUseContactMutationSafety(question) {
@@ -6656,9 +6812,12 @@ function mentionsHighLevel(question) {
 
 function isExplicitHighLevelToolRequest(question) {
   const normalized = normalizeText(question)
-  if (!mentionsHighLevel(normalized)) return false
 
-  return /(busca|buscar|buscame|encuentra|revisa|consulta|consultar|muestra|listar|lista|trae|traeme|tráeme|obten|obtiene|obtener|\bget\b|\bpost\b|\bput\b|\bpatch\b|\bdelete\b|crea|crear|actualiza|modifica|cambia|manda|envia|envía|agenda|agendar|calendariza|ejecuta|haz|hacer|contacto|contactos|cliente|clientes|lead|leads|workflow|flujo|automatizacion|automatización|calendario|calendarios|cita|citas|appointment|appointments|oportunidad|pipeline|conversacion|conversación|mensaje|tag|custom field|campo personalizado|producto|precio|media storage|archivo|imagen|folder|usuario|ubicacion|ubicación|location)/.test(normalized)
+  if (mentionsHighLevel(normalized)) {
+    return hasHighLevelOperationVerb(normalized) || mentionsHighLevelResource(normalized)
+  }
+
+  return isHighLevelOperationalResourceRequest(normalized)
 }
 
 function getRecentConversationTextBeforeLatestUser(messages = [], limit = 8) {
@@ -6707,12 +6866,12 @@ function shouldUseInternalDatabaseContext(question, messages = []) {
 
 function buildUnifiedAgentRoute({ messages = [], latestUserMessage = '' } = {}) {
   const normalized = normalizeText(latestUserMessage)
-  const explicitHighLevelToolIntent = isExplicitHighLevelToolRequest(latestUserMessage)
+  const highLevelToolIntent = isExplicitHighLevelToolRequest(latestUserMessage)
   const paymentBackendOnly = shouldUsePaymentBackendForLatestMessage(messages)
   const contactMutationSafety = shouldUseContactMutationSafety(latestUserMessage)
-  const requiresDbResearch = !paymentBackendOnly && !explicitHighLevelToolIntent && shouldUseInternalDatabaseContext(latestUserMessage, messages)
+  const requiresDbResearch = !paymentBackendOnly && !highLevelToolIntent && shouldUseInternalDatabaseContext(latestUserMessage, messages)
   const highLevelOperationalIntent = !paymentBackendOnly && (
-    explicitHighLevelToolIntent ||
+    highLevelToolIntent ||
     (!requiresDbResearch &&
       /(workflow|flujo|automatizacion|automatización|cita|calendario|appointment|oportunidad|pipeline|mensaje|conversacion|conversación|media storage|archivo|imagen|folder|tag|producto|precio|contacto|cliente|lead|campo personalizado|custom field).*(busca|revisa|analiza|cambia|actualiza|modifica|mete|saca|crea|agenda|agenda[r]?|calendariza|manda|envia|envía|haz|hacer)|(?:busca|revisa|analiza|cambia|actualiza|modifica|mete|saca|crea|agenda|agendar|calendariza|manda|envia|envía|haz|hacer).*(workflow|flujo|automatizacion|automatización|cita|calendario|appointment|oportunidad|pipeline|mensaje|conversacion|conversación|media storage|archivo|imagen|folder|tag|producto|precio|contacto|cliente|lead|campo personalizado|custom field)/.test(normalized))
   )
@@ -6732,7 +6891,7 @@ function buildUnifiedAgentRoute({ messages = [], latestUserMessage = '' } = {}) 
     requiresPaymentTools: paymentBackendOnly,
     paymentBackendOnly,
     contactMutationSafety,
-    explicitHighLevelToolIntent,
+    highLevelToolIntent,
     metaAdsOperationalIntent: false,
     skipLocalShortcuts: true,
     confidence: 1,
@@ -6767,7 +6926,9 @@ const UNIFIED_CAPABILITY_PROMPT = [
   '- Para conversación normal, ideas, redacción, chistes o preguntas generales que no requieren datos privados ni acciones externas, responde sin llamar herramientas.',
   '- Para analítica interna del negocio usa la DB de Ristak y los resultados SQL disponibles. Esto incluye campañas/anuncios sincronizados, ROAS, utilidad, pagos, citas, contactos, ventas, fuentes, cohortes e históricos.',
   '- Para GoHighLevel usa HighLevel MCP o highlevel_rest_request cuando el usuario pida recursos/acciones de CRM: media storage, imágenes, archivos, workflows, calendarios, citas, conversaciones, oportunidades, productos, tags, custom fields, usuarios o ubicaciones.',
-  '- Si el último mensaje menciona explícitamente GoHighLevel, GoHi Level, HighLevel o GHL y pide buscar, consultar, hacer GET/POST/PUT/PATCH/DELETE, crear o actualizar algo, usa herramientas reales de HighLevel en ese turno. Prioriza HighLevel MCP; si el MCP no expone lo necesario, usa highlevel_rest_request. No contestes desde la DB local salvo que el usuario pida Ristak/DB/reportes.',
+  `- Catálogo HighLevel cubierto por rutas/MCP/REST: ${HIGHLEVEL_API_RESOURCE_CATALOG_TEXT}.`,
+  '- Si el último mensaje menciona explícitamente GoHighLevel, GoHi Level, HighLevel o GHL y pide buscar, consultar, hacer GET/POST/PUT/PATCH/DELETE, crear o actualizar algo, usa herramientas reales de HighLevel en ese turno. Si el usuario no dice HighLevel pero pide de forma operativa un recurso claramente propio del catálogo (form submissions, custom values, trigger links, media storage, blogs, funnels, surveys, store, workflows, tasks, notes, tags, etc.), también usa HighLevel.',
+  '- Prioriza HighLevel MCP porque lista y llama tools oficiales. Si el MCP no expone lo necesario, usa highlevel_rest_request con el path documentado. No contestes desde la DB local salvo que el usuario pida Ristak/DB/reportes.',
   '- Si una acción de CRM menciona un nombre de persona/contacto, primero resuelve ese nombre contra DB/GHL y usa el contactId real. No le pidas ID, correo o teléfono al usuario si Memoria operacional CRM ya trae resolvedContact.',
   '- Para agendar citas, meter a workflow, crear oportunidades o mandar mensajes a una persona, usa el contactId resuelto por lookup_highlevel_contact o Memoria operacional CRM; no confundas ese nombre con la última/próxima cita de otro contacto.',
   '- Para pagos, links, invoices, parcialidades, pagos manuales, tarjeta guardada o domiciliación usa las herramientas internas de Ristak porque replican la lógica real del backend. No uses MCP como atajo para mutaciones de dinero.',
@@ -7801,7 +7962,8 @@ async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, ru
   const contactActionRequest = Boolean(agentRoute?.contactMutationSafety) ||
     (agentRoute?.domain === 'contacts' && agentRoute?.action === 'mutate')
   const paymentOperationRequest = paymentActionRequest && isOperationalPaymentRequest(messages)
-  const webSearchTools = metaAdsOperationalIntent || paymentOperationRequest || contactActionRequest
+  const highLevelToolIntent = Boolean(agentRoute?.highLevelToolIntent)
+  const webSearchTools = metaAdsOperationalIntent || paymentOperationRequest || contactActionRequest || highLevelToolIntent
     ? []
     : buildWebSearchTools(agentConfig, runtimeContext)
   const rawHighLevelTools = metaAdsOperationalIntent
@@ -7809,7 +7971,7 @@ async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, ru
     : buildHighLevelTools(highLevelConnection, {
         paymentActionRequest,
         contactActionRequest,
-        explicitHighLevelToolIntent: Boolean(agentRoute?.explicitHighLevelToolIntent)
+        highLevelToolIntent
       })
   const highLevelTools = paymentOperationRequest
     ? rawHighLevelTools.filter(tool => tool?.type === 'function' && PAYMENT_OPERATION_TOOL_NAMES.has(tool.name))
@@ -7855,6 +8017,9 @@ async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, ru
     '',
     'Conexión HighLevel para acciones en CRM:',
     buildHighLevelToolContext(highLevelConnection),
+    '',
+    'Catálogo HighLevel que debe enrutar a MCP/REST cuando el usuario lo pida:',
+    HIGHLEVEL_API_RESOURCE_CATALOG_TEXT,
     '',
     'Contexto operacional para referencias del usuario:',
     operationalReferenceContext ? JSON.stringify(operationalReferenceContext, null, 2) : 'No aplica para esta ruta.',
@@ -7929,7 +8094,7 @@ async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, ru
             paymentContact: paymentOperationalMemory?.resolvedContact || null,
             crmContact: crmOperationalMemory?.resolvedContact || null
           },
-          forceInitialToolCall: paymentOperationRequest || Boolean(agentRoute?.explicitHighLevelToolIntent && highLevelTools.length && !paymentOperationRequest)
+          forceInitialToolCall: paymentOperationRequest || Boolean(highLevelToolIntent && highLevelTools.length && !paymentOperationRequest)
         })
       : await callOpenAIResponse(apiKey, {
           model,
