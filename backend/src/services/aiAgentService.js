@@ -54,8 +54,13 @@ const DEFAULT_PAYMENT_CURRENCY = 'MXN'
 const DEFAULT_PAYMENT_TIMEZONE = 'America/Mexico_City'
 const DEFAULT_APPOINTMENT_TIMEZONE = 'America/Mexico_City'
 const DEFAULT_APPOINTMENT_DURATION_MINUTES = 60
-const DEFAULT_AI_RESPONSE_STYLE = 'direct'
-const DEFAULT_AI_RECOMMENDATION_MODE = 'on_request'
+const DEFAULT_AI_RESPONSE_STYLE = 'advisor'
+const DEFAULT_AI_RECOMMENDATION_MODE = 'when_useful'
+const DEFAULT_AGENT_TEMPERATURE = readBoundedNumberEnv('OPENAI_AGENT_TEMPERATURE', 0.55, 0, 2)
+const DEFAULT_AGENT_TOP_P = readBoundedNumberEnv('OPENAI_AGENT_TOP_P', 0.95, 0.01, 1)
+const ACTION_AGENT_TEMPERATURE = readBoundedNumberEnv('OPENAI_AGENT_ACTION_TEMPERATURE', 0.25, 0, 2)
+const ACTION_AGENT_TOP_P = readBoundedNumberEnv('OPENAI_AGENT_ACTION_TOP_P', 0.9, 0.01, 1)
+const DEFAULT_AGENT_REASONING_EFFORT = normalizeReasoningEffort(process.env.OPENAI_AGENT_REASONING_EFFORT)
 const LEGACY_BUSINESS_CONTEXT_FIELDS = [
   { label: 'Mercado o nicho', camelField: 'marketContext', dbField: 'market_context' },
   { label: 'Cliente ideal', camelField: 'idealCustomer', dbField: 'ideal_customer' },
@@ -206,6 +211,17 @@ Reglas SQL:
 const BANNED_SQL_PATTERN = /\b(insert|update|delete|drop|alter|create|truncate|pragma|attach|detach|vacuum|reindex|grant|revoke|copy|execute|merge|call)\b/i
 const BANNED_DATA_PATTERN = /\b(highlevel_config|ai_agent_config|meta_config|app_config|users|payment_methods|api_token|access_token|password|secret|encrypted|openai|stripe)\b/i
 const UNRESOLVED_DATE_PARAM_PATTERN = /^(start|end|from|to|inicio|fin)_(date|ts|timestamp|fecha)$/i
+
+function readBoundedNumberEnv(name, fallback, min, max) {
+  const rawValue = Number(process.env[name])
+  if (!Number.isFinite(rawValue)) return fallback
+  return Math.min(max, Math.max(min, rawValue))
+}
+
+function normalizeReasoningEffort(value) {
+  const normalized = String(value || 'medium').trim().toLowerCase()
+  return ['minimal', 'low', 'medium', 'high'].includes(normalized) ? normalized : 'medium'
+}
 
 function cleanText(value, maxLength = 1000) {
   if (!value || typeof value !== 'string') return ''
@@ -5856,6 +5872,13 @@ async function executeUpdateHighLevelContactField(args = {}, highLevelConnection
   const fieldResolution = resolveContactField(bundle.fieldCatalog, args)
 
   if (!fieldResolution.field) {
+    const conversationText = normalizeText(buildConversationText(context.messages || []))
+    const askedForCustomFields = /(campo personalizado|campos personalizados|custom field|custom fields)/.test(conversationText)
+    const fieldOptions = askedForCustomFields
+      ? bundle.fieldCatalog.filter(field => field.type === 'custom')
+      : bundle.fieldCatalog
+    const clarificationFields = fieldOptions.length ? fieldOptions : bundle.fieldCatalog
+
     return {
       ok: false,
       action: 'update_highlevel_contact_field',
@@ -5869,13 +5892,25 @@ async function executeUpdateHighLevelContactField(args = {}, highLevelConnection
       },
       rawContact: bundle.rawContact,
       fields: bundle.fieldCatalog.map(compactContactFieldForAgent),
+      customFieldsError: bundle.customFieldsError,
+      responseGuidance: [
+        'El usuario está en un flujo de modificación de campos de contacto.',
+        'Si pidió "cuáles tienes", "cuáles hay", "investiga" o algo similar, no repitas la misma pregunta.',
+        'Usa fields para mostrar campos reales disponibles de GoHighLevel, priorizando custom fields si el usuario pidió campo personalizado.',
+        'Pregunta cuál campo quiere cambiar como siguiente paso y usa las clarificationOptions como botones.',
+        'No digas que ya modificaste nada.'
+      ].join(' '),
       clarificationOptions: Array.isArray(fieldResolution.candidates)
         ? buildContactFieldClarificationOptions({
             contact: bundle.contact,
             fields: fieldResolution.candidates,
             newValue: valueInput.value
           })
-        : []
+        : buildContactFieldClarificationOptions({
+            contact: bundle.contact,
+            fields: clarificationFields,
+            newValue: valueInput.value
+          })
     }
   }
 
@@ -9749,7 +9784,7 @@ function buildHighLevelTools(highLevelConnection, options = {}) {
     {
       type: 'function',
       name: 'lookup_highlevel_contact',
-      description: 'Busca un contacto por nombre/email/teléfono/ID, hace GET real del contacto en GoHighLevel y devuelve el rawContact completo junto con la lista de campos estándar y custom fields de la location. Úsala antes de cualquier acción de CRM sobre una persona: agendar cita, meter a workflow, crear oportunidad, mandar mensaje, cambiar datos de contacto o ver campos/data. Si el usuario dio nombre limpio, búscalo; no pidas ID/correo/teléfono sin intentar lookup.',
+      description: 'Busca un contacto por nombre/email/teléfono/ID, hace GET real del contacto en GoHighLevel y devuelve el rawContact completo junto con la lista de campos estándar y custom fields de la location. Úsala antes de cualquier acción de CRM sobre una persona: agendar cita, meter a workflow, crear oportunidad, mandar mensaje, cambiar datos de contacto o ver campos/data. Si ya hay contacto activo en memoria y el usuario pregunta "cuáles tienes", "qué campos hay" o "investiga en GHL", llama esta herramienta con ese contactId para listar campos reales y valores actuales. Si el usuario dio nombre limpio, búscalo; no pidas ID/correo/teléfono sin intentar lookup.',
       parameters: {
         type: 'object',
         properties: {
@@ -9768,7 +9803,7 @@ function buildHighLevelTools(highLevelConnection, options = {}) {
     {
       type: 'function',
       name: 'update_highlevel_contact_field',
-      description: 'Prepara y ejecuta una modificación segura de un campo de contacto en GoHighLevel. Primero busca el contacto, hace GET real, cruza campos estándar y custom fields, resuelve el campo más relevante y SIEMPRE pide confirmación antes de hacer PUT. Úsala para "modifica la ciudad", "cambia duración del programa", "actualiza este campo", etc. No uses highlevel_rest_request ni MCP para cambiar contactos cuando esta herramienta puede hacerlo.',
+      description: 'Prepara y ejecuta una modificación segura de un campo de contacto en GoHighLevel. Primero busca el contacto, hace GET real, cruza campos estándar y custom fields, resuelve el campo más relevante y SIEMPRE pide confirmación antes de hacer PUT. Úsala para "modifica la ciudad", "cambia duración del programa", "actualiza este campo", etc. Si falta fieldSelector y el usuario pidió ver opciones, la herramienta devuelve campos reales y botones para elegir; no repitas "qué campo" sin mostrar esas opciones. No uses highlevel_rest_request ni MCP para cambiar contactos cuando esta herramienta puede hacerlo.',
       parameters: {
         type: 'object',
         properties: {
@@ -11066,6 +11101,53 @@ function shouldUseContactMutationSafety(question) {
   return /(contacto|cliente|lead|prospecto|persona|campo personalizado|custom field|campo|dato).*(actualiza|modifica|cambia|editar|cambiale|actualizale|modificale|ponle|quitale)|(?:actualiza|modifica|cambia|editar|cambiale|actualizale|modificale|ponle|quitale).*(contacto|cliente|lead|prospecto|persona|campo personalizado|custom field|campo|dato|nombre|email|correo|telefono|ciudad|pagos totales|total paid)/.test(normalized)
 }
 
+function userRequestsOperationalDiscovery(question = '') {
+  const normalized = normalizeText(question)
+  if (!normalized) return false
+
+  return /(cuales|cuáles|que|qué)\s+(?:tienes|tenemos|hay|existen|estan|están|aparecen|puedes usar|puedo usar)|(?:lista|listame|lístame|muestra|muéstrame|dame|ensena|enseña|trae|tráeme|busca|buscame|búscame|revisa|investiga|averigua)\b.*\b(?:opciones|disponibles|campos|productos|workflows|flujos|formularios|surveys|encuestas|tags|etiquetas|calendarios|citas|usuarios|archivos|imagenes|imágenes|precios)|\b(?:tu|tú)\s+(?:investiga|busca|revisa|averigua)|\bopciones\b/.test(normalized)
+}
+
+function hasRecentHighLevelOperationalContext(messages = []) {
+  const previousText = normalizeText(getRecentConversationTextBeforeLatestUser(messages, 10))
+  if (!previousText) return false
+
+  const hasHighLevelResource = /(highlevel|go\s*high\s*level|gohighlevel|ghl|contacto|cliente|lead|persona|workflow|flujo|automatizacion|automatización|campo personalizado|custom field|campo|dato|cita|calendario|appointment|oportunidad|pipeline|mensaje|conversacion|conversación|tag|nota|producto|precio|formulario|survey|encuesta|funnel|embudo|archivo|media|usuario)/.test(previousText)
+  const hasOperationalCue = /(busc|revis|consulta|muestra|lista|elige|cual|cuál|que campo|qué campo|me falta|falta|necesito|actualiz|modific|cambia|editar|mete|saca|agrega|manda|envia|envía|crea|agenda|haz|hacer|quieres que haga|sigo con la accion|sigo con la acción)/.test(previousText)
+
+  return hasHighLevelResource && hasOperationalCue
+}
+
+function isHighLevelOperationalConversationContinuation(messages = []) {
+  const latestUserIndex = findLatestUserMessageIndex(messages)
+  if (latestUserIndex < 1) return false
+
+  const latestUserText = getMessageText(messages[latestUserIndex])
+  const normalized = normalizeText(latestUserText)
+  if (!normalized || isExplicitLatestMessageTopicSwitch(latestUserText)) return false
+  if (!hasRecentHighLevelOperationalContext(messages)) return false
+
+  return userRequestsOperationalDiscovery(latestUserText) ||
+    messageHasSelectedClarificationOption(messages[latestUserIndex]) ||
+    isConversationalFollowUp(messages)
+}
+
+function isContactMutationConversationContinuation(messages = []) {
+  const latestUserIndex = findLatestUserMessageIndex(messages)
+  if (latestUserIndex < 1) return false
+
+  const latestUserText = getMessageText(messages[latestUserIndex])
+  const previousText = normalizeText(getRecentConversationTextBeforeLatestUser(messages, 10))
+  if (!hasRecentHighLevelOperationalContext(messages)) return false
+
+  const previousWasContactFieldFlow = /(campo personalizado|custom field|campo|dato).*(contacto|cliente|lead|persona)|(?:contacto|cliente|lead|persona).*(campo personalizado|custom field|campo|dato)|que campo|qué campo/.test(previousText)
+
+  return previousWasContactFieldFlow && (
+    userRequestsOperationalDiscovery(latestUserText) ||
+    /(valor|pon|ponle|cambia|actualiza|modifica|deja|guarda|quita|borra)/.test(normalizeText(latestUserText))
+  )
+}
+
 function mentionsHighLevel(question) {
   const normalized = normalizeText(question)
 
@@ -11292,14 +11374,16 @@ function shouldUseInternalDatabaseContext(question, messages = []) {
 function buildUnifiedAgentRoute({ messages = [], latestUserMessage = '', agentConfig = null } = {}) {
   const normalized = normalizeText(latestUserMessage)
   const highLevelRestReadIntent = isHighLevelRestReadCatalogRequest(latestUserMessage, messages)
-  const highLevelToolIntent = highLevelRestReadIntent || isExplicitHighLevelToolRequest(latestUserMessage)
+  const highLevelContinuation = isHighLevelOperationalConversationContinuation(messages)
+  const contactMutationContinuation = isContactMutationConversationContinuation(messages)
+  const highLevelToolIntent = highLevelRestReadIntent || isExplicitHighLevelToolRequest(latestUserMessage) || highLevelContinuation
   const paymentBackendOnly = shouldUsePaymentBackendForLatestMessage(messages)
   const latestCustomActionExecution = isConfiguredActionExecutionRequest(latestUserMessage, agentConfig)
   const customActionContinuation = !paymentBackendOnly &&
     !isExplicitLatestMessageTopicSwitch(latestUserMessage) &&
     isConfiguredActionConversationContinuation(messages, agentConfig)
   const customActionIntent = latestCustomActionExecution || customActionContinuation
-  const contactMutationSafety = shouldUseContactMutationSafety(latestUserMessage)
+  const contactMutationSafety = shouldUseContactMutationSafety(latestUserMessage) || contactMutationContinuation
   const requiresDbResearch = !paymentBackendOnly && !highLevelToolIntent && !customActionIntent && shouldUseInternalDatabaseContext(latestUserMessage, messages)
   const highLevelOperationalIntent = !paymentBackendOnly && (
     highLevelToolIntent ||
@@ -11329,6 +11413,7 @@ function buildUnifiedAgentRoute({ messages = [], latestUserMessage = '', agentCo
     highLevelRestReadIntent,
     highLevelToolIntent: highLevelToolIntent || customActionIntent,
     customActionIntent,
+    highLevelContinuation,
     metaAdsOperationalIntent: false,
     skipLocalShortcuts: true,
     confidence: 1,
@@ -11342,8 +11427,10 @@ const BASE_SPECIALIST_PROMPT = [
   'Usa la conversación completa, la vista actual, la DB y las herramientas disponibles. No reinicies contexto por mirar sólo el último mensaje, pero sí permite cambios normales de tema como lo haría un humano.',
   'El último mensaje del usuario manda sobre la acción activa. El historial sirve como memoria para retomar hilos si el usuario los menciona, no como permiso para arrastrar una tarea vieja cuando el usuario ya pidió otra cosa.',
   'Piensa con criterio propio: si el usuario sólo conversa, responde directo; si pide datos internos, investiga en DB; si pide una acción, identifica registros exactos; si falta algo indispensable, pregunta sólo eso.',
+  'No trabajes como árbol rígido de preguntas. El usuario puede adelantar, corregir, pedir opciones, decir "tú investiga" o contestar en otro orden; integra esa intención, usa herramientas y avanza con lo ya sabido.',
   'Entiende referencias humanas normales: "el de la última cita", "la próxima cita", "este contacto", "ese workflow", "la conversación anterior" no son nombres literales. Resuelve primero la entidad real y luego ejecuta.',
   'Si una persona/recurso quedó activo en la memoria operacional y el usuario luego dice "por cierto", "también", "a él/ella", "cóbrale", "mételo", "mándale" o pide otra acción sin nombrar a alguien nuevo, reutiliza esa entidad activa. No vuelvas a pedir cuál homónimo es sólo porque hay nombres parecidos.',
+  'Si en medio de una acción el usuario pregunta "cuáles tienes", "cuáles hay", "qué opciones", "investiga", "búscalo en GHL" o algo parecido, eso significa: consulta la fuente real y muestra opciones disponibles. No repitas la misma pregunta faltante.',
   'Responde en español natural, directo y útil para un dueño de negocio.',
   'Cuando pidas permiso o confirmación, hazlo amigable: "Entonces, solo para confirmar, ¿quieres que lo deje así?". No digas "confirmación explícita", "ejecutar", "autorizar" ni "proceder" en el mensaje al usuario.',
   'No escribas marcadores internos de cita como turn0search0, cite o bloques raros; si hay fuentes, la app las mostrará fuera del texto.',
@@ -11376,6 +11463,8 @@ const UNIFIED_CAPABILITY_PROMPT = [
   '- highlevel_rest_request rechaza rutas que no estén en el catálogo Sub-Account y también bloquea escrituras con datos incompletos. Si devuelve missingFields, requestBodyRequired, readinessRequired o sugerencias, pregunta ese dato faltante; no improvises body, IDs ni valores.',
   '- Para usuarios no técnicos, no pidas que digan endpoint, método, ID técnico o nombre exacto del módulo si tú puedes inferirlo. Traduce el pedido a términos canónicos de HighLevel y busca el endpoint.',
   '- Si el usuario pide listar, ver, revisar, buscar, traer o hacer GET de un recurso de HighLevel, es lectura. Ejecuta lookup_highlevel_endpoint y luego highlevel_rest_request GET. No pidas contacto, email, teléfono ni ID salvo que el endpoint elegido tenga contactId u otro ID obligatorio en el path.',
+  '- Si estás en un flujo de contacto/campo y el usuario pregunta "cuáles tienes", "cuáles hay", "investiga dentro de GHL" o similar, usa lookup_highlevel_contact con el contacto activo para leer campos estándar y custom fields reales. Lista opciones con valores actuales y luego pregunta cuál quiere cambiar.',
+  '- Si una herramienta ya devolvió fields, customFieldDefinitions, products, workflows, calendars, tags u opciones, usa esos resultados para avanzar. No contestes con otra pregunta genérica si ya puedes mostrar opciones reales.',
   '- Para citas/calendarios operativos usa manage_highlevel_appointment antes que MCP o highlevel_rest_request. Operaciones: lookup_slots, create, reschedule, cancel, confirm, showed, noshow y delete.',
   '- Contrato de citas GHL: agendar = POST /calendars/events/appointments; reprogramar/confirmar/cancelar/showed/noshow = PUT /calendars/events/appointments/:eventId con appointmentStatus o startTime/endTime; eliminar de verdad = DELETE /calendars/events/:eventId.',
   '- Si el usuario pide agendar y no dio hora exacta, primero busca disponibilidad con lookup_slots. Si no dio calendarId, usa el calendario predeterminado de Ristak; si hay varios y no hay default, pide que elija.',
@@ -11409,6 +11498,7 @@ const EXECUTION_PREFLIGHT_PROMPT = [
   '- Para eventos/citas, antes de crear o cambiar debe estar claro: contacto o evento exacto, calendario/default válido, fecha, hora, zona horaria, duración o fin calculable, estado/acción y cualquier ubicación/nota que el usuario haya pedido.',
   '- Para escrituras, eliminaciones, envíos, cambios de estado, workflows, tags, oportunidades, mensajes, productos, media, usuarios, webhooks y demás acciones reales de HighLevel, resume qué se va a tocar y pide un sí claro antes de la mutación.',
   '- Si la herramienta devuelve missingFields, confirmationRequired, clarificationOptions o varias coincidencias, no improvises. Convierte eso en la siguiente pregunta humana más corta posible.',
+  '- Si el usuario responde a un missingField pidiendo que investigues opciones disponibles, haz una lectura real del recurso o usa la evidencia que ya devolvió la herramienta. No vuelvas a pedir el mismo dato sin investigar.',
   '- No uses vocabulario de programador con usuarios no técnicos. Traduce "path param", "query", "body", "endpoint" o "schema" a preguntas normales: cuál cliente, cuál fecha, cuál formulario, qué monto, qué campo, qué archivo, qué workflow.'
 ].join('\n')
 
@@ -11575,6 +11665,7 @@ async function evaluateCustomActionReadiness(apiKey, {
         'Esto aplica a todo el catálogo de HighLevel: contactos, citas, pagos, suscripciones, formularios, surveys, funnels, blogs, campañas, anuncios, widgets, productos, oportunidades, usuarios, workflows, media storage, etc.',
         'Orden obligatorio cuando la acción involucra contacto/persona: si el usuario ya dio una pista de contacto, primero debe buscarse y verificarse el contacto. No bloquees por cantidad, fecha u otro dato hasta que el contacto esté resuelto o descartado.',
         'Nunca pidas "nombre completo, ID, teléfono o correo" como primer paso si ya hay una pista como nombre parcial. Primero deja que herramientas/API busquen coincidencias y muestren recomendaciones.',
+        'Si el usuario pide "cuáles tienes", "cuáles hay", "investiga", "búscalo en GHL" o pide opciones disponibles dentro de un flujo activo, NO bloquees con la misma pregunta faltante. Marca ready=true para que las herramientas investiguen/listen opciones reales.',
         'Usa la conversación completa. Si el usuario dio el dato en un seguimiento como "solo 1 mes", considéralo presente.',
         'Si bloqueas, formula UNA sola pregunta conversacional y corta. No confirmes, no digas que ya hiciste algo y no menciones endpoints/payloads/IDs técnicos.',
         'Devuelve únicamente JSON válido con este formato: {"applies":true,"ready":false,"missingFields":["..."],"question":"...","reason":"..."}',
@@ -14424,35 +14515,40 @@ export async function createAgentReply({ apiKey, messages, viewContext, userId =
       customActionVerifiedContact = normalizeOperationalContact(resolvedContact.contact) || customActionVerifiedContact
     }
 
-    const preflight = await evaluateCustomActionReadiness(apiKey, {
-      model: normalizeAIAgentModel(agentConfig?.model),
-      agentConfig,
-      messages,
-      latestUserMessage,
-      runtimeContext
-    })
+    const skipPreflightForDiscovery = userRequestsOperationalDiscovery(latestUserMessage) &&
+      hasRecentHighLevelOperationalContext(messages)
 
-    if (preflight.applies && !preflight.ready) {
-      return {
-        reply: preflight.question || 'Me falta un dato indispensable antes de hacer esa acción. ¿Qué dato uso?',
+    if (!skipPreflightForDiscovery) {
+      const preflight = await evaluateCustomActionReadiness(apiKey, {
         model: normalizeAIAgentModel(agentConfig?.model),
-        sources: [],
-        clarificationOptions: [],
-        usage: null,
-        agentMemory: customActionVerifiedContact
-          ? {
-              version: 1,
-              generatedAt: runtimeContext.nowIso || DateTime.now().toISO(),
-              activeContact: customActionVerifiedContact,
-              contacts: [customActionVerifiedContact]
-            }
-          : null,
-        debug: {
-          queryCount: 0,
-          highLevelToolsEnabled: false,
-          metaAdsOperationsEnabled: false,
-          agentRoute,
-          customActionPreflight: preflight
+        agentConfig,
+        messages,
+        latestUserMessage,
+        runtimeContext
+      })
+
+      if (preflight.applies && !preflight.ready) {
+        return {
+          reply: preflight.question || 'Me falta un dato indispensable antes de hacer esa acción. ¿Qué dato uso?',
+          model: normalizeAIAgentModel(agentConfig?.model),
+          sources: [],
+          clarificationOptions: [],
+          usage: null,
+          agentMemory: customActionVerifiedContact
+            ? {
+                version: 1,
+                generatedAt: runtimeContext.nowIso || DateTime.now().toISO(),
+                activeContact: customActionVerifiedContact,
+                contacts: [customActionVerifiedContact]
+              }
+            : null,
+          debug: {
+            queryCount: 0,
+            highLevelToolsEnabled: false,
+            metaAdsOperationsEnabled: false,
+            agentRoute,
+            customActionPreflight: preflight
+          }
         }
       }
     }
