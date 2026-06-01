@@ -104,6 +104,7 @@ interface CampaignData {
 }
 
 type ChartView = 'revenue' | 'leads' | 'appointments' | 'visitors'
+type CampaignTableView = 'classic' | 'adsets' | 'ads'
 
 interface ChartConfig {
   title: string
@@ -202,6 +203,7 @@ export const Campaigns: React.FC = () => {
   const [expandedCampaigns, setExpandedCampaigns] = useState<Set<string>>(new Set())
   const [expandedAdSets, setExpandedAdSets] = useState<Set<string>>(new Set())
   const [viewMode, setViewMode] = useState<'campaigns' | 'winners'>('campaigns')
+  const [campaignTableView, setCampaignTableView] = useState<CampaignTableView>('classic')
   const [winnersCategory, setWinnersCategory] = useState<'campaigns' | 'adsets' | 'ads'>('ads')
   const [campaignSummary, setCampaignSummary] = useState<CampaignsReport['summary'] | null>(null)
   const [selectedChart, setSelectedChart] = useState<ChartView>('revenue')
@@ -1016,6 +1018,7 @@ export const Campaigns: React.FC = () => {
     handledOpenCampaignRef.current = signature
 
     setViewMode('campaigns')
+    setCampaignTableView('classic')
     setExpandedCampaigns((previous) => {
       const next = new Set(previous)
       next.add(String(campaignId))
@@ -1420,8 +1423,20 @@ export const Campaigns: React.FC = () => {
     }
   ], [labels, handleOpenContactsModal, winnersNameColumn])
 
+  const campaignTableTabs = React.useMemo(() => [
+    { value: 'classic', label: 'Clásica' },
+    { value: 'adsets', label: 'Conjuntos' },
+    { value: 'ads', label: 'Anuncios' }
+  ], [])
+
+  const handleCampaignTableViewChange = React.useCallback((value: string) => {
+    if (value === 'classic' || value === 'adsets' || value === 'ads') {
+      setCampaignTableView(value)
+    }
+  }, [])
+
   // Preparar datos planos para la tabla
-  const getFlattenedData = () => {
+  const getClassicCampaignTableData = () => {
     const flatData: any[] = []
 
     if (!campaigns || campaigns.length === 0) {
@@ -1431,7 +1446,7 @@ export const Campaigns: React.FC = () => {
     campaigns.forEach(campaign => {
       // Convertir IDs a strings para consistencia
       const campaignId = String(campaign.id)
-      const adSetsData = campaign.adsets || []
+      const adSetsData = campaign.adsets || campaign.adSets || []
       const isExpanded = expandedCampaigns.has(campaignId)
 
       // Agregar campaña (si está expandida, mostrar placeholder)
@@ -1483,15 +1498,113 @@ export const Campaigns: React.FC = () => {
     return flatData
   }
 
+  const getFlatAdSetsData = () => {
+    const flatData: any[] = []
+
+    if (!campaigns || campaigns.length === 0) {
+      return flatData
+    }
+
+    campaigns.forEach(campaign => {
+      const campaignId = String(campaign.id)
+      const adSetsData = campaign.adsets || campaign.adSets || []
+
+      adSetsData.forEach((adSet: any) => {
+        flatData.push({
+          ...adSet,
+          id: String(adSet.id),
+          level: 'adset',
+          campaignId,
+          campaignName: campaign.name,
+          platform: campaign.platform,
+          hasChildren: false,
+          isFlatView: true,
+          showPlaceholder: false
+        })
+      })
+    })
+
+    return flatData
+  }
+
+  const getFlatAdsData = () => {
+    const flatData: any[] = []
+
+    if (!campaigns || campaigns.length === 0) {
+      return flatData
+    }
+
+    campaigns.forEach(campaign => {
+      const campaignId = String(campaign.id)
+      const adSetsData = campaign.adsets || campaign.adSets || []
+
+      adSetsData.forEach((adSet: any) => {
+        const adSetId = String(adSet.id)
+        const adsData = adSet.ads || []
+
+        adsData.forEach((ad: any) => {
+          flatData.push({
+            ...ad,
+            id: String(ad.id),
+            level: 'ad',
+            campaignId,
+            campaignName: campaign.name,
+            adSetId,
+            adSetName: adSet.name,
+            platform: campaign.platform,
+            hasChildren: false,
+            isFlatView: true,
+            showPlaceholder: false
+          })
+        })
+      })
+    })
+
+    return flatData
+  }
+
+  const campaignTableData = React.useMemo(() => {
+    if (campaignTableView === 'adsets') {
+      return getFlatAdSetsData()
+    }
+
+    if (campaignTableView === 'ads') {
+      return getFlatAdsData()
+    }
+
+    return getClassicCampaignTableData()
+  }, [campaignTableView, campaigns, expandedCampaigns, expandedAdSets])
+
+  const campaignTableSearchPlaceholder = campaignTableView === 'classic'
+    ? 'Buscar campañas, conjuntos o anuncios...'
+    : campaignTableView === 'adsets'
+      ? 'Buscar conjuntos de anuncios...'
+      : 'Buscar anuncios...'
+
+  const campaignTableEmptyMessage = campaignTableView === 'classic'
+    ? 'No hay campañas disponibles'
+    : campaignTableView === 'adsets'
+      ? 'No hay conjuntos de anuncios disponibles'
+      : 'No hay anuncios disponibles'
+
+  const campaignTableId = campaignTableView === 'classic' ? 'campaigns' : `campaigns_${campaignTableView}`
+
   const baseColumns: Column<any>[] = [
     {
       key: 'name',
-      header: 'Nombre',
+      header: campaignTableView === 'adsets'
+        ? 'Conjunto de anuncios'
+        : campaignTableView === 'ads'
+          ? 'Anuncio'
+          : 'Nombre',
       fixed: true,
       visible: true,
       render: (value, item) => {
+        const isFlatView = Boolean(item.isFlatView)
         const indentStyle = {
-          paddingLeft: item.level === 'adset' ? '40px' : item.level === 'ad' ? '60px' : '20px'
+          paddingLeft: isFlatView
+            ? '20px'
+            : item.level === 'adset' ? '40px' : item.level === 'ad' ? '60px' : '20px'
         }
 
         const handleToggle = (e: React.MouseEvent) => {
@@ -1510,7 +1623,7 @@ export const Campaigns: React.FC = () => {
           <div
             className={`${styles.nameCell} ${item.hasChildren ? styles.clickableName : ''}`}
             style={indentStyle}
-            onClick={handleToggle}
+            onClick={item.hasChildren ? handleToggle : undefined}
           >
             {item.hasChildren && (
               <button
@@ -1521,18 +1634,32 @@ export const Campaigns: React.FC = () => {
                 {item.isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
               </button>
             )}
-            <div className={styles.nameContent}>
-              {item.level === 'campaign' && item.platform && (
-                <Icon
-                  name={item.platform.toLowerCase()}
-                  size={16}
-                  className={styles.campaignIcon}
-                />
+            <div className={styles.nameStack}>
+              <div className={styles.nameContent}>
+                {(item.level === 'campaign' || isFlatView) && item.platform && (
+                  <Icon
+                    name={item.platform.toLowerCase()}
+                    size={16}
+                    className={styles.campaignIcon}
+                  />
+                )}
+                {item.level === 'ad' && renderCreativePreview(item)}
+                <strong className={`${styles.nameText} ${styles[item.level]}`}>
+                  {value}
+                </strong>
+              </div>
+
+              {isFlatView && (item.campaignName || item.adSetName) && (
+                <div className={styles.tableBreadcrumb}>
+                  {item.campaignName && <span>{item.campaignName}</span>}
+                  {item.adSetName && (
+                    <>
+                      <ChevronRight size={12} />
+                      <span>{item.adSetName}</span>
+                    </>
+                  )}
+                </div>
               )}
-              {item.level === 'ad' && renderCreativePreview(item)}
-              <strong className={`${styles.nameText} ${styles[item.level]}`}>
-                {value}
-              </strong>
             </div>
           </div>
         )
@@ -2217,17 +2344,21 @@ export const Campaigns: React.FC = () => {
       ) : (
         <Card padding="none">
           <Table
-            key="campaigns_table"
+            key={`campaigns_table_${campaignTableView}`}
             initialColumns={columns}
-            data={getFlattenedData()}
+            data={campaignTableData}
             keyExtractor={getCampaignTableRowKey}
-            emptyMessage="No hay campañas disponibles"
+            emptyMessage={campaignTableEmptyMessage}
             loading={loading}
             searchable={true}
-            searchPlaceholder="Buscar campañas..."
+            searchPlaceholder={campaignTableSearchPlaceholder}
             paginated={true}
             pageSize={50}
-            tableId="campaigns"
+            filters={campaignTableTabs}
+            activeFilter={campaignTableView}
+            onFilterChange={handleCampaignTableViewChange}
+            searchPosition="right"
+            tableId={campaignTableId}
             focusedRowKey={highlightedRowKey}
             rowClassName={(item) => getCampaignTableRowKey(item) === highlightedRowKey ? styles.highlightedRow : undefined}
           />
