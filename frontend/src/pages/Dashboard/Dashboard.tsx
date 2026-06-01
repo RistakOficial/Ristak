@@ -486,6 +486,7 @@ export const Dashboard: React.FC = () => {
   const [financialScope, setFinancialScope] = useState<'all' | 'attribution' | 'campaigns'>('all')
   const [funnelLoading, setFunnelLoading] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [chartLoading, setChartLoading] = useState(true)
   const [selectedChartView, setSelectedChartView] = useState<ChartView>('revenue-spend')
   const [extendedChartDataLoaded, setExtendedChartDataLoaded] = useState(false)
   const [extendedChartDataLoading, setExtendedChartDataLoading] = useState(false)
@@ -686,7 +687,9 @@ export const Dashboard: React.FC = () => {
   }, [analyticsEnabled, selectedChartView, formattedFinancialData, visitorsLeadsData, leadsAppointmentsData, appointmentsAttendancesData, attendancesSalesData, labels.leads, currencyAxisFormatter, chartWindow.buckets])
 
   const isExtendedChartView = selectedChartView !== 'revenue-spend'
-  const isChartLoading = isExtendedChartView && extendedChartDataLoading
+  const isChartLoading = selectedChartView === 'revenue-spend'
+    ? chartLoading
+    : extendedChartDataLoading
 
   const hasChartData = React.useMemo(
     () => chartConfig.data.some(item => (item.value ?? 0) !== 0 || (item.value2 ?? 0) !== 0),
@@ -939,9 +942,11 @@ export const Dashboard: React.FC = () => {
   }, [selectedChartView, analyticsEnabled, loadExtendedChartData])
 
   useEffect(() => {
-    const loadData = async () => {
-      if (!user) return
+    if (!user) return
 
+    let mounted = true
+
+    const loadData = async () => {
       setLoading(true)
       try {
         const trafficPromise = analyticsEnabled
@@ -951,15 +956,10 @@ export const Dashboard: React.FC = () => {
             })
           : Promise.resolve<{ name: string; value: number; color: string }[]>([])
 
-        const [metricsData, chartDataResponse, trafficSourcesData, funnelDataResponse] = await Promise.all([
+        const [metricsData, trafficSourcesData, funnelDataResponse] = await Promise.all([
           dashboardService.getDashboardMetrics({
             start: dateRange.start,
             end: dateRange.end
-          }),
-          dashboardService.getFinancialChart({
-            start: chartWindow.start,
-            end: chartWindow.end,
-            scope: financialScope
           }),
           trafficPromise,
           dashboardService.getFunnelData({
@@ -969,19 +969,60 @@ export const Dashboard: React.FC = () => {
           })
         ])
 
+        if (!mounted) return
+
         setMetrics(metricsData)
-        setChartData(chartDataResponse)
         setTrafficSources(analyticsEnabled ? trafficSourcesData : [])
         setFunnelData(funnelDataResponse)
       } catch (error) {
         // TODO: add logging service
       } finally {
-        setLoading(false)
+        if (mounted) {
+          setLoading(false)
+        }
       }
     }
 
     loadData()
-  }, [analyticsEnabled, chartWindow.end, chartWindow.start, dateRange, financialScope, user])
+
+    return () => {
+      mounted = false
+    }
+  }, [analyticsEnabled, dateRange.end, dateRange.start, user])
+
+  useEffect(() => {
+    if (!user) return
+
+    let mounted = true
+
+    const loadFinancialChartData = async () => {
+      setChartLoading(true)
+      try {
+        const chartDataResponse = await dashboardService.getFinancialChart({
+          start: chartWindow.start,
+          end: chartWindow.end,
+          scope: financialScope
+        })
+
+        if (!mounted) return
+        setChartData(chartDataResponse)
+      } catch (error) {
+        if (mounted) {
+          setChartData([])
+        }
+      } finally {
+        if (mounted) {
+          setChartLoading(false)
+        }
+      }
+    }
+
+    loadFinancialChartData()
+
+    return () => {
+      mounted = false
+    }
+  }, [chartWindow.end, chartWindow.start, financialScope, user])
 
   useEffect(() => {
     if (!user) return
