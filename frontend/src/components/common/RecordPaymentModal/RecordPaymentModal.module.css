@@ -281,11 +281,14 @@
 }
 
 .dropdownItem {
+  appearance: none;
+  -webkit-appearance: none;
   width: 100%;
   padding: 12px;
   background: transparent;
   border: none;
   border-bottom: 1px solid var(--color-border);
+  border-radius: 0 !important;
   text-align: left;
   cursor: pointer;
   transition: background 0.15s ease;

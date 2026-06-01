@@ -89,7 +89,7 @@
 .options {
   max-height: var(--custom-select-options-max-height, 280px);
   overflow-y: auto;
-  padding: 4px;
+  padding: 0;
 }
 
 .options::-webkit-scrollbar {
@@ -110,6 +110,8 @@
 }
 
 .option {
+  appearance: none;
+  -webkit-appearance: none;
   width: 100%;
   display: flex;
   align-items: center;
@@ -117,7 +119,7 @@
   padding: 10px 12px;
   border: none;
   background: transparent;
-  border-radius: 8px;
+  border-radius: 0 !important;
   font-size: 14px;
   color: var(--color-text-secondary);
   cursor: pointer;

@@ -89,7 +89,7 @@
   background: color-mix(in srgb, var(--color-background-secondary) 92%, transparent);
   box-shadow: 0 18px 45px rgba(0, 0, 0, 0.28);
   backdrop-filter: blur(18px);
-  padding: 8px;
+  padding: 0;
 }
 
 .category + .category {
@@ -110,10 +110,12 @@
 .resultList {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 0;
 }
 
 .resultItem {
+  appearance: none;
+  -webkit-appearance: none;
   display: grid;
   grid-template-columns: 32px minmax(0, 1fr) auto;
   align-items: center;
@@ -121,7 +123,7 @@
   min-height: 54px;
   gap: 10px;
   border: 0;
-  border-radius: var(--design-control-radius, 8px);
+  border-radius: 0 !important;
   background: transparent;
   color: var(--color-text-primary);
   padding: 8px;

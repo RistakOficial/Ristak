@@ -146,6 +146,7 @@
   align-items: center;
   gap: var(--spacing-sm);
   padding: var(--spacing-sm) var(--spacing-md);
+  border-radius: 0 !important;
   cursor: pointer;
   font-size: var(--font-size-sm);
   transition: background-color var(--transition-fast);

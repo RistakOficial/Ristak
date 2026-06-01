@@ -1059,8 +1059,8 @@ body.light[data-design-preset='editorial'] {
   --design-chart-warning: #9a7a32;
   --design-chart-danger: #a65d55;
   --design-chart-muted: #a3aaa0;
-  --design-chart-grid: rgba(21, 24, 21, 0.09);
-  --design-chart-grid-dash: 1 0;
+  --design-chart-grid: rgba(21, 24, 21, 0.055);
+  --design-chart-grid-dash: 2 7;
   --design-chart-axis: #7d8379;
   --design-chart-empty-bg: #f6f8f5;
   --design-chart-panel-bg: #f0f3ef;
@@ -1118,8 +1118,8 @@ body.dark[data-design-preset='editorial'] {
   --design-chart-warning: #b79246;
   --design-chart-danger: #bd746b;
   --design-chart-muted: #5f665c;
-  --design-chart-grid: rgba(255, 255, 255, 0.075);
-  --design-chart-grid-dash: 1 0;
+  --design-chart-grid: rgba(255, 255, 255, 0.045);
+  --design-chart-grid-dash: 2 7;
   --design-chart-axis: #838c7f;
   --design-chart-empty-bg: #1a1e1a;
   --design-chart-panel-bg: #1d211d;
@@ -1224,6 +1224,22 @@ body[data-design-preset]:not([data-design-preset='classic']) textarea,
 body[data-design-preset]:not([data-design-preset='classic']) button,
 body[data-design-preset]:not([data-design-preset='classic']) .glass {
   border-radius: var(--design-control-radius);
+}
+
+body[data-design-preset]:not([data-design-preset='classic']) :is(
+  [class*='ViewSelector_option'],
+  [class*='CustomSelect_option'],
+  [class*='DropdownMenu_item'],
+  [class*='dropdownItem'],
+  [class*='selectorItem'],
+  [class*='pickerItem'],
+  [class*='presetItem'],
+  [class*='suggestionItem'],
+  [class*='addNewButton'],
+  [class*='resultItem'],
+  [class*='columnOption']
+) {
+  border-radius: 0 !important;
 }
 
 body[data-design-preset]:not([data-design-preset='classic']) [data-ristak-tablist] {

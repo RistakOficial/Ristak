@@ -463,10 +463,13 @@ body.dark .dropdownMenu {
 }
 
 .dropdownItem {
+  appearance: none;
+  -webkit-appearance: none;
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: var(--spacing-sm) var(--spacing-md);
+  border-radius: 0 !important;
   font-size: var(--font-size-base);
   color: var(--color-text-primary);
   cursor: pointer;

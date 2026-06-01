@@ -150,7 +150,7 @@ body.dark .dropdown {
 /* Suggestions */
 .suggestions {
   list-style: none;
-  padding: var(--spacing-xs) 0;
+  padding: 0;
   margin: 0;
   max-height: 200px;
   overflow-y: auto;
@@ -163,6 +163,7 @@ body.dark .dropdown {
   align-items: flex-start;
   gap: var(--spacing-sm);
   padding: var(--spacing-sm) var(--spacing-md);
+  border-radius: 0 !important;
   cursor: pointer;
   transition: background 0.1s ease;
 }
@@ -217,6 +218,8 @@ body.dark .dropdown {
 }
 
 .addNewButton {
+  appearance: none;
+  -webkit-appearance: none;
   display: flex;
   align-items: center;
   gap: var(--spacing-sm);
@@ -225,6 +228,7 @@ body.dark .dropdown {
   background: white;
   border: none;
   border-top: 1px solid #e5e5e5;
+  border-radius: 0 !important;
   color: var(--color-primary);
   font-size: var(--font-size-base);
   font-weight: 500;
@@ -235,6 +239,7 @@ body.dark .dropdown {
 
 .addNewButton:hover,
 .addNewButton.selected {
+  border-radius: 0 !important;
   background: rgba(var(--color-primary-rgb), 0.08);
 }
 

@@ -86,17 +86,19 @@
 .presetList {
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-xs);
+  gap: 0;
 }
 
 .presetItem {
+  appearance: none;
+  -webkit-appearance: none;
   display: flex;
   align-items: center;
   gap: var(--spacing-sm);
   padding: 10px 12px;
   background-color: transparent;
   border: none;
-  border-radius: var(--radius-md);
+  border-radius: 0 !important;
   color: var(--color-text-tertiary);
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
@@ -274,12 +276,14 @@
 }
 
 .pickerItem {
+  appearance: none;
+  -webkit-appearance: none;
   display: block;
   width: 100%;
   padding: 7px 10px;
   background: transparent;
   border: none;
-  border-radius: var(--radius-sm);
+  border-radius: 0 !important;
   cursor: pointer;
   font-size: var(--font-size-sm);
   color: var(--color-text-secondary);
