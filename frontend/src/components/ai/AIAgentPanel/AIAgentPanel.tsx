@@ -45,6 +45,9 @@ const FILE_INPUT_ACCEPT = [
 
 type VoiceCaptureState = 'idle' | 'recording' | 'finalizing'
 type VoiceEndAction = 'draft' | 'send'
+type SendMessageOptions = {
+  forceChat?: boolean
+}
 type AIAgentAttachmentDraft = AIAgentAttachment & {
   previewUrl?: string
 }
@@ -1616,7 +1619,8 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
 
   const sendMessage = async (
     overrideText?: string,
-    selectedClarificationOption?: AIAgentMessage['selectedClarificationOption']
+    selectedClarificationOption?: AIAgentMessage['selectedClarificationOption'],
+    options: SendMessageOptions = {}
   ) => {
     const messageAttachments = overrideText === undefined ? [...attachmentsRef.current] : []
     const text = (overrideText ?? input).trim()
@@ -1624,7 +1628,7 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
 
     if ((!messageText && !messageAttachments.length) || savingConfig) return
 
-    if (nextOnboardingQuestion && messageAttachments.length) {
+    if (nextOnboardingQuestion && !options.forceChat && messageAttachments.length) {
       setAttachmentError('Primero responde el contexto en texto; los archivos los analizamos después.')
       return
     }
@@ -1652,7 +1656,7 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
       return
     }
 
-    if (nextOnboardingQuestion) {
+    if (nextOnboardingQuestion && !options.forceChat) {
       await saveOnboardingAnswer(messageText, userMessage)
       return
     }
@@ -2115,7 +2119,7 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
                         key={label}
                         type="button"
                         className={styles.suggestionButton}
-                        onClick={() => sendMessage(prompt)}
+                        onClick={() => sendMessage(prompt, undefined, { forceChat: true })}
                         disabled={savingConfig}
                       >
                         <span className={styles.suggestionIcon}>
