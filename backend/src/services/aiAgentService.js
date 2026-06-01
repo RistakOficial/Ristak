@@ -7571,6 +7571,27 @@ function isConfiguredActionExecutionRequest(question, agentConfig) {
   return hasActionVerb && (hasOperationalTarget || sharesActionCustomizationKeyword(normalized, actionCustomizations))
 }
 
+function isConfiguredActionConversationContinuation(messages = [], agentConfig = null) {
+  const actionCustomizations = getConfiguredActionCustomizations(agentConfig)
+  if (!actionCustomizations || !Array.isArray(messages)) return false
+
+  const latestUserIndex = findLatestUserMessageIndex(messages)
+  if (latestUserIndex < 1) return false
+
+  const latestUserText = normalizeText(getMessageText(messages[latestUserIndex]))
+  const previousText = messages
+    .slice(Math.max(0, latestUserIndex - 8), latestUserIndex)
+    .map(message => getMessageText(message))
+    .filter(Boolean)
+    .join('\n')
+
+  if (!sharesActionCustomizationKeyword(previousText, actionCustomizations)) return false
+
+  return isAffirmativeExecutionIntent(latestUserText) ||
+    /^(?:solo\s+)?(?:\d+(?:[.,]\d+)?|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)\s*(?:mes|meses|dia|dias|día|días|semana|semanas|ano|anos|año|años)?\b/.test(latestUserText) ||
+    /^(?:solo|nada mas|nom[aá]s|por|durante|para)\b/.test(latestUserText)
+}
+
 function getRecentConversationTextBeforeLatestUser(messages = [], limit = 8) {
   if (!Array.isArray(messages)) return ''
 
@@ -7618,7 +7639,8 @@ function shouldUseInternalDatabaseContext(question, messages = []) {
 function buildUnifiedAgentRoute({ messages = [], latestUserMessage = '', agentConfig = null } = {}) {
   const normalized = normalizeText(latestUserMessage)
   const highLevelToolIntent = isExplicitHighLevelToolRequest(latestUserMessage)
-  const customActionIntent = isConfiguredActionExecutionRequest(latestUserMessage, agentConfig)
+  const customActionIntent = isConfiguredActionExecutionRequest(latestUserMessage, agentConfig) ||
+    isConfiguredActionConversationContinuation(messages, agentConfig)
   const paymentBackendOnly = shouldUsePaymentBackendForLatestMessage(messages)
   const contactMutationSafety = shouldUseContactMutationSafety(latestUserMessage)
   const requiresDbResearch = !paymentBackendOnly && !highLevelToolIntent && !customActionIntent && shouldUseInternalDatabaseContext(latestUserMessage, messages)
@@ -7824,6 +7846,73 @@ async function groundCustomActionReply(apiKey, {
   } catch (error) {
     logger.warn(`No se pudo verificar respuesta de acción personalizada: ${error.message}`)
     return reply
+  }
+}
+
+async function evaluateCustomActionReadiness(apiKey, {
+  model,
+  agentConfig,
+  messages = [],
+  latestUserMessage = '',
+  runtimeContext = {}
+} = {}) {
+  const actionCustomizations = getConfiguredActionCustomizations(agentConfig)
+  if (!actionCustomizations) return { applies: false, ready: true }
+
+  try {
+    const { text } = await callOpenAIResponse(apiKey, {
+      model,
+      maxOutputTokens: 900,
+      instructions: [
+        'Eres una compuerta de seguridad previa a herramientas para acciones personalizadas en GoHighLevel.',
+        'Tu trabajo es decidir si el último mensaje puede avanzar a herramientas/API o si falta un dato indispensable.',
+        'Lee la personalización como instrucciones operativas. Si la regla dice que sin cierto dato se debe preguntar antes de cualquier acción, debes bloquear herramientas.',
+        'Esto aplica a todo el catálogo de HighLevel: contactos, citas, pagos, suscripciones, formularios, surveys, funnels, blogs, campañas, anuncios, widgets, productos, oportunidades, usuarios, workflows, media storage, etc.',
+        'Usa la conversación completa. Si el usuario dio el dato en un seguimiento como "solo 1 mes", considéralo presente.',
+        'Si bloqueas, formula UNA sola pregunta conversacional y corta. No confirmes, no digas que ya hiciste algo y no menciones endpoints/payloads/IDs técnicos.',
+        'Devuelve únicamente JSON válido con este formato: {"applies":true,"ready":false,"missingFields":["..."],"question":"...","reason":"..."}',
+        'Si no aplica o ya están los datos indispensables: {"applies":true,"ready":true,"missingFields":[],"question":"","reason":"..."}'
+      ].join('\n'),
+      input: [
+        `Fecha/hora local: ${runtimeContext.nowIso || ''}`,
+        '',
+        'Personalización de acciones configurada:',
+        actionCustomizations,
+        '',
+        'Último mensaje del usuario:',
+        latestUserMessage || '',
+        '',
+        'Conversación reciente:',
+        buildConversationText(messages) || 'Sin mensajes previos.',
+        '',
+        'Decide si falta un dato indispensable antes de llamar herramientas/API.'
+      ].join('\n')
+    })
+
+    const parsed = parseJsonObject(text)
+    const applies = parsed.applies !== false
+    const ready = parsed.ready !== false
+    const missingFields = Array.isArray(parsed.missingFields)
+      ? parsed.missingFields.map(item => cleanText(String(item), 120)).filter(Boolean)
+      : []
+    const question = cleanText(parsed.question || '', 500)
+
+    return {
+      applies,
+      ready,
+      missingFields,
+      question,
+      reason: cleanText(parsed.reason || '', 500)
+    }
+  } catch (error) {
+    logger.warn(`No se pudo evaluar preflight de acción personalizada: ${error.message}`)
+    return {
+      applies: true,
+      ready: true,
+      missingFields: [],
+      question: '',
+      reason: 'Preflight no disponible; se continúa con guardas de herramientas.'
+    }
   }
 }
 
@@ -10545,6 +10634,34 @@ export async function createAgentReply({ apiKey, messages, viewContext, userId =
     latestUserMessage,
     agentConfig
   })
+
+  if (agentRoute?.customActionIntent) {
+    const preflight = await evaluateCustomActionReadiness(apiKey, {
+      model: normalizeAIAgentModel(agentConfig?.model),
+      agentConfig,
+      messages,
+      latestUserMessage,
+      runtimeContext
+    })
+
+    if (preflight.applies && !preflight.ready) {
+      return {
+        reply: preflight.question || 'Me falta un dato indispensable antes de hacer esa acción. ¿Qué dato uso?',
+        model: normalizeAIAgentModel(agentConfig?.model),
+        sources: [],
+        clarificationOptions: [],
+        usage: null,
+        debug: {
+          queryCount: 0,
+          highLevelToolsEnabled: false,
+          metaAdsOperationsEnabled: false,
+          agentRoute,
+          customActionPreflight: preflight
+        }
+      }
+    }
+  }
+
   const metaAdsOperationalIntent = agentRoute?.customActionIntent || mentionsHighLevel(latestUserMessage)
     ? false
     : shouldSkipDbResearchForMetaAds(latestUserMessage)
