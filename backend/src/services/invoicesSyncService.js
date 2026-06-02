@@ -26,6 +26,7 @@ import {
 const PAID_INVOICE_STATUSES = new Set(['paid', 'succeeded', 'completed'])
 const LOCAL_EXPORT_EXCLUDED_STATUSES = new Set(['deleted', 'failed', 'refunded', 'void', 'voided'])
 const LOCAL_EXPORT_PAID_STATUSES = new Set(['paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success'])
+const LOCAL_EXPORT_ID_PREFIXES = ['manual_payment_']
 const LOCAL_EXPORT_METHOD_TO_GHL_MODE = {
   card: 'card',
   transfer: 'bank_transfer',
@@ -75,6 +76,11 @@ function normalizeLocalPaymentMode(value, fallback = 'live') {
   return fallback === 'test' ? 'test' : 'live'
 }
 
+function isLocalPaymentExportCandidate(payment = {}) {
+  const id = cleanString(payment.id)
+  return LOCAL_EXPORT_ID_PREFIXES.some(prefix => id.startsWith(prefix))
+}
+
 function getInvoiceItems(invoice = {}) {
   for (const source of [invoice.invoiceItems, invoice.items, invoice.lineItems]) {
     if (Array.isArray(source) && source.length > 0) return source
@@ -106,6 +112,24 @@ function getInvoiceDisplayTitle(invoice = {}) {
     firstItem.description ||
     'Pago'
   )
+}
+
+function getInvoiceNotes(invoice = {}) {
+  return cleanString(
+    invoice.termsNotes ||
+    invoice.terms ||
+    invoice.notes ||
+    invoice.memo ||
+    invoice.description
+  )
+}
+
+function extractImportedLocalPaymentId(invoice = {}) {
+  const notes = getInvoiceNotes(invoice)
+  if (!notes || !notes.includes('Importado desde Ristak')) return null
+
+  const match = notes.match(/Pago local:\s*([A-Za-z0-9_-]+)/i)
+  return match?.[1] || null
 }
 
 function getPaymentTitle(payment = {}) {
@@ -160,9 +184,10 @@ async function getLocalPaymentExportContext() {
 async function getLocalPaymentsPendingHighLevel({ paymentId, limit = 100 } = {}) {
   const filters = [
     "(p.ghl_invoice_id IS NULL OR p.ghl_invoice_id = '')",
-    'COALESCE(p.amount, 0) > 0'
+    'COALESCE(p.amount, 0) > 0',
+    `(${LOCAL_EXPORT_ID_PREFIXES.map(() => 'p.id LIKE ?').join(' OR ')})`
   ]
-  const params = []
+  const params = LOCAL_EXPORT_ID_PREFIXES.map(prefix => `${prefix}%`)
 
   if (paymentId) {
     filters.push('p.id = ?')
@@ -198,7 +223,7 @@ async function getLocalPaymentsPendingHighLevel({ paymentId, limit = 100 } = {})
 
   return rows.filter(payment => {
     const status = cleanString(payment.status).toLowerCase()
-    return !LOCAL_EXPORT_EXCLUDED_STATUSES.has(status)
+    return isLocalPaymentExportCandidate(payment) && !LOCAL_EXPORT_EXCLUDED_STATUSES.has(status)
   })
 }
 
@@ -463,7 +488,16 @@ export async function syncLocalPaymentsToHighLevel({ paymentId, limit = 100 } = 
   }
 }
 
-async function findExistingPaymentForInvoice({ invoiceId, contactId, invoiceNumber }) {
+async function findExistingPaymentForInvoice({ invoiceId, contactId, invoiceNumber, importedLocalPaymentId = null }) {
+  if (importedLocalPaymentId) {
+    const existingImportedLocal = await db.get(
+      'SELECT id, status, payment_mode, ghl_invoice_id FROM payments WHERE id = ? LIMIT 1',
+      [importedLocalPaymentId]
+    )
+
+    if (existingImportedLocal) return existingImportedLocal
+  }
+
   const existingByInvoiceId = await db.get(
     'SELECT id, status, payment_mode, ghl_invoice_id FROM payments WHERE ghl_invoice_id = ? OR id = ? LIMIT 1',
     [invoiceId, invoiceId]
@@ -558,10 +592,19 @@ export async function syncInvoices({ limit = 100, offset = 0, contactId } = {}) 
         }
 
         const invoiceNumber = invoice.invoiceNumber || null
+        const importedLocalPaymentId = extractImportedLocalPaymentId(invoice)
+
+        if (importedLocalPaymentId && !isLocalPaymentExportCandidate({ id: importedLocalPaymentId })) {
+          logger.warn(`Ignorando invoice ${ghlInvoiceId}: parece duplicado creado por exportación local accidental de ${importedLocalPaymentId}`)
+          skipped++
+          continue
+        }
+
         const existing = await findExistingPaymentForInvoice({
           invoiceId: ghlInvoiceId,
           contactId,
-          invoiceNumber
+          invoiceNumber,
+          importedLocalPaymentId
         })
 
         // Datos comunes del invoice
@@ -769,10 +812,19 @@ export async function syncAllInvoices({ contactId } = {}) {
         const contactId = invoice.contactId
 
         const invoiceNumber = invoice.invoiceNumber || null
+        const importedLocalPaymentId = extractImportedLocalPaymentId(invoice)
+
+        if (importedLocalPaymentId && !isLocalPaymentExportCandidate({ id: importedLocalPaymentId })) {
+          logger.warn(`Ignorando invoice ${ghlInvoiceId}: parece duplicado creado por exportación local accidental de ${importedLocalPaymentId}`)
+          skipped++
+          continue
+        }
+
         const existing = await findExistingPaymentForInvoice({
           invoiceId: ghlInvoiceId,
           contactId,
-          invoiceNumber
+          invoiceNumber,
+          importedLocalPaymentId
         })
 
         if (!contactId) {
@@ -938,10 +990,18 @@ export async function syncSingleInvoice(invoiceId) {
 
     const ghlStatus = mapInvoiceStatus(invoice.status)
     const invoiceNumber = invoice.invoiceNumber || null
+    const importedLocalPaymentId = extractImportedLocalPaymentId(invoice)
+
+    if (importedLocalPaymentId && !isLocalPaymentExportCandidate({ id: importedLocalPaymentId })) {
+      logger.warn(`Ignorando invoice ${ghlInvoiceId}: parece duplicado creado por exportación local accidental de ${importedLocalPaymentId}`)
+      return { success: true, invoiceId: ghlInvoiceId, skipped: true, reason: 'accidental_local_export_duplicate' }
+    }
+
     const existing = await findExistingPaymentForInvoice({
       invoiceId: ghlInvoiceId,
       contactId,
-      invoiceNumber
+      invoiceNumber,
+      importedLocalPaymentId
     })
 
     const invoiceData = {

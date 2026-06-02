@@ -632,6 +632,11 @@ async function initTables() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_calendars_ghl ON calendars(ghl_calendar_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_calendars_source ON calendars(source)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_calendars_active ON calendars(is_active)')
+    try {
+      await db.run("CREATE UNIQUE INDEX IF NOT EXISTS idx_calendars_ghl_unique ON calendars(ghl_calendar_id) WHERE ghl_calendar_id IS NOT NULL AND ghl_calendar_id != ''")
+    } catch (err) {
+      logger.warn('Advertencia al crear índice único de calendars.ghl_calendar_id:', err.message)
+    }
 
     for (const [columnName, columnType] of [
       ['ghl_appointment_id', 'TEXT'],
@@ -651,6 +656,7 @@ async function initTables() {
     try {
       await db.run('CREATE INDEX IF NOT EXISTS idx_appointments_ghl ON appointments(ghl_appointment_id)')
       await db.run('CREATE INDEX IF NOT EXISTS idx_appointments_sync_status ON appointments(sync_status)')
+      await db.run("CREATE UNIQUE INDEX IF NOT EXISTS idx_appointments_ghl_unique ON appointments(ghl_appointment_id) WHERE ghl_appointment_id IS NOT NULL AND ghl_appointment_id != ''")
     } catch (err) {
       logger.warn('Advertencia al crear índices de sync de appointments:', err.message)
     }

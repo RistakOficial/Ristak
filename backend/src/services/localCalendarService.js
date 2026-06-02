@@ -663,6 +663,23 @@ function overlaps(startA, endA, startB, endB) {
   return startA < endB && endA > startB
 }
 
+function sameText(a, b) {
+  return cleanString(a).toLowerCase() === cleanString(b).toLowerCase()
+}
+
+function sameTime(a, b, toleranceMs = 60000) {
+  const timeA = new Date(a).getTime()
+  const timeB = new Date(b).getTime()
+  if (!Number.isFinite(timeA) || !Number.isFinite(timeB)) return false
+  return Math.abs(timeA - timeB) <= toleranceMs
+}
+
+function isRistakOwnedRow(row = {}, prefix = '') {
+  const source = cleanString(row.source).toLowerCase()
+  const id = cleanString(row.id)
+  return source === 'ristak' || (prefix && id.startsWith(prefix))
+}
+
 export async function getLocalFreeSlots(calendarId, startDate, endDate, timezone = DEFAULT_TIMEZONE) {
   const calendar = await getLocalCalendar(calendarId)
   if (!calendar) return []
@@ -763,19 +780,32 @@ async function getFallbackTeamMembers(client, locationId) {
 export async function syncLocalCalendarsToHighLevel(locationId, apiToken) {
   const rows = await db.all(`
     SELECT * FROM calendars
-    WHERE COALESCE(ghl_calendar_id, '') = ''
-       OR sync_status IN ('pending', 'error')
+    WHERE (
+        COALESCE(source, 'ristak') = 'ristak'
+        OR id LIKE 'rstk_cal_%'
+      )
+      AND (
+        COALESCE(ghl_calendar_id, '') = ''
+        OR sync_status IN ('pending', 'error')
+      )
     ORDER BY created_at ASC
   `)
 
   const client = new GHLClient(apiToken, locationId)
+  let remoteCalendarsCache = null
   let created = 0
   let updated = 0
+  let matched = 0
   let failed = 0
 
   for (const row of rows) {
     const calendar = calendarRowToApi(row)
     try {
+      if (!isRistakOwnedRow(row, LOCAL_CALENDAR_PREFIX)) {
+        logger.warn(`Saltando calendario no local para evitar duplicado en HighLevel: ${calendar.id}`)
+        continue
+      }
+
       let teamMembers = normalizeTeamMembers(calendar.teamMembers)
       if (!teamMembers.length) {
         teamMembers = await getFallbackTeamMembers(client, locationId)
@@ -783,8 +813,30 @@ export async function syncLocalCalendarsToHighLevel(locationId, apiToken) {
 
       const payload = buildHighLevelCalendarPayload({ ...calendar, teamMembers }, locationId)
       let response
-      if (calendar.ghlCalendarId) {
-        response = await highlevelCalendarService.updateCalendar(calendar.ghlCalendarId, payload, apiToken)
+      let ghlCalendarId = calendar.ghlCalendarId
+
+      if (!ghlCalendarId) {
+        if (!remoteCalendarsCache) {
+          remoteCalendarsCache = await highlevelCalendarService.getCalendars(locationId, apiToken)
+        }
+
+        const slug = payload.slug || slugify(payload.name)
+        const existingRemote = remoteCalendarsCache.find(remote => (
+          sameText(remote.slug || remote.widgetSlug, slug) ||
+          sameText(remote.name, payload.name)
+        ))
+
+        if (existingRemote?.id) {
+          ghlCalendarId = existingRemote.id
+          matched += 1
+          response = existingRemote
+        }
+      }
+
+      if (response) {
+        // Ya encontramos un calendario remoto equivalente; solo ligamos IDs.
+      } else if (ghlCalendarId) {
+        response = await highlevelCalendarService.updateCalendar(ghlCalendarId, payload, apiToken)
         updated += 1
       } else {
         response = await highlevelCalendarService.createCalendar(payload, apiToken)
@@ -792,7 +844,12 @@ export async function syncLocalCalendarsToHighLevel(locationId, apiToken) {
       }
 
       const remoteCalendar = response?.calendar || response
-      const ghlCalendarId = remoteCalendar?.id || calendar.ghlCalendarId
+      ghlCalendarId = remoteCalendar?.id || ghlCalendarId
+
+      if (!ghlCalendarId) {
+        throw new Error('HighLevel no devolvió ID de calendario; se detiene para evitar duplicados')
+      }
+
       await upsertLocalCalendar({
         ...calendar,
         ...remoteCalendar,
@@ -819,7 +876,7 @@ export async function syncLocalCalendarsToHighLevel(locationId, apiToken) {
     }
   }
 
-  return { total: rows.length, created, updated, failed }
+  return { total: rows.length, created, updated, matched, failed }
 }
 
 async function ensureHighLevelContactForAppointment(client, appointment = {}) {
@@ -893,19 +950,29 @@ async function ensureHighLevelContactForAppointment(client, appointment = {}) {
 export async function syncLocalAppointmentsToHighLevel(locationId, apiToken) {
   const rows = await db.all(`
     SELECT * FROM appointments
-    WHERE sync_status IN ('pending', 'error', 'pending_delete')
+    WHERE (
+        COALESCE(source, 'ristak') = 'ristak'
+        OR id LIKE 'rstk_appt_%'
+      )
+      AND sync_status IN ('pending', 'error', 'pending_delete')
     ORDER BY date_added ASC
   `)
 
   const client = new GHLClient(apiToken, locationId)
   let created = 0
   let updated = 0
+  let matched = 0
   let deleted = 0
   let failed = 0
 
   for (const row of rows) {
     const appointment = appointmentRowToApi(row)
     try {
+      if (!isRistakOwnedRow(row, LOCAL_APPOINTMENT_PREFIX)) {
+        logger.warn(`Saltando cita no local para evitar duplicado en HighLevel: ${appointment.id}`)
+        continue
+      }
+
       const calendar = await getLocalCalendar(appointment.calendarId)
       const remoteCalendarId = calendar?.ghlCalendarId || appointment.calendarId
 
@@ -932,8 +999,41 @@ export async function syncLocalAppointmentsToHighLevel(locationId, apiToken) {
       }
 
       let response
-      if (appointment.ghlAppointmentId) {
-        response = await highlevelCalendarService.updateAppointment(appointment.ghlAppointmentId, payload, apiToken)
+      let ghlAppointmentId = appointment.ghlAppointmentId
+
+      if (!ghlAppointmentId) {
+        const startMs = new Date(appointment.startTime).getTime()
+        const endMs = new Date(appointment.endTime || appointment.startTime).getTime()
+        const searchStart = Number.isFinite(startMs) ? startMs - 5 * 60000 : Date.now() - 5 * 60000
+        const searchEnd = Number.isFinite(endMs) ? endMs + 5 * 60000 : searchStart + 15 * 60000
+        const existingEvents = await highlevelCalendarService.getCalendarEvents(
+          locationId,
+          searchStart,
+          searchEnd,
+          apiToken,
+          remoteCalendarId
+        ).catch(error => {
+          logger.warn(`No se pudo buscar cita existente antes de crear ${appointment.id}: ${error.message}`)
+          return []
+        })
+
+        const existingRemote = existingEvents.find(event => (
+          sameTime(event.startTime || event.start_time, appointment.startTime) &&
+          (!contactId || !event.contactId || event.contactId === contactId) &&
+          sameText(event.title || event.name || '', appointment.title || '')
+        ))
+
+        if (existingRemote?.id) {
+          ghlAppointmentId = existingRemote.id
+          response = existingRemote
+          matched += 1
+        }
+      }
+
+      if (response) {
+        // Ya encontramos una cita remota equivalente; solo ligamos IDs.
+      } else if (ghlAppointmentId) {
+        response = await highlevelCalendarService.updateAppointment(ghlAppointmentId, payload, apiToken)
         updated += 1
       } else {
         response = await highlevelCalendarService.createAppointment(payload, locationId, apiToken)
@@ -941,7 +1041,12 @@ export async function syncLocalAppointmentsToHighLevel(locationId, apiToken) {
       }
 
       const remoteAppointment = response?.appointment || response
-      const ghlAppointmentId = remoteAppointment?.id || appointment.ghlAppointmentId
+      ghlAppointmentId = remoteAppointment?.id || ghlAppointmentId
+
+      if (!ghlAppointmentId) {
+        throw new Error('HighLevel no devolvió ID de cita; se detiene para evitar duplicados')
+      }
+
       await upsertLocalAppointment({
         ...appointment,
         ...remoteAppointment,
@@ -968,7 +1073,7 @@ export async function syncLocalAppointmentsToHighLevel(locationId, apiToken) {
     }
   }
 
-  return { total: rows.length, created, updated, deleted, failed }
+  return { total: rows.length, created, updated, matched, deleted, failed }
 }
 
 export default {
