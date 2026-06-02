@@ -43,10 +43,39 @@ export interface WhatsAppWebMessage {
   created_at?: string | null
 }
 
+export interface WhatsAppWebLog {
+  id: string
+  whatsapp_web_message_id?: string | null
+  contact_id?: string | null
+  remote_jid?: string | null
+  phone?: string | null
+  direction?: string | null
+  message_type?: string | null
+  message_text?: string | null
+  push_name?: string | null
+  has_attribution?: number | boolean | null
+  detected_ctwa_clid?: string | null
+  detected_source_id?: string | null
+  detected_source_url?: string | null
+  detected_source_type?: string | null
+  detected_source_app?: string | null
+  detected_entry_point?: string | null
+  detected_headline?: string | null
+  detected_body?: string | null
+  message_timestamp?: string | null
+  created_at?: string | null
+}
+
+export interface WhatsAppWebLogs {
+  recent: WhatsAppWebLog[]
+  attributed: WhatsAppWebLog[]
+}
+
 export const whatsappWebService = {
   getStatus: () => apiClient.get<WhatsAppWebStatus>('/whatsapp-web/status'),
   connect: () => apiClient.post<WhatsAppWebStatus>('/whatsapp-web/connect'),
   disconnect: () => apiClient.post<WhatsAppWebStatus>('/whatsapp-web/disconnect'),
+  getLogs: () => apiClient.get<WhatsAppWebLogs>('/whatsapp-web/logs'),
   getMessages: (limit = 12) => apiClient.get<WhatsAppWebMessage[]>('/whatsapp-web/messages', {
     params: { limit: String(limit) }
   })

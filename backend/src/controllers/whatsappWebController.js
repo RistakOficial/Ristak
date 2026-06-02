@@ -1,6 +1,7 @@
 import {
   disconnectWhatsAppWebSession,
   getRecentWhatsAppWebMessages,
+  getWhatsAppWebLogs,
   getWhatsAppWebStatus,
   startWhatsAppWebSession
 } from '../services/whatsappWebService.js'
@@ -54,6 +55,19 @@ export async function getWhatsAppWebMessages(req, res) {
     res.status(500).json({
       success: false,
       error: 'Error leyendo mensajes de WhatsApp Business'
+    })
+  }
+}
+
+export async function getWhatsAppWebLogsView(req, res) {
+  try {
+    const data = await getWhatsAppWebLogs()
+    res.json({ success: true, data })
+  } catch (error) {
+    logger.error(`Error leyendo logs de WhatsApp Business: ${error.message}`)
+    res.status(500).json({
+      success: false,
+      error: 'Error leyendo logs de WhatsApp Business'
     })
   }
 }

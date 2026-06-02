@@ -3,7 +3,7 @@ import { CheckCircle, RefreshCw, ShieldCheck, Unplug } from 'lucide-react'
 import { SiWhatsapp } from 'react-icons/si'
 import { Button, Card } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
-import { WhatsAppWebStatus, whatsappWebService } from '@/services/whatsappWebService'
+import { WhatsAppWebLog, WhatsAppWebLogs, WhatsAppWebStatus, whatsappWebService } from '@/services/whatsappWebService'
 import styles from './WhatsAppSettings.module.css'
 
 type BusinessProfile = {
@@ -24,12 +24,38 @@ function parseJson<T>(value?: string | null): T | null {
   }
 }
 
+function formatLogDate(value?: string | null) {
+  if (!value) return ''
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString()
+}
+
+function renderLog(log: WhatsAppWebLog) {
+  return (
+    <div key={log.id} className={styles.logItem}>
+      <div>{formatLogDate(log.message_timestamp || log.created_at)}</div>
+      <div>{log.direction || ''} · {log.message_type || ''}</div>
+      <div>{log.phone || ''} {log.push_name ? `· ${log.push_name}` : ''}</div>
+      <div>{log.message_text || '(sin texto)'}</div>
+      <div>contact_id: {log.contact_id || ''}</div>
+      <div>remote_jid: {log.remote_jid || ''}</div>
+      <div>source_id: {log.detected_source_id || ''}</div>
+      <div>ctwa: {log.detected_ctwa_clid || ''}</div>
+      <div>url: {log.detected_source_url || ''}</div>
+      <div>headline: {log.detected_headline || ''}</div>
+    </div>
+  )
+}
+
 export const WhatsAppSettings: React.FC = () => {
   const { showToast, showConfirm } = useNotification()
   const [status, setStatus] = useState<WhatsAppWebStatus | null>(null)
   const [loading, setLoading] = useState(true)
   const [disconnecting, setDisconnecting] = useState(false)
   const [manualDisconnected, setManualDisconnected] = useState(false)
+  const [showLogs, setShowLogs] = useState(false)
+  const [logs, setLogs] = useState<WhatsAppWebLogs | null>(null)
+  const [logsLoading, setLogsLoading] = useState(false)
   const requestInFlight = useRef(false)
 
   const session = status?.session
@@ -134,6 +160,19 @@ export const WhatsAppSettings: React.FC = () => {
     )
   }
 
+  const openLogs = async (event: React.MouseEvent<HTMLAnchorElement>) => {
+    event.preventDefault()
+    setShowLogs(true)
+    setLogsLoading(true)
+    try {
+      setLogs(await whatsappWebService.getLogs())
+    } catch (error) {
+      showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudieron leer los logs')
+    } finally {
+      setLogsLoading(false)
+    }
+  }
+
   if (loading) {
     return (
       <Card className={styles.shell}>
@@ -152,11 +191,33 @@ export const WhatsAppSettings: React.FC = () => {
         <div>
           <p className={styles.eyebrow}>Configuracion</p>
           <h2 className={styles.title}>WhatsApp Business</h2>
+          {showLogs ? (
+            <a href="#" onClick={(event) => { event.preventDefault(); setShowLogs(false) }}>Volver</a>
+          ) : (
+            <a href="#" onClick={openLogs}>Ver logs</a>
+          )}
         </div>
       </div>
 
       <div className={styles.stage}>
-        {isConnected ? (
+        {showLogs ? (
+          <div className={styles.logsView}>
+            {logsLoading ? (
+              <p>Cargando logs...</p>
+            ) : (
+              <>
+                <div>
+                  <h3>Chats recientes</h3>
+                  {(logs?.recent || []).length ? (logs?.recent || []).map(renderLog) : <p>Sin logs</p>}
+                </div>
+                <div>
+                  <h3>Con atribucion detectada</h3>
+                  {(logs?.attributed || []).length ? (logs?.attributed || []).map(renderLog) : <p>Sin atribucion</p>}
+                </div>
+              </>
+            )}
+          </div>
+        ) : isConnected ? (
           <div className={styles.connectedState}>
             <div className={styles.avatar}>
               {profileImage ? (

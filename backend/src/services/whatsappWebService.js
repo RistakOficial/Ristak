@@ -615,7 +615,101 @@ async function saveWhatsAppWebMessage({
     ])
   }
 
+  await saveWhatsAppWebLog({
+    sessionId,
+    webMessageId,
+    contactId,
+    remoteJid,
+    phone,
+    msg,
+    messageType,
+    messageText,
+    messageTimestamp,
+    rawPayload,
+    pushName,
+    attribution
+  })
+
   return webMessageId
+}
+
+async function saveWhatsAppWebLog({
+  sessionId,
+  webMessageId,
+  contactId,
+  remoteJid,
+  phone,
+  msg,
+  messageType,
+  messageText,
+  messageTimestamp,
+  rawPayload,
+  pushName,
+  attribution
+}) {
+  const logId = hashId('waweb_log', `${sessionId}|${webMessageId}`)
+
+  await db.run(`
+    INSERT INTO whatsapp_web_logs (
+      id, session_id, whatsapp_web_message_id, contact_id, remote_jid, phone,
+      direction, message_type, message_text, push_name, has_attribution,
+      detected_ctwa_clid, detected_source_id, detected_source_url, detected_source_type,
+      detected_source_app, detected_entry_point, detected_headline, detected_body,
+      message_timestamp, raw_payload_json, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(id) DO UPDATE SET
+      contact_id = excluded.contact_id,
+      phone = excluded.phone,
+      direction = excluded.direction,
+      message_type = excluded.message_type,
+      message_text = excluded.message_text,
+      push_name = excluded.push_name,
+      has_attribution = excluded.has_attribution,
+      detected_ctwa_clid = excluded.detected_ctwa_clid,
+      detected_source_id = excluded.detected_source_id,
+      detected_source_url = excluded.detected_source_url,
+      detected_source_type = excluded.detected_source_type,
+      detected_source_app = excluded.detected_source_app,
+      detected_entry_point = excluded.detected_entry_point,
+      detected_headline = excluded.detected_headline,
+      detected_body = excluded.detected_body,
+      message_timestamp = excluded.message_timestamp,
+      raw_payload_json = excluded.raw_payload_json
+  `, [
+    logId,
+    sessionId,
+    webMessageId,
+    contactId,
+    remoteJid,
+    phone || null,
+    msg.key?.fromMe ? 'outbound' : 'inbound',
+    messageType,
+    messageText || null,
+    pushName || null,
+    attribution.hasAttribution ? 1 : 0,
+    attribution.ctwaClid || null,
+    attribution.sourceId || null,
+    attribution.sourceUrl || null,
+    attribution.sourceType || null,
+    attribution.sourceApp || null,
+    attribution.entryPoint || null,
+    attribution.headline || null,
+    attribution.body || null,
+    messageTimestamp,
+    rawPayload
+  ])
+
+  await db.run(`
+    DELETE FROM whatsapp_web_logs
+    WHERE session_id = ?
+      AND id IN (
+        SELECT id
+        FROM whatsapp_web_logs
+        WHERE session_id = ?
+        ORDER BY created_at DESC
+        LIMIT 1000000 OFFSET 100
+      )
+  `, [sessionId, sessionId])
 }
 
 async function processIncomingMessage(sessionId, msg) {
@@ -967,6 +1061,38 @@ export async function getRecentWhatsAppWebMessages(sessionId = DEFAULT_SESSION_I
     ORDER BY created_at DESC
     LIMIT ${safeLimit}
   `, [sessionId])
+}
+
+export async function getWhatsAppWebLogs(sessionId = DEFAULT_SESSION_ID) {
+  await ensureSessionRecord(sessionId)
+
+  const fields = `
+    id, whatsapp_web_message_id, contact_id, remote_jid, phone, direction,
+    message_type, message_text, push_name, has_attribution, detected_ctwa_clid,
+    detected_source_id, detected_source_url, detected_source_type, detected_source_app,
+    detected_entry_point, detected_headline, detected_body, message_timestamp,
+    created_at
+  `
+
+  const [recent, attributed] = await Promise.all([
+    db.all(`
+      SELECT ${fields}
+      FROM whatsapp_web_logs
+      WHERE session_id = ?
+      ORDER BY created_at DESC
+      LIMIT 100
+    `, [sessionId]),
+    db.all(`
+      SELECT ${fields}
+      FROM whatsapp_web_logs
+      WHERE session_id = ?
+        AND has_attribution = 1
+      ORDER BY created_at DESC
+      LIMIT 100
+    `, [sessionId])
+  ])
+
+  return { recent, attributed }
 }
 
 export async function initializeWhatsAppWebReceiver() {

@@ -152,6 +152,7 @@ const CONTACT_PHONE_REFERENCE_TABLES = [
   { table: 'whatsapp_web_contacts', column: 'contact_id' },
   { table: 'whatsapp_web_messages', column: 'contact_id' },
   { table: 'whatsapp_web_attribution', column: 'contact_id' },
+  { table: 'whatsapp_web_logs', column: 'contact_id' },
   { table: 'payment_flows', column: 'contact_id' },
   { table: 'sessions', column: 'contact_id' }
 ]
@@ -202,6 +203,7 @@ async function syncContactPhoneColumns(contactId, canonicalPhone) {
     ['whatsapp_web_contacts', 'phone'],
     ['whatsapp_web_messages', 'phone'],
     ['whatsapp_web_attribution', 'phone'],
+    ['whatsapp_web_logs', 'phone'],
     ['payment_flows', 'contact_phone']
   ]
 
@@ -840,6 +842,36 @@ async function initTables() {
       )
     `)
 
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS whatsapp_web_logs (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        whatsapp_web_message_id TEXT,
+        contact_id TEXT,
+        remote_jid TEXT,
+        phone TEXT,
+        direction TEXT,
+        message_type TEXT,
+        message_text TEXT,
+        push_name TEXT,
+        has_attribution INTEGER DEFAULT 0,
+        detected_ctwa_clid TEXT,
+        detected_source_id TEXT,
+        detected_source_url TEXT,
+        detected_source_type TEXT,
+        detected_source_app TEXT,
+        detected_entry_point TEXT,
+        detected_headline TEXT,
+        detected_body TEXT,
+        message_timestamp DATETIME,
+        raw_payload_json TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (session_id) REFERENCES whatsapp_web_sessions(id) ON DELETE CASCADE,
+        FOREIGN KEY (whatsapp_web_message_id) REFERENCES whatsapp_web_messages(id) ON DELETE SET NULL,
+        FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE SET NULL
+      )
+    `)
+
     for (const [tableName, columnName, columnType] of [
       ['whatsapp_web_messages', 'detected_headline', 'TEXT'],
       ['whatsapp_web_messages', 'detected_body', 'TEXT'],
@@ -862,6 +894,8 @@ async function initTables() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_web_attr_contact ON whatsapp_web_attribution(contact_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_web_attr_ctwa ON whatsapp_web_attribution(detected_ctwa_clid)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_web_attr_source ON whatsapp_web_attribution(detected_source_id)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_web_logs_session_created ON whatsapp_web_logs(session_id, created_at)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_web_logs_attribution ON whatsapp_web_logs(has_attribution, created_at)')
 
     // Tabla de versiones de Meta API (para auto-actualización)
     await db.run(`
