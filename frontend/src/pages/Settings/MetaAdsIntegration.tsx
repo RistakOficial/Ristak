@@ -1,11 +1,11 @@
-import React, { useState, useEffect } from 'react'
+import React, { useEffect, useState } from 'react'
 import { Card, Button } from '@/components/common'
-import { CheckCircle, RefreshCw, Trash2, XCircle } from 'lucide-react'
+import { ArrowLeft, ArrowRight, CheckCircle, ExternalLink, RefreshCw, Trash2, XCircle } from 'lucide-react'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useTheme } from '@/contexts/ThemeContext'
 import { useAppConfig, useIsRenderDomain } from '@/hooks'
 import { campaignsService } from '@/services/campaignsService'
-import styles from './HighLevelIntegration.module.css'
+import styles from './MetaAdsIntegration.module.css'
 
 interface MetaCredentials {
   adAccountId: string
@@ -40,42 +40,24 @@ export const MetaAdsIntegration: React.FC = () => {
     pageId: '',
     pixelApiToken: ''
   })
-
-  // Estados para dropdowns
   const [adAccounts, setAdAccounts] = useState<AdAccount[]>([])
   const [pixels, setPixels] = useState<Pixel[]>([])
   const [isLoadingAccounts, setIsLoadingAccounts] = useState(false)
   const [isLoadingPixels, setIsLoadingPixels] = useState(false)
-
-  // Token real (revelado) para llamadas a Meta API
-  const [realAccessToken, setRealAccessToken] = useState<string>('')
-
-  // Estado para el botón "Continuar" del Access Token
+  const [realAccessToken, setRealAccessToken] = useState('')
   const [isSavingToken, setIsSavingToken] = useState(false)
-
-  // Estado para guardar Pixel API Token
   const [isSavingPixelToken, setIsSavingPixelToken] = useState(false)
-
-  // Estado para guardar Page ID
   const [isSavingPageId, setIsSavingPageId] = useState(false)
-  const [savedPageId, setSavedPageId] = useState<string>('')  // Page ID que viene del backend (guardado)
-
-  // Estado para re-sincronización al cambiar el switch
+  const [savedPageId, setSavedPageId] = useState('')
   const [isSyncingSnippet, setIsSyncingSnippet] = useState(false)
-
-  // Estado para sincronización manual de Meta Ads
   const [isSyncingMetaAds, setIsSyncingMetaAds] = useState(false)
+  const [activeStep, setActiveStep] = useState(0)
 
   const { showToast } = useNotification()
   const { theme } = useTheme()
-
-  // Detectar si estamos en dominio .onrender.com
   const isRenderDomain = useIsRenderDomain()
-
-  // Switch para incluir Meta Pixel en snippet (default: true)
   const [includeMetaPixel, setIncludeMetaPixel, savingPixelPref] = useAppConfig('include_meta_pixel', true)
 
-  // Cargar credenciales al montar el componente
   useEffect(() => {
     loadCredentials()
   }, [])
@@ -88,17 +70,11 @@ export const MetaAdsIntegration: React.FC = () => {
 
       if (data.success && data.data) {
         setCredentials(data.data)
+        setSavedPageId(data.data.pageId || '')
 
-        // Guardar el Page ID que viene del backend
-        if (data.data.pageId) {
-          setSavedPageId(data.data.pageId)
-        }
-
-        // Si hay access token guardado, cargar cuentas y pixeles
         if (data.data.accessToken) {
           let tokenToUse = data.data.accessToken
 
-          // Si está enmascarado, obtener el token real desde el backend
           if (data.data.accessToken.startsWith('***')) {
             try {
               const revealResponse = await fetch('/api/meta/config/reveal/access_token')
@@ -108,19 +84,14 @@ export const MetaAdsIntegration: React.FC = () => {
                 tokenToUse = revealData.accessToken
               }
             } catch {
-              // Si falla, no hacer nada más (no cargar cuentas)
               setIsLoading(false)
               return
             }
           }
 
-          // Guardar el token real en estado separado
           setRealAccessToken(tokenToUse)
-
-          // Cargar cuentas de anuncios
           await fetchAdAccounts(tokenToUse, data.data.adAccountId)
 
-          // Si hay adAccountId, cargar pixeles también
           if (data.data.adAccountId) {
             const accountIdWithPrefix = data.data.adAccountId.startsWith('act_')
               ? data.data.adAccountId
@@ -147,7 +118,6 @@ export const MetaAdsIntegration: React.FC = () => {
       if (result.success && result.adAccounts.length > 0) {
         setAdAccounts(result.adAccounts)
 
-        // Si hay un ID guardado, buscar coincidencia (sin el prefijo "act_")
         if (savedAdAccountId) {
           const normalizedSavedId = savedAdAccountId.replace(/^act_/, '')
           const matchingAccount = result.adAccounts.find(acc =>
@@ -155,7 +125,6 @@ export const MetaAdsIntegration: React.FC = () => {
           )
 
           if (matchingAccount) {
-            // Actualizar credentials con el ID sin prefijo pero guardar el objeto completo
             setCredentials(prev => ({
               ...prev,
               adAccountId: matchingAccount.id.replace(/^act_/, '')
@@ -168,7 +137,7 @@ export const MetaAdsIntegration: React.FC = () => {
         showToast('warning', 'Sin cuentas', 'No se encontraron cuentas de anuncios')
         setAdAccounts([])
       }
-    } catch (error) {
+    } catch {
       showToast('error', 'Error', 'No se pudieron cargar las cuentas')
       setAdAccounts([])
     } finally {
@@ -189,11 +158,9 @@ export const MetaAdsIntegration: React.FC = () => {
       if (result.success && result.pixels.length > 0) {
         setPixels(result.pixels)
 
-        // Si hay un pixel ID guardado, buscar coincidencia
         if (savedPixelId) {
           const matchingPixel = result.pixels.find(p => p.id === savedPixelId)
           if (matchingPixel) {
-            // Actualizar credentials para mantener el pixel seleccionado
             setCredentials(prev => ({
               ...prev,
               pixelId: matchingPixel.id
@@ -215,19 +182,15 @@ export const MetaAdsIntegration: React.FC = () => {
   }
 
   const handleSelectAdAccount = (account: AdAccount) => {
-    // Esta función ya no se usa, reemplazada por handleSelectAndSaveAccount
     handleSelectAndSaveAccount(account)
   }
 
   const handleSelectPixel = (pixel: Pixel) => {
-    // Esta función ya no se usa, reemplazada por handleSelectAndSavePixel
     handleSelectAndSavePixel(pixel)
   }
 
   const handleRemoveCredential = (field: keyof MetaCredentials) => {
-    // Limpiar el campo y todos los que dependen de él (cascada)
     if (field === 'accessToken') {
-      // Si se elimina el token, limpiar TODO
       setCredentials({
         adAccountId: '',
         accessToken: '',
@@ -238,9 +201,9 @@ export const MetaAdsIntegration: React.FC = () => {
       setRealAccessToken('')
       setAdAccounts([])
       setPixels([])
-      setSavedPageId('')  // Limpiar Page ID guardado
+      setSavedPageId('')
+      setActiveStep(0)
     } else if (field === 'adAccountId') {
-      // Si se elimina la cuenta, limpiar pixel y pixel token
       setCredentials(prev => ({
         ...prev,
         adAccountId: '',
@@ -248,19 +211,18 @@ export const MetaAdsIntegration: React.FC = () => {
         pixelApiToken: ''
       }))
       setPixels([])
+      setActiveStep(1)
     } else if (field === 'pixelId') {
-      // Si se elimina el pixel, limpiar pixel token
       setCredentials(prev => ({
         ...prev,
         pixelId: '',
         pixelApiToken: ''
       }))
+      setActiveStep(2)
     } else if (field === 'pageId') {
-      // Si se elimina el Page ID, limpiar también el savedPageId
       setCredentials(prev => ({ ...prev, pageId: '' }))
       setSavedPageId('')
     } else {
-      // Para otros campos, solo limpiar el campo actual
       setCredentials(prev => ({ ...prev, [field]: '' }))
     }
   }
@@ -269,7 +231,6 @@ export const MetaAdsIntegration: React.FC = () => {
     setCredentials(prev => ({ ...prev, [field]: value }))
   }
 
-  // Función para validar Access Token y cargar cuentas
   const handleContinueWithToken = async () => {
     if (!credentials.accessToken || credentials.accessToken.length < 50) {
       showToast('error', 'Token inválido', 'El Access Token parece estar incompleto')
@@ -279,30 +240,24 @@ export const MetaAdsIntegration: React.FC = () => {
     setIsSavingToken(true)
 
     try {
-      // Solo validar el token y cargar cuentas (NO guardamos aún en DB)
-      // El guardado ocurre cuando el usuario selecciona la cuenta
       showToast('info', 'Validando token...', 'Cargando tus cuentas de anuncios')
       setRealAccessToken(credentials.accessToken)
-
-      // Cargar cuentas desde Meta API
       await fetchAdAccounts(credentials.accessToken)
-
       showToast('success', 'Token válido', 'Selecciona tu cuenta de anuncios')
-    } catch (error) {
+      setActiveStep(1)
+    } catch {
       showToast('error', 'Error', 'No se pudo validar el token o cargar las cuentas')
-      setRealAccessToken('') // Resetear si falla
+      setRealAccessToken('')
     } finally {
       setIsSavingToken(false)
     }
   }
 
-  // Auto-guardar cuando selecciona cuenta
   const handleSelectAndSaveAccount = async (account: AdAccount) => {
     const accountIdWithoutPrefix = account.id.replace(/^act_/, '')
     setCredentials(prev => ({ ...prev, adAccountId: accountIdWithoutPrefix }))
 
     try {
-      // Guardar en DB + Custom Values
       const response = await fetch('/api/meta/save-and-sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -311,7 +266,7 @@ export const MetaAdsIntegration: React.FC = () => {
           accessToken: realAccessToken || credentials.accessToken,
           pixelId: credentials.pixelId,
           pageId: credentials.pageId,
-          pixelApiToken: ''  // No guardamos este aquí
+          pixelApiToken: ''
         })
       })
 
@@ -319,19 +274,18 @@ export const MetaAdsIntegration: React.FC = () => {
 
       if (data.success) {
         showToast('success', 'Cuenta guardada', `${account.name} configurada`)
-        // Auto-cargar pixeles
+        setActiveStep(2)
         if (realAccessToken) {
           fetchPixels(account.id, realAccessToken)
         }
       } else {
         showToast('error', 'Error', data.error || 'No se pudo guardar la cuenta')
       }
-    } catch (error) {
+    } catch {
       showToast('error', 'Error', 'No se pudo guardar la cuenta')
     }
   }
 
-  // Auto-guardar cuando selecciona pixel
   const handleSelectAndSavePixel = async (pixel: Pixel) => {
     setCredentials(prev => ({ ...prev, pixelId: pixel.id }))
 
@@ -344,7 +298,7 @@ export const MetaAdsIntegration: React.FC = () => {
           accessToken: realAccessToken || credentials.accessToken,
           pixelId: pixel.id,
           pageId: credentials.pageId,
-          pixelApiToken: ''  // No guardamos este aquí
+          pixelApiToken: ''
         })
       })
 
@@ -352,22 +306,21 @@ export const MetaAdsIntegration: React.FC = () => {
 
       if (data.success) {
         showToast('success', 'Pixel guardado', `${pixel.name} configurado`)
+        setActiveStep(3)
       } else {
         showToast('error', 'Error', data.error || 'No se pudo guardar el pixel')
       }
-    } catch (error) {
+    } catch {
       showToast('error', 'Error', 'No se pudo guardar el pixel')
     }
   }
 
-  // Guardar Page ID con botón (independiente del flujo principal)
   const handleSavePageId = async () => {
     if (!credentials.pageId) {
       showToast('error', 'Page ID requerido', 'Ingresa el Page ID primero')
       return
     }
 
-    // NO requiere que estén configurados otros campos
     if (!credentials.adAccountId) {
       showToast('warning', 'Configura primero', 'Primero debes conectar tu cuenta de anuncios')
       return
@@ -382,7 +335,7 @@ export const MetaAdsIntegration: React.FC = () => {
         body: JSON.stringify({
           adAccountId: credentials.adAccountId,
           accessToken: realAccessToken || credentials.accessToken,
-          pixelId: credentials.pixelId || '',  // Puede estar vacío
+          pixelId: credentials.pixelId || '',
           pageId: credentials.pageId,
           pixelApiToken: credentials.pixelApiToken || ''
         })
@@ -392,19 +345,18 @@ export const MetaAdsIntegration: React.FC = () => {
 
       if (data.success) {
         showToast('success', 'Page ID guardado', 'Configuración actualizada')
-        setSavedPageId(credentials.pageId)  // Marcar como guardado
-        await loadCredentials()  // Recargar para ver el chip
+        setSavedPageId(credentials.pageId)
+        await loadCredentials()
       } else {
         showToast('error', 'Error', data.error || 'No se pudo guardar el Page ID')
       }
-    } catch (error) {
+    } catch {
       showToast('error', 'Error', 'No se pudo guardar el Page ID')
     } finally {
       setIsSavingPageId(false)
     }
   }
 
-  // Guardar SOLO Pixel API Token (separado)
   const handleSavePixelApiToken = async () => {
     if (!credentials.pixelApiToken) {
       showToast('error', 'Token requerido', 'Ingresa el Pixel API Token primero')
@@ -426,24 +378,22 @@ export const MetaAdsIntegration: React.FC = () => {
 
       if (data.success) {
         showToast('success', 'Pixel API Token guardado', 'Token guardado en DB y Custom Values')
-        await loadCredentials()  // Recargar para ver el token enmascarado
+        await loadCredentials()
+        setActiveStep(4)
       } else {
         showToast('error', 'Error', data.error || 'No se pudo guardar el Pixel API Token')
       }
-    } catch (error) {
+    } catch {
       showToast('error', 'Error', 'No se pudo conectar con el servidor')
     } finally {
       setIsSavingPixelToken(false)
     }
   }
 
-  // Toggle para incluir/excluir Meta Pixel en snippet de tracking
   const handleToggleMetaPixel = async (newValue: boolean) => {
     try {
-      // Guardar preferencia en DB (sistema híbrido)
       await setIncludeMetaPixel(newValue)
 
-      // Re-sincronizar snippet automáticamente
       setIsSyncingSnippet(true)
       const response = await fetch('/api/tracking/configure', {
         method: 'POST',
@@ -463,14 +413,13 @@ export const MetaAdsIntegration: React.FC = () => {
       } else {
         showToast('error', 'Error', data.error || 'No se pudo sincronizar el snippet')
       }
-    } catch (error) {
+    } catch {
       showToast('error', 'Error', 'No se pudo actualizar el snippet')
     } finally {
       setIsSyncingSnippet(false)
     }
   }
 
-  // Sincronización manual de Meta Ads
   const handleSyncMetaAds = async () => {
     setIsSyncingMetaAds(true)
     showToast('info', 'Sincronizando...', 'Iniciando sincronización de Meta Ads (últimos 35 meses)')
@@ -491,7 +440,7 @@ export const MetaAdsIntegration: React.FC = () => {
           result.error || 'No se pudo completar la sincronización'
         )
       }
-    } catch (error) {
+    } catch {
       showToast('error', 'Error', 'No se pudo conectar con el servidor')
     } finally {
       setIsSyncingMetaAds(false)
@@ -505,40 +454,443 @@ export const MetaAdsIntegration: React.FC = () => {
   const hasPixelApiToken = Boolean(credentials.pixelApiToken)
   const hasPageId = Boolean(savedPageId)
   const metaSetupSteps = [
-    { title: 'Access Token', completed: hasAccessToken, unlocked: true },
-    { title: 'Cuenta de anuncios', completed: hasAdAccount, unlocked: hasAccessToken },
-    { title: 'Meta Pixel', completed: hasPixel, unlocked: hasAdAccount },
-    { title: 'Pixel API Token', completed: hasPixelApiToken, unlocked: hasPixel },
-    { title: 'Facebook Page ID', completed: hasPageId, unlocked: hasAdAccount }
+    {
+      title: 'Access Token',
+      description: 'System User Token',
+      done: hasAccessToken,
+      required: true,
+      unlocked: true
+    },
+    {
+      title: 'Cuenta de anuncios',
+      description: 'Campañas y reportes',
+      done: hasAdAccount,
+      required: true,
+      unlocked: hasAccessToken
+    },
+    {
+      title: 'Meta Pixel',
+      description: 'Medición web opcional',
+      done: hasPixel,
+      required: false,
+      unlocked: hasAdAccount
+    },
+    {
+      title: 'Pixel API Token',
+      description: 'Conversions API',
+      done: hasPixelApiToken,
+      required: false,
+      unlocked: hasPixel
+    },
+    {
+      title: 'Facebook Page ID',
+      description: 'Caja separada',
+      done: hasPageId,
+      required: false,
+      unlocked: hasAdAccount
+    }
   ]
-  const completedMetaSetupSteps = metaSetupSteps.filter(step => step.completed).length
-  const isMetaOnboardingComplete = metaSetupSteps.slice(0, 4).every(step => step.completed)
-  const getMetaStepClassName = (stepIndex: number) => [
-    styles.metaSetupStep,
-    metaSetupSteps[stepIndex]?.completed ? styles.metaSetupStepDone : '',
-    !metaSetupSteps[stepIndex]?.unlocked ? styles.metaSetupStepLocked : ''
-  ].filter(Boolean).join(' ')
+  const completedMetaSetupSteps = metaSetupSteps.filter(step => step.done).length
+  const hasRailActions = Boolean((credentials.pixelId && !isRenderDomain) || (credentials.accessToken && credentials.adAccountId))
+
+  const getSelectedAdAccountLabel = () => {
+    if (!credentials.adAccountId) return 'Pendiente'
+    const normalizedId = credentials.adAccountId.replace(/^act_/, '')
+    const matchingAccount = adAccounts.find(acc =>
+      acc.id.replace(/^act_/, '') === normalizedId
+    )
+
+    return matchingAccount
+      ? `${matchingAccount.name} (${normalizedId})`
+      : normalizedId
+  }
+
+  const getSelectedPixelLabel = () => {
+    if (!credentials.pixelId) return 'Opcional'
+    const matchingPixel = pixels.find(p => p.id === credentials.pixelId)
+    return matchingPixel ? `${matchingPixel.name} (${credentials.pixelId})` : credentials.pixelId
+  }
+
+  const getStepBlockMessage = (stepIndex = activeStep) => {
+    if (stepIndex === 1 && !hasAccessToken) {
+      return 'Primero valida el Access Token para cargar tus cuentas de anuncios'
+    }
+
+    if ((stepIndex === 2 || stepIndex === 4) && !hasAdAccount) {
+      return 'Primero selecciona y guarda una cuenta de anuncios'
+    }
+
+    if (stepIndex === 3 && !hasPixel) {
+      return 'Primero selecciona un Meta Pixel para guardar el Pixel API Token'
+    }
+
+    return 'Completa el paso anterior para continuar'
+  }
+
+  const handleNextStep = () => {
+    const currentStep = metaSetupSteps[activeStep]
+
+    if (!currentStep?.unlocked) {
+      showToast('warning', 'Paso bloqueado', getStepBlockMessage(activeStep))
+      return
+    }
+
+    if (currentStep.required && !currentStep.done) {
+      showToast('warning', 'Falta un dato', getStepBlockMessage(activeStep + 1))
+      return
+    }
+
+    if (activeStep === 2 && !hasPixel) {
+      setActiveStep(4)
+      return
+    }
+
+    setActiveStep(step => Math.min(step + 1, metaSetupSteps.length - 1))
+  }
+
+  const handlePreviousStep = () => {
+    setActiveStep(step => step === 4 && !hasPixel ? 2 : Math.max(step - 1, 0))
+  }
+
+  const handleSelectStep = (stepIndex: number) => {
+    const selectedStep = metaSetupSteps[stepIndex]
+
+    if (!selectedStep?.unlocked) {
+      showToast('warning', 'Paso bloqueado', getStepBlockMessage(stepIndex))
+      return
+    }
+
+    setActiveStep(stepIndex)
+  }
+
+  const renderStepContent = () => {
+    if (activeStep === 0) {
+      return (
+        <>
+          <div className={styles.stepIntro}>
+            <span className={styles.stepEyebrow}>Paso 1</span>
+            <h3 className={styles.stepTitle}>Conecta el Access Token</h3>
+            <p className={styles.stepText}>
+              Genera un System User Token de Meta con permisos para leer campañas. Este token desbloquea la selección de cuenta de anuncios.
+            </p>
+            <a href="https://business.facebook.com/settings/system-users" target="_blank" rel="noopener noreferrer" className={styles.inlineDocLink}>
+              Abrir Business Settings
+              <ExternalLink size={14} />
+            </a>
+          </div>
+
+          <label className={`${styles.formGroup} ${styles.formGroupWide}`}>
+            <span className={styles.formLabel}>Access Token</span>
+            {credentials.accessToken && credentials.accessToken.startsWith('***') ? (
+              <div className={styles.filterChip}>
+                <span className={styles.chipText}>{credentials.accessToken}</span>
+                <button
+                  onClick={() => handleRemoveCredential('accessToken')}
+                  className={styles.chipDeleteButton}
+                  type="button"
+                  aria-label="Eliminar Access Token"
+                >
+                  <Trash2 size={16} />
+                </button>
+              </div>
+            ) : (
+              <div className={styles.inputActionRow}>
+                <input
+                  type="text"
+                  value={credentials.accessToken}
+                  onChange={(event) => handleInputChange('accessToken', event.target.value)}
+                  placeholder="EAAabcdef..."
+                  className={styles.formInput}
+                />
+                {!realAccessToken && !isLoadingAccounts && (
+                  <Button
+                    type="button"
+                    variant="primary"
+                    onClick={handleContinueWithToken}
+                    disabled={isSavingToken || !credentials.accessToken || credentials.accessToken.length < 50}
+                  >
+                    {isSavingToken ? 'Guardando...' : 'Continuar'}
+                  </Button>
+                )}
+              </div>
+            )}
+          </label>
+
+          {isLoadingAccounts && (
+            <div className={styles.inlineStatus}>
+              <RefreshCw size={14} className={styles.spinning} />
+              Cargando cuentas de anuncios...
+            </div>
+          )}
+        </>
+      )
+    }
+
+    if (activeStep === 1) {
+      return (
+        <>
+          <div className={styles.stepIntro}>
+            <span className={styles.stepEyebrow}>Paso 2</span>
+            <h3 className={styles.stepTitle}>Selecciona la cuenta de anuncios</h3>
+            <p className={styles.stepText}>
+              Esta cuenta alimenta campañas, costos y reportes. Al seleccionarla se guarda automáticamente y se cargan los pixeles disponibles.
+            </p>
+          </div>
+
+          {!hasAccessToken ? (
+            <p className={styles.stepHint}>{getStepBlockMessage(1)}</p>
+          ) : (
+            <label className={`${styles.formGroup} ${styles.formGroupWide}`}>
+              <span className={styles.formLabel}>Cuenta de anuncios</span>
+              {credentials.adAccountId ? (
+                <div className={styles.filterChip}>
+                  <span className={styles.chipText}>{getSelectedAdAccountLabel()}</span>
+                  <button
+                    onClick={() => {
+                      handleRemoveCredential('adAccountId')
+                      setPixels([])
+                    }}
+                    className={styles.chipDeleteButton}
+                    type="button"
+                    aria-label="Eliminar cuenta de anuncios"
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+              ) : adAccounts.length > 0 ? (
+                <select
+                  className={styles.formInput}
+                  onChange={(event) => {
+                    const account = adAccounts.find(a => a.id === event.target.value)
+                    if (account) handleSelectAdAccount(account)
+                  }}
+                  value={credentials.adAccountId || ''}
+                >
+                  <option value="">-- Selecciona una cuenta --</option>
+                  {adAccounts.map((account) => (
+                    <option key={account.id} value={account.id}>
+                      {account.name} ({account.id}) - {account.currency}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  type="text"
+                  value={credentials.adAccountId}
+                  onChange={(event) => handleInputChange('adAccountId', event.target.value)}
+                  placeholder="act_123456789012345"
+                  className={styles.formInput}
+                />
+              )}
+            </label>
+          )}
+        </>
+      )
+    }
+
+    if (activeStep === 2) {
+      return (
+        <>
+          <div className={styles.stepIntro}>
+            <span className={styles.stepEyebrow}>Paso 3</span>
+            <h3 className={styles.stepTitle}>Elige el Meta Pixel</h3>
+            <p className={styles.stepText}>
+              Es opcional para conectar Meta Ads, pero necesario si quieres incluir el pixel en el snippet o usar Conversions API.
+            </p>
+          </div>
+
+          {!hasAdAccount ? (
+            <p className={styles.stepHint}>{getStepBlockMessage(2)}</p>
+          ) : (
+            <>
+              <label className={`${styles.formGroup} ${styles.formGroupWide}`}>
+                <span className={styles.formLabel}>Meta Pixel</span>
+                {credentials.pixelId ? (
+                  <div className={styles.filterChip}>
+                    <span className={styles.chipText}>{getSelectedPixelLabel()}</span>
+                    <button
+                      onClick={() => handleRemoveCredential('pixelId')}
+                      className={styles.chipDeleteButton}
+                      type="button"
+                      aria-label="Eliminar Meta Pixel"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
+                ) : isLoadingPixels ? (
+                  <div className={styles.inlineStatus}>
+                    <RefreshCw size={14} className={styles.spinning} />
+                    Cargando pixeles...
+                  </div>
+                ) : pixels.length > 0 ? (
+                  <select
+                    className={styles.formInput}
+                    onChange={(event) => {
+                      const pixel = pixels.find(p => p.id === event.target.value)
+                      if (pixel) handleSelectPixel(pixel)
+                    }}
+                    value={credentials.pixelId || ''}
+                  >
+                    <option value="">-- Sin pixel (opcional) --</option>
+                    {pixels.map((pixel) => (
+                      <option key={pixel.id} value={pixel.id}>
+                        {pixel.name} ({pixel.id})
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    type="text"
+                    value={credentials.pixelId}
+                    onChange={(event) => handleInputChange('pixelId', event.target.value)}
+                    placeholder="1234567890123456"
+                    className={styles.formInput}
+                  />
+                )}
+              </label>
+              <p className={styles.stepHint}>
+                Si no necesitas pixel por ahora, puedes saltar directo al Facebook Page ID.
+              </p>
+            </>
+          )}
+        </>
+      )
+    }
+
+    if (activeStep === 3) {
+      return (
+        <>
+          <div className={styles.stepIntro}>
+            <span className={styles.stepEyebrow}>Paso 4</span>
+            <h3 className={styles.stepTitle}>Guarda el Pixel API Token</h3>
+            <p className={styles.stepText}>
+              Este token sólo aplica si usas Conversions API. Se guarda separado para no mezclarlo con el Access Token principal.
+            </p>
+            <a href="https://business.facebook.com/events_manager2" target="_blank" rel="noopener noreferrer" className={styles.inlineDocLink}>
+              Abrir Events Manager
+              <ExternalLink size={14} />
+            </a>
+          </div>
+
+          {!hasPixel ? (
+            <p className={styles.stepHint}>{getStepBlockMessage(3)}</p>
+          ) : (
+            <label className={`${styles.formGroup} ${styles.formGroupWide}`}>
+              <span className={styles.formLabel}>Pixel API Token</span>
+              {credentials.pixelApiToken && credentials.pixelApiToken.startsWith('***') ? (
+                <div className={styles.filterChip}>
+                  <span className={styles.chipText}>{credentials.pixelApiToken}</span>
+                  <button
+                    onClick={() => handleRemoveCredential('pixelApiToken')}
+                    className={styles.chipDeleteButton}
+                    type="button"
+                    aria-label="Eliminar Pixel API Token"
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+              ) : (
+                <div className={styles.inputActionRow}>
+                  <input
+                    type="text"
+                    value={credentials.pixelApiToken}
+                    onChange={(event) => handleInputChange('pixelApiToken', event.target.value)}
+                    placeholder="Pega aquí el token generado desde Events Manager"
+                    className={styles.formInput}
+                  />
+                  <Button
+                    type="button"
+                    variant="primary"
+                    onClick={handleSavePixelApiToken}
+                    disabled={isSavingPixelToken || !credentials.pixelApiToken}
+                  >
+                    <RefreshCw size={16} className={isSavingPixelToken ? styles.spinning : ''} />
+                    {isSavingPixelToken ? 'Guardando...' : 'Guardar'}
+                  </Button>
+                </div>
+              )}
+            </label>
+          )}
+        </>
+      )
+    }
+
+    return (
+      <>
+        <div className={styles.stepIntro}>
+          <span className={styles.stepEyebrow}>Paso 5</span>
+          <h3 className={styles.stepTitle}>Guarda el Facebook Page ID</h3>
+          <p className={styles.stepText}>
+            Esta es la caja separada para Page ID dentro del wizard de Meta Ads. Es opcional para anuncios, pero necesaria para eventos personalizados ligados a Facebook Page.
+          </p>
+          <a href="https://business.facebook.com/latest/settings/pages" target="_blank" rel="noopener noreferrer" className={styles.inlineDocLink}>
+            Abrir páginas en Meta Business
+            <ExternalLink size={14} />
+          </a>
+        </div>
+
+        {!hasAdAccount ? (
+          <p className={styles.stepHint}>{getStepBlockMessage(4)}</p>
+        ) : (
+          <label className={`${styles.formGroup} ${styles.formGroupWide}`}>
+            <span className={styles.formLabel}>Facebook Page ID</span>
+            {savedPageId && credentials.pageId === savedPageId ? (
+              <div className={styles.filterChip}>
+                <span className={styles.chipText}>{credentials.pageId}</span>
+                <button
+                  onClick={() => handleRemoveCredential('pageId')}
+                  className={styles.chipDeleteButton}
+                  type="button"
+                  aria-label="Eliminar Page ID"
+                >
+                  <Trash2 size={16} />
+                </button>
+              </div>
+            ) : (
+              <div className={styles.inputActionRow}>
+                <input
+                  type="text"
+                  value={credentials.pageId}
+                  onChange={(event) => handleInputChange('pageId', event.target.value)}
+                  placeholder="1234567890123456"
+                  className={styles.formInput}
+                />
+                <Button
+                  type="button"
+                  variant="primary"
+                  onClick={handleSavePageId}
+                  disabled={isSavingPageId || !credentials.pageId}
+                >
+                  <RefreshCw size={16} className={isSavingPageId ? styles.spinning : ''} />
+                  {isSavingPageId ? 'Guardando...' : 'Guardar'}
+                </Button>
+              </div>
+            )}
+          </label>
+        )}
+      </>
+    )
+  }
 
   return (
-    <div className={styles.integrationContainer}>
+    <div className={styles.container}>
       <Card className={styles.mainCard}>
-        {/* Header */}
         <div className={styles.pageHeader}>
           <div className={styles.headerContent}>
             <div className={styles.headerLeft}>
-              <div className={styles.logoContainer}>
+              <span className={styles.logoMark} aria-hidden="true">
                 <img
                   src={theme === 'light'
                     ? 'https://img.icons8.com/fluency/96/meta.png'
                     : 'https://img.icons8.com/ios-filled/150/FFFFFF/meta.png'
                   }
-                  alt="Meta"
+                  alt=""
                 />
-              </div>
+              </span>
               <div>
                 <h2 className={styles.pageTitle}>Meta Ads</h2>
                 <p className={styles.pageSubtitle}>
-                  Conecta tu cuenta de anuncios de Facebook
+                  Sigue el wizard y conecta cuenta, pixel y Page ID sin mezclar campos.
                 </p>
               </div>
             </div>
@@ -558,461 +910,149 @@ export const MetaAdsIntegration: React.FC = () => {
           </div>
         </div>
 
-        <div className={styles.metaWorkspace}>
-          <div className={styles.metaPrimaryColumn}>
-            <div className={`${styles.section} ${styles.metaConfigSection}`}>
+        <div className={styles.workspace}>
+          <div className={styles.primaryColumn}>
+            <section className={`${styles.section} ${styles.wizardSection}`}>
               <div className={styles.sectionHeader}>
                 <div>
-                  <h3 className={styles.sectionTitle}>Flujo de configuración</h3>
+                  <h3 className={styles.sectionTitle}>Wizard de configuración</h3>
                   <p className={styles.sectionDescription}>
-                    Se van desbloqueando campos conforme conectas Meta.
+                    Avanza por pasos. Los opcionales no bloquean el Page ID.
                   </p>
                 </div>
-                <span className={styles.metaSetupCount}>
-                  {completedMetaSetupSteps}/5 listo
-                </span>
+                <span className={styles.stepCount}>{completedMetaSetupSteps}/5 listo</span>
               </div>
 
-              <div className={styles.metaProgressList} aria-label="Progreso de configuración de Meta">
-                {metaSetupSteps.map((step, index) => (
-                  <div
-                    key={step.title}
-                    className={[
-                      styles.metaProgressItem,
-                      step.completed ? styles.metaProgressDone : '',
-                      !step.unlocked ? styles.metaProgressLocked : ''
-                    ].filter(Boolean).join(' ')}
-                  >
-                    <span className={styles.metaProgressDot}>
-                      {step.completed ? <CheckCircle size={13} /> : index + 1}
-                    </span>
-                    <span className={styles.metaProgressLabel}>{step.title}</span>
-                    <span className={styles.metaProgressStatus}>
-                      {step.completed ? 'Listo' : step.unlocked ? 'Siguiente' : 'Después'}
-                    </span>
-                  </div>
-                ))}
-              </div>
-
-              {isLoading ? (
-                <div className={styles.metaLoadingState}>
-                  Cargando credenciales...
+              <div className={styles.wizardShell}>
+                <div className={styles.progressList} aria-label="Progreso de configuración de Meta">
+                  {metaSetupSteps.map((step, index) => (
+                    <button
+                      key={step.title}
+                      type="button"
+                      className={[
+                        styles.progressItem,
+                        step.done ? styles.progressDone : '',
+                        index === activeStep ? styles.progressActive : '',
+                        !step.unlocked ? styles.progressLocked : ''
+                      ].filter(Boolean).join(' ')}
+                      onClick={() => handleSelectStep(index)}
+                      disabled={!step.unlocked}
+                    >
+                      <span className={styles.progressDot}>
+                        {step.done ? <CheckCircle size={13} /> : index + 1}
+                      </span>
+                      <span className={styles.progressCopy}>
+                        <span className={styles.progressLabel}>{step.title}</span>
+                        <span className={styles.progressDescription}>{step.description}</span>
+                      </span>
+                    </button>
+                  ))}
                 </div>
-              ) : (
-                <div className={[
-                  styles.metaSetupFlow,
-                  isMetaOnboardingComplete ? styles.metaSetupFlowComplete : ''
-                ].filter(Boolean).join(' ')}>
-                  <div className={getMetaStepClassName(0)}>
-                    <div className={styles.metaStepMarker}>
-                      {metaSetupSteps[0].completed ? <CheckCircle size={16} /> : '1'}
-                    </div>
-                    <div className={styles.metaStepContent}>
-                      <div className={styles.metaStepHeader}>
-                        <div>
-                          <h4 className={styles.metaStepTitle}>Access Token</h4>
-                          <p className={styles.formHint}>
-                            Genera un token desde{' '}
-                            <a href="https://business.facebook.com/settings/system-users" target="_blank" rel="noopener noreferrer" className={styles.link}>
-                              business.facebook.com
-                            </a>
-                            {' '}con permisos <code className={styles.codeInline}>ads_read</code>
-                          </p>
-                        </div>
-                        <span className={styles.metaStepBadge}>
-                          Requerido
-                        </span>
-                      </div>
 
-                      <div className={styles.formGroup}>
-                        {credentials.accessToken && credentials.accessToken.startsWith('***') ? (
-                          <div className={styles.filterChip}>
-                            <span className={styles.chipText}>{credentials.accessToken}</span>
-                            <button
-                              onClick={() => handleRemoveCredential('accessToken')}
-                              className={styles.chipDeleteButton}
-                              type="button"
-                              aria-label="Eliminar Access Token"
-                            >
-                              <Trash2 size={16} />
-                            </button>
-                          </div>
-                        ) : (
-                          <div className={styles.metaInputActionRow}>
-                            <input
-                              type="text"
-                              value={credentials.accessToken}
-                              onChange={(e) => handleInputChange('accessToken', e.target.value)}
-                              placeholder="EAAabcdef..."
-                              className={styles.formInput}
-                            />
-                            {!realAccessToken && !isLoadingAccounts && (
-                              <Button
-                                type="button"
-                                variant="primary"
-                                onClick={handleContinueWithToken}
-                                disabled={isSavingToken || !credentials.accessToken || credentials.accessToken.length < 50}
-                              >
-                                {isSavingToken ? 'Guardando...' : 'Continuar'}
-                              </Button>
-                            )}
-                          </div>
-                        )}
-                        {isLoadingAccounts && (
-                          <div className={styles.metaInlineStatus}>
-                            <RefreshCw size={14} className={styles.spinning} />
-                            Cargando cuentas de anuncios...
-                          </div>
+                <div className={styles.stepPanel}>
+                  {isLoading ? (
+                    <div className={styles.loadingState}>Cargando credenciales...</div>
+                  ) : (
+                    <>
+                      {renderStepContent()}
+
+                      <div className={styles.stepActions}>
+                        <Button type="button" variant="secondary" onClick={handlePreviousStep} disabled={activeStep === 0}>
+                          <ArrowLeft size={16} />
+                          Atrás
+                        </Button>
+                        {activeStep < metaSetupSteps.length - 1 && (
+                          <Button type="button" variant="secondary" onClick={handleNextStep}>
+                            {activeStep === 2 && !hasPixel ? 'Saltar a Page ID' : 'Siguiente'}
+                            <ArrowRight size={16} />
+                          </Button>
                         )}
                       </div>
-                    </div>
+                    </>
+                  )}
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <aside className={styles.statusRail}>
+            <div className={styles.railBlock}>
+              <div className={styles.railHeader}>
+                <CheckCircle size={18} />
+                <span>Estado Meta</span>
+              </div>
+              <strong className={styles.railPrimaryValue}>
+                {isMetaConfigured ? 'Configuración activa' : 'Configuración pendiente'}
+              </strong>
+              <span className={styles.railSecondaryValue}>
+                {isMetaConfigured ? 'Cuenta lista para reportes y sincronización.' : 'Completa Access Token y cuenta de anuncios.'}
+              </span>
+              <div className={styles.railMeta}>
+                <span>Token</span>
+                <strong>{hasAccessToken ? 'Listo' : '-'}</strong>
+                <span>Cuenta</span>
+                <strong>{hasAdAccount ? getSelectedAdAccountLabel() : '-'}</strong>
+                <span>Pixel</span>
+                <strong>{hasPixel ? getSelectedPixelLabel() : '-'}</strong>
+                <span>CAPI</span>
+                <strong>{hasPixelApiToken ? 'Listo' : '-'}</strong>
+                <span>Page ID</span>
+                <strong>{hasPageId ? savedPageId : '-'}</strong>
+              </div>
+            </div>
+
+            <div className={styles.railBlock}>
+              <div className={styles.railHeader}>
+                <RefreshCw size={18} />
+                <span>Extras</span>
+              </div>
+
+              {credentials.pixelId && !isRenderDomain && (
+                <div className={styles.railSwitchRow}>
+                  <div>
+                    <span className={styles.railSwitchLabel}>Incluir en snippet</span>
+                    <span className={styles.railSecondaryValue}>Agrega el Meta Pixel al Web Tracking.</span>
                   </div>
-
-                  {realAccessToken && (
-                    <div className={getMetaStepClassName(1)}>
-                      <div className={styles.metaStepMarker}>
-                        {metaSetupSteps[1].completed ? <CheckCircle size={16} /> : '2'}
-                      </div>
-                      <div className={styles.metaStepContent}>
-                        <div className={styles.metaStepHeader}>
-                          <div>
-                            <h4 className={styles.metaStepTitle}>Cuenta de anuncios</h4>
-                            <p className={styles.formHint}>
-                              Selecciona la cuenta que alimentará campañas, reportes y costos.
-                            </p>
-                          </div>
-                          <span className={styles.metaStepBadge}>
-                            Requerido
-                          </span>
-                        </div>
-
-                        <div className={styles.formGroup}>
-                          {credentials.adAccountId ? (
-                            <div className={styles.filterChip}>
-                              <span className={styles.chipText}>
-                                {(() => {
-                                  const normalizedId = credentials.adAccountId.replace(/^act_/, '')
-                                  const matchingAccount = adAccounts.find(acc =>
-                                    acc.id.replace(/^act_/, '') === normalizedId
-                                  )
-                                  return matchingAccount
-                                    ? `${matchingAccount.name} (${normalizedId})`
-                                    : normalizedId
-                                })()}
-                              </span>
-                              <button
-                                onClick={() => {
-                                  handleRemoveCredential('adAccountId')
-                                  setPixels([])
-                                }}
-                                className={styles.chipDeleteButton}
-                                type="button"
-                                aria-label="Eliminar cuenta de anuncios"
-                              >
-                                <Trash2 size={16} />
-                              </button>
-                            </div>
-                          ) : adAccounts.length > 0 ? (
-                            <select
-                              className={styles.formInput}
-                              onChange={(e) => {
-                                const account = adAccounts.find(a => a.id === e.target.value)
-                                if (account) handleSelectAdAccount(account)
-                              }}
-                              value={credentials.adAccountId || ''}
-                            >
-                              <option value="">-- Selecciona una cuenta --</option>
-                              {adAccounts.map((account) => (
-                                <option key={account.id} value={account.id}>
-                                  {account.name} ({account.id}) - {account.currency}
-                                </option>
-                              ))}
-                            </select>
-                          ) : (
-                            <input
-                              type="text"
-                              value={credentials.adAccountId}
-                              onChange={(e) => handleInputChange('adAccountId', e.target.value)}
-                              placeholder="act_123456789012345"
-                              className={styles.formInput}
-                            />
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {credentials.adAccountId && (
-                    <div className={getMetaStepClassName(2)}>
-                      <div className={styles.metaStepMarker}>
-                        {metaSetupSteps[2].completed ? <CheckCircle size={16} /> : '3'}
-                      </div>
-                      <div className={styles.metaStepContent}>
-                        <div className={styles.metaStepHeader}>
-                          <div>
-                            <h4 className={styles.metaStepTitle}>Meta Pixel</h4>
-                            <p className={styles.formHint}>
-                              Conecta el pixel para completar medición web y conversiones.
-                            </p>
-                          </div>
-                          <span className={styles.metaStepBadge}>
-                            Opcional
-                          </span>
-                        </div>
-
-                        <div className={styles.formGroup}>
-                          {credentials.pixelId ? (
-                            <div className={styles.filterChip}>
-                              <span className={styles.chipText}>
-                                {(() => {
-                                  const matchingPixel = pixels.find(p => p.id === credentials.pixelId)
-                                  return matchingPixel
-                                    ? `${matchingPixel.name} (${credentials.pixelId})`
-                                    : credentials.pixelId
-                                })()}
-                              </span>
-                              <button
-                                onClick={() => handleRemoveCredential('pixelId')}
-                                className={styles.chipDeleteButton}
-                                type="button"
-                                aria-label="Eliminar Meta Pixel"
-                              >
-                                <Trash2 size={16} />
-                              </button>
-                            </div>
-                          ) : isLoadingPixels ? (
-                            <div className={styles.metaInlineStatus}>
-                              <RefreshCw size={14} className={styles.spinning} />
-                              Cargando pixeles...
-                            </div>
-                          ) : pixels.length > 0 ? (
-                            <select
-                              className={styles.formInput}
-                              onChange={(e) => {
-                                const pixel = pixels.find(p => p.id === e.target.value)
-                                if (pixel) handleSelectPixel(pixel)
-                              }}
-                              value={credentials.pixelId || ''}
-                            >
-                              <option value="">-- Sin pixel (opcional) --</option>
-                              {pixels.map((pixel) => (
-                                <option key={pixel.id} value={pixel.id}>
-                                  {pixel.name} ({pixel.id})
-                                </option>
-                              ))}
-                            </select>
-                          ) : (
-                            <input
-                              type="text"
-                              value={credentials.pixelId}
-                              onChange={(e) => handleInputChange('pixelId', e.target.value)}
-                              placeholder="1234567890123456"
-                              className={styles.formInput}
-                            />
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {credentials.pixelId && (
-                    <div className={getMetaStepClassName(3)}>
-                      <div className={styles.metaStepMarker}>
-                        {metaSetupSteps[3].completed ? <CheckCircle size={16} /> : '4'}
-                      </div>
-                      <div className={styles.metaStepContent}>
-                        <div className={styles.metaStepHeader}>
-                          <div>
-                            <h4 className={styles.metaStepTitle}>Pixel API Token</h4>
-                            <p className={styles.formHint}>
-                              Solo si usas Conversions API. Genera desde{' '}
-                              <a href="https://business.facebook.com/events_manager2" target="_blank" rel="noopener noreferrer" className={styles.link}>
-                                Events Manager
-                              </a>
-                            </p>
-                          </div>
-                          <span className={styles.metaStepBadge}>
-                            CAPI
-                          </span>
-                        </div>
-
-                        <div className={styles.formGroup}>
-                          {credentials.pixelApiToken && credentials.pixelApiToken.startsWith('***') ? (
-                            <div className={styles.filterChip}>
-                              <span className={styles.chipText}>{credentials.pixelApiToken}</span>
-                              <button
-                                onClick={() => handleRemoveCredential('pixelApiToken')}
-                                className={styles.chipDeleteButton}
-                                type="button"
-                                aria-label="Eliminar Pixel API Token"
-                              >
-                                <Trash2 size={16} />
-                              </button>
-                            </div>
-                          ) : (
-                            <div className={styles.metaInputActionRow}>
-                              <input
-                                type="text"
-                                value={credentials.pixelApiToken}
-                                onChange={(e) => handleInputChange('pixelApiToken', e.target.value)}
-                                placeholder="Pega aquí el token generado desde Events Manager"
-                                className={styles.formInput}
-                              />
-                              <Button
-                                type="button"
-                                variant="primary"
-                                onClick={handleSavePixelApiToken}
-                                disabled={isSavingPixelToken || !credentials.pixelApiToken}
-                              >
-                                <RefreshCw size={16} className={isSavingPixelToken ? styles.spinning : ''} />
-                                {isSavingPixelToken ? 'Guardando...' : 'Guardar Pixel API Token'}
-                              </Button>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {credentials.adAccountId && (
-                    <div className={getMetaStepClassName(4)}>
-                      <div className={styles.metaStepMarker}>
-                        {metaSetupSteps[4].completed ? <CheckCircle size={16} /> : '5'}
-                      </div>
-                      <div className={styles.metaStepContent}>
-                        <div className={styles.metaStepHeader}>
-                          <div>
-                            <h4 className={styles.metaStepTitle}>Facebook Page ID</h4>
-                            <p className={styles.formHint}>
-                              Es opcional para Meta Ads, pero requerido si vas a activar los eventos personalizados de WhatsApp. Lo encuentras en{' '}
-                              <a href="https://business.facebook.com/latest/settings/pages" target="_blank" rel="noopener noreferrer" className={styles.link}>
-                                Configuración del portafolio comercial
-                              </a>
-                              {' '}en Meta Business.
-                            </p>
-                          </div>
-                          <span className={styles.metaStepBadge}>
-                            WhatsApp
-                          </span>
-                        </div>
-
-                        <div className={styles.formGroup}>
-                          {savedPageId && credentials.pageId === savedPageId ? (
-                            <div className={styles.filterChip}>
-                              <span className={styles.chipText}>{credentials.pageId}</span>
-                              <button
-                                onClick={() => handleRemoveCredential('pageId')}
-                                className={styles.chipDeleteButton}
-                                type="button"
-                                aria-label="Eliminar Page ID"
-                              >
-                                <Trash2 size={16} />
-                              </button>
-                            </div>
-                          ) : (
-                            <div className={styles.metaInputActionRow}>
-                              <input
-                                type="text"
-                                value={credentials.pageId}
-                                onChange={(e) => handleInputChange('pageId', e.target.value)}
-                                placeholder="1234567890123456"
-                                className={styles.formInput}
-                              />
-                              <Button
-                                type="button"
-                                variant="primary"
-                                onClick={handleSavePageId}
-                                disabled={isSavingPageId || !credentials.pageId}
-                              >
-                                <RefreshCw size={16} className={isSavingPageId ? styles.spinning : ''} />
-                                {isSavingPageId ? 'Guardando...' : 'Guardar Page ID'}
-                              </Button>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  )}
+                  <label className={styles.switchContainer}>
+                    <input
+                      type="checkbox"
+                      checked={includeMetaPixel === true}
+                      onChange={(event) => handleToggleMetaPixel(event.target.checked)}
+                      disabled={isSyncingSnippet || savingPixelPref}
+                      className={styles.switchInput}
+                    />
+                    <span className={styles.switchSlider}></span>
+                  </label>
                 </div>
               )}
-            </div>
-          </div>
 
-          <div className={styles.metaSideColumn}>
-            <div className={styles.section}>
-              <div className={styles.sectionHeader}>
-                <div>
-                  <h3 className={styles.sectionTitle}>Extras de Meta</h3>
-                  <p className={styles.sectionDescription}>
-                    Opcionales y acciones de operación.
-                  </p>
+              {isSyncingSnippet && (
+                <div className={styles.inlineStatus}>
+                  <RefreshCw size={16} className={styles.spinning} />
+                  Sincronizando snippet...
                 </div>
-              </div>
+              )}
 
-              <div className={styles.metaSideList}>
-                {credentials.pixelId && !isRenderDomain && (
-                  <div className={styles.metaSideBlock}>
-                    <div className={styles.metaSwitchRow}>
-                      <div>
-                        <label className={styles.formLabel}>
-                          Incluir en snippet de tracking
-                        </label>
-                        <p className={styles.formHint}>
-                          El snippet de Web Tracking incluirá automáticamente el código del Meta Pixel.
-                        </p>
-                      </div>
-                      <label className={styles.switchContainer}>
-                        <input
-                          type="checkbox"
-                          checked={includeMetaPixel === true}
-                          onChange={(e) => handleToggleMetaPixel(e.target.checked)}
-                          disabled={isSyncingSnippet || savingPixelPref}
-                          className={styles.switchInput}
-                        />
-                        <span className={styles.switchSlider}></span>
-                      </label>
-                    </div>
-                    {isSyncingSnippet && (
-                      <div className={styles.metaInlineStatus}>
-                        <RefreshCw size={16} className={styles.spinning} />
-                        Sincronizando snippet...
-                      </div>
-                    )}
-                  </div>
-                )}
+              {credentials.accessToken && credentials.adAccountId && (
+                <button
+                  type="button"
+                  className={styles.railButton}
+                  onClick={handleSyncMetaAds}
+                  disabled={isSyncingMetaAds}
+                >
+                  <RefreshCw size={16} className={isSyncingMetaAds ? styles.spinning : ''} />
+                  {isSyncingMetaAds ? 'Sincronizando' : 'Sincronizar Meta Ads'}
+                </button>
+              )}
 
-                {credentials.accessToken && credentials.adAccountId && (
-                  <div className={styles.metaSideBlock}>
-                    <label className={styles.formLabel}>
-                      Sincronización manual
-                    </label>
-                    <p className={styles.formHint}>
-                      Sincroniza manualmente los datos de Meta Ads (últimos 35 meses). La sincronización automática ocurre cada hora.
-                    </p>
-                    <div className={styles.formActions}>
-                      <Button
-                        type="button"
-                        variant="primary"
-                        onClick={handleSyncMetaAds}
-                        disabled={isSyncingMetaAds}
-                      >
-                        <RefreshCw size={18} className={isSyncingMetaAds ? styles.spinning : ''} />
-                        {isSyncingMetaAds ? 'Sincronizando...' : 'Sincronizar datos de Meta Ads'}
-                      </Button>
-                    </div>
-                  </div>
-                )}
-
-                {(!credentials.pixelId || isRenderDomain) && !(credentials.accessToken && credentials.adAccountId) && (
-                  <p className={styles.metaEmptySideText}>
-                    Completa primero el flujo principal para activar estas acciones.
-                  </p>
-                )}
-              </div>
+              {!hasRailActions && (
+                <span className={styles.railSecondaryValue}>
+                  Completa el flujo principal para activar estas acciones.
+                </span>
+              )}
             </div>
-          </div>
+          </aside>
         </div>
-
       </Card>
     </div>
   )

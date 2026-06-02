@@ -1,0 +1,667 @@
+.container {
+  width: 100%;
+  overflow: visible;
+  padding-bottom: 200px;
+}
+
+.mainCard {
+  padding: var(--spacing-2xl);
+  overflow: visible !important;
+}
+
+.pageHeader {
+  margin-bottom: var(--spacing-2xl);
+  padding-bottom: var(--spacing-xl);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.headerContent {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.headerLeft {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+
+.headerRight {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.logoMark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 46px;
+  height: 46px;
+  border: 1px solid rgba(8, 102, 255, 0.24);
+  border-radius: 8px;
+  background: rgba(8, 102, 255, 0.09);
+}
+
+.logoMark img {
+  width: 30px;
+  height: 30px;
+  object-fit: contain;
+}
+
+.pageTitle {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-4xl);
+  font-weight: var(--font-weight-bold);
+  line-height: 1.1;
+}
+
+.pageSubtitle,
+.sectionDescription {
+  margin: 6px 0 0;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.statusConnected,
+.statusDisconnected {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 32px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.statusConnected {
+  color: var(--color-status-success);
+  background: rgba(16, 185, 129, 0.1);
+  border: 1px solid rgba(16, 185, 129, 0.28);
+}
+
+.statusDisconnected {
+  color: var(--color-status-error);
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.22);
+}
+
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 260px;
+  gap: 18px;
+  align-items: start;
+}
+
+.primaryColumn {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-width: 0;
+}
+
+.section {
+  padding: 18px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 8px;
+  background: rgba(148, 163, 184, 0.04);
+}
+
+.wizardSection {
+  padding: 24px;
+}
+
+.sectionHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+.sectionTitle {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: 15px;
+  font-weight: 780;
+  line-height: 1.25;
+}
+
+.stepCount {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 999px;
+  color: var(--color-text-primary);
+  background: rgba(148, 163, 184, 0.08);
+  font-size: 12px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.wizardShell {
+  display: grid;
+  grid-template-columns: minmax(230px, 0.32fr) minmax(0, 1fr);
+  gap: 16px;
+  align-items: stretch;
+}
+
+.progressList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.progressItem {
+  appearance: none;
+  -webkit-appearance: none;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 8px;
+  width: 100%;
+  padding: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 8px;
+  color: var(--color-text-secondary);
+  background: rgba(148, 163, 184, 0.045);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  transition: border-color var(--transition-base), background var(--transition-base), opacity var(--transition-base);
+}
+
+.progressItem:hover,
+.progressActive {
+  border-color: rgba(8, 102, 255, 0.32);
+  background: rgba(8, 102, 255, 0.06);
+}
+
+.progressItem:disabled {
+  cursor: not-allowed;
+}
+
+.progressLocked {
+  opacity: 0.55;
+}
+
+.progressDot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 7px;
+  color: var(--color-text-tertiary);
+  background: rgba(148, 163, 184, 0.08);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.progressDone .progressDot {
+  color: var(--color-status-success);
+  border-color: rgba(16, 185, 129, 0.28);
+  background: rgba(16, 185, 129, 0.1);
+}
+
+.progressCopy {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.progressLabel {
+  overflow: hidden;
+  color: var(--color-text-primary);
+  font-size: 12px;
+  font-weight: 720;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.progressDescription {
+  overflow: hidden;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.loadingState {
+  padding: 34px 16px;
+  color: var(--color-text-secondary);
+  text-align: center;
+  font-size: 13px;
+}
+
+.stepPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 500px;
+  padding: 24px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 8px;
+  background: var(--color-background);
+}
+
+.stepIntro {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.stepEyebrow {
+  color: #0866ff;
+  font-size: 11px;
+  font-weight: 820;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.stepTitle {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: 26px;
+  font-weight: 820;
+  line-height: 1.2;
+}
+
+.stepText {
+  max-width: 760px;
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+.stepHint {
+  margin: 0;
+  padding: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 8px;
+  color: var(--color-text-secondary);
+  background: rgba(148, 163, 184, 0.045);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.inlineDocLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  width: fit-content;
+  min-height: 34px;
+  padding: 0 10px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 8px;
+  color: var(--color-text-primary);
+  background: rgba(148, 163, 184, 0.055);
+  font-size: 13px;
+  font-weight: 720;
+  text-decoration: none;
+}
+
+.inlineDocLink:hover {
+  border-color: rgba(8, 102, 255, 0.34);
+  color: #0866ff;
+}
+
+.formGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+}
+
+.formGroupWide {
+  grid-column: 1 / -1;
+}
+
+.formLabel {
+  color: var(--color-text-primary);
+  font-size: 13px;
+  font-weight: 720;
+}
+
+.formInput {
+  width: 100%;
+  min-height: 48px;
+  padding: 0 12px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 6px;
+  color: var(--color-text-primary);
+  background: var(--color-background);
+  font-size: 15px;
+  outline: none;
+  transition: border-color var(--transition-base), box-shadow var(--transition-base);
+}
+
+.formInput:focus {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(var(--color-primary-rgb), 0.12);
+}
+
+.formInput::placeholder {
+  color: var(--color-text-tertiary);
+}
+
+.inputActionRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: stretch;
+}
+
+.inputActionRow button {
+  min-height: 42px;
+  white-space: nowrap;
+}
+
+.inlineStatus {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 8px;
+  color: var(--color-text-secondary);
+  background: rgba(148, 163, 184, 0.06);
+  font-size: 13px;
+}
+
+.filterChip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 48px;
+  padding: 0 10px 0 12px;
+  border: 1px solid rgba(8, 102, 255, 0.22);
+  border-radius: 8px;
+  color: var(--color-text-primary);
+  background: rgba(8, 102, 255, 0.06);
+}
+
+.chipText {
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chipDeleteButton {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  border-radius: 8px;
+  color: var(--color-status-error);
+  background: rgba(239, 68, 68, 0.08);
+  cursor: pointer;
+}
+
+.chipDeleteButton:hover {
+  border-color: rgba(239, 68, 68, 0.34);
+  background: rgba(239, 68, 68, 0.12);
+}
+
+.stepActions {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: auto;
+  padding-top: 14px;
+  border-top: 1px solid rgba(148, 163, 184, 0.16);
+}
+
+.statusRail {
+  position: sticky;
+  top: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.railBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 8px;
+  background: rgba(148, 163, 184, 0.04);
+}
+
+.railHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #0866ff;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.railPrimaryValue {
+  overflow: hidden;
+  color: var(--color-text-primary);
+  font-size: 14px;
+  font-weight: 820;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.railSecondaryValue {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.railMeta {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 4px 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(148, 163, 184, 0.16);
+}
+
+.railMeta span {
+  color: var(--color-text-tertiary);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.railMeta strong {
+  overflow: hidden;
+  color: var(--color-text-primary);
+  font-size: 11px;
+  font-weight: 760;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.railSwitchRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.railSwitchLabel {
+  display: block;
+  color: var(--color-text-primary);
+  font-size: 12px;
+  font-weight: 780;
+  line-height: 1.35;
+}
+
+.railButton {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 34px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 8px;
+  color: var(--color-text-primary);
+  background: var(--color-background);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 740;
+}
+
+.railButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.switchContainer {
+  position: relative;
+  display: inline-block;
+  flex-shrink: 0;
+  width: 44px;
+  height: 24px;
+}
+
+.switchInput {
+  width: 0;
+  height: 0;
+  opacity: 0;
+}
+
+.switchSlider {
+  position: absolute;
+  inset: 0;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.22);
+  cursor: pointer;
+  transition: background var(--transition-base), border-color var(--transition-base);
+}
+
+.switchSlider:before {
+  position: absolute;
+  content: "";
+  width: 16px;
+  height: 16px;
+  left: 3px;
+  bottom: 3px;
+  border-radius: 50%;
+  background: #ffffff;
+  transition: transform var(--transition-base);
+}
+
+.switchInput:checked + .switchSlider {
+  border-color: rgba(8, 102, 255, 0.42);
+  background: #0866ff;
+}
+
+.switchInput:checked + .switchSlider:before {
+  transform: translateX(20px);
+}
+
+.switchInput:disabled + .switchSlider {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.spinning {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 1180px) {
+  .workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .statusRail {
+    position: static;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 900px) {
+  .headerContent,
+  .sectionHeader {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .headerRight {
+    justify-content: flex-start;
+  }
+
+  .wizardShell,
+  .progressList,
+  .statusRail {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .mainCard {
+    padding: 18px !important;
+  }
+
+  .section {
+    padding: 14px;
+  }
+
+  .headerLeft {
+    align-items: flex-start;
+  }
+
+  .pageTitle {
+    font-size: 24px;
+  }
+
+  .inputActionRow,
+  .stepActions {
+    grid-template-columns: 1fr;
+    flex-direction: column;
+  }
+
+  .inputActionRow button,
+  .stepActions button {
+    width: 100%;
+  }
+}
