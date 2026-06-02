@@ -5,6 +5,7 @@ import { API_URLS } from '../config/constants.js'
 import { logger } from '../utils/logger.js'
 import { getMetaConfig } from './metaAdsService.js'
 import { nonTestPaymentCondition } from '../utils/paymentMode.js'
+import { buildPhoneMatchCandidates } from '../utils/phoneUtils.js'
 
 const CONFIG_KEYS = {
   scheduleEnabled: 'meta_whatsapp_schedule_enabled',
@@ -166,6 +167,7 @@ function buildBusinessMessagingCustomData(customData, contact, whatsappAttributi
   const adName = cleanString(contact.attribution_ad_name || whatsappAttribution?.referral_headline)
   const referralSourceType = cleanString(whatsappAttribution?.referral_source_type)
   const referralSourceUrl = cleanString(whatsappAttribution?.referral_source_url)
+  const attributionSource = cleanString(whatsappAttribution?.attribution_source)
 
   if (adId) {
     enrichedData.ad_id = adId
@@ -181,6 +183,10 @@ function buildBusinessMessagingCustomData(customData, contact, whatsappAttributi
 
   if (referralSourceUrl) {
     enrichedData.referral_source_url = referralSourceUrl
+  }
+
+  if (attributionSource) {
+    enrichedData.attribution_source = attributionSource
   }
 
   return Object.fromEntries(
@@ -274,36 +280,73 @@ async function getContactForMetaEvent(contactId) {
 async function getLatestWhatsappAttribution(contact) {
   if (!contact?.id) return null
 
-  const phoneCandidates = [
-    cleanString(contact.phone),
-    normalizePhoneForHash(contact.phone)
-  ].filter(Boolean)
-
-  if (phoneCandidates[1]) {
-    phoneCandidates.push(`+${phoneCandidates[1]}`)
-  }
-
-  const uniquePhoneCandidates = [...new Set(phoneCandidates)]
+  const uniquePhoneCandidates = buildPhoneMatchCandidates(contact.phone)
   const phoneFilter = uniquePhoneCandidates.length
     ? ` OR phone IN (${uniquePhoneCandidates.map(() => '?').join(', ')})`
     : ''
 
-  return db.get(
+  const legacyRows = await db.all(
     `SELECT
+       'legacy' as attribution_source,
        referral_ctwa_clid,
        referral_source_id,
        referral_source_type,
        referral_source_url,
        referral_headline,
-       ad_id_thru_message
+       ad_id_thru_message,
+       created_at
      FROM whatsapp_attribution
      WHERE contact_id = ?${phoneFilter}
-     ORDER BY
-       CASE WHEN COALESCE(referral_ctwa_clid, '') != '' THEN 0 ELSE 1 END,
-       created_at DESC
-     LIMIT 1`,
+       AND (
+         COALESCE(referral_ctwa_clid, '') != ''
+         OR COALESCE(referral_source_id, '') != ''
+         OR COALESCE(referral_source_url, '') != ''
+         OR COALESCE(referral_headline, '') != ''
+         OR COALESCE(ad_id_thru_message, '') != ''
+       )`,
     [contact.id, ...uniquePhoneCandidates]
   )
+
+  const webPhoneFilter = uniquePhoneCandidates.length
+    ? ` OR msg.phone IN (${uniquePhoneCandidates.map(() => '?').join(', ')})
+        OR attr.phone IN (${uniquePhoneCandidates.map(() => '?').join(', ')})`
+    : ''
+
+  const webRows = await db.all(
+    `SELECT
+       'whatsapp_web' as attribution_source,
+       COALESCE(attr.detected_ctwa_clid, msg.detected_ctwa_clid) as referral_ctwa_clid,
+       COALESCE(attr.detected_source_id, msg.detected_source_id) as referral_source_id,
+       COALESCE(attr.detected_source_type, msg.detected_source_type) as referral_source_type,
+       COALESCE(attr.detected_source_url, msg.detected_source_url) as referral_source_url,
+       COALESCE(attr.detected_headline, msg.detected_headline) as referral_headline,
+       COALESCE(attr.detected_source_id, msg.detected_source_id) as ad_id_thru_message,
+       COALESCE(attr.created_at, msg.created_at) as created_at
+     FROM whatsapp_web_messages msg
+     LEFT JOIN whatsapp_web_attribution attr ON attr.whatsapp_web_message_id = msg.id
+     WHERE (msg.contact_id = ? OR attr.contact_id = ?${webPhoneFilter})
+       AND msg.direction = 'inbound'
+       AND (
+         COALESCE(attr.detected_ctwa_clid, msg.detected_ctwa_clid, '') != ''
+         OR COALESCE(attr.detected_source_id, msg.detected_source_id, '') != ''
+         OR COALESCE(attr.detected_source_url, msg.detected_source_url, '') != ''
+         OR COALESCE(attr.detected_headline, msg.detected_headline, '') != ''
+       )`,
+    [contact.id, contact.id, ...uniquePhoneCandidates, ...uniquePhoneCandidates]
+  )
+
+  const rows = [...legacyRows, ...webRows]
+  if (!rows.length) return null
+
+  return rows.sort((a, b) => {
+    const aHasCtwa = cleanString(a.referral_ctwa_clid) ? 1 : 0
+    const bHasCtwa = cleanString(b.referral_ctwa_clid) ? 1 : 0
+    if (aHasCtwa !== bHasCtwa) return bHasCtwa - aHasCtwa
+
+    const aTime = Date.parse(a.created_at || '') || 0
+    const bTime = Date.parse(b.created_at || '') || 0
+    return bTime - aTime
+  })[0]
 }
 
 async function logMetaEvent({
