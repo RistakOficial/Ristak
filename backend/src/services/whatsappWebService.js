@@ -1,0 +1,826 @@
+import crypto from 'crypto'
+import pino from 'pino'
+import QRCode from 'qrcode'
+import makeWASocket, {
+  Browsers,
+  BufferJSON,
+  DisconnectReason,
+  initAuthCreds,
+  makeCacheableSignalKeyStore,
+  proto
+} from '@whiskeysockets/baileys'
+import { db } from '../config/database.js'
+import { logger } from '../utils/logger.js'
+
+const DEFAULT_SESSION_ID = 'default'
+const SOURCE_NAME = 'WhatsApp Web'
+const baileysLogger = pino({ level: process.env.BAILEYS_LOG_LEVEL || 'silent' })
+const runtimeSessions = new Map()
+
+function nowIso() {
+  return new Date().toISOString()
+}
+
+function isPostgres() {
+  return Boolean(process.env.DATABASE_URL)
+}
+
+function hashId(prefix, value) {
+  return `${prefix}_${crypto.createHash('sha256').update(String(value || crypto.randomUUID())).digest('hex').slice(0, 24)}`
+}
+
+function safeString(value) {
+  if (value === null || value === undefined) return ''
+  if (Buffer.isBuffer(value)) return value.toString('base64')
+  if (value instanceof Uint8Array) return Buffer.from(value).toString('base64')
+  if (typeof value === 'object') {
+    try {
+      return JSON.stringify(value, BufferJSON.replacer)
+    } catch {
+      return String(value)
+    }
+  }
+  return String(value)
+}
+
+function safeJson(value) {
+  try {
+    return JSON.stringify(value ?? null, BufferJSON.replacer)
+  } catch {
+    return JSON.stringify({ unserializable: true })
+  }
+}
+
+function parseAuthJson(value) {
+  if (!value) return null
+  try {
+    return JSON.parse(value, BufferJSON.reviver)
+  } catch {
+    return null
+  }
+}
+
+function toDateTime(value) {
+  if (!value) return null
+  if (typeof value === 'number') {
+    const millis = value > 9999999999 ? value : value * 1000
+    return new Date(millis).toISOString()
+  }
+  if (typeof value === 'object' && typeof value.toNumber === 'function') {
+    return new Date(value.toNumber() * 1000).toISOString()
+  }
+  const parsed = Date.parse(String(value))
+  return Number.isFinite(parsed) ? new Date(parsed).toISOString() : null
+}
+
+function normalizePhoneFromJid(jid = '') {
+  const raw = String(jid || '').split('@')[0] || ''
+  const digits = raw.replace(/\D/g, '')
+  return digits ? `+${digits}` : ''
+}
+
+function normalizePhoneDigits(phone = '') {
+  return String(phone || '').replace(/\D/g, '')
+}
+
+function shouldIgnoreJid(jid = '') {
+  return !jid ||
+    jid === 'status@broadcast' ||
+    jid.endsWith('@g.us') ||
+    jid.endsWith('@broadcast') ||
+    jid.includes('newsletter')
+}
+
+function getMessageContent(message = {}) {
+  return message.ephemeralMessage?.message ||
+    message.viewOnceMessage?.message ||
+    message.viewOnceMessageV2?.message ||
+    message.documentWithCaptionMessage?.message ||
+    message
+}
+
+function getMessageType(message = {}) {
+  const content = getMessageContent(message)
+  return Object.keys(content || {}).find(key => key !== 'messageContextInfo') || 'unknown'
+}
+
+function getMessageText(message = {}) {
+  const content = getMessageContent(message)
+  return content.conversation ||
+    content.extendedTextMessage?.text ||
+    content.imageMessage?.caption ||
+    content.videoMessage?.caption ||
+    content.documentMessage?.caption ||
+    content.buttonsResponseMessage?.selectedDisplayText ||
+    content.templateButtonReplyMessage?.selectedDisplayText ||
+    content.listResponseMessage?.title ||
+    content.listResponseMessage?.description ||
+    ''
+}
+
+function walk(value, visitor, path = [], seen = new WeakSet()) {
+  if (!value || typeof value !== 'object') return
+  if (seen.has(value)) return
+  seen.add(value)
+
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => walk(item, visitor, [...path, String(index)], seen))
+    return
+  }
+
+  for (const [key, child] of Object.entries(value)) {
+    visitor(key, child, [...path, key])
+    walk(child, visitor, [...path, key], seen)
+  }
+}
+
+function findFirstByKeys(payload, keys) {
+  const wanted = new Set(keys.map(key => key.toLowerCase()))
+  let found = ''
+
+  walk(payload, (key, value) => {
+    if (found) return
+    if (wanted.has(String(key).toLowerCase())) {
+      const normalized = safeString(value)
+      if (normalized) found = normalized
+    }
+  })
+
+  return found
+}
+
+function findFirstObjectByKeys(payload, keys) {
+  const wanted = new Set(keys.map(key => key.toLowerCase()))
+  let found = null
+
+  walk(payload, (key, value) => {
+    if (found) return
+    if (wanted.has(String(key).toLowerCase()) && value && typeof value === 'object') {
+      found = value
+    }
+  })
+
+  return found
+}
+
+function collectContextInfo(payload) {
+  const contextInfo = []
+
+  walk(payload, (key, value) => {
+    if (String(key).toLowerCase() === 'contextinfo' && value && typeof value === 'object') {
+      contextInfo.push(value)
+    }
+  })
+
+  return contextInfo
+}
+
+function detectAttribution(payload) {
+  const externalAdReply = findFirstObjectByKeys(payload, ['externalAdReply', 'external_ad_reply'])
+  const contextInfo = collectContextInfo(payload)
+  const contextSource = contextInfo[0] || null
+  const searchRoot = {
+    payload,
+    externalAdReply,
+    contextInfo
+  }
+
+  const detected = {
+    ctwaClid: findFirstByKeys(searchRoot, ['ctwaClid', 'ctwa_clid', 'ctwa', 'clid']),
+    sourceId: findFirstByKeys(searchRoot, ['sourceId', 'source_id', 'adId', 'ad_id']),
+    sourceUrl: findFirstByKeys(searchRoot, ['sourceUrl', 'source_url']),
+    sourceType: findFirstByKeys(searchRoot, ['sourceType', 'source_type']),
+    sourceApp: findFirstByKeys(searchRoot, ['sourceApp', 'source_app', 'entryPointConversionApp']),
+    entryPoint: findFirstByKeys(searchRoot, [
+      'entryPointConversionSource',
+      'entryPointConversionExternalSource',
+      'conversionSource'
+    ]),
+    conversionData: findFirstByKeys(searchRoot, ['conversionData']),
+    ctwaPayload: findFirstByKeys(searchRoot, ['ctwaPayload', 'ctwaSignals'])
+  }
+
+  return {
+    ...detected,
+    externalAdReply,
+    contextInfo: contextSource,
+    hasAttribution: Object.values(detected).some(Boolean) || Boolean(externalAdReply)
+  }
+}
+
+async function ensureSessionRecord(sessionId = DEFAULT_SESSION_ID) {
+  await db.run(`
+    INSERT INTO whatsapp_web_sessions (id, label, status, updated_at)
+    VALUES (?, ?, 'disconnected', CURRENT_TIMESTAMP)
+    ON CONFLICT(id) DO NOTHING
+  `, [sessionId, 'WhatsApp Web'])
+}
+
+async function updateSession(sessionId, updates) {
+  const entries = Object.entries(updates).filter(([, value]) => value !== undefined)
+  if (!entries.length) return
+
+  const assignments = entries.map(([key]) => `${key} = ?`)
+  const params = entries.map(([, value]) => value)
+  assignments.push('updated_at = CURRENT_TIMESTAMP')
+  params.push(sessionId)
+
+  await db.run(
+    `UPDATE whatsapp_web_sessions SET ${assignments.join(', ')} WHERE id = ?`,
+    params
+  )
+}
+
+async function readAuthData(sessionId, authKey) {
+  const row = await db.get(
+    'SELECT value_json FROM whatsapp_web_auth_state WHERE session_id = ? AND auth_key = ?',
+    [sessionId, authKey]
+  )
+  return parseAuthJson(row?.value_json)
+}
+
+async function writeAuthData(sessionId, authKey, value) {
+  await db.run(`
+    INSERT INTO whatsapp_web_auth_state (session_id, auth_key, value_json, updated_at)
+    VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(session_id, auth_key) DO UPDATE SET
+      value_json = excluded.value_json,
+      updated_at = CURRENT_TIMESTAMP
+  `, [sessionId, authKey, safeJson(value)])
+}
+
+async function removeAuthData(sessionId, authKey) {
+  await db.run(
+    'DELETE FROM whatsapp_web_auth_state WHERE session_id = ? AND auth_key = ?',
+    [sessionId, authKey]
+  )
+}
+
+async function clearAuthState(sessionId) {
+  await db.run('DELETE FROM whatsapp_web_auth_state WHERE session_id = ?', [sessionId])
+}
+
+async function hasSavedAuthState(sessionId = DEFAULT_SESSION_ID) {
+  const row = await db.get(
+    'SELECT 1 as present FROM whatsapp_web_auth_state WHERE session_id = ? AND auth_key = ? LIMIT 1',
+    [sessionId, 'creds']
+  )
+  return Boolean(row)
+}
+
+async function useDbAuthState(sessionId = DEFAULT_SESSION_ID) {
+  await ensureSessionRecord(sessionId)
+
+  const creds = await readAuthData(sessionId, 'creds') || initAuthCreds()
+  const state = {
+    creds,
+    keys: {
+      get: async (type, ids) => {
+        const data = {}
+
+        await Promise.all(ids.map(async (id) => {
+          let value = await readAuthData(sessionId, `${type}-${id}`)
+          if (type === 'app-state-sync-key' && value) {
+            value = proto.Message.AppStateSyncKeyData.fromObject(value)
+          }
+          data[id] = value
+        }))
+
+        return data
+      },
+      set: async (data) => {
+        const tasks = []
+        for (const category of Object.keys(data || {})) {
+          for (const id of Object.keys(data[category] || {})) {
+            const value = data[category][id]
+            const authKey = `${category}-${id}`
+            tasks.push(value ? writeAuthData(sessionId, authKey, value) : removeAuthData(sessionId, authKey))
+          }
+        }
+        await Promise.all(tasks)
+      },
+      clear: async () => clearAuthState(sessionId)
+    }
+  }
+
+  return {
+    state,
+    saveCreds: async () => writeAuthData(sessionId, 'creds', creds)
+  }
+}
+
+function getRuntime(sessionId = DEFAULT_SESSION_ID) {
+  if (!runtimeSessions.has(sessionId)) {
+    runtimeSessions.set(sessionId, {
+      socket: null,
+      starting: null,
+      manualDisconnect: false
+    })
+  }
+  return runtimeSessions.get(sessionId)
+}
+
+async function findExistingContact(phone) {
+  const digits = normalizePhoneDigits(phone)
+  const candidates = [...new Set([phone, digits, digits ? `+${digits}` : ''].filter(Boolean))]
+  if (!candidates.length) return null
+
+  const placeholders = candidates.map(() => '?').join(', ')
+  return db.get(
+    `SELECT id, full_name, phone, attribution_ad_id, attribution_ctwa_clid, attribution_ad_name
+     FROM contacts
+     WHERE phone IN (${placeholders})
+     LIMIT 1`,
+    candidates
+  )
+}
+
+function buildContactCustomFields({ remoteJid, messageText, attribution }) {
+  return [
+    { key: 'whatsapp_web_remote_jid', field_value: remoteJid },
+    { key: 'whatsapp_web_first_message', field_value: messageText || '' },
+    { key: 'whatsapp_web_source_id', field_value: attribution.sourceId || '' },
+    { key: 'whatsapp_web_ctwa_clid', field_value: attribution.ctwaClid || '' },
+    { key: 'whatsapp_web_source_url', field_value: attribution.sourceUrl || '' }
+  ]
+}
+
+async function upsertLocalContact({ phone, pushName, remoteJid, messageText, attribution }) {
+  const existing = await findExistingContact(phone)
+  const fullName = pushName || phone || 'Contacto WhatsApp'
+
+  if (!existing) {
+    const contactId = hashId('waweb_contact', `${phone}|${remoteJid}`)
+    const customFieldsValue = JSON.stringify(buildContactCustomFields({ remoteJid, messageText, attribution }))
+    const customFieldsPlaceholder = isPostgres() ? '?::jsonb' : '?'
+
+    await db.run(`
+      INSERT INTO contacts (
+        id, phone, full_name, first_name, source, attribution_url, attribution_session_source,
+        attribution_medium, attribution_ctwa_clid, attribution_ad_name, attribution_ad_id,
+        custom_fields, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${customFieldsPlaceholder}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `, [
+      contactId,
+      phone || null,
+      fullName,
+      pushName || null,
+      SOURCE_NAME,
+      attribution.sourceUrl || null,
+      attribution.sourceApp || attribution.entryPoint || SOURCE_NAME,
+      attribution.sourceType || 'whatsapp_web',
+      attribution.ctwaClid || null,
+      attribution.sourceId || null,
+      attribution.sourceId || null,
+      customFieldsValue
+    ])
+
+    return { id: contactId, created: true }
+  }
+
+  const updates = []
+  const params = []
+
+  if (!existing.full_name && pushName) {
+    updates.push('full_name = ?')
+    params.push(pushName)
+  }
+
+  if (attribution.sourceUrl) {
+    updates.push('attribution_url = ?')
+    params.push(attribution.sourceUrl)
+  }
+
+  if (attribution.sourceApp || attribution.entryPoint) {
+    updates.push('attribution_session_source = ?')
+    params.push(attribution.sourceApp || attribution.entryPoint)
+  }
+
+  if (attribution.sourceType) {
+    updates.push('attribution_medium = ?')
+    params.push(attribution.sourceType)
+  }
+
+  if (attribution.ctwaClid) {
+    updates.push('attribution_ctwa_clid = ?')
+    params.push(attribution.ctwaClid)
+  }
+
+  if (attribution.sourceId) {
+    updates.push('attribution_ad_id = ?')
+    params.push(attribution.sourceId)
+    updates.push('attribution_ad_name = COALESCE(attribution_ad_name, ?)')
+    params.push(attribution.sourceId)
+  }
+
+  if (updates.length) {
+    updates.push('updated_at = CURRENT_TIMESTAMP')
+    params.push(existing.id)
+    await db.run(`UPDATE contacts SET ${updates.join(', ')} WHERE id = ?`, params)
+  }
+
+  return { id: existing.id, created: false }
+}
+
+async function upsertWhatsAppWebContact({ sessionId, contactId, remoteJid, phone, pushName, rawProfile }) {
+  const webContactId = hashId('waweb_profile', `${sessionId}|${remoteJid}`)
+
+  await db.run(`
+    INSERT INTO whatsapp_web_contacts (
+      id, session_id, contact_id, remote_jid, phone, push_name, display_name,
+      raw_profile_json, first_seen_at, last_seen_at, message_count, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    ON CONFLICT(session_id, remote_jid) DO UPDATE SET
+      contact_id = COALESCE(excluded.contact_id, whatsapp_web_contacts.contact_id),
+      phone = COALESCE(excluded.phone, whatsapp_web_contacts.phone),
+      push_name = COALESCE(excluded.push_name, whatsapp_web_contacts.push_name),
+      display_name = COALESCE(excluded.display_name, whatsapp_web_contacts.display_name),
+      raw_profile_json = excluded.raw_profile_json,
+      last_seen_at = CURRENT_TIMESTAMP,
+      message_count = whatsapp_web_contacts.message_count + 1,
+      updated_at = CURRENT_TIMESTAMP
+  `, [
+    webContactId,
+    sessionId,
+    contactId,
+    remoteJid,
+    phone || null,
+    pushName || null,
+    pushName || phone || null,
+    safeJson(rawProfile)
+  ])
+
+  return webContactId
+}
+
+async function saveWhatsAppWebMessage({
+  sessionId,
+  contactId,
+  webContactId,
+  msg,
+  remoteJid,
+  phone,
+  pushName,
+  attribution
+}) {
+  const messageId = msg.key?.id || hashId('msgid', safeJson(msg))
+  const webMessageId = hashId('waweb_msg', `${sessionId}|${remoteJid}|${messageId}`)
+  const messageType = getMessageType(msg.message)
+  const messageText = getMessageText(msg.message)
+  const messageTimestamp = toDateTime(msg.messageTimestamp)
+  const rawPayload = safeJson(msg)
+  const contextInfoJson = attribution.contextInfo ? safeJson(attribution.contextInfo) : null
+
+  await db.run(`
+    INSERT INTO whatsapp_web_messages (
+      id, session_id, whatsapp_web_contact_id, contact_id, remote_jid, phone, message_id,
+      direction, message_type, message_text, push_name, message_timestamp, raw_payload_json,
+      context_info_json, detected_ctwa_clid, detected_source_id, detected_source_url,
+      detected_source_type, detected_source_app, detected_entry_point, detected_conversion_data,
+      detected_ctwa_payload, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    ON CONFLICT(id) DO UPDATE SET
+      contact_id = COALESCE(excluded.contact_id, whatsapp_web_messages.contact_id),
+      whatsapp_web_contact_id = COALESCE(excluded.whatsapp_web_contact_id, whatsapp_web_messages.whatsapp_web_contact_id),
+      message_text = excluded.message_text,
+      raw_payload_json = excluded.raw_payload_json,
+      context_info_json = excluded.context_info_json,
+      detected_ctwa_clid = excluded.detected_ctwa_clid,
+      detected_source_id = excluded.detected_source_id,
+      detected_source_url = excluded.detected_source_url,
+      detected_source_type = excluded.detected_source_type,
+      detected_source_app = excluded.detected_source_app,
+      detected_entry_point = excluded.detected_entry_point,
+      detected_conversion_data = excluded.detected_conversion_data,
+      detected_ctwa_payload = excluded.detected_ctwa_payload,
+      updated_at = CURRENT_TIMESTAMP
+  `, [
+    webMessageId,
+    sessionId,
+    webContactId,
+    contactId,
+    remoteJid,
+    phone || null,
+    messageId,
+    msg.key?.fromMe ? 'outbound' : 'inbound',
+    messageType,
+    messageText || null,
+    pushName || null,
+    messageTimestamp,
+    rawPayload,
+    contextInfoJson,
+    attribution.ctwaClid || null,
+    attribution.sourceId || null,
+    attribution.sourceUrl || null,
+    attribution.sourceType || null,
+    attribution.sourceApp || null,
+    attribution.entryPoint || null,
+    attribution.conversionData || null,
+    attribution.ctwaPayload || null
+  ])
+
+  if (attribution.hasAttribution) {
+    const attributionId = hashId('waweb_attr', `${sessionId}|${remoteJid}|${messageId}`)
+    await db.run(`
+      INSERT INTO whatsapp_web_attribution (
+        id, session_id, whatsapp_web_message_id, whatsapp_web_contact_id, contact_id,
+        remote_jid, phone, message_id, detected_ctwa_clid, detected_source_id,
+        detected_source_url, detected_source_type, detected_source_app, detected_entry_point,
+        detected_conversion_data, detected_ctwa_payload, external_ad_reply_json,
+        context_info_json, raw_payload_json, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(id) DO UPDATE SET
+        contact_id = COALESCE(excluded.contact_id, whatsapp_web_attribution.contact_id),
+        detected_ctwa_clid = excluded.detected_ctwa_clid,
+        detected_source_id = excluded.detected_source_id,
+        detected_source_url = excluded.detected_source_url,
+        detected_source_type = excluded.detected_source_type,
+        detected_source_app = excluded.detected_source_app,
+        detected_entry_point = excluded.detected_entry_point,
+        detected_conversion_data = excluded.detected_conversion_data,
+        detected_ctwa_payload = excluded.detected_ctwa_payload,
+        external_ad_reply_json = excluded.external_ad_reply_json,
+        context_info_json = excluded.context_info_json,
+        raw_payload_json = excluded.raw_payload_json
+    `, [
+      attributionId,
+      sessionId,
+      webMessageId,
+      webContactId,
+      contactId,
+      remoteJid,
+      phone || null,
+      messageId,
+      attribution.ctwaClid || null,
+      attribution.sourceId || null,
+      attribution.sourceUrl || null,
+      attribution.sourceType || null,
+      attribution.sourceApp || null,
+      attribution.entryPoint || null,
+      attribution.conversionData || null,
+      attribution.ctwaPayload || null,
+      attribution.externalAdReply ? safeJson(attribution.externalAdReply) : null,
+      contextInfoJson,
+      rawPayload
+    ])
+  }
+
+  return webMessageId
+}
+
+async function processIncomingMessage(sessionId, msg) {
+  if (!msg?.message || msg.key?.fromMe) return
+
+  const remoteJid = msg.key?.remoteJid || ''
+  if (shouldIgnoreJid(remoteJid)) return
+
+  const phone = normalizePhoneFromJid(remoteJid)
+  if (!phone) return
+
+  const pushName = msg.pushName || ''
+  const messageText = getMessageText(msg.message)
+  const attribution = detectAttribution(msg)
+  const contact = await upsertLocalContact({
+    phone,
+    pushName,
+    remoteJid,
+    messageText,
+    attribution
+  })
+  const webContactId = await upsertWhatsAppWebContact({
+    sessionId,
+    contactId: contact.id,
+    remoteJid,
+    phone,
+    pushName,
+    rawProfile: {
+      key: msg.key,
+      pushName,
+      remoteJid
+    }
+  })
+
+  await saveWhatsAppWebMessage({
+    sessionId,
+    contactId: contact.id,
+    webContactId,
+    msg,
+    remoteJid,
+    phone,
+    pushName,
+    attribution
+  })
+
+  await updateSession(sessionId, { last_error: null })
+
+  logger.info(`WhatsApp Web mensaje recibido de ${phone}${attribution.hasAttribution ? ' con atribucion detectada' : ''}`)
+}
+
+async function createQrImage(qr) {
+  return QRCode.toDataURL(qr, {
+    margin: 1,
+    width: 320,
+    color: {
+      dark: '#111111',
+      light: '#ffffff'
+    }
+  })
+}
+
+function disconnectRuntimeSocket(sessionId, runtime) {
+  if (!runtime?.socket) return
+  try {
+    runtime.socket.ev.removeAllListeners('connection.update')
+    runtime.socket.ev.removeAllListeners('messages.upsert')
+    runtime.socket.ev.removeAllListeners('creds.update')
+    runtime.socket.ws?.close?.()
+  } catch (error) {
+    logger.warn(`No se pudo cerrar socket WhatsApp Web: ${error.message}`)
+  } finally {
+    runtime.socket = null
+    runtime.starting = null
+  }
+}
+
+export async function startWhatsAppWebSession(sessionId = DEFAULT_SESSION_ID) {
+  await ensureSessionRecord(sessionId)
+  const runtime = getRuntime(sessionId)
+
+  if (runtime.starting) return runtime.starting
+  if (runtime.socket) return getWhatsAppWebStatus(sessionId)
+
+  runtime.manualDisconnect = false
+  runtime.starting = (async () => {
+    const { state, saveCreds } = await useDbAuthState(sessionId)
+
+    await updateSession(sessionId, {
+      status: 'connecting',
+      qr_code: null,
+      qr_image: null,
+      last_error: null
+    })
+
+    const socket = makeWASocket({
+      auth: {
+        creds: state.creds,
+        keys: makeCacheableSignalKeyStore(state.keys, baileysLogger)
+      },
+      browser: Browsers.macOS('Ristak'),
+      logger: baileysLogger,
+      printQRInTerminal: false,
+      markOnlineOnConnect: false,
+      syncFullHistory: false
+    })
+
+    runtime.socket = socket
+
+    socket.ev.on('creds.update', saveCreds)
+
+    socket.ev.on('connection.update', async (update) => {
+      try {
+        const { connection, qr, lastDisconnect } = update
+
+        if (qr) {
+          const qrImage = await createQrImage(qr)
+          await updateSession(sessionId, {
+            status: 'qr',
+            qr_code: qr,
+            qr_image: qrImage,
+            last_qr_at: nowIso(),
+            last_error: null
+          })
+        }
+
+        if (connection === 'open') {
+          await updateSession(sessionId, {
+            status: 'connected',
+            qr_code: null,
+            qr_image: null,
+            phone: normalizePhoneFromJid(socket.user?.id || ''),
+            jid: socket.user?.id || null,
+            push_name: socket.user?.name || socket.user?.verifiedName || null,
+            connected_at: nowIso(),
+            last_error: null
+          })
+          logger.success('WhatsApp Web conectado con Baileys')
+        }
+
+        if (connection === 'close') {
+          const statusCode = lastDisconnect?.error?.output?.statusCode
+          const shouldReconnect = !runtime.manualDisconnect && statusCode !== DisconnectReason.loggedOut
+          disconnectRuntimeSocket(sessionId, runtime)
+
+          await updateSession(sessionId, {
+            status: shouldReconnect ? 'reconnecting' : 'disconnected',
+            disconnected_at: nowIso(),
+            qr_code: null,
+            qr_image: null,
+            last_error: lastDisconnect?.error?.message || null
+          })
+
+          if (shouldReconnect) {
+            setTimeout(() => {
+              startWhatsAppWebSession(sessionId).catch(error => {
+                logger.error(`No se pudo reconectar WhatsApp Web: ${error.message}`)
+              })
+            }, 2500)
+          }
+        }
+      } catch (error) {
+        logger.error(`Error procesando connection.update de WhatsApp Web: ${error.message}`)
+      }
+    })
+
+    socket.ev.on('messages.upsert', async ({ messages = [] }) => {
+      for (const msg of messages) {
+        try {
+          await processIncomingMessage(sessionId, msg)
+        } catch (error) {
+          logger.error(`Error guardando mensaje WhatsApp Web: ${error.message}`)
+        }
+      }
+    })
+
+    runtime.starting = null
+    return getWhatsAppWebStatus(sessionId)
+  })()
+
+  return runtime.starting
+}
+
+export async function disconnectWhatsAppWebSession(sessionId = DEFAULT_SESSION_ID) {
+  await ensureSessionRecord(sessionId)
+  const runtime = getRuntime(sessionId)
+  runtime.manualDisconnect = true
+
+  if (runtime.socket) {
+    try {
+      await runtime.socket.logout('Ristak disconnect')
+    } catch (error) {
+      logger.warn(`Logout WhatsApp Web fallo, limpiando sesion local: ${error.message}`)
+    }
+  }
+
+  disconnectRuntimeSocket(sessionId, runtime)
+  await clearAuthState(sessionId)
+  await updateSession(sessionId, {
+    status: 'disconnected',
+    phone: null,
+    jid: null,
+    push_name: null,
+    qr_code: null,
+    qr_image: null,
+    last_error: null,
+    disconnected_at: nowIso()
+  })
+
+  return getWhatsAppWebStatus(sessionId)
+}
+
+export async function getWhatsAppWebStatus(sessionId = DEFAULT_SESSION_ID) {
+  await ensureSessionRecord(sessionId)
+  const session = await db.get('SELECT * FROM whatsapp_web_sessions WHERE id = ?', [sessionId])
+  const stats = await db.get(`
+    SELECT
+      (SELECT COUNT(*) FROM whatsapp_web_contacts WHERE session_id = ?) as contacts_count,
+      (SELECT COUNT(*) FROM whatsapp_web_messages WHERE session_id = ?) as messages_count,
+      (SELECT COUNT(*) FROM whatsapp_web_attribution WHERE session_id = ?) as attribution_count
+  `, [sessionId, sessionId, sessionId])
+  const authSaved = await hasSavedAuthState(sessionId)
+
+  return {
+    session: {
+      ...session,
+      auth_saved: authSaved
+    },
+    stats: {
+      contacts: Number(stats?.contacts_count || 0),
+      messages: Number(stats?.messages_count || 0),
+      attribution: Number(stats?.attribution_count || 0)
+    }
+  }
+}
+
+export async function getRecentWhatsAppWebMessages(sessionId = DEFAULT_SESSION_ID, limit = 12) {
+  await ensureSessionRecord(sessionId)
+  const safeLimit = Math.min(Math.max(Number(limit) || 12, 1), 50)
+
+  return db.all(`
+    SELECT id, contact_id, phone, push_name, message_text, message_type, detected_ctwa_clid,
+           detected_source_id, detected_source_url, created_at
+    FROM whatsapp_web_messages
+    WHERE session_id = ?
+    ORDER BY created_at DESC
+    LIMIT ${safeLimit}
+  `, [sessionId])
+}
+
+export async function initializeWhatsAppWebReceiver() {
+  await ensureSessionRecord(DEFAULT_SESSION_ID)
+  if (!await hasSavedAuthState(DEFAULT_SESSION_ID)) return
+
+  startWhatsAppWebSession(DEFAULT_SESSION_ID).catch(error => {
+    logger.error(`No se pudo iniciar WhatsApp Web automaticamente: ${error.message}`)
+  })
+}
+

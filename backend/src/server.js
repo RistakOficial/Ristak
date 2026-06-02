@@ -12,6 +12,7 @@ import { startMetaVersionCron } from './jobs/metaVersionCron.js'
 import { initializeVersion } from './services/metaVersionService.js'
 import { verifyAndUpdateWebhooks } from './startup/webhookVerification.js'
 import { repairPendingPaymentFlows } from './services/paymentFlowService.js'
+import { initializeWhatsAppWebReceiver } from './services/whatsappWebService.js'
 
 // Force redeploy to ensure latest logs are active
 
@@ -40,6 +41,7 @@ import aiAgentRoutes from './routes/aiAgent.routes.js'
 import searchRoutes from './routes/search.routes.js'
 import externalRoutes from './routes/external.routes.js'
 import mcpRoutes from './routes/mcp.routes.js'
+import whatsappWebRoutes from './routes/whatsappWeb.routes.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -87,6 +89,7 @@ app.use('/api/ai-agent', aiAgentRoutes)
 app.use('/api/search', searchRoutes)
 app.use('/api/external', externalRoutes)
 app.use('/api/mcp', mcpRoutes)
+app.use('/api/whatsapp-web', whatsappWebRoutes)
 app.use('/webhook', webhooksRoutes)
 app.use('/webhooks', webhooksRoutes) // Alias para webhooks con 's'
 
@@ -136,6 +139,10 @@ app.listen(PORT, async () => {
 
   repairPendingPaymentFlows().catch(error => {
     logger.error(`No se pudo ejecutar reparación inicial de parcialidades: ${error.message}`)
+  })
+
+  initializeWhatsAppWebReceiver().catch(error => {
+    logger.error(`No se pudo inicializar WhatsApp Web: ${error.message}`)
   })
 
   // Iniciar cron jobs

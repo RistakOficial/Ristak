@@ -1,0 +1,381 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  width: 100%;
+}
+
+.heroCard,
+.messagesCard,
+.loadingCard {
+  border-radius: 8px;
+}
+
+.loadingCard {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--color-text-secondary);
+  font-size: 14px;
+}
+
+.spin {
+  animation: spin 0.85s linear infinite;
+}
+
+.heroHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+.heroTitleGroup {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  min-width: 0;
+}
+
+.logoMark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 48px;
+  height: 48px;
+  border-radius: 8px;
+  color: #0bbf5f;
+  background: rgba(16, 185, 129, 0.1);
+  border: 1px solid rgba(16, 185, 129, 0.28);
+}
+
+.eyebrow {
+  margin: 0 0 4px;
+  color: #0bbf5f;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.title {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: 40px;
+  line-height: 1.05;
+  letter-spacing: 0;
+}
+
+.subtitle {
+  max-width: 680px;
+  margin: 8px 0 0;
+  color: var(--color-text-secondary);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.statusConnected,
+.statusDisconnected,
+.statusQr,
+.statusBusy {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 34px;
+  padding: 0 11px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.statusConnected {
+  color: var(--color-status-success);
+  background: rgba(16, 185, 129, 0.1);
+  border: 1px solid rgba(16, 185, 129, 0.28);
+}
+
+.statusQr {
+  color: #0f766e;
+  background: rgba(20, 184, 166, 0.1);
+  border: 1px solid rgba(20, 184, 166, 0.28);
+}
+
+.statusBusy {
+  color: #ca8a04;
+  background: rgba(234, 179, 8, 0.1);
+  border: 1px solid rgba(234, 179, 8, 0.28);
+}
+
+.statusDisconnected {
+  color: var(--color-text-secondary);
+  background: rgba(148, 163, 184, 0.1);
+  border: 1px solid rgba(148, 163, 184, 0.24);
+}
+
+.connectionGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 260px;
+  gap: 18px;
+  margin-top: 18px;
+  align-items: stretch;
+}
+
+.qrPanel,
+.sidePanel,
+.messagesCard {
+  min-width: 0;
+}
+
+.qrPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 18px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 8px;
+  background: rgba(148, 163, 184, 0.045);
+}
+
+.panelHeader,
+.sectionHeader,
+.messageTop {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.panelHeader h3,
+.sectionHeader h3 {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: 16px;
+  line-height: 1.2;
+}
+
+.panelHeader p,
+.sectionHeader p {
+  margin: 6px 0 0;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.qrStage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 390px;
+  border: 1px dashed rgba(148, 163, 184, 0.3);
+  border-radius: 8px;
+  background: var(--color-background-primary);
+}
+
+.qrBox,
+.emptyQr,
+.connectedState {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  width: 100%;
+  padding: 18px;
+  text-align: center;
+}
+
+.qrBox img {
+  width: min(320px, 100%);
+  aspect-ratio: 1;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 8px;
+  background: #fff;
+  object-fit: contain;
+}
+
+.qrBox p,
+.emptyQr span,
+.connectedState span,
+.emptyMessages span {
+  max-width: 360px;
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.emptyQr,
+.emptyMessages {
+  color: var(--color-text-tertiary);
+}
+
+.emptyQr strong,
+.connectedState strong {
+  color: var(--color-text-primary);
+  font-size: 18px;
+}
+
+.connectedState {
+  color: #0bbf5f;
+}
+
+.actions {
+  display: flex;
+  width: 100%;
+}
+
+.errorBox {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 11px 12px;
+  border-radius: 8px;
+  color: var(--color-status-error);
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.22);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.sidePanel {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
+.statCard {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 92px;
+  padding: 16px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 8px;
+  color: var(--color-text-primary);
+  background: rgba(148, 163, 184, 0.045);
+}
+
+.statCard svg {
+  color: #0bbf5f;
+}
+
+.statCard strong {
+  display: block;
+  font-size: 26px;
+  line-height: 1;
+}
+
+.statCard span {
+  display: block;
+  margin-top: 5px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.messagesCard {
+  padding-top: 20px;
+}
+
+.emptyMessages {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 120px;
+  margin-top: 14px;
+  border: 1px dashed rgba(148, 163, 184, 0.26);
+  border-radius: 8px;
+}
+
+.messageList {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.messageItem {
+  padding: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 8px;
+  background: rgba(148, 163, 184, 0.04);
+}
+
+.messageTop strong {
+  color: var(--color-text-primary);
+  font-size: 14px;
+}
+
+.messageTop span {
+  flex-shrink: 0;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+}
+
+.messageItem p {
+  margin: 8px 0 0;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.attrLine {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.attrLine span {
+  display: inline-flex;
+  max-width: 100%;
+  padding: 5px 8px;
+  border-radius: 999px;
+  color: #0f766e;
+  background: rgba(20, 184, 166, 0.1);
+  border: 1px solid rgba(20, 184, 166, 0.22);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 980px) {
+  .connectionGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .sidePanel {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 680px) {
+  .heroHeader,
+  .panelHeader,
+  .sectionHeader,
+  .messageTop {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .sidePanel {
+    grid-template-columns: 1fr;
+  }
+
+  .qrStage {
+    min-height: 330px;
+  }
+
+  .title {
+    font-size: 30px;
+  }
+}
