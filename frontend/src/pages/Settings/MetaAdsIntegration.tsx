@@ -31,6 +31,11 @@ interface Pixel {
   last_fired_time: string
 }
 
+interface FetchCollectionResult {
+  success: boolean
+  count: number
+}
+
 export const MetaAdsIntegration: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true)
   const [credentials, setCredentials] = useState<MetaCredentials>({
@@ -92,13 +97,13 @@ export const MetaAdsIntegration: React.FC = () => {
           }
 
           setRealAccessToken(tokenToUse)
-          await fetchAdAccounts(tokenToUse, data.data.adAccountId)
+          await fetchAdAccounts(tokenToUse, data.data.adAccountId, { silent: true })
 
           if (data.data.adAccountId) {
             const accountIdWithPrefix = data.data.adAccountId.startsWith('act_')
               ? data.data.adAccountId
               : `act_${data.data.adAccountId}`
-            await fetchPixels(accountIdWithPrefix, tokenToUse, data.data.pixelId)
+            await fetchPixels(accountIdWithPrefix, tokenToUse, data.data.pixelId, { silent: true })
           }
         }
       }
@@ -108,10 +113,16 @@ export const MetaAdsIntegration: React.FC = () => {
     }
   }
 
-  const fetchAdAccounts = async (token: string, savedAdAccountId?: string) => {
+  const fetchAdAccounts = async (
+    token: string,
+    savedAdAccountId?: string,
+    options: { silent?: boolean } = {}
+  ): Promise<FetchCollectionResult> => {
     if (!token) {
-      showToast('error', 'Token requerido', 'Primero ingresa tu Access Token')
-      return
+      if (!options.silent) {
+        showToast('error', 'Token requerido', 'Primero ingresa tu Access Token')
+      }
+      return { success: false, count: 0 }
     }
 
     setIsLoadingAccounts(true)
@@ -134,23 +145,48 @@ export const MetaAdsIntegration: React.FC = () => {
           }
         }
 
-        showToast('success', 'Cuentas cargadas', `Se encontraron ${result.adAccounts.length} cuentas de anuncios`)
-      } else {
-        showToast('warning', 'Sin cuentas', 'No se encontraron cuentas de anuncios')
+        if (!options.silent) {
+          showToast('success', 'Cuentas cargadas', `Se encontraron ${result.adAccounts.length} cuentas de anuncios`)
+        }
+
+        return { success: true, count: result.adAccounts.length }
+      }
+
+      if (result.success) {
+        if (!options.silent) {
+          showToast('warning', 'Sin cuentas', 'No se encontraron cuentas de anuncios')
+        }
         setAdAccounts([])
+        return { success: true, count: 0 }
+      } else {
+        if (!options.silent) {
+          showToast('error', 'Error', 'No se pudieron cargar las cuentas')
+        }
+        setAdAccounts([])
+        return { success: false, count: 0 }
       }
     } catch {
-      showToast('error', 'Error', 'No se pudieron cargar las cuentas')
+      if (!options.silent) {
+        showToast('error', 'Error', 'No se pudieron cargar las cuentas')
+      }
       setAdAccounts([])
+      return { success: false, count: 0 }
     } finally {
       setIsLoadingAccounts(false)
     }
   }
 
-  const fetchPixels = async (adAccountId: string, token: string, savedPixelId?: string) => {
+  const fetchPixels = async (
+    adAccountId: string,
+    token: string,
+    savedPixelId?: string,
+    options: { silent?: boolean } = {}
+  ): Promise<FetchCollectionResult> => {
     if (!adAccountId || !token) {
-      showToast('error', 'Datos requeridos', 'Primero selecciona una cuenta de anuncios')
-      return
+      if (!options.silent) {
+        showToast('error', 'Datos requeridos', 'Primero selecciona una cuenta de anuncios')
+      }
+      return { success: false, count: 0 }
     }
 
     setIsLoadingPixels(true)
@@ -170,14 +206,32 @@ export const MetaAdsIntegration: React.FC = () => {
           }
         }
 
-        showToast('success', 'Pixeles cargados', `Se encontraron ${result.pixels.length} pixeles`)
-      } else {
-        showToast('info', 'Sin pixeles', 'No se encontraron pixeles para esta cuenta')
+        if (!options.silent) {
+          showToast('success', 'Pixeles cargados', `Se encontraron ${result.pixels.length} pixeles`)
+        }
+
+        return { success: true, count: result.pixels.length }
+      }
+
+      if (result.success) {
+        if (!options.silent) {
+          showToast('info', 'Sin pixeles', 'No se encontraron pixeles para esta cuenta')
+        }
         setPixels([])
+        return { success: true, count: 0 }
+      } else {
+        if (!options.silent) {
+          showToast('error', 'Error', 'No se pudieron cargar los pixeles')
+        }
+        setPixels([])
+        return { success: false, count: 0 }
       }
     } catch {
-      showToast('error', 'Error', 'No se pudieron cargar los pixeles')
+      if (!options.silent) {
+        showToast('error', 'Error', 'No se pudieron cargar los pixeles')
+      }
       setPixels([])
+      return { success: false, count: 0 }
     } finally {
       setIsLoadingPixels(false)
     }
@@ -244,8 +298,17 @@ export const MetaAdsIntegration: React.FC = () => {
     try {
       showToast('info', 'Validando token...', 'Cargando tus cuentas de anuncios')
       setRealAccessToken(credentials.accessToken)
-      await fetchAdAccounts(credentials.accessToken)
-      showToast('success', 'Token válido', 'Selecciona tu cuenta de anuncios')
+      const accountsResult = await fetchAdAccounts(credentials.accessToken)
+
+      if (!accountsResult.success) {
+        setRealAccessToken('')
+        return
+      }
+
+      if (accountsResult.count > 0) {
+        showToast('success', 'Token válido', 'Selecciona tu cuenta de anuncios')
+      }
+
       setActiveStep(1)
     } catch {
       showToast('error', 'Error', 'No se pudo validar el token o cargar las cuentas')
