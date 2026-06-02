@@ -134,13 +134,6 @@ export const WhatsAppSettings: React.FC = () => {
     )
   }
 
-  const accountDetails = [
-    { label: 'Numero', value: session?.phone },
-    { label: 'Nombre', value: displayName },
-    { label: 'Categoria', value: businessProfile?.category },
-    { label: 'Email', value: businessProfile?.email }
-  ].filter(item => item.value)
-
   if (loading) {
     return (
       <Card className={styles.shell}>
@@ -181,18 +174,10 @@ export const WhatsAppSettings: React.FC = () => {
               </span>
               <h3>{session?.phone || 'Numero conectado'}</h3>
               <p>{displayName}</p>
+              {businessProfile?.category && (
+                <span className={styles.profileCategory}>{businessProfile.category}</span>
+              )}
             </div>
-
-            {accountDetails.length > 0 && (
-              <div className={styles.detailsGrid}>
-                {accountDetails.map(item => (
-                  <div key={item.label} className={styles.detailItem}>
-                    <span>{item.label}</span>
-                    <strong>{item.value}</strong>
-                  </div>
-                ))}
-              </div>
-            )}
 
             <Button variant="danger" onClick={confirmDisconnect} loading={disconnecting}>
               <Unplug size={17} />
