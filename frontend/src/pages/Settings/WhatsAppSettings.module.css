@@ -177,6 +177,30 @@
   font-size: 16px;
 }
 
+.connectedActions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.logsLink {
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  opacity: 0.48;
+  text-decoration: none;
+  transition: opacity 160ms ease, color 160ms ease;
+}
+
+.logsLink:hover,
+.logsLink:focus-visible {
+  color: var(--color-text-secondary);
+  opacity: 0.78;
+  text-decoration: underline;
+}
+
 .profileCategory {
   display: block;
   max-width: min(520px, 100%);
@@ -208,6 +232,21 @@
   padding: 12px;
   text-align: left;
   overflow: auto;
+}
+
+.logsBackLink {
+  grid-column: 1 / -1;
+  width: fit-content;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.logsBackLink:hover,
+.logsBackLink:focus-visible {
+  color: var(--color-text-primary);
+  text-decoration: underline;
 }
 
 .logsView h3 {

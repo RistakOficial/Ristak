@@ -191,17 +191,13 @@ export const WhatsAppSettings: React.FC = () => {
         <div>
           <p className={styles.eyebrow}>Configuracion</p>
           <h2 className={styles.title}>WhatsApp Business</h2>
-          {showLogs ? (
-            <a href="#" onClick={(event) => { event.preventDefault(); setShowLogs(false) }}>Volver</a>
-          ) : (
-            <a href="#" onClick={openLogs}>Ver logs</a>
-          )}
         </div>
       </div>
 
       <div className={styles.stage}>
         {showLogs ? (
           <div className={styles.logsView}>
+            <a href="#" className={styles.logsBackLink} onClick={(event) => { event.preventDefault(); setShowLogs(false) }}>Volver</a>
             {logsLoading ? (
               <p>Cargando logs...</p>
             ) : (
@@ -240,10 +236,13 @@ export const WhatsAppSettings: React.FC = () => {
               )}
             </div>
 
-            <Button variant="danger" onClick={confirmDisconnect} loading={disconnecting}>
-              <Unplug size={17} />
-              Desconectar
-            </Button>
+            <div className={styles.connectedActions}>
+              <Button variant="danger" onClick={confirmDisconnect} loading={disconnecting}>
+                <Unplug size={17} />
+                Desconectar
+              </Button>
+              <a href="#" className={styles.logsLink} onClick={openLogs}>Ver logs</a>
+            </div>
           </div>
         ) : showQr ? (
           <div className={styles.qrState}>
