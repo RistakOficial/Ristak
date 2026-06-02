@@ -186,9 +186,9 @@ export const getContacts = async (req, res) => {
         c.attribution_ad_name,
         c.attribution_ad_id,
         c.custom_fields,
-        COALESCE(ps.total_paid, c.total_paid, 0) AS total_paid,
-        COALESCE(ps.purchases_count, c.purchases_count, 0) AS purchases_count,
-        COALESCE(ps.last_purchase_date, c.last_purchase_date) AS last_purchase_date,
+        COALESCE(ps.total_paid, 0) AS total_paid,
+        COALESCE(ps.purchases_count, 0) AS purchases_count,
+        ps.last_purchase_date AS last_purchase_date,
         c.appointment_date,
         c.created_at,
         (
@@ -198,7 +198,7 @@ export const getContacts = async (req, res) => {
             AND ${ACTIVE_APPOINTMENT_CONDITION}
         ) AS has_appointments,
         (
-          COALESCE(ps.purchases_count, c.purchases_count, 0) > 0
+          COALESCE(ps.purchases_count, 0) > 0
           OR EXISTS (
             SELECT 1
             FROM appointment_attendance_signals aas
@@ -324,6 +324,7 @@ export const getContacts = async (req, res) => {
         status,
         lastPurchase: c.last_purchase_date,
         purchases: c.purchases_count || 0,
+        hasAppointments: Boolean(c.has_appointments),
         hasShowedAppointment: Boolean(c.has_showed_appointment),
         hasAttendedAppointment: Boolean(c.has_showed_appointment),
         source: c.source,
@@ -425,9 +426,9 @@ export const getContactById = async (req, res) => {
         c.visitor_id,
         c.attribution_ad_name,
         c.attribution_ad_id,
-        COALESCE(ps.total_paid, c.total_paid, 0) AS total_paid,
-        COALESCE(ps.purchases_count, c.purchases_count, 0) AS purchases_count,
-        COALESCE(ps.last_purchase_date, c.last_purchase_date) AS last_purchase_date,
+        COALESCE(ps.total_paid, 0) AS total_paid,
+        COALESCE(ps.purchases_count, 0) AS purchases_count,
+        ps.last_purchase_date AS last_purchase_date,
         c.appointment_date,
         c.created_at,
         (
@@ -437,7 +438,7 @@ export const getContactById = async (req, res) => {
             AND ${ACTIVE_APPOINTMENT_CONDITION}
         ) AS has_appointments,
         (
-          COALESCE(ps.purchases_count, c.purchases_count, 0) > 0
+          COALESCE(ps.purchases_count, 0) > 0
           OR EXISTS (
             SELECT 1
             FROM appointment_attendance_signals aas
@@ -714,6 +715,7 @@ export const getContactById = async (req, res) => {
       appointments: appointmentsOrdered,
       firstAppointmentDate,
       nextAppointmentDate,
+      hasAppointments: Boolean(contact.has_appointments),
       hasShowedAppointment,
       hasAttendedAppointment: hasShowedAppointment,
       firstSession: firstSession ? {
@@ -797,10 +799,10 @@ export const searchContacts = async (req, res) => {
         c.full_name,
         c.email,
         c.phone,
-        COALESCE(ps.total_paid, c.total_paid, 0) AS total_paid,
-        COALESCE(ps.purchases_count, c.purchases_count, 0) AS purchases_count,
+        COALESCE(ps.total_paid, 0) AS total_paid,
+        COALESCE(ps.purchases_count, 0) AS purchases_count,
         c.appointment_date,
-        COALESCE(ps.last_purchase_date, c.last_purchase_date) AS last_purchase_date,
+        ps.last_purchase_date AS last_purchase_date,
         c.created_at,
         c.source,
         c.attribution_ad_name,
@@ -812,7 +814,7 @@ export const searchContacts = async (req, res) => {
             AND ${ACTIVE_APPOINTMENT_CONDITION}
         ) AS has_appointments,
         (
-          COALESCE(ps.purchases_count, c.purchases_count, 0) > 0
+          COALESCE(ps.purchases_count, 0) > 0
           OR EXISTS (
             SELECT 1
             FROM appointment_attendance_signals aas
@@ -853,6 +855,7 @@ export const searchContacts = async (req, res) => {
         status,
         lastPurchase: c.last_purchase_date,
         purchases: c.purchases_count || 0,
+        hasAppointments: Boolean(c.has_appointments),
         hasShowedAppointment: Boolean(c.has_showed_appointment),
         hasAttendedAppointment: Boolean(c.has_showed_appointment),
         source: c.source,

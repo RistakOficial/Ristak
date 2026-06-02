@@ -1125,11 +1125,21 @@ export const handleInvoiceWebhook = async (req, res) => {
         break;
 
       case 'InvoiceDeleted':
-      case 'invoice.deleted':
-        // Eliminar de BD local
+      case 'invoice.deleted': {
+        // Eliminar de BD local y recalcular estadísticas del contacto para que
+        // no quede como cliente con purchases_count/total_paid obsoletos
+        const deletedPayment = await db.get(
+          'SELECT contact_id FROM payments WHERE ghl_invoice_id = ?',
+          [invoiceId]
+        );
         await db.run('DELETE FROM payments WHERE ghl_invoice_id = ?', [invoiceId]);
+        if (deletedPayment?.contact_id) {
+          await updateSingleContactStats(deletedPayment.contact_id);
+          logger.success(`Estadísticas recalculadas tras eliminar invoice para contacto: ${deletedPayment.contact_id}`);
+        }
         logger.info(`Invoice ${invoiceId} fue eliminado`);
         return res.status(200).json({ success: true, message: 'Invoice eliminado' });
+      }
 
       default:
         logger.warn(`Tipo de evento de invoice no manejado: ${eventType}`);
@@ -1201,8 +1211,9 @@ export const handleInvoiceWebhook = async (req, res) => {
         await markPaymentFlowInvoicePaid(invoiceId);
       }
 
-      // Si fue reembolsado, recalcular estadísticas
-      if (newStatus === 'refunded') {
+      // Si fue reembolsado o anulado, recalcular estadísticas para que el pago
+      // deje de contar y el contacto no quede marcado como cliente
+      if (newStatus === 'refunded' || newStatus === 'void') {
         const payment = await db.get(
           'SELECT contact_id FROM payments WHERE ghl_invoice_id = ?',
           [invoiceId]
@@ -1210,7 +1221,7 @@ export const handleInvoiceWebhook = async (req, res) => {
 
         if (payment && payment.contact_id) {
           await updateSingleContactStats(payment.contact_id);
-          logger.success(`Estadísticas recalculadas tras reembolso para contacto: ${payment.contact_id}`);
+          logger.success(`Estadísticas recalculadas tras ${newStatus === 'void' ? 'anulación' : 'reembolso'} para contacto: ${payment.contact_id}`);
         }
       }
     }

@@ -211,17 +211,42 @@ export async function buildContactStats ({ startDate, endDate, scope = 'all' } =
 
   const dedupExpr = buildDedupExpression('')
 
+  // Derivar estado del contacto desde datos vivos (pagos y citas reales), no desde
+  // columnas denormalizadas que pueden quedar obsoletas. Un contacto es "cliente" solo
+  // si tiene al menos un pago válido en la BD; "con cita" solo si tiene una cita activa.
+  const activePaymentList = [...ACTIVE_PAYMENT_STATUSES].map(value => `'${value}'`).join(', ')
+  const inactiveAppointmentList = [...INACTIVE_APPOINTMENT_STATUSES].map(value => `'${value}'`).join(', ')
+  const validPaymentExists = `EXISTS (
+    SELECT 1 FROM payments p
+    WHERE p.contact_id = contacts.id
+      AND p.amount > 0
+      AND LOWER(p.status) IN (${activePaymentList})
+      AND ${nonTestPaymentCondition('p')}
+  )`
+  const activeAppointmentExists = `EXISTS (
+    SELECT 1 FROM appointments a
+    WHERE a.contact_id = contacts.id
+      AND LOWER(COALESCE(a.appointment_status, a.status, '')) NOT IN (${inactiveAppointmentList})
+  )`
+  const validPaymentTotal = `COALESCE((
+    SELECT SUM(p.amount) FROM payments p
+    WHERE p.contact_id = contacts.id
+      AND p.amount > 0
+      AND LOWER(p.status) IN (${activePaymentList})
+      AND ${nonTestPaymentCondition('p')}
+  ), 0)`
+
   const selectClause = `
     SELECT
       COUNT(DISTINCT ${dedupExpr}) as total,
       COUNT(DISTINCT CASE
-        WHEN purchases_count > 0 THEN ${dedupExpr}
+        WHEN ${validPaymentExists} THEN ${dedupExpr}
       END) as customers,
       COUNT(DISTINCT CASE
-        WHEN appointment_date IS NOT NULL THEN ${dedupExpr}
+        WHEN ${activeAppointmentExists} THEN ${dedupExpr}
       END) as with_appointments,
-      COALESCE(SUM(total_paid), 0) as ltv_total,
-      COALESCE(AVG(total_paid), 0) as avg_ltv
+      COALESCE(SUM(${validPaymentTotal}), 0) as ltv_total,
+      COALESCE(AVG(${validPaymentTotal}), 0) as avg_ltv
     FROM contacts
   `
 
