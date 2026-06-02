@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { Card, Button } from '@/components/common'
-import { ArrowLeft, ArrowRight, CheckCircle, ExternalLink, RefreshCw, Trash2, XCircle } from 'lucide-react'
+import { ArrowLeft, ArrowRight, CheckCircle, ExternalLink, MessageSquareText, RefreshCw, Trash2, XCircle } from 'lucide-react'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useTheme } from '@/contexts/ThemeContext'
 import { useAppConfig, useIsRenderDomain } from '@/hooks'
@@ -57,6 +57,8 @@ export const MetaAdsIntegration: React.FC = () => {
   const { theme } = useTheme()
   const isRenderDomain = useIsRenderDomain()
   const [includeMetaPixel, setIncludeMetaPixel, savingPixelPref] = useAppConfig('include_meta_pixel', true)
+  const [whatsappScheduleEventEnabled, setWhatsappScheduleEventEnabled, savingWhatsappScheduleEvent] = useAppConfig('meta_whatsapp_schedule_enabled', false)
+  const [whatsappPurchaseEventEnabled, setWhatsappPurchaseEventEnabled, savingWhatsappPurchaseEvent] = useAppConfig('meta_whatsapp_purchase_enabled', false)
 
   useEffect(() => {
     loadCredentials()
@@ -417,6 +419,50 @@ export const MetaAdsIntegration: React.FC = () => {
       showToast('error', 'Error', 'No se pudo actualizar el snippet')
     } finally {
       setIsSyncingSnippet(false)
+    }
+  }
+
+  const handleToggleWhatsappScheduleEvent = async (newValue: boolean) => {
+    if (newValue && !savedPageId) {
+      showToast(
+        'warning',
+        'Page ID requerido',
+        'Primero guarda el Facebook Page ID en el paso 5 para activar eventos personalizados de WhatsApp'
+      )
+      return
+    }
+
+    try {
+      await setWhatsappScheduleEventEnabled(newValue)
+      showToast(
+        'success',
+        'Evento de cita actualizado',
+        newValue ? 'LeadSubmitted se enviará cuando aplique' : 'LeadSubmitted quedó apagado'
+      )
+    } catch {
+      showToast('error', 'Error', 'No se pudo actualizar el evento de cita')
+    }
+  }
+
+  const handleToggleWhatsappPurchaseEvent = async (newValue: boolean) => {
+    if (newValue && !savedPageId) {
+      showToast(
+        'warning',
+        'Page ID requerido',
+        'Primero guarda el Facebook Page ID en el paso 5 para activar eventos personalizados de WhatsApp'
+      )
+      return
+    }
+
+    try {
+      await setWhatsappPurchaseEventEnabled(newValue)
+      showToast(
+        'success',
+        'Evento de pago actualizado',
+        newValue ? 'Purchase se enviará cuando aplique' : 'Purchase quedó apagado'
+      )
+    } catch {
+      showToast('error', 'Error', 'No se pudo actualizar el evento de pago')
     }
   }
 
@@ -998,6 +1044,64 @@ export const MetaAdsIntegration: React.FC = () => {
                 <strong>{hasPixelApiToken ? 'Listo' : '-'}</strong>
                 <span>Page ID</span>
                 <strong>{hasPageId ? savedPageId : '-'}</strong>
+              </div>
+            </div>
+
+            <div className={styles.railBlock}>
+              <div className={styles.railHeader}>
+                <MessageSquareText size={18} />
+                <span>Eventos WhatsApp</span>
+              </div>
+              <span className={styles.railSecondaryValue}>
+                Envía conversiones server-side cuando entren eventos desde WhatsApp.
+              </span>
+
+              <div className={styles.eventRows}>
+                <div className={[
+                  styles.eventRow,
+                  !hasPageId ? styles.eventRowLocked : ''
+                ].filter(Boolean).join(' ')}>
+                  <div>
+                    <span className={styles.railSwitchLabel}>Cita agendada</span>
+                    <span className={styles.railSecondaryValue}>LeadSubmitted una sola vez por contacto.</span>
+                    {!hasPageId && (
+                      <span className={styles.requirementPill}>Requiere Page ID</span>
+                    )}
+                  </div>
+                  <label className={styles.switchContainer}>
+                    <input
+                      type="checkbox"
+                      checked={whatsappScheduleEventEnabled === true}
+                      onChange={(event) => handleToggleWhatsappScheduleEvent(event.target.checked)}
+                      disabled={savingWhatsappScheduleEvent}
+                      className={styles.switchInput}
+                    />
+                    <span className={styles.switchSlider}></span>
+                  </label>
+                </div>
+
+                <div className={[
+                  styles.eventRow,
+                  !hasPageId ? styles.eventRowLocked : ''
+                ].filter(Boolean).join(' ')}>
+                  <div>
+                    <span className={styles.railSwitchLabel}>Pago recibido</span>
+                    <span className={styles.railSecondaryValue}>Purchase una sola vez por contacto.</span>
+                    {!hasPageId && (
+                      <span className={styles.requirementPill}>Requiere Page ID</span>
+                    )}
+                  </div>
+                  <label className={styles.switchContainer}>
+                    <input
+                      type="checkbox"
+                      checked={whatsappPurchaseEventEnabled === true}
+                      onChange={(event) => handleToggleWhatsappPurchaseEvent(event.target.checked)}
+                      disabled={savingWhatsappPurchaseEvent}
+                      className={styles.switchInput}
+                    />
+                    <span className={styles.switchSlider}></span>
+                  </label>
+                </div>
               </div>
             </div>
 
