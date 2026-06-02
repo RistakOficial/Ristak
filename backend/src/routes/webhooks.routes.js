@@ -6,8 +6,6 @@ import {
   handleAppointmentWebhook,
   handleAppointmentShowedWebhook,
   handleWhatsAppAttributionWebhook,
-  handleWhatsAppApiWebhook,
-  verifyWhatsAppApiWebhook,
   handleInvoiceWebhook
 } from '../controllers/webhooksController.js'
 
@@ -18,8 +16,6 @@ router.post('/payment', handlePaymentWebhook)
 router.post('/refund', handleRefundWebhook)
 router.post('/appointment', handleAppointmentWebhook)
 router.post('/appointment/showed', handleAppointmentShowedWebhook)
-router.get('/whatsapp', verifyWhatsAppApiWebhook)
-router.post('/whatsapp', handleWhatsAppApiWebhook)
 router.post('/whatsapp/attribution', handleWhatsAppAttributionWebhook)
 router.post('/invoice', handleInvoiceWebhook)
 

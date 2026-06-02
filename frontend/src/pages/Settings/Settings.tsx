@@ -6,7 +6,7 @@ import { HighLevelIntegration } from './HighLevelIntegration'
 import { Costs } from './Costs'
 import { PaymentsConfiguration } from './PaymentsConfiguration'
 import { MetaAdsIntegration } from './MetaAdsIntegration'
-import { WhatsApp_API } from './WhatsApp_API'
+import { WhatsAppSettings } from './WhatsAppSettings'
 import { WebTracking } from './WebTracking'
 import { CalendarsConfiguration } from './CalendarsConfiguration'
 import { AccountSettings } from './AccountSettings'
@@ -39,7 +39,7 @@ export const Settings: React.FC = () => {
     },
     {
       to: '/settings/whatsapp',
-      label: 'WhatsApp API',
+      label: 'WhatsApp',
       icon: <SiWhatsapp size={18} />
     },
     {
@@ -114,7 +114,7 @@ export const Settings: React.FC = () => {
               <Route path="highlevel" element={<HighLevelIntegration />} />
               <Route path="costs" element={<Costs />} />
               <Route path="meta-ads" element={<MetaAdsIntegration />} />
-              <Route path="whatsapp" element={<WhatsApp_API />} />
+              <Route path="whatsapp" element={<WhatsAppSettings />} />
               <Route path="calendars" element={<CalendarsConfiguration />} />
               <Route path="tracking" element={<WebTracking />} />
               <Route path="payments" element={<PaymentsConfiguration />} />
