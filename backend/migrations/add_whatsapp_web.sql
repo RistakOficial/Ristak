@@ -50,6 +50,26 @@ CREATE TABLE IF NOT EXISTS whatsapp_web_contacts (
   FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE SET NULL
 );
 
+CREATE TABLE IF NOT EXISTS whatsapp_web_chats (
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL,
+  contact_id TEXT,
+  remote_jid TEXT,
+  phone TEXT,
+  display_name TEXT,
+  conversation_timestamp TIMESTAMP,
+  unread_count INTEGER DEFAULT 0,
+  archived INTEGER DEFAULT 0,
+  pinned INTEGER DEFAULT 0,
+  muted_until TIMESTAMP,
+  raw_chat_json TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(session_id, remote_jid),
+  FOREIGN KEY (session_id) REFERENCES whatsapp_web_sessions(id) ON DELETE CASCADE,
+  FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE SET NULL
+);
+
 CREATE TABLE IF NOT EXISTS whatsapp_web_messages (
   id TEXT PRIMARY KEY,
   session_id TEXT NOT NULL,
@@ -71,6 +91,8 @@ CREATE TABLE IF NOT EXISTS whatsapp_web_messages (
   detected_source_type TEXT,
   detected_source_app TEXT,
   detected_entry_point TEXT,
+  detected_headline TEXT,
+  detected_body TEXT,
   detected_conversion_data TEXT,
   detected_ctwa_payload TEXT,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -95,6 +117,8 @@ CREATE TABLE IF NOT EXISTS whatsapp_web_attribution (
   detected_source_type TEXT,
   detected_source_app TEXT,
   detected_entry_point TEXT,
+  detected_headline TEXT,
+  detected_body TEXT,
   detected_conversion_data TEXT,
   detected_ctwa_payload TEXT,
   external_ad_reply_json TEXT,
@@ -108,6 +132,9 @@ CREATE TABLE IF NOT EXISTS whatsapp_web_attribution (
 );
 
 CREATE INDEX IF NOT EXISTS idx_whatsapp_web_sessions_status ON whatsapp_web_sessions(status);
+CREATE INDEX IF NOT EXISTS idx_whatsapp_web_chats_session ON whatsapp_web_chats(session_id);
+CREATE INDEX IF NOT EXISTS idx_whatsapp_web_chats_contact ON whatsapp_web_chats(contact_id);
+CREATE INDEX IF NOT EXISTS idx_whatsapp_web_chats_remote ON whatsapp_web_chats(remote_jid);
 CREATE INDEX IF NOT EXISTS idx_whatsapp_web_contacts_phone ON whatsapp_web_contacts(phone);
 CREATE INDEX IF NOT EXISTS idx_whatsapp_web_contacts_contact ON whatsapp_web_contacts(contact_id);
 CREATE INDEX IF NOT EXISTS idx_whatsapp_web_messages_contact ON whatsapp_web_messages(contact_id);

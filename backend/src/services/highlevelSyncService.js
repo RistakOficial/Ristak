@@ -633,8 +633,8 @@ async function ensureContactExists(contactId, apiToken, usePostgres, locationId)
           attribution_url = EXCLUDED.attribution_url,
           attribution_session_source = EXCLUDED.attribution_session_source,
           attribution_medium = EXCLUDED.attribution_medium,
-          attribution_ad_id = EXCLUDED.attribution_ad_id,
-          attribution_ad_name = EXCLUDED.attribution_ad_name,
+          attribution_ad_id = COALESCE(NULLIF(contacts.attribution_ad_id, ''), EXCLUDED.attribution_ad_id),
+          attribution_ad_name = COALESCE(NULLIF(contacts.attribution_ad_name, ''), EXCLUDED.attribution_ad_name),
           visitor_id = COALESCE(EXCLUDED.visitor_id, contacts.visitor_id),
           custom_fields = COALESCE(EXCLUDED.custom_fields, contacts.custom_fields),
           updated_at = EXCLUDED.updated_at`
@@ -652,8 +652,8 @@ async function ensureContactExists(contactId, apiToken, usePostgres, locationId)
           attribution_url = excluded.attribution_url,
           attribution_session_source = excluded.attribution_session_source,
           attribution_medium = excluded.attribution_medium,
-          attribution_ad_id = excluded.attribution_ad_id,
-          attribution_ad_name = excluded.attribution_ad_name,
+          attribution_ad_id = COALESCE(NULLIF(contacts.attribution_ad_id, ''), excluded.attribution_ad_id),
+          attribution_ad_name = COALESCE(NULLIF(contacts.attribution_ad_name, ''), excluded.attribution_ad_name),
           visitor_id = COALESCE(excluded.visitor_id, contacts.visitor_id),
           custom_fields = COALESCE(excluded.custom_fields, contacts.custom_fields),
           updated_at = excluded.updated_at`
@@ -818,8 +818,8 @@ async function syncHighLevelContacts(locationId, apiToken) {
             attribution_url = EXCLUDED.attribution_url,
             attribution_session_source = EXCLUDED.attribution_session_source,
             attribution_medium = EXCLUDED.attribution_medium,
-            attribution_ad_id = EXCLUDED.attribution_ad_id,
-            attribution_ad_name = EXCLUDED.attribution_ad_name,
+            attribution_ad_id = COALESCE(NULLIF(contacts.attribution_ad_id, ''), EXCLUDED.attribution_ad_id),
+            attribution_ad_name = COALESCE(NULLIF(contacts.attribution_ad_name, ''), EXCLUDED.attribution_ad_name),
             visitor_id = COALESCE(EXCLUDED.visitor_id, contacts.visitor_id),
             custom_fields = COALESCE(EXCLUDED.custom_fields, contacts.custom_fields),
             updated_at = EXCLUDED.updated_at`
@@ -837,8 +837,8 @@ async function syncHighLevelContacts(locationId, apiToken) {
             attribution_url = excluded.attribution_url,
             attribution_session_source = excluded.attribution_session_source,
             attribution_medium = excluded.attribution_medium,
-            attribution_ad_id = excluded.attribution_ad_id,
-            attribution_ad_name = excluded.attribution_ad_name,
+            attribution_ad_id = COALESCE(NULLIF(contacts.attribution_ad_id, ''), excluded.attribution_ad_id),
+            attribution_ad_name = COALESCE(NULLIF(contacts.attribution_ad_name, ''), excluded.attribution_ad_name),
             visitor_id = COALESCE(excluded.visitor_id, contacts.visitor_id),
             custom_fields = COALESCE(excluded.custom_fields, contacts.custom_fields),
             updated_at = excluded.updated_at`
@@ -957,8 +957,8 @@ async function upsertHighLevelContactLocallyFromWhatsApp({ localContact, highLev
         attribution_session_source = COALESCE(excluded.attribution_session_source, contacts.attribution_session_source),
         attribution_medium = COALESCE(excluded.attribution_medium, contacts.attribution_medium),
         attribution_ctwa_clid = COALESCE(excluded.attribution_ctwa_clid, contacts.attribution_ctwa_clid),
-        attribution_ad_name = COALESCE(excluded.attribution_ad_name, contacts.attribution_ad_name),
-        attribution_ad_id = COALESCE(excluded.attribution_ad_id, contacts.attribution_ad_id),
+        attribution_ad_name = COALESCE(NULLIF(contacts.attribution_ad_name, ''), excluded.attribution_ad_name),
+        attribution_ad_id = COALESCE(NULLIF(contacts.attribution_ad_id, ''), excluded.attribution_ad_id),
         custom_fields = COALESCE(excluded.custom_fields, contacts.custom_fields),
         updated_at = CURRENT_TIMESTAMP
     `, [

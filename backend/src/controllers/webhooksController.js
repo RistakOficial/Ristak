@@ -20,6 +20,7 @@ import {
   prepareContactPhoneUpsert
 } from '../services/contactIdentityService.js';
 import { normalizePhoneForStorage } from '../utils/phoneUtils.js';
+import { detectWhatsAppAttributionFields } from '../utils/whatsappAttribution.js';
 
 function firstValue(...values) {
   return values.find(value => value !== undefined && value !== null && value !== '');
@@ -380,8 +381,8 @@ export const handleContactWebhook = async (req, res) => {
           attribution_url = EXCLUDED.attribution_url,
           attribution_session_source = EXCLUDED.attribution_session_source,
           attribution_medium = EXCLUDED.attribution_medium,
-          attribution_ad_id = EXCLUDED.attribution_ad_id,
-          attribution_ad_name = EXCLUDED.attribution_ad_name,
+          attribution_ad_id = COALESCE(NULLIF(contacts.attribution_ad_id, ''), EXCLUDED.attribution_ad_id),
+          attribution_ad_name = COALESCE(NULLIF(contacts.attribution_ad_name, ''), EXCLUDED.attribution_ad_name),
           visitor_id = COALESCE(EXCLUDED.visitor_id, contacts.visitor_id),
           custom_fields = COALESCE(EXCLUDED.custom_fields, contacts.custom_fields),
           updated_at = CURRENT_TIMESTAMP`
@@ -398,8 +399,8 @@ export const handleContactWebhook = async (req, res) => {
           attribution_url = excluded.attribution_url,
           attribution_session_source = excluded.attribution_session_source,
           attribution_medium = excluded.attribution_medium,
-          attribution_ad_id = excluded.attribution_ad_id,
-          attribution_ad_name = excluded.attribution_ad_name,
+          attribution_ad_id = COALESCE(NULLIF(contacts.attribution_ad_id, ''), excluded.attribution_ad_id),
+          attribution_ad_name = COALESCE(NULLIF(contacts.attribution_ad_name, ''), excluded.attribution_ad_name),
           visitor_id = COALESCE(excluded.visitor_id, contacts.visitor_id),
           custom_fields = COALESCE(excluded.custom_fields, contacts.custom_fields),
           updated_at = CURRENT_TIMESTAMP`;
@@ -1255,12 +1256,14 @@ export const handleWhatsAppAttributionWebhook = async (req, res) => {
     const matchedContact = contactId ? null : await findContactByPhoneCandidates(phone);
     const resolvedContactId = contactId || matchedContact?.id || null;
 
-    // Extraer datos de atribución de Click-to-WhatsApp
-    const referralSourceId = customData.source_id || data.referral_source_id || data.sourceId || data.source_id || null;
-    const referralCtwaClid = customData.ctwa_clid || data.referral_ctwa_clid || data.ctwa_clid || data.ctwaCLID || null;
-    const adIdThruMessage = customData.ad_id || customData.adId || data.ad_id || data.adId || null;
     const messageContent = customData.message_content || customData.messageContent || data.message_content || data.messageContent || data.message || null;
-    const referralHeadline = customData.headline || data.referral_headline || data.headline || null;
+    const detectedAttribution = detectWhatsAppAttributionFields(data, [messageContent]);
+
+    // Extraer datos de atribución de Click-to-WhatsApp. En WhatsApp, source_id es el ad_id real.
+    const referralSourceId = detectedAttribution.sourceId || customData.source_id || data.referral_source_id || data.sourceId || data.source_id || null;
+    const referralCtwaClid = detectedAttribution.ctwaClid || customData.ctwa_clid || data.referral_ctwa_clid || data.ctwa_clid || data.ctwaCLID || null;
+    const adIdThruMessage = customData.ad_id || customData.adId || data.ad_id || data.adId || null;
+    const referralHeadline = customData.headline || data.referral_headline || data.headline || detectedAttribution.headline || null;
 
     const usePostgres = process.env.DATABASE_URL ? true : false;
     const query = usePostgres
@@ -1278,11 +1281,11 @@ export const handleWhatsAppAttributionWebhook = async (req, res) => {
     await db.run(query, [
       resolvedContactId,
       phone,
-      customData.source_url || data.referral_source_url || data.sourceUrl || data.source_url,
-      customData.source_type || data.referral_source_type || data.sourceType || data.source_type,
+      customData.source_url || data.referral_source_url || data.sourceUrl || data.source_url || detectedAttribution.sourceUrl,
+      customData.source_type || data.referral_source_type || data.sourceType || data.source_type || detectedAttribution.sourceType,
       referralSourceId,
       referralHeadline,
-      customData.body || data.referral_body || data.body,
+      customData.body || data.referral_body || data.body || detectedAttribution.body,
       customData.image_url || data.referral_image_url || data.imageUrl || data.image_url,
       customData.video_url || data.referral_video_url || data.videoUrl || data.video_url,
       customData.thumbnail_url || data.referral_thumbnail_url || data.thumbnailUrl || data.thumbnail_url,

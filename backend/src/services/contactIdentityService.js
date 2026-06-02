@@ -9,6 +9,7 @@ const CONTACT_REFERENCE_TABLES = [
   { table: 'appointment_attendance_signals', column: 'contact_id', deleteOnConflict: true },
   { table: 'meta_conversion_event_logs', column: 'contact_id' },
   { table: 'whatsapp_attribution', column: 'contact_id' },
+  { table: 'whatsapp_web_chats', column: 'contact_id' },
   { table: 'whatsapp_web_contacts', column: 'contact_id' },
   { table: 'whatsapp_web_messages', column: 'contact_id' },
   { table: 'whatsapp_web_attribution', column: 'contact_id' },
@@ -62,6 +63,7 @@ async function syncContactPhoneColumns(contactId, canonicalPhone) {
 
   const updates = [
     ['whatsapp_attribution', 'phone'],
+    ['whatsapp_web_chats', 'phone'],
     ['whatsapp_web_contacts', 'phone'],
     ['whatsapp_web_messages', 'phone'],
     ['whatsapp_web_attribution', 'phone'],

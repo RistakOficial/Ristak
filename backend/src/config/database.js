@@ -149,6 +149,7 @@ const CONTACT_PHONE_REFERENCE_TABLES = [
   { table: 'appointment_attendance_signals', column: 'contact_id', deleteOnConflict: true },
   { table: 'meta_conversion_event_logs', column: 'contact_id' },
   { table: 'whatsapp_attribution', column: 'contact_id' },
+  { table: 'whatsapp_web_chats', column: 'contact_id' },
   { table: 'whatsapp_web_contacts', column: 'contact_id' },
   { table: 'whatsapp_web_messages', column: 'contact_id' },
   { table: 'whatsapp_web_attribution', column: 'contact_id' },
@@ -200,6 +201,7 @@ async function updateContactReferences(fromId, toId) {
 async function syncContactPhoneColumns(contactId, canonicalPhone) {
   const updates = [
     ['whatsapp_attribution', 'phone'],
+    ['whatsapp_web_chats', 'phone'],
     ['whatsapp_web_contacts', 'phone'],
     ['whatsapp_web_messages', 'phone'],
     ['whatsapp_web_attribution', 'phone'],
@@ -906,6 +908,28 @@ async function initTables() {
     `)
 
     await db.run(`
+      CREATE TABLE IF NOT EXISTS whatsapp_web_chats (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        contact_id TEXT,
+        remote_jid TEXT,
+        phone TEXT,
+        display_name TEXT,
+        conversation_timestamp DATETIME,
+        unread_count INTEGER DEFAULT 0,
+        archived INTEGER DEFAULT 0,
+        pinned INTEGER DEFAULT 0,
+        muted_until DATETIME,
+        raw_chat_json TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(session_id, remote_jid),
+        FOREIGN KEY (session_id) REFERENCES whatsapp_web_sessions(id) ON DELETE CASCADE,
+        FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE SET NULL
+      )
+    `)
+
+    await db.run(`
       CREATE TABLE IF NOT EXISTS whatsapp_web_messages (
         id TEXT PRIMARY KEY,
         session_id TEXT NOT NULL,
@@ -1014,6 +1038,9 @@ async function initTables() {
     }
 
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_web_sessions_status ON whatsapp_web_sessions(status)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_web_chats_session ON whatsapp_web_chats(session_id)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_web_chats_contact ON whatsapp_web_chats(contact_id)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_web_chats_remote ON whatsapp_web_chats(remote_jid)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_web_contacts_phone ON whatsapp_web_contacts(phone)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_web_contacts_contact ON whatsapp_web_contacts(contact_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_web_messages_contact ON whatsapp_web_messages(contact_id)')

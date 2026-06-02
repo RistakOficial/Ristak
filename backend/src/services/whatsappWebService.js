@@ -12,6 +12,7 @@ import makeWASocket, {
 import { db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 import { buildPhoneMatchCandidates, normalizePhoneDigits, normalizePhoneForStorage } from '../utils/phoneUtils.js'
+import { detectWhatsAppAttributionFields } from '../utils/whatsappAttribution.js'
 
 const DEFAULT_SESSION_ID = 'default'
 const SOURCE_NAME = 'WhatsApp Business'
@@ -268,29 +269,23 @@ function detectAttribution(payload) {
   const contextInfo = collectContextInfo(payload)
   const contextSource = contextInfo[0] || null
   const adReply = externalAdReply || {}
-  const searchRoot = {
-    payload,
-    externalAdReply,
-    contextInfo
-  }
+  const fields = detectWhatsAppAttributionFields(payload, [
+    getMessageText(payload?.message)
+  ])
 
   const detected = {
-    ctwaClid: findFirstByKeys(searchRoot, ['ctwaClid', 'ctwa_clid', 'ctwa', 'clid']),
-    sourceId: findFirstByKeys(searchRoot, ['sourceId', 'source_id', 'adId', 'ad_id']),
-    sourceUrl: findFirstByKeys(searchRoot, ['sourceUrl', 'source_url']),
-    sourceType: findFirstByKeys(searchRoot, ['sourceType', 'source_type']),
-    sourceApp: findFirstByKeys(searchRoot, ['sourceApp', 'source_app', 'entryPointConversionApp']),
-    entryPoint: findFirstByKeys(searchRoot, [
-      'entryPointConversionSource',
-      'entryPointConversionExternalSource',
-      'conversionSource'
-    ]),
+    ctwaClid: fields.ctwaClid,
+    sourceId: fields.sourceId,
+    sourceUrl: fields.sourceUrl,
+    sourceType: fields.sourceType,
+    sourceApp: fields.sourceApp,
+    entryPoint: fields.entryPoint,
     headline: safeString(adReply.title || adReply.headline || '') ||
-      findFirstByKeys(searchRoot, ['referralHeadline', 'referral_headline', 'headline']),
+      fields.headline,
     body: safeString(adReply.body || adReply.description || '') ||
-      findFirstByKeys(searchRoot, ['referralBody', 'referral_body']),
-    conversionData: findFirstByKeys(searchRoot, ['conversionData']),
-    ctwaPayload: findFirstByKeys(searchRoot, ['ctwaPayload', 'ctwaSignals'])
+      fields.body,
+    conversionData: fields.conversionData,
+    ctwaPayload: fields.ctwaPayload
   }
 
   return {
@@ -440,11 +435,11 @@ function buildContactCustomFields({ remoteJid, messageText, attribution }) {
   ]
 }
 
-function shouldMoveContactCreatedAt(existing, firstMessageAt) {
+function shouldMoveContactCreatedAt(existing, firstMessageAt, { allowAttributionCorrection = false } = {}) {
   if (!firstMessageAt) return false
 
   const source = String(existing?.source || '').toLowerCase()
-  if (source && source !== SOURCE_NAME.toLowerCase()) return false
+  if (!allowAttributionCorrection && source && source !== SOURCE_NAME.toLowerCase()) return false
 
   if (!existing?.created_at) return true
 
@@ -455,6 +450,24 @@ function shouldMoveContactCreatedAt(existing, firstMessageAt) {
   if (!Number.isFinite(existingTime)) return true
 
   return firstMessageTime < existingTime
+}
+
+function shouldApplyWhatsAppSourceId(existing, attribution, messageTimestamp) {
+  if (!attribution?.sourceId) return false
+  if (!existing?.attribution_ad_id) return true
+  if (existing.attribution_ad_id === attribution.sourceId) return false
+
+  const messageTime = Date.parse(String(messageTimestamp || ''))
+  const existingCreatedTime = Date.parse(String(existing.created_at || ''))
+
+  return Number.isFinite(messageTime) &&
+    (!Number.isFinite(existingCreatedTime) || messageTime <= existingCreatedTime)
+}
+
+function getMessageSortTime(msg) {
+  const timestamp = toDateTime(msg?.messageTimestamp)
+  const time = timestamp ? Date.parse(timestamp) : NaN
+  return Number.isFinite(time) ? time : Number.MAX_SAFE_INTEGER
 }
 
 async function upsertLocalContact({ phone, pushName, remoteJid, messageText, messageTimestamp, isInbound, attribution }) {
@@ -484,7 +497,7 @@ async function upsertLocalContact({ phone, pushName, remoteJid, messageText, mes
       attribution.sourceApp || attribution.entryPoint || SOURCE_NAME,
       attribution.sourceType || 'whatsapp_web',
       attribution.ctwaClid || null,
-      attribution.sourceId || null,
+      attribution.headline || attribution.sourceId || null,
       attribution.sourceId || null,
       customFieldsValue,
       firstMessageAt
@@ -521,14 +534,22 @@ async function upsertLocalContact({ phone, pushName, remoteJid, messageText, mes
     params.push(attribution.ctwaClid)
   }
 
-  if (attribution.sourceId) {
+  if (shouldApplyWhatsAppSourceId(existing, attribution, messageTimestamp)) {
     updates.push('attribution_ad_id = ?')
-    params.push(attribution.sourceId)
-    updates.push('attribution_ad_name = COALESCE(attribution_ad_name, ?)')
     params.push(attribution.sourceId)
   }
 
-  if (isInbound && shouldMoveContactCreatedAt(existing, messageTimestamp)) {
+  if (attribution.headline) {
+    updates.push('attribution_ad_name = ?')
+    params.push(attribution.headline)
+  } else if (shouldApplyWhatsAppSourceId(existing, attribution, messageTimestamp)) {
+    updates.push("attribution_ad_name = COALESCE(NULLIF(attribution_ad_name, ''), ?)")
+    params.push(attribution.sourceId)
+  }
+
+  if (isInbound && shouldMoveContactCreatedAt(existing, messageTimestamp, {
+    allowAttributionCorrection: Boolean(attribution.sourceId)
+  })) {
     updates.push('created_at = ?')
     params.push(messageTimestamp)
   }
@@ -587,6 +608,155 @@ async function upsertWhatsAppWebContact({ sessionId, contactId, remoteJid, phone
   return webContactId
 }
 
+async function upsertWhatsAppWebProfile({ sessionId, contactId, remoteJid, phone, displayName, rawProfile }) {
+  const webContactId = hashId('waweb_profile', `${sessionId}|${remoteJid}`)
+
+  await db.run(`
+    INSERT INTO whatsapp_web_contacts (
+      id, session_id, contact_id, remote_jid, phone, push_name, display_name,
+      raw_profile_json, first_seen_at, last_seen_at, message_count, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    ON CONFLICT(session_id, remote_jid) DO UPDATE SET
+      contact_id = COALESCE(excluded.contact_id, whatsapp_web_contacts.contact_id),
+      phone = COALESCE(excluded.phone, whatsapp_web_contacts.phone),
+      push_name = COALESCE(excluded.push_name, whatsapp_web_contacts.push_name),
+      display_name = COALESCE(excluded.display_name, whatsapp_web_contacts.display_name),
+      raw_profile_json = excluded.raw_profile_json,
+      updated_at = CURRENT_TIMESTAMP
+  `, [
+    webContactId,
+    sessionId,
+    contactId || null,
+    remoteJid,
+    phone || null,
+    displayName || null,
+    displayName || phone || null,
+    safeJson(rawProfile)
+  ])
+
+  return webContactId
+}
+
+async function upsertWhatsAppWebChat({ sessionId, contactId, remoteJid, phone, displayName, chat }) {
+  const webChatId = hashId('waweb_chat', `${sessionId}|${remoteJid}`)
+  const conversationTimestamp = toDateTime(
+    chat?.conversationTimestamp ||
+    chat?.lastMessageRecvTimestamp ||
+    chat?.t ||
+    chat?.timestamp
+  )
+  const mutedUntil = toDateTime(chat?.muteEndTime || chat?.mutedUntil)
+
+  await db.run(`
+    INSERT INTO whatsapp_web_chats (
+      id, session_id, contact_id, remote_jid, phone, display_name,
+      conversation_timestamp, unread_count, archived, pinned, muted_until,
+      raw_chat_json, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    ON CONFLICT(session_id, remote_jid) DO UPDATE SET
+      contact_id = COALESCE(excluded.contact_id, whatsapp_web_chats.contact_id),
+      phone = COALESCE(excluded.phone, whatsapp_web_chats.phone),
+      display_name = COALESCE(excluded.display_name, whatsapp_web_chats.display_name),
+      conversation_timestamp = COALESCE(excluded.conversation_timestamp, whatsapp_web_chats.conversation_timestamp),
+      unread_count = COALESCE(excluded.unread_count, whatsapp_web_chats.unread_count),
+      archived = COALESCE(excluded.archived, whatsapp_web_chats.archived),
+      pinned = COALESCE(excluded.pinned, whatsapp_web_chats.pinned),
+      muted_until = COALESCE(excluded.muted_until, whatsapp_web_chats.muted_until),
+      raw_chat_json = excluded.raw_chat_json,
+      updated_at = CURRENT_TIMESTAMP
+  `, [
+    webChatId,
+    sessionId,
+    contactId || null,
+    remoteJid,
+    phone || null,
+    displayName || phone || null,
+    conversationTimestamp,
+    Number(chat?.unreadCount || chat?.unread_count || 0),
+    chat?.archived ? 1 : 0,
+    chat?.pinned ? 1 : 0,
+    mutedUntil,
+    safeJson(chat)
+  ])
+
+  return webChatId
+}
+
+function getWhatsAppProfileDisplayName(profile = {}, phone = '') {
+  return profile.name ||
+    profile.notify ||
+    profile.verifiedName ||
+    profile.pushName ||
+    profile.shortName ||
+    phone ||
+    ''
+}
+
+async function processWhatsAppWebContacts(sessionId, contacts = [], lidPhoneMap = new Map()) {
+  let saved = 0
+
+  for (const profile of contacts || []) {
+    const remoteJid = normalizeJid(profile?.id || profile?.jid || profile?.lid || profile?.phoneNumber || '')
+    if (!remoteJid || shouldIgnoreJid(remoteJid)) continue
+
+    const phoneJid = pickPhoneJid([
+      profile?.phoneNumber,
+      profile?.pn,
+      profile?.jid,
+      profile?.id,
+      profile?.lid
+    ].filter(Boolean), lidPhoneMap)
+    const phone = normalizePhoneForStorage(normalizePhoneFromJid(phoneJid)) || normalizePhoneFromJid(phoneJid)
+    const existingContact = phone ? await findExistingContact(phone) : null
+    const displayName = getWhatsAppProfileDisplayName(profile, phone)
+
+    await upsertWhatsAppWebProfile({
+      sessionId,
+      contactId: existingContact?.id || null,
+      remoteJid,
+      phone,
+      displayName,
+      rawProfile: profile
+    })
+    saved += 1
+  }
+
+  return saved
+}
+
+function shouldIgnoreChatJid(jid = '') {
+  return !jid ||
+    jid === 'status@broadcast' ||
+    jid.endsWith('@broadcast') ||
+    jid.includes('newsletter')
+}
+
+async function processWhatsAppWebChats(sessionId, chats = [], lidPhoneMap = new Map()) {
+  let saved = 0
+
+  for (const chat of chats || []) {
+    const remoteJid = normalizeJid(chat?.id || chat?.jid || chat?.remoteJid || '')
+    if (!remoteJid || shouldIgnoreChatJid(remoteJid)) continue
+
+    const phoneJid = pickPhoneJid([remoteJid], lidPhoneMap)
+    const phone = normalizePhoneForStorage(normalizePhoneFromJid(phoneJid)) || normalizePhoneFromJid(phoneJid)
+    const existingContact = phone ? await findExistingContact(phone) : null
+    const displayName = chat?.name || chat?.subject || chat?.notify || phone || remoteJid
+
+    await upsertWhatsAppWebChat({
+      sessionId,
+      contactId: existingContact?.id || null,
+      remoteJid,
+      phone,
+      displayName,
+      chat
+    })
+    saved += 1
+  }
+
+  return saved
+}
+
 async function reconcileWhatsAppContactCreatedAt(sessionId = DEFAULT_SESSION_ID) {
   const rows = await db.all(`
     SELECT
@@ -627,6 +797,165 @@ async function reconcileWhatsAppContactCreatedAt(sessionId = DEFAULT_SESSION_ID)
   return updated
 }
 
+async function getFirstWhatsAppSourceAttribution(contactId) {
+  if (!contactId) return null
+
+  return db.get(`
+    SELECT *
+    FROM (
+      SELECT
+        COALESCE(NULLIF(referral_source_id, ''), NULLIF(ad_id_thru_message, '')) as source_id,
+        referral_ctwa_clid as ctwa_clid,
+        referral_source_url as source_url,
+        referral_source_type as source_type,
+        NULL as source_app,
+        NULL as entry_point,
+        referral_headline as headline,
+        created_at as attribution_at
+      FROM whatsapp_attribution
+      WHERE contact_id = ?
+
+      UNION ALL
+
+      SELECT
+        COALESCE(NULLIF(attr.detected_source_id, ''), NULLIF(msg.detected_source_id, '')) as source_id,
+        COALESCE(NULLIF(attr.detected_ctwa_clid, ''), NULLIF(msg.detected_ctwa_clid, '')) as ctwa_clid,
+        COALESCE(NULLIF(attr.detected_source_url, ''), NULLIF(msg.detected_source_url, '')) as source_url,
+        COALESCE(NULLIF(attr.detected_source_type, ''), NULLIF(msg.detected_source_type, '')) as source_type,
+        COALESCE(NULLIF(attr.detected_source_app, ''), NULLIF(msg.detected_source_app, '')) as source_app,
+        COALESCE(NULLIF(attr.detected_entry_point, ''), NULLIF(msg.detected_entry_point, '')) as entry_point,
+        COALESCE(NULLIF(attr.detected_headline, ''), NULLIF(msg.detected_headline, '')) as headline,
+        COALESCE(msg.message_timestamp, msg.created_at, attr.created_at) as attribution_at
+      FROM whatsapp_web_messages msg
+      LEFT JOIN whatsapp_web_attribution attr ON attr.whatsapp_web_message_id = msg.id
+      WHERE msg.contact_id = ?
+    ) candidates
+    WHERE source_id IS NOT NULL
+      AND source_id != ''
+    ORDER BY
+      CASE WHEN attribution_at IS NULL THEN 1 ELSE 0 END,
+      attribution_at ASC
+    LIMIT 1
+  `, [contactId, contactId])
+}
+
+function shouldUseFirstWhatsAppSource(contact, attribution) {
+  if (!attribution?.source_id) return false
+  if (!contact?.attribution_ad_id) return true
+  if (contact.attribution_ad_id === attribution.source_id) return true
+
+  const source = String(contact.source || '').toLowerCase()
+  if (!source || source === SOURCE_NAME.toLowerCase()) return true
+
+  const attributionTime = Date.parse(String(attribution.attribution_at || ''))
+  const contactTime = Date.parse(String(contact.created_at || ''))
+
+  return Number.isFinite(attributionTime) &&
+    (!Number.isFinite(contactTime) || attributionTime <= contactTime)
+}
+
+async function reconcileContactFirstWhatsAppAttribution(contactId) {
+  const [contact, firstAttribution] = await Promise.all([
+    db.get(`
+      SELECT id, source, created_at, attribution_ad_id, attribution_ctwa_clid,
+             attribution_url, attribution_session_source, attribution_medium,
+             attribution_ad_name
+      FROM contacts
+      WHERE id = ?
+      LIMIT 1
+    `, [contactId]),
+    getFirstWhatsAppSourceAttribution(contactId)
+  ])
+
+  if (!contact || !firstAttribution?.source_id) return 0
+
+  const useFirstSource = shouldUseFirstWhatsAppSource(contact, firstAttribution)
+  const updates = []
+  const params = []
+
+  if (useFirstSource && contact.attribution_ad_id !== firstAttribution.source_id) {
+    updates.push('attribution_ad_id = ?')
+    params.push(firstAttribution.source_id)
+  }
+
+  if (useFirstSource && firstAttribution.ctwa_clid) {
+    updates.push('attribution_ctwa_clid = COALESCE(NULLIF(attribution_ctwa_clid, \'\'), ?)')
+    params.push(firstAttribution.ctwa_clid)
+  }
+
+  if (useFirstSource && firstAttribution.source_url) {
+    updates.push('attribution_url = COALESCE(NULLIF(attribution_url, \'\'), ?)')
+    params.push(firstAttribution.source_url)
+  }
+
+  if (useFirstSource && (firstAttribution.source_app || firstAttribution.entry_point)) {
+    updates.push('attribution_session_source = COALESCE(NULLIF(attribution_session_source, \'\'), ?)')
+    params.push(firstAttribution.source_app || firstAttribution.entry_point)
+  }
+
+  if (useFirstSource && firstAttribution.source_type) {
+    updates.push('attribution_medium = COALESCE(NULLIF(attribution_medium, \'\'), ?)')
+    params.push(firstAttribution.source_type)
+  }
+
+  if (useFirstSource && (firstAttribution.headline || firstAttribution.source_id)) {
+    updates.push('attribution_ad_name = COALESCE(NULLIF(attribution_ad_name, \'\'), ?)')
+    params.push(firstAttribution.headline || firstAttribution.source_id)
+  }
+
+  if (useFirstSource && shouldMoveContactCreatedAt(contact, firstAttribution.attribution_at, {
+    allowAttributionCorrection: true
+  })) {
+    updates.push('created_at = ?')
+    params.push(firstAttribution.attribution_at)
+  }
+
+  if (!updates.length) return 0
+
+  updates.push('updated_at = CURRENT_TIMESTAMP')
+  params.push(contactId)
+
+  await db.run(`UPDATE contacts SET ${updates.join(', ')} WHERE id = ?`, params)
+
+  if (useFirstSource) {
+    logger.info(`WhatsApp Business primer source_id aplicado a contacto ${contactId}: ${firstAttribution.source_id}`)
+  }
+
+  return 1
+}
+
+async function reconcileWhatsAppFirstAttribution(sessionId = DEFAULT_SESSION_ID) {
+  const rows = await db.all(`
+    SELECT DISTINCT contact_id
+    FROM (
+      SELECT contact_id
+      FROM whatsapp_web_messages
+      WHERE session_id = ?
+        AND contact_id IS NOT NULL
+        AND COALESCE(detected_source_id, '') != ''
+
+      UNION
+
+      SELECT contact_id
+      FROM whatsapp_attribution
+      WHERE contact_id IS NOT NULL
+        AND COALESCE(referral_source_id, ad_id_thru_message, '') != ''
+    ) contacts_with_whatsapp_source
+  `, [sessionId])
+
+  let updated = 0
+
+  for (const row of rows) {
+    updated += await reconcileContactFirstWhatsAppAttribution(row.contact_id)
+  }
+
+  if (updated > 0) {
+    logger.info(`WhatsApp Business primera atribucion reconciliada en ${updated} contactos`)
+  }
+
+  return updated
+}
+
 async function saveWhatsAppWebMessage({
   sessionId,
   contactId,
@@ -658,17 +987,17 @@ async function saveWhatsAppWebMessage({
       whatsapp_web_contact_id = COALESCE(excluded.whatsapp_web_contact_id, whatsapp_web_messages.whatsapp_web_contact_id),
       message_text = excluded.message_text,
       raw_payload_json = excluded.raw_payload_json,
-      context_info_json = excluded.context_info_json,
-      detected_ctwa_clid = excluded.detected_ctwa_clid,
-      detected_source_id = excluded.detected_source_id,
-      detected_source_url = excluded.detected_source_url,
-      detected_source_type = excluded.detected_source_type,
-      detected_source_app = excluded.detected_source_app,
-      detected_entry_point = excluded.detected_entry_point,
-      detected_headline = excluded.detected_headline,
-      detected_body = excluded.detected_body,
-      detected_conversion_data = excluded.detected_conversion_data,
-      detected_ctwa_payload = excluded.detected_ctwa_payload,
+      context_info_json = COALESCE(excluded.context_info_json, whatsapp_web_messages.context_info_json),
+      detected_ctwa_clid = COALESCE(excluded.detected_ctwa_clid, whatsapp_web_messages.detected_ctwa_clid),
+      detected_source_id = COALESCE(excluded.detected_source_id, whatsapp_web_messages.detected_source_id),
+      detected_source_url = COALESCE(excluded.detected_source_url, whatsapp_web_messages.detected_source_url),
+      detected_source_type = COALESCE(excluded.detected_source_type, whatsapp_web_messages.detected_source_type),
+      detected_source_app = COALESCE(excluded.detected_source_app, whatsapp_web_messages.detected_source_app),
+      detected_entry_point = COALESCE(excluded.detected_entry_point, whatsapp_web_messages.detected_entry_point),
+      detected_headline = COALESCE(excluded.detected_headline, whatsapp_web_messages.detected_headline),
+      detected_body = COALESCE(excluded.detected_body, whatsapp_web_messages.detected_body),
+      detected_conversion_data = COALESCE(excluded.detected_conversion_data, whatsapp_web_messages.detected_conversion_data),
+      detected_ctwa_payload = COALESCE(excluded.detected_ctwa_payload, whatsapp_web_messages.detected_ctwa_payload),
       updated_at = CURRENT_TIMESTAMP
   `, [
     webMessageId,
@@ -709,18 +1038,18 @@ async function saveWhatsAppWebMessage({
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
       ON CONFLICT(id) DO UPDATE SET
         contact_id = COALESCE(excluded.contact_id, whatsapp_web_attribution.contact_id),
-        detected_ctwa_clid = excluded.detected_ctwa_clid,
-        detected_source_id = excluded.detected_source_id,
-        detected_source_url = excluded.detected_source_url,
-        detected_source_type = excluded.detected_source_type,
-        detected_source_app = excluded.detected_source_app,
-        detected_entry_point = excluded.detected_entry_point,
-        detected_headline = excluded.detected_headline,
-        detected_body = excluded.detected_body,
-        detected_conversion_data = excluded.detected_conversion_data,
-        detected_ctwa_payload = excluded.detected_ctwa_payload,
-        external_ad_reply_json = excluded.external_ad_reply_json,
-        context_info_json = excluded.context_info_json,
+        detected_ctwa_clid = COALESCE(excluded.detected_ctwa_clid, whatsapp_web_attribution.detected_ctwa_clid),
+        detected_source_id = COALESCE(excluded.detected_source_id, whatsapp_web_attribution.detected_source_id),
+        detected_source_url = COALESCE(excluded.detected_source_url, whatsapp_web_attribution.detected_source_url),
+        detected_source_type = COALESCE(excluded.detected_source_type, whatsapp_web_attribution.detected_source_type),
+        detected_source_app = COALESCE(excluded.detected_source_app, whatsapp_web_attribution.detected_source_app),
+        detected_entry_point = COALESCE(excluded.detected_entry_point, whatsapp_web_attribution.detected_entry_point),
+        detected_headline = COALESCE(excluded.detected_headline, whatsapp_web_attribution.detected_headline),
+        detected_body = COALESCE(excluded.detected_body, whatsapp_web_attribution.detected_body),
+        detected_conversion_data = COALESCE(excluded.detected_conversion_data, whatsapp_web_attribution.detected_conversion_data),
+        detected_ctwa_payload = COALESCE(excluded.detected_ctwa_payload, whatsapp_web_attribution.detected_ctwa_payload),
+        external_ad_reply_json = COALESCE(excluded.external_ad_reply_json, whatsapp_web_attribution.external_ad_reply_json),
+        context_info_json = COALESCE(excluded.context_info_json, whatsapp_web_attribution.context_info_json),
         raw_payload_json = excluded.raw_payload_json
     `, [
       attributionId,
@@ -796,15 +1125,18 @@ async function saveWhatsAppWebLog({
       message_type = excluded.message_type,
       message_text = excluded.message_text,
       push_name = excluded.push_name,
-      has_attribution = excluded.has_attribution,
-      detected_ctwa_clid = excluded.detected_ctwa_clid,
-      detected_source_id = excluded.detected_source_id,
-      detected_source_url = excluded.detected_source_url,
-      detected_source_type = excluded.detected_source_type,
-      detected_source_app = excluded.detected_source_app,
-      detected_entry_point = excluded.detected_entry_point,
-      detected_headline = excluded.detected_headline,
-      detected_body = excluded.detected_body,
+      has_attribution = CASE
+        WHEN excluded.has_attribution = 1 OR whatsapp_web_logs.has_attribution = 1 THEN 1
+        ELSE 0
+      END,
+      detected_ctwa_clid = COALESCE(excluded.detected_ctwa_clid, whatsapp_web_logs.detected_ctwa_clid),
+      detected_source_id = COALESCE(excluded.detected_source_id, whatsapp_web_logs.detected_source_id),
+      detected_source_url = COALESCE(excluded.detected_source_url, whatsapp_web_logs.detected_source_url),
+      detected_source_type = COALESCE(excluded.detected_source_type, whatsapp_web_logs.detected_source_type),
+      detected_source_app = COALESCE(excluded.detected_source_app, whatsapp_web_logs.detected_source_app),
+      detected_entry_point = COALESCE(excluded.detected_entry_point, whatsapp_web_logs.detected_entry_point),
+      detected_headline = COALESCE(excluded.detected_headline, whatsapp_web_logs.detected_headline),
+      detected_body = COALESCE(excluded.detected_body, whatsapp_web_logs.detected_body),
       message_timestamp = excluded.message_timestamp,
       raw_payload_json = excluded.raw_payload_json
   `, [
@@ -909,6 +1241,10 @@ async function processWhatsAppWebMessage(sessionId, msg, { eventSource = 'notify
     attribution
   })
 
+  if (attribution.sourceId) {
+    await reconcileContactFirstWhatsAppAttribution(contact.id)
+  }
+
   await updateSession(sessionId, { last_error: null })
 
   logger.info(`WhatsApp Business mensaje ${eventSource === 'history' ? 'historico ' : ''}recibido de ${phone}${attribution.hasAttribution ? ' con atribucion detectada' : ''}`)
@@ -916,6 +1252,7 @@ async function processWhatsAppWebMessage(sessionId, msg, { eventSource = 'notify
   return {
     saved: true,
     attributionDetected: attribution.hasAttribution,
+    contactId: contact.id,
     phone
   }
 }
@@ -924,12 +1261,17 @@ async function processWhatsAppWebHistory(sessionId, messages = [], metadata = {}
   const runtime = getRuntime(sessionId)
   const historyLidPhoneMap = buildLidPhoneMap(metadata)
   mergeLidPhoneMappings(runtime.lidPhoneMap, historyLidPhoneMap)
+  const contactsSaved = await processWhatsAppWebContacts(sessionId, metadata.contacts || [], runtime.lidPhoneMap)
+  const chatsSaved = await processWhatsAppWebChats(sessionId, metadata.chats || [], runtime.lidPhoneMap)
 
   let saved = 0
   let attributed = 0
   let failed = 0
+  const affectedContactIds = new Set()
 
-  for (const msg of messages) {
+  const sortedMessages = [...messages].sort((a, b) => getMessageSortTime(a) - getMessageSortTime(b))
+
+  for (const msg of sortedMessages) {
     let result
 
     try {
@@ -946,6 +1288,9 @@ async function processWhatsAppWebHistory(sessionId, messages = [], metadata = {}
 
     if (result.saved) {
       saved += 1
+      if (result.contactId) {
+        affectedContactIds.add(result.contactId)
+      }
       if (result.attributionDetected) {
         attributed += 1
       }
@@ -953,11 +1298,15 @@ async function processWhatsAppWebHistory(sessionId, messages = [], metadata = {}
   }
 
   logger.info(
-    `WhatsApp Business historial procesado: ${saved}/${messages.length} mensajes guardados, ${attributed} con atribucion, ${failed} fallidos, ${runtime.lidPhoneMap.size} mappings LID-PN${metadata.syncType ? ` (sync ${metadata.syncType})` : ''}`
+    `WhatsApp Business historial procesado: ${saved}/${messages.length} mensajes guardados, ${contactsSaved} contactos, ${chatsSaved} chats, ${attributed} con atribucion, ${failed} fallidos, ${runtime.lidPhoneMap.size} mappings LID-PN${metadata.syncType ? ` (sync ${metadata.syncType})` : ''}`
   )
 
   if (saved > 0) {
     await reconcileWhatsAppContactCreatedAt(sessionId)
+  }
+
+  for (const contactId of affectedContactIds) {
+    await reconcileContactFirstWhatsAppAttribution(contactId)
   }
 
   return saved
@@ -1014,6 +1363,10 @@ function disconnectRuntimeSocket(sessionId, runtime) {
     runtime.socket.ev.removeAllListeners('messages.upsert')
     runtime.socket.ev.removeAllListeners('messaging-history.set')
     runtime.socket.ev.removeAllListeners('messaging-history.status')
+    runtime.socket.ev.removeAllListeners('contacts.upsert')
+    runtime.socket.ev.removeAllListeners('contacts.update')
+    runtime.socket.ev.removeAllListeners('chats.upsert')
+    runtime.socket.ev.removeAllListeners('chats.update')
     runtime.socket.ev.removeAllListeners('lid-mapping.update')
     runtime.socket.ev.removeAllListeners('creds.update')
     runtime.socket.ws?.close?.()
@@ -1138,11 +1491,43 @@ export async function startWhatsAppWebSession(sessionId = DEFAULT_SESSION_ID) {
       }
     })
 
-    socket.ev.on('messaging-history.set', async ({ messages = [], contacts = [], lidPnMappings = [], syncType, progress }) => {
+    socket.ev.on('messaging-history.set', async ({ messages = [], contacts = [], chats = [], lidPnMappings = [], syncType, progress }) => {
       try {
-        await processWhatsAppWebHistory(sessionId, messages, { contacts, lidPnMappings, syncType, progress })
+        await processWhatsAppWebHistory(sessionId, messages, { contacts, chats, lidPnMappings, syncType, progress })
       } catch (error) {
         logger.error(`Error guardando historial de atribucion WhatsApp Business: ${error.message}`)
+      }
+    })
+
+    socket.ev.on('contacts.upsert', async (contacts = []) => {
+      try {
+        await processWhatsAppWebContacts(sessionId, contacts, runtime.lidPhoneMap)
+      } catch (error) {
+        logger.error(`Error guardando contactos WhatsApp Business: ${error.message}`)
+      }
+    })
+
+    socket.ev.on('contacts.update', async (contacts = []) => {
+      try {
+        await processWhatsAppWebContacts(sessionId, contacts, runtime.lidPhoneMap)
+      } catch (error) {
+        logger.error(`Error actualizando contactos WhatsApp Business: ${error.message}`)
+      }
+    })
+
+    socket.ev.on('chats.upsert', async (chats = []) => {
+      try {
+        await processWhatsAppWebChats(sessionId, chats, runtime.lidPhoneMap)
+      } catch (error) {
+        logger.error(`Error guardando chats WhatsApp Business: ${error.message}`)
+      }
+    })
+
+    socket.ev.on('chats.update', async (chats = []) => {
+      try {
+        await processWhatsAppWebChats(sessionId, chats, runtime.lidPhoneMap)
+      } catch (error) {
+        logger.error(`Error actualizando chats WhatsApp Business: ${error.message}`)
       }
     })
 
@@ -1199,10 +1584,11 @@ export async function getWhatsAppWebStatus(sessionId = DEFAULT_SESSION_ID) {
   const session = await db.get('SELECT * FROM whatsapp_web_sessions WHERE id = ?', [sessionId])
   const stats = await db.get(`
     SELECT
+      (SELECT COUNT(*) FROM whatsapp_web_chats WHERE session_id = ?) as chats_count,
       (SELECT COUNT(*) FROM whatsapp_web_contacts WHERE session_id = ?) as contacts_count,
       (SELECT COUNT(*) FROM whatsapp_web_messages WHERE session_id = ?) as messages_count,
       (SELECT COUNT(*) FROM whatsapp_web_attribution WHERE session_id = ?) as attribution_count
-  `, [sessionId, sessionId, sessionId])
+  `, [sessionId, sessionId, sessionId, sessionId])
   const authSaved = await hasSavedAuthState(sessionId)
 
   return {
@@ -1211,6 +1597,7 @@ export async function getWhatsAppWebStatus(sessionId = DEFAULT_SESSION_ID) {
       auth_saved: authSaved
     },
     stats: {
+      chats: Number(stats?.chats_count || 0),
       contacts: Number(stats?.contacts_count || 0),
       messages: Number(stats?.messages_count || 0),
       attribution: Number(stats?.attribution_count || 0)
@@ -1268,6 +1655,9 @@ export async function initializeWhatsAppWebReceiver() {
   await ensureSessionRecord(DEFAULT_SESSION_ID)
   await reconcileWhatsAppContactCreatedAt(DEFAULT_SESSION_ID).catch(error => {
     logger.warn(`No se pudieron reconciliar fechas de contactos WhatsApp Business: ${error.message}`)
+  })
+  await reconcileWhatsAppFirstAttribution(DEFAULT_SESSION_ID).catch(error => {
+    logger.warn(`No se pudo reconciliar primera atribucion WhatsApp Business: ${error.message}`)
   })
 
   if (!await hasSavedAuthState(DEFAULT_SESSION_ID)) return
