@@ -146,7 +146,7 @@ function sanitizeConfig(row) {
     appSecret: row.app_secret ? maskSecret(row.app_secret) : '',
     appSecretConfigured: Boolean(row.app_secret),
     embeddedSignupConfigId: row.embedded_signup_config_id || '',
-    graphApiVersion: normalizeGraphVersion(row.graph_api_version),
+    graphApiVersion: normalizeGraphVersion(getMetaApiVersion()),
     webhookVerifyToken: row.webhook_verify_token ? decryptSecret(row.webhook_verify_token) || '' : '',
     webhookVerifyTokenConfigured: Boolean(row.webhook_verify_token),
     callbackUrl: row.callback_url || '',
@@ -242,7 +242,7 @@ export async function saveWhatsAppConfig(input = {}) {
     input.embedded_signup_config_id ??
     existing?.embedded_signup_config_id
   )
-  const graphApiVersion = normalizeGraphVersion(input.graphApiVersion ?? input.graph_api_version ?? existing?.graph_api_version)
+  const graphApiVersion = normalizeGraphVersion(getMetaApiVersion())
   const appSecret = encryptSecret(input.appSecret ?? input.app_secret, existing?.app_secret)
   const webhookVerifyToken = encryptSecret(input.webhookVerifyToken ?? input.webhook_verify_token, existing?.webhook_verify_token)
   const callbackUrl = nullableString(input.callbackUrl ?? input.callback_url ?? existing?.callback_url)

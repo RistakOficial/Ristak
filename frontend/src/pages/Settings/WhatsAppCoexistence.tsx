@@ -347,7 +347,13 @@ export const WhatsAppCoexistence: React.FC = () => {
 
     setIsSaving(true)
     try {
-      const saved = await whatsappService.saveConfig(form)
+      const saved = await whatsappService.saveConfig({
+        appId: form.appId,
+        appSecret: form.appSecret,
+        embeddedSignupConfigId: form.embeddedSignupConfigId,
+        webhookVerifyToken: form.webhookVerifyToken,
+        callbackUrl: form.callbackUrl
+      })
       setConfig(saved)
       setForm(prev => ({
         ...prev,
@@ -563,15 +569,6 @@ export const WhatsAppCoexistence: React.FC = () => {
               />
             </label>
 
-            <label className={styles.formGroup}>
-              <span className={styles.formLabel}>Graph API Version</span>
-              <input
-                className={styles.formInput}
-                value={form.graphApiVersion}
-                onChange={(event) => handleInputChange('graphApiVersion', event.target.value)}
-                placeholder="v23.0"
-              />
-            </label>
           </div>
         </>
       )
@@ -673,7 +670,7 @@ export const WhatsAppCoexistence: React.FC = () => {
             <span className={styles.stepEyebrow}>Paso 4</span>
             <h3 className={styles.stepTitle}>Guarda la configuración</h3>
             <p className={styles.stepText}>
-              Esto guarda App ID, App Secret, Configuration ID, versión de Graph API y webhook en la estructura dedicada de WhatsApp.
+              Esto guarda App ID, App Secret, Configuration ID y webhook en la estructura dedicada de WhatsApp.
             </p>
           </div>
 

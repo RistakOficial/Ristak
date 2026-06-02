@@ -46,7 +46,6 @@ export interface SaveWhatsAppConfigPayload {
   appId: string
   appSecret?: string
   embeddedSignupConfigId: string
-  graphApiVersion: string
   webhookVerifyToken?: string
   callbackUrl: string
 }
