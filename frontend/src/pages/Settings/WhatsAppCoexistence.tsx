@@ -371,7 +371,7 @@ export const WhatsAppCoexistence: React.FC = () => {
         silent ? 'Webhook listo' : 'WhatsApp guardado',
         silent ? 'Token guardado; ya puedes verificarlo en Meta' : 'Configuración lista para conectar'
       )
-      return true
+      return saved
     } catch (error) {
       showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo guardar')
       return false
