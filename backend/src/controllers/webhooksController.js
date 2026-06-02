@@ -12,11 +12,6 @@ import {
   triggerWhatsappAppointmentBookedEvent,
   triggerWhatsappFirstPurchaseEvent
 } from '../services/metaWhatsappEventsService.js';
-import {
-  getWebhookVerifyToken,
-  ingestWhatsAppWebhook,
-  logWhatsAppServiceError
-} from '../services/whatsappApiService.js';
 import { resolveHighLevelContactCustomFields } from '../services/highlevelCustomFieldsService.js';
 import { hasContactCustomFieldsPayload } from '../utils/contactCustomFields.js';
 
@@ -1203,42 +1198,6 @@ export const handleInvoiceWebhook = async (req, res) => {
     logger.error(`Error en handleInvoiceWebhook: ${error.message}`);
     // Siempre devolver 200 para que HighLevel no reintente
     res.status(200).json({ success: true, message: 'Webhook recibido' });
-  }
-};
-
-/**
- * Verifica el webhook oficial de WhatsApp Cloud API.
- */
-export const verifyWhatsAppApiWebhook = async (req, res) => {
-  try {
-    const mode = req.query['hub.mode'];
-    const token = req.query['hub.verify_token'];
-    const challenge = req.query['hub.challenge'];
-    const verifyToken = await getWebhookVerifyToken();
-
-    if (mode === 'subscribe' && token && verifyToken && token === verifyToken) {
-      return res.status(200).send(challenge);
-    }
-
-    return res.sendStatus(403);
-  } catch (error) {
-    logWhatsAppServiceError('verifyWhatsAppApiWebhook', error);
-    return res.sendStatus(403);
-  }
-};
-
-/**
- * Recibe webhooks oficiales de WhatsApp Cloud API.
- * Guarda todo en tablas whatsapp_* sin tocar CRM ni atribucion.
- */
-export const handleWhatsAppApiWebhook = async (req, res) => {
-  try {
-    const result = await ingestWhatsAppWebhook(req.body || {});
-    res.status(200).json({ success: true, ...result });
-  } catch (error) {
-    logWhatsAppServiceError('handleWhatsAppApiWebhook', error);
-    // Meta necesita 200 para evitar loops de reintento mientras conservamos el evento/error en DB.
-    res.status(200).json({ success: true, received: true });
   }
 };
 
