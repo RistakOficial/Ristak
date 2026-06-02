@@ -48,7 +48,6 @@ interface AdData {
   roas?: number
   cpc?: number
   cpm?: number
-  revenueVsSpend?: number
 }
 
 interface CreativePreviewData {
@@ -78,7 +77,6 @@ interface AdSetData {
   roas?: number
   cpc?: number
   cpm?: number
-  revenueVsSpend?: number
   ads?: AdData[]
   isExpanded?: boolean
 }
@@ -100,7 +98,6 @@ interface CampaignData {
   roas?: number
   cpc?: number
   cpm?: number
-  revenueVsSpend?: number
   adsets?: AdSetData[]
   adSets?: AdSetData[]  // Keep both for compatibility
   isExpanded?: boolean
@@ -183,16 +180,10 @@ const escapeSelectorValue = (value: string) => {
 const getRevenueVsSpend = (item: { revenue?: number | null; spend?: number | null }) =>
   Number(item.revenue || 0) - Number(item.spend || 0)
 
-const formatSignedCurrency = (value: number) => `${value > 0 ? '+' : ''}${formatCurrency(value)}`
-
-const renderRevenueVsSpend = (item: { revenue?: number | null; spend?: number | null; revenueVsSpend?: number }) => {
-  const value = typeof item.revenueVsSpend === 'number'
-    ? item.revenueVsSpend
-    : getRevenueVsSpend(item)
-
+const renderRevenueAmount = (value: number, item: { revenue?: number | null; spend?: number | null }) => {
   return (
-    <span className={`${styles.revenueVsSpendAmount} ${value > 0 ? styles.revenueVsSpendPositive : styles.revenueVsSpendNegative}`}>
-      {formatSignedCurrency(value)}
+    <span className={`${styles.revenueAmount} ${getRevenueVsSpend(item) > 0 ? styles.revenuePositive : styles.revenueNegative}`}>
+      {formatCurrency(value || 0)}
     </span>
   )
 }
@@ -448,12 +439,10 @@ export const Campaigns: React.FC = () => {
           ...adset,
           appointments: adset.appointments || 0,
           attendances: adset.attendances || 0,
-          revenueVsSpend: getRevenueVsSpend(adset),
           ads: (adset.ads || []).map((ad: any) => ({
             ...ad,
             appointments: ad.appointments || 0,
-            attendances: ad.attendances || 0,
-            revenueVsSpend: getRevenueVsSpend(ad)
+            attendances: ad.attendances || 0
           }))
         }))
 
@@ -468,7 +457,6 @@ export const Campaigns: React.FC = () => {
           leads: campaign.leads || 0,
           appointments: campaign.appointments || 0,
           attendances: campaign.attendances || 0,
-          revenueVsSpend: getRevenueVsSpend(campaign),
           roas: campaign.roas || (campaign.revenue && campaign.spend ? campaign.revenue / campaign.spend : 0)
         }
       })
@@ -1133,8 +1121,7 @@ export const Campaigns: React.FC = () => {
       appointments: (campaign as any).appointments || 0,
       attendances: (campaign as any).attendances || 0,
       leads: campaign.leads || 0,
-      spend: campaign.spend || 0,
-      revenueVsSpend: getRevenueVsSpend(campaign)
+      spend: campaign.spend || 0
     }))
     return sortWinners(items)
   }, [campaigns, sortWinners])
@@ -1156,8 +1143,7 @@ export const Campaigns: React.FC = () => {
           appointments: adSet.appointments || 0,
           attendances: adSet.attendances || 0,
           leads: adSet.leads || 0,
-          spend: adSet.spend || 0,
-          revenueVsSpend: getRevenueVsSpend(adSet)
+          spend: adSet.spend || 0
         })
       })
     })
@@ -1185,8 +1171,7 @@ export const Campaigns: React.FC = () => {
             appointments: ad.appointments || 0,
             attendances: ad.attendances || 0,
             leads: ad.leads || 0,
-            spend: ad.spend || 0,
-            revenueVsSpend: getRevenueVsSpend(ad)
+            spend: ad.spend || 0
           })
         })
       })
@@ -1318,7 +1303,7 @@ export const Campaigns: React.FC = () => {
       key: 'revenue',
       header: 'Ingresos',
       visible: true,
-      render: (value: number) => formatCurrency(value || 0),
+      render: (value: number, item: any) => renderRevenueAmount(value, item),
       sortable: true,
       width: '11%'
     },
@@ -1329,14 +1314,6 @@ export const Campaigns: React.FC = () => {
       render: (value: number) => formatCurrency(value || 0),
       sortable: true,
       width: '11%'
-    },
-    {
-      key: 'revenueVsSpend',
-      header: 'Ingresos vs inversión',
-      visible: true,
-      render: (_value: number, item: any) => renderRevenueVsSpend(item),
-      sortable: true,
-      width: '12%'
     },
     {
       key: 'sales',
@@ -1490,7 +1467,6 @@ export const Campaigns: React.FC = () => {
         level: 'campaign',
         hasChildren: adSetsData.length > 0,
         isExpanded: isExpanded,
-        revenueVsSpend: getRevenueVsSpend(campaign),
         showPlaceholder: isExpanded && adSetsData.length > 0
       })
 
@@ -1509,7 +1485,6 @@ export const Campaigns: React.FC = () => {
             campaignId: campaignId,
             hasChildren: adsData.length > 0,
             isExpanded: adSetExpanded,
-            revenueVsSpend: getRevenueVsSpend(adSet),
             showPlaceholder: adSetExpanded && adsData.length > 0
           })
 
@@ -1523,7 +1498,6 @@ export const Campaigns: React.FC = () => {
                 campaignId: campaignId,
                 adSetId: adSetId,
                 hasChildren: false,
-                revenueVsSpend: getRevenueVsSpend(ad),
                 showPlaceholder: false
               })
             })
@@ -1556,7 +1530,6 @@ export const Campaigns: React.FC = () => {
           platform: campaign.platform,
           hasChildren: false,
           isFlatView: true,
-          revenueVsSpend: getRevenueVsSpend(adSet),
           showPlaceholder: false
         })
       })
@@ -1592,7 +1565,6 @@ export const Campaigns: React.FC = () => {
             platform: campaign.platform,
             hasChildren: false,
             isFlatView: true,
-            revenueVsSpend: getRevenueVsSpend(ad),
             showPlaceholder: false
           })
         })
@@ -1728,7 +1700,7 @@ export const Campaigns: React.FC = () => {
       visible: true,
       render: (value, item) => item.showPlaceholder ?
         <span className={styles.placeholderText}>—</span> :
-        formatCurrency(value || 0),
+        renderRevenueAmount(value || 0, item),
       sortable: true,
       width: '10%'
     },
@@ -1741,16 +1713,6 @@ export const Campaigns: React.FC = () => {
         formatCurrency(value),
       sortable: true,
       width: '10%'
-    },
-    {
-      key: 'revenueVsSpend',
-      header: 'Ingresos vs inversión',
-      visible: true,
-      render: (_value, item) => item.showPlaceholder ?
-        <span className={styles.placeholderText}>—</span> :
-        renderRevenueVsSpend(item),
-      sortable: true,
-      width: '11%'
     },
     {
       key: 'leads',

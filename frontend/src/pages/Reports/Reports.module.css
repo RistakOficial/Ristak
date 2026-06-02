@@ -461,16 +461,16 @@
   color: var(--color-text-primary);
 }
 
-.comparisonAmount {
+.financialAmount {
   font-weight: var(--font-weight-semibold);
   white-space: nowrap;
 }
 
-.comparisonPositive {
+.financialPositive {
   color: color-mix(in srgb, var(--color-status-success, #10b981) 72%, var(--color-text-primary) 28%);
 }
 
-.comparisonNegative {
+.financialNegative {
   color: color-mix(in srgb, var(--color-status-error, #dc2626) 68%, var(--color-text-primary) 32%);
 }
 

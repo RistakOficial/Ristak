@@ -79,7 +79,6 @@ type TableRow = {
   profit: number
   revenue: number
   spend: number
-  revenueVsSpend: number
   businessExpenses: number
   fixedBusinessExpenses: number
   sales: number
@@ -186,8 +185,6 @@ const calcDelta = (current: number, previous: number) => {
   }
   return ((current - previous) / previous) * 100
 }
-
-const formatSignedCurrency = (value: number) => `${value > 0 ? '+' : ''}${formatCurrency(value)}`
 
 const formatPeriodLabel = (
   value: string,
@@ -1553,7 +1550,6 @@ export const Reports: React.FC = () => {
     metrics.map((item, index) => {
       const businessExpenses = businessExpensesByPeriod[item.date] || 0
       const fixedBusinessExpenses = fixedBusinessExpensesByPeriod[item.date] || 0
-      const revenueVsSpend = item.revenue - item.spend
       const profit = item.revenue -
         item.spend -
         (applyManualBusinessExpenses ? businessExpenses : 0) -
@@ -1583,7 +1579,6 @@ export const Reports: React.FC = () => {
         profit,
         revenue: item.revenue,
         spend: item.spend,
-        revenueVsSpend,
         businessExpenses,
         fixedBusinessExpenses,
         sales: item.sales,
@@ -1842,15 +1837,9 @@ export const Reports: React.FC = () => {
         key: 'revenue',
         header: 'Recolectado',
         sortable: true,
-        render: (value: number) => <span className={styles.primaryText}>{formatCurrency(value)}</span>
-      },
-      {
-        key: 'revenueVsSpend',
-        header: 'Recolectado vs invertido',
-        sortable: true,
-        render: (value: number) => (
-          <span className={`${styles.comparisonAmount} ${value > 0 ? styles.comparisonPositive : styles.comparisonNegative}`}>
-            {formatSignedCurrency(value)}
+        render: (value: number, row) => (
+          <span className={`${styles.financialAmount} ${value > row.spend ? styles.financialPositive : styles.financialNegative}`}>
+            {formatCurrency(value)}
           </span>
         )
       },
@@ -1858,7 +1847,11 @@ export const Reports: React.FC = () => {
         key: 'profit',
         header: 'Ganancias',
         sortable: true,
-        render: (value: number) => <span className={styles.primaryText}>{formatCurrency(value)}</span>
+        render: (value: number) => (
+          <span className={`${styles.financialAmount} ${value > 0 ? styles.financialPositive : styles.financialNegative}`}>
+            {formatCurrency(value)}
+          </span>
+        )
       },
       {
         key: 'roas',

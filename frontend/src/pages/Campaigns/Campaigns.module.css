@@ -388,16 +388,16 @@
   font-weight: var(--font-weight-semibold);
 }
 
-.revenueVsSpendAmount {
+.revenueAmount {
   font-weight: var(--font-weight-semibold);
   white-space: nowrap;
 }
 
-.revenueVsSpendPositive {
+.revenuePositive {
   color: color-mix(in srgb, var(--color-status-success, #10b981) 54%, var(--color-text-primary) 46%);
 }
 
-.revenueVsSpendNegative {
+.revenueNegative {
   color: color-mix(in srgb, var(--color-status-error, #dc2626) 52%, var(--color-text-primary) 48%);
 }
 
