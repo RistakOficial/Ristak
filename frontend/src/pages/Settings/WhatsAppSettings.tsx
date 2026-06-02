@@ -52,6 +52,7 @@ export const WhatsAppSettings: React.FC = () => {
   const [status, setStatus] = useState<WhatsAppWebStatus | null>(null)
   const [loading, setLoading] = useState(true)
   const [disconnecting, setDisconnecting] = useState(false)
+  const [connecting, setConnecting] = useState(false)
   const [manualDisconnected, setManualDisconnected] = useState(false)
   const [showLogs, setShowLogs] = useState(false)
   const [logs, setLogs] = useState<WhatsAppWebLogs | null>(null)
@@ -70,22 +71,31 @@ export const WhatsAppSettings: React.FC = () => {
     'WhatsApp Business'
   const profileImage = session?.profile_picture_url
   const showQr = !isConnected && Boolean(session?.qr_image) && !manualDisconnected
-  const generatingQr = !isConnected && !showQr && !manualDisconnected
+  const isWaitingForQr = connecting && !isConnected && !showQr && !manualDisconnected
 
   const loadStatus = async () => {
     const nextStatus = await whatsappWebService.getStatus()
     setStatus(nextStatus)
+    if (nextStatus.session?.status === 'connected' || nextStatus.session?.status === 'qr' || nextStatus.session?.status === 'disconnected') {
+      setConnecting(false)
+    }
     return nextStatus
   }
 
   const startConnection = async () => {
-    if (requestInFlight.current || manualDisconnected) return
+    if (requestInFlight.current) return
     requestInFlight.current = true
+    setManualDisconnected(false)
+    setConnecting(true)
 
     try {
-      const nextStatus = await whatsappWebService.connect()
+      const nextStatus = await whatsappWebService.connect({ reset: true })
       setStatus(nextStatus)
+      if (nextStatus.session?.status === 'connected' || nextStatus.session?.status === 'qr' || nextStatus.session?.status === 'disconnected') {
+        setConnecting(false)
+      }
     } catch (error) {
+      setConnecting(false)
       showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo generar el QR')
     } finally {
       requestInFlight.current = false
@@ -98,13 +108,8 @@ export const WhatsAppSettings: React.FC = () => {
 
     const bootstrap = async () => {
       try {
-        const nextStatus = await loadStatus()
+        await loadStatus()
         if (cancelled) return
-
-        const currentStatus = nextStatus.session?.status
-        if (!['connected', 'qr', 'connecting', 'reconnecting'].includes(currentStatus || '')) {
-          void startConnection()
-        }
       } catch (error) {
         if (!cancelled) {
           showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo leer WhatsApp Business')
@@ -122,21 +127,18 @@ export const WhatsAppSettings: React.FC = () => {
   }, [])
 
   useEffect(() => {
-    if (isConnected || manualDisconnected) return
+    if (isConnected || manualDisconnected || (!connecting && !showQr)) return
 
     const interval = window.setInterval(async () => {
       try {
-        const nextStatus = await loadStatus()
-        if (nextStatus.session?.status === 'disconnected') {
-          void startConnection()
-        }
+        await loadStatus()
       } catch {
         // El siguiente ciclo reintenta.
       }
     }, 2500)
 
     return () => window.clearInterval(interval)
-  }, [isConnected, manualDisconnected])
+  }, [connecting, isConnected, manualDisconnected, showQr])
 
   const confirmDisconnect = () => {
     showConfirm(
@@ -144,6 +146,7 @@ export const WhatsAppSettings: React.FC = () => {
       'Se cerrara la conexion actual. Para volver a conectar, abre esta pagina otra vez y se generara un QR nuevo.',
       async () => {
         setDisconnecting(true)
+        setConnecting(false)
         setManualDisconnected(true)
         try {
           const nextStatus = await whatsappWebService.disconnect()
@@ -256,11 +259,31 @@ export const WhatsAppSettings: React.FC = () => {
           <div className={styles.disconnectedState}>
             <SiWhatsapp size={52} />
             <h3>Desconectado</h3>
+            <Button size="lg" onClick={startConnection} loading={connecting}>
+              <SiWhatsapp size={18} />
+              Conectar WhatsApp
+            </Button>
           </div>
-        ) : (
+        ) : isWaitingForQr ? (
           <div className={styles.generatingState}>
             <RefreshCw size={34} className={styles.spin} />
-            <span>{generatingQr ? 'Generando QR' : 'Preparando conexion'}</span>
+            <span>Generando QR</span>
+            {session?.last_error && <p className={styles.errorText}>{session.last_error}</p>}
+            <Button variant="outline" size="md" onClick={startConnection}>
+              <RefreshCw size={16} />
+              Generar QR nuevo
+            </Button>
+          </div>
+        ) : (
+          <div className={styles.idleState}>
+            <SiWhatsapp size={58} />
+            <h3>Conectar WhatsApp Business</h3>
+            <p>Genera un QR nuevo y escanealo desde WhatsApp para conectar la cuenta.</p>
+            {session?.last_error && <p className={styles.errorText}>{session.last_error}</p>}
+            <Button size="lg" onClick={startConnection} loading={connecting}>
+              <SiWhatsapp size={18} />
+              Conectar WhatsApp
+            </Button>
           </div>
         )}
       </div>

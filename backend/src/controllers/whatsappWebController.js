@@ -22,7 +22,7 @@ export async function getWhatsAppWebConnectionStatus(req, res) {
 
 export async function connectWhatsAppWeb(req, res) {
   try {
-    const data = await startWhatsAppWebSession()
+    const data = await startWhatsAppWebSession('default', { resetAuth: Boolean(req.body?.reset) })
     res.json({ success: true, data })
   } catch (error) {
     logger.error(`Error iniciando WhatsApp Business: ${error.message}`)

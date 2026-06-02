@@ -1382,169 +1382,195 @@ function disconnectRuntimeSocket(sessionId, runtime) {
   }
 }
 
-export async function startWhatsAppWebSession(sessionId = DEFAULT_SESSION_ID) {
+export async function startWhatsAppWebSession(sessionId = DEFAULT_SESSION_ID, { resetAuth = false } = {}) {
   await ensureSessionRecord(sessionId)
   const runtime = getRuntime(sessionId)
 
-  if (runtime.starting) return getWhatsAppWebStatus(sessionId)
-  if (runtime.socket) return getWhatsAppWebStatus(sessionId)
+  if (resetAuth) {
+    runtime.manualDisconnect = true
+    disconnectRuntimeSocket(sessionId, runtime)
+    runtime.lidPhoneMap.clear()
+    await clearAuthState(sessionId)
+    await updateSession(sessionId, {
+      status: 'disconnected',
+      phone: null,
+      jid: null,
+      push_name: null,
+      profile_picture_url: null,
+      business_profile_json: null,
+      account_info_json: null,
+      qr_code: null,
+      qr_image: null,
+      last_error: null,
+      disconnected_at: nowIso()
+    })
+  } else {
+    if (runtime.starting) return getWhatsAppWebStatus(sessionId)
+    if (runtime.socket) return getWhatsAppWebStatus(sessionId)
+  }
 
   runtime.manualDisconnect = false
   runtime.starting = (async () => {
     try {
-    const authAlreadySaved = await hasSavedAuthState(sessionId)
-    if (!authAlreadySaved) {
-      runtime.lidPhoneMap.clear()
-    }
+      const authAlreadySaved = await hasSavedAuthState(sessionId)
+      if (!authAlreadySaved) {
+        runtime.lidPhoneMap.clear()
+      }
 
-    const { state, saveCreds } = await useDbAuthState(sessionId)
+      const { state, saveCreds } = await useDbAuthState(sessionId)
 
-    await updateSession(sessionId, {
-      status: 'connecting',
-      qr_code: null,
-      qr_image: null,
-      last_error: null
-    })
+      await updateSession(sessionId, {
+        status: 'connecting',
+        qr_code: null,
+        qr_image: null,
+        last_error: null
+      })
 
-    const socket = makeWASocket({
-      auth: {
-        creds: state.creds,
-        keys: makeCacheableSignalKeyStore(state.keys, baileysLogger)
-      },
-      browser: FULL_HISTORY_BROWSER,
-      logger: baileysLogger,
-      printQRInTerminal: false,
-      markOnlineOnConnect: false,
-      syncFullHistory: true,
-      shouldSyncHistoryMessage: () => true
-    })
+      const socket = makeWASocket({
+        auth: {
+          creds: state.creds,
+          keys: makeCacheableSignalKeyStore(state.keys, baileysLogger)
+        },
+        browser: FULL_HISTORY_BROWSER,
+        logger: baileysLogger,
+        printQRInTerminal: false,
+        markOnlineOnConnect: false,
+        qrTimeout: 60000,
+        syncFullHistory: true,
+        shouldSyncHistoryMessage: () => true
+      })
 
-    runtime.socket = socket
+      runtime.socket = socket
 
-    socket.ev.on('creds.update', saveCreds)
+      socket.ev.on('creds.update', saveCreds)
 
-    socket.ev.on('connection.update', async (update) => {
-      try {
-        const { connection, qr, lastDisconnect } = update
+      socket.ev.on('connection.update', async (update) => {
+        try {
+          const { connection, qr, lastDisconnect } = update
 
-        if (qr) {
-          const qrImage = await createQrImage(qr)
-          await updateSession(sessionId, {
-            status: 'qr',
-            qr_code: qr,
-            qr_image: qrImage,
-            last_qr_at: nowIso(),
-            last_error: null
-          })
+          if (qr) {
+            const qrImage = await createQrImage(qr)
+            await updateSession(sessionId, {
+              status: 'qr',
+              qr_code: qr,
+              qr_image: qrImage,
+              last_qr_at: nowIso(),
+              last_error: null
+            })
+          }
+
+          if (connection === 'open') {
+            const accountInfo = await getConnectedAccountInfo(socket)
+            await updateSession(sessionId, {
+              status: 'connected',
+              qr_code: null,
+              qr_image: null,
+              phone: accountInfo.phone,
+              jid: accountInfo.jid || null,
+              push_name: accountInfo.pushName,
+              profile_picture_url: accountInfo.profilePictureUrl,
+              business_profile_json: accountInfo.businessProfile ? safeJson(accountInfo.businessProfile) : null,
+              account_info_json: accountInfo.accountInfo ? safeJson(accountInfo.accountInfo) : null,
+              connected_at: nowIso(),
+              last_error: null
+            })
+            logger.success('WhatsApp Business conectado')
+          }
+
+          if (connection === 'close') {
+            const statusCode = lastDisconnect?.error?.output?.statusCode
+            const authFailed = statusCode === DisconnectReason.loggedOut || statusCode === DisconnectReason.badSession
+            const shouldReconnect = !runtime.manualDisconnect && !authFailed
+            disconnectRuntimeSocket(sessionId, runtime)
+
+            if (authFailed) {
+              await clearAuthState(sessionId)
+            }
+
+            await updateSession(sessionId, {
+              status: shouldReconnect ? 'reconnecting' : 'disconnected',
+              disconnected_at: nowIso(),
+              qr_code: null,
+              qr_image: null,
+              last_error: lastDisconnect?.error?.message || null
+            })
+
+            if (shouldReconnect) {
+              setTimeout(() => {
+                startWhatsAppWebSession(sessionId).catch(error => {
+                  logger.error(`No se pudo reconectar WhatsApp Business: ${error.message}`)
+                })
+              }, 2500)
+            }
+          }
+        } catch (error) {
+          logger.error(`Error procesando connection.update de WhatsApp Business: ${error.message}`)
         }
+      })
 
-        if (connection === 'open') {
-          const accountInfo = await getConnectedAccountInfo(socket)
-          await updateSession(sessionId, {
-            status: 'connected',
-            qr_code: null,
-            qr_image: null,
-            phone: accountInfo.phone,
-            jid: accountInfo.jid || null,
-            push_name: accountInfo.pushName,
-            profile_picture_url: accountInfo.profilePictureUrl,
-            business_profile_json: accountInfo.businessProfile ? safeJson(accountInfo.businessProfile) : null,
-            account_info_json: accountInfo.accountInfo ? safeJson(accountInfo.accountInfo) : null,
-            connected_at: nowIso(),
-            last_error: null
-          })
-          logger.success('WhatsApp Business conectado')
-        }
-
-        if (connection === 'close') {
-          const statusCode = lastDisconnect?.error?.output?.statusCode
-          const shouldReconnect = !runtime.manualDisconnect && statusCode !== DisconnectReason.loggedOut
-          disconnectRuntimeSocket(sessionId, runtime)
-
-          await updateSession(sessionId, {
-            status: shouldReconnect ? 'reconnecting' : 'disconnected',
-            disconnected_at: nowIso(),
-            qr_code: null,
-            qr_image: null,
-            last_error: lastDisconnect?.error?.message || null
-          })
-
-          if (shouldReconnect) {
-            setTimeout(() => {
-              startWhatsAppWebSession(sessionId).catch(error => {
-                logger.error(`No se pudo reconectar WhatsApp Business: ${error.message}`)
-              })
-            }, 2500)
+      socket.ev.on('messages.upsert', async ({ messages = [], type = 'notify' }) => {
+        for (const msg of messages) {
+          try {
+            await processWhatsAppWebMessage(sessionId, msg, {
+              eventSource: type,
+              onlyAttributed: false,
+              lidPhoneMap: runtime.lidPhoneMap
+            })
+          } catch (error) {
+            logger.error(`Error guardando mensaje WhatsApp Business: ${error.message}`)
           }
         }
-      } catch (error) {
-        logger.error(`Error procesando connection.update de WhatsApp Business: ${error.message}`)
-      }
-    })
+      })
 
-    socket.ev.on('messages.upsert', async ({ messages = [], type = 'notify' }) => {
-      for (const msg of messages) {
+      socket.ev.on('messaging-history.set', async ({ messages = [], contacts = [], chats = [], lidPnMappings = [], syncType, progress }) => {
         try {
-          await processWhatsAppWebMessage(sessionId, msg, {
-            eventSource: type,
-            onlyAttributed: false,
-            lidPhoneMap: runtime.lidPhoneMap
-          })
+          await processWhatsAppWebHistory(sessionId, messages, { contacts, chats, lidPnMappings, syncType, progress })
         } catch (error) {
-          logger.error(`Error guardando mensaje WhatsApp Business: ${error.message}`)
+          logger.error(`Error guardando historial de atribucion WhatsApp Business: ${error.message}`)
         }
-      }
-    })
+      })
 
-    socket.ev.on('messaging-history.set', async ({ messages = [], contacts = [], chats = [], lidPnMappings = [], syncType, progress }) => {
-      try {
-        await processWhatsAppWebHistory(sessionId, messages, { contacts, chats, lidPnMappings, syncType, progress })
-      } catch (error) {
-        logger.error(`Error guardando historial de atribucion WhatsApp Business: ${error.message}`)
-      }
-    })
+      socket.ev.on('contacts.upsert', async (contacts = []) => {
+        try {
+          await processWhatsAppWebContacts(sessionId, contacts, runtime.lidPhoneMap)
+        } catch (error) {
+          logger.error(`Error guardando contactos WhatsApp Business: ${error.message}`)
+        }
+      })
 
-    socket.ev.on('contacts.upsert', async (contacts = []) => {
-      try {
-        await processWhatsAppWebContacts(sessionId, contacts, runtime.lidPhoneMap)
-      } catch (error) {
-        logger.error(`Error guardando contactos WhatsApp Business: ${error.message}`)
-      }
-    })
+      socket.ev.on('contacts.update', async (contacts = []) => {
+        try {
+          await processWhatsAppWebContacts(sessionId, contacts, runtime.lidPhoneMap)
+        } catch (error) {
+          logger.error(`Error actualizando contactos WhatsApp Business: ${error.message}`)
+        }
+      })
 
-    socket.ev.on('contacts.update', async (contacts = []) => {
-      try {
-        await processWhatsAppWebContacts(sessionId, contacts, runtime.lidPhoneMap)
-      } catch (error) {
-        logger.error(`Error actualizando contactos WhatsApp Business: ${error.message}`)
-      }
-    })
+      socket.ev.on('chats.upsert', async (chats = []) => {
+        try {
+          await processWhatsAppWebChats(sessionId, chats, runtime.lidPhoneMap)
+        } catch (error) {
+          logger.error(`Error guardando chats WhatsApp Business: ${error.message}`)
+        }
+      })
 
-    socket.ev.on('chats.upsert', async (chats = []) => {
-      try {
-        await processWhatsAppWebChats(sessionId, chats, runtime.lidPhoneMap)
-      } catch (error) {
-        logger.error(`Error guardando chats WhatsApp Business: ${error.message}`)
-      }
-    })
+      socket.ev.on('chats.update', async (chats = []) => {
+        try {
+          await processWhatsAppWebChats(sessionId, chats, runtime.lidPhoneMap)
+        } catch (error) {
+          logger.error(`Error actualizando chats WhatsApp Business: ${error.message}`)
+        }
+      })
 
-    socket.ev.on('chats.update', async (chats = []) => {
-      try {
-        await processWhatsAppWebChats(sessionId, chats, runtime.lidPhoneMap)
-      } catch (error) {
-        logger.error(`Error actualizando chats WhatsApp Business: ${error.message}`)
-      }
-    })
+      socket.ev.on('lid-mapping.update', ({ lid, pn }) => {
+        rememberLidPhoneMapping(runtime.lidPhoneMap, lid, pn)
+      })
 
-    socket.ev.on('lid-mapping.update', ({ lid, pn }) => {
-      rememberLidPhoneMapping(runtime.lidPhoneMap, lid, pn)
-    })
+      socket.ev.on('messaging-history.status', ({ syncType, status }) => {
+        logger.info(`WhatsApp Business historial ${status}: ${syncType}`)
+      })
 
-    socket.ev.on('messaging-history.status', ({ syncType, status }) => {
-      logger.info(`WhatsApp Business historial ${status}: ${syncType}`)
-    })
-
-    return getWhatsAppWebStatus(sessionId)
+      return getWhatsAppWebStatus(sessionId)
     } catch (error) {
       await updateSession(sessionId, {
         status: 'disconnected',

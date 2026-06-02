@@ -20,6 +20,7 @@ export interface WhatsAppWebSession {
 }
 
 export interface WhatsAppWebStats {
+  chats?: number
   contacts: number
   messages: number
   attribution: number
@@ -73,7 +74,7 @@ export interface WhatsAppWebLogs {
 
 export const whatsappWebService = {
   getStatus: () => apiClient.get<WhatsAppWebStatus>('/whatsapp-web/status'),
-  connect: () => apiClient.post<WhatsAppWebStatus>('/whatsapp-web/connect'),
+  connect: (options?: { reset?: boolean }) => apiClient.post<WhatsAppWebStatus>('/whatsapp-web/connect', options || {}),
   disconnect: () => apiClient.post<WhatsAppWebStatus>('/whatsapp-web/disconnect'),
   getLogs: () => apiClient.get<WhatsAppWebLogs>('/whatsapp-web/logs'),
   getMessages: (limit = 12) => apiClient.get<WhatsAppWebMessage[]>('/whatsapp-web/messages', {

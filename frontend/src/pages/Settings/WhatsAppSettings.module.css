@@ -59,6 +59,7 @@
 
 .qrState,
 .generatingState,
+.idleState,
 .disconnectedState,
 .connectedState {
   display: flex;
@@ -97,6 +98,37 @@
   color: var(--color-text-secondary);
   font-size: 18px;
   font-weight: 750;
+}
+
+.idleState {
+  gap: 14px;
+  color: #0bbf5f;
+}
+
+.idleState h3 {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: 28px;
+  line-height: 1.1;
+  letter-spacing: 0;
+}
+
+.idleState p {
+  max-width: 420px;
+  margin: 0 0 6px;
+  color: var(--color-text-secondary);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.errorText {
+  max-width: 520px;
+  margin: 0;
+  color: var(--color-status-error);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 .spin {
