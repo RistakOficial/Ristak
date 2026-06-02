@@ -102,20 +102,6 @@ function isLocalHostname(hostname = '') {
   return ['localhost', '127.0.0.1', '::1'].includes(hostname) || hostname.endsWith('.localhost')
 }
 
-function generateWebhookVerifyToken() {
-  const bytes = new Uint8Array(24)
-
-  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
-    crypto.getRandomValues(bytes)
-  } else {
-    for (let index = 0; index < bytes.length; index += 1) {
-      bytes[index] = Math.floor(Math.random() * 256)
-    }
-  }
-
-  return `wa_${Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('')}`
-}
-
 function getStatusLabel(status: string) {
   switch (status) {
     case 'connected':
@@ -224,7 +210,8 @@ export const WhatsAppCoexistence: React.FC = () => {
   const hasConfigId = Boolean(form.embeddedSignupConfigId)
   const hasWebhookToken = Boolean(form.webhookVerifyToken || config.webhookVerifyTokenConfigured)
   const isConnected = config.connectionStatus === 'connected'
-  const isReadyToSave = Boolean(hasAppCredentials && hasConfigId && hasWebhookToken)
+  const hasSetupCredentials = Boolean(hasAppCredentials && hasConfigId)
+  const isReadyToSave = Boolean(hasSetupCredentials && hasWebhookToken)
 
   const setupSteps = useMemo(() => ([
     {
@@ -275,18 +262,6 @@ export const WhatsAppCoexistence: React.FC = () => {
   useEffect(() => {
     loadConfig()
   }, [])
-
-  useEffect(() => {
-    if (activeStep !== 2 || isLoading || config.webhookVerifyTokenConfigured || form.webhookVerifyToken) return
-
-    setForm(prev => {
-      if (prev.webhookVerifyToken) return prev
-      return {
-        ...prev,
-        webhookVerifyToken: generateWebhookVerifyToken()
-      }
-    })
-  }, [activeStep, config.webhookVerifyTokenConfigured, form.webhookVerifyToken, isLoading])
 
   useEffect(() => {
     const handleEmbeddedSignupMessage = (event: MessageEvent) => {
@@ -356,8 +331,9 @@ export const WhatsAppCoexistence: React.FC = () => {
     setForm(prev => ({ ...prev, [field]: value }))
   }
 
-  const handleSave = async (options: { silent?: boolean } = {}) => {
+  const handleSave = async (options: { silent?: boolean; generateWebhookToken?: boolean } = {}) => {
     const silent = options.silent === true
+    const generateWebhookToken = options.generateWebhookToken === true
 
     if (!form.appId || !form.embeddedSignupConfigId) {
       showToast('error', 'Datos incompletos', 'App ID y Configuration ID son requeridos')
@@ -369,7 +345,7 @@ export const WhatsAppCoexistence: React.FC = () => {
       return false
     }
 
-    if (!form.webhookVerifyToken && !config.webhookVerifyTokenConfigured) {
+    if (!form.webhookVerifyToken && !config.webhookVerifyTokenConfigured && !generateWebhookToken) {
       showToast('error', 'Verify token requerido', 'Define el token que usarás en el webhook de Meta')
       return false
     }
@@ -380,14 +356,14 @@ export const WhatsAppCoexistence: React.FC = () => {
         appId: form.appId,
         appSecret: form.appSecret,
         embeddedSignupConfigId: form.embeddedSignupConfigId,
-        webhookVerifyToken: form.webhookVerifyToken,
+        webhookVerifyToken: form.webhookVerifyToken || undefined,
         callbackUrl: form.callbackUrl
       })
       setConfig(saved)
       setForm(prev => ({
         ...prev,
         appSecret: saved.appSecret || prev.appSecret,
-        webhookVerifyToken: prev.webhookVerifyToken || saved.webhookVerifyToken || '',
+        webhookVerifyToken: saved.webhookVerifyToken || prev.webhookVerifyToken || '',
         graphApiVersion: saved.graphApiVersion || prev.graphApiVersion
       }))
       showToast(
@@ -405,19 +381,27 @@ export const WhatsAppCoexistence: React.FC = () => {
   }
 
   useEffect(() => {
-    if (activeStep !== 2 || isLoading || isSaving || config.configured || !isReadyToSave || !form.webhookVerifyToken) return
+    if (
+      activeStep !== 2 ||
+      isLoading ||
+      isSaving ||
+      config.configured ||
+      config.webhookVerifyTokenConfigured ||
+      form.webhookVerifyToken ||
+      !hasSetupCredentials
+    ) return
 
     const signature = [
       form.appId,
+      form.appSecret || (config.appSecretConfigured ? 'stored-secret' : ''),
       form.embeddedSignupConfigId,
-      form.webhookVerifyToken,
       form.callbackUrl
     ].join('|')
 
     if (autoSavedWebhookSignatureRef.current === signature) return
     autoSavedWebhookSignatureRef.current = signature
 
-    handleSave({ silent: true }).then(saved => {
+    handleSave({ silent: true, generateWebhookToken: true }).then(saved => {
       if (!saved) {
         autoSavedWebhookSignatureRef.current = ''
       }
@@ -425,12 +409,15 @@ export const WhatsAppCoexistence: React.FC = () => {
   }, [
     activeStep,
     config.configured,
+    config.appSecretConfigured,
+    config.webhookVerifyTokenConfigured,
     form.appId,
+    form.appSecret,
     form.callbackUrl,
     form.embeddedSignupConfigId,
     form.webhookVerifyToken,
+    hasSetupCredentials,
     isLoading,
-    isReadyToSave,
     isSaving
   ])
 
@@ -595,6 +582,13 @@ export const WhatsAppCoexistence: React.FC = () => {
   }
 
   const handleCopyWebhookToken = async () => {
+    if (!form.webhookVerifyToken && hasSetupCredentials) {
+      const saved = await handleSave({ silent: true, generateWebhookToken: true })
+      if (!saved) return
+      await handleCopy(saved.webhookVerifyToken, 'Verify token copiado')
+      return
+    }
+
     if (!config.configured && isReadyToSave) {
       const saved = await handleSave({ silent: true })
       if (!saved) return
@@ -723,7 +717,7 @@ export const WhatsAppCoexistence: React.FC = () => {
             <span className={styles.stepEyebrow}>Paso 3</span>
             <h3 className={styles.stepTitle}>Configura el webhook de WhatsApp</h3>
             <p className={styles.stepText}>
-              Ristak creó este token automáticamente y lo guarda al llegar a este paso. Copia la callback URL y el token, luego pégalos en Meta Developers → WhatsApp → Configuration para verificar el webhook.
+              Ristak crea este token automáticamente en el backend y lo guarda al llegar a este paso. Copia la callback URL y el token, luego pégalos en Meta Developers → WhatsApp → Configuration para verificar el webhook.
             </p>
           </div>
 

@@ -86,6 +86,10 @@ function sha256(value) {
   return crypto.createHash('sha256').update(String(value || '')).digest('hex')
 }
 
+function generateWebhookVerifyToken() {
+  return `wa_${crypto.randomBytes(24).toString('hex')}`
+}
+
 function isConnectedPhone(phone = {}) {
   return phone.is_on_biz_app === true || phone.is_on_biz_app === 1 || phone.platform_type === 'CLOUD_API'
 }
@@ -244,13 +248,29 @@ export async function saveWhatsAppConfig(input = {}) {
   )
   const graphApiVersion = normalizeGraphVersion(getMetaApiVersion())
   const appSecret = encryptSecret(input.appSecret ?? input.app_secret, existing?.app_secret)
-  const webhookVerifyToken = encryptSecret(input.webhookVerifyToken ?? input.webhook_verify_token, existing?.webhook_verify_token)
+  const incomingWebhookVerifyToken = input.webhookVerifyToken ?? input.webhook_verify_token
+  const shouldGenerateWebhookVerifyToken = Boolean(
+    !nullableString(incomingWebhookVerifyToken) &&
+    !existing?.webhook_verify_token &&
+    appId &&
+    appSecret &&
+    embeddedSignupConfigId
+  )
+  const webhookVerifyToken = encryptSecret(
+    shouldGenerateWebhookVerifyToken ? generateWebhookVerifyToken() : incomingWebhookVerifyToken,
+    existing?.webhook_verify_token
+  )
   const callbackUrl = nullableString(input.callbackUrl ?? input.callback_url ?? existing?.callback_url)
+  const existingMetadata = safeJsonParse(existing?.metadata, {}) || {}
   const metadata = {
-    ...(safeJsonParse(existing?.metadata, {}) || {}),
+    ...existingMetadata,
     docs: {
       embeddedSignup: 'https://developers.facebook.com/documentation/business-messaging/whatsapp/embedded-signup/implementation',
       coexistence: 'https://developers.facebook.com/documentation/business-messaging/whatsapp/embedded-signup/onboarding-business-app-users'
+    },
+    webhook: {
+      ...(existingMetadata.webhook || {}),
+      ...(shouldGenerateWebhookVerifyToken ? { verifyTokenGeneratedAt: new Date().toISOString() } : {})
     }
   }
 
