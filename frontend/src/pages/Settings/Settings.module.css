@@ -430,7 +430,7 @@ body.dark .select:focus {
 
 .settingsLayout {
   display: grid;
-  grid-template-columns: 244px minmax(0, 1040px);
+  grid-template-columns: 244px minmax(0, 1fr);
   align-items: start;
   gap: 28px;
   width: 100%;
