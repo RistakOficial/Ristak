@@ -11,7 +11,6 @@ import {
   Link2,
   MessageSquareText,
   RefreshCw,
-  ShieldCheck,
 } from 'lucide-react'
 import { SiWhatsapp } from 'react-icons/si'
 import {
@@ -175,16 +174,11 @@ export const WhatsApp_API: React.FC = () => {
       done: hasWebhookToken
     },
     {
-      title: 'Guardar',
-      description: 'Persistir configuración',
-      done: config.configured
-    },
-    {
       title: 'Validar',
       description: 'Conectar con Meta',
       done: isConnected
     }
-  ]), [config.configured, hasAppCredentials, hasPhoneApiData, hasWebhookToken, isConnected])
+  ]), [hasAppCredentials, hasPhoneApiData, hasWebhookToken, isConnected])
 
   const completedSteps = setupSteps.filter(step => step.done).length
   const activeStepDone = setupSteps[activeStep]?.done === true
@@ -341,16 +335,9 @@ export const WhatsApp_API: React.FC = () => {
     isSaving
   ])
 
-  const handleSaveAndContinue = async () => {
-    const saved = await handleSave({ requireComplete: true })
-    if (saved) setActiveStep(4)
-  }
-
   const handleConnect = async () => {
-    if (!config.configured) {
-      const saved = await handleSave({ requireComplete: true })
-      if (!saved) return
-    }
+    const saved = await handleSave({ silent: true, requireComplete: true })
+    if (!saved) return
 
     setIsConnecting(true)
     try {
@@ -394,8 +381,8 @@ export const WhatsApp_API: React.FC = () => {
       return 'Llega al paso de webhook y copia el verify token generado por Ristak'
     }
 
-    if (stepIndex === 3 && !config.configured) {
-      return 'Guarda la configuración antes de validarla con Meta'
+    if (stepIndex === 3 && !isReadyToSave) {
+      return 'Completa Meta App, Cloud API y webhook antes de validar'
     }
 
     return ''
@@ -404,11 +391,6 @@ export const WhatsApp_API: React.FC = () => {
   const handleNextStep = () => {
     if (activeStep < 3 && !activeStepDone) {
       showToast('warning', 'Falta un dato', getStepBlockMessage())
-      return
-    }
-
-    if (activeStep === 3 && !config.configured) {
-      showToast('warning', 'Guarda primero', getStepBlockMessage())
       return
     }
 
@@ -729,9 +711,9 @@ export const WhatsApp_API: React.FC = () => {
         <>
           <div className={styles.stepIntro}>
             <span className={styles.stepEyebrow}>Paso 4</span>
-            <h3 className={styles.stepTitle}>Guarda la configuración</h3>
+            <h3 className={styles.stepTitle}>Valida y conecta WhatsApp</h3>
             <p className={styles.stepText}>
-              Ristak guardará los datos en tablas exclusivas de WhatsApp y mantendrá tokens/secretos cifrados. Todavía no se mezcla con contactos, atribución ni CRM.
+              Ristak guardará la configuración, revisará los datos con Meta y conectará el número en una sola acción.
             </p>
           </div>
 
@@ -750,57 +732,72 @@ export const WhatsApp_API: React.FC = () => {
             </div>
             <div>
               <span>Estado</span>
-              <strong>{config.configured ? 'Guardado' : 'Sin guardar'}</strong>
+              <strong>{isConnected ? 'Conectado' : 'Listo para validar'}</strong>
             </div>
           </div>
 
-          <Button type="button" variant="primary" onClick={handleSaveAndContinue} disabled={!isReadyToSave || isSaving || isLoading}>
-            <KeyRound size={16} className={isSaving ? styles.spinning : ''} />
-            {isSaving ? 'Guardando...' : config.configured ? 'Actualizar y continuar' : 'Guardar y continuar'}
+          <div className={styles.setupCallout}>
+            <strong>Qué pasa al validar</strong>
+            <p>
+              Se guardan los datos en tablas exclusivas de WhatsApp, se suscribe el WABA a webhooks y se lee la información del número desde Graph API. Si Meta responde bien, el wizard desaparece y verás el número conectado.
+            </p>
+          </div>
+
+          <Button type="button" variant="primary" onClick={handleConnect} disabled={!isReadyToSave || isSaving || isConnecting || isLoading}>
+            <Link2 size={16} className={(isSaving || isConnecting) ? styles.spinning : ''} />
+            {(isSaving || isConnecting) ? 'Validando...' : 'Validar conexión'}
           </Button>
         </>
       )
     }
 
-    return (
-      <>
-        <div className={styles.stepIntro}>
-          <span className={styles.stepEyebrow}>Paso 5</span>
-          <h3 className={styles.stepTitle}>Valida WhatsApp con Meta</h3>
-          <p className={styles.stepText}>
-            Ristak usará el token para leer el Phone Number ID, consultar el WABA y suscribir la app a webhooks. Si Meta responde bien, el número queda conectado.
-          </p>
-        </div>
-
-        <div className={styles.setupCallout}>
-          <strong>Qué hace este botón</strong>
-          <p>
-            No abre otra pantalla de Meta. Hace llamadas directas a Graph API con tus datos: suscribe el WABA a la app, lee la información del número y marca la conexión como activa.
-          </p>
-        </div>
-
-        <Button type="button" variant="primary" onClick={handleConnect} disabled={!config.configured || isConnecting}>
-          <Link2 size={16} className={isConnecting ? styles.spinning : ''} />
-          {isConnecting ? 'Validando...' : 'Validar conexión'}
-        </Button>
-      </>
-    )
+    return null
   }
+
+  const connectedPhoneNumber = config.displayPhoneNumber || config.phoneNumberId || 'WhatsApp conectado'
+  const connectedProfileName = config.verifiedName || 'Nombre pendiente de Meta'
+  const connectedPlatform = config.platformType || (config.isOnBizApp ? 'WhatsApp Business App' : 'Cloud API')
+  const connectedInfoItems = [
+    { label: 'Nombre', value: connectedProfileName },
+    { label: 'Phone Number ID', value: config.phoneNumberId || '-' },
+    { label: 'WABA ID', value: config.wabaId || '-' },
+    { label: 'Calidad', value: config.qualityRating || 'Pendiente' },
+    { label: 'Plataforma', value: connectedPlatform },
+    { label: 'Estado', value: getStatusLabel(config.connectionStatus) }
+  ]
 
   return (
     <div className={styles.container}>
       <Card className={styles.mainCard}>
         <div className={styles.pageHeader}>
           <div className={styles.headerContent}>
-            <div className={styles.headerLeft}>
+            <div className={[styles.headerLeft, isConnected ? styles.headerLeftConnected : ''].filter(Boolean).join(' ')}>
               <span className={styles.logoMark} aria-hidden="true">
                 <SiWhatsapp size={26} />
               </span>
               <div>
-                <h2 className={styles.pageTitle}>WhatsApp API</h2>
-                <p className={styles.pageSubtitle}>
-                  Conecta WhatsApp Cloud API directa con tu propia Meta App, sin mezclar datos con CRM.
-                </p>
+                {isConnected ? (
+                  <>
+                    <span className={styles.connectedEyebrow}>Número conectado</span>
+                    <h2 className={styles.connectedPhoneTitle}>{connectedPhoneNumber}</h2>
+                    <p className={styles.pageSubtitle}>{connectedProfileName}</p>
+                    <div className={styles.connectedHeaderMeta}>
+                      {connectedInfoItems.map((item) => (
+                        <div key={item.label}>
+                          <span>{item.label}</span>
+                          <strong>{item.value}</strong>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <h2 className={styles.pageTitle}>WhatsApp API</h2>
+                    <p className={styles.pageSubtitle}>
+                      Conecta WhatsApp Cloud API directa con tu propia Meta App, sin mezclar datos con CRM.
+                    </p>
+                  </>
+                )}
               </div>
             </div>
             {isConnected && (
@@ -809,126 +806,9 @@ export const WhatsApp_API: React.FC = () => {
                   <CheckCircle size={16} />
                   <span>{getStatusLabel(config.connectionStatus)}</span>
                 </div>
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div className={[styles.workspace, !isConnected ? styles.workspaceSetupOnly : ''].filter(Boolean).join(' ')}>
-          <div className={styles.primaryColumn}>
-            <section className={`${styles.section} ${styles.wizardSection}`}>
-              <div className={styles.sectionHeader}>
-                <div>
-                  <h3 className={styles.sectionTitle}>Wizard de conexión</h3>
-                  <p className={styles.sectionDescription}>
-                    Completa cada paso y valida el número con Meta Cloud API.
-                  </p>
-                </div>
-                <span className={styles.stepCount}>{completedSteps}/5 listo</span>
-              </div>
-
-              <div className={styles.wizardShell}>
-                <div className={styles.progressList}>
-                  {setupSteps.map((step, index) => (
-                    <button
-                      key={step.title}
-                      type="button"
-                      className={[
-                        styles.progressItem,
-                        step.done ? styles.progressDone : '',
-                        index === activeStep ? styles.progressActive : ''
-                      ].filter(Boolean).join(' ')}
-                      onClick={() => handleSelectStep(index)}
-                    >
-                      <span className={styles.progressDot}>{step.done ? <CheckCircle size={13} /> : index + 1}</span>
-                      <span className={styles.progressCopy}>
-                        <span className={styles.progressLabel}>{step.title}</span>
-                        <span className={styles.progressDescription}>{step.description}</span>
-                      </span>
-                    </button>
-                  ))}
-                </div>
-
-                <div className={styles.stepPanel}>
-                  {isLoading ? (
-                    <div className={styles.loadingState}>Cargando WhatsApp API...</div>
-                  ) : (
-                    <>
-                      {renderStepContent()}
-
-                      <div className={styles.stepActions}>
-                        <Button type="button" variant="secondary" onClick={handlePreviousStep} disabled={activeStep === 0}>
-                          <ArrowLeft size={16} />
-                          Atrás
-                        </Button>
-                        {activeStep < setupSteps.length - 1 && (
-                          <Button type="button" variant="secondary" onClick={handleNextStep}>
-                            Siguiente
-                            <ArrowRight size={16} />
-                          </Button>
-                        )}
-                      </div>
-                    </>
-                  )}
-                </div>
-              </div>
-            </section>
-
-            {isConnected && (
-              <section className={styles.section}>
-                <div className={styles.sectionHeader}>
-                  <div>
-                    <h3 className={styles.sectionTitle}>Estructura WhatsApp separada</h3>
-                    <p className={styles.sectionDescription}>
-                      Almacenamiento dedicado para chats, mensajes, contactos, números y webhooks.
-                    </p>
-                  </div>
-                </div>
-
-                <div className={styles.storageGrid}>
-                  <div className={styles.storageItem}>
-                    <span className={styles.storageValue}>{storage.phoneNumbers}</span>
-                    <span className={styles.storageLabel}>Números</span>
-                  </div>
-                  <div className={styles.storageItem}>
-                    <span className={styles.storageValue}>{storage.contacts}</span>
-                    <span className={styles.storageLabel}>Contactos WA</span>
-                  </div>
-                  <div className={styles.storageItem}>
-                    <span className={styles.storageValue}>{storage.chats}</span>
-                    <span className={styles.storageLabel}>Chats</span>
-                  </div>
-                  <div className={styles.storageItem}>
-                    <span className={styles.storageValue}>{storage.messages}</span>
-                    <span className={styles.storageLabel}>Mensajes</span>
-                  </div>
-                  <div className={styles.storageItem}>
-                    <span className={styles.storageValue}>{storage.webhookEvents}</span>
-                    <span className={styles.storageLabel}>Webhooks</span>
-                  </div>
-                </div>
-              </section>
-            )}
-          </div>
-
-          {isConnected && (
-            <aside className={styles.statusRail}>
-              <div className={styles.railBlock}>
-                <div className={styles.railHeader}>
-                  <ShieldCheck size={18} />
-                  <span>Número</span>
-                </div>
-                <strong className={styles.railPrimaryValue}>{config.displayPhoneNumber || 'Pendiente'}</strong>
-                <span className={styles.railSecondaryValue}>{config.verifiedName || getStatusLabel(config.connectionStatus)}</span>
-                <div className={styles.railMeta}>
-                  <span>Phone ID</span>
-                  <strong>{config.phoneNumberId || '-'}</strong>
-                  <span>WABA</span>
-                  <strong>{config.wabaId || '-'}</strong>
-                </div>
                 <button
                   type="button"
-                  className={styles.railButton}
+                  className={styles.connectedRefreshButton}
                   onClick={handleRefreshStatus}
                   disabled={!config.businessTokenConfigured || isRefreshing}
                 >
@@ -936,16 +816,132 @@ export const WhatsApp_API: React.FC = () => {
                   {isRefreshing ? 'Actualizando' : 'Actualizar'}
                 </button>
               </div>
+            )}
+          </div>
+        </div>
 
-              <div className={styles.railBlock}>
-                <div className={styles.railHeader}>
-                  <MessageSquareText size={18} />
-                  <span>Plantillas</span>
+        <div className={[
+          styles.workspace,
+          !isConnected ? styles.workspaceSetupOnly : styles.workspaceConnected
+        ].filter(Boolean).join(' ')}>
+          <div className={styles.primaryColumn}>
+            {!isConnected && (
+              <section className={`${styles.section} ${styles.wizardSection}`}>
+                <div className={styles.sectionHeader}>
+                  <div>
+                    <h3 className={styles.sectionTitle}>Wizard de conexión</h3>
+                    <p className={styles.sectionDescription}>
+                      Completa cada paso y valida el número con Meta Cloud API.
+                    </p>
+                  </div>
+                  <span className={styles.stepCount}>{completedSteps}/4 listo</span>
                 </div>
-                <span className={styles.railSecondaryValue}>Próximamente</span>
-              </div>
-            </aside>
-          )}
+
+                <div className={styles.wizardShell}>
+                  <div className={styles.progressList}>
+                    {setupSteps.map((step, index) => (
+                      <button
+                        key={step.title}
+                        type="button"
+                        className={[
+                          styles.progressItem,
+                          step.done ? styles.progressDone : '',
+                          index === activeStep ? styles.progressActive : ''
+                        ].filter(Boolean).join(' ')}
+                        onClick={() => handleSelectStep(index)}
+                      >
+                        <span className={styles.progressDot}>{step.done ? <CheckCircle size={13} /> : index + 1}</span>
+                        <span className={styles.progressCopy}>
+                          <span className={styles.progressLabel}>{step.title}</span>
+                          <span className={styles.progressDescription}>{step.description}</span>
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className={styles.stepPanel}>
+                    {isLoading ? (
+                      <div className={styles.loadingState}>Cargando WhatsApp API...</div>
+                    ) : (
+                      <>
+                        {renderStepContent()}
+
+                        <div className={styles.stepActions}>
+                          <Button type="button" variant="secondary" onClick={handlePreviousStep} disabled={activeStep === 0}>
+                            <ArrowLeft size={16} />
+                            Atrás
+                          </Button>
+                          {activeStep < setupSteps.length - 1 && (
+                            <Button type="button" variant="secondary" onClick={handleNextStep}>
+                              Siguiente
+                              <ArrowRight size={16} />
+                            </Button>
+                          )}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </section>
+            )}
+
+            {isConnected && (
+              <>
+                <section className={styles.section}>
+                  <div className={styles.sectionHeader}>
+                    <div>
+                      <h3 className={styles.sectionTitle}>Estructura WhatsApp separada</h3>
+                      <p className={styles.sectionDescription}>
+                        Almacenamiento dedicado para chats, mensajes, contactos, números y webhooks.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className={styles.storageGrid}>
+                    <div className={styles.storageItem}>
+                      <span className={styles.storageValue}>{storage.phoneNumbers}</span>
+                      <span className={styles.storageLabel}>Números</span>
+                    </div>
+                    <div className={styles.storageItem}>
+                      <span className={styles.storageValue}>{storage.contacts}</span>
+                      <span className={styles.storageLabel}>Contactos WA</span>
+                    </div>
+                    <div className={styles.storageItem}>
+                      <span className={styles.storageValue}>{storage.chats}</span>
+                      <span className={styles.storageLabel}>Chats</span>
+                    </div>
+                    <div className={styles.storageItem}>
+                      <span className={styles.storageValue}>{storage.messages}</span>
+                      <span className={styles.storageLabel}>Mensajes</span>
+                    </div>
+                    <div className={styles.storageItem}>
+                      <span className={styles.storageValue}>{storage.webhookEvents}</span>
+                      <span className={styles.storageLabel}>Webhooks</span>
+                    </div>
+                  </div>
+                </section>
+
+                <section className={`${styles.section} ${styles.templatesSection}`}>
+                  <div className={styles.sectionHeader}>
+                    <div>
+                      <h3 className={styles.sectionTitle}>Plantillas de WhatsApp</h3>
+                      <p className={styles.sectionDescription}>
+                        Espacio separado para sincronizar, crear y revisar plantillas cuando activemos ese módulo.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className={styles.templatePlaceholder}>
+                    <MessageSquareText size={20} />
+                    <div>
+                      <strong>Plantillas pendientes</strong>
+                      <span>La conexión ya queda lista; aquí irá la administración completa de templates.</span>
+                    </div>
+                  </div>
+                </section>
+              </>
+            )}
+          </div>
         </div>
       </Card>
     </div>
