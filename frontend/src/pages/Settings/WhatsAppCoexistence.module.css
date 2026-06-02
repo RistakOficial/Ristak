@@ -387,6 +387,12 @@
   color: var(--color-text-tertiary);
 }
 
+.formInput[readonly] {
+  color: var(--color-text-primary);
+  background: rgba(148, 163, 184, 0.055);
+  cursor: default;
+}
+
 .notThisBox {
   padding: 12px;
   border: 1px solid rgba(245, 158, 11, 0.22);

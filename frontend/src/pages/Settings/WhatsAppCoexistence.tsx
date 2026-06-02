@@ -85,6 +85,20 @@ function buildDefaultCallbackUrl() {
   return `${window.location.origin}/webhook/whatsapp`
 }
 
+function generateWebhookVerifyToken() {
+  const bytes = new Uint8Array(24)
+
+  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+    crypto.getRandomValues(bytes)
+  } else {
+    for (let index = 0; index < bytes.length; index += 1) {
+      bytes[index] = Math.floor(Math.random() * 256)
+    }
+  }
+
+  return `wa_${Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('')}`
+}
+
 function getStatusLabel(status: string) {
   switch (status) {
     case 'connected':
@@ -236,6 +250,18 @@ export const WhatsAppCoexistence: React.FC = () => {
   }, [])
 
   useEffect(() => {
+    if (activeStep !== 2 || isLoading || config.webhookVerifyTokenConfigured || form.webhookVerifyToken) return
+
+    setForm(prev => {
+      if (prev.webhookVerifyToken) return prev
+      return {
+        ...prev,
+        webhookVerifyToken: generateWebhookVerifyToken()
+      }
+    })
+  }, [activeStep, config.webhookVerifyTokenConfigured, form.webhookVerifyToken, isLoading])
+
+  useEffect(() => {
     const handleEmbeddedSignupMessage = (event: MessageEvent) => {
       if (!event.origin.endsWith('facebook.com')) return
 
@@ -326,7 +352,7 @@ export const WhatsAppCoexistence: React.FC = () => {
       setForm(prev => ({
         ...prev,
         appSecret: saved.appSecret || prev.appSecret,
-        webhookVerifyToken: saved.webhookVerifyToken || prev.webhookVerifyToken,
+        webhookVerifyToken: prev.webhookVerifyToken || saved.webhookVerifyToken || '',
         graphApiVersion: saved.graphApiVersion || prev.graphApiVersion
       }))
       showToast('success', 'WhatsApp guardado', 'Configuración lista para conectar')
@@ -593,7 +619,7 @@ export const WhatsAppCoexistence: React.FC = () => {
             <span className={styles.stepEyebrow}>Paso 3</span>
             <h3 className={styles.stepTitle}>Configura el webhook de WhatsApp</h3>
             <p className={styles.stepText}>
-              En WhatsApp → Configuration pega esta callback URL y usa el mismo verify token que pongas aquí.
+              Ristak creó este token automáticamente. Copia la URL y el token; después de guardar en el siguiente paso, pégalos en Meta Developers → WhatsApp → Configuration para verificar el webhook.
             </p>
           </div>
 
@@ -613,17 +639,28 @@ export const WhatsAppCoexistence: React.FC = () => {
           </label>
 
           <label className={`${styles.formGroup} ${styles.formGroupWide}`}>
-            <span className={styles.formLabel}>Webhook verify token</span>
-            <input
-              className={styles.formInput}
-              value={form.webhookVerifyToken}
-              onChange={(event) => handleInputChange('webhookVerifyToken', event.target.value)}
-              placeholder={config.webhookVerifyTokenConfigured ? 'Ya guardado; pega uno nuevo sólo si quieres rotarlo' : 'Token privado para verificar el webhook'}
-            />
+            <span className={styles.formLabel}>Verify token generado por Ristak</span>
+            <div className={styles.inputActionRow}>
+              <input
+                className={styles.formInput}
+                value={form.webhookVerifyToken}
+                readOnly
+                placeholder={config.webhookVerifyTokenConfigured ? 'Token ya guardado' : 'Generando token...'}
+              />
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => handleCopy(form.webhookVerifyToken, 'Verify token copiado')}
+                disabled={!form.webhookVerifyToken}
+              >
+                <Copy size={16} />
+                Copiar
+              </Button>
+            </div>
           </label>
 
           <p className={styles.stepHint}>
-            Después de verificar el webhook, Meta permitirá seleccionar los eventos de WhatsApp que enviaremos a esta estructura separada.
+            No lo sacas de Meta y no se escribe a mano. Este token es único para esta configuración: Meta lo compara con Ristak y, si coincide exacto, deja activar los eventos de WhatsApp.
           </p>
         </>
       )

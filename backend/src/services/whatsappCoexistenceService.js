@@ -147,7 +147,7 @@ function sanitizeConfig(row) {
     appSecretConfigured: Boolean(row.app_secret),
     embeddedSignupConfigId: row.embedded_signup_config_id || '',
     graphApiVersion: normalizeGraphVersion(row.graph_api_version),
-    webhookVerifyToken: row.webhook_verify_token ? maskSecret(row.webhook_verify_token) : '',
+    webhookVerifyToken: row.webhook_verify_token ? decryptSecret(row.webhook_verify_token) || '' : '',
     webhookVerifyTokenConfigured: Boolean(row.webhook_verify_token),
     callbackUrl: row.callback_url || '',
     businessToken: row.business_token ? maskSecret(row.business_token) : '',
