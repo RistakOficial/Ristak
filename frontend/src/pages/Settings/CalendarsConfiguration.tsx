@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { Card, Button, Modal, CustomSelect, Loading } from '@/components/common'
-import { Calendar, Loader2, CheckCircle, XCircle, Info, Settings } from 'lucide-react'
+import { Calendar, Loader2, CheckCircle, XCircle, Info, Settings, Plus } from 'lucide-react'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useAppConfig } from '@/hooks'
 import { useAuth } from '@/contexts/AuthContext'
@@ -15,10 +15,30 @@ export const CalendarsConfiguration: React.FC = () => {
   // Estados de configuración (usa sistema híbrido)
   const [defaultCalendarId, setDefaultCalendarId] = useAppConfig<string>('default_calendar_id', '')
   const [attributionCalendarIds, setAttributionCalendarIds] = useAppConfig<string[]>('attribution_calendar_ids', [])
+  const [calendarSourcePreference, setCalendarSourcePreference] = useAppConfig<'combined' | 'ristak' | 'ghl'>('calendar_source_preference', 'combined')
 
   // Estados locales
   const [calendars, setCalendars] = useState<CalendarType[]>([])
   const [loadingCalendars, setLoadingCalendars] = useState(true)
+  const [showCreateModal, setShowCreateModal] = useState(false)
+  const [creatingCalendar, setCreatingCalendar] = useState(false)
+  const [newCalendar, setNewCalendar] = useState<Partial<CalendarType>>({
+    name: '',
+    calendarType: 'event',
+    eventTitle: 'Cita',
+    eventColor: '#3b82f6',
+    isActive: true,
+    slotDuration: 60,
+    slotDurationUnit: 'mins',
+    slotInterval: 60,
+    slotIntervalUnit: 'mins',
+    appoinmentPerSlot: 1,
+    appoinmentPerDay: 0,
+    allowBookingAfter: 0,
+    allowBookingAfterUnit: 'hours',
+    allowBookingFor: 30,
+    allowBookingForUnit: 'days'
+  })
 
   // Estados del modal de configuración
   const [showConfigModal, setShowConfigModal] = useState(false)
@@ -27,16 +47,10 @@ export const CalendarsConfiguration: React.FC = () => {
 
   // Cargar calendarios al montar
   useEffect(() => {
-    if (locationId && accessToken) {
-      loadCalendars()
-    }
-  }, [locationId, accessToken])
+    loadCalendars()
+  }, [locationId, accessToken, calendarSourcePreference])
 
   const loadCalendars = async () => {
-    if (!locationId || !accessToken) {
-      return
-    }
-
     try {
       setLoadingCalendars(true)
       const data = await calendarsService.getCalendars(locationId, accessToken)
@@ -98,7 +112,7 @@ export const CalendarsConfiguration: React.FC = () => {
   }
 
   const handleSaveCalendarConfig = async () => {
-    if (!selectedCalendar || !accessToken) return
+    if (!selectedCalendar) return
 
     setSavingConfig(true)
     try {
@@ -133,9 +147,9 @@ export const CalendarsConfiguration: React.FC = () => {
         updateData.availabilityType = selectedCalendar.availabilityType
       }
 
-      await calendarsService.updateCalendar(selectedCalendar.id, updateData, accessToken)
+      await calendarsService.updateCalendar(selectedCalendar.id, updateData, accessToken || undefined)
 
-      showToast('success', 'Configuración de calendario actualizada', `Los cambios se guardaron en ${selectedCalendar.name}`)
+      showToast('success', 'Configuración de calendario actualizada', accessToken ? `Los cambios se guardaron en ${selectedCalendar.name}` : `Los cambios quedaron guardados en Ristak y pendientes de sync`)
       handleCloseConfigModal()
       loadCalendars() // Recargar calendarios para ver cambios
     } catch (error: any) {
@@ -144,6 +158,139 @@ export const CalendarsConfiguration: React.FC = () => {
       setSavingConfig(false)
     }
   }
+
+  const handleCreateCalendar = async () => {
+    if (!newCalendar.name?.trim()) {
+      showToast('error', 'Nombre requerido', 'Escribe un nombre para el calendario')
+      return
+    }
+
+    setCreatingCalendar(true)
+    try {
+      const created = await calendarsService.createCalendar({
+        ...newCalendar,
+        name: newCalendar.name.trim(),
+        eventTitle: newCalendar.eventTitle || newCalendar.name.trim()
+      }, accessToken || undefined)
+
+      showToast(
+        'success',
+        'Calendario creado',
+        accessToken
+          ? 'Se guardó en Ristak y se intentó sincronizar con HighLevel'
+          : 'Se guardó en Ristak y se sincronizará cuando conectes HighLevel'
+      )
+
+      if (created?.id && !defaultCalendarId) {
+        await setDefaultCalendarId(created.id)
+      }
+
+      setShowCreateModal(false)
+      setNewCalendar({
+        name: '',
+        calendarType: 'event',
+        eventTitle: 'Cita',
+        eventColor: '#3b82f6',
+        isActive: true,
+        slotDuration: 60,
+        slotDurationUnit: 'mins',
+        slotInterval: 60,
+        slotIntervalUnit: 'mins',
+        appoinmentPerSlot: 1,
+        appoinmentPerDay: 0,
+        allowBookingAfter: 0,
+        allowBookingAfterUnit: 'hours',
+        allowBookingFor: 30,
+        allowBookingForUnit: 'days'
+      })
+      await loadCalendars()
+    } catch (error: any) {
+      showToast('error', 'Error al crear calendario', error.message || 'Intenta nuevamente')
+    } finally {
+      setCreatingCalendar(false)
+    }
+  }
+
+  const renderCreateCalendarModal = () => showCreateModal ? createPortal(
+    <Modal
+      isOpen={showCreateModal}
+      onClose={() => setShowCreateModal(false)}
+      title="Crear calendario"
+      size="md"
+    >
+      <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '18px' }}>
+        <div className={styles.formField}>
+          <label className={styles.label}>Nombre</label>
+          <input
+            className={styles.input}
+            value={newCalendar.name || ''}
+            onChange={(e) => setNewCalendar({ ...newCalendar, name: e.target.value, eventTitle: newCalendar.eventTitle || e.target.value })}
+            placeholder="Ej. Consultas de ventas"
+          />
+        </div>
+
+        <div className={styles.formField}>
+          <label className={styles.label}>Título de evento</label>
+          <input
+            className={styles.input}
+            value={newCalendar.eventTitle || ''}
+            onChange={(e) => setNewCalendar({ ...newCalendar, eventTitle: e.target.value })}
+            placeholder="Ej. Cita"
+          />
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+          <div className={styles.formField}>
+            <label className={styles.label}>Duración</label>
+            <input
+              type="number"
+              className={styles.input}
+              value={newCalendar.slotDuration || 60}
+              min="1"
+              onChange={(e) => setNewCalendar({ ...newCalendar, slotDuration: parseInt(e.target.value, 10) || 60 })}
+            />
+          </div>
+          <div className={styles.formField}>
+            <label className={styles.label}>Intervalo</label>
+            <input
+              type="number"
+              className={styles.input}
+              value={newCalendar.slotInterval || 60}
+              min="1"
+              onChange={(e) => setNewCalendar({ ...newCalendar, slotInterval: parseInt(e.target.value, 10) || 60 })}
+            />
+          </div>
+        </div>
+
+        <div className={styles.formField}>
+          <label className={styles.label}>Color</label>
+          <input
+            type="color"
+            value={newCalendar.eventColor || '#3b82f6'}
+            onChange={(e) => setNewCalendar({ ...newCalendar, eventColor: e.target.value })}
+            style={{ width: 56, height: 38, padding: 0, border: '1px solid var(--color-border)', borderRadius: 6, background: 'transparent' }}
+          />
+        </div>
+
+        <div style={{ display: 'flex', gap: '12px', paddingTop: '8px', borderTop: '1px solid var(--color-border)' }}>
+          <Button onClick={handleCreateCalendar} disabled={creatingCalendar}>
+            {creatingCalendar ? (
+              <>
+                <Loader2 size={18} className={styles.spinIcon} />
+                Creando...
+              </>
+            ) : (
+              'Crear calendario'
+            )}
+          </Button>
+          <Button variant="ghost" onClick={() => setShowCreateModal(false)} disabled={creatingCalendar}>
+            Cancelar
+          </Button>
+        </div>
+      </div>
+    </Modal>,
+    document.body
+  ) : null
 
   if (loadingCalendars) {
     return <Loading message="Cargando calendarios..." page="calendar-settings" />
@@ -177,10 +324,15 @@ export const CalendarsConfiguration: React.FC = () => {
 
           <div className={styles.section}>
             <p style={{ color: 'var(--color-text-secondary)' }}>
-              Asegúrate de tener al menos un calendario configurado en HighLevel.
+              Crea un calendario en Ristak para empezar a agendar. Si después conectas HighLevel, se sincronizará.
             </p>
+            <Button onClick={() => setShowCreateModal(true)} style={{ marginTop: '16px' }}>
+              <Plus size={16} />
+              Crear calendario
+            </Button>
           </div>
         </Card>
+        {renderCreateCalendarModal()}
       </div>
     )
   }
@@ -205,6 +357,14 @@ export const CalendarsConfiguration: React.FC = () => {
               </div>
             </div>
             <div className={styles.headerRight}>
+              <Button
+                variant="outline"
+                size="small"
+                onClick={() => setShowCreateModal(true)}
+              >
+                <Plus size={16} />
+                Crear calendario
+              </Button>
               {defaultCalendarId || attributionCalendarIds.length > 0 ? (
                 <div className={styles.statusConnected}>
                   <CheckCircle size={16} />
@@ -216,6 +376,37 @@ export const CalendarsConfiguration: React.FC = () => {
                   <span>Sin configurar</span>
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+
+        {/* Origen de calendarios */}
+        <div className={styles.section}>
+          <h3 className={styles.sectionTitle}>Origen de Calendarios</h3>
+          <p className={styles.sectionDescription} style={{ marginBottom: '16px' }}>
+            Define qué calendarios se muestran para operar en Ristak. La sincronización sigue combinando datos cuando HighLevel está conectado.
+          </p>
+
+          <div className={styles.sectionContent}>
+            <div className={styles.formField}>
+              <label className={styles.label}>Calendarios a usar</label>
+              <CustomSelect
+                value={calendarSourcePreference}
+                onChange={async (value) => {
+                  const nextValue = value as 'combined' | 'ristak' | 'ghl'
+                  await setCalendarSourcePreference(nextValue)
+                  showToast('success', 'Preferencia guardada', nextValue === 'combined' ? 'Ristak y HighLevel se mostrarán juntos' : nextValue === 'ristak' ? 'Solo se mostrarán calendarios de Ristak' : 'Solo se mostrarán calendarios de HighLevel')
+                  await loadCalendars()
+                }}
+                options={[
+                  { value: 'combined', label: 'Ristak + HighLevel' },
+                  { value: 'ristak', label: 'Solo Ristak' },
+                  { value: 'ghl', label: 'Solo HighLevel' }
+                ]}
+              />
+              <p className={styles.hint}>
+                Aunque filtres la vista, las citas y calendarios pendientes de Ristak se suben a HighLevel cuando la integración está activa.
+              </p>
             </div>
           </div>
         </div>
@@ -378,6 +569,8 @@ export const CalendarsConfiguration: React.FC = () => {
           </div>
         </div>
       </Card>
+
+      {renderCreateCalendarModal()}
 
       {/* Modal de Configuración del Calendario */}
       {showConfigModal && selectedCalendar && createPortal(

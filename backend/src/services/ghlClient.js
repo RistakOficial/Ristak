@@ -294,6 +294,49 @@ class GHLClient {
     }
   }
 
+  async upsertContact({ name, firstName, lastName, email, phone, source }) {
+    const fullName = cleanString(name || `${firstName || ''} ${lastName || ''}`.trim())
+    let resolvedFirstName = cleanString(firstName)
+    let resolvedLastName = cleanString(lastName)
+
+    if (!resolvedFirstName && fullName) {
+      const nameParts = fullName.split(/\s+/)
+      resolvedFirstName = nameParts[0] || ''
+      resolvedLastName = resolvedLastName || nameParts.slice(1).join(' ')
+    }
+
+    const body = {
+      locationId: this.locationId,
+      ...(resolvedFirstName && { firstName: resolvedFirstName }),
+      ...(resolvedLastName && { lastName: resolvedLastName }),
+      ...(fullName && { name: fullName }),
+      ...(email && { email }),
+      ...(phone && { phone: normalizePhoneForStorage(phone) || phone }),
+      ...(source && { source })
+    }
+
+    if (!body.email && !body.phone) {
+      throw new Error('Email o teléfono requerido para upsert de contacto en HighLevel')
+    }
+
+    logger.info(`Upsert de contacto en HighLevel: ${fullName || email || phone}`)
+
+    const response = await this.request('/contacts/upsert', {
+      method: 'POST',
+      body
+    })
+
+    const contactData = response.contact || response
+    const responseName = `${contactData.firstName || ''} ${contactData.lastName || ''}`.trim()
+
+    return {
+      contact: {
+        ...contactData,
+        name: responseName || contactData.name || contactData.email || contactData.phone || fullName || 'Sin nombre'
+      }
+    }
+  }
+
   async updateContact(contactId, data) {
     // Separar nombre completo en firstName y lastName si se proporciona
     const body = { ...data }

@@ -1,4 +1,5 @@
 import * as calendarService from '../services/highlevelCalendarService.js';
+import * as localCalendarService from '../services/localCalendarService.js';
 import { logger } from '../utils/logger.js';
 import { getGHLClient } from '../services/ghlClient.js';
 import { db } from '../config/database.js';
@@ -8,22 +9,61 @@ import { triggerWhatsappAppointmentBookedEvent } from '../services/metaWhatsappE
  * Controlador para endpoints de Calendarios de HighLevel
  */
 
+async function getSavedHighLevelConfig() {
+  return db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1');
+}
+
+async function getHighLevelContext(req, source = {}) {
+  const saved = await getSavedHighLevelConfig().catch(() => null);
+  return {
+    locationId: source.locationId || req.query?.locationId || req.body?.locationId || saved?.location_id || null,
+    accessToken: source.accessToken || req.query?.accessToken || req.body?.accessToken || saved?.api_token || null
+  };
+}
+
+async function getCalendarSourcePreference() {
+  try {
+    const row = await db.get('SELECT config_value FROM app_config WHERE config_key = ?', ['calendar_source_preference']);
+    return row?.config_value || 'combined';
+  } catch {
+    return 'combined';
+  }
+}
+
+async function mirrorHighLevelCalendars(locationId, accessToken) {
+  if (!locationId || !accessToken) return;
+
+  const calendars = await calendarService.getCalendars(locationId, accessToken);
+  for (const calendar of calendars) {
+    await localCalendarService.upsertLocalCalendar(calendar, {
+      source: 'ghl',
+      ghlCalendarId: calendar.id,
+      locationId,
+      syncStatus: 'synced',
+      rawJson: calendar
+    });
+  }
+}
+
 /**
  * GET /api/calendars
  * Obtener todos los calendarios de la ubicación
  */
 export async function getCalendars(req, res) {
   try {
-    const { locationId, accessToken } = req.query;
+    const { locationId, accessToken } = await getHighLevelContext(req);
 
-    if (!locationId || !accessToken) {
-      return res.status(400).json({
-        success: false,
-        error: 'Se requiere locationId y accessToken'
-      });
+    if (locationId && accessToken) {
+      try {
+        await mirrorHighLevelCalendars(locationId, accessToken);
+      } catch (error) {
+        logger.warn(`[Calendars Controller] No se pudieron espejear calendarios GHL: ${error.message}`);
+      }
     }
 
-    const calendars = await calendarService.getCalendars(locationId, accessToken);
+    await localCalendarService.ensureDefaultLocalCalendar();
+    const sourcePreference = await getCalendarSourcePreference();
+    const calendars = await localCalendarService.listLocalCalendars({ sourcePreference });
 
     res.json({
       success: true,
@@ -39,22 +79,73 @@ export async function getCalendars(req, res) {
 }
 
 /**
+ * POST /api/calendars
+ * Crear calendario local de Ristak. Si HighLevel está conectado, intenta crearlo allá también.
+ */
+export async function createCalendar(req, res) {
+  try {
+    const { accessToken: tokenFromBody, locationId: locationFromBody, ...calendarData } = req.body;
+    const { locationId, accessToken } = await getHighLevelContext(req, {
+      locationId: locationFromBody,
+      accessToken: tokenFromBody
+    });
+
+    let calendar = await localCalendarService.createLocalCalendar({
+      ...calendarData,
+      locationId: locationId || calendarData.locationId
+    });
+
+    if (locationId && accessToken) {
+      const syncResult = await localCalendarService.syncLocalCalendarsToHighLevel(locationId, accessToken);
+      calendar = await localCalendarService.getLocalCalendar(calendar.id);
+      logger.info(`[Calendars Controller] Sync calendario creado: ${JSON.stringify(syncResult)}`);
+    }
+
+    res.status(201).json({
+      success: true,
+      data: calendar
+    });
+  } catch (error) {
+    logger.error(`[Calendars Controller] Error en createCalendar: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+}
+
+/**
  * GET /api/calendars/:id
  * Obtener un calendario específico
  */
 export async function getCalendar(req, res) {
   try {
     const { id } = req.params;
-    const { accessToken } = req.query;
+    const { accessToken, locationId } = await getHighLevelContext(req);
 
-    if (!accessToken) {
-      return res.status(400).json({
-        success: false,
-        error: 'Se requiere accessToken'
+    const localCalendar = await localCalendarService.getLocalCalendar(id);
+    if (localCalendar) {
+      return res.json({
+        success: true,
+        data: localCalendar
       });
     }
 
-    const calendar = await calendarService.getCalendar(id, accessToken);
+    if (!accessToken) {
+      return res.status(404).json({
+        success: false,
+        error: 'Calendario no encontrado'
+      });
+    }
+
+    const remote = await calendarService.getCalendar(id, accessToken);
+    const calendar = await localCalendarService.upsertLocalCalendar(remote.calendar || remote, {
+      source: 'ghl',
+      ghlCalendarId: id,
+      locationId,
+      syncStatus: 'synced',
+      rawJson: remote
+    });
 
     res.json({
       success: true,
@@ -75,22 +166,50 @@ export async function getCalendar(req, res) {
  */
 export async function getEvents(req, res) {
   try {
-    const { locationId, startTime, endTime, calendarId, accessToken } = req.query;
+    const { startTime, endTime, calendarId } = req.query;
+    const { locationId, accessToken } = await getHighLevelContext(req);
 
-    if (!locationId || !startTime || !endTime || !accessToken) {
+    if (!startTime || !endTime) {
       return res.status(400).json({
         success: false,
-        error: 'Se requiere locationId, startTime, endTime y accessToken'
+        error: 'Se requiere startTime y endTime'
       });
     }
 
-    const events = await calendarService.getCalendarEvents(
-      locationId,
-      parseInt(startTime, 10),
-      parseInt(endTime, 10),
-      accessToken,
+    if (locationId && accessToken) {
+      try {
+        const localCalendar = calendarId ? await localCalendarService.getLocalCalendar(calendarId) : null;
+        const remoteCalendarId = localCalendar?.ghlCalendarId || calendarId || null;
+        const remoteEvents = await calendarService.getCalendarEvents(
+          locationId,
+          parseInt(startTime, 10),
+          parseInt(endTime, 10),
+          accessToken,
+          remoteCalendarId
+        );
+
+        for (const event of remoteEvents) {
+          const eventCalendar = event.calendarId
+            ? await localCalendarService.getLocalCalendar(event.calendarId)
+            : null;
+          await localCalendarService.upsertLocalAppointment(event, {
+            source: 'ghl',
+            ghlAppointmentId: event.id,
+            calendarId: eventCalendar?.id || localCalendar?.id || event.calendarId,
+            locationId,
+            syncStatus: 'synced'
+          });
+        }
+      } catch (error) {
+        logger.warn(`[Calendars Controller] No se pudo refrescar eventos GHL, usando DB local: ${error.message}`);
+      }
+    }
+
+    const events = await localCalendarService.listLocalAppointments({
+      startTime,
+      endTime,
       calendarId
-    );
+    });
 
     res.json({
       success: true,
@@ -111,60 +230,10 @@ export async function getEvents(req, res) {
  * Este endpoint devuelve el contactId y assignedUserId completos
  * NO requiere accessToken - lo obtiene automáticamente de la configuración guardada
  */
-async function getLocalAppointment(eventId) {
-  const appointment = await db.get(
-    `SELECT
-      a.id,
-      a.calendar_id,
-      a.contact_id,
-      a.location_id,
-      a.title,
-      a.status,
-      a.appointment_status,
-      a.assigned_user_id,
-      a.notes,
-      a.address,
-      a.start_time,
-      a.end_time,
-      a.date_added,
-      a.date_updated,
-      c.full_name AS contact_name,
-      c.email AS contact_email,
-      c.phone AS contact_phone
-    FROM appointments a
-    LEFT JOIN contacts c ON c.id = a.contact_id
-    WHERE a.id = ?`,
-    [eventId]
-  );
-
-  if (!appointment) {
-    return null;
-  }
-
-  return {
-    id: appointment.id,
-    title: appointment.title || appointment.contact_name || '(Sin título)',
-    calendarId: appointment.calendar_id || '',
-    locationId: appointment.location_id || '',
-    contactId: appointment.contact_id || undefined,
-    appointmentStatus: appointment.appointment_status || appointment.status || 'confirmed',
-    assignedUserId: appointment.assigned_user_id || undefined,
-    notes: appointment.notes || '',
-    address: appointment.address || '',
-    startTime: appointment.start_time,
-    endTime: appointment.end_time || appointment.start_time,
-    dateAdded: appointment.date_added || appointment.start_time,
-    dateUpdated: appointment.date_updated || undefined,
-    contactName: appointment.contact_name || '',
-    contactEmail: appointment.contact_email || '',
-    contactPhone: appointment.contact_phone || ''
-  };
-}
-
 export async function getAppointment(req, res) {
   try {
     const { eventId } = req.params;
-    const localAppointment = await getLocalAppointment(eventId);
+    const localAppointment = await localCalendarService.getLocalAppointment(eventId);
 
     if (localAppointment) {
       return res.json({
@@ -190,7 +259,7 @@ export async function getAppointment(req, res) {
     });
   } catch (error) {
     try {
-      const localAppointment = await getLocalAppointment(req.params.eventId);
+      const localAppointment = await localCalendarService.getLocalAppointment(req.params.eventId);
       if (localAppointment) {
         logger.warn(`[Calendars Controller] Usando cita local por fallback: ${error.message}`);
         return res.json({
@@ -217,22 +286,41 @@ export async function getAppointment(req, res) {
 export async function getFreeSlots(req, res) {
   try {
     const { id } = req.params;
-    const { startDate, endDate, timezone, accessToken } = req.query;
+    const { startDate, endDate, timezone } = req.query;
+    const { accessToken } = await getHighLevelContext(req);
 
-    if (!startDate || !endDate || !accessToken) {
+    if (!startDate || !endDate) {
       return res.status(400).json({
         success: false,
-        error: 'Se requiere startDate, endDate y accessToken'
+        error: 'Se requiere startDate y endDate'
       });
     }
 
-    const slots = await calendarService.getFreeSlots(
-      id,
-      startDate,
-      endDate,
-      accessToken,
-      timezone
-    );
+    const localCalendar = await localCalendarService.getLocalCalendar(id);
+    let slots;
+
+    if (accessToken && (localCalendar?.ghlCalendarId || (!localCalendar && id))) {
+      try {
+        slots = await calendarService.getFreeSlots(
+          localCalendar?.ghlCalendarId || id,
+          startDate,
+          endDate,
+          accessToken,
+          timezone
+        );
+      } catch (error) {
+        logger.warn(`[Calendars Controller] Free slots GHL falló, usando local: ${error.message}`);
+      }
+    }
+
+    if (!slots) {
+      slots = await localCalendarService.getLocalFreeSlots(
+        localCalendar?.id || id,
+        startDate,
+        endDate,
+        timezone
+      );
+    }
 
     res.json({
       success: true,
@@ -254,23 +342,27 @@ export async function getFreeSlots(req, res) {
 export async function getBlockedSlots(req, res) {
   try {
     const { calendarId } = req.params;
-    const { locationId, startTime, endTime, accessToken } = req.query;
+    const { startTime, endTime } = req.query;
+    const { locationId, accessToken } = await getHighLevelContext(req);
 
     if (!locationId || !startTime || !endTime || !accessToken) {
-      return res.status(400).json({
-        success: false,
-        error: 'Se requiere locationId, startTime, endTime y accessToken'
+      return res.json({
+        success: true,
+        data: []
       });
     }
 
+    const localCalendar = await localCalendarService.getLocalCalendar(calendarId);
+    const remoteCalendarId = localCalendar?.ghlCalendarId || calendarId;
+
     // Obtener el calendario completo para extraer teamMembers
     let calendar = null;
-    if (calendarId) {
+    if (remoteCalendarId) {
       try {
-        const calendarData = await calendarService.getCalendar(calendarId, accessToken);
+        const calendarData = await calendarService.getCalendar(remoteCalendarId, accessToken);
         calendar = calendarData.calendar || calendarData; // Normalizar respuesta
       } catch (error) {
-        logger.warn(`[Calendars Controller] No se pudo obtener calendario ${calendarId}: ${error.message}`);
+        logger.warn(`[Calendars Controller] No se pudo obtener calendario ${remoteCalendarId}: ${error.message}`);
       }
     }
 
@@ -279,7 +371,7 @@ export async function getBlockedSlots(req, res) {
       parseInt(startTime, 10),
       parseInt(endTime, 10),
       accessToken,
-      calendarId,
+      remoteCalendarId,
       calendar // Pasar el objeto calendario completo con teamMembers
     );
 
@@ -371,22 +463,40 @@ export async function updateBlockedSlot(req, res) {
 export async function createAppointment(req, res) {
   try {
     const { accessToken, locationId, ...appointmentData } = req.body;
+    const context = await getHighLevelContext(req, { locationId, accessToken });
+    const localCalendar = await localCalendarService.getLocalCalendar(appointmentData.calendarId || appointmentData.calendar_id);
+    let appointment = await localCalendarService.createLocalAppointment({
+      ...appointmentData,
+      calendarId: localCalendar?.id || appointmentData.calendarId,
+      locationId: context.locationId
+    }, {
+      locationId: context.locationId,
+      syncStatus: 'pending'
+    });
 
-    if (!accessToken) {
-      return res.status(400).json({
-        success: false,
-        error: 'Se requiere accessToken'
-      });
+    if (context.locationId && context.accessToken && (localCalendar?.ghlCalendarId || !localCalendar)) {
+      try {
+        const remote = await calendarService.createAppointment(
+          {
+            ...appointmentData,
+            calendarId: localCalendar?.ghlCalendarId || appointmentData.calendarId
+          },
+          context.locationId,
+          context.accessToken
+        );
+        appointment = await localCalendarService.upsertLocalAppointment(remote, {
+          id: appointment.id,
+          source: appointment.source || 'ristak',
+          ghlAppointmentId: remote.appointment?.id || remote.id,
+          calendarId: appointment.calendarId,
+          locationId: context.locationId,
+          syncStatus: 'synced'
+        });
+      } catch (error) {
+        logger.warn(`[Calendars Controller] Cita guardada local, sync GHL pendiente: ${error.message}`);
+      }
     }
 
-    if (!locationId) {
-      return res.status(400).json({
-        success: false,
-        error: 'Se requiere locationId'
-      });
-    }
-
-    const appointment = await calendarService.createAppointment(appointmentData, locationId, accessToken);
     const contactId = appointmentData.contactId || appointmentData.contact_id || appointment?.contactId || appointment?.contact_id;
 
     if (contactId) {
@@ -414,15 +524,29 @@ export async function updateAppointment(req, res) {
   try {
     const { id } = req.params;
     const { accessToken, ...updateData } = req.body;
+    const context = await getHighLevelContext(req, { accessToken });
+    const existing = await localCalendarService.getLocalAppointment(id);
+    let appointment;
 
-    if (!accessToken) {
-      return res.status(400).json({
-        success: false,
-        error: 'Se requiere accessToken'
-      });
+    if (context.accessToken && existing?.ghlAppointmentId) {
+      try {
+        const remote = await calendarService.updateAppointment(existing.ghlAppointmentId, updateData, context.accessToken);
+        appointment = await localCalendarService.upsertLocalAppointment(remote, {
+          id: existing.id,
+          source: existing.source || 'ristak',
+          ghlAppointmentId: existing.ghlAppointmentId,
+          calendarId: existing.calendarId,
+          locationId: context.locationId || existing.locationId,
+          syncStatus: 'synced'
+        });
+      } catch (error) {
+        logger.warn(`[Calendars Controller] Update GHL falló, guardando pendiente local: ${error.message}`);
+      }
     }
 
-    const appointment = await calendarService.updateAppointment(id, updateData, accessToken);
+    if (!appointment) {
+      appointment = await localCalendarService.updateLocalAppointment(id, updateData, { syncStatus: 'pending' });
+    }
 
     res.json({
       success: true,
@@ -445,15 +569,33 @@ export async function updateCalendar(req, res) {
   try {
     const { id } = req.params;
     const { accessToken, ...updateData } = req.body;
+    const context = await getHighLevelContext(req, { accessToken });
+    const existing = await localCalendarService.getLocalCalendar(id);
+    let calendar = await localCalendarService.updateLocalCalendar(id, updateData, { syncStatus: 'pending' });
 
-    if (!accessToken) {
-      return res.status(400).json({
+    if (!calendar && !existing) {
+      return res.status(404).json({
         success: false,
-        error: 'Se requiere accessToken'
+        error: 'Calendario no encontrado'
       });
     }
 
-    const calendar = await calendarService.updateCalendar(id, updateData, accessToken);
+    const remoteCalendarId = existing?.ghlCalendarId || id;
+    if (context.accessToken && remoteCalendarId && existing?.ghlCalendarId) {
+      try {
+        const remote = await calendarService.updateCalendar(remoteCalendarId, updateData, context.accessToken);
+        calendar = await localCalendarService.upsertLocalCalendar(remote.calendar || remote, {
+          id: existing.id,
+          source: existing.source,
+          ghlCalendarId: remoteCalendarId,
+          locationId: context.locationId || existing.locationId,
+          syncStatus: 'synced',
+          rawJson: remote
+        });
+      } catch (error) {
+        logger.warn(`[Calendars Controller] Update calendario GHL falló, queda pendiente: ${error.message}`);
+      }
+    }
 
     res.json({
       success: true,
@@ -475,16 +617,20 @@ export async function updateCalendar(req, res) {
 export async function deleteEvent(req, res) {
   try {
     const { id } = req.params;
-    const { accessToken } = req.query;
+    const { accessToken } = await getHighLevelContext(req);
+    const existing = await localCalendarService.getLocalAppointment(id);
 
-    if (!accessToken) {
-      return res.status(400).json({
-        success: false,
-        error: 'Se requiere accessToken'
-      });
+    if (accessToken && existing?.ghlAppointmentId) {
+      try {
+        await calendarService.deleteEvent(existing.ghlAppointmentId, accessToken);
+        await localCalendarService.deleteLocalAppointment(existing.id);
+      } catch (error) {
+        logger.warn(`[Calendars Controller] Delete GHL falló, marcando pendiente: ${error.message}`);
+        await localCalendarService.deleteLocalAppointment(existing.id, { markPendingDelete: true });
+      }
+    } else {
+      await localCalendarService.deleteLocalAppointment(id);
     }
-
-    await calendarService.deleteEvent(id, accessToken);
 
     res.json({
       success: true,
@@ -531,6 +677,7 @@ export async function deleteBlockedSlot(req, res) {
 
 export default {
   getCalendars,
+  createCalendar,
   getCalendar,
   getEvents,
   getAppointment,

@@ -11,6 +11,9 @@ const router = express.Router();
 // Obtener todos los calendarios
 router.get('/', calendarsController.getCalendars);
 
+// Crear calendario local de Ristak
+router.post('/', calendarsController.createCalendar);
+
 // Obtener eventos/citas
 router.get('/events', calendarsController.getEvents);
 

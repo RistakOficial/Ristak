@@ -7,6 +7,7 @@ import { logger } from '../utils/logger.js';
 
 const GHL_API_BASE = 'https://services.leadconnectorhq.com';
 const API_VERSION = '2021-04-15';
+const CALENDARS_API_VERSION = '2023-02-21';
 const REQUEST_TIMEOUT = 15000; // 15 segundos timeout
 
 /**
@@ -65,7 +66,7 @@ export async function getCalendars(locationId, accessToken) {
         method: 'GET',
         headers: {
           'Accept': 'application/json',
-          'Version': API_VERSION,
+          'Version': CALENDARS_API_VERSION,
           'Authorization': `Bearer ${accessToken}`
         }
       }
@@ -103,7 +104,7 @@ export async function getCalendar(calendarId, accessToken) {
         method: 'GET',
         headers: {
           'Accept': 'application/json',
-          'Version': API_VERSION,
+          'Version': CALENDARS_API_VERSION,
           'Authorization': `Bearer ${accessToken}`
         }
       }
@@ -121,6 +122,56 @@ export async function getCalendar(calendarId, accessToken) {
     return data;
   } catch (error) {
     logger.error(`[HighLevel Calendar] Error en getCalendar: ${error.message}`);
+    throw error;
+  }
+}
+
+/**
+ * Crear un calendario en HighLevel.
+ * Endpoint oficial: POST /calendars/ con Version 2023-02-21.
+ * @param {Object} calendarData - Configuración completa del calendario
+ * @param {string} accessToken - Token de acceso OAuth / Private Integration Token
+ * @returns {Promise<Object>} Calendario creado
+ */
+export async function createCalendar(calendarData, accessToken) {
+  try {
+    logger.info(`[HighLevel Calendar] Creando calendario: ${calendarData.name || calendarData.slug || 'Sin nombre'}`);
+
+    if (!calendarData.locationId) {
+      throw new Error('Se requiere locationId para crear calendario');
+    }
+
+    if (!calendarData.name) {
+      throw new Error('Se requiere name para crear calendario');
+    }
+
+    const response = await fetchWithTimeout(
+      `${GHL_API_BASE}/calendars/`,
+      {
+        method: 'POST',
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+          'Version': CALENDARS_API_VERSION,
+          'Authorization': `Bearer ${accessToken}`
+        },
+        body: JSON.stringify(calendarData)
+      }
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      logger.error(`[HighLevel Calendar] Error al crear calendario: ${response.status} - ${errorText}`);
+      throw new Error(`Error al crear calendario: ${response.status} - ${errorText}`);
+    }
+
+    const data = await response.json();
+    const calendar = data.calendar || data;
+    logger.info(`[HighLevel Calendar] Calendario creado exitosamente: ${calendar.id || 'N/A'}`);
+
+    return data;
+  } catch (error) {
+    logger.error(`[HighLevel Calendar] Error en createCalendar: ${error.message}`);
     throw error;
   }
 }
@@ -507,7 +558,7 @@ export async function updateBlockedSlot(eventId, updateData, accessToken) {
         headers: {
           'Accept': 'application/json',
           'Content-Type': 'application/json',
-          'Version': API_VERSION,
+          'Version': CALENDARS_API_VERSION,
           'Authorization': `Bearer ${accessToken}`
         },
         body: JSON.stringify(updateData)
@@ -813,6 +864,7 @@ export async function deleteBlockedSlot(eventId, accessToken) {
 export default {
   getCalendars,
   getCalendar,
+  createCalendar,
   getCalendarEvents,
   getAppointment,
   getFreeSlots,

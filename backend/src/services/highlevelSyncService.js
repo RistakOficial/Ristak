@@ -18,6 +18,13 @@ import {
   prepareContactPhoneUpsert
 } from './contactIdentityService.js'
 import GHLClient from './ghlClient.js'
+import {
+  getLocalCalendar,
+  syncLocalAppointmentsToHighLevel,
+  syncLocalCalendarsToHighLevel,
+  upsertLocalAppointment,
+  upsertLocalCalendar
+} from './localCalendarService.js'
 
 const HIGHLEVEL_BASE_URL = 'https://services.leadconnectorhq.com'
 const HIGHLEVEL_API_VERSION = '2021-07-28'
@@ -498,6 +505,17 @@ async function fetchCalendarEventsByCalendar({
   })
 
   logger.info(`Se encontraron ${calendars.length} calendarios para sincronizar citas`)
+
+  for (const calendar of calendars) {
+    if (!calendar?.id) continue
+    await upsertLocalCalendar(calendar, {
+      source: 'ghl',
+      ghlCalendarId: calendar.id,
+      locationId,
+      syncStatus: 'synced',
+      rawJson: calendar
+    })
+  }
 
   const events = []
   let total = initialTotal
@@ -1115,49 +1133,22 @@ async function syncHighLevelAppointments(locationId, apiToken) {
         contactsCreated++
       }
 
-      // Ahora guardar la cita
-      const query = usePostgres
-        ? `INSERT INTO appointments (id, calendar_id, contact_id, location_id, title, status,
-            appointment_status, assigned_user_id, notes, address, start_time, end_time, date_added, date_updated)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-           ON CONFLICT (id) DO UPDATE SET
-             status = EXCLUDED.status,
-             appointment_status = EXCLUDED.appointment_status,
-             start_time = EXCLUDED.start_time,
-             end_time = EXCLUDED.end_time,
-             notes = COALESCE(EXCLUDED.notes, appointments.notes),
-             address = COALESCE(EXCLUDED.address, appointments.address),
-             date_added = COALESCE(appointments.date_added, EXCLUDED.date_added),
-             date_updated = EXCLUDED.date_updated`
-        : `INSERT INTO appointments (id, calendar_id, contact_id, location_id, title, status,
-            appointment_status, assigned_user_id, notes, address, start_time, end_time, date_added, date_updated)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT (id) DO UPDATE SET
-             status = EXCLUDED.status,
-             appointment_status = EXCLUDED.appointment_status,
-             start_time = EXCLUDED.start_time,
-             end_time = EXCLUDED.end_time,
-             notes = COALESCE(EXCLUDED.notes, appointments.notes),
-             address = COALESCE(EXCLUDED.address, appointments.address),
-             date_added = COALESCE(appointments.date_added, EXCLUDED.date_added),
-             date_updated = EXCLUDED.date_updated`
+      const localCalendar = normalized.calendarId
+        ? await getLocalCalendar(normalized.calendarId)
+        : null
 
-      await db.run(query, [
-        normalized.id,
-        normalized.calendarId,
-        normalized.contactId,
-        normalized.locationId,
-        normalized.title,
-        normalized.status,
-        normalized.appointmentStatus,
-        normalized.assignedUserId,
-        normalized.notes,
-        normalized.address,
-        normalized.startTime,
-        normalized.endTime,
-        normalized.dateAdded,
-        normalized.dateUpdated
-      ])
+      await upsertLocalAppointment({
+        ...normalized,
+        id: normalized.id,
+        ghlAppointmentId: normalized.id,
+        calendarId: localCalendar?.id || normalized.calendarId
+      }, {
+        source: 'ghl',
+        ghlAppointmentId: normalized.id,
+        calendarId: localCalendar?.id || normalized.calendarId,
+        locationId,
+        syncStatus: 'synced'
+      })
 
       // Actualizar appointment_date del contacto con la fecha de la cita más próxima
       if (normalized.contactId && normalized.startTime) {
@@ -1701,6 +1692,16 @@ export async function syncHighLevelData(locationId, apiToken, triggerSource = 'm
     const baseUrl = process.env.RENDER_EXTERNAL_URL || `http://localhost:${process.env.PORT || 3001}`
     await setupHighLevelWebhooks(locationId, apiToken, baseUrl)
 
+    // 1.5. Subir calendarios creados en Ristak antes de tocar citas.
+    syncProgress.step = 'Subiendo calendarios Ristak a HighLevel...'
+    let localCalendarsResult = { total: 0, created: 0, updated: 0, failed: 0 }
+    try {
+      localCalendarsResult = await syncLocalCalendarsToHighLevel(locationId, apiToken)
+      logger.info(`Calendarios Ristak → GHL: ${localCalendarsResult.created} creados, ${localCalendarsResult.updated} actualizados, ${localCalendarsResult.failed} fallidos`)
+    } catch (error) {
+      logger.warn(`No se pudieron subir calendarios Ristak a HighLevel: ${error.message}`)
+    }
+
     // 2. Sincronizar contactos
     syncProgress.step = 'Sincronizando contactos...'
     const contactsResult = await syncHighLevelContacts(locationId, apiToken)
@@ -1709,7 +1710,17 @@ export async function syncHighLevelData(locationId, apiToken, triggerSource = 'm
     syncProgress.step = 'Subiendo contactos WhatsApp a HighLevel...'
     const whatsappContactsResult = await syncWhatsAppContactsToHighLevel(locationId, apiToken)
 
-    // 3. Sincronizar citas
+    // 2.75. Subir citas creadas/editadas en Ristak antes de bajar lo remoto.
+    syncProgress.step = 'Subiendo citas Ristak a HighLevel...'
+    let localAppointmentsResult = { total: 0, created: 0, updated: 0, deleted: 0, failed: 0 }
+    try {
+      localAppointmentsResult = await syncLocalAppointmentsToHighLevel(locationId, apiToken)
+      logger.info(`Citas Ristak → GHL: ${localAppointmentsResult.created} creadas, ${localAppointmentsResult.updated} actualizadas, ${localAppointmentsResult.deleted} eliminadas, ${localAppointmentsResult.failed} fallidas`)
+    } catch (error) {
+      logger.warn(`No se pudieron subir citas Ristak a HighLevel: ${error.message}`)
+    }
+
+    // 3. Sincronizar citas desde HighLevel hacia Ristak
     syncProgress.step = 'Sincronizando citas...'
     let appointmentsResult = { saved: 0, total: 0, contactsCreated: 0 }
     try {
@@ -1732,12 +1743,14 @@ export async function syncHighLevelData(locationId, apiToken, triggerSource = 'm
     // 5. Completado
     syncProgress.status = 'completed'
     syncProgress.step = 'Sincronización completada'
-    syncProgress.message = `✅ Sincronización completada: ${contactsResult.saved} contactos GHL, ${whatsappContactsResult.synced} contactos WhatsApp, ${appointmentsResult.saved} citas, ${paymentsResult.saved} pagos`
+    syncProgress.message = `✅ Sincronización completada: ${contactsResult.saved} contactos GHL, ${whatsappContactsResult.synced} contactos WhatsApp, ${localCalendarsResult.created + localCalendarsResult.updated} calendarios Ristak→GHL, ${localAppointmentsResult.created + localAppointmentsResult.updated} citas Ristak→GHL, ${appointmentsResult.saved} citas GHL→Ristak, ${paymentsResult.saved} pagos`
 
     logger.info('===========================================')
     logger.info('SINCRONIZACIÓN COMPLETADA EXITOSAMENTE')
     logger.info(`Contactos GHL: ${contactsResult.saved}/${contactsResult.total}`)
     logger.info(`Contactos WhatsApp → GHL: ${whatsappContactsResult.synced}/${whatsappContactsResult.total} (${whatsappContactsResult.created} creados, ${whatsappContactsResult.matched} emparejados, ${whatsappContactsResult.failed} fallidos)`)
+    logger.info(`Calendarios Ristak → GHL: ${localCalendarsResult.created + localCalendarsResult.updated}/${localCalendarsResult.total} (${localCalendarsResult.failed} fallidos)`)
+    logger.info(`Citas Ristak → GHL: ${localAppointmentsResult.created + localAppointmentsResult.updated + localAppointmentsResult.deleted}/${localAppointmentsResult.total} (${localAppointmentsResult.failed} fallidas)`)
     logger.info(`Citas: ${appointmentsResult.saved}/${appointmentsResult.total} (${appointmentsResult.contactsCreated} contactos creados)`)
     logger.info(`Pagos: ${paymentsResult.saved}/${paymentsResult.total} (${paymentsResult.contactsCreated} contactos creados)`)
     logger.info('===========================================')
@@ -1818,6 +1831,8 @@ export async function syncHighLevelData(locationId, apiToken, triggerSource = 'm
       success: true,
       contacts: contactsResult,
       whatsappContacts: whatsappContactsResult,
+      localCalendars: localCalendarsResult,
+      localAppointments: localAppointmentsResult,
       appointments: appointmentsResult,
       payments: paymentsResult,
       metaAds: metaAdsResult

@@ -8,6 +8,7 @@ import { getGroupExpression } from '../services/analyticsService.js'
 import fetch from 'node-fetch'
 
 const isPostgres = Boolean(process.env.DATABASE_URL)
+const TRACKING_SNIPPET_VERSION = '8' // Incrementar cuando cambies el código del snippet
 
 const parseIsoDateToUtc = (value) => {
   const [year, month, day] = String(value || '').split('-').map(Number)
@@ -16,6 +17,35 @@ const parseIsoDateToUtc = (value) => {
 }
 
 const formatUtcDateKey = (date) => date.toISOString().slice(0, 10)
+
+function buildTrackingSnippet({ trackingDomain, metaPixelId = null, includeMetaPixel = false }) {
+  let snippet = `<!-- Pixel de Tracking Ristak -->
+<script async src="https://${trackingDomain}/snip.js?v=${TRACKING_SNIPPET_VERSION}"></script>`
+
+  if (metaPixelId && includeMetaPixel) {
+    snippet += `
+
+<!-- Meta Pixel Code -->
+<script>
+!function(f,b,e,v,n,t,s)
+{if(f.fbq)return;n=f.fbq=function(){n.callMethod?
+n.callMethod.apply(n,arguments):n.queue.push(arguments)};
+if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';
+n.queue=[];t=b.createElement(e);t.async=!0;
+t.src=v;s=b.getElementsByTagName(e)[0];
+s.parentNode.insertBefore(t,s)}(window, document,'script',
+'https://connect.facebook.net/en_US/fbevents.js');
+fbq('init', '${metaPixelId}');
+fbq('track', 'PageView');
+</script>
+<noscript><img height="1" width="1" style="display:none"
+src="https://www.facebook.com/tr?id=${metaPixelId}&ev=PageView&noscript=1"
+/></noscript>
+<!-- End Meta Pixel Code -->`
+  }
+
+  return snippet
+}
 
 /**
  * Genera el código JavaScript del pixel de tracking
@@ -992,6 +1022,17 @@ export async function getTrackingConfig(req, res) {
     // Verificar si hay Meta Pixel configurado
     const metaConfig = await db.get('SELECT pixel_id FROM meta_config LIMIT 1')
     const hasMetaPixel = !!(metaConfig && metaConfig.pixel_id)
+    const includeMetaPixelPref = await getAppConfig('include_meta_pixel')
+    const includeMetaPixel = includeMetaPixelPref === null || includeMetaPixelPref === undefined
+      ? true
+      : (includeMetaPixelPref === '1' || includeMetaPixelPref === 1 || includeMetaPixelPref === true || includeMetaPixelPref === 'true')
+    const trackingSnippet = trackingDomain
+      ? buildTrackingSnippet({
+        trackingDomain,
+        metaPixelId: hasMetaPixel ? metaConfig.pixel_id : null,
+        includeMetaPixel
+      })
+      : null
 
     res.json({
       trackingDomain,
@@ -1000,7 +1041,9 @@ export async function getTrackingConfig(req, res) {
       showAnalytics,
       visitorSource,
       hasMetaPixel,
-      metaPixelId: hasMetaPixel ? metaConfig.pixel_id : null
+      metaPixelId: hasMetaPixel ? metaConfig.pixel_id : null,
+      includeMetaPixel,
+      trackingSnippet
     })
   } catch (error) {
     logger.error('Error obteniendo configuración de tracking:', error)
@@ -1061,33 +1104,16 @@ export async function configureTracking(req, res) {
       ? true // Default: ON
       : (includeMetaPixelPref === '1' || includeMetaPixelPref === 1 || includeMetaPixelPref === true || includeMetaPixelPref === 'true')
 
-    // Generar el snippet con versión para evitar cache
-    const SNIPPET_VERSION = '8' // Incrementar cuando cambies el código del snippet
-    let snippet = `<!-- Pixel de Tracking Ristak -->
-<script async src="https://${trackingDomain}/snip.js?v=${SNIPPET_VERSION}"></script>`
+    // Generar el snippet con versión para evitar cache.
+    // Si hay Meta Pixel configurado Y el usuario quiere incluirlo, agregar el código del pixel.
+    const snippet = buildTrackingSnippet({
+      trackingDomain,
+      metaPixelId: hasMetaPixel ? metaConfig.pixel_id : null,
+      includeMetaPixel
+    })
 
-    // Si hay Meta Pixel configurado Y el usuario quiere incluirlo, agregar el código del pixel
     if (hasMetaPixel && includeMetaPixel) {
       logger.info(`Agregando Meta Pixel (${metaConfig.pixel_id}) al snippet`)
-      snippet += `
-
-<!-- Meta Pixel Code -->
-<script>
-!function(f,b,e,v,n,t,s)
-{if(f.fbq)return;n=f.fbq=function(){n.callMethod?
-n.callMethod.apply(n,arguments):n.queue.push(arguments)};
-if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';
-n.queue=[];t=b.createElement(e);t.async=!0;
-t.src=v;s=b.getElementsByTagName(e)[0];
-s.parentNode.insertBefore(t,s)}(window, document,'script',
-'https://connect.facebook.net/en_US/fbevents.js');
-fbq('init', '${metaConfig.pixel_id}');
-fbq('track', 'PageView');
-</script>
-<noscript><img height="1" width="1" style="display:none"
-src="https://www.facebook.com/tr?id=${metaConfig.pixel_id}&ev=PageView&noscript=1"
-/></noscript>
-<!-- End Meta Pixel Code -->`
     }
 
     // Log informativo

@@ -254,7 +254,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
 
   // Cargar slots disponibles desde la API de HighLevel
   const loadFreeSlots = async () => {
-    if (!calendar?.id || !accessToken || scheduleMode !== 'default') {
+    if (!calendar?.id || scheduleMode !== 'default') {
       return;
     }
 
@@ -268,7 +268,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
         calendar.id,
         today.toISOString().split('T')[0],
         endDate.toISOString().split('T')[0],
-        accessToken,
+        accessToken || undefined,
         formData.timeZone || DEFAULT_TIMEZONE
       );
 

@@ -185,18 +185,49 @@ export const testConnection = async (req, res) => {
  * Se usa cuando se cambia a un location diferente
  */
 async function clearAllData() {
-  logger.info('🧹 Limpiando todas las tablas de datos...');
+  logger.info('🧹 Limpiando espejos de HighLevel sin borrar datos locales de Ristak...');
 
   try {
-    // Eliminar en orden para respetar foreign keys
+    // Eliminar solo espejos remotos. Los datos creados en Ristak deben sobrevivir
+    // para poder sincronizarse con el nuevo location conectado.
     await db.run('DELETE FROM whatsapp_attribution');
     await db.run('DELETE FROM meta_ads');
     await db.run('DELETE FROM payments');
-    await db.run('DELETE FROM appointments');
-    await db.run('DELETE FROM contacts');
     await db.run('DELETE FROM meta_config');
 
-    logger.success('✅ Todas las tablas de datos han sido limpiadas');
+    try {
+      await db.run("DELETE FROM appointments WHERE COALESCE(source, 'ghl') = 'ghl' AND COALESCE(ghl_appointment_id, '') != ''");
+      await db.run(`
+        UPDATE appointments
+        SET location_id = NULL,
+            ghl_appointment_id = NULL,
+            sync_status = 'pending',
+            sync_error = NULL,
+            synced_at = NULL,
+            date_updated = CURRENT_TIMESTAMP
+        WHERE COALESCE(source, 'ristak') != 'ghl'
+      `);
+    } catch (error) {
+      logger.warn(`No se pudo limpiar metadata de citas HighLevel: ${error.message}`);
+    }
+
+    try {
+      await db.run("DELETE FROM calendars WHERE COALESCE(source, 'ghl') = 'ghl'");
+      await db.run(`
+        UPDATE calendars
+        SET location_id = NULL,
+            ghl_calendar_id = NULL,
+            sync_status = 'pending',
+            sync_error = NULL,
+            last_synced_at = NULL,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE COALESCE(source, 'ristak') != 'ghl'
+      `);
+    } catch (error) {
+      logger.warn(`No se pudo limpiar metadata de calendarios HighLevel: ${error.message}`);
+    }
+
+    logger.success('✅ Espejos HighLevel limpiados, datos locales preservados');
   } catch (error) {
     logger.error('Error limpiando tablas:', error.message);
     throw error;
@@ -244,10 +275,10 @@ export const saveConfig = async (req, res) => {
 
     // Verificar si existe una configuración con un location_id DIFERENTE
     const existingConfig = await db.get(
-      'SELECT location_id FROM highlevel_config LIMIT 1'
+      'SELECT id, location_id FROM highlevel_config LIMIT 1'
     );
 
-    if (existingConfig && existingConfig.location_id !== cleanLocationId) {
+    if (existingConfig?.location_id && existingConfig.location_id !== cleanLocationId) {
       // Es un location DIFERENTE - borrar TODO de la base de datos
       logger.warn(`⚠️ Detectado cambio de location: ${existingConfig.location_id} → ${cleanLocationId}`);
       logger.warn('🗑️ Se eliminarán TODOS los datos existentes para iniciar con el nuevo location');
@@ -273,6 +304,12 @@ export const saveConfig = async (req, res) => {
         [cleanToken, locationData ? JSON.stringify(locationData) : null, cleanLocationId]
       );
       logger.info('Configuración actualizada exitosamente (mismo location)');
+    } else if (existingConfig && !existingConfig.location_id) {
+      await db.run(
+        'UPDATE highlevel_config SET location_id = ?, api_token = ?, location_data = ? WHERE id = ?',
+        [cleanLocationId, cleanToken, locationData ? JSON.stringify(locationData) : null, existingConfig.id]
+      );
+      logger.info('Configuración parcial de HighLevel completada exitosamente');
     } else {
       // Insertar nueva configuración
       await db.run(
@@ -2091,17 +2128,81 @@ export const text2Pay = async (req, res) => {
 /**
  * Busca contactos en HighLevel
  */
+async function searchLocalContactsForCalendar({ query, email, phone, limit = 20 }) {
+  const conditions = []
+  const params = []
+  const cappedLimit = Math.min(Number(limit) || 20, 50)
+
+  if (email) {
+    conditions.push('LOWER(email) = LOWER(?)')
+    params.push(email)
+  }
+
+  if (phone) {
+    const normalizedPhone = normalizePhoneForStorage(phone) || phone
+    conditions.push('(phone = ? OR REPLACE(REPLACE(REPLACE(REPLACE(phone, ?, ?), ?, ?), ?, ?), ?, ?) LIKE ?)')
+    params.push(normalizedPhone, ' ', '', '-', '', '(', '', ')', '', `%${String(normalizedPhone).slice(-10)}%`)
+  }
+
+  if (query) {
+    const like = `%${String(query).trim().toLowerCase()}%`
+    conditions.push(`(
+      LOWER(COALESCE(full_name, '')) LIKE ?
+      OR LOWER(COALESCE(first_name, '')) LIKE ?
+      OR LOWER(COALESCE(last_name, '')) LIKE ?
+      OR LOWER(COALESCE(email, '')) LIKE ?
+      OR LOWER(COALESCE(phone, '')) LIKE ?
+    )`)
+    params.push(like, like, like, like, like)
+  }
+
+  if (!conditions.length) return []
+
+  const rows = await db.all(`
+    SELECT id, full_name, first_name, last_name, email, phone, source
+    FROM contacts
+    WHERE ${conditions.join(' AND ')}
+    ORDER BY updated_at DESC, created_at DESC
+    LIMIT ${cappedLimit}
+  `, params)
+
+  return rows.map(contact => {
+    const name = contact.full_name ||
+      `${contact.first_name || ''} ${contact.last_name || ''}`.trim() ||
+      contact.email ||
+      contact.phone ||
+      'Sin nombre'
+
+    return {
+      id: contact.id,
+      name,
+      firstName: contact.first_name || '',
+      lastName: contact.last_name || '',
+      email: contact.email || '',
+      phone: contact.phone || '',
+      source: contact.source || 'ristak'
+    }
+  })
+}
+
 export const searchContacts = async (req, res) => {
   try {
     const { query, email, phone, limit = 20 } = req.body;
 
-    // Usar GHL Client
-    const ghlClient = await getGHLClient();
-    const data = await ghlClient.searchContacts({ query, email, phone, limit: Number(limit) });
+    let contacts = [];
+
+    try {
+      const ghlClient = await getGHLClient();
+      const data = await ghlClient.searchContacts({ query, email, phone, limit: Number(limit) });
+      contacts = data.contacts || [];
+    } catch (error) {
+      logger.warn(`Búsqueda GHL no disponible, usando contactos locales: ${error.message}`);
+      contacts = await searchLocalContactsForCalendar({ query, email, phone, limit });
+    }
 
     res.json({
       success: true,
-      contacts: data.contacts || []
+      contacts
     });
 
   } catch (error) {
@@ -2128,12 +2229,42 @@ export const getContactById = async (req, res) => {
       });
     }
 
-    const ghlClient = await getGHLClient();
-    const contact = await ghlClient.request(`/contacts/${id}`);
+    let contact = null;
+
+    try {
+      const ghlClient = await getGHLClient();
+      const response = await ghlClient.request(`/contacts/${id}`);
+      contact = response.contact || response;
+    } catch (error) {
+      logger.warn(`Contacto GHL no disponible, usando DB local: ${error.message}`);
+      const row = await db.get(
+        'SELECT id, full_name, first_name, last_name, email, phone, source FROM contacts WHERE id = ?',
+        [id]
+      );
+
+      if (row) {
+        contact = {
+          id: row.id,
+          name: row.full_name || `${row.first_name || ''} ${row.last_name || ''}`.trim() || row.email || row.phone || 'Sin nombre',
+          firstName: row.first_name || '',
+          lastName: row.last_name || '',
+          email: row.email || '',
+          phone: row.phone || '',
+          source: row.source || 'ristak'
+        };
+      }
+    }
+
+    if (!contact) {
+      return res.status(404).json({
+        success: false,
+        error: 'Contacto no encontrado'
+      });
+    }
 
     res.json({
       success: true,
-      contact: contact.contact || contact
+      contact
     });
 
   } catch (error) {

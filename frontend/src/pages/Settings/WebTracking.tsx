@@ -1,13 +1,13 @@
 import React, { useState, useEffect } from 'react'
 import { Card, Button } from '@/components/common'
-import { Check, Info, Loader2, RefreshCw, Activity } from 'lucide-react'
+import { Check, Copy, Info, Loader2, RefreshCw, Activity } from 'lucide-react'
 import { trackingService } from '@/services/trackingService'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useAppConfig, useIsRenderDomain } from '@/hooks'
 import styles from './HighLevelIntegration.module.css'
 
 export const WebTracking: React.FC = () => {
-  const { showToast} = useNotification()
+  const { showToast } = useNotification()
 
   // Detectar si estamos en dominio .onrender.com
   const isOnRenderDomain = useIsRenderDomain()
@@ -23,6 +23,7 @@ export const WebTracking: React.FC = () => {
   const [isConfigured, setIsConfigured] = useState(false)
   const [hasHighLevel, setHasHighLevel] = useState(false)
   const [hasAutoActivated, setHasAutoActivated] = useState(false)
+  const [trackingSnippet, setTrackingSnippet] = useState('')
 
   useEffect(() => {
     loadTrackingConfig()
@@ -35,6 +36,7 @@ export const WebTracking: React.FC = () => {
       setTrackingDomain(config.trackingDomain || '')
       setIsConfigured(config.isConfigured)
       setHasHighLevel(config.hasHighLevel)
+      setTrackingSnippet(config.trackingSnippet || '')
 
       // Si es .onrender.com → FORZAR analytics OFF y visitor source a 'platform'
       if (isOnRenderDomain) {
@@ -82,13 +84,27 @@ export const WebTracking: React.FC = () => {
   const handleConfigureTracking = async () => {
     setConfiguringTracking(true)
     try {
-      await trackingService.configureTracking()
+      const response = await trackingService.configureTracking()
+      if (response.snippet) {
+        setTrackingSnippet(response.snippet)
+      }
       setIsConfigured(true)
       showToast('success', 'Sincronización exitosa', 'El código del pixel se guardó en HighLevel como "rstktrack"')
     } catch (error) {
       showToast('error', 'Error al sincronizar', 'No se pudo guardar el código en HighLevel')
     } finally {
       setConfiguringTracking(false)
+    }
+  }
+
+  const handleCopyTrackingSnippet = async () => {
+    if (!trackingSnippet) return
+
+    try {
+      await navigator.clipboard.writeText(trackingSnippet)
+      showToast('success', 'Código copiado', 'Pégalo en los headers del sitio correspondiente')
+    } catch (error) {
+      showToast('error', 'Error', 'No se pudo copiar el código del pixel')
     }
   }
 
@@ -274,17 +290,7 @@ export const WebTracking: React.FC = () => {
             </p>
           </div>
 
-          {!hasHighLevel ? (
-            <div className={styles.infoBox}>
-              <div className={styles.infoBoxTitle}>
-                <Info size={16} />
-                <span>Primero configura HighLevel</span>
-              </div>
-              <div className={styles.infoBoxContent}>
-                Ve a la sección de HighLevel en Settings y conéctalo primero
-              </div>
-            </div>
-          ) : !trackingDomain.trim() ? (
+          {!trackingDomain.trim() ? (
             <div className={styles.warningBox}>
               <div className={styles.infoBoxTitle}>
                 <Info size={16} />
@@ -319,31 +325,72 @@ export const WebTracking: React.FC = () => {
                 <label className={styles.formLabel}>
                   Paso 2: Sincronizar con HighLevel
                 </label>
-                <p className={styles.formHint} style={{ marginBottom: '12px' }}>
-                  Esto guarda el código del pixel en HighLevel automáticamente
-                </p>
-                <Button
-                  variant="primary"
-                  onClick={handleConfigureTracking}
-                  disabled={configuringTracking}
-                >
-                  {configuringTracking ? (
-                    <>
-                      <Loader2 size={16} className={styles.spinIcon} />
-                      Sincronizando...
-                    </>
-                  ) : (
-                    <>
-                      <RefreshCw size={16} />
-                      {isConfigured ? 'Volver a sincronizar' : 'Sincronizar ahora'}
-                    </>
-                  )}
-                </Button>
-                {isConfigured && (
-                  <p className={styles.formHint} style={{ marginTop: '12px' }}>
-                    Ya está sincronizado. El código está guardado como rstktrack en HighLevel
-                  </p>
+                {hasHighLevel ? (
+                  <>
+                    <p className={styles.formHint} style={{ marginBottom: '12px' }}>
+                      Esto guarda el código del pixel en HighLevel automáticamente
+                    </p>
+                    <Button
+                      variant="primary"
+                      onClick={handleConfigureTracking}
+                      disabled={configuringTracking}
+                    >
+                      {configuringTracking ? (
+                        <>
+                          <Loader2 size={16} className={styles.spinIcon} />
+                          Sincronizando...
+                        </>
+                      ) : (
+                        <>
+                          <RefreshCw size={16} />
+                          {isConfigured ? 'Volver a sincronizar' : 'Sincronizar ahora'}
+                        </>
+                      )}
+                    </Button>
+                    {isConfigured && (
+                      <p className={styles.formHint} style={{ marginTop: '12px' }}>
+                        Ya está sincronizado. El código está guardado como rstktrack en HighLevel
+                      </p>
+                    )}
+                  </>
+                ) : (
+                  <div className={styles.infoBox}>
+                    <div className={styles.infoBoxTitle}>
+                      <Info size={16} />
+                      <span>HighLevel no está conectado</span>
+                    </div>
+                    <div className={styles.infoBoxContent}>
+                      Puedes conectar HighLevel para sincronizar automático o usar el código manual de abajo.
+                    </div>
+                  </div>
                 )}
+              </div>
+
+              <div className={styles.manualInstallDivider} aria-hidden="true">
+                <span>O</span>
+              </div>
+
+              <div className={styles.manualSnippetBox}>
+                <div className={styles.manualSnippetHeader}>
+                  <div>
+                    <label className={styles.formLabel}>
+                      Código de píxel web
+                    </label>
+                    <p className={styles.formHint}>
+                      Copia este código y pégalo en los headers de la página correspondiente.
+                    </p>
+                  </div>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={handleCopyTrackingSnippet}
+                    disabled={!trackingSnippet}
+                  >
+                    <Copy size={16} />
+                    Copiar código
+                  </Button>
+                </div>
+                <pre className={styles.manualSnippetCode}><code>{trackingSnippet || 'Cargando código del pixel...'}</code></pre>
               </div>
             </>
           )}

@@ -29,6 +29,7 @@ export interface OpenHours {
 
 export interface Calendar {
   id: string;
+  ghlCalendarId?: string | null;
   locationId: string;
   groupId?: string;
   name: string;
@@ -39,6 +40,7 @@ export interface Calendar {
   widgetType?: string;
   eventTitle?: string;
   eventColor: string;
+  timeZone?: string;
   isActive: boolean;
   teamMembers?: CalendarTeamMember[];
   locationConfigurations?: LocationConfiguration[];
@@ -73,6 +75,9 @@ export interface Calendar {
     enabled: boolean;
     LookBusyPercentage: number;
   };
+  source?: 'ristak' | 'ghl';
+  syncStatus?: 'pending' | 'synced' | 'error';
+  syncError?: string | null;
 }
 
 export interface CalendarEvent {
@@ -133,10 +138,13 @@ export const calendarsService = {
   /**
    * Obtener todos los calendarios de la ubicación
    */
-  async getCalendars(locationId: string, accessToken: string): Promise<Calendar[]> {
+  async getCalendars(locationId?: string | null, accessToken?: string | null): Promise<Calendar[]> {
     try {
       const data = await apiClient.get<Calendar[]>('/calendars', {
-        params: { locationId, accessToken }
+        params: {
+          ...(locationId ? { locationId } : {}),
+          ...(accessToken ? { accessToken } : {})
+        }
       });
       return Array.isArray(data) ? data : [];
     } catch (error) {
@@ -145,12 +153,27 @@ export const calendarsService = {
   },
 
   /**
+   * Crear calendario local de Ristak. Si HighLevel está conectado, backend lo sincroniza.
+   */
+  async createCalendar(calendarData: Partial<Calendar>, accessToken?: string): Promise<Calendar | null> {
+    try {
+      const data = await apiClient.post<Calendar>('/calendars', {
+        ...calendarData,
+        ...(accessToken ? { accessToken } : {})
+      });
+      return data;
+    } catch (error) {
+      throw error;
+    }
+  },
+
+  /**
    * Obtener un calendario específico
    */
-  async getCalendar(calendarId: string, accessToken: string): Promise<Calendar | null> {
+  async getCalendar(calendarId: string, accessToken?: string): Promise<Calendar | null> {
     try {
       const data = await apiClient.get<Calendar>(`/calendars/${calendarId}`, {
-        params: { accessToken }
+        params: accessToken ? { accessToken } : {}
       });
       return data;
     } catch (error) {
@@ -165,16 +188,17 @@ export const calendarsService = {
     locationId: string,
     startTime: number,
     endTime: number,
-    accessToken: string,
+    accessToken?: string,
     calendarId?: string
   ): Promise<CalendarEvent[]> {
     try {
       const params: any = {
-        locationId,
         startTime: startTime.toString(),
-        endTime: endTime.toString(),
-        accessToken
+        endTime: endTime.toString()
       };
+
+      if (locationId) params.locationId = locationId;
+      if (accessToken) params.accessToken = accessToken;
 
       if (calendarId) {
         params.calendarId = calendarId;
@@ -208,12 +232,17 @@ export const calendarsService = {
     calendarId: string,
     startDate: string,
     endDate: string,
-    accessToken: string,
+    accessToken?: string,
     timezone: string = 'America/Mexico_City'
   ): Promise<FreeSlot[]> {
     try {
       const data = await apiClient.get<FreeSlot[]>(`/calendars/${calendarId}/free-slots`, {
-        params: { startDate, endDate, timezone, accessToken }
+        params: {
+          startDate,
+          endDate,
+          timezone,
+          ...(accessToken ? { accessToken } : {})
+        }
       });
       return Array.isArray(data) ? data : [];
     } catch (error) {
@@ -229,7 +258,7 @@ export const calendarsService = {
     locationId: string,
     startTime: number,
     endTime: number,
-    accessToken: string
+    accessToken?: string
   ): Promise<BlockedSlot[]> {
     try {
       const data = await apiClient.get<BlockedSlot[]>(`/calendars/${calendarId}/blocked-slots`, {
@@ -237,7 +266,7 @@ export const calendarsService = {
           locationId,
           startTime: startTime.toString(),
           endTime: endTime.toString(),
-          accessToken
+          ...(accessToken ? { accessToken } : {})
         }
       });
       return Array.isArray(data) ? data : [];
@@ -283,11 +312,11 @@ export const calendarsService = {
   /**
    * Crear una nueva cita
    */
-  async createAppointment(appointmentData: any, accessToken: string): Promise<CalendarEvent | null> {
+  async createAppointment(appointmentData: any, accessToken?: string): Promise<CalendarEvent | null> {
     try {
       const data = await apiClient.post<CalendarEvent>('/calendars/appointments', {
         ...appointmentData,
-        accessToken
+        ...(accessToken ? { accessToken } : {})
       });
       return data;
     } catch (error) {
@@ -301,12 +330,12 @@ export const calendarsService = {
   async updateAppointment(
     eventId: string,
     updateData: Partial<CalendarEvent>,
-    accessToken: string
+    accessToken?: string
   ): Promise<CalendarEvent | null> {
     try {
       const data = await apiClient.put<CalendarEvent>(`/calendars/appointments/${eventId}`, {
         ...updateData,
-        accessToken
+        ...(accessToken ? { accessToken } : {})
       });
       return data;
     } catch (error) {
@@ -317,10 +346,10 @@ export const calendarsService = {
   /**
    * Eliminar un evento del calendario
    */
-  async deleteEvent(eventId: string, accessToken: string): Promise<boolean> {
+  async deleteEvent(eventId: string, accessToken?: string): Promise<boolean> {
     try {
       await apiClient.delete(`/calendars/events/${eventId}`, {
-        params: { accessToken }
+        params: accessToken ? { accessToken } : {}
       });
       return true;
     } catch (error) {
@@ -348,12 +377,12 @@ export const calendarsService = {
   async updateCalendar(
     calendarId: string,
     updateData: Partial<Calendar>,
-    accessToken: string
+    accessToken?: string
   ): Promise<Calendar | null> {
     try {
       const data = await apiClient.put<Calendar>(`/calendars/${calendarId}`, {
         ...updateData,
-        accessToken
+        ...(accessToken ? { accessToken } : {})
       });
       return data;
     } catch (error) {
@@ -435,7 +464,7 @@ export const calendarsService = {
   async getTodayUpcomingAppointments(
     calendarId: string,
     locationId: string,
-    accessToken: string,
+    accessToken?: string,
     limit: number = 8
   ): Promise<CalendarEvent[]> {
     try {
@@ -470,7 +499,7 @@ export const calendarsService = {
   async getFutureAppointments(
     calendarId: string,
     locationId: string,
-    accessToken: string
+    accessToken?: string
   ): Promise<CalendarEvent[]> {
     try {
       const now = new Date();

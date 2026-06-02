@@ -1,7 +1,16 @@
 .container {
   --chart-loading-fill: var(--app-skeleton-base);
+  --funnel-progress-fill: linear-gradient(90deg, #050505 0%, #0a0a0a 100%);
 
   padding: 1.5rem;
+}
+
+:global(body.dark) .container {
+  --funnel-progress-fill: linear-gradient(
+    90deg,
+    var(--design-chart-secondary, var(--color-text-secondary)),
+    var(--design-chart-muted, var(--color-text-tertiary))
+  );
 }
 
 .header {
@@ -291,13 +300,22 @@
 
 .progressFill {
   height: 100%;
+  background: var(--funnel-progress-fill);
+  border-radius: 9999px;
+  transition: width 1s ease-out;
+}
+
+:global(body:not(.dark) [data-ristak-chart='funnel'] [class*='progressFill']) {
+  background: linear-gradient(90deg, #050505 0%, #0a0a0a 100%) !important;
+}
+
+:global(body.dark [data-ristak-chart='funnel'] [data-funnel-progress-fill]) {
   background: linear-gradient(
     90deg,
     var(--design-chart-secondary, var(--color-text-secondary)),
     var(--design-chart-muted, var(--color-text-tertiary))
-  );
-  border-radius: 9999px;
-  transition: width 1s ease-out;
+  ) !important;
+  opacity: 1 !important;
 }
 
 .connector {

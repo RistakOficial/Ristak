@@ -4,11 +4,13 @@ import { resolveDateRange, resolveDateRangeWithGHLTimezone } from '../utils/date
 import { buildTransactionStats, buildTransactionSummary } from '../services/analyticsService.js'
 import { getGHLClient } from '../services/ghlClient.js'
 import { getHighLevelConfig } from '../config/database.js'
-import { syncInvoices, syncAllInvoices, getInvoicesFromDB } from '../services/invoicesSyncService.js'
+import { syncAllInvoices, syncLocalPaymentsToHighLevel } from '../services/invoicesSyncService.js'
 import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js'
 import { updateSingleContactStats } from '../utils/updateContactsStats.js'
 import { triggerWhatsappFirstPurchaseEvent } from '../services/metaWhatsappEventsService.js'
 import { formatInvoiceMultilineText, formatInvoiceSingleLineText } from '../utils/invoiceTextFormatter.js'
+import { findContactByPhoneCandidates } from '../services/contactIdentityService.js'
+import { normalizePhoneForStorage } from '../utils/phoneUtils.js'
 
 const SUCCESS_PAYMENT_STATUSES = new Set(['succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success'])
 const VALID_TRANSACTION_STATUSES = new Set([
@@ -58,6 +60,110 @@ const normalizeAmount = (amount) => {
     throw new Error('Monto inválido')
   }
   return Math.round(parsed * 100) / 100
+}
+
+const cleanString = (value) => String(value || '').trim()
+
+const createLocalId = (prefix) => `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`
+
+const splitName = (name = '') => {
+  const parts = cleanString(name).split(/\s+/).filter(Boolean)
+  return {
+    firstName: parts[0] || '',
+    lastName: parts.slice(1).join(' ')
+  }
+}
+
+const normalizePaymentMode = (mode) => mode === 'test' ? 'test' : 'live'
+
+async function findExistingContactForPayment({ contactId, email, phone }) {
+  if (contactId) {
+    const byId = await db.get('SELECT id FROM contacts WHERE id = ?', [contactId])
+    if (byId) return byId.id
+  }
+
+  const normalizedEmail = cleanString(email).toLowerCase()
+  if (normalizedEmail) {
+    const byEmail = await db.get('SELECT id FROM contacts WHERE LOWER(email) = ? LIMIT 1', [normalizedEmail])
+    if (byEmail) return byEmail.id
+  }
+
+  if (phone) {
+    const byPhone = await findContactByPhoneCandidates(phone)
+    if (byPhone) return byPhone.id
+  }
+
+  return null
+}
+
+async function ensureLocalContactForPayment({ contactId, contactName, email, phone }) {
+  const fullName = cleanString(contactName)
+  const normalizedPhone = normalizePhoneForStorage(phone) || cleanString(phone) || null
+  const normalizedEmail = cleanString(email) || null
+  const existingContactId = await findExistingContactForPayment({
+    contactId: cleanString(contactId),
+    email: normalizedEmail,
+    phone: normalizedPhone
+  })
+
+  if (existingContactId) {
+    const nameParts = splitName(fullName)
+    try {
+      await db.run(
+        `UPDATE contacts
+         SET phone = COALESCE(NULLIF(phone, ''), ?),
+             email = COALESCE(NULLIF(email, ''), ?),
+             full_name = COALESCE(NULLIF(full_name, ''), ?),
+             first_name = COALESCE(NULLIF(first_name, ''), ?),
+             last_name = COALESCE(NULLIF(last_name, ''), ?),
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+        [
+          normalizedPhone,
+          normalizedEmail,
+          fullName || null,
+          nameParts.firstName || null,
+          nameParts.lastName || null,
+          existingContactId
+        ]
+      )
+    } catch (error) {
+      logger.warn(`No se pudo completar datos del contacto ${existingContactId}: ${error.message}`)
+    }
+
+    return existingContactId
+  }
+
+  if (!normalizedEmail && !normalizedPhone && !fullName) {
+    return null
+  }
+
+  const id = cleanString(contactId) || createLocalId('manual_contact')
+  const nameParts = splitName(fullName)
+
+  await db.run(
+    `INSERT INTO contacts (
+      id, phone, email, full_name, first_name, last_name, source, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    ON CONFLICT(id) DO UPDATE SET
+      phone = COALESCE(NULLIF(contacts.phone, ''), excluded.phone),
+      email = COALESCE(NULLIF(contacts.email, ''), excluded.email),
+      full_name = COALESCE(NULLIF(contacts.full_name, ''), excluded.full_name),
+      first_name = COALESCE(NULLIF(contacts.first_name, ''), excluded.first_name),
+      last_name = COALESCE(NULLIF(contacts.last_name, ''), excluded.last_name),
+      updated_at = CURRENT_TIMESTAMP`,
+    [
+      id,
+      normalizedPhone,
+      normalizedEmail,
+      fullName || normalizedEmail || normalizedPhone || 'Contacto manual',
+      nameParts.firstName || null,
+      nameParts.lastName || null,
+      'ristak_manual'
+    ]
+  )
+
+  return id
 }
 
 const toDateOnly = (dateValue) => {
@@ -214,6 +320,127 @@ const getTransactionByIdForResponse = async (id) => {
   )
 
   return row ? mapTransactionRow(row) : null
+}
+
+/**
+ * Crea una transacción/pago local. HighLevel es opcional: si está configurado,
+ * el pago se exporta como invoice y se enlaza por ghl_invoice_id.
+ */
+export const createTransaction = async (req, res) => {
+  try {
+    const {
+      id,
+      amount,
+      currency,
+      method,
+      paymentMethod,
+      status,
+      reference,
+      title,
+      description,
+      date,
+      dueDate,
+      contactId,
+      contactName,
+      email,
+      phone,
+      paymentMode
+    } = req.body
+
+    const finalAmount = normalizeAmount(amount)
+    if (finalAmount === undefined || finalAmount <= 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'El monto debe ser mayor a 0'
+      })
+    }
+
+    const finalStatus = normalizeStatus(status) || 'paid'
+    if (!VALID_TRANSACTION_STATUSES.has(finalStatus)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Estado de pago inválido'
+      })
+    }
+
+    const finalContactId = await ensureLocalContactForPayment({
+      contactId,
+      contactName,
+      email,
+      phone
+    })
+
+    if (!finalContactId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Necesitas asociar el pago a un contacto con nombre, email o teléfono'
+      })
+    }
+
+    const transactionId = cleanString(id) || createLocalId('manual_payment')
+    const finalCurrency = cleanString(currency || 'MXN').toUpperCase()
+    const finalMethod = cleanString(paymentMethod || method || 'cash') || 'cash'
+    const finalTitle = cleanString(title || description || 'Pago')
+    const finalDescription = cleanString(description || title || 'Pago')
+    const finalDate = date || new Date().toISOString()
+    const finalPaymentMode = normalizePaymentMode(paymentMode)
+
+    await db.run(
+      `INSERT INTO payments (
+        id, contact_id, amount, currency, status, payment_method, payment_mode,
+        reference, title, description, date, due_date, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [
+        transactionId,
+        finalContactId,
+        finalAmount,
+        finalCurrency,
+        finalStatus,
+        finalMethod,
+        finalPaymentMode,
+        reference || null,
+        finalTitle,
+        finalDescription,
+        finalDate,
+        dueDate || null
+      ]
+    )
+
+    await updateSingleContactStats(finalContactId)
+
+    if (SUCCESS_PAYMENT_STATUSES.has(finalStatus)) {
+      await triggerWhatsappFirstPurchaseEvent(finalContactId, {
+        amount: finalAmount,
+        currency: finalCurrency,
+        paymentMode: finalPaymentMode
+      })
+    }
+
+    try {
+      const localExport = await syncLocalPaymentsToHighLevel({ paymentId: transactionId, limit: 1 })
+      if (localExport.exported > 0) {
+        logger.success(`Pago local exportado a HighLevel: ${transactionId}`)
+      }
+    } catch (syncError) {
+      logger.warn(`Pago ${transactionId} guardado localmente; no se pudo exportar a HighLevel: ${syncError.message}`)
+    }
+
+    const createdTransaction = await getTransactionByIdForResponse(transactionId)
+
+    logger.success(`Transacción creada: ${transactionId}`)
+
+    res.status(201).json({
+      success: true,
+      data: createdTransaction
+    })
+  } catch (error) {
+    logger.error(`Error creando transacción: ${error.message}`)
+    const statusCode = error.message === 'Monto inválido' ? 400 : 500
+    res.status(statusCode).json({
+      success: false,
+      error: error.message || 'Error creando transacción'
+    })
+  }
 }
 
 /**
@@ -830,6 +1057,17 @@ export const recordPayment = async (req, res) => {
         currency: transaction.currency || 'MXN',
         paymentMode
       })
+    }
+
+    if (!transaction.ghl_invoice_id) {
+      try {
+        const localExport = await syncLocalPaymentsToHighLevel({ paymentId: id, limit: 1 })
+        if (localExport.exported > 0) {
+          logger.success(`Pago registrado y exportado a HighLevel: ${id}`)
+        }
+      } catch (syncError) {
+        logger.warn(`Pago ${id} registrado localmente; no se pudo exportar a HighLevel: ${syncError.message}`)
+      }
     }
 
     logger.success(`Pago registrado para transacción: ${id}`)

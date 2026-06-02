@@ -1,5 +1,6 @@
 import express from 'express'
 import {
+  createTransaction,
   getTransactions,
   getTransactionById,
   getTransactionStats,
@@ -16,6 +17,7 @@ const router = express.Router()
 
 // Rutas principales
 router.get('/', getTransactions)
+router.post('/', createTransaction)
 router.get('/stats', getTransactionStats)
 router.get('/summary', getTransactionSummary)
 router.get('/:id', getTransactionById)

@@ -22,6 +22,7 @@ import styles from './RecordPaymentModal.module.css'
 import { useNotification } from '@/contexts/NotificationContext'
 import { formatCurrency as formatMxCurrency } from '@/utils/format'
 import { highLevelService } from '@/services/highLevelService'
+import { transactionsService } from '@/services/transactionsService'
 
 const IVA_RATE = 0.16
 const DEFAULT_INVOICE_TITLE = 'Pago'
@@ -951,6 +952,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     }
 
     const effectiveSendMethod = sendMethod
+    let processedInvoiceId: string | undefined
 
     setLoading(true)
     setStep('processing')
@@ -974,6 +976,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       }
 
       let invoiceId = invoiceSummary.invoiceId
+      processedInvoiceId = invoiceId
 
       if (!invoiceId) {
         // Crear una copia limpia del payload para evitar referencias circulares
@@ -1037,6 +1040,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         }
 
         invoiceId = data.invoice?.id || data.invoice?._id
+        processedInvoiceId = invoiceId
 
         if (!invoiceId) {
           throw new Error('No se pudo obtener el ID del invoice')
@@ -1101,6 +1105,37 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       onSuccess?.()
       onClose()
     } catch (error: any) {
+      const canSaveManualPaymentLocally = paymentOption === 'manual' && !processedInvoiceId
+
+      if (canSaveManualPaymentLocally && selectedContact) {
+        try {
+          await transactionsService.createTransaction({
+            date: manualPaymentData.paymentDate || new Date().toISOString(),
+            contactId: selectedContact.id,
+            contactName: selectedContact.name,
+            email: selectedContact.email || '',
+            phone: selectedContact.phone || '',
+            amount: invoiceSummary.amount,
+            currency: invoiceSummary.currency,
+            method: manualPaymentData.paymentMethod as any,
+            status: 'paid',
+            reference: manualPaymentData.reference,
+            title: invoicePayload.title || invoicePayload.name || DEFAULT_INVOICE_TITLE,
+            description: [invoiceSummary.description, manualPaymentData.notes].filter(Boolean).join('\n'),
+            dueDate: invoicePayload.dueDate
+          })
+
+          showToast('success', 'Pago registrado localmente', 'Cuando conectes HighLevel, Ristak lo importará y lo enlazará para evitar duplicados.')
+          onSuccess?.()
+          onClose()
+          return
+        } catch (localError: any) {
+          showToast('error', 'Error', localError.message || 'No se pudo registrar el pago localmente')
+          setStep('options')
+          return
+        }
+      }
+
       showToast('error', 'Error', error.message || 'No se pudo completar la operación')
       setStep('options')
     } finally {

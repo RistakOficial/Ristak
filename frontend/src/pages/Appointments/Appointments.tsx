@@ -274,8 +274,6 @@ export const Appointments: React.FC = () => {
   }, [currentDate, viewMode]);
 
   const loadCalendars = useCallback(async () => {
-    if (!locationId || !accessToken) return;
-
     try {
       setLoading(true);
       const calendarsData = await calendarsService.getCalendars(locationId, accessToken);
@@ -311,7 +309,7 @@ export const Appointments: React.FC = () => {
   }, [locationId, accessToken, defaultCalendarId, selectCalendar]);
 
   const loadEvents = useCallback(async () => {
-    if (!locationId || !accessToken || !selectedCalendar) return;
+    if (!selectedCalendar) return;
 
     try {
       setLoading(true);
@@ -320,10 +318,10 @@ export const Appointments: React.FC = () => {
       const { startTime, endTime } = getDateRange();
 
       const eventsData = await calendarsService.getEvents(
-        locationId,
+        locationId || '',
         startTime,
         endTime,
-        accessToken,
+        accessToken || undefined,
         selectedCalendar.id
       );
 
@@ -337,10 +335,10 @@ export const Appointments: React.FC = () => {
       monthEnd.setMonth(monthEnd.getMonth() + 1);
 
       const monthlyData = await calendarsService.getEvents(
-        locationId,
+        locationId || '',
         monthStart.getTime(),
         monthEnd.getTime(),
-        accessToken,
+        accessToken || undefined,
         selectedCalendar.id
       );
 
@@ -355,13 +353,13 @@ export const Appointments: React.FC = () => {
 
   // Cargar eventos próximos desde HOY (independiente del calendario visible)
   const loadUpcomingEvents = useCallback(async () => {
-    if (!locationId || !accessToken || !selectedCalendar) return;
+    if (!selectedCalendar) return;
 
     try {
       const upcomingData = await calendarsService.getFutureAppointments(
         selectedCalendar.id,
-        locationId,
-        accessToken
+        locationId || '',
+        accessToken || undefined
       );
 
       setUpcomingEvents(upcomingData);
@@ -372,7 +370,7 @@ export const Appointments: React.FC = () => {
 
   // Cargar horarios bloqueados del calendario
   const loadBlockedSlots = useCallback(async () => {
-    if (!locationId || !accessToken || !selectedCalendar) return;
+    if (!selectedCalendar) return;
 
     try {
       // Usar el mismo rango de fechas que loadEvents
@@ -380,10 +378,10 @@ export const Appointments: React.FC = () => {
 
       const blockedSlotsData = await calendarsService.getBlockedSlots(
         selectedCalendar.id,
-        locationId,
+        locationId || '',
         startTime,
         endTime,
-        accessToken
+        accessToken || undefined
       );
 
       setBlockedSlots(blockedSlotsData);
@@ -396,14 +394,12 @@ export const Appointments: React.FC = () => {
   // useEffects - ejecutar después de declarar las funciones
   // Cargar calendarios al montar (incluye defaultCalendarId para reaccionar a cambios de configuración)
   useEffect(() => {
-    if (locationId && accessToken) {
-      loadCalendars();
-    }
+    loadCalendars();
   }, [locationId, accessToken, defaultCalendarId, loadCalendars]);
 
   // Cargar eventos cuando cambie el calendario o la fecha
   useEffect(() => {
-    if (selectedCalendar && locationId && accessToken) {
+    if (selectedCalendar) {
       loadEvents();
       // DESACTIVADO TEMPORALMENTE - Blocked Slots
       // loadBlockedSlots();
@@ -412,7 +408,7 @@ export const Appointments: React.FC = () => {
 
   // Cargar próximas citas solo cuando cambie el calendario seleccionado
   useEffect(() => {
-    if (selectedCalendar && locationId && accessToken) {
+    if (selectedCalendar) {
       loadUpcomingEvents();
     }
   }, [selectedCalendar, locationId, accessToken, loadUpcomingEvents]);
@@ -676,19 +672,19 @@ export const Appointments: React.FC = () => {
     timeZone: string;
     contactId?: string;
   }) => {
-    if (!selectedCalendar || !locationId || !accessToken) return;
+    if (!selectedCalendar) return;
 
     try {
       setLoading(true);
       await calendarsService.createAppointment(
         {
           calendarId: selectedCalendar.id,
-          locationId,
+          ...(locationId ? { locationId } : {}),
           ...payload
         },
-        accessToken
+        accessToken || undefined
       );
-      showToast('success', 'Cita programada', 'La nueva cita se creó correctamente.');
+      showToast('success', 'Cita programada', accessToken ? 'La nueva cita se creó correctamente.' : 'La cita quedó guardada en Ristak y se sincronizará cuando conectes HighLevel.');
       setIsCreateModalOpen(false);
       await loadEvents();
       await loadUpcomingEvents();
@@ -780,11 +776,9 @@ export const Appointments: React.FC = () => {
 
   // Actualizar cita
   const handleSaveAppointment = async (eventId: string, updates: Partial<CalendarEvent>) => {
-    if (!accessToken) return;
-
     try {
-      await calendarsService.updateAppointment(eventId, updates, accessToken);
-      showToast('success', 'Cita actualizada', 'Los cambios se guardaron correctamente.');
+      await calendarsService.updateAppointment(eventId, updates, accessToken || undefined);
+      showToast('success', 'Cita actualizada', accessToken ? 'Los cambios se guardaron correctamente.' : 'Los cambios quedaron guardados en Ristak y pendientes de sync.');
 
       // Recargar eventos
       loadEvents();
@@ -796,10 +790,8 @@ export const Appointments: React.FC = () => {
 
   // Eliminar cita
   const handleDeleteAppointment = async (eventId: string) => {
-    if (!accessToken) return;
-
     try {
-      await calendarsService.deleteEvent(eventId, accessToken);
+      await calendarsService.deleteEvent(eventId, accessToken || undefined);
       showToast('success', 'Cita eliminada', 'La cita se eliminó correctamente.');
 
       // Recargar eventos
@@ -1117,18 +1109,6 @@ export const Appointments: React.FC = () => {
         return isDark ? 'rgba(209, 213, 219, 0.3)' : 'rgba(156, 163, 175, 0.2)';
     }
   };
-
-  if (!locationId || !accessToken) {
-    return (
-      <PageContainer>
-        <div className={styles.emptyState}>
-          <CalendarIcon size={48} className={styles.emptyIcon} />
-          <h2>Configuración requerida</h2>
-          <p>Debes configurar tu cuenta de HighLevel para ver los calendarios.</p>
-        </div>
-      </PageContainer>
-    );
-  }
 
   if (loading && calendars.length === 0) {
     return <Loading message="Cargando calendarios..." page="appointments" />

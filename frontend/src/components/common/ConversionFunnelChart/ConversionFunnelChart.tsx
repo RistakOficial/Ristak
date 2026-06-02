@@ -238,7 +238,13 @@ export const ConversionFunnelChart: React.FC<ConversionFunnelChartProps> = ({
                     <div className={styles.progressBar}>
                       <div
                         className={styles.progressFill}
-                        style={{ width: `${percentage}%` }}
+                        data-funnel-progress-fill
+                        style={{
+                          width: `${percentage}%`,
+                          background: '#000000',
+                          backgroundImage: 'none',
+                          opacity: 1
+                        }}
                       />
                     </div>
                   </div>

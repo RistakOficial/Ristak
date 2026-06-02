@@ -581,6 +581,128 @@ async function initTables() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_appointments_contact ON appointments(contact_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_appointments_start_time ON appointments(start_time)')
 
+    // Calendarios locales de Ristak. Si un calendario viene de HighLevel,
+    // ghl_calendar_id guarda el ID remoto; si nace en Ristak, se llena al sincronizar.
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS calendars (
+        id TEXT PRIMARY KEY,
+        ghl_calendar_id TEXT UNIQUE,
+        location_id TEXT,
+        name TEXT NOT NULL,
+        description TEXT,
+        slug TEXT,
+        widget_slug TEXT,
+        calendar_type TEXT DEFAULT 'event',
+        widget_type TEXT,
+        event_title TEXT,
+        event_color TEXT DEFAULT '#3b82f6',
+        is_active INTEGER DEFAULT 1,
+        team_members TEXT,
+        location_configurations TEXT,
+        slot_duration INTEGER DEFAULT 60,
+        slot_duration_unit TEXT DEFAULT 'mins',
+        slot_interval INTEGER DEFAULT 60,
+        slot_interval_unit TEXT DEFAULT 'mins',
+        slot_buffer INTEGER DEFAULT 0,
+        slot_buffer_unit TEXT DEFAULT 'mins',
+        pre_buffer INTEGER DEFAULT 0,
+        pre_buffer_unit TEXT DEFAULT 'mins',
+        appoinment_per_slot INTEGER DEFAULT 1,
+        appoinment_per_day INTEGER DEFAULT 0,
+        allow_booking_after INTEGER DEFAULT 0,
+        allow_booking_after_unit TEXT DEFAULT 'hours',
+        allow_booking_for INTEGER DEFAULT 30,
+        allow_booking_for_unit TEXT DEFAULT 'days',
+        open_hours TEXT,
+        auto_confirm INTEGER DEFAULT 1,
+        allow_reschedule INTEGER DEFAULT 1,
+        allow_cancellation INTEGER DEFAULT 1,
+        notes TEXT,
+        availability_type INTEGER DEFAULT 0,
+        source TEXT DEFAULT 'ristak',
+        sync_status TEXT DEFAULT 'pending',
+        sync_error TEXT,
+        last_synced_at DATETIME,
+        raw_json TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+
+    await db.run('CREATE INDEX IF NOT EXISTS idx_calendars_ghl ON calendars(ghl_calendar_id)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_calendars_source ON calendars(source)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_calendars_active ON calendars(is_active)')
+
+    for (const [columnName, columnType] of [
+      ['ghl_appointment_id', 'TEXT'],
+      ['source', "TEXT DEFAULT 'ghl'"],
+      ['sync_status', "TEXT DEFAULT 'synced'"],
+      ['sync_error', 'TEXT'],
+      ['synced_at', 'DATETIME'],
+      ['deleted_at', 'DATETIME']
+    ]) {
+      try {
+        await db.run(`ALTER TABLE appointments ADD COLUMN ${columnName} ${columnType}`)
+      } catch (err) {
+        // Columna ya existe, ignorar.
+      }
+    }
+
+    try {
+      await db.run('CREATE INDEX IF NOT EXISTS idx_appointments_ghl ON appointments(ghl_appointment_id)')
+      await db.run('CREATE INDEX IF NOT EXISTS idx_appointments_sync_status ON appointments(sync_status)')
+    } catch (err) {
+      logger.warn('Advertencia al crear índices de sync de appointments:', err.message)
+    }
+
+    for (const [columnName, columnType] of [
+      ['ghl_calendar_id', 'TEXT'],
+      ['location_id', 'TEXT'],
+      ['description', 'TEXT'],
+      ['slug', 'TEXT'],
+      ['widget_slug', 'TEXT'],
+      ['calendar_type', "TEXT DEFAULT 'event'"],
+      ['widget_type', 'TEXT'],
+      ['event_title', 'TEXT'],
+      ['event_color', "TEXT DEFAULT '#3b82f6'"],
+      ['is_active', 'INTEGER DEFAULT 1'],
+      ['team_members', 'TEXT'],
+      ['location_configurations', 'TEXT'],
+      ['slot_duration', 'INTEGER DEFAULT 60'],
+      ['slot_duration_unit', "TEXT DEFAULT 'mins'"],
+      ['slot_interval', 'INTEGER DEFAULT 60'],
+      ['slot_interval_unit', "TEXT DEFAULT 'mins'"],
+      ['slot_buffer', 'INTEGER DEFAULT 0'],
+      ['slot_buffer_unit', "TEXT DEFAULT 'mins'"],
+      ['pre_buffer', 'INTEGER DEFAULT 0'],
+      ['pre_buffer_unit', "TEXT DEFAULT 'mins'"],
+      ['appoinment_per_slot', 'INTEGER DEFAULT 1'],
+      ['appoinment_per_day', 'INTEGER DEFAULT 0'],
+      ['allow_booking_after', 'INTEGER DEFAULT 0'],
+      ['allow_booking_after_unit', "TEXT DEFAULT 'hours'"],
+      ['allow_booking_for', 'INTEGER DEFAULT 30'],
+      ['allow_booking_for_unit', "TEXT DEFAULT 'days'"],
+      ['open_hours', 'TEXT'],
+      ['auto_confirm', 'INTEGER DEFAULT 1'],
+      ['allow_reschedule', 'INTEGER DEFAULT 1'],
+      ['allow_cancellation', 'INTEGER DEFAULT 1'],
+      ['notes', 'TEXT'],
+      ['availability_type', 'INTEGER DEFAULT 0'],
+      ['source', "TEXT DEFAULT 'ristak'"],
+      ['sync_status', "TEXT DEFAULT 'pending'"],
+      ['sync_error', 'TEXT'],
+      ['last_synced_at', 'DATETIME'],
+      ['raw_json', 'TEXT'],
+      ['created_at', 'DATETIME DEFAULT CURRENT_TIMESTAMP'],
+      ['updated_at', 'DATETIME DEFAULT CURRENT_TIMESTAMP']
+    ]) {
+      try {
+        await db.run(`ALTER TABLE calendars ADD COLUMN ${columnName} ${columnType}`)
+      } catch (err) {
+        // Columna ya existe, ignorar.
+      }
+    }
+
     // Señales irreversibles para atribución de asistencia.
     // No alteran el estado operativo del calendario.
     await db.run(`

@@ -90,6 +90,7 @@ interface TrackingConfig {
   isConfigured: boolean
   hasHighLevel: boolean
   showAnalytics: boolean
+  trackingSnippet?: string | null
 }
 
 /**
