@@ -11,6 +11,7 @@ import fetch from 'node-fetch'
 import { getHighLevelConfig } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 import { formatInvoiceMultilineText, formatInvoicePayloadText } from '../utils/invoiceTextFormatter.js'
+import { normalizePhoneForStorage } from '../utils/phoneUtils.js'
 
 const GHL_BASE_URL = 'https://services.leadconnectorhq.com'
 const GHL_API_VERSION = '2021-07-28'
@@ -78,7 +79,7 @@ function normalizeInvoiceAddress(address = {}, fallback = {}) {
 
 function normalizeInvoiceBusinessDetails(businessDetails = {}) {
   const normalized = { ...businessDetails }
-  const phoneNo = cleanString(normalized.phoneNo || normalized.phone)
+  const phoneNo = normalizePhoneForStorage(normalized.phoneNo || normalized.phone) || cleanString(normalized.phoneNo || normalized.phone)
   const address = normalizeInvoiceAddress(normalized.address, normalized)
 
   delete normalized.phone
@@ -214,7 +215,7 @@ class GHLClient {
     }
 
     if (email) body.email = email
-    if (phone) body.phone = phone
+    if (phone) body.phone = normalizePhoneForStorage(phone) || phone
     if (query) body.query = query
     if (limit) body.pageLimit = limit // GHL usa pageLimit, no limit
 
@@ -271,7 +272,7 @@ class GHLClient {
       firstName: firstName,
       lastName: lastName,
       email: email,
-      phone: phone,
+      phone: normalizePhoneForStorage(phone) || phone,
     }
 
     logger.info(`Creando contacto: ${name}`)
@@ -296,6 +297,7 @@ class GHLClient {
   async updateContact(contactId, data) {
     // Separar nombre completo en firstName y lastName si se proporciona
     const body = { ...data }
+    if (body.phone) body.phone = normalizePhoneForStorage(body.phone) || body.phone
 
     if (data.name) {
       const nameParts = data.name.trim().split(' ')

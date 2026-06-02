@@ -4,6 +4,7 @@ import { updateContactsStats } from '../utils/updateContactsStats.js'
 import { resolveDateRange, resolveDateRangeWithGHLTimezone } from '../utils/dateUtils.js'
 import { buildContactStats } from '../services/analyticsService.js'
 import { getGHLClient } from '../services/ghlClient.js'
+import { prepareContactPhoneUpsert } from '../services/contactIdentityService.js'
 import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js'
 import { nonTestPaymentCondition } from '../utils/paymentMode.js'
 import { buildContactSearchClause, buildContactSearchRank } from '../utils/searchText.js'
@@ -13,6 +14,7 @@ import {
   parseContactCustomFields,
   serializeContactCustomFieldsForDb
 } from '../utils/contactCustomFields.js'
+import { normalizePhoneForStorage } from '../utils/phoneUtils.js'
 import fetch from 'node-fetch'
 
 const normalizePhone = (phone) => {
@@ -944,6 +946,12 @@ export const updateContact = async (req, res) => {
     const highLevelCustomFields = hasCustomFieldsUpdate
       ? buildHighLevelCustomFieldsPayload(customFields)
       : null
+    const normalizedPhone = phone !== undefined
+      ? (normalizePhoneForStorage(phone) || phone || null)
+      : undefined
+    const phoneUpsert = phone !== undefined
+      ? await prepareContactPhoneUpsert({ contactId: id, phone: normalizedPhone })
+      : null
 
     // Construir query de actualización solo con campos permitidos
     const updates = []
@@ -959,7 +967,7 @@ export const updateContact = async (req, res) => {
     }
     if (phone !== undefined) {
       updates.push('phone = ?')
-      params.push(phone)
+      params.push(phoneUpsert?.phone || null)
     }
     if (source !== undefined) {
       updates.push('source = ?')
@@ -989,7 +997,7 @@ export const updateContact = async (req, res) => {
 
       if (full_name) ghlUpdateData.name = full_name
       if (email) ghlUpdateData.email = email
-      if (phone) ghlUpdateData.phone = phone
+      if (phone) ghlUpdateData.phone = phoneUpsert?.phone || normalizedPhone
       if (source) ghlUpdateData.source = source
       if (tags !== undefined) ghlUpdateData.tags = tags
       if (hasCustomFieldsUpdate) ghlUpdateData.customFields = highLevelCustomFields

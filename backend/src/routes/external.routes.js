@@ -31,11 +31,16 @@ import { requireApiToken } from '../middleware/apiTokenMiddleware.js'
 import { getExternalApiAppId } from '../utils/apiTokens.js'
 import { getGHLClient } from '../services/ghlClient.js'
 import {
+  finalizePreparedPhoneUpsert,
+  prepareContactPhoneUpsert
+} from '../services/contactIdentityService.js'
+import {
   hasContactCustomFieldsPayload,
   normalizeContactCustomFields,
   parseContactCustomFields,
   serializeContactCustomFieldsForDb
 } from '../utils/contactCustomFields.js'
+import { normalizePhoneForStorage } from '../utils/phoneUtils.js'
 
 const router = express.Router()
 const SECRET_KEY_PATTERN = /(token|secret|password|authorization|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret|database[_-]?url|encrypted|hash)/i
@@ -216,7 +221,7 @@ function normalizeContactPayload(body = {}) {
     first_name: data.first_name || nameParts.firstName,
     last_name: data.last_name || nameParts.lastName,
     email: data.email || '',
-    phone: data.phone || '',
+    phone: normalizePhoneForStorage(data.phone) || data.phone || '',
     source: data.source || 'external_api',
     attribution_ad_name: data.attribution_ad_name,
     attribution_ad_id: data.attribution_ad_id
@@ -238,6 +243,7 @@ async function upsertLocalContact(contact = {}) {
   const customFieldsValueSql = process.env.DATABASE_URL
     ? "COALESCE(?::jsonb, '[]'::jsonb)"
     : "COALESCE(?, '[]')"
+  const phoneUpsert = await prepareContactPhoneUpsert({ contactId: id, phone: contact.phone })
 
   await db.run(
     `INSERT INTO contacts (
@@ -257,7 +263,7 @@ async function upsertLocalContact(contact = {}) {
        updated_at = CURRENT_TIMESTAMP`,
     [
       id,
-      contact.phone || null,
+      phoneUpsert.phone || null,
       contact.email || null,
       fullName || null,
       firstName || null,
@@ -269,6 +275,7 @@ async function upsertLocalContact(contact = {}) {
       contact.createdAt || contact.dateAdded || contact.created_at || null
     ]
   )
+  await finalizePreparedPhoneUpsert(phoneUpsert, id)
 
   return db.get('SELECT * FROM contacts WHERE id = ?', [id])
 }

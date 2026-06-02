@@ -11,6 +11,7 @@ import makeWASocket, {
 } from '@whiskeysockets/baileys'
 import { db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
+import { buildPhoneMatchCandidates, normalizePhoneDigits, normalizePhoneForStorage } from '../utils/phoneUtils.js'
 
 const DEFAULT_SESSION_ID = 'default'
 const SOURCE_NAME = 'WhatsApp Business'
@@ -105,18 +106,16 @@ export function resolveWhatsAppWebAddressing(msg = {}) {
   ].filter(Boolean)
   const phoneJid = pickPhoneJid(candidates)
   const identityJid = phoneJid || remoteJid
+  const rawPhone = normalizePhoneFromJid(identityJid)
 
   return {
     remoteJid,
     phoneJid,
     identityJid,
-    phone: normalizePhoneFromJid(identityJid),
+    rawPhone,
+    phone: normalizePhoneForStorage(rawPhone) || rawPhone,
     usedLidFallback: !phoneJid && isLidJid(remoteJid)
   }
-}
-
-function normalizePhoneDigits(phone = '') {
-  return String(phone || '').replace(/\D/g, '')
 }
 
 function shouldIgnoreJid(jid = '') {
@@ -364,8 +363,7 @@ function getRuntime(sessionId = DEFAULT_SESSION_ID) {
 }
 
 async function findExistingContact(phone) {
-  const digits = normalizePhoneDigits(phone)
-  const candidates = [...new Set([phone, digits, digits ? `+${digits}` : ''].filter(Boolean))]
+  const candidates = buildPhoneMatchCandidates(phone)
   if (!candidates.length) return null
 
   const placeholders = candidates.map(() => '?').join(', ')
@@ -389,11 +387,12 @@ function buildContactCustomFields({ remoteJid, messageText, attribution }) {
 }
 
 async function upsertLocalContact({ phone, pushName, remoteJid, messageText, attribution }) {
-  const existing = await findExistingContact(phone)
-  const fullName = pushName || phone || 'Contacto WhatsApp'
+  const canonicalPhone = normalizePhoneForStorage(phone) || phone
+  const existing = await findExistingContact(canonicalPhone)
+  const fullName = pushName || canonicalPhone || 'Contacto WhatsApp'
 
   if (!existing) {
-    const contactId = hashId('waweb_contact', `${phone}|${remoteJid}`)
+    const contactId = hashId('waweb_contact', `${canonicalPhone}|${remoteJid}`)
     const customFieldsValue = JSON.stringify(buildContactCustomFields({ remoteJid, messageText, attribution }))
     const customFieldsPlaceholder = isPostgres() ? '?::jsonb' : '?'
 
@@ -405,7 +404,7 @@ async function upsertLocalContact({ phone, pushName, remoteJid, messageText, att
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${customFieldsPlaceholder}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
     `, [
       contactId,
-      phone || null,
+      canonicalPhone || null,
       fullName,
       pushName || null,
       SOURCE_NAME,
@@ -745,7 +744,7 @@ async function getConnectedAccountInfo(socket) {
 
   return {
     jid,
-    phone: normalizePhoneFromJid(jid),
+    phone: normalizePhoneForStorage(normalizePhoneFromJid(jid)) || normalizePhoneFromJid(jid),
     pushName: socket.user?.name ||
       socket.user?.verifiedName ||
       businessProfile?.businessName ||

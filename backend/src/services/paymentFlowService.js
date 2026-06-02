@@ -7,6 +7,7 @@ import { getInvoicePaymentMode } from '../utils/paymentMode.js'
 import { updateSingleContactStats } from '../utils/updateContactsStats.js'
 import { combineInvoiceTextSections, formatInvoiceMultilineText } from '../utils/invoiceTextFormatter.js'
 import { logger } from '../utils/logger.js'
+import { normalizePhoneForStorage } from '../utils/phoneUtils.js'
 
 export const PAYMENT_FLOW_STATES = {
   DRAFT: 'draft',
@@ -722,6 +723,7 @@ async function getAuthorizedPaymentMethod(contactOrFlow, options = {}) {
 
 function buildInvoicePayload({ basePayload, contact, amount, currency, concept, title, dueDate, summaryDetails }) {
   const contactName = contact.name || contact.email || contact.phone || 'Cliente'
+  const contactPhone = normalizePhoneForStorage(contact.phone) || contact.phone || ''
   const businessDetails = basePayload?.businessDetails || { name: 'Mi Negocio' }
   const termsNotes = combineTextSections(basePayload?.termsNotes, summaryDetails)
   const invoiceDates = resolveInvoiceDates(dueDate, basePayload?.dueDate, basePayload?.timezone)
@@ -736,7 +738,7 @@ function buildInvoicePayload({ basePayload, contact, amount, currency, concept, 
       id: contact.id,
       name: contactName,
       email: contact.email || '',
-      phoneNo: contact.phone || ''
+      phoneNo: contactPhone
     },
     items: [
       {
@@ -752,7 +754,7 @@ function buildInvoicePayload({ basePayload, contact, amount, currency, concept, 
     liveMode: basePayload?.liveMode !== undefined ? basePayload.liveMode : true,
     sentTo: {
       email: contact.email ? [contact.email] : [],
-      phoneNo: contact.phone ? [contact.phone] : []
+      phoneNo: contactPhone ? [contactPhone] : []
     },
     paymentMethods: basePayload?.paymentMethods || {
       stripe: {
@@ -1798,7 +1800,7 @@ export async function createInstallmentPaymentFlow(payload) {
       contact.id,
       contact.name || null,
       contact.email || null,
-      contact.phone || null,
+      normalizePhoneForStorage(contact.phone) || contact.phone || null,
       totalAmount,
       currency,
       concept,

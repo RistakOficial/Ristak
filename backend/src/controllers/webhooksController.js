@@ -14,6 +14,12 @@ import {
 } from '../services/metaWhatsappEventsService.js';
 import { resolveHighLevelContactCustomFields } from '../services/highlevelCustomFieldsService.js';
 import { hasContactCustomFieldsPayload } from '../utils/contactCustomFields.js';
+import {
+  finalizePreparedPhoneUpsert,
+  findContactByPhoneCandidates,
+  prepareContactPhoneUpsert
+} from '../services/contactIdentityService.js';
+import { normalizePhoneForStorage } from '../utils/phoneUtils.js';
 
 function firstValue(...values) {
   return values.find(value => value !== undefined && value !== null && value !== '');
@@ -301,7 +307,7 @@ export const handleContactWebhook = async (req, res) => {
     // HighLevel puede mandar el ID en diferentes lugares
     const contactId = data.contact_id || data.id || data.contactId;
     const email = data.email;
-    const phone = data.phone || data.contactPhone;
+    const phone = normalizePhoneForStorage(data.phone || data.contactPhone) || data.phone || data.contactPhone;
 
     logger.info(`📥 Webhook de contacto recibido: ${contactId || 'sin ID'}`);
 
@@ -361,6 +367,7 @@ export const handleContactWebhook = async (req, res) => {
       : null;
 
     const usePostgres = process.env.DATABASE_URL ? true : false;
+    const phoneUpsert = await prepareContactPhoneUpsert({ contactId, phone });
 
     const query = usePostgres
       ? `INSERT INTO contacts (id, phone, email, full_name, first_name, last_name, source, created_at,
@@ -399,7 +406,7 @@ export const handleContactWebhook = async (req, res) => {
 
     await db.run(query, [
       contactId,
-      data.phone || data.contactPhone,
+      phoneUpsert.phone || null,
       data.email,
       data.full_name || data.contactName || `${data.first_name || data.firstName || ''} ${data.last_name || data.lastName || ''}`.trim() || 'Sin nombre',
       data.first_name || data.firstName,
@@ -414,6 +421,7 @@ export const handleContactWebhook = async (req, res) => {
       visitorId,
       customFieldsJson
     ]);
+    await finalizePreparedPhoneUpsert(phoneUpsert, contactId);
 
     // Si viene visitor_id, vincular histórico de sesiones
     if (visitorId && contactId) {
@@ -489,6 +497,10 @@ export const handlePaymentWebhook = async (req, res) => {
     const contactExists = await db.get('SELECT id FROM contacts WHERE id = ?', [contactId]);
     if (!contactExists && contactId) {
       logger.info(`Contacto ${contactId} no existe, creando con datos básicos...`);
+      const basicPhoneUpsert = await prepareContactPhoneUpsert({
+        contactId,
+        phone: payment.customer?.phone || data.phone
+      });
 
       const contactQuery = usePostgres
         ? `INSERT INTO contacts (id, full_name, phone, source, created_at) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id) DO NOTHING`
@@ -497,10 +509,11 @@ export const handlePaymentWebhook = async (req, res) => {
       await db.run(contactQuery, [
         contactId,
         payment.customer?.name || data.full_name || data.contactName || 'Contacto sin nombre',
-        payment.customer?.phone || data.phone || null,
+        basicPhoneUpsert.phone || null,
         'payment-webhook',
         data.date_created || new Date().toISOString()
       ]);
+      await finalizePreparedPhoneUpsert(basicPhoneUpsert, contactId);
     }
 
     // Extraer método de pago
@@ -730,6 +743,10 @@ export const handleAppointmentWebhook = async (req, res) => {
       const contactExists = await db.get('SELECT id FROM contacts WHERE id = ?', [contactId]);
       if (!contactExists) {
         logger.info(`Contacto ${contactId} no existe, creando con datos básicos...`);
+        const basicPhoneUpsert = await prepareContactPhoneUpsert({
+          contactId,
+          phone: data.phone
+        });
 
         const contactQuery = usePostgres
           ? `INSERT INTO contacts (id, full_name, phone, source, created_at) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id) DO NOTHING`
@@ -738,10 +755,11 @@ export const handleAppointmentWebhook = async (req, res) => {
         await db.run(contactQuery, [
           contactId,
           data.full_name || data.contactName || 'Contacto sin nombre',
-          data.phone || null,
+          basicPhoneUpsert.phone || null,
           'appointment-webhook',
           data.date_created || new Date().toISOString()
         ]);
+        await finalizePreparedPhoneUpsert(basicPhoneUpsert, contactId);
       }
     }
 
@@ -855,6 +873,10 @@ export const handleAppointmentShowedWebhook = async (req, res) => {
     if (contactId) {
       const contactExists = await db.get('SELECT id FROM contacts WHERE id = ?', [contactId]);
       if (!contactExists) {
+        const basicPhoneUpsert = await prepareContactPhoneUpsert({
+          contactId,
+          phone: data.phone || data.contactPhone || data.contact?.phone
+        });
         const contactQuery = usePostgres
           ? `INSERT INTO contacts (id, full_name, phone, source, created_at) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id) DO NOTHING`
           : `INSERT OR IGNORE INTO contacts (id, full_name, phone, source, created_at) VALUES (?, ?, ?, ?, ?)`;
@@ -862,10 +884,11 @@ export const handleAppointmentShowedWebhook = async (req, res) => {
         await db.run(contactQuery, [
           contactId,
           data.full_name || data.contactName || data.contact?.name || 'Contacto sin nombre',
-          data.phone || data.contactPhone || data.contact?.phone || null,
+          basicPhoneUpsert.phone || null,
           'appointment-showed-webhook',
           data.date_created || data.dateCreated || new Date().toISOString()
         ]);
+        await finalizePreparedPhoneUpsert(basicPhoneUpsert, contactId);
       }
     }
 
@@ -1209,7 +1232,7 @@ export const handleWhatsAppAttributionWebhook = async (req, res) => {
     const data = req.body;
     const customData = data.customData || {};
 
-    const phone = data.phone || data.contactPhone;
+    const phone = normalizePhoneForStorage(data.phone || data.contactPhone) || data.phone || data.contactPhone;
     const contactId = data.contact_id || data.contactId;
 
     logger.info(`📥 Webhook de atribución WhatsApp recibido para: ${phone || 'sin teléfono'}`);
@@ -1218,6 +1241,8 @@ export const handleWhatsAppAttributionWebhook = async (req, res) => {
       logger.warn('Webhook de atribución sin teléfono, ignorando');
       return res.status(200).json({ success: true, message: 'Webhook recibido' });
     }
+    const matchedContact = contactId ? null : await findContactByPhoneCandidates(phone);
+    const resolvedContactId = contactId || matchedContact?.id || null;
 
     // Extraer datos de atribución de Click-to-WhatsApp
     const referralSourceId = customData.source_id || data.referral_source_id || data.sourceId || data.source_id || null;
@@ -1240,7 +1265,7 @@ export const handleWhatsAppAttributionWebhook = async (req, res) => {
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 
     await db.run(query, [
-      contactId,
+      resolvedContactId,
       phone,
       customData.source_url || data.referral_source_url || data.sourceUrl || data.source_url,
       customData.source_type || data.referral_source_type || data.sourceType || data.source_type,
@@ -1258,7 +1283,7 @@ export const handleWhatsAppAttributionWebhook = async (req, res) => {
     // Usar referral_source_id como ad_id si viene disponible
     let finalAdId = referralSourceId || adIdThruMessage || null;
 
-    if (contactId) {
+    if (resolvedContactId) {
       const contactUpdates = [];
       const contactParams = [];
 
@@ -1279,7 +1304,7 @@ export const handleWhatsAppAttributionWebhook = async (req, res) => {
 
       if (contactUpdates.length > 0) {
         contactUpdates.push('updated_at = CURRENT_TIMESTAMP');
-        contactParams.push(contactId);
+        contactParams.push(resolvedContactId);
 
         await db.run(
           `UPDATE contacts SET ${contactUpdates.join(', ')} WHERE id = ?`,
@@ -1288,15 +1313,15 @@ export const handleWhatsAppAttributionWebhook = async (req, res) => {
       }
     }
 
-    if (finalAdId && contactId) {
-      logger.info(`✅ Ad ID guardado en contacts para ${contactId}: ${finalAdId}`);
+    if (finalAdId && resolvedContactId) {
+      logger.info(`✅ Ad ID guardado en contacts para ${resolvedContactId}: ${finalAdId}`);
     }
 
-    if (referralCtwaClid && contactId) {
-      logger.info(`✅ CTWA CLID guardado en contacts para ${contactId}`);
+    if (referralCtwaClid && resolvedContactId) {
+      logger.info(`✅ CTWA CLID guardado en contacts para ${resolvedContactId}`);
     }
 
-    logger.info(`✅ Atribución WhatsApp procesada para ${phone} (contacto ${contactId}) - Ad ID final: ${finalAdId || 'ninguno'}`);
+    logger.info(`✅ Atribución WhatsApp procesada para ${phone} (contacto ${resolvedContactId || 'sin_contacto'}) - Ad ID final: ${finalAdId || 'ninguno'}`);
     res.status(200).json({
       success: true,
       message: 'Atribución procesada',

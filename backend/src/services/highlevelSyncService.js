@@ -13,6 +13,10 @@ import {
   resolveHighLevelContactCustomFields
 } from './highlevelCustomFieldsService.js'
 import { hasContactCustomFieldsPayload } from '../utils/contactCustomFields.js'
+import {
+  finalizePreparedPhoneUpsert,
+  prepareContactPhoneUpsert
+} from './contactIdentityService.js'
 
 const HIGHLEVEL_BASE_URL = 'https://services.leadconnectorhq.com'
 const HIGHLEVEL_API_VERSION = '2021-07-28'
@@ -559,6 +563,11 @@ async function ensureContactExists(contactId, apiToken, usePostgres, locationId)
     })
     const contact = customFieldsResult.contact
     const customFieldsJson = customFieldsResult.customFieldsJson
+    const highLevelContactId = contact.id || contactId
+    const phoneUpsert = await prepareContactPhoneUpsert({
+      contactId: highLevelContactId,
+      phone: contact.phone || contact.contactPhone
+    })
 
     // HighLevel puede enviar atribución en dos lugares: attributions[] o attributionSource
     // IMPORTANTE: SIEMPRE usar FIRST attribution, NUNCA lastAttributionSource
@@ -623,8 +632,8 @@ async function ensureContactExists(contactId, apiToken, usePostgres, locationId)
           updated_at = excluded.updated_at`
 
     await db.run(query, [
-      contact.id,
-      contact.phone || contact.contactPhone,
+      highLevelContactId,
+      phoneUpsert.phone || null,
       contact.email,
       contact.contactName || `${contact.firstName || ''} ${contact.lastName || ''}`.trim(),
       contact.firstName,
@@ -640,6 +649,7 @@ async function ensureContactExists(contactId, apiToken, usePostgres, locationId)
       contact.dateAdded || new Date().toISOString(),
       contact.dateUpdated || contact.dateAdded || new Date().toISOString()
     ])
+    await finalizePreparedPhoneUpsert(phoneUpsert, highLevelContactId)
 
     return true
   } catch (error) {
@@ -738,6 +748,11 @@ async function syncHighLevelContacts(locationId, apiToken) {
       })
       const contact = customFieldsResult.contact
       const customFieldsJson = customFieldsResult.customFieldsJson
+      const highLevelContactId = contact.id || rawContact.id || rawContact._id
+      const phoneUpsert = await prepareContactPhoneUpsert({
+        contactId: highLevelContactId,
+        phone: contact.phone || contact.contactPhone
+      })
 
       // HighLevel puede enviar atribución en dos lugares: attributions[] o attributionSource
       // IMPORTANTE: SIEMPRE usar FIRST attribution, NUNCA lastAttributionSource
@@ -802,8 +817,8 @@ async function syncHighLevelContacts(locationId, apiToken) {
             updated_at = excluded.updated_at`
 
       await db.run(query, [
-        contact.id,
-        contact.phone || contact.contactPhone,
+        highLevelContactId,
+        phoneUpsert.phone || null,
         contact.email,
         contact.contactName || `${contact.firstName || ''} ${contact.lastName || ''}`.trim(),
         contact.firstName,
@@ -819,6 +834,7 @@ async function syncHighLevelContacts(locationId, apiToken) {
         contact.dateAdded || new Date().toISOString(),
         contact.dateUpdated || contact.dateAdded || new Date().toISOString()
       ])
+      await finalizePreparedPhoneUpsert(phoneUpsert, highLevelContactId)
 
       saved++
 
@@ -827,7 +843,7 @@ async function syncHighLevelContacts(locationId, apiToken) {
         updateContacts(saved, allContacts.length, 'running', `Guardando contactos: ${saved}/${allContacts.length}`)
       }
     } catch (err) {
-      logger.error(`Error guardando contacto ${contact.id}: ${err.message}`)
+      logger.error(`Error guardando contacto ${rawContact.id || rawContact._id || 'sin_id'}: ${err.message}`)
     }
   }
 

@@ -8,6 +8,7 @@ import { getGHLClient } from '../services/ghlClient.js';
 import { buildInvoicePaymentUrl } from '../utils/paymentUrl.js';
 import { createInstallmentPaymentFlow } from '../services/paymentFlowService.js';
 import { formatInvoiceMultilineText, formatInvoicePayloadText } from '../utils/invoiceTextFormatter.js';
+import { normalizePhoneForStorage } from '../utils/phoneUtils.js';
 
 const normalizeGhlInvoiceMode = (mode) => mode === 'test' ? 'test' : 'live';
 const INACTIVE_INVOICE_SCHEDULE_STATUSES = new Set([
@@ -1499,7 +1500,7 @@ async function persistLocalInvoiceSchedule(schedule) {
         schedule.contactId || null,
         schedule.contactName || null,
         schedule.email || null,
-        schedule.phone || null,
+        normalizePhoneForStorage(schedule.phone) || schedule.phone || null,
         schedule.name || null,
         schedule.title || null,
         schedule.status || null,

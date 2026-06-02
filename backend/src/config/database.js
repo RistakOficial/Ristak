@@ -1,6 +1,7 @@
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
 import { logger } from '../utils/logger.js'
+import { normalizePhoneForStorage } from '../utils/phoneUtils.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -138,6 +139,184 @@ if (usePostgres) {
         })
       })
     }
+  }
+}
+
+const CONTACT_PHONE_REFERENCE_TABLES = [
+  { table: 'payments', column: 'contact_id' },
+  { table: 'payment_plans', column: 'contact_id' },
+  { table: 'appointments', column: 'contact_id' },
+  { table: 'appointment_attendance_signals', column: 'contact_id', deleteOnConflict: true },
+  { table: 'meta_conversion_event_logs', column: 'contact_id' },
+  { table: 'whatsapp_attribution', column: 'contact_id' },
+  { table: 'whatsapp_web_contacts', column: 'contact_id' },
+  { table: 'whatsapp_web_messages', column: 'contact_id' },
+  { table: 'whatsapp_web_attribution', column: 'contact_id' },
+  { table: 'payment_flows', column: 'contact_id' },
+  { table: 'sessions', column: 'contact_id' }
+]
+
+function getContactPhoneScore(contact = {}, canonicalPhone = '') {
+  let score = 0
+  const id = String(contact.id || '')
+  const source = String(contact.source || '').toLowerCase()
+
+  if (!id.startsWith('waweb_contact_')) score += 1000
+  if (Number(contact.total_paid || 0) > 0) score += 500
+  if (Number(contact.purchases_count || 0) > 0) score += 250
+  if (source.includes('gohighlevel') || source.includes('highlevel')) score += 150
+  if (contact.phone === canonicalPhone) score += 50
+
+  return score
+}
+
+function pickContactPhoneWinner(contacts = [], canonicalPhone = '') {
+  return [...contacts].sort((a, b) => {
+    const scoreDiff = getContactPhoneScore(b, canonicalPhone) - getContactPhoneScore(a, canonicalPhone)
+    if (scoreDiff !== 0) return scoreDiff
+    return String(a.created_at || '').localeCompare(String(b.created_at || ''))
+  })[0]
+}
+
+async function updateContactReferences(fromId, toId) {
+  for (const reference of CONTACT_PHONE_REFERENCE_TABLES) {
+    try {
+      await db.run(
+        `UPDATE ${reference.table} SET ${reference.column} = ? WHERE ${reference.column} = ?`,
+        [toId, fromId]
+      )
+    } catch (err) {
+      if (reference.deleteOnConflict) {
+        await db.run(`DELETE FROM ${reference.table} WHERE ${reference.column} = ?`, [fromId])
+        continue
+      }
+
+      logger.warn(`Advertencia al fusionar referencias ${reference.table}.${reference.column}: ${err.message}`)
+    }
+  }
+}
+
+async function syncContactPhoneColumns(contactId, canonicalPhone) {
+  const updates = [
+    ['whatsapp_attribution', 'phone'],
+    ['whatsapp_web_contacts', 'phone'],
+    ['whatsapp_web_messages', 'phone'],
+    ['whatsapp_web_attribution', 'phone'],
+    ['payment_flows', 'contact_phone']
+  ]
+
+  for (const [table, column] of updates) {
+    try {
+      await db.run(`UPDATE ${table} SET ${column} = ? WHERE contact_id = ?`, [canonicalPhone, contactId])
+    } catch (err) {
+      logger.warn(`Advertencia al normalizar ${table}.${column}: ${err.message}`)
+    }
+  }
+}
+
+async function reconcileCanonicalContactPhones() {
+  const rows = await db.all(`
+    SELECT id, phone, full_name, first_name, last_name, source, visitor_id,
+      attribution_url, attribution_session_source, attribution_medium, attribution_ctwa_clid,
+      attribution_ad_name, attribution_ad_id, total_paid, purchases_count, created_at
+    FROM contacts
+    WHERE phone IS NOT NULL AND phone != ''
+  `)
+
+  const groups = new Map()
+  for (const row of rows) {
+    const canonicalPhone = normalizePhoneForStorage(row.phone)
+    if (!canonicalPhone) continue
+    if (!groups.has(canonicalPhone)) groups.set(canonicalPhone, [])
+    groups.get(canonicalPhone).push(row)
+  }
+
+  let changed = 0
+
+  for (const [canonicalPhone, contacts] of groups.entries()) {
+    if (contacts.length === 1) {
+      const [contact] = contacts
+      if (contact.phone !== canonicalPhone) {
+        await db.run(
+          'UPDATE contacts SET phone = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+          [canonicalPhone, contact.id]
+        )
+        await syncContactPhoneColumns(contact.id, canonicalPhone)
+        changed += 1
+      }
+      continue
+    }
+
+    const winner = pickContactPhoneWinner(contacts, canonicalPhone)
+    const losers = contacts.filter(contact => contact.id !== winner.id)
+    const merged = { ...winner }
+
+    for (const loser of losers) {
+      for (const field of [
+        'full_name',
+        'first_name',
+        'last_name',
+        'source',
+        'visitor_id',
+        'attribution_url',
+        'attribution_session_source',
+        'attribution_medium',
+        'attribution_ctwa_clid',
+        'attribution_ad_name',
+        'attribution_ad_id'
+      ]) {
+        if (!merged[field] && loser[field]) merged[field] = loser[field]
+      }
+
+      merged.total_paid = Math.max(Number(merged.total_paid || 0), Number(loser.total_paid || 0))
+      merged.purchases_count = Math.max(Number(merged.purchases_count || 0), Number(loser.purchases_count || 0))
+
+      await db.run('UPDATE contacts SET phone = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [loser.id])
+      await updateContactReferences(loser.id, winner.id)
+      await db.run('DELETE FROM contacts WHERE id = ?', [loser.id])
+      changed += 1
+    }
+
+    await db.run(`
+      UPDATE contacts SET
+        phone = ?,
+        full_name = ?,
+        first_name = ?,
+        last_name = ?,
+        source = ?,
+        visitor_id = ?,
+        attribution_url = ?,
+        attribution_session_source = ?,
+        attribution_medium = ?,
+        attribution_ctwa_clid = ?,
+        attribution_ad_name = ?,
+        attribution_ad_id = ?,
+        total_paid = ?,
+        purchases_count = ?,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `, [
+      canonicalPhone,
+      merged.full_name || null,
+      merged.first_name || null,
+      merged.last_name || null,
+      merged.source || null,
+      merged.visitor_id || null,
+      merged.attribution_url || null,
+      merged.attribution_session_source || null,
+      merged.attribution_medium || null,
+      merged.attribution_ctwa_clid || null,
+      merged.attribution_ad_name || null,
+      merged.attribution_ad_id || null,
+      Number(merged.total_paid || 0),
+      Number(merged.purchases_count || 0),
+      winner.id
+    ])
+    await syncContactPhoneColumns(winner.id, canonicalPhone)
+  }
+
+  if (changed > 0) {
+    logger.success(`✅ Migración: ${changed} contactos normalizados/fusionados por teléfono`)
   }
 }
 
@@ -1441,6 +1620,12 @@ async function initTables() {
     `)
 
     await db.run('CREATE INDEX IF NOT EXISTS idx_report_manual_business_expenses_period ON report_manual_business_expenses(period_type, period_start)')
+
+    try {
+      await reconcileCanonicalContactPhones()
+    } catch (err) {
+      logger.warn('Advertencia al reconciliar teléfonos de contactos:', err.message)
+    }
 
     logger.success('Todas las tablas inicializadas correctamente')
   } catch (error) {
