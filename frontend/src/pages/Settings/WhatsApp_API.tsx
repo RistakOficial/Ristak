@@ -28,6 +28,42 @@ const CLOUD_API_DOCS_URL = 'https://developers.facebook.com/docs/whatsapp/cloud-
 const WEBHOOK_DOCS_URL = 'https://developers.facebook.com/docs/whatsapp/cloud-api/guides/set-up-webhooks'
 const SYSTEM_USER_DOCS_URL = 'https://developers.facebook.com/docs/whatsapp/business-management-api/get-started'
 
+const WEBHOOK_FIELD_GROUPS = [
+  {
+    title: 'Obligatorio para tracking',
+    description: 'Este campo trae mensajes entrantes y estados de mensajes salientes. No busques statuses como campo separado; Meta los manda dentro de messages.',
+    fields: ['messages']
+  },
+  {
+    title: 'Recomendado para plantillas',
+    description: 'Deja estos listos para saber aprobaciones, rechazos, calidad y cambios de categoría cuando activemos plantillas.',
+    fields: [
+      'message_template_status_update',
+      'message_template_quality_update',
+      'message_template_components_update',
+      'template_category_update',
+      'template_correct_category_detection'
+    ]
+  },
+  {
+    title: 'Recomendado para salud del número',
+    description: 'Sirven para detectar alertas del WABA, cambios de nombre, calidad del número y estado de la cuenta.',
+    fields: [
+      'phone_number_quality_update',
+      'phone_number_name_update',
+      'account_update',
+      'account_alerts',
+      'account_review_update',
+      'business_status_update'
+    ]
+  },
+  {
+    title: 'Opcional si Meta lo muestra',
+    description: 'Suscríbelos solo si vas a usar tracking extra, llamadas o flows. Ristak los guardará crudos aunque todavía no los explote en pantalla.',
+    fields: ['tracking_events', 'calls', 'flows']
+  }
+]
+
 const emptyConfig: WhatsAppConfig = {
   configured: false,
   appId: '',
@@ -606,10 +642,37 @@ export const WhatsApp_API: React.FC = () => {
               <span>Usa la URL de devolución de llamada y el verify token de abajo. El token no se inventa; Ristak lo crea y lo guarda cifrado.</span>
             </li>
             <li>
-              <strong>Suscribe el campo messages</strong>
-              <span>Después de verificar y guardar, suscribe el campo messages para recibir mensajes entrantes y cambios de estado.</span>
+              <strong>Suscribe los campos correctos</strong>
+              <span>Después de verificar y guardar, baja a Campos del webhook y suscribe primero messages. Ese es el campo crítico para recibir mensajes y trackear estados.</span>
+            </li>
+            <li>
+              <strong>Prueba el tracking base</strong>
+              <span>Usa Probar en messages y luego manda un WhatsApp real al número. Ristak guardará el evento crudo y separará mensajes de estados cuando lleguen.</span>
             </li>
           </ol>
+
+          <div className={styles.webhookFieldsPanel}>
+            <div className={styles.webhookFieldsHeader}>
+              <strong>Campos del webhook a suscribir</strong>
+              <span>
+                Producto: WhatsApp Business Account. Usa la misma versión que Meta muestre para todos los campos de este objeto y evita suscribirte a campos innecesarios.
+              </span>
+            </div>
+
+            <div className={styles.webhookFieldGroups}>
+              {WEBHOOK_FIELD_GROUPS.map((group) => (
+                <div key={group.title} className={styles.webhookFieldGroup}>
+                  <strong>{group.title}</strong>
+                  <p>{group.description}</p>
+                  <div className={styles.webhookFieldPills}>
+                    {group.fields.map((field) => (
+                      <code key={field}>{field}</code>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
 
           <div className={styles.warningCallout}>
             <strong>OJO: no actives el certificado de cliente</strong>
