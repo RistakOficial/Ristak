@@ -233,7 +233,7 @@ export const AreaChart: React.FC<AreaChartProps> = ({
                         const isActive = props.index === activeIndex
 
                         // Capturar la posición real del punto cuando está activo
-                        if (isActive && props.cx && props.cy) {
+                        if (isActive && props.cx != null && props.cy != null) {
                           const rect = chartRef.current?.getBoundingClientRect()
                           if (rect) {
                             const pointX = rect.left + props.cx
@@ -260,45 +260,52 @@ export const AreaChart: React.FC<AreaChartProps> = ({
                         }
 
                         return (
-                          <circle
-                            cx={props.cx}
-                            cy={props.cy}
-                            r={showPoints ? (isActive ? 7 : 3.5) : 0}
-                            fill={
-                              showPoints
-                                ? isActive
-                                  ? 'var(--color-background-primary)'
-                                  : serie.color
-                                : 'transparent'
-                            }
-                            stroke={showPoints && isActive ? serie.color : 'none'}
-                            strokeWidth={showPoints && isActive ? 3 : 0}
-                            data-chart-index={props.index}
-                            data-chart-interactive={showPoints ? 'true' : undefined}
-                            role={onPointClick ? 'button' : undefined}
-                            tabIndex={onPointClick ? 0 : undefined}
-                            aria-label={onPointClick ? `Ver detalles de ${serie.label} en ${props.payload?.label ?? 'este punto'}` : undefined}
-                            onClick={(event) => {
-                              if (!onPointClick || !props.payload) return
-                              event.stopPropagation()
-                              onPointClick(props.payload, props.index, serie.key)
-                            }}
-                            onKeyDown={(event) => {
-                              if (!onPointClick || !props.payload) return
-                              if (event.key !== 'Enter' && event.key !== ' ') return
-                              event.preventDefault()
-                              onPointClick(props.payload, props.index, serie.key)
-                            }}
-                            style={{
-                              pointerEvents: showPoints ? 'auto' : 'none',
-                              cursor: onPointClick ? 'pointer' : undefined,
-                              transition: showPoints ? 'all 150ms ease-out' : undefined,
-                              filter:
-                                showPoints && isActive
+                          <g>
+                            <circle
+                              cx={props.cx}
+                              cy={props.cy}
+                              r={10}
+                              fill="transparent"
+                              stroke="transparent"
+                              data-chart-index={props.index}
+                              data-chart-interactive="true"
+                              role={onPointClick ? 'button' : undefined}
+                              tabIndex={onPointClick ? 0 : undefined}
+                              aria-label={onPointClick ? `Ver detalles de ${serie.label} en ${props.payload?.label ?? 'este punto'}` : undefined}
+                              onClick={(event) => {
+                                if (!onPointClick || !props.payload) return
+                                event.stopPropagation()
+                                onPointClick(props.payload, props.index, serie.key)
+                              }}
+                              onKeyDown={(event) => {
+                                if (!onPointClick || !props.payload) return
+                                if (event.key !== 'Enter' && event.key !== ' ') return
+                                event.preventDefault()
+                                onPointClick(props.payload, props.index, serie.key)
+                              }}
+                              style={{
+                                pointerEvents: 'all',
+                                cursor: onPointClick ? 'pointer' : undefined
+                              }}
+                            />
+                            <circle
+                              cx={props.cx}
+                              cy={props.cy}
+                              r={isActive ? 7 : 0}
+                              fill="var(--color-background-primary)"
+                              stroke={serie.color}
+                              strokeWidth={isActive ? 3 : 0}
+                              opacity={isActive ? 1 : 0}
+                              aria-hidden="true"
+                              style={{
+                                pointerEvents: 'none',
+                                transition: 'all 150ms ease-out',
+                                filter: isActive
                                   ? 'drop-shadow(0 2px 4px rgba(0, 0, 0, 0.2))'
                                   : 'none'
-                            }}
-                          />
+                              }}
+                            />
+                          </g>
                         )
                       }
                     : false

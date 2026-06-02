@@ -551,7 +551,7 @@ const SimpleLineChart: React.FC<SimpleLineChartProps> = ({ data, dataKeys, forma
                 const isActive = props.index === activeIndex
 
                 // Capturar la posición real del punto cuando está activo
-                if (isActive && props.cx && props.cy) {
+                if (isActive && props.cx != null && props.cy != null) {
                   const rect = chartRef.current?.getBoundingClientRect()
                   if (rect) {
                     const pointX = rect.left + props.cx
@@ -578,21 +578,33 @@ const SimpleLineChart: React.FC<SimpleLineChartProps> = ({ data, dataKeys, forma
                 }
 
                 return (
-                  <circle
-                    cx={props.cx}
-                    cy={props.cy}
-                    r={isActive ? 7 : 3.5}
-                    fill={isActive ? 'var(--color-background-primary)' : dk.color}
-                    stroke={isActive ? dk.color : 'none'}
-                    strokeWidth={isActive ? 3 : 0}
-                    data-chart-index={props.index}
-                    data-chart-interactive="true"
-                    style={{
-                      pointerEvents: 'auto',
-                      transition: 'all 150ms ease-out',
-                      filter: isActive ? 'drop-shadow(0 2px 4px rgba(0, 0, 0, 0.2))' : 'none'
-                    }}
-                  />
+                  <g>
+                    <circle
+                      cx={props.cx}
+                      cy={props.cy}
+                      r={10}
+                      fill="transparent"
+                      stroke="transparent"
+                      data-chart-index={props.index}
+                      data-chart-interactive="true"
+                      style={{ pointerEvents: 'all' }}
+                    />
+                    <circle
+                      cx={props.cx}
+                      cy={props.cy}
+                      r={isActive ? 7 : 0}
+                      fill="var(--color-background-primary)"
+                      stroke={dk.color}
+                      strokeWidth={isActive ? 3 : 0}
+                      opacity={isActive ? 1 : 0}
+                      aria-hidden="true"
+                      style={{
+                        pointerEvents: 'none',
+                        transition: 'all 150ms ease-out',
+                        filter: isActive ? 'drop-shadow(0 2px 4px rgba(0, 0, 0, 0.2))' : 'none'
+                      }}
+                    />
+                  </g>
                 )
               }}
               activeDot={false}
@@ -851,7 +863,7 @@ const SimpleAreaChart: React.FC<SimpleAreaChartProps> = ({ data, dataKeys, forma
                 const isActive = props.index === activeIndex
 
                 // Capturar la posición real del punto cuando está activo
-                if (isActive && props.cx && props.cy) {
+                if (isActive && props.cx != null && props.cy != null) {
                   const rect = chartRef.current?.getBoundingClientRect()
                   if (rect) {
                     const pointX = rect.left + props.cx
@@ -878,21 +890,33 @@ const SimpleAreaChart: React.FC<SimpleAreaChartProps> = ({ data, dataKeys, forma
                 }
 
                 return (
-                  <circle
-                    cx={props.cx}
-                    cy={props.cy}
-                    r={isActive ? 7 : 3.5}
-                    fill={isActive ? 'var(--color-background-primary)' : dk.color}
-                    stroke={isActive ? dk.color : 'none'}
-                    strokeWidth={isActive ? 3 : 0}
-                    data-chart-index={props.index}
-                    data-chart-interactive="true"
-                    style={{
-                      pointerEvents: 'auto',
-                      transition: 'all 150ms ease-out',
-                      filter: isActive ? 'drop-shadow(0 2px 4px rgba(0, 0, 0, 0.2))' : 'none'
-                    }}
-                  />
+                  <g>
+                    <circle
+                      cx={props.cx}
+                      cy={props.cy}
+                      r={10}
+                      fill="transparent"
+                      stroke="transparent"
+                      data-chart-index={props.index}
+                      data-chart-interactive="true"
+                      style={{ pointerEvents: 'all' }}
+                    />
+                    <circle
+                      cx={props.cx}
+                      cy={props.cy}
+                      r={isActive ? 7 : 0}
+                      fill="var(--color-background-primary)"
+                      stroke={dk.color}
+                      strokeWidth={isActive ? 3 : 0}
+                      opacity={isActive ? 1 : 0}
+                      aria-hidden="true"
+                      style={{
+                        pointerEvents: 'none',
+                        transition: 'all 150ms ease-out',
+                        filter: isActive ? 'drop-shadow(0 2px 4px rgba(0, 0, 0, 0.2))' : 'none'
+                      }}
+                    />
+                  </g>
                 )
               }}
               activeDot={false}
