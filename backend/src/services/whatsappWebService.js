@@ -86,6 +86,62 @@ function normalizePhoneFromJid(jid = '') {
   return digits ? `+${digits}` : ''
 }
 
+function normalizeDisplayText(value) {
+  if (value === null || value === undefined) return ''
+  const text = String(value).replace(/\s+/g, ' ').trim()
+  if (!text || text === 'null' || text === 'undefined') return ''
+  return text
+}
+
+function isPhoneLikeName(value, phone = '', remoteJid = '') {
+  const text = normalizeDisplayText(value)
+  if (!text) return false
+
+  const lower = text.toLowerCase()
+  if (
+    lower.endsWith('@s.whatsapp.net') ||
+    lower.endsWith('@c.us') ||
+    lower.endsWith('@lid') ||
+    lower.endsWith('@hosted') ||
+    lower.endsWith('@hosted.lid')
+  ) {
+    return true
+  }
+
+  const hasLetters = /\p{L}/u.test(text)
+  const digits = normalizePhoneDigits(text)
+  if (!hasLetters && digits.length >= 7) return true
+
+  const phoneDigits = normalizePhoneDigits(phone)
+  const jidDigits = normalizePhoneDigits(normalizePhoneFromJid(remoteJid))
+
+  return !hasLetters &&
+    digits.length > 0 &&
+    (
+      (phoneDigits && (digits === phoneDigits || digits.endsWith(phoneDigits) || phoneDigits.endsWith(digits))) ||
+      (jidDigits && (digits === jidDigits || digits.endsWith(jidDigits) || jidDigits.endsWith(digits)))
+    )
+}
+
+function cleanWhatsAppContactName(value, { phone = '', remoteJid = '' } = {}) {
+  const text = normalizeDisplayText(value)
+  if (!text || isPhoneLikeName(text, phone, remoteJid)) return ''
+  return text
+}
+
+function pickWhatsAppContactName(values = [], context = {}) {
+  for (const value of values) {
+    const name = cleanWhatsAppContactName(value, context)
+    if (name) return name
+  }
+  return ''
+}
+
+function shouldReplaceContactName(currentName, phone = '', remoteJid = '') {
+  const text = normalizeDisplayText(currentName)
+  return !text || isPhoneLikeName(text, phone, remoteJid)
+}
+
 function isPhoneJid(jid = '') {
   return String(jid || '').endsWith('@s.whatsapp.net') ||
     String(jid || '').endsWith('@c.us') ||
@@ -1479,6 +1535,7 @@ export async function startWhatsAppWebSession(sessionId = DEFAULT_SESSION_ID, { 
 
           if (connection === 'close') {
             const statusCode = lastDisconnect?.error?.output?.statusCode
+            const restartRequired = statusCode === DisconnectReason.restartRequired
             const authFailed = statusCode === DisconnectReason.loggedOut || statusCode === DisconnectReason.badSession
             const shouldReconnect = !runtime.manualDisconnect && !authFailed
             disconnectRuntimeSocket(sessionId, runtime)
@@ -1492,7 +1549,7 @@ export async function startWhatsAppWebSession(sessionId = DEFAULT_SESSION_ID, { 
               disconnected_at: nowIso(),
               qr_code: null,
               qr_image: null,
-              last_error: lastDisconnect?.error?.message || null
+              last_error: shouldReconnect ? null : (lastDisconnect?.error?.message || null)
             })
 
             if (shouldReconnect) {
@@ -1500,7 +1557,7 @@ export async function startWhatsAppWebSession(sessionId = DEFAULT_SESSION_ID, { 
                 startWhatsAppWebSession(sessionId).catch(error => {
                   logger.error(`No se pudo reconectar WhatsApp Business: ${error.message}`)
                 })
-              }, 2500)
+              }, restartRequired ? 0 : 2500)
             }
           }
         } catch (error) {

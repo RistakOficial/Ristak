@@ -15,6 +15,8 @@ type BusinessProfile = {
   category?: string
 }
 
+const CONNECTION_FLOW_TIMEOUT_MS = 120_000
+
 function parseJson<T>(value?: string | null): T | null {
   if (!value) return null
   try {
@@ -59,6 +61,7 @@ export const WhatsAppSettings: React.FC = () => {
   const [logs, setLogs] = useState<WhatsAppWebLogs | null>(null)
   const [logsLoading, setLogsLoading] = useState(false)
   const requestInFlight = useRef(false)
+  const connectionStartedAt = useRef<number | null>(null)
 
   const session = status?.session
   const isConnected = session?.status === 'connected'
@@ -74,12 +77,33 @@ export const WhatsAppSettings: React.FC = () => {
   const showQr = qrRequested && !isConnected && Boolean(session?.qr_image) && !manualDisconnected
   const isWaitingForQr = connecting && !isConnected && !showQr && !manualDisconnected
 
+  const isConnectionFlowFresh = () => {
+    return Boolean(connectionStartedAt.current && Date.now() - connectionStartedAt.current < CONNECTION_FLOW_TIMEOUT_MS)
+  }
+
   const loadStatus = async () => {
     const nextStatus = await whatsappWebService.getStatus()
     setStatus(nextStatus)
-    if (nextStatus.session?.status === 'connected' || nextStatus.session?.status === 'qr' || nextStatus.session?.status === 'disconnected') {
+    const currentStatus = nextStatus.session?.status
+
+    if (currentStatus === 'connected') {
       setConnecting(false)
+      setQrRequested(false)
+      connectionStartedAt.current = null
+    } else if (currentStatus === 'qr') {
+      setConnecting(false)
+      setQrRequested(true)
+    } else if (currentStatus === 'connecting' || currentStatus === 'reconnecting') {
+      if (qrRequested && isConnectionFlowFresh()) setConnecting(true)
+    } else if (currentStatus === 'disconnected') {
+      if (qrRequested && isConnectionFlowFresh()) {
+        setConnecting(true)
+      } else {
+        setConnecting(false)
+        connectionStartedAt.current = null
+      }
     }
+
     return nextStatus
   }
 
@@ -89,15 +113,26 @@ export const WhatsAppSettings: React.FC = () => {
     setManualDisconnected(false)
     setConnecting(true)
     setQrRequested(true)
+    connectionStartedAt.current = Date.now()
 
     try {
       const nextStatus = await whatsappWebService.connect({ reset: true })
       setStatus(nextStatus)
-      if (nextStatus.session?.status === 'connected' || nextStatus.session?.status === 'qr' || nextStatus.session?.status === 'disconnected') {
+      const currentStatus = nextStatus.session?.status
+      if (currentStatus === 'connected') {
         setConnecting(false)
+        setQrRequested(false)
+        connectionStartedAt.current = null
+      } else if (currentStatus === 'qr') {
+        setConnecting(false)
+        setQrRequested(true)
+      } else if (currentStatus === 'disconnected' && !isConnectionFlowFresh()) {
+        setConnecting(false)
+        connectionStartedAt.current = null
       }
     } catch (error) {
       setConnecting(false)
+      connectionStartedAt.current = null
       showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo generar el QR')
     } finally {
       requestInFlight.current = false
@@ -129,7 +164,7 @@ export const WhatsAppSettings: React.FC = () => {
   }, [])
 
   useEffect(() => {
-    if (isConnected || manualDisconnected || (!connecting && !showQr)) return
+    if (isConnected || manualDisconnected || !qrRequested) return
 
     const interval = window.setInterval(async () => {
       try {
@@ -140,7 +175,7 @@ export const WhatsAppSettings: React.FC = () => {
     }, 2500)
 
     return () => window.clearInterval(interval)
-  }, [connecting, isConnected, manualDisconnected, showQr])
+  }, [isConnected, manualDisconnected, qrRequested])
 
   const confirmDisconnect = () => {
     showConfirm(
@@ -150,6 +185,7 @@ export const WhatsAppSettings: React.FC = () => {
         setDisconnecting(true)
         setConnecting(false)
         setQrRequested(false)
+        connectionStartedAt.current = null
         setManualDisconnected(true)
         try {
           const nextStatus = await whatsappWebService.disconnect()
