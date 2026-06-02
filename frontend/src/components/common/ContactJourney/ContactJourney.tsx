@@ -11,12 +11,22 @@ interface ContactJourneyProps {
   contactId: string
 }
 
-const getEventIcon = (type: JourneyEvent['type']) => {
-  switch (type) {
+const isWhatsAppJourneyEvent = (event?: JourneyEvent | null) => {
+  if (!event) return false
+  const data = (event.data && typeof event.data === 'object') ? event.data : {}
+  const source = String(data.source || data.referral_source_app || data.referral_entry_point || '').toLowerCase()
+
+  return event.type === 'whatsapp_message' || source.includes('whatsapp')
+}
+
+const getEventIcon = (event: JourneyEvent) => {
+  if (isWhatsAppJourneyEvent(event)) {
+    return 'whatsapp'
+  }
+
+  switch (event.type) {
     case 'page_visit':
       return 'mouse-pointer-click'
-    case 'whatsapp_message':
-      return 'whatsapp'
     case 'contact_created':
       return 'user-plus'
     case 'appointment':
@@ -28,12 +38,14 @@ const getEventIcon = (type: JourneyEvent['type']) => {
   }
 }
 
-const getEventTitle = (type: JourneyEvent['type']) => {
-  switch (type) {
+const getEventTitle = (event: JourneyEvent) => {
+  if (isWhatsAppJourneyEvent(event)) {
+    return 'WhatsApp'
+  }
+
+  switch (event.type) {
     case 'page_visit':
       return 'Visita'
-    case 'whatsapp_message':
-      return 'WhatsApp'
     case 'contact_created':
       return 'Contacto'
     case 'appointment':
@@ -45,12 +57,14 @@ const getEventTitle = (type: JourneyEvent['type']) => {
   }
 }
 
-const getEventColor = (type: JourneyEvent['type']) => {
-  switch (type) {
+const getEventColor = (event: JourneyEvent) => {
+  if (isWhatsAppJourneyEvent(event)) {
+    return 'green'
+  }
+
+  switch (event.type) {
     case 'page_visit':
       return 'blue'
-    case 'whatsapp_message':
-      return 'green'
     case 'contact_created':
       return 'purple'
     case 'appointment':
@@ -80,6 +94,9 @@ const getEventDescription = (event?: JourneyEvent | null): string => {
   }
 
   if (type === 'contact_created') {
+    if (isWhatsAppJourneyEvent(event)) {
+      return 'Contacto creado'
+    }
     // Solo mostrar la fuente si es corta
     const source = data.source || 'Registro'
     return source.length > 15 ? 'Se registró' : source
@@ -142,6 +159,9 @@ const getTooltipContent = (event?: JourneyEvent | null) => {
   }
 
   if (type === 'whatsapp_message') {
+    if (data.message_text) {
+      items.push({ label: 'Mensaje', value: data.message_text })
+    }
     if (data.referral_headline) {
       items.push({ label: 'Mensaje', value: data.referral_headline })
     }
@@ -150,6 +170,12 @@ const getTooltipContent = (event?: JourneyEvent | null) => {
     }
     if (data.phone) {
       items.push({ label: 'Teléfono', value: data.phone })
+    }
+    if (data.referral_source_id) {
+      items.push({ label: 'ID anuncio', value: data.referral_source_id })
+    }
+    if (data.referral_ctwa_clid) {
+      items.push({ label: 'CTWA CLID', value: data.referral_ctwa_clid })
     }
   }
 
@@ -259,9 +285,8 @@ export const ContactJourney = ({ contactId }: ContactJourneyProps) => {
             return null
           }
 
-          const eventType = event.type as JourneyEvent['type']
-          const iconName = getEventIcon(eventType)
-          const color = getEventColor(eventType)
+          const iconName = getEventIcon(event)
+          const color = getEventColor(event)
           const isLast = index === journey.length - 1
 
           const tooltipItems = getTooltipContent(event)
@@ -287,7 +312,7 @@ export const ContactJourney = ({ contactId }: ContactJourneyProps) => {
                   <Icon name={iconName as any} size={18} />
                 </div>
                 <div className={styles.eventContent}>
-                  <span className={styles.eventTitle}>{getEventTitle(eventType)}</span>
+                  <span className={styles.eventTitle}>{getEventTitle(event)}</span>
                   <span className={styles.eventDescription}>{getEventDescription(event)}</span>
                   <span className={styles.eventDate}>{formatLocalDateShort(event.date)}</span>
                 </div>
@@ -305,7 +330,7 @@ export const ContactJourney = ({ contactId }: ContactJourneyProps) => {
                     zIndex: 2147483647
                   }}
                 >
-                  <div className={styles.tooltipTitle}>{getEventTitle(eventType)}</div>
+                  <div className={styles.tooltipTitle}>{getEventTitle(event)}</div>
                   <div className={styles.tooltipDate}>{formatLocalDateTime(event.date)}</div>
                   {tooltipItems.map((item, idx) => (
                     <div key={idx} className={styles.tooltipItem}>

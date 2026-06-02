@@ -79,6 +79,42 @@ function normalizePhoneFromJid(jid = '') {
   return digits ? `+${digits}` : ''
 }
 
+function isPhoneJid(jid = '') {
+  return String(jid || '').endsWith('@s.whatsapp.net') || String(jid || '').endsWith('@c.us')
+}
+
+function isLidJid(jid = '') {
+  return String(jid || '').endsWith('@lid') || String(jid || '').endsWith('@hosted.lid')
+}
+
+function pickPhoneJid(candidates = []) {
+  return candidates.find(candidate => {
+    if (!isPhoneJid(candidate)) return false
+    return normalizePhoneDigits(normalizePhoneFromJid(candidate)).length >= 8
+  }) || ''
+}
+
+export function resolveWhatsAppWebAddressing(msg = {}) {
+  const key = msg.key || {}
+  const remoteJid = key.remoteJid || ''
+  const candidates = [
+    key.remoteJidAlt,
+    key.participantAlt,
+    key.participant,
+    remoteJid
+  ].filter(Boolean)
+  const phoneJid = pickPhoneJid(candidates)
+  const identityJid = phoneJid || remoteJid
+
+  return {
+    remoteJid,
+    phoneJid,
+    identityJid,
+    phone: normalizePhoneFromJid(identityJid),
+    usedLidFallback: !phoneJid && isLidJid(remoteJid)
+  }
+}
+
 function normalizePhoneDigits(phone = '') {
   return String(phone || '').replace(/\D/g, '')
 }
@@ -573,11 +609,13 @@ async function saveWhatsAppWebMessage({
 async function processIncomingMessage(sessionId, msg) {
   if (!msg?.message || msg.key?.fromMe) return
 
-  const remoteJid = msg.key?.remoteJid || ''
+  const { remoteJid, phoneJid, identityJid, phone, usedLidFallback } = resolveWhatsAppWebAddressing(msg)
   if (shouldIgnoreJid(remoteJid)) return
 
-  const phone = normalizePhoneFromJid(remoteJid)
-  if (!phone) return
+  if (!phone || usedLidFallback) {
+    logger.warn(`WhatsApp Business mensaje sin numero telefonico resoluble: ${remoteJid}`)
+    return
+  }
 
   const pushName = msg.pushName || ''
   const messageText = getMessageText(msg.message)
@@ -585,20 +623,22 @@ async function processIncomingMessage(sessionId, msg) {
   const contact = await upsertLocalContact({
     phone,
     pushName,
-    remoteJid,
+    remoteJid: identityJid,
     messageText,
     attribution
   })
   const webContactId = await upsertWhatsAppWebContact({
     sessionId,
     contactId: contact.id,
-    remoteJid,
+    remoteJid: identityJid,
     phone,
     pushName,
     rawProfile: {
       key: msg.key,
       pushName,
-      remoteJid
+      remoteJid,
+      phoneJid,
+      identityJid
     }
   })
 

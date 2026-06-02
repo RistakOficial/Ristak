@@ -1285,6 +1285,36 @@ export const getContactJourney = async (req, res) => {
       })
     })
 
+    const whatsappBusinessMessages = await db.all(
+      `SELECT phone, message_text, message_type, push_name, message_timestamp, created_at,
+              detected_ctwa_clid, detected_source_id, detected_source_url,
+              detected_source_type, detected_source_app, detected_entry_point
+       FROM whatsapp_web_messages
+       WHERE contact_id = ?
+       ORDER BY COALESCE(message_timestamp, created_at) ASC`,
+      [id]
+    )
+
+    whatsappBusinessMessages.forEach(msg => {
+      journey.push({
+        type: 'whatsapp_message',
+        date: msg.message_timestamp || msg.created_at,
+        data: {
+          source: 'WhatsApp',
+          phone: msg.phone,
+          push_name: msg.push_name,
+          message_text: msg.message_text,
+          message_type: msg.message_type,
+          referral_source_url: msg.detected_source_url,
+          referral_source_type: msg.detected_source_type,
+          referral_ctwa_clid: msg.detected_ctwa_clid,
+          referral_source_id: msg.detected_source_id,
+          referral_source_app: msg.detected_source_app,
+          referral_entry_point: msg.detected_entry_point
+        }
+      })
+    })
+
     // 3. Contacto creado
     journey.push({
       type: 'contact_created',
