@@ -224,8 +224,10 @@
 }
 
 .logsView {
+  position: relative;
   display: grid;
   grid-template-columns: 1fr 1fr;
+  align-content: start;
   gap: 14px;
   width: 100%;
   height: 100%;
@@ -234,19 +236,36 @@
   overflow: auto;
 }
 
-.logsBackLink {
+.logsBackButton {
   grid-column: 1 / -1;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   width: fit-content;
-  color: var(--color-text-secondary);
+  min-height: 36px;
+  padding: 0 11px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 8px;
+  color: var(--color-text-primary);
+  background: color-mix(in srgb, var(--color-background-secondary) 92%, transparent);
   font-size: 13px;
   font-weight: 800;
+  line-height: 1;
   text-decoration: none;
+  cursor: pointer;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.12);
+  transition: border-color 160ms ease, background 160ms ease;
 }
 
-.logsBackLink:hover,
-.logsBackLink:focus-visible {
-  color: var(--color-text-primary);
-  text-decoration: underline;
+.logsBackButton:hover,
+.logsBackButton:focus-visible {
+  border-color: rgba(16, 185, 129, 0.34);
+  background: color-mix(in srgb, var(--color-background-tertiary) 88%, #10b981 8%);
 }
 
 .logsView h3 {

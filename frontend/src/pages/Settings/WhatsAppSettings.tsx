@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
-import { CheckCircle, RefreshCw, ShieldCheck, Unplug } from 'lucide-react'
+import { ArrowLeft, CheckCircle, RefreshCw, ShieldCheck, Unplug } from 'lucide-react'
 import { SiWhatsapp } from 'react-icons/si'
 import { Button, Card } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
@@ -197,7 +197,10 @@ export const WhatsAppSettings: React.FC = () => {
       <div className={styles.stage}>
         {showLogs ? (
           <div className={styles.logsView}>
-            <a href="#" className={styles.logsBackLink} onClick={(event) => { event.preventDefault(); setShowLogs(false) }}>Volver</a>
+            <button type="button" className={styles.logsBackButton} onClick={() => setShowLogs(false)}>
+              <ArrowLeft size={15} />
+              Volver
+            </button>
             {logsLoading ? (
               <p>Cargando logs...</p>
             ) : (
