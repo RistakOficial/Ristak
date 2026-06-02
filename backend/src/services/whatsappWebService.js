@@ -9,18 +9,33 @@ import makeWASocket, {
   makeCacheableSignalKeyStore,
   proto
 } from '@whiskeysockets/baileys'
-import { db } from '../config/database.js'
+import { db, getAppConfig, setAppConfig } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 import { buildPhoneMatchCandidates, normalizePhoneDigits, normalizePhoneForStorage } from '../utils/phoneUtils.js'
 
 const DEFAULT_SESSION_ID = 'default'
 const SOURCE_NAME = 'WhatsApp Business'
 const FULL_HISTORY_BROWSER = Browsers.macOS('Desktop')
+const FULL_HISTORY_BACKFILL_VERSION = 'desktop-full-history-on-demand-2026-06-02'
+const FULL_HISTORY_BACKFILL_DELAY_MS = 5000
+const ON_DEMAND_HISTORY_REQUEST_DELAY_MS = 350
+const ON_DEMAND_HISTORY_MESSAGE_COUNT = Math.min(
+  Math.max(Number(process.env.WHATSAPP_WEB_ON_DEMAND_HISTORY_COUNT) || 1000, 1),
+  5000
+)
+const ON_DEMAND_HISTORY_ANCHOR_LIMIT = Math.min(
+  Math.max(Number(process.env.WHATSAPP_WEB_ON_DEMAND_ANCHOR_LIMIT) || 100000, 1),
+  250000
+)
 const baileysLogger = pino({ level: process.env.BAILEYS_LOG_LEVEL || 'silent' })
 const runtimeSessions = new Map()
 
 function nowIso() {
   return new Date().toISOString()
+}
+
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms))
 }
 
 function isPostgres() {
@@ -73,6 +88,15 @@ function toDateTime(value) {
   }
   const parsed = Date.parse(String(value))
   return Number.isFinite(parsed) ? new Date(parsed).toISOString() : null
+}
+
+function toTimestampMillis(value) {
+  if (!value) return null
+  if (typeof value === 'number') return value > 9999999999 ? value : value * 1000
+  if (typeof value === 'object' && typeof value.toNumber === 'function') return value.toNumber() * 1000
+
+  const parsed = Date.parse(String(value))
+  return Number.isFinite(parsed) ? parsed : null
 }
 
 function normalizePhoneFromJid(jid = '') {
@@ -410,7 +434,8 @@ function getRuntime(sessionId = DEFAULT_SESSION_ID) {
       socket: null,
       starting: null,
       manualDisconnect: false,
-      lidPhoneMap: new Map()
+      lidPhoneMap: new Map(),
+      historyBackfill: null
     })
   }
   return runtimeSessions.get(sessionId)
@@ -876,6 +901,182 @@ async function processWhatsAppWebHistory(sessionId, messages = [], metadata = {}
   return saved
 }
 
+function fullHistoryBackfillConfigKey(sessionId) {
+  return `whatsapp_web_full_history_backfill:${sessionId}`
+}
+
+function buildFullHistorySyncConfig() {
+  return {
+    storageQuotaMb: 10240,
+    inlineInitialPayloadInE2EeMsg: true,
+    supportCallLogHistory: false,
+    supportBotUserAgentChatHistory: true,
+    supportCagReactionsAndPolls: true,
+    supportBizHostedMsg: true,
+    supportRecentSyncChunkMessageCountTuning: true,
+    supportHostedGroupMsg: true,
+    supportFbidBotChatHistory: true,
+    supportMessageAssociation: true,
+    supportGroupHistory: false
+  }
+}
+
+async function requestFullHistoryOnDemand(sessionId, socket) {
+  if (!socket?.sendPeerDataOperationMessage) {
+    logger.warn('WhatsApp Business full-history on-demand no disponible en esta version de Baileys')
+    return null
+  }
+
+  const requestId = `ristak-${sessionId}-${Date.now()}-${crypto.randomUUID()}`
+  const stanzaId = await socket.sendPeerDataOperationMessage({
+    peerDataOperationRequestType: proto.Message.PeerDataOperationRequestType.FULL_HISTORY_SYNC_ON_DEMAND,
+    fullHistorySyncOnDemandRequest: {
+      requestMetadata: { requestId },
+      historySyncConfig: buildFullHistorySyncConfig()
+    }
+  })
+
+  logger.info(`WhatsApp Business full-history on-demand solicitado: request=${requestId}, stanza=${stanzaId}`)
+  return { requestId, stanzaId }
+}
+
+async function getOldestKnownChatHistoryAnchors(sessionId) {
+  const rows = await db.all(`
+    SELECT remote_jid, message_id, direction, message_timestamp, created_at
+    FROM (
+      SELECT
+        remote_jid,
+        message_id,
+        direction,
+        message_timestamp,
+        created_at,
+        COALESCE(message_timestamp, created_at) as oldest_at,
+        ROW_NUMBER() OVER (
+          PARTITION BY remote_jid
+          ORDER BY COALESCE(message_timestamp, created_at) ASC
+        ) as rn
+      FROM whatsapp_web_messages
+      WHERE session_id = ?
+        AND remote_jid IS NOT NULL
+        AND remote_jid != ''
+        AND message_id IS NOT NULL
+        AND message_id != ''
+    ) oldest_messages
+    WHERE rn = 1
+    ORDER BY oldest_at ASC
+    LIMIT ${ON_DEMAND_HISTORY_ANCHOR_LIMIT}
+  `, [sessionId])
+
+  const seen = new Set()
+  const anchors = []
+
+  for (const row of rows) {
+    const remoteJid = normalizeJid(row.remote_jid)
+    if (!remoteJid || seen.has(remoteJid) || shouldIgnoreJid(remoteJid)) continue
+
+    const timestamp = toTimestampMillis(row.message_timestamp || row.created_at)
+    if (!timestamp) continue
+
+    seen.add(remoteJid)
+    anchors.push({
+      remoteJid,
+      oldestMsgKey: {
+        remoteJid,
+        fromMe: row.direction === 'outbound',
+        id: row.message_id
+      },
+      oldestMsgTimestamp: timestamp
+    })
+  }
+
+  return anchors
+}
+
+async function requestOlderKnownChatHistory(sessionId, socket) {
+  if (!socket?.fetchMessageHistory) {
+    logger.warn('WhatsApp Business fetchMessageHistory no disponible en esta version de Baileys')
+    return { requested: 0, failed: 0 }
+  }
+
+  const anchors = await getOldestKnownChatHistoryAnchors(sessionId)
+  let requested = 0
+  let failed = 0
+
+  for (const anchor of anchors) {
+    try {
+      await socket.fetchMessageHistory(
+        ON_DEMAND_HISTORY_MESSAGE_COUNT,
+        anchor.oldestMsgKey,
+        anchor.oldestMsgTimestamp
+      )
+      requested += 1
+      await delay(ON_DEMAND_HISTORY_REQUEST_DELAY_MS)
+    } catch (error) {
+      failed += 1
+      logger.warn(`WhatsApp Business no pudo pedir historial viejo de ${anchor.remoteJid}: ${error.message}`)
+    }
+  }
+
+  logger.info(`WhatsApp Business historial viejo solicitado por chat: ${requested}/${anchors.length} chats, ${failed} fallidos`)
+  return { requested, failed, anchors: anchors.length }
+}
+
+async function runFullHistoryBackfill(sessionId, socket) {
+  const configKey = fullHistoryBackfillConfigKey(sessionId)
+  const existingMarker = await getAppConfig(configKey)
+
+  if (existingMarker) {
+    try {
+      const parsed = JSON.parse(existingMarker)
+      if (parsed?.version === FULL_HISTORY_BACKFILL_VERSION && parsed?.status === 'complete') {
+        logger.info(`WhatsApp Business backfill de historial ya fue solicitado para ${sessionId}`)
+        return
+      }
+    } catch {
+      if (existingMarker === FULL_HISTORY_BACKFILL_VERSION) return
+    }
+  }
+
+  await setAppConfig(configKey, {
+    version: FULL_HISTORY_BACKFILL_VERSION,
+    status: 'running',
+    started_at: nowIso()
+  })
+
+  try {
+    const fullHistoryRequest = await requestFullHistoryOnDemand(sessionId, socket)
+    const knownChatBackfill = await requestOlderKnownChatHistory(sessionId, socket)
+
+    await setAppConfig(configKey, {
+      version: FULL_HISTORY_BACKFILL_VERSION,
+      status: 'complete',
+      completed_at: nowIso(),
+      full_history_request: fullHistoryRequest,
+      known_chat_backfill: knownChatBackfill
+    })
+  } catch (error) {
+    await setAppConfig(configKey, {
+      version: FULL_HISTORY_BACKFILL_VERSION,
+      status: 'failed',
+      failed_at: nowIso(),
+      error: error.message
+    })
+    throw error
+  }
+}
+
+function scheduleFullHistoryBackfill(sessionId, socket) {
+  const runtime = getRuntime(sessionId)
+  if (runtime.historyBackfill) return
+
+  runtime.historyBackfill = setTimeout(() => {
+    runtime.historyBackfill = null
+    runFullHistoryBackfill(sessionId, socket).catch(error => {
+      logger.error(`No se pudo solicitar backfill de historial WhatsApp Business: ${error.message}`)
+    })
+  }, FULL_HISTORY_BACKFILL_DELAY_MS)
+}
+
 async function createQrImage(qr) {
   return QRCode.toDataURL(qr, {
     margin: 1,
@@ -933,6 +1134,10 @@ function disconnectRuntimeSocket(sessionId, runtime) {
   } catch (error) {
     logger.warn(`No se pudo cerrar socket WhatsApp Business: ${error.message}`)
   } finally {
+    if (runtime.historyBackfill) {
+      clearTimeout(runtime.historyBackfill)
+      runtime.historyBackfill = null
+    }
     runtime.socket = null
     runtime.starting = null
   }
@@ -1009,6 +1214,9 @@ export async function startWhatsAppWebSession(sessionId = DEFAULT_SESSION_ID) {
             last_error: null
           })
           logger.success('WhatsApp Business conectado')
+          if (authAlreadySaved) {
+            scheduleFullHistoryBackfill(sessionId, socket)
+          }
         }
 
         if (connection === 'close') {
@@ -1179,9 +1387,17 @@ export async function getWhatsAppWebLogs(sessionId = DEFAULT_SESSION_ID) {
 
 export async function initializeWhatsAppWebReceiver() {
   await ensureSessionRecord(DEFAULT_SESSION_ID)
-  if (!await hasSavedAuthState(DEFAULT_SESSION_ID)) return
 
-  startWhatsAppWebSession(DEFAULT_SESSION_ID).catch(error => {
-    logger.error(`No se pudo iniciar WhatsApp Business automaticamente: ${error.message}`)
-  })
+  const sessions = await db.all(`
+    SELECT DISTINCT session_id
+    FROM whatsapp_web_auth_state
+    WHERE auth_key = 'creds'
+  `)
+
+  for (const row of sessions) {
+    const sessionId = row.session_id || DEFAULT_SESSION_ID
+    startWhatsAppWebSession(sessionId).catch(error => {
+      logger.error(`No se pudo iniciar WhatsApp Business automaticamente (${sessionId}): ${error.message}`)
+    })
+  }
 }
