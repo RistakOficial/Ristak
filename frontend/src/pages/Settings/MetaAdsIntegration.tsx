@@ -1086,14 +1086,16 @@ export const MetaAdsIntegration: React.FC = () => {
             <section className={`${styles.section} ${styles.eventSection}`}>
               <div className={styles.sectionHeader}>
                 <div>
-                  <h3 className={styles.sectionTitle}>Eventos personalizados de WhatsApp</h3>
+                  <div className={styles.sectionTitleRow}>
+                    <span className={`${styles.sectionIcon} ${styles.whatsappSectionIcon}`} aria-hidden="true">
+                      <Icon name="whatsapp" size={18} />
+                    </span>
+                    <h3 className={styles.sectionTitle}>Eventos personalizados de WhatsApp</h3>
+                  </div>
                   <p className={styles.sectionDescription}>
                     Envía conversiones server-side cuando entren eventos desde WhatsApp.
                   </p>
                 </div>
-                <span className={`${styles.sectionIcon} ${styles.whatsappSectionIcon}`} aria-hidden="true">
-                  <Icon name="whatsapp" size={18} />
-                </span>
               </div>
 
               <div className={styles.eventRows}>
