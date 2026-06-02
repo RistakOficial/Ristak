@@ -1,5 +1,6 @@
 import {
   connectWhatsAppCloudApi,
+  disconnectWhatsAppCloudApi,
   getWhatsAppConfig,
   getWhatsAppStorageSummary,
   logWhatsAppServiceError,
@@ -54,6 +55,22 @@ export const refreshStatus = async (req, res) => {
     res.json({ success: true, data: { config, storage } })
   } catch (error) {
     logWhatsAppServiceError('refreshStatus', error)
+    res.status(400).json({
+      success: false,
+      error: error.message,
+      meta: error.meta || undefined
+    })
+  }
+}
+
+export const disconnectCloudApi = async (req, res) => {
+  try {
+    const config = await disconnectWhatsAppCloudApi()
+    const storage = await getWhatsAppStorageSummary()
+
+    res.json({ success: true, data: { config, storage } })
+  } catch (error) {
+    logWhatsAppServiceError('disconnectCloudApi', error)
     res.status(400).json({
       success: false,
       error: error.message,

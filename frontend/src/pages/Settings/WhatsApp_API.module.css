@@ -145,6 +145,17 @@
   opacity: 0.5;
 }
 
+.connectedDisconnectButton {
+  color: var(--color-status-error);
+  border-color: rgba(239, 68, 68, 0.24);
+  background: rgba(239, 68, 68, 0.08);
+}
+
+.connectedDisconnectButton:hover:not(:disabled) {
+  border-color: rgba(239, 68, 68, 0.36);
+  background: rgba(239, 68, 68, 0.12);
+}
+
 .statusConnected,
 .statusWarning,
 .statusDisconnected {

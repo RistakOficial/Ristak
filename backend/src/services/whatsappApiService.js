@@ -7,6 +7,7 @@ import { decrypt, encrypt, isEncrypted } from '../utils/encryption.js'
 import { logger } from '../utils/logger.js'
 
 const DEFAULT_CONNECTION_STATUS = 'not_configured'
+const DISCONNECTED_CONNECTION_STATUS = 'disconnected'
 const WHATSAPP_CLOUD_API_DOCS_URL = 'https://developers.facebook.com/docs/whatsapp/cloud-api/get-started'
 const WHATSAPP_CLOUD_API_WEBHOOKS_URL = 'https://developers.facebook.com/docs/whatsapp/cloud-api/guides/set-up-webhooks'
 const WHATSAPP_CLOUD_API_TOKENS_URL = 'https://developers.facebook.com/docs/whatsapp/business-management-api/get-started'
@@ -101,9 +102,50 @@ function hasSharedMetaAccessToken(metaConfig = {}) {
 }
 
 function getConfigStatus(row = {}, metaConfig = {}) {
+  if (row.connection_status === DISCONNECTED_CONNECTION_STATUS) return row.connection_status
   if (row.connection_status === 'connected' && hasSharedMetaAccessToken(metaConfig)) return row.connection_status
   if (row.app_id && row.app_secret && hasSharedMetaAccessToken(metaConfig) && row.waba_id && row.phone_number_id) return 'ready_to_connect'
   return DEFAULT_CONNECTION_STATUS
+}
+
+function isMetaConnectionGoneError(error = {}) {
+  const message = normalizeString(error.message || error.meta?.error?.message).toLowerCase()
+  return (
+    message.includes('application has been deleted') ||
+    message.includes('unsupported get request') ||
+    message.includes('object does not exist') ||
+    message.includes('cannot be loaded')
+  )
+}
+
+async function markWhatsAppDisconnected(config, reason = {}) {
+  if (!config?.id) return config
+
+  const metadata = {
+    ...(safeJsonParse(config.metadata, {}) || {}),
+    disconnectedAt: new Date().toISOString(),
+    disconnectReason: reason.message || 'WhatsApp API desconectado',
+    disconnectSource: reason.source || 'system',
+    ...(reason.unsubscribeResponse ? { unsubscribeResponse: reason.unsubscribeResponse } : {})
+  }
+
+  await db.run(
+    `UPDATE whatsapp_api_config
+     SET connection_status = ?,
+         last_error_payload = ?,
+         metadata = ?,
+         last_verified_at = CURRENT_TIMESTAMP,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?`,
+    [
+      DISCONNECTED_CONNECTION_STATUS,
+      reason.error ? safeJsonStringify(reason.error) : null,
+      safeJsonStringify(metadata),
+      config.id
+    ]
+  )
+
+  return await getRawConfigById(config.id)
 }
 
 function isDirectCloudConfigReady(row = {}, metaConfig = {}) {
@@ -304,6 +346,25 @@ async function subscribeWabaToWebhooks({ wabaId, businessToken, graphApiVersion 
 
   if (!response.ok || data.error) {
     const message = data?.error?.message || `Meta WABA subscription failed (${response.status})`
+    const error = new Error(message)
+    error.meta = data
+    throw error
+  }
+
+  return data
+}
+
+async function unsubscribeWabaFromWebhooks({ wabaId, businessToken, graphApiVersion }) {
+  if (!wabaId || !businessToken) return null
+
+  const params = new URLSearchParams({ access_token: businessToken })
+  const response = await fetch(`${graphBase(graphApiVersion)}/${encodeURIComponent(wabaId)}/subscribed_apps?${params.toString()}`, {
+    method: 'DELETE'
+  })
+  const data = await response.json()
+
+  if (!response.ok || data.error) {
+    const message = data?.error?.message || `Meta WABA unsubscribe failed (${response.status})`
     const error = new Error(message)
     error.meta = data
     throw error
@@ -533,65 +594,119 @@ export async function refreshWhatsAppConnectionStatus() {
   const wabaId = config.waba_id
   const phoneNumberId = config.phone_number_id
 
-  let phone = null
-  let phoneNumbers = []
-  if (phoneNumberId) {
-    phone = await fetchPhoneNumber({
-      phoneNumberId,
-      businessToken,
-      graphApiVersion: config.graph_api_version
+  try {
+    let phone = null
+    let phoneNumbers = []
+    if (phoneNumberId) {
+      phone = await fetchPhoneNumber({
+        phoneNumberId,
+        businessToken,
+        graphApiVersion: config.graph_api_version
+      })
+    }
+
+    if (wabaId) {
+      phoneNumbers = await fetchWabaPhoneNumbers({
+        wabaId,
+        businessToken,
+        graphApiVersion: config.graph_api_version
+      })
+    }
+
+    const selectedPhone = phone || phoneNumbers.find(item => item.id === phoneNumberId) || phoneNumbers.find(isConnectedPhone) || phoneNumbers[0] || null
+
+    if (selectedPhone?.id) {
+      await upsertPhoneNumber({ configId: config.id, wabaId, phone: selectedPhone })
+    }
+
+    for (const phoneNumber of phoneNumbers) {
+      await upsertPhoneNumber({ configId: config.id, wabaId, phone: phoneNumber })
+    }
+
+    await db.run(
+      `UPDATE whatsapp_api_config
+       SET phone_number_id = COALESCE(?, phone_number_id),
+           display_phone_number = COALESCE(?, display_phone_number),
+           verified_name = COALESCE(?, verified_name),
+           quality_rating = COALESCE(?, quality_rating),
+           platform_type = COALESCE(?, platform_type),
+           is_on_biz_app = ?,
+           connection_status = CASE WHEN waba_id IS NOT NULL AND COALESCE(?, phone_number_id) IS NOT NULL THEN 'connected' ELSE connection_status END,
+           metadata = ?,
+           last_error_payload = NULL,
+           last_verified_at = CURRENT_TIMESTAMP,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [
+        nullableString(selectedPhone?.id),
+        nullableString(selectedPhone?.display_phone_number),
+        nullableString(selectedPhone?.verified_name),
+        nullableString(selectedPhone?.quality_rating),
+        nullableString(selectedPhone?.platform_type),
+        selectedPhone ? asBooleanInteger(selectedPhone.is_on_biz_app) : asBooleanInteger(config.is_on_biz_app),
+        nullableString(selectedPhone?.id),
+        safeJsonStringify({
+          ...(safeJsonParse(config.metadata, {}) || {}),
+          lastStatusRefresh: new Date().toISOString(),
+          phoneNumbers
+        }),
+        config.id
+      ]
+    )
+
+    return sanitizeConfig(await getRawConfigById(config.id), metaConfig)
+  } catch (error) {
+    if (!isMetaConnectionGoneError(error)) throw error
+
+    const disconnected = await markWhatsAppDisconnected(config, {
+      source: 'refresh',
+      message: error.message,
+      error: error.meta || { message: error.message }
     })
-  }
 
-  if (wabaId) {
-    phoneNumbers = await fetchWabaPhoneNumbers({
-      wabaId,
-      businessToken,
-      graphApiVersion: config.graph_api_version
+    return sanitizeConfig(disconnected, metaConfig)
+  }
+}
+
+export async function disconnectWhatsAppCloudApi() {
+  const [config, metaConfig] = await Promise.all([
+    getRawConfig(),
+    getMetaConfig().catch(error => {
+      logger.warn(`No se pudo leer token compartido de Meta al desconectar WhatsApp: ${error.message}`)
+      return null
     })
+  ])
+
+  if (!config) {
+    return sanitizeConfig(config, metaConfig)
   }
 
-  const selectedPhone = phone || phoneNumbers.find(item => item.id === phoneNumberId) || phoneNumbers.find(isConnectedPhone) || phoneNumbers[0] || null
+  let unsubscribeResponse = null
+  let unsubscribeError = null
 
-  if (selectedPhone?.id) {
-    await upsertPhoneNumber({ configId: config.id, wabaId, phone: selectedPhone })
+  if (metaConfig?.access_token && config.waba_id) {
+    try {
+      unsubscribeResponse = await unsubscribeWabaFromWebhooks({
+        wabaId: config.waba_id,
+        businessToken: metaConfig.access_token,
+        graphApiVersion: config.graph_api_version
+      })
+    } catch (error) {
+      unsubscribeError = error
+      if (!isMetaConnectionGoneError(error)) {
+        logger.warn(`[WhatsApp API] No se pudo desuscribir WABA de Meta al desconectar localmente: ${error.message}`)
+      }
+    }
   }
 
-  for (const phoneNumber of phoneNumbers) {
-    await upsertPhoneNumber({ configId: config.id, wabaId, phone: phoneNumber })
-  }
+  const disconnected = await markWhatsAppDisconnected(config, {
+    source: 'manual_disconnect',
+    message: unsubscribeError?.message || 'Desconectado manualmente desde configuración',
+    error: unsubscribeError?.meta || (unsubscribeError ? { message: unsubscribeError.message } : null),
+    unsubscribeResponse
+  })
 
-  await db.run(
-    `UPDATE whatsapp_api_config
-     SET phone_number_id = COALESCE(?, phone_number_id),
-         display_phone_number = COALESCE(?, display_phone_number),
-         verified_name = COALESCE(?, verified_name),
-         quality_rating = COALESCE(?, quality_rating),
-         platform_type = COALESCE(?, platform_type),
-         is_on_biz_app = ?,
-         connection_status = CASE WHEN waba_id IS NOT NULL AND COALESCE(?, phone_number_id) IS NOT NULL THEN 'connected' ELSE connection_status END,
-         metadata = ?,
-         last_verified_at = CURRENT_TIMESTAMP,
-         updated_at = CURRENT_TIMESTAMP
-     WHERE id = ?`,
-    [
-      nullableString(selectedPhone?.id),
-      nullableString(selectedPhone?.display_phone_number),
-      nullableString(selectedPhone?.verified_name),
-      nullableString(selectedPhone?.quality_rating),
-      nullableString(selectedPhone?.platform_type),
-      selectedPhone ? asBooleanInteger(selectedPhone.is_on_biz_app) : asBooleanInteger(config.is_on_biz_app),
-      nullableString(selectedPhone?.id),
-      safeJsonStringify({
-        ...(safeJsonParse(config.metadata, {}) || {}),
-        lastStatusRefresh: new Date().toISOString(),
-        phoneNumbers
-      }),
-      config.id
-    ]
-  )
-
-  return sanitizeConfig(await getRawConfigById(config.id), metaConfig)
+  return sanitizeConfig(disconnected, metaConfig)
 }
 
 export async function getWebhookVerifyToken() {

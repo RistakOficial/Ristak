@@ -62,6 +62,10 @@ export const whatsappService = {
     return await apiClient.post<WhatsAppConfigResponse>('/whatsapp/cloud-api/connect', payload || {})
   },
 
+  async disconnectCloudApi(): Promise<WhatsAppConfigResponse> {
+    return await apiClient.post<WhatsAppConfigResponse>('/whatsapp/cloud-api/disconnect', {})
+  },
+
   async refreshStatus(): Promise<WhatsAppConfigResponse> {
     return await apiClient.post<WhatsAppConfigResponse>('/whatsapp/status/refresh', {})
   }

@@ -11,6 +11,7 @@ import {
   Link2,
   MessageSquareText,
   RefreshCw,
+  Unplug,
 } from 'lucide-react'
 import { SiWhatsapp } from 'react-icons/si'
 import {
@@ -117,6 +118,8 @@ function getStatusLabel(status: string) {
   switch (status) {
     case 'connected':
       return 'Conectado'
+    case 'disconnected':
+      return 'Desconectado'
     case 'ready_to_connect':
       return 'Listo para validar'
     default:
@@ -147,6 +150,7 @@ export const WhatsApp_API: React.FC = () => {
   const [isSaving, setIsSaving] = useState(false)
   const [isConnecting, setIsConnecting] = useState(false)
   const [isRefreshing, setIsRefreshing] = useState(false)
+  const [isDisconnecting, setIsDisconnecting] = useState(false)
   const [activeStep, setActiveStep] = useState(0)
   const autoSavedWebhookSignatureRef = useRef<string>('')
 
@@ -201,6 +205,17 @@ export const WhatsApp_API: React.FC = () => {
     try {
       const response = await whatsappService.getConfig()
       applyConfigResponse(response.config, response.storage)
+      if (response.config.connectionStatus === 'connected' && response.config.businessTokenConfigured) {
+        try {
+          const refreshed = await whatsappService.refreshStatus()
+          applyConfigResponse(refreshed.config, refreshed.storage)
+          if (refreshed.config.connectionStatus !== 'connected') {
+            setActiveStep(3)
+          }
+        } catch {
+          // Keep the cached state if Meta is temporarily unavailable during page load.
+        }
+      }
     } catch (error) {
       showToast('error', 'Error', 'No se pudo cargar WhatsApp API')
     } finally {
@@ -355,16 +370,42 @@ export const WhatsApp_API: React.FC = () => {
     }
   }
 
-  const handleRefreshStatus = async () => {
+  const handleRefreshStatus = async (options: { silent?: boolean } = {}) => {
     setIsRefreshing(true)
     try {
       const result = await whatsappService.refreshStatus()
       applyConfigResponse(result.config, result.storage)
-      showToast('success', 'Estado actualizado', 'Se consultó el número en Meta')
+      if (result.config.connectionStatus === 'connected') {
+        if (!options.silent) showToast('success', 'Estado actualizado', 'Se consultó el número en Meta')
+      } else {
+        setActiveStep(3)
+        if (!options.silent) {
+          showToast('warning', 'WhatsApp desconectado', 'Meta ya no validó la app o el número. Revisa los datos y vuelve a validar.')
+        }
+      }
     } catch (error) {
-      showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo consultar Meta')
+      if (!options.silent) {
+        showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo consultar Meta')
+      }
     } finally {
       setIsRefreshing(false)
+    }
+  }
+
+  const handleDisconnect = async () => {
+    const confirmed = window.confirm('Esto desconectará WhatsApp API en Ristak y quitará la suscripción de webhooks si Meta todavía permite hacerlo. Los datos históricos de WhatsApp se conservan separados.')
+    if (!confirmed) return
+
+    setIsDisconnecting(true)
+    try {
+      const result = await whatsappService.disconnectCloudApi()
+      applyConfigResponse(result.config, result.storage)
+      setActiveStep(3)
+      showToast('success', 'WhatsApp desconectado', 'La conexión quedó desactivada. Puedes corregir datos y volver a validar cuando quieras.')
+    } catch (error) {
+      showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo desconectar WhatsApp API')
+    } finally {
+      setIsDisconnecting(false)
     }
   }
 
@@ -810,10 +851,19 @@ export const WhatsApp_API: React.FC = () => {
                   type="button"
                   className={styles.connectedRefreshButton}
                   onClick={handleRefreshStatus}
-                  disabled={!config.businessTokenConfigured || isRefreshing}
+                  disabled={!config.businessTokenConfigured || isRefreshing || isDisconnecting}
                 >
                   <RefreshCw size={16} className={isRefreshing ? styles.spinning : ''} />
                   {isRefreshing ? 'Actualizando' : 'Actualizar'}
+                </button>
+                <button
+                  type="button"
+                  className={`${styles.connectedRefreshButton} ${styles.connectedDisconnectButton}`}
+                  onClick={handleDisconnect}
+                  disabled={isRefreshing || isDisconnecting}
+                >
+                  <Unplug size={16} className={isDisconnecting ? styles.spinning : ''} />
+                  {isDisconnecting ? 'Desconectando' : 'Desconectar'}
                 </button>
               </div>
             )}
