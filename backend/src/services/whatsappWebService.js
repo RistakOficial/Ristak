@@ -422,7 +422,7 @@ async function findExistingContact(phone) {
 
   const placeholders = candidates.map(() => '?').join(', ')
   return db.get(
-    `SELECT id, full_name, phone, attribution_ad_id, attribution_ctwa_clid, attribution_ad_name
+    `SELECT id, full_name, phone, source, created_at, attribution_ad_id, attribution_ctwa_clid, attribution_ad_name
      FROM contacts
      WHERE phone IN (${placeholders})
      LIMIT 1`,
@@ -440,10 +440,28 @@ function buildContactCustomFields({ remoteJid, messageText, attribution }) {
   ]
 }
 
-async function upsertLocalContact({ phone, pushName, remoteJid, messageText, attribution }) {
+function shouldMoveContactCreatedAt(existing, firstMessageAt) {
+  if (!firstMessageAt) return false
+
+  const source = String(existing?.source || '').toLowerCase()
+  if (source && source !== SOURCE_NAME.toLowerCase()) return false
+
+  if (!existing?.created_at) return true
+
+  const existingTime = Date.parse(String(existing.created_at))
+  const firstMessageTime = Date.parse(String(firstMessageAt))
+
+  if (!Number.isFinite(firstMessageTime)) return false
+  if (!Number.isFinite(existingTime)) return true
+
+  return firstMessageTime < existingTime
+}
+
+async function upsertLocalContact({ phone, pushName, remoteJid, messageText, messageTimestamp, isInbound, attribution }) {
   const canonicalPhone = normalizePhoneForStorage(phone) || phone
   const existing = await findExistingContact(canonicalPhone)
   const fullName = pushName || canonicalPhone || 'Contacto WhatsApp'
+  const firstMessageAt = messageTimestamp || nowIso()
 
   if (!existing) {
     const contactId = hashId('waweb_contact', `${canonicalPhone}|${remoteJid}`)
@@ -455,7 +473,7 @@ async function upsertLocalContact({ phone, pushName, remoteJid, messageText, att
         id, phone, full_name, first_name, source, attribution_url, attribution_session_source,
         attribution_medium, attribution_ctwa_clid, attribution_ad_name, attribution_ad_id,
         custom_fields, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${customFieldsPlaceholder}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${customFieldsPlaceholder}, ?, CURRENT_TIMESTAMP)
     `, [
       contactId,
       canonicalPhone || null,
@@ -468,7 +486,8 @@ async function upsertLocalContact({ phone, pushName, remoteJid, messageText, att
       attribution.ctwaClid || null,
       attribution.sourceId || null,
       attribution.sourceId || null,
-      customFieldsValue
+      customFieldsValue,
+      firstMessageAt
     ])
 
     return { id: contactId, created: true }
@@ -509,6 +528,11 @@ async function upsertLocalContact({ phone, pushName, remoteJid, messageText, att
     params.push(attribution.sourceId)
   }
 
+  if (isInbound && shouldMoveContactCreatedAt(existing, messageTimestamp)) {
+    updates.push('created_at = ?')
+    params.push(messageTimestamp)
+  }
+
   if (updates.length) {
     updates.push('updated_at = CURRENT_TIMESTAMP')
     params.push(existing.id)
@@ -518,21 +542,33 @@ async function upsertLocalContact({ phone, pushName, remoteJid, messageText, att
   return { id: existing.id, created: false }
 }
 
-async function upsertWhatsAppWebContact({ sessionId, contactId, remoteJid, phone, pushName, rawProfile }) {
+async function upsertWhatsAppWebContact({ sessionId, contactId, remoteJid, phone, pushName, firstSeenAt, rawProfile }) {
   const webContactId = hashId('waweb_profile', `${sessionId}|${remoteJid}`)
+  const seenAt = firstSeenAt || nowIso()
 
   await db.run(`
     INSERT INTO whatsapp_web_contacts (
       id, session_id, contact_id, remote_jid, phone, push_name, display_name,
       raw_profile_json, first_seen_at, last_seen_at, message_count, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
     ON CONFLICT(session_id, remote_jid) DO UPDATE SET
       contact_id = COALESCE(excluded.contact_id, whatsapp_web_contacts.contact_id),
       phone = COALESCE(excluded.phone, whatsapp_web_contacts.phone),
       push_name = COALESCE(excluded.push_name, whatsapp_web_contacts.push_name),
       display_name = COALESCE(excluded.display_name, whatsapp_web_contacts.display_name),
       raw_profile_json = excluded.raw_profile_json,
-      last_seen_at = CURRENT_TIMESTAMP,
+      first_seen_at = CASE
+        WHEN whatsapp_web_contacts.first_seen_at IS NULL THEN excluded.first_seen_at
+        WHEN excluded.first_seen_at IS NULL THEN whatsapp_web_contacts.first_seen_at
+        WHEN excluded.first_seen_at < whatsapp_web_contacts.first_seen_at THEN excluded.first_seen_at
+        ELSE whatsapp_web_contacts.first_seen_at
+      END,
+      last_seen_at = CASE
+        WHEN whatsapp_web_contacts.last_seen_at IS NULL THEN excluded.last_seen_at
+        WHEN excluded.last_seen_at IS NULL THEN whatsapp_web_contacts.last_seen_at
+        WHEN excluded.last_seen_at > whatsapp_web_contacts.last_seen_at THEN excluded.last_seen_at
+        ELSE whatsapp_web_contacts.last_seen_at
+      END,
       message_count = whatsapp_web_contacts.message_count + 1,
       updated_at = CURRENT_TIMESTAMP
   `, [
@@ -543,10 +579,52 @@ async function upsertWhatsAppWebContact({ sessionId, contactId, remoteJid, phone
     phone || null,
     pushName || null,
     pushName || phone || null,
-    safeJson(rawProfile)
+    safeJson(rawProfile),
+    seenAt,
+    seenAt
   ])
 
   return webContactId
+}
+
+async function reconcileWhatsAppContactCreatedAt(sessionId = DEFAULT_SESSION_ID) {
+  const rows = await db.all(`
+    SELECT
+      contact_id,
+      COALESCE(
+        MIN(CASE WHEN direction = 'inbound' THEN message_timestamp END),
+        MIN(message_timestamp)
+      ) as first_message_at
+    FROM whatsapp_web_messages
+    WHERE session_id = ?
+      AND contact_id IS NOT NULL
+      AND message_timestamp IS NOT NULL
+    GROUP BY contact_id
+  `, [sessionId])
+
+  let updated = 0
+
+  for (const row of rows) {
+    const contact = await db.get(
+      'SELECT id, source, created_at FROM contacts WHERE id = ?',
+      [row.contact_id]
+    )
+
+    if (!contact || !shouldMoveContactCreatedAt(contact, row.first_message_at)) continue
+
+    await db.run(`
+      UPDATE contacts
+      SET created_at = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `, [row.first_message_at, row.contact_id])
+    updated += 1
+  }
+
+  if (updated > 0) {
+    logger.info(`WhatsApp Business fechas de contactos reconciliadas: ${updated}`)
+  }
+
+  return updated
 }
 
 async function saveWhatsAppWebMessage({
@@ -791,13 +869,17 @@ async function processWhatsAppWebMessage(sessionId, msg, { eventSource = 'notify
     return { saved: false, reason: 'no-phone' }
   }
 
-  const pushName = msg.key?.fromMe ? '' : (msg.pushName || '')
+  const isInbound = !msg.key?.fromMe
+  const pushName = isInbound ? (msg.pushName || '') : ''
   const messageText = getMessageText(msg.message)
+  const messageTimestamp = toDateTime(msg.messageTimestamp)
   const contact = await upsertLocalContact({
     phone,
     pushName,
     remoteJid: identityJid,
     messageText,
+    messageTimestamp,
+    isInbound,
     attribution
   })
   const webContactId = await upsertWhatsAppWebContact({
@@ -806,6 +888,7 @@ async function processWhatsAppWebMessage(sessionId, msg, { eventSource = 'notify
     remoteJid: identityJid,
     phone,
     pushName,
+    firstSeenAt: messageTimestamp,
     rawProfile: {
       key: msg.key,
       pushName,
@@ -872,6 +955,10 @@ async function processWhatsAppWebHistory(sessionId, messages = [], metadata = {}
   logger.info(
     `WhatsApp Business historial procesado: ${saved}/${messages.length} mensajes guardados, ${attributed} con atribucion, ${failed} fallidos, ${runtime.lidPhoneMap.size} mappings LID-PN${metadata.syncType ? ` (sync ${metadata.syncType})` : ''}`
   )
+
+  if (saved > 0) {
+    await reconcileWhatsAppContactCreatedAt(sessionId)
+  }
 
   return saved
 }
@@ -1179,6 +1266,10 @@ export async function getWhatsAppWebLogs(sessionId = DEFAULT_SESSION_ID) {
 
 export async function initializeWhatsAppWebReceiver() {
   await ensureSessionRecord(DEFAULT_SESSION_ID)
+  await reconcileWhatsAppContactCreatedAt(DEFAULT_SESSION_ID).catch(error => {
+    logger.warn(`No se pudieron reconciliar fechas de contactos WhatsApp Business: ${error.message}`)
+  })
+
   if (!await hasSavedAuthState(DEFAULT_SESSION_ID)) return
 
   startWhatsAppWebSession(DEFAULT_SESSION_ID).catch(error => {
