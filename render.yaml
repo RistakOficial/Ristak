@@ -25,5 +25,6 @@ databases:
     databaseName: ristak_db
     user: ristak_user
     plan: basic-256mb
-    diskSizeGB: 1
+    # Do not set diskSizeGB here. Render treats it as desired state and
+    # fails Blueprint sync if an existing database was manually grown above it.
     storageAutoscalingEnabled: true

@@ -26,6 +26,17 @@ Render creará:
 - `DATABASE_URL` apuntando a la base creada.
 - `JWT_SECRET` generado por Render desde el Blueprint.
 
+### Storage De Postgres
+
+El Blueprint habilita `storageAutoscalingEnabled`, pero no fija `diskSizeGB`.
+Esto es intencional: Render no permite reducir el disco de una base existente.
+Si `diskSizeGB` queda fijo en `1` y después la base se aumenta manualmente a
+15 GB o más, el siguiente Blueprint sync falla intentando bajarla otra vez.
+
+Cuando `diskSizeGB` se omite, Render conserva el tamaño actual en bases
+existentes. Para una base nueva, Render usa el tamaño inicial por defecto del
+plan configurado.
+
 ## Qué Hace El Build
 
 `render.yaml` ejecuta:
