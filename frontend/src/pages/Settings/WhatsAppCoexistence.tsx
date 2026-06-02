@@ -666,7 +666,7 @@ export const WhatsAppCoexistence: React.FC = () => {
             </li>
             <li>
               <strong>Permite acceso a WhatsApp</strong>
-              <span>Si Meta pide permisos/scopes, incluye acceso para administrar la cuenta de WhatsApp, enviar mensajes y leer eventos necesarios del negocio.</span>
+              <span>Si Meta pide permisos/scopes, incluye acceso para administrar la cuenta de WhatsApp, enviar mensajes y leer eventos necesarios del negocio. Para conectar números reales, los permisos de WhatsApp deben tener Advanced Access aprobado en App Review.</span>
               <div className={styles.permissionPills}>
                 <span>whatsapp_business_management</span>
                 <span>whatsapp_business_messaging</span>
@@ -840,6 +840,13 @@ export const WhatsAppCoexistence: React.FC = () => {
           <h3 className={styles.stepTitle}>Conecta el número de WhatsApp</h3>
           <p className={styles.stepText}>
             Ya está lista la configuración. Abre el flujo oficial de Meta y termina la conexión del número.
+          </p>
+        </div>
+
+        <div className={styles.warningCallout}>
+          <strong>Si Meta muestra el error #2655111</strong>
+          <p>
+            La conexión ya llegó al registro del número, pero tu Meta App todavía no tiene Advanced Access aprobado para whatsapp_business_messaging y whatsapp_business_management. En Meta Developers ve a App Review → Permissions and Features y solicita esos permisos; mientras no estén aprobados, Meta no permite registrar un número real en Embedded Signup / Coexistence.
           </p>
         </div>
 
