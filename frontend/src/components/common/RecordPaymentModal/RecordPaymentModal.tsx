@@ -25,6 +25,7 @@ import { highLevelService } from '@/services/highLevelService'
 
 const IVA_RATE = 0.16
 const DEFAULT_INVOICE_TITLE = 'Pago'
+const CONTACT_SEARCH_DELAY_MS = 90
 
 const formatCurrency = (value: number, _currency = 'MXN'): string => formatMxCurrency(value)
 
@@ -461,13 +462,20 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
   // Search contacts
   useEffect(() => {
-    if (searchQuery.length < 2) {
+    const query = searchQuery.trim()
+
+    if (query.length < 2) {
       setContacts([])
       setShowContactDropdown(false)
+      setSearchingContact(false)
       return
     }
 
-    const timer = setTimeout(async () => {
+    const controller = new AbortController()
+    setSearchingContact(true)
+    setShowContactDropdown(true)
+
+    const timer = window.setTimeout(async () => {
       setSearchingContact(true)
       try {
         const response = await fetch('/api/highlevel/contacts/search', {
@@ -475,8 +483,9 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           headers: {
             'Content-Type': 'application/json'
           },
+          signal: controller.signal,
           body: JSON.stringify({
-            query: searchQuery,
+            query,
             limit: 10
           })
         })
@@ -494,16 +503,25 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           lastName: contact.lastName || ''
         }))
 
-        setContacts(formattedContacts)
-        setShowContactDropdown(true)
+        if (!controller.signal.aborted) {
+          setContacts(formattedContacts)
+          setShowContactDropdown(true)
+        }
       } catch (error) {
-        setContacts([])
+        if (!controller.signal.aborted) {
+          setContacts([])
+        }
       } finally {
-        setSearchingContact(false)
+        if (!controller.signal.aborted) {
+          setSearchingContact(false)
+        }
       }
-    }, 300)
+    }, CONTACT_SEARCH_DELAY_MS)
 
-    return () => clearTimeout(timer)
+    return () => {
+      window.clearTimeout(timer)
+      controller.abort()
+    }
   }, [searchQuery])
 
   useEffect(() => {
@@ -1158,7 +1176,11 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
               {showContactDropdown && (
                 <div className={styles.dropdown}>
-                  {contacts.length > 0 ? (
+                  {searchingContact && contacts.length === 0 ? (
+                    <div className={styles.dropdownEmpty}>
+                      Buscando contactos...
+                    </div>
+                  ) : contacts.length > 0 ? (
                     contacts.map((contact) => (
                       <button
                         key={contact.id}

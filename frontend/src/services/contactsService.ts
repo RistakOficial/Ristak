@@ -97,10 +97,11 @@ export const contactsService = {
     }
   },
 
-  async searchContacts(searchTerm: string): Promise<Contact[]> {
+  async searchContacts(searchTerm: string, signal?: AbortSignal): Promise<Contact[]> {
     try {
       const data = await apiClient.get<Contact[]>('/contacts/search', {
-        params: { q: searchTerm }
+        params: { q: searchTerm },
+        signal
       })
       const results = Array.isArray(data) ? data : []
       return dedupeContacts<Contact>(results).map(normalizeContact)

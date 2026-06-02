@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect } from 'react'
 import { Modal, Icon, Badge, type BadgeVariant } from '@/components/common'
 import { formatUrlParameter } from '@/utils/format'
 import { CONTACT_STAGE_BADGE_VARIANTS, getContactStageBadge } from '@/utils/contactStageBadge'
-import { someSearchTextIncludes } from '@/utils/searchText'
+import { buildSearchIndex, prepareSearchQuery, searchIndexIncludes } from '@/utils/searchText'
 import { useLabels } from '@/contexts/LabelsContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
 import styles from './VisitorDetailsModal.module.css'
@@ -131,21 +131,36 @@ export function VisitorDetailsModal({
     }
   }, [isOpen, normalizedData])
 
+  const preparedVisitorSearch = useMemo(() => prepareSearchQuery(searchQuery), [searchQuery])
+  const visitorSearchIndexes = useMemo(() => {
+    return normalizedData.map(visitor => buildSearchIndex([
+      visitor.contact?.name,
+      visitor.contact?.email,
+      visitor.contact?.phone,
+      visitor.visitorId,
+      visitor.utmSource,
+      visitor.utmCampaign
+    ]))
+  }, [normalizedData])
+
   // Filtrar visitantes según búsqueda
   const filteredData = useMemo(() => {
-    if (!searchQuery) return normalizedData
+    if (!preparedVisitorSearch.normalized) return normalizedData
 
-    return normalizedData.filter(visitor =>
-      someSearchTextIncludes([
-        visitor.contact?.name,
-        visitor.contact?.email,
-        visitor.contact?.phone,
-        visitor.visitorId,
-        visitor.utmSource,
-        visitor.utmCampaign
-      ], searchQuery)
+    return normalizedData.filter((visitor, index) =>
+      searchIndexIncludes(
+        visitorSearchIndexes[index] ?? buildSearchIndex([
+          visitor.contact?.name,
+          visitor.contact?.email,
+          visitor.contact?.phone,
+          visitor.visitorId,
+          visitor.utmSource,
+          visitor.utmCampaign
+        ]),
+        preparedVisitorSearch
+      )
     )
-  }, [normalizedData, searchQuery])
+  }, [normalizedData, preparedVisitorSearch, visitorSearchIndexes])
 
   const getDeviceIcon = (deviceType?: string) => {
     if (!deviceType) return 'monitor'

@@ -71,6 +71,7 @@ const ALL_TIMEZONES: string[] =
       ];
 
 const DEFAULT_TIMEZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+const CONTACT_SEARCH_DELAY_MS = 90;
 
 /**
  * Formatea slot completo con duración
@@ -455,13 +456,20 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
 
   // Búsqueda de contactos
   useEffect(() => {
-    if (searchQuery.length < 2) {
+    const query = searchQuery.trim();
+
+    if (query.length < 2) {
       setContacts([]);
       setShowContactDropdown(false);
+      setSearchingContact(false);
       return;
     }
 
-    const timer = setTimeout(async () => {
+    const controller = new AbortController();
+    setSearchingContact(true);
+    setShowContactDropdown(true);
+
+    const timer = window.setTimeout(async () => {
       setSearchingContact(true);
       try {
         const response = await fetch('/api/highlevel/contacts/search', {
@@ -469,8 +477,9 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
           headers: {
             'Content-Type': 'application/json'
           },
+          signal: controller.signal,
           body: JSON.stringify({
-            query: searchQuery,
+            query,
             limit: 10
           })
         });
@@ -488,16 +497,25 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
           lastName: contact.lastName || ''
         }));
 
-        setContacts(formattedContacts);
-        setShowContactDropdown(true);
+        if (!controller.signal.aborted) {
+          setContacts(formattedContacts);
+          setShowContactDropdown(true);
+        }
       } catch (error) {
-        setContacts([]);
+        if (!controller.signal.aborted) {
+          setContacts([]);
+        }
       } finally {
-        setSearchingContact(false);
+        if (!controller.signal.aborted) {
+          setSearchingContact(false);
+        }
       }
-    }, 300);
+    }, CONTACT_SEARCH_DELAY_MS);
 
-    return () => clearTimeout(timer);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
   }, [searchQuery]);
 
   // Validar slot cuando cambien las fechas (solo en modo crear)
@@ -931,7 +949,11 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
 
                   {showContactDropdown && (
                     <div className={styles.dropdown}>
-                      {contacts.length > 0 ? (
+                      {searchingContact && contacts.length === 0 ? (
+                        <div className={styles.dropdownEmpty}>
+                          Buscando contactos...
+                        </div>
+                      ) : contacts.length > 0 ? (
                         contacts.map((contact) => (
                           <button
                             key={contact.id}

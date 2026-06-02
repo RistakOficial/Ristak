@@ -9,7 +9,7 @@ import { useTheme } from '@/contexts/ThemeContext';
 import { useAppConfig } from '@/hooks';
 import { calendarsService, type Calendar, type CalendarEvent, type AppointmentStats, type BlockedSlot } from '@/services/calendarsService';
 import { formatTime12h } from '@/utils/format'
-import { searchTextIncludes } from '@/utils/searchText'
+import { buildSearchIndex, prepareSearchQuery, searchIndexIncludes } from '@/utils/searchText'
 import { useTimezone } from '@/contexts/TimezoneContext';
 import styles from './Appointments.module.css';
 
@@ -543,10 +543,7 @@ export const Appointments: React.FC = () => {
     setCurrentDate(new Date());
   };
 
-  // Búsqueda de citas
-  const searchResults = useMemo(() => {
-    if (!searchQuery.trim()) return [];
-
+  const appointmentSearchItems = useMemo(() => {
     const allEvents = [...events, ...upcomingEvents];
 
     // Eliminar duplicados por ID
@@ -554,32 +551,41 @@ export const Appointments: React.FC = () => {
       index === self.findIndex((e) => e.id === event.id)
     );
 
-    return uniqueEvents
-      .filter((event) => {
-        // Buscar por título (nombre del contacto)
-        if (searchTextIncludes(event.title, searchQuery)) return true;
+    return uniqueEvents.map((event) => {
+      // Buscar por fecha (formato: "15 enero", "15/01", "enero 2025", etc)
+      const eventDate = new Date(event.startTime);
+      const dateStr = formatLocalDateShort(eventDate);
+      const monthName = MONTH_NAMES[eventDate.getMonth()];
+      const dayMonth = `${eventDate.getDate()} ${monthName}`;
+      const yearStr = eventDate.getFullYear().toString();
 
-        // Buscar por estado de cita
-        if (searchTextIncludes(event.appointmentStatus, searchQuery)) return true;
-        if (searchTextIncludes(getStatusLabel(event.appointmentStatus), searchQuery)) return true;
+      return {
+        event,
+        searchIndex: buildSearchIndex([
+          event.title,
+          event.appointmentStatus,
+          getStatusLabel(event.appointmentStatus),
+          dateStr,
+          monthName,
+          dayMonth,
+          yearStr
+        ])
+      };
+    });
+  }, [events, upcomingEvents]);
 
-        // Buscar por fecha (formato: "15 enero", "15/01", "enero 2025", etc)
-        const eventDate = new Date(event.startTime);
-        const dateStr = formatLocalDateShort(eventDate);
-        const monthName = MONTH_NAMES[eventDate.getMonth()];
-        const dayMonth = `${eventDate.getDate()} ${monthName}`;
-        const yearStr = eventDate.getFullYear().toString();
+  const preparedAppointmentSearch = useMemo(() => prepareSearchQuery(searchQuery), [searchQuery]);
 
-        if (searchTextIncludes(dateStr, searchQuery)) return true;
-        if (searchTextIncludes(monthName, searchQuery)) return true;
-        if (searchTextIncludes(dayMonth, searchQuery)) return true;
-        if (searchTextIncludes(yearStr, searchQuery)) return true;
+  // Búsqueda de citas
+  const searchResults = useMemo(() => {
+    if (!preparedAppointmentSearch.normalized) return [];
 
-        return false;
-      })
+    return appointmentSearchItems
+      .filter(({ searchIndex }) => searchIndexIncludes(searchIndex, preparedAppointmentSearch))
+      .map(({ event }) => event)
       .sort((a, b) => a.startTime.localeCompare(b.startTime))
       .slice(0, 10); // Limitar a 10 resultados
-  }, [searchQuery, events, upcomingEvents]);
+  }, [appointmentSearchItems, preparedAppointmentSearch]);
 
   const handleSelectSearchResult = (event: CalendarEvent) => {
     // Navegar a la fecha de la cita

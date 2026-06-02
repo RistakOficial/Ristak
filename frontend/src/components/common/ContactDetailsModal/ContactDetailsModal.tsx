@@ -3,7 +3,7 @@ import { Modal, Icon, Badge, type BadgeVariant } from '@/components/common'
 import { ContactJourney } from '@/components/common/ContactJourney'
 import { normalizeTrafficSource } from '@/utils/trafficSourceNormalizer'
 import { CONTACT_STAGE_BADGE_VARIANTS, getContactStageBadge } from '@/utils/contactStageBadge'
-import { someSearchTextIncludes } from '@/utils/searchText'
+import { buildSearchIndex, prepareSearchQuery, searchIndexIncludes } from '@/utils/searchText'
 import { useLabels } from '@/contexts/LabelsContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
 import type { ContactCustomField, ContactCustomFieldValue } from '@/types'
@@ -205,14 +205,22 @@ export function ContactDetailsModal({
     setCustomFieldDrafts(buildCustomFieldDrafts(selectedContact.customFields || []))
   }, [selectedContact?.id, selectedContact?.customFields])
 
+  const preparedContactSearch = useMemo(() => prepareSearchQuery(searchQuery), [searchQuery])
+  const contactSearchIndexes = useMemo(() => {
+    return data.map(contact => buildSearchIndex([contact.name, contact.email, contact.phone, contact.id]))
+  }, [data])
+
   // Filtrar contactos según búsqueda
   const filteredData = useMemo(() => {
-    if (!searchQuery) return data
+    if (!preparedContactSearch.normalized) return data
 
-    return data.filter(contact =>
-      someSearchTextIncludes([contact.name, contact.email, contact.phone, contact.id], searchQuery)
+    return data.filter((contact, index) =>
+      searchIndexIncludes(
+        contactSearchIndexes[index] ?? buildSearchIndex([contact.name, contact.email, contact.phone, contact.id]),
+        preparedContactSearch
+      )
     )
-  }, [data, searchQuery])
+  }, [contactSearchIndexes, data, preparedContactSearch])
 
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat('es-MX', {

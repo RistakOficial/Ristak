@@ -17,7 +17,7 @@ import {
 } from 'lucide-react'
 import { AdHierarchyMenu } from './AdHierarchyMenu'
 import { HelpTooltip } from '../HelpTooltip'
-import { searchTextIncludes } from '@/utils/searchText'
+import { buildSearchIndex, prepareSearchQuery, searchIndexIncludes } from '@/utils/searchText'
 
 // Estructura del árbol de filtros con todas las categorías disponibles
 interface FilterNode {
@@ -338,6 +338,21 @@ export function TreeFilter({
     : availableFilterLabels
       ? `Sin filtros aplicados. Abre para filtrar por ${availableFilterLabels}.`
       : 'Sin filtros aplicados.'
+  const preparedFilterSearch = useMemo(() => prepareSearchQuery(searchTerm), [searchTerm])
+  const filterSearchIndexes = useMemo(() => {
+    const indexes = new Map<string, ReturnType<typeof buildSearchIndex>>()
+
+    filterTree.forEach(category => {
+      category.children?.forEach(child => {
+        indexes.set(child.id, buildSearchIndex(child.label))
+      })
+    })
+
+    return indexes
+  }, [filterTree])
+  const matchesFilterSearch = (node: FilterNode) => {
+    return searchIndexIncludes(filterSearchIndexes.get(node.id) ?? buildSearchIndex(node.label), preparedFilterSearch)
+  }
 
   const handleClearAllFilters = () => {
     onFilterChange({})
@@ -351,9 +366,7 @@ export function TreeFilter({
     if (!node.children) return []
     if (!searchTerm) return node.children
 
-    return node.children.filter(child =>
-      searchTextIncludes(child.label, searchTerm)
-    )
+    return node.children.filter(matchesFilterSearch)
   }
 
   // Obtener resultados de búsqueda global
@@ -365,9 +378,7 @@ export function TreeFilter({
     filterTree.forEach(category => {
       if (!category.children) return
 
-      const matchingItems = category.children.filter(item =>
-        searchTextIncludes(item.label, searchTerm)
-      )
+      const matchingItems = category.children.filter(matchesFilterSearch)
 
       if (matchingItems.length > 0) {
         results.push({

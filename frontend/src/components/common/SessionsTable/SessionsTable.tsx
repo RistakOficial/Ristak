@@ -5,7 +5,7 @@ import { RefreshCw, Maximize2, Minimize2, Search, Edit, Trash2, X, Check } from 
 import { trackingService, TrackingSession, SessionsResponse } from '@/services/trackingService'
 import { useTimezone } from '@/contexts/TimezoneContext'
 import { useNotification } from '@/contexts/NotificationContext'
-import { searchTextIncludes, someSearchTextIncludes } from '@/utils/searchText'
+import { buildSearchIndex, prepareSearchQuery, searchIndexIncludes } from '@/utils/searchText'
 import styles from './SessionsTable.module.css'
 
 interface SessionsTableProps {
@@ -13,6 +13,60 @@ interface SessionsTableProps {
   filteredSessions?: TrackingSession[] // Sesiones ya filtradas desde parent (Analytics)
   useExternalData?: boolean // Si true, usa filteredSessions en vez de cargar propias
 }
+
+const SESSION_SEARCH_KEYS = [
+  'session_id',
+  'visitor_id',
+  'contact_id',
+  'full_name',
+  'email',
+  'event_name',
+  'started_at',
+  'page_url',
+  'referrer_url',
+  'utm_source',
+  'utm_medium',
+  'utm_campaign',
+  'utm_term',
+  'utm_content',
+  'gclid',
+  'fbclid',
+  'fbc',
+  'fbp',
+  'wbraid',
+  'gbraid',
+  'msclkid',
+  'ttclid',
+  'channel',
+  'source_platform',
+  'campaign_id',
+  'adset_id',
+  'ad_group_id',
+  'ad_id',
+  'campaign_name',
+  'adset_name',
+  'ad_group_name',
+  'ad_name',
+  'placement',
+  'site_source_name',
+  'network',
+  'match_type',
+  'keyword',
+  'search_query',
+  'creative_id',
+  'ad_position',
+  'ip',
+  'user_agent',
+  'device_type',
+  'os',
+  'browser',
+  'browser_version',
+  'language',
+  'timezone',
+  'geo_country',
+  'geo_region',
+  'geo_city'
+] as const
 
 export const SessionsTable: React.FC<SessionsTableProps> = ({
   className,
@@ -118,38 +172,37 @@ export const SessionsTable: React.FC<SessionsTableProps> = ({
     }
   }
 
+  const preparedSessionSearch = useMemo(() => prepareSearchQuery(searchQuery), [searchQuery])
+  const sessionSearchIndexes = useMemo(() => {
+    return sessions.map((session: any) => ({
+      all: buildSearchIndex(SESSION_SEARCH_KEYS.map(key => session[key])),
+      columns: SESSION_SEARCH_KEYS.reduce<Record<string, ReturnType<typeof buildSearchIndex>>>((acc, key) => {
+        acc[key] = buildSearchIndex(session[key])
+        return acc
+      }, {})
+    }))
+  }, [sessions])
+
   // Filtrar sesiones por búsqueda
   const searchFilteredSessions = useMemo(() => {
-    if (!searchQuery.trim()) return sessions
+    if (!preparedSessionSearch.normalized) return sessions
 
-    return sessions.filter((session: any) => {
+    return sessions.filter((session: any, index) => {
+      const searchIndexes = sessionSearchIndexes[index]
+      if (!searchIndexes) return false
+
       // Si busca en columna específica
       if (searchColumn !== 'all') {
-        const value = session[searchColumn]
-        return searchTextIncludes(value, searchQuery)
+        return searchIndexIncludes(
+          searchIndexes.columns[searchColumn] ?? buildSearchIndex(session[searchColumn]),
+          preparedSessionSearch
+        )
       }
 
       // Si busca en todas las columnas
-      return someSearchTextIncludes([
-        session.session_id,
-        session.visitor_id,
-        session.contact_id,
-        session.full_name,
-        session.email,
-        session.utm_source,
-        session.utm_medium,
-        session.utm_campaign,
-        session.page_url,
-        session.referrer_url,
-        session.ip,
-        session.device_type,
-        session.browser,
-        session.os,
-        session.geo_country,
-        session.geo_city
-      ], searchQuery)
+      return searchIndexIncludes(searchIndexes.all, preparedSessionSearch)
     })
-  }, [sessions, searchQuery, searchColumn])
+  }, [sessions, preparedSessionSearch, searchColumn, sessionSearchIndexes])
 
   const handleToggleExpanded = () => {
     setIsExpanded(prev => !prev)

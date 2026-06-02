@@ -1,5 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { debounce } from 'lodash';
+import React, { useState, useRef, useEffect } from 'react';
 import styles from './ContactSearchInput.module.css';
 import { Icon } from '../Icon/Icon';
 import { Contact } from '@/types';
@@ -13,6 +12,8 @@ interface ContactSearchInputProps {
   error?: string;
   disabled?: boolean;
 }
+
+const CONTACT_SEARCH_DELAY_MS = 90;
 
 export const ContactSearchInput: React.FC<ContactSearchInputProps> = ({
   value,
@@ -59,42 +60,46 @@ export const ContactSearchInput: React.FC<ContactSearchInputProps> = ({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Debounced search function
-  const searchContacts = useCallback(
-    debounce(async (term: string) => {
-      if (term.length < 2) {
-        setSuggestions([]);
-        return;
-      }
-
-      setIsLoading(true);
-      try {
-        const results = await contactsService.searchContacts(term);
-        setSuggestions(results);
-      } catch (error) {
-        // TODO: Implement proper logging service
-        setSuggestions([]);
-      } finally {
-        setIsLoading(false);
-      }
-    }, 300),
-    []
-  );
-
   useEffect(() => {
-    return () => {
-      searchContacts.cancel?.()
-    }
-  }, [searchContacts])
+    const term = searchTerm.trim();
 
-  useEffect(() => {
-    if (searchTerm && !value) {
-      searchContacts(searchTerm);
-      setIsOpen(true);
-    } else {
+    if (term.length < 2 || value) {
       setSuggestions([]);
       setIsOpen(false);
+      setIsLoading(false);
+      setSelectedIndex(-1);
+      return;
     }
+
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      setIsLoading(true);
+      setIsOpen(true);
+      setSelectedIndex(-1);
+
+      try {
+        const results = await contactsService.searchContacts(term, controller.signal);
+        if (!controller.signal.aborted) {
+          setSuggestions(results);
+        }
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          setSuggestions([]);
+        }
+      } finally {
+        if (!controller.signal.aborted) {
+          setIsLoading(false);
+        }
+      }
+    }, CONTACT_SEARCH_DELAY_MS);
+
+    setIsOpen(true);
+    setIsLoading(true);
+
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
   }, [searchTerm, value]);
 
   // Keyboard navigation

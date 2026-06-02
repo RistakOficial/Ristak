@@ -12,6 +12,7 @@ import {
 } from 'lucide-react'
 import { cn } from '@/utils/cn'
 import { globalSearchService, type GlobalSearchCategory, type GlobalSearchItem, type GlobalSearchItemType } from '@/services/globalSearchService'
+import { buildSearchIndex, searchIndexIncludes } from '@/utils/searchText'
 import styles from './GlobalSearch.module.css'
 
 interface GlobalSearchProps {
@@ -26,6 +27,9 @@ const ICONS: Record<GlobalSearchItemType, React.ComponentType<{ size?: number; c
   adset: Layers,
   ad: MousePointerClick
 }
+
+const GLOBAL_SEARCH_DELAY_MS = 60
+const GLOBAL_SEARCH_CACHE_LIMIT = 30
 
 const buildSearchParams = (item: GlobalSearchItem) => {
   const params = new URLSearchParams()
@@ -65,10 +69,36 @@ const buildSearchParams = (item: GlobalSearchItem) => {
   return { pathname: '/campaigns', search: `?${params.toString()}` }
 }
 
+const filterCategoriesByQuery = (
+  categories: GlobalSearchCategory[],
+  query: string
+): GlobalSearchCategory[] => {
+  return categories
+    .map(category => ({
+      ...category,
+      items: category.items.filter(item =>
+        searchIndexIncludes(
+          buildSearchIndex([
+            item.title,
+            item.subtitle,
+            item.meta,
+            item.id,
+            item.type,
+            ...Object.values(item.metadata ?? {})
+          ]),
+          query
+        )
+      )
+    }))
+    .filter(category => category.items.length > 0)
+}
+
 export const GlobalSearch: React.FC<GlobalSearchProps> = ({ className }) => {
   const navigate = useNavigate()
   const rootRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  const cacheRef = useRef(new Map<string, GlobalSearchCategory[]>())
+  const latestCategoriesRef = useRef<GlobalSearchCategory[]>([])
   const [query, setQuery] = useState('')
   const [categories, setCategories] = useState<GlobalSearchCategory[]>([])
   const [isOpen, setIsOpen] = useState(false)
@@ -107,13 +137,29 @@ export const GlobalSearch: React.FC<GlobalSearchProps> = ({ className }) => {
       return
     }
 
+    const cachedCategories = cacheRef.current.get(trimmedQuery)
+    const optimisticCategories = cachedCategories
+      ?? filterCategoriesByQuery(latestCategoriesRef.current, trimmedQuery)
+
+    setCategories(optimisticCategories)
+    setIsOpen(true)
+    setActiveIndex(0)
+    setLoading(true)
+    setError(null)
+
     const controller = new AbortController()
     const timeoutId = window.setTimeout(() => {
-      setLoading(true)
-      setError(null)
-
       globalSearchService.search(trimmedQuery, controller.signal)
         .then((response) => {
+          if (controller.signal.aborted) return
+
+          cacheRef.current.set(trimmedQuery, response.categories)
+          if (cacheRef.current.size > GLOBAL_SEARCH_CACHE_LIMIT) {
+            const oldestKey = cacheRef.current.keys().next().value
+            if (oldestKey) cacheRef.current.delete(oldestKey)
+          }
+
+          latestCategoriesRef.current = response.categories
           setCategories(response.categories)
           setActiveIndex(0)
           setIsOpen(true)
@@ -194,10 +240,12 @@ export const GlobalSearch: React.FC<GlobalSearchProps> = ({ className }) => {
         <Search size={17} className={styles.inputIcon} />
         <input
           ref={inputRef}
-          type="search"
+          type="text"
           placeholder="Buscar"
           className={styles.input}
           value={query}
+          autoComplete="off"
+          spellCheck={false}
           onChange={(event) => {
             setQuery(event.target.value)
             setIsOpen(Boolean(event.target.value.trim()))
@@ -233,11 +281,11 @@ export const GlobalSearch: React.FC<GlobalSearchProps> = ({ className }) => {
 
       {showDropdown && (
         <div id="global-search-results" className={styles.dropdown} role="listbox">
-          {loading && (
+          {loading && categories.length === 0 && (
             <div className={styles.stateRow}>Buscando...</div>
           )}
 
-          {!loading && error && (
+          {error && categories.length === 0 && (
             <div className={styles.stateRow}>{error}</div>
           )}
 
@@ -245,7 +293,7 @@ export const GlobalSearch: React.FC<GlobalSearchProps> = ({ className }) => {
             <div className={styles.stateRow}>Sin resultados</div>
           )}
 
-          {!loading && !error && categories.map((category) => (
+          {categories.map((category) => (
             <section key={category.id} className={styles.category}>
               <div className={styles.categoryHeader}>{category.label}</div>
               <div className={styles.resultList}>

@@ -11,7 +11,7 @@ import {
   ChevronRight
 } from 'lucide-react'
 import { useTableConfig } from '@/hooks'
-import { searchTextIncludes } from '@/utils/searchText'
+import { buildSearchIndex, prepareSearchQuery, searchIndexIncludes } from '@/utils/searchText'
 import { TabList } from '../TabList'
 import styles from './Table.module.css'
 
@@ -330,6 +330,12 @@ export function Table<T extends Record<string, any>>({
 
   const visibleColumns = columns.filter(col => col.visible !== false)
   const hiddenColumns = columns.filter(col => !col.fixed && col.visible === false)
+  const preparedSearchTerm = useMemo(() => prepareSearchQuery(searchTerm), [searchTerm])
+  const rowSearchIndexes = useMemo(() => {
+    if (!Array.isArray(data)) return []
+
+    return data.map(item => buildSearchIndex(getSearchValues(item, columns)))
+  }, [columns, data])
 
   const filteredData = useMemo(() => {
     if (!Array.isArray(data)) {
@@ -340,10 +346,8 @@ export function Table<T extends Record<string, any>>({
     let filtered = [...data]
 
     if (searchTerm) {
-      filtered = filtered.filter(item =>
-        getSearchValues(item, columns).some(value =>
-          searchTextIncludes(value, searchTerm)
-        )
+      filtered = filtered.filter((item, index) =>
+        searchIndexIncludes(rowSearchIndexes[index] ?? buildSearchIndex(getSearchValues(item, columns)), preparedSearchTerm)
       )
     }
 
@@ -363,7 +367,7 @@ export function Table<T extends Record<string, any>>({
     }
 
     return filtered
-  }, [columns, data, searchTerm, sortBy, sortOrder])
+  }, [columns, data, preparedSearchTerm, rowSearchIndexes, searchTerm, sortBy, sortOrder])
 
   const paginatedData = useMemo(() => {
     if (!paginated) return filteredData
