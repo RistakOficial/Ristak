@@ -9,6 +9,9 @@ CREATE TABLE IF NOT EXISTS whatsapp_web_sessions (
   phone TEXT,
   jid TEXT,
   push_name TEXT,
+  profile_picture_url TEXT,
+  business_profile_json TEXT,
+  account_info_json TEXT,
   qr_code TEXT,
   qr_image TEXT,
   last_error TEXT,
@@ -113,4 +116,3 @@ CREATE INDEX IF NOT EXISTS idx_whatsapp_web_messages_created ON whatsapp_web_mes
 CREATE INDEX IF NOT EXISTS idx_whatsapp_web_attr_contact ON whatsapp_web_attribution(contact_id);
 CREATE INDEX IF NOT EXISTS idx_whatsapp_web_attr_ctwa ON whatsapp_web_attribution(detected_ctwa_clid);
 CREATE INDEX IF NOT EXISTS idx_whatsapp_web_attr_source ON whatsapp_web_attribution(detected_source_id);
-

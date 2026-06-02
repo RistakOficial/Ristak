@@ -1,123 +1,130 @@
-import React, { useEffect, useMemo, useState } from 'react'
-import { AlertTriangle, Database, MessageCircle, QrCode, RefreshCw, Unplug, Users, Wifi } from 'lucide-react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
+import { CheckCircle, RefreshCw, ShieldCheck, Unplug } from 'lucide-react'
 import { SiWhatsapp } from 'react-icons/si'
 import { Button, Card } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
-import {
-  WhatsAppWebMessage,
-  WhatsAppWebStatus,
-  whatsappWebService
-} from '@/services/whatsappWebService'
+import { WhatsAppWebStatus, whatsappWebService } from '@/services/whatsappWebService'
 import styles from './WhatsAppSettings.module.css'
+
+type BusinessProfile = {
+  businessName?: string
+  name?: string
+  description?: string
+  email?: string
+  website?: string | string[]
+  category?: string
+}
+
+function parseJson<T>(value?: string | null): T | null {
+  if (!value) return null
+  try {
+    return JSON.parse(value) as T
+  } catch {
+    return null
+  }
+}
 
 export const WhatsAppSettings: React.FC = () => {
   const { showToast, showConfirm } = useNotification()
   const [status, setStatus] = useState<WhatsAppWebStatus | null>(null)
-  const [messages, setMessages] = useState<WhatsAppWebMessage[]>([])
   const [loading, setLoading] = useState(true)
-  const [connecting, setConnecting] = useState(false)
   const [disconnecting, setDisconnecting] = useState(false)
-  const [refreshing, setRefreshing] = useState(false)
+  const [manualDisconnected, setManualDisconnected] = useState(false)
+  const requestInFlight = useRef(false)
 
   const session = status?.session
-  const stats = status?.stats
   const isConnected = session?.status === 'connected'
-  const isWaitingQr = session?.status === 'qr'
-  const isBusy = session?.status === 'connecting' || session?.status === 'reconnecting'
+  const businessProfile = useMemo(
+    () => parseJson<BusinessProfile>(session?.business_profile_json),
+    [session?.business_profile_json]
+  )
+  const displayName = session?.push_name ||
+    businessProfile?.businessName ||
+    businessProfile?.name ||
+    'WhatsApp Business'
+  const profileImage = session?.profile_picture_url
+  const showQr = !isConnected && Boolean(session?.qr_image) && !manualDisconnected
+  const generatingQr = !isConnected && !showQr && !manualDisconnected
 
-  const statusMeta = useMemo(() => {
-    if (isConnected) {
-      return {
-        label: 'Conectado',
-        detail: session?.phone || 'WhatsApp enlazado',
-        className: styles.statusConnected
-      }
-    }
-
-    if (isWaitingQr) {
-      return {
-        label: 'Escanea el QR',
-        detail: 'WhatsApp Web esta esperando el celular',
-        className: styles.statusQr
-      }
-    }
-
-    if (isBusy) {
-      return {
-        label: session?.status === 'reconnecting' ? 'Reconectando' : 'Generando QR',
-        detail: 'Preparando sesion Baileys',
-        className: styles.statusBusy
-      }
-    }
-
-    return {
-      label: 'Desconectado',
-      detail: 'Genera un QR para enlazar el numero',
-      className: styles.statusDisconnected
-    }
-  }, [isBusy, isConnected, isWaitingQr, session?.phone, session?.status])
-
-  const loadStatus = async (options: { silent?: boolean } = {}) => {
-    if (!options.silent) setRefreshing(true)
-    try {
-      const [nextStatus, nextMessages] = await Promise.all([
-        whatsappWebService.getStatus(),
-        whatsappWebService.getMessages(10)
-      ])
-      setStatus(nextStatus)
-      setMessages(nextMessages)
-    } catch (error) {
-      if (!options.silent) {
-        showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo leer WhatsApp Web')
-      }
-    } finally {
-      setLoading(false)
-      setRefreshing(false)
-    }
+  const loadStatus = async () => {
+    const nextStatus = await whatsappWebService.getStatus()
+    setStatus(nextStatus)
+    return nextStatus
   }
 
-  useEffect(() => {
-    loadStatus({ silent: true })
-  }, [])
+  const startConnection = async () => {
+    if (requestInFlight.current || manualDisconnected) return
+    requestInFlight.current = true
 
-  useEffect(() => {
-    if (!session || isConnected) return
-    if (!['connecting', 'qr', 'reconnecting'].includes(session.status)) return
-
-    const interval = window.setInterval(() => {
-      loadStatus({ silent: true })
-    }, 2500)
-
-    return () => window.clearInterval(interval)
-  }, [isConnected, session?.status])
-
-  const handleConnect = async () => {
-    setConnecting(true)
     try {
       const nextStatus = await whatsappWebService.connect()
       setStatus(nextStatus)
-      showToast('info', 'QR en proceso', 'Escanea el codigo con WhatsApp cuando aparezca')
-      await loadStatus({ silent: true })
     } catch (error) {
-      showToast('error', 'No se pudo iniciar', error instanceof Error ? error.message : 'Error iniciando WhatsApp Web')
+      showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo generar el QR')
     } finally {
-      setConnecting(false)
+      requestInFlight.current = false
+      setLoading(false)
     }
   }
 
+  useEffect(() => {
+    let cancelled = false
+
+    const bootstrap = async () => {
+      try {
+        const nextStatus = await loadStatus()
+        if (cancelled) return
+
+        const currentStatus = nextStatus.session?.status
+        if (!['connected', 'qr', 'connecting', 'reconnecting'].includes(currentStatus || '')) {
+          await startConnection()
+        }
+      } catch (error) {
+        if (!cancelled) {
+          showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo leer WhatsApp Business')
+        }
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+
+    bootstrap()
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    if (isConnected || manualDisconnected) return
+
+    const interval = window.setInterval(async () => {
+      try {
+        const nextStatus = await loadStatus()
+        if (nextStatus.session?.status === 'disconnected') {
+          await startConnection()
+        }
+      } catch {
+        // El siguiente ciclo reintenta.
+      }
+    }, 2500)
+
+    return () => window.clearInterval(interval)
+  }, [isConnected, manualDisconnected])
+
   const confirmDisconnect = () => {
     showConfirm(
-      'Desconectar WhatsApp',
-      'Se cerrara la sesion de WhatsApp Web y el usuario tendra que escanear otro QR para conectar de nuevo.',
+      'Desconectar WhatsApp Business',
+      'Se cerrara la conexion actual. Para volver a conectar, abre esta pagina otra vez y se generara un QR nuevo.',
       async () => {
         setDisconnecting(true)
+        setManualDisconnected(true)
         try {
           const nextStatus = await whatsappWebService.disconnect()
           setStatus(nextStatus)
-          setMessages([])
-          showToast('success', 'Desconectado', 'La sesion de WhatsApp Web se cerro correctamente')
+          showToast('success', 'Desconectado', 'WhatsApp Business se desconecto correctamente')
         } catch (error) {
-          showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo desconectar WhatsApp')
+          showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo desconectar')
         } finally {
           setDisconnecting(false)
         }
@@ -127,151 +134,88 @@ export const WhatsAppSettings: React.FC = () => {
     )
   }
 
+  const accountDetails = [
+    { label: 'Numero', value: session?.phone },
+    { label: 'Nombre', value: displayName },
+    { label: 'Categoria', value: businessProfile?.category },
+    { label: 'Email', value: businessProfile?.email }
+  ].filter(item => item.value)
+
   if (loading) {
     return (
-      <Card className={styles.loadingCard}>
-        <RefreshCw size={18} className={styles.spin} />
-        Cargando WhatsApp Web
+      <Card className={styles.shell}>
+        <div className={styles.generatingState}>
+          <RefreshCw size={26} className={styles.spin} />
+          <span>Generando QR</span>
+        </div>
       </Card>
     )
   }
 
   return (
-    <div className={styles.container}>
-      <Card className={styles.heroCard}>
-        <div className={styles.heroHeader}>
-          <div className={styles.heroTitleGroup}>
-            <span className={styles.logoMark}><SiWhatsapp size={28} /></span>
-            <div>
-              <p className={styles.eyebrow}>WhatsApp Web</p>
-              <h2 className={styles.title}>Conector Baileys</h2>
-              <p className={styles.subtitle}>
-                Recibe mensajes entrantes, crea contactos locales y guarda el JSON crudo para rastrear atribucion.
-              </p>
-            </div>
-          </div>
-          <span className={statusMeta.className}>
-            <Wifi size={15} />
-            <span>{statusMeta.label}</span>
-          </span>
+    <Card className={styles.shell}>
+      <div className={styles.header}>
+        <span className={styles.logoMark}><SiWhatsapp size={30} /></span>
+        <div>
+          <p className={styles.eyebrow}>Configuracion</p>
+          <h2 className={styles.title}>WhatsApp Business</h2>
         </div>
+      </div>
 
-        <div className={styles.connectionGrid}>
-          <section className={styles.qrPanel}>
-            <div className={styles.panelHeader}>
-              <div>
-                <h3>Conexion del numero</h3>
-                <p>{statusMeta.detail}</p>
-              </div>
-              <Button variant="outline" size="sm" onClick={() => loadStatus()} loading={refreshing}>
-                <RefreshCw size={15} />
-                Actualizar
-              </Button>
-            </div>
-
-            <div className={styles.qrStage}>
-              {isConnected ? (
-                <div className={styles.connectedState}>
-                  <SiWhatsapp size={56} />
-                  <strong>{session?.phone || 'Numero conectado'}</strong>
-                  <span>{session?.push_name || session?.jid || 'Sesion activa'}</span>
-                </div>
-              ) : session?.qr_image ? (
-                <div className={styles.qrBox}>
-                  <img src={session.qr_image} alt="Codigo QR para conectar WhatsApp Web" />
-                  <p>Abre WhatsApp en el celular, entra a Dispositivos vinculados y escanea este codigo.</p>
-                </div>
+      <div className={styles.stage}>
+        {isConnected ? (
+          <div className={styles.connectedState}>
+            <div className={styles.avatar}>
+              {profileImage ? (
+                <img src={profileImage} alt="" />
               ) : (
-                <div className={styles.emptyQr}>
-                  <QrCode size={58} />
-                  <strong>Sin QR activo</strong>
-                  <span>Genera un codigo para conectar el telefono.</span>
-                </div>
+                <SiWhatsapp size={58} />
               )}
+              <span className={styles.checkBadge}><CheckCircle size={22} /></span>
             </div>
 
-            <div className={styles.actions}>
-              {!isConnected && (
-                <Button onClick={handleConnect} loading={connecting || isBusy} fullWidth>
-                  <QrCode size={17} />
-                  Generar QR
-                </Button>
-              )}
-              {isConnected && (
-                <Button variant="danger" onClick={confirmDisconnect} loading={disconnecting} fullWidth>
-                  <Unplug size={17} />
-                  Desconectar
-                </Button>
-              )}
+            <div className={styles.connectedCopy}>
+              <span className={styles.connectedLabel}>
+                <ShieldCheck size={18} />
+                Conectado
+              </span>
+              <h3>{session?.phone || 'Numero conectado'}</h3>
+              <p>{displayName}</p>
             </div>
 
-            {session?.last_error && (
-              <div className={styles.errorBox}>
-                <AlertTriangle size={16} />
-                <span>{session.last_error}</span>
+            {accountDetails.length > 0 && (
+              <div className={styles.detailsGrid}>
+                {accountDetails.map(item => (
+                  <div key={item.label} className={styles.detailItem}>
+                    <span>{item.label}</span>
+                    <strong>{item.value}</strong>
+                  </div>
+                ))}
               </div>
             )}
-          </section>
 
-          <aside className={styles.sidePanel}>
-            <div className={styles.statCard}>
-              <Users size={18} />
-              <div>
-                <strong>{stats?.contacts || 0}</strong>
-                <span>Contactos Web</span>
-              </div>
-            </div>
-            <div className={styles.statCard}>
-              <MessageCircle size={18} />
-              <div>
-                <strong>{stats?.messages || 0}</strong>
-                <span>Mensajes</span>
-              </div>
-            </div>
-            <div className={styles.statCard}>
-              <Database size={18} />
-              <div>
-                <strong>{stats?.attribution || 0}</strong>
-                <span>Atribucion detectada</span>
-              </div>
-            </div>
-          </aside>
-        </div>
-      </Card>
-
-      <Card className={styles.messagesCard}>
-        <div className={styles.sectionHeader}>
-          <div>
-            <h3>Ultimos mensajes recibidos</h3>
-            <p>Se guardan en tablas `whatsapp_web_*`, separadas de WhatsApp API oficial.</p>
+            <Button variant="danger" onClick={confirmDisconnect} loading={disconnecting}>
+              <Unplug size={17} />
+              Desconectar
+            </Button>
           </div>
-        </div>
-
-        {messages.length === 0 ? (
-          <div className={styles.emptyMessages}>
-            <MessageCircle size={26} />
-            <span>Aun no hay mensajes recibidos por Baileys.</span>
+        ) : showQr ? (
+          <div className={styles.qrState}>
+            <img src={session?.qr_image || ''} alt="Codigo QR para conectar WhatsApp Business" />
+            <p>Escanea el codigo desde WhatsApp para conectar la cuenta.</p>
+          </div>
+        ) : manualDisconnected ? (
+          <div className={styles.disconnectedState}>
+            <SiWhatsapp size={52} />
+            <h3>Desconectado</h3>
           </div>
         ) : (
-          <div className={styles.messageList}>
-            {messages.map(message => (
-              <article key={message.id} className={styles.messageItem}>
-                <div className={styles.messageTop}>
-                  <strong>{message.push_name || message.phone || 'Contacto WhatsApp'}</strong>
-                  <span>{message.created_at ? new Date(message.created_at).toLocaleString() : ''}</span>
-                </div>
-                <p>{message.message_text || message.message_type || 'Mensaje sin texto'}</p>
-                {(message.detected_ctwa_clid || message.detected_source_id) && (
-                  <div className={styles.attrLine}>
-                    {message.detected_source_id && <span>Ad: {message.detected_source_id}</span>}
-                    {message.detected_ctwa_clid && <span>CTWA: {message.detected_ctwa_clid}</span>}
-                  </div>
-                )}
-              </article>
-            ))}
+          <div className={styles.generatingState}>
+            <RefreshCw size={34} className={styles.spin} />
+            <span>{generatingQr ? 'Generando QR' : 'Preparando conexion'}</span>
           </div>
         )}
-      </Card>
-    </div>
+      </div>
+    </Card>
   )
 }

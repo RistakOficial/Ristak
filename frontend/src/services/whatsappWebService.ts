@@ -7,6 +7,9 @@ export interface WhatsAppWebSession {
   phone?: string | null
   jid?: string | null
   push_name?: string | null
+  profile_picture_url?: string | null
+  business_profile_json?: string | null
+  account_info_json?: string | null
   qr_code?: string | null
   qr_image?: string | null
   last_error?: string | null
@@ -48,4 +51,3 @@ export const whatsappWebService = {
     params: { limit: String(limit) }
   })
 }
-
