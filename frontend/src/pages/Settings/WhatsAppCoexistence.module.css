@@ -417,6 +417,29 @@
   line-height: 1.5;
 }
 
+.warningCallout {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid rgba(245, 158, 11, 0.24);
+  border-radius: 8px;
+  color: var(--color-status-warning);
+  background: rgba(245, 158, 11, 0.08);
+}
+
+.warningCallout strong {
+  color: var(--color-status-warning);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.warningCallout p {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 .permissionPills {
   display: flex;
   flex-wrap: wrap;

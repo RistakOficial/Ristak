@@ -90,6 +90,18 @@ function buildCurrentWizardUrl() {
   return `${window.location.origin}/settings/whatsapp-coexistence`
 }
 
+function getUrlParts(value: string) {
+  try {
+    return new URL(value)
+  } catch {
+    return null
+  }
+}
+
+function isLocalHostname(hostname = '') {
+  return ['localhost', '127.0.0.1', '::1'].includes(hostname) || hostname.endsWith('.localhost')
+}
+
 function generateWebhookVerifyToken() {
   const bytes = new Uint8Array(24)
 
@@ -206,6 +218,7 @@ export const WhatsAppCoexistence: React.FC = () => {
   const pendingCodeRef = useRef<string>('')
   const sessionPayloadRef = useRef<EmbeddedSignupPayload | null>(null)
   const completedCodeRef = useRef<string>('')
+  const autoSavedWebhookSignatureRef = useRef<string>('')
 
   const hasAppCredentials = Boolean(form.appId && (form.appSecret || config.appSecretConfigured))
   const hasConfigId = Boolean(form.embeddedSignupConfigId)
@@ -243,6 +256,14 @@ export const WhatsAppCoexistence: React.FC = () => {
 
   const completedSteps = setupSteps.filter(step => step.done).length
   const currentWizardUrl = useMemo(() => buildCurrentWizardUrl(), [])
+  const webhookEnvironmentMismatch = useMemo(() => {
+    if (typeof window === 'undefined') return false
+
+    const callbackUrl = getUrlParts(form.callbackUrl)
+    if (!callbackUrl) return false
+
+    return isLocalHostname(window.location.hostname) && !isLocalHostname(callbackUrl.hostname)
+  }, [form.callbackUrl])
   const canLaunchSignup = Boolean(
     config.configured &&
     form.appId &&
@@ -335,7 +356,9 @@ export const WhatsAppCoexistence: React.FC = () => {
     setForm(prev => ({ ...prev, [field]: value }))
   }
 
-  const handleSave = async () => {
+  const handleSave = async (options: { silent?: boolean } = {}) => {
+    const silent = options.silent === true
+
     if (!form.appId || !form.embeddedSignupConfigId) {
       showToast('error', 'Datos incompletos', 'App ID y Configuration ID son requeridos')
       return false
@@ -367,7 +390,11 @@ export const WhatsAppCoexistence: React.FC = () => {
         webhookVerifyToken: prev.webhookVerifyToken || saved.webhookVerifyToken || '',
         graphApiVersion: saved.graphApiVersion || prev.graphApiVersion
       }))
-      showToast('success', 'WhatsApp guardado', 'Configuración lista para conectar')
+      showToast(
+        'success',
+        silent ? 'Webhook listo' : 'WhatsApp guardado',
+        silent ? 'Token guardado; ya puedes verificarlo en Meta' : 'Configuración lista para conectar'
+      )
       return true
     } catch (error) {
       showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo guardar')
@@ -376,6 +403,36 @@ export const WhatsAppCoexistence: React.FC = () => {
       setIsSaving(false)
     }
   }
+
+  useEffect(() => {
+    if (activeStep !== 2 || isLoading || isSaving || config.configured || !isReadyToSave || !form.webhookVerifyToken) return
+
+    const signature = [
+      form.appId,
+      form.embeddedSignupConfigId,
+      form.webhookVerifyToken,
+      form.callbackUrl
+    ].join('|')
+
+    if (autoSavedWebhookSignatureRef.current === signature) return
+    autoSavedWebhookSignatureRef.current = signature
+
+    handleSave({ silent: true }).then(saved => {
+      if (!saved) {
+        autoSavedWebhookSignatureRef.current = ''
+      }
+    })
+  }, [
+    activeStep,
+    config.configured,
+    form.appId,
+    form.callbackUrl,
+    form.embeddedSignupConfigId,
+    form.webhookVerifyToken,
+    isLoading,
+    isReadyToSave,
+    isSaving
+  ])
 
   const finalizeSignup = async (
     code: string,
@@ -537,6 +594,15 @@ export const WhatsAppCoexistence: React.FC = () => {
     }
   }
 
+  const handleCopyWebhookToken = async () => {
+    if (!config.configured && isReadyToSave) {
+      const saved = await handleSave({ silent: true })
+      if (!saved) return
+    }
+
+    await handleCopy(form.webhookVerifyToken, 'Verify token copiado')
+  }
+
   const renderStepContent = () => {
     if (activeStep === 0) {
       return (
@@ -657,9 +723,18 @@ export const WhatsAppCoexistence: React.FC = () => {
             <span className={styles.stepEyebrow}>Paso 3</span>
             <h3 className={styles.stepTitle}>Configura el webhook de WhatsApp</h3>
             <p className={styles.stepText}>
-              Ristak creó este token automáticamente. Copia la callback URL y el token; después de guardar en el siguiente paso, pégalos en Meta Developers → WhatsApp → Configuration para verificar el webhook.
+              Ristak creó este token automáticamente y lo guarda al llegar a este paso. Copia la callback URL y el token, luego pégalos en Meta Developers → WhatsApp → Configuration para verificar el webhook.
             </p>
           </div>
+
+          {webhookEnvironmentMismatch && (
+            <div className={styles.warningCallout}>
+              <strong>Estás configurando local contra el dominio público</strong>
+              <p>
+                Meta validará la URL pública, pero este wizard en localhost guarda en tu backend local. Para verificar en Meta, abre esta misma pantalla desde el dominio público y guarda ahí, o usa una callback local expuesta por túnel.
+              </p>
+            </div>
+          )}
 
           <div className={styles.setupCallout}>
             <strong>Eventos que debes activar en WhatsApp</strong>
@@ -701,17 +776,17 @@ export const WhatsAppCoexistence: React.FC = () => {
               <Button
                 type="button"
                 variant="secondary"
-                onClick={() => handleCopy(form.webhookVerifyToken, 'Verify token copiado')}
-                disabled={!form.webhookVerifyToken}
+                onClick={handleCopyWebhookToken}
+                disabled={!form.webhookVerifyToken || isSaving}
               >
-                <Copy size={16} />
-                Copiar
+                {isSaving ? <KeyRound size={16} className={styles.spinning} /> : <Copy size={16} />}
+                {isSaving ? 'Guardando' : 'Copiar'}
               </Button>
             </div>
           </label>
 
           <p className={styles.stepHint}>
-            No lo sacas de Meta y no se escribe a mano. Este token es único para esta configuración: Meta lo compara con Ristak y, si coincide exacto, deja activar los eventos de WhatsApp.
+            No lo sacas de Meta y no se escribe a mano. Si Meta devuelve 403 o dice que no pudo validar, confirma que guardaste en el mismo dominio de la callback URL.
           </p>
         </>
       )
