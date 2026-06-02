@@ -17,107 +17,113 @@ import styles from './Settings.module.css'
 
 export const Settings: React.FC = () => {
   const { theme } = useTheme()
+  const settingsNavigation = [
+    {
+      to: '/settings/highlevel',
+      label: 'HighLevel',
+      icon: <Send size={18} />
+    },
+    {
+      to: '/settings/meta-ads',
+      label: 'Meta Ads',
+      icon: (
+        <img
+          src={theme === 'dark'
+            ? 'https://img.icons8.com/ios-filled/150/FFFFFF/meta.png'
+            : 'https://img.icons8.com/ios-filled/150/meta.png'
+          }
+          alt=""
+          className={styles.settingsNavMetaIcon}
+        />
+      )
+    },
+    {
+      to: '/settings/whatsapp-coexistence',
+      label: 'WhatsApp API',
+      icon: <SiWhatsapp size={18} />
+    },
+    {
+      to: '/settings/calendars',
+      label: 'Calendarios',
+      icon: <Calendar size={18} />
+    },
+    {
+      to: '/settings/tracking',
+      label: 'Rastreo Web',
+      icon: <Activity size={18} />
+    },
+    {
+      to: '/settings/payments',
+      label: 'Pagos',
+      icon: <CreditCard size={18} />
+    },
+    {
+      to: '/settings/costs',
+      label: 'Costos',
+      icon: <TrendingDown size={18} />
+    },
+    {
+      to: '/settings/ai-agent',
+      label: 'Agente AI',
+      icon: <Bot size={18} />
+    },
+    {
+      to: '/settings/api-access',
+      label: 'Acceso API',
+      icon: <KeyRound size={18} />
+    },
+    {
+      to: '/settings/account',
+      label: 'Cuenta',
+      icon: <UserCircle size={18} />
+    }
+  ]
+
   return (
     <div className={styles.container}>
-      <div className={styles.header}>
-        <h1 className={styles.title}>Configuración</h1>
-        <p className={styles.subtitle}>Gestiona las integraciones y configuración de tu cuenta</p>
-      </div>
+      <div className={styles.settingsLayout}>
+        <aside className={styles.settingsNavPanel} aria-label="Secciones de configuración">
+          <div className={styles.settingsNavHeader}>
+            <span className={styles.settingsNavEyebrow}>Configuración</span>
+            <strong className={styles.settingsNavTitle}>Secciones</strong>
+          </div>
 
-      <div className={styles.tabs}>
-        <NavLink
-          to="/settings/highlevel"
-          className={({ isActive }) => `${styles.tab} ${isActive ? styles.tabActive : ''}`}
-        >
-          <Send size={18} />
-          <span>HighLevel</span>
-        </NavLink>
-        <NavLink
-          to="/settings/meta-ads"
-          className={({ isActive }) => `${styles.tab} ${isActive ? styles.tabActive : ''}`}
-        >
-          <img
-            src={theme === 'dark'
-              ? 'https://img.icons8.com/ios-filled/150/FFFFFF/meta.png'
-              : 'https://img.icons8.com/ios-filled/150/meta.png'
-            }
-            alt="Meta"
-            style={{ width: '18px', height: '18px' }}
-          />
-          <span>Meta Ads</span>
-        </NavLink>
-        <NavLink
-          to="/settings/whatsapp-coexistence"
-          className={({ isActive }) => `${styles.tab} ${isActive ? styles.tabActive : ''}`}
-        >
-          <SiWhatsapp size={18} />
-          <span>WhatsApp API</span>
-        </NavLink>
-        <NavLink
-          to="/settings/calendars"
-          className={({ isActive }) => `${styles.tab} ${isActive ? styles.tabActive : ''}`}
-        >
-          <Calendar size={18} />
-          <span>Calendarios</span>
-        </NavLink>
-        <NavLink
-          to="/settings/tracking"
-          className={({ isActive }) => `${styles.tab} ${isActive ? styles.tabActive : ''}`}
-        >
-          <Activity size={18} />
-          <span>Rastreo Web</span>
-        </NavLink>
-        <NavLink
-          to="/settings/payments"
-          className={({ isActive }) => `${styles.tab} ${isActive ? styles.tabActive : ''}`}
-        >
-          <CreditCard size={18} />
-          <span>Pagos</span>
-        </NavLink>
-        <NavLink
-          to="/settings/costs"
-          className={({ isActive }) => `${styles.tab} ${isActive ? styles.tabActive : ''}`}
-        >
-          <TrendingDown size={18} />
-          <span>Costos</span>
-        </NavLink>
-        <NavLink
-          to="/settings/ai-agent"
-          className={({ isActive }) => `${styles.tab} ${isActive ? styles.tabActive : ''}`}
-        >
-          <Bot size={18} />
-          <span>Agente AI</span>
-        </NavLink>
-        <NavLink
-          to="/settings/api-access"
-          className={({ isActive }) => `${styles.tab} ${isActive ? styles.tabActive : ''}`}
-        >
-          <KeyRound size={18} />
-          <span>Acceso API</span>
-        </NavLink>
-        <NavLink
-          to="/settings/account"
-          className={({ isActive }) => `${styles.tab} ${isActive ? styles.tabActive : ''}`}
-        >
-          <UserCircle size={18} />
-          <span>Cuenta</span>
-        </NavLink>
-      </div>
+          <nav className={styles.settingsNavList}>
+            {settingsNavigation.map((item) => (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                className={({ isActive }) => `${styles.settingsNavItem} ${isActive ? styles.settingsNavItemActive : ''}`}
+              >
+                <span className={styles.settingsNavIcon}>{item.icon}</span>
+                <span className={styles.settingsNavLabel}>{item.label}</span>
+              </NavLink>
+            ))}
+          </nav>
+        </aside>
 
-      <div className={styles.mainContent}>
-        <Routes>
-          <Route index element={<Navigate to="highlevel" replace />} />
-          <Route path="highlevel" element={<HighLevelIntegration />} />
-          <Route path="costs" element={<Costs />} />
-          <Route path="meta-ads" element={<MetaAdsIntegration />} />
-          <Route path="whatsapp-coexistence" element={<WhatsAppCoexistence />} />
-          <Route path="calendars" element={<CalendarsConfiguration />} />
-          <Route path="tracking" element={<WebTracking />} />
-          <Route path="payments" element={<PaymentsConfiguration />} />
-          <Route path="ai-agent" element={<AIAgentSettings />} />
-          <Route path="api-access" element={<APIAccessSettings />} />
-          <Route path="account" element={<AccountSettings />} />
-        </Routes>
+        <section className={styles.settingsPanel}>
+          <div className={styles.header}>
+            <h1 className={styles.title}>Configuración</h1>
+            <p className={styles.subtitle}>Gestiona las integraciones y configuración de tu cuenta</p>
+          </div>
+
+          <div className={styles.mainContent}>
+            <Routes>
+              <Route index element={<Navigate to="highlevel" replace />} />
+              <Route path="highlevel" element={<HighLevelIntegration />} />
+              <Route path="costs" element={<Costs />} />
+              <Route path="meta-ads" element={<MetaAdsIntegration />} />
+              <Route path="whatsapp-coexistence" element={<WhatsAppCoexistence />} />
+              <Route path="calendars" element={<CalendarsConfiguration />} />
+              <Route path="tracking" element={<WebTracking />} />
+              <Route path="payments" element={<PaymentsConfiguration />} />
+              <Route path="ai-agent" element={<AIAgentSettings />} />
+              <Route path="api-access" element={<APIAccessSettings />} />
+              <Route path="account" element={<AccountSettings />} />
+            </Routes>
+          </div>
+        </section>
       </div>
     </div>
   )
