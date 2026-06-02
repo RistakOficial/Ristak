@@ -11,10 +11,10 @@ export async function getWhatsAppWebConnectionStatus(req, res) {
     const data = await getWhatsAppWebStatus()
     res.json({ success: true, data })
   } catch (error) {
-    logger.error(`Error obteniendo estado de WhatsApp Web: ${error.message}`)
+    logger.error(`Error obteniendo estado de WhatsApp Business: ${error.message}`)
     res.status(500).json({
       success: false,
-      error: 'Error obteniendo estado de WhatsApp Web'
+      error: 'Error obteniendo estado de WhatsApp Business'
     })
   }
 }
@@ -24,10 +24,10 @@ export async function connectWhatsAppWeb(req, res) {
     const data = await startWhatsAppWebSession()
     res.json({ success: true, data })
   } catch (error) {
-    logger.error(`Error iniciando WhatsApp Web: ${error.message}`)
+    logger.error(`Error iniciando WhatsApp Business: ${error.message}`)
     res.status(500).json({
       success: false,
-      error: 'Error iniciando WhatsApp Web'
+      error: 'Error iniciando WhatsApp Business'
     })
   }
 }
@@ -37,10 +37,10 @@ export async function disconnectWhatsAppWeb(req, res) {
     const data = await disconnectWhatsAppWebSession()
     res.json({ success: true, data })
   } catch (error) {
-    logger.error(`Error desconectando WhatsApp Web: ${error.message}`)
+    logger.error(`Error desconectando WhatsApp Business: ${error.message}`)
     res.status(500).json({
       success: false,
-      error: 'Error desconectando WhatsApp Web'
+      error: 'Error desconectando WhatsApp Business'
     })
   }
 }
@@ -50,11 +50,10 @@ export async function getWhatsAppWebMessages(req, res) {
     const data = await getRecentWhatsAppWebMessages('default', req.query.limit)
     res.json({ success: true, data })
   } catch (error) {
-    logger.error(`Error leyendo mensajes de WhatsApp Web: ${error.message}`)
+    logger.error(`Error leyendo mensajes de WhatsApp Business: ${error.message}`)
     res.status(500).json({
       success: false,
-      error: 'Error leyendo mensajes de WhatsApp Web'
+      error: 'Error leyendo mensajes de WhatsApp Business'
     })
   }
 }
-

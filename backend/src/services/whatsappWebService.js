@@ -13,7 +13,7 @@ import { db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 
 const DEFAULT_SESSION_ID = 'default'
-const SOURCE_NAME = 'WhatsApp Web'
+const SOURCE_NAME = 'WhatsApp Business'
 const baileysLogger = pino({ level: process.env.BAILEYS_LOG_LEVEL || 'silent' })
 const runtimeSessions = new Map()
 
@@ -74,7 +74,7 @@ function toDateTime(value) {
 }
 
 function normalizePhoneFromJid(jid = '') {
-  const raw = String(jid || '').split('@')[0] || ''
+  const raw = String(jid || '').split('@')[0]?.split(':')[0] || ''
   const digits = raw.replace(/\D/g, '')
   return digits ? `+${digits}` : ''
 }
@@ -212,8 +212,10 @@ async function ensureSessionRecord(sessionId = DEFAULT_SESSION_ID) {
   await db.run(`
     INSERT INTO whatsapp_web_sessions (id, label, status, updated_at)
     VALUES (?, ?, 'disconnected', CURRENT_TIMESTAMP)
-    ON CONFLICT(id) DO NOTHING
-  `, [sessionId, 'WhatsApp Web'])
+    ON CONFLICT(id) DO UPDATE SET
+      label = excluded.label,
+      updated_at = CURRENT_TIMESTAMP
+  `, [sessionId, 'WhatsApp Business'])
 }
 
 async function updateSession(sessionId, updates) {
@@ -613,7 +615,7 @@ async function processIncomingMessage(sessionId, msg) {
 
   await updateSession(sessionId, { last_error: null })
 
-  logger.info(`WhatsApp Web mensaje recibido de ${phone}${attribution.hasAttribution ? ' con atribucion detectada' : ''}`)
+  logger.info(`WhatsApp Business mensaje recibido de ${phone}${attribution.hasAttribution ? ' con atribucion detectada' : ''}`)
 }
 
 async function createQrImage(qr) {
@@ -627,6 +629,39 @@ async function createQrImage(qr) {
   })
 }
 
+async function getConnectedAccountInfo(socket) {
+  const jid = socket.user?.id || ''
+  let profilePictureUrl = null
+  let businessProfile = null
+
+  if (jid) {
+    try {
+      profilePictureUrl = await socket.profilePictureUrl(jid, 'image', 5000)
+    } catch {
+      profilePictureUrl = null
+    }
+
+    try {
+      businessProfile = await socket.getBusinessProfile(jid)
+    } catch {
+      businessProfile = null
+    }
+  }
+
+  return {
+    jid,
+    phone: normalizePhoneFromJid(jid),
+    pushName: socket.user?.name ||
+      socket.user?.verifiedName ||
+      businessProfile?.businessName ||
+      businessProfile?.name ||
+      null,
+    profilePictureUrl,
+    businessProfile,
+    accountInfo: socket.user || null
+  }
+}
+
 function disconnectRuntimeSocket(sessionId, runtime) {
   if (!runtime?.socket) return
   try {
@@ -635,7 +670,7 @@ function disconnectRuntimeSocket(sessionId, runtime) {
     runtime.socket.ev.removeAllListeners('creds.update')
     runtime.socket.ws?.close?.()
   } catch (error) {
-    logger.warn(`No se pudo cerrar socket WhatsApp Web: ${error.message}`)
+    logger.warn(`No se pudo cerrar socket WhatsApp Business: ${error.message}`)
   } finally {
     runtime.socket = null
     runtime.starting = null
@@ -692,17 +727,21 @@ export async function startWhatsAppWebSession(sessionId = DEFAULT_SESSION_ID) {
         }
 
         if (connection === 'open') {
+          const accountInfo = await getConnectedAccountInfo(socket)
           await updateSession(sessionId, {
             status: 'connected',
             qr_code: null,
             qr_image: null,
-            phone: normalizePhoneFromJid(socket.user?.id || ''),
-            jid: socket.user?.id || null,
-            push_name: socket.user?.name || socket.user?.verifiedName || null,
+            phone: accountInfo.phone,
+            jid: accountInfo.jid || null,
+            push_name: accountInfo.pushName,
+            profile_picture_url: accountInfo.profilePictureUrl,
+            business_profile_json: accountInfo.businessProfile ? safeJson(accountInfo.businessProfile) : null,
+            account_info_json: accountInfo.accountInfo ? safeJson(accountInfo.accountInfo) : null,
             connected_at: nowIso(),
             last_error: null
           })
-          logger.success('WhatsApp Web conectado con Baileys')
+          logger.success('WhatsApp Business conectado')
         }
 
         if (connection === 'close') {
@@ -721,13 +760,13 @@ export async function startWhatsAppWebSession(sessionId = DEFAULT_SESSION_ID) {
           if (shouldReconnect) {
             setTimeout(() => {
               startWhatsAppWebSession(sessionId).catch(error => {
-                logger.error(`No se pudo reconectar WhatsApp Web: ${error.message}`)
+                logger.error(`No se pudo reconectar WhatsApp Business: ${error.message}`)
               })
             }, 2500)
           }
         }
       } catch (error) {
-        logger.error(`Error procesando connection.update de WhatsApp Web: ${error.message}`)
+        logger.error(`Error procesando connection.update de WhatsApp Business: ${error.message}`)
       }
     })
 
@@ -736,7 +775,7 @@ export async function startWhatsAppWebSession(sessionId = DEFAULT_SESSION_ID) {
         try {
           await processIncomingMessage(sessionId, msg)
         } catch (error) {
-          logger.error(`Error guardando mensaje WhatsApp Web: ${error.message}`)
+          logger.error(`Error guardando mensaje WhatsApp Business: ${error.message}`)
         }
       }
     })
@@ -757,7 +796,7 @@ export async function disconnectWhatsAppWebSession(sessionId = DEFAULT_SESSION_I
     try {
       await runtime.socket.logout('Ristak disconnect')
     } catch (error) {
-      logger.warn(`Logout WhatsApp Web fallo, limpiando sesion local: ${error.message}`)
+      logger.warn(`Logout WhatsApp Business fallo, limpiando sesion local: ${error.message}`)
     }
   }
 
@@ -768,6 +807,9 @@ export async function disconnectWhatsAppWebSession(sessionId = DEFAULT_SESSION_I
     phone: null,
     jid: null,
     push_name: null,
+    profile_picture_url: null,
+    business_profile_json: null,
+    account_info_json: null,
     qr_code: null,
     qr_image: null,
     last_error: null,
@@ -820,7 +862,6 @@ export async function initializeWhatsAppWebReceiver() {
   if (!await hasSavedAuthState(DEFAULT_SESSION_ID)) return
 
   startWhatsAppWebSession(DEFAULT_SESSION_ID).catch(error => {
-    logger.error(`No se pudo iniciar WhatsApp Web automaticamente: ${error.message}`)
+    logger.error(`No se pudo iniciar WhatsApp Business automaticamente: ${error.message}`)
   })
 }
-

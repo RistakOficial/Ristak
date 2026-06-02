@@ -535,6 +535,9 @@ async function initTables() {
         phone TEXT,
         jid TEXT,
         push_name TEXT,
+        profile_picture_url TEXT,
+        business_profile_json TEXT,
+        account_info_json TEXT,
         qr_code TEXT,
         qr_image TEXT,
         last_error TEXT,
@@ -545,6 +548,18 @@ async function initTables() {
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
     `)
+
+    for (const [columnName, columnType] of [
+      ['profile_picture_url', 'TEXT'],
+      ['business_profile_json', 'TEXT'],
+      ['account_info_json', 'TEXT']
+    ]) {
+      try {
+        await db.run(`ALTER TABLE whatsapp_web_sessions ADD COLUMN ${columnName} ${columnType}`)
+      } catch (err) {
+        // Columna ya existe, ignorar.
+      }
+    }
 
     await db.run(`
       CREATE TABLE IF NOT EXISTS whatsapp_web_auth_state (
