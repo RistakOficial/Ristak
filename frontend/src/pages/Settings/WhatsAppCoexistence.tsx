@@ -717,7 +717,7 @@ export const WhatsAppCoexistence: React.FC = () => {
             <span className={styles.stepEyebrow}>Paso 3</span>
             <h3 className={styles.stepTitle}>Configura el webhook de WhatsApp</h3>
             <p className={styles.stepText}>
-              Ristak crea este token automáticamente en el backend y lo guarda al llegar a este paso. Copia la callback URL y el token, luego pégalos en Meta Developers → WhatsApp → Configuration para verificar el webhook.
+              Ristak crea este token automáticamente en el backend y lo guarda al llegar a este paso. Ahora ve a Meta Developers → Webhooks, selecciona el producto correcto y verifica la URL con este token.
             </p>
           </div>
 
@@ -730,17 +730,26 @@ export const WhatsAppCoexistence: React.FC = () => {
             </div>
           )}
 
-          <div className={styles.setupCallout}>
-            <strong>Eventos que debes activar en WhatsApp</strong>
+          <ol className={styles.guideDetailList}>
+            <li>
+              <strong>En Meta Developers abre Webhooks</strong>
+              <span>Dentro de tu app, entra a Webhooks. En el campo Seleccionar producto elige exactamente WhatsApp Business Account.</span>
+            </li>
+            <li>
+              <strong>Configura un webhook</strong>
+              <span>Pega la URL de devolución de llamada de Ristak y el token de verificación que aparece abajo. El token no se inventa ni se saca de Meta; Ristak ya lo creó para esta conexión.</span>
+            </li>
+            <li>
+              <strong>Verifica y guarda</strong>
+              <span>Cuando los dos campos estén pegados, presiona Verificar y guardar. Si Meta valida bien, ya puedes seguir con el wizard.</span>
+            </li>
+          </ol>
+
+          <div className={styles.warningCallout}>
+            <strong>OJO: no actives el certificado de cliente</strong>
             <p>
-              El webhook no se configura en Facebook Login for Business. Se configura en WhatsApp → Configuration. Cuando Meta deje elegir campos, activa mensajes, estados de mensajes, plantillas y cambios de cuenta o número si aparecen.
+              Deja apagado el switch que dice Adjunta un certificado de cliente a las solicitudes de webhook. Ristak no usa certificado de cliente para esta validación inicial; si lo prendes, Meta puede fallar la verificación.
             </p>
-            <div className={styles.permissionPills}>
-              <span>messages</span>
-              <span>message_template_status_update</span>
-              <span>phone_number_quality_update</span>
-              <span>account_update</span>
-            </div>
           </div>
 
           <label className={`${styles.formGroup} ${styles.formGroupWide}`}>
