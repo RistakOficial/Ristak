@@ -135,6 +135,13 @@
   line-height: 1.25;
 }
 
+.sectionTitleRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
 .sectionIcon {
   display: inline-flex;
   align-items: center;
