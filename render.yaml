@@ -25,4 +25,5 @@ databases:
     databaseName: ristak_db
     user: ristak_user
     plan: basic-256mb
-    diskSizeGB: 15
+    diskSizeGB: 1
+    storageAutoscalingEnabled: true
