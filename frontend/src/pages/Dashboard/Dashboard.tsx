@@ -1648,17 +1648,6 @@ export const Dashboard: React.FC = () => {
               />
             </div>
             <div className="flex shrink-0 flex-wrap items-center gap-x-6 gap-y-3 xl:justify-end">
-              <div className="flex flex-wrap items-center gap-4 text-xs text-[var(--color-text-secondary)]">
-                {chartLegendItems.map((item) => (
-                  <div key={item.key} className="inline-flex items-center gap-2">
-                    <span
-                      className="h-2.5 w-2.5 rounded-full"
-                      style={{ backgroundColor: item.color }}
-                    />
-                    <span className="font-medium">{item.label}</span>
-                  </div>
-                ))}
-              </div>
               {selectedChartView === 'revenue-spend' && (
                 <div className={funnelStyles.scopeSelector} data-ristak-scope-selector>
                   {financialScopeOptions.map(({ value, label, icon: Icon, description }) => {
@@ -1682,6 +1671,17 @@ export const Dashboard: React.FC = () => {
                   })}
                 </div>
               )}
+              <div className="flex flex-wrap items-center gap-4 px-2 text-xs text-[var(--color-text-secondary)]">
+                {chartLegendItems.map((item) => (
+                  <div key={item.key} className="inline-flex items-center gap-2">
+                    <span
+                      className="h-2.5 w-2.5 rounded-full"
+                      style={{ backgroundColor: item.color }}
+                    />
+                    <span className="font-medium">{item.label}</span>
+                  </div>
+                ))}
+              </div>
               <ViewSelector
                 options={chartViewOptions}
                 value={selectedChartView}
@@ -1703,6 +1703,7 @@ export const Dashboard: React.FC = () => {
                 color2={chartConfig.color2}
                 formatValue={chartConfig.formatValue}
                 formatTooltipValue={chartConfig.formatTooltipValue}
+                legendLabels={{ label1: chartConfig.label1, label2: chartConfig.label2 }}
                 onPointClick={handleChartPointClick}
               />
             ) : (
