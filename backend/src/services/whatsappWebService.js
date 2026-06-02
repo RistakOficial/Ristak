@@ -627,7 +627,7 @@ async function processIncomingMessage(sessionId, msg) {
 }
 
 async function processWhatsAppWebMessage(sessionId, msg, { eventSource = 'notify', onlyAttributed = false } = {}) {
-  if (!msg?.message || msg.key?.fromMe) return { saved: false, reason: 'ignored' }
+  if (!msg?.message) return { saved: false, reason: 'ignored' }
 
   const { remoteJid, phoneJid, identityJid, phone, usedLidFallback } = resolveWhatsAppWebAddressing(msg)
   if (shouldIgnoreJid(remoteJid)) return { saved: false, reason: 'ignored-jid' }
@@ -642,7 +642,7 @@ async function processWhatsAppWebMessage(sessionId, msg, { eventSource = 'notify
     return { saved: false, reason: 'no-phone' }
   }
 
-  const pushName = msg.pushName || ''
+  const pushName = msg.key?.fromMe ? '' : (msg.pushName || '')
   const messageText = getMessageText(msg.message)
   const contact = await upsertLocalContact({
     phone,
@@ -671,7 +671,7 @@ async function processWhatsAppWebMessage(sessionId, msg, { eventSource = 'notify
     contactId: contact.id,
     webContactId,
     msg,
-    remoteJid,
+    remoteJid: identityJid,
     phone,
     pushName,
     attribution
@@ -690,20 +690,24 @@ async function processWhatsAppWebMessage(sessionId, msg, { eventSource = 'notify
 
 async function processWhatsAppWebHistory(sessionId, messages = [], metadata = {}) {
   let saved = 0
+  let attributed = 0
 
   for (const msg of messages) {
     const result = await processWhatsAppWebMessage(sessionId, msg, {
       eventSource: 'history',
-      onlyAttributed: true
+      onlyAttributed: false
     })
 
     if (result.saved) {
       saved += 1
+      if (result.attributionDetected) {
+        attributed += 1
+      }
     }
   }
 
   if (saved > 0) {
-    logger.info(`WhatsApp Business historial de atribucion guardado: ${saved} mensajes${metadata.syncType ? ` (sync ${metadata.syncType})` : ''}`)
+    logger.info(`WhatsApp Business historial guardado: ${saved} mensajes, ${attributed} con atribucion${metadata.syncType ? ` (sync ${metadata.syncType})` : ''}`)
   }
 
   return saved
@@ -869,7 +873,7 @@ export async function startWhatsAppWebSession(sessionId = DEFAULT_SESSION_ID) {
         try {
           await processWhatsAppWebMessage(sessionId, msg, {
             eventSource: type,
-            onlyAttributed: type !== 'notify'
+            onlyAttributed: false
           })
         } catch (error) {
           logger.error(`Error guardando mensaje WhatsApp Business: ${error.message}`)

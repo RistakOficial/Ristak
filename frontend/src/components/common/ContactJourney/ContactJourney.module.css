@@ -57,10 +57,36 @@
   transition: all 0.2s ease;
 }
 
+.adBadge {
+  position: absolute;
+  right: -4px;
+  bottom: -3px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  color: #1877f2;
+  background: #fff;
+  border: 1px solid rgba(148, 163, 184, 0.55);
+}
+
+:global(body.dark) .adBadge {
+  color: #60a5fa;
+  background: #111827;
+  border-color: rgba(148, 163, 184, 0.5);
+}
+
 /* Iconos dentro del círculo - tamaño reducido */
 .eventDot svg {
   width: 18px;
   height: 18px;
+}
+
+.eventDot .adBadge svg {
+  width: 11px;
+  height: 11px;
 }
 
 /* Colores sutiles al estilo de la app con BUEN CONTRASTE */

@@ -62,6 +62,7 @@ const iconMap: Record<string, React.FC<any>> = {
   'globe': LucideIcons.Globe,
   'message-square': LucideIcons.MessageSquare,
   'facebook': LucideIcons.Facebook,
+  'instagram': LucideIcons.Instagram,
   'meta': MetaIcon as any,
   'whatsapp': WhatsAppIcon as any,
   'google': GoogleIcon as any,

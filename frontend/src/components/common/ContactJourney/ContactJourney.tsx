@@ -76,6 +76,20 @@ const getEventColor = (event: JourneyEvent) => {
   }
 }
 
+const getAdPlatformIcon = (platform?: string | null) => {
+  const normalized = String(platform || '').toLowerCase()
+
+  if (normalized.includes('instagram')) {
+    return 'instagram'
+  }
+
+  if (normalized.includes('facebook')) {
+    return 'facebook'
+  }
+
+  return 'meta'
+}
+
 const getEventDescription = (event?: JourneyEvent | null): string => {
   if (!event) {
     return ''
@@ -90,6 +104,9 @@ const getEventDescription = (event?: JourneyEvent | null): string => {
   }
 
   if (type === 'whatsapp_message') {
+    if (data.is_ad_attributed) {
+      return data.ad_platform ? `Anuncio ${data.ad_platform}` : 'Anuncio'
+    }
     return 'WhatsApp'
   }
 
@@ -159,6 +176,9 @@ const getTooltipContent = (event?: JourneyEvent | null) => {
   }
 
   if (type === 'whatsapp_message') {
+    if (data.is_ad_attributed) {
+      items.push({ label: 'Origen', value: data.ad_platform || 'Anuncio' })
+    }
     if (data.message_text) {
       items.push({ label: 'Mensaje', value: data.message_text })
     }
@@ -288,6 +308,8 @@ export const ContactJourney = ({ contactId }: ContactJourneyProps) => {
           const iconName = getEventIcon(event)
           const color = getEventColor(event)
           const isLast = index === journey.length - 1
+          const isAdAttributed = Boolean(event.data?.is_ad_attributed)
+          const adPlatformIcon = getAdPlatformIcon(event.data?.ad_platform)
 
           const tooltipItems = getTooltipContent(event)
 
@@ -310,6 +332,11 @@ export const ContactJourney = ({ contactId }: ContactJourneyProps) => {
               >
                 <div className={`${styles.eventDot} ${styles[color]}`}>
                   <Icon name={iconName as any} size={18} />
+                  {isAdAttributed && (
+                    <span className={styles.adBadge} title={event.data?.ad_platform || 'Anuncio'}>
+                      <Icon name={adPlatformIcon as any} size={11} />
+                    </span>
+                  )}
                 </div>
                 <div className={styles.eventContent}>
                   <span className={styles.eventTitle}>{getEventTitle(event)}</span>

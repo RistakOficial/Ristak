@@ -1204,6 +1204,83 @@ export const getContactJourney = async (req, res) => {
     }
 
     const journey = []
+    const successfulPaymentsCondition = `
+      contact_id = ?
+      AND amount > 0
+      AND LOWER(status) IN ('succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success')
+      AND ${nonTestPaymentCondition()}
+    `
+    const firstPayment = await db.get(
+      `SELECT date FROM payments
+       WHERE ${successfulPaymentsCondition}
+       ORDER BY date ASC
+       LIMIT 1`,
+      [id]
+    )
+    const rawFirstPaymentTime = firstPayment?.date ? new Date(firstPayment.date).getTime() : null
+    const firstPaymentTime = Number.isFinite(rawFirstPaymentTime) ? rawFirstPaymentTime : null
+
+    const getDateTime = (value) => {
+      const time = new Date(value).getTime()
+      return Number.isFinite(time) ? time : 0
+    }
+
+    const getDateKey = (value) => {
+      const time = getDateTime(value)
+      return time ? new Date(time).toISOString().slice(0, 10) : String(value || '')
+    }
+
+    const detectWhatsAppAdPlatform = (data = {}) => {
+      const haystack = [
+        data.referral_source_app,
+        data.referral_source_type,
+        data.referral_entry_point,
+        data.referral_source_url
+      ].filter(Boolean).join(' ').toLowerCase()
+
+      if (haystack.includes('instagram') || haystack.includes('ig_') || haystack.includes('ig ')) {
+        return 'Instagram'
+      }
+
+      if (haystack.includes('facebook') || haystack.includes('fb_') || haystack.includes('fb ')) {
+        return 'Facebook'
+      }
+
+      if (data.referral_source_id || data.referral_ctwa_clid || haystack.includes('meta')) {
+        return 'Meta Ads'
+      }
+
+      return ''
+    }
+
+    const addWhatsAppJourneyEvents = (events) => {
+      const dailyBeforePayment = new Map()
+      const attributedAfterPayment = []
+
+      events
+        .filter(event => event?.date)
+        .sort((a, b) => getDateTime(a.date) - getDateTime(b.date))
+        .forEach(event => {
+          const eventTime = getDateTime(event.date)
+          const isAfterFirstPayment = firstPaymentTime && eventTime >= firstPaymentTime
+
+          if (isAfterFirstPayment) {
+            if (event.data?.is_ad_attributed) {
+              attributedAfterPayment.push(event)
+            }
+            return
+          }
+
+          const dayKey = getDateKey(event.date)
+          const existing = dailyBeforePayment.get(dayKey)
+
+          if (!existing || (!existing.data?.is_ad_attributed && event.data?.is_ad_attributed)) {
+            dailyBeforePayment.set(dayKey, event)
+          }
+        })
+
+      journey.push(...dailyBeforePayment.values(), ...attributedAfterPayment)
+    }
 
     // 1. TODAS las visitas/sessions (por contact_id, visitor_id o email)
     let sessions = []
@@ -1262,7 +1339,8 @@ export const getContactJourney = async (req, res) => {
       })
     })
 
-    // 2. TODOS los mensajes de WhatsApp
+    // 2. Movimientos de WhatsApp del cliente: diario antes del pago, atribuidos despues.
+    const whatsappJourneyEvents = []
     const whatsappMessages = await db.all(
       `SELECT * FROM whatsapp_attribution
        WHERE contact_id = ?
@@ -1271,66 +1349,91 @@ export const getContactJourney = async (req, res) => {
     )
 
     whatsappMessages.forEach(msg => {
-      journey.push({
+      const data = {
+        source: 'WhatsApp',
+        phone: msg.phone,
+        message_text: msg.message_content,
+        referral_source_url: msg.referral_source_url,
+        referral_source_type: msg.referral_source_type,
+        referral_source_id: msg.referral_source_id || msg.ad_id_thru_message,
+        referral_headline: msg.referral_headline,
+        referral_body: msg.referral_body,
+        referral_ctwa_clid: msg.referral_ctwa_clid,
+        is_ad_attributed: true
+      }
+
+      whatsappJourneyEvents.push({
         type: 'whatsapp_message',
         date: msg.created_at,
         data: {
-          phone: msg.phone,
-          message_text: msg.message_content,
-          referral_source_url: msg.referral_source_url,
-          referral_source_type: msg.referral_source_type,
-          referral_source_id: msg.referral_source_id || msg.ad_id_thru_message,
-          referral_headline: msg.referral_headline,
-          referral_body: msg.referral_body,
-          referral_ctwa_clid: msg.referral_ctwa_clid
+          ...data,
+          ad_platform: detectWhatsAppAdPlatform(data)
         }
       })
     })
 
-    const whatsappBusinessAttributionMessages = await db.all(
+    const whatsappBusinessMessages = await db.all(
       `SELECT
-          attr.phone,
-          attr.detected_ctwa_clid,
-          attr.detected_source_id,
-          attr.detected_source_url,
-          attr.detected_source_type,
-          attr.detected_source_app,
-          attr.detected_entry_point,
-          attr.detected_headline,
-          attr.detected_body,
-          attr.created_at,
           msg.message_text,
           msg.message_type,
           msg.push_name,
-          msg.message_timestamp
-       FROM whatsapp_web_attribution attr
-       LEFT JOIN whatsapp_web_messages msg ON msg.id = attr.whatsapp_web_message_id
-       WHERE attr.contact_id = ?
-       ORDER BY COALESCE(msg.message_timestamp, attr.created_at) ASC`,
+          msg.message_timestamp,
+          msg.created_at,
+          msg.phone,
+          msg.direction,
+          COALESCE(attr.id, '') as attribution_id,
+          COALESCE(attr.detected_ctwa_clid, msg.detected_ctwa_clid) as detected_ctwa_clid,
+          COALESCE(attr.detected_source_id, msg.detected_source_id) as detected_source_id,
+          COALESCE(attr.detected_source_url, msg.detected_source_url) as detected_source_url,
+          COALESCE(attr.detected_source_type, msg.detected_source_type) as detected_source_type,
+          COALESCE(attr.detected_source_app, msg.detected_source_app) as detected_source_app,
+          COALESCE(attr.detected_entry_point, msg.detected_entry_point) as detected_entry_point,
+          COALESCE(attr.detected_headline, msg.detected_headline) as detected_headline,
+          COALESCE(attr.detected_body, msg.detected_body) as detected_body
+       FROM whatsapp_web_messages msg
+       LEFT JOIN whatsapp_web_attribution attr ON attr.whatsapp_web_message_id = msg.id
+       WHERE msg.contact_id = ?
+         AND msg.direction = 'inbound'
+       ORDER BY COALESCE(msg.message_timestamp, msg.created_at) ASC`,
       [id]
     )
 
-    whatsappBusinessAttributionMessages.forEach(msg => {
-      journey.push({
+    whatsappBusinessMessages.forEach(msg => {
+      const isAdAttributed = Boolean(
+        msg.attribution_id ||
+        msg.detected_ctwa_clid ||
+        msg.detected_source_id ||
+        msg.detected_source_url ||
+        msg.detected_headline
+      )
+      const data = {
+        source: 'WhatsApp',
+        phone: msg.phone,
+        push_name: msg.push_name,
+        message_text: msg.message_text,
+        message_type: msg.message_type,
+        referral_source_url: msg.detected_source_url,
+        referral_source_type: msg.detected_source_type,
+        referral_ctwa_clid: msg.detected_ctwa_clid,
+        referral_source_id: msg.detected_source_id,
+        referral_headline: msg.detected_headline,
+        referral_body: msg.detected_body,
+        referral_source_app: msg.detected_source_app,
+        referral_entry_point: msg.detected_entry_point,
+        is_ad_attributed: isAdAttributed
+      }
+
+      whatsappJourneyEvents.push({
         type: 'whatsapp_message',
         date: msg.message_timestamp || msg.created_at,
         data: {
-          source: 'WhatsApp',
-          phone: msg.phone,
-          push_name: msg.push_name,
-          message_text: msg.message_text,
-          message_type: msg.message_type,
-          referral_source_url: msg.detected_source_url,
-          referral_source_type: msg.detected_source_type,
-          referral_ctwa_clid: msg.detected_ctwa_clid,
-          referral_source_id: msg.detected_source_id,
-          referral_headline: msg.detected_headline,
-          referral_body: msg.detected_body,
-          referral_source_app: msg.detected_source_app,
-          referral_entry_point: msg.detected_entry_point
+          ...data,
+          ad_platform: detectWhatsAppAdPlatform(data)
         }
       })
     })
+
+    addWhatsAppJourneyEvents(whatsappJourneyEvents)
 
     // 3. Contacto creado
     journey.push({
@@ -1415,10 +1518,7 @@ export const getContactJourney = async (req, res) => {
     // 5. TODOS los pagos exitosos
     const payments = await db.all(
       `SELECT * FROM payments
-       WHERE contact_id = ?
-         AND amount > 0
-         AND LOWER(status) IN ('succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success')
-         AND ${nonTestPaymentCondition()}
+       WHERE ${successfulPaymentsCondition}
        ORDER BY date ASC`,
       [id]
     )
