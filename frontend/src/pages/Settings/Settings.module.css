@@ -425,7 +425,7 @@ body.dark .select:focus {
   gap: 0;
   max-width: none;
   margin: 0;
-  padding: var(--spacing-2xl) clamp(20px, 3vw, 36px) 4rem;
+  padding: var(--spacing-2xl) 1.5rem 4rem;
 }
 
 .settingsLayout {
@@ -434,6 +434,8 @@ body.dark .select:focus {
   align-items: start;
   gap: 28px;
   width: 100%;
+  max-width: var(--app-page-max);
+  margin: 0 auto;
 }
 
 .settingsNavPanel {
@@ -544,6 +546,13 @@ body.dark .select:focus {
 .settingsPanel {
   min-width: 0;
   width: 100%;
+}
+
+@media (min-width: 768px) {
+  .container {
+    padding-right: 2.5rem;
+    padding-left: 2.5rem;
+  }
 }
 
 .header {
