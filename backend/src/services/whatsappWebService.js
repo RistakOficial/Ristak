@@ -215,6 +215,7 @@ function detectAttribution(payload) {
   const externalAdReply = findFirstObjectByKeys(payload, ['externalAdReply', 'external_ad_reply'])
   const contextInfo = collectContextInfo(payload)
   const contextSource = contextInfo[0] || null
+  const adReply = externalAdReply || {}
   const searchRoot = {
     payload,
     externalAdReply,
@@ -232,6 +233,10 @@ function detectAttribution(payload) {
       'entryPointConversionExternalSource',
       'conversionSource'
     ]),
+    headline: safeString(adReply.title || adReply.headline || '') ||
+      findFirstByKeys(searchRoot, ['referralHeadline', 'referral_headline', 'headline']),
+    body: safeString(adReply.body || adReply.description || '') ||
+      findFirstByKeys(searchRoot, ['referralBody', 'referral_body']),
     conversionData: findFirstByKeys(searchRoot, ['conversionData']),
     ctwaPayload: findFirstByKeys(searchRoot, ['ctwaPayload', 'ctwaSignals'])
   }
@@ -514,9 +519,9 @@ async function saveWhatsAppWebMessage({
       id, session_id, whatsapp_web_contact_id, contact_id, remote_jid, phone, message_id,
       direction, message_type, message_text, push_name, message_timestamp, raw_payload_json,
       context_info_json, detected_ctwa_clid, detected_source_id, detected_source_url,
-      detected_source_type, detected_source_app, detected_entry_point, detected_conversion_data,
+      detected_source_type, detected_source_app, detected_entry_point, detected_headline, detected_body, detected_conversion_data,
       detected_ctwa_payload, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
     ON CONFLICT(id) DO UPDATE SET
       contact_id = COALESCE(excluded.contact_id, whatsapp_web_messages.contact_id),
       whatsapp_web_contact_id = COALESCE(excluded.whatsapp_web_contact_id, whatsapp_web_messages.whatsapp_web_contact_id),
@@ -529,6 +534,8 @@ async function saveWhatsAppWebMessage({
       detected_source_type = excluded.detected_source_type,
       detected_source_app = excluded.detected_source_app,
       detected_entry_point = excluded.detected_entry_point,
+      detected_headline = excluded.detected_headline,
+      detected_body = excluded.detected_body,
       detected_conversion_data = excluded.detected_conversion_data,
       detected_ctwa_payload = excluded.detected_ctwa_payload,
       updated_at = CURRENT_TIMESTAMP
@@ -553,6 +560,8 @@ async function saveWhatsAppWebMessage({
     attribution.sourceType || null,
     attribution.sourceApp || null,
     attribution.entryPoint || null,
+    attribution.headline || null,
+    attribution.body || null,
     attribution.conversionData || null,
     attribution.ctwaPayload || null
   ])
@@ -564,9 +573,9 @@ async function saveWhatsAppWebMessage({
         id, session_id, whatsapp_web_message_id, whatsapp_web_contact_id, contact_id,
         remote_jid, phone, message_id, detected_ctwa_clid, detected_source_id,
         detected_source_url, detected_source_type, detected_source_app, detected_entry_point,
-        detected_conversion_data, detected_ctwa_payload, external_ad_reply_json,
+        detected_headline, detected_body, detected_conversion_data, detected_ctwa_payload, external_ad_reply_json,
         context_info_json, raw_payload_json, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
       ON CONFLICT(id) DO UPDATE SET
         contact_id = COALESCE(excluded.contact_id, whatsapp_web_attribution.contact_id),
         detected_ctwa_clid = excluded.detected_ctwa_clid,
@@ -575,6 +584,8 @@ async function saveWhatsAppWebMessage({
         detected_source_type = excluded.detected_source_type,
         detected_source_app = excluded.detected_source_app,
         detected_entry_point = excluded.detected_entry_point,
+        detected_headline = excluded.detected_headline,
+        detected_body = excluded.detected_body,
         detected_conversion_data = excluded.detected_conversion_data,
         detected_ctwa_payload = excluded.detected_ctwa_payload,
         external_ad_reply_json = excluded.external_ad_reply_json,
@@ -595,6 +606,8 @@ async function saveWhatsAppWebMessage({
       attribution.sourceType || null,
       attribution.sourceApp || null,
       attribution.entryPoint || null,
+      attribution.headline || null,
+      attribution.body || null,
       attribution.conversionData || null,
       attribution.ctwaPayload || null,
       attribution.externalAdReply ? safeJson(attribution.externalAdReply) : null,
@@ -607,19 +620,30 @@ async function saveWhatsAppWebMessage({
 }
 
 async function processIncomingMessage(sessionId, msg) {
-  if (!msg?.message || msg.key?.fromMe) return
+  return processWhatsAppWebMessage(sessionId, msg, {
+    eventSource: 'notify',
+    onlyAttributed: false
+  })
+}
+
+async function processWhatsAppWebMessage(sessionId, msg, { eventSource = 'notify', onlyAttributed = false } = {}) {
+  if (!msg?.message || msg.key?.fromMe) return { saved: false, reason: 'ignored' }
 
   const { remoteJid, phoneJid, identityJid, phone, usedLidFallback } = resolveWhatsAppWebAddressing(msg)
-  if (shouldIgnoreJid(remoteJid)) return
+  if (shouldIgnoreJid(remoteJid)) return { saved: false, reason: 'ignored-jid' }
+
+  const attribution = detectAttribution(msg)
+  if (onlyAttributed && !attribution.hasAttribution) {
+    return { saved: false, reason: 'no-attribution' }
+  }
 
   if (!phone || usedLidFallback) {
     logger.warn(`WhatsApp Business mensaje sin numero telefonico resoluble: ${remoteJid}`)
-    return
+    return { saved: false, reason: 'no-phone' }
   }
 
   const pushName = msg.pushName || ''
   const messageText = getMessageText(msg.message)
-  const attribution = detectAttribution(msg)
   const contact = await upsertLocalContact({
     phone,
     pushName,
@@ -655,7 +679,34 @@ async function processIncomingMessage(sessionId, msg) {
 
   await updateSession(sessionId, { last_error: null })
 
-  logger.info(`WhatsApp Business mensaje recibido de ${phone}${attribution.hasAttribution ? ' con atribucion detectada' : ''}`)
+  logger.info(`WhatsApp Business mensaje ${eventSource === 'history' ? 'historico ' : ''}recibido de ${phone}${attribution.hasAttribution ? ' con atribucion detectada' : ''}`)
+
+  return {
+    saved: true,
+    attributionDetected: attribution.hasAttribution,
+    phone
+  }
+}
+
+async function processWhatsAppWebHistory(sessionId, messages = [], metadata = {}) {
+  let saved = 0
+
+  for (const msg of messages) {
+    const result = await processWhatsAppWebMessage(sessionId, msg, {
+      eventSource: 'history',
+      onlyAttributed: true
+    })
+
+    if (result.saved) {
+      saved += 1
+    }
+  }
+
+  if (saved > 0) {
+    logger.info(`WhatsApp Business historial de atribucion guardado: ${saved} mensajes${metadata.syncType ? ` (sync ${metadata.syncType})` : ''}`)
+  }
+
+  return saved
 }
 
 async function createQrImage(qr) {
@@ -707,6 +758,8 @@ function disconnectRuntimeSocket(sessionId, runtime) {
   try {
     runtime.socket.ev.removeAllListeners('connection.update')
     runtime.socket.ev.removeAllListeners('messages.upsert')
+    runtime.socket.ev.removeAllListeners('messaging-history.set')
+    runtime.socket.ev.removeAllListeners('messaging-history.status')
     runtime.socket.ev.removeAllListeners('creds.update')
     runtime.socket.ws?.close?.()
   } catch (error) {
@@ -744,7 +797,8 @@ export async function startWhatsAppWebSession(sessionId = DEFAULT_SESSION_ID) {
       logger: baileysLogger,
       printQRInTerminal: false,
       markOnlineOnConnect: false,
-      syncFullHistory: false
+      syncFullHistory: true,
+      shouldSyncHistoryMessage: () => true
     })
 
     runtime.socket = socket
@@ -810,14 +864,29 @@ export async function startWhatsAppWebSession(sessionId = DEFAULT_SESSION_ID) {
       }
     })
 
-    socket.ev.on('messages.upsert', async ({ messages = [] }) => {
+    socket.ev.on('messages.upsert', async ({ messages = [], type = 'notify' }) => {
       for (const msg of messages) {
         try {
-          await processIncomingMessage(sessionId, msg)
+          await processWhatsAppWebMessage(sessionId, msg, {
+            eventSource: type,
+            onlyAttributed: type !== 'notify'
+          })
         } catch (error) {
           logger.error(`Error guardando mensaje WhatsApp Business: ${error.message}`)
         }
       }
+    })
+
+    socket.ev.on('messaging-history.set', async ({ messages = [], syncType, progress }) => {
+      try {
+        await processWhatsAppWebHistory(sessionId, messages, { syncType, progress })
+      } catch (error) {
+        logger.error(`Error guardando historial de atribucion WhatsApp Business: ${error.message}`)
+      }
+    })
+
+    socket.ev.on('messaging-history.status', ({ syncType, status }) => {
+      logger.info(`WhatsApp Business historial ${status}: ${syncType}`)
     })
 
     runtime.starting = null

@@ -1276,8 +1276,10 @@ export const getContactJourney = async (req, res) => {
         date: msg.created_at,
         data: {
           phone: msg.phone,
+          message_text: msg.message_content,
           referral_source_url: msg.referral_source_url,
           referral_source_type: msg.referral_source_type,
+          referral_source_id: msg.referral_source_id || msg.ad_id_thru_message,
           referral_headline: msg.referral_headline,
           referral_body: msg.referral_body,
           referral_ctwa_clid: msg.referral_ctwa_clid
@@ -1285,17 +1287,30 @@ export const getContactJourney = async (req, res) => {
       })
     })
 
-    const whatsappBusinessMessages = await db.all(
-      `SELECT phone, message_text, message_type, push_name, message_timestamp, created_at,
-              detected_ctwa_clid, detected_source_id, detected_source_url,
-              detected_source_type, detected_source_app, detected_entry_point
-       FROM whatsapp_web_messages
-       WHERE contact_id = ?
-       ORDER BY COALESCE(message_timestamp, created_at) ASC`,
+    const whatsappBusinessAttributionMessages = await db.all(
+      `SELECT
+          attr.phone,
+          attr.detected_ctwa_clid,
+          attr.detected_source_id,
+          attr.detected_source_url,
+          attr.detected_source_type,
+          attr.detected_source_app,
+          attr.detected_entry_point,
+          attr.detected_headline,
+          attr.detected_body,
+          attr.created_at,
+          msg.message_text,
+          msg.message_type,
+          msg.push_name,
+          msg.message_timestamp
+       FROM whatsapp_web_attribution attr
+       LEFT JOIN whatsapp_web_messages msg ON msg.id = attr.whatsapp_web_message_id
+       WHERE attr.contact_id = ?
+       ORDER BY COALESCE(msg.message_timestamp, attr.created_at) ASC`,
       [id]
     )
 
-    whatsappBusinessMessages.forEach(msg => {
+    whatsappBusinessAttributionMessages.forEach(msg => {
       journey.push({
         type: 'whatsapp_message',
         date: msg.message_timestamp || msg.created_at,
@@ -1309,6 +1324,8 @@ export const getContactJourney = async (req, res) => {
           referral_source_type: msg.detected_source_type,
           referral_ctwa_clid: msg.detected_ctwa_clid,
           referral_source_id: msg.detected_source_id,
+          referral_headline: msg.detected_headline,
+          referral_body: msg.detected_body,
           referral_source_app: msg.detected_source_app,
           referral_entry_point: msg.detected_entry_point
         }

@@ -615,6 +615,8 @@ async function initTables() {
         detected_source_type TEXT,
         detected_source_app TEXT,
         detected_entry_point TEXT,
+        detected_headline TEXT,
+        detected_body TEXT,
         detected_conversion_data TEXT,
         detected_ctwa_payload TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -641,6 +643,8 @@ async function initTables() {
         detected_source_type TEXT,
         detected_source_app TEXT,
         detected_entry_point TEXT,
+        detected_headline TEXT,
+        detected_body TEXT,
         detected_conversion_data TEXT,
         detected_ctwa_payload TEXT,
         external_ad_reply_json TEXT,
@@ -653,6 +657,19 @@ async function initTables() {
         FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE SET NULL
       )
     `)
+
+    for (const [tableName, columnName, columnType] of [
+      ['whatsapp_web_messages', 'detected_headline', 'TEXT'],
+      ['whatsapp_web_messages', 'detected_body', 'TEXT'],
+      ['whatsapp_web_attribution', 'detected_headline', 'TEXT'],
+      ['whatsapp_web_attribution', 'detected_body', 'TEXT']
+    ]) {
+      try {
+        await db.run(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${columnType}`)
+      } catch (err) {
+        // Columna ya existe, ignorar.
+      }
+    }
 
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_web_sessions_status ON whatsapp_web_sessions(status)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_web_contacts_phone ON whatsapp_web_contacts(phone)')

@@ -163,10 +163,10 @@ const getTooltipContent = (event?: JourneyEvent | null) => {
       items.push({ label: 'Mensaje', value: data.message_text })
     }
     if (data.referral_headline) {
-      items.push({ label: 'Mensaje', value: data.referral_headline })
+      items.push({ label: 'Anuncio', value: data.referral_headline })
     }
     if (data.referral_body) {
-      items.push({ label: 'Contenido', value: data.referral_body })
+      items.push({ label: 'Detalle anuncio', value: data.referral_body })
     }
     if (data.phone) {
       items.push({ label: 'Teléfono', value: data.phone })
