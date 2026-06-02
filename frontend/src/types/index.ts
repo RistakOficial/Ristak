@@ -81,6 +81,7 @@ export interface Contact {
   mergedContactIds?: string[]
   firstAppointmentDate?: string | null
   nextAppointmentDate?: string | null
+  hasAppointments?: boolean
   hasShowedAppointment?: boolean
   hasAttendedAppointment?: boolean
   payments?: ContactPayment[]

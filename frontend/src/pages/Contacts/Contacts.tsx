@@ -34,9 +34,21 @@ const APPOINTMENT_CANCELED_STATUSES = new Set([
   'canceled',
   'no_show',
   'noshow',
+  'invalid',
   'failed',
-  'missed'
+  'missed',
+  'deleted',
+  'void',
+  'voided'
 ])
+
+const getAppointmentStatusValue = (appointment: { appointment_status?: string | null; appointmentStatus?: string | null; status?: string | null }) =>
+  String(appointment.appointment_status || appointment.appointmentStatus || appointment.status || '').trim().toLowerCase()
+
+const isActiveAppointment = (appointment: { appointment_status?: string | null; appointmentStatus?: string | null; status?: string | null }) => {
+  const statusValue = getAppointmentStatusValue(appointment)
+  return !statusValue || !APPOINTMENT_CANCELED_STATUSES.has(statusValue)
+}
 
 const STATUS_PRIORITY: Record<Contact['status'], number> = {
   lead: 0,
@@ -248,12 +260,13 @@ const mergeContactDetailRecords = (
   const appointments = Array.from(appointmentMap.values()).sort((a, b) =>
     new Date(a.start_time).getTime() - new Date(b.start_time).getTime()
   )
+  const activeAppointments = appointments.filter(isActiveAppointment)
 
   merged.appointments = appointments
-  if (appointments.length > 0) {
-    merged.firstAppointmentDate = appointments[0].start_time
+  if (activeAppointments.length > 0) {
+    merged.firstAppointmentDate = activeAppointments[0].start_time
   } else {
-    merged.firstAppointmentDate = baseContact?.firstAppointmentDate ?? merged.firstAppointmentDate ?? null
+    merged.firstAppointmentDate = appointments.length > 0 ? null : (baseContact?.firstAppointmentDate ?? merged.firstAppointmentDate ?? null)
   }
 
   const now = Date.now()
@@ -262,8 +275,7 @@ const mergeContactDetailRecords = (
     if (Number.isNaN(start) || start < now) {
       return false
     }
-    const statusValue = (appointment.appointment_status || appointment.status || '').toLowerCase()
-    return !APPOINTMENT_CANCELED_STATUSES.has(statusValue)
+    return isActiveAppointment(appointment)
   })
 
   merged.nextAppointmentDate = upcomingAppointment
@@ -893,7 +905,7 @@ export const Contacts: React.FC = () => {
         // Buscar el contacto en los eventos de calendarios
         const hasAppointmentInCalendar = allEvents.some(event => {
           // Buscar por contactId del evento
-          return event.contactId === contact.id
+          return event.contactId === contact.id && isActiveAppointment(event)
         })
 
         // Si hay eventos de calendario, confiar en esa data
@@ -904,8 +916,8 @@ export const Contacts: React.FC = () => {
         // Fallback: usar datos locales si no se cargaron eventos
         const hasAppointments =
           contact.status === 'appointment' ||
-          (contact.appointments && contact.appointments.length > 0) ||
-          contact.firstAppointmentDate !== null && contact.firstAppointmentDate !== undefined
+          Boolean(contact.appointments?.some(isActiveAppointment)) ||
+          (!contact.appointments && contact.firstAppointmentDate !== null && contact.firstAppointmentDate !== undefined)
 
         return hasAppointments
       }

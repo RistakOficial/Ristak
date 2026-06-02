@@ -13,6 +13,31 @@ import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/
 import { nonTestPaymentCondition } from '../utils/paymentMode.js'
 
 const isPostgres = Boolean(process.env.DATABASE_URL)
+const ACTIVE_PAYMENT_STATUSES = new Set(['succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success'])
+const INACTIVE_APPOINTMENT_STATUSES = new Set([
+  'cancelled',
+  'canceled',
+  'no_show',
+  'noshow',
+  'invalid',
+  'failed',
+  'missed',
+  'deleted',
+  'void',
+  'voided'
+])
+
+function isActivePayment(payment = {}) {
+  const status = String(payment.status || '').trim().toLowerCase()
+  return Number(payment.amount || 0) > 0 &&
+    payment.payment_mode !== 'test' &&
+    (!status || ACTIVE_PAYMENT_STATUSES.has(status))
+}
+
+function isActiveAppointment(appointment = {}) {
+  const status = String(appointment.appointmentStatus || appointment.appointment_status || appointment.status || '').trim().toLowerCase()
+  return !status || !INACTIVE_APPOINTMENT_STATUSES.has(status)
+}
 
 /**
  * Obtiene los calendarios configurados para atribución
@@ -1735,9 +1760,8 @@ export async function buildContactsList ({ startDate, endDate, type = 'interesad
     const appointments = appointmentsMap.get(contact.id) || []
     const firstSession = firstSessionMap.get(contact.id) || null
     // CRÍTICO: Solo sumar pagos exitosos, NO incluir refunded/cancelled
-    const validStatuses = ['succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success']
     const totalFromPayments = payments
-      .filter(payment => validStatuses.includes(payment.status?.toLowerCase()) && payment.payment_mode !== 'test')
+      .filter(isActivePayment)
       .reduce((sum, payment) => sum + payment.amount, 0)
 
     // Para "customers" o vista "atribución", usar el LTV total histórico
@@ -1747,10 +1771,11 @@ export async function buildContactsList ({ startDate, endDate, type = 'interesad
     const finalLtv = useTotalLtv ? lifetimeLtv : totalFromPayments
     const finalPurchases = useTotalLtv
       ? (contact.purchases_count || 0)
-      : payments.filter(payment => validStatuses.includes(payment.status?.toLowerCase()) && payment.payment_mode !== 'test').length
+      : payments.filter(isActivePayment).length
     const lifetimePurchases = contact.purchases_count || 0
-    const hasRangePayments = payments.some(payment => payment.amount > 0 && payment.payment_mode !== 'test')
+    const hasRangePayments = payments.some(isActivePayment)
     const isCustomer = lifetimeLtv > 0 || lifetimePurchases > 0 || hasRangePayments
+    const hasActiveAppointments = appointments.some(isActiveAppointment)
 
     return {
       id: contact.id,
@@ -1774,7 +1799,7 @@ export async function buildContactsList ({ startDate, endDate, type = 'interesad
       lifetimeLtv,
       lifetimePurchases,
       isCustomer,
-      hasAppointments: appointments.length > 0,
+      hasAppointments: hasActiveAppointments,
       hasShowedAppointment: contactsWithAttendances.has(contact.id),
       hasAttendedAppointment: contactsWithAttendances.has(contact.id)
     }

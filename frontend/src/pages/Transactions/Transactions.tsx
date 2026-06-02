@@ -131,6 +131,8 @@ const TRANSACTION_STATUS_ORDER = [
   'deleted'
 ]
 
+const REFUNDABLE_TRANSACTION_STATUSES = ['paid']
+
 const PAYMENT_PLAN_STATUS_ORDER = [
   'active',
   'scheduled',
@@ -782,6 +784,22 @@ export const Transactions: React.FC = () => {
     )
   }
 
+  const handleRefundTransaction = async (transaction: Transaction) => {
+    showConfirm(
+      'Reembolsar pago',
+      `¿Confirmas el reembolso de ${formatCurrency(transaction.amount)}? El pago quedará como reembolsado y ya no contará al contacto como cliente.`,
+      async () => {
+        try {
+          await transactionsService.refundTransaction(transaction.id)
+          showToast('success', 'Pago reembolsado correctamente', 'El contacto se recalculó y este pago ya no cuenta como compra activa.')
+          fetchData()
+        } catch (error: any) {
+          showToast('error', 'No se pudo reembolsar el pago', error?.message || 'Hubo un problema al marcar el pago como reembolsado.')
+        }
+      }
+    )
+  }
+
   const handleMarkAsPaid = async (transaction: Transaction) => {
     showConfirm(
       'Marcar como pagado',
@@ -1028,6 +1046,11 @@ export const Transactions: React.FC = () => {
           actions.push('mark-paid')
         }
 
+        // Reembolsar - para pagos completados locales; backend bloquea invoices remotos de HighLevel
+        if (REFUNDABLE_TRANSACTION_STATUSES.includes(item.status)) {
+          actions.push('refund')
+        }
+
         // Anular - para draft, sent, pending, overdue (no para paid, void, refunded)
         if (['draft', 'sent', 'pending', 'overdue', 'partial'].includes(item.status)) {
           actions.push('void')
@@ -1112,8 +1135,19 @@ export const Transactions: React.FC = () => {
                 )}
 
                 {/* Separador antes de acciones destructivas */}
-                {(actions.includes('void') || actions.includes('delete')) && (
+                {(actions.includes('refund') || actions.includes('void') || actions.includes('delete')) && (
                   <DropdownMenuSeparator />
+                )}
+
+                {/* Reembolsar pago */}
+                {actions.includes('refund') && (
+                  <DropdownMenuItem
+                    onClick={() => handleRefundTransaction(item)}
+                    className={styles.destructive}
+                  >
+                    <RotateCcw size={16} />
+                    <span style={{ marginLeft: '8px' }}>Reembolsar pago</span>
+                  </DropdownMenuItem>
                 )}
 
                 {/* Anular pago */}

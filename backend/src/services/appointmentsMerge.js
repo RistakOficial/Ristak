@@ -6,11 +6,29 @@ function normalizeAppointmentStatusValue(status) {
 }
 
 function isShowedAppointmentStatus(status) {
-  return normalizeAppointmentStatusValue(status) === 'showed'
+  return ['showed', 'attended', 'completed', 'complete'].includes(normalizeAppointmentStatusValue(status))
 }
+
+const INACTIVE_APPOINTMENT_STATUSES = new Set([
+  'cancelled',
+  'canceled',
+  'no_show',
+  'noshow',
+  'invalid',
+  'failed',
+  'missed',
+  'deleted',
+  'void',
+  'voided'
+])
 
 function getAppointmentStatus(appointment) {
   return appointment?.appointmentStatus || appointment?.appointment_status || appointment?.status || ''
+}
+
+function isActiveAppointment(appointment) {
+  const status = normalizeAppointmentStatusValue(getAppointmentStatus(appointment))
+  return !status || !INACTIVE_APPOINTMENT_STATUSES.has(status)
 }
 
 export async function recordAttendanceAttributionSignal({ contactId, appointmentId = null, source = 'webhook_showed' } = {}) {
@@ -326,8 +344,13 @@ export async function getContactsWithAppointmentsHybrid(locationId, apiToken, ca
     // Combinar con deduplicación
     const merged = mergeAppointments(dbAppointments, apiAppointments, 'oldest_date')
 
-    // Extraer contact_ids únicos
-    const contactIds = new Set(merged.map(apt => apt.contactId))
+    // Extraer contact_ids únicos con cita activa; canceladas/no-show no cuentan como agendadas.
+    const contactIds = new Set(
+      merged
+        .filter(isActiveAppointment)
+        .map(apt => apt.contactId)
+        .filter(Boolean)
+    )
 
     logger.info(`👥 Total contactos con citas (híbrido): ${contactIds.size}`)
     return contactIds

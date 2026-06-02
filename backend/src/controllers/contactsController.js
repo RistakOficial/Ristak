@@ -41,9 +41,17 @@ const APPOINTMENT_CANCELED_STATUSES = new Set([
   'canceled',
   'no_show',
   'noshow',
+  'invalid',
   'failed',
-  'missed'
+  'missed',
+  'deleted',
+  'void',
+  'voided'
 ])
+const APPOINTMENT_ATTENDED_STATUSES = new Set(['showed', 'attended', 'completed', 'complete'])
+const sqlList = values => [...values].map(value => `'${value}'`).join(', ')
+const ACTIVE_APPOINTMENT_CONDITION = `LOWER(COALESCE(appointment_status, status, '')) NOT IN (${sqlList(APPOINTMENT_CANCELED_STATUSES)})`
+const ATTENDED_APPOINTMENT_CONDITION = `LOWER(COALESCE(appointment_status, status, '')) IN (${sqlList(APPOINTMENT_ATTENDED_STATUSES)})`
 
 /**
  * Obtiene todos los contactos con paginación y filtros
@@ -183,7 +191,12 @@ export const getContacts = async (req, res) => {
         COALESCE(ps.last_purchase_date, c.last_purchase_date) AS last_purchase_date,
         c.appointment_date,
         c.created_at,
-        (SELECT COUNT(*) > 0 FROM appointments WHERE contact_id = c.id) AS has_appointments,
+        (
+          SELECT COUNT(*) > 0
+          FROM appointments
+          WHERE contact_id = c.id
+            AND ${ACTIVE_APPOINTMENT_CONDITION}
+        ) AS has_appointments,
         (
           COALESCE(ps.purchases_count, c.purchases_count, 0) > 0
           OR EXISTS (
@@ -195,7 +208,7 @@ export const getContacts = async (req, res) => {
             SELECT 1
             FROM appointments
             WHERE contact_id = c.id
-              AND LOWER(COALESCE(appointment_status, status, '')) = 'showed'
+              AND ${ATTENDED_APPOINTMENT_CONDITION}
           )
         ) AS has_showed_appointment
       FROM contacts c
@@ -417,7 +430,12 @@ export const getContactById = async (req, res) => {
         COALESCE(ps.last_purchase_date, c.last_purchase_date) AS last_purchase_date,
         c.appointment_date,
         c.created_at,
-        (SELECT COUNT(*) > 0 FROM appointments WHERE contact_id = c.id) AS has_appointments,
+        (
+          SELECT COUNT(*) > 0
+          FROM appointments
+          WHERE contact_id = c.id
+            AND ${ACTIVE_APPOINTMENT_CONDITION}
+        ) AS has_appointments,
         (
           COALESCE(ps.purchases_count, c.purchases_count, 0) > 0
           OR EXISTS (
@@ -429,7 +447,7 @@ export const getContactById = async (req, res) => {
             SELECT 1
             FROM appointments
             WHERE contact_id = c.id
-              AND LOWER(COALESCE(appointment_status, status, '')) = 'showed'
+              AND ${ATTENDED_APPOINTMENT_CONDITION}
           )
         ) AS has_showed_appointment
       FROM contacts c
@@ -625,7 +643,7 @@ export const getContactById = async (req, res) => {
     const hasShowedAppointment =
       Boolean(contact.has_showed_appointment) ||
       appointmentsOrdered.some(appointment =>
-        String(appointment.appointment_status || appointment.status || '').trim().toLowerCase() === 'showed'
+        APPOINTMENT_ATTENDED_STATUSES.has(String(appointment.appointment_status || appointment.status || '').trim().toLowerCase())
       )
 
     // Determinar status basado en la actividad del contacto
@@ -787,7 +805,12 @@ export const searchContacts = async (req, res) => {
         c.source,
         c.attribution_ad_name,
         c.attribution_ad_id,
-        (SELECT COUNT(*) > 0 FROM appointments WHERE contact_id = c.id) AS has_appointments,
+        (
+          SELECT COUNT(*) > 0
+          FROM appointments
+          WHERE contact_id = c.id
+            AND ${ACTIVE_APPOINTMENT_CONDITION}
+        ) AS has_appointments,
         (
           COALESCE(ps.purchases_count, c.purchases_count, 0) > 0
           OR EXISTS (
@@ -799,7 +822,7 @@ export const searchContacts = async (req, res) => {
             SELECT 1
             FROM appointments
             WHERE contact_id = c.id
-              AND LOWER(COALESCE(appointment_status, status, '')) = 'showed'
+              AND ${ATTENDED_APPOINTMENT_CONDITION}
           )
         ) AS has_showed_appointment
       FROM contacts c

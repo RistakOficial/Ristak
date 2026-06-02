@@ -7,6 +7,7 @@ import {
   getTransactionSummary,
   updateTransaction,
   deleteTransaction,
+  refundTransaction,
   voidTransaction,
   recordPayment,
   sendTransaction,
@@ -25,6 +26,7 @@ router.put('/:id', updateTransaction)
 router.delete('/:id', deleteTransaction)
 
 // Acciones sobre transacciones
+router.post('/:id/refund', refundTransaction)
 router.post('/:id/void', voidTransaction)
 router.post('/:id/record-payment', recordPayment)
 router.post('/:id/send', sendTransaction)

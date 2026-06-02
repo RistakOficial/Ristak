@@ -945,6 +945,9 @@ export const deleteTransaction = async (req, res) => {
 
     // Eliminar de la base de datos
     await db.run('DELETE FROM payments WHERE id = ?', [id])
+    if (transaction.contact_id) {
+      await updateSingleContactStats(transaction.contact_id)
+    }
 
     logger.success(`Transacción eliminada: ${id}`)
 
@@ -958,6 +961,72 @@ export const deleteTransaction = async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Error eliminando transacción'
+    })
+  }
+}
+
+/**
+ * Marca un pago local como reembolsado. HighLevel no expone refund por API aquí,
+ * así que los invoices remotos deben reembolsarse en HighLevel y sincronizarse.
+ */
+export const refundTransaction = async (req, res) => {
+  try {
+    const { id } = req.params
+
+    logger.info(`Reembolsando transacción: ${id}`)
+
+    const transaction = await db.get('SELECT * FROM payments WHERE id = ?', [id])
+
+    if (!transaction) {
+      return res.status(404).json({
+        success: false,
+        error: 'Transacción no encontrada'
+      })
+    }
+
+    const currentStatus = normalizeStatus(transaction.status)
+
+    if (currentStatus === 'refunded') {
+      return res.json({
+        success: true,
+        message: 'El pago ya estaba reembolsado'
+      })
+    }
+
+    if (transaction.ghl_invoice_id) {
+      return res.status(422).json({
+        success: false,
+        error: 'Este pago viene de HighLevel. Haz el reembolso en HighLevel; Ristak lo actualizará por webhook o sincronización.'
+      })
+    }
+
+    if (!SUCCESS_PAYMENT_STATUSES.has(currentStatus)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Solo se pueden reembolsar pagos completados'
+      })
+    }
+
+    await db.run(
+      'UPDATE payments SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+      ['refunded', id]
+    )
+
+    if (transaction.contact_id) {
+      await updateSingleContactStats(transaction.contact_id)
+    }
+
+    logger.success(`Transacción reembolsada: ${id}`)
+
+    res.json({
+      success: true,
+      message: 'Pago reembolsado correctamente'
+    })
+  } catch (error) {
+    logger.error(`Error reembolsando transacción: ${error.message}`)
+    res.status(500).json({
+      success: false,
+      error: 'Error reembolsando pago'
     })
   }
 }

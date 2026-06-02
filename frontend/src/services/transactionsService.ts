@@ -120,6 +120,10 @@ export const transactionsService = {
     await apiClient.delete(`/transactions/${id}`)
   },
 
+  async refundTransaction(id: string): Promise<void> {
+    await apiClient.post(`/transactions/${id}/refund`, {})
+  },
+
   async voidTransaction(id: string): Promise<void> {
     await apiClient.post(`/transactions/${id}/void`, {})
   },

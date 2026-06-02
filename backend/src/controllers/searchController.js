@@ -8,6 +8,19 @@ import {
 } from '../utils/searchText.js'
 
 const CATEGORY_LIMIT = 6
+const INACTIVE_APPOINTMENT_STATUSES = [
+  'cancelled',
+  'canceled',
+  'no_show',
+  'noshow',
+  'invalid',
+  'failed',
+  'missed',
+  'deleted',
+  'void',
+  'voided'
+]
+const ACTIVE_APPOINTMENT_CONDITION = `LOWER(COALESCE(appointment_status, status, '')) NOT IN (${INACTIVE_APPOINTMENT_STATUSES.map(status => `'${status}'`).join(', ')})`
 
 const safeText = (value) => (value === null || value === undefined ? '' : String(value))
 
@@ -100,7 +113,12 @@ export const globalSearch = async (req, res) => {
           c.created_at,
           c.total_paid,
           c.purchases_count,
-          (SELECT COUNT(*) > 0 FROM appointments WHERE contact_id = c.id) AS has_appointments
+          (
+            SELECT COUNT(*) > 0
+            FROM appointments
+            WHERE contact_id = c.id
+              AND ${ACTIVE_APPOINTMENT_CONDITION}
+          ) AS has_appointments
         FROM contacts c
         WHERE ${contactSearchClause.condition}
         ORDER BY ${contactSearchRank.expression} DESC, c.created_at DESC
