@@ -1,9 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { Navigate } from 'react-router-dom'
 import { useDateRange } from '../../contexts/DateRangeContext'
 import { useTimezone } from '../../contexts/TimezoneContext'
 import { useLabels } from '../../contexts/LabelsContext'
-import { useIsRenderDomain } from '../../hooks'
 import {
   PageContainer,
   Card,
@@ -658,7 +656,6 @@ const mapListToDistributionData = (
   .slice(0, limit)
 
 const Analytics: React.FC = () => {
-  const isRenderDomain = useIsRenderDomain()
   const { dateRange, setDateRange } = useDateRange()
   const { convertToLocalTime } = useTimezone()
   const { labels: appLabels } = useLabels()
@@ -680,11 +677,6 @@ const Analytics: React.FC = () => {
     { stage: 'appointment_attended', label: 'Citas asistidas' },
     { stage: 'customer', label: customersLabel }
   ], [customersLabel, leadsLabel])
-
-  // Si estamos en dominio .onrender.com, redirigir al Dashboard
-  if (isRenderDomain) {
-    return <Navigate to="/dashboard" replace />
-  }
 
   // Estado para filtros
   const [selectedFilters, setSelectedFilters] = useState<Record<string, string[]>>({})
