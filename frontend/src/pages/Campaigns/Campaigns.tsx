@@ -1687,20 +1687,14 @@ export const Campaigns: React.FC = () => {
       width: '30%'
     },
     {
-      key: 'roas',
-      header: 'Retorno de Inversión',
+      key: 'spend',
+      header: 'Inversión',
       visible: true,
-      render: (value, item) => {
-        if (item.showPlaceholder) return <span className={styles.placeholderText}>—</span>
-        const roasValue = value || 0
-        return (
-          <span className={roasValue >= 3 ? styles.goodRoas : styles.lowRoas}>
-            {formatRoas(roasValue)}
-          </span>
-        )
-      },
+      render: (value, item) => item.showPlaceholder ?
+        <span className={styles.placeholderText}>—</span> :
+        formatCurrency(value),
       sortable: true,
-      width: '8%'
+      width: '10%'
     },
     {
       key: 'revenue',
@@ -1713,14 +1707,19 @@ export const Campaigns: React.FC = () => {
       width: '10%'
     },
     {
-      key: 'spend',
-      header: 'Inversión',
+      key: 'roas',
+      header: 'Retorno de Inversión',
       visible: true,
-      render: (value, item) => item.showPlaceholder ?
-        <span className={styles.placeholderText}>—</span> :
-        formatCurrency(value),
+      render: (value, item) => {
+        if (item.showPlaceholder) return <span className={styles.placeholderText}>—</span>
+        return (
+          <span className={(value || 0) >= 3 ? styles.goodRoas : styles.lowRoas}>
+            {formatRoas(value || 0)}
+          </span>
+        )
+      },
       sortable: true,
-      width: '10%'
+      width: '8%'
     },
     {
       key: 'leads',
@@ -1728,7 +1727,6 @@ export const Campaigns: React.FC = () => {
       visible: true,
       render: (value, item) => {
         if (item.showPlaceholder) return <span className={styles.placeholderText}>—</span>
-
         const hasLeads = (value || 0) > 0
 
         return (
@@ -1738,37 +1736,6 @@ export const Campaigns: React.FC = () => {
               if (hasLeads) {
                 e.stopPropagation()
                 handleOpenContactsModal(item, 'interesados')
-              }
-            }}
-          >
-            {value || 0}
-          </span>
-        )
-      },
-      sortable: true,
-      width: '7%'
-    },
-    {
-      key: 'sales',
-      header: (
-        <div style={{ textAlign: 'center', lineHeight: '1.2' }}>
-          <div>{labels.customers}</div>
-          <div style={{ fontSize: '0.75em', opacity: 0.7 }}>(Nuevos)</div>
-        </div>
-      ),
-      visible: true,
-      render: (value, item) => {
-        if (item.showPlaceholder) return <span className={styles.placeholderText}>—</span>
-
-        const hasSales = (value || 0) > 0
-
-        return (
-          <span
-            className={hasSales ? styles.clickableNumber : ''}
-            onClick={(e) => {
-              if (hasSales) {
-                e.stopPropagation()
-                handleOpenContactsModal(item, 'sales')
               }
             }}
           >
@@ -1920,6 +1887,37 @@ export const Campaigns: React.FC = () => {
             }}
           >
             {(value || 0).toLocaleString()}
+          </span>
+        )
+      },
+      sortable: true,
+      width: '7%'
+    },
+    {
+      key: 'sales',
+      header: (
+        <div style={{ textAlign: 'center', lineHeight: '1.2' }}>
+          <div>{labels.customers}</div>
+          <div style={{ fontSize: '0.75em', opacity: 0.7 }}>(Nuevos)</div>
+        </div>
+      ),
+      visible: true,
+      render: (value, item) => {
+        if (item.showPlaceholder) return <span className={styles.placeholderText}>—</span>
+
+        const hasSales = (value || 0) > 0
+
+        return (
+          <span
+            className={hasSales ? styles.clickableNumber : ''}
+            onClick={(e) => {
+              if (hasSales) {
+                e.stopPropagation()
+                handleOpenContactsModal(item, 'sales')
+              }
+            }}
+          >
+            {value || 0}
           </span>
         )
       },
