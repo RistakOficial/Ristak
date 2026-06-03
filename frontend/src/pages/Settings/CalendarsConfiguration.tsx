@@ -464,132 +464,109 @@ export const CalendarsConfiguration: React.FC = () => {
           </div>
         </div>
 
-        {/* Configuración de Calendarios Individuales */}
-        <div className={styles.section}>
-          <h3 className={styles.sectionTitle}>Configuración Avanzada de Calendarios</h3>
-          <p className={styles.sectionDescription} style={{ marginBottom: '16px' }}>
-            Ajusta la configuración individual de cada calendario (horarios, duraciones, límites, etc.)
-          </p>
-
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            {calendars.map(calendar => (
-              <div
-                key={calendar.id}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  padding: '16px',
-                  backgroundColor: 'var(--color-background-secondary)',
-                  border: '1px solid var(--color-border)',
-                  borderRadius: '8px'
-                }}
-              >
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 600, color: 'var(--color-text-primary)', marginBottom: '4px' }}>
-                    {calendar.name}
-                  </div>
-                  <div style={{ fontSize: '13px', color: 'var(--color-text-secondary)' }}>
-                    Duración: {calendar.slotDuration} {calendar.slotDurationUnit} ·
-                    Intervalo: {calendar.slotInterval} {calendar.slotIntervalUnit}
-                  </div>
-                </div>
-                <Button
-                  variant="outline"
-                  size="small"
-                  onClick={() => handleOpenConfigModal(calendar)}
-                >
-                  <Settings size={16} />
-                  Configurar
-                </Button>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Calendarios para Atribución */}
+        {/* Tus calendarios: una sola lista donde marcas atribución/eventos y
+            ajustas la configuración de cada calendario, sin duplicar la vista. */}
         <div className={styles.section} style={{ borderTop: '1px solid var(--color-border)', paddingTop: '24px' }}>
-          <h3 className={styles.sectionTitle}>Calendarios para Atribución</h3>
-          <p className={styles.sectionDescription} style={{ marginBottom: '16px' }}>
-            Selecciona qué calendarios quieres usar para medir resultados en Reportes, Campañas y el Viaje del Cliente
-          </p>
-
-          <div className={styles.infoBox} style={{ marginBottom: '16px', display: 'flex', gap: '12px', padding: '12px', backgroundColor: 'var(--color-background-secondary)', borderRadius: '8px' }}>
-            <Info size={20} style={{ color: 'var(--color-primary)', flexShrink: 0, marginTop: '2px' }} />
-            <div style={{ fontSize: '13px', color: 'var(--color-text-secondary)', lineHeight: '1.5' }}>
-              <strong style={{ color: 'var(--color-text-primary)' }}>¿Qué significa esto?</strong>
-              <br />
-              Solo las citas de los calendarios seleccionados aparecerán en:
-              <ul style={{ margin: '8px 0 0 0', paddingLeft: '20px' }}>
-                <li>La columna "Citas" en Reportes y Campañas</li>
-                <li>El timeline del Viaje del Cliente de cada contacto</li>
-                <li>Las métricas de atribución de marketing</li>
-              </ul>
-            </div>
-          </div>
-
-          <div className={styles.sectionContent}>
-            <div className={styles.formField}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                <label className={styles.label} style={{ margin: 0 }}>
-                  Selecciona calendarios ({attributionCalendarIds.length}/{calendars.length})
-                </label>
-                <Button
-                  variant="ghost"
-                  size="small"
-                  onClick={handleSelectAllAttribution}
-                >
-                  {allSelected ? 'Deseleccionar todos' : 'Seleccionar todos'}
-                </Button>
-              </div>
-
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                {calendars.map(calendar => {
-                  const isSelected = attributionCalendarIds.includes(calendar.id)
-                  return (
-                    <label
-                      key={calendar.id}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '12px',
-                        padding: '12px',
-                        backgroundColor: isSelected ? 'var(--color-background-secondary)' : 'transparent',
-                        border: `1px solid ${isSelected ? 'var(--color-primary)' : 'var(--color-border)'}`,
-                        borderRadius: '8px',
-                        cursor: 'pointer',
-                        transition: 'all 0.2s ease'
-                      }}
-                      onMouseEnter={(e) => {
-                        if (!isSelected) {
-                          e.currentTarget.style.backgroundColor = 'var(--color-background-secondary)'
-                        }
-                      }}
-                      onMouseLeave={(e) => {
-                        if (!isSelected) {
-                          e.currentTarget.style.backgroundColor = 'transparent'
-                        }
-                      }}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={isSelected}
-                        onChange={() => handleAttributionToggle(calendar.id)}
-                      />
-                      <div style={{ flex: 1 }}>
-                        <div style={{ fontWeight: 500, color: 'var(--color-text-primary)' }}>
-                          {calendar.name}
-                        </div>
-                      </div>
-                    </label>
-                  )
-                })}
-              </div>
-
-              <p className={styles.hint} style={{ marginTop: '12px' }}>
-                Si no seleccionas ninguno, NO se mostrarán citas en los reportes ni en el viaje del cliente
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '16px', flexWrap: 'wrap', marginBottom: '12px' }}>
+            <div>
+              <h3 className={styles.sectionTitle}>Tus calendarios</h3>
+              <p className={styles.sectionDescription} style={{ margin: 0 }}>
+                Marca los que cuentan como conversión y ajusta la configuración de cada uno.
               </p>
             </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexShrink: 0 }}>
+              <span style={{ fontSize: '13px', color: 'var(--color-text-tertiary)', whiteSpace: 'nowrap' }}>
+                {attributionCalendarIds.length}/{calendars.length} marcados
+              </span>
+              <Button variant="ghost" size="small" onClick={handleSelectAllAttribution}>
+                {allSelected ? 'Desmarcar todos' : 'Marcar todos'}
+              </Button>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', gap: '12px', padding: '14px', backgroundColor: 'var(--color-background-secondary)', borderRadius: '8px', marginBottom: '16px' }}>
+            <Info size={20} style={{ color: 'var(--color-primary)', flexShrink: 0, marginTop: '2px' }} />
+            <div style={{ fontSize: '13px', color: 'var(--color-text-secondary)', lineHeight: '1.6' }}>
+              <strong style={{ color: 'var(--color-text-primary)' }}>¿Para qué sirve marcar un calendario?</strong>
+              <br />
+              Los calendarios marcados son los que cuentan como conversión. Cuando alguien agenda en uno de ellos, esa cita:
+              <ul style={{ margin: '8px 0 0 0', paddingLeft: '20px' }}>
+                <li>Aparece en la columna “Citas” de Reportes y Campañas</li>
+                <li>Se refleja en el Viaje del Cliente del contacto</li>
+                <li>Suma en las métricas de atribución de marketing</li>
+                <li>
+                  Dispara los{' '}
+                  <strong style={{ color: 'var(--color-text-primary)' }}>
+                    eventos de conversión hacia Meta (Pixel / API de Conversiones) y WhatsApp
+                  </strong>
+                  , si los tienes activados en Ajustes → Eventos personalizados
+                </li>
+              </ul>
+              <div style={{ marginTop: '8px' }}>
+                Si no marcas ninguno, se toman en cuenta{' '}
+                <strong style={{ color: 'var(--color-text-primary)' }}>todos</strong> los calendarios.
+              </div>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            {calendars.map(calendar => {
+              const isAttributed = attributionCalendarIds.includes(calendar.id)
+              return (
+                <div
+                  key={calendar.id}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: '16px',
+                    flexWrap: 'wrap',
+                    padding: '14px 16px',
+                    backgroundColor: 'var(--color-background-secondary)',
+                    border: `1px solid ${isAttributed ? 'var(--color-primary)' : 'var(--color-border)'}`,
+                    borderRadius: '10px',
+                    transition: 'border-color 0.2s ease'
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0, flex: 1 }}>
+                    <span style={{ width: 10, height: 10, borderRadius: '50%', backgroundColor: calendar.eventColor || 'var(--color-primary)', flexShrink: 0 }} />
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontWeight: 600, color: 'var(--color-text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {calendar.name}
+                      </div>
+                      <div style={{ fontSize: '12px', color: 'var(--color-text-tertiary)' }}>
+                        {calendar.slotDuration} {calendar.slotDurationUnit} · cada {calendar.slotInterval} {calendar.slotIntervalUnit}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexShrink: 0 }}>
+                    <div className={styles.toggleContainer}>
+                      <button
+                        type="button"
+                        className={`${styles.toggle} ${isAttributed ? styles.toggleActive : ''}`}
+                        onClick={() => handleAttributionToggle(calendar.id)}
+                        aria-pressed={isAttributed}
+                        aria-label={`Atribución y eventos para ${calendar.name}`}
+                      >
+                        <span className={styles.toggleThumb} />
+                      </button>
+                      <span className={`${styles.toggleLabel} ${isAttributed ? styles.toggleLabelActive : ''}`}>
+                        Atribución y eventos
+                      </span>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="small"
+                      onClick={() => handleOpenConfigModal(calendar)}
+                    >
+                      <Settings size={16} />
+                      Configurar
+                    </Button>
+                  </div>
+                </div>
+              )
+            })}
           </div>
         </div>
       </Card>

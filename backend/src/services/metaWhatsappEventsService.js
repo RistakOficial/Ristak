@@ -566,13 +566,48 @@ export function isSuccessfulPaymentStatus(status) {
   return SUCCESS_PAYMENT_STATUSES.has(String(status || '').trim().toLowerCase())
 }
 
-export async function triggerWhatsappAppointmentBookedEvent(contactId) {
+/**
+ * Calendarios marcados para atribución. Devuelve `null` cuando no hay ninguno
+ * seleccionado, lo que significa "todos" (sin filtro).
+ */
+async function getAttributionCalendarIds() {
+  try {
+    const config = await db.get(
+      'SELECT config_value FROM app_config WHERE config_key = ?',
+      ['attribution_calendar_ids']
+    )
+
+    if (!config || !config.config_value) {
+      return null
+    }
+
+    const calendarIds = JSON.parse(config.config_value)
+    return Array.isArray(calendarIds) && calendarIds.length > 0
+      ? calendarIds.map((id) => String(id))
+      : null
+  } catch (error) {
+    logger.warn(`Error al leer calendarios de atribución para eventos: ${error.message} - usando TODOS`)
+    return null
+  }
+}
+
+export async function triggerWhatsappAppointmentBookedEvent(contactId, options = {}) {
   if (!await getConfigBoolean(CONFIG_KEYS.scheduleEnabled, false)) {
     return { sent: false, reason: 'disabled' }
   }
 
   if (!contactId) {
     return { sent: false, reason: 'missing_contact_id' }
+  }
+
+  // El evento de conversión solo se dispara para citas de calendarios marcados
+  // para atribución. Si no hay ninguno seleccionado (null) se envía para todos.
+  // Si la cita no trae calendario, no bloqueamos (evita perder conversiones por
+  // un payload incompleto).
+  const attributionCalendarIds = await getAttributionCalendarIds()
+  const calendarId = options.calendarId ? String(options.calendarId) : null
+  if (attributionCalendarIds && calendarId && !attributionCalendarIds.includes(calendarId)) {
+    return { sent: false, reason: 'calendar_not_attributed' }
   }
 
   const metaEventName = await getConfiguredEventName(CONFIG_KEYS.scheduleEventName, 'LeadSubmitted')

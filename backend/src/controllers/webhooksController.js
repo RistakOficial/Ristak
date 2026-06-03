@@ -729,6 +729,7 @@ export const handleAppointmentWebhook = async (req, res) => {
 
     // HighLevel manda el ID de la cita en calendar.appointmentId
     const appointmentId = calendar.appointmentId || data.id || data.appointment_id;
+    const appointmentCalendarId = calendar.id || data.calendarId || data.calendar_id;
 
     logger.info(`📥 Webhook de cita recibido: ${appointmentId || 'sin ID'}`);
 
@@ -801,7 +802,7 @@ export const handleAppointmentWebhook = async (req, res) => {
 
     await db.run(query, [
       appointmentId,
-      calendar.id || data.calendarId || data.calendar_id,
+      appointmentCalendarId,
       contactId,
       data.location?.id || data.locationId || data.location_id,
       calendar.title || data.title || calendar.calendarName,
@@ -834,7 +835,7 @@ export const handleAppointmentWebhook = async (req, res) => {
       appointmentStatusNormalized.includes('deleted');
 
     if (contactId && !isCancelledAppointment) {
-      await triggerWhatsappAppointmentBookedEvent(contactId);
+      await triggerWhatsappAppointmentBookedEvent(contactId, { calendarId: appointmentCalendarId });
     }
 
     logger.info(`✅ Cita ${appointmentId} procesada exitosamente para contacto ${contactId}`);

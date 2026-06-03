@@ -503,7 +503,9 @@ export async function createAppointment(req, res) {
     const contactId = appointmentData.contactId || appointmentData.contact_id || appointment?.contactId || appointment?.contact_id;
 
     if (contactId) {
-      await triggerWhatsappAppointmentBookedEvent(contactId);
+      await triggerWhatsappAppointmentBookedEvent(contactId, {
+        calendarId: appointment?.calendarId || appointmentData.calendarId || appointmentData.calendar_id
+      });
     }
 
     res.status(201).json({
