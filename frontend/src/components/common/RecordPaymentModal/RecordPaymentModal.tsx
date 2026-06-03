@@ -342,6 +342,11 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const [manualPaymentData, setManualPaymentData] = useState<ManualPaymentData>(defaultManualPaymentData)
   const [transferInfoUrl, setTransferInfoUrl] = useState<string | null>(null)
 
+  // Estado de conexión con HighLevel. Cuando NO está conectado, Ristak opera en
+  // modo local: solo se puede registrar el pago manualmente (sin enviar enlaces,
+  // sin parcialidades ni productos de HighLevel).
+  const [highLevelConnected, setHighLevelConnected] = useState(false)
+
   const { showToast } = useNotification()
 
   const canChoosePaymentMode = chargeType === 'direct' || Boolean(selectedProduct && selectedPrice)
@@ -458,6 +463,30 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     }
   }
 
+  const loadIntegrationStatus = async () => {
+    try {
+      const response = await fetch('/api/integrations/status')
+      if (!response.ok) {
+        setHighLevelConnected(false)
+        return
+      }
+      const data = await response.json()
+      setHighLevelConnected(Boolean(data?.highlevel?.connected))
+    } catch (error) {
+      setHighLevelConnected(false)
+    }
+  }
+
+  // En modo local (sin HighLevel) forzamos pago único y registro manual: no hay
+  // envío de enlaces, parcialidades ni productos guardados.
+  useEffect(() => {
+    if (!highLevelConnected) {
+      setPaymentMode('single')
+      setPaymentOption('manual')
+      setChargeType('direct')
+    }
+  }, [highLevelConnected])
+
   useEffect(() => {
     if (!isOpen) {
       resetForm()
@@ -466,6 +495,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
     resetForm()
     loadConfig()
+    loadIntegrationStatus()
   }, [isOpen, initialPaymentMode])
 
   // Search contacts
@@ -486,30 +516,53 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     const timer = window.setTimeout(async () => {
       setSearchingContact(true)
       try {
-        const response = await fetch('/api/highlevel/contacts/search', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          signal: controller.signal,
-          body: JSON.stringify({
-            query,
-            limit: 10
-          })
-        })
-        if (!response.ok) {
-          throw new Error('Error al buscar contactos')
-        }
-        const data = await response.json()
+        let formattedContacts: Contact[]
 
-        const formattedContacts = (data.contacts || []).map((contact: any) => ({
-          id: contact.id,
-          name: contact.name || 'Sin nombre',
-          email: contact.email || '',
-          phone: contact.phone || '',
-          firstName: contact.firstName || '',
-          lastName: contact.lastName || ''
-        }))
+        if (highLevelConnected) {
+          const response = await fetch('/api/highlevel/contacts/search', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            signal: controller.signal,
+            body: JSON.stringify({
+              query,
+              limit: 10
+            })
+          })
+          if (!response.ok) {
+            throw new Error('Error al buscar contactos')
+          }
+          const data = await response.json()
+
+          formattedContacts = (data.contacts || []).map((contact: any) => ({
+            id: contact.id,
+            name: contact.name || 'Sin nombre',
+            email: contact.email || '',
+            phone: contact.phone || '',
+            firstName: contact.firstName || '',
+            lastName: contact.lastName || ''
+          }))
+        } else {
+          // Modo local: buscar en los contactos almacenados en Ristak.
+          const params = new URLSearchParams({ q: query })
+          const response = await fetch(`/api/contacts/search?${params.toString()}`, {
+            signal: controller.signal
+          })
+          if (!response.ok) {
+            throw new Error('Error al buscar contactos')
+          }
+          const data = await response.json()
+
+          formattedContacts = (data.data || []).map((contact: any) => ({
+            id: contact.id,
+            name: contact.full_name || contact.name || 'Sin nombre',
+            email: contact.email || '',
+            phone: contact.phone || '',
+            firstName: contact.firstName || '',
+            lastName: contact.lastName || ''
+          }))
+        }
 
         if (!controller.signal.aborted) {
           setContacts(formattedContacts)
@@ -530,7 +583,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       window.clearTimeout(timer)
       controller.abort()
     }
-  }, [searchQuery])
+  }, [searchQuery, highLevelConnected])
 
   useEffect(() => {
     if (isOpen && chargeType === 'product' && products.length === 0) {
@@ -942,7 +995,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       }
 
       setManualPaymentData(defaultManualPaymentData())
-      setPaymentOption('send')
+      setPaymentOption(highLevelConnected ? 'send' : 'manual')
 
       setStep('options')
     } catch (error: any) {
@@ -963,6 +1016,44 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
     setLoading(true)
     setStep('processing')
+
+    // Modo local (sin HighLevel): registrar el pago directamente en Ristak.
+    if (!highLevelConnected) {
+      if (!selectedContact) {
+        showToast('error', 'Selecciona un contacto')
+        setStep('options')
+        setLoading(false)
+        return
+      }
+
+      try {
+        await transactionsService.createTransaction({
+          date: manualPaymentData.paymentDate || new Date().toISOString(),
+          contactId: selectedContact.id,
+          contactName: selectedContact.name,
+          email: selectedContact.email || '',
+          phone: selectedContact.phone || '',
+          amount: invoiceSummary.amount,
+          currency: invoiceSummary.currency,
+          method: manualPaymentData.paymentMethod as any,
+          status: 'paid',
+          reference: manualPaymentData.reference,
+          title: invoicePayload.title || invoicePayload.name || DEFAULT_INVOICE_TITLE,
+          description: [invoiceSummary.description, manualPaymentData.notes].filter(Boolean).join('\n'),
+          dueDate: invoicePayload.dueDate
+        })
+
+        showToast('success', 'Éxito', 'Pago registrado correctamente')
+        onSuccess?.()
+        onClose()
+      } catch (localError: any) {
+        showToast('error', 'Error', localError.message || 'No se pudo registrar el pago')
+        setStep('options')
+      } finally {
+        setLoading(false)
+      }
+      return
+    }
 
     try {
       if (paymentMode === 'partial') {
@@ -1158,7 +1249,11 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     const taxAmount = includeIVA ? normalizeAmount(subtotalAmount * IVA_RATE) : 0
     const totalAmount = includeIVA ? normalizeAmount(subtotalAmount + taxAmount) : subtotalAmount
 
-    const renderPaymentModeField = () => (
+    const renderPaymentModeField = () => {
+      // Las parcialidades dependen de HighLevel. En modo local solo hay pago único.
+      if (!highLevelConnected) return null
+
+      return (
       <div className={styles.field}>
         <label className={styles.label}>Tipo de pago</label>
         <div style={{ marginTop: '4px' }}>
@@ -1180,7 +1275,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           />
         </div>
       </div>
-    )
+      )
+    }
 
     return (
       <div className={styles.content}>
@@ -1247,33 +1343,37 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           )}
         </div>
 
-        <div className={styles.field}>
-          <label className={styles.label}>Tipo de cobro</label>
-          <div style={{ marginTop: '4px' }}>
-            <TabList
-              tabs={[
-                { value: 'direct', label: 'Cobro directo' },
-                { value: 'product', label: 'Productos guardados' }
-              ]}
-              activeTab={chargeType}
-              onTabChange={(value) => {
-                if (value === 'direct') {
-                  setChargeType('direct')
-                  setSelectedProduct(null)
-                  setSelectedPrice(null)
-                  setPrices([])
-                  setCustomAmount('')
-                  setCurrency('MXN')
-                } else {
-                  setChargeType('product')
-                  setAmount('')
-                }
-              }}
-              variant="compact"
-              className={styles.fullWidthTabList}
-            />
+        {/* Los productos guardados provienen de HighLevel. En modo local solo
+            existe el cobro directo, así que ocultamos el selector. */}
+        {highLevelConnected && (
+          <div className={styles.field}>
+            <label className={styles.label}>Tipo de cobro</label>
+            <div style={{ marginTop: '4px' }}>
+              <TabList
+                tabs={[
+                  { value: 'direct', label: 'Cobro directo' },
+                  { value: 'product', label: 'Productos guardados' }
+                ]}
+                activeTab={chargeType}
+                onTabChange={(value) => {
+                  if (value === 'direct') {
+                    setChargeType('direct')
+                    setSelectedProduct(null)
+                    setSelectedPrice(null)
+                    setPrices([])
+                    setCustomAmount('')
+                    setCurrency('MXN')
+                  } else {
+                    setChargeType('product')
+                    setAmount('')
+                  }
+                }}
+                variant="compact"
+                className={styles.fullWidthTabList}
+              />
+            </div>
           </div>
-        </div>
+        )}
 
         {chargeType === 'direct' && renderPaymentModeField()}
 
@@ -1844,7 +1944,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         </div>
 
         <div className={styles.paymentOptions}>
-          {/* Enviar enlace de pago por... (con selector integrado) */}
+          {/* Enviar enlace de pago por... (solo disponible con HighLevel conectado) */}
+          {highLevelConnected && (
           <div
             className={`${styles.optionButton} ${paymentOption === 'send' ? styles.optionButtonActive : ''}`}
             onClick={() => setPaymentOption('send')}
@@ -1886,6 +1987,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
               </div>
             )}
           </div>
+          )}
 
           {/* Registrar pago manual */}
           <button
@@ -1899,7 +2001,11 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
               </div>
               <div>
                 <p>Registrar pago manual</p>
-                <span>Marca el invoice como pagado (efectivo, transferencia, etc.)</span>
+                <span>
+                  {highLevelConnected
+                    ? 'Marca el invoice como pagado (efectivo, transferencia, etc.)'
+                    : 'Registra el pago en Ristak (efectivo, transferencia, etc.)'}
+                </span>
               </div>
             </div>
             {paymentOption === 'manual' && <Check size={18} className={styles.optionCheck} />}
@@ -2017,7 +2123,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
               setStep('form')
               setInvoicePayload(null)
               setInvoiceSummary(null)
-              setPaymentOption('send')
+              setPaymentOption(highLevelConnected ? 'send' : 'manual')
             }}
             disabled={loading}
           >
