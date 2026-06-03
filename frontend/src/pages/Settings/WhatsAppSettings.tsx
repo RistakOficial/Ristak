@@ -227,6 +227,7 @@ export const WhatsAppSettings: React.FC = () => {
   }
 
   return (
+    <>
     <Card className={styles.shell}>
       <div className={styles.header}>
         <span className={styles.logoMark}><SiWhatsapp size={30} /></span>
@@ -331,5 +332,7 @@ export const WhatsAppSettings: React.FC = () => {
         )}
       </div>
     </Card>
+    <p style={{ marginTop: '12px', fontSize: '13px', color: 'var(--text-muted, #888)' }}>Ycloud integration pendiente...</p>
+    </>
   )
 }
