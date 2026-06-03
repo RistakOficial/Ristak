@@ -22,7 +22,7 @@ import { useDateRange } from '@/contexts/DateRangeContext'
 import { useAuth } from '@/contexts/AuthContext'
 import { useLabels } from '@/contexts/LabelsContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
-import { useAppConfig } from '@/hooks'
+import { useAppConfig, useIsRenderDomain } from '@/hooks'
 import { dashboardService, type DashboardMetrics, type ChartData, type DashboardVisitorDetail } from '@/services/dashboardService'
 import { trackingService } from '@/services/trackingService'
 import { whatsappWebService } from '@/services/whatsappWebService'
@@ -460,6 +460,9 @@ export const Dashboard: React.FC = () => {
   const { labels } = useLabels()
   const { formatLocalDateTime } = useTimezone()
 
+  // Detectar si estamos en dominio .onrender.com
+  const isRenderDomain = useIsRenderDomain()
+
   // Sistema híbrido de configuración
   const [showAnalyticsConfig] = useAppConfig<string | number | boolean>('show_analytics', '1')
   const [chartPeriodConfig, setChartPeriodConfig] = useAppConfig<string>('dashboard_chart_period', 'last12')
@@ -468,7 +471,7 @@ export const Dashboard: React.FC = () => {
   })
   const chartPeriodPreference = normalizeChartPeriodPreference(chartPeriodConfig)
 
-  const analyticsPreferenceEnabled = parseAnalyticsFlag(showAnalyticsConfig)
+  const analyticsPreferenceEnabled = !isRenderDomain && parseAnalyticsFlag(showAnalyticsConfig)
   const [webTrackingConfigured, setWebTrackingConfigured] = useState(false)
   const analyticsEnabled = analyticsPreferenceEnabled && webTrackingConfigured
   const showFunnelVisitors = analyticsEnabled && parseAnalyticsFlag(showFunnelVisitorsConfig)
@@ -514,6 +517,7 @@ export const Dashboard: React.FC = () => {
     return funnelData.filter((stage) => stage.stage?.trim().toLowerCase() !== 'visitantes')
   }, [analyticsEnabled, funnelData])
 
+  // La dona de fuentes/WhatsApp se muestra siempre; el resto del gating de dominio se mantiene.
   const showTrafficSourcesChart = true
   const hasWebSourceView = analyticsEnabled
   const hasWhatsappSourceView = Boolean(whatsappSourceStatus?.connected || whatsappSourceStatus?.hasData)

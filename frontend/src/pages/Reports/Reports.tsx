@@ -27,7 +27,7 @@ import {
 } from '@/services/reportsService'
 import { costsService, type Cost } from '@/services/costsService'
 import { formatCurrency, formatNumber, formatDate, formatDateToISO, parseLocalDateString } from '@/utils/format'
-import { useAppConfig, useChartHover, useMetaTimezone, useTableConfig } from '@/hooks'
+import { useAppConfig, useChartHover, useIsRenderDomain, useMetaTimezone, useTableConfig } from '@/hooks'
 import { DEFAULT_BAR_RADIUS, getTopRoundedBarPath } from '@/components/common/chartShapes'
 import { ChartTooltip } from '@/components/common/ChartTooltip/ChartTooltip'
 import styles from './Reports.module.css'
@@ -1144,7 +1144,7 @@ const MetricsGrid: React.FC<MetricsGridProps> = ({
     }
   ], [chartData, trafficItems, trafficKeys, labels, totals, reportType, profit, roas, roi, cac, aov, transactionsPerCustomer, cpl, epl, cpa, cpaAttendance, interesadoToAppt, apptToAttendance, attendanceToSale, attendanceToCustomer, salesLabel, applyManualBusinessExpenses, applyFixedBusinessExpenses])
 
-  // Filtrar la tarjeta de "Tráfico" si showVisitors es false
+  // Filtrar la tarjeta de "Tráfico" si showVisitors es false (dominio .onrender.com)
   const metricGroups = showVisitors
     ? allMetricGroups
     : allMetricGroups.filter(group => group.title !== 'Tráfico')
@@ -1270,6 +1270,9 @@ export const Reports: React.FC = () => {
   // Detectar discrepancia de timezone con Meta
   const timezoneInfo = useMetaTimezone()
 
+  // Detectar si estamos en dominio .onrender.com
+  const isRenderDomain = useIsRenderDomain()
+
   // Sistema híbrido de configuración
   const [visitorSourceConfig] = useAppConfig<'platform' | 'tracking'>('visitor_source', 'platform')
   const [showAnalyticsConfig] = useAppConfig<string | number | boolean>('show_analytics', '1')
@@ -1278,8 +1281,9 @@ export const Reports: React.FC = () => {
     '0'
   )
 
-  const visitorSource = visitorSourceConfig
-  const analyticsEnabled = parseAnalyticsFlag(showAnalyticsConfig)
+  // FORZAR valores si estamos en dominio .onrender.com
+  const visitorSource = isRenderDomain ? 'platform' : visitorSourceConfig
+  const analyticsEnabled = isRenderDomain ? false : parseAnalyticsFlag(showAnalyticsConfig)
 
   const [reportType, setReportType] = useState<ReportType>('cashflow')
   const reportTypeRef = React.useRef<ReportType>(reportType)

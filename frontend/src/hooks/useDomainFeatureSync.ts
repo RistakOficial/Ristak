@@ -1,15 +1,20 @@
 import { useEffect, useRef } from 'react'
 import { useAppConfig } from './useAppConfig'
+import { useIsRenderDomain } from './useIsRenderDomain'
 import { trackingService } from '@/services/trackingService'
 
 type VisitorSource = 'platform' | 'tracking'
 
 /**
- * Habilita automáticamente las preferencias dependientes del rastreo
- * (visibilidad de Analíticas y fuente de visitantes) cuando existe
- * configuración de tracking, sin importar desde qué host se cargó la app.
+ * Mantiene sincronizadas las preferencias dependientes del dominio
+ * (como la visibilidad de Analíticas) sin importar desde qué host
+ * se cargó la aplicación.
+ *
+ * - En dominios .onrender.com: se fuerza show_analytics = false y visitor_source = 'platform'
+ * - En dominios personalizados: se habilitan automáticamente cuando exista configuración de tracking
  */
 export const useDomainFeatureSync = () => {
+  const isRenderDomain = useIsRenderDomain()
   const [showAnalytics, setShowAnalytics] = useAppConfig<boolean>('show_analytics', false)
   const [visitorSource, setVisitorSource] = useAppConfig<VisitorSource>('visitor_source', 'platform')
   const syncingRef = useRef(false)
@@ -17,8 +22,11 @@ export const useDomainFeatureSync = () => {
   useEffect(() => {
     let cancelled = false
 
+    const desiredAnalytics = isRenderDomain ? false : true
+    const desiredVisitor: VisitorSource = isRenderDomain ? 'platform' : 'tracking'
+
     // Ya estamos en el estado esperado, no hacer nada
-    if (showAnalytics === true && visitorSource === 'tracking') {
+    if (showAnalytics === desiredAnalytics && visitorSource === desiredVisitor) {
       return
     }
 
@@ -30,38 +38,49 @@ export const useDomainFeatureSync = () => {
       let visitorChanged = false
 
       try {
-        let shouldEnable = true
+        if (isRenderDomain) {
+          if (showAnalytics !== false) {
+            await setShowAnalytics(false)
+            analyticsChanged = true
+          }
+          if (visitorSource !== 'platform') {
+            await setVisitorSource('platform')
+            visitorChanged = true
+          }
+        } else {
+          let shouldEnable = true
 
-        try {
-          const config = await trackingService.getTrackingConfig()
-          shouldEnable = Boolean(config?.trackingDomain?.trim()) ||
-            Boolean(config?.showAnalytics) ||
-            Boolean(config?.isConfigured)
-        } catch {
-          // Si la API falla, preferimos habilitar (fail-open) para no ocultar Analíticas por error transitorio
-          shouldEnable = true
-        }
+          try {
+            const config = await trackingService.getTrackingConfig()
+            shouldEnable = Boolean(config?.trackingDomain?.trim()) ||
+              Boolean(config?.showAnalytics) ||
+              Boolean(config?.isConfigured)
+          } catch {
+            // Si la API falla, preferimos habilitar (fail-open) para no ocultar Analíticas por error transitorio
+            shouldEnable = true
+          }
 
-        if (!shouldEnable) return
+          if (!shouldEnable) return
 
-        if (!showAnalytics) {
-          await setShowAnalytics(true)
-          analyticsChanged = true
-        }
-        if (visitorSource !== 'tracking') {
-          await setVisitorSource('tracking')
-          visitorChanged = true
+          if (!showAnalytics) {
+            await setShowAnalytics(true)
+            analyticsChanged = true
+          }
+          if (visitorSource !== 'tracking') {
+            await setVisitorSource('tracking')
+            visitorChanged = true
+          }
         }
 
         if (!cancelled) {
           if (analyticsChanged) {
             window.dispatchEvent(new CustomEvent('analytics-preference-changed', {
-              detail: { showAnalytics: true }
+              detail: { showAnalytics: !isRenderDomain }
             }))
           }
           if (visitorChanged) {
             window.dispatchEvent(new CustomEvent('visitor-source-changed', {
-              detail: { visitorSource: 'tracking' }
+              detail: { visitorSource: isRenderDomain ? 'platform' : 'tracking' }
             }))
           }
         }
@@ -76,5 +95,5 @@ export const useDomainFeatureSync = () => {
     return () => {
       cancelled = true
     }
-  }, [showAnalytics, visitorSource, setShowAnalytics, setVisitorSource])
+  }, [isRenderDomain, showAnalytics, visitorSource, setShowAnalytics, setVisitorSource])
 }

@@ -2300,8 +2300,9 @@ export const saveAndSyncMeta = async (req, res) => {
       logger.error(`Error en sincronización de Meta Ads: ${error.message}`);
     });
 
-    // 8. Sincronizar snippet automáticamente cuando hay host y Pixel ID
-    if (req.headers.host && normalizedPixelId) {
+    // 8. Si tenemos dominio personalizado (NO estamos en .onrender.com), sincronizar snippet automáticamente
+    const isRenderDomain = req.headers.host?.includes('onrender.com')
+    if (!isRenderDomain && req.headers.host && normalizedPixelId) {
       // Leer preferencia del usuario: ¿quiere incluir Meta Pixel en el snippet?
       // Default: true (ON por default)
       const { getAppConfig } = await import('../config/database.js')
@@ -2311,7 +2312,7 @@ export const saveAndSyncMeta = async (req, res) => {
         : (includeMetaPixelPref === '1' || includeMetaPixelPref === 1 || includeMetaPixelPref === true || includeMetaPixelPref === 'true')
 
       if (includeMetaPixel) {
-        logger.info(`Host detectado (${req.headers.host}), sincronizando snippet con Meta Pixel ${normalizedPixelId}...`)
+        logger.info(`Dominio personalizado detectado (${req.headers.host}), sincronizando snippet con Meta Pixel ${normalizedPixelId}...`)
 
         // Importar la función de configuración de tracking
         const { configureTracking } = await import('./trackingController.js')
@@ -2341,6 +2342,8 @@ export const saveAndSyncMeta = async (req, res) => {
         logger.info(`Usuario configuró Meta Pixel (${normalizedPixelId}) pero tiene DESACTIVADA la inclusión en snippet (include_meta_pixel = false)`)
         logger.info('NO se auto-sincronizará el snippet. El usuario puede activar el switch en Settings → Meta Ads')
       }
+    } else if (isRenderDomain) {
+      logger.info('Dominio .onrender.com detectado, NO sincronizando snippet (requiere dominio personalizado)')
     } else if (!normalizedPixelId) {
       logger.info('No se proporcionó Pixel ID, snippet NO incluirá Meta Pixel')
     }

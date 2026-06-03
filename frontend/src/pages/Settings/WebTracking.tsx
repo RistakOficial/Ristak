@@ -3,11 +3,14 @@ import { Card, Button } from '@/components/common'
 import { Check, Copy, Info, Loader2, RefreshCw, Activity } from 'lucide-react'
 import { trackingService } from '@/services/trackingService'
 import { useNotification } from '@/contexts/NotificationContext'
-import { useAppConfig } from '@/hooks'
+import { useAppConfig, useIsRenderDomain } from '@/hooks'
 import styles from './HighLevelIntegration.module.css'
 
 export const WebTracking: React.FC = () => {
   const { showToast } = useNotification()
+
+  // Detectar si estamos en dominio .onrender.com
+  const isOnRenderDomain = useIsRenderDomain()
 
   // Sistema híbrido de configuración (cache + DB)
   // Defaults: false y 'platform' hasta que se configure dominio personalizado
@@ -35,8 +38,26 @@ export const WebTracking: React.FC = () => {
       setHasHighLevel(config.hasHighLevel)
       setTrackingSnippet(config.trackingSnippet || '')
 
-      // Activación automática cuando hay dominio de tracking configurado
-      if (config.trackingDomain && !hasAutoActivated) {
+      // Si es .onrender.com → FORZAR analytics OFF y visitor source a 'platform'
+      if (isOnRenderDomain) {
+        if (showAnalytics !== false) {
+          await setShowAnalytics(false)
+        }
+        if (visitorSource !== 'platform') {
+          await setVisitorSource('platform')
+        }
+
+        // Disparar eventos para actualizar el sidebar
+        window.dispatchEvent(new CustomEvent('analytics-preference-changed', {
+          detail: { showAnalytics: false }
+        }))
+        window.dispatchEvent(new CustomEvent('visitor-source-changed', {
+          detail: { visitorSource: 'platform' }
+        }))
+      }
+      // Si NO es .onrender.com → Activación automática
+      else if (config.trackingDomain && !hasAutoActivated) {
+        // Activar analytics y visitor tracking automáticamente
         if (!showAnalytics) {
           await setShowAnalytics(true)
         }
@@ -100,9 +121,24 @@ export const WebTracking: React.FC = () => {
               <div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                   <h1 className={styles.pageTitle}>Rastreo Web</h1>
+                  {isOnRenderDomain && (
+                    <span style={{
+                      padding: '4px 12px',
+                      borderRadius: '6px',
+                      background: 'var(--color-surface)',
+                      color: 'var(--color-text-secondary)',
+                      fontSize: '0.875rem',
+                      fontWeight: 600,
+                      border: '1px solid var(--color-border)'
+                    }}>
+                      Dominio requerido
+                    </span>
+                  )}
                 </div>
                 <p className={styles.pageSubtitle}>
-                  Captura visitas, UTMs y atribución de campañas
+                  {isOnRenderDomain
+                    ? 'Configura un dominio personalizado para activar el tracking'
+                    : 'Captura visitas, UTMs y atribución de campañas'}
                 </p>
               </div>
             </div>
@@ -112,7 +148,7 @@ export const WebTracking: React.FC = () => {
                   <Loader2 size={16} className={styles.spinIcon} />
                   <span>Verificando...</span>
                 </div>
-              ) : isConfigured ? (
+              ) : !isOnRenderDomain && isConfigured ? (
                 <div className={styles.statusConnected}>
                   <Check size={16} />
                   <span>Configurado</span>
@@ -122,8 +158,131 @@ export const WebTracking: React.FC = () => {
           </div>
         </div>
 
-        {/* Configuración */}
-        <div className={styles.section}>
+        {/* Mostrar instrucciones si es dominio .onrender.com */}
+        {isOnRenderDomain ? (
+          <div className={styles.section}>
+            <div className={styles.sectionHeader}>
+              <h3 className={styles.sectionTitle}>Instrucciones de configuración</h3>
+              <p className={styles.sectionSubtitle} style={{ marginTop: '8px', fontSize: '0.95rem', color: 'var(--color-text-secondary)', lineHeight: '1.6' }}>
+                Para activar el rastreo web, configura un dominio personalizado siguiendo estos pasos
+              </p>
+            </div>
+
+            <div style={{ marginTop: '24px' }}>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                {/* Paso 1 */}
+                <div style={{ padding: '20px', border: '1px solid var(--color-border)', borderRadius: '8px', background: 'var(--color-surface)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
+                    <div style={{
+                      width: '32px',
+                      height: '32px',
+                      borderRadius: '50%',
+                      background: 'var(--color-primary)',
+                      color: 'white',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontWeight: 'bold',
+                      fontSize: '1.1rem'
+                    }}>1</div>
+                    <h5 style={{ margin: 0, fontSize: '1rem', fontWeight: 600 }}>
+                      Configurar CNAME en tu DNS
+                    </h5>
+                  </div>
+                  <p style={{ margin: '0 0 12px 44px', color: 'var(--color-text-secondary)', fontSize: '0.95rem' }}>
+                    Ve a tu proveedor de DNS (Cloudflare, GoDaddy, Namecheap, etc.) y crea un registro CNAME:
+                  </p>
+                  <div className={styles.codeBlock} style={{ marginLeft: '44px', padding: '16px', fontSize: '0.9rem' }}>
+                    <div style={{ marginBottom: '8px' }}><strong>Tipo:</strong> <code>CNAME</code></div>
+                    <div style={{ marginBottom: '8px' }}><strong>Nombre/Host:</strong> <code>track</code> (o el subdominio que prefieras)</div>
+                    <div><strong>Apunta a:</strong> <code>ristak-app.onrender.com</code></div>
+                  </div>
+                  <p style={{ margin: '12px 0 0 44px', color: 'var(--color-text-secondary)', fontSize: '0.85rem', fontStyle: 'italic' }}>
+                    Ejemplo: Si tu dominio es <strong>miempresa.com</strong>, el CNAME creará <strong>track.miempresa.com</strong>
+                  </p>
+                </div>
+
+                {/* Paso 2 */}
+                <div style={{ padding: '20px', border: '1px solid var(--color-border)', borderRadius: '8px', background: 'var(--color-surface)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
+                    <div style={{
+                      width: '32px',
+                      height: '32px',
+                      borderRadius: '50%',
+                      background: 'var(--color-primary)',
+                      color: 'white',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontWeight: 'bold',
+                      fontSize: '1.1rem'
+                    }}>2</div>
+                    <h5 style={{ margin: 0, fontSize: '1rem', fontWeight: 600 }}>
+                      Configurar dominio personalizado en Render
+                    </h5>
+                  </div>
+                  <p style={{ margin: '0 0 12px 44px', color: 'var(--color-text-secondary)', fontSize: '0.95rem' }}>
+                    Ve a tu app en Render Dashboard:
+                  </p>
+                  <ol style={{ margin: '0 0 0 60px', padding: 0, color: 'var(--color-text-secondary)', fontSize: '0.9rem', lineHeight: '1.8' }}>
+                    <li>Abre tu servicio <strong>ristak-app</strong></li>
+                    <li>Ve a la pestaña <strong>Settings</strong></li>
+                    <li>Busca la sección <strong>Custom Domains</strong></li>
+                    <li>Click en <strong>Add Custom Domain</strong></li>
+                    <li>Ingresa el dominio: <code>track.tudominio.com</code></li>
+                    <li>Espera a que el estado cambie a <strong>Verified</strong> (puede tardar 5-10 minutos)</li>
+                  </ol>
+                </div>
+
+                {/* Paso 3 */}
+                <div style={{ padding: '20px', border: '1px solid var(--color-border)', borderRadius: '8px', background: 'var(--color-surface)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
+                    <div style={{
+                      width: '32px',
+                      height: '32px',
+                      borderRadius: '50%',
+                      background: 'var(--color-primary)',
+                      color: 'white',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontWeight: 'bold',
+                      fontSize: '1.1rem'
+                    }}>3</div>
+                    <h5 style={{ margin: 0, fontSize: '1rem', fontWeight: 600 }}>
+                      Acceder usando tu dominio personalizado
+                    </h5>
+                  </div>
+                  <p style={{ margin: '0 0 12px 44px', color: 'var(--color-text-secondary)', fontSize: '0.95rem' }}>
+                    Una vez que Render haya verificado el dominio:
+                  </p>
+                  <div style={{ marginLeft: '44px', padding: '16px', background: 'var(--color-success-bg)', border: '1px solid var(--color-success)', borderRadius: '6px' }}>
+                    <p style={{ margin: 0, fontSize: '0.9rem', color: 'var(--color-success-dark)' }}>
+                      ✅ Abre tu navegador y ve a <strong>track.tudominio.com</strong>
+                    </p>
+                    <p style={{ margin: '8px 0 0 0', fontSize: '0.85rem', color: 'var(--color-success-dark)', fontStyle: 'italic' }}>
+                      Esta página se recargará automáticamente y el Web Tracking se activará
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className={styles.infoBox} style={{ marginTop: '32px' }}>
+              <div className={styles.infoBoxTitle}>
+                <Info size={16} />
+                <span>¿Necesitas ayuda?</span>
+              </div>
+              <div className={styles.infoBoxContent} style={{ marginTop: '8px' }}>
+                Si tienes problemas con la configuración, contacta a soporte técnico
+              </div>
+            </div>
+          </div>
+        ) : (
+          <>
+            {/* Configuración normal (dominio personalizado detectado) */}
+            <div className={styles.section}>
           <div className={styles.sectionHeader}>
             <h3 className={styles.sectionTitle}>Configuración Rápida</h3>
             <p className={styles.sectionSubtitle} style={{ marginTop: '4px', fontSize: '0.875rem', color: 'var(--color-text-secondary)' }}>
@@ -235,7 +394,9 @@ export const WebTracking: React.FC = () => {
               </div>
             </>
           )}
-        </div>
+          </div>
+        </>
+        )}
       </Card>
     </div>
   )

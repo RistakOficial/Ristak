@@ -3,7 +3,7 @@ import { Card, Button, Icon } from '@/components/common'
 import { ArrowLeft, ArrowRight, CheckCircle, ExternalLink, RefreshCw, Trash2, XCircle } from 'lucide-react'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useTheme } from '@/contexts/ThemeContext'
-import { useAppConfig } from '@/hooks'
+import { useAppConfig, useIsRenderDomain } from '@/hooks'
 import { campaignsService } from '@/services/campaignsService'
 import styles from './MetaAdsIntegration.module.css'
 
@@ -78,6 +78,7 @@ export const MetaAdsIntegration: React.FC = () => {
 
   const { showToast } = useNotification()
   const { theme } = useTheme()
+  const isRenderDomain = useIsRenderDomain()
   const [includeMetaPixel, setIncludeMetaPixel, savingPixelPref] = useAppConfig('include_meta_pixel', true)
   const [whatsappScheduleEventEnabled, setWhatsappScheduleEventEnabled, savingWhatsappScheduleEvent] = useAppConfig('meta_whatsapp_schedule_enabled', false)
   const [whatsappPurchaseEventEnabled, setWhatsappPurchaseEventEnabled, savingWhatsappPurchaseEvent] = useAppConfig('meta_whatsapp_purchase_enabled', false)
@@ -725,7 +726,7 @@ export const MetaAdsIntegration: React.FC = () => {
     }
   ]
   const completedMetaSetupSteps = metaSetupSteps.filter(step => step.done).length
-  const hasRailActions = Boolean(credentials.pixelId || (credentials.accessToken && credentials.adAccountId))
+  const hasRailActions = Boolean((credentials.pixelId && !isRenderDomain) || (credentials.accessToken && credentials.adAccountId))
 
   const getSelectedAdAccountLabel = () => {
     if (!credentials.adAccountId) return 'Pendiente'
@@ -1339,7 +1340,7 @@ export const MetaAdsIntegration: React.FC = () => {
                 <span>Extras</span>
               </div>
 
-              {credentials.pixelId && (
+              {credentials.pixelId && !isRenderDomain && (
                 <div className={styles.railSwitchRow}>
                   <div>
                     <span className={styles.railSwitchLabel}>Incluir en snippet</span>
