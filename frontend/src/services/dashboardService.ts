@@ -326,7 +326,8 @@ class DashboardService {
     end: Date;
     includeWeb?: boolean;
     includeWhatsapp?: boolean;
-  }): Promise<{ name: string; value: number; color: string }[]> {
+    metric?: 'traffic' | 'appointments' | 'conversions';
+  }): Promise<{ name: string; value: number; color?: string }[]> {
     try {
       const queryParams = new URLSearchParams({
         startDate: formatDateToISO(params.start),
@@ -334,6 +335,10 @@ class DashboardService {
         includeWeb: params.includeWeb === false ? '0' : '1',
         includeWhatsapp: params.includeWhatsapp === false ? '0' : '1'
       });
+
+      if (params.metric && params.metric !== 'traffic') {
+        queryParams.set('metric', params.metric);
+      }
 
       const response = await fetch(`${API_URL}/api/dashboard/traffic-sources?${queryParams}`);
 

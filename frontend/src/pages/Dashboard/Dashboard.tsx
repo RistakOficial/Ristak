@@ -47,6 +47,7 @@ const parseAnalyticsFlag = (value: unknown) => {
 type FunnelStageKind = 'visitors' | 'leads' | 'appointments' | 'attendances' | 'customers'
 type ContactModalType = 'interesados' | 'sales' | 'appointments' | 'attendances'
 type ChartView = 'revenue-spend' | 'visitors-leads' | 'leads-appointments' | 'appointments-attendances' | 'attendances-sales'
+type SourceMetric = 'web' | 'whatsapp' | 'appointments' | 'conversions'
 type ChartSeriesKey = 'value' | 'value2'
 type ChartBucketGranularity = 'day' | 'week' | 'fortnight' | 'month' | 'quarter' | 'year'
 type ChartPeriodPreference =
@@ -482,10 +483,13 @@ export const Dashboard: React.FC = () => {
   const [leadsAppointmentsData, setLeadsAppointmentsData] = useState<{ label: string; value: number; value2: number }[]>([])
   const [appointmentsAttendancesData, setAppointmentsAttendancesData] = useState<{ label: string; value: number; value2: number }[]>([])
   const [attendancesSalesData, setAttendancesSalesData] = useState<{ label: string; value: number; value2: number }[]>([])
-  const [trafficSources, setTrafficSources] = useState<{ name: string; value: number; color: string }[]>([])
+  const [trafficSources, setTrafficSources] = useState<{ name: string; value: number; color?: string }[]>([])
   const [whatsappTrafficSources, setWhatsappTrafficSources] = useState<{ name: string; value: number; color?: string }[]>([])
   const [whatsappSourceStatus, setWhatsappSourceStatus] = useState<{ connected: boolean; hasData: boolean } | null>(null)
-  const [selectedSourceView, setSelectedSourceView] = useState<'web' | 'whatsapp'>('web')
+  const [appointmentSources, setAppointmentSources] = useState<{ name: string; value: number; color?: string }[]>([])
+  const [conversionSources, setConversionSources] = useState<{ name: string; value: number; color?: string }[]>([])
+  const [sourceBreakdownLoading, setSourceBreakdownLoading] = useState(false)
+  const [sourceMetric, setSourceMetric] = useState<SourceMetric>('web')
   const [funnelData, setFunnelData] = useState<{ stage: string; value: number }[]>([])
   const [funnelScope, setFunnelScope] = useState<'all' | 'attribution' | 'campaigns'>('all')
   const [financialScope, setFinancialScope] = useState<'all' | 'attribution' | 'campaigns'>('all')
@@ -521,12 +525,57 @@ export const Dashboard: React.FC = () => {
   const showTrafficSourcesChart = true
   const hasWebSourceView = analyticsEnabled
   const hasWhatsappSourceView = Boolean(whatsappSourceStatus?.connected || whatsappSourceStatus?.hasData)
-  const showBothSourceViews = hasWebSourceView && hasWhatsappSourceView
-  // Prioridad al sitio web cuando ambos están disponibles; si solo hay uno, ese manda.
-  const effectiveSourceView: 'web' | 'whatsapp' = hasWebSourceView
-    ? (showBothSourceViews ? selectedSourceView : 'web')
-    : 'whatsapp'
-  const sourceViewIsWhatsapp = effectiveSourceView === 'whatsapp'
+
+  // Un solo dropdown combina el origen de tráfico (web/WhatsApp) con citas y conversiones.
+  const sourceMetricOptions = React.useMemo<{ value: SourceMetric; label: string }[]>(() => {
+    const options: { value: SourceMetric; label: string }[] = []
+    if (hasWebSourceView) options.push({ value: 'web', label: 'Sitio web' })
+    if (hasWhatsappSourceView) options.push({ value: 'whatsapp', label: 'Mensajes' })
+    options.push({ value: 'appointments', label: 'Citas' })
+    options.push({ value: 'conversions', label: labels.customers })
+    return options
+  }, [hasWebSourceView, hasWhatsappSourceView, labels.customers])
+
+  // Si la métrica elegida deja de estar disponible (p.ej. web sin analytics), cae a la primera.
+  const effectiveSourceMetric: SourceMetric = sourceMetricOptions.some(option => option.value === sourceMetric)
+    ? sourceMetric
+    : (sourceMetricOptions[0]?.value ?? 'appointments')
+
+  const sourceChartData =
+    effectiveSourceMetric === 'web' ? trafficSources
+    : effectiveSourceMetric === 'whatsapp' ? whatsappTrafficSources
+    : effectiveSourceMetric === 'appointments' ? appointmentSources
+    : conversionSources
+
+  const customerLabelLower = labels.customers.toLowerCase()
+  const sourceChartMeta: Record<SourceMetric, {
+    title?: string; totalLabel?: string; itemLabel?: string; emptyText?: string; emptySubtext?: string
+  }> = {
+    web: {},
+    whatsapp: {
+      title: 'Origen de mensajes WhatsApp',
+      totalLabel: 'conversaciones',
+      itemLabel: 'Conversaciones',
+      emptyText: 'Sin origen de WhatsApp',
+      emptySubtext: 'Aparecerá cuando WhatsApp Web detecte mensajes con origen de anuncio o enlace'
+    },
+    appointments: {
+      title: 'Origen de citas',
+      totalLabel: 'citas',
+      itemLabel: 'Citas',
+      emptyText: 'Sin origen de citas',
+      emptySubtext: 'Aparecerá cuando haya citas agendadas en el rango'
+    },
+    conversions: {
+      title: `Origen de ${customerLabelLower}`,
+      totalLabel: customerLabelLower,
+      itemLabel: labels.customers,
+      emptyText: `Sin origen de ${customerLabelLower}`,
+      emptySubtext: 'Aparecerá cuando haya ventas en el rango'
+    }
+  }
+  const activeSourceMeta = sourceChartMeta[effectiveSourceMetric]
+  const sourceChartLoading = (effectiveSourceMetric === 'appointments' || effectiveSourceMetric === 'conversions') && sourceBreakdownLoading
 
   useEffect(() => {
     if (!analyticsPreferenceEnabled) {
@@ -1033,6 +1082,37 @@ export const Dashboard: React.FC = () => {
       mounted = false
     }
   }, [analyticsEnabled, dateRange.end, dateRange.start, user])
+
+  // Carga perezosa del desglose por origen de citas / conversiones (solo cuando se selecciona).
+  useEffect(() => {
+    if (!user) return
+    if (effectiveSourceMetric !== 'appointments' && effectiveSourceMetric !== 'conversions') return
+
+    let active = true
+    const metric = effectiveSourceMetric
+    setSourceBreakdownLoading(true)
+
+    dashboardService.getTrafficSources({
+      start: dateRange.start,
+      end: dateRange.end,
+      metric
+    })
+      .then((data) => {
+        if (!active) return
+        if (metric === 'appointments') {
+          setAppointmentSources(data)
+        } else {
+          setConversionSources(data)
+        }
+      })
+      .finally(() => {
+        if (active) setSourceBreakdownLoading(false)
+      })
+
+    return () => {
+      active = false
+    }
+  }, [effectiveSourceMetric, dateRange.start, dateRange.end, user])
 
   useEffect(() => {
     if (!user) return
@@ -1762,23 +1842,20 @@ export const Dashboard: React.FC = () => {
           />
           {showTrafficSourcesChart && (
             <TrafficSourcesChart
-              data={sourceViewIsWhatsapp ? whatsappTrafficSources : trafficSources}
-              loading={false}
-              title={sourceViewIsWhatsapp ? 'Origen de mensajes WhatsApp' : undefined}
-              totalLabel={sourceViewIsWhatsapp ? 'conversaciones' : undefined}
-              emptyText={sourceViewIsWhatsapp ? 'Sin origen de WhatsApp' : undefined}
-              emptySubtext={sourceViewIsWhatsapp ? 'Aparecerá cuando WhatsApp Web detecte mensajes con origen de anuncio o enlace' : undefined}
-              itemLabel={sourceViewIsWhatsapp ? 'Conversaciones' : undefined}
-              headerAction={showBothSourceViews ? (
+              data={sourceChartData}
+              loading={sourceChartLoading}
+              title={activeSourceMeta.title}
+              totalLabel={activeSourceMeta.totalLabel}
+              emptyText={activeSourceMeta.emptyText}
+              emptySubtext={activeSourceMeta.emptySubtext}
+              itemLabel={activeSourceMeta.itemLabel}
+              headerAction={(
                 <ViewSelector
-                  options={[
-                    { value: 'web', label: 'Sitio web' },
-                    { value: 'whatsapp', label: 'Mensajes' }
-                  ]}
-                  value={effectiveSourceView}
-                  onChange={(value) => setSelectedSourceView(value as 'web' | 'whatsapp')}
+                  options={sourceMetricOptions}
+                  value={effectiveSourceMetric}
+                  onChange={(value) => setSourceMetric(value as SourceMetric)}
                 />
-              ) : undefined}
+              )}
             />
           )}
         </div>

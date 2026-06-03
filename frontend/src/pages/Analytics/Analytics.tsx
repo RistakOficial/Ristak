@@ -28,6 +28,7 @@ import {
 } from '../../services/analyticsService'
 import { trackingService, type TrackingSession } from '../../services/trackingService'
 import { whatsappWebService, type WhatsAppWebAnalytics } from '../../services/whatsappWebService'
+import { dashboardService } from '../../services/dashboardService'
 import { formatDateToISO, parseLocalDateString, formatUrlParameter, formatChartNumber } from '../../utils/format'
 import { normalizeTrafficSource } from '../../utils/trafficSourceNormalizer'
 
@@ -35,7 +36,7 @@ type ViewType = 'day' | 'month' | 'year'
 type MonthPreset = 'last12' | 'thisYear' | 'custom'
 type AnalyticsMainChartView = 'traffic' | 'visitors-registrations' | 'sessions-visitors' | 'identity-returning'
 type AnalyticsConversionChartView = 'registrations-customers' | 'appointments-attendances' | 'prospects-customers' | 'messages-appointments' | 'appointments-patients'
-type AnalyticsDistributionView = 'sources' | 'platforms' | 'devices' | 'placements' | 'browsers' | 'os'
+type AnalyticsDistributionView = 'sources' | 'platforms' | 'devices' | 'placements' | 'browsers' | 'os' | 'appointments' | 'conversions'
 
 const monthNamesShort = [
   'ene', 'feb', 'mar', 'abr', 'may', 'jun',
@@ -718,6 +719,9 @@ const Analytics: React.FC = () => {
   const [selectedMainChartView, setSelectedMainChartView] = useState<AnalyticsMainChartView>('traffic')
   const [selectedConversionChartView, setSelectedConversionChartView] = useState<AnalyticsConversionChartView>('registrations-customers')
   const [selectedDistributionView, setSelectedDistributionView] = useState<AnalyticsDistributionView>('sources')
+  const [appointmentSourceData, setAppointmentSourceData] = useState<{ name: string; value: number; color?: string }[]>([])
+  const [conversionSourceData, setConversionSourceData] = useState<{ name: string; value: number; color?: string }[]>([])
+  const [distributionSourceLoading, setDistributionSourceLoading] = useState(false)
 
   // Guardar el valor ORIGINAL de registros para restaurar al quitar filtros
   const [originalRegistros, setOriginalRegistros] = useState<number>(0)
@@ -1847,8 +1851,10 @@ const Analytics: React.FC = () => {
     { value: 'devices', label: 'Dispositivos' },
     { value: 'placements', label: 'Ubicaciones' },
     { value: 'browsers', label: 'Navegadores' },
-    { value: 'os', label: 'Sistemas' }
-  ], [])
+    { value: 'os', label: 'Sistemas' },
+    { value: 'appointments', label: 'Citas' },
+    { value: 'conversions', label: appLabels.customers }
+  ], [appLabels.customers])
 
   const sessionTrendData = React.useMemo(
     () => buildSessionTrendData(sessionsForCharts, viewType, convertToLocalTime),
@@ -2049,6 +2055,28 @@ const Analytics: React.FC = () => {
           insightCountSuffix: 'sistemas activos',
           data: mapListToDistributionData(osData)
         }
+      case 'appointments':
+        return {
+          title: 'Origen de Citas',
+          totalLabel: 'citas',
+          emptyText: 'Sin origen de citas',
+          emptySubtext: 'Aparecerá cuando haya citas agendadas en el rango',
+          insightPrimaryLabel: 'Mayor origen',
+          insightCountLabel: 'Variedad',
+          insightCountSuffix: 'orígenes activos',
+          data: appointmentSourceData
+        }
+      case 'conversions':
+        return {
+          title: `Origen de ${appLabels.customers}`,
+          totalLabel: appLabels.customers.toLowerCase(),
+          emptyText: `Sin origen de ${appLabels.customers.toLowerCase()}`,
+          emptySubtext: 'Aparecerá cuando haya ventas en el rango',
+          insightPrimaryLabel: 'Mayor origen',
+          insightCountLabel: 'Variedad',
+          insightCountSuffix: 'orígenes activos',
+          data: conversionSourceData
+        }
       case 'sources':
       default:
         return {
@@ -2062,7 +2090,37 @@ const Analytics: React.FC = () => {
           data: trafficSources
         }
     }
-  }, [browserData, devicesData, osData, placementsData, platformsData, selectedDistributionView, trafficSources])
+  }, [appLabels.customers, appointmentSourceData, browserData, conversionSourceData, devicesData, osData, placementsData, platformsData, selectedDistributionView, trafficSources])
+
+  // Carga perezosa del desglose por origen para Citas / Conversiones en la distribución.
+  useEffect(() => {
+    if (selectedDistributionView !== 'appointments' && selectedDistributionView !== 'conversions') return
+
+    let active = true
+    const metric = selectedDistributionView
+    setDistributionSourceLoading(true)
+
+    dashboardService.getTrafficSources({
+      start: dateRange.start instanceof Date ? dateRange.start : new Date(dateRange.start),
+      end: dateRange.end instanceof Date ? dateRange.end : new Date(dateRange.end),
+      metric
+    })
+      .then((data) => {
+        if (!active) return
+        if (metric === 'appointments') {
+          setAppointmentSourceData(data)
+        } else {
+          setConversionSourceData(data)
+        }
+      })
+      .finally(() => {
+        if (active) setDistributionSourceLoading(false)
+      })
+
+    return () => {
+      active = false
+    }
+  }, [selectedDistributionView, dateRange.start, dateRange.end])
 
   const showWebAnalyticsBlocks = webTrackingConfigured
   const showWhatsAppSourceBlock = !webTrackingConfigured || Boolean(whatsAppAnalytics?.status.connected || whatsAppAnalytics?.status.hasData)
@@ -2308,9 +2366,10 @@ const Analytics: React.FC = () => {
           {showWebAnalyticsBlocks && (
             <TrafficSourcesChart
               data={distributionConfig.data}
-              loading={loading && !hasLoadedAnalytics}
+              loading={(loading && !hasLoadedAnalytics) || ((selectedDistributionView === 'appointments' || selectedDistributionView === 'conversions') && distributionSourceLoading)}
               title={distributionConfig.title}
               totalLabel={distributionConfig.totalLabel}
+              itemLabel={selectedDistributionView === 'appointments' ? 'Citas' : selectedDistributionView === 'conversions' ? appLabels.customers : undefined}
               emptyText={distributionConfig.emptyText}
               emptySubtext={distributionConfig.emptySubtext}
               insightPrimaryLabel={distributionConfig.insightPrimaryLabel}
