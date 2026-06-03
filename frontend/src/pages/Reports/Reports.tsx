@@ -299,49 +299,59 @@ const getManualExpenseRange = (expense: ManualBusinessExpense) => {
 
 const roundCurrencyValue = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100
 
-const getRangeOverlapDays = (
+// Los costos fijos configurados son MENSUALES: cada mes aporta su monto completo.
+// Para cualquier rango objetivo (día, mes, año o rango libre) se prorratea mes a mes:
+// cada mes contribuye monthlyValue * (díasDelMesDentroDelRango / díasTotalesDelMes).
+// Así un día = monthlyValue / díasDelMes, un mes completo = monthlyValue
+// y un año completo = monthlyValue * 12.
+const calculateMonthlyFixedCostForRange = (
   targetRange: { from: string; to: string },
-  sourceRange: { from: string; to: string }
+  monthlyValue: number
 ) => {
+  if (!Number.isFinite(monthlyValue) || monthlyValue <= 0) return 0
+
+  const startParts = parseDateKeyParts(targetRange.from)
+  const endParts = parseDateKeyParts(targetRange.to)
+  if (!startParts || !endParts) return 0
+
   const targetStart = toUtcDayIndex(targetRange.from)
   const targetEnd = toUtcDayIndex(targetRange.to)
-  const sourceStart = toUtcDayIndex(sourceRange.from)
-  const sourceEnd = toUtcDayIndex(sourceRange.to)
+  if (targetStart === null || targetEnd === null || targetEnd < targetStart) return 0
 
-  if (
-    targetStart === null ||
-    targetEnd === null ||
-    sourceStart === null ||
-    sourceEnd === null ||
-    targetEnd < targetStart ||
-    sourceEnd < sourceStart
-  ) {
-    return { overlapDays: 0, sourceDays: 0 }
+  let total = 0
+  let year = startParts.year
+  let month = startParts.month
+
+  while (year < endParts.year || (year === endParts.year && month <= endParts.month)) {
+    const daysInMonth = getLastDayOfMonth(year, month)
+    const monthStart = toUtcDayIndex(`${year}-${String(month).padStart(2, '0')}-01`)
+
+    if (monthStart !== null) {
+      const monthEnd = monthStart + daysInMonth - 1
+      const overlapStart = Math.max(targetStart, monthStart)
+      const overlapEnd = Math.min(targetEnd, monthEnd)
+
+      if (overlapEnd >= overlapStart) {
+        const overlapDays = overlapEnd - overlapStart + 1
+        total += (monthlyValue * overlapDays) / daysInMonth
+      }
+    }
+
+    month += 1
+    if (month > 12) {
+      month = 1
+      year += 1
+    }
   }
 
-  const overlapStart = Math.max(targetStart, sourceStart)
-  const overlapEnd = Math.min(targetEnd, sourceEnd)
-
-  if (overlapEnd < overlapStart) {
-    return { overlapDays: 0, sourceDays: sourceEnd - sourceStart + 1 }
-  }
-
-  return {
-    overlapDays: overlapEnd - overlapStart + 1,
-    sourceDays: sourceEnd - sourceStart + 1
-  }
+  return total
 }
 
 const calculateConfiguredBusinessCostsForRange = (
   targetRange: { from: string; to: string },
   costs: Cost[],
-  sourceRange: { from: string; to: string },
   revenue: number
 ) => {
-  const { overlapDays, sourceDays } = getRangeOverlapDays(targetRange, sourceRange)
-
-  if (overlapDays <= 0 || sourceDays <= 0) return 0
-
   const total = costs.reduce((sum, cost) => {
     if (Number(cost.is_active) === 0) return sum
 
@@ -349,7 +359,8 @@ const calculateConfiguredBusinessCostsForRange = (
     if (!Number.isFinite(value) || value <= 0) return sum
 
     if (cost.calculation_type === 'fixed') {
-      return sum + (value * overlapDays) / sourceDays
+      // Costo fijo mensual recurrente, prorrateado al periodo mostrado.
+      return sum + calculateMonthlyFixedCostForRange(targetRange, value)
     }
 
     if (cost.calculation_type === 'percentage' && cost.applies_to === 'revenue') {
@@ -1517,7 +1528,6 @@ export const Reports: React.FC = () => {
       expensesByPeriod[item.date] = calculateConfiguredBusinessCostsForRange(
         resolvePeriodRange(item.date, viewType),
         configuredCosts,
-        apiRange,
         item.revenue
       )
     })
@@ -1531,7 +1541,7 @@ export const Reports: React.FC = () => {
 
   const fixedBusinessExpensesTotalForRange = useMemo(() => {
     const revenue = summary?.payments.totalRevenue ?? metrics.reduce((sum, item) => sum + item.revenue, 0)
-    return calculateConfiguredBusinessCostsForRange(apiRange, configuredCosts, apiRange, revenue)
+    return calculateConfiguredBusinessCostsForRange(apiRange, configuredCosts, revenue)
   }, [apiRange, configuredCosts, summary?.payments.totalRevenue, metrics])
 
   const handleSaveBusinessExpense = useCallback(async (row: TableRow, rawValue: string): Promise<number | null> => {
