@@ -219,7 +219,7 @@ export const WhatsAppSettings: React.FC = () => {
     return (
       <Card className={styles.shell}>
         <div className={styles.generatingState}>
-          <RefreshCw size={26} className={styles.spin} />
+          <RefreshCw size={26} />
           <span>Cargando configuracion</span>
         </div>
       </Card>
@@ -310,7 +310,7 @@ export const WhatsAppSettings: React.FC = () => {
           </div>
         ) : isWaitingForQr ? (
           <div className={styles.generatingState}>
-            <RefreshCw size={34} className={styles.spin} />
+            <RefreshCw size={34} />
             <span>Generando QR</span>
             {session?.last_error && <p className={styles.errorText}>{session.last_error}</p>}
             <Button variant="outline" size="md" onClick={startConnection}>

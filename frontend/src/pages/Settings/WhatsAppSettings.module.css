@@ -132,10 +132,6 @@
   overflow-wrap: anywhere;
 }
 
-.spin {
-  animation: spin 0.85s linear infinite;
-}
-
 .connectedState {
   gap: 22px;
 }
@@ -315,12 +311,6 @@
   line-height: 1.4;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
 }
 
 @media (max-width: 680px) {
