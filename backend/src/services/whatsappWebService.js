@@ -15,6 +15,8 @@ import { buildPhoneMatchCandidates, normalizePhoneDigits, normalizePhoneForStora
 import { detectWhatsAppAttributionFields } from '../utils/whatsappAttribution.js'
 
 const DEFAULT_SESSION_ID = 'default'
+const RECONNECT_BASE_DELAY_MS = 2500
+const RECONNECT_MAX_DELAY_MS = 60000
 const SOURCE_NAME = 'WhatsApp Business'
 const GENERIC_CONTACT_NAME = 'Contacto WhatsApp'
 const FULL_HISTORY_BROWSER = Browsers.macOS('Desktop')
@@ -468,7 +470,9 @@ function getRuntime(sessionId = DEFAULT_SESSION_ID) {
       manualDisconnect: false,
       lidPhoneMap: new Map(),
       accountJid: null,
-      accountPhone: null
+      accountPhone: null,
+      reconnectAttempts: 0,
+      reconnectTimer: null
     })
   }
   return runtimeSessions.get(sessionId)
@@ -1681,6 +1685,11 @@ export async function startWhatsAppWebSession(sessionId = DEFAULT_SESSION_ID, { 
 
   if (resetAuth) {
     runtime.manualDisconnect = true
+    if (runtime.reconnectTimer) {
+      clearTimeout(runtime.reconnectTimer)
+      runtime.reconnectTimer = null
+    }
+    runtime.reconnectAttempts = 0
     disconnectRuntimeSocket(sessionId, runtime)
     runtime.lidPhoneMap.clear()
     runtime.accountJid = null
@@ -1755,6 +1764,7 @@ export async function startWhatsAppWebSession(sessionId = DEFAULT_SESSION_ID, { 
           }
 
           if (connection === 'open') {
+            runtime.reconnectAttempts = 0
             const accountInfo = await getConnectedAccountInfo(socket)
             runtime.accountJid = normalizeJid(accountInfo.jid || '')
             runtime.accountPhone = accountInfo.phone
@@ -1786,13 +1796,25 @@ export async function startWhatsAppWebSession(sessionId = DEFAULT_SESSION_ID, { 
 
           if (connection === 'close') {
             const statusCode = lastDisconnect?.error?.output?.statusCode
+            const reason = lastDisconnect?.error?.message || 'desconocido'
             const restartRequired = statusCode === DisconnectReason.restartRequired
             const authFailed = statusCode === DisconnectReason.loggedOut || statusCode === DisconnectReason.badSession
-            const shouldReconnect = !runtime.manualDisconnect && !authFailed
+            const connectionReplaced = statusCode === DisconnectReason.connectionReplaced
+            const shouldReconnect = !runtime.manualDisconnect && !authFailed && !connectionReplaced
+
+            logger.warn(`WhatsApp Business desconectado (status ${statusCode ?? 'n/a'}): ${reason}`)
+
             disconnectRuntimeSocket(sessionId, runtime)
 
             if (authFailed) {
               await clearAuthState(sessionId)
+            }
+
+            let lastError = null
+            if (connectionReplaced) {
+              lastError = 'Otra sesion de WhatsApp tomo el control de esta conexion. Reconecta manualmente para retomar.'
+            } else if (!shouldReconnect) {
+              lastError = reason
             }
 
             await updateSession(sessionId, {
@@ -1800,15 +1822,29 @@ export async function startWhatsAppWebSession(sessionId = DEFAULT_SESSION_ID, { 
               disconnected_at: nowIso(),
               qr_code: null,
               qr_image: null,
-              last_error: shouldReconnect ? null : (lastDisconnect?.error?.message || null)
+              last_error: lastError
             })
 
             if (shouldReconnect) {
-              setTimeout(() => {
+              const attempt = runtime.reconnectAttempts || 0
+              runtime.reconnectAttempts = attempt + 1
+              const delay = restartRequired
+                ? 0
+                : Math.min(RECONNECT_BASE_DELAY_MS * (2 ** attempt), RECONNECT_MAX_DELAY_MS)
+
+              if (delay > 0) {
+                logger.info(`WhatsApp Business reintentando conexion en ${Math.round(delay / 1000)}s (intento ${attempt + 1})`)
+              }
+
+              if (runtime.reconnectTimer) clearTimeout(runtime.reconnectTimer)
+              runtime.reconnectTimer = setTimeout(() => {
+                runtime.reconnectTimer = null
                 startWhatsAppWebSession(sessionId).catch(error => {
                   logger.error(`No se pudo reconectar WhatsApp Business: ${error.message}`)
                 })
-              }, restartRequired ? 0 : 2500)
+              }, delay)
+            } else {
+              runtime.reconnectAttempts = 0
             }
           }
         } catch (error) {
@@ -1903,6 +1939,11 @@ export async function disconnectWhatsAppWebSession(sessionId = DEFAULT_SESSION_I
   await ensureSessionRecord(sessionId)
   const runtime = getRuntime(sessionId)
   runtime.manualDisconnect = true
+  if (runtime.reconnectTimer) {
+    clearTimeout(runtime.reconnectTimer)
+    runtime.reconnectTimer = null
+  }
+  runtime.reconnectAttempts = 0
 
   if (runtime.socket) {
     try {
