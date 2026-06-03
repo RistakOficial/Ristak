@@ -58,7 +58,6 @@
 }
 
 .qrState,
-.generatingState,
 .idleState,
 .disconnectedState,
 .connectedState {
@@ -91,14 +90,6 @@
   color: var(--color-text-secondary);
   font-size: 14px;
   line-height: 1.5;
-}
-
-.generatingState {
-  flex: 1;
-  gap: 14px;
-  color: var(--color-text-secondary);
-  font-size: 18px;
-  font-weight: 750;
 }
 
 .idleState {
@@ -311,6 +302,69 @@
   line-height: 1.4;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
+}
+
+.skeletonHeaderRow {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding-bottom: 22px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+.skeletonHeaderText {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.skeletonBlock {
+  position: relative;
+  overflow: hidden;
+  border-radius: 8px;
+  background: var(--app-skeleton-base);
+}
+
+.skeletonBlock::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-110%);
+  background: linear-gradient(90deg, transparent 0%, var(--app-skeleton-highlight) 50%, transparent 100%);
+  animation: skeletonShimmer 1.45s ease-in-out infinite;
+}
+
+.skeletonLogo {
+  flex-shrink: 0;
+  width: 52px;
+  height: 52px;
+}
+
+.skeletonEyebrow {
+  width: 110px;
+  height: 12px;
+}
+
+.skeletonTitle {
+  width: 240px;
+  height: 36px;
+}
+
+.skeletonStage {
+  flex: 1;
+  width: 100%;
+  min-height: 470px;
+}
+
+.skeletonQr {
+  width: min(360px, 100%);
+  aspect-ratio: 1;
+}
+
+@keyframes skeletonShimmer {
+  100% {
+    transform: translateX(110%);
+  }
 }
 
 @media (max-width: 680px) {

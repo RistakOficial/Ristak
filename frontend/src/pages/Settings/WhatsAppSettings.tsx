@@ -218,10 +218,14 @@ export const WhatsAppSettings: React.FC = () => {
   if (loading) {
     return (
       <Card className={styles.shell}>
-        <div className={styles.generatingState}>
-          <RefreshCw size={26} />
-          <span>Cargando configuracion</span>
+        <div className={styles.skeletonHeaderRow} role="status" aria-live="polite" aria-label="Cargando configuracion">
+          <div className={`${styles.skeletonBlock} ${styles.skeletonLogo}`} />
+          <div className={styles.skeletonHeaderText}>
+            <div className={`${styles.skeletonBlock} ${styles.skeletonEyebrow}`} />
+            <div className={`${styles.skeletonBlock} ${styles.skeletonTitle}`} />
+          </div>
         </div>
+        <div className={`${styles.skeletonBlock} ${styles.skeletonStage}`} />
       </Card>
     )
   }
@@ -309,9 +313,8 @@ export const WhatsAppSettings: React.FC = () => {
             </Button>
           </div>
         ) : isWaitingForQr ? (
-          <div className={styles.generatingState}>
-            <RefreshCw size={34} />
-            <span>Generando QR</span>
+          <div className={styles.qrState} role="status" aria-live="polite" aria-label="Generando QR">
+            <div className={`${styles.skeletonBlock} ${styles.skeletonQr}`} />
             {session?.last_error && <p className={styles.errorText}>{session.last_error}</p>}
             <Button variant="outline" size="md" onClick={startConnection}>
               <RefreshCw size={16} />
