@@ -60,6 +60,12 @@ interface RecordPaymentModalProps {
   onClose: () => void
   onSuccess?: () => void
   initialPaymentMode?: PaymentMode
+  /**
+   * 'modal' (default) renderiza dentro del overlay Modal.
+   * 'embedded' renderiza el mismo flujo sin overlay, para incrustarlo en una
+   * página propia (por ejemplo la versión móvil de registro de pagos).
+   */
+  variant?: 'modal' | 'embedded'
 }
 
 interface Contact {
@@ -269,7 +275,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   isOpen,
   onClose,
   onSuccess,
-  initialPaymentMode = 'single'
+  initialPaymentMode = 'single',
+  variant = 'modal'
 }) => {
   const [loading, setLoading] = useState(false)
   const [step, setStep] = useState<'form' | 'options' | 'processing'>('form')
@@ -2075,6 +2082,21 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
             activePaymentMode === 'partial' ? 'Crear parcialidades' : 'Continuar'
           )}
         </Button>
+      </div>
+    )
+  }
+
+  if (variant === 'embedded') {
+    if (!isOpen) return null
+
+    return (
+      <div className={styles.embeddedRoot}>
+        <div className={styles.embeddedScroll} data-phone-scrollable="true">
+          {step === 'processing' && renderProcessing()}
+          {step === 'form' && renderForm()}
+          {step === 'options' && renderPaymentOptions()}
+        </div>
+        {renderFooter()}
       </div>
     )
   }

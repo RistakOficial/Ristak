@@ -369,6 +369,9 @@
   background: var(--design-card-bg, color-mix(in srgb, var(--color-background-secondary) 92%, transparent));
   box-shadow: var(--design-card-shadow, none);
   text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .paymentActionButton svg {

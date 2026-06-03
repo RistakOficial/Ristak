@@ -1,0 +1,358 @@
+.phonePage {
+  --phone-frame-bg: color-mix(in srgb, var(--color-background-primary) 92%, #ffffff 8%);
+  --phone-header-bg: color-mix(in srgb, var(--color-background-secondary) 96%, var(--color-background-primary) 4%);
+  position: fixed;
+  inset: 0;
+  isolation: isolate;
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  width: 100vw;
+  max-width: 100%;
+  height: 100dvh;
+  min-height: 100dvh;
+  max-height: 100dvh;
+  color: var(--color-text-primary);
+  background:
+    linear-gradient(180deg, rgba(16, 185, 129, 0.08), transparent 34%),
+    linear-gradient(135deg, rgba(59, 130, 246, 0.08), transparent 42%),
+    var(--phone-frame-bg);
+  overflow: visible;
+  overscroll-behavior: none;
+}
+
+.phonePage::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 100%;
+  height: env(safe-area-inset-top, 0px);
+  background: var(--phone-header-bg);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.phoneFrame {
+  position: relative;
+  z-index: 1;
+  isolation: isolate;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: 100%;
+  max-width: none;
+  height: 100dvh;
+  min-height: 100dvh;
+  max-height: 100dvh;
+  background: var(--phone-frame-bg);
+  box-shadow: none;
+  overflow: hidden;
+}
+
+/* Header — cubre el dynamic island con safe-area-inset-top (igual que el agente IA) */
+.header {
+  position: relative;
+  grid-row: 1;
+  z-index: 2;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  min-height: calc(74px + env(safe-area-inset-top));
+  padding: calc(env(safe-area-inset-top) + 14px) 14px 12px;
+  background: var(--phone-header-bg);
+  backdrop-filter: blur(16px);
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+.headerMain {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 10px;
+}
+
+.headerMain > div {
+  min-width: 0;
+}
+
+.brandMark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  border-radius: 8px;
+  color: #ffffff;
+  background: #111827;
+  font-size: 18px;
+  font-weight: 900;
+}
+
+.headerMain h1 {
+  margin: 2px 0 0;
+  color: var(--color-text-primary);
+  font-size: clamp(22px, 6.2vw, 30px);
+  font-weight: 850;
+  line-height: 1.08;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.eyebrow {
+  margin: 0;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+/* Botón "Volver" — solo texto simple con flechita, esquina superior izquierda */
+.backButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 6px 6px 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-text-primary);
+  font-size: 16px;
+  font-weight: 650;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.backButton:active {
+  opacity: 0.6;
+}
+
+.headerFormTitle {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: 17px;
+  font-weight: 750;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.iconButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 8px;
+  color: var(--color-text-primary);
+  background: color-mix(in srgb, var(--color-background-secondary) 90%, transparent);
+  text-decoration: none;
+  transition: transform 160ms ease, border-color 160ms ease, background 160ms ease;
+}
+
+.iconButton:hover {
+  transform: translateY(-1px);
+  border-color: rgba(59, 130, 246, 0.36);
+}
+
+/* Host del formulario embebido */
+.formHost {
+  grid-row: 2;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Vista de selección: dos botones, uno arriba y otro abajo */
+.selectStack {
+  grid-row: 2;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 22px 16px calc(env(safe-area-inset-bottom, 0px) + 22px);
+  overflow-y: auto;
+}
+
+.choiceCard {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  padding: 20px 18px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 16px;
+  background: var(--color-surface, var(--color-background-secondary));
+  color: var(--color-text-primary);
+  text-align: left;
+  cursor: pointer;
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.08);
+  transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.choiceCard:active {
+  transform: scale(0.99);
+  border-color: rgba(59, 130, 246, 0.4);
+}
+
+.choiceTop {
+  margin-bottom: auto;
+}
+
+.choiceBottom {
+  margin-top: auto;
+}
+
+.choiceIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 52px;
+  height: 52px;
+  border-radius: 14px;
+}
+
+.choiceIconGreen {
+  color: #047857;
+  background: rgba(16, 185, 129, 0.14);
+}
+
+.choiceIconBlue {
+  color: #1d4ed8;
+  background: rgba(59, 130, 246, 0.14);
+}
+
+.choiceText {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.choiceText strong {
+  font-size: 18px;
+  font-weight: 800;
+  line-height: 1.15;
+}
+
+.choiceText small {
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--color-text-secondary);
+}
+
+.choiceChevron {
+  flex: 0 0 auto;
+  color: var(--color-text-tertiary);
+}
+
+.selectHint {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* Estados de carga / bloqueo */
+.loadingPage,
+.blockedPage {
+  display: grid;
+  min-height: 100dvh;
+  padding: 24px;
+  color: var(--color-text-primary);
+  background:
+    linear-gradient(180deg, rgba(148, 163, 184, 0.08), transparent 42%),
+    var(--color-background-primary);
+  place-items: center;
+}
+
+.loadingDot {
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--color-text-tertiary);
+  border-top-color: transparent;
+  border-radius: 999px;
+  animation: spin 0.8s linear infinite;
+}
+
+.blockedPanel {
+  display: grid;
+  width: min(420px, 100%);
+  gap: 18px;
+  padding: 22px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--color-background-secondary) 94%, transparent);
+  box-shadow: 0 20px 56px rgba(15, 23, 42, 0.18);
+}
+
+.blockedIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  height: 46px;
+  border-radius: 12px;
+  color: var(--color-text-primary);
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+}
+
+.blockedCopy {
+  display: grid;
+  gap: 8px;
+}
+
+.blockedCopy h1 {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: 26px;
+  font-weight: 820;
+  line-height: 1.12;
+}
+
+.blockedCopy p:last-child {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+.dashboardLink {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  width: fit-content;
+  padding: 0 15px;
+  border-radius: 9px;
+  color: var(--color-background-primary);
+  background: var(--color-text-primary);
+  font-size: 14px;
+  font-weight: 750;
+  text-decoration: none;
+}
+
+.dashboardLink:hover {
+  opacity: 0.88;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

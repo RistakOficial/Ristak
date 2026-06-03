@@ -1455,3 +1455,33 @@ body.dark .tooltipInfo {
     padding: 14px 16px;
   }
 }
+
+/* Variante embebida (página móvil de pagos, sin overlay de Modal) */
+.embeddedRoot {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--color-surface);
+}
+
+.embeddedScroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
+.embeddedRoot .content,
+.embeddedRoot .optionsContent {
+  padding: 16px 16px 24px;
+  gap: 16px;
+}
+
+.embeddedRoot .footer {
+  position: sticky;
+  bottom: 0;
+  padding: 14px 16px calc(env(safe-area-inset-bottom, 0px) + 14px);
+  background: var(--color-surface);
+}

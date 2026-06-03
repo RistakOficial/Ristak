@@ -18,6 +18,7 @@ import { Appointments } from '@/pages/Appointments'
 import { Analytics } from '@/pages/Analytics'
 import { PhoneAgentChat } from '@/pages/PhoneAgentChat'
 import { PhoneApp } from '@/pages/PhoneApp'
+import { PhonePayments } from '@/pages/PhonePayments'
 import { Login } from '@/pages/Login'
 import { Setup } from '@/pages/Login/Setup'
 import { ToastContainer } from '@/components/common/Toast'
@@ -105,6 +106,14 @@ const AppWithNotifications: React.FC = () => {
             element={
               <ProtectedRoute>
                 <Navigate to="/phone/dashboard" replace />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/phone/payments"
+            element={
+              <ProtectedRoute>
+                <PhonePayments />
               </ProtectedRoute>
             }
           />

@@ -21,7 +21,6 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useDateRange } from '@/contexts/DateRangeContext'
 import { AccountSettings } from '@/pages/Settings/AccountSettings'
 import { AIAgentSettings } from '@/pages/Settings/AIAgentSettings'
-import { RecordPaymentModal } from '@/components/common'
 import { calendarsService, type AppointmentStats, type Calendar, type CalendarEvent } from '@/services/calendarsService'
 import { campaignsService, type Campaign } from '@/services/campaignsService'
 import { contactsService, type ContactStats } from '@/services/contactsService'
@@ -52,7 +51,6 @@ const PHONE_SECTION_IDS = [
 type PhoneSectionId = typeof PHONE_SECTION_IDS[number]
 type AccessState = 'checking' | 'allowed' | 'blocked'
 type TrendPoint = { label: string; value: number; value2?: number }
-type PhonePaymentModalMode = 'single' | 'partial'
 
 type PeriodOption = {
   id: 'today' | 'last7days' | 'thisMonth' | 'last30days' | 'last90days'
@@ -353,8 +351,6 @@ export const PhoneApp: React.FC = () => {
   const [loading, setLoading] = useState(true)
   const [refreshKey, setRefreshKey] = useState(0)
   const [loadError, setLoadError] = useState<string | null>(null)
-  const [showRecordPaymentModal, setShowRecordPaymentModal] = useState(false)
-  const [paymentModalMode, setPaymentModalMode] = useState<PhonePaymentModalMode>('single')
 
   const activeSectionId = isPhoneSectionId(params.section) ? params.section : null
   const activeSection = activeSectionId ? SECTION_BY_ID[activeSectionId] : SECTION_BY_ID.dashboard
@@ -717,11 +713,6 @@ export const PhoneApp: React.FC = () => {
     ]
   }, [appointmentsTrend, leadsTrend, salesTrend, visitorsTrend])
 
-  const openPaymentModal = (mode: PhonePaymentModalMode) => {
-    setPaymentModalMode(mode)
-    setShowRecordPaymentModal(true)
-  }
-
   if (!activeSectionId) {
     return <Navigate to="/phone/dashboard" replace />
   }
@@ -854,7 +845,6 @@ export const PhoneApp: React.FC = () => {
                 <TransactionsSection
                   summary={phoneData.transactionSummary}
                   transactions={recentTransactions}
-                  onOpenPayment={openPaymentModal}
                 />
               )}
 
@@ -898,16 +888,6 @@ export const PhoneApp: React.FC = () => {
           )}
         </section>
       </div>
-
-      <RecordPaymentModal
-        isOpen={showRecordPaymentModal}
-        initialPaymentMode={paymentModalMode}
-        onClose={() => setShowRecordPaymentModal(false)}
-        onSuccess={() => {
-          setShowRecordPaymentModal(false)
-          setRefreshKey((value) => value + 1)
-        }}
-      />
     </main>
   )
 }
@@ -995,38 +975,35 @@ function AppointmentsSection({ stats, events, calendars, trend }: AppointmentsSe
 interface TransactionsSectionProps {
   summary: TransactionSummary
   transactions: Transaction[]
-  onOpenPayment: (mode: PhonePaymentModalMode) => void
 }
 
-function TransactionsSection({ summary, transactions, onOpenPayment }: TransactionsSectionProps) {
+function TransactionsSection({ summary, transactions }: TransactionsSectionProps) {
   const revenueDelta = calculateDelta(summary.totalRevenue, summary.totalRevenuePrev)
   const paidDelta = calculateDelta(summary.completedPayments, summary.completedPaymentsPrev)
 
   return (
     <div className={styles.sectionStack}>
       <div className={styles.paymentActionGrid}>
-        <button
-          type="button"
+        <Link
+          to="/phone/payments?mode=single"
           className={`${styles.paymentActionButton} ${styles.paymentActionPrimary}`}
-          onClick={() => onOpenPayment('single')}
         >
           <CreditCard size={18} />
           <span>
             <strong>Cobrar cliente</strong>
             <small>Enviar link o registrar pago manual</small>
           </span>
-        </button>
-        <button
-          type="button"
+        </Link>
+        <Link
+          to="/phone/payments?mode=partial"
           className={styles.paymentActionButton}
-          onClick={() => onOpenPayment('partial')}
         >
           <CalendarDays size={18} />
           <span>
             <strong>Plan de pagos</strong>
             <small>Abrir parcialidades del formulario</small>
           </span>
-        </button>
+        </Link>
       </div>
 
       <div className={styles.metricGrid}>
