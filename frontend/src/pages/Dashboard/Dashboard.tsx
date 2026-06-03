@@ -25,6 +25,7 @@ import { useTimezone } from '@/contexts/TimezoneContext'
 import { useAppConfig, useIsRenderDomain } from '@/hooks'
 import { dashboardService, type DashboardMetrics, type ChartData, type DashboardVisitorDetail } from '@/services/dashboardService'
 import { trackingService } from '@/services/trackingService'
+import { whatsappWebService } from '@/services/whatsappWebService'
 import { reportsService, type ContactListItem } from '@/services/reportsService'
 import { transactionsService, type Transaction } from '@/services/transactionsService'
 import { calendarsService, type CalendarEvent } from '@/services/calendarsService'
@@ -482,6 +483,9 @@ export const Dashboard: React.FC = () => {
   const [appointmentsAttendancesData, setAppointmentsAttendancesData] = useState<{ label: string; value: number; value2: number }[]>([])
   const [attendancesSalesData, setAttendancesSalesData] = useState<{ label: string; value: number; value2: number }[]>([])
   const [trafficSources, setTrafficSources] = useState<{ name: string; value: number; color: string }[]>([])
+  const [whatsappTrafficSources, setWhatsappTrafficSources] = useState<{ name: string; value: number; color?: string }[]>([])
+  const [whatsappSourceStatus, setWhatsappSourceStatus] = useState<{ connected: boolean; hasData: boolean } | null>(null)
+  const [selectedSourceView, setSelectedSourceView] = useState<'web' | 'whatsapp'>('web')
   const [funnelData, setFunnelData] = useState<{ stage: string; value: number }[]>([])
   const [funnelScope, setFunnelScope] = useState<'all' | 'attribution' | 'campaigns'>('all')
   const [financialScope, setFinancialScope] = useState<'all' | 'attribution' | 'campaigns'>('all')
@@ -514,6 +518,14 @@ export const Dashboard: React.FC = () => {
   }, [analyticsEnabled, funnelData])
 
   const showTrafficSourcesChart = !isRenderDomain
+  const hasWebSourceView = analyticsEnabled
+  const hasWhatsappSourceView = Boolean(whatsappSourceStatus?.connected || whatsappSourceStatus?.hasData)
+  const showBothSourceViews = hasWebSourceView && hasWhatsappSourceView
+  // Prioridad al sitio web cuando ambos están disponibles; si solo hay uno, ese manda.
+  const effectiveSourceView: 'web' | 'whatsapp' = hasWebSourceView
+    ? (showBothSourceViews ? selectedSourceView : 'web')
+    : 'whatsapp'
+  const sourceViewIsWhatsapp = effectiveSourceView === 'whatsapp'
 
   useEffect(() => {
     if (!analyticsPreferenceEnabled) {
@@ -973,7 +985,7 @@ export const Dashboard: React.FC = () => {
     const loadData = async () => {
       setLoading(true)
       try {
-        const [metricsData, trafficSourcesData, funnelDataResponse] = await Promise.all([
+        const [metricsData, trafficSourcesData, funnelDataResponse, whatsappAnalytics] = await Promise.all([
           dashboardService.getDashboardMetrics({
             start: dateRange.start,
             end: dateRange.end
@@ -981,19 +993,29 @@ export const Dashboard: React.FC = () => {
           dashboardService.getTrafficSources({
             start: dateRange.start,
             end: dateRange.end,
-            includeWeb: analyticsEnabled
+            includeWeb: analyticsEnabled,
+            includeWhatsapp: false
           }),
           dashboardService.getFunnelData({
             start: dateRange.start,
             end: dateRange.end,
             scope: 'all'
-          })
+          }),
+          whatsappWebService
+            .getAnalytics({ start: formatDateToISO(dateRange.start), end: formatEndDateToISO(dateRange.end) })
+            .catch(() => null)
         ])
 
         if (!mounted) return
 
         setMetrics(metricsData)
         setTrafficSources(trafficSourcesData)
+        setWhatsappTrafficSources(whatsappAnalytics?.sources || [])
+        setWhatsappSourceStatus(
+          whatsappAnalytics?.status
+            ? { connected: whatsappAnalytics.status.connected, hasData: whatsappAnalytics.status.hasData }
+            : null
+        )
         setFunnelData(funnelDataResponse)
       } catch (error) {
         // TODO: add logging service
@@ -1739,13 +1761,23 @@ export const Dashboard: React.FC = () => {
           />
           {showTrafficSourcesChart && (
             <TrafficSourcesChart
-              data={trafficSources}
+              data={sourceViewIsWhatsapp ? whatsappTrafficSources : trafficSources}
               loading={false}
-              title={analyticsEnabled ? undefined : 'Origen de mensajes WhatsApp'}
-              totalLabel={analyticsEnabled ? undefined : 'conversaciones'}
-              emptyText={analyticsEnabled ? undefined : 'Sin origen de WhatsApp'}
-              emptySubtext={analyticsEnabled ? undefined : 'Aparecerá cuando WhatsApp Web detecte mensajes con origen de anuncio o enlace'}
-              itemLabel={analyticsEnabled ? undefined : 'Conversaciones'}
+              title={sourceViewIsWhatsapp ? 'Origen de mensajes WhatsApp' : undefined}
+              totalLabel={sourceViewIsWhatsapp ? 'conversaciones' : undefined}
+              emptyText={sourceViewIsWhatsapp ? 'Sin origen de WhatsApp' : undefined}
+              emptySubtext={sourceViewIsWhatsapp ? 'Aparecerá cuando WhatsApp Web detecte mensajes con origen de anuncio o enlace' : undefined}
+              itemLabel={sourceViewIsWhatsapp ? 'Conversaciones' : undefined}
+              headerAction={showBothSourceViews ? (
+                <ViewSelector
+                  options={[
+                    { value: 'web', label: 'Sitio web' },
+                    { value: 'whatsapp', label: 'Mensajes' }
+                  ]}
+                  value={effectiveSourceView}
+                  onChange={(value) => setSelectedSourceView(value as 'web' | 'whatsapp')}
+                />
+              ) : undefined}
             />
           )}
         </div>

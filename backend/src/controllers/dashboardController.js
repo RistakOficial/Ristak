@@ -908,7 +908,7 @@ export const getStorageStatus = async (req, res) => {
  */
 export const getTrafficSources = async (req, res) => {
   try {
-    const { startDate, endDate, includeWeb = '1' } = req.query
+    const { startDate, endDate, includeWeb = '1', includeWhatsapp = '1' } = req.query
 
     if (!startDate || !endDate) {
       return res.status(400).json({ success: false, error: 'Se requieren startDate y endDate' })
@@ -916,6 +916,7 @@ export const getTrafficSources = async (req, res) => {
 
     const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate })
     const shouldIncludeWeb = String(includeWeb) !== '0'
+    const shouldIncludeWhatsapp = String(includeWhatsapp) !== '0'
 
     // Cada visitante debe contar una sola vez. Tomamos su primera sesión del rango y
     // normalizamos en JS con la misma lógica robusta que usa Analytics.
@@ -960,11 +961,13 @@ export const getTrafficSources = async (req, res) => {
       sourcesMap.set(sourceName, (sourcesMap.get(sourceName) || 0) + 1)
     })
 
-    const whatsappSources = await getWhatsAppTrafficSourcesForRange({
-      startDate,
-      endDate,
-      limit: 50
-    })
+    const whatsappSources = shouldIncludeWhatsapp
+      ? await getWhatsAppTrafficSourcesForRange({
+          startDate,
+          endDate,
+          limit: 50
+        })
+      : []
 
     whatsappSources.forEach(source => {
       sourcesMap.set(source.name, (sourcesMap.get(source.name) || 0) + Number(source.value || 0))
@@ -984,6 +987,7 @@ export const getTrafficSources = async (req, res) => {
       'YouTube': '#ff0000',
       'Messenger': '#0084ff',
       'WhatsApp': '#25d366',
+      'WhatsApp directo': '#25d366',
       'Snapchat': '#fffc00',
       'Pinterest': '#e60023',
       'Reddit': '#ff4500',

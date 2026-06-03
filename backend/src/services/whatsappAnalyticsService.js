@@ -10,6 +10,7 @@ const SOURCE_COLORS = {
   Instagram: '#c32aa3',
   'Meta Ads': '#0084ff',
   WhatsApp: '#25d366',
+  'WhatsApp directo': '#25d366',
   Google: '#4285f4',
   TikTok: '#ee1d52',
   LinkedIn: '#0a66c2',
@@ -55,7 +56,7 @@ function attributionPredicate(alias = 'm') {
 }
 
 function normalizeSource(row = {}) {
-  return normalizeWhatsAppAttributionPlatform({
+  const platform = normalizeWhatsAppAttributionPlatform({
     referral_source_url: row.detected_source_url,
     source_url: row.detected_source_url,
     attribution_url: row.detected_source_url,
@@ -71,6 +72,9 @@ function normalizeSource(row = {}) {
     ctwa_clid: row.detected_ctwa_clid,
     source: 'WhatsApp'
   })
+
+  // Un mensaje sin origen de anuncio/enlace es una conversación directa de WhatsApp
+  return platform === 'WhatsApp' ? 'WhatsApp directo' : platform
 }
 
 function colorForSource(name) {
