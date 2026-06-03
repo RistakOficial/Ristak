@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useSearchParams } from 'react-router-dom'
-import { KpiCard, Card, Button, Table, DateRangePicker, PageContainer, TabList, Badge, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, ContactDetailsModal, BarChart, Loading, TreeFilter } from '@/components/common'
-import type { Column, BarChartData } from '@/components/common'
+import { KpiCard, Card, Button, Table, DateRangePicker, PageContainer, TabList, Badge, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, ContactDetailsModal, Loading, TreeFilter } from '@/components/common'
+import type { Column } from '@/components/common'
 import {
   Users,
   User,
@@ -372,14 +372,8 @@ export const Contacts: React.FC = () => {
   const [viewMode, setViewMode] = useState<'all' | 'by-date'>('all') // Por defecto 'all' (Todos)
   const [isClient, setIsClient] = useState(false)
   const [allEvents, setAllEvents] = useState<CalendarEvent[]>([]) // Eventos de calendarios
-  const [chartData, setChartData] = useState<BarChartData[]>([])
-  const [loadingChart, setLoadingChart] = useState(false)
   const [hasLoadedContacts, setHasLoadedContacts] = useState(false)
   const handledOpenContactRef = useRef<string | null>(null)
-
-  const rangeStart = dateRange.start instanceof Date ? dateRange.start : new Date(dateRange.start)
-  const rangeEnd = dateRange.end instanceof Date ? dateRange.end : new Date(dateRange.end)
-  const spansMultipleYears = rangeStart.getFullYear() !== rangeEnd.getFullYear()
 
   const openContactModal = (contact: Contact) => {
     setSelectedContact(contact)
@@ -448,7 +442,6 @@ export const Contacts: React.FC = () => {
 
   useEffect(() => {
     fetchData()
-    fetchChartData()
   }, [dateRange, viewMode])
 
   useEffect(() => {
@@ -661,40 +654,6 @@ export const Contacts: React.FC = () => {
     } catch (error) {
       showToast('error', 'No se pudo actualizar', 'GoHighLevel no aceptó el cambio. Revisa el valor e intenta de nuevo.')
       throw error
-    }
-  }
-
-  const fetchChartData = async () => {
-    // Solo mostrar gráfico en modo 'by-date'
-    if (viewMode !== 'by-date') {
-      setChartData([])
-      return
-    }
-
-    setLoadingChart(true)
-    try {
-      const start = dateRange.start instanceof Date ? dateRange.start : new Date(dateRange.start)
-      const end = dateRange.end instanceof Date ? dateRange.end : new Date(dateRange.end)
-      const startDate = formatDateToISO(start)
-      const endDate = formatEndDateToISO(end)
-
-      const data = await contactsService.getContactsChart(startDate, endDate)
-
-      // Formatear datos para el gráfico
-      const formattedData = data.map(item => ({
-        name: new Date(item.date).toLocaleDateString('es-MX', {
-          day: 'numeric',
-          month: 'short',
-          year: spansMultipleYears ? 'numeric' : undefined
-        }),
-        value: item.count
-      }))
-
-      setChartData(formattedData)
-    } catch (error) {
-      setChartData([])
-    } finally {
-      setLoadingChart(false)
     }
   }
 
@@ -1337,23 +1296,6 @@ export const Contacts: React.FC = () => {
             icon={<TrendingUp className="text-[var(--color-text-tertiary)]" />}
           />
         </div>
-
-        {viewMode === 'by-date' && (
-          <div className={styles.chartsGrid}>
-            <Card variant="glass" padding="lg">
-              <div className={styles.chartHeader}>
-                <h3 className={styles.chartTitle}>Registros por fecha</h3>
-                <p className={styles.chartSubtitle}>Visualiza cómo se han registrado los contactos a lo largo del tiempo</p>
-              </div>
-              <BarChart
-                data={chartData}
-                loading={loadingChart}
-                height={320}
-                formatTooltip={(value) => `${value} ${value === 1 ? 'registro' : 'registros'}`}
-              />
-            </Card>
-          </div>
-        )}
 
       <Card padding="none">
         <Table
