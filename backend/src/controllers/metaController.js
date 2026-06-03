@@ -26,6 +26,7 @@ import {
   saveMetaCustomValues
 } from '../services/highlevelSyncService.js';
 import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js';
+import { parseContactCustomFields } from '../utils/contactCustomFields.js';
 import { API_URLS } from '../config/constants.js';
 import fetch from 'node-fetch';
 
@@ -1286,6 +1287,7 @@ export const getContactsByType = async (req, res) => {
         c.attribution_ad_name,
         c.total_paid,
         c.purchases_count,
+        c.custom_fields,
         c.created_at,
         MAX(ma.campaign_name) as campaign_name,
         MAX(ma.adset_name) as adset_name,
@@ -1316,6 +1318,7 @@ export const getContactsByType = async (req, res) => {
                c.attribution_ad_name,
                c.total_paid,
                c.purchases_count,
+               c.custom_fields,
                c.created_at
       ORDER BY c.created_at DESC
     `;
@@ -1499,7 +1502,8 @@ export const getContactsByType = async (req, res) => {
         hasAttendedAppointment: contactsWithAttendances.has(contact.id),
         payments: payments,
         appointments: appointments,
-        firstSession: firstSession
+        firstSession: firstSession,
+        customFields: parseContactCustomFields(contact.custom_fields)
       };
     });
 

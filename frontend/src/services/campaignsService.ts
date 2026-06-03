@@ -1,5 +1,6 @@
 import { dedupeContacts } from '@/utils/contactDedup'
 import apiClient from './apiClient'
+import type { ContactCustomField } from '@/types'
 
 export interface Campaign {
   id: string
@@ -116,6 +117,7 @@ export interface CampaignContact {
   mergedContactIds?: string[]
   hasShowedAppointment?: boolean
   hasAttendedAppointment?: boolean
+  customFields?: ContactCustomField[]
 }
 
 interface CreativePreviewResponse {
