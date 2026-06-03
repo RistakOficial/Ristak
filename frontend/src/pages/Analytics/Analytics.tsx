@@ -1779,7 +1779,8 @@ const Analytics: React.FC = () => {
   const whatsAppTrendData = React.useMemo<TrafficPoint[]>(() => (
     (whatsAppAnalytics?.trend || []).map(item => ({
       label: formatPeriodLabel(item.label, viewType),
-      value: Number(item.messages || 0)
+      value: Number(item.messages || 0),
+      value2: 0
     }))
   ), [viewType, whatsAppAnalytics])
 
@@ -1801,13 +1802,6 @@ const Analytics: React.FC = () => {
       setSelectedMainChartView('traffic')
     }
   }, [selectedMainChartView, webTrackingConfigured])
-
-  useEffect(() => {
-    const validValues = conversionChartOptions.map(opt => opt.value)
-    if (!validValues.includes(selectedConversionChartView)) {
-      setSelectedConversionChartView(conversionChartOptions[0]?.value as AnalyticsConversionChartView)
-    }
-  }, [conversionChartOptions, selectedConversionChartView])
 
   useEffect(() => {
     if (!webTrackingConfigured && Object.keys(selectedFilters).length > 0) {
@@ -1839,6 +1833,13 @@ const Analytics: React.FC = () => {
 
     return opts
   }, [customersLabel, leadsLabel, webTrackingConfigured, whatsAppAnalytics])
+
+  useEffect(() => {
+    const validValues = conversionChartOptions.map(opt => opt.value)
+    if (!validValues.includes(selectedConversionChartView)) {
+      setSelectedConversionChartView(conversionChartOptions[0]?.value as AnalyticsConversionChartView)
+    }
+  }, [conversionChartOptions, selectedConversionChartView])
 
   const distributionOptions = React.useMemo<Array<{ value: AnalyticsDistributionView; label: string }>>(() => [
     { value: 'sources', label: 'Fuentes' },
