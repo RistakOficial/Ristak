@@ -1,7 +1,8 @@
-import React, { useRef, useState } from 'react'
-import { CheckCircle, Lock, Save, Upload, User, X } from 'lucide-react'
+import React, { useEffect, useRef, useState } from 'react'
+import { Check, CheckCircle, ChevronDown, Loader2, Lock, Save, Upload, User, X } from 'lucide-react'
 import { Button, Card } from '@/components/common'
 import { useAuth } from '@/contexts/AuthContext'
+import { useLabels } from '@/contexts/LabelsContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useAppConfig } from '@/hooks'
 import styles from './Settings.module.css'
@@ -9,9 +10,12 @@ import styles from './Settings.module.css'
 const API_URL = import.meta.env.VITE_API_URL || ''
 const PROFILE_PHOTO_KEY = 'admin_profile_photo'
 const MAX_PROFILE_PHOTO_SIZE = 1.5 * 1024 * 1024
+const CUSTOMER_LABEL_OPTIONS = ['Cliente', 'Paciente', 'Proyecto', 'Miembro', 'Alumno']
+const LEAD_LABEL_OPTIONS = ['Interesado', 'Prospecto', 'Mensaje', 'Lead', 'Consulta']
 
 export const AccountSettings: React.FC = () => {
   const { user, logout } = useAuth()
+  const { labels, updateLabels } = useLabels()
   const { showToast } = useNotification()
   const fileInputRef = useRef<HTMLInputElement | null>(null)
 
@@ -29,9 +33,37 @@ export const AccountSettings: React.FC = () => {
   const [isEditingPassword, setIsEditingPassword] = useState(false)
   const [isChangingPassword, setIsChangingPassword] = useState(false)
 
+  const [customLabels, setCustomLabels] = useState({
+    customer: labels.customer,
+    lead: labels.lead
+  })
+  const [openDropdown, setOpenDropdown] = useState<'customer' | 'lead' | null>(null)
+  const [savingLabels, setSavingLabels] = useState(false)
+
   const currentUsername = user?.username || 'admin'
   const visibleProfilePhoto = isEditingPhoto ? profilePhotoDraft : profilePhoto
   const usernameChanged = newUsername.trim() && newUsername.trim() !== currentUsername
+
+  useEffect(() => {
+    setCustomLabels({
+      customer: labels.customer,
+      lead: labels.lead
+    })
+  }, [labels])
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target
+      if (target instanceof Element && !target.closest('[data-labels-dropdown]')) {
+        setOpenDropdown(null)
+      }
+    }
+
+    if (openDropdown) {
+      document.addEventListener('click', handleClickOutside)
+      return () => document.removeEventListener('click', handleClickOutside)
+    }
+  }, [openDropdown])
 
   const handleStartPhotoEdit = () => {
     setProfilePhotoDraft(profilePhoto || '')
@@ -196,6 +228,35 @@ export const AccountSettings: React.FC = () => {
       showToast('error', 'Error', error.message || 'No se pudo cambiar la contraseña')
     } finally {
       setIsChangingPassword(false)
+    }
+  }
+
+  const handleSaveLabels = async (customer: string, lead: string) => {
+    const nextCustomer = customer || labels.customer
+    const nextLead = lead || labels.lead
+
+    setSavingLabels(true)
+    setCustomLabels({
+      customer: nextCustomer,
+      lead: nextLead
+    })
+
+    try {
+      await updateLabels({
+        customer: nextCustomer,
+        customers: `${nextCustomer}s`,
+        lead: nextLead,
+        leads: `${nextLead}s`
+      })
+      showToast('success', 'Guardado', 'Nombres actualizados')
+    } catch (error) {
+      setCustomLabels({
+        customer: labels.customer,
+        lead: labels.lead
+      })
+      showToast('error', 'Error', 'No se pudieron guardar los nombres')
+    } finally {
+      setSavingLabels(false)
     }
   }
 
@@ -440,6 +501,96 @@ export const AccountSettings: React.FC = () => {
                     </Button>
                   </div>
                 </>
+              )}
+            </section>
+
+            <section className={`${styles.accountSection} ${styles.accountSectionWide}`}>
+              <div className={styles.accountSectionHeader}>
+                <div>
+                  <h3 className={styles.accountSectionTitle}>Nombres de contactos</h3>
+                  <p className={styles.accountSectionDescription}>
+                    Define cómo se nombran tus clientes y prospectos en toda la cuenta.
+                  </p>
+                </div>
+              </div>
+
+              <div className={styles.labelsGrid}>
+                <div className={styles.labelField}>
+                  <label className={styles.label}>Clientes</label>
+                  <div className={styles.customDropdown} data-labels-dropdown>
+                    <button
+                      type="button"
+                      className={styles.dropdownTrigger}
+                      onClick={() => setOpenDropdown(openDropdown === 'customer' ? null : 'customer')}
+                      disabled={savingLabels}
+                    >
+                      <span>{customLabels.customer || 'Seleccionar...'}</span>
+                      <ChevronDown size={18} className={openDropdown === 'customer' ? styles.iconRotated : ''} />
+                    </button>
+                    {openDropdown === 'customer' && (
+                      <div className={styles.dropdownMenuWrapper}>
+                        <div className={styles.dropdownMenu}>
+                          {CUSTOMER_LABEL_OPTIONS.map((option) => (
+                            <button
+                              key={option}
+                              type="button"
+                              className={`${styles.dropdownItem} ${customLabels.customer === option ? styles.dropdownItemActive : ''}`}
+                              onClick={() => {
+                                setOpenDropdown(null)
+                                handleSaveLabels(option, customLabels.lead)
+                              }}
+                            >
+                              <span>{option}</span>
+                              {customLabels.customer === option && <Check size={16} />}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className={styles.labelField}>
+                  <label className={styles.label}>Prospectos</label>
+                  <div className={styles.customDropdown} data-labels-dropdown>
+                    <button
+                      type="button"
+                      className={styles.dropdownTrigger}
+                      onClick={() => setOpenDropdown(openDropdown === 'lead' ? null : 'lead')}
+                      disabled={savingLabels}
+                    >
+                      <span>{customLabels.lead || 'Seleccionar...'}</span>
+                      <ChevronDown size={18} className={openDropdown === 'lead' ? styles.iconRotated : ''} />
+                    </button>
+                    {openDropdown === 'lead' && (
+                      <div className={styles.dropdownMenuWrapper}>
+                        <div className={styles.dropdownMenu}>
+                          {LEAD_LABEL_OPTIONS.map((option) => (
+                            <button
+                              key={option}
+                              type="button"
+                              className={`${styles.dropdownItem} ${customLabels.lead === option ? styles.dropdownItemActive : ''}`}
+                              onClick={() => {
+                                setOpenDropdown(null)
+                                handleSaveLabels(customLabels.customer, option)
+                              }}
+                            >
+                              <span>{option}</span>
+                              {customLabels.lead === option && <Check size={16} />}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {savingLabels && (
+                <div className={styles.savingIndicator}>
+                  <Loader2 size={14} className={styles.spinIcon} />
+                  <span>Guardando...</span>
+                </div>
               )}
             </section>
           </div>

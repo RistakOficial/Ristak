@@ -8,12 +8,10 @@ import {
   AlertCircle,
   Eye,
   EyeOff,
-  Check,
   RefreshCw,
   Trash2,
   Loader2,
   Info,
-  ChevronDown,
   X,
   Plus,
   UserX
@@ -21,7 +19,6 @@ import {
 import { highLevelService } from '@/services/highLevelService'
 import { hiddenContactsService, type HiddenFilter } from '@/services/hiddenContactsService'
 import { useNotification } from '@/contexts/NotificationContext'
-import { useLabels } from '@/contexts/LabelsContext'
 import { useTheme } from '@/contexts/ThemeContext'
 import { requestAIAgentClose } from '@/utils/aiAgentEvents'
 import styles from './HighLevelIntegration.module.css'
@@ -41,7 +38,6 @@ interface IntegrationStatus {
 
 export const HighLevelIntegration: React.FC = () => {
   const { showToast } = useNotification()
-  const { labels, updateLabels } = useLabels()
   const { theme } = useTheme()
   const [loading, setLoading] = useState(false)
   const [checkingStatus, setCheckingStatus] = useState(false)
@@ -53,14 +49,6 @@ export const HighLevelIntegration: React.FC = () => {
   const [isEditMode, setIsEditMode] = useState(false)
   const [showDisconnectModal, setShowDisconnectModal] = useState(false)
 
-  // Estados para labels personalizados
-  const [savingLabels, setSavingLabels] = useState(false)
-  const [customLabels, setCustomLabels] = useState({
-    customer: '',
-    lead: ''
-  })
-  const [openDropdown, setOpenDropdown] = useState<'customer' | 'lead' | null>(null)
-
   // Estados para contactos ocultos
   const [showHiddenContactsModal, setShowHiddenContactsModal] = useState(false)
   const [hiddenFilters, setHiddenFilters] = useState<HiddenFilter[]>([])
@@ -68,31 +56,6 @@ export const HighLevelIntegration: React.FC = () => {
   const [newFilterType, setNewFilterType] = useState<'contains' | 'exact'>('contains')
   const [loadingFilters, setLoadingFilters] = useState(false)
   const [addingFilter, setAddingFilter] = useState(false)
-
-  useEffect(() => {
-    setCustomLabels({
-      customer: labels.customer,
-      lead: labels.lead
-    })
-  }, [labels])
-
-  // Cerrar dropdown al hacer click fuera
-  useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      const target = e.target as HTMLElement
-      if (!target.closest('[data-dropdown]')) {
-        setOpenDropdown(null)
-      }
-    }
-
-    if (openDropdown) {
-      document.addEventListener('click', handleClickOutside)
-      return () => document.removeEventListener('click', handleClickOutside)
-    }
-  }, [openDropdown])
-
-  const customerOptions = ['Cliente', 'Paciente', 'Proyecto', 'Miembro', 'Alumno']
-  const leadOptions = ['Interesado', 'Prospecto', 'Mensaje', 'Lead', 'Consulta']
 
   useEffect(() => {
     loadIntegrationStatus()
@@ -169,26 +132,6 @@ export const HighLevelIntegration: React.FC = () => {
       showToast('error', 'Error', 'Error al desconectar la cuenta')
     } finally {
       setLoading(false)
-    }
-  }
-
-  const handleSaveLabels = async (customer: string, lead: string) => {
-    setSavingLabels(true)
-    try {
-      // Generar automáticamente los plurales agregando "s"
-      const labelsToSave = {
-        customer: customer,
-        customers: customer + 's',
-        lead: lead,
-        leads: lead + 's'
-      }
-
-      await updateLabels(labelsToSave)
-      showToast('success', 'Guardado', 'Etiquetas actualizadas')
-    } catch (error) {
-      showToast('error', 'Error', 'No se pudieron guardar las etiquetas')
-    } finally {
-      setSavingLabels(false)
     }
   }
 
@@ -570,99 +513,6 @@ export const HighLevelIntegration: React.FC = () => {
               )}
             </Button>
           </div>
-        </div>
-        )}
-
-        {/* Personalización de Labels */}
-        {isConfigured && !isEditMode && (
-        <div className={styles.section}>
-          <div className={styles.sectionHeader}>
-            <h3 className={styles.sectionTitle}>Personaliza tu App</h3>
-          </div>
-          <p className={styles.sectionDescription}>
-            Elige cómo llamar a tus contactos y leads en toda la aplicación
-          </p>
-
-          <div className={styles.labelsGrid}>
-            <div className={styles.labelField}>
-              <label className={styles.formLabel}>¿Cómo llamas a tus clientes?</label>
-              <div className={styles.customDropdown} data-dropdown>
-                <button
-                  type="button"
-                  className={styles.dropdownTrigger}
-                  onClick={() => {
-                    setOpenDropdown(openDropdown === 'customer' ? null : 'customer')
-                  }}
-                >
-                  <span>{customLabels.customer || 'Seleccionar...'}</span>
-                  <ChevronDown size={18} className={openDropdown === 'customer' ? styles.iconRotated : ''} />
-                </button>
-                {openDropdown === 'customer' && (
-                  <div className={styles.dropdownMenuWrapper}>
-                    <div className={styles.dropdownMenu}>
-                      {customerOptions.map((option) => (
-                        <div
-                          key={option}
-                          className={`${styles.dropdownItem} ${customLabels.customer === option ? styles.dropdownItemActive : ''}`}
-                          onClick={() => {
-                            setCustomLabels({ ...customLabels, customer: option })
-                            handleSaveLabels(option, customLabels.lead)
-                            setOpenDropdown(null)
-                          }}
-                        >
-                          {option}
-                          {customLabels.customer === option && <Check size={16} />}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div className={styles.labelField}>
-              <label className={styles.formLabel}>¿Cómo llamas a tus leads?</label>
-              <div className={styles.customDropdown} data-dropdown>
-                <button
-                  type="button"
-                  className={styles.dropdownTrigger}
-                  onClick={() => {
-                    setOpenDropdown(openDropdown === 'lead' ? null : 'lead')
-                  }}
-                >
-                  <span>{customLabels.lead || 'Seleccionar...'}</span>
-                  <ChevronDown size={18} className={openDropdown === 'lead' ? styles.iconRotated : ''} />
-                </button>
-                {openDropdown === 'lead' && (
-                  <div className={styles.dropdownMenuWrapper}>
-                    <div className={styles.dropdownMenu}>
-                      {leadOptions.map((option) => (
-                        <div
-                          key={option}
-                          className={`${styles.dropdownItem} ${customLabels.lead === option ? styles.dropdownItemActive : ''}`}
-                          onClick={() => {
-                            setCustomLabels({ ...customLabels, lead: option })
-                            handleSaveLabels(customLabels.customer, option)
-                            setOpenDropdown(null)
-                          }}
-                        >
-                          {option}
-                          {customLabels.lead === option && <Check size={16} />}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {savingLabels && (
-            <div className={styles.savingIndicator}>
-              <Loader2 size={14} className={styles.spinIcon} />
-              <span>Guardando...</span>
-            </div>
-          )}
         </div>
         )}
 
