@@ -29,6 +29,7 @@ import {
 } from 'lucide-react'
 import { useDateRange } from '@/contexts/DateRangeContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
+import { useHighLevelConnected } from '@/hooks'
 import { formatCurrency, formatDateToISO, formatEndDateToISO, formatNumber, parseLocalDateString, formatName } from '@/utils/format'
 import { transactionsService, type Transaction, type TransactionSummary, type PaymentPlan } from '@/services/transactionsService'
 import { highLevelService } from '@/services/highLevelService'
@@ -286,6 +287,10 @@ export const Transactions: React.FC = () => {
     monthlyMode: 'dayOfMonth'
   })
   const [paymentTableTab, setPaymentTableTab] = useState<PaymentsTableTab>('transactions')
+
+  // Los planes de pago dependen de una integración de terceros (HighLevel).
+  // Sin ella, Ristak solo registra transacciones locales: no hay tab de planes.
+  const { connected: highLevelConnected } = useHighLevelConnected()
   const [transactionStatusFilters, setTransactionStatusFilters] = useState<StatusFilters>({})
   const [paymentPlanStatusFilters, setPaymentPlanStatusFilters] = useState<StatusFilters>({})
   const [viewMode, setViewMode] = useState<'all' | 'by-date'>('all') // Por defecto 'all' (Todos)
@@ -305,6 +310,14 @@ export const Transactions: React.FC = () => {
       fetchPaymentPlans()
     }
   }, [paymentTableTab])
+
+  // Si la integración se desconecta, regresar a transacciones: sin HighLevel no
+  // existen planes de pago que mostrar.
+  useEffect(() => {
+    if (!highLevelConnected && paymentTableTab === 'payment-plans') {
+      setPaymentTableTab('transactions')
+    }
+  }, [highLevelConnected, paymentTableTab])
 
   useEffect(() => {
     setIsClient(true)
@@ -1290,10 +1303,15 @@ export const Transactions: React.FC = () => {
     setTransactionStatusFilters(filters)
   }
 
-  const paymentTableTabs = [
-    { label: 'Transacciones', value: 'transactions' },
-    { label: 'Planes de pago', value: 'payment-plans' }
-  ]
+  // Solo se ofrece el selector Transacciones/Planes de pago cuando hay una
+  // integración de terceros conectada. Sin ella se omite (undefined) y la tabla
+  // no renderiza ninguna pestaña.
+  const paymentTableTabs = highLevelConnected
+    ? [
+        { label: 'Transacciones', value: 'transactions' },
+        { label: 'Planes de pago', value: 'payment-plans' }
+      ]
+    : undefined
 
   const statusFilterControl = (
     <TreeFilter

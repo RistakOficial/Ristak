@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import { Card, Button, Modal, CustomSelect, Loading } from '@/components/common'
 import { Calendar, Loader2, CheckCircle, XCircle, Info, Settings, Plus } from 'lucide-react'
 import { useNotification } from '@/contexts/NotificationContext'
-import { useAppConfig } from '@/hooks'
+import { useAppConfig, useHighLevelConnected } from '@/hooks'
 import { useAuth } from '@/contexts/AuthContext'
 import { calendarsService, type Calendar as CalendarType } from '@/services/calendarsService'
 import styles from './HighLevelIntegration.module.css'
@@ -16,6 +16,10 @@ export const CalendarsConfiguration: React.FC = () => {
   const [defaultCalendarId, setDefaultCalendarId] = useAppConfig<string>('default_calendar_id', '')
   const [attributionCalendarIds, setAttributionCalendarIds] = useAppConfig<string[]>('attribution_calendar_ids', [])
   const [calendarSourcePreference, setCalendarSourcePreference] = useAppConfig<'combined' | 'ristak' | 'ghl'>('calendar_source_preference', 'combined')
+
+  // El origen de calendarios solo tiene sentido con una integración de terceros
+  // (HighLevel). Sin ella, Ristak es la única fuente posible.
+  const { connected: highLevelConnected, loading: highLevelLoading } = useHighLevelConnected()
 
   // Estados locales
   const [calendars, setCalendars] = useState<CalendarType[]>([])
@@ -49,6 +53,23 @@ export const CalendarsConfiguration: React.FC = () => {
   useEffect(() => {
     loadCalendars()
   }, [locationId, accessToken, calendarSourcePreference])
+
+  // Sin integración conectada el selector de origen queda oculto. Si había quedado
+  // en "Solo HighLevel", se volvería a Ristak para no esconder sus calendarios
+  // (de lo contrario no habría forma de recuperarlos sin el selector).
+  useEffect(() => {
+    if (!highLevelLoading && !highLevelConnected && calendarSourcePreference === 'ghl') {
+      setCalendarSourcePreference('ristak').catch(() => {})
+    }
+  }, [highLevelLoading, highLevelConnected, calendarSourcePreference, setCalendarSourcePreference])
+
+  // Con un único calendario, ese es el predeterminado: no tiene sentido pedir
+  // selección manual cuando solo existe la opción de Ristak.
+  useEffect(() => {
+    if (!loadingCalendars && calendars.length === 1 && !defaultCalendarId) {
+      setDefaultCalendarId(calendars[0].id).catch(() => {})
+    }
+  }, [loadingCalendars, calendars, defaultCalendarId, setDefaultCalendarId])
 
   const loadCalendars = async () => {
     try {
@@ -380,36 +401,39 @@ export const CalendarsConfiguration: React.FC = () => {
           </div>
         </div>
 
-        {/* Origen de calendarios */}
-        <div className={styles.section}>
-          <h3 className={styles.sectionTitle}>Origen de Calendarios</h3>
-          <p className={styles.sectionDescription} style={{ marginBottom: '16px' }}>
-            Define qué calendarios se muestran para operar en Ristak. La sincronización sigue combinando datos cuando HighLevel está conectado.
-          </p>
+        {/* Origen de calendarios: solo aplica cuando hay una integración de
+            terceros conectada. Sin ella, Ristak es la única fuente. */}
+        {highLevelConnected && (
+          <div className={styles.section}>
+            <h3 className={styles.sectionTitle}>Origen de Calendarios</h3>
+            <p className={styles.sectionDescription} style={{ marginBottom: '16px' }}>
+              Define qué calendarios se muestran para operar en Ristak. La sincronización sigue combinando datos cuando HighLevel está conectado.
+            </p>
 
-          <div className={styles.sectionContent}>
-            <div className={styles.formField}>
-              <label className={styles.label}>Calendarios a usar</label>
-              <CustomSelect
-                value={calendarSourcePreference}
-                onChange={async (value) => {
-                  const nextValue = value as 'combined' | 'ristak' | 'ghl'
-                  await setCalendarSourcePreference(nextValue)
-                  showToast('success', 'Preferencia guardada', nextValue === 'combined' ? 'Ristak y HighLevel se mostrarán juntos' : nextValue === 'ristak' ? 'Solo se mostrarán calendarios de Ristak' : 'Solo se mostrarán calendarios de HighLevel')
-                  await loadCalendars()
-                }}
-                options={[
-                  { value: 'combined', label: 'Ristak + HighLevel' },
-                  { value: 'ristak', label: 'Solo Ristak' },
-                  { value: 'ghl', label: 'Solo HighLevel' }
-                ]}
-              />
-              <p className={styles.hint}>
-                Aunque filtres la vista, las citas y calendarios pendientes de Ristak se suben a HighLevel cuando la integración está activa.
-              </p>
+            <div className={styles.sectionContent}>
+              <div className={styles.formField}>
+                <label className={styles.label}>Calendarios a usar</label>
+                <CustomSelect
+                  value={calendarSourcePreference}
+                  onChange={async (value) => {
+                    const nextValue = value as 'combined' | 'ristak' | 'ghl'
+                    await setCalendarSourcePreference(nextValue)
+                    showToast('success', 'Preferencia guardada', nextValue === 'combined' ? 'Ristak y HighLevel se mostrarán juntos' : nextValue === 'ristak' ? 'Solo se mostrarán calendarios de Ristak' : 'Solo se mostrarán calendarios de HighLevel')
+                    await loadCalendars()
+                  }}
+                  options={[
+                    { value: 'combined', label: 'Ristak + HighLevel' },
+                    { value: 'ristak', label: 'Solo Ristak' },
+                    { value: 'ghl', label: 'Solo HighLevel' }
+                  ]}
+                />
+                <p className={styles.hint}>
+                  Aunque filtres la vista, las citas y calendarios pendientes de Ristak se suben a HighLevel cuando la integración está activa.
+                </p>
+              </div>
             </div>
           </div>
-        </div>
+        )}
 
         {/* Calendario Predeterminado */}
         <div className={styles.section}>
