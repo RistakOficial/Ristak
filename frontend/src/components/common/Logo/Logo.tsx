@@ -1,4 +1,5 @@
 import React from 'react'
+import { useTheme } from '@/contexts/ThemeContext'
 
 interface LogoProps {
   className?: string
@@ -14,12 +15,15 @@ const sizeClasses: Record<NonNullable<LogoProps['size']>, string> = {
 }
 
 export const Logo: React.FC<LogoProps> = ({ className = '', size = 'md' }) => {
+  const { theme } = useTheme()
+
   return (
     <div className={`${sizeClasses[size]} ${className}`}>
       <img
         src="/logo.svg?v=2"
         alt="Ristak"
         className="w-full h-full object-contain"
+        style={theme === 'dark' ? { filter: 'invert(1)' } : undefined}
       />
     </div>
   )

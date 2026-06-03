@@ -34,7 +34,7 @@ import { normalizeTrafficSource } from '../../utils/trafficSourceNormalizer'
 type ViewType = 'day' | 'month' | 'year'
 type MonthPreset = 'last12' | 'thisYear' | 'custom'
 type AnalyticsMainChartView = 'traffic' | 'visitors-registrations' | 'sessions-visitors' | 'identity-returning'
-type AnalyticsConversionChartView = 'registrations-customers' | 'appointments-attendances' | 'prospects-customers'
+type AnalyticsConversionChartView = 'registrations-customers' | 'appointments-attendances' | 'prospects-customers' | 'messages-appointments' | 'appointments-patients'
 type AnalyticsDistributionView = 'sources' | 'platforms' | 'devices' | 'placements' | 'browsers' | 'os'
 
 const monthNamesShort = [
@@ -254,7 +254,7 @@ type ChartMetricConfig = {
   title: string
   description: string
   label1: string
-  label2: string
+  label2?: string
   color: string
   color2: string
   data: TrafficPoint[]
@@ -629,6 +629,23 @@ const mergeVisitorRegistrationData = (
     label,
     value: visitorsByLabel.get(label) || 0,
     value2: registrationsByLabel.get(label) || 0
+  }))
+}
+
+const mergeWhatsAppWithAppointments = (
+  waData: TrafficPoint[],
+  convData: ConversionTrendPoint[]
+): TrafficPoint[] => {
+  const waByLabel = new Map(waData.map(item => [item.label, item.value]))
+  const apptByLabel = new Map(convData.map(item => [item.label, item.appointments]))
+  const labels = [
+    ...waData.map(item => item.label),
+    ...convData.map(item => item.label).filter(label => !waByLabel.has(label))
+  ]
+  return labels.map(label => ({
+    label,
+    value: waByLabel.get(label) || 0,
+    value2: apptByLabel.get(label) || 0
   }))
 }
 
@@ -1762,14 +1779,13 @@ const Analytics: React.FC = () => {
   const whatsAppTrendData = React.useMemo<TrafficPoint[]>(() => (
     (whatsAppAnalytics?.trend || []).map(item => ({
       label: formatPeriodLabel(item.label, viewType),
-      value: Number(item.messages || 0),
-      value2: Number(item.conversations || 0)
+      value: Number(item.messages || 0)
     }))
   ), [viewType, whatsAppAnalytics])
 
   const mainChartOptions = React.useMemo<Array<{ value: AnalyticsMainChartView; label: string }>>(() => {
     if (!webTrackingConfigured) {
-      return [{ value: 'traffic', label: 'Mensajes de WhatsApp' }]
+      return [{ value: 'traffic', label: 'Mensajes' }]
     }
 
     return [
@@ -1787,16 +1803,42 @@ const Analytics: React.FC = () => {
   }, [selectedMainChartView, webTrackingConfigured])
 
   useEffect(() => {
+    const validValues = conversionChartOptions.map(opt => opt.value)
+    if (!validValues.includes(selectedConversionChartView)) {
+      setSelectedConversionChartView(conversionChartOptions[0]?.value as AnalyticsConversionChartView)
+    }
+  }, [conversionChartOptions, selectedConversionChartView])
+
+  useEffect(() => {
     if (!webTrackingConfigured && Object.keys(selectedFilters).length > 0) {
       setSelectedFilters({})
     }
   }, [selectedFilters, webTrackingConfigured])
 
-  const conversionChartOptions = React.useMemo<Array<{ value: AnalyticsConversionChartView; label: string }>>(() => [
-    { value: 'registrations-customers', label: `Registros vs ${customersLabel}` },
-    { value: 'appointments-attendances', label: 'Citas vs Asistencias' },
-    { value: 'prospects-customers', label: `${leadsLabel} vs ${customersLabel}` }
-  ], [customersLabel, leadsLabel])
+  const conversionChartOptions = React.useMemo<Array<{ value: AnalyticsConversionChartView; label: string }>>(() => {
+    const hasWhatsApp = Boolean(whatsAppAnalytics?.status?.connected || whatsAppAnalytics?.status?.hasData)
+
+    if (!webTrackingConfigured) {
+      return [
+        { value: 'messages-appointments' as AnalyticsConversionChartView, label: 'Mensajes vs Citas' },
+        { value: 'appointments-patients' as AnalyticsConversionChartView, label: `Citas vs ${customersLabel}` }
+      ]
+    }
+
+    const opts: Array<{ value: AnalyticsConversionChartView; label: string }> = [
+      { value: 'registrations-customers', label: `Registros vs ${customersLabel}` },
+      { value: 'prospects-customers', label: `${leadsLabel} vs ${customersLabel}` }
+    ]
+
+    if (hasWhatsApp) {
+      opts.push(
+        { value: 'messages-appointments', label: 'Mensajes vs Citas' },
+        { value: 'appointments-patients', label: `Citas vs ${customersLabel}` }
+      )
+    }
+
+    return opts
+  }, [customersLabel, leadsLabel, webTrackingConfigured, whatsAppAnalytics])
 
   const distributionOptions = React.useMemo<Array<{ value: AnalyticsDistributionView; label: string }>>(() => [
     { value: 'sources', label: 'Fuentes' },
@@ -1830,9 +1872,8 @@ const Analytics: React.FC = () => {
     if (!webTrackingConfigured) {
       return {
         title: 'Mensajes de WhatsApp',
-        description: `Mensajes entrantes y conversaciones por ${periodLabel}`,
-        label1: 'Mensajes entrantes',
-        label2: 'Conversaciones',
+        description: `Mensajes recibidos por ${periodLabel}`,
+        label1: 'Mensajes',
         color: 'var(--design-chart-primary, #10b981)',
         color2: 'var(--design-chart-tertiary, #3b82f6)',
         data: whatsAppTrendData,
@@ -1913,6 +1954,28 @@ const Analytics: React.FC = () => {
           data: mapTrendToChartData(conversionTrendData, 'prospects', 'customers'),
           emptyMessage: `Sin ${leadsLabelLower} o ${customersLabelLower} disponibles`
         }
+      case 'messages-appointments':
+        return {
+          title: 'Mensajes vs Citas',
+          description: `Cuántos mensajes de WhatsApp llegan versus citas agendadas por ${periodLabel}`,
+          label1: 'Mensajes',
+          label2: 'Citas',
+          color: 'var(--design-chart-primary, #10b981)',
+          color2: 'var(--design-chart-warning, #f59e0b)',
+          data: mergeWhatsAppWithAppointments(whatsAppTrendData, conversionTrendData),
+          emptyMessage: 'Sin mensajes o citas disponibles'
+        }
+      case 'appointments-patients':
+        return {
+          title: `Citas vs ${customersLabel}`,
+          description: `Cuántas citas agendadas se convierten en ${customersLabelLower} por ${periodLabel}`,
+          label1: 'Citas',
+          label2: customersLabel,
+          color: 'var(--design-chart-warning, #f59e0b)',
+          color2: 'var(--design-chart-primary, #10b981)',
+          data: mapTrendToChartData(conversionTrendData, 'appointments', 'customers'),
+          emptyMessage: `Sin citas o ${customersLabelLower} disponibles`
+        }
       case 'registrations-customers':
       default:
         return {
@@ -1926,7 +1989,7 @@ const Analytics: React.FC = () => {
           emptyMessage: `Sin registros o ${customersLabelLower} disponibles`
         }
     }
-  }, [conversionTrendData, customersLabel, customersLabelLower, leadsLabel, leadsLabelLower, periodLabel, selectedConversionChartView])
+  }, [conversionTrendData, customersLabel, customersLabelLower, leadsLabel, leadsLabelLower, periodLabel, selectedConversionChartView, whatsAppTrendData])
 
   const distributionConfig = React.useMemo(() => {
     switch (selectedDistributionView) {
@@ -2146,10 +2209,12 @@ const Analytics: React.FC = () => {
                   <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: mainChartConfig.color }} />
                   <span className="font-medium">{mainChartConfig.label1}</span>
                 </span>
-                <span className="inline-flex items-center gap-2">
-                  <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: mainChartConfig.color2 }} />
-                  <span className="font-medium">{mainChartConfig.label2}</span>
-                </span>
+                {mainChartConfig.label2 && (
+                  <span className="inline-flex items-center gap-2">
+                    <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: mainChartConfig.color2 }} />
+                    <span className="font-medium">{mainChartConfig.label2}</span>
+                  </span>
+                )}
               </div>
               <ViewSelector
                 options={mainChartOptions}
