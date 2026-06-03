@@ -5,6 +5,7 @@ import { normalizeTrafficSource } from '../utils/trafficSourceNormalizer.js';
 import { getGroupExpression } from '../services/analyticsService.js';
 import { getManualBusinessExpensesTotalForRange } from '../services/manualBusinessExpensesService.js';
 import { getWhatsAppTrafficSourcesForRange } from '../services/whatsappAnalyticsService.js';
+import { getContactSourceBreakdown } from '../services/contactSourceService.js';
 import { DateTime } from 'luxon';
 import { getContactsWithAppointmentsHybrid, getContactsWithShowedAppointmentsHybrid } from '../services/appointmentsMerge.js';
 import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js';
@@ -908,13 +909,20 @@ export const getStorageStatus = async (req, res) => {
  */
 export const getTrafficSources = async (req, res) => {
   try {
-    const { startDate, endDate, includeWeb = '1', includeWhatsapp = '1' } = req.query
+    const { startDate, endDate, includeWeb = '1', includeWhatsapp = '1', metric = 'traffic' } = req.query
 
     if (!startDate || !endDate) {
       return res.status(400).json({ success: false, error: 'Se requieren startDate y endDate' })
     }
 
     const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate })
+
+    // Métricas alternativas: origen de citas / conversiones, agrupado por fuente del contacto.
+    if (metric === 'appointments' || metric === 'conversions') {
+      const data = await getSourceBreakdownByMetric(metric, range)
+      return res.json({ success: true, data })
+    }
+
     const shouldIncludeWeb = String(includeWeb) !== '0'
     const shouldIncludeWhatsapp = String(includeWhatsapp) !== '0'
 
@@ -1017,6 +1025,66 @@ export const getTrafficSources = async (req, res) => {
     logger.error(`Error en getTrafficSources: ${error.message}`)
     res.status(500).json({ success: false, error: 'Error al obtener fuentes de tráfico' })
   }
+}
+
+/**
+ * Desglose por fuente de origen para métricas de citas o conversiones.
+ * - appointments: contactos con cita (date_added) dentro del rango.
+ * - conversions: contactos cuyo PRIMER pago exitoso cae en el rango (clientes nuevos),
+ *   misma definición que la etapa "Clientes" del embudo en vista "Todos".
+ * En ambos casos se agrupa por la fuente resuelta del contacto (sesión web + WhatsApp/Meta).
+ * @param {'appointments'|'conversions'} metric
+ * @param {{ startUtc: string, endUtc: string }} range
+ * @returns {Promise<Array<{ name: string, value: number }>>}
+ */
+async function getSourceBreakdownByMetric(metric, range) {
+  const hiddenFilters = await getHiddenContactFilters()
+  const hiddenConditionContacts = buildHiddenContactsCondition(hiddenFilters, 'contacts', false)
+  const hiddenConditionC = hiddenConditionContacts ? hiddenConditionContacts.replace(/contacts\./g, 'c.') : ''
+
+  let contactIds = []
+
+  if (metric === 'appointments') {
+    const attributionCalendarIds = await getAttributionCalendarIds()
+    const conditions = ['a.date_added >= ?', 'a.date_added <= ?', 'a.contact_id IS NOT NULL']
+    const params = [range.startUtc, range.endUtc]
+
+    if (attributionCalendarIds && attributionCalendarIds.length > 0) {
+      conditions.push(`a.calendar_id IN (${attributionCalendarIds.map(() => '?').join(', ')})`)
+      params.push(...attributionCalendarIds)
+    }
+    if (hiddenConditionC) conditions.push(hiddenConditionC)
+
+    const rows = await db.all(`
+      SELECT DISTINCT a.contact_id AS id
+      FROM appointments a
+      INNER JOIN contacts c ON c.id = a.contact_id
+      WHERE ${conditions.join(' AND ')}
+    `, params)
+    contactIds = rows.map(row => row.id)
+  } else {
+    // conversions: clientes nuevos = contactos cuyo primer pago exitoso cae en el rango
+    const SUCCESS_PAYMENT_STATUSES = ['succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success']
+    const statusPlaceholders = SUCCESS_PAYMENT_STATUSES.map(() => '?').join(', ')
+    const conditions = ['first_p.first_payment_date >= ?', 'first_p.first_payment_date <= ?']
+    if (hiddenConditionC) conditions.push(hiddenConditionC)
+
+    const rows = await db.all(`
+      SELECT DISTINCT c.id AS id
+      FROM contacts c
+      INNER JOIN (
+        SELECT contact_id, MIN(date) as first_payment_date
+        FROM payments
+        WHERE LOWER(status) IN (${statusPlaceholders})
+          AND ${nonTestPaymentCondition()}
+        GROUP BY contact_id
+      ) first_p ON first_p.contact_id = c.id
+      WHERE ${conditions.join(' AND ')}
+    `, [...SUCCESS_PAYMENT_STATUSES, range.startUtc, range.endUtc])
+    contactIds = rows.map(row => row.id)
+  }
+
+  return getContactSourceBreakdown(contactIds, { limit: 10 })
 }
 
 /**
