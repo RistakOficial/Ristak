@@ -136,6 +136,10 @@ export interface GoogleCalendarIntegrationStatus {
   updatedAt: string | null;
 }
 
+export interface GoogleCalendarServiceAccountReveal {
+  serviceAccountJson: string;
+}
+
 export interface AppointmentStats {
   pending: number;
   cancelled: number;
@@ -182,6 +186,10 @@ export const calendarsService = {
 
   async getGoogleIntegration(): Promise<GoogleCalendarIntegrationStatus> {
     return apiClient.get<GoogleCalendarIntegrationStatus>('/calendars/google-integration');
+  },
+
+  async revealGoogleServiceAccount(): Promise<GoogleCalendarServiceAccountReveal> {
+    return apiClient.get<GoogleCalendarServiceAccountReveal>('/calendars/google-integration/reveal/service-account');
   },
 
   async saveGoogleIntegration(payload: {

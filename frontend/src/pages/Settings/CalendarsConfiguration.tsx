@@ -222,6 +222,16 @@ export const CalendarsConfiguration: React.FC = () => {
       const data = await calendarsService.getGoogleIntegration()
       setGoogleIntegration(data)
       setGoogleCalendarId(data.calendarId || '')
+      if (data.connected) {
+        try {
+          const revealed = await calendarsService.revealGoogleServiceAccount()
+          setServiceAccountJson(revealed.serviceAccountJson || '')
+        } catch {
+          setServiceAccountJson('')
+        }
+      } else {
+        setServiceAccountJson('')
+      }
       setEditingGoogleIntegration(!data.connected)
     } catch (error: any) {
       showToast('error', 'Error al cargar Google Calendar', error.message || 'No se pudo leer la integración')
@@ -277,7 +287,12 @@ export const CalendarsConfiguration: React.FC = () => {
       })
       setGoogleIntegration(data)
       setGoogleCalendarId(data.calendarId || normalizedCalendarId)
-      setServiceAccountJson('')
+      try {
+        const revealed = await calendarsService.revealGoogleServiceAccount()
+        setServiceAccountJson(revealed.serviceAccountJson || serviceAccountJson.trim())
+      } catch {
+        setServiceAccountJson(serviceAccountJson.trim())
+      }
       setEditingGoogleIntegration(false)
       await loadCalendars()
       showToast('success', 'Google Calendar guardado', 'La conexión quedó guardada. Ahora puedes probar o sincronizar manualmente.')
@@ -318,6 +333,19 @@ export const CalendarsConfiguration: React.FC = () => {
       showToast('error', 'No se pudo sincronizar Google Calendar', error.message || 'Revisa permisos y comparte el calendario con el Service Account')
     } finally {
       setSyncingGoogleIntegration(false)
+    }
+  }
+
+  const handleEditGoogleIntegration = async () => {
+    setEditingGoogleIntegration(true)
+
+    if (serviceAccountJson.trim()) return
+
+    try {
+      const revealed = await calendarsService.revealGoogleServiceAccount()
+      setServiceAccountJson(revealed.serviceAccountJson || '')
+    } catch (error: any) {
+      showToast('error', 'No se pudo cargar el JSON', error.message || 'Pega el JSON manualmente para reemplazarlo')
     }
   }
 
@@ -968,7 +996,7 @@ export const CalendarsConfiguration: React.FC = () => {
                     placeholder='{"type":"service_account","project_id":"...","private_key":"-----BEGIN PRIVATE KEY-----\\n...","client_email":"..."}'
                     spellCheck={false}
                   />
-                  <small>{isConnected ? 'Si sólo cambias el Calendar ID, puedes dejar vacío el JSON para conservar la llave actual.' : 'Se guarda cifrado en backend. Después de guardar ya no se mostrará el JSON.'}</small>
+                  <small>{isConnected ? 'El JSON guardado se precarga para que puedas editarlo o reemplazarlo. Se mantiene cifrado en backend.' : 'Se guarda cifrado en backend. Después de guardar se seguirá mostrando aquí para edición.'}</small>
                 </label>
               </div>
 
@@ -1072,7 +1100,7 @@ export const CalendarsConfiguration: React.FC = () => {
                     </>
                   )}
                 </Button>
-                <Button variant="ghost" onClick={() => setEditingGoogleIntegration(true)} disabled={busyGoogleAction}>
+                <Button variant="ghost" onClick={handleEditGoogleIntegration} disabled={busyGoogleAction}>
                   <Pencil size={16} />
                   Editar
                 </Button>

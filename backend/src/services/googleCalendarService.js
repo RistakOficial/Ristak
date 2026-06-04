@@ -187,6 +187,15 @@ export async function getGoogleCalendarConfig({ includeCredentials = false } = {
   }
 }
 
+export async function getGoogleServiceAccountJson() {
+  const config = await getGoogleCalendarConfig({ includeCredentials: true })
+  if (!config?.credentials) {
+    throw new Error('Google Calendar no esta configurado')
+  }
+
+  return JSON.stringify(config.credentials, null, 2)
+}
+
 export async function saveGoogleCalendarConfig({ calendarId, credentials }) {
   const normalizedCalendarId = normalizeGoogleCalendarIdInput(calendarId)
   if (!normalizedCalendarId) {
@@ -931,6 +940,7 @@ export default {
   deleteGoogleEventForAppointment,
   getGoogleCalendarConfig,
   getGoogleCalendarMetadata,
+  getGoogleServiceAccountJson,
   listGoogleCalendars,
   listGoogleEvents,
   normalizeServiceAccountCredentials,

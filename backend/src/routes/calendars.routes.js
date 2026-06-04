@@ -16,6 +16,7 @@ router.post('/', calendarsController.createCalendar);
 
 // Integración Google Calendar por Service Account
 router.get('/google-integration', calendarsController.getGoogleCalendarIntegration);
+router.get('/google-integration/reveal/service-account', calendarsController.revealGoogleCalendarServiceAccount);
 router.put('/google-integration', calendarsController.saveGoogleCalendarIntegration);
 router.post('/google-integration/test', calendarsController.testGoogleCalendarIntegration);
 router.post('/google-integration/sync', calendarsController.syncGoogleCalendarIntegration);

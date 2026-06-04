@@ -159,6 +159,27 @@ export async function getGoogleCalendarIntegration(req, res) {
 }
 
 /**
+ * GET /api/calendars/google-integration/reveal/service-account
+ * Devuelve el JSON del Service Account para edición en Settings.
+ */
+export async function revealGoogleCalendarServiceAccount(req, res) {
+  try {
+    res.json({
+      success: true,
+      data: {
+        serviceAccountJson: await googleCalendarService.getGoogleServiceAccountJson()
+      }
+    });
+  } catch (error) {
+    logger.warn(`[Calendars Controller] No se pudo revelar JSON Google Calendar: ${error.message}`);
+    res.status(404).json({
+      success: false,
+      error: error.message
+    });
+  }
+}
+
+/**
  * PUT /api/calendars/google-integration
  * Guarda credenciales cifradas de Service Account y Calendar ID.
  */
