@@ -23,6 +23,7 @@ interface TrafficSourcesChartProps {
   insightCountSuffix?: string
   headerAction?: React.ReactNode
   titleSlot?: React.ReactNode
+  showZeroStateAsChart?: boolean
 }
 
 interface ChartSource {
@@ -117,7 +118,8 @@ export const TrafficSourcesChart: React.FC<TrafficSourcesChartProps> = ({
   insightCountLabel = 'Diversificación',
   insightCountSuffix = 'fuentes activas',
   headerAction,
-  titleSlot
+  titleSlot,
+  showZeroStateAsChart = false
 }) => {
   const normalizedData = useMemo(() => {
     const sourceMap = new Map<string, { name: string; value: number; color?: string; firstIndex: number }>()
@@ -310,6 +312,26 @@ export const TrafficSourcesChart: React.FC<TrafficSourcesChartProps> = ({
               <div className={styles.centerValue}>
                 {(activeSource?.value ?? totalVisits).toLocaleString('es-MX')}
               </div>
+            </div>
+          </div>
+        ) : showZeroStateAsChart ? (
+          <div className={styles.donutFrame} data-ristak-chart-zero>
+            <svg
+              className={styles.donutChart}
+              viewBox="0 0 200 200"
+              role="img"
+              aria-label={`${title} con 0 ${totalLabel}`}
+              shapeRendering="geometricPrecision"
+            >
+              <circle
+                className={styles.donutTrack}
+                cx={DONUT_CENTER}
+                cy={DONUT_CENTER}
+                r={DONUT_RADIUS}
+              />
+            </svg>
+            <div className={styles.centerLabel}>
+              <div className={styles.centerValue}>0</div>
             </div>
           </div>
         ) : (
