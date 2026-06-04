@@ -1014,45 +1014,6 @@ body.dark .select:focus {
   font-weight: 700;
 }
 
-.timezonePreview {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.timezonePreviewItem {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 4px;
-  padding: 12px;
-  border: 1px solid rgba(148, 163, 184, 0.16);
-  border-radius: 8px;
-  background: var(--color-background-primary);
-}
-
-.timezonePreviewLabel {
-  color: var(--color-text-tertiary);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-}
-
-.timezonePreviewValue {
-  overflow-wrap: anywhere;
-  color: var(--color-text-primary);
-  font-size: 14px;
-  font-weight: 750;
-  line-height: 1.25;
-}
-
-.timezonePreviewMeta {
-  overflow-wrap: anywhere;
-  color: var(--color-text-tertiary);
-  font-size: 12px;
-  line-height: 1.35;
-}
-
 .storageUsageSection {
   gap: 12px;
 }
@@ -1141,8 +1102,7 @@ body.dark .select:focus {
 
   .accountGrid,
   .passwordGrid,
-  .labelsGrid,
-  .timezonePreview {
+  .labelsGrid {
     grid-template-columns: 1fr;
   }
 

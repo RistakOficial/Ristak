@@ -45,7 +45,6 @@ interface TimezoneDisplayInfo {
   value: string
   offset: string
   currentTime: string
-  currentDateTime: string
   optionLabel: string
 }
 
@@ -104,22 +103,6 @@ const formatTimezoneTime = (timeZone: string, atDate: Date): string => {
   }
 }
 
-const formatTimezoneDateTime = (timeZone: string, atDate: Date): string => {
-  try {
-    return new Intl.DateTimeFormat('es-MX', {
-      timeZone,
-      weekday: 'short',
-      day: '2-digit',
-      month: 'short',
-      hour: 'numeric',
-      minute: '2-digit',
-      hour12: true
-    }).format(atDate)
-  } catch {
-    return 'Hora no disponible'
-  }
-}
-
 const buildTimezoneDisplayInfo = (timeZone: string, atDate: Date): TimezoneDisplayInfo => {
   const offset = formatTimezoneOffset(timeZone, atDate)
   const currentTime = formatTimezoneTime(timeZone, atDate)
@@ -128,7 +111,6 @@ const buildTimezoneDisplayInfo = (timeZone: string, atDate: Date): TimezoneDispl
     value: timeZone,
     offset,
     currentTime,
-    currentDateTime: formatTimezoneDateTime(timeZone, atDate),
     optionLabel: `${timeZone} (${offset}) - ${currentTime}`
   }
 }
@@ -173,10 +155,6 @@ export const AccountSettings: React.FC = () => {
   const visibleProfilePhoto = isEditingPhoto ? profilePhotoDraft : profilePhoto
   const usernameChanged = newUsername.trim() && newUsername.trim() !== currentUsername
   const storagePercent = Math.max(0, Math.min(100, storageStatus?.percentUsed ?? 0))
-  const browserTimezone = useMemo(
-    () => Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
-    []
-  )
   const timezoneOptions = useMemo(
     () => ALL_TIMEZONES.map((tz) => buildTimezoneDisplayInfo(tz, timezoneClock)),
     [timezoneClock]
@@ -184,10 +162,6 @@ export const AccountSettings: React.FC = () => {
   const selectedTimezoneInfo = useMemo(
     () => buildTimezoneDisplayInfo(timezoneDraft || timezone || 'UTC', timezoneClock),
     [timezoneDraft, timezone, timezoneClock]
-  )
-  const browserTimezoneInfo = useMemo(
-    () => buildTimezoneDisplayInfo(browserTimezone, timezoneClock),
-    [browserTimezone, timezoneClock]
   )
 
   useEffect(() => {
@@ -865,22 +839,6 @@ export const AccountSettings: React.FC = () => {
                 </Button>
               </div>
 
-              <div className={styles.timezonePreview} aria-live="polite">
-                <div className={styles.timezonePreviewItem}>
-                  <span className={styles.timezonePreviewLabel}>Zona seleccionada</span>
-                  <strong className={styles.timezonePreviewValue}>{selectedTimezoneInfo.currentDateTime}</strong>
-                  <span className={styles.timezonePreviewMeta}>
-                    {selectedTimezoneInfo.value} · {selectedTimezoneInfo.offset}
-                  </span>
-                </div>
-                <div className={styles.timezonePreviewItem}>
-                  <span className={styles.timezonePreviewLabel}>Reloj del navegador</span>
-                  <strong className={styles.timezonePreviewValue}>{browserTimezoneInfo.currentDateTime}</strong>
-                  <span className={styles.timezonePreviewMeta}>
-                    {browserTimezoneInfo.value} · {browserTimezoneInfo.offset}
-                  </span>
-                </div>
-              </div>
             </section>
 
             <section className={`${styles.accountSection} ${styles.accountSectionWide} ${styles.storageUsageSection}`}>
