@@ -691,6 +691,7 @@ const Analytics: React.FC = () => {
   const [yearRange, setYearRange] = useState(defaultYearRange)
   const [selectedMainChartView, setSelectedMainChartView] = useState<AnalyticsMainChartView>('traffic')
   const [selectedConversionChartView, setSelectedConversionChartView] = useState<AnalyticsConversionChartView>('registrations-customers')
+  const [conversionChartTouched, setConversionChartTouched] = useState(false)
 
   // Guardar el valor ORIGINAL de registros para restaurar al quitar filtros
   const [originalRegistros, setOriginalRegistros] = useState<number>(0)
@@ -1723,11 +1724,20 @@ const Analytics: React.FC = () => {
   }, [customersLabel, leadsLabel, webTrackingConfigured, whatsAppAnalytics])
 
   useEffect(() => {
+    if (
+      !conversionChartTouched &&
+      webTrackingConfigured &&
+      selectedConversionChartView !== 'registrations-customers'
+    ) {
+      setSelectedConversionChartView('registrations-customers')
+      return
+    }
+
     const validValues = conversionChartOptions.map(opt => opt.value)
     if (!validValues.includes(selectedConversionChartView)) {
       setSelectedConversionChartView(conversionChartOptions[0]?.value as AnalyticsConversionChartView)
     }
-  }, [conversionChartOptions, selectedConversionChartView])
+  }, [conversionChartOptions, conversionChartTouched, selectedConversionChartView, webTrackingConfigured])
 
   const sessionTrendData = React.useMemo(
     () => buildSessionTrendData(sessionsForCharts, viewType, convertToLocalTime),
@@ -2066,7 +2076,10 @@ const Analytics: React.FC = () => {
                   variant="title"
                   options={conversionChartOptions}
                   value={selectedConversionChartView}
-                  onChange={(value) => setSelectedConversionChartView(value as AnalyticsConversionChartView)}
+                  onChange={(value) => {
+                    setConversionChartTouched(true)
+                    setSelectedConversionChartView(value as AnalyticsConversionChartView)
+                  }}
                 />
                 <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
                   {conversionChartConfig.description}
