@@ -131,7 +131,6 @@ export const OriginDistributionCard: React.FC = () => {
           />
           {category === 'traffic' && (
             <ViewSelector
-              variant="title"
               options={DIMENSION_OPTIONS}
               value={dimension}
               onChange={(value) => setDimension(value as TrafficDimension)}
