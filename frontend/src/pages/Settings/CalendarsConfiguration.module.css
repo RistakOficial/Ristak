@@ -466,13 +466,16 @@
 /* ===== Google Calendar tab ===== */
 .googleLayout {
   display: grid;
-  grid-template-columns: minmax(0, 1.15fr) minmax(320px, 0.85fr);
-  gap: 16px;
+  grid-template-columns: minmax(330px, 0.86fr) minmax(0, 1.14fr);
+  gap: 20px;
   align-items: start;
+  margin-top: 4px;
+  padding: 8px 4px 2px;
 }
 
 .connectionPanel,
 .guidePanel {
+  min-width: 0;
   padding: 18px;
   border: 1px solid rgba(148, 163, 184, 0.18);
   border-radius: 12px;
@@ -500,7 +503,50 @@
 }
 
 .guideHeader {
-  justify-content: flex-start;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.guideHeader > svg {
+  flex: 0 0 auto;
+}
+
+.guideHeader > div {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.guideToggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 34px;
+  padding: 0 11px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 8px;
+  background: rgba(148, 163, 184, 0.055);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 750;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.guideToggle:hover {
+  border-color: rgba(148, 163, 184, 0.32);
+  background: rgba(148, 163, 184, 0.1);
+  color: var(--color-text-primary);
+}
+
+.guideToggle svg {
+  transition: transform 0.16s ease;
+}
+
+.guideToggleOpen svg {
+  transform: rotate(180deg);
 }
 
 .statusPill {
@@ -826,17 +872,37 @@
 .setupNotice {
   display: grid;
   gap: 5px;
-  margin-bottom: 14px;
-  padding: 12px 0;
-  border-top: 1px solid rgba(148, 163, 184, 0.14);
-  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+  margin-bottom: 12px;
+  padding: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 10px;
+  background: rgba(148, 163, 184, 0.04);
   color: var(--color-text-secondary);
   font-size: 13px;
   line-height: 1.45;
 }
 
-.setupNotice strong {
+.guidePreview {
+  display: grid;
+  gap: 5px;
+  padding: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 10px;
+  background: rgba(148, 163, 184, 0.035);
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.setupNotice strong,
+.guidePreview strong {
   color: var(--color-text-primary);
+}
+
+.guideBody {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
 }
 
 .setupSteps {
@@ -1001,6 +1067,19 @@
   .sourceControl {
     display: grid;
     grid-template-columns: auto auto minmax(0, 1fr);
+  }
+
+  .googleLayout {
+    padding: 6px 0 0;
+  }
+
+  .guideHeader {
+    align-items: stretch;
+    flex-wrap: wrap;
+  }
+
+  .guideToggle {
+    width: 100%;
   }
 
   .calendarRow {
