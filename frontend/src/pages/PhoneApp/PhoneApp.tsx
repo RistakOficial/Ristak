@@ -402,7 +402,7 @@ export const PhoneApp: React.FC = () => {
     const previousBodyHeight = body.style.height
     const previousBodyOverscroll = body.style.overscrollBehavior
     const previousBodyBackground = body.style.background
-    const phoneHeaderBackground = 'color-mix(in srgb, var(--color-background-secondary) 96%, var(--color-background-primary) 4%)'
+    const phoneFrameBackground = 'color-mix(in srgb, var(--color-background-primary) 92%, #ffffff 8%)'
     let startX = 0
     let startY = 0
 
@@ -413,11 +413,11 @@ export const PhoneApp: React.FC = () => {
     html.style.overflow = 'hidden'
     html.style.height = '100%'
     html.style.overscrollBehavior = 'none'
-    html.style.background = phoneHeaderBackground
+    html.style.background = phoneFrameBackground
     body.style.overflow = 'hidden'
     body.style.height = '100%'
     body.style.overscrollBehavior = 'none'
-    body.style.background = phoneHeaderBackground
+    body.style.background = phoneFrameBackground
 
     const getScrollableElement = (target: EventTarget | null) => {
       if (!(target instanceof Element)) return null

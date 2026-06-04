@@ -1,6 +1,5 @@
 .phonePage {
   --phone-frame-bg: color-mix(in srgb, var(--color-background-primary) 92%, #ffffff 8%);
-  --phone-header-bg: color-mix(in srgb, var(--color-background-secondary) 96%, var(--color-background-primary) 4%);
   position: fixed;
   inset: 0;
   isolation: isolate;
@@ -19,18 +18,6 @@
     var(--phone-frame-bg);
   overflow: visible;
   overscroll-behavior: none;
-}
-
-.phonePage::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 0;
-  height: env(safe-area-inset-top, 0px);
-  background: var(--phone-header-bg);
-  pointer-events: none;
-  z-index: 2;
 }
 
 .phoneFrame {
@@ -62,9 +49,9 @@
   min-width: 0;
   min-height: calc(74px + env(safe-area-inset-top));
   padding: calc(env(safe-area-inset-top) + 14px) 14px 12px;
-  background: var(--phone-header-bg);
-  backdrop-filter: blur(16px);
-  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+  background: transparent;
+  backdrop-filter: none;
+  border-bottom: 0;
 }
 
 .headerMain {
