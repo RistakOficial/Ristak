@@ -26,11 +26,11 @@
   position: absolute;
   left: 0;
   right: 0;
-  bottom: 100%;
+  top: 0;
   height: env(safe-area-inset-top, 0px);
   background: var(--phone-header-bg);
   pointer-events: none;
-  z-index: 0;
+  z-index: 2;
 }
 
 .phoneFrame {
