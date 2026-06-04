@@ -78,6 +78,11 @@ export interface SiteTheme {
   textColor?: string
   template?: SiteTemplateId
   pages?: SitePage[]
+  pagePadding?: number
+  pageRadius?: number
+  pageBorderColor?: string
+  pageMaxWidth?: number
+  metaConversionTarget?: 'same_page' | 'next_page'
   brandName?: string
   brandSubtitle?: string
   brandAvatar?: string

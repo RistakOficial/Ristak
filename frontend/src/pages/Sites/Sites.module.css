@@ -2323,3 +2323,267 @@
 .swatchBtnActive {
   box-shadow: 0 0 0 2px var(--color-background-primary), 0 0 0 4px var(--color-primary);
 }
+
+/* Refinamiento del editor visual de Sites */
+.editorHeader {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.85fr) minmax(620px, 1.8fr);
+  align-items: start;
+}
+
+.editorHeaderIdentity {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.editorTopControls {
+  display: flex;
+  justify-content: flex-end;
+  align-items: end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.publicTitleEditorField {
+  width: min(520px, 100%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-text-secondary);
+}
+
+.publicTitleEditorField input {
+  width: 100%;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  padding: 4px 6px;
+  font: inherit;
+  font-size: 0.98rem;
+  font-weight: 700;
+  outline: none;
+}
+
+.publicTitleEditorField svg {
+  color: var(--color-text-tertiary);
+  flex: 0 0 auto;
+}
+
+.editorNameField {
+  flex-direction: row;
+}
+
+.editorNameField input:hover,
+.editorNameField input:focus,
+.publicTitleEditorField input:hover,
+.publicTitleEditorField input:focus {
+  border-color: rgba(148, 163, 184, 0.22);
+  background: rgba(148, 163, 184, 0.08);
+}
+
+.compactField {
+  min-width: 132px;
+  display: grid;
+  gap: 5px;
+  color: var(--color-text-primary);
+}
+
+.compactField span {
+  color: var(--color-text-secondary);
+  font-size: 0.74rem;
+  font-weight: 850;
+}
+
+.compactField input,
+.compactField select {
+  width: 100%;
+  min-height: 38px;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 8px;
+  background: var(--color-background-primary);
+  color: var(--color-text-primary);
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 0.84rem;
+  outline: none;
+}
+
+.builderGridLanding {
+  grid-template-columns: 178px 204px minmax(560px, 1fr) minmax(280px, 340px);
+}
+
+.builderGridForm {
+  grid-template-columns: 210px minmax(560px, 1fr) minmax(280px, 340px);
+}
+
+.canvasWrap,
+.canvasWrapDark {
+  min-height: 720px;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 8px;
+  background: var(--site-frame, var(--site-background)) !important;
+  background-image: none !important;
+  background-size: auto !important;
+  padding: var(--site-page-padding, 18px);
+}
+
+.pageCanvas {
+  width: min(var(--site-page-max, 1040px), 100%);
+  min-height: 680px;
+  gap: clamp(20px, 3vw, 42px);
+  border: 1px solid var(--site-page-border, transparent);
+  border-radius: var(--site-page-radius, 0);
+  background: var(--site-background);
+  color: var(--site-text);
+  padding: 0;
+  box-shadow: none;
+}
+
+.canvasBlock,
+.darkCanvas .canvasBlock {
+  border: 1px solid transparent;
+  border-radius: var(--block-radius, 8px);
+  background: var(--block-bg, transparent);
+  color: var(--block-text, var(--site-text));
+  padding: var(--block-pad, 0);
+}
+
+.canvasBlock:hover,
+.canvasBlockSelected {
+  border-color: color-mix(in srgb, var(--site-accent) 55%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--site-accent) 14%, transparent);
+}
+
+.dragHandle,
+.blockDelete {
+  top: 8px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+}
+
+.dragHandle {
+  left: 8px;
+}
+
+.blockDelete {
+  right: 8px;
+}
+
+.canvasBlockSelected .dragHandle,
+.canvasBlockSelected .blockDelete,
+.canvasBlock:hover .dragHandle,
+.canvasBlock:hover .blockDelete {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.previewHero {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  justify-items: center;
+  text-align: center;
+  gap: 20px;
+  border: 1px solid var(--site-border, rgba(148, 163, 184, 0.22));
+  border-radius: clamp(20px, 2.4vw, 28px);
+  background: var(--site-surface, var(--site-background));
+  padding: clamp(32px, 4.6vw, 64px) clamp(18px, 3vw, 42px);
+}
+
+.previewHero::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  z-index: -1;
+  background-image:
+    linear-gradient(to right, color-mix(in srgb, var(--site-text) 7%, transparent) 1px, transparent 1px),
+    linear-gradient(to bottom, color-mix(in srgb, var(--site-text) 7%, transparent) 1px, transparent 1px);
+  background-size: 56px 56px;
+  -webkit-mask-image: radial-gradient(ellipse 78% 66% at 50% 28%, #000, transparent 72%);
+  mask-image: radial-gradient(ellipse 78% 66% at 50% 28%, #000, transparent 72%);
+}
+
+.inlineHeroTitle,
+.inlineHeadingInput,
+.previewHeadline {
+  color: var(--block-text, var(--site-text)) !important;
+  font-size: var(--block-font-size, clamp(2.3rem, 5.6vw, 4rem));
+  line-height: 1.03;
+}
+
+.previewSubheading,
+.previewText,
+.inlineTextArea,
+.inlineFieldHelp {
+  color: var(--site-muted, #64748b) !important;
+}
+
+.previewListTitle,
+.inlineFieldLabel,
+.previewField label,
+.previewList article strong {
+  color: var(--block-text, var(--site-text)) !important;
+}
+
+.inlineButtonInput,
+.previewButton {
+  color: #fff !important;
+}
+
+.pageCanvas .inlineControls,
+.pageCanvas .inlineBlockTools {
+  display: none;
+}
+
+.panelSubheader {
+  color: var(--color-text-primary);
+  font-size: 0.82rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.editorSubmitPreview {
+  display: flex;
+  justify-content: stretch;
+}
+
+.editorSubmitPreview button {
+  width: 100%;
+  min-height: 50px;
+  border: 1px solid var(--site-accent);
+  border-radius: 14px;
+  background: var(--site-accent);
+  color: #fff;
+  font: inherit;
+  font-weight: 850;
+}
+
+.socialProfileSelectable {
+  border: 1px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.socialProfileSelectable:hover,
+.socialProfileSelected {
+  border-color: color-mix(in srgb, var(--site-accent) 55%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--site-accent) 14%, transparent);
+}
+
+@media (max-width: 1280px) {
+  .editorHeader {
+    grid-template-columns: 1fr;
+  }
+
+  .editorTopControls {
+    justify-content: flex-start;
+  }
+
+  .builderGridLanding,
+  .builderGridForm {
+    grid-template-columns: 1fr;
+  }
+}

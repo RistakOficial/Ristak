@@ -34,6 +34,7 @@ import {
   Image,
   LayoutTemplate,
   ListChecks,
+  Maximize2,
   Monitor,
   MoreVertical,
   MousePointerClick,
@@ -118,6 +119,7 @@ const ruleActions: Array<{ value: SiteOptionAction; label: string }> = [
 
 const SITES_AI_DRAFT_CREATED_EVENT = 'ristak-sites-ai-draft-created'
 const DEFAULT_FUNNEL_PAGE_ID = 'page-1'
+const SOCIAL_PROFILE_SELECTED_ID = '__social_profile__'
 
 type ButtonAction = 'url' | 'next_page' | 'specific_page'
 type FormCompletionAction = 'form_default' | 'next_page' | 'next_page_if_qualified'
@@ -279,8 +281,16 @@ const getCanvasThemeStyle = (site: PublicSite): React.CSSProperties => {
   const meta = templateMetaById(id)
   const platform = id === 'facebook' || id === 'instagram' || id === 'tiktok'
   const dark = isSiteDark(site)
+  const theme = site.theme || {}
+  const pageVars = {
+    '--site-page-padding': `${getThemeNumber(theme, 'pagePadding', site.siteType === 'landing_page' ? 18 : 22, 0, 80)}px`,
+    '--site-page-radius': `${getThemeNumber(theme, 'pageRadius', site.siteType === 'landing_page' ? 0 : 24, 0, 40)}px`,
+    '--site-page-border': getThemeHex(theme, 'pageBorderColor', 'transparent'),
+    '--site-page-max': `${getThemeNumber(theme, 'pageMaxWidth', site.siteType === 'landing_page' ? 1160 : 520, 360, 1440)}px`
+  }
   if (platform) {
     return {
+      ...pageVars,
       '--site-accent': meta?.accent || '#111827',
       '--site-background': id === 'tiktok' ? '#161616' : '#ffffff',
       '--site-surface': id === 'tiktok' ? '#161616' : '#ffffff',
@@ -294,6 +304,7 @@ const getCanvasThemeStyle = (site: PublicSite): React.CSSProperties => {
   const accent = userAccentColor(site) || (dark ? '#ffffff' : '#111827')
   const surface = dark ? `color-mix(in srgb, #ffffff 4%, ${bg})` : '#ffffff'
   return {
+    ...pageVars,
     '--site-accent': accent,
     '--site-background': surface,
     '--site-surface': surface,
@@ -361,9 +372,20 @@ const getSettingNumber = (settings: Record<string, unknown>, key: string, fallba
   return Math.min(max, Math.max(min, value))
 }
 
+const getThemeNumber = (theme: SiteTheme | undefined, key: keyof SiteTheme, fallback: number, min: number, max: number) => {
+  const value = Number(theme?.[key])
+  if (!Number.isFinite(value)) return fallback
+  return Math.min(max, Math.max(min, value))
+}
+
 const getSettingHex = (settings: Record<string, unknown>, key: string, fallback: string) => {
   const value = getSettingString(settings, key)
   return isHex6(value) ? value : fallback
+}
+
+const getThemeHex = (theme: SiteTheme | undefined, key: keyof SiteTheme, fallback: string) => {
+  const value = theme?.[key]
+  return typeof value === 'string' && isHex6(value) ? value : fallback
 }
 
 const getBlockCanvasStyle = (block: SiteBlock): React.CSSProperties => {
@@ -759,7 +781,7 @@ export const Sites: React.FC = () => {
       : blocks,
     [activePage, blocks, pages, selectedSite]
   )
-  const selectedBlock = canvasBlocks.find(block => block.id === selectedBlockId) || canvasBlocks[0] || null
+  const selectedBlock = canvasBlocks.find(block => block.id === selectedBlockId) || null
   const activeDragBlock = canvasBlocks.find(block => block.id === activeDragId) || null
   const editorSite = section === 'landings'
     ? (isLanding(selectedSite) ? selectedSite : null)
@@ -768,6 +790,9 @@ export const Sites: React.FC = () => {
       : null
   const isFocusedSitesMode = createFlow !== 'closed' || Boolean(editorSite)
   const publicUrl = editorSite ? buildPublicUrl(editorSite, domainConfig) : ''
+  const hasNextFunnelPage = Boolean(
+    editorSite && isLanding(editorSite) && pages.length > 1 && activePage && pages.some(page => page.sortOrder > activePage.sortOrder)
+  )
   const editorTrackingStats = getTrackingStats(editorSite)
 
   const performUrlNavigation = useCallback((href: string) => {
@@ -824,7 +849,8 @@ export const Sites: React.FC = () => {
   }, [pendingLeaveAction])
 
   useEffect(() => {
-    loadSites()
+    const initialEditorId = new URLSearchParams(window.location.search).get('siteEditor') || undefined
+    loadSites(initialEditorId)
     loadCalendarsForBuilder()
   }, [])
 
@@ -839,11 +865,12 @@ export const Sites: React.FC = () => {
 
   useEffect(() => {
     if (!canvasBlocks.length) {
-      if (selectedBlockId) setSelectedBlockId('')
+      if (selectedBlockId && selectedBlockId !== SOCIAL_PROFILE_SELECTED_ID) setSelectedBlockId('')
       return
     }
-    if (!selectedBlockId || !canvasBlocks.some(block => block.id === selectedBlockId)) {
-      setSelectedBlockId(canvasBlocks[0].id)
+    if (selectedBlockId === SOCIAL_PROFILE_SELECTED_ID) return
+    if (selectedBlockId && !canvasBlocks.some(block => block.id === selectedBlockId)) {
+      setSelectedBlockId('')
     }
   }, [canvasBlocks, selectedBlockId])
 
@@ -855,7 +882,7 @@ export const Sites: React.FC = () => {
       setSites(current => [site, ...current.filter(item => item.id !== site.id)])
       setSelectedSite(site)
       setActivePageId(normalizeFunnelPages(site)[0]?.id || DEFAULT_FUNNEL_PAGE_ID)
-      setSelectedBlockId(site.blocks?.[0]?.id || '')
+      setSelectedBlockId('')
       setSection(site.siteType === 'landing_page' ? 'landings' : 'forms')
       setCreateFlow('closed')
       setHasUnsavedChanges(false)
@@ -953,8 +980,9 @@ export const Sites: React.FC = () => {
       if (nextId) {
         const site = await sitesService.getSite(nextId)
         setSelectedSite(site)
+        setSection(site.siteType === 'landing_page' ? 'landings' : 'forms')
         setActivePageId(normalizeFunnelPages(site)[0]?.id || DEFAULT_FUNNEL_PAGE_ID)
-        setSelectedBlockId(site.blocks?.[0]?.id || '')
+        setSelectedBlockId('')
       } else {
         setSelectedSite(null)
         setSelectedBlockId('')
@@ -1003,7 +1031,7 @@ export const Sites: React.FC = () => {
       const site = await sitesService.getSite(siteId)
       setSelectedSite(site)
       setActivePageId(normalizeFunnelPages(site)[0]?.id || DEFAULT_FUNNEL_PAGE_ID)
-      setSelectedBlockId(site.blocks?.[0]?.id || '')
+      setSelectedBlockId('')
       setCreateFlow('closed')
       setHasUnsavedChanges(false)
     } catch (error) {
@@ -1066,7 +1094,7 @@ export const Sites: React.FC = () => {
 
   const syncSelectedSite = (site: PublicSite) => {
     setSelectedSite(site)
-    setSelectedBlockId(current => site.blocks?.some(block => block.id === current) ? current : site.blocks?.[0]?.id || '')
+    setSelectedBlockId(current => site.blocks?.some(block => block.id === current) ? current : '')
     setSites(current => current.map(item => item.id === site.id ? { ...item, ...site } : item))
   }
 
@@ -1241,7 +1269,7 @@ export const Sites: React.FC = () => {
       setSites(current => [site, ...current])
       setSelectedSite(site)
       setActivePageId(normalizeFunnelPages(site)[0]?.id || DEFAULT_FUNNEL_PAGE_ID)
-      setSelectedBlockId(site.blocks?.[0]?.id || '')
+      setSelectedBlockId('')
       setSection(siteType === 'landing_page' ? 'landings' : 'forms')
       setCreateFlow('closed')
       setHasUnsavedChanges(false)
@@ -1305,6 +1333,13 @@ export const Sites: React.FC = () => {
       previewWindow.close()
       showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo previsualizar')
     }
+  }
+
+  const handleOpenFullEditor = () => {
+    if (!editorSite) return
+    const url = new URL(window.location.href)
+    url.searchParams.set('siteEditor', editorSite.id)
+    window.open(url.toString(), '_blank', 'noopener,noreferrer')
   }
 
   const handleVerifyDomain = async () => {
@@ -1413,6 +1448,46 @@ export const Sites: React.FC = () => {
     })
   }
 
+  const patchBlockCategorySettingsLocal = (sourceBlock: SiteBlock, patch: Record<string, unknown>) => {
+    markEditorDirty()
+    const sourcePageId = isLanding(selectedSite) ? getBlockPageId(sourceBlock, pages) : ''
+    setSelectedSite(current => {
+      if (!current?.blocks) return current
+      return {
+        ...current,
+        blocks: current.blocks.map(block => {
+          const sameType = block.blockType === sourceBlock.blockType
+          const samePage = !isLanding(current) || getBlockPageId(block, pages) === sourcePageId
+          return sameType && samePage
+            ? { ...block, settings: { ...(block.settings || {}), ...patch } }
+            : block
+        })
+      }
+    })
+  }
+
+  const handleSaveBlockCategory = async (sourceBlock = selectedBlock) => {
+    if (!selectedSite?.blocks || !sourceBlock) return
+    const sourcePageId = isLanding(selectedSite) ? getBlockPageId(sourceBlock, pages) : ''
+    const targets = selectedSite.blocks.filter(block => {
+      const sameType = block.blockType === sourceBlock.blockType
+      const samePage = !isLanding(selectedSite) || getBlockPageId(block, pages) === sourcePageId
+      return sameType && samePage
+    })
+    if (!targets.length) return
+
+    try {
+      let site = selectedSite
+      for (const block of targets) {
+        site = await sitesService.updateBlock(selectedSite.id, block.id, block)
+      }
+      syncSelectedSite(site)
+      setHasUnsavedChanges(false)
+    } catch (error) {
+      showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo guardar el estilo')
+    }
+  }
+
   const handleSaveBlock = async (blockId = selectedBlock?.id) => {
     if (!selectedSite?.blocks || !blockId) return
     const block = selectedSite.blocks.find(item => item.id === blockId)
@@ -1491,19 +1566,140 @@ export const Sites: React.FC = () => {
   return (
     <>
       <div className={`${styles.container} ${isFocusedSitesMode ? styles.containerFocused : ''}`}>
-        <header className={styles.header}>
-          <div>
-            <div className={styles.titleRow}>
-              {isFocusedSitesMode && (
-                <button type="button" className={styles.backButton} onClick={handleBackToLibrary}>
-                  <ArrowLeft size={16} />
-                  Volver
-                </button>
-              )}
-              <h1 className={styles.title}>Sitios</h1>
+        <header className={`${styles.header} ${editorSite ? styles.editorHeader : ''}`}>
+          {editorSite ? (
+            <>
+              <div className={styles.editorHeaderIdentity}>
+                <div className={styles.titleRow}>
+                  <button type="button" className={styles.backButton} onClick={handleBackToLibrary}>
+                    <ArrowLeft size={16} />
+                    Volver
+                  </button>
+                  <span className={`${styles.statusPill} ${getStatusClass(editorSite, domainConfig)}`}>{getStatusLabel(editorSite, domainConfig)}</span>
+                </div>
+                <label className={styles.editorNameField}>
+                  <input
+                    value={editorSite.name}
+                    aria-label="Nombre interno del site"
+                    onChange={(event) => updateSelectedSite({ name: event.target.value })}
+                    onBlur={() => handleSaveSite()}
+                  />
+                  <Pencil size={15} />
+                </label>
+                <label className={styles.publicTitleEditorField}>
+                  <input
+                    value={editorSite.title}
+                    aria-label="Titulo publico"
+                    placeholder="Titulo publico"
+                    onChange={(event) => updateSelectedSite({ title: event.target.value })}
+                    onBlur={() => handleSaveSite()}
+                  />
+                  <Pencil size={14} />
+                </label>
+                <div className={styles.trackingSummary} aria-label="Metricas de tracking nativo">
+                  <span className={styles.trackingMetric}><span>{editorTrackingStats.views} vistas</span></span>
+                  <span className={styles.trackingMetric}><span>{editorTrackingStats.visitors} visitantes</span></span>
+                  <span className={styles.trackingMetric}><span>{editorTrackingStats.conversions} conversiones</span></span>
+                  <span className={styles.trackingMetric}><span>{editorTrackingStats.conversionRate}% conversion</span></span>
+                </div>
+              </div>
+              <div className={styles.editorTopControls}>
+                <label className={styles.compactField}>
+                  <span>Ruta publica</span>
+                  <input
+                    value={getRoutePath(editorSite)}
+                    placeholder={editorSite.siteType === 'landing_page' ? '/site-01' : '/form-01'}
+                    onChange={(event) => updateSelectedSite({ slug: normalizeRouteInput(event.target.value) })}
+                    onBlur={() => handleSaveSite()}
+                  />
+                </label>
+                <label className={`${styles.metaToggle} ${editorSite.metaCapiEnabled ? styles.metaToggleActive : ''}`}>
+                  <input
+                    type="checkbox"
+                    checked={editorSite.metaCapiEnabled}
+                    onChange={(event) => updateSelectedSite({ metaCapiEnabled: event.target.checked })}
+                  />
+                  <span className={styles.metaMark} aria-hidden="true">∞</span>
+                  <span>
+                    <strong>Meta Pixel + CAPI</strong>
+                    <small>{editorSite.metaCapiEnabled ? 'Activo' : 'Apagado'}</small>
+                  </span>
+                </label>
+                <label className={styles.compactField}>
+                  <span>Evento</span>
+                  <select
+                    value={editorSite.metaEventName || 'Lead'}
+                    disabled={!editorSite.metaCapiEnabled}
+                    onChange={(event) => updateSelectedSite({ metaEventName: event.target.value })}
+                    onBlur={() => handleSaveSite()}
+                  >
+                    {metaEventOptions.map(option => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                </label>
+                {hasNextFunnelPage && (
+                  <label className={styles.compactField}>
+                    <span>Conversion</span>
+                    <select
+                      value={editorSite.theme?.metaConversionTarget || 'same_page'}
+                      disabled={!editorSite.metaCapiEnabled}
+                      onChange={(event) => patchSiteTheme({ metaConversionTarget: event.target.value as SiteTheme['metaConversionTarget'] })}
+                      onBlur={() => handleSaveSite()}
+                    >
+                      <option value="same_page">Esta pagina</option>
+                      <option value="next_page">Pagina siguiente</option>
+                    </select>
+                  </label>
+                )}
+                <div className={styles.editorActions}>
+                  {publicUrl && (
+                    <a className={styles.iconLink} href={publicUrl} target="_blank" rel="noreferrer">
+                      <ExternalLink size={16} />
+                      Abrir
+                    </a>
+                  )}
+                  <div className={styles.deviceToggle}>
+                    <button type="button" className={device === 'desktop' ? styles.deviceActive : ''} onClick={() => setDevice('desktop')} title="Desktop">
+                      <Monitor size={16} />
+                    </button>
+                    <button type="button" className={device === 'mobile' ? styles.deviceActive : ''} onClick={() => setDevice('mobile')} title="Movil">
+                      <Smartphone size={16} />
+                    </button>
+                  </div>
+                  <Button variant="secondary" onClick={handleOpenFullEditor}>
+                    <Maximize2 size={16} />
+                    Pantalla grande
+                  </Button>
+                  <Button variant="secondary" onClick={handlePreviewSite}>
+                    <Eye size={16} />
+                    Previsualizar
+                  </Button>
+                  <Button variant="secondary" onClick={() => handleSaveSite()} loading={saving}>
+                    <Save size={16} />
+                    Guardar
+                  </Button>
+                  <Button onClick={() => handleSaveSite('published')} loading={saving}>
+                    <Send size={16} />
+                    Publicar
+                  </Button>
+                </div>
+              </div>
+            </>
+          ) : (
+            <div>
+              <div className={styles.titleRow}>
+                {isFocusedSitesMode && (
+                  <button type="button" className={styles.backButton} onClick={handleBackToLibrary}>
+                    <ArrowLeft size={16} />
+                    Volver
+                  </button>
+                )}
+                <h1 className={styles.title}>Sitios</h1>
+              </div>
+              <p className={styles.subtitle}>Constructor visual controlado para landings, formularios, leads y publicacion por dominio verificado.</p>
             </div>
-            <p className={styles.subtitle}>Constructor visual controlado para landings, formularios, leads y publicacion por dominio verificado.</p>
-          </div>
+          )}
         </header>
 
         <div className={`${styles.sitesShell} ${isFocusedSitesMode ? styles.sitesShellFocused : ''}`}>
@@ -1566,101 +1762,6 @@ export const Sites: React.FC = () => {
               />
             ) : editorSite ? (
               <section className={styles.builder}>
-                <div className={styles.builderHeader}>
-                  <div className={styles.editorIdentity}>
-                    <span className={`${styles.statusPill} ${getStatusClass(editorSite, domainConfig)}`}>{getStatusLabel(editorSite, domainConfig)}</span>
-                    <label className={styles.editorNameField}>
-                      <Pencil size={15} />
-                      <input
-                        value={editorSite.name}
-                        aria-label="Nombre interno del site"
-                        onChange={(event) => updateSelectedSite({ name: event.target.value })}
-                        onBlur={() => handleSaveSite()}
-                      />
-                    </label>
-                    <input
-                      className={styles.publicTitleField}
-                      value={editorSite.title}
-                      aria-label="Titulo publico"
-                      placeholder="Titulo publico"
-                      onChange={(event) => updateSelectedSite({ title: event.target.value })}
-                      onBlur={() => handleSaveSite()}
-                    />
-                    <div className={styles.trackingSummary} aria-label="Metricas de tracking nativo">
-                      <span className={styles.trackingMetric}><span>{editorTrackingStats.views} vistas</span></span>
-                      <span className={styles.trackingMetric}><span>{editorTrackingStats.visitors} visitantes</span></span>
-                      <span className={styles.trackingMetric}><span>{editorTrackingStats.conversions} conversiones</span></span>
-                      <span className={styles.trackingMetric}><span>{editorTrackingStats.conversionRate}% conversion</span></span>
-                    </div>
-                  </div>
-                  <div className={styles.editorActions}>
-                    {publicUrl && (
-                      <a className={styles.iconLink} href={publicUrl} target="_blank" rel="noreferrer">
-                        <ExternalLink size={16} />
-                        Abrir
-                      </a>
-                    )}
-                    <div className={styles.deviceToggle}>
-                      <button type="button" className={device === 'desktop' ? styles.deviceActive : ''} onClick={() => setDevice('desktop')} title="Desktop">
-                        <Monitor size={16} />
-                      </button>
-                      <button type="button" className={device === 'mobile' ? styles.deviceActive : ''} onClick={() => setDevice('mobile')} title="Movil">
-                        <Smartphone size={16} />
-                      </button>
-                    </div>
-                    <Button variant="secondary" onClick={handlePreviewSite}>
-                      <Eye size={16} />
-                      Previsualizar
-                    </Button>
-                    <Button variant="secondary" onClick={() => handleSaveSite()} loading={saving}>
-                      <Save size={16} />
-                      Guardar
-                    </Button>
-                    <Button onClick={() => handleSaveSite('published')} loading={saving}>
-                      <Send size={16} />
-                      Publicar
-                    </Button>
-                  </div>
-                </div>
-
-              <div className={styles.siteSettingsBar}>
-                <label className={styles.inlineField}>
-                  <span>Ruta publica</span>
-                  <input
-                    value={getRoutePath(editorSite)}
-                    placeholder={editorSite.siteType === 'landing_page' ? '/site-01' : '/form-01'}
-                    onChange={(event) => updateSelectedSite({ slug: normalizeRouteInput(event.target.value) })}
-                  />
-                </label>
-                <label className={`${styles.metaToggle} ${editorSite.metaCapiEnabled ? styles.metaToggleActive : ''}`}>
-                  <input
-                    type="checkbox"
-                    checked={editorSite.metaCapiEnabled}
-                    onChange={(event) => updateSelectedSite({ metaCapiEnabled: event.target.checked })}
-                  />
-                  <span className={styles.metaMark} aria-hidden="true">∞</span>
-                  <span>
-                    <strong>Meta conversiones</strong>
-                    <small>{editorSite.metaCapiEnabled ? 'Pixel frontend + CAPI servidor activos' : 'Desactivado para este site'}</small>
-                  </span>
-                </label>
-                <label className={styles.inlineField}>
-                  <span>Evento a enviar</span>
-                  <select
-                    value={editorSite.metaEventName || 'Lead'}
-                    disabled={!editorSite.metaCapiEnabled}
-                    onChange={(event) => updateSelectedSite({ metaEventName: event.target.value })}
-                  >
-                    {metaEventOptions.map(option => (
-                      <option key={option.value} value={option.value}>{option.label}</option>
-                    ))}
-                  </select>
-                </label>
-                <p>
-                  Al publicar, el formulario dispara este evento con deduplicacion por eventID. El token privado se usa solo en backend.
-                </p>
-              </div>
-
               <div className={`${styles.builderGrid} ${isLanding(editorSite) ? styles.builderGridLanding : styles.builderGridForm}`}>
                 {isLanding(editorSite) && (
                   <div className={styles.pagesRail}>
@@ -1691,7 +1792,6 @@ export const Sites: React.FC = () => {
                       <strong>{isLanding(editorSite) ? activePage?.title || 'Pagina 1' : 'Canvas'}</strong>
                       <span>{canvasBlocks.length} {canvasBlocks.length === 1 ? 'bloque' : 'bloques'}</span>
                     </div>
-                    <CanvasStyleControls site={editorSite} onPatchTheme={patchSiteTheme} onSave={() => handleSaveSite()} />
                   </div>
                   <DndContext
                     sensors={sensors}
@@ -1710,14 +1810,23 @@ export const Sites: React.FC = () => {
                       >
                         <div
                           className={`${styles.pageCanvas} ${editorSite.siteType === 'interactive_form' ? styles.interactiveCanvas : ''} ${isSiteDark(editorSite) ? styles.darkCanvas : ''}`}
+                          onClick={() => setSelectedBlockId('')}
                         >
                           {!isLanding(editorSite) && platformChromeFor(resolveTemplateId(editorSite)) && (
-                            <CanvasChrome
-                              platform={platformChromeFor(resolveTemplateId(editorSite))!}
-                              site={editorSite}
-                              onPatchTheme={patchSiteTheme}
-                              onSave={() => handleSaveSite()}
-                            />
+                            <div
+                              className={`${styles.socialProfileSelectable} ${selectedBlockId === SOCIAL_PROFILE_SELECTED_ID ? styles.socialProfileSelected : ''}`}
+                              onClick={(event) => {
+                                event.stopPropagation()
+                                setSelectedBlockId(SOCIAL_PROFILE_SELECTED_ID)
+                              }}
+                            >
+                              <CanvasChrome
+                                platform={platformChromeFor(resolveTemplateId(editorSite))!}
+                                site={editorSite}
+                                onPatchTheme={patchSiteTheme}
+                                onSave={() => handleSaveSite()}
+                              />
+                            </div>
                           )}
                           {canvasBlocks.length === 0 ? (
                             <div className={styles.dropEmpty}>
@@ -1743,6 +1852,11 @@ export const Sites: React.FC = () => {
                               onSave={() => handleSaveBlock(block.id)}
                             />
                           ))}
+                          {isFormSite(editorSite) && canvasBlocks.some(block => fieldBlockTypes.has(block.blockType)) && (
+                            <div className={styles.editorSubmitPreview}>
+                              <button type="button">{editorSite.theme?.submitText || 'Enviar'}</button>
+                            </div>
+                          )}
                         </div>
                       </div>
                     </SortableContext>
@@ -1755,6 +1869,24 @@ export const Sites: React.FC = () => {
                     </DragOverlay>
                   </DndContext>
                 </section>
+
+                <PropertiesPanel
+                  site={editorSite}
+                  block={selectedBlock}
+                  blocks={canvasBlocks}
+                  forms={forms}
+                  calendars={calendars}
+                  pages={pages}
+                  activePageId={activePage?.id || DEFAULT_FUNNEL_PAGE_ID}
+                  showSocialProfile={selectedBlockId === SOCIAL_PROFILE_SELECTED_ID}
+                  onPatchTheme={patchSiteTheme}
+                  onSaveSite={() => handleSaveSite()}
+                  onPatchBlock={(patch) => patchSelectedBlock(patch)}
+                  onPatchSettings={(patch) => patchSelectedBlockSettings(patch)}
+                  onPatchCategorySettings={(block, patch) => patchBlockCategorySettingsLocal(block, patch)}
+                  onSaveCategory={(block) => handleSaveBlockCategory(block)}
+                  onSave={() => handleSaveBlock()}
+                />
 
               </div>
             </section>
@@ -2245,48 +2377,7 @@ const CanvasChrome: React.FC<{
     window.setTimeout(onSave, 0)
   }
 
-  const controls = (
-    <div className={styles.socialProfileControls}>
-      <span>Social Media Profile</span>
-      <select
-        value={platform}
-        onChange={(event) => patchAndSave({ template: event.target.value as SiteTemplateId })}
-        aria-label="Red social"
-      >
-        <option value="facebook">Facebook</option>
-        <option value="instagram">Instagram</option>
-        <option value="tiktok">TikTok</option>
-      </select>
-      <input
-        value={name}
-        onChange={(event) => onPatchTheme({ brandName: event.target.value })}
-        onBlur={onSave}
-        placeholder="Nombre de la pagina"
-        aria-label="Nombre de la pagina"
-      />
-      <input
-        value={subtitle}
-        onChange={(event) => onPatchTheme({ brandSubtitle: event.target.value })}
-        onBlur={onSave}
-        placeholder="Subtitulo"
-        aria-label="Subtitulo de perfil"
-      />
-      <input
-        value={avatar}
-        onChange={(event) => onPatchTheme({ brandAvatar: event.target.value })}
-        onBlur={onSave}
-        placeholder="Avatar URL"
-        aria-label="Avatar URL"
-      />
-      <input
-        value={followers}
-        onChange={(event) => onPatchTheme({ followers: event.target.value })}
-        onBlur={onSave}
-        placeholder="Seguidores"
-        aria-label="Seguidores"
-      />
-    </div>
-  )
+  const controls = null
 
   if (platform === 'facebook') {
     return (
@@ -2513,7 +2604,10 @@ const SortableCanvasBlock: React.FC<SortableCanvasBlockProps> = ({
       ref={setNodeRef}
       style={{ transform: CSS.Transform.toString(transform), transition, ...getBlockCanvasStyle(block) }}
       className={`${styles.canvasBlock} ${selected ? styles.canvasBlockSelected : ''} ${isDragging ? styles.canvasBlockDragging : ''}`}
-      onClick={onSelect}
+      onClick={(event) => {
+        event.stopPropagation()
+        onSelect()
+      }}
     >
       <button type="button" className={styles.dragHandle} {...attributes} {...listeners} aria-label="Reordenar bloque">
         <GripVertical size={16} />
@@ -2662,9 +2756,7 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
   const patchBlock = onPatchBlock || (() => {})
   const patchSettings = onPatchSettings || (() => {})
   const save = onSave || (() => {})
-  const styleTools = selected && editable
-    ? <InlineBlockStyleControls block={block} onPatchSettings={patchSettings} onSave={save} />
-    : null
+  const styleTools = null
 
   if (block.blockType === 'hero') {
     return (
@@ -3162,10 +3254,116 @@ interface PropertiesPanelProps {
   calendars: CalendarType[]
   pages: SitePage[]
   activePageId: string
+  showSocialProfile: boolean
+  onPatchTheme: (patch: Partial<SiteTheme>) => void
+  onSaveSite: () => void
   onPatchBlock: (patch: Partial<SiteBlock>) => void
   onPatchSettings: (patch: Record<string, unknown>) => void
+  onPatchCategorySettings: (block: SiteBlock, patch: Record<string, unknown>) => void
+  onSaveCategory: (block: SiteBlock) => void
   onSave: () => void
-  onDelete: () => void
+}
+
+const PageInspector: React.FC<{
+  site: PublicSite
+  pages: SitePage[]
+  activePageId: string
+  showSocialProfile: boolean
+  onPatchTheme: (patch: Partial<SiteTheme>) => void
+  onSaveSite: () => void
+}> = ({ site, pages, activePageId, showSocialProfile, onPatchTheme, onSaveSite }) => {
+  const theme = site.theme || {}
+  const currentId = resolveTemplateId(site)
+  const platform = platformChromeFor(currentId)
+  const hasNextPage = isLanding(site) && pages.length > 1 && pages.some(page => page.sortOrder > (pages.find(item => item.id === activePageId)?.sortOrder || 0))
+
+  return (
+    <aside className={styles.propertiesPanel}>
+      <div className={styles.panelHeader}>
+        <strong>{platform && showSocialProfile ? 'Social Media Profile' : 'Pagina'}</strong>
+        <span>{isLanding(site) ? 'Landing' : 'Formulario'}</span>
+      </div>
+      <div className={styles.propertiesBody}>
+        <div className={styles.settingsGroup}>
+          <div className={styles.twoColumn}>
+            <label className={styles.field}>
+              <span>Fondo de pagina</span>
+              <input type="color" value={userBgColor(site) || getThemeHex(theme, 'backgroundColor', '#ffffff')} onChange={(event) => onPatchTheme({ backgroundColor: event.target.value })} onBlur={onSaveSite} />
+            </label>
+            <label className={styles.field}>
+              <span>Acento</span>
+              <input type="color" value={userAccentColor(site) || getThemeHex(theme, 'accentColor', '#111827')} onChange={(event) => onPatchTheme({ accentColor: event.target.value })} onBlur={onSaveSite} />
+            </label>
+          </div>
+          <div className={styles.twoColumn}>
+            <label className={styles.field}>
+              <span>Padding pagina</span>
+              <input type="range" min="0" max="80" value={getThemeNumber(theme, 'pagePadding', isLanding(site) ? 18 : 22, 0, 80)} onChange={(event) => onPatchTheme({ pagePadding: Number(event.target.value) })} onBlur={onSaveSite} />
+            </label>
+            <label className={styles.field}>
+              <span>Ancho maximo</span>
+              <input type="range" min="360" max="1440" value={getThemeNumber(theme, 'pageMaxWidth', isLanding(site) ? 1160 : 520, 360, 1440)} onChange={(event) => onPatchTheme({ pageMaxWidth: Number(event.target.value) })} onBlur={onSaveSite} />
+            </label>
+          </div>
+          <div className={styles.twoColumn}>
+            <label className={styles.field}>
+              <span>Borde pagina</span>
+              <input type="color" value={getThemeHex(theme, 'pageBorderColor', '#111827')} onChange={(event) => onPatchTheme({ pageBorderColor: event.target.value })} onBlur={onSaveSite} />
+            </label>
+            <label className={styles.field}>
+              <span>Radio pagina</span>
+              <input type="range" min="0" max="40" value={getThemeNumber(theme, 'pageRadius', isLanding(site) ? 0 : 24, 0, 40)} onChange={(event) => onPatchTheme({ pageRadius: Number(event.target.value) })} onBlur={onSaveSite} />
+            </label>
+          </div>
+          {hasNextPage && site.metaCapiEnabled && (
+            <label className={styles.field}>
+              <span>Meta Pixel + CAPI sucede en</span>
+              <select value={theme.metaConversionTarget || 'same_page'} onChange={(event) => onPatchTheme({ metaConversionTarget: event.target.value as SiteTheme['metaConversionTarget'] })} onBlur={onSaveSite}>
+                <option value="same_page">Esta pagina</option>
+                <option value="next_page">Pagina siguiente</option>
+              </select>
+            </label>
+          )}
+          {isFormSite(site) && (
+            <label className={styles.field}>
+              <span>Texto del boton de envio</span>
+              <input value={theme.submitText || ''} placeholder="Enviar" onChange={(event) => onPatchTheme({ submitText: event.target.value })} onBlur={onSaveSite} />
+            </label>
+          )}
+        </div>
+
+        {platform && showSocialProfile && (
+          <div className={styles.settingsGroup}>
+            <div className={styles.panelSubheader}>Social Media Profile</div>
+            <label className={styles.field}>
+              <span>Red social</span>
+              <select value={platform} onChange={(event) => onPatchTheme({ template: event.target.value as SiteTemplateId })} onBlur={onSaveSite}>
+                <option value="facebook">Facebook</option>
+                <option value="instagram">Instagram</option>
+                <option value="tiktok">TikTok</option>
+              </select>
+            </label>
+            <label className={styles.field}>
+              <span>Nombre de pagina</span>
+              <input value={theme.brandName || ''} placeholder={site.title || site.name} onChange={(event) => onPatchTheme({ brandName: event.target.value })} onBlur={onSaveSite} />
+            </label>
+            <label className={styles.field}>
+              <span>Subtitulo</span>
+              <input value={theme.brandSubtitle || ''} placeholder={platform === 'instagram' ? 'Publicacion pagada' : 'Patrocinado'} onChange={(event) => onPatchTheme({ brandSubtitle: event.target.value })} onBlur={onSaveSite} />
+            </label>
+            <label className={styles.field}>
+              <span>Avatar URL</span>
+              <input value={theme.brandAvatar || ''} placeholder="https://..." onChange={(event) => onPatchTheme({ brandAvatar: event.target.value })} onBlur={onSaveSite} />
+            </label>
+            <label className={styles.field}>
+              <span>Seguidores</span>
+              <input value={theme.followers || ''} placeholder="12 mil" onChange={(event) => onPatchTheme({ followers: event.target.value })} onBlur={onSaveSite} />
+            </label>
+          </div>
+        )}
+      </div>
+    </aside>
+  )
 }
 
 const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
@@ -3176,20 +3374,17 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   calendars,
   pages,
   activePageId,
+  showSocialProfile,
+  onPatchTheme,
+  onSaveSite,
   onPatchBlock,
   onPatchSettings,
-  onSave,
-  onDelete
+  onPatchCategorySettings,
+  onSaveCategory,
+  onSave
 }) => {
   if (!block) {
-    return (
-      <aside className={styles.propertiesPanel}>
-        <div className={styles.emptyState}>
-          <Settings2 size={24} />
-          <p>Selecciona un bloque para editar sus propiedades.</p>
-        </div>
-      </aside>
-    )
+    return <PageInspector site={site} pages={pages} activePageId={activePageId} showSocialProfile={showSocialProfile} onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
   }
 
   const isField = fieldBlockTypes.has(block.blockType)
@@ -3279,6 +3474,12 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
           <OptionsRulesEditor block={block} blocks={blocks} onPatchBlock={onPatchBlock} onSave={onSave} />
         )}
 
+        <InlineBlockStyleControls
+          block={block}
+          onPatchSettings={(patch) => onPatchCategorySettings(block, patch)}
+          onSave={() => onSaveCategory(block)}
+        />
+
         {!isField && (
           <LandingBlockSettings
             site={site}
@@ -3296,10 +3497,6 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
           <Button variant="secondary" onClick={onSave}>
             <Save size={16} />
             Guardar bloque
-          </Button>
-          <Button variant="danger" onClick={onDelete}>
-            <Trash2 size={16} />
-            Eliminar
           </Button>
         </div>
       </div>

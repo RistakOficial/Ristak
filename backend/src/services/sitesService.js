@@ -2209,6 +2209,17 @@ function blockSettingNumber(settings, key, min, max) {
   return Math.min(max, Math.max(min, value))
 }
 
+function themeNumber(theme, key, fallback, min, max) {
+  const value = Number(theme && theme[key])
+  if (!Number.isFinite(value)) return fallback
+  return Math.min(max, Math.max(min, value))
+}
+
+function themeHex(theme, key) {
+  const value = cleanString(theme && theme[key])
+  return /^#[0-9a-f]{6}$/i.test(value) ? value : ''
+}
+
 function renderBlockStyleVars(block) {
   const settings = block.settings || {}
   const vars = []
@@ -2763,8 +2774,8 @@ const RSTK_BASE_CSS = `
     -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
   }
   img{max-width:100%;display:block}
-  .rstk-frame{min-height:100vh;padding:clamp(14px,5vw,56px) 16px}
-  .rstk-page{width:100%;max-width:var(--rstk-max);margin:0 auto}
+  .rstk-frame{min-height:100vh;padding:var(--rstk-frame-pad,clamp(10px,3vw,32px)) 16px}
+  .rstk-page{width:100%;max-width:var(--rstk-max);margin:0 auto;border:1px solid var(--rstk-page-border,transparent);border-radius:var(--rstk-page-radius,0)}
   .rstk-shell{display:grid;gap:var(--rstk-gap)}
   .rstk-centered .rstk-shell{text-align:center;justify-items:center}
   .rstk-centered .rstk-subheading,.rstk-centered .rstk-text{margin-inline:auto}
@@ -2907,8 +2918,8 @@ const RSTK_BASE_CSS = `
   }
 
   /* ---------- Premium landing ---------- */
-  .rstk-kind-landing .rstk-frame{padding:0 clamp(16px,4vw,28px) clamp(48px,7vw,96px)}
-  .rstk-kind-landing .rstk-shell{gap:clamp(40px,7vw,104px);padding-top:clamp(10px,3vw,32px)}
+  .rstk-kind-landing .rstk-frame{padding:var(--rstk-frame-pad,clamp(10px,3vw,28px)) clamp(14px,3vw,24px) clamp(32px,5vw,64px)}
+  .rstk-kind-landing .rstk-shell{gap:clamp(24px,4vw,64px);padding-top:clamp(6px,2vw,20px)}
   .rstk-kind-landing .rstk-headline{font-family:var(--rstk-display);font-size:clamp(2.3rem,5.6vw,4rem);line-height:1.03;letter-spacing:-0.028em;background:linear-gradient(180deg,var(--rstk-ink),color-mix(in srgb,var(--rstk-ink) 58%,var(--rstk-page-bg)));-webkit-background-clip:text;background-clip:text;color:transparent}
   .rstk-kind-landing .rstk-subheading{font-size:clamp(1.05rem,1.7vw,1.28rem);max-width:60ch;line-height:1.6}
   .rstk-kind-landing h2{font-family:var(--rstk-display)}
@@ -2917,7 +2928,7 @@ const RSTK_BASE_CSS = `
   .rstk-kind-landing .rstk-kicker{display:inline-flex;align-items:center;gap:8px;width:fit-content;padding:7px 14px 7px 12px;border:1px solid var(--rstk-border);border-radius:999px;background:var(--rstk-surface);color:var(--rstk-muted);font-size:.72rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}
   .rstk-kind-landing .rstk-kicker::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--rstk-accent);box-shadow:0 0 10px 1px color-mix(in srgb,var(--rstk-accent) 80%,transparent)}
 
-  .rstk-kind-landing .rstk-hero{position:relative;isolation:isolate;overflow:hidden;gap:22px;justify-items:center;text-align:center;padding:clamp(44px,7vw,104px) clamp(22px,4vw,56px);border:1px solid var(--rstk-border);border-radius:clamp(22px,3vw,32px);background:var(--rstk-surface)}
+  .rstk-kind-landing .rstk-hero{position:relative;isolation:isolate;overflow:hidden;gap:22px;justify-items:center;text-align:center;padding:clamp(32px,4.8vw,68px) clamp(20px,3.2vw,44px);border:1px solid var(--rstk-border);border-radius:clamp(22px,3vw,32px);background:var(--rstk-surface)}
   .rstk-kind-landing .rstk-hero::before{content:"";position:absolute;inset:-1px;z-index:-1;background-image:linear-gradient(to right,color-mix(in srgb,var(--rstk-ink) 7%,transparent) 1px,transparent 1px),linear-gradient(to bottom,color-mix(in srgb,var(--rstk-ink) 7%,transparent) 1px,transparent 1px);background-size:56px 56px;-webkit-mask-image:radial-gradient(ellipse 78% 66% at 50% 28%,#000,transparent 72%);mask-image:radial-gradient(ellipse 78% 66% at 50% 28%,#000,transparent 72%)}
   .rstk-kind-landing .rstk-hero::after{content:"";position:absolute;left:50%;top:-32%;width:82%;height:380px;transform:translateX(-50%);z-index:-1;background:radial-gradient(ellipse at center,color-mix(in srgb,var(--rstk-accent) 22%,transparent),transparent 70%);filter:blur(22px);pointer-events:none}
   .rstk-kind-landing .rstk-hero .rstk-headline{font-size:clamp(2.6rem,6.2vw,4.6rem);max-width:16ch}
@@ -2934,7 +2945,7 @@ const RSTK_BASE_CSS = `
   .rstk-kind-landing .rstk-checklist h2{text-align:center;margin-bottom:4px}
   .rstk-kind-landing .rstk-check-body strong{font-size:1.04rem}
 
-  .rstk-kind-landing .rstk-cta{position:relative;overflow:hidden;justify-items:center;text-align:center;gap:18px;padding:clamp(40px,6vw,84px) clamp(24px,4vw,56px);border:1px solid var(--rstk-border);border-radius:clamp(24px,3vw,32px);background:var(--rstk-surface)}
+  .rstk-kind-landing .rstk-cta{position:relative;overflow:hidden;justify-items:center;text-align:center;gap:18px;padding:clamp(30px,4.4vw,62px) clamp(20px,3.2vw,44px);border:1px solid var(--rstk-border);border-radius:clamp(24px,3vw,32px);background:var(--rstk-surface)}
   .rstk-kind-landing .rstk-cta::after{content:"";position:absolute;left:50%;top:-42%;width:72%;height:320px;transform:translateX(-50%);z-index:0;background:radial-gradient(ellipse at center,color-mix(in srgb,var(--rstk-accent) 24%,transparent),transparent 70%);filter:blur(20px);pointer-events:none}
   .rstk-kind-landing .rstk-cta > *{position:relative;z-index:1}
   .rstk-kind-landing .rstk-cta h2{font-size:clamp(2rem,4vw,3.1rem)}
@@ -3068,7 +3079,7 @@ function resolveRenderOverrides(template, theme, isLandingType) {
   return userAccent ? { accent: userAccent } : {}
 }
 
-function buildStyleSheet(template, maxWidth, overrides = {}) {
+function buildStyleSheet(template, maxWidth, overrides = {}, pageVars = {}) {
   const v = { ...template.vars, ...(overrides.vars || {}) }
   const accent = overrides.accent || v.accent
   const accentStrong = overrides.accent ? `color-mix(in srgb, ${overrides.accent} 86%, #000)` : v.accentStrong
@@ -3101,6 +3112,9 @@ function buildStyleSheet(template, maxWidth, overrides = {}) {
     --rstk-btn-radius:${v.btnRadius};
     --rstk-btn-weight:${v.btnWeight};
     --rstk-max:${maxWidth};
+    --rstk-frame-pad:${pageVars.framePad || 'clamp(10px,3vw,32px)'};
+    --rstk-page-border:${pageVars.pageBorder || 'transparent'};
+    --rstk-page-radius:${pageVars.pageRadius || '0px'};
     --rstk-pad:clamp(18px,4vw,30px);
     --rstk-gap:clamp(16px,3vw,22px);
     ${template.gradient ? `--rstk-gradient:${template.gradient};` : ''}
@@ -3148,6 +3162,14 @@ async function buildMetaPixelSnippet(site, trackingEnabled) {
         window.fbq(${JSON.stringify(pixelMethod)}, ${JSON.stringify(eventName)}, data);
       }
     };
+    try {
+      const pending = window.sessionStorage && window.sessionStorage.getItem('ristakPendingMetaSubmit');
+      if (pending) {
+        window.sessionStorage.removeItem('ristakPendingMetaSubmit');
+        const parsed = JSON.parse(pending);
+        window.ristakMetaTrackSiteSubmit(parsed.eventId || '', parsed.data || {});
+      }
+    } catch (error) {}
   </script>
   <noscript><img height="1" width="1" style="display:none" src="https://www.facebook.com/tr?id=${encodeURIComponent(pixelId)}&ev=PageView&noscript=1"/></noscript>`
 }
@@ -3168,9 +3190,18 @@ export async function renderPublicSiteHtml(site, { pageId, trackingEnabled = tru
   const completionAction = isLandingType ? getFormCompletionAction(blocks) : 'form_default'
   const nextPage = isLandingType ? getNextPage(site, activePage?.id) : null
   const nextPageUrl = nextPage ? pageHref(nextPage.id) : ''
+  const metaConversionTarget = cleanString(theme.metaConversionTarget) === 'next_page' && nextPageUrl ? 'next_page' : 'same_page'
   const submitText = cleanString(theme.submitText) || 'Enviar'
-  const maxWidth = isLandingType ? '1040px' : (template.id === 'interactive' ? '600px' : '520px')
-  const styleSheet = buildStyleSheet(template, maxWidth, resolveRenderOverrides(template, theme, isLandingType))
+  const pageMaxWidth = themeNumber(theme, 'pageMaxWidth', isLandingType ? 1160 : (template.id === 'interactive' ? 600 : 520), 360, 1440)
+  const pagePadding = themeNumber(theme, 'pagePadding', isLandingType ? 18 : 22, 0, 80)
+  const pageRadius = themeNumber(theme, 'pageRadius', isLandingType ? 0 : 24, 0, 40)
+  const pageBorder = themeHex(theme, 'pageBorderColor') || 'transparent'
+  const maxWidth = `${pageMaxWidth}px`
+  const styleSheet = buildStyleSheet(template, maxWidth, resolveRenderOverrides(template, theme, isLandingType), {
+    framePad: `${pagePadding}px`,
+    pageBorder,
+    pageRadius: `${pageRadius}px`
+  })
   const chrome = (!isLandingType && template.chrome && template.chrome !== 'none') ? renderBrandChrome(template, brand) : ''
   const footer = (hasForm && !isLandingType) ? renderLegalFooter(brand) : ''
   const bodyClass = [
@@ -3253,6 +3284,7 @@ export async function renderPublicSiteHtml(site, { pageId, trackingEnabled = tru
       const progressFill = document.querySelector('[data-progress-fill]');
       const isInteractive = ${isInteractive ? 'true' : 'false'};
       const completionAction = ${JSON.stringify(completionAction)};
+      const metaConversionTarget = ${JSON.stringify(metaConversionTarget)};
       const nextPageUrl = ${JSON.stringify(nextPageUrl)};
       let index = 0;
 
@@ -3380,10 +3412,20 @@ export async function renderPublicSiteHtml(site, { pageId, trackingEnabled = tru
             ? submission.capi.eventId
             : (submission.submissionId ? 'site_' + siteId + '_' + submission.submissionId : '');
           if (window.ristakMetaTrackSiteSubmit) {
+            if (metaConversionTarget === 'next_page' && nextPageUrl && window.sessionStorage) {
+              window.sessionStorage.setItem('ristakPendingMetaSubmit', JSON.stringify({
+                eventId: metaEventId,
+                data: {
+                  status: submission.status || 'submitted',
+                  conversion_type: 'form_submit'
+                }
+              }));
+            } else {
             window.ristakMetaTrackSiteSubmit(metaEventId, {
               status: submission.status || 'submitted',
               conversion_type: 'form_submit'
             });
+            }
           }
           form.reset();
           if (window.ristakNativeRememberContact && submission.contactId) {
