@@ -355,6 +355,42 @@ const getSettingString = (settings: Record<string, unknown>, key: string) => {
   return typeof value === 'string' ? value : ''
 }
 
+const getSettingNumber = (settings: Record<string, unknown>, key: string, fallback: number, min: number, max: number) => {
+  const value = Number(settings?.[key])
+  if (!Number.isFinite(value)) return fallback
+  return Math.min(max, Math.max(min, value))
+}
+
+const getSettingHex = (settings: Record<string, unknown>, key: string, fallback: string) => {
+  const value = getSettingString(settings, key)
+  return isHex6(value) ? value : fallback
+}
+
+const getBlockCanvasStyle = (block: SiteBlock): React.CSSProperties => {
+  const settings = block.settings || {}
+  const style: Record<string, string> = {}
+  const bg = getSettingString(settings, 'blockBg')
+  const text = getSettingString(settings, 'blockText')
+  const fontFamily = getSettingString(settings, 'fontFamily')
+  const fieldBg = getSettingString(settings, 'fieldBg')
+  const fieldBorder = getSettingString(settings, 'fieldBorder')
+
+  if (isHex6(bg)) style['--block-bg'] = bg
+  if (isHex6(text)) style['--block-text'] = text
+  if (fontFamily) style['--block-font'] = fontFamily
+  if (isHex6(fieldBg)) style['--block-field-bg'] = fieldBg
+  if (isHex6(fieldBorder)) style['--block-field-border'] = fieldBorder
+  if (settings.fontWeight === 'bold') style['--block-font-weight'] = '850'
+
+  if (settings.blockPadding !== undefined) style['--block-pad'] = `${getSettingNumber(settings, 'blockPadding', 16, 8, 64)}px`
+  if (settings.blockRadius !== undefined) style['--block-radius'] = `${getSettingNumber(settings, 'blockRadius', 8, 0, 36)}px`
+  if (settings.fontSize !== undefined) style['--block-font-size'] = `${getSettingNumber(settings, 'fontSize', 18, 12, 72)}px`
+  if (settings.buttonRadius !== undefined) style['--block-button-radius'] = `${getSettingNumber(settings, 'buttonRadius', 8, 0, 40)}px`
+  if (settings.mediaWidth !== undefined) style['--block-media-width'] = `${getSettingNumber(settings, 'mediaWidth', 100, 30, 100)}%`
+
+  return style as React.CSSProperties
+}
+
 const cloneJson = <T,>(value: T): T => {
   try {
     return JSON.parse(JSON.stringify(value)) as T
@@ -1692,6 +1728,7 @@ export const Sites: React.FC = () => {
                             <SortableCanvasBlock
                               key={block.id}
                               block={block}
+                              blocks={canvasBlocks}
                               index={index}
                               selected={selectedBlock?.id === block.id}
                               site={editorSite}
@@ -2438,22 +2475,43 @@ const Palette: React.FC<{ blockTypes: SiteBlockType[]; onAdd: (blockType: SiteBl
 
 interface SortableCanvasBlockProps {
   block: SiteBlock
+  blocks: SiteBlock[]
   index: number
   selected: boolean
   site: PublicSite
   forms: PublicSite[]
   calendars: CalendarType[]
+  pages: SitePage[]
+  activePageId: string
   onSelect: () => void
   onDelete: () => void
+  onPatchBlock: (patch: Partial<SiteBlock>) => void
+  onPatchSettings: (patch: Record<string, unknown>) => void
+  onSave: () => void
 }
 
-const SortableCanvasBlock: React.FC<SortableCanvasBlockProps> = ({ block, index, selected, site, forms, calendars, onSelect, onDelete }) => {
+const SortableCanvasBlock: React.FC<SortableCanvasBlockProps> = ({
+  block,
+  blocks,
+  index,
+  selected,
+  site,
+  forms,
+  calendars,
+  pages,
+  activePageId,
+  onSelect,
+  onDelete,
+  onPatchBlock,
+  onPatchSettings,
+  onSave
+}) => {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: block.id })
 
   return (
     <article
       ref={setNodeRef}
-      style={{ transform: CSS.Transform.toString(transform), transition }}
+      style={{ transform: CSS.Transform.toString(transform), transition, ...getBlockCanvasStyle(block) }}
       className={`${styles.canvasBlock} ${selected ? styles.canvasBlockSelected : ''} ${isDragging ? styles.canvasBlockDragging : ''}`}
       onClick={onSelect}
     >
@@ -2466,54 +2524,314 @@ const SortableCanvasBlock: React.FC<SortableCanvasBlockProps> = ({ block, index,
       <button type="button" className={styles.blockDelete} onClick={(event) => { event.stopPropagation(); onDelete() }} aria-label="Eliminar bloque">
         <Trash2 size={15} />
       </button>
-      <CanvasPreviewBlock block={block} forms={forms} calendars={calendars} />
+      <CanvasPreviewBlock
+        block={block}
+        blocks={blocks}
+        forms={forms}
+        calendars={calendars}
+        pages={pages}
+        activePageId={activePageId}
+        selected={selected}
+        onPatchBlock={onPatchBlock}
+        onPatchSettings={onPatchSettings}
+        onSave={onSave}
+      />
     </article>
   )
 }
 
-const CanvasPreviewBlock: React.FC<{ block: SiteBlock; forms: PublicSite[]; calendars: CalendarType[] }> = ({ block, forms, calendars }) => {
+const InlineButtonRouting: React.FC<{
+  settings: Record<string, unknown>
+  pages: SitePage[]
+  activePageId: string
+  onPatchSettings: (patch: Record<string, unknown>) => void
+  onSave: () => void
+}> = ({ settings, pages, activePageId, onPatchSettings, onSave }) => (
+  <div className={styles.inlineBlockTools} onClick={(event) => event.stopPropagation()}>
+    <ButtonActionFields settings={settings} pages={pages} activePageId={activePageId} onPatchSettings={onPatchSettings} onSave={onSave} />
+  </div>
+)
+
+const InlineBlockStyleControls: React.FC<{
+  block: SiteBlock
+  onPatchSettings: (patch: Record<string, unknown>) => void
+  onSave: () => void
+}> = ({ block, onPatchSettings, onSave }) => {
   const settings = block.settings || {}
+  const supportsButton = block.blockType === 'hero' || block.blockType === 'button' || block.blockType === 'cta'
+  const supportsField = fieldBlockTypes.has(block.blockType)
+  const supportsMedia = block.blockType === 'image'
+
+  return (
+    <div className={styles.inlineBlockTools} onClick={(event) => event.stopPropagation()}>
+      <label>
+        <span>Fondo</span>
+        <input type="color" value={getSettingHex(settings, 'blockBg', '#ffffff')} onChange={(event) => onPatchSettings({ blockBg: event.target.value })} onBlur={onSave} />
+      </label>
+      <label>
+        <span>Texto</span>
+        <input type="color" value={getSettingHex(settings, 'blockText', '#111827')} onChange={(event) => onPatchSettings({ blockText: event.target.value })} onBlur={onSave} />
+      </label>
+      <label>
+        <span>Padding</span>
+        <input type="range" min="8" max="64" value={getSettingNumber(settings, 'blockPadding', 16, 8, 64)} onChange={(event) => onPatchSettings({ blockPadding: Number(event.target.value) })} onBlur={onSave} />
+      </label>
+      <label>
+        <span>Radio</span>
+        <input type="range" min="0" max="36" value={getSettingNumber(settings, 'blockRadius', 8, 0, 36)} onChange={(event) => onPatchSettings({ blockRadius: Number(event.target.value) })} onBlur={onSave} />
+      </label>
+      <label>
+        <span>Tamano</span>
+        <input type="range" min="12" max="72" value={getSettingNumber(settings, 'fontSize', 18, 12, 72)} onChange={(event) => onPatchSettings({ fontSize: Number(event.target.value) })} onBlur={onSave} />
+      </label>
+      <label>
+        <span>Fuente</span>
+        <select value={getSettingString(settings, 'fontFamily')} onChange={(event) => onPatchSettings({ fontFamily: event.target.value })} onBlur={onSave}>
+          <option value="">Sistema</option>
+          <option value="Inter, system-ui, sans-serif">Inter</option>
+          <option value="'Inter Tight', Inter, system-ui, sans-serif">Inter Tight</option>
+          <option value="Georgia, 'Times New Roman', serif">Serif</option>
+        </select>
+      </label>
+      <label className={styles.inlineCheck}>
+        <input
+          type="checkbox"
+          checked={settings.fontWeight === 'bold'}
+          onChange={(event) => {
+            onPatchSettings({ fontWeight: event.target.checked ? 'bold' : '' })
+            window.setTimeout(onSave, 0)
+          }}
+        />
+        <span>Bold</span>
+      </label>
+      {supportsButton && (
+        <label>
+          <span>Botones</span>
+          <input type="range" min="0" max="40" value={getSettingNumber(settings, 'buttonRadius', 8, 0, 40)} onChange={(event) => onPatchSettings({ buttonRadius: Number(event.target.value) })} onBlur={onSave} />
+        </label>
+      )}
+      {supportsField && (
+        <>
+          <label>
+            <span>Caja</span>
+            <input type="color" value={getSettingHex(settings, 'fieldBg', '#ffffff')} onChange={(event) => onPatchSettings({ fieldBg: event.target.value })} onBlur={onSave} />
+          </label>
+          <label>
+            <span>Borde</span>
+            <input type="color" value={getSettingHex(settings, 'fieldBorder', '#dbe3ef')} onChange={(event) => onPatchSettings({ fieldBorder: event.target.value })} onBlur={onSave} />
+          </label>
+        </>
+      )}
+      {supportsMedia && (
+        <label>
+          <span>Imagen</span>
+          <input type="range" min="30" max="100" value={getSettingNumber(settings, 'mediaWidth', 100, 30, 100)} onChange={(event) => onPatchSettings({ mediaWidth: Number(event.target.value) })} onBlur={onSave} />
+        </label>
+      )}
+    </div>
+  )
+}
+
+interface CanvasPreviewBlockProps {
+  block: SiteBlock
+  blocks?: SiteBlock[]
+  forms: PublicSite[]
+  calendars: CalendarType[]
+  pages?: SitePage[]
+  activePageId?: string
+  selected?: boolean
+  onPatchBlock?: (patch: Partial<SiteBlock>) => void
+  onPatchSettings?: (patch: Record<string, unknown>) => void
+  onSave?: () => void
+}
+
+const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
+  block,
+  blocks = [],
+  forms,
+  calendars,
+  pages = [],
+  activePageId = DEFAULT_FUNNEL_PAGE_ID,
+  selected = false,
+  onPatchBlock,
+  onPatchSettings,
+  onSave
+}) => {
+  const settings = block.settings || {}
+  const editable = Boolean(onPatchBlock && onSave)
+  const patchBlock = onPatchBlock || (() => {})
+  const patchSettings = onPatchSettings || (() => {})
+  const save = onSave || (() => {})
+  const styleTools = selected && editable
+    ? <InlineBlockStyleControls block={block} onPatchSettings={patchSettings} onSave={save} />
+    : null
 
   if (block.blockType === 'hero') {
     return (
       <section className={styles.previewHero}>
-        {getSettingString(settings, 'kicker') && <span>{getSettingString(settings, 'kicker')}</span>}
-        <h1>{block.content || block.label}</h1>
-        {getSettingString(settings, 'subtitle') && <p>{getSettingString(settings, 'subtitle')}</p>}
-        {getSettingString(settings, 'buttonText') && <button type="button">{getSettingString(settings, 'buttonText')}</button>}
+        <input
+          className={styles.inlineKicker}
+          value={getSettingString(settings, 'kicker')}
+          placeholder="Kicker"
+          disabled={!editable}
+          onChange={(event) => patchSettings({ kicker: event.target.value })}
+          onBlur={save}
+        />
+        <textarea
+          className={styles.inlineHeroTitle}
+          rows={2}
+          value={block.content}
+          placeholder={block.label || 'Titular principal'}
+          disabled={!editable}
+          onChange={(event) => patchBlock({ content: event.target.value })}
+          onBlur={save}
+        />
+        <textarea
+          className={styles.inlineTextArea}
+          rows={2}
+          value={getSettingString(settings, 'subtitle')}
+          placeholder="Subtitulo"
+          disabled={!editable}
+          onChange={(event) => patchSettings({ subtitle: event.target.value })}
+          onBlur={save}
+        />
+        <input
+          className={styles.inlineButtonInput}
+          value={getSettingString(settings, 'buttonText')}
+          placeholder="Texto del boton"
+          disabled={!editable}
+          onChange={(event) => patchSettings({ buttonText: event.target.value })}
+          onBlur={save}
+        />
+        {selected && pages.length > 0 && (
+          <InlineButtonRouting settings={settings} pages={pages} activePageId={activePageId} onPatchSettings={patchSettings} onSave={save} />
+        )}
+        {styleTools}
       </section>
     )
   }
 
   if (['headline', 'title'].includes(block.blockType)) {
-    return <h1 className={styles.previewHeadline}>{block.content || block.label}</h1>
+    return (
+      <>
+        <textarea
+          className={`${styles.previewHeadline} ${styles.inlineHeadingInput}`}
+          rows={2}
+          value={block.content}
+          placeholder={block.label || 'Titulo'}
+          disabled={!editable}
+          onChange={(event) => patchBlock({ content: event.target.value })}
+          onBlur={save}
+        />
+        {styleTools}
+      </>
+    )
   }
 
   if (['subheading', 'subtitle', 'description'].includes(block.blockType)) {
-    return <p className={styles.previewSubheading}>{block.content || block.label}</p>
+    return (
+      <>
+        <textarea
+          className={`${styles.previewSubheading} ${styles.inlineTextArea}`}
+          rows={2}
+          value={block.content}
+          placeholder={block.label || 'Subtitulo'}
+          disabled={!editable}
+          onChange={(event) => patchBlock({ content: event.target.value })}
+          onBlur={save}
+        />
+        {styleTools}
+      </>
+    )
   }
 
   if (block.blockType === 'text') {
-    return <p className={styles.previewText}>{block.content || 'Texto de contenido'}</p>
+    return (
+      <>
+        <textarea
+          className={`${styles.previewText} ${styles.inlineTextArea}`}
+          rows={4}
+          value={block.content || ''}
+          placeholder="Texto de contenido"
+          disabled={!editable}
+          onChange={(event) => patchBlock({ content: event.target.value })}
+          onBlur={save}
+        />
+        {styleTools}
+      </>
+    )
   }
 
   if (block.blockType === 'image') {
-    return <div className={styles.previewMedia}>{getSettingString(settings, 'mediaUrl') || block.content || 'Imagen'}</div>
+    const mediaUrl = getSettingString(settings, 'mediaUrl') || block.content
+    return (
+      <div className={styles.previewMediaEditor}>
+        {mediaUrl ? <img src={mediaUrl} alt={block.label || 'Imagen'} /> : <div className={styles.previewMedia}>Imagen</div>}
+        {selected && (
+          <div className={styles.inlineControls}>
+            <input value={mediaUrl} placeholder="URL de imagen" onChange={(event) => patchSettings({ mediaUrl: event.target.value })} onBlur={save} />
+            <label>
+              <span>Tamaño</span>
+              <input
+                type="range"
+                min="30"
+                max="100"
+                value={Number(settings.mediaWidth || 100)}
+                onChange={(event) => patchSettings({ mediaWidth: Number(event.target.value) })}
+                onBlur={save}
+              />
+            </label>
+          </div>
+        )}
+        {styleTools}
+      </div>
+    )
   }
 
   if (block.blockType === 'video') {
-    return <div className={styles.previewMedia}>{getSettingString(settings, 'mediaUrl') || block.content || 'Video'}</div>
+    return (
+      <div className={styles.previewMediaEditor}>
+        <div className={styles.previewMedia}>{getSettingString(settings, 'mediaUrl') || block.content || 'Video'}</div>
+        {selected && (
+          <div className={styles.inlineControls}>
+            <input value={getSettingString(settings, 'mediaUrl')} placeholder="URL de video" onChange={(event) => patchSettings({ mediaUrl: event.target.value })} onBlur={save} />
+          </div>
+        )}
+        {styleTools}
+      </div>
+    )
   }
 
   if (block.blockType === 'button') {
-    return <button type="button" className={styles.previewButton}>{getSettingString(settings, 'buttonText') || block.content || 'Boton'}</button>
+    return (
+      <div className={styles.previewButtonEditor}>
+        <input
+          className={styles.previewButton}
+          value={getSettingString(settings, 'buttonText') || block.content || ''}
+          placeholder="Boton"
+          disabled={!editable}
+          onChange={(event) => patchSettings({ buttonText: event.target.value })}
+          onBlur={save}
+        />
+        {selected && <InlineButtonRouting settings={settings} pages={pages} activePageId={activePageId} onPatchSettings={patchSettings} onSave={save} />}
+        {styleTools}
+      </div>
+    )
   }
 
   if (['benefits', 'testimonials', 'services', 'faq'].includes(block.blockType)) {
     const items = Array.isArray(settings.items) ? settings.items : []
     return (
       <section className={styles.previewList}>
-        <h2>{block.content || block.label}</h2>
+        <textarea
+          className={`${styles.previewListTitle} ${styles.inlineTextArea}`}
+          rows={1}
+          value={block.content}
+          placeholder={block.label || 'Titulo de seccion'}
+          disabled={!editable}
+          onChange={(event) => patchBlock({ content: event.target.value })}
+          onBlur={save}
+        />
         <div>
           {items.slice(0, 3).map((item, index) => {
             const record = item && typeof item === 'object' ? item as Record<string, unknown> : { title: item }
@@ -2525,6 +2843,21 @@ const CanvasPreviewBlock: React.FC<{ block: SiteBlock; forms: PublicSite[]; cale
             )
           })}
         </div>
+        {selected && (
+          <div className={styles.inlineControls} onClick={(event) => event.stopPropagation()}>
+            <label>
+              <span>Items</span>
+              <textarea
+                rows={5}
+                value={stringifyItems(settings)}
+                placeholder="Titulo | texto | autor"
+                onChange={(event) => patchSettings({ items: parseItems(event.target.value) })}
+                onBlur={save}
+              />
+            </label>
+          </div>
+        )}
+        {styleTools}
       </section>
     )
   }
@@ -2535,14 +2868,63 @@ const CanvasPreviewBlock: React.FC<{ block: SiteBlock; forms: PublicSite[]; cale
     const embeddedBlocks = Array.isArray(settings.embeddedBlocks) ? settings.embeddedBlocks as SiteBlock[] : []
     return (
       <section className={styles.previewEmbeddedForm}>
-        <h2>{block.content || 'Formulario'}</h2>
-        <p>{form ? `Usando: ${form.name}` : getSettingString(settings, 'description') || 'Formulario embebido'}</p>
+        <textarea
+          className={`${styles.previewListTitle} ${styles.inlineTextArea}`}
+          rows={1}
+          value={block.content}
+          placeholder="Formulario"
+          disabled={!editable}
+          onChange={(event) => patchBlock({ content: event.target.value })}
+          onBlur={save}
+        />
+        <textarea
+          className={`${styles.previewSubheading} ${styles.inlineTextArea}`}
+          rows={2}
+          value={form ? `Usando: ${form.name}` : getSettingString(settings, 'description') || ''}
+          placeholder="Descripcion del formulario"
+          disabled={!editable || Boolean(form)}
+          onChange={(event) => patchSettings({ description: event.target.value })}
+          onBlur={save}
+        />
         {(embeddedBlocks.length ? embeddedBlocks : [{ id: 'placeholder', blockType: 'short_text', label: 'Campo', required: true } as SiteBlock]).slice(0, 3).map(field => (
           <div key={field.id} className={styles.previewField}>
             <label>{field.label}{field.required ? ' *' : ''}</label>
             <input disabled placeholder={field.placeholder || 'Respuesta'} />
           </div>
         ))}
+        {selected && (
+          <div className={styles.inlineControls} onClick={(event) => event.stopPropagation()}>
+            <label>
+              <span>Formulario existente</span>
+              <select value={formSiteId} onChange={(event) => patchSettings({ formSiteId: event.target.value, embeddedBlocks: undefined })} onBlur={save}>
+                <option value="">Formulario inline dentro de esta landing</option>
+                {forms.map(formOption => (
+                  <option key={formOption.id} value={formOption.id}>{formOption.name}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>Al terminar</span>
+              <select value={getFormCompletionAction(settings)} onChange={(event) => patchSettings({ completionAction: event.target.value })} onBlur={save}>
+                <option value="next_page">Ir a la siguiente pagina al terminar</option>
+                <option value="next_page_if_qualified">Ir a la siguiente pagina solo si califica</option>
+                <option value="form_default">Mantener configuracion actual del formulario</option>
+              </select>
+            </label>
+            <button
+              type="button"
+              className={styles.inlineMiniButton}
+              onClick={() => {
+                patchSettings({ formSiteId: '', embeddedBlocks: createEmbeddedBlocks(block.siteId) })
+                window.setTimeout(save, 0)
+              }}
+            >
+              <Plus size={14} />
+              Crear formulario inline
+            </button>
+          </div>
+        )}
+        {styleTools}
       </section>
     )
   }
@@ -2550,9 +2932,36 @@ const CanvasPreviewBlock: React.FC<{ block: SiteBlock; forms: PublicSite[]; cale
   if (block.blockType === 'cta') {
     return (
       <section className={styles.previewCta}>
-        <h2>{block.content || block.label}</h2>
-        {getSettingString(settings, 'subtitle') && <p>{getSettingString(settings, 'subtitle')}</p>}
-        {getSettingString(settings, 'buttonText') && <button type="button">{getSettingString(settings, 'buttonText')}</button>}
+        <textarea
+          className={`${styles.previewListTitle} ${styles.inlineTextArea}`}
+          rows={1}
+          value={block.content}
+          placeholder={block.label || 'CTA final'}
+          disabled={!editable}
+          onChange={(event) => patchBlock({ content: event.target.value })}
+          onBlur={save}
+        />
+        <textarea
+          className={`${styles.previewSubheading} ${styles.inlineTextArea}`}
+          rows={2}
+          value={getSettingString(settings, 'subtitle')}
+          placeholder="Subtitulo"
+          disabled={!editable}
+          onChange={(event) => patchSettings({ subtitle: event.target.value })}
+          onBlur={save}
+        />
+        <input
+          className={styles.previewButton}
+          value={getSettingString(settings, 'buttonText')}
+          placeholder="Texto del boton"
+          disabled={!editable}
+          onChange={(event) => patchSettings({ buttonText: event.target.value })}
+          onBlur={save}
+        />
+        {selected && pages.length > 0 && (
+          <InlineButtonRouting settings={settings} pages={pages} activePageId={activePageId} onPatchSettings={patchSettings} onSave={save} />
+        )}
+        {styleTools}
       </section>
     )
   }
@@ -2567,15 +2976,64 @@ const CanvasPreviewBlock: React.FC<{ block: SiteBlock; forms: PublicSite[]; cale
           <CalendarDays size={18} />
           <span>{calendar?.name || calendarName || 'Selecciona un calendario'}</span>
         </div>
+        {selected && (
+          <div className={styles.inlineControls} onClick={(event) => event.stopPropagation()}>
+            <label>
+              <span>Calendario</span>
+              <select
+                value={calendarId}
+                onChange={(event) => {
+                  const next = calendars.find(item => item.id === event.target.value)
+                  patchSettings({
+                    calendarId: next?.id || '',
+                    calendarSlug: next?.slug || next?.widgetSlug || '',
+                    calendarName: next?.name || ''
+                  })
+                }}
+                onBlur={save}
+              >
+                <option value="">Selecciona un calendario</option>
+                {calendars.map(calendarOption => (
+                  <option key={calendarOption.id} value={calendarOption.id}>{calendarOption.name}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+        )}
+        {styleTools}
       </div>
     )
   }
 
   if (block.blockType === 'embed') {
-    return <EmbedPreview rawCode={block.content} />
+    return (
+      <div className={styles.previewEmbedEditor}>
+        <EmbedPreview rawCode={block.content} />
+        {selected && (
+          <div className={styles.inlineControls} onClick={(event) => event.stopPropagation()}>
+            <label>
+              <span>Embed / URL</span>
+              <textarea rows={4} value={block.content} onChange={(event) => patchBlock({ content: event.target.value })} onBlur={save} />
+            </label>
+          </div>
+        )}
+        {styleTools}
+      </div>
+    )
   }
 
-  return <FieldPreview block={block} />
+  return (
+    <FieldPreview
+      block={block}
+      blocks={blocks}
+      selected={selected}
+      editable={editable}
+      onPatchBlock={patchBlock}
+      onPatchSettings={patchSettings}
+      onSave={save}
+      styleTools={styleTools}
+    />
+  )
 }
 
 const EmbedPreview: React.FC<{ rawCode: string }> = ({ rawCode }) => {
@@ -2611,25 +3069,90 @@ const EmbedPreview: React.FC<{ rawCode: string }> = ({ rawCode }) => {
   )
 }
 
-const FieldPreview: React.FC<{ block: SiteBlock }> = ({ block }) => (
-  <div className={styles.previewField}>
-    <label>{block.label}{block.required ? ' *' : ''}</label>
-    {block.content && <p>{block.content}</p>}
-    {block.blockType === 'paragraph' ? (
-      <textarea rows={3} placeholder={block.placeholder} disabled />
-    ) : isChoiceBlock(block.blockType) ? (
-      <div className={styles.previewOptions}>
-        {getOptions(block).map(option => <span key={option.id || option.label}>{option.label}</span>)}
-      </div>
-    ) : (
+const FieldPreview: React.FC<{
+  block: SiteBlock
+  blocks: SiteBlock[]
+  selected: boolean
+  editable: boolean
+  onPatchBlock: (patch: Partial<SiteBlock>) => void
+  onPatchSettings: (patch: Record<string, unknown>) => void
+  onSave: () => void
+  styleTools: React.ReactNode
+}> = ({ block, blocks, selected, editable, onPatchBlock, onPatchSettings, onSave, styleTools }) => {
+  const settings = block.settings || {}
+
+  return (
+    <div className={styles.previewField}>
       <input
-        type={block.blockType === 'email' ? 'email' : block.blockType === 'phone' ? 'tel' : block.blockType === 'date' ? 'date' : 'text'}
-        placeholder={block.placeholder}
-        disabled
+        className={styles.inlineFieldLabel}
+        value={block.label}
+        disabled={!editable}
+        onChange={(event) => onPatchBlock({ label: event.target.value })}
+        onBlur={onSave}
       />
-    )}
-  </div>
-)
+      <textarea
+        className={styles.inlineFieldHelp}
+        rows={2}
+        value={block.content}
+        placeholder="Texto de ayuda"
+        disabled={!editable}
+        onChange={(event) => onPatchBlock({ content: event.target.value })}
+        onBlur={onSave}
+      />
+      {block.blockType === 'paragraph' ? (
+        <textarea rows={3} placeholder={block.placeholder || 'Respuesta'} disabled />
+      ) : isChoiceBlock(block.blockType) ? (
+        <div className={styles.previewOptions}>
+          {getOptions(block).map(option => <span key={option.id || option.label}>{option.label}</span>)}
+        </div>
+      ) : (
+        <input
+          type={block.blockType === 'email' ? 'email' : block.blockType === 'phone' ? 'tel' : block.blockType === 'date' ? 'date' : 'text'}
+          placeholder={block.placeholder || 'Respuesta'}
+          disabled
+        />
+      )}
+      {selected && editable && (
+        <div className={styles.inlineControls} onClick={(event) => event.stopPropagation()}>
+          <label>
+            <span>Placeholder</span>
+            <input value={block.placeholder} onChange={(event) => onPatchBlock({ placeholder: event.target.value })} onBlur={onSave} />
+          </label>
+          <label>
+            <span>Nombre interno</span>
+            <input value={getSettingString(settings, 'internalName')} onChange={(event) => onPatchSettings({ internalName: event.target.value })} onBlur={onSave} />
+          </label>
+          <label>
+            <span>Validacion</span>
+            <select value={getSettingString(settings, 'validation')} onChange={(event) => onPatchSettings({ validation: event.target.value })} onBlur={onSave}>
+              <option value="">Ninguna</option>
+              <option value="email">Email</option>
+              <option value="phone">Telefono</option>
+              <option value="number">Numero</option>
+              <option value="currency">Moneda</option>
+              <option value="date">Fecha</option>
+            </select>
+          </label>
+          <label className={styles.inlineCheck}>
+            <input
+              type="checkbox"
+              checked={block.required}
+              onChange={(event) => {
+                onPatchBlock({ required: event.target.checked })
+                window.setTimeout(onSave, 0)
+              }}
+            />
+            <span>Requerido</span>
+          </label>
+          {isChoiceBlock(block.blockType) && (
+            <OptionsRulesEditor block={block} blocks={blocks} onPatchBlock={onPatchBlock} onSave={onSave} />
+          )}
+        </div>
+      )}
+      {styleTools}
+    </div>
+  )
+}
 
 interface PropertiesPanelProps {
   site: PublicSite

@@ -2198,6 +2198,51 @@ function stripToneMarker(value) {
   return String(value || '').replace(/^\s*[+\-–—✓✔✗✘x×]\s*/i, '').trim()
 }
 
+function blockSettingHex(settings, key) {
+  const value = cleanString(settings && settings[key])
+  return /^#[0-9a-f]{6}$/i.test(value) ? value : ''
+}
+
+function blockSettingNumber(settings, key, min, max) {
+  const value = Number(settings && settings[key])
+  if (!Number.isFinite(value)) return null
+  return Math.min(max, Math.max(min, value))
+}
+
+function renderBlockStyleVars(block) {
+  const settings = block.settings || {}
+  const vars = []
+  const blockBg = blockSettingHex(settings, 'blockBg')
+  const blockText = blockSettingHex(settings, 'blockText')
+  const fieldBg = blockSettingHex(settings, 'fieldBg')
+  const fieldBorder = blockSettingHex(settings, 'fieldBorder')
+  const fontFamily = cleanString(settings.fontFamily)
+  const fontSize = blockSettingNumber(settings, 'fontSize', 12, 72)
+  const blockPadding = blockSettingNumber(settings, 'blockPadding', 0, 80)
+  const blockRadius = blockSettingNumber(settings, 'blockRadius', 0, 48)
+  const buttonRadius = blockSettingNumber(settings, 'buttonRadius', 0, 48)
+  const mediaWidth = blockSettingNumber(settings, 'mediaWidth', 30, 100)
+
+  if (blockBg) vars.push(`--rstk-block-bg:${blockBg}`)
+  if (blockText) vars.push(`--rstk-block-text:${blockText}`)
+  if (fieldBg) vars.push(`--rstk-field-bg:${fieldBg}`)
+  if (fieldBorder) vars.push(`--rstk-field-border:${fieldBorder}`)
+  if (fontFamily) vars.push(`--rstk-block-font:${fontFamily.replace(/[;"{}<>]/g, '')}`)
+  if (settings.fontWeight === 'bold') vars.push('--rstk-block-weight:850')
+  if (fontSize !== null) vars.push(`--rstk-block-size:${fontSize}px`)
+  if (blockPadding !== null) vars.push(`--rstk-block-pad:${blockPadding}px`)
+  if (blockRadius !== null) vars.push(`--rstk-block-radius:${blockRadius}px`)
+  if (buttonRadius !== null) vars.push(`--rstk-block-button-radius:${buttonRadius}px`)
+  if (mediaWidth !== null) vars.push(`--rstk-media-width:${mediaWidth}%`)
+
+  return vars.length ? ` style="${escapeHtml(vars.join(';'))}"` : ''
+}
+
+function wrapRenderedBlock(block, html) {
+  const style = renderBlockStyleVars(block)
+  return style ? `<div class="rstk-block-style"${style}>${html}</div>` : html
+}
+
 function renderContentBlock(block, context = {}) {
   const content = escapeHtml(block.content)
   const settings = block.settings || {}
@@ -2621,10 +2666,11 @@ function getBrand(site, template) {
   const subtitleDefault = template.chrome === 'instagram' ? 'Publicacion pagada' : 'Patrocinado'
   const subtitle = cleanString(theme.brandSubtitle) || subtitleDefault
   const avatarUrl = safeUrl(theme.brandAvatar)
+  const followers = cleanString(theme.followers || theme.followersCount || theme.followerCount)
   const verified = theme.brandVerified === undefined ? true : normalizeBoolean(theme.brandVerified) === 1
   const handle = (slugify(name) || 'marca').replace(/-/g, '')
   const initial = (name.trim()[0] || 'R').toUpperCase()
-  return { name, subtitle, avatarUrl, verified, handle, initial }
+  return { name, subtitle, avatarUrl, followers, verified, handle, initial }
 }
 
 function renderAvatar(brand) {
@@ -2635,6 +2681,8 @@ function renderAvatar(brand) {
 }
 
 function renderBrandChrome(template, brand) {
+  const followerText = brand.followers ? ` <span aria-hidden="true">&middot;</span> ${escapeHtml(brand.followers)} seguidores` : ''
+
   if (template.chrome === 'facebook') {
     return `
       <header class="rstk-chrome rstk-fb">
@@ -2643,7 +2691,7 @@ function renderBrandChrome(template, brand) {
           ${renderAvatar(brand)}
           <div class="rstk-fb-meta">
             <div class="rstk-fb-name">${escapeHtml(brand.name)}${brand.verified ? RSTK_ICONS.verified : ''}</div>
-            <div class="rstk-fb-sub">${escapeHtml(brand.subtitle)} <span aria-hidden="true">&middot;</span> ${RSTK_ICONS.globe}</div>
+            <div class="rstk-fb-sub">${escapeHtml(brand.subtitle)}${followerText} <span aria-hidden="true">&middot;</span> ${RSTK_ICONS.globe}</div>
           </div>
           <span class="rstk-fb-mark" aria-hidden="true">f</span>
         </div>
@@ -2663,7 +2711,7 @@ function renderBrandChrome(template, brand) {
           <span class="rstk-ig-ring">${renderAvatar(brand)}</span>
           <div class="rstk-ig-meta">
             <div class="rstk-ig-name">${escapeHtml(brand.handle)}</div>
-            <div class="rstk-ig-sub">${escapeHtml(brand.subtitle)}</div>
+            <div class="rstk-ig-sub">${escapeHtml(brand.subtitle)}${followerText}</div>
           </div>
         </div>
       </header>
@@ -2681,7 +2729,7 @@ function renderBrandChrome(template, brand) {
           ${renderAvatar(brand)}
           <div class="rstk-tt-meta">
             <div class="rstk-tt-name">@${escapeHtml(brand.handle)}</div>
-            <div class="rstk-tt-sub">${escapeHtml(brand.subtitle)}</div>
+            <div class="rstk-tt-sub">${escapeHtml(brand.subtitle)}${followerText}</div>
           </div>
         </div>
       </header>
@@ -2720,6 +2768,38 @@ const RSTK_BASE_CSS = `
   .rstk-shell{display:grid;gap:var(--rstk-gap)}
   .rstk-centered .rstk-shell{text-align:center;justify-items:center}
   .rstk-centered .rstk-subheading,.rstk-centered .rstk-text{margin-inline:auto}
+  .rstk-block-style{
+    width:100%;
+    background:var(--rstk-block-bg,transparent);
+    color:var(--rstk-block-text,var(--rstk-ink));
+    font-family:var(--rstk-block-font,var(--rstk-font));
+    font-size:var(--rstk-block-size,inherit);
+    font-weight:var(--rstk-block-weight,inherit);
+    border-radius:var(--rstk-block-radius,0);
+    padding:var(--rstk-block-pad,0);
+  }
+  .rstk-block-style .rstk-headline,
+  .rstk-block-style h2,
+  .rstk-block-style label,
+  .rstk-block-style strong{color:var(--rstk-block-text,var(--rstk-ink))}
+  .rstk-block-style .rstk-subheading,
+  .rstk-block-style .rstk-text,
+  .rstk-block-style .rstk-help,
+  .rstk-block-style p{color:color-mix(in srgb,var(--rstk-block-text,var(--rstk-ink)) 68%,var(--rstk-muted) 32%)}
+  .rstk-block-style .rstk-button-link,
+  .rstk-block-style button{border-radius:var(--rstk-block-button-radius,var(--rstk-btn-radius))}
+  .rstk-block-style input,
+  .rstk-block-style textarea,
+  .rstk-block-style select,
+  .rstk-block-style .rstk-option{
+    background:var(--rstk-field-bg,var(--rstk-input-bg));
+    border-color:var(--rstk-field-border,var(--rstk-input-border));
+  }
+  .rstk-block-style .rstk-media,
+  .rstk-block-style .rstk-video{
+    width:var(--rstk-media-width,100%);
+    margin-inline:auto;
+  }
 
   .rstk-kind-form .rstk-shell{
     background:var(--rstk-surface);border:1px solid var(--rstk-border);
@@ -3101,11 +3181,12 @@ export async function renderPublicSiteHtml(site, { pageId, trackingEnabled = tru
     isInteractive ? 'rstk-interactive' : ''
   ].filter(Boolean).join(' ')
 
-  const bodyBlocks = blocks.map(block => (
-    FIELD_BLOCK_TYPES.has(block.blockType)
+  const bodyBlocks = blocks.map(block => {
+    const html = FIELD_BLOCK_TYPES.has(block.blockType)
       ? renderFieldBlock(block, isInteractive)
       : renderContentBlock(block, { site, pageId: activePage?.id })
-  )).join('\n')
+    return wrapRenderedBlock(block, html)
+  }).join('\n')
 
   const submitArea = hasForm
     ? `
