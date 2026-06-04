@@ -604,16 +604,17 @@ body.dark .dropdownMenu {
 }
 
 .toggle {
-  position: relative;
-  display: inline-block;
-  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  box-sizing: border-box;
   width: 44px;
+  height: 24px;
+  padding: 2px;
   flex-shrink: 0;
+  border: none;
   border-radius: 9999px;
   background-color: var(--color-border);
   transition: background-color 0.2s;
-  border: none;
-  padding: 0;
   cursor: pointer;
   vertical-align: middle;
 }
@@ -632,16 +633,14 @@ body.dark .dropdownMenu {
 }
 
 .toggleThumb {
-  position: absolute;
-  top: 50%;
-  left: 2px;
-  height: 20px;
+  box-sizing: border-box;
   width: 20px;
-  margin-top: -10px;
+  height: 20px;
+  flex-shrink: 0;
   border-radius: 50%;
   background-color: #ffffff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
   transition: transform 0.2s;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
 }
 
 .toggleActive .toggleThumb {
