@@ -941,12 +941,19 @@ const Analytics: React.FC = () => {
             browsers: [],
             os: [],
             placements: [],
-            conversions: []
+            conversions: [],
+            trackingSources: [],
+            siteTypes: [],
+            nativeSites: [],
+            nativeForms: [],
+            nativeConversions: []
           }
 
           // Páginas
           const pageMap: { [key: string]: number } = {}
           currentSessions.forEach((session: Session) => {
+            if (!isTrackingViewEvent(session)) return
+
             if (session.page_url) {
               const urlPath = session.page_url.split('?')[0]
               const pageName = urlPath.split('/').pop() || 'home'
@@ -990,6 +997,11 @@ const Analytics: React.FC = () => {
           const browsersMap: { [key: string]: Set<string> } = {}
           const osMap: { [key: string]: Set<string> } = {}
           const placementsMap: { [key: string]: Set<string> } = {}
+          const trackingSourceMap: { [key: string]: Set<string> } = {}
+          const siteTypesMap: { [key: string]: Set<string> } = {}
+          const nativeSitesMap: { [key: string]: { name: string; visitors: Set<string> } } = {}
+          const nativeFormsMap: { [key: string]: { name: string; visitors: Set<string> } } = {}
+          const nativeConversionsMap: { [key: string]: { name: string; conversions: Set<string> } } = {}
           const conversionsMap = CONVERSION_STAGES.reduce<Record<ConversionStage, Set<string>>>((acc, stage) => {
             acc[stage] = new Set()
             return acc
@@ -998,6 +1010,52 @@ const Analytics: React.FC = () => {
           currentSessions.forEach((session: Session) => {
             const visitorId = session.visitor_id
             const conversionStage = getSessionConversionStage(session)
+            const trackingSource = getTrackingSourceValue(session)
+
+            if (!trackingSourceMap[trackingSource]) trackingSourceMap[trackingSource] = new Set()
+            trackingSourceMap[trackingSource].add(visitorId)
+
+            if (isNativeSiteSession(session)) {
+              const siteType = session.site_type || 'unknown'
+              if (!siteTypesMap[siteType]) siteTypesMap[siteType] = new Set()
+              siteTypesMap[siteType].add(visitorId)
+
+              if (session.site_id) {
+                if (!nativeSitesMap[session.site_id]) {
+                  nativeSitesMap[session.site_id] = {
+                    name: session.site_name || session.site_slug || 'Site sin nombre',
+                    visitors: new Set()
+                  }
+                }
+                nativeSitesMap[session.site_id].visitors.add(visitorId)
+              }
+
+              const formId = getNativeFormId(session)
+              if (formId) {
+                if (!nativeFormsMap[formId]) {
+                  nativeFormsMap[formId] = {
+                    name: getNativeFormName(session) || 'Formulario sin nombre',
+                    visitors: new Set()
+                  }
+                }
+                nativeFormsMap[formId].visitors.add(visitorId)
+              }
+
+              const nativeConversionValue = getNativeConversionFilterValue(session)
+              if (nativeConversionValue) {
+                const conversionKey = session.submission_id || session.contact_id || visitorId
+                const label = nativeConversionValue.startsWith('form:')
+                  ? `Formulario: ${getNativeFormName(session) || session.site_name || 'Sin nombre'}`
+                  : `Landing: ${session.site_name || session.site_slug || 'Sin nombre'}`
+                if (!nativeConversionsMap[nativeConversionValue]) {
+                  nativeConversionsMap[nativeConversionValue] = {
+                    name: label,
+                    conversions: new Set()
+                  }
+                }
+                nativeConversionsMap[nativeConversionValue].conversions.add(conversionKey)
+              }
+            }
 
             if (conversionStage) {
               conversionsMap[conversionStage].add(visitorId)
@@ -1146,6 +1204,26 @@ const Analytics: React.FC = () => {
 
           filterData.placements = Object.entries(placementsMap)
             .map(([name, visitorSet]) => ({ name, count: visitorSet.size }))
+            .sort((a, b) => b.count - a.count)
+
+          filterData.trackingSources = Object.entries(trackingSourceMap)
+            .map(([value, visitorSet]) => ({ value, name: getTrackingSourceLabel(value), count: visitorSet.size }))
+            .sort((a, b) => b.count - a.count)
+
+          filterData.siteTypes = Object.entries(siteTypesMap)
+            .map(([value, visitorSet]) => ({ value, name: getSiteTypeLabel(value), count: visitorSet.size }))
+            .sort((a, b) => b.count - a.count)
+
+          filterData.nativeSites = Object.entries(nativeSitesMap)
+            .map(([value, item]) => ({ value, name: item.name, count: item.visitors.size }))
+            .sort((a, b) => b.count - a.count)
+
+          filterData.nativeForms = Object.entries(nativeFormsMap)
+            .map(([value, item]) => ({ value, name: item.name, count: item.visitors.size }))
+            .sort((a, b) => b.count - a.count)
+
+          filterData.nativeConversions = Object.entries(nativeConversionsMap)
+            .map(([value, item]) => ({ value, name: item.name, count: item.conversions.size }))
             .sort((a, b) => b.count - a.count)
 
           filterData.conversions = conversionFilters.map(item => ({
@@ -1401,6 +1479,21 @@ const Analytics: React.FC = () => {
               case 'conversion_stage':
                 if (getSessionConversionStage(session) === value) fieldMatch = true
                 break
+              case 'tracking_source':
+                if (getTrackingSourceValue(session) === value) fieldMatch = true
+                break
+              case 'site_type':
+                if ((session.site_type || 'unknown') === value) fieldMatch = true
+                break
+              case 'site_id':
+                if (session.site_id === value) fieldMatch = true
+                break
+              case 'form_site_id':
+                if (getNativeFormId(session) === value) fieldMatch = true
+                break
+              case 'native_conversion_source':
+                if (getNativeConversionFilterValue(session) === value) fieldMatch = true
+                break
             }
           }
 
@@ -1450,12 +1543,14 @@ const Analytics: React.FC = () => {
       return
     }
 
+    const viewSessionsToProcess = sessionsToProcess.filter(isTrackingViewEvent)
+
     // Recalcular KPIs principales con las sesiones filtradas
-    const uniqueVids = new Set(sessionsToProcess.map((s: Session) => s.visitor_id)).size
-    const totalPageViews = sessionsToProcess.length
+    const uniqueVids = new Set(viewSessionsToProcess.map((s: Session) => s.visitor_id)).size
+    const totalPageViews = viewSessionsToProcess.length
 
     // Contar sesiones únicas (por session_id)
-    const uniqueSessionIds = new Set(sessionsToProcess.map((s: Session) => s.session_id)).size
+    const uniqueSessionIds = new Set(viewSessionsToProcess.map((s: Session) => s.session_id)).size
 
     // Registros = contactos únicos que aparecen en las sesiones filtradas
     const sesionesConContacto = sessionsToProcess.filter((s: Session) => {
@@ -1480,7 +1575,7 @@ const Analytics: React.FC = () => {
 
     // Usuarios recurrentes: contar visitor_ids que tienen múltiples session_ids diferentes
     const visitorSessionMap: { [key: string]: Set<string> } = {}
-    sessionsToProcess.forEach((s: Session) => {
+    viewSessionsToProcess.forEach((s: Session) => {
       if (!visitorSessionMap[s.visitor_id]) {
         visitorSessionMap[s.visitor_id] = new Set()
       }
@@ -1549,7 +1644,7 @@ const Analytics: React.FC = () => {
       if (!browsersForFilter[browser]) browsersForFilter[browser] = new Set()
       browsersForFilter[browser].add(session.visitor_id)
     })
-    const uniqueVisitorsInFilter = new Set(sessionsToProcess.map(s => s.visitor_id)).size
+    const uniqueVisitorsInFilter = new Set(viewSessionsToProcess.map(s => s.visitor_id)).size
     const browserStats = Object.entries(browsersForFilter)
       .map(([browser, visitorSet]) => ({
         name: browser,
@@ -1606,7 +1701,7 @@ const Analytics: React.FC = () => {
       if (!devicesFiltered[device]) devicesFiltered[device] = new Set()
       devicesFiltered[device].add(session.visitor_id)
     })
-    const uniqueVisitorsFiltered = new Set(sessionsToProcess.map(s => s.visitor_id)).size
+    const uniqueVisitorsFiltered = new Set(viewSessionsToProcess.map(s => s.visitor_id)).size
     const deviceStats = Object.entries(devicesFiltered)
       .map(([device, visitorSet]) => ({
         name: device,
@@ -1634,7 +1729,7 @@ const Analytics: React.FC = () => {
     setOsData(osStats)
 
     const visitorCounts: { [key: string]: number } = {}
-    sessionsToProcess.forEach((s: Session) => {
+    viewSessionsToProcess.forEach((s: Session) => {
       visitorCounts[s.visitor_id] = (visitorCounts[s.visitor_id] || 0) + 1
     })
     const topVisitorsList = Object.entries(visitorCounts)
