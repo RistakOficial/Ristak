@@ -43,7 +43,7 @@ interface FetchCollectionResult {
   count: number
 }
 
-type SecretTokenField = 'accessToken' | 'pixelApiToken'
+type SecretTokenField = 'accessToken'
 
 const MASKED_SECRET_PREFIX = '***'
 const SECRET_MASK_FILL = '*'.repeat(180)
@@ -97,18 +97,14 @@ export const MetaAdsIntegration: React.FC = () => {
   const [isLoadingPixels, setIsLoadingPixels] = useState(false)
   const [isLoadingPages, setIsLoadingPages] = useState(false)
   const [realAccessToken, setRealAccessToken] = useState('')
-  const [realPixelApiToken, setRealPixelApiToken] = useState('')
   const [isSavingToken, setIsSavingToken] = useState(false)
-  const [isSavingPixelToken, setIsSavingPixelToken] = useState(false)
   const [isRevealingAccessToken, setIsRevealingAccessToken] = useState(false)
-  const [isRevealingPixelApiToken, setIsRevealingPixelApiToken] = useState(false)
   const [isSavingPageId, setIsSavingPageId] = useState(false)
   const [savedPageId, setSavedPageId] = useState('')
   const [isSyncingSnippet, setIsSyncingSnippet] = useState(false)
   const [isSyncingMetaAds, setIsSyncingMetaAds] = useState(false)
   const [activeStep, setActiveStep] = useState(0)
   const accessTokenInputRef = useRef<HTMLInputElement>(null)
-  const pixelApiTokenInputRef = useRef<HTMLInputElement>(null)
 
   const { showToast } = useNotification()
   const { theme } = useTheme()
@@ -158,10 +154,6 @@ export const MetaAdsIntegration: React.FC = () => {
               : `act_${data.data.adAccountId}`
             await fetchPixels(accountIdWithPrefix, tokenToUse, data.data.pixelId, { silent: true })
           }
-        }
-
-        if (data.data.pixelApiToken && !isMaskedSecretValue(data.data.pixelApiToken)) {
-          setRealPixelApiToken(data.data.pixelApiToken)
         }
       }
     } catch {
@@ -364,7 +356,6 @@ export const MetaAdsIntegration: React.FC = () => {
         pixelApiToken: ''
       })
       setRealAccessToken('')
-      setRealPixelApiToken('')
       setAdAccounts([])
       setPixels([])
       setPages([])
@@ -377,7 +368,6 @@ export const MetaAdsIntegration: React.FC = () => {
         pixelId: '',
         pixelApiToken: ''
       }))
-      setRealPixelApiToken('')
       setPixels([])
       setActiveStep(1)
     } else if (field === 'pixelId') {
@@ -386,14 +376,12 @@ export const MetaAdsIntegration: React.FC = () => {
         pixelId: '',
         pixelApiToken: ''
       }))
-      setRealPixelApiToken('')
       setActiveStep(2)
     } else if (field === 'pageId') {
       setCredentials(prev => ({ ...prev, pageId: '' }))
       setSavedPageId('')
     } else if (field === 'pixelApiToken') {
       setCredentials(prev => ({ ...prev, pixelApiToken: '' }))
-      setRealPixelApiToken('')
     } else {
       setCredentials(prev => ({ ...prev, [field]: '' }))
     }
@@ -405,9 +393,7 @@ export const MetaAdsIntegration: React.FC = () => {
 
   const focusSecretInput = (field: SecretTokenField) => {
     const focusAndSelect = () => {
-      const input = field === 'accessToken'
-        ? accessTokenInputRef.current
-        : pixelApiTokenInputRef.current
+      const input = accessTokenInputRef.current
 
       input?.focus()
       input?.select()
@@ -418,24 +404,16 @@ export const MetaAdsIntegration: React.FC = () => {
   }
 
   const handleEditStoredSecret = async (field: SecretTokenField) => {
-    const isAccessToken = field === 'accessToken'
-    let revealedToken = isAccessToken ? realAccessToken : realPixelApiToken
+    let revealedToken = realAccessToken
 
     if (!revealedToken) {
-      if (isAccessToken) {
-        setIsRevealingAccessToken(true)
-      } else {
-        setIsRevealingPixelApiToken(true)
-      }
+      setIsRevealingAccessToken(true)
 
       try {
-        const endpoint = isAccessToken
-          ? '/api/meta/config/reveal/access_token'
-          : '/api/meta/config/reveal/pixel_api_token'
-        const response = await fetch(endpoint)
+        const response = await fetch('/api/meta/config/reveal/access_token')
         const data = await response.json()
 
-        revealedToken = isAccessToken ? data.accessToken : data.pixelApiToken
+        revealedToken = data.accessToken
 
         if (!data.success || !revealedToken) {
           throw new Error(data.error || 'Token no disponible')
@@ -444,23 +422,15 @@ export const MetaAdsIntegration: React.FC = () => {
         showToast(
           'error',
           'No se pudo revelar',
-          isAccessToken ? 'No se pudo cargar el Access Token original' : 'No se pudo cargar el Pixel API Token original'
+          'No se pudo cargar el Access Token original'
         )
         return
       } finally {
-        if (isAccessToken) {
-          setIsRevealingAccessToken(false)
-        } else {
-          setIsRevealingPixelApiToken(false)
-        }
+        setIsRevealingAccessToken(false)
       }
     }
 
-    if (isAccessToken) {
-      setRealAccessToken(revealedToken)
-    } else {
-      setRealPixelApiToken(revealedToken)
-    }
+    setRealAccessToken(revealedToken)
 
     setCredentials(prev => ({ ...prev, [field]: revealedToken }))
     focusSecretInput(field)
@@ -632,46 +602,9 @@ export const MetaAdsIntegration: React.FC = () => {
     }
   }
 
-  const handleSavePageId = async () => {
-    await savePageId(credentials.pageId)
-  }
-
   const handleSelectAndSavePage = async (page: MetaPage) => {
     setCredentials(prev => ({ ...prev, pageId: page.id }))
     await savePageId(page.id)
-  }
-
-  const handleSavePixelApiToken = async () => {
-    if (!credentials.pixelApiToken) {
-      showToast('error', 'Token requerido', 'Ingresa el Pixel API Token primero')
-      return
-    }
-
-    setIsSavingPixelToken(true)
-
-    try {
-      const response = await fetch('/api/meta/save-pixel-token', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          pixelApiToken: credentials.pixelApiToken
-        })
-      })
-
-      const data = await response.json()
-
-      if (data.success) {
-        showToast('success', 'Pixel API Token guardado', 'Token guardado en DB y Custom Values')
-        await loadCredentials()
-        setActiveStep(4)
-      } else {
-        showToast('error', 'Error', data.error || 'No se pudo guardar el Pixel API Token')
-      }
-    } catch {
-      showToast('error', 'Error', 'No se pudo conectar con el servidor')
-    } finally {
-      setIsSavingPixelToken(false)
-    }
   }
 
   const handleToggleMetaPixel = async (newValue: boolean) => {
@@ -709,7 +642,7 @@ export const MetaAdsIntegration: React.FC = () => {
       showToast(
         'warning',
         'Facebook Page requerida',
-        'Primero selecciona la Facebook Page en el paso 5 para activar eventos personalizados de WhatsApp'
+        'Primero selecciona la Facebook Page en el paso 4 para activar eventos personalizados de WhatsApp'
       )
       return
     }
@@ -731,7 +664,7 @@ export const MetaAdsIntegration: React.FC = () => {
       showToast(
         'warning',
         'Facebook Page requerida',
-        'Primero selecciona la Facebook Page en el paso 5 para activar eventos personalizados de WhatsApp'
+        'Primero selecciona la Facebook Page en el paso 4 para activar eventos personalizados de WhatsApp'
       )
       return
     }
@@ -779,17 +712,11 @@ export const MetaAdsIntegration: React.FC = () => {
   const hasAccessToken = Boolean(realAccessToken || isMaskedSecretValue(credentials.accessToken))
   const hasAdAccount = Boolean(credentials.adAccountId)
   const hasPixel = Boolean(credentials.pixelId)
-  const hasPixelApiToken = Boolean(credentials.pixelApiToken)
   const hasPageId = Boolean(savedPageId)
   const shouldShowAccessTokenAction = Boolean(
     credentials.accessToken &&
     !isMaskedSecretValue(credentials.accessToken) &&
     (!realAccessToken || credentials.accessToken !== realAccessToken)
-  )
-  const shouldShowPixelApiTokenAction = Boolean(
-    credentials.pixelApiToken &&
-    !isMaskedSecretValue(credentials.pixelApiToken) &&
-    (!realPixelApiToken || credentials.pixelApiToken !== realPixelApiToken)
   )
   const metaSetupSteps = [
     {
@@ -812,13 +739,6 @@ export const MetaAdsIntegration: React.FC = () => {
       done: hasPixel,
       required: false,
       unlocked: hasAdAccount
-    },
-    {
-      title: 'Pixel API Token',
-      description: 'Opcional CAPI',
-      done: hasPixelApiToken,
-      required: false,
-      unlocked: hasPixel
     },
     {
       title: 'Facebook Page',
@@ -861,12 +781,8 @@ export const MetaAdsIntegration: React.FC = () => {
       return 'Primero valida el Access Token para cargar tus cuentas de anuncios'
     }
 
-    if ((stepIndex === 2 || stepIndex === 4) && !hasAdAccount) {
+    if ((stepIndex === 2 || stepIndex === 3) && !hasAdAccount) {
       return 'Primero selecciona y guarda una cuenta de anuncios'
-    }
-
-    if (stepIndex === 3 && !hasPixel) {
-      return 'Primero selecciona un Meta Pixel para guardar el Pixel API Token'
     }
 
     return 'Completa el paso anterior para continuar'
@@ -886,7 +802,7 @@ export const MetaAdsIntegration: React.FC = () => {
     }
 
     if (activeStep === 2 && !hasPixel) {
-      setActiveStep(4)
+      setActiveStep(3)
       return
     }
 
@@ -894,7 +810,7 @@ export const MetaAdsIntegration: React.FC = () => {
   }
 
   const handlePreviousStep = () => {
-    setActiveStep(step => step === 4 && !hasPixel ? 2 : Math.max(step - 1, 0))
+    setActiveStep(step => step === 3 && !hasPixel ? 2 : Math.max(step - 1, 0))
   }
 
   const handleSelectStep = (stepIndex: number) => {
@@ -1148,86 +1064,10 @@ export const MetaAdsIntegration: React.FC = () => {
       )
     }
 
-    if (activeStep === 3) {
-      return (
-        <>
-          <div className={styles.stepIntro}>
-            <span className={styles.stepEyebrow}>Paso 4</span>
-            <h3 className={styles.stepTitle}>Revisa Conversions API</h3>
-            <p className={styles.stepText}>
-              Normalmente el token principal basta si el usuario del sistema tiene acceso al dataset. Esta caja queda como respaldo si Meta no deja generar o usar CAPI con el token principal.
-            </p>
-            <a href="https://business.facebook.com/events_manager2" target="_blank" rel="noopener noreferrer" className={styles.inlineDocLink}>
-              Abrir Events Manager
-              <ExternalLink size={14} />
-            </a>
-          </div>
-
-          {!hasPixel ? (
-            <p className={styles.stepHint}>{getStepBlockMessage(3)}</p>
-          ) : (
-            <div className={`${styles.formGroup} ${styles.formGroupWide}`}>
-              <span id="metaPixelApiTokenLabel" className={styles.formLabel}>Pixel API Token</span>
-              {credentials.pixelApiToken && isMaskedSecretValue(credentials.pixelApiToken) ? (
-                <div
-                  className={`${styles.filterChip} ${styles.secretTokenChip}`}
-                  onClick={() => handleEditStoredSecret('pixelApiToken')}
-                  onKeyDown={(event) => handleSecretChipKeyDown(event, 'pixelApiToken')}
-                  role="button"
-                  tabIndex={0}
-                  aria-label="Mostrar y editar Pixel API Token"
-                  title="Mostrar y editar Pixel API Token"
-                >
-                  {renderMaskedSecretValue(credentials.pixelApiToken, isRevealingPixelApiToken)}
-                  <button
-                    onClick={(event) => {
-                      event.stopPropagation()
-                      handleRemoveCredential('pixelApiToken')
-                    }}
-                    className={styles.chipDeleteButton}
-                    type="button"
-                    aria-label="Eliminar Pixel API Token"
-                  >
-                    <Trash2 size={16} />
-                  </button>
-                </div>
-              ) : (
-                <div className={styles.inputActionRow}>
-                  <input
-                    id="metaPixelApiToken"
-                    ref={pixelApiTokenInputRef}
-                    type="text"
-                    value={credentials.pixelApiToken}
-                    onChange={(event) => handleInputChange('pixelApiToken', event.target.value)}
-                    placeholder="Pega aquí el token generado desde Events Manager"
-                    className={`${styles.formInput} ${styles.secretTokenInput}`}
-                    aria-labelledby="metaPixelApiTokenLabel"
-                    autoComplete="off"
-                    spellCheck={false}
-                  />
-                  {shouldShowPixelApiTokenAction && (
-                    <Button
-                      type="button"
-                      variant="primary"
-                      onClick={handleSavePixelApiToken}
-                      disabled={isSavingPixelToken || !credentials.pixelApiToken}
-                    >
-                      <RefreshCw size={16} className={isSavingPixelToken ? styles.spinning : ''} />
-                      {isSavingPixelToken ? 'Guardando...' : realPixelApiToken ? 'Actualizar' : 'Guardar'}
-                    </Button>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-        </>
-      )
-    }
-
     return (
       <>
         <div className={styles.stepIntro}>
-          <span className={styles.stepEyebrow}>Paso 5</span>
+          <span className={styles.stepEyebrow}>Paso 4</span>
           <h3 className={styles.stepTitle}>Selecciona la Facebook Page</h3>
           <p className={styles.stepText}>
             La Página se obtiene desde Meta con el permiso pages_show_list. Así los eventos de WhatsApp quedan ligados a la Página correcta sin copiar IDs a mano.
@@ -1346,7 +1186,7 @@ export const MetaAdsIntegration: React.FC = () => {
                     Crea el token correcto y después selecciona los activos que Meta devuelve por API.
                   </p>
                 </div>
-                <span className={styles.stepCount}>{completedMetaSetupSteps}/5 listo</span>
+                <span className={styles.stepCount}>{completedMetaSetupSteps}/4 listo</span>
               </div>
 
               <div className={styles.wizardShell}>
@@ -1484,8 +1324,6 @@ export const MetaAdsIntegration: React.FC = () => {
                 <strong>{hasAdAccount ? getSelectedAdAccountLabel() : '-'}</strong>
                 <span>Pixel</span>
                 <strong>{hasPixel ? getSelectedPixelLabel() : '-'}</strong>
-                <span>CAPI</span>
-                <strong>{hasPixelApiToken ? 'Listo' : '-'}</strong>
                 <span>Page</span>
                 <strong>{hasPageId ? getSelectedPageLabel() : '-'}</strong>
               </div>
