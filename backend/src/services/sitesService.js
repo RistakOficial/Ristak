@@ -73,9 +73,16 @@ const SITES_AI_MAX_MESSAGE_CHARS = 5000
 const RENDER_DOMAIN_CACHE_TTL_MS = 15 * 60 * 1000
 const RENDER_FAILED_CACHE_TTL_MS = 90 * 1000
 const DEFAULT_FUNNEL_PAGE_ID = 'page-1'
+const SITE_META_EVENTS = new Set(['Lead', 'Schedule', 'Purchase', 'FormSubmitted'])
+const META_STANDARD_PIXEL_EVENTS = new Set(['Lead', 'Schedule', 'Purchase'])
 
 function cleanString(value) {
   return String(value || '').trim()
+}
+
+function normalizeSiteMetaEventName(value) {
+  const eventName = cleanString(value)
+  return SITE_META_EVENTS.has(eventName) ? eventName : 'Lead'
 }
 
 function parseJson(value, fallback) {
@@ -233,7 +240,7 @@ function mapSite(row) {
     description: row.description || '',
     theme: parseJson(row.theme_json, DEFAULT_THEME),
     metaCapiEnabled: Boolean(Number(row.meta_capi_enabled || 0)),
-    metaEventName: row.meta_event_name || 'Lead',
+    metaEventName: normalizeSiteMetaEventName(row.meta_event_name),
     renderDomainVerified: Boolean(Number(row.render_domain_verified || 0)),
     renderDomainCheckedAt: row.render_domain_checked_at || null,
     renderDomainError: row.render_domain_error || null,
@@ -885,7 +892,7 @@ async function insertAISiteBlueprint(blueprint) {
     blueprint.title,
     blueprint.description || null,
     jsonString(blueprint.theme),
-    blueprint.metaEventName || 'Lead'
+    normalizeSiteMetaEventName(blueprint.metaEventName)
   ])
 
   for (const block of blueprint.blocks) {
@@ -1058,7 +1065,7 @@ export async function createSite(input = {}) {
     description || null,
     jsonString(theme),
     normalizeBoolean(input.metaCapiEnabled),
-    cleanString(input.metaEventName) || 'Lead'
+    normalizeSiteMetaEventName(input.metaEventName)
   ])
 
   for (const block of buildDefaultBlocks(id, siteType, theme.template)) {
@@ -1191,7 +1198,7 @@ export async function updateSite(siteId, input = {}) {
     input.description === undefined ? current.description : cleanString(input.description) || null,
     jsonString({ ...DEFAULT_THEME, ...(input.theme || current.theme || {}) }),
     input.metaCapiEnabled === undefined ? normalizeBoolean(current.metaCapiEnabled) : normalizeBoolean(input.metaCapiEnabled),
-    cleanString(input.metaEventName) || current.metaEventName || 'Lead',
+    normalizeSiteMetaEventName(input.metaEventName || current.metaEventName),
     domainChanged ? 1 : 0,
     domainChanged ? 1 : 0,
     domainChanged ? 1 : 0,
@@ -2853,7 +2860,48 @@ function buildStyleSheet(template, maxWidth, accentOverride) {
   `
 }
 
-export function renderPublicSiteHtml(site, { pageId, trackingEnabled = true } = {}) {
+async function buildMetaPixelSnippet(site, trackingEnabled) {
+  if (!trackingEnabled || !site.metaCapiEnabled) return ''
+
+  const metaConfig = await getMetaConfig().catch(error => {
+    logger.warn(`No se pudo leer Pixel ID de Meta para snippet de Site: ${error.message}`)
+    return null
+  })
+  const pixelId = cleanString(metaConfig?.pixel_id || process.env.META_PIXEL_ID || process.env.META_DATASET_ID)
+  if (!pixelId) return ''
+
+  const eventName = normalizeSiteMetaEventName(site.metaEventName)
+  const pixelMethod = META_STANDARD_PIXEL_EVENTS.has(eventName) ? 'track' : 'trackCustom'
+
+  return `
+  <script>
+    !function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?
+    n.callMethod.apply(n,arguments):n.queue.push(arguments)};if(!f._fbq)f._fbq=n;
+    n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);t.async=!0;
+    t.src=v;s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}
+    (window, document,'script','https://connect.facebook.net/en_US/fbevents.js');
+    fbq('init', ${JSON.stringify(pixelId)});
+    fbq('track', 'PageView');
+    window.ristakMetaTrackSiteSubmit = function(eventId, customData) {
+      if (!window.fbq) return;
+      const data = Object.assign({
+        source: 'ristak_site',
+        site_id: ${JSON.stringify(site.id)},
+        site_name: ${JSON.stringify(site.name || '')},
+        content_name: ${JSON.stringify(site.title || site.name || '')}
+      }, customData || {});
+      const options = eventId ? { eventID: eventId } : undefined;
+      if (options) {
+        window.fbq(${JSON.stringify(pixelMethod)}, ${JSON.stringify(eventName)}, data, options);
+      } else {
+        window.fbq(${JSON.stringify(pixelMethod)}, ${JSON.stringify(eventName)}, data);
+      }
+    };
+  </script>
+  <noscript><img height="1" width="1" style="display:none" src="https://www.facebook.com/tr?id=${encodeURIComponent(pixelId)}&ev=PageView&noscript=1"/></noscript>`
+}
+
+export async function renderPublicSiteHtml(site, { pageId, trackingEnabled = true } = {}) {
   const theme = { ...DEFAULT_THEME, ...(site.theme || {}) }
   const template = resolveTemplate(site)
   const brand = getBrand(site, template)
@@ -2912,6 +2960,7 @@ export function renderPublicSiteHtml(site, { pageId, trackingEnabled = true } = 
       pageTitle: activePage?.title || ''
     })
     : ''
+  const metaPixelSnippet = await buildMetaPixelSnippet(site, trackingEnabled)
 
   return `<!doctype html>
 <html lang="es">
@@ -3074,6 +3123,15 @@ export function renderPublicSiteHtml(site, { pageId, trackingEnabled = true } = 
             throw new Error(data.error || 'No se pudo enviar el formulario');
           }
           const submission = data && data.data ? data.data : {};
+          const metaEventId = submission.capi && submission.capi.eventId
+            ? submission.capi.eventId
+            : (submission.submissionId ? 'site_' + siteId + '_' + submission.submissionId : '');
+          if (window.ristakMetaTrackSiteSubmit) {
+            window.ristakMetaTrackSiteSubmit(metaEventId, {
+              status: submission.status || 'submitted',
+              conversion_type: 'form_submit'
+            });
+          }
           form.reset();
           if (window.ristakNativeRememberContact && submission.contactId) {
             window.ristakNativeRememberContact({
@@ -3100,6 +3158,7 @@ export function renderPublicSiteHtml(site, { pageId, trackingEnabled = true } = 
       renderStep();
     })();
   </script>
+  ${metaPixelSnippet}
   ${nativeTrackingScript}
 </body>
 </html>`
@@ -3487,7 +3546,7 @@ async function sendSiteLeadMetaEvent({ site, submissionId, contactId, contact, r
     return { sent: false, reason: 'disabled' }
   }
 
-  const eventName = cleanString(site.metaEventName) || 'Lead'
+  const eventName = normalizeSiteMetaEventName(site.metaEventName)
   const eventId = `site_${site.id}_${submissionId}`
   const metaConfig = await getMetaConfig().catch(error => {
     logger.warn(`No se pudo leer configuracion Meta para Sites CAPI: ${error.message}`)

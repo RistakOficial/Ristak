@@ -88,6 +88,13 @@ const sectionItems: Array<{ id: SitesSection; label: string; icon: React.ReactNo
   { id: 'domains', label: 'Dominios', icon: <Globe2 size={17} /> }
 ]
 
+const metaEventOptions = [
+  { value: 'Lead', label: 'Lead' },
+  { value: 'Schedule', label: 'Schedule' },
+  { value: 'Purchase', label: 'Purchase' },
+  { value: 'FormSubmitted', label: 'FormSubmitted' }
+]
+
 const ruleActions: Array<{ value: SiteOptionAction; label: string }> = [
   { value: 'continue', label: 'Continuar normalmente' },
   { value: 'cold_lead', label: 'Marcar lead frio' },
@@ -1515,6 +1522,35 @@ export const Sites: React.FC = () => {
                 </div>
               </div>
 
+              <div className={styles.metaSettingsBar}>
+                <label className={`${styles.metaToggle} ${editorSite.metaCapiEnabled ? styles.metaToggleActive : ''}`}>
+                  <input
+                    type="checkbox"
+                    checked={editorSite.metaCapiEnabled}
+                    onChange={(event) => updateSelectedSite({ metaCapiEnabled: event.target.checked })}
+                  />
+                  <span>
+                    <strong>Meta conversiones</strong>
+                    <small>{editorSite.metaCapiEnabled ? 'Pixel frontend + CAPI servidor activos' : 'Desactivado para este site'}</small>
+                  </span>
+                </label>
+                <label className={styles.inlineField}>
+                  <span>Evento a enviar</span>
+                  <select
+                    value={editorSite.metaEventName || 'Lead'}
+                    disabled={!editorSite.metaCapiEnabled}
+                    onChange={(event) => updateSelectedSite({ metaEventName: event.target.value })}
+                  >
+                    {metaEventOptions.map(option => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                </label>
+                <p>
+                  Al publicar, el formulario dispara este evento con deduplicacion por eventID. El token privado se usa solo en backend.
+                </p>
+              </div>
+
               <DesignControls site={editorSite} onPatchTheme={patchSiteTheme} onSave={() => handleSaveSite()} />
 
               <div className={`${styles.builderGrid} ${isLanding(editorSite) ? styles.builderGridLanding : styles.builderGridForm}`}>
@@ -1686,21 +1722,6 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
 }) => {
   const isLandingLibrary = section === 'landings'
 
-  if (sites.length === 0) {
-    return (
-      <section className={styles.libraryPanel}>
-        <div className={styles.libraryEmpty}>
-          <LayoutTemplate size={34} />
-          <p>{getLibraryEmptyMessage(section)}</p>
-          <Button onClick={onCreate} loading={creating}>
-            <Plus size={16} />
-            {getCreateButtonLabel(section)}
-          </Button>
-        </div>
-      </section>
-    )
-  }
-
   return (
     <section className={styles.libraryPanel}>
       <div className={styles.libraryHeader}>
@@ -1721,7 +1742,13 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
             <Plus size={22} />
           </span>
           <strong>{getCreateButtonLabel(section)}</strong>
-          <small>{isLandingLibrary ? 'Agrega otra pagina o embudo a tu biblioteca.' : 'Agrega otro formulario publico a tu biblioteca.'}</small>
+          <small>
+            {sites.length === 0
+              ? getLibraryEmptyMessage(section)
+              : isLandingLibrary
+                ? 'Agrega otra pagina o embudo a tu biblioteca.'
+                : 'Agrega otro formulario publico a tu biblioteca.'}
+          </small>
         </button>
 
         {sites.map(site => {

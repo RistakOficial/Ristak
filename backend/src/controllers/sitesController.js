@@ -92,7 +92,7 @@ export async function previewSiteHandler(req, res) {
       return res.status(404).json({ success: false, error: 'Site no encontrado' })
     }
 
-    res.status(200).type('html').send(renderPublicSiteHtml(site, {
+    res.status(200).type('html').send(await renderPublicSiteHtml(site, {
       pageId: req.query?.page,
       trackingEnabled: false
     }))
@@ -272,7 +272,7 @@ export async function publicSiteHostMiddleware(req, res, next) {
         return sendDomainError(req, res, 404, 'Ruta no disponible en este dominio publico')
       }
 
-      return res.status(200).type('html').send(renderPublicSiteHtml(resolution.site, {
+      return res.status(200).type('html').send(await renderPublicSiteHtml(resolution.site, {
         pageId: req.query?.page,
         trackingEnabled: true
       }))
