@@ -101,6 +101,10 @@
   align-items: start;
 }
 
+.connectedWorkspace {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .primaryColumn {
   display: flex;
   flex-direction: column;
@@ -117,6 +121,119 @@
 
 .wizardSection {
   padding: 24px;
+}
+
+.connectedSection {
+  padding: 24px;
+  border-color: rgba(16, 185, 129, 0.22);
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.1), rgba(8, 102, 255, 0.045));
+}
+
+.connectedHeader {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  min-width: 0;
+}
+
+.connectedIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 54px;
+  height: 54px;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  border-radius: 8px;
+  color: var(--color-status-success);
+  background: rgba(16, 185, 129, 0.12);
+}
+
+.connectedCopy {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.connectedTitle {
+  margin: 2px 0 0;
+  color: var(--color-text-primary);
+  font-size: 30px;
+  font-weight: 850;
+  line-height: 1.12;
+}
+
+.connectedText {
+  max-width: 720px;
+  margin: 8px 0 0;
+  color: var(--color-text-secondary);
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.connectedActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.connectedMetaGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.connectedMetaItem {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 8px;
+  background: var(--color-background);
+}
+
+.connectedMetaItem span {
+  display: block;
+  color: var(--color-text-tertiary);
+  font-size: 10px;
+  font-weight: 820;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.connectedMetaItem strong {
+  display: block;
+  overflow: hidden;
+  margin-top: 6px;
+  color: var(--color-text-primary);
+  font-size: 14px;
+  font-weight: 780;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.connectedExtrasSection {
+  padding: 18px;
+}
+
+.connectedExtrasRows {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.connectedExtraRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 8px;
+  background: var(--color-background);
 }
 
 .sectionHeader {
@@ -885,9 +1002,18 @@
 
 @media (max-width: 900px) {
   .headerContent,
-  .sectionHeader {
+  .sectionHeader,
+  .connectedHeader {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .connectedActions {
+    justify-content: flex-start;
+  }
+
+  .connectedMetaGrid {
+    grid-template-columns: 1fr;
   }
 
   .headerRight {
@@ -930,13 +1056,20 @@
   }
 
   .inputActionRow,
-  .stepActions {
+  .stepActions,
+  .connectedExtraRow {
     grid-template-columns: 1fr;
     flex-direction: column;
+    align-items: stretch;
   }
 
   .inputActionRow button,
-  .stepActions button {
+  .stepActions button,
+  .connectedActions button {
     width: 100%;
+  }
+
+  .connectedTitle {
+    font-size: 24px;
   }
 }

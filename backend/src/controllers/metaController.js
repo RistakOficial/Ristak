@@ -1,4 +1,4 @@
-import { db, setAppConfig } from '../config/database.js';
+import { db, getAppConfig, setAppConfig } from '../config/database.js';
 import { logger } from '../utils/logger.js';
 import { isEncrypted } from '../utils/encryption.js';
 import {
@@ -315,6 +315,7 @@ export const saveConfig = async (req, res) => {
       pixel_api_token || null,
       page_id || null
     );
+    await setAppConfig('meta_config_disconnected', '0');
 
     logger.info('Configuración de Meta guardada exitosamente');
 
@@ -441,6 +442,37 @@ export const revealMetaPixelApiToken = async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Error al revelar el Pixel API Token de Meta'
+    });
+  }
+};
+
+/**
+ * Elimina la configuración local de Meta Ads
+ */
+export const deleteMetaConfig = async (req, res) => {
+  try {
+    await db.run('DELETE FROM meta_config');
+    await setAppConfig('meta_config_disconnected', '1');
+    await db.run(
+      `DELETE FROM app_config WHERE config_key IN (?, ?, ?)`,
+      [
+        'meta_whatsapp_schedule_enabled',
+        'meta_whatsapp_purchase_enabled',
+        'meta_whatsapp_business_account_id'
+      ]
+    );
+
+    logger.info('Configuración de Meta eliminada');
+
+    res.json({
+      success: true,
+      message: 'Configuración de Meta eliminada exitosamente'
+    });
+  } catch (error) {
+    logger.error(`Error en deleteMetaConfig: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      error: 'Error al eliminar la configuración de Meta'
     });
   }
 };
@@ -2105,6 +2137,20 @@ export const getMetaCustomValues = async (req, res) => {
       logger.warn(`No se pudo leer Meta local: ${error.message}`);
       return null;
     });
+    const metaDisconnected = cleanString(await getAppConfig('meta_config_disconnected')) === '1';
+
+    if (metaDisconnected && !hasUsableLocalMetaConfig(localMetaConfig)) {
+      return res.json({
+        success: true,
+        data: null,
+        source: 'disconnected',
+        reconciliation: {
+          success: true,
+          action: 'disconnected',
+          message: 'Meta fue desconectado localmente; no se rehidrata desde HighLevel automáticamente'
+        }
+      });
+    }
 
     if (hlConfig?.location_id && hlConfig?.api_token) {
       const reconciliation = await reconcileMetaBusinessWithHighLevel(
@@ -2252,6 +2298,7 @@ export const saveAndSyncMeta = async (req, res) => {
       cleanString(effectivePixelApiToken) || null,
       normalizedPageId || null
     );
+    await setAppConfig('meta_config_disconnected', '0');
 
     if (normalizedWhatsappBusinessAccountId) {
       await setAppConfig('meta_whatsapp_business_account_id', normalizedWhatsappBusinessAccountId);

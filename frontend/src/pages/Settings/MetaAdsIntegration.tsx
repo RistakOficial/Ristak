@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { Card, Button, Icon } from '@/components/common'
-import { ArrowLeft, ArrowRight, CheckCircle, ExternalLink, RefreshCw, Trash2, XCircle } from 'lucide-react'
+import { Card, Button, Icon, Modal } from '@/components/common'
+import { ArrowLeft, ArrowRight, CheckCircle, ExternalLink, Pencil, Power, RefreshCw, Trash2, XCircle } from 'lucide-react'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useTheme } from '@/contexts/ThemeContext'
 import { useAppConfig, useIsRenderDomain } from '@/hooks'
@@ -103,6 +103,9 @@ export const MetaAdsIntegration: React.FC = () => {
   const [savedPageId, setSavedPageId] = useState('')
   const [isSyncingSnippet, setIsSyncingSnippet] = useState(false)
   const [isSyncingMetaAds, setIsSyncingMetaAds] = useState(false)
+  const [isEditingMetaConfig, setIsEditingMetaConfig] = useState(false)
+  const [isDisconnectModalOpen, setIsDisconnectModalOpen] = useState(false)
+  const [isDisconnectingMeta, setIsDisconnectingMeta] = useState(false)
   const [activeStep, setActiveStep] = useState(0)
   const accessTokenInputRef = useRef<HTMLInputElement>(null)
 
@@ -461,6 +464,23 @@ export const MetaAdsIntegration: React.FC = () => {
     </span>
   )
 
+  const resetLocalMetaState = () => {
+    setCredentials({
+      adAccountId: '',
+      accessToken: '',
+      pixelId: '',
+      pageId: '',
+      pixelApiToken: ''
+    })
+    setAdAccounts([])
+    setPixels([])
+    setPages([])
+    setRealAccessToken('')
+    setSavedPageId('')
+    setActiveStep(0)
+    setIsEditingMetaConfig(false)
+  }
+
   const handleContinueWithToken = async () => {
     if (!credentials.accessToken || credentials.accessToken.length < 50) {
       showToast('error', 'Token inválido', 'El Access Token parece estar incompleto')
@@ -588,10 +608,11 @@ export const MetaAdsIntegration: React.FC = () => {
       const data = await response.json()
 
       if (data.success) {
-        showToast('success', 'Page ID guardado', 'Configuración actualizada')
+        showToast('success', 'Meta conectado', 'La configuración quedó guardada')
         setSavedPageId(pageId)
         setCredentials(prev => ({ ...prev, pageId }))
         await loadCredentials()
+        setIsEditingMetaConfig(false)
       } else {
         showToast('error', 'Error', data.error || 'No se pudo guardar el Page ID')
       }
@@ -605,6 +626,48 @@ export const MetaAdsIntegration: React.FC = () => {
   const handleSelectAndSavePage = async (page: MetaPage) => {
     setCredentials(prev => ({ ...prev, pageId: page.id }))
     await savePageId(page.id)
+  }
+
+  const handleFinishWizard = () => {
+    if (!hasPageId) {
+      showToast('warning', 'Falta Facebook Page', 'Selecciona y guarda una Página para terminar')
+      return
+    }
+
+    setIsEditingMetaConfig(false)
+  }
+
+  const handleEditMetaConfig = () => {
+    setIsEditingMetaConfig(true)
+    setActiveStep(0)
+  }
+
+  const handleDisconnectMetaConfig = async () => {
+    setIsDisconnectingMeta(true)
+
+    try {
+      const response = await fetch('/api/meta/config', {
+        method: 'DELETE'
+      })
+      const data = await response.json()
+
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || 'No se pudo eliminar la configuración')
+      }
+
+      await Promise.all([
+        setWhatsappScheduleEventEnabled(false),
+        setWhatsappPurchaseEventEnabled(false)
+      ])
+
+      resetLocalMetaState()
+      setIsDisconnectModalOpen(false)
+      showToast('success', 'Meta desconectado', 'La configuración actual fue eliminada')
+    } catch (error) {
+      showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo desconectar Meta')
+    } finally {
+      setIsDisconnectingMeta(false)
+    }
   }
 
   const handleToggleMetaPixel = async (newValue: boolean) => {
@@ -708,11 +771,12 @@ export const MetaAdsIntegration: React.FC = () => {
     }
   }
 
-  const isMetaConfigured = Boolean(credentials.accessToken && credentials.adAccountId)
   const hasAccessToken = Boolean(realAccessToken || isMaskedSecretValue(credentials.accessToken))
   const hasAdAccount = Boolean(credentials.adAccountId)
   const hasPixel = Boolean(credentials.pixelId)
   const hasPageId = Boolean(savedPageId)
+  const isMetaConfigured = Boolean(hasAccessToken && hasAdAccount && hasPageId)
+  const shouldShowWizard = !isMetaConfigured || isEditingMetaConfig
   const shouldShowAccessTokenAction = Boolean(
     credentials.accessToken &&
     !isMaskedSecretValue(credentials.accessToken) &&
@@ -1108,6 +1172,7 @@ export const MetaAdsIntegration: React.FC = () => {
                   if (page) handleSelectAndSavePage(page)
                 }}
                 value={credentials.pageId || ''}
+                disabled={isSavingPageId}
               >
                 <option value="">-- Selecciona una Página --</option>
                 {pages.map((page) => (
@@ -1130,6 +1195,12 @@ export const MetaAdsIntegration: React.FC = () => {
                   <RefreshCw size={16} className={isLoadingPages ? styles.spinning : ''} />
                   Volver a cargar
                 </Button>
+              </div>
+            )}
+            {isSavingPageId && (
+              <div className={styles.inlineStatus}>
+                <RefreshCw size={14} className={styles.spinning} />
+                Guardando página...
               </div>
             )}
           </div>
@@ -1176,8 +1247,54 @@ export const MetaAdsIntegration: React.FC = () => {
           </div>
         </div>
 
-        <div className={styles.workspace}>
+        <div className={[
+          styles.workspace,
+          !shouldShowWizard ? styles.connectedWorkspace : ''
+        ].filter(Boolean).join(' ')}>
           <div className={styles.primaryColumn}>
+            {!shouldShowWizard && (
+              <section className={`${styles.section} ${styles.connectedSection}`}>
+                <div className={styles.connectedHeader}>
+                  <span className={styles.connectedIcon} aria-hidden="true">
+                    <CheckCircle size={28} />
+                  </span>
+                  <div className={styles.connectedCopy}>
+                    <span className={styles.stepEyebrow}>Meta Ads</span>
+                    <h3 className={styles.connectedTitle}>Configuración activa</h3>
+                    <p className={styles.connectedText}>
+                      La cuenta está lista para reportes, sincronización y eventos server-side.
+                    </p>
+                  </div>
+                  <div className={styles.connectedActions}>
+                    <Button type="button" variant="secondary" onClick={handleEditMetaConfig}>
+                      <Pencil size={16} />
+                      Editar
+                    </Button>
+                    <Button type="button" variant="danger" onClick={() => setIsDisconnectModalOpen(true)}>
+                      <Power size={16} />
+                      Desconectar
+                    </Button>
+                  </div>
+                </div>
+
+                <div className={styles.connectedMetaGrid}>
+                  <div className={styles.connectedMetaItem}>
+                    <span>Cuenta publicitaria</span>
+                    <strong>{getSelectedAdAccountLabel()}</strong>
+                  </div>
+                  <div className={styles.connectedMetaItem}>
+                    <span>Facebook Page</span>
+                    <strong>{getSelectedPageLabel()}</strong>
+                  </div>
+                  <div className={styles.connectedMetaItem}>
+                    <span>Meta Pixel</span>
+                    <strong>{hasPixel ? getSelectedPixelLabel() : 'Sin pixel'}</strong>
+                  </div>
+                </div>
+              </section>
+            )}
+
+            {shouldShowWizard && (
             <section className={`${styles.section} ${styles.wizardSection}`}>
               <div className={styles.sectionHeader}>
                 <div>
@@ -1233,12 +1350,77 @@ export const MetaAdsIntegration: React.FC = () => {
                             <ArrowRight size={16} />
                           </Button>
                         )}
+                        {activeStep === metaSetupSteps.length - 1 && (
+                          <Button type="button" variant="primary" onClick={handleFinishWizard} disabled={!hasPageId || isSavingPageId}>
+                            Terminar
+                            <CheckCircle size={16} />
+                          </Button>
+                        )}
                       </div>
                     </>
                   )}
                 </div>
               </div>
             </section>
+            )}
+
+            {!shouldShowWizard && (
+              <section className={`${styles.section} ${styles.connectedExtrasSection}`}>
+                <div className={styles.sectionHeader}>
+                  <div>
+                    <h3 className={styles.sectionTitle}>Acciones de Meta</h3>
+                    <p className={styles.sectionDescription}>
+                      Controles operativos para snippet y sincronización.
+                    </p>
+                  </div>
+                </div>
+
+                <div className={styles.connectedExtrasRows}>
+                  {credentials.pixelId && !isRenderDomain ? (
+                    <div className={styles.connectedExtraRow}>
+                      <div>
+                        <span className={styles.railSwitchLabel}>Incluir Meta Pixel en snippet</span>
+                        <span className={styles.railSecondaryValue}>Agrega el pixel al Web Tracking.</span>
+                      </div>
+                      <label className={styles.switchContainer}>
+                        <input
+                          type="checkbox"
+                          checked={includeMetaPixel === true}
+                          onChange={(event) => handleToggleMetaPixel(event.target.checked)}
+                          disabled={isSyncingSnippet || savingPixelPref}
+                          className={styles.switchInput}
+                        />
+                        <span className={styles.switchSlider}></span>
+                      </label>
+                    </div>
+                  ) : (
+                    <div className={styles.connectedExtraRow}>
+                      <div>
+                        <span className={styles.railSwitchLabel}>Snippet</span>
+                        <span className={styles.railSecondaryValue}>Configura un Meta Pixel para activar esta opción.</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {isSyncingSnippet && (
+                    <div className={styles.inlineStatus}>
+                      <RefreshCw size={16} className={styles.spinning} />
+                      Sincronizando snippet...
+                    </div>
+                  )}
+
+                  <button
+                    type="button"
+                    className={styles.railButton}
+                    onClick={handleSyncMetaAds}
+                    disabled={isSyncingMetaAds}
+                  >
+                    <RefreshCw size={16} className={isSyncingMetaAds ? styles.spinning : ''} />
+                    {isSyncingMetaAds ? 'Sincronizando' : 'Sincronizar Meta Ads'}
+                  </button>
+                </div>
+              </section>
+            )}
 
             <section className={`${styles.section} ${styles.eventSection}`}>
               <div className={styles.sectionHeader}>
@@ -1305,6 +1487,7 @@ export const MetaAdsIntegration: React.FC = () => {
             </section>
           </div>
 
+          {shouldShowWizard && (
           <aside className={styles.statusRail}>
             <div className={styles.railBlock}>
               <div className={styles.railHeader}>
@@ -1380,8 +1563,26 @@ export const MetaAdsIntegration: React.FC = () => {
               )}
             </div>
           </aside>
+          )}
         </div>
       </Card>
+
+      <Modal
+        isOpen={isDisconnectModalOpen}
+        onClose={() => {
+          if (!isDisconnectingMeta) {
+            setIsDisconnectModalOpen(false)
+          }
+        }}
+        title="Eliminar configuración de Meta"
+        message="¿Estás seguro que quieres eliminar la configuración actual de Meta?"
+        type="confirm"
+        confirmText={isDisconnectingMeta ? 'Eliminando...' : 'Eliminar'}
+        cancelText="Cancelar"
+        onConfirm={() => {
+          void handleDisconnectMetaConfig()
+        }}
+      />
     </div>
   )
 }

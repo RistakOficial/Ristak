@@ -24,6 +24,7 @@ import {
   getAdAccounts,
   getPixels,
   getPages,
+  deleteMetaConfig,
   savePixelToken
 } from '../controllers/metaController.js'
 
@@ -32,6 +33,7 @@ const router = express.Router()
 // Configuración
 router.post('/config', saveConfig)
 router.get('/config', getConfig)
+router.delete('/config', deleteMetaConfig)
 router.get('/config/reveal/access_token', revealMetaToken)
 router.get('/config/reveal/pixel_api_token', revealMetaPixelApiToken)
 router.get('/verify-token', verifyToken)
