@@ -234,7 +234,7 @@ export const CalendarsConfiguration: React.FC = () => {
 
   const handleCopyPublicUrl = async (calendar: CalendarType) => {
     if (!calendar.publicUrl) {
-      showToast('warning', 'URL no disponible', calendar.publicUrlUnavailableReason || 'Conecta y verifica un dominio externo en Sites primero')
+      showToast('warning', 'URL no disponible', calendar.publicUrlUnavailableReason || 'Conecta y verifica el dominio publico general primero')
       return
     }
 
@@ -555,8 +555,8 @@ export const CalendarsConfiguration: React.FC = () => {
                         <Globe2 size={14} style={{ color: calendar.publicUrl ? 'var(--color-primary)' : 'var(--color-text-tertiary)', flexShrink: 0 }} />
                         <input
                           readOnly
-                          value={calendar.publicUrl || calendar.publicUrlUnavailableReason || 'Conecta un dominio externo en Sites'}
-                          title={calendar.publicUrl || calendar.publicUrlUnavailableReason || 'Conecta un dominio externo en Sites'}
+                          value={calendar.publicUrl || calendar.publicUrlUnavailableReason || 'Conecta el dominio publico general'}
+                          title={calendar.publicUrl || calendar.publicUrlUnavailableReason || 'Conecta el dominio publico general'}
                           style={{
                             minWidth: 0,
                             flex: 1,

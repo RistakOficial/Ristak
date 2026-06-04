@@ -219,7 +219,7 @@ export const Appointments: React.FC = () => {
 
   const copyCalendarPublicUrl = async (calendar: Calendar | null) => {
     if (!calendar?.publicUrl) {
-      showToast('warning', 'URL no disponible', calendar?.publicUrlUnavailableReason || 'Conecta un dominio externo verificado en Sites primero.');
+      showToast('warning', 'URL no disponible', calendar?.publicUrlUnavailableReason || 'Conecta el dominio publico general verificado primero.');
       return;
     }
 
@@ -1247,8 +1247,8 @@ export const Appointments: React.FC = () => {
             }}>
               <input
                 readOnly
-                value={selectedCalendar.publicUrl || selectedCalendar.publicUrlUnavailableReason || 'Conecta un dominio en Sites'}
-                title={selectedCalendar.publicUrl || selectedCalendar.publicUrlUnavailableReason || 'Conecta un dominio en Sites'}
+                value={selectedCalendar.publicUrl || selectedCalendar.publicUrlUnavailableReason || 'Conecta el dominio publico general'}
+                title={selectedCalendar.publicUrl || selectedCalendar.publicUrlUnavailableReason || 'Conecta el dominio publico general'}
                 style={{
                   minWidth: 0,
                   flex: 1,

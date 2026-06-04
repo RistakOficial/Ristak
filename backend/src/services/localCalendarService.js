@@ -8,6 +8,7 @@ import { normalizeToUtcIso, getAccountTimezone, isValidTimezone } from '../utils
 import { finalizePreparedPhoneUpsert, prepareContactPhoneUpsert } from './contactIdentityService.js'
 import GHLClient from './ghlClient.js'
 import * as highlevelCalendarService from './highlevelCalendarService.js'
+import { getSitesPublicDomain } from './sitesService.js'
 
 const LOCAL_CALENDAR_PREFIX = 'rstk_cal'
 const LOCAL_APPOINTMENT_PREFIX = 'rstk_appt'
@@ -94,36 +95,27 @@ function publicCalendarPath(calendar = {}) {
 }
 
 export async function getCalendarPublicUrlStatus() {
-  const row = await db.get(`
-    SELECT domain, render_domain_verified, status
-    FROM public_sites
-    WHERE COALESCE(domain, '') != ''
-    ORDER BY
-      CASE WHEN render_domain_verified = 1 THEN 0 ELSE 1 END,
-      CASE WHEN status = 'published' THEN 0 ELSE 1 END,
-      updated_at DESC
-    LIMIT 1
-  `)
+  const domainConfig = await getSitesPublicDomain()
 
-  if (!row?.domain) {
+  if (!domainConfig.domain) {
     return {
       enabled: false,
       domain: '',
-      reason: 'Conecta y verifica un dominio externo en Sites para activar URLs publicas de calendarios.'
+      reason: 'Conecta y verifica el dominio publico general para activar URLs publicas de calendarios.'
     }
   }
 
-  if (Number(row.render_domain_verified || 0) !== 1) {
+  if (!domainConfig.renderDomainVerified) {
     return {
       enabled: false,
-      domain: row.domain,
-      reason: 'El dominio de Sites existe, pero todavia no esta verificado en Render.'
+      domain: domainConfig.domain,
+      reason: 'El dominio publico general existe, pero todavia no esta verificado en Render.'
     }
   }
 
   return {
     enabled: true,
-    domain: row.domain,
+    domain: domainConfig.domain,
     reason: ''
   }
 }

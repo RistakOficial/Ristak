@@ -168,9 +168,12 @@ export interface PublicSite {
   submissions?: SiteSubmission[]
 }
 
-export interface RenderVerificationResult {
-  site: PublicSite
-  verification: {
+export interface SitesDomainConfig {
+  domain: string
+  renderDomainVerified: boolean
+  renderDomainCheckedAt: string | null
+  renderDomainError: string | null
+  verification?: {
     verified: boolean
     error: string | null
   }
@@ -330,8 +333,16 @@ export const sitesService = {
     return apiClient.delete(`/sites/${siteId}`)
   },
 
-  verifyDomain(siteId: string, domain?: string) {
-    return apiClient.post<RenderVerificationResult>(`/sites/${siteId}/verify-domain`, domain === undefined ? undefined : { domain })
+  getDomain() {
+    return apiClient.get<SitesDomainConfig>('/sites/domain')
+  },
+
+  verifyDomain(domain: string) {
+    return apiClient.post<SitesDomainConfig>('/sites/domain/verify', { domain })
+  },
+
+  verifySiteDomain(siteId: string, domain?: string) {
+    return apiClient.post<SitesDomainConfig>(`/sites/${siteId}/verify-domain`, domain === undefined ? undefined : { domain })
   },
 
   createBlock(siteId: string, payload: Partial<SiteBlock> & { blockType: SiteBlockType }) {

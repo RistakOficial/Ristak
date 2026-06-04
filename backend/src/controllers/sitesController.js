@@ -8,9 +8,10 @@ import {
   getRequestHost,
   getSite,
   getSitePreview,
+  getSitesPublicDomain,
   isDashboardHost,
   listSites,
-  refreshSiteRenderDomain,
+  refreshSitesPublicDomain,
   renderDomainErrorHtml,
   renderPublicSiteHtml,
   reorderBlocks,
@@ -187,14 +188,29 @@ export async function reorderBlocksHandler(req, res) {
 
 export async function verifySiteDomainHandler(req, res) {
   try {
-    const result = await refreshSiteRenderDomain(req.params.siteId, req.body || {})
-    if (!result) {
-      return res.status(404).json({ success: false, error: 'Site no encontrado' })
-    }
-
+    const result = await refreshSitesPublicDomain(req.body || {})
     res.json({ success: true, data: result })
   } catch (error) {
     logger.error(`Error verificando dominio de site: ${error.message}`)
+    sendError(res, error, 'Error verificando dominio')
+  }
+}
+
+export async function getSitesDomainHandler(req, res) {
+  try {
+    res.json({ success: true, data: await getSitesPublicDomain() })
+  } catch (error) {
+    logger.error(`Error obteniendo dominio publico de Sites: ${error.message}`)
+    sendError(res, error, 'Error obteniendo dominio')
+  }
+}
+
+export async function verifySitesDomainHandler(req, res) {
+  try {
+    const result = await refreshSitesPublicDomain(req.body || {})
+    res.json({ success: true, data: result })
+  } catch (error) {
+    logger.error(`Error verificando dominio publico de Sites: ${error.message}`)
     sendError(res, error, 'Error verificando dominio')
   }
 }
@@ -262,7 +278,7 @@ export async function publicSiteHostMiddleware(req, res, next) {
       return res.status(200).type('html').send(renderPublicCalendarHtml(calendar, { host }))
     }
 
-    const resolution = await resolvePublicSiteForHost(host)
+    const resolution = await resolvePublicSiteForHost(host, { path: req.path })
     if (resolution.ok) {
       if (req.path.startsWith('/api') || req.path.startsWith('/webhook')) {
         return sendDomainError(req, res, 404, 'La API privada no esta disponible en dominios publicos de Sites')

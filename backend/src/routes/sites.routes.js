@@ -6,6 +6,7 @@ import {
   createSiteWithAIHandler,
   deleteBlockHandler,
   deleteSiteHandler,
+  getSitesDomainHandler,
   getSiteHandler,
   getSitesHandler,
   previewSiteHandler,
@@ -13,6 +14,7 @@ import {
   submitPublicSiteHandler,
   updateBlockHandler,
   updateSiteHandler,
+  verifySitesDomainHandler,
   verifySiteDomainHandler
 } from '../controllers/sitesController.js'
 
@@ -25,6 +27,8 @@ router.use(requireAuth)
 router.get('/', getSitesHandler)
 router.post('/', createSiteHandler)
 router.post('/ai-create', createSiteWithAIHandler)
+router.get('/domain', getSitesDomainHandler)
+router.post('/domain/verify', verifySitesDomainHandler)
 router.get('/:siteId/preview', previewSiteHandler)
 router.get('/:siteId', getSiteHandler)
 router.put('/:siteId', updateSiteHandler)

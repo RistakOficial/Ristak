@@ -59,6 +59,7 @@ import {
   siteTemplates,
   sitesService,
   type PublicSite,
+  type SitesDomainConfig,
   type SiteBlock,
   type SiteBlockOption,
   type SiteBlockType,
@@ -87,6 +88,13 @@ const sectionItems: Array<{ id: SitesSection; label: string; icon: React.ReactNo
   { id: 'leads', label: 'Respuestas / Leads', icon: <ListChecks size={17} /> },
   { id: 'domains', label: 'Dominios', icon: <Globe2 size={17} /> }
 ]
+
+const emptySitesDomainConfig: SitesDomainConfig = {
+  domain: '',
+  renderDomainVerified: false,
+  renderDomainCheckedAt: null,
+  renderDomainError: null
+}
 
 const metaEventOptions = [
   { value: 'Lead', label: 'Lead' },
@@ -171,15 +179,15 @@ const slugifyName = (value: string) => value
   .replace(/[^a-z0-9]+/g, '_')
   .replace(/^_+|_+$/g, '') || 'field'
 
-const getStatusLabel = (site: PublicSite) => {
+const getStatusLabel = (site: PublicSite, domainConfig: SitesDomainConfig) => {
   if (site.status !== 'published') return site.status === 'draft' ? 'Borrador' : 'Archivado'
-  if (!site.domain) return 'Sin dominio'
-  return site.renderDomainVerified ? 'Publicado' : 'Dominio pendiente'
+  if (!domainConfig.domain) return 'Sin dominio'
+  return domainConfig.renderDomainVerified ? 'Publicado' : 'Dominio pendiente'
 }
 
-const getStatusClass = (site: PublicSite) => {
+const getStatusClass = (site: PublicSite, domainConfig: SitesDomainConfig) => {
   if (site.status !== 'published') return styles.statusMuted
-  if (!site.domain || !site.renderDomainVerified) return styles.statusWarning
+  if (!domainConfig.domain || !domainConfig.renderDomainVerified) return styles.statusWarning
   return styles.statusSuccess
 }
 
@@ -200,7 +208,11 @@ const normalizeRouteInput = (value: string) => value
 
 const getRoutePath = (site?: PublicSite | null) => `/${normalizeRouteInput(site?.slug || '')}`
 
-const buildPublicUrl = (site: PublicSite) => site.domain ? `https://${site.domain}${getRoutePath(site)}` : ''
+const buildPublicUrl = (site: PublicSite, domainConfig: SitesDomainConfig) =>
+  domainConfig.domain ? `https://${domainConfig.domain}${getRoutePath(site)}` : ''
+
+const getPublicRouteLabel = (site: PublicSite, domainConfig: SitesDomainConfig) =>
+  domainConfig.domain ? `${domainConfig.domain}${getRoutePath(site)}` : getRoutePath(site)
 
 const getNextRouteSlug = (siteType: SiteType, existingSites: PublicSite[]) => {
   const prefix = siteType === 'landing_page' ? 'site' : 'form'
@@ -621,6 +633,8 @@ export const Sites: React.FC = () => {
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }))
   const [section, setSection] = useState<SitesSection>('landings')
   const [sites, setSites] = useState<PublicSite[]>([])
+  const [domainConfig, setDomainConfig] = useState<SitesDomainConfig>(emptySitesDomainConfig)
+  const [domainInput, setDomainInput] = useState('')
   const [calendars, setCalendars] = useState<CalendarType[]>([])
   const [selectedSite, setSelectedSite] = useState<PublicSite | null>(null)
   const [selectedBlockId, setSelectedBlockId] = useState<string>('')
@@ -673,7 +687,7 @@ export const Sites: React.FC = () => {
       ? (isFormSite(selectedSite) ? selectedSite : null)
       : null
   const isFocusedSitesMode = createFlow !== 'closed' || Boolean(editorSite)
-  const publicUrl = editorSite ? buildPublicUrl(editorSite) : ''
+  const publicUrl = editorSite ? buildPublicUrl(editorSite, domainConfig) : ''
   const editorTrackingStats = getTrackingStats(editorSite)
 
   const performUrlNavigation = useCallback((href: string) => {
@@ -848,8 +862,13 @@ export const Sites: React.FC = () => {
   const loadSites = async (selectId?: string) => {
     setLoading(true)
     try {
-      const list = await sitesService.listSites()
+      const [list, nextDomainConfig] = await Promise.all([
+        sitesService.listSites(),
+        sitesService.getDomain()
+      ])
       setSites(list)
+      setDomainConfig(nextDomainConfig)
+      setDomainInput(nextDomainConfig.domain)
       const nextId = selectId || (selectedSite?.id && list.some(site => site.id === selectedSite.id) ? selectedSite.id : '')
       if (nextId) {
         const site = await sitesService.getSite(nextId)
@@ -987,7 +1006,6 @@ export const Sites: React.FC = () => {
       slug: site.slug,
       siteType: site.siteType,
       status: site.status,
-      domain: site.domain,
       title: site.title,
       description: site.description,
       theme,
@@ -1173,7 +1191,6 @@ export const Sites: React.FC = () => {
         slug: selectedSite.slug,
         siteType: selectedSite.siteType,
         status: statusOverride || selectedSite.status,
-        domain: selectedSite.domain,
         title: selectedSite.title,
         description: selectedSite.description,
         theme: selectedSite.theme,
@@ -1211,15 +1228,15 @@ export const Sites: React.FC = () => {
   }
 
   const handleVerifyDomain = async () => {
-    if (!selectedSite) return
     setVerifying(true)
     try {
-      const result = await sitesService.verifyDomain(selectedSite.id, selectedSite.domain)
-      syncSelectedSite(result.site)
-      if (result.verification.verified) {
-        showToast('success', 'Dominio verificado y guardado', 'Render ya reconoce este dominio para el servicio')
+      const result = await sitesService.verifyDomain(domainInput)
+      setDomainConfig(result)
+      setDomainInput(result.domain)
+      if (result.verification?.verified) {
+        showToast('success', 'Dominio verificado y guardado', 'Render ya reconoce este dominio para enrutar todos los sites')
       } else {
-        showToast('warning', 'Dominio pendiente', result.verification.error || 'Render aun no lo verifica')
+        showToast('warning', 'Dominio pendiente', result.verification?.error || result.renderDomainError || 'Render aun no lo verifica')
       }
     } catch (error) {
       showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo verificar el dominio')
@@ -1231,8 +1248,10 @@ export const Sites: React.FC = () => {
   const handleConfigureSiteDomain = (siteId: string) => {
     requestLeaveEditor(() => {
       const site = sites.find(item => item.id === siteId)
-      if (site) setSelectedSite(site)
-      setSection('domains')
+      if (site) {
+        setSection(site.siteType === 'landing_page' ? 'landings' : 'forms')
+        void openSite(site.id)
+      }
       setCreateFlow('closed')
       setHasUnsavedChanges(false)
     })
@@ -1430,11 +1449,18 @@ export const Sites: React.FC = () => {
               <LeadsPanel rows={leadRows} loading={loadingLeads} onRefresh={loadLeads} />
             ) : section === 'domains' ? (
               <DomainsPanel
-                sites={sites}
-                selectedSite={selectedSite}
+                domainConfig={domainConfig}
+                domainInput={domainInput}
                 verifying={verifying}
-                onSelect={selectSite}
-                onPatchSite={updateSelectedSite}
+                onDomainChange={(value) => {
+                  setDomainInput(value)
+                  setDomainConfig(current => ({
+                    ...current,
+                    domain: value,
+                    renderDomainVerified: false,
+                    renderDomainError: null
+                  }))
+                }}
                 onVerifyDomain={handleVerifyDomain}
               />
             ) : (section === 'landings' || section === 'forms') && !editorSite ? (
@@ -1447,12 +1473,13 @@ export const Sites: React.FC = () => {
                 onEdit={selectSite}
                 onConfigureDomain={handleConfigureSiteDomain}
                 onDelete={(site) => void handleDeleteSite(site)}
+                domainConfig={domainConfig}
               />
             ) : editorSite ? (
               <section className={styles.builder}>
                 <div className={styles.builderHeader}>
                   <div>
-                    <span className={`${styles.statusPill} ${getStatusClass(editorSite)}`}>{getStatusLabel(editorSite)}</span>
+                    <span className={`${styles.statusPill} ${getStatusClass(editorSite, domainConfig)}`}>{getStatusLabel(editorSite, domainConfig)}</span>
                     <h2>{editorSite.name}</h2>
                     <p>{editorSite.siteType === 'landing_page' ? 'Editor visual de landing page' : editorSite.siteType === 'interactive_form' ? 'Formulario interactivo, una pregunta por pantalla' : 'Formulario de una sola pagina'}</p>
                     <div className={styles.trackingSummary} aria-label="Metricas de tracking nativo">
@@ -1704,6 +1731,7 @@ interface SitesLibraryPanelProps {
   sites: PublicSite[]
   creating: boolean
   selectedSiteId: string
+  domainConfig: SitesDomainConfig
   onCreate: () => void
   onEdit: (siteId: string) => void
   onConfigureDomain: (siteId: string) => void
@@ -1715,6 +1743,7 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
   sites,
   creating,
   selectedSiteId,
+  domainConfig,
   onCreate,
   onEdit,
   onConfigureDomain,
@@ -1753,7 +1782,7 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
 
         {sites.map(site => {
           const stats = getTrackingStats(site)
-          const publicUrl = buildPublicUrl(site)
+          const publicUrl = buildPublicUrl(site, domainConfig)
           const pagesCount = isLanding(site) ? normalizeFunnelPages(site).length : 1
 
           return (
@@ -1785,9 +1814,9 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
               <div className={styles.libraryCardBody}>
                 <div className={styles.libraryCardTitleRow}>
                   <strong>{site.name}</strong>
-                  <span className={`${styles.statusPill} ${getStatusClass(site)}`}>{getStatusLabel(site)}</span>
+                  <span className={`${styles.statusPill} ${getStatusClass(site, domainConfig)}`}>{getStatusLabel(site, domainConfig)}</span>
                 </div>
-                <span className={styles.siteDomain}>{site.domain ? `${site.domain}${getRoutePath(site)}` : getRoutePath(site)}</span>
+                <span className={styles.siteDomain}>{getPublicRouteLabel(site, domainConfig)}</span>
                 <div className={styles.libraryMetaGrid}>
                   <span>{pagesCount} {pagesCount === 1 ? 'pagina' : 'paginas'}</span>
                   <span>{stats.visitors} visitantes</span>
@@ -1826,7 +1855,7 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
                   }}
                 >
                   <Settings2 size={15} />
-                  Direccion
+                  Ruta
                 </button>
                 <button
                   type="button"
@@ -2826,7 +2855,7 @@ const LandingBlockSettings: React.FC<LandingBlockSettingsProps> = ({ site, block
           <p className={styles.muted}>
             {selectedCalendar.publicUrlEnabled
               ? `Se mostrara como iframe usando ${selectedCalendar.publicBookingPath || '/calendar/...'}`
-              : selectedCalendar.publicUrlUnavailableReason || 'Conecta un dominio externo en Sites para que funcione publicamente.'}
+              : selectedCalendar.publicUrlUnavailableReason || 'Conecta el dominio publico general para que funcione publicamente.'}
           </p>
         ) : (
           <p className={styles.muted}>Este bloque usa la URL publica del calendario en el mismo dominio del site.</p>
@@ -2929,73 +2958,53 @@ const LeadsPanel: React.FC<{ rows: LeadRow[]; loading: boolean; onRefresh: () =>
 )
 
 interface DomainsPanelProps {
-  sites: PublicSite[]
-  selectedSite: PublicSite | null
+  domainConfig: SitesDomainConfig
+  domainInput: string
   verifying: boolean
-  onSelect: (siteId: string) => void
-  onPatchSite: (patch: Partial<PublicSite>) => void
+  onDomainChange: (value: string) => void
   onVerifyDomain: () => void
 }
 
 const DomainsPanel: React.FC<DomainsPanelProps> = ({
-  sites,
-  selectedSite,
+  domainConfig,
+  domainInput,
   verifying,
-  onSelect,
-  onPatchSite,
+  onDomainChange,
   onVerifyDomain
-}) => (
-  <section className={styles.dataPanel}>
-    <div className={styles.builderHeader}>
-      <div>
-        <h2>Dominios</h2>
-        <p>Conecta un dominio exacto y verifica que exista como Custom Domain verificado en Render.</p>
+}) => {
+  const domainStatus = !domainConfig.domain
+    ? { label: 'Sin dominio', className: styles.statusMuted }
+    : domainConfig.renderDomainVerified
+      ? { label: 'Verificado', className: styles.statusSuccess }
+      : { label: 'Pendiente Render', className: styles.statusWarning }
+
+  return (
+    <section className={styles.dataPanel}>
+      <div className={styles.builderHeader}>
+        <div>
+          <h2>Dominios</h2>
+          <p>Conecta un solo dominio general para enrutar todos los formularios, sitios y landing pages.</p>
+        </div>
+        <span className={`${styles.statusPill} ${domainStatus.className}`}>{domainStatus.label}</span>
       </div>
-    </div>
 
-    <div className={styles.domainsGrid}>
-      <aside className={styles.domainSiteList}>
-        {sites.map(site => (
-          <button
-            key={site.id}
-            type="button"
-            className={`${styles.siteItem} ${selectedSite?.id === site.id ? styles.siteItemActive : ''}`}
-            onClick={() => onSelect(site.id)}
-          >
-            <span className={styles.siteName}>{site.name}</span>
-            <span className={styles.siteDomain}>{site.domain ? `${site.domain}${getRoutePath(site)}` : getRoutePath(site)}</span>
-          </button>
-        ))}
-      </aside>
-
-      {selectedSite ? (
-        <div className={styles.domainEditor}>
-          <label className={styles.field}>
-            <span>Dominio publico del site</span>
-            <input
-              value={selectedSite.domain}
-              placeholder="www.doctorramirez.com"
-              onChange={(event) => onPatchSite({
-                domain: event.target.value,
-                renderDomainVerified: false,
-                renderDomainError: null
-              })}
-            />
-          </label>
-          {selectedSite.renderDomainError && <p className={styles.domainError}>{selectedSite.renderDomainError}</p>}
-          <div className={styles.editorActions}>
-            <Button onClick={onVerifyDomain} loading={verifying} disabled={!selectedSite.domain.trim()}>
-              <CheckCircle2 size={16} />
-              Verificar dominio
-            </Button>
-          </div>
+      <div className={styles.domainEditor}>
+        <label className={styles.field}>
+          <span>Dominio publico general</span>
+          <input
+            value={domainInput}
+            placeholder="www.doctorramirez.com"
+            onChange={(event) => onDomainChange(event.target.value)}
+          />
+        </label>
+        {domainConfig.renderDomainError && <p className={styles.domainError}>{domainConfig.renderDomainError}</p>}
+        <div className={styles.editorActions}>
+          <Button onClick={onVerifyDomain} loading={verifying} disabled={!domainInput.trim()}>
+            <CheckCircle2 size={16} />
+            Verificar dominio
+          </Button>
         </div>
-      ) : (
-        <div className={styles.emptyState}>
-          <Globe2 size={24} />
-          <p>Selecciona un sitio para configurar su dominio.</p>
-        </div>
-      )}
-    </div>
-  </section>
-)
+      </div>
+    </section>
+  )
+}

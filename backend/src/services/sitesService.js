@@ -1,6 +1,6 @@
 import crypto from 'crypto'
 import fetch from 'node-fetch'
-import { db, getAppConfig } from '../config/database.js'
+import { db, getAppConfig, setAppConfig } from '../config/database.js'
 import { API_URLS } from '../config/constants.js'
 import { logger } from '../utils/logger.js'
 import { normalizePhoneForStorage } from '../utils/phoneUtils.js'
@@ -75,6 +75,12 @@ const RENDER_FAILED_CACHE_TTL_MS = 90 * 1000
 const DEFAULT_FUNNEL_PAGE_ID = 'page-1'
 const SITE_META_EVENTS = new Set(['Lead', 'Schedule', 'Purchase', 'FormSubmitted'])
 const META_STANDARD_PIXEL_EVENTS = new Set(['Lead', 'Schedule', 'Purchase'])
+const SITES_PUBLIC_DOMAIN_CONFIG_KEYS = {
+  domain: 'sites_public_domain',
+  verified: 'sites_public_domain_verified',
+  checkedAt: 'sites_public_domain_checked_at',
+  error: 'sites_public_domain_error'
+}
 
 function cleanString(value) {
   return String(value || '').trim()
@@ -1045,7 +1051,7 @@ export async function createSite(input = {}) {
   const slug = await ensureUniqueSlug(slugify(input.slug || await getNextDefaultSlug(siteType)))
   const title = cleanString(input.title) || name
   const description = cleanString(input.description)
-  const domain = normalizeDomain(input.domain)
+  const domain = ''
   const theme = { ...DEFAULT_THEME, ...(input.theme || {}) }
   const status = validateSiteStatus(input.status || 'draft')
 
@@ -1147,14 +1153,7 @@ export async function updateSite(siteId, input = {}) {
   const current = await getSite(siteId, { includeBlocks: false })
   if (!current) return null
 
-  const nextDomain = input.domain === undefined
-    ? current.domain
-    : normalizeDomain(input.domain)
-
-  if (input.domain !== undefined && cleanString(input.domain) && !nextDomain) {
-    throw new Error('Dominio invalido')
-  }
-
+  const nextDomain = current.domain
   const nextStatus = input.status === undefined
     ? current.status
     : validateSiteStatus(input.status)
@@ -1164,7 +1163,7 @@ export async function updateSite(siteId, input = {}) {
   const nextSlug = input.slug === undefined
     ? current.slug
     : await ensureUniqueSlug(slugify(input.slug), siteId)
-  const domainChanged = nextDomain !== current.domain
+  const domainChanged = false
 
   await db.run(`
     UPDATE public_sites SET
@@ -1342,47 +1341,92 @@ function shouldRefreshRenderCheck(site, force = false) {
   return Date.now() - checkedAt > ttl
 }
 
-async function updateRenderVerification(siteId, result) {
-  await db.run(`
-    UPDATE public_sites SET
-      render_domain_verified = ?,
-      render_domain_checked_at = CURRENT_TIMESTAMP,
-      render_domain_error = ?,
-      updated_at = CURRENT_TIMESTAMP
-    WHERE id = ?
-  `, [
-    result.verified ? 1 : 0,
-    result.verified ? null : result.error || 'Dominio no verificado en Render',
-    siteId
+async function getSitesPublicDomainConfig() {
+  const [rawDomain, verified, checkedAt, error] = await Promise.all([
+    getAppConfig(SITES_PUBLIC_DOMAIN_CONFIG_KEYS.domain),
+    getAppConfig(SITES_PUBLIC_DOMAIN_CONFIG_KEYS.verified),
+    getAppConfig(SITES_PUBLIC_DOMAIN_CONFIG_KEYS.checkedAt),
+    getAppConfig(SITES_PUBLIC_DOMAIN_CONFIG_KEYS.error)
   ])
+  const domain = normalizeDomain(rawDomain)
+
+  return {
+    domain,
+    renderDomainVerified: Boolean(domain && cleanString(verified) === '1'),
+    renderDomainCheckedAt: cleanString(checkedAt) || null,
+    renderDomainError: cleanString(error) || null
+  }
 }
 
-async function saveVerifiedSiteDomain(siteId, domain, result) {
-  const existing = await db.get(
-    "SELECT id FROM public_sites WHERE LOWER(domain) = LOWER(?) AND id != ? AND COALESCE(domain, '') != '' LIMIT 1",
-    [domain, siteId]
-  )
-
-  if (existing) {
-    const error = new Error('Este dominio ya esta conectado a otro site')
-    error.status = 409
-    throw error
+async function saveSitesPublicDomainVerification(domain, result) {
+  const checkedAt = new Date().toISOString()
+  const config = {
+    domain,
+    renderDomainVerified: Boolean(result.verified),
+    renderDomainCheckedAt: checkedAt,
+    renderDomainError: result.verified ? null : result.error || 'Dominio no verificado en Render'
   }
 
-  await db.run(`
-    UPDATE public_sites SET
-      domain = ?,
-      render_domain_verified = ?,
-      render_domain_checked_at = CURRENT_TIMESTAMP,
-      render_domain_error = ?,
-      updated_at = CURRENT_TIMESTAMP
-    WHERE id = ?
-  `, [
-    domain,
-    result.verified ? 1 : 0,
-    result.verified ? null : result.error || 'Dominio no verificado en Render',
-    siteId
+  await Promise.all([
+    setAppConfig(SITES_PUBLIC_DOMAIN_CONFIG_KEYS.domain, domain),
+    setAppConfig(SITES_PUBLIC_DOMAIN_CONFIG_KEYS.verified, result.verified ? '1' : '0'),
+    setAppConfig(SITES_PUBLIC_DOMAIN_CONFIG_KEYS.checkedAt, checkedAt),
+    setAppConfig(SITES_PUBLIC_DOMAIN_CONFIG_KEYS.error, config.renderDomainError)
   ])
+
+  return config
+}
+
+export async function getSitesPublicDomain() {
+  return getSitesPublicDomainConfig()
+}
+
+export async function refreshSitesPublicDomain(input = {}) {
+  const current = await getSitesPublicDomainConfig()
+  const hasDomainCandidate = Object.prototype.hasOwnProperty.call(input, 'domain')
+  const rawDomain = hasDomainCandidate ? input.domain : current.domain
+  const domain = normalizeDomain(rawDomain)
+
+  if (hasDomainCandidate && cleanString(rawDomain) && !domain) {
+    const result = { verified: false, error: 'Dominio invalido' }
+    return {
+      ...current,
+      domain: cleanString(rawDomain),
+      renderDomainVerified: false,
+      renderDomainCheckedAt: new Date().toISOString(),
+      renderDomainError: result.error,
+      verification: result
+    }
+  }
+
+  if (!domain) {
+    const result = { verified: false, error: 'Configura un dominio primero' }
+    return {
+      ...current,
+      domain: '',
+      renderDomainVerified: false,
+      renderDomainCheckedAt: new Date().toISOString(),
+      renderDomainError: result.error,
+      verification: result
+    }
+  }
+
+  const result = await verifyRenderCustomDomain(domain)
+  const shouldPersist = result.verified || domain === current.domain || !hasDomainCandidate
+  const nextConfig = shouldPersist
+    ? await saveSitesPublicDomainVerification(domain, result)
+    : {
+        ...current,
+        domain,
+        renderDomainVerified: false,
+        renderDomainCheckedAt: new Date().toISOString(),
+        renderDomainError: result.error
+      }
+
+  return {
+    ...nextConfig,
+    verification: result
+  }
 }
 
 export async function verifyRenderCustomDomain(domainValue) {
@@ -1442,74 +1486,37 @@ export async function verifyRenderCustomDomain(domainValue) {
   }
 }
 
-export async function refreshSiteRenderDomain(siteId, input = {}) {
-  const site = await getSite(siteId, { includeBlocks: false })
-  if (!site) return null
-  const hasDomainCandidate = Object.prototype.hasOwnProperty.call(input, 'domain')
-  const rawDomain = hasDomainCandidate ? input.domain : site.domain
-  const domain = normalizeDomain(rawDomain)
+function normalizePublicRouteSlug(pathValue) {
+  const path = cleanString(pathValue || '/')
+  const firstSegment = path
+    .split('?')[0]
+    .split('#')[0]
+    .split('/')
+    .filter(Boolean)[0] || ''
+  let decoded = firstSegment
 
-  if (hasDomainCandidate && cleanString(rawDomain) && !domain) {
-    const result = { verified: false, error: 'Dominio invalido' }
-    return {
-      site: {
-        ...await getSite(site.id, { includeBlocks: true, includeSubmissions: true }),
-        domain: cleanString(rawDomain),
-        renderDomainVerified: false,
-        renderDomainCheckedAt: new Date().toISOString(),
-        renderDomainError: result.error
-      },
-      verification: result
-    }
+  try {
+    decoded = decodeURIComponent(firstSegment)
+  } catch {
+    decoded = firstSegment
   }
 
-  if (!domain) {
-    const result = { verified: false, error: 'Configura un dominio primero' }
-    if (!hasDomainCandidate) {
-      await updateRenderVerification(site.id, result)
-    }
-    return {
-      site: {
-        ...await getSite(site.id, { includeBlocks: true, includeSubmissions: true }),
-        domain: '',
-        renderDomainVerified: false,
-        renderDomainCheckedAt: new Date().toISOString(),
-        renderDomainError: result.error
-      },
-      verification: result
-    }
-  }
-
-  const result = await verifyRenderCustomDomain(domain)
-
-  if (result.verified) {
-    await saveVerifiedSiteDomain(site.id, domain, result)
-    return { site: await getSite(site.id, { includeBlocks: true, includeSubmissions: true }), verification: result }
-  }
-
-  if (!hasDomainCandidate || domain === site.domain) {
-    await updateRenderVerification(site.id, result)
-  }
-
-  return {
-    site: {
-      ...await getSite(site.id, { includeBlocks: true, includeSubmissions: true }),
-      domain,
-      renderDomainVerified: false,
-      renderDomainCheckedAt: new Date().toISOString(),
-      renderDomainError: result.error
-    },
-    verification: result
-  }
+  return cleanString(decoded)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/^\/+/, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
 }
 
-async function findSiteByDomain(hostValue) {
-  const host = normalizeDomain(hostValue)
-  if (!host) return null
+async function findSiteByRoutePath(pathValue) {
+  const slug = normalizePublicRouteSlug(pathValue)
+  if (!slug) return null
 
   const row = await db.get(
-    "SELECT * FROM public_sites WHERE LOWER(domain) = LOWER(?) AND COALESCE(domain, '') != '' LIMIT 1",
-    [host]
+    'SELECT * FROM public_sites WHERE LOWER(slug) = LOWER(?) LIMIT 1',
+    [slug]
   )
 
   return mapSite(row)
@@ -1521,30 +1528,30 @@ export async function resolveConnectedPublicDomainForHost(hostValue, { forceRefr
     return { ok: false, status: 404, reason: 'invalid_host', message: 'Dominio invalido' }
   }
 
-  const site = await findSiteByDomain(host)
-  if (!site) {
+  const config = await getSitesPublicDomainConfig()
+  if (!config.domain || config.domain !== host) {
     return { ok: false, status: 404, reason: 'domain_not_configured', message: 'Dominio no configurado' }
   }
 
-  if (shouldRefreshRenderCheck(site, forceRefresh)) {
-    const verification = await verifyRenderCustomDomain(host)
-    await updateRenderVerification(site.id, verification)
-    site.renderDomainVerified = verification.verified
-    site.renderDomainCheckedAt = new Date().toISOString()
-    site.renderDomainError = verification.error
+  if (shouldRefreshRenderCheck(config, forceRefresh)) {
+    const verification = await verifyRenderCustomDomain(config.domain)
+    const nextConfig = await saveSitesPublicDomainVerification(config.domain, verification)
+    config.renderDomainVerified = nextConfig.renderDomainVerified
+    config.renderDomainCheckedAt = nextConfig.renderDomainCheckedAt
+    config.renderDomainError = nextConfig.renderDomainError
   }
 
-  if (!site.renderDomainVerified) {
+  if (!config.renderDomainVerified) {
     return {
       ok: false,
       status: 404,
       reason: 'render_domain_unverified',
-      message: site.renderDomainError || 'Dominio no verificado en Render',
-      site
+      message: config.renderDomainError || 'Dominio no verificado en Render',
+      domainConfig: config
     }
   }
 
-  return { ok: true, site, host }
+  return { ok: true, domain: config.domain, domainConfig: config, host }
 }
 
 async function hydrateEmbeddedForms(blocks = []) {
@@ -1580,7 +1587,7 @@ async function hydrateEmbeddedForms(blocks = []) {
   return hydrated
 }
 
-export async function resolvePublicSiteForHost(hostValue, { forceRefresh = false } = {}) {
+export async function resolvePublicSiteForHost(hostValue, { forceRefresh = false, path = '/' } = {}) {
   const host = normalizeDomain(hostValue)
   if (!host) {
     return { ok: false, status: 404, reason: 'invalid_host', message: 'Dominio invalido' }
@@ -1589,14 +1596,18 @@ export async function resolvePublicSiteForHost(hostValue, { forceRefresh = false
   const domainResolution = await resolveConnectedPublicDomainForHost(host, { forceRefresh })
   if (!domainResolution.ok) return domainResolution
 
-  const site = domainResolution.site
+  const site = await findSiteByRoutePath(path)
+  if (!site) {
+    return { ok: false, status: 404, reason: 'route_not_configured', message: 'Ruta publica no configurada' }
+  }
 
   if (site.status !== 'published') {
     return { ok: false, status: 404, reason: 'site_not_published', message: 'Este site no esta publicado', site }
   }
 
   site.blocks = await hydrateEmbeddedForms(await listSiteBlocks(site.id))
-  return { ok: true, site, host }
+  site.domain = domainResolution.domain || host
+  return { ok: true, site, host, domain: domainResolution.domain || host, path }
 }
 
 function escapeHtml(value) {
@@ -2757,6 +2768,50 @@ const RSTK_BASE_CSS = `
     .rstk-actions button{width:100%}
     .rstk-actions [data-back]{width:100%}
   }
+
+  /* ---------- Premium landing ---------- */
+  .rstk-kind-landing .rstk-frame{padding:0 clamp(16px,4vw,28px) clamp(48px,7vw,96px)}
+  .rstk-kind-landing .rstk-shell{gap:clamp(40px,7vw,104px);padding-top:clamp(10px,3vw,32px)}
+  .rstk-kind-landing .rstk-headline{font-family:var(--rstk-display);font-size:clamp(2.3rem,5.6vw,4rem);line-height:1.03;letter-spacing:-0.028em;background:linear-gradient(180deg,var(--rstk-ink),color-mix(in srgb,var(--rstk-ink) 58%,var(--rstk-page-bg)));-webkit-background-clip:text;background-clip:text;color:transparent}
+  .rstk-kind-landing .rstk-subheading{font-size:clamp(1.05rem,1.7vw,1.28rem);max-width:60ch;line-height:1.6}
+  .rstk-kind-landing h2{font-family:var(--rstk-display)}
+  .rstk-kind-landing .rstk-text{font-size:1.06rem;line-height:1.7}
+
+  .rstk-kind-landing .rstk-kicker{display:inline-flex;align-items:center;gap:8px;width:fit-content;padding:7px 14px 7px 12px;border:1px solid var(--rstk-border);border-radius:999px;background:var(--rstk-surface);color:var(--rstk-muted);font-size:.72rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}
+  .rstk-kind-landing .rstk-kicker::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--rstk-accent);box-shadow:0 0 10px 1px color-mix(in srgb,var(--rstk-accent) 80%,transparent)}
+
+  .rstk-kind-landing .rstk-hero{position:relative;isolation:isolate;overflow:hidden;gap:22px;justify-items:center;text-align:center;padding:clamp(44px,7vw,104px) clamp(22px,4vw,56px);border:1px solid var(--rstk-border);border-radius:clamp(22px,3vw,32px);background:var(--rstk-surface)}
+  .rstk-kind-landing .rstk-hero::before{content:"";position:absolute;inset:-1px;z-index:-1;background-image:linear-gradient(to right,color-mix(in srgb,var(--rstk-ink) 7%,transparent) 1px,transparent 1px),linear-gradient(to bottom,color-mix(in srgb,var(--rstk-ink) 7%,transparent) 1px,transparent 1px);background-size:56px 56px;-webkit-mask-image:radial-gradient(ellipse 78% 66% at 50% 28%,#000,transparent 72%);mask-image:radial-gradient(ellipse 78% 66% at 50% 28%,#000,transparent 72%)}
+  .rstk-kind-landing .rstk-hero::after{content:"";position:absolute;left:50%;top:-32%;width:82%;height:380px;transform:translateX(-50%);z-index:-1;background:radial-gradient(ellipse at center,color-mix(in srgb,var(--rstk-accent) 22%,transparent),transparent 70%);filter:blur(22px);pointer-events:none}
+  .rstk-kind-landing .rstk-hero .rstk-headline{font-size:clamp(2.6rem,6.2vw,4.6rem);max-width:16ch}
+  .rstk-kind-landing .rstk-hero .rstk-subheading{margin-inline:auto}
+
+  .rstk-kind-landing .rstk-section-list{gap:clamp(20px,3vw,38px)}
+  .rstk-kind-landing .rstk-section-list h2{text-align:center;max-width:20ch;margin-inline:auto;font-size:clamp(1.85rem,3.4vw,2.85rem);line-height:1.08;letter-spacing:-0.02em}
+  .rstk-kind-landing .rstk-list-grid{gap:16px}
+  .rstk-kind-landing .rstk-list-grid article{padding:24px;border-radius:18px;background:var(--rstk-surface);transition:transform .3s var(--rstk-ease),border-color .3s var(--rstk-ease),box-shadow .3s var(--rstk-ease)}
+  .rstk-kind-landing .rstk-list-grid article:hover{transform:translateY(-4px);border-color:color-mix(in srgb,var(--rstk-ink) 22%,transparent);box-shadow:0 30px 60px -42px rgba(0,0,0,.55)}
+  .rstk-kind-landing .rstk-list-grid strong{font-size:1.06rem}
+
+  .rstk-kind-landing .rstk-checklist{padding:clamp(24px,3vw,40px);border:1px solid var(--rstk-border);border-radius:24px;background:var(--rstk-surface);max-width:720px;width:100%;margin-inline:auto}
+  .rstk-kind-landing .rstk-checklist h2{text-align:center;margin-bottom:4px}
+  .rstk-kind-landing .rstk-check-body strong{font-size:1.04rem}
+
+  .rstk-kind-landing .rstk-cta{position:relative;overflow:hidden;justify-items:center;text-align:center;gap:18px;padding:clamp(40px,6vw,84px) clamp(24px,4vw,56px);border:1px solid var(--rstk-border);border-radius:clamp(24px,3vw,32px);background:var(--rstk-surface)}
+  .rstk-kind-landing .rstk-cta::after{content:"";position:absolute;left:50%;top:-42%;width:72%;height:320px;transform:translateX(-50%);z-index:0;background:radial-gradient(ellipse at center,color-mix(in srgb,var(--rstk-accent) 24%,transparent),transparent 70%);filter:blur(20px);pointer-events:none}
+  .rstk-kind-landing .rstk-cta > *{position:relative;z-index:1}
+  .rstk-kind-landing .rstk-cta h2{font-size:clamp(2rem,4vw,3.1rem)}
+  .rstk-kind-landing .rstk-cta p{font-size:1.1rem;max-width:52ch;margin-inline:auto}
+
+  .rstk-kind-landing .rstk-button-link{border-radius:999px;min-height:54px;padding:0 28px;font-family:var(--rstk-display);font-weight:600;transition:transform .25s var(--rstk-ease),box-shadow .25s var(--rstk-ease),background .2s ease}
+  .rstk-kind-landing .rstk-button-link:hover{transform:translateY(-2px);box-shadow:0 18px 42px -14px color-mix(in srgb,var(--rstk-accent) 55%,transparent)}
+
+  .rstk-kind-landing .rstk-media,.rstk-kind-landing .rstk-video,.rstk-kind-landing .rstk-embed{border-radius:clamp(16px,2vw,22px);box-shadow:0 40px 90px -52px rgba(0,0,0,.6)}
+  .rstk-kind-landing .rstk-embedded-form{padding:clamp(24px,3vw,40px);border:1px solid var(--rstk-border);border-radius:24px;background:var(--rstk-surface);max-width:560px;width:100%;margin-inline:auto}
+
+  @media (max-width:640px){
+    .rstk-kind-landing .rstk-hero{padding:clamp(32px,8vw,56px) 20px}
+  }
 `
 
 const RSTK_TEMPLATE_EXTRAS = {
@@ -2821,14 +2876,73 @@ const RSTK_TEMPLATE_EXTRAS = {
   `
 }
 
-function buildStyleSheet(template, maxWidth, accentOverride) {
-  const v = template.vars
-  const accent = accentOverride || v.accent
-  const accentStrong = accentOverride ? `color-mix(in srgb, ${accentOverride} 86%, #000)` : v.accentStrong
-  const ring = accentOverride ? `color-mix(in srgb, ${accentOverride} 22%, transparent)` : v.ring
+function relLuminance(hex) {
+  const h = String(hex || '').replace('#', '')
+  if (h.length < 6) return 1
+  const toLin = (c) => {
+    const x = c / 255
+    return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4)
+  }
+  const r = toLin(parseInt(h.slice(0, 2), 16))
+  const g = toLin(parseInt(h.slice(2, 4), 16))
+  const b = toLin(parseInt(h.slice(4, 6), 16))
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b
+}
+
+function deriveNeutralVars(template, bg, userAccent) {
+  const dark = relLuminance(bg) < 0.5
+  const ink = dark ? '#f4f4f6' : '#0f172a'
+  const accent = userAccent || (dark ? '#ffffff' : '#0f172a')
+  const onAccent = relLuminance(accent) > 0.6 ? '#08080a' : '#ffffff'
+  return {
+    ...template.vars,
+    pageBg: bg,
+    pageImage: `radial-gradient(1100px 560px at 50% -160px, color-mix(in srgb, ${accent} ${dark ? '12%' : '9%'}, transparent), transparent 70%)`,
+    ink,
+    muted: `color-mix(in srgb, ${ink} 60%, ${bg})`,
+    surface: dark ? 'rgba(255,255,255,0.04)' : 'rgba(15,23,42,0.022)',
+    surface2: dark ? 'rgba(255,255,255,0.06)' : 'rgba(15,23,42,0.04)',
+    border: dark ? 'rgba(255,255,255,0.1)' : 'rgba(15,23,42,0.1)',
+    accent,
+    accentStrong: accent,
+    onAccent,
+    ring: `color-mix(in srgb, ${accent} 26%, transparent)`,
+    inputBg: dark ? 'rgba(255,255,255,0.04)' : '#ffffff',
+    inputInk: ink,
+    inputBorder: dark ? 'rgba(255,255,255,0.14)' : '#dfe3e8'
+  }
+}
+
+function resolveRenderOverrides(template, theme, isLandingType) {
+  if (template.chrome !== 'none') return {}
+  const hex = (value) => (/^#[0-9a-f]{6}$/i.test(cleanString(value)) ? cleanString(value) : null)
+  // DEFAULT_THEME forces backgroundColor=#ffffff, so treat white as "not chosen":
+  // landings default to the premium dark canvas; forms stay light until recolored.
+  const rawBg = hex(theme.backgroundColor)
+  const userBg = rawBg && rawBg.toLowerCase() !== String(DEFAULT_THEME.backgroundColor).toLowerCase() ? rawBg : null
+  const rawAccent = hex(theme.accentColor)
+  const userAccent = rawAccent && rawAccent.toLowerCase() !== String(DEFAULT_THEME.accentColor).toLowerCase() ? rawAccent : null
+  if (isLandingType) {
+    return { vars: deriveNeutralVars(template, userBg || '#08080a', userAccent) }
+  }
+  if (userBg) {
+    return { vars: deriveNeutralVars(template, userBg, userAccent) }
+  }
+  return userAccent ? { accent: userAccent } : {}
+}
+
+function buildStyleSheet(template, maxWidth, overrides = {}) {
+  const v = { ...template.vars, ...(overrides.vars || {}) }
+  const accent = overrides.accent || v.accent
+  const accentStrong = overrides.accent ? `color-mix(in srgb, ${overrides.accent} 86%, #000)` : v.accentStrong
+  const ring = overrides.accent ? `color-mix(in srgb, ${overrides.accent} 22%, transparent)` : v.ring
+  const baseFont = template.chrome === 'none' ? `'Inter', ${template.font}` : template.font
+  const display = template.chrome === 'none' ? `'Inter Tight', 'Inter', ${template.font}` : template.font
   return `
   :root{
-    --rstk-font:${template.font};
+    --rstk-font:${baseFont};
+    --rstk-display:${display};
+    --rstk-ease:cubic-bezier(.16,.84,.44,1);
     --rstk-page-bg:${v.pageBg};
     --rstk-page-image:${v.pageImage};
     --rstk-ink:${v.ink};
@@ -2918,10 +3032,8 @@ export async function renderPublicSiteHtml(site, { pageId, trackingEnabled = tru
   const nextPage = isLandingType ? getNextPage(site, activePage?.id) : null
   const nextPageUrl = nextPage ? pageHref(nextPage.id) : ''
   const submitText = cleanString(theme.submitText) || 'Enviar'
-  const maxWidth = isLandingType ? '780px' : (template.id === 'interactive' ? '600px' : '520px')
-  const themeAccent = cleanString(theme.accentColor)
-  const allowThemeAccent = (template.chrome === 'none') && /^#[0-9a-f]{6}$/i.test(themeAccent) && themeAccent.toLowerCase() !== String(DEFAULT_THEME.accentColor).toLowerCase()
-  const styleSheet = buildStyleSheet(template, maxWidth, allowThemeAccent ? themeAccent : null)
+  const maxWidth = isLandingType ? '1040px' : (template.id === 'interactive' ? '600px' : '520px')
+  const styleSheet = buildStyleSheet(template, maxWidth, resolveRenderOverrides(template, theme, isLandingType))
   const chrome = (!isLandingType && template.chrome && template.chrome !== 'none') ? renderBrandChrome(template, brand) : ''
   const footer = (hasForm && !isLandingType) ? renderLegalFooter(brand) : ''
   const bodyClass = [
@@ -2969,6 +3081,9 @@ export async function renderPublicSiteHtml(site, { pageId, trackingEnabled = tru
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${escapeHtml(site.title || site.name)}</title>
   <meta name="description" content="${escapeHtml(site.description || '')}">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Inter+Tight:wght@500;600;700&display=swap" rel="stylesheet">
   <style>${styleSheet}</style>
 </head>
 <body class="${bodyClass}">
@@ -3706,20 +3821,33 @@ async function recordNativeSiteConversionEvent({ site, blocks, submittedPageId, 
 
 export async function createSubmissionFromRequest(req, body = {}) {
   const host = getRequestHost(req)
-  const resolution = await resolvePublicSiteForHost(host)
+  const domainResolution = await resolveConnectedPublicDomainForHost(host)
 
-  if (!resolution.ok) {
-    const error = new Error(resolution.message)
-    error.status = resolution.status
+  if (!domainResolution.ok) {
+    const error = new Error(domainResolution.message)
+    error.status = domainResolution.status
     throw error
   }
 
-  const site = resolution.site
-  if (body.siteId && body.siteId !== site.id) {
-    const error = new Error('El site no corresponde a este dominio')
-    error.status = 403
+  const submittedSiteId = cleanString(body.siteId)
+  const site = submittedSiteId
+    ? await getSite(submittedSiteId, { includeBlocks: false, includeSubmissions: false })
+    : await findSiteByRoutePath(req.path)
+
+  if (!site) {
+    const error = new Error('Site publico no encontrado')
+    error.status = 404
     throw error
   }
+
+  if (site.status !== 'published') {
+    const error = new Error('Este site no esta publicado')
+    error.status = 404
+    throw error
+  }
+
+  site.domain = domainResolution.domain || host
+  site.blocks = await hydrateEmbeddedForms(await listSiteBlocks(site.id))
 
   const blocks = Array.isArray(site.blocks) && site.blocks.length
     ? site.blocks
