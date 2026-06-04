@@ -498,6 +498,77 @@ async function initTables() {
       }
     }
 
+    // Catálogo local de productos/precios.
+    // Ristak puede operar sin HighLevel; cuando GHL se conecta, estos registros
+    // se emparejan por IDs remotos o firma exacta antes de crear nada remoto.
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS products (
+        id TEXT PRIMARY KEY,
+        ghl_product_id TEXT UNIQUE,
+        location_id TEXT,
+        name TEXT NOT NULL,
+        description TEXT,
+        product_type TEXT DEFAULT 'DIGITAL',
+        image TEXT,
+        available_in_store INTEGER DEFAULT 0,
+        currency TEXT DEFAULT 'MXN',
+        is_active INTEGER DEFAULT 1,
+        source TEXT DEFAULT 'ristak',
+        sync_status TEXT DEFAULT 'pending',
+        sync_origin TEXT DEFAULT 'ristak',
+        sync_error TEXT,
+        raw_json TEXT,
+        last_synced_at DATETIME,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS product_prices (
+        id TEXT PRIMARY KEY,
+        product_id TEXT NOT NULL,
+        ghl_price_id TEXT UNIQUE,
+        ghl_product_id TEXT,
+        location_id TEXT,
+        name TEXT NOT NULL,
+        type TEXT DEFAULT 'one_time',
+        currency TEXT DEFAULT 'MXN',
+        amount REAL NOT NULL,
+        description TEXT,
+        interval TEXT,
+        interval_count INTEGER,
+        trial_period INTEGER,
+        total_cycles INTEGER,
+        setup_fee REAL,
+        compare_at_price REAL,
+        sku TEXT,
+        track_inventory INTEGER DEFAULT 0,
+        available_quantity REAL,
+        allow_out_of_stock_purchases INTEGER DEFAULT 0,
+        is_digital_product INTEGER DEFAULT 1,
+        variant_option_ids TEXT,
+        shipping_options TEXT,
+        metadata TEXT,
+        source TEXT DEFAULT 'ristak',
+        sync_status TEXT DEFAULT 'pending',
+        sync_origin TEXT DEFAULT 'ristak',
+        sync_error TEXT,
+        raw_json TEXT,
+        last_synced_at DATETIME,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
+      )
+    `)
+
+    await db.run('CREATE INDEX IF NOT EXISTS idx_products_ghl_product ON products(ghl_product_id)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_products_name ON products(name)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_products_sync_status ON products(sync_status)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_product_prices_product ON product_prices(product_id)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_product_prices_ghl_price ON product_prices(ghl_price_id)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_product_prices_sync_status ON product_prices(sync_status)')
+
     // Tabla de pagos
     await db.run(`
       CREATE TABLE IF NOT EXISTS payments (

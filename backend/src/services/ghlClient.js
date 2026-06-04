@@ -15,6 +15,7 @@ import { normalizePhoneForStorage } from '../utils/phoneUtils.js'
 
 const GHL_BASE_URL = 'https://services.leadconnectorhq.com'
 const GHL_API_VERSION = '2021-07-28'
+const GHL_PRODUCTS_API_VERSION = '2023-02-21'
 const GHL_INVOICE_SCHEDULE_API_VERSION = '2023-02-21'
 const GHL_INVOICE_SCHEDULE_AUTOPAY_API_VERSION = '2021-07-28'
 const MAX_RETRIES = 3
@@ -415,6 +416,7 @@ class GHLClient {
     logger.info(`Obteniendo productos (limit: ${limit})`)
 
     const response = await this.request('/products/', {
+      version: GHL_PRODUCTS_API_VERSION,
       params: {
         locationId: this.locationId,
         limit,
@@ -427,9 +429,40 @@ class GHLClient {
 
   async getProduct(productId) {
     return this.request(`/products/${productId}`, {
+      version: GHL_PRODUCTS_API_VERSION,
       params: {
         locationId: this.locationId,
       }
+    })
+  }
+
+  async createProduct(productData = {}) {
+    const body = {
+      ...productData,
+      locationId: productData.locationId || this.locationId
+    }
+
+    logger.info(`Creando producto en HighLevel: ${body.name || 'Sin nombre'}`)
+
+    return this.request('/products/', {
+      method: 'POST',
+      version: GHL_PRODUCTS_API_VERSION,
+      body
+    })
+  }
+
+  async updateProduct(productId, productData = {}) {
+    const body = {
+      ...productData,
+      locationId: productData.locationId || this.locationId
+    }
+
+    logger.info(`Actualizando producto en HighLevel: ${productId}`)
+
+    return this.request(`/products/${productId}`, {
+      method: 'PUT',
+      version: GHL_PRODUCTS_API_VERSION,
+      body
     })
   }
 
@@ -437,12 +470,45 @@ class GHLClient {
     logger.info(`Obteniendo precios para producto: ${productId}`)
 
     const response = await this.request(`/products/${productId}/price`, {
+      version: GHL_PRODUCTS_API_VERSION,
       params: {
         locationId: this.locationId,
       }
     })
 
     return response
+  }
+
+  async createPrice(productId, priceData = {}) {
+    const body = {
+      ...priceData,
+      product: priceData.product || productId,
+      locationId: priceData.locationId || this.locationId
+    }
+
+    logger.info(`Creando precio en HighLevel para producto: ${productId}`)
+
+    return this.request(`/products/${productId}/price`, {
+      method: 'POST',
+      version: GHL_PRODUCTS_API_VERSION,
+      body
+    })
+  }
+
+  async updatePrice(productId, priceId, priceData = {}) {
+    const body = {
+      ...priceData,
+      product: priceData.product || productId,
+      locationId: priceData.locationId || this.locationId
+    }
+
+    logger.info(`Actualizando precio en HighLevel: ${priceId}`)
+
+    return this.request(`/products/${productId}/price/${priceId}`, {
+      method: 'PUT',
+      version: GHL_PRODUCTS_API_VERSION,
+      body
+    })
   }
 
   // ============================================

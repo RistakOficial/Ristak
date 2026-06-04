@@ -39,6 +39,7 @@ export function startHighLevelSyncCron() {
           `✅ Sincronización HighLevel completada: ` +
           `${result.contacts.saved} contactos, ` +
           `${result.appointments.saved} citas, ` +
+          `${result.products?.pulled?.savedProducts || 0} productos GHL→Ristak, ` +
           `${result.payments.saved} pagos/invoices`
         )
       } else {

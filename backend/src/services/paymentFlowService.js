@@ -8,6 +8,7 @@ import { updateSingleContactStats } from '../utils/updateContactsStats.js'
 import { combineInvoiceTextSections, formatInvoiceMultilineText } from '../utils/invoiceTextFormatter.js'
 import { logger } from '../utils/logger.js'
 import { normalizePhoneForStorage } from '../utils/phoneUtils.js'
+import { prepareInvoiceCatalogItemsForHighLevel } from './localProductService.js'
 
 export const PAYMENT_FLOW_STATES = {
   DRAFT: 'draft',
@@ -846,7 +847,8 @@ async function createInvoice({ ghlClient, basePayload, contact, amount, currency
 
   payload.liveMode = context.liveMode
 
-  const response = await ghlClient.createInvoice(payload)
+  const payloadWithCatalogIds = await prepareInvoiceCatalogItemsForHighLevel(payload, { ghlClient })
+  const response = await ghlClient.createInvoice(payloadWithCatalogIds)
   const invoice = response.invoice || response
   const invoiceId = invoice.id || invoice._id
 

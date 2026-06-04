@@ -4,6 +4,7 @@ import { resolveDateRangeWithGHLTimezone } from '../utils/dateUtils.js'
 import { buildHiddenContactsCondition, getHiddenContactFilters } from '../utils/hiddenContactsFilter.js'
 import { getGHLClient } from './ghlClient.js'
 import * as highLevelCalendarService from './highlevelCalendarService.js'
+import { listLocalProducts, syncProductsWithSavedConfig } from './localProductService.js'
 import { cancelScheduledInstallmentPayment, createInstallmentPaymentFlow, createOfflineContactPayment, createSinglePaymentLink, updateScheduledInstallmentPayment } from './paymentFlowService.js'
 import { recordAttendanceAttributionSignal } from './appointmentsMerge.js'
 import { triggerWhatsappAppointmentBookedEvent } from './metaWhatsappEventsService.js'
@@ -5399,99 +5400,67 @@ async function loadGhlProductPrices(ghlClient, productId) {
 }
 
 async function executeLookupHighLevelProducts(args = {}, highLevelConnection) {
-  if (!highLevelConnection?.configured) {
-    return {
-      ok: false,
-      error: 'HighLevel no está configurado. Configura primero la integración de Go High Level.'
-    }
-  }
-
-  const ghlClient = await getGHLClient()
   const limit = Math.min(100, Math.max(1, Number(args.limit || PRODUCT_LOOKUP_LIMIT)))
   const query = cleanText(String(args.query || args.productHint || args.productName || args.name || ''), 180)
   const productId = cleanText(String(args.productId || args.product_id || ''), 180)
   const priceId = cleanText(String(args.priceId || args.price_id || ''), 180)
   const includePrices = args.includePrices !== false
-  const pageLimit = Math.min(100, Math.max(1, Number(args.pageLimit || limit)))
-  const maxPages = query || productId
-    ? 5
-    : Math.max(1, Math.ceil(limit / pageLimit))
-  const startOffset = Math.max(0, normalizeInteger(args.offset || 0))
-  const seenProducts = new Set()
   let products = []
 
-  for (let page = 0; page < maxPages; page += 1) {
-    const response = await ghlClient.listProducts({
-      limit: pageLimit,
-      offset: startOffset + (page * pageLimit)
+  if (highLevelConnection?.configured && args.sync !== false) {
+    await syncProductsWithSavedConfig({ pull: true, push: true }).catch(error => {
+      logger.warn(`No se pudo sincronizar catalogo antes de lookup: ${error.message}`)
     })
-    const pageProducts = extractArrayPayload(response, ['products', 'data', 'items', 'results'])
-      .map(normalizeGhlProduct)
-      .filter(product => product.id || product.name)
-
-    for (const product of pageProducts) {
-      const key = product.id || normalizeText(product.name)
-      if (!key || seenProducts.has(key)) continue
-      seenProducts.add(key)
-      products.push(product)
-    }
-
-    if (pageProducts.length < pageLimit) break
-    if (!query && !productId && products.length >= limit) break
   }
 
   if (productId) {
-    let selectedProduct = products.find(product => product.id === productId)
-
-    if (!selectedProduct) {
-      try {
-        const productResponse = await ghlClient.getProduct(productId)
-        selectedProduct = normalizeGhlProduct(productResponse.product || productResponse.data || productResponse)
-      } catch {
-        selectedProduct = null
-      }
-    }
-
-    products = selectedProduct ? [selectedProduct] : []
+    const localResult = await listLocalProducts({
+      limit: 250,
+      query: productId,
+      includePrices
+    })
+    products = (localResult.products || []).filter(product =>
+      product.id === productId ||
+      product.localId === productId ||
+      product.ghlProductId === productId
+    )
   } else if (query) {
+    const localResult = await listLocalProducts({
+      limit: Math.max(limit, PRODUCT_LOOKUP_LIMIT),
+      query,
+      includePrices
+    })
+    products = localResult.products || []
     products = products
       .map(product => ({ product, score: scoreProductMatch(product, query) }))
       .filter(item => Number.isFinite(item.score))
       .sort((a, b) => a.score - b.score || a.product.name.localeCompare(b.product.name))
       .map(item => item.product)
+  } else {
+    const localResult = await listLocalProducts({
+      limit,
+      offset: Math.max(0, normalizeInteger(args.offset || 0)),
+      includePrices
+    })
+    products = localResult.products || []
   }
 
   if (!products.length) {
     return {
       ok: false,
       error: query || productId
-        ? `No encontré productos de HighLevel que coincidan con "${query || productId}".`
-        : 'No encontré productos de HighLevel.',
+        ? `No encontré productos guardados que coincidan con "${query || productId}".`
+        : 'No encontré productos guardados en Ristak.',
       products: []
     }
   }
 
   const selectedProducts = products.slice(0, query || productId ? 8 : CLARIFICATION_OPTION_LIMIT)
-  const productsWithPrices = []
-
-  for (const product of selectedProducts) {
-    let prices = []
-    let priceError = null
-
-    if (includePrices && product.id) {
-      try {
-        prices = await loadGhlProductPrices(ghlClient, product.id)
-      } catch (error) {
-        priceError = cleanText(error.message || 'No se pudieron cargar precios', 240)
-      }
-    }
-
-    productsWithPrices.push({
-      ...product,
-      prices,
-      priceError
-    })
-  }
+  const productsWithPrices = selectedProducts.map(product => ({
+    ...product,
+    prices: includePrices && Array.isArray(product.prices) ? product.prices : [],
+    priceError: null
+  }))
 
   const selectedProduct = productsWithPrices.length === 1 ? productsWithPrices[0] : null
   const selectedPrice = selectedProduct && priceId
@@ -5501,7 +5470,7 @@ async function executeLookupHighLevelProducts(args = {}, highLevelConnection) {
   if ((query || productId) && productsWithPrices.length > 1) {
     return {
       ok: false,
-      error: 'Encontré varios productos parecidos en HighLevel. Necesito que elijas cuál usar antes de preparar el cobro.',
+      error: 'Encontré varios productos parecidos en Ristak. Necesito que elijas cuál usar antes de preparar el cobro.',
       needsProductSelection: true,
       products: productsWithPrices,
       clarificationOptions: buildProductOptions(productsWithPrices)
@@ -5522,8 +5491,8 @@ async function executeLookupHighLevelProducts(args = {}, highLevelConnection) {
   return {
     ok: true,
     message: selectedProduct
-      ? 'Producto de HighLevel encontrado.'
-      : 'Productos de HighLevel encontrados.',
+      ? 'Producto guardado encontrado.'
+      : 'Productos guardados encontrados.',
     product: selectedProduct,
     products: productsWithPrices,
     price: selectedPrice || (selectedProduct?.prices?.length === 1 ? selectedProduct.prices[0] : null),
@@ -7545,7 +7514,7 @@ async function buildPaymentProductSelectionRequiredOutput({ highLevelConnection,
       limit: PRODUCT_LOOKUP_LIMIT
     }, highLevelConnection)
   } catch (error) {
-    lookupError = cleanText(error.message || 'No se pudieron cargar productos de HighLevel.', 240)
+    lookupError = cleanText(error.message || 'No se pudieron cargar productos guardados.', 240)
   }
 
   const options = Array.isArray(lookup?.clarificationOptions) ? lookup.clarificationOptions : []
@@ -7732,7 +7701,7 @@ async function resolvePaymentProductArgs(args = {}, highLevelConnection = {}, me
       output: {
         ok: false,
         action: 'lookup_highlevel_products',
-        error: lookup.error || `No encontré el producto "${productHint}" en HighLevel.`,
+        error: lookup.error || `No encontré el producto "${productHint}" en Ristak.`,
         missingFields: ['producto']
       }
     }
@@ -11266,7 +11235,7 @@ function buildHighLevelTools(highLevelConnection, options = {}) {
     {
       type: 'function',
       name: 'lookup_highlevel_products',
-      description: 'Busca y lista productos/precios guardados en GoHighLevel de forma segura y de sólo lectura. Úsala cuando el usuario mencione explícitamente producto, producto guardado, precio de GHL o quiera ver productos/precios. No la uses para cobros normales con monto, número o descripción libre. En flujos de cobro, este lookup nunca es respuesta final: después de elegir producto/precio u "otro precio", continúa con create_single_payment_link o create_installment_payment_flow. Si hay productos parecidos o varios precios, devuelve opciones para que el usuario elija.',
+      description: 'Busca y lista productos/precios guardados en el catalogo de Ristak. Si GoHighLevel esta conectado, el catalogo local se sincroniza con GHL sin duplicar. Usala cuando el usuario mencione explicitamente producto, producto guardado o quiera ver productos/precios. No la uses para cobros normales con monto, numero o descripcion libre. En flujos de cobro, este lookup nunca es respuesta final: despues de elegir producto/precio u "otro precio", continua con create_single_payment_link o create_installment_payment_flow. Si hay productos parecidos o varios precios, devuelve opciones para que el usuario elija.',
       parameters: {
         type: 'object',
         properties: {
@@ -11274,7 +11243,7 @@ function buildHighLevelTools(highLevelConnection, options = {}) {
           productHint: { type: ['string', 'null'], description: 'Alias de query cuando el usuario dio un nombre aproximado de producto.' },
           productName: { type: ['string', 'null'], description: 'Nombre exacto o aproximado del producto.' },
           productId: { type: ['string', 'null'], description: 'ID exacto del producto de GHL si ya se conoce.' },
-          priceId: { type: ['string', 'null'], description: 'ID exacto del precio de GHL si ya se conoce.' },
+          priceId: { type: ['string', 'null'], description: 'ID exacto del precio guardado si ya se conoce.' },
           includePrices: { type: ['boolean', 'null'], description: 'true para incluir precios del producto. Por defecto true.' },
           limit: { type: ['number', 'null'], description: 'Máximo de productos a consultar, por defecto 50.' }
         },
@@ -11341,8 +11310,8 @@ function buildHighLevelTools(highLevelConnection, options = {}) {
           title: { type: ['string', 'null'], description: 'Título visible del invoice.' },
           productId: { type: ['string', 'null'], description: 'ID del producto de GHL cuando el cobro viene de producto guardado.' },
           productName: { type: ['string', 'null'], description: 'Nombre del producto de GHL seleccionado.' },
-          priceId: { type: ['string', 'null'], description: 'ID del precio de GHL seleccionado.' },
-          priceName: { type: ['string', 'null'], description: 'Nombre del precio de GHL seleccionado.' },
+          priceId: { type: ['string', 'null'], description: 'ID del precio guardado seleccionado.' },
+          priceName: { type: ['string', 'null'], description: 'Nombre del precio guardado seleccionado.' },
           productPrice: { type: ['number', 'null'], description: 'Precio del producto seleccionado si el usuario quiere cobrar el precio guardado.' },
           priceAmount: { type: ['number', 'null'], description: 'Alias de productPrice.' },
           priceCurrency: { type: ['string', 'null'], description: 'Moneda del precio seleccionado.' },
@@ -11387,8 +11356,8 @@ function buildHighLevelTools(highLevelConnection, options = {}) {
           concept: { type: ['string', 'null'], description: 'Concepto del cobro/invoice.' },
           productId: { type: ['string', 'null'], description: 'ID del producto de GHL cuando el plan viene de producto guardado.' },
           productName: { type: ['string', 'null'], description: 'Nombre del producto de GHL seleccionado.' },
-          priceId: { type: ['string', 'null'], description: 'ID del precio de GHL seleccionado.' },
-          priceName: { type: ['string', 'null'], description: 'Nombre del precio de GHL seleccionado.' },
+          priceId: { type: ['string', 'null'], description: 'ID del precio guardado seleccionado.' },
+          priceName: { type: ['string', 'null'], description: 'Nombre del precio guardado seleccionado.' },
           productPrice: { type: ['number', 'null'], description: 'Precio total del producto seleccionado si el usuario quiere usar el precio guardado como total del plan.' },
           priceAmount: { type: ['number', 'null'], description: 'Alias de productPrice.' },
           priceCurrency: { type: ['string', 'null'], description: 'Moneda del precio seleccionado.' },
@@ -13262,7 +13231,7 @@ const PAYMENT_WORKFLOW_PROMPT = [
   '- No hay orden obligatorio de preguntas. Lo obligatorio es validar completitud antes de confirmar o tocar dinero: contacto exacto, tipo de pago, producto/precio o monto, fechas/recurrencia cuando aplique, método/tarjeta, canal si se enviará link, concepto/descripción y resumen final. El usuario puede dar esos datos en cualquier orden; conserva lo ya dicho y pregunta sólo el siguiente dato faltante.',
   '- Para productos, no basta con saber que es "un producto": debe existir producto exacto y precio/monto definido por selección, precio guardado o monto personalizado antes del resumen final.',
   '- Para pagos programados, no asumas hoy si el usuario dijo programar/agendar/cargo futuro y no dio fecha; pregunta la fecha exacta.',
-  '- Si el usuario menciona "producto de X", "producto X" o corrige "no, el producto...", conserva contacto/fechas/monto y resuelve ese producto de HighLevel antes de pedir tarjeta o confirmación final. La búsqueda de producto no es el final del flujo.',
+  '- Si el usuario menciona "producto de X", "producto X" o corrige "no, el producto...", conserva contacto/fechas/monto y resuelve ese producto del catalogo Ristak antes de pedir tarjeta o confirmación final. La búsqueda de producto no es el final del flujo.',
   '- Si el usuario dice sólo "un producto" o "cóbrale un producto" sin decir cuál, primero muestra/pide el producto. No hables de tarjeta, link ni canal todavía.',
   '- Si el usuario elige "otro precio" o da un monto personalizado para un producto, usa ese producto con el monto personalizado y continúa con create_single_payment_link o create_installment_payment_flow; no te quedes sólo en lookup_highlevel_products.',
   '- Nunca digas "listo", "quedó", "se creó", "se programó", "se envió" o "se cobró" si la última herramienta de pago no devolvió ok:true de una mutación real. Si sólo hubo búsqueda, aclaración o error, di que todavía no quedó creado y pregunta el siguiente dato.',

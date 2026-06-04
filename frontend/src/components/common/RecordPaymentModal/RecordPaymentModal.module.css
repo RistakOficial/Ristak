@@ -19,6 +19,13 @@
   gap: 8px;
 }
 
+.fieldHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 .label {
   font-size: 13px;
   font-weight: 600;
@@ -480,6 +487,22 @@
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
+}
+
+.quickProductPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 8px;
+  background: rgba(148, 163, 184, 0.05);
+}
+
+.quickProductActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .planHint {

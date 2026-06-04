@@ -9,6 +9,14 @@ import { buildInvoicePaymentUrl } from '../utils/paymentUrl.js';
 import { createInstallmentPaymentFlow } from '../services/paymentFlowService.js';
 import { formatInvoiceMultilineText, formatInvoicePayloadText } from '../utils/invoiceTextFormatter.js';
 import { normalizePhoneForStorage } from '../utils/phoneUtils.js';
+import {
+  createLocalPrice,
+  createLocalProduct,
+  listLocalPrices,
+  listLocalProducts,
+  prepareInvoiceCatalogItemsForHighLevel,
+  syncProductsWithSavedConfig
+} from '../services/localProductService.js';
 
 const normalizeGhlInvoiceMode = (mode) => mode === 'test' ? 'test' : 'live';
 const INACTIVE_INVOICE_SCHEDULE_STATUSES = new Set([
@@ -225,6 +233,34 @@ async function clearAllData() {
       `);
     } catch (error) {
       logger.warn(`No se pudo limpiar metadata de calendarios HighLevel: ${error.message}`);
+    }
+
+    try {
+      await db.run("DELETE FROM product_prices WHERE COALESCE(source, 'ghl') = 'ghl'");
+      await db.run("DELETE FROM products WHERE COALESCE(source, 'ghl') = 'ghl'");
+      await db.run(`
+        UPDATE products
+        SET location_id = NULL,
+            ghl_product_id = NULL,
+            sync_status = 'pending',
+            sync_error = NULL,
+            last_synced_at = NULL,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE COALESCE(source, 'ristak') != 'ghl'
+      `);
+      await db.run(`
+        UPDATE product_prices
+        SET location_id = NULL,
+            ghl_price_id = NULL,
+            ghl_product_id = NULL,
+            sync_status = 'pending',
+            sync_error = NULL,
+            last_synced_at = NULL,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE COALESCE(source, 'ristak') != 'ghl'
+      `);
+    } catch (error) {
+      logger.warn(`No se pudo limpiar metadata de productos HighLevel: ${error.message}`);
     }
 
     logger.success('✅ Espejos HighLevel limpiados, datos locales preservados');
@@ -835,19 +871,31 @@ export const updateCustomLabels = async (req, res) => {
 };
 
 /**
- * Lista productos de HighLevel
+ * Lista productos del catalogo local de Ristak.
+ * Si HighLevel esta conectado, el catalogo se mantiene sincronizado por el sync general.
  */
 export const listProducts = async (req, res) => {
   try {
-    const { limit = 100 } = req.query;
+    const { limit = 100, offset = 0, query = '', sync = 'false' } = req.query;
 
-    // Usar GHL Client
-    const ghlClient = await getGHLClient();
-    const data = await ghlClient.listProducts({ limit: Number(limit) });
+    if (sync === 'true') {
+      await syncProductsWithSavedConfig().catch(error => {
+        logger.warn(`No se pudo sincronizar productos antes de listar: ${error.message}`);
+      });
+    }
+
+    const data = await listLocalProducts({
+      limit: Number(limit),
+      offset: Number(offset),
+      query: String(query || ''),
+      includePrices: req.query.includePrices !== 'false'
+    });
 
     res.json({
       success: true,
-      products: data.products || data.data || []
+      products: data.products || [],
+      total: data.total || 0,
+      source: 'ristak'
     });
 
   } catch (error) {
@@ -860,19 +908,40 @@ export const listProducts = async (req, res) => {
 };
 
 /**
- * Lista precios de un producto
+ * Crea un producto local de Ristak y lo sincroniza a HighLevel si esta conectado.
+ */
+export const createProduct = async (req, res) => {
+  try {
+    const product = await createLocalProduct(req.body || {});
+
+    res.status(201).json({
+      success: true,
+      product,
+      message: product.ghlProductId
+        ? 'Producto creado y sincronizado con HighLevel'
+        : 'Producto creado localmente'
+    });
+  } catch (error) {
+    logger.error(`Error en createProduct: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Error al crear producto'
+    });
+  }
+};
+
+/**
+ * Lista precios locales de un producto
  */
 export const listPrices = async (req, res) => {
   try {
     const { productId } = req.params;
 
-    // Usar GHL Client
-    const ghlClient = await getGHLClient();
-    const data = await ghlClient.listPrices(productId);
+    const prices = await listLocalPrices(productId);
 
     res.json({
       success: true,
-      prices: data.prices || data.data || []
+      prices
     });
 
   } catch (error) {
@@ -885,19 +954,60 @@ export const listPrices = async (req, res) => {
 };
 
 /**
+ * Crea un precio local para un producto y lo sincroniza si HighLevel esta conectado.
+ */
+export const createPrice = async (req, res) => {
+  try {
+    const { productId } = req.params;
+    const price = await createLocalPrice(productId, req.body || {});
+
+    res.status(201).json({
+      success: true,
+      price,
+      message: price.ghlPriceId
+        ? 'Precio creado y sincronizado con HighLevel'
+        : 'Precio creado localmente'
+    });
+  } catch (error) {
+    logger.error(`Error en createPrice: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Error al crear precio'
+    });
+  }
+};
+
+export const syncProducts = async (req, res) => {
+  try {
+    const result = await syncProductsWithSavedConfig();
+    res.json({
+      success: true,
+      result
+    });
+  } catch (error) {
+    logger.error(`Error en syncProducts: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Error al sincronizar productos'
+    });
+  }
+};
+
+/**
  * Crea un invoice en HighLevel
  */
 export const createInvoice = async (req, res) => {
   try {
     const liveMode = await getGhlInvoiceLiveMode();
     const paymentMode = liveMode ? 'live' : 'test';
-    const invoiceData = formatInvoicePayloadText({
+    const formattedInvoiceData = formatInvoicePayloadText({
       ...(req.body || {}),
       liveMode
     });
 
     // PASO 1: Crear invoice en HighLevel
     const ghlClient = await getGHLClient();
+    const invoiceData = await prepareInvoiceCatalogItemsForHighLevel(formattedInvoiceData, { ghlClient });
     const data = await ghlClient.createInvoice(invoiceData);
 
     const createdInvoice = data.invoice || data;

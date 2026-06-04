@@ -43,6 +43,7 @@ import searchRoutes from './routes/search.routes.js'
 import externalRoutes from './routes/external.routes.js'
 import mcpRoutes from './routes/mcp.routes.js'
 import whatsappWebRoutes from './routes/whatsappWeb.routes.js'
+import productsRoutes from './routes/products.routes.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -73,6 +74,7 @@ app.use('/api/auth', authRoutes)
 app.use('/api/api-access', apiAccessRoutes)
 app.use('/api/reports', reportsRoutes)
 app.use('/api/highlevel', highlevelRoutes)
+app.use('/api/products', productsRoutes)
 app.use('/api/meta', metaRoutes)
 app.use('/api/dashboard', dashboardRoutes)
 app.use('/api/webhook-config', webhookConfigRoutes)

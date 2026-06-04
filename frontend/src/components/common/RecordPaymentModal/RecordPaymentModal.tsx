@@ -132,17 +132,26 @@ const toInvoiceSendMethod = (method: SendMethod): InvoiceSendMethod => {
 interface Product {
   _id: string
   id: string
+  localId?: string
+  ghlProductId?: string | null
   name: string
   description?: string
+  currency?: string
+  syncStatus?: string
+  prices?: Price[]
 }
 
 interface Price {
   _id: string
   id: string
+  localId?: string
+  ghlPriceId?: string | null
+  localProductId?: string
   name: string
   amount: number
   price: number
   currency: string
+  syncStatus?: string
 }
 
 interface InvoiceSummary {
@@ -333,6 +342,13 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const [selectedPrice, setSelectedPrice] = useState<Price | null>(null)
   const [customAmount, setCustomAmount] = useState('')
   const [loadingProducts, setLoadingProducts] = useState(false)
+  const [showCreateProduct, setShowCreateProduct] = useState(false)
+  const [creatingProduct, setCreatingProduct] = useState(false)
+  const [newProductName, setNewProductName] = useState('')
+  const [newProductDescription, setNewProductDescription] = useState('')
+  const [newProductPriceName, setNewProductPriceName] = useState('')
+  const [newProductAmount, setNewProductAmount] = useState('')
+  const [newProductCurrency, setNewProductCurrency] = useState('MXN')
 
   // Payment options
   const [invoicePayload, setInvoicePayload] = useState<Record<string, any> | null>(null)
@@ -343,8 +359,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const [transferInfoUrl, setTransferInfoUrl] = useState<string | null>(null)
 
   // Estado de conexión con HighLevel. Cuando NO está conectado, Ristak opera en
-  // modo local: solo se puede registrar el pago manualmente (sin enviar enlaces,
-  // sin parcialidades ni productos de HighLevel).
+  // modo local: productos y pagos manuales siguen funcionando; enlaces y
+  // parcialidades remotas quedan desactivados.
   const [highLevelConnected, setHighLevelConnected] = useState(false)
 
   const { showToast } = useNotification()
@@ -426,6 +442,13 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     setPrices([])
     setProducts([])
     setCustomAmount('')
+    setShowCreateProduct(false)
+    setCreatingProduct(false)
+    setNewProductName('')
+    setNewProductDescription('')
+    setNewProductPriceName('')
+    setNewProductAmount('')
+    setNewProductCurrency('MXN')
     setInvoicePayload(null)
     setInvoiceSummary(null)
     setPaymentOption('send')
@@ -478,12 +501,11 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   }
 
   // En modo local (sin HighLevel) forzamos pago único y registro manual: no hay
-  // envío de enlaces, parcialidades ni productos guardados.
+  // envío de enlaces ni parcialidades remotas, pero el catalogo local sigue activo.
   useEffect(() => {
     if (!highLevelConnected) {
       setPaymentMode('single')
       setPaymentOption('manual')
-      setChargeType('direct')
     }
   }, [highLevelConnected])
 
@@ -593,7 +615,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
   useEffect(() => {
     if (selectedProduct) {
-      loadPrices(selectedProduct.id || selectedProduct._id)
+      const productId = selectedProduct.id || selectedProduct._id || selectedProduct.localId || ''
+      if (productId) loadPrices(productId)
     }
   }, [selectedProduct])
 
@@ -645,7 +668,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const loadProducts = async () => {
     setLoadingProducts(true)
     try {
-      const response = await fetch('/api/highlevel/products?limit=100')
+      const response = await fetch('/api/products?limit=100')
       if (!response.ok) throw new Error('Error al obtener productos')
       const data = await response.json()
       setProducts(data.products || [])
@@ -658,12 +681,85 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
   const loadPrices = async (productId: string) => {
     try {
-      const response = await fetch(`/api/highlevel/products/${productId}/prices`)
+      const response = await fetch(`/api/products/${productId}/prices`)
       if (!response.ok) throw new Error('Error al obtener precios')
       const data = await response.json()
       setPrices(data.prices || [])
     } catch (error) {
       showToast('error', 'No se pudieron cargar los precios')
+    }
+  }
+
+  const resetNewProductForm = () => {
+    setNewProductName('')
+    setNewProductDescription('')
+    setNewProductPriceName('')
+    setNewProductAmount('')
+    setNewProductCurrency(currency || 'MXN')
+  }
+
+  const handleCreateProduct = async () => {
+    const productName = newProductName.trim()
+    const productAmount = normalizeAmount(newProductAmount)
+
+    if (!productName) {
+      showToast('error', 'Escribe el nombre del producto')
+      return
+    }
+
+    if (productAmount <= 0) {
+      showToast('error', 'Ingresa un precio válido')
+      return
+    }
+
+    setCreatingProduct(true)
+    try {
+      const response = await fetch('/api/products', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: productName,
+          description: newProductDescription.trim(),
+          productType: 'DIGITAL',
+          availableInStore: false,
+          currency: newProductCurrency || currency || 'MXN',
+          prices: [
+            {
+              name: newProductPriceName.trim() || productName,
+              amount: productAmount,
+              currency: newProductCurrency || currency || 'MXN',
+              type: 'one_time',
+              description: newProductDescription.trim()
+            }
+          ]
+        })
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'No se pudo crear el producto')
+
+      const product = data.product as Product
+      const productPrices = product?.prices || []
+      const firstPrice = productPrices[0] || null
+
+      setProducts(prev => {
+        const productKey = product.id || product._id || product.localId
+        const filtered = prev.filter(item => (item.id || item._id || item.localId) !== productKey)
+        return [product, ...filtered]
+      })
+      setSelectedProduct(product)
+      setPrices(productPrices)
+      setSelectedPrice(firstPrice)
+      if (firstPrice) {
+        setCustomAmount(String(firstPrice.amount || firstPrice.price || productAmount))
+        setCurrency(firstPrice.currency || newProductCurrency || 'MXN')
+      }
+      setShowCreateProduct(false)
+      resetNewProductForm()
+      showToast('success', data.message || 'Producto creado')
+    } catch (error: any) {
+      showToast('error', error.message || 'No se pudo crear el producto')
+    } finally {
+      setCreatingProduct(false)
     }
   }
 
@@ -933,13 +1029,15 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         const parsedAmount = normalizeAmount(customAmount)
         subtotal = parsedAmount
         finalCurrency = selectedPrice.currency || currency
+        const productCatalogId = selectedProduct.ghlProductId || selectedProduct.id || selectedProduct._id || selectedProduct.localId
+        const priceCatalogId = selectedPrice.ghlPriceId || selectedPrice.id || selectedPrice._id || selectedPrice.localId
 
         items = [
           {
             name: selectedProduct.name,
             description: resolvedDescription || selectedProduct.description || selectedPrice.name || selectedProduct.name || resolvedTitle,
-            priceId: selectedPrice.id || selectedPrice._id,
-            productId: selectedProduct.id || selectedProduct._id,
+            priceId: priceCatalogId,
+            productId: productCatalogId,
             amount: parsedAmount,
             qty: 1,
             currency: finalCurrency
@@ -1343,55 +1441,67 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           )}
         </div>
 
-        {/* Los productos guardados provienen de HighLevel. En modo local solo
-            existe el cobro directo, así que ocultamos el selector. */}
-        {highLevelConnected && (
-          <div className={styles.field}>
-            <label className={styles.label}>Tipo de cobro</label>
-            <div style={{ marginTop: '4px' }}>
-              <TabList
-                tabs={[
-                  { value: 'direct', label: 'Cobro directo' },
-                  { value: 'product', label: 'Productos guardados' }
-                ]}
-                activeTab={chargeType}
-                onTabChange={(value) => {
-                  if (value === 'direct') {
-                    setChargeType('direct')
-                    setSelectedProduct(null)
-                    setSelectedPrice(null)
-                    setPrices([])
-                    setCustomAmount('')
-                    setCurrency('MXN')
-                  } else {
-                    setChargeType('product')
-                    setAmount('')
-                  }
-                }}
-                variant="compact"
-                className={styles.fullWidthTabList}
-              />
-            </div>
+        <div className={styles.field}>
+          <label className={styles.label}>Tipo de cobro</label>
+          <div style={{ marginTop: '4px' }}>
+            <TabList
+              tabs={[
+                { value: 'direct', label: 'Cobro directo' },
+                { value: 'product', label: 'Productos guardados' }
+              ]}
+              activeTab={chargeType}
+              onTabChange={(value) => {
+                if (value === 'direct') {
+                  setChargeType('direct')
+                  setSelectedProduct(null)
+                  setSelectedPrice(null)
+                  setPrices([])
+                  setCustomAmount('')
+                  setCurrency('MXN')
+                  setShowCreateProduct(false)
+                } else {
+                  setChargeType('product')
+                  setAmount('')
+                  setNewProductCurrency(currency || 'MXN')
+                }
+              }}
+              variant="compact"
+              className={styles.fullWidthTabList}
+            />
           </div>
-        )}
+        </div>
 
         {chargeType === 'direct' && renderPaymentModeField()}
 
         {chargeType === 'product' && (
           <>
             <div className={styles.field}>
-              <label className={styles.label}>Producto</label>
+              <div className={styles.fieldHeader}>
+                <label className={styles.label}>Producto</label>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setShowCreateProduct(prev => !prev)
+                    if (!showCreateProduct) setNewProductCurrency(currency || 'MXN')
+                  }}
+                >
+                  <Plus size={14} />
+                  Nuevo
+                </Button>
+              </div>
               <CustomSelect
                 options={[
                   { value: '', label: 'Selecciona un producto' },
                   ...products.map((product) => ({
-                    value: product.id || product._id || '',
+                    value: product.id || product._id || product.localId || '',
                     label: product.name
                   }))
                 ]}
-                value={selectedProduct?.id || selectedProduct?._id || ''}
+                value={selectedProduct?.id || selectedProduct?._id || selectedProduct?.localId || ''}
                 onChange={(value) => {
-                  const product = products.find(p => (p.id || p._id) === value)
+                  const product = products.find(p => (p.id || p._id || p.localId) === value)
                   setSelectedProduct(product || null)
                   setSelectedPrice(null)
                   setPrices([])
@@ -1402,6 +1512,94 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
               {loadingProducts && <p className={styles.hint}>Cargando productos...</p>}
             </div>
 
+            {showCreateProduct && (
+              <div className={styles.quickProductPanel}>
+                <div className={styles.fieldGrid}>
+                  <div className={styles.field}>
+                    <label className={styles.label}>Nombre</label>
+                    <input
+                      className={styles.input}
+                      value={newProductName}
+                      onChange={(event) => setNewProductName(event.target.value)}
+                      placeholder="Producto"
+                    />
+                  </div>
+                  <div className={styles.field}>
+                    <label className={styles.label}>Precio</label>
+                    <div className={styles.amountInput}>
+                      <DollarSign size={16} className={styles.dollarIcon} />
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        className={styles.input}
+                        value={newProductAmount}
+                        onChange={(event) => setNewProductAmount(event.target.value)}
+                        placeholder="0.00"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className={styles.fieldGrid}>
+                  <div className={styles.field}>
+                    <label className={styles.label}>Nombre del precio</label>
+                    <input
+                      className={styles.input}
+                      value={newProductPriceName}
+                      onChange={(event) => setNewProductPriceName(event.target.value)}
+                      placeholder="Precio base"
+                    />
+                  </div>
+                  <div className={styles.field}>
+                    <label className={styles.label}>Moneda</label>
+                    <CustomSelect
+                      value={newProductCurrency}
+                      onChange={setNewProductCurrency}
+                      options={[
+                        { value: 'MXN', label: 'MXN' },
+                        { value: 'USD', label: 'USD' }
+                      ]}
+                    />
+                  </div>
+                </div>
+
+                <div className={styles.field}>
+                  <label className={styles.label}>Descripción</label>
+                  <input
+                    className={styles.input}
+                    value={newProductDescription}
+                    onChange={(event) => setNewProductDescription(event.target.value)}
+                    placeholder="Detalle"
+                  />
+                </div>
+
+                <div className={styles.quickProductActions}>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    loading={creatingProduct}
+                    onClick={handleCreateProduct}
+                  >
+                    Guardar producto
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setShowCreateProduct(false)
+                      resetNewProductForm()
+                    }}
+                    disabled={creatingProduct}
+                  >
+                    Cancelar
+                  </Button>
+                </div>
+              </div>
+            )}
+
             {selectedProduct && (
               <div className={styles.field}>
                 <label className={styles.label}>Precio</label>
@@ -1409,13 +1607,13 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                   options={[
                     { value: '', label: 'Selecciona un precio' },
                     ...prices.map((price) => ({
-                      value: price.id || price._id || '',
+                      value: price.id || price._id || price.localId || '',
                       label: `${price.name || 'Precio'} - ${formatCurrency(price.amount || price.price, price.currency)}`
                     }))
                   ]}
-                  value={selectedPrice?.id || selectedPrice?._id || ''}
+                  value={selectedPrice?.id || selectedPrice?._id || selectedPrice?.localId || ''}
                   onChange={(value) => {
-                    const price = prices.find(p => (p.id || p._id) === value)
+                    const price = prices.find(p => (p.id || p._id || p.localId) === value)
                     setSelectedPrice(price || null)
                   }}
                   placeholder="Selecciona un precio"

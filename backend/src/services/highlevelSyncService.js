@@ -25,6 +25,7 @@ import {
   upsertLocalAppointment,
   upsertLocalCalendar
 } from './localCalendarService.js'
+import { syncProductsWithHighLevel } from './localProductService.js'
 
 const HIGHLEVEL_BASE_URL = 'https://services.leadconnectorhq.com'
 const HIGHLEVEL_API_VERSION = '2021-07-28'
@@ -49,6 +50,7 @@ let syncProgress = {
   contacts: { saved: 0, total: 0, status: 'pending', message: '' },
   whatsappContacts: { saved: 0, total: 0, status: 'pending', message: '' },
   appointments: { saved: 0, total: 0, status: 'pending', message: '' },
+  products: { saved: 0, total: 0, status: 'pending', message: '' },
   payments: { saved: 0, total: 0, status: 'pending', message: '' },
   metaAds: { synced: false, count: 0, saved: 0, total: 0, status: 'pending', message: '' }
 }
@@ -71,6 +73,7 @@ function updateGlobalProgress() {
     (syncProgress.contacts.total || 0) +
     (syncProgress.whatsappContacts?.total || 0) +
     (syncProgress.appointments.total || 0) +
+    (syncProgress.products?.total || 0) +
     (syncProgress.payments.total || 0) +
     (syncProgress.metaAds?.total || 0)
 
@@ -78,6 +81,7 @@ function updateGlobalProgress() {
     (syncProgress.contacts.saved || 0) +
     (syncProgress.whatsappContacts?.saved || 0) +
     (syncProgress.appointments.saved || 0) +
+    (syncProgress.products?.saved || 0) +
     (syncProgress.payments.saved || 0) +
     (syncProgress.metaAds?.saved || 0)
 
@@ -97,6 +101,11 @@ function updateWhatsAppContacts(saved, total, status, message) {
 
 function updateAppointments(saved, total, status, message) {
   syncProgress.appointments = { saved, total, status, message }
+  updateGlobalProgress()
+}
+
+function updateProducts(saved, total, status, message) {
+  syncProgress.products = { saved, total, status, message }
   updateGlobalProgress()
 }
 
@@ -1680,6 +1689,7 @@ export async function syncHighLevelData(locationId, apiToken, triggerSource = 'm
       contacts: { saved: 0, total: 0, status: 'pending', message: 'Esperando...' },
       whatsappContacts: { saved: 0, total: 0, status: 'pending', message: 'Esperando...' },
       appointments: { saved: 0, total: 0, status: 'pending', message: 'Esperando...' },
+      products: { saved: 0, total: 0, status: 'pending', message: 'Esperando...' },
       payments: { saved: 0, total: 0, status: 'pending', message: 'Esperando...' },
       metaAds: { synced: false, count: 0, saved: 0, total: 0, status: 'pending', message: 'Esperando...' }
     }
@@ -1700,6 +1710,36 @@ export async function syncHighLevelData(locationId, apiToken, triggerSource = 'm
       logger.info(`Calendarios Ristak → GHL: ${localCalendarsResult.created} creados, ${localCalendarsResult.updated} actualizados, ${localCalendarsResult.failed} fallidos`)
     } catch (error) {
       logger.warn(`No se pudieron subir calendarios Ristak a HighLevel: ${error.message}`)
+    }
+
+    // 1.75. Sincronizar productos en ambos sentidos. Primero GHL -> local para
+    // emparejar IDs remotos, despues local -> GHL para subir pendientes sin duplicar.
+    syncProgress.step = 'Sincronizando productos...'
+    updateProducts(0, 0, 'running', 'Emparejando catalogo Ristak y HighLevel...')
+    let productsResult = {
+      pulled: { total: 0, savedProducts: 0, savedPrices: 0 },
+      pushed: { total: 0, created: 0, updated: 0, matched: 0, failed: 0, pricesCreated: 0, pricesUpdated: 0, pricesMatched: 0, pricesFailed: 0 }
+    }
+    try {
+      productsResult = await syncProductsWithHighLevel(locationId, apiToken)
+      const savedProducts = (productsResult.pulled.savedProducts || 0) +
+        (productsResult.pushed.created || 0) +
+        (productsResult.pushed.updated || 0) +
+        (productsResult.pushed.matched || 0)
+      const savedPrices = (productsResult.pulled.savedPrices || 0) +
+        (productsResult.pushed.pricesCreated || 0) +
+        (productsResult.pushed.pricesUpdated || 0) +
+        (productsResult.pushed.pricesMatched || 0)
+      updateProducts(
+        savedProducts + savedPrices,
+        (productsResult.pulled.total || 0) + (productsResult.pushed.total || 0),
+        'completed',
+        `${savedProducts} productos y ${savedPrices} precios sincronizados`
+      )
+      logger.info(`Productos Ristak/GHL: ${savedProducts} productos, ${savedPrices} precios, ${productsResult.pushed.failed + productsResult.pushed.pricesFailed} fallidos`)
+    } catch (error) {
+      updateProducts(0, 0, 'error', error.message)
+      logger.warn(`No se pudieron sincronizar productos: ${error.message}`)
     }
 
     // 2. Sincronizar contactos
@@ -1743,13 +1783,14 @@ export async function syncHighLevelData(locationId, apiToken, triggerSource = 'm
     // 5. Completado
     syncProgress.status = 'completed'
     syncProgress.step = 'Sincronización completada'
-    syncProgress.message = `✅ Sincronización completada: ${contactsResult.saved} contactos GHL, ${whatsappContactsResult.synced} contactos WhatsApp, ${localCalendarsResult.created + localCalendarsResult.updated} calendarios Ristak→GHL, ${localAppointmentsResult.created + localAppointmentsResult.updated} citas Ristak→GHL, ${appointmentsResult.saved} citas GHL→Ristak, ${paymentsResult.saved} pagos`
+    syncProgress.message = `✅ Sincronización completada: ${contactsResult.saved} contactos GHL, ${whatsappContactsResult.synced} contactos WhatsApp, ${localCalendarsResult.created + localCalendarsResult.updated} calendarios Ristak→GHL, ${syncProgress.products.saved} productos/precios, ${localAppointmentsResult.created + localAppointmentsResult.updated} citas Ristak→GHL, ${appointmentsResult.saved} citas GHL→Ristak, ${paymentsResult.saved} pagos`
 
     logger.info('===========================================')
     logger.info('SINCRONIZACIÓN COMPLETADA EXITOSAMENTE')
     logger.info(`Contactos GHL: ${contactsResult.saved}/${contactsResult.total}`)
     logger.info(`Contactos WhatsApp → GHL: ${whatsappContactsResult.synced}/${whatsappContactsResult.total} (${whatsappContactsResult.created} creados, ${whatsappContactsResult.matched} emparejados, ${whatsappContactsResult.failed} fallidos)`)
     logger.info(`Calendarios Ristak → GHL: ${localCalendarsResult.created + localCalendarsResult.updated}/${localCalendarsResult.total} (${localCalendarsResult.failed} fallidos)`)
+    logger.info(`Productos/precios: ${syncProgress.products.saved}/${syncProgress.products.total}`)
     logger.info(`Citas Ristak → GHL: ${localAppointmentsResult.created + localAppointmentsResult.updated + localAppointmentsResult.deleted}/${localAppointmentsResult.total} (${localAppointmentsResult.failed} fallidas)`)
     logger.info(`Citas: ${appointmentsResult.saved}/${appointmentsResult.total} (${appointmentsResult.contactsCreated} contactos creados)`)
     logger.info(`Pagos: ${paymentsResult.saved}/${paymentsResult.total} (${paymentsResult.contactsCreated} contactos creados)`)
@@ -1832,6 +1873,7 @@ export async function syncHighLevelData(locationId, apiToken, triggerSource = 'm
       contacts: contactsResult,
       whatsappContacts: whatsappContactsResult,
       localCalendars: localCalendarsResult,
+      products: productsResult,
       localAppointments: localAppointmentsResult,
       appointments: appointmentsResult,
       payments: paymentsResult,

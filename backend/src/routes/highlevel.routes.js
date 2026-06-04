@@ -15,6 +15,9 @@ import {
   updateCustomLabels,
   listProducts,
   listPrices,
+  createProduct,
+  createPrice,
+  syncProducts,
   createInvoice,
   createInvoiceSchedule,
   listInvoiceSchedules,
@@ -63,7 +66,10 @@ router.post('/invoice-config', saveInvoiceConfig)
 
 // Products and Payments
 router.get('/products', listProducts)
+router.post('/products', createProduct)
+router.post('/products/sync', syncProducts)
 router.get('/products/:productId/prices', listPrices)
+router.post('/products/:productId/prices', createPrice)
 router.post('/invoices', createInvoice)
 router.get('/invoices/schedules', listInvoiceSchedules)
 router.post('/invoices/schedules', createInvoiceSchedule)
