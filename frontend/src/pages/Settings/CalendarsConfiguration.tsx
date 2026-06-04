@@ -1,12 +1,44 @@
 import React, { useState, useEffect, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { Card, Button, Modal, CustomSelect, Loading } from '@/components/common'
-import { Calendar, Loader2, CheckCircle, XCircle, Info, Settings, Plus, Copy, ExternalLink, Globe2, KeyRound, TestTube2, Trash2, ShieldCheck } from 'lucide-react'
+import {
+  Calendar,
+  Loader2,
+  CheckCircle,
+  XCircle,
+  Info,
+  Settings,
+  Plus,
+  Copy,
+  ExternalLink,
+  Globe2,
+  KeyRound,
+  TestTube2,
+  Trash2,
+  ShieldCheck,
+  Star,
+  BookOpen,
+  PlayCircle,
+  FileKey2,
+  ListChecks,
+  SlidersHorizontal
+} from 'lucide-react'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useAppConfig, useHighLevelConnected } from '@/hooks'
 import { useAuth } from '@/contexts/AuthContext'
 import { calendarsService, type Calendar as CalendarType, type GoogleCalendarIntegrationStatus } from '@/services/calendarsService'
 import styles from './HighLevelIntegration.module.css'
+import pageStyles from './CalendarsConfiguration.module.css'
+
+type CalendarSettingsTab = 'calendars' | 'google'
+
+const GOOGLE_HELP_LINKS = {
+  calendarApi: 'https://console.cloud.google.com/apis/library/calendar-json.googleapis.com',
+  serviceAccounts: 'https://docs.cloud.google.com/iam/docs/service-accounts-create',
+  serviceAccountKeys: 'https://docs.cloud.google.com/iam/docs/keys-create-delete',
+  shareCalendar: 'https://support.google.com/calendar/answer/37082',
+  videoSearch: 'https://www.youtube.com/results?search_query=Google+Cloud+service+account+JSON+key+Google+Calendar+API'
+}
 
 export const CalendarsConfiguration: React.FC = () => {
   const { showToast } = useNotification()
@@ -24,6 +56,7 @@ export const CalendarsConfiguration: React.FC = () => {
   // Estados locales
   const [calendars, setCalendars] = useState<CalendarType[]>([])
   const [loadingCalendars, setLoadingCalendars] = useState(true)
+  const [activeTab, setActiveTab] = useState<CalendarSettingsTab>('calendars')
   const [googleIntegration, setGoogleIntegration] = useState<GoogleCalendarIntegrationStatus | null>(null)
   const [loadingGoogleIntegration, setLoadingGoogleIntegration] = useState(true)
   const [savingGoogleIntegration, setSavingGoogleIntegration] = useState(false)
@@ -437,184 +470,375 @@ export const CalendarsConfiguration: React.FC = () => {
     document.body
   ) : null
 
-  const renderGoogleCalendarIntegrationSection = () => {
+  const handleCalendarSourcePreferenceChange = async (value: string) => {
+    const nextValue = value as 'combined' | 'ristak' | 'ghl'
+    await setCalendarSourcePreference(nextValue)
+    showToast(
+      'success',
+      'Origen guardado',
+      nextValue === 'combined'
+        ? 'Ristak y HighLevel se mostrarán juntos'
+        : nextValue === 'ristak'
+          ? 'Solo se mostrarán calendarios de Ristak'
+          : 'Solo se mostrarán calendarios de HighLevel'
+    )
+    await loadCalendars()
+  }
+
+  const renderCalendarSourceSelect = () => highLevelConnected ? (
+    <div className={pageStyles.sourceControl}>
+      <SlidersHorizontal size={16} />
+      <span>Origen</span>
+      <CustomSelect
+        className={pageStyles.sourceSelect}
+        value={calendarSourcePreference}
+        onChange={handleCalendarSourcePreferenceChange}
+        options={[
+          { value: 'combined', label: 'Ristak + HighLevel' },
+          { value: 'ristak', label: 'Solo Ristak' },
+          { value: 'ghl', label: 'Solo HighLevel' }
+        ]}
+      />
+    </div>
+  ) : null
+
+  const renderCalendarSourceBadge = (calendar: CalendarType) => (
+    <span className={pageStyles.metaPill}>
+      {calendar.source === 'ghl' ? 'HighLevel' : 'Ristak'}
+    </span>
+  )
+
+  const renderCalendarRow = (calendar: CalendarType) => {
+    const isAttributed = attributionCalendarIds.includes(calendar.id)
+    const isDefault = defaultCalendarId === calendar.id
+
+    return (
+      <article
+        key={calendar.id}
+        className={`${pageStyles.calendarRow} ${isDefault ? pageStyles.calendarRowDefault : ''}`}
+      >
+        <div className={pageStyles.calendarIdentity}>
+          <span
+            className={pageStyles.calendarColor}
+            style={{ backgroundColor: calendar.eventColor || 'var(--color-primary)' }}
+          />
+          <div className={pageStyles.calendarMain}>
+            <div className={pageStyles.calendarTitleLine}>
+              <h3>{calendar.name}</h3>
+              {isDefault && (
+                <span className={pageStyles.defaultPill}>
+                  <Star size={13} />
+                  Predeterminado
+                </span>
+              )}
+              {renderCalendarSourceBadge(calendar)}
+            </div>
+
+            <div className={pageStyles.calendarMeta}>
+              <span>{calendar.slotDuration} {calendar.slotDurationUnit}</span>
+              <span>Cada {calendar.slotInterval} {calendar.slotIntervalUnit}</span>
+              <span>{calendar.isActive ? 'Activo' : 'Inactivo'}</span>
+            </div>
+
+            <div className={pageStyles.publicUrlLine}>
+              <Globe2 size={15} />
+              <span title={calendar.publicUrl || calendar.publicUrlUnavailableReason || ''}>
+                {calendar.publicUrl || calendar.publicUrlUnavailableReason || 'URL publica pendiente'}
+              </span>
+              <button
+                type="button"
+                className={pageStyles.iconAction}
+                onClick={() => handleCopyPublicUrl(calendar)}
+                disabled={!calendar.publicUrl}
+                title="Copiar URL"
+              >
+                <Copy size={14} />
+              </button>
+              {calendar.publicUrl && (
+                <a
+                  className={pageStyles.iconActionLink}
+                  href={calendar.publicUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  title="Abrir URL publica"
+                >
+                  <ExternalLink size={14} />
+                </a>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className={pageStyles.calendarActions}>
+          {!isDefault && (
+            <Button
+              variant="outline"
+              size="small"
+              onClick={() => handleDefaultCalendarChange(calendar.id)}
+            >
+              <Star size={15} />
+              Usar como predeterminado
+            </Button>
+          )}
+          <div className={styles.toggleContainer}>
+            <button
+              type="button"
+              className={`${styles.toggle} ${isAttributed ? styles.toggleActive : ''}`}
+              onClick={() => handleAttributionToggle(calendar.id)}
+              aria-pressed={isAttributed}
+              aria-label={`Conversión para ${calendar.name}`}
+              title="Cuenta como conversión"
+            >
+              <span className={styles.toggleThumb} />
+            </button>
+            <span className={`${styles.toggleLabel} ${isAttributed ? styles.toggleLabelActive : ''}`}>
+              Conversión
+            </span>
+          </div>
+          <Button
+            variant="ghost"
+            size="small"
+            onClick={() => handleOpenConfigModal(calendar)}
+          >
+            <Settings size={15} />
+            Configurar
+          </Button>
+        </div>
+      </article>
+    )
+  }
+
+  const renderCalendarsTab = () => (
+    <div className={pageStyles.tabPanel}>
+      <div className={pageStyles.panelToolbar}>
+        <div>
+          <h2>Tus calendarios</h2>
+          <p>{calendars.length} calendario{calendars.length !== 1 ? 's' : ''} conectado{calendars.length !== 1 ? 's' : ''}</p>
+        </div>
+        <div className={pageStyles.toolbarActions}>
+          {renderCalendarSourceSelect()}
+          <Button variant="outline" size="small" onClick={() => setShowCreateModal(true)}>
+            <Plus size={16} />
+            Crear calendario
+          </Button>
+        </div>
+      </div>
+
+      <div className={pageStyles.attributionBar}>
+        <div>
+          <strong>{attributionCalendarIds.length}/{calendars.length}</strong>
+          <span>marcados como conversión</span>
+        </div>
+        <Button variant="ghost" size="small" onClick={handleSelectAllAttribution} disabled={calendars.length === 0}>
+          {allSelected ? 'Desmarcar todos' : 'Marcar todos'}
+        </Button>
+      </div>
+
+      <details className={pageStyles.compactHelp}>
+        <summary>¿Qué significa “conversión”?</summary>
+        <p>Los calendarios marcados alimentan citas en reportes, campañas, viaje del cliente y eventos de Meta/WhatsApp. Si no marcas ninguno, Ristak toma todos.</p>
+      </details>
+
+      {calendars.length > 0 ? (
+        <div className={pageStyles.calendarList}>
+          {calendars.map(renderCalendarRow)}
+        </div>
+      ) : (
+        <div className={pageStyles.emptyState}>
+          <Calendar size={34} />
+          <h3>No hay calendarios todavía</h3>
+          <p>Crea el primero para empezar a agendar desde Ristak.</p>
+          <Button onClick={() => setShowCreateModal(true)}>
+            <Plus size={16} />
+            Crear calendario
+          </Button>
+        </div>
+      )}
+    </div>
+  )
+
+  const renderGoogleCalendarTab = () => {
     const isConnected = Boolean(googleIntegration?.connected)
     const testOk = googleIntegration?.lastTestStatus === 'success'
     const testFailed = googleIntegration?.lastTestStatus === 'error'
 
     return (
-      <div className={styles.section}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap', marginBottom: 16 }}>
-          <div>
-            <h3 className={styles.sectionTitle}>Google Calendar</h3>
-            <p className={styles.sectionDescription} style={{ marginTop: 6 }}>
-              Conecta un calendario por Service Account, sin flujo OAuth. Cada instalación puede usar sus propias credenciales.
-            </p>
+      <div className={pageStyles.googleLayout}>
+        <section className={pageStyles.connectionPanel}>
+          <div className={pageStyles.connectionHeader}>
+            <div>
+              <h2>Google Calendar</h2>
+              <p>Conexión por Service Account, sin pedir OAuth al cliente.</p>
+            </div>
+            {loadingGoogleIntegration ? (
+              <span className={pageStyles.statusPill}>
+                <Loader2 size={15} className={styles.spinIcon} />
+                Cargando
+              </span>
+            ) : testOk ? (
+              <span className={`${pageStyles.statusPill} ${pageStyles.statusOk}`}>
+                <CheckCircle size={15} />
+                Probado
+              </span>
+            ) : isConnected ? (
+              <span className={`${pageStyles.statusPill} ${pageStyles.statusWarn}`}>
+                <Info size={15} />
+                Guardado
+              </span>
+            ) : (
+              <span className={`${pageStyles.statusPill} ${pageStyles.statusOff}`}>
+                <XCircle size={15} />
+                Sin conectar
+              </span>
+            )}
           </div>
-          {loadingGoogleIntegration ? (
-            <div className={styles.statusWarning}>
-              <Loader2 size={16} className={styles.spinIcon} />
-              <span>Cargando</span>
-            </div>
-          ) : testOk ? (
-            <div className={styles.statusConnected}>
-              <CheckCircle size={16} />
-              <span>Probado</span>
-            </div>
-          ) : isConnected ? (
-            <div className={styles.statusWarning}>
-              <Info size={16} />
-              <span>Guardado</span>
-            </div>
-          ) : (
-            <div className={styles.statusDisconnected}>
-              <XCircle size={16} />
-              <span>Sin conectar</span>
-            </div>
-          )}
-        </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 320px), 1fr))', gap: 18 }}>
-          <div>
-            <div className={styles.formField}>
-              <label className={styles.label}>Calendar ID</label>
+          <div className={pageStyles.formGrid}>
+            <label className={pageStyles.field}>
+              <span>Calendar ID</span>
               <input
-                className={styles.input}
                 value={googleCalendarId}
                 onChange={(event) => setGoogleCalendarId(event.target.value)}
                 placeholder="cliente@empresa.com o nombre@group.calendar.google.com"
                 autoComplete="off"
               />
-              <p className={styles.hint}>
-                Usa el ID exacto del calendario donde Ristak leerá y escribirá citas.
-              </p>
-            </div>
+            </label>
 
-            <div className={styles.formField}>
-              <label className={styles.label}>JSON del Service Account</label>
+            <label className={pageStyles.field}>
+              <span>JSON del Service Account</span>
               <textarea
-                className={styles.input}
                 value={serviceAccountJson}
                 onChange={(event) => setServiceAccountJson(event.target.value)}
                 placeholder='{"type":"service_account","project_id":"...","private_key":"-----BEGIN PRIVATE KEY-----\\n...","client_email":"..."}'
                 spellCheck={false}
-                style={{
-                  minHeight: 168,
-                  resize: 'vertical',
-                  fontFamily: 'var(--font-family-mono)',
-                  fontSize: 12,
-                  lineHeight: 1.5
-                }}
               />
-              <p className={styles.hint}>
-                Se guarda cifrado en backend. Si ya está conectado, puedes dejarlo vacío para conservar la llave actual.
-              </p>
-            </div>
+              <small>Se cifra en backend. Si ya está conectado, puedes dejarlo vacío para conservar la llave actual.</small>
+            </label>
+          </div>
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-              <Button
-                onClick={handleSaveGoogleIntegration}
-                disabled={savingGoogleIntegration || testingGoogleIntegration}
-              >
-                {savingGoogleIntegration ? (
-                  <>
-                    <Loader2 size={16} className={styles.spinIcon} />
-                    Guardando...
-                  </>
-                ) : (
-                  <>
-                    <KeyRound size={16} />
-                    Guardar conexión
-                  </>
-                )}
-              </Button>
-              <Button
-                variant="outline"
-                onClick={handleTestGoogleIntegration}
-                disabled={!isConnected || savingGoogleIntegration || testingGoogleIntegration}
-              >
-                {testingGoogleIntegration ? (
-                  <>
-                    <Loader2 size={16} className={styles.spinIcon} />
-                    Probando...
-                  </>
-                ) : (
-                  <>
-                    <TestTube2 size={16} />
-                    Probar conexión
-                  </>
-                )}
-              </Button>
-              {isConnected && (
-                <Button
-                  variant="ghost"
-                  onClick={handleDisconnectGoogleIntegration}
-                  disabled={disconnectingGoogleIntegration}
-                >
-                  {disconnectingGoogleIntegration ? (
-                    <>
-                      <Loader2 size={16} className={styles.spinIcon} />
-                      Desconectando...
-                    </>
-                  ) : (
-                    <>
-                      <Trash2 size={16} />
-                      Desconectar
-                    </>
-                  )}
-                </Button>
+          <div className={pageStyles.serviceEmailBox}>
+            <FileKey2 size={18} />
+            <div>
+              <span>Email técnico para compartir el calendario</span>
+              <strong>{serviceAccountEmailForSharing || 'Pega o guarda el JSON para ver el email'}</strong>
+            </div>
+            <Button
+              variant="outline"
+              size="small"
+              onClick={handleCopyServiceAccountEmail}
+              disabled={!serviceAccountEmailForSharing}
+            >
+              <Copy size={14} />
+              Copiar
+            </Button>
+          </div>
+
+          <div className={pageStyles.formActions}>
+            <Button onClick={handleSaveGoogleIntegration} disabled={savingGoogleIntegration || testingGoogleIntegration}>
+              {savingGoogleIntegration ? (
+                <>
+                  <Loader2 size={16} className={styles.spinIcon} />
+                  Guardando...
+                </>
+              ) : (
+                <>
+                  <KeyRound size={16} />
+                  Guardar conexión
+                </>
               )}
-            </div>
-
-            {(testOk || testFailed) && (
-              <div style={{ marginTop: 14, fontSize: 13, color: testOk ? 'var(--color-success)' : 'var(--color-error)' }}>
-                {testOk ? 'Última prueba correcta' : 'Última prueba fallida'}: {googleIntegration?.lastTestMessage}
-              </div>
-            )}
-          </div>
-
-          <div className={styles.stepGuidePanel} style={{ marginBottom: 0 }}>
-            <div className={styles.stepGuideTitle}>
-              <ShieldCheck size={16} />
-              Instrucciones para el cliente
-            </div>
-            <ol className={styles.integrationGuide}>
-              <li>En Google Cloud, crea un Service Account y activa Google Calendar API en el proyecto.</li>
-              <li>Genera una llave JSON y pégala aquí junto con el Calendar ID.</li>
-              <li>En Google Calendar, abre Configuración del calendario y comparte el calendario con el email técnico.</li>
-              <li>Asigna permiso para hacer cambios en eventos. Luego guarda y presiona Probar conexión.</li>
-            </ol>
-
-            <div style={{ marginTop: 14 }}>
-              <label className={styles.label}>Email técnico para compartir</label>
-              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-                <input
-                  className={styles.input}
-                  readOnly
-                  value={serviceAccountEmailForSharing || 'Pega o guarda el JSON para ver el email'}
-                  style={{ fontSize: 12 }}
-                />
-                <Button
-                  variant="outline"
-                  size="small"
-                  onClick={handleCopyServiceAccountEmail}
-                  disabled={!serviceAccountEmailForSharing}
-                >
-                  <Copy size={14} />
-                  Copiar
-                </Button>
-              </div>
-            </div>
-
+            </Button>
+            <Button
+              variant="outline"
+              onClick={handleTestGoogleIntegration}
+              disabled={!isConnected || savingGoogleIntegration || testingGoogleIntegration}
+            >
+              {testingGoogleIntegration ? (
+                <>
+                  <Loader2 size={16} className={styles.spinIcon} />
+                  Probando...
+                </>
+              ) : (
+                <>
+                  <TestTube2 size={16} />
+                  Probar conexión
+                </>
+              )}
+            </Button>
             {isConnected && (
-              <div style={{ display: 'grid', gap: 8, marginTop: 14, fontSize: 13, color: 'var(--color-text-secondary)' }}>
-                <div><strong style={{ color: 'var(--color-text-primary)' }}>Proyecto:</strong> {googleIntegration?.projectId || 'Sin dato'}</div>
-                <div><strong style={{ color: 'var(--color-text-primary)' }}>Calendario:</strong> {googleIntegration?.calendarSummary || googleIntegration?.calendarId}</div>
-                <div><strong style={{ color: 'var(--color-text-primary)' }}>Zona:</strong> {googleIntegration?.calendarTimeZone || 'Sin validar'}</div>
-              </div>
+              <Button variant="ghost" onClick={handleDisconnectGoogleIntegration} disabled={disconnectingGoogleIntegration}>
+                {disconnectingGoogleIntegration ? (
+                  <>
+                    <Loader2 size={16} className={styles.spinIcon} />
+                    Desconectando...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 size={16} />
+                    Desconectar
+                  </>
+                )}
+              </Button>
             )}
           </div>
-        </div>
+
+          {(testOk || testFailed) && (
+            <div className={`${pageStyles.testResult} ${testOk ? pageStyles.testOk : pageStyles.testError}`}>
+              {testOk ? 'Última prueba correcta' : 'Última prueba fallida'}: {googleIntegration?.lastTestMessage}
+            </div>
+          )}
+
+          {isConnected && (
+            <div className={pageStyles.integrationFacts}>
+              <span><strong>Proyecto</strong>{googleIntegration?.projectId || 'Sin dato'}</span>
+              <span><strong>Calendario</strong>{googleIntegration?.calendarSummary || googleIntegration?.calendarId}</span>
+              <span><strong>Zona</strong>{googleIntegration?.calendarTimeZone || 'Sin validar'}</span>
+            </div>
+          )}
+        </section>
+
+        <aside className={pageStyles.guidePanel}>
+          <div className={pageStyles.guideHeader}>
+            <BookOpen size={20} />
+            <div>
+              <h2>Guía para principiantes</h2>
+              <p>El flujo completo para que no se pierdan en Google Cloud.</p>
+            </div>
+          </div>
+
+          <ol className={pageStyles.setupSteps}>
+            <li><strong>Abre Google Cloud Console.</strong> Entra con la cuenta del cliente y elige o crea un proyecto.</li>
+            <li><strong>Activa Google Calendar API.</strong> Abre la librería de APIs y habilita Google Calendar API.</li>
+            <li><strong>Crea un Service Account.</strong> Ve a IAM, Service Accounts y crea uno llamado “Ristak Calendar”.</li>
+            <li><strong>Genera la llave JSON.</strong> En Keys, usa Add key, Create new key, JSON. Ese archivo se pega aquí.</li>
+            <li><strong>Comparte el calendario.</strong> En Google Calendar, abre Settings and sharing y agrega el email técnico.</li>
+            <li><strong>Da permiso de edición.</strong> Necesita poder hacer cambios en eventos; libre/ocupado no alcanza.</li>
+            <li><strong>Copia el Calendar ID.</strong> En Integrate calendar, copia el Calendar ID y pégalo en Ristak.</li>
+            <li><strong>Guarda y prueba.</strong> Ristak valida lectura, creación, actualización y cancelación con un evento temporal.</li>
+          </ol>
+
+          <div className={pageStyles.supportLinks}>
+            <a href={GOOGLE_HELP_LINKS.calendarApi} target="_blank" rel="noreferrer">
+              <ListChecks size={16} />
+              Activar Calendar API
+            </a>
+            <a href={GOOGLE_HELP_LINKS.serviceAccounts} target="_blank" rel="noreferrer">
+              <ShieldCheck size={16} />
+              Crear Service Account
+            </a>
+            <a href={GOOGLE_HELP_LINKS.serviceAccountKeys} target="_blank" rel="noreferrer">
+              <FileKey2 size={16} />
+              Crear llave JSON
+            </a>
+            <a href={GOOGLE_HELP_LINKS.shareCalendar} target="_blank" rel="noreferrer">
+              <Calendar size={16} />
+              Compartir calendario
+            </a>
+            <a href={GOOGLE_HELP_LINKS.videoSearch} target="_blank" rel="noreferrer">
+              <PlayCircle size={16} />
+              Videos paso a paso
+            </a>
+          </div>
+        </aside>
       </div>
     )
   }
@@ -623,295 +847,52 @@ export const CalendarsConfiguration: React.FC = () => {
     return <Loading message="Cargando calendarios..." page="calendar-settings" />
   }
 
-  if (calendars.length === 0) {
-    return (
-      <div className={styles.integrationContainer}>
-        <Card className={styles.mainCard}>
-          <div className={styles.pageHeader}>
-            <div className={styles.headerContent}>
-              <div className={styles.headerLeft}>
-              <div className={styles.logoContainer}>
-                <Calendar size={32} style={{ color: 'var(--color-text-secondary)' }} />
-              </div>
-              <div>
-                <h2 className={styles.pageTitle}>Calendarios</h2>
-                <p className={styles.pageSubtitle}>
-                  No hay calendarios disponibles
-                </p>
-              </div>
-              </div>
-              <div className={styles.headerRight}>
-                <div className={styles.statusDisconnected}>
-                  <XCircle size={16} />
-                  <span>Sin calendarios</span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {renderGoogleCalendarIntegrationSection()}
-
-          <div className={styles.section}>
-            <p style={{ color: 'var(--color-text-secondary)' }}>
-              Crea un calendario en Ristak para empezar a agendar. Si después conectas HighLevel, se sincronizará.
-            </p>
-            <Button onClick={() => setShowCreateModal(true)} style={{ marginTop: '16px' }}>
-              <Plus size={16} />
-              Crear calendario
-            </Button>
-          </div>
-        </Card>
-        {renderCreateCalendarModal()}
-      </div>
-    )
-  }
-
-  const allSelected = attributionCalendarIds.length === calendars.length
+  const allSelected = calendars.length > 0 && attributionCalendarIds.length === calendars.length
 
   return (
     <div className={styles.integrationContainer}>
-      <Card className={styles.mainCard}>
-        {/* Header */}
-        <div className={styles.pageHeader}>
-          <div className={styles.headerContent}>
-            <div className={styles.headerLeft}>
-              <div className={styles.logoContainer}>
-                <Calendar size={32} style={{ color: 'var(--color-primary)' }} />
-              </div>
-              <div>
-                <h2 className={styles.pageTitle}>Configuración de Calendarios</h2>
-                <p className={styles.pageSubtitle}>
-                  Configura qué calendarios usar y cómo
-                </p>
-              </div>
+      <Card className={`${styles.mainCard} ${pageStyles.mainCard}`}>
+        <div className={pageStyles.header}>
+          <div>
+            <div className={pageStyles.eyebrow}>
+              <Calendar size={17} />
+              Configuración
             </div>
-            <div className={styles.headerRight}>
-              <Button
-                variant="outline"
-                size="small"
-                onClick={() => setShowCreateModal(true)}
-              >
-                <Plus size={16} />
-                Crear calendario
-              </Button>
-              {defaultCalendarId || attributionCalendarIds.length > 0 ? (
-                <div className={styles.statusConnected}>
-                  <CheckCircle size={16} />
-                  <span>Configurado</span>
-                </div>
-              ) : (
-                <div className={styles.statusDisconnected}>
-                  <XCircle size={16} />
-                  <span>Sin configurar</span>
-                </div>
-              )}
-            </div>
+            <h2>Configuración de calendario</h2>
+            <p>Administra calendarios, predeterminado, conversiones y Google Calendar sin llenar la pantalla de ruido.</p>
           </div>
+          <Button variant="outline" size="small" onClick={() => setShowCreateModal(true)}>
+            <Plus size={16} />
+            Crear calendario
+          </Button>
         </div>
 
-        {renderGoogleCalendarIntegrationSection()}
-
-        {/* Origen de calendarios: solo aplica cuando hay una integración de
-            terceros conectada. Sin ella, Ristak es la única fuente. */}
-        {highLevelConnected && (
-          <div className={styles.section}>
-            <h3 className={styles.sectionTitle}>Origen de Calendarios</h3>
-            <p className={styles.sectionDescription} style={{ marginBottom: '16px' }}>
-              Define qué calendarios se muestran para operar en Ristak. La sincronización sigue combinando datos cuando HighLevel está conectado.
-            </p>
-
-            <div className={styles.sectionContent}>
-              <div className={styles.formField}>
-                <label className={styles.label}>Calendarios a usar</label>
-                <CustomSelect
-                  value={calendarSourcePreference}
-                  onChange={async (value) => {
-                    const nextValue = value as 'combined' | 'ristak' | 'ghl'
-                    await setCalendarSourcePreference(nextValue)
-                    showToast('success', 'Preferencia guardada', nextValue === 'combined' ? 'Ristak y HighLevel se mostrarán juntos' : nextValue === 'ristak' ? 'Solo se mostrarán calendarios de Ristak' : 'Solo se mostrarán calendarios de HighLevel')
-                    await loadCalendars()
-                  }}
-                  options={[
-                    { value: 'combined', label: 'Ristak + HighLevel' },
-                    { value: 'ristak', label: 'Solo Ristak' },
-                    { value: 'ghl', label: 'Solo HighLevel' }
-                  ]}
-                />
-                <p className={styles.hint}>
-                  Aunque filtres la vista, las citas y calendarios pendientes de Ristak se suben a HighLevel cuando la integración está activa.
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Calendario Predeterminado */}
-        <div className={styles.section}>
-          <h3 className={styles.sectionTitle}>Calendario Predeterminado</h3>
-          <p className={styles.sectionDescription} style={{ marginBottom: '16px' }}>
-            El calendario que se seleccionará automáticamente al abrir la página de Citas
-          </p>
-
-          <div className={styles.sectionContent}>
-            <div className={styles.formField}>
-              <label className={styles.label}>Selecciona un calendario</label>
-              <CustomSelect
-                value={defaultCalendarId}
-                onChange={(value) => handleDefaultCalendarChange(value)}
-                options={[
-                  { value: '', label: 'Ninguno (seleccionar manualmente)' },
-                  ...calendars.map(calendar => ({
-                    value: calendar.id,
-                    label: calendar.name
-                  }))
-                ]}
-                placeholder="Selecciona un calendario"
-              />
-              <p className={styles.hint}>
-                Si no seleccionas ninguno, tendrás que elegir el calendario cada vez que entres a la página de Citas
-              </p>
-            </div>
-          </div>
+        <div className={pageStyles.tabs} role="tablist" aria-label="Configuración de calendarios">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'calendars'}
+            className={activeTab === 'calendars' ? pageStyles.tabActive : ''}
+            onClick={() => setActiveTab('calendars')}
+          >
+            <Calendar size={16} />
+            Tus calendarios
+            <span>{calendars.length}</span>
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'google'}
+            className={activeTab === 'google' ? pageStyles.tabActive : ''}
+            onClick={() => setActiveTab('google')}
+          >
+            <Globe2 size={16} />
+            Google Calendar
+            <span>{googleIntegration?.connected ? 'Conectado' : 'Setup'}</span>
+          </button>
         </div>
 
-        {/* Tus calendarios: una sola lista donde marcas atribución/eventos y
-            ajustas la configuración de cada calendario, sin duplicar la vista. */}
-        <div className={styles.section} style={{ borderTop: '1px solid var(--color-border)', paddingTop: '24px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '16px', flexWrap: 'wrap', marginBottom: '12px' }}>
-            <div>
-              <h3 className={styles.sectionTitle}>Tus calendarios</h3>
-              <p className={styles.sectionDescription} style={{ margin: 0 }}>
-                Marca los que cuentan como conversión y ajusta la configuración de cada uno.
-              </p>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexShrink: 0 }}>
-              <span style={{ fontSize: '13px', color: 'var(--color-text-tertiary)', whiteSpace: 'nowrap' }}>
-                {attributionCalendarIds.length}/{calendars.length} marcados
-              </span>
-              <Button variant="ghost" size="small" onClick={handleSelectAllAttribution}>
-                {allSelected ? 'Desmarcar todos' : 'Marcar todos'}
-              </Button>
-            </div>
-          </div>
-
-          <div style={{ display: 'flex', gap: '12px', padding: '14px', backgroundColor: 'var(--color-background-secondary)', borderRadius: '8px', marginBottom: '16px' }}>
-            <Info size={20} style={{ color: 'var(--color-primary)', flexShrink: 0, marginTop: '2px' }} />
-            <div style={{ fontSize: '13px', color: 'var(--color-text-secondary)', lineHeight: '1.6' }}>
-              <strong style={{ color: 'var(--color-text-primary)' }}>¿Para qué sirve marcar un calendario?</strong>
-              <br />
-              Los calendarios marcados son los que cuentan como conversión. Cuando alguien agenda en uno de ellos, esa cita:
-              <ul style={{ margin: '8px 0 0 0', paddingLeft: '20px' }}>
-                <li>Aparece en la columna “Citas” de Reportes y Campañas</li>
-                <li>Se refleja en el Viaje del Cliente del contacto</li>
-                <li>Suma en las métricas de atribución de marketing</li>
-                <li>
-                  Dispara los{' '}
-                  <strong style={{ color: 'var(--color-text-primary)' }}>
-                    eventos de conversión hacia Meta (Pixel / API de Conversiones) y WhatsApp
-                  </strong>
-                  , si los tienes activados en Ajustes → Eventos personalizados
-                </li>
-              </ul>
-              <div style={{ marginTop: '8px' }}>
-                Si no marcas ninguno, se toman en cuenta{' '}
-                <strong style={{ color: 'var(--color-text-primary)' }}>todos</strong> los calendarios.
-              </div>
-            </div>
-          </div>
-
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-            {calendars.map(calendar => {
-              const isAttributed = attributionCalendarIds.includes(calendar.id)
-              return (
-                <div
-                  key={calendar.id}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    gap: '16px',
-                    flexWrap: 'wrap',
-                    padding: '14px 16px',
-                    backgroundColor: 'var(--color-background-secondary)',
-                    border: `1px solid ${isAttributed ? 'var(--color-primary)' : 'var(--color-border)'}`,
-                    borderRadius: '10px',
-                    transition: 'border-color 0.2s ease'
-                  }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0, flex: 1 }}>
-                    <span style={{ width: 10, height: 10, borderRadius: '50%', backgroundColor: calendar.eventColor || 'var(--color-primary)', flexShrink: 0 }} />
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ fontWeight: 600, color: 'var(--color-text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                        {calendar.name}
-                      </div>
-                      <div style={{ fontSize: '12px', color: 'var(--color-text-tertiary)' }}>
-                        {calendar.slotDuration} {calendar.slotDurationUnit} · cada {calendar.slotInterval} {calendar.slotIntervalUnit}
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '8px', minWidth: 0, maxWidth: 520 }}>
-                        <Globe2 size={14} style={{ color: calendar.publicUrl ? 'var(--color-primary)' : 'var(--color-text-tertiary)', flexShrink: 0 }} />
-                        <input
-                          readOnly
-                          value={calendar.publicUrl || calendar.publicUrlUnavailableReason || 'Conecta el dominio publico general'}
-                          title={calendar.publicUrl || calendar.publicUrlUnavailableReason || 'Conecta el dominio publico general'}
-                          style={{
-                            minWidth: 0,
-                            flex: 1,
-                            height: 32,
-                            border: '1px solid var(--color-border)',
-                            borderRadius: '7px',
-                            backgroundColor: 'var(--color-background-primary)',
-                            color: calendar.publicUrl ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)',
-                            fontSize: '12px',
-                            padding: '0 10px'
-                          }}
-                        />
-                        <Button
-                          variant="ghost"
-                          size="small"
-                          onClick={() => handleCopyPublicUrl(calendar)}
-                          disabled={!calendar.publicUrl}
-                        >
-                          <Copy size={14} />
-                          Copiar URL
-                        </Button>
-                        {calendar.publicUrl && (
-                          <a href={calendar.publicUrl} target="_blank" rel="noreferrer" style={{ display: 'inline-flex', color: 'var(--color-text-secondary)' }}>
-                            <ExternalLink size={15} />
-                          </a>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexShrink: 0 }}>
-                    <div className={styles.toggleContainer}>
-                      <button
-                        type="button"
-                        className={`${styles.toggle} ${isAttributed ? styles.toggleActive : ''}`}
-                        onClick={() => handleAttributionToggle(calendar.id)}
-                        aria-pressed={isAttributed}
-                        aria-label={`Atribución y eventos para ${calendar.name}`}
-                      >
-                        <span className={styles.toggleThumb} />
-                      </button>
-                      <span className={`${styles.toggleLabel} ${isAttributed ? styles.toggleLabelActive : ''}`}>
-                        Atribución y eventos
-                      </span>
-                    </div>
-                    <Button
-                      variant="outline"
-                      size="small"
-                      onClick={() => handleOpenConfigModal(calendar)}
-                    >
-                      <Settings size={16} />
-                      Configurar
-                    </Button>
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        </div>
+        {activeTab === 'calendars' ? renderCalendarsTab() : renderGoogleCalendarTab()}
       </Card>
 
       {renderCreateCalendarModal()}
