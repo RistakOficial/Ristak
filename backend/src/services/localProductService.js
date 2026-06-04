@@ -961,6 +961,7 @@ export async function syncHighLevelProductsToLocal(locationId, apiToken) {
   let savedProducts = 0
   let savedPrices = 0
   let totalProducts = 0
+  const remoteProductIds = new Set()
 
   for (let page = 0; page < 50; page += 1) {
     const response = await client.listProducts({
@@ -971,6 +972,10 @@ export async function syncHighLevelProductsToLocal(locationId, apiToken) {
     totalProducts += remoteProducts.length
 
     for (const remoteProduct of remoteProducts) {
+      const normalizedRemoteProduct = normalizeGhlProduct(remoteProduct)
+      if (normalizedRemoteProduct.ghlProductId) {
+        remoteProductIds.add(normalizedRemoteProduct.ghlProductId)
+      }
       const product = await upsertLocalProduct(normalizeGhlProduct(remoteProduct), {
         source: 'ghl',
         locationId,
@@ -1003,7 +1008,53 @@ export async function syncHighLevelProductsToLocal(locationId, apiToken) {
     if (remoteProducts.length < PRODUCT_PAGE_LIMIT) break
   }
 
-  return { total: totalProducts, savedProducts, savedPrices }
+  const prunedProducts = await pruneStaleHighLevelProducts(locationId, [...remoteProductIds])
+
+  return { total: totalProducts, savedProducts, savedPrices, prunedProducts }
+}
+
+async function pruneStaleHighLevelProducts(locationId, remoteProductIds = []) {
+  const cleanLocationId = cleanString(locationId)
+  if (!cleanLocationId) return 0
+
+  const staleLocationRows = await db.all(
+    `SELECT id
+     FROM products
+     WHERE COALESCE(source, '') = 'ghl'
+       AND COALESCE(location_id, '') != ?`,
+    [cleanLocationId]
+  )
+
+  const staleCurrentRows = remoteProductIds.length
+    ? await db.all(
+        `SELECT id
+         FROM products
+         WHERE COALESCE(source, '') = 'ghl'
+           AND COALESCE(location_id, '') = ?
+           AND COALESCE(ghl_product_id, '') != ''
+           AND ghl_product_id NOT IN (${remoteProductIds.map(() => '?').join(', ')})`,
+        [cleanLocationId, ...remoteProductIds]
+      )
+    : await db.all(
+        `SELECT id
+         FROM products
+         WHERE COALESCE(source, '') = 'ghl'
+           AND COALESCE(location_id, '') = ?
+           AND COALESCE(ghl_product_id, '') != ''`,
+        [cleanLocationId]
+      )
+
+  const staleIds = [...new Set([...staleLocationRows, ...staleCurrentRows].map(row => row.id).filter(Boolean))]
+  for (const productId of staleIds) {
+    await db.run('DELETE FROM product_prices WHERE product_id = ?', [productId])
+    await db.run('DELETE FROM products WHERE id = ?', [productId])
+  }
+
+  if (staleIds.length) {
+    logger.info(`Productos espejo de HighLevel podados localmente: ${staleIds.length}`)
+  }
+
+  return staleIds.length
 }
 
 export async function syncLocalProductsToHighLevel(locationId, apiToken) {
