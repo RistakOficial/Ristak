@@ -1,0 +1,1 @@
+export { OriginDistributionCard } from './OriginDistributionCard'

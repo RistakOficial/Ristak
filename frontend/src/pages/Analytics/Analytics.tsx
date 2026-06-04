@@ -12,7 +12,7 @@ import {
   Button,
   AreaChart,
   TreeFilter,
-  TrafficSourcesChart,
+  OriginDistributionCard,
   SessionsTable,
   Loading
 } from '../../components/common'
@@ -28,7 +28,6 @@ import {
 } from '../../services/analyticsService'
 import { trackingService, type TrackingSession } from '../../services/trackingService'
 import { whatsappWebService, type WhatsAppWebAnalytics } from '../../services/whatsappWebService'
-import { dashboardService } from '../../services/dashboardService'
 import { formatDateToISO, parseLocalDateString, formatUrlParameter, formatChartNumber } from '../../utils/format'
 import { normalizeTrafficSource } from '../../utils/trafficSourceNormalizer'
 
@@ -36,7 +35,6 @@ type ViewType = 'day' | 'month' | 'year'
 type MonthPreset = 'last12' | 'thisYear' | 'custom'
 type AnalyticsMainChartView = 'traffic' | 'visitors-registrations' | 'sessions-visitors' | 'identity-returning'
 type AnalyticsConversionChartView = 'registrations-customers' | 'appointments-attendances' | 'prospects-customers' | 'messages-appointments' | 'appointments-patients'
-type AnalyticsDistributionView = 'sources' | 'platforms' | 'devices' | 'placements' | 'browsers' | 'os' | 'appointments' | 'conversions'
 
 const monthNamesShort = [
   'ene', 'feb', 'mar', 'abr', 'may', 'jun',
@@ -269,17 +267,6 @@ const CONVERSION_STAGES: ConversionStage[] = [
   'appointment_scheduled',
   'appointment_attended',
   'customer'
-]
-
-const distributionColors = [
-  '#2dd4bf',
-  '#60a5fa',
-  '#f59e0b',
-  '#a78bfa',
-  '#f43f5e',
-  '#34d399',
-  '#f97316',
-  '#94a3b8'
 ]
 
 const toNumber = (value: unknown): number => {
@@ -660,19 +647,6 @@ const mapTrendToChartData = <T extends { label: string }>(
   value2: Number(item[value2Key] || 0)
 }))
 
-const mapListToDistributionData = (
-  items: Array<{ name: string; users?: number; value?: number; color?: string }>,
-  limit = 10
-) => items
-  .map((item, index) => ({
-    name: item.name,
-    value: Number(item.value ?? item.users ?? 0),
-    color: item.color || distributionColors[index % distributionColors.length]
-  }))
-  .filter(item => item.value > 0)
-  .sort((a, b) => b.value - a.value)
-  .slice(0, limit)
-
 const Analytics: React.FC = () => {
   const { dateRange, setDateRange } = useDateRange()
   const { convertToLocalTime } = useTimezone()
@@ -706,7 +680,6 @@ const Analytics: React.FC = () => {
   const [dailyTraffic, setDailyTraffic] = useState<TrafficPoint[]>([])
   const [dailyConversions, setDailyConversions] = useState<any[]>([])
   const [contactConversionsByDate, setContactConversionsByDate] = useState<ContactConversionsByDate[]>([])
-  const [trafficSources, setTrafficSources] = useState<{ name: string; value: number; color: string }[]>([])
   const [platformsData, setPlatformsData] = useState<any[]>([])
   const [placementsData, setPlacementsData] = useState<any[]>([])
   const [devicesData, setDevicesData] = useState<any[]>([])
@@ -718,10 +691,6 @@ const Analytics: React.FC = () => {
   const [yearRange, setYearRange] = useState(defaultYearRange)
   const [selectedMainChartView, setSelectedMainChartView] = useState<AnalyticsMainChartView>('traffic')
   const [selectedConversionChartView, setSelectedConversionChartView] = useState<AnalyticsConversionChartView>('registrations-customers')
-  const [selectedDistributionView, setSelectedDistributionView] = useState<AnalyticsDistributionView>('sources')
-  const [appointmentSourceData, setAppointmentSourceData] = useState<{ name: string; value: number; color?: string }[]>([])
-  const [conversionSourceData, setConversionSourceData] = useState<{ name: string; value: number; color?: string }[]>([])
-  const [distributionSourceLoading, setDistributionSourceLoading] = useState(false)
 
   // Guardar el valor ORIGINAL de registros para restaurar al quitar filtros
   const [originalRegistros, setOriginalRegistros] = useState<number>(0)
@@ -1207,48 +1176,6 @@ const Analytics: React.FC = () => {
             .slice(0, 5)
           setPlacementsData(placementStats)
 
-          // Preparar datos para la dona de fuentes de tráfico - VISITANTES ÚNICOS
-          const trafficSourcesForChart: { [key: string]: Set<string> } = {}
-          currentSessions.forEach((session: Session) => {
-            const source = normalizeTrafficSource({
-              referrer_url: session.referrer_url,
-              site_source_name: session.site_source_name,
-              utm_source: session.utm_source,
-              source_platform: session.source_platform
-            })
-            if (!trafficSourcesForChart[source]) trafficSourcesForChart[source] = new Set()
-            trafficSourcesForChart[source].add(session.visitor_id)
-          })
-
-          const trafficColorMap: { [key: string]: string } = {
-            'Facebook': '#1877f2',
-            'Google': '#4285f4',
-            'Instagram': '#c32aa3',
-            'TikTok': '#ee1d52',
-            'Microsoft': '#00a4ef',
-            'Twitter': '#1da1f2',
-            'LinkedIn': '#0a66c2',
-            'YouTube': '#ff0000',
-            'Messenger': '#0084ff',
-            'WhatsApp': '#25d366',
-            'Snapchat': '#fffc00',
-            'Pinterest': '#e60023',
-            'Reddit': '#ff4500',
-            'Email': '#ea4335',
-            'Directo': '#6b7280',
-            'Orgánico': '#10b981'
-          }
-
-          const trafficSourcesData = Object.entries(trafficSourcesForChart)
-            .map(([source, visitorSet]) => ({
-              name: source,
-              value: visitorSet.size,
-              color: trafficColorMap[source] || '#6b7280'
-            }))
-            .sort((a, b) => b.value - a.value)
-            .slice(0, 10)
-          setTrafficSources(trafficSourcesData)
-
           const devicesForChart: { [key: string]: Set<string> } = {}
           currentSessions.forEach((session: Session) => {
             const device = session.device_type || 'Desconocido'
@@ -1300,7 +1227,6 @@ const Analytics: React.FC = () => {
           setAllSessions([])
           setSessions([])
           setAvailableFilterData({})
-          setTrafficSources([])
           setPlatformsData([])
           setPlacementsData([])
           setDevicesData([])
@@ -1615,48 +1541,6 @@ const Analytics: React.FC = () => {
       .slice(0, 5)
     setPlacementsData(placementStats)
 
-    // Preparar datos para la dona de fuentes de tráfico - VISITANTES ÚNICOS
-    const trafficSourcesFiltered: { [key: string]: Set<string> } = {}
-    sessionsToProcess.forEach((session: Session) => {
-      const source = normalizeTrafficSource({
-        referrer_url: session.referrer_url,
-        site_source_name: session.site_source_name,
-        utm_source: session.utm_source,
-        source_platform: session.source_platform
-      })
-      if (!trafficSourcesFiltered[source]) trafficSourcesFiltered[source] = new Set()
-      trafficSourcesFiltered[source].add(session.visitor_id)
-    })
-
-    const trafficColorMap: { [key: string]: string } = {
-      'Facebook': '#1877f2',
-      'Google': '#4285f4',
-      'Instagram': '#c32aa3',
-      'TikTok': '#ee1d52',
-      'Microsoft': '#00a4ef',
-      'Twitter': '#1da1f2',
-      'LinkedIn': '#0a66c2',
-      'YouTube': '#ff0000',
-      'Messenger': '#0084ff',
-      'WhatsApp': '#25d366',
-      'Snapchat': '#fffc00',
-      'Pinterest': '#e60023',
-      'Reddit': '#ff4500',
-      'Email': '#ea4335',
-      'Directo': '#6b7280',
-      'Orgánico': '#10b981'
-    }
-
-    const trafficSourcesData = Object.entries(trafficSourcesFiltered)
-      .map(([source, visitorSet]) => ({
-        name: source,
-        value: visitorSet.size,
-        color: trafficColorMap[source] || '#6b7280'
-      }))
-      .sort((a, b) => b.value - a.value)
-      .slice(0, 10)
-    setTrafficSources(trafficSourcesData)
-
     const devicesFiltered: { [key: string]: Set<string> } = {}
     sessionsToProcess.forEach((session: Session) => {
       const device = session.device_type || 'Desconocido'
@@ -1845,17 +1729,6 @@ const Analytics: React.FC = () => {
     }
   }, [conversionChartOptions, selectedConversionChartView])
 
-  const distributionOptions = React.useMemo<Array<{ value: AnalyticsDistributionView; label: string }>>(() => [
-    { value: 'sources', label: 'Fuentes' },
-    { value: 'platforms', label: 'Plataformas' },
-    { value: 'devices', label: 'Dispositivos' },
-    { value: 'placements', label: 'Ubicaciones' },
-    { value: 'browsers', label: 'Navegadores' },
-    { value: 'os', label: 'Sistemas' },
-    { value: 'appointments', label: 'Citas' },
-    { value: 'conversions', label: appLabels.customers }
-  ], [appLabels.customers])
-
   const sessionTrendData = React.useMemo(
     () => buildSessionTrendData(sessionsForCharts, viewType, convertToLocalTime),
     [sessionsForCharts, viewType, convertToLocalTime]
@@ -1998,133 +1871,7 @@ const Analytics: React.FC = () => {
     }
   }, [conversionTrendData, customersLabel, customersLabelLower, leadsLabel, leadsLabelLower, periodLabel, selectedConversionChartView, whatsAppTrendData])
 
-  const distributionConfig = React.useMemo(() => {
-    switch (selectedDistributionView) {
-      case 'platforms':
-        return {
-          title: 'Distribución por Plataforma',
-          totalLabel: 'visitantes únicos',
-          emptyText: 'Sin plataformas',
-          emptySubtext: 'Aparecerán cuando el tráfico traiga fuente detectable',
-          insightPrimaryLabel: 'Mayor plataforma',
-          insightCountLabel: 'Variedad',
-          insightCountSuffix: 'plataformas activas',
-          data: mapListToDistributionData(platformsData)
-        }
-      case 'devices':
-        return {
-          title: 'Distribución por Dispositivo',
-          totalLabel: 'visitantes únicos',
-          emptyText: 'Sin dispositivos',
-          emptySubtext: 'Aparecerán cuando haya visitas con dispositivo detectado',
-          insightPrimaryLabel: 'Mayor dispositivo',
-          insightCountLabel: 'Variedad',
-          insightCountSuffix: 'dispositivos activos',
-          data: mapListToDistributionData(devicesData)
-        }
-      case 'placements':
-        return {
-          title: 'Distribución por Ubicación',
-          totalLabel: 'visitantes únicos',
-          emptyText: 'Sin ubicaciones',
-          emptySubtext: 'Aparecerán cuando las campañas envíen placement',
-          insightPrimaryLabel: 'Mayor ubicación',
-          insightCountLabel: 'Variedad',
-          insightCountSuffix: 'ubicaciones activas',
-          data: mapListToDistributionData(placementsData)
-        }
-      case 'browsers':
-        return {
-          title: 'Distribución por Navegador',
-          totalLabel: 'visitantes únicos',
-          emptyText: 'Sin navegadores',
-          emptySubtext: 'Aparecerán cuando haya visitas capturadas',
-          insightPrimaryLabel: 'Mayor navegador',
-          insightCountLabel: 'Variedad',
-          insightCountSuffix: 'navegadores activos',
-          data: mapListToDistributionData(browserData)
-        }
-      case 'os':
-        return {
-          title: 'Distribución por Sistema',
-          totalLabel: 'visitantes únicos',
-          emptyText: 'Sin sistemas',
-          emptySubtext: 'Aparecerán cuando haya visitas capturadas',
-          insightPrimaryLabel: 'Mayor sistema',
-          insightCountLabel: 'Variedad',
-          insightCountSuffix: 'sistemas activos',
-          data: mapListToDistributionData(osData)
-        }
-      case 'appointments':
-        return {
-          title: 'Origen de Citas',
-          totalLabel: 'citas',
-          emptyText: 'Sin origen de citas',
-          emptySubtext: 'Aparecerá cuando haya citas agendadas en el rango',
-          insightPrimaryLabel: 'Mayor origen',
-          insightCountLabel: 'Variedad',
-          insightCountSuffix: 'orígenes activos',
-          data: appointmentSourceData
-        }
-      case 'conversions':
-        return {
-          title: `Origen de ${appLabels.customers}`,
-          totalLabel: appLabels.customers.toLowerCase(),
-          emptyText: `Sin origen de ${appLabels.customers.toLowerCase()}`,
-          emptySubtext: 'Aparecerá cuando haya ventas en el rango',
-          insightPrimaryLabel: 'Mayor origen',
-          insightCountLabel: 'Variedad',
-          insightCountSuffix: 'orígenes activos',
-          data: conversionSourceData
-        }
-      case 'sources':
-      default:
-        return {
-          title: 'Distribución por Fuente',
-          totalLabel: 'visitantes únicos',
-          emptyText: 'Sin fuentes',
-          emptySubtext: 'Los datos aparecerán cuando haya visitas',
-          insightPrimaryLabel: 'Mayor fuente',
-          insightCountLabel: 'Diversificación',
-          insightCountSuffix: 'fuentes activas',
-          data: trafficSources
-        }
-    }
-  }, [appLabels.customers, appointmentSourceData, browserData, conversionSourceData, devicesData, osData, placementsData, platformsData, selectedDistributionView, trafficSources])
-
-  // Carga perezosa del desglose por origen para Citas / Conversiones en la distribución.
-  useEffect(() => {
-    if (selectedDistributionView !== 'appointments' && selectedDistributionView !== 'conversions') return
-
-    let active = true
-    const metric = selectedDistributionView
-    setDistributionSourceLoading(true)
-
-    dashboardService.getTrafficSources({
-      start: dateRange.start instanceof Date ? dateRange.start : new Date(dateRange.start),
-      end: dateRange.end instanceof Date ? dateRange.end : new Date(dateRange.end),
-      metric
-    })
-      .then((data) => {
-        if (!active) return
-        if (metric === 'appointments') {
-          setAppointmentSourceData(data)
-        } else {
-          setConversionSourceData(data)
-        }
-      })
-      .finally(() => {
-        if (active) setDistributionSourceLoading(false)
-      })
-
-    return () => {
-      active = false
-    }
-  }, [selectedDistributionView, dateRange.start, dateRange.end])
-
   const showWebAnalyticsBlocks = webTrackingConfigured
-  const showWhatsAppSourceBlock = !webTrackingConfigured || Boolean(whatsAppAnalytics?.status.connected || whatsAppAnalytics?.status.hasData)
-  const whatsAppSourceData = whatsAppAnalytics?.sources || []
   const mainChartHasData = mainChartConfig.data.some(item => (item.value || 0) > 0 || (item.value2 || 0) > 0)
   const conversionChartHasData = conversionChartConfig.data.some(item => (item.value || 0) > 0 || (item.value2 || 0) > 0)
 
@@ -2363,42 +2110,7 @@ const Analytics: React.FC = () => {
             </div>
           </Card>
 
-          {showWebAnalyticsBlocks && (
-            <TrafficSourcesChart
-              data={distributionConfig.data}
-              loading={(loading && !hasLoadedAnalytics) || ((selectedDistributionView === 'appointments' || selectedDistributionView === 'conversions') && distributionSourceLoading)}
-              title={distributionConfig.title}
-              totalLabel={distributionConfig.totalLabel}
-              itemLabel={selectedDistributionView === 'appointments' ? 'Citas' : selectedDistributionView === 'conversions' ? appLabels.customers : undefined}
-              emptyText={distributionConfig.emptyText}
-              emptySubtext={distributionConfig.emptySubtext}
-              insightPrimaryLabel={distributionConfig.insightPrimaryLabel}
-              insightCountLabel={distributionConfig.insightCountLabel}
-              insightCountSuffix={distributionConfig.insightCountSuffix}
-              headerAction={(
-                <ViewSelector
-                  options={distributionOptions}
-                  value={selectedDistributionView}
-                  onChange={(value) => setSelectedDistributionView(value as AnalyticsDistributionView)}
-                />
-              )}
-            />
-          )}
-
-          {showWhatsAppSourceBlock && (
-            <TrafficSourcesChart
-              data={whatsAppSourceData}
-              loading={loading && !hasLoadedAnalytics}
-              title="Origen de mensajes WhatsApp"
-              totalLabel="conversaciones"
-              emptyText="Sin origen de WhatsApp"
-              emptySubtext="Aparecerá cuando WhatsApp Web detecte mensajes con origen de anuncio o enlace"
-              itemLabel="Conversaciones"
-              insightPrimaryLabel="Mayor origen"
-              insightCountLabel="Variedad"
-              insightCountSuffix="orígenes activos"
-            />
-          )}
+          <OriginDistributionCard />
         </div>
 
         {/* Grid de stats cards */}

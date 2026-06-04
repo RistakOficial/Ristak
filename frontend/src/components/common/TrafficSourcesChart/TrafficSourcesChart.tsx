@@ -22,6 +22,7 @@ interface TrafficSourcesChartProps {
   insightCountLabel?: string
   insightCountSuffix?: string
   headerAction?: React.ReactNode
+  titleSlot?: React.ReactNode
 }
 
 interface ChartSource {
@@ -115,7 +116,8 @@ export const TrafficSourcesChart: React.FC<TrafficSourcesChartProps> = ({
   insightPrimaryLabel = 'Mayor fuente',
   insightCountLabel = 'Diversificación',
   insightCountSuffix = 'fuentes activas',
-  headerAction
+  headerAction,
+  titleSlot
 }) => {
   const normalizedData = useMemo(() => {
     const sourceMap = new Map<string, { name: string; value: number; color?: string; firstIndex: number }>()
@@ -219,7 +221,7 @@ export const TrafficSourcesChart: React.FC<TrafficSourcesChartProps> = ({
     <Card variant="glass" className={styles.container} data-ristak-chart="donut">
       <div className={styles.header}>
         <div className={styles.headerMain}>
-          <h3 className={styles.title}>{title}</h3>
+          {titleSlot ? titleSlot : <h3 className={styles.title}>{title}</h3>}
           <div className={styles.totalContainer}>
             <span className={styles.totalValue}>
               {totalVisits.toLocaleString('es-MX')}

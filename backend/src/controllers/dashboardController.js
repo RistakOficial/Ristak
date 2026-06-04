@@ -6,6 +6,7 @@ import { getGroupExpression } from '../services/analyticsService.js';
 import { getManualBusinessExpensesTotalForRange } from '../services/manualBusinessExpensesService.js';
 import { getWhatsAppTrafficSourcesForRange } from '../services/whatsappAnalyticsService.js';
 import { getContactSourceBreakdown } from '../services/contactSourceService.js';
+import { getTrafficDistributions, getLeadsContactIds } from '../services/originDistributionService.js';
 import { DateTime } from 'luxon';
 import { getContactsWithAppointmentsHybrid, getContactsWithShowedAppointmentsHybrid } from '../services/appointmentsMerge.js';
 import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js';
@@ -909,20 +910,13 @@ export const getStorageStatus = async (req, res) => {
  */
 export const getTrafficSources = async (req, res) => {
   try {
-    const { startDate, endDate, includeWeb = '1', includeWhatsapp = '1', metric = 'traffic' } = req.query
+    const { startDate, endDate, includeWeb = '1', includeWhatsapp = '1' } = req.query
 
     if (!startDate || !endDate) {
       return res.status(400).json({ success: false, error: 'Se requieren startDate y endDate' })
     }
 
     const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate })
-
-    // Métricas alternativas: origen de citas / conversiones, agrupado por fuente del contacto.
-    if (metric === 'appointments' || metric === 'conversions') {
-      const data = await getSourceBreakdownByMetric(metric, range)
-      return res.json({ success: true, data })
-    }
-
     const shouldIncludeWeb = String(includeWeb) !== '0'
     const shouldIncludeWhatsapp = String(includeWhatsapp) !== '0'
 
@@ -1085,6 +1079,42 @@ async function getSourceBreakdownByMetric(metric, range) {
   }
 
   return getContactSourceBreakdown(contactIds, { limit: 10 })
+}
+
+/**
+ * Payload unificado de la dona de "Origen" (Dashboard + Analíticas).
+ * Devuelve la distribución de tráfico (6 dimensiones por visitantes únicos) y el
+ * desglose por fuente de leads, citas y conversiones. El frontend cambia de vista
+ * localmente sin volver a pedir datos.
+ */
+export const getOriginDistribution = async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query
+
+    if (!startDate || !endDate) {
+      return res.status(400).json({ success: false, error: 'Se requieren startDate y endDate' })
+    }
+
+    const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate })
+
+    const [traffic, leadIds, appointments, conversions] = await Promise.all([
+      getTrafficDistributions(range),
+      getLeadsContactIds(range),
+      getSourceBreakdownByMetric('appointments', range),
+      getSourceBreakdownByMetric('conversions', range)
+    ])
+
+    const leads = await getContactSourceBreakdown(leadIds, { limit: 10 })
+
+    res.json({
+      success: true,
+      data: { traffic, leads, appointments, conversions }
+    })
+  } catch (error) {
+    logger.error(`Error en getOriginDistribution: ${error.message}`)
+    logger.error(error.stack)
+    res.status(500).json({ success: false, error: 'Error al obtener la distribución de origen' })
+  }
 }
 
 /**

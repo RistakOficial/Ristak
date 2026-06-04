@@ -62,6 +62,33 @@ export interface DashboardVisitorDetail {
   } | null;
 }
 
+export interface SourceDatum {
+  name: string;
+  value: number;
+  color?: string;
+}
+
+export interface OriginDistributionData {
+  traffic: {
+    sources: SourceDatum[];
+    platforms: SourceDatum[];
+    devices: SourceDatum[];
+    placements: SourceDatum[];
+    browsers: SourceDatum[];
+    os: SourceDatum[];
+  };
+  leads: SourceDatum[];
+  appointments: SourceDatum[];
+  conversions: SourceDatum[];
+}
+
+const EMPTY_ORIGIN_DISTRIBUTION: OriginDistributionData = {
+  traffic: { sources: [], platforms: [], devices: [], placements: [], browsers: [], os: [] },
+  leads: [],
+  appointments: [],
+  conversions: []
+};
+
 class DashboardService {
   async getDashboardMetrics(params: {
     start: Date;
@@ -326,7 +353,6 @@ class DashboardService {
     end: Date;
     includeWeb?: boolean;
     includeWhatsapp?: boolean;
-    metric?: 'traffic' | 'appointments' | 'conversions';
   }): Promise<{ name: string; value: number; color?: string }[]> {
     try {
       const queryParams = new URLSearchParams({
@@ -335,10 +361,6 @@ class DashboardService {
         includeWeb: params.includeWeb === false ? '0' : '1',
         includeWhatsapp: params.includeWhatsapp === false ? '0' : '1'
       });
-
-      if (params.metric && params.metric !== 'traffic') {
-        queryParams.set('metric', params.metric);
-      }
 
       const response = await fetch(`${API_URL}/api/dashboard/traffic-sources?${queryParams}`);
 
@@ -351,6 +373,30 @@ class DashboardService {
     } catch (error) {
       // TODO: Implement proper logging service
       return [];
+    }
+  }
+
+  async getOriginDistribution(params: {
+    start: Date;
+    end: Date;
+  }): Promise<OriginDistributionData> {
+    try {
+      const queryParams = new URLSearchParams({
+        startDate: formatDateToISO(params.start),
+        endDate: formatEndDateToISO(params.end)
+      });
+
+      const response = await fetch(`${API_URL}/api/dashboard/origin-distribution?${queryParams}`);
+
+      if (!response.ok) {
+        return EMPTY_ORIGIN_DISTRIBUTION;
+      }
+
+      const result = await response.json();
+      return result?.data || EMPTY_ORIGIN_DISTRIBUTION;
+    } catch (error) {
+      // TODO: Implement proper logging service
+      return EMPTY_ORIGIN_DISTRIBUTION;
     }
   }
 

@@ -14,6 +14,7 @@ export type { BarChartData } from './BarChart'
 export { Table } from './Table'
 export type { Column } from './Table'
 export { TrafficSourcesChart } from './TrafficSourcesChart'
+export { OriginDistributionCard } from './OriginDistributionCard'
 export { ConversionFunnelChart } from './ConversionFunnelChart'
 
 // Componentes de fecha
