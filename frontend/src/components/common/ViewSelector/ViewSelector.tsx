@@ -7,13 +7,16 @@ interface ViewSelectorProps {
   options: Array<{ value: string; label: string }>
   onChange: (value: string) => void
   className?: string
+  /** 'control' (caja normal) o 'title' (se ve como un título grande con chevron). */
+  variant?: 'control' | 'title'
 }
 
 export const ViewSelector: React.FC<ViewSelectorProps> = ({
   value,
   options,
   onChange,
-  className
+  className,
+  variant = 'control'
 }) => {
   const [isOpen, setIsOpen] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
@@ -41,22 +44,24 @@ export const ViewSelector: React.FC<ViewSelectorProps> = ({
     setIsOpen(false)
   }
 
+  const isTitle = variant === 'title'
+
   return (
-    <div className={`${styles.wrapper} ${className || ''}`} ref={dropdownRef}>
+    <div className={`${styles.wrapper} ${isTitle ? styles.wrapperTitle : ''} ${className || ''}`} ref={dropdownRef}>
       <button
-        className={styles.trigger}
+        className={`${styles.trigger} ${isTitle ? styles.triggerTitle : ''}`}
         onClick={() => setIsOpen(!isOpen)}
         type="button"
       >
         <span className={styles.value}>{selectedOption?.label}</span>
         <ChevronDown
-          size={16}
+          size={isTitle ? 20 : 16}
           className={`${styles.icon} ${isOpen ? styles.iconOpen : ''}`}
         />
       </button>
 
       {isOpen && (
-        <div className={styles.dropdown}>
+        <div className={`${styles.dropdown} ${isTitle ? styles.dropdownTitle : ''}`}>
           {options.map(option => (
             <button
               key={option.value}

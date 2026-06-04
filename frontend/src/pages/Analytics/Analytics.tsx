@@ -2004,7 +2004,12 @@ const Analytics: React.FC = () => {
         <Card variant="glass" className="p-6">
           <div className="mb-4 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div className="min-w-0 flex-1">
-              <h3 className="text-lg font-semibold">{mainChartConfig.title}</h3>
+              <ViewSelector
+                variant="title"
+                options={mainChartOptions}
+                value={selectedMainChartView}
+                onChange={(value) => setSelectedMainChartView(value as AnalyticsMainChartView)}
+              />
               <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
                 {mainChartConfig.description}
               </p>
@@ -2022,11 +2027,6 @@ const Analytics: React.FC = () => {
                   </span>
                 )}
               </div>
-              <ViewSelector
-                options={mainChartOptions}
-                value={selectedMainChartView}
-                onChange={(value) => setSelectedMainChartView(value as AnalyticsMainChartView)}
-              />
             </div>
           </div>
 
@@ -2062,7 +2062,12 @@ const Analytics: React.FC = () => {
           >
             <div className="mb-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
               <div className="min-w-0 flex-1">
-                <h3 className="text-lg font-semibold">{conversionChartConfig.title}</h3>
+                <ViewSelector
+                  variant="title"
+                  options={conversionChartOptions}
+                  value={selectedConversionChartView}
+                  onChange={(value) => setSelectedConversionChartView(value as AnalyticsConversionChartView)}
+                />
                 <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
                   {conversionChartConfig.description}
                 </p>
@@ -2078,11 +2083,6 @@ const Analytics: React.FC = () => {
                     <span className="font-medium">{conversionChartConfig.label2}</span>
                   </span>
                 </div>
-                <ViewSelector
-                  options={conversionChartOptions}
-                  value={selectedConversionChartView}
-                  onChange={(value) => setSelectedConversionChartView(value as AnalyticsConversionChartView)}
-                />
               </div>
             </div>
             <div className="relative w-full flex-1 min-h-[340px]">

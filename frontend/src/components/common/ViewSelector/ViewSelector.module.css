@@ -32,6 +32,41 @@
   border-color: var(--color-primary);
 }
 
+/* Variante "title": el selector se ve como un título grande (1.125rem / 600) con chevron,
+   sin caja, alineado a la izquierda como un encabezado normal. */
+.wrapperTitle {
+  min-width: 0;
+  width: max-content;
+  max-width: 100%;
+}
+
+.triggerTitle {
+  width: max-content;
+  max-width: 100%;
+  padding: 0.125rem 0.375rem;
+  margin-left: -0.375rem;
+  background-color: transparent;
+  border-color: transparent;
+  font-size: 1.125rem;
+  font-weight: 600;
+  line-height: 1.4;
+  gap: 0.4rem;
+}
+
+.triggerTitle:hover {
+  border-color: transparent;
+  background-color: var(--color-surface);
+}
+
+.triggerTitle:focus {
+  border-color: transparent;
+}
+
+.dropdownTitle {
+  left: 0;
+  right: auto;
+}
+
 .value {
   flex: 1;
   text-align: left;

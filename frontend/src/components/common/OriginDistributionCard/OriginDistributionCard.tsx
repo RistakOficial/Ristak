@@ -122,19 +122,23 @@ export const OriginDistributionCard: React.FC = () => {
       insightCountLabel="Variedad"
       insightCountSuffix={meta.insightCountSuffix}
       titleSlot={(
-        <ViewSelector
-          options={categoryOptions}
-          value={category}
-          onChange={(value) => setCategory(value as OriginCategory)}
-        />
+        <div className="flex flex-wrap items-center gap-3">
+          <ViewSelector
+            variant="title"
+            options={categoryOptions}
+            value={category}
+            onChange={(value) => setCategory(value as OriginCategory)}
+          />
+          {category === 'traffic' && (
+            <ViewSelector
+              variant="title"
+              options={DIMENSION_OPTIONS}
+              value={dimension}
+              onChange={(value) => setDimension(value as TrafficDimension)}
+            />
+          )}
+        </div>
       )}
-      headerAction={category === 'traffic' ? (
-        <ViewSelector
-          options={DIMENSION_OPTIONS}
-          value={dimension}
-          onChange={(value) => setDimension(value as TrafficDimension)}
-        />
-      ) : undefined}
     />
   )
 }
