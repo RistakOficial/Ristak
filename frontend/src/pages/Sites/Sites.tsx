@@ -36,6 +36,7 @@ import {
   Monitor,
   MoreVertical,
   MousePointerClick,
+  Pencil,
   Plus,
   RefreshCw,
   Save,
@@ -248,6 +249,30 @@ const getCreateButtonLabel = (section: SitesSection) => {
   if (section === 'landings') return 'Crear landing page ("sitio web")'
   if (section === 'forms') return 'Crear formulario'
   return 'Nuevo sitio'
+}
+
+const getLibraryTitle = (section: SitesSection) => {
+  if (section === 'landings') return 'Landing pages ("sitio web")'
+  if (section === 'forms') return 'Formularios'
+  return 'Sitios'
+}
+
+const getLibraryDescription = (section: SitesSection) => {
+  if (section === 'landings') return 'Biblioteca de paginas publicas, embudos y sitios listos para editar.'
+  if (section === 'forms') return 'Biblioteca de formularios publicos para capturar prospectos y respuestas.'
+  return 'Biblioteca de sitios publicos.'
+}
+
+const getLibraryEmptyMessage = (section: SitesSection) => {
+  if (section === 'landings') return 'Crea una landing page para verla aqui como tarjeta editable.'
+  if (section === 'forms') return 'Crea un formulario para verlo aqui como tarjeta editable.'
+  return getEmptyEditorMessage(section)
+}
+
+const getSiteTypeLabel = (site: PublicSite) => {
+  if (site.siteType === 'landing_page') return 'Landing page'
+  if (site.siteType === 'interactive_form') return 'Formulario interactivo'
+  return 'Formulario'
 }
 
 const getCreateFlowForSection = (section: SitesSection): CreateFlow => {
@@ -816,7 +841,7 @@ export const Sites: React.FC = () => {
     try {
       const list = await sitesService.listSites()
       setSites(list)
-      const nextId = selectId || selectedSite?.id || list.find(site => site.siteType === 'landing_page')?.id || list[0]?.id
+      const nextId = selectId || (selectedSite?.id && list.some(site => site.id === selectedSite.id) ? selectedSite.id : '')
       if (nextId) {
         const site = await sitesService.getSite(nextId)
         setSelectedSite(site)
@@ -889,29 +914,24 @@ export const Sites: React.FC = () => {
     setCreateFlow('closed')
     setHasUnsavedChanges(false)
 
-    if (nextSection === 'landings') {
-      const first = selectedSite && isLanding(selectedSite) ? selectedSite : landings[0]
-      if (first) {
-        await openSite(first.id)
-      } else {
-        setSelectedSite(null)
-        setSelectedBlockId('')
-      }
-    }
-
-    if (nextSection === 'forms') {
-      const first = selectedSite && isFormSite(selectedSite) ? selectedSite : forms[0]
-      if (first) {
-        await openSite(first.id)
-      } else {
-        setSelectedSite(null)
-        setSelectedBlockId('')
-      }
+    if (nextSection === 'landings' || nextSection === 'forms') {
+      setSelectedSite(null)
+      setSelectedBlockId('')
     }
   }
 
   const handleSectionChange = (nextSection: SitesSection) => {
-    if (nextSection === section) return
+    if (nextSection === section) {
+      if ((section === 'landings' || section === 'forms') && (editorSite || createFlow !== 'closed')) {
+        requestLeaveEditor(() => {
+          setSelectedSite(null)
+          setSelectedBlockId('')
+          setCreateFlow('closed')
+          setHasUnsavedChanges(false)
+        })
+      }
+      return
+    }
 
     requestLeaveEditor(() => {
       void changeSection(nextSection)
@@ -920,7 +940,18 @@ export const Sites: React.FC = () => {
 
   const handleStartCreateFlow = () => {
     requestLeaveEditor(() => {
+      setSelectedSite(null)
+      setSelectedBlockId('')
       setCreateFlow(getCreateFlowForSection(section))
+      setHasUnsavedChanges(false)
+    })
+  }
+
+  const handleBackToLibrary = () => {
+    requestLeaveEditor(() => {
+      setSelectedSite(null)
+      setSelectedBlockId('')
+      setCreateFlow('closed')
       setHasUnsavedChanges(false)
     })
   }
@@ -1188,21 +1219,29 @@ export const Sites: React.FC = () => {
     }
   }
 
-  const handleDeleteSite = async () => {
-    if (!selectedSite) return
-    const confirmed = window.confirm(`Eliminar "${selectedSite.name}" y sus respuestas?`)
+  const handleConfigureSiteDomain = (siteId: string) => {
+    requestLeaveEditor(() => {
+      const site = sites.find(item => item.id === siteId)
+      if (site) setSelectedSite(site)
+      setSection('domains')
+      setCreateFlow('closed')
+      setHasUnsavedChanges(false)
+    })
+  }
+
+  const handleDeleteSite = async (siteToDelete = selectedSite) => {
+    if (!siteToDelete) return
+    const confirmed = window.confirm(`Eliminar "${siteToDelete.name}" y sus respuestas?`)
     if (!confirmed) return
 
     try {
-      await sitesService.deleteSite(selectedSite.id)
-      const nextSites = sites.filter(site => site.id !== selectedSite.id)
+      await sitesService.deleteSite(siteToDelete.id)
+      const nextSites = sites.filter(site => site.id !== siteToDelete.id)
       setSites(nextSites)
-      const pool = section === 'landings'
-        ? nextSites.filter(site => site.siteType === 'landing_page')
-        : nextSites.filter(site => site.siteType !== 'landing_page')
-      const next = pool[0] || nextSites[0]
-      setSelectedSite(next ? await sitesService.getSite(next.id) : null)
-      setSelectedBlockId('')
+      if (selectedSite?.id === siteToDelete.id) {
+        setSelectedSite(null)
+        setSelectedBlockId('')
+      }
       setHasUnsavedChanges(false)
       showToast('success', 'Eliminado', 'Sitio eliminado')
     } catch (error) {
@@ -1357,42 +1396,6 @@ export const Sites: React.FC = () => {
                 </button>
               ))}
             </nav>
-
-            {(section === 'landings' || section === 'forms') && (
-              <div className={styles.siteList}>
-                <div className={styles.panelHeader}>
-                  <strong>{section === 'landings' ? 'Landing pages ("sitio web")' : 'Formularios'}</strong>
-                  <span>{section === 'landings' ? landings.length : forms.length}</span>
-                </div>
-                <div className={styles.siteItems}>
-                  {(section === 'landings' ? landings : forms).length === 0 ? (
-                    <div className={styles.emptyState}>
-                      <Globe2 size={22} />
-                      <p>No hay nada creado todavia.</p>
-                    </div>
-                  ) : (section === 'landings' ? landings : forms).map(site => {
-                    const stats = getTrackingStats(site)
-                    return (
-                      <button
-                        key={site.id}
-                        type="button"
-                        className={`${styles.siteItem} ${selectedSite?.id === site.id ? styles.siteItemActive : ''}`}
-                        onClick={() => selectSite(site.id)}
-                      >
-                        <span className={styles.siteName}>{site.name}</span>
-                        <span className={styles.siteDomain}>{site.domain ? `${site.domain}${getRoutePath(site)}` : getRoutePath(site)}</span>
-                        <span className={styles.siteStats}>
-                          <span>{stats.visitors} visitantes</span>
-                          <span>{stats.conversions} conv.</span>
-                          <span>{stats.conversionRate}%</span>
-                        </span>
-                        <span className={`${styles.statusPill} ${getStatusClass(site)}`}>{getStatusLabel(site)}</span>
-                      </button>
-                    )
-                  })}
-                </div>
-              </div>
-            )}
           </aside>
 
           <main className={styles.mainSurface}>
@@ -1415,6 +1418,17 @@ export const Sites: React.FC = () => {
                 onPatchSite={updateSelectedSite}
                 onVerifyDomain={handleVerifyDomain}
               />
+            ) : (section === 'landings' || section === 'forms') && !editorSite ? (
+              <SitesLibraryPanel
+                section={section}
+                sites={section === 'landings' ? landings : forms}
+                creating={creating}
+                selectedSiteId={selectedSite?.id || ''}
+                onCreate={handleStartCreateFlow}
+                onEdit={selectSite}
+                onConfigureDomain={handleConfigureSiteDomain}
+                onDelete={(site) => void handleDeleteSite(site)}
+              />
             ) : editorSite ? (
               <section className={styles.builder}>
                 <div className={styles.builderHeader}>
@@ -1436,6 +1450,10 @@ export const Sites: React.FC = () => {
                         Abrir
                       </a>
                     )}
+                    <Button variant="secondary" onClick={handleBackToLibrary}>
+                      <LayoutTemplate size={16} />
+                      Biblioteca
+                    </Button>
                     <Button variant="secondary" onClick={handlePreviewSite}>
                       <Eye size={16} />
                       Previsualizar
@@ -1448,7 +1466,7 @@ export const Sites: React.FC = () => {
                       <Send size={16} />
                       Publicar
                     </Button>
-                    <Button variant="danger" onClick={handleDeleteSite}>
+                    <Button variant="danger" onClick={() => void handleDeleteSite()}>
                       <Trash2 size={16} />
                     </Button>
                   </div>
@@ -1633,6 +1651,164 @@ const UnsavedChangesModal: React.FC<UnsavedChangesModalProps> = ({ onStay, onLea
     </section>
   </div>
 )
+
+interface SitesLibraryPanelProps {
+  section: SitesSection
+  sites: PublicSite[]
+  creating: boolean
+  selectedSiteId: string
+  onCreate: () => void
+  onEdit: (siteId: string) => void
+  onConfigureDomain: (siteId: string) => void
+  onDelete: (site: PublicSite) => void
+}
+
+const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
+  section,
+  sites,
+  creating,
+  selectedSiteId,
+  onCreate,
+  onEdit,
+  onConfigureDomain,
+  onDelete
+}) => {
+  const isLandingLibrary = section === 'landings'
+
+  if (sites.length === 0) {
+    return (
+      <section className={styles.libraryPanel}>
+        <div className={styles.libraryEmpty}>
+          <LayoutTemplate size={34} />
+          <p>{getLibraryEmptyMessage(section)}</p>
+          <Button onClick={onCreate} loading={creating}>
+            <Plus size={16} />
+            {getCreateButtonLabel(section)}
+          </Button>
+        </div>
+      </section>
+    )
+  }
+
+  return (
+    <section className={styles.libraryPanel}>
+      <div className={styles.libraryHeader}>
+        <div>
+          <span>{isLandingLibrary ? 'Sitios y embudos' : 'Captura de prospectos'}</span>
+          <h2>{getLibraryTitle(section)}</h2>
+          <p>{getLibraryDescription(section)}</p>
+        </div>
+        <Button onClick={onCreate} loading={creating}>
+          <Plus size={16} />
+          {getCreateButtonLabel(section)}
+        </Button>
+      </div>
+
+      <div className={styles.libraryGrid}>
+        <button type="button" className={styles.createLibraryCard} onClick={onCreate}>
+          <span className={styles.createLibraryIcon}>
+            <Plus size={22} />
+          </span>
+          <strong>{getCreateButtonLabel(section)}</strong>
+          <small>{isLandingLibrary ? 'Agrega otra pagina o embudo a tu biblioteca.' : 'Agrega otro formulario publico a tu biblioteca.'}</small>
+        </button>
+
+        {sites.map(site => {
+          const stats = getTrackingStats(site)
+          const publicUrl = buildPublicUrl(site)
+          const pagesCount = isLanding(site) ? normalizeFunnelPages(site).length : 1
+
+          return (
+            <article
+              key={site.id}
+              className={`${styles.libraryCard} ${selectedSiteId === site.id ? styles.libraryCardActive : ''}`}
+              role="button"
+              tabIndex={0}
+              onClick={() => onEdit(site.id)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault()
+                  onEdit(site.id)
+                }
+              }}
+            >
+              <div className={styles.libraryCardPreview}>
+                <div className={styles.libraryBrowserDots} aria-hidden="true">
+                  <span />
+                  <span />
+                  <span />
+                </div>
+                <div className={styles.libraryPreviewBody}>
+                  {isLanding(site) ? <LayoutTemplate size={30} /> : <FormInput size={30} />}
+                  <span>{getSiteTypeLabel(site)}</span>
+                </div>
+              </div>
+
+              <div className={styles.libraryCardBody}>
+                <div className={styles.libraryCardTitleRow}>
+                  <strong>{site.name}</strong>
+                  <span className={`${styles.statusPill} ${getStatusClass(site)}`}>{getStatusLabel(site)}</span>
+                </div>
+                <span className={styles.siteDomain}>{site.domain ? `${site.domain}${getRoutePath(site)}` : getRoutePath(site)}</span>
+                <div className={styles.libraryMetaGrid}>
+                  <span>{pagesCount} {pagesCount === 1 ? 'pagina' : 'paginas'}</span>
+                  <span>{stats.visitors} visitantes</span>
+                  <span>{stats.conversions} conv.</span>
+                  <span>{stats.conversionRate}%</span>
+                </div>
+              </div>
+
+              <div className={styles.libraryCardActions} aria-label={`Acciones para ${site.name}`}>
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    onEdit(site.id)
+                  }}
+                >
+                  <Pencil size={15} />
+                  Editar
+                </button>
+                {publicUrl ? (
+                  <a
+                    href={publicUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    onClick={(event) => event.stopPropagation()}
+                  >
+                    <ExternalLink size={15} />
+                    Abrir
+                  </a>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    onConfigureDomain(site.id)
+                  }}
+                >
+                  <Settings2 size={15} />
+                  Direccion
+                </button>
+                <button
+                  type="button"
+                  className={styles.libraryDangerAction}
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    onDelete(site)
+                  }}
+                >
+                  <Trash2 size={15} />
+                  Eliminar
+                </button>
+              </div>
+            </article>
+          )
+        })}
+      </div>
+    </section>
+  )
+}
 
 interface CreateFlowPanelProps {
   step: CreateFlow

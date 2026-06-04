@@ -53,7 +53,8 @@
 .palette,
 .propertiesPanel,
 .dataPanel,
-.createPanel {
+.createPanel,
+.libraryPanel {
   border: 1px solid rgba(148, 163, 184, 0.18);
   border-radius: 8px;
   background: color-mix(in srgb, var(--color-background-secondary) 96%, var(--color-primary) 4%);
@@ -209,7 +210,8 @@
 
 .builder,
 .dataPanel,
-.createPanel {
+.createPanel,
+.libraryPanel {
   display: grid;
   gap: 16px;
   padding: 16px;
@@ -230,6 +232,247 @@
   margin: 5px 0 0;
   color: var(--color-text-tertiary);
   font-size: 0.92rem;
+}
+
+.libraryPanel {
+  min-height: min(720px, calc(100vh - 220px));
+  align-content: start;
+}
+
+.libraryHeader {
+  min-height: 54px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.libraryHeader span {
+  color: var(--color-text-tertiary);
+  font-size: 0.78rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.libraryHeader h2 {
+  margin: 5px 0 0;
+  color: var(--color-text-primary);
+  font-size: 1.28rem;
+  font-weight: 850;
+  letter-spacing: 0;
+}
+
+.libraryHeader p {
+  margin: 5px 0 0;
+  color: var(--color-text-tertiary);
+  font-size: 0.92rem;
+}
+
+.libraryGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(270px, 1fr));
+  gap: 14px;
+  align-items: stretch;
+}
+
+.libraryEmpty {
+  min-height: 180px;
+  display: grid;
+  place-items: center;
+  gap: 10px;
+  color: var(--color-text-tertiary);
+  text-align: center;
+}
+
+.libraryEmpty p {
+  margin: 0;
+  max-width: 360px;
+}
+
+.createLibraryCard,
+.libraryCard {
+  min-height: 236px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.16);
+  color: var(--color-text-primary);
+  text-align: left;
+  transition: background 160ms ease, border-color 160ms ease, transform 160ms ease;
+}
+
+.createLibraryCard {
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 9px;
+  padding: 18px;
+  color: var(--color-text-secondary);
+  text-align: center;
+}
+
+.createLibraryCard:hover,
+.libraryCard:hover,
+.libraryCardActive {
+  border-color: rgba(148, 163, 184, 0.34);
+  background: rgba(148, 163, 184, 0.12);
+  transform: translateY(-1px);
+}
+
+.createLibraryIcon {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--color-text-primary);
+}
+
+.createLibraryCard strong {
+  color: var(--color-text-primary);
+  font-size: 0.96rem;
+}
+
+.createLibraryCard small {
+  max-width: 220px;
+  color: var(--color-text-tertiary);
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.libraryCard {
+  position: relative;
+  display: grid;
+  grid-template-rows: 118px 1fr;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.libraryCardPreview {
+  position: relative;
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0)),
+    rgba(148, 163, 184, 0.08);
+  padding: 13px;
+}
+
+.libraryBrowserDots {
+  display: flex;
+  gap: 5px;
+}
+
+.libraryBrowserDots span {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: rgba(148, 163, 184, 0.5);
+}
+
+.libraryPreviewBody {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--color-text-tertiary);
+}
+
+.libraryPreviewBody span {
+  max-width: 150px;
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  font-size: 0.8rem;
+  font-weight: 850;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.libraryCardBody {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  padding: 13px;
+}
+
+.libraryCardTitleRow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.libraryCardTitleRow strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-primary);
+  font-size: 0.98rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.libraryMetaGrid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.libraryMetaGrid span {
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.08);
+  color: var(--color-text-secondary);
+  padding: 3px 7px;
+  font-size: 0.72rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.libraryCardActions {
+  position: absolute;
+  inset: auto 10px 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  opacity: 0;
+  transform: translateY(6px);
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+
+.libraryCard:hover .libraryCardActions,
+.libraryCard:focus-within .libraryCardActions {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.libraryCardActions button,
+.libraryCardActions a {
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--color-background-secondary) 92%, #000 8%);
+  color: var(--color-text-primary);
+  padding: 0 9px;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 850;
+  text-decoration: none;
+  box-shadow: 0 10px 28px -18px rgba(0, 0, 0, 0.75);
+}
+
+.libraryCardActions button:hover,
+.libraryCardActions a:hover {
+  background: color-mix(in srgb, var(--color-background-secondary) 84%, #fff 16%);
+}
+
+.libraryCardActions .libraryDangerAction {
+  color: var(--badge-danger-text, #fca5a5);
 }
 
 .trackingSummary {
@@ -1099,6 +1342,22 @@
 
   .builderGrid {
     grid-template-columns: 1fr;
+  }
+
+  .libraryHeader {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .libraryCard {
+    grid-template-rows: 118px auto;
+  }
+
+  .libraryCardActions {
+    position: static;
+    padding: 0 13px 13px;
+    opacity: 1;
+    transform: none;
   }
 
   .paletteItems {
