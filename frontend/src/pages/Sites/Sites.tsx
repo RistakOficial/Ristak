@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   DndContext,
@@ -21,6 +21,7 @@ import {
   AlertTriangle,
   ArrowLeft,
   CalendarDays,
+  Check,
   CheckCircle2,
   ChevronRight,
   Copy,
@@ -38,6 +39,7 @@ import {
   MoreVertical,
   MousePointerClick,
   Pencil,
+  Play,
   Plus,
   RefreshCw,
   Save,
@@ -47,7 +49,8 @@ import {
   Smartphone,
   Trash2,
   Type,
-  Video
+  Video,
+  X
 } from 'lucide-react'
 import {
   Button,
@@ -80,10 +83,12 @@ import {
 import { calendarsService, type Calendar as CalendarType } from '@/services/calendarsService'
 import { requestAIAgentOpen, type AIAgentSitesCreationKind } from '@/utils/aiAgentEvents'
 import styles from './Sites.module.css'
+import './sitesCanvas.css'
+import { buildCanvasTheme } from './sitesCanvasTheme'
 
 type SitesSection = 'landings' | 'forms' | 'leads' | 'domains'
 type DeviceMode = 'desktop' | 'mobile'
-type CreateFlow = 'closed' | 'landing-start' | 'landing-template' | 'form-kind' | 'form-template'
+type CreateFlow = 'closed' | 'landing-start' | 'landing-template' | 'form-kind' | 'form-template' | 'interactive-template'
 
 interface LeadRow extends SiteSubmission {
   siteName: string
@@ -286,47 +291,6 @@ const isSiteDark = (site: PublicSite): boolean => {
   return relLum(resolvedPageBg(site)) < 0.5
 }
 
-const getCanvasThemeStyle = (site: PublicSite): React.CSSProperties => {
-  const id = resolveTemplateId(site)
-  const meta = templateMetaById(id)
-  const platform = id === 'facebook' || id === 'instagram' || id === 'tiktok'
-  const dark = isSiteDark(site)
-  const theme = site.theme || {}
-  const pageVars = {
-    '--site-page-padding': `${getThemeNumber(theme, 'pagePadding', site.siteType === 'landing_page' ? 18 : 22, 0, 80)}px`,
-    '--site-page-radius': `${getThemeNumber(theme, 'pageRadius', site.siteType === 'landing_page' ? 0 : 24, 0, 40)}px`,
-    '--site-page-border': getThemeHex(theme, 'pageBorderColor', 'transparent'),
-    '--site-page-max': `${getThemeNumber(theme, 'pageMaxWidth', site.siteType === 'landing_page' ? 1160 : 520, 360, 1440)}px`
-  }
-  if (platform) {
-    return {
-      ...pageVars,
-      '--site-accent': meta?.accent || '#111827',
-      '--site-on-accent': onAccentFor(meta?.accent || '#111827'),
-      '--site-background': id === 'tiktok' ? '#161616' : '#ffffff',
-      '--site-surface': id === 'tiktok' ? '#161616' : '#ffffff',
-      '--site-frame': id === 'tiktok' ? '#000000' : '#f0f2f5',
-      '--site-text': id === 'tiktok' ? '#ffffff' : '#0f172a',
-      '--site-muted': id === 'tiktok' ? '#a1a1aa' : '#64748b',
-      '--site-border': id === 'tiktok' ? 'rgba(255,255,255,0.14)' : '#e6e8ec'
-    } as React.CSSProperties
-  }
-  const bg = resolvedPageBg(site)
-  const accent = userAccentColor(site) || (dark ? '#ffffff' : '#111827')
-  const surface = dark ? `color-mix(in srgb, #ffffff 4%, ${bg})` : '#ffffff'
-  return {
-    ...pageVars,
-    '--site-accent': accent,
-    '--site-on-accent': onAccentFor(accent),
-    '--site-background': surface,
-    '--site-surface': surface,
-    '--site-frame': bg,
-    '--site-text': dark ? '#f4f4f6' : '#0f172a',
-    '--site-muted': dark ? '#a1a1aa' : '#64748b',
-    '--site-border': dark ? 'rgba(255,255,255,0.12)' : '#e6e8ec'
-  } as React.CSSProperties
-}
-
 const platformChromeFor = (id: SiteTemplateId): 'facebook' | 'instagram' | 'tiktok' | null => {
   if (id === 'facebook' || id === 'instagram' || id === 'tiktok') return id
   return null
@@ -400,6 +364,8 @@ const getThemeHex = (theme: SiteTheme | undefined, key: keyof SiteTheme, fallbac
   return typeof value === 'string' && isHex6(value) ? value : fallback
 }
 
+// Mirrors backend renderBlockStyleVars so per-block overrides resolve to the same
+// CSS variables the published .rstk-block-style wrapper consumes.
 const getBlockCanvasStyle = (block: SiteBlock): React.CSSProperties => {
   const settings = block.settings || {}
   const style: Record<string, string> = {}
@@ -409,18 +375,18 @@ const getBlockCanvasStyle = (block: SiteBlock): React.CSSProperties => {
   const fieldBg = getSettingString(settings, 'fieldBg')
   const fieldBorder = getSettingString(settings, 'fieldBorder')
 
-  if (isHex6(bg)) style['--block-bg'] = bg
-  if (isHex6(text)) style['--block-text'] = text
-  if (fontFamily) style['--block-font'] = fontFamily
-  if (isHex6(fieldBg)) style['--block-field-bg'] = fieldBg
-  if (isHex6(fieldBorder)) style['--block-field-border'] = fieldBorder
-  if (settings.fontWeight === 'bold') style['--block-font-weight'] = '850'
+  if (isHex6(bg)) style['--rstk-block-bg'] = bg
+  if (isHex6(text)) style['--rstk-block-text'] = text
+  if (fontFamily) style['--rstk-block-font'] = fontFamily.replace(/[;"{}<>]/g, '')
+  if (isHex6(fieldBg)) style['--rstk-field-bg'] = fieldBg
+  if (isHex6(fieldBorder)) style['--rstk-field-border'] = fieldBorder
+  if (settings.fontWeight === 'bold') style['--rstk-block-weight'] = '850'
 
-  if (settings.blockPadding !== undefined) style['--block-pad'] = `${getSettingNumber(settings, 'blockPadding', 16, 8, 64)}px`
-  if (settings.blockRadius !== undefined) style['--block-radius'] = `${getSettingNumber(settings, 'blockRadius', 8, 0, 36)}px`
-  if (settings.fontSize !== undefined) style['--block-font-size'] = `${getSettingNumber(settings, 'fontSize', 18, 12, 72)}px`
-  if (settings.buttonRadius !== undefined) style['--block-button-radius'] = `${getSettingNumber(settings, 'buttonRadius', 8, 0, 40)}px`
-  if (settings.mediaWidth !== undefined) style['--block-media-width'] = `${getSettingNumber(settings, 'mediaWidth', 100, 30, 100)}%`
+  if (settings.fontSize !== undefined) style['--rstk-block-size'] = `${getSettingNumber(settings, 'fontSize', 18, 12, 72)}px`
+  if (settings.blockPadding !== undefined) style['--rstk-block-pad'] = `${getSettingNumber(settings, 'blockPadding', 16, 0, 80)}px`
+  if (settings.blockRadius !== undefined) style['--rstk-block-radius'] = `${getSettingNumber(settings, 'blockRadius', 8, 0, 48)}px`
+  if (settings.buttonRadius !== undefined) style['--rstk-block-button-radius'] = `${getSettingNumber(settings, 'buttonRadius', 8, 0, 48)}px`
+  if (settings.mediaWidth !== undefined) style['--rstk-media-width'] = `${getSettingNumber(settings, 'mediaWidth', 100, 30, 100)}%`
 
   return style as React.CSSProperties
 }
@@ -526,6 +492,36 @@ const parseItems = (value: string) => value
     const [title, text, author] = line.split('|').map(part => part.trim())
     return { title, text: text || '', author: author || '' }
   })
+
+interface CanvasItem { title: string; text: string; author: string }
+
+// Mirrors backend getItems/getItemTone/stripToneMarker so canvas lists render
+// identically to the published page (incl. +/- pro/con markers).
+const getCanvasItems = (settings: Record<string, unknown>): CanvasItem[] => {
+  const items = Array.isArray(settings.items) ? settings.items : []
+  return items
+    .map((item) => {
+      if (item && typeof item === 'object') {
+        const record = item as Record<string, unknown>
+        return {
+          title: String(record.title || record.label || record.name || ''),
+          text: String(record.text || record.content || record.description || ''),
+          author: String(record.author || record.role || '')
+        }
+      }
+      return { title: String(item || ''), text: '', author: '' }
+    })
+    .filter(item => item.title || item.text)
+}
+
+const getItemTone = (item: CanvasItem): 'pro' | 'con' | 'neutral' => {
+  const raw = String(item.title || item.text || '').trim()
+  if (/^[+✓✔]/.test(raw)) return 'pro'
+  if (/^[-–—✗✘x×]/i.test(raw)) return 'con'
+  return 'neutral'
+}
+
+const stripToneMarker = (value: string) => String(value || '').replace(/^\s*[+\-–—✓✔✗✘x×]\s*/i, '').trim()
 
 type EmbedPreviewConfig =
   | { kind: 'empty' }
@@ -804,6 +800,7 @@ export const Sites: React.FC = () => {
   const hasNextFunnelPage = Boolean(
     editorSite && isLanding(editorSite) && pages.length > 1 && activePage && pages.some(page => page.sortOrder > activePage.sortOrder)
   )
+  const canvasTheme = editorSite ? buildCanvasTheme(editorSite, device) : null
 
   const performUrlNavigation = useCallback((href: string) => {
     const target = new URL(href, window.location.href)
@@ -1584,6 +1581,7 @@ export const Sites: React.FC = () => {
                   <input
                     value={editorSite.name}
                     aria-label="Nombre interno del site"
+                    style={{ width: `calc(${Math.max((editorSite.name || '').length, 6)}ch + 16px)` }}
                     onChange={(event) => updateSelectedSite({ name: event.target.value })}
                     onBlur={() => handleSaveSite()}
                   />
@@ -1594,6 +1592,7 @@ export const Sites: React.FC = () => {
                     value={editorSite.title}
                     aria-label="Titulo publico"
                     placeholder="Titulo publico"
+                    style={{ width: `calc(${Math.max((editorSite.title || '').length, 'Titulo publico'.length)}ch + 16px)` }}
                     onChange={(event) => updateSelectedSite({ title: event.target.value })}
                     onBlur={() => handleSaveSite()}
                   />
@@ -1792,69 +1791,75 @@ export const Sites: React.FC = () => {
                     onDragCancel={() => setActiveDragId(null)}
                   >
                     <SortableContext items={canvasBlocks.map(block => block.id)} strategy={verticalListSortingStrategy}>
-                      <div
-                        className={`${styles.canvasWrap} ${device === 'mobile' ? styles.canvasWrapMobile : ''} ${paletteDragging ? styles.canvasWrapActive : ''} ${isSiteDark(editorSite) ? styles.canvasWrapDark : ''}`}
-                        style={getCanvasThemeStyle(editorSite)}
+                      <CanvasStage
+                        designWidth={canvasTheme!.designWidth}
+                        canvasClassName={`rstkCanvas ${canvasTheme!.bodyClass}`}
+                        canvasStyle={canvasTheme!.vars}
+                        active={paletteDragging}
+                        onClear={() => setSelectedBlockId('')}
                         onDragOver={handleCanvasDragOver}
                         onDragLeave={() => setPaletteDragging(false)}
                         onDrop={handleCanvasDrop}
                       >
-                        <div
-                          className={`${styles.pageCanvas} ${isLanding(editorSite) ? styles.landingCanvas : styles.formCanvas} ${editorSite.siteType === 'interactive_form' ? styles.interactiveCanvas : ''} ${isSiteDark(editorSite) ? styles.darkCanvas : ''}`}
-                          onClick={() => setSelectedBlockId('')}
-                        >
-                          {!isLanding(editorSite) && platformChromeFor(resolveTemplateId(editorSite)) && (
-                            <div
-                              className={`${styles.socialProfileSelectable} ${selectedBlockId === SOCIAL_PROFILE_SELECTED_ID ? styles.socialProfileSelected : ''}`}
-                              onClick={(event) => {
-                                event.stopPropagation()
-                                setSelectedBlockId(SOCIAL_PROFILE_SELECTED_ID)
-                              }}
-                            >
-                              <CanvasChrome
-                                platform={platformChromeFor(resolveTemplateId(editorSite))!}
-                                site={editorSite}
-                                onPatchTheme={patchSiteTheme}
-                                onSave={() => handleSaveSite()}
-                              />
+                        <div className="rstk-frame">
+                          <main className="rstk-page">
+                            <div className="rstk-shell">
+                              {!isLanding(editorSite) && platformChromeFor(resolveTemplateId(editorSite)) && (
+                                <div
+                                  className={`${styles.socialProfileSelectable} ${selectedBlockId === SOCIAL_PROFILE_SELECTED_ID ? styles.socialProfileSelected : ''}`}
+                                  onClick={(event) => {
+                                    event.stopPropagation()
+                                    setSelectedBlockId(SOCIAL_PROFILE_SELECTED_ID)
+                                  }}
+                                >
+                                  <CanvasChrome
+                                    platform={platformChromeFor(resolveTemplateId(editorSite))!}
+                                    site={editorSite}
+                                    onPatchTheme={patchSiteTheme}
+                                    onSave={() => handleSaveSite()}
+                                  />
+                                </div>
+                              )}
+                              {canvasBlocks.length === 0 ? (
+                                <div className="rstkDropEmpty">
+                                  <Plus size={22} />
+                                  <p>Arrastra bloques desde la barra de la izquierda o haz click para agregarlos.</p>
+                                </div>
+                              ) : canvasBlocks.map((block, index) => (
+                                <SortableCanvasBlock
+                                  key={block.id}
+                                  block={block}
+                                  blocks={canvasBlocks}
+                                  index={index}
+                                  selected={selectedBlock?.id === block.id}
+                                  site={editorSite}
+                                  forms={forms}
+                                  calendars={calendars}
+                                  pages={pages}
+                                  activePageId={activePage?.id || DEFAULT_FUNNEL_PAGE_ID}
+                                  onSelect={() => setSelectedBlockId(block.id)}
+                                  onDelete={() => handleDeleteBlock(block.id)}
+                                  onPatchBlock={(patch) => patchBlockLocal(block.id, patch)}
+                                  onPatchSettings={(patch) => patchBlockSettingsLocal(block, patch)}
+                                  onSave={() => handleSaveBlock(block.id)}
+                                />
+                              ))}
+                              {isFormSite(editorSite) && canvasBlocks.some(block => fieldBlockTypes.has(block.blockType)) && (
+                                <div className="rstk-actions">
+                                  <button type="button" data-submit>{editorSite.theme?.submitText || 'Enviar'}</button>
+                                </div>
+                              )}
                             </div>
-                          )}
-                          {canvasBlocks.length === 0 ? (
-                            <div className={styles.dropEmpty}>
-                              <Plus size={22} />
-                              <p>Arrastra bloques desde la barra de la izquierda o haz click para agregarlos.</p>
-                            </div>
-                          ) : canvasBlocks.map((block, index) => (
-                            <SortableCanvasBlock
-                              key={block.id}
-                              block={block}
-                              blocks={canvasBlocks}
-                              index={index}
-                              selected={selectedBlock?.id === block.id}
-                              site={editorSite}
-                              forms={forms}
-                              calendars={calendars}
-                              pages={pages}
-                              activePageId={activePage?.id || DEFAULT_FUNNEL_PAGE_ID}
-                              onSelect={() => setSelectedBlockId(block.id)}
-                              onDelete={() => handleDeleteBlock(block.id)}
-                              onPatchBlock={(patch) => patchBlockLocal(block.id, patch)}
-                              onPatchSettings={(patch) => patchBlockSettingsLocal(block, patch)}
-                              onSave={() => handleSaveBlock(block.id)}
-                            />
-                          ))}
-                          {isFormSite(editorSite) && canvasBlocks.some(block => fieldBlockTypes.has(block.blockType)) && (
-                            <div className={styles.editorSubmitPreview}>
-                              <button type="button">{editorSite.theme?.submitText || 'Enviar'}</button>
-                            </div>
-                          )}
+                          </main>
                         </div>
-                      </div>
+                      </CanvasStage>
                     </SortableContext>
                     <DragOverlay dropAnimation={null}>
                       {activeDragBlock ? (
-                        <div className={styles.dragOverlayCard} style={getCanvasThemeStyle(editorSite)}>
-                          <CanvasPreviewBlock block={activeDragBlock} forms={forms} calendars={calendars} />
+                        <div className={`rstkCanvas ${canvasTheme!.bodyClass}`} style={{ ...canvasTheme!.vars, width: 460, ['--rstk-scale' as string]: 1 } as React.CSSProperties}>
+                          <div className="rstk-block-style">
+                            <CanvasPreviewBlock block={activeDragBlock} forms={forms} calendars={calendars} />
+                          </div>
                         </div>
                       ) : null}
                     </DragOverlay>
@@ -2092,6 +2097,7 @@ interface CreateFlowPanelProps {
 
 const FORM_TEMPLATE_IDS: SiteTemplateId[] = ['facebook', 'instagram', 'tiktok', 'ristak']
 const LANDING_TEMPLATE_IDS: SiteTemplateId[] = ['ristak', 'vsl']
+const INTERACTIVE_TEMPLATE_IDS: SiteTemplateId[] = ['facebook', 'instagram', 'tiktok', 'interactive']
 
 const TemplateCard: React.FC<{ id: SiteTemplateId; disabled: boolean; onPick: () => void }> = ({ id, disabled, onPick }) => {
   const meta = templateMetaById(id)
@@ -2121,6 +2127,8 @@ const CreateFlowPanel: React.FC<CreateFlowPanelProps> = ({ step, creating, onCre
     ? 'Elige el estilo de tu landing'
     : step === 'form-template'
       ? 'Donde se va a abrir tu formulario?'
+      : step === 'interactive-template'
+        ? 'Elige el estilo de tu formulario interactivo'
       : isLandingFlow
         ? 'Como quieres iniciar la landing?'
         : 'Que tipo de formulario quieres?'
@@ -2128,8 +2136,12 @@ const CreateFlowPanel: React.FC<CreateFlowPanelProps> = ({ step, creating, onCre
   return (
     <section className={styles.createPanel}>
       <div className={styles.createHeader}>
-        {(step === 'form-template' || step === 'landing-template') && (
-          <button type="button" className={styles.backLink} onClick={() => onAdvance(step === 'form-template' ? 'form-kind' : 'landing-start')}>
+        {(step === 'form-template' || step === 'landing-template' || step === 'interactive-template') && (
+          <button
+            type="button"
+            className={styles.backLink}
+            onClick={() => onAdvance(step === 'landing-template' ? 'landing-start' : 'form-kind')}
+          >
             <ChevronRight size={15} /> Volver
           </button>
         )}
@@ -2182,6 +2194,12 @@ const CreateFlowPanel: React.FC<CreateFlowPanelProps> = ({ step, creating, onCre
             <p>Una pregunta por pantalla, estilo quiz, con saltos y descalificacion.</p>
             <ChevronRight size={18} />
           </button>
+          <button type="button" disabled={creating} onClick={() => onAdvance('interactive-template')}>
+            <MousePointerClick size={22} />
+            <strong>Interactivo con plantilla social</strong>
+            <p>Usa el mismo look de Facebook, Instagram o TikTok para hacerlo ver nativo.</p>
+            <ChevronRight size={18} />
+          </button>
           <button type="button" disabled={creating} onClick={() => onCreateWithAI('form')}>
             <Sparkles size={22} />
             <strong>Usando IA</strong>
@@ -2189,6 +2207,17 @@ const CreateFlowPanel: React.FC<CreateFlowPanelProps> = ({ step, creating, onCre
             <ChevronRight size={18} />
           </button>
         </div>
+      )}
+
+      {step === 'interactive-template' && (
+        <>
+          <p className={styles.galleryHint}>El formulario interactivo se vera con apariencia de anuncio nativo para que el lead no sienta cambio de contexto.</p>
+          <div className={styles.templateGallery}>
+            {INTERACTIVE_TEMPLATE_IDS.map(id => (
+              <TemplateCard key={id} id={id} disabled={creating} onPick={() => onCreate('interactive_form', 'template', id)} />
+            ))}
+          </div>
+        </>
       )}
 
       {step === 'form-template' && (
@@ -2201,6 +2230,7 @@ const CreateFlowPanel: React.FC<CreateFlowPanelProps> = ({ step, creating, onCre
           </div>
         </>
       )}
+
     </section>
   )
 }
@@ -2515,6 +2545,119 @@ const Palette: React.FC<{ blockTypes: SiteBlockType[]; onAdd: (blockType: SiteBl
   )
 }
 
+// Inline, in-place text editing that renders as the real rstk element, so the
+// typography/gradients/spacing match the published page exactly. Content is set
+// imperatively to avoid React rewriting the DOM mid-edit (which jumps the caret).
+interface InlineEditableProps {
+  as?: 'h1' | 'h2' | 'p' | 'span' | 'div' | 'a' | 'strong'
+  className?: string
+  value: string
+  placeholder?: string
+  disabled?: boolean
+  multiline?: boolean
+  onChange: (value: string) => void
+  onCommit?: () => void
+}
+
+const InlineEditable: React.FC<InlineEditableProps> = ({
+  as = 'div', className, value, placeholder, disabled, multiline, onChange, onCommit
+}) => {
+  const ref = useRef<HTMLElement>(null)
+
+  useEffect(() => {
+    const el = ref.current
+    if (el && el.textContent !== value) el.textContent = value
+  }, [value])
+
+  const Tag = as as React.ElementType
+  return (
+    <Tag
+      ref={ref}
+      className={className}
+      contentEditable={!disabled}
+      suppressContentEditableWarning
+      spellCheck={false}
+      role="textbox"
+      data-rstk-edit=""
+      data-empty={value ? 'false' : 'true'}
+      data-placeholder={placeholder || ''}
+      onInput={(event: React.FormEvent<HTMLElement>) => {
+        const text = event.currentTarget.textContent || ''
+        event.currentTarget.setAttribute('data-empty', text ? 'false' : 'true')
+        onChange(text)
+      }}
+      onBlur={() => onCommit?.()}
+      onKeyDown={(event: React.KeyboardEvent<HTMLElement>) => {
+        if (!multiline && event.key === 'Enter') {
+          event.preventDefault()
+          event.currentTarget.blur()
+        }
+      }}
+    />
+  )
+}
+
+// Renders the canvas page at its true desktop width and transform-scales it to
+// fit the column — a faithful "monitor comprimido" of the published page.
+interface CanvasStageProps {
+  designWidth: number
+  canvasClassName: string
+  canvasStyle: React.CSSProperties
+  active?: boolean
+  onClear?: () => void
+  onDragOver?: React.DragEventHandler<HTMLDivElement>
+  onDragLeave?: React.DragEventHandler<HTMLDivElement>
+  onDrop?: React.DragEventHandler<HTMLDivElement>
+  children: React.ReactNode
+}
+
+const CanvasStage: React.FC<CanvasStageProps> = ({
+  designWidth, canvasClassName, canvasStyle, active, onClear, onDragOver, onDragLeave, onDrop, children
+}) => {
+  const viewportRef = useRef<HTMLDivElement>(null)
+  const stageRef = useRef<HTMLDivElement>(null)
+  const [scale, setScale] = useState(1)
+  const [stageHeight, setStageHeight] = useState(0)
+
+  useLayoutEffect(() => {
+    const viewport = viewportRef.current
+    const stage = stageRef.current
+    if (!viewport || !stage) return
+    const recompute = () => {
+      const avail = viewport.clientWidth - 36
+      const next = Math.max(0.2, Math.min(1, avail / designWidth))
+      setScale(next)
+      setStageHeight(stage.offsetHeight * next)
+    }
+    recompute()
+    const observer = new ResizeObserver(recompute)
+    observer.observe(viewport)
+    observer.observe(stage)
+    return () => observer.disconnect()
+  }, [designWidth])
+
+  return (
+    <div
+      ref={viewportRef}
+      className={`canvasViewport ${active ? 'canvasViewportActive' : ''}`}
+      onClick={onClear}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+    >
+      <div className="canvasScaler" style={{ width: Math.round(designWidth * scale), height: Math.round(stageHeight) }}>
+        <div
+          ref={stageRef}
+          className={`canvasStage ${canvasClassName}`}
+          style={{ ...canvasStyle, width: designWidth, transform: `scale(${scale})`, ['--rstk-scale' as string]: scale } as React.CSSProperties}
+        >
+          {children}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 interface SortableCanvasBlockProps {
   block: SiteBlock
   blocks: SiteBlock[]
@@ -2551,24 +2694,26 @@ const SortableCanvasBlock: React.FC<SortableCanvasBlockProps> = ({
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: block.id })
 
   return (
-    <article
+    <div
       ref={setNodeRef}
-      style={{ transform: CSS.Transform.toString(transform), transition, ...getBlockCanvasStyle(block) }}
-      className={`${styles.canvasBlock} ${selected ? styles.canvasBlockSelected : ''} ${isDragging ? styles.canvasBlockDragging : ''}`}
+      style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.6 : undefined, ...getBlockCanvasStyle(block) }}
+      className={`rstk-block-style rstkSel ${selected ? 'rstkSelActive' : ''}`}
       onClick={(event) => {
         event.stopPropagation()
         onSelect()
       }}
     >
-      <button type="button" className={styles.dragHandle} {...attributes} {...listeners} aria-label="Reordenar bloque">
-        <GripVertical size={16} />
-      </button>
       {site.siteType === 'interactive_form' && fieldBlockTypes.has(block.blockType) && (
-        <span className={styles.stepBadge}>Pantalla {index + 1}</span>
+        <span className="rstkStepBadge">Pantalla {index + 1}</span>
       )}
-      <button type="button" className={styles.blockDelete} onClick={(event) => { event.stopPropagation(); onDelete() }} aria-label="Eliminar bloque">
-        <Trash2 size={15} />
-      </button>
+      <div className="rstkBlockTools">
+        <button type="button" className="rstkBlockTool rstkBlockToolDrag" {...attributes} {...listeners} aria-label="Reordenar bloque">
+          <GripVertical size={15} />
+        </button>
+        <button type="button" className="rstkBlockTool rstkBlockToolDelete" onClick={(event) => { event.stopPropagation(); onDelete() }} aria-label="Eliminar bloque">
+          <Trash2 size={14} />
+        </button>
+      </div>
       <CanvasPreviewBlock
         block={block}
         blocks={blocks}
@@ -2581,7 +2726,7 @@ const SortableCanvasBlock: React.FC<SortableCanvasBlockProps> = ({
         onPatchSettings={onPatchSettings}
         onSave={onSave}
       />
-    </article>
+    </div>
   )
 }
 
@@ -2744,200 +2889,95 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
   const patchBlock = onPatchBlock || (() => {})
   const patchSettings = onPatchSettings || (() => {})
   const save = onSave || (() => {})
-  const styleTools = null
 
   if (block.blockType === 'hero') {
     return (
-      <section className={styles.previewHero}>
-        <input
-          className={styles.inlineKicker}
-          value={getSettingString(settings, 'kicker')}
-          placeholder="Kicker"
-          disabled={!editable}
-          onChange={(event) => patchSettings({ kicker: event.target.value })}
-          onBlur={save}
-        />
-        <textarea
-          className={styles.inlineHeroTitle}
-          rows={2}
-          value={block.content}
-          placeholder={block.label || 'Titular principal'}
-          disabled={!editable}
-          onChange={(event) => patchBlock({ content: event.target.value })}
-          onBlur={save}
-        />
-        <textarea
-          className={styles.inlineTextArea}
-          rows={2}
-          value={getSettingString(settings, 'subtitle')}
-          placeholder="Subtitulo"
-          disabled={!editable}
-          onChange={(event) => patchSettings({ subtitle: event.target.value })}
-          onBlur={save}
-        />
-        <input
-          className={styles.inlineButtonInput}
-          value={getSettingString(settings, 'buttonText')}
-          placeholder="Texto del boton"
-          disabled={!editable}
-          onChange={(event) => patchSettings({ buttonText: event.target.value })}
-          onBlur={save}
-        />
-        {selected && pages.length > 0 && (
-          <InlineButtonRouting settings={settings} pages={pages} activePageId={activePageId} onPatchSettings={patchSettings} onSave={save} />
-        )}
-        {styleTools}
+      <section className="rstk-hero">
+        <InlineEditable as="p" className="rstk-kicker" value={getSettingString(settings, 'kicker')} placeholder="Kicker (opcional)" disabled={!editable} onChange={(value) => patchSettings({ kicker: value })} onCommit={save} />
+        <InlineEditable as="h1" className="rstk-headline" multiline value={block.content} placeholder={block.label || 'Titular principal'} disabled={!editable} onChange={(value) => patchBlock({ content: value })} onCommit={save} />
+        <InlineEditable as="p" className="rstk-subheading" multiline value={getSettingString(settings, 'subtitle')} placeholder="Subtitulo" disabled={!editable} onChange={(value) => patchSettings({ subtitle: value })} onCommit={save} />
+        <InlineEditable as="a" className="rstk-button-link" value={getSettingString(settings, 'buttonText')} placeholder="Texto del boton" disabled={!editable} onChange={(value) => patchSettings({ buttonText: value })} onCommit={save} />
       </section>
     )
   }
 
   if (['headline', 'title'].includes(block.blockType)) {
     return (
-      <>
-        <textarea
-          className={`${styles.previewHeadline} ${styles.inlineHeadingInput}`}
-          rows={2}
-          value={block.content}
-          placeholder={block.label || 'Titulo'}
-          disabled={!editable}
-          onChange={(event) => patchBlock({ content: event.target.value })}
-          onBlur={save}
-        />
-        {styleTools}
-      </>
+      <InlineEditable as="h1" className="rstk-headline" multiline value={block.content} placeholder={block.label || 'Titulo'} disabled={!editable} onChange={(value) => patchBlock({ content: value })} onCommit={save} />
     )
   }
 
   if (['subheading', 'subtitle', 'description'].includes(block.blockType)) {
     return (
-      <>
-        <textarea
-          className={`${styles.previewSubheading} ${styles.inlineTextArea}`}
-          rows={2}
-          value={block.content}
-          placeholder={block.label || 'Subtitulo'}
-          disabled={!editable}
-          onChange={(event) => patchBlock({ content: event.target.value })}
-          onBlur={save}
-        />
-        {styleTools}
-      </>
+      <InlineEditable as="p" className="rstk-subheading" multiline value={block.content} placeholder={block.label || 'Subtitulo'} disabled={!editable} onChange={(value) => patchBlock({ content: value })} onCommit={save} />
     )
   }
 
   if (block.blockType === 'text') {
     return (
-      <>
-        <textarea
-          className={`${styles.previewText} ${styles.inlineTextArea}`}
-          rows={4}
-          value={block.content || ''}
-          placeholder="Texto de contenido"
-          disabled={!editable}
-          onChange={(event) => patchBlock({ content: event.target.value })}
-          onBlur={save}
-        />
-        {styleTools}
-      </>
+      <InlineEditable as="div" className="rstk-text" multiline value={block.content || ''} placeholder="Texto de contenido" disabled={!editable} onChange={(value) => patchBlock({ content: value })} onCommit={save} />
     )
   }
 
   if (block.blockType === 'image') {
     const mediaUrl = getSettingString(settings, 'mediaUrl') || block.content
-    return (
-      <div className={styles.previewMediaEditor}>
-        {mediaUrl ? <img src={mediaUrl} alt={block.label || 'Imagen'} /> : <div className={styles.previewMedia}>Imagen</div>}
-        {selected && (
-          <div className={styles.inlineControls}>
-            <input value={mediaUrl} placeholder="URL de imagen" onChange={(event) => patchSettings({ mediaUrl: event.target.value })} onBlur={save} />
-            <label>
-              <span>Tamaño</span>
-              <input
-                type="range"
-                min="30"
-                max="100"
-                value={Number(settings.mediaWidth || 100)}
-                onChange={(event) => patchSettings({ mediaWidth: Number(event.target.value) })}
-                onBlur={save}
-              />
-            </label>
-          </div>
-        )}
-        {styleTools}
-      </div>
-    )
+    return mediaUrl
+      ? <figure className="rstk-media"><img src={mediaUrl} alt={block.label || 'Imagen'} loading="lazy" /></figure>
+      : <div className="rstk-media rstk-media-empty">Imagen sin URL</div>
   }
 
   if (block.blockType === 'video') {
-    return (
-      <div className={styles.previewMediaEditor}>
-        <div className={styles.previewMedia}>{getSettingString(settings, 'mediaUrl') || block.content || 'Video'}</div>
-        {selected && (
-          <div className={styles.inlineControls}>
-            <input value={getSettingString(settings, 'mediaUrl')} placeholder="URL de video" onChange={(event) => patchSettings({ mediaUrl: event.target.value })} onBlur={save} />
-          </div>
-        )}
-        {styleTools}
-      </div>
-    )
+    const videoUrl = getSettingString(settings, 'mediaUrl') || block.content
+    return videoUrl
+      ? <div className="rstk-video"><iframe src={videoUrl} title={block.label || 'Video'} loading="lazy" allowFullScreen /></div>
+      : <div className="rstk-media rstk-media-empty"><span className="rstk-play"><Play size={22} /></span>Agrega la URL del video</div>
   }
 
   if (block.blockType === 'button') {
     return (
-      <div className={styles.previewButtonEditor}>
-        <input
-          className={styles.previewButton}
-          value={getSettingString(settings, 'buttonText') || block.content || ''}
-          placeholder="Boton"
-          disabled={!editable}
-          onChange={(event) => patchSettings({ buttonText: event.target.value })}
-          onBlur={save}
-        />
-        {selected && <InlineButtonRouting settings={settings} pages={pages} activePageId={activePageId} onPatchSettings={patchSettings} onSave={save} />}
-        {styleTools}
-      </div>
+      <InlineEditable as="a" className="rstk-button-link" value={getSettingString(settings, 'buttonText') || block.content || ''} placeholder="Boton" disabled={!editable} onChange={(value) => patchSettings({ buttonText: value })} onCommit={save} />
     )
   }
 
-  if (['benefits', 'testimonials', 'services', 'faq'].includes(block.blockType)) {
-    const items = Array.isArray(settings.items) ? settings.items : []
+  if (block.blockType === 'benefits') {
+    const items = getCanvasItems(settings)
     return (
-      <section className={styles.previewList}>
-        <textarea
-          className={`${styles.previewListTitle} ${styles.inlineTextArea}`}
-          rows={1}
-          value={block.content}
-          placeholder={block.label || 'Titulo de seccion'}
-          disabled={!editable}
-          onChange={(event) => patchBlock({ content: event.target.value })}
-          onBlur={save}
-        />
-        <div>
-          {items.slice(0, 3).map((item, index) => {
-            const record = item && typeof item === 'object' ? item as Record<string, unknown> : { title: item }
+      <section className="rstk-section-list rstk-checklist">
+        <InlineEditable as="h2" value={block.content} placeholder={block.label || 'Titulo de seccion'} disabled={!editable} onChange={(value) => patchBlock({ content: value })} onCommit={save} />
+        <ul className="rstk-check-list">
+          {(items.length ? items : [{ title: 'Agrega elementos en el panel', text: '', author: '' }]).map((item, index) => {
+            const tone = getItemTone(item)
+            const title = stripToneMarker(item.title)
+            const text = stripToneMarker(item.text)
             return (
-              <article key={index}>
-                <strong>{String(record.title || `Elemento ${index + 1}`)}</strong>
-                {record.text && <p>{String(record.text)}</p>}
-              </article>
+              <li key={index} className={`rstk-check rstk-check-${tone}`}>
+                <span className="rstk-check-icon" aria-hidden="true">{tone === 'con' ? <X size={15} /> : <Check size={15} />}</span>
+                <span className="rstk-check-body">
+                  {title && <strong>{title}</strong>}
+                  {text && <span>{text}</span>}
+                </span>
+              </li>
             )
           })}
+        </ul>
+      </section>
+    )
+  }
+
+  if (['testimonials', 'services', 'faq'].includes(block.blockType)) {
+    const items = getCanvasItems(settings)
+    return (
+      <section className="rstk-section-list">
+        <InlineEditable as="h2" value={block.content} placeholder={block.label || 'Titulo de seccion'} disabled={!editable} onChange={(value) => patchBlock({ content: value })} onCommit={save} />
+        <div className="rstk-list-grid">
+          {(items.length ? items : [{ title: 'Elemento', text: 'Agrega elementos en el panel', author: '' }]).map((item, index) => (
+            <article key={index}>
+              {item.title && <strong>{item.title}</strong>}
+              {item.text && <p>{item.text}</p>}
+              {item.author && <small>{item.author}</small>}
+            </article>
+          ))}
         </div>
-        {selected && (
-          <div className={styles.inlineControls} onClick={(event) => event.stopPropagation()}>
-            <label>
-              <span>Items</span>
-              <textarea
-                rows={5}
-                value={stringifyItems(settings)}
-                placeholder="Titulo | texto | autor"
-                onChange={(event) => patchSettings({ items: parseItems(event.target.value) })}
-                onBlur={save}
-              />
-            </label>
-          </div>
-        )}
-        {styleTools}
       </section>
     )
   }
@@ -2946,291 +2986,113 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
     const formSiteId = getSettingString(settings, 'formSiteId')
     const form = forms.find(item => item.id === formSiteId)
     const embeddedBlocks = Array.isArray(settings.embeddedBlocks) ? settings.embeddedBlocks as SiteBlock[] : []
+    const description = form ? `Usando formulario: ${form.name}` : getSettingString(settings, 'description')
+    const fields = embeddedBlocks.length ? embeddedBlocks : [{ id: 'placeholder', blockType: 'short_text', label: 'Campo', required: true, placeholder: 'Respuesta' } as SiteBlock]
     return (
-      <section className={styles.previewEmbeddedForm}>
-        <textarea
-          className={`${styles.previewListTitle} ${styles.inlineTextArea}`}
-          rows={1}
-          value={block.content}
-          placeholder="Formulario"
-          disabled={!editable}
-          onChange={(event) => patchBlock({ content: event.target.value })}
-          onBlur={save}
-        />
-        <textarea
-          className={`${styles.previewSubheading} ${styles.inlineTextArea}`}
-          rows={2}
-          value={form ? `Usando: ${form.name}` : getSettingString(settings, 'description') || ''}
-          placeholder="Descripcion del formulario"
-          disabled={!editable || Boolean(form)}
-          onChange={(event) => patchSettings({ description: event.target.value })}
-          onBlur={save}
-        />
-        {(embeddedBlocks.length ? embeddedBlocks : [{ id: 'placeholder', blockType: 'short_text', label: 'Campo', required: true } as SiteBlock]).slice(0, 3).map(field => (
-          <div key={field.id} className={styles.previewField}>
-            <label>{field.label}{field.required ? ' *' : ''}</label>
-            <input disabled placeholder={field.placeholder || 'Respuesta'} />
-          </div>
-        ))}
-        {selected && (
-          <div className={styles.inlineControls} onClick={(event) => event.stopPropagation()}>
-            <label>
-              <span>Formulario existente</span>
-              <select value={formSiteId} onChange={(event) => patchSettings({ formSiteId: event.target.value, embeddedBlocks: undefined })} onBlur={save}>
-                <option value="">Formulario inline dentro de esta landing</option>
-                {forms.map(formOption => (
-                  <option key={formOption.id} value={formOption.id}>{formOption.name}</option>
-                ))}
-              </select>
-            </label>
-            <label>
-              <span>Al terminar</span>
-              <select value={getFormCompletionAction(settings)} onChange={(event) => patchSettings({ completionAction: event.target.value })} onBlur={save}>
-                <option value="next_page">Ir a la siguiente pagina al terminar</option>
-                <option value="next_page_if_qualified">Ir a la siguiente pagina solo si califica</option>
-                <option value="form_default">Mantener configuracion actual del formulario</option>
-              </select>
-            </label>
-            <button
-              type="button"
-              className={styles.inlineMiniButton}
-              onClick={() => {
-                patchSettings({ formSiteId: '', embeddedBlocks: createEmbeddedBlocks(block.siteId) })
-                window.setTimeout(save, 0)
-              }}
-            >
-              <Plus size={14} />
-              Crear formulario inline
-            </button>
-          </div>
-        )}
-        {styleTools}
+      <section className="rstk-embedded-form">
+        <InlineEditable as="h2" value={block.content} placeholder="Formulario" disabled={!editable} onChange={(value) => patchBlock({ content: value })} onCommit={save} />
+        {description && <p className="rstk-help">{description}</p>}
+        {fields.map(field => <FieldStaticPreview key={field.id} block={field} />)}
       </section>
     )
   }
 
   if (block.blockType === 'cta') {
     return (
-      <section className={styles.previewCta}>
-        <textarea
-          className={`${styles.previewListTitle} ${styles.inlineTextArea}`}
-          rows={1}
-          value={block.content}
-          placeholder={block.label || 'CTA final'}
-          disabled={!editable}
-          onChange={(event) => patchBlock({ content: event.target.value })}
-          onBlur={save}
-        />
-        <textarea
-          className={`${styles.previewSubheading} ${styles.inlineTextArea}`}
-          rows={2}
-          value={getSettingString(settings, 'subtitle')}
-          placeholder="Subtitulo"
-          disabled={!editable}
-          onChange={(event) => patchSettings({ subtitle: event.target.value })}
-          onBlur={save}
-        />
-        <input
-          className={styles.previewButton}
-          value={getSettingString(settings, 'buttonText')}
-          placeholder="Texto del boton"
-          disabled={!editable}
-          onChange={(event) => patchSettings({ buttonText: event.target.value })}
-          onBlur={save}
-        />
-        {selected && pages.length > 0 && (
-          <InlineButtonRouting settings={settings} pages={pages} activePageId={activePageId} onPatchSettings={patchSettings} onSave={save} />
-        )}
-        {styleTools}
+      <section className="rstk-cta">
+        <InlineEditable as="h2" value={block.content} placeholder={block.label || 'CTA final'} disabled={!editable} onChange={(value) => patchBlock({ content: value })} onCommit={save} />
+        <InlineEditable as="p" multiline value={getSettingString(settings, 'subtitle')} placeholder="Subtitulo" disabled={!editable} onChange={(value) => patchSettings({ subtitle: value })} onCommit={save} />
+        <InlineEditable as="a" className="rstk-button-link" value={getSettingString(settings, 'buttonText')} placeholder="Texto del boton" disabled={!editable} onChange={(value) => patchSettings({ buttonText: value })} onCommit={save} />
       </section>
     )
   }
 
   if (block.blockType === 'calendar_embed') {
-    const calendarId = getSettingString(settings, 'calendarId')
     const calendarName = getSettingString(settings, 'calendarName')
-    const calendar = calendars.find(item => item.id === calendarId)
+    const calendarSlug = getSettingString(settings, 'calendarSlug')
     return (
-      <div className={styles.previewEmbed}>
-        <div className={styles.previewEmbedEmpty}>
-          <CalendarDays size={18} />
-          <span>{calendar?.name || calendarName || 'Selecciona un calendario'}</span>
-        </div>
-        {selected && (
-          <div className={styles.inlineControls} onClick={(event) => event.stopPropagation()}>
-            <label>
-              <span>Calendario</span>
-              <select
-                value={calendarId}
-                onChange={(event) => {
-                  const next = calendars.find(item => item.id === event.target.value)
-                  patchSettings({
-                    calendarId: next?.id || '',
-                    calendarSlug: next?.slug || next?.widgetSlug || '',
-                    calendarName: next?.name || ''
-                  })
-                }}
-                onBlur={save}
-              >
-                <option value="">Selecciona un calendario</option>
-                {calendars.map(calendarOption => (
-                  <option key={calendarOption.id} value={calendarOption.id}>{calendarOption.name}</option>
-                ))}
-              </select>
-            </label>
-          </div>
-        )}
-        {styleTools}
+      <div className="rstk-embed rstk-embed-empty">
+        <CalendarDays size={20} />
+        <span style={{ marginTop: 6 }}>{calendarName || (calendarSlug ? `Calendario /${calendarSlug}` : 'Selecciona un calendario para embeber')}</span>
       </div>
     )
   }
 
   if (block.blockType === 'embed') {
-    return (
-      <div className={styles.previewEmbedEditor}>
-        <EmbedPreview rawCode={block.content} />
-        {selected && (
-          <div className={styles.inlineControls} onClick={(event) => event.stopPropagation()}>
-            <label>
-              <span>Embed / URL</span>
-              <textarea rows={4} value={block.content} onChange={(event) => patchBlock({ content: event.target.value })} onBlur={save} />
-            </label>
-          </div>
-        )}
-        {styleTools}
-      </div>
-    )
+    return <EmbedPreview rawCode={block.content} />
   }
 
-  return (
-    <FieldPreview
-      block={block}
-      blocks={blocks}
-      selected={selected}
-      editable={editable}
-      onPatchBlock={patchBlock}
-      onPatchSettings={patchSettings}
-      onSave={save}
-      styleTools={styleTools}
-    />
-  )
+  return <FieldPreview block={block} editable={editable} onPatchBlock={patchBlock} onSave={save} />
 }
+
+// Read-only field preview (rstk markup) for embedded form fields on the canvas.
+const FieldStaticPreview: React.FC<{ block: SiteBlock }> = ({ block }) => (
+  <section className="rstk-field">
+    <label>{block.label || 'Pregunta'}{block.required ? <span className="rstk-required">*</span> : null}</label>
+    {block.content ? <p className="rstk-help">{block.content}</p> : null}
+    {block.blockType === 'paragraph'
+      ? <textarea readOnly rows={4} placeholder={block.placeholder || ''} />
+      : <input readOnly placeholder={block.placeholder || 'Respuesta'} />}
+  </section>
+)
 
 const EmbedPreview: React.FC<{ rawCode: string }> = ({ rawCode }) => {
   const embed = resolveEmbedPreview(rawCode)
 
   if (embed.kind === 'empty') {
-    return (
-      <div className={`${styles.previewEmbed} ${styles.previewEmbedEmpty}`}>
-        Pega una URL, iframe o codigo embed/html
-      </div>
-    )
+    return <div className="rstk-embed rstk-embed-empty">Pega una URL, iframe o codigo embed/html</div>
   }
 
-  const frameStyle = {
-    height: `${embed.height || EMBED_DEFAULT_HEIGHT}px`
-  } as React.CSSProperties
-
   return (
-    <div className={styles.previewEmbed}>
-      <iframe
-        className={styles.previewEmbedFrame}
-        title={embed.title}
-        src={embed.kind === 'url' ? embed.src : undefined}
-        srcDoc={embed.kind === 'html' ? embed.srcDoc : undefined}
-        loading="lazy"
-        referrerPolicy="no-referrer-when-downgrade"
-        sandbox={embed.kind === 'url' ? EMBED_SANDBOX_URL : EMBED_SANDBOX_HTML}
-        allow={embed.kind === 'url' ? embed.allow || DEFAULT_EMBED_ALLOW : DEFAULT_EMBED_ALLOW}
-        allowFullScreen
-        style={frameStyle}
-      />
-    </div>
+    <iframe
+      className={`rstk-embed ${embed.kind === 'html' ? 'rstk-embed-code' : ''}`}
+      title={embed.title}
+      src={embed.kind === 'url' ? embed.src : undefined}
+      srcDoc={embed.kind === 'html' ? embed.srcDoc : undefined}
+      loading="lazy"
+      referrerPolicy="no-referrer-when-downgrade"
+      sandbox={embed.kind === 'url' ? EMBED_SANDBOX_URL : EMBED_SANDBOX_HTML}
+      allow={embed.kind === 'url' ? embed.allow || DEFAULT_EMBED_ALLOW : DEFAULT_EMBED_ALLOW}
+      allowFullScreen
+      style={{ minHeight: `${embed.height || EMBED_DEFAULT_HEIGHT}px` }}
+    />
   )
 }
 
+// Field blocks: rstk-field markup with inline-editable label/help. The input is
+// a non-interactive preview; placeholder/validation/options are edited in the panel.
 const FieldPreview: React.FC<{
   block: SiteBlock
-  blocks: SiteBlock[]
-  selected: boolean
   editable: boolean
   onPatchBlock: (patch: Partial<SiteBlock>) => void
-  onPatchSettings: (patch: Record<string, unknown>) => void
   onSave: () => void
-  styleTools: React.ReactNode
-}> = ({ block, blocks, selected, editable, onPatchBlock, onPatchSettings, onSave, styleTools }) => {
-  const settings = block.settings || {}
+}> = ({ block, editable, onPatchBlock, onSave }) => {
+  const inputType = block.blockType === 'email' ? 'email' : block.blockType === 'phone' ? 'tel' : block.blockType === 'date' ? 'date' : block.blockType === 'number' || block.blockType === 'currency' ? 'number' : 'text'
 
   return (
-    <div className={styles.previewField}>
-      <input
-        className={styles.inlineFieldLabel}
-        value={block.label}
-        disabled={!editable}
-        onChange={(event) => onPatchBlock({ label: event.target.value })}
-        onBlur={onSave}
-      />
-      <textarea
-        className={styles.inlineFieldHelp}
-        rows={2}
-        value={block.content}
-        placeholder="Texto de ayuda"
-        disabled={!editable}
-        onChange={(event) => onPatchBlock({ content: event.target.value })}
-        onBlur={onSave}
-      />
+    <section className="rstk-field">
+      <label>
+        <InlineEditable as="span" value={block.label} placeholder="Pregunta" disabled={!editable} onChange={(value) => onPatchBlock({ label: value })} onCommit={onSave} />
+        {block.required ? <span className="rstk-required">*</span> : null}
+      </label>
+      {(editable || block.content) && (
+        <InlineEditable as="p" className="rstk-help" multiline value={block.content} placeholder="Texto de ayuda (opcional)" disabled={!editable} onChange={(value) => onPatchBlock({ content: value })} onCommit={onSave} />
+      )}
       {block.blockType === 'paragraph' ? (
-        <textarea rows={3} placeholder={block.placeholder || 'Respuesta'} disabled />
+        <textarea readOnly rows={4} placeholder={block.placeholder || ''} />
       ) : isChoiceBlock(block.blockType) ? (
-        <div className={styles.previewOptions}>
-          {getOptions(block).map(option => <span key={option.id || option.label}>{option.label}</span>)}
+        <div className="rstk-options">
+          {getOptions(block).map(option => (
+            <label key={option.id || option.label} className="rstk-option">
+              <input type={block.blockType === 'checkboxes' ? 'checkbox' : 'radio'} readOnly />
+              <span>{option.label}</span>
+            </label>
+          ))}
         </div>
       ) : (
-        <input
-          type={block.blockType === 'email' ? 'email' : block.blockType === 'phone' ? 'tel' : block.blockType === 'date' ? 'date' : 'text'}
-          placeholder={block.placeholder || 'Respuesta'}
-          disabled
-        />
+        <input type={inputType} readOnly placeholder={block.placeholder || ''} />
       )}
-      {selected && editable && (
-        <div className={styles.inlineControls} onClick={(event) => event.stopPropagation()}>
-          <label>
-            <span>Placeholder</span>
-            <input value={block.placeholder} onChange={(event) => onPatchBlock({ placeholder: event.target.value })} onBlur={onSave} />
-          </label>
-          <label>
-            <span>Nombre interno</span>
-            <input value={getSettingString(settings, 'internalName')} onChange={(event) => onPatchSettings({ internalName: event.target.value })} onBlur={onSave} />
-          </label>
-          <label>
-            <span>Validacion</span>
-            <select value={getSettingString(settings, 'validation')} onChange={(event) => onPatchSettings({ validation: event.target.value })} onBlur={onSave}>
-              <option value="">Ninguna</option>
-              <option value="email">Email</option>
-              <option value="phone">Telefono</option>
-              <option value="number">Numero</option>
-              <option value="currency">Moneda</option>
-              <option value="date">Fecha</option>
-            </select>
-          </label>
-          <label className={styles.inlineCheck}>
-            <input
-              type="checkbox"
-              checked={block.required}
-              onChange={(event) => {
-                onPatchBlock({ required: event.target.checked })
-                window.setTimeout(onSave, 0)
-              }}
-            />
-            <span>Requerido</span>
-          </label>
-          {isChoiceBlock(block.blockType) && (
-            <OptionsRulesEditor block={block} blocks={blocks} onPatchBlock={onPatchBlock} onSave={onSave} />
-          )}
-        </div>
-      )}
-      {styleTools}
-    </div>
+    </section>
   )
 }
 

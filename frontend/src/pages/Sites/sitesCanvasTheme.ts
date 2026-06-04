@@ -1,0 +1,282 @@
+import type React from 'react'
+import type { PublicSite, SiteTemplateId } from '../../services/sitesService'
+
+/**
+ * WYSIWYG canvas theme.
+ *
+ * This is a faithful port of the backend public-site renderer
+ * (backend/src/services/sitesService.js: SITE_TEMPLATES, deriveNeutralVars,
+ * resolveRenderOverrides, buildStyleSheet). The editor canvas must compute the
+ * exact same `--rstk-*` variables so the "cajita" looks identical to the
+ * published page. Keep this in sync with that file.
+ */
+
+const RSTK_SANS =
+  "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, 'Apple Color Emoji', 'Segoe UI Emoji', sans-serif"
+
+type TemplateVars = {
+  pageBg: string
+  pageImage: string
+  ink: string
+  muted: string
+  surface: string
+  surface2: string
+  border: string
+  accent: string
+  accentStrong: string
+  onAccent: string
+  ring: string
+  inputBg: string
+  inputInk: string
+  inputBorder: string
+  radius: string
+  radiusLg: string
+  shadow: string
+  headingWeight: string
+  btnRadius: string
+  btnWeight: string
+}
+
+type Template = {
+  id: SiteTemplateId
+  mode: 'light' | 'dark'
+  chrome: 'none' | 'facebook' | 'instagram' | 'tiktok'
+  centered?: boolean
+  font: string
+  gradient?: string
+  cyan?: string
+  vars: TemplateVars
+}
+
+const SITE_TEMPLATES: Record<SiteTemplateId, Template> = {
+  ristak: {
+    id: 'ristak', mode: 'light', chrome: 'none', font: RSTK_SANS,
+    vars: {
+      pageBg: '#f5f6f8',
+      pageImage: 'radial-gradient(1200px 520px at 50% -120px, rgba(15,23,42,.06), transparent 70%)',
+      ink: '#0f172a', muted: '#64748b', surface: '#ffffff', surface2: '#f8fafc', border: '#e6e8ec',
+      accent: '#111827', accentStrong: '#000000', onAccent: '#ffffff', ring: 'rgba(17,24,39,.16)',
+      inputBg: '#ffffff', inputInk: '#0f172a', inputBorder: '#dfe3e8',
+      radius: '12px', radiusLg: '18px', shadow: '0 30px 60px -42px rgba(15,23,42,.4)',
+      headingWeight: '800', btnRadius: '12px', btnWeight: '750'
+    }
+  },
+  facebook: {
+    id: 'facebook', mode: 'light', chrome: 'facebook', font: RSTK_SANS,
+    vars: {
+      pageBg: '#f0f2f5', pageImage: 'none',
+      ink: '#1c1e21', muted: '#65676b', surface: '#ffffff', surface2: '#f7f8fa', border: '#ced0d4',
+      accent: '#1877f2', accentStrong: '#166fe5', onAccent: '#ffffff', ring: 'rgba(24,119,242,.22)',
+      inputBg: '#ffffff', inputInk: '#1c1e21', inputBorder: '#ccd0d5',
+      radius: '8px', radiusLg: '12px', shadow: '0 1px 2px rgba(0,0,0,.1), 0 22px 48px -34px rgba(0,0,0,.5)',
+      headingWeight: '800', btnRadius: '8px', btnWeight: '800'
+    }
+  },
+  instagram: {
+    id: 'instagram', mode: 'light', chrome: 'instagram', font: RSTK_SANS,
+    gradient: 'linear-gradient(45deg, #feda75, #fa7e1e, #d62976, #962fbf, #4f5bd5)',
+    vars: {
+      pageBg: '#fafafa', pageImage: 'none',
+      ink: '#262626', muted: '#8e8e8e', surface: '#ffffff', surface2: '#fafafa', border: '#dbdbdb',
+      accent: '#0095f6', accentStrong: '#1877f2', onAccent: '#ffffff', ring: 'rgba(0,149,246,.2)',
+      inputBg: '#ffffff', inputInk: '#262626', inputBorder: '#dbdbdb',
+      radius: '12px', radiusLg: '16px', shadow: '0 24px 54px -38px rgba(0,0,0,.45)',
+      headingWeight: '800', btnRadius: '10px', btnWeight: '800'
+    }
+  },
+  tiktok: {
+    id: 'tiktok', mode: 'dark', chrome: 'tiktok', font: RSTK_SANS, cyan: '#25f4ee',
+    vars: {
+      pageBg: '#000000', pageImage: 'radial-gradient(760px 420px at 50% -80px, rgba(37,244,238,.12), transparent 70%)',
+      ink: '#ffffff', muted: '#a1a1aa', surface: '#161616', surface2: '#1f1f1f', border: 'rgba(255,255,255,.12)',
+      accent: '#fe2c55', accentStrong: '#ef1f49', onAccent: '#ffffff', ring: 'rgba(254,44,85,.32)',
+      inputBg: '#1f1f1f', inputInk: '#ffffff', inputBorder: 'rgba(255,255,255,.16)',
+      radius: '10px', radiusLg: '18px', shadow: '0 36px 70px -42px rgba(0,0,0,.9)',
+      headingWeight: '900', btnRadius: '10px', btnWeight: '800'
+    }
+  },
+  vsl: {
+    id: 'vsl', mode: 'light', chrome: 'none', centered: true, font: RSTK_SANS,
+    vars: {
+      pageBg: '#0a0b0d', pageImage: 'radial-gradient(900px 520px at 50% -60px, rgba(71,85,105,.28), transparent 70%)',
+      ink: '#0f172a', muted: '#64748b', surface: '#ffffff', surface2: '#f8fafc', border: '#e6e8ec',
+      accent: '#111827', accentStrong: '#000000', onAccent: '#ffffff', ring: 'rgba(17,24,39,.16)',
+      inputBg: '#ffffff', inputInk: '#0f172a', inputBorder: '#dfe3e8',
+      radius: '14px', radiusLg: '22px', shadow: '0 50px 90px -46px rgba(0,0,0,.75)',
+      headingWeight: '800', btnRadius: '14px', btnWeight: '800'
+    }
+  },
+  interactive: {
+    id: 'interactive', mode: 'light', chrome: 'none', centered: true, font: RSTK_SANS,
+    vars: {
+      pageBg: '#0a0b0d', pageImage: 'radial-gradient(900px 520px at 50% -60px, rgba(71,85,105,.3), transparent 70%)',
+      ink: '#0f172a', muted: '#64748b', surface: '#ffffff', surface2: '#f6f7f9', border: '#e6e8ec',
+      accent: '#111827', accentStrong: '#000000', onAccent: '#ffffff', ring: 'rgba(17,24,39,.14)',
+      inputBg: '#ffffff', inputInk: '#0f172a', inputBorder: '#dfe3e8',
+      radius: '14px', radiusLg: '24px', shadow: '0 60px 100px -52px rgba(0,0,0,.8)',
+      headingWeight: '800', btnRadius: '14px', btnWeight: '800'
+    }
+  }
+}
+
+const DEFAULT_BG = '#ffffff'
+const DEFAULT_ACCENT = '#111827'
+
+const isHex6 = (value?: string): value is string => !!value && /^#[0-9a-f]{6}$/i.test(value)
+
+const relLuminance = (hex: string): number => {
+  const h = hex.replace('#', '')
+  if (h.length < 6) return 1
+  const lin = (c: number) => {
+    const x = c / 255
+    return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4)
+  }
+  return 0.2126 * lin(parseInt(h.slice(0, 2), 16)) + 0.7152 * lin(parseInt(h.slice(2, 4), 16)) + 0.0722 * lin(parseInt(h.slice(4, 6), 16))
+}
+
+const resolveTemplate = (site: PublicSite): Template => {
+  const id = site?.theme?.template
+  if (id && SITE_TEMPLATES[id]) return SITE_TEMPLATES[id]
+  if (site?.siteType === 'interactive_form') return SITE_TEMPLATES.interactive
+  return SITE_TEMPLATES.ristak
+}
+
+// Mirror of backend deriveNeutralVars: recolors the whole palette from a single
+// page background so dark landings look premium and recolored forms stay legible.
+const deriveNeutralVars = (template: Template, bg: string, userAccent: string | null): TemplateVars => {
+  const dark = relLuminance(bg) < 0.5
+  const ink = dark ? '#f4f4f6' : '#0f172a'
+  const accent = userAccent || (dark ? '#ffffff' : '#0f172a')
+  const onAccent = relLuminance(accent) > 0.6 ? '#08080a' : '#ffffff'
+  return {
+    ...template.vars,
+    pageBg: bg,
+    pageImage: `radial-gradient(1100px 560px at 50% -160px, color-mix(in srgb, ${accent} ${dark ? '12%' : '9%'}, transparent), transparent 70%)`,
+    ink,
+    muted: `color-mix(in srgb, ${ink} 60%, ${bg})`,
+    surface: dark ? 'rgba(255,255,255,0.04)' : 'rgba(15,23,42,0.022)',
+    surface2: dark ? 'rgba(255,255,255,0.06)' : 'rgba(15,23,42,0.04)',
+    border: dark ? 'rgba(255,255,255,0.1)' : 'rgba(15,23,42,0.1)',
+    accent,
+    accentStrong: accent,
+    onAccent,
+    ring: `color-mix(in srgb, ${accent} 26%, transparent)`,
+    inputBg: dark ? 'rgba(255,255,255,0.04)' : '#ffffff',
+    inputInk: ink,
+    inputBorder: dark ? 'rgba(255,255,255,0.14)' : '#dfe3e8'
+  }
+}
+
+type Overrides = { vars?: TemplateVars; accent?: string }
+
+const resolveRenderOverrides = (template: Template, theme: PublicSite['theme'], isLandingType: boolean): Overrides => {
+  if (template.chrome !== 'none') return {}
+  const hex = (value?: string) => (isHex6(value) ? (value as string) : null)
+  const rawBg = hex(theme.backgroundColor)
+  const userBg = rawBg && rawBg.toLowerCase() !== DEFAULT_BG ? rawBg : null
+  const rawAccent = hex(theme.accentColor)
+  const userAccent = rawAccent && rawAccent.toLowerCase() !== DEFAULT_ACCENT.toLowerCase() ? rawAccent : null
+  if (isLandingType) {
+    return { vars: deriveNeutralVars(template, userBg || '#08080a', userAccent) }
+  }
+  if (userBg) {
+    return { vars: deriveNeutralVars(template, userBg, userAccent) }
+  }
+  return userAccent ? { accent: userAccent } : {}
+}
+
+const themeNumber = (theme: PublicSite['theme'], key: keyof NonNullable<PublicSite['theme']>, fallback: number, min: number, max: number) => {
+  const value = Number(theme?.[key])
+  if (!Number.isFinite(value)) return fallback
+  return Math.min(max, Math.max(min, value))
+}
+
+export interface CanvasTheme {
+  /** All --rstk-* variables, applied inline on the canvas root. */
+  vars: React.CSSProperties
+  /** body-equivalent classes: rstk-tpl-X rstk-mode rstk-kind-X rstk-centered ... */
+  bodyClass: string
+  /** Natural ("desktop") page width the canvas is rendered at before scaling. */
+  designWidth: number
+  templateId: SiteTemplateId
+  centered: boolean
+  chrome: Template['chrome']
+  isLanding: boolean
+}
+
+/**
+ * Compute the canvas theme for a site. `device` shrinks the design width so the
+ * mobile toggle shows the real responsive layout instead of a scaled desktop one.
+ */
+export const buildCanvasTheme = (site: PublicSite, device: 'desktop' | 'mobile' = 'desktop'): CanvasTheme => {
+  const template = resolveTemplate(site)
+  const theme = site.theme || {}
+  const isLandingType = site.siteType === 'landing_page'
+  const overrides = resolveRenderOverrides(template, theme, isLandingType)
+  const v: TemplateVars = { ...template.vars, ...(overrides.vars || {}) }
+
+  const accent = overrides.accent || v.accent
+  const accentStrong = overrides.accent ? `color-mix(in srgb, ${overrides.accent} 86%, #000)` : v.accentStrong
+  const ring = overrides.accent ? `color-mix(in srgb, ${overrides.accent} 22%, transparent)` : v.ring
+  const baseFont = template.chrome === 'none' ? `'Inter', ${template.font}` : template.font
+  const display = template.chrome === 'none' ? `'Inter Tight', 'Inter', ${template.font}` : template.font
+
+  const pageMaxWidth = themeNumber(theme, 'pageMaxWidth', isLandingType ? 1160 : (template.id === 'interactive' ? 600 : 520), 360, 1440)
+  const pagePadding = themeNumber(theme, 'pagePadding', isLandingType ? 18 : 22, 0, 80)
+  const pageRadius = themeNumber(theme, 'pageRadius', isLandingType ? 0 : 24, 0, 40)
+  const pageBorder = isHex6(theme.pageBorderColor) ? (theme.pageBorderColor as string) : 'transparent'
+
+  const vars = {
+    '--rstk-font': baseFont,
+    '--rstk-display': display,
+    '--rstk-ease': 'cubic-bezier(.16,.84,.44,1)',
+    '--rstk-page-bg': v.pageBg,
+    '--rstk-page-image': v.pageImage,
+    '--rstk-ink': v.ink,
+    '--rstk-muted': v.muted,
+    '--rstk-surface': v.surface,
+    '--rstk-surface2': v.surface2,
+    '--rstk-border': v.border,
+    '--rstk-accent': accent,
+    '--rstk-accent-strong': accentStrong,
+    '--rstk-on-accent': v.onAccent,
+    '--rstk-ring': ring,
+    '--rstk-input-bg': v.inputBg,
+    '--rstk-input-ink': v.inputInk,
+    '--rstk-input-border': v.inputBorder,
+    '--rstk-radius': v.radius,
+    '--rstk-radius-lg': v.radiusLg,
+    '--rstk-shadow': v.shadow,
+    '--rstk-heading-weight': v.headingWeight,
+    '--rstk-btn-radius': v.btnRadius,
+    '--rstk-btn-weight': v.btnWeight,
+    '--rstk-max': `${pageMaxWidth}px`,
+    '--rstk-frame-pad': `${pagePadding}px`,
+    '--rstk-page-border': pageBorder,
+    '--rstk-page-radius': `${pageRadius}px`,
+    '--rstk-pad': 'clamp(18px,4vw,30px)',
+    '--rstk-gap': 'clamp(16px,3vw,22px)',
+    ...(template.gradient ? { '--rstk-gradient': template.gradient } : {}),
+    ...(template.cyan ? { '--rstk-cyan': template.cyan } : {})
+  } as React.CSSProperties
+
+  const bodyClass = [
+    `rstk-tpl-${template.id}`,
+    `rstk-${template.mode}`,
+    `rstk-kind-${isLandingType ? 'landing' : 'form'}`,
+    template.centered ? 'rstk-centered' : '',
+    site.siteType === 'interactive_form' ? 'rstk-interactive' : ''
+  ].filter(Boolean).join(' ')
+
+  const designWidth = device === 'mobile' ? 390 : pageMaxWidth
+
+  return {
+    vars,
+    bodyClass,
+    designWidth,
+    templateId: template.id,
+    centered: Boolean(template.centered),
+    chrome: template.chrome,
+    isLanding: isLandingType
+  }
+}

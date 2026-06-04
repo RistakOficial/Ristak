@@ -1,0 +1,278 @@
+/*
+ * WYSIWYG editor canvas styles.
+ *
+ * Everything under `.rstkCanvas` is a 1:1 scoped copy of the backend public-site
+ * stylesheet (backend/src/services/sitesService.js -> RSTK_BASE_CSS) so the
+ * editor "cajita" renders identically to the published page. The `--rstk-*`
+ * variables are supplied inline by buildCanvasTheme(). Keep in sync with the
+ * backend. Editor-only chrome (selection outline, handles, inline-edit
+ * placeholders) lives in the clearly marked block at the bottom.
+ */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Inter+Tight:wght@500;600;700&display=swap');
+
+.rstkCanvas,
+.rstkCanvas *,
+.rstkCanvas *::before,
+.rstkCanvas *::after { box-sizing: border-box; }
+.rstkCanvas [hidden] { display: none !important; }
+
+.rstkCanvas {
+  font-family: var(--rstk-font);
+  color: var(--rstk-ink);
+  line-height: 1.5;
+  letter-spacing: -0.003em;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+.rstkCanvas img { max-width: 100%; display: block; }
+
+/* The frame carries the page background + image (published <body>). */
+.rstkCanvas .rstk-frame {
+  background-color: var(--rstk-page-bg);
+  background-image: var(--rstk-page-image);
+  background-repeat: no-repeat;
+  padding: var(--rstk-frame-pad, clamp(10px, 3vw, 32px)) 16px;
+}
+.rstkCanvas .rstk-page { width: 100%; max-width: var(--rstk-max); margin: 0 auto; border: 1px solid var(--rstk-page-border, transparent); border-radius: var(--rstk-page-radius, 0); }
+.rstkCanvas .rstk-shell { display: grid; gap: var(--rstk-gap); }
+.rstkCanvas.rstk-centered .rstk-shell { text-align: center; justify-items: center; }
+.rstkCanvas.rstk-centered .rstk-subheading, .rstkCanvas.rstk-centered .rstk-text { margin-inline: auto; }
+
+.rstkCanvas .rstk-block-style {
+  width: 100%;
+  background: var(--rstk-block-bg, transparent);
+  color: var(--rstk-block-text, var(--rstk-ink));
+  font-family: var(--rstk-block-font, var(--rstk-font));
+  font-size: var(--rstk-block-size, inherit);
+  font-weight: var(--rstk-block-weight, inherit);
+  border-radius: var(--rstk-block-radius, 0);
+  padding: var(--rstk-block-pad, 0);
+}
+.rstkCanvas .rstk-block-style .rstk-headline,
+.rstkCanvas .rstk-block-style h2,
+.rstkCanvas .rstk-block-style label,
+.rstkCanvas .rstk-block-style strong { color: var(--rstk-block-text, var(--rstk-ink)); }
+.rstkCanvas .rstk-block-style .rstk-subheading,
+.rstkCanvas .rstk-block-style .rstk-text,
+.rstkCanvas .rstk-block-style .rstk-help,
+.rstkCanvas .rstk-block-style p { color: color-mix(in srgb, var(--rstk-block-text, var(--rstk-ink)) 68%, var(--rstk-muted) 32%); }
+.rstkCanvas .rstk-block-style .rstk-button-link,
+.rstkCanvas .rstk-block-style button { border-radius: var(--rstk-block-button-radius, var(--rstk-btn-radius)); }
+.rstkCanvas .rstk-block-style input,
+.rstkCanvas .rstk-block-style textarea,
+.rstkCanvas .rstk-block-style select,
+.rstkCanvas .rstk-block-style .rstk-option {
+  background: var(--rstk-field-bg, var(--rstk-input-bg));
+  border-color: var(--rstk-field-border, var(--rstk-input-border));
+}
+.rstkCanvas .rstk-block-style .rstk-media,
+.rstkCanvas .rstk-block-style .rstk-video { width: var(--rstk-media-width, 100%); margin-inline: auto; }
+
+.rstkCanvas.rstk-kind-form .rstk-shell {
+  background: var(--rstk-surface); border: 1px solid var(--rstk-border);
+  border-radius: var(--rstk-radius-lg); box-shadow: var(--rstk-shadow);
+  padding: var(--rstk-pad); overflow: hidden;
+}
+.rstkCanvas .rstk-form { display: grid; gap: 18px; background: transparent; border: 0; box-shadow: none; padding: 0; margin: 0; }
+
+.rstkCanvas .rstk-headline { margin: 0; font-weight: var(--rstk-heading-weight); font-size: clamp(1.7rem, 4.6vw, 3rem); line-height: 1.05; letter-spacing: -0.02em; }
+.rstkCanvas.rstk-kind-landing .rstk-headline { font-size: clamp(2rem, 5.4vw, 3.6rem); }
+.rstkCanvas .rstk-subheading { margin: 0; color: var(--rstk-muted); font-size: clamp(1rem, 2vw, 1.18rem); max-width: 60ch; }
+.rstkCanvas .rstk-kicker { margin: 0; color: var(--rstk-accent); font-size: .78rem; font-weight: 800; text-transform: uppercase; letter-spacing: .09em; }
+.rstkCanvas .rstk-text { margin: 0; color: color-mix(in srgb, var(--rstk-ink) 80%, transparent); max-width: 66ch; }
+.rstkCanvas .rstk-hero, .rstkCanvas .rstk-cta, .rstkCanvas .rstk-section-list, .rstkCanvas .rstk-embedded-form { display: grid; gap: 14px; }
+.rstkCanvas .rstk-hero { gap: 16px; }
+.rstkCanvas .rstk-section-list h2, .rstkCanvas .rstk-cta h2, .rstkCanvas .rstk-embedded-form h2 { margin: 0; font-size: clamp(1.25rem, 2.6vw, 1.7rem); font-weight: var(--rstk-heading-weight); letter-spacing: -0.01em; }
+
+.rstkCanvas .rstk-button-link, .rstkCanvas .rstk-actions button {
+  -webkit-appearance: none; appearance: none; cursor: pointer;
+  min-height: 50px; display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  border: 1px solid var(--rstk-accent); border-radius: var(--rstk-btn-radius);
+  background: var(--rstk-accent); color: var(--rstk-on-accent);
+  font: inherit; font-weight: var(--rstk-btn-weight); font-size: 1.02rem; line-height: 1;
+  padding: 0 22px; text-decoration: none;
+}
+.rstkCanvas .rstk-button-link { width: fit-content; }
+.rstkCanvas.rstk-centered .rstk-button-link { margin-inline: auto; }
+.rstkCanvas .rstk-secondary { background: transparent !important; color: var(--rstk-ink) !important; border-color: var(--rstk-border) !important; }
+
+.rstkCanvas .rstk-list-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
+.rstkCanvas .rstk-list-grid article { border: 1px solid var(--rstk-border); border-radius: var(--rstk-radius); background: var(--rstk-surface2); padding: 16px; text-align: left; }
+.rstkCanvas .rstk-list-grid strong { display: block; font-weight: 750; }
+.rstkCanvas .rstk-list-grid p { margin: 6px 0 0; color: var(--rstk-muted); font-size: .92rem; }
+.rstkCanvas .rstk-list-grid small { display: block; margin-top: 8px; color: var(--rstk-muted); font-weight: 700; }
+
+.rstkCanvas .rstk-check-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 11px; text-align: left; }
+.rstkCanvas .rstk-check { display: flex; align-items: flex-start; gap: 11px; }
+.rstkCanvas .rstk-check-icon { flex: 0 0 auto; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; margin-top: 1px; }
+.rstkCanvas .rstk-check-pro .rstk-check-icon { background: color-mix(in srgb, #16a34a 16%, var(--rstk-surface)); color: #16a34a; }
+.rstkCanvas .rstk-check-con .rstk-check-icon { background: color-mix(in srgb, #dc2626 14%, var(--rstk-surface)); color: #dc2626; }
+.rstkCanvas .rstk-check-neutral .rstk-check-icon { background: color-mix(in srgb, var(--rstk-accent) 14%, var(--rstk-surface)); color: var(--rstk-accent); }
+.rstkCanvas .rstk-check-body { display: grid; gap: 2px; }
+.rstkCanvas .rstk-check-body strong { font-weight: 650; font-size: 1rem; }
+.rstkCanvas .rstk-check-body span { color: var(--rstk-muted); font-size: .92rem; }
+
+.rstkCanvas .rstk-media, .rstkCanvas .rstk-video { width: 100%; margin: 0; overflow: hidden; border: 1px solid var(--rstk-border); border-radius: var(--rstk-radius); background: var(--rstk-surface2); }
+.rstkCanvas .rstk-media img, .rstkCanvas .rstk-video iframe { width: 100%; display: block; border: 0; }
+.rstkCanvas .rstk-video { aspect-ratio: 16/9; position: relative; }
+.rstkCanvas .rstk-video iframe { height: 100%; }
+.rstkCanvas .rstk-media-empty { min-height: 190px; display: grid; place-items: center; gap: 8px; color: var(--rstk-muted); font-size: .92rem; }
+.rstkCanvas .rstk-play { display: grid; place-items: center; width: 58px; height: 58px; border-radius: 50%; background: var(--rstk-accent); color: var(--rstk-on-accent); }
+
+.rstkCanvas .rstk-field { display: grid; gap: 8px; text-align: left; }
+.rstkCanvas label { font-size: .95rem; font-weight: 700; color: var(--rstk-ink); }
+.rstkCanvas .rstk-required { color: #dc2626; margin-left: 3px; }
+.rstkCanvas .rstk-help { margin: 0; color: var(--rstk-muted); font-size: .9rem; }
+.rstkCanvas input, .rstkCanvas textarea, .rstkCanvas select {
+  width: 100%; border: 1px solid var(--rstk-input-border); border-radius: var(--rstk-radius);
+  background: var(--rstk-input-bg); color: var(--rstk-input-ink); font: inherit; font-size: 1rem;
+  padding: 13px 14px; outline: none;
+}
+.rstkCanvas textarea { resize: vertical; min-height: 108px; }
+.rstkCanvas input::placeholder, .rstkCanvas textarea::placeholder { color: color-mix(in srgb, var(--rstk-muted) 80%, transparent); }
+.rstkCanvas select { appearance: none; -webkit-appearance: none; background-image: linear-gradient(45deg, transparent 50%, var(--rstk-muted) 50%), linear-gradient(135deg, var(--rstk-muted) 50%, transparent 50%); background-position: calc(100% - 20px) calc(50% - 3px), calc(100% - 15px) calc(50% - 3px); background-size: 5px 5px, 5px 5px; background-repeat: no-repeat; padding-right: 42px; }
+
+.rstkCanvas .rstk-options { display: grid; gap: 10px; }
+.rstkCanvas .rstk-option { display: flex; align-items: center; gap: 11px; min-height: 50px; border: 1px solid var(--rstk-input-border); border-radius: var(--rstk-radius); padding: 11px 14px; background: var(--rstk-input-bg); color: var(--rstk-input-ink); font-weight: 600; }
+.rstkCanvas .rstk-option input { width: 19px; height: 19px; padding: 0; flex: 0 0 auto; accent-color: var(--rstk-accent); }
+
+.rstkCanvas .rstk-embed { width: 100%; min-height: 360px; display: block; border: 1px solid var(--rstk-border); border-radius: var(--rstk-radius); background: var(--rstk-surface2); }
+.rstkCanvas .rstk-calendar-embed { min-height: 760px; }
+.rstkCanvas iframe.rstk-embed { overflow: hidden; }
+.rstkCanvas .rstk-embed-code { background: transparent; }
+.rstkCanvas .rstk-embed-empty { display: grid; place-items: center; min-height: 160px; color: var(--rstk-muted); }
+
+.rstkCanvas .rstk-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 4px; }
+.rstkCanvas .rstk-actions [data-submit], .rstkCanvas .rstk-actions [data-next] { flex: 1 1 auto; }
+.rstkCanvas .rstk-progress { display: grid; gap: 8px; }
+.rstkCanvas .rstk-progress-track { height: 6px; border-radius: 999px; background: color-mix(in srgb, var(--rstk-ink) 12%, transparent); overflow: hidden; }
+.rstkCanvas .rstk-progress-fill { display: block; height: 100%; border-radius: 999px; background: var(--rstk-accent); }
+.rstkCanvas .rstk-progress b { font-size: .8rem; color: var(--rstk-muted); font-weight: 700; }
+
+/* ---------- Premium landing ---------- */
+.rstkCanvas.rstk-kind-landing .rstk-frame { padding: var(--rstk-frame-pad, clamp(10px, 3vw, 28px)) clamp(14px, 3vw, 24px) clamp(32px, 5vw, 64px); }
+.rstkCanvas.rstk-kind-landing .rstk-shell { gap: clamp(24px, 4vw, 64px); padding-top: clamp(6px, 2vw, 20px); }
+.rstkCanvas.rstk-kind-landing .rstk-headline { font-family: var(--rstk-display); font-size: clamp(2.3rem, 5.6vw, 4rem); line-height: 1.03; letter-spacing: -0.028em; background: linear-gradient(180deg, var(--rstk-ink), color-mix(in srgb, var(--rstk-ink) 58%, var(--rstk-page-bg))); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.rstkCanvas.rstk-kind-landing .rstk-subheading { font-size: clamp(1.05rem, 1.7vw, 1.28rem); max-width: 60ch; line-height: 1.6; }
+.rstkCanvas.rstk-kind-landing h2 { font-family: var(--rstk-display); }
+.rstkCanvas.rstk-kind-landing .rstk-text { font-size: 1.06rem; line-height: 1.7; }
+
+.rstkCanvas.rstk-kind-landing .rstk-kicker { display: inline-flex; align-items: center; gap: 8px; width: fit-content; padding: 7px 14px 7px 12px; border: 1px solid var(--rstk-border); border-radius: 999px; background: var(--rstk-surface); color: var(--rstk-muted); font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
+.rstkCanvas.rstk-kind-landing .rstk-kicker::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--rstk-accent); box-shadow: 0 0 10px 1px color-mix(in srgb, var(--rstk-accent) 80%, transparent); }
+
+.rstkCanvas.rstk-kind-landing .rstk-hero { position: relative; isolation: isolate; overflow: hidden; gap: 22px; justify-items: center; text-align: center; padding: clamp(32px, 4.8vw, 68px) clamp(20px, 3.2vw, 44px); border: 1px solid var(--rstk-border); border-radius: clamp(22px, 3vw, 32px); background: var(--rstk-surface); }
+.rstkCanvas.rstk-kind-landing .rstk-hero::before { content: ""; position: absolute; inset: -1px; z-index: -1; background-image: linear-gradient(to right, color-mix(in srgb, var(--rstk-ink) 7%, transparent) 1px, transparent 1px), linear-gradient(to bottom, color-mix(in srgb, var(--rstk-ink) 7%, transparent) 1px, transparent 1px); background-size: 56px 56px; -webkit-mask-image: radial-gradient(ellipse 78% 66% at 50% 28%, #000, transparent 72%); mask-image: radial-gradient(ellipse 78% 66% at 50% 28%, #000, transparent 72%); }
+.rstkCanvas.rstk-kind-landing .rstk-hero::after { content: ""; position: absolute; left: 50%; top: -32%; width: 82%; height: 380px; transform: translateX(-50%); z-index: -1; background: radial-gradient(ellipse at center, color-mix(in srgb, var(--rstk-accent) 22%, transparent), transparent 70%); filter: blur(22px); pointer-events: none; }
+.rstkCanvas.rstk-kind-landing .rstk-hero .rstk-headline { font-size: clamp(2.6rem, 6.2vw, 4.6rem); max-width: 16ch; }
+.rstkCanvas.rstk-kind-landing .rstk-hero .rstk-subheading { margin-inline: auto; }
+
+.rstkCanvas.rstk-kind-landing .rstk-section-list { gap: clamp(20px, 3vw, 38px); }
+.rstkCanvas.rstk-kind-landing .rstk-section-list h2 { text-align: center; max-width: 20ch; margin-inline: auto; font-size: clamp(1.85rem, 3.4vw, 2.85rem); line-height: 1.08; letter-spacing: -0.02em; }
+.rstkCanvas.rstk-kind-landing .rstk-list-grid { gap: 16px; }
+.rstkCanvas.rstk-kind-landing .rstk-list-grid article { padding: 24px; border-radius: 18px; background: var(--rstk-surface); }
+.rstkCanvas.rstk-kind-landing .rstk-list-grid strong { font-size: 1.06rem; }
+
+.rstkCanvas.rstk-kind-landing .rstk-checklist { padding: clamp(24px, 3vw, 40px); border: 1px solid var(--rstk-border); border-radius: 24px; background: var(--rstk-surface); width: 100%; margin-inline: auto; }
+.rstkCanvas.rstk-kind-landing .rstk-checklist h2 { text-align: center; margin-bottom: 4px; }
+.rstkCanvas.rstk-kind-landing .rstk-check-body strong { font-size: 1.04rem; }
+
+.rstkCanvas.rstk-kind-landing .rstk-cta { position: relative; overflow: hidden; justify-items: center; text-align: center; gap: 18px; padding: clamp(30px, 4.4vw, 62px) clamp(20px, 3.2vw, 44px); border: 1px solid var(--rstk-border); border-radius: clamp(24px, 3vw, 32px); background: var(--rstk-surface); }
+.rstkCanvas.rstk-kind-landing .rstk-cta::after { content: ""; position: absolute; left: 50%; top: -42%; width: 72%; height: 320px; transform: translateX(-50%); z-index: 0; background: radial-gradient(ellipse at center, color-mix(in srgb, var(--rstk-accent) 24%, transparent), transparent 70%); filter: blur(20px); pointer-events: none; }
+.rstkCanvas.rstk-kind-landing .rstk-cta > * { position: relative; z-index: 1; }
+.rstkCanvas.rstk-kind-landing .rstk-cta h2 { font-size: clamp(2rem, 4vw, 3.1rem); }
+.rstkCanvas.rstk-kind-landing .rstk-cta p { font-size: 1.1rem; max-width: 52ch; margin-inline: auto; }
+
+.rstkCanvas.rstk-kind-landing .rstk-button-link { border-radius: 999px; min-height: 54px; padding: 0 28px; font-family: var(--rstk-display); font-weight: 600; }
+.rstkCanvas.rstk-kind-landing .rstk-media, .rstkCanvas.rstk-kind-landing .rstk-video, .rstkCanvas.rstk-kind-landing .rstk-embed { border-radius: clamp(16px, 2vw, 22px); box-shadow: 0 40px 90px -52px rgba(0, 0, 0, .6); }
+.rstkCanvas.rstk-kind-landing .rstk-embedded-form { padding: clamp(24px, 3vw, 40px); border: 1px solid var(--rstk-border); border-radius: 24px; background: var(--rstk-surface); width: 100%; margin-inline: auto; }
+
+/* ============================================================
+ * Editor-only chrome (NOT part of the published page)
+ * ============================================================ */
+
+/* Scroll viewport that holds the scaled page. */
+.canvasViewport {
+  min-height: 620px;
+  max-height: calc(100vh - 230px);
+  overflow: auto;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 12px;
+  background:
+    linear-gradient(90deg, rgba(148, 163, 184, 0.07) 1px, transparent 1px),
+    linear-gradient(180deg, rgba(148, 163, 184, 0.07) 1px, transparent 1px),
+    var(--color-background-secondary, #f1f5f9);
+  background-size: 22px 22px;
+  padding: 18px;
+  display: flex;
+  justify-content: center;
+}
+.canvasViewportActive { border-color: color-mix(in srgb, var(--rstk-accent, #2563eb) 60%, transparent); }
+
+/* The scaler reserves the post-scale footprint; the inner page is rendered at
+   its true design width and transform-scaled to fit (a real "compressed monitor"). */
+.canvasScaler { position: relative; flex: 0 0 auto; }
+.canvasStage { transform-origin: top left; }
+
+/* Preview-only: fields and embeds are edited via the right panel, never typed
+   into directly on the canvas. Inline-edit text nodes opt back in below. */
+.rstkCanvas input, .rstkCanvas textarea, .rstkCanvas select { pointer-events: none; }
+.rstkCanvas iframe { pointer-events: none; }
+
+/* Selectable block wrapper. */
+.rstkCanvas .rstk-block-style { position: relative; }
+.rstkCanvas .rstkSel { cursor: pointer; }
+.rstkCanvas .rstkSel::after {
+  content: ""; position: absolute; inset: -6px; border-radius: 12px;
+  border: 1.5px solid transparent; pointer-events: none;
+  transition: border-color .12s ease, background .12s ease;
+}
+.rstkCanvas .rstkSel:hover::after { border-color: color-mix(in srgb, var(--rstk-accent) 40%, transparent); }
+.rstkCanvas .rstkSelActive::after {
+  border-color: var(--rstk-accent);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--rstk-accent) 14%, transparent);
+}
+
+/* Block toolbar (drag + delete). Counter-scaled so it stays usable at any zoom. */
+.rstkCanvas .rstkBlockTools {
+  position: absolute; top: -6px; right: -6px; z-index: 5;
+  display: flex; gap: 4px; opacity: 0; pointer-events: none;
+  transform: scale(calc(1 / var(--rstk-scale, 1))); transform-origin: top right;
+  transition: opacity .12s ease;
+}
+.rstkCanvas .rstkSel:hover .rstkBlockTools,
+.rstkCanvas .rstkSelActive .rstkBlockTools { opacity: 1; pointer-events: auto; }
+.rstkCanvas .rstkBlockTool {
+  width: 26px; height: 26px; display: grid; place-items: center;
+  border: 1px solid rgba(148, 163, 184, 0.28); border-radius: 7px;
+  background: #ffffff; color: #475569; box-shadow: 0 6px 16px -8px rgba(15, 23, 42, 0.5);
+}
+.rstkCanvas .rstkBlockTool:hover { color: #0f172a; border-color: rgba(148, 163, 184, 0.5); }
+.rstkCanvas .rstkBlockToolDrag { cursor: grab; }
+.rstkCanvas .rstkBlockToolDelete:hover { color: #dc2626; border-color: rgba(220, 38, 38, 0.4); }
+.rstkCanvas .rstkStepBadge {
+  position: absolute; top: -6px; left: -6px; z-index: 5;
+  transform: scale(calc(1 / var(--rstk-scale, 1))); transform-origin: top left;
+  border-radius: 999px; background: var(--rstk-accent); color: var(--rstk-on-accent);
+  padding: 3px 9px; font-size: .68rem; font-weight: 800; white-space: nowrap;
+}
+
+/* Inline-editable text nodes render as the real rstk element, so typography,
+   gradients and spacing match the published page exactly. */
+.rstkCanvas [data-rstk-edit] {
+  pointer-events: auto; cursor: text; outline: none;
+  caret-color: var(--rstk-accent); min-width: 1ch;
+  border-radius: 6px;
+}
+.rstkCanvas [data-rstk-edit]:focus { box-shadow: 0 0 0 2px color-mix(in srgb, var(--rstk-accent) 32%, transparent); }
+.rstkCanvas [data-rstk-edit][data-empty="true"]::before {
+  content: attr(data-placeholder); opacity: .45; pointer-events: none;
+}
+/* Gradient-clipped landing headline would hide typed text; force it solid while editing. */
+.rstkCanvas.rstk-kind-landing .rstk-headline[data-rstk-edit]:focus { background: none; -webkit-text-fill-color: var(--rstk-ink); color: var(--rstk-ink); }
+
+.rstkCanvas .rstkDropEmpty {
+  min-height: 260px; display: grid; place-items: center; gap: 10px;
+  color: var(--rstk-muted); text-align: center; border: 1.5px dashed var(--rstk-border);
+  border-radius: 16px; padding: 32px;
+}
+.rstkCanvas .rstkDropEmpty p { margin: 0; max-width: 320px; }

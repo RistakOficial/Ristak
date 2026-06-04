@@ -535,7 +535,9 @@
 .editorNameField {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 5px;
+  width: fit-content;
+  max-width: 520px;
   color: var(--color-text-primary);
 }
 
@@ -557,7 +559,7 @@
 
 .editorNameField input {
   min-width: 0;
-  width: 100%;
+  max-width: 480px;
   font-size: 1.12rem;
   font-weight: 850;
 }
@@ -2352,15 +2354,16 @@
 }
 
 .publicTitleEditorField {
-  width: min(520px, 100%);
+  width: fit-content;
+  max-width: 520px;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 5px;
   color: var(--color-text-secondary);
 }
 
 .publicTitleEditorField input {
-  width: 100%;
+  max-width: 480px;
   border: 1px solid transparent;
   border-radius: 8px;
   background: transparent;
