@@ -764,6 +764,39 @@
   color: var(--color-error);
 }
 
+.failureHelp {
+  display: grid;
+  gap: 7px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--color-warning) 32%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--color-warning) 9%, transparent);
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.failureHelp strong {
+  color: var(--color-text-primary);
+}
+
+.failureHelp span {
+  position: relative;
+  padding-left: 16px;
+}
+
+.failureHelp span::before {
+  content: '';
+  position: absolute;
+  top: 0.62em;
+  left: 2px;
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.5;
+}
+
 .integrationFacts {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -790,23 +823,106 @@
   letter-spacing: 0.04em;
 }
 
-.setupSteps {
+.setupNotice {
   display: grid;
-  gap: 10px;
-  margin: 0;
-  padding-left: 22px;
+  gap: 5px;
+  margin-bottom: 14px;
+  padding: 12px 0;
+  border-top: 1px solid rgba(148, 163, 184, 0.14);
+  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
   color: var(--color-text-secondary);
   font-size: 13px;
-  line-height: 1.55;
+  line-height: 1.45;
 }
 
-.setupSteps li::marker {
+.setupNotice strong {
+  color: var(--color-text-primary);
+}
+
+.setupSteps {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.setupSteps li {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 12px;
+  padding: 13px 0;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+.setupSteps li:first-child {
+  padding-top: 0;
+}
+
+.setupSteps li:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.stepNumber {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid color-mix(in srgb, var(--color-warning) 34%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-warning) 11%, transparent);
   color: var(--color-warning);
+  font-size: 12px;
   font-weight: 800;
 }
 
-.setupSteps strong {
+.stepBody {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.stepBody strong {
   color: var(--color-text-primary);
+  font-size: 13.5px;
+}
+
+.stepBody p,
+.stepBody span {
+  margin: 0;
+}
+
+.stepBody span {
+  position: relative;
+  padding-left: 16px;
+  color: var(--color-text-tertiary);
+}
+
+.stepBody span::before {
+  content: '';
+  position: absolute;
+  top: 0.65em;
+  left: 2px;
+  width: 4px;
+  height: 4px;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.55;
+}
+
+.stepBody code {
+  padding: 1px 5px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 5px;
+  background: rgba(148, 163, 184, 0.08);
+  color: var(--color-text-primary);
+  font-size: 12px;
+  overflow-wrap: anywhere;
 }
 
 .supportLinks {

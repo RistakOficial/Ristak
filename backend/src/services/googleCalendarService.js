@@ -41,6 +41,36 @@ function normalizePrivateKey(privateKey) {
   return cleanString(privateKey).replace(/\\n/g, '\n')
 }
 
+function decodeBase64Url(value) {
+  const normalized = cleanString(value).replace(/-/g, '+').replace(/_/g, '/')
+  const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=')
+  return Buffer.from(padded, 'base64').toString('utf8').trim()
+}
+
+function normalizeGoogleCalendarIdInput(value) {
+  const raw = cleanString(value)
+  if (!raw) return ''
+
+  try {
+    const url = new URL(raw)
+    const cid = url.searchParams.get('cid')
+    if (cid) {
+      const decoded = decodeBase64Url(cid)
+      if (decoded) return decoded
+    }
+
+    const src = url.searchParams.get('src')
+    if (src) {
+      const decoded = decodeURIComponent(src).trim()
+      if (decoded) return decoded
+    }
+  } catch {
+    // No es URL; se usa el valor tal cual como Calendar ID.
+  }
+
+  return raw
+}
+
 export function normalizeServiceAccountCredentials(input) {
   const credentials = typeof input === 'string' ? parseJson(input) : input
   if (!credentials || typeof credentials !== 'object') {
@@ -158,7 +188,7 @@ export async function getGoogleCalendarConfig({ includeCredentials = false } = {
 }
 
 export async function saveGoogleCalendarConfig({ calendarId, credentials }) {
-  const normalizedCalendarId = cleanString(calendarId)
+  const normalizedCalendarId = normalizeGoogleCalendarIdInput(calendarId)
   if (!normalizedCalendarId) {
     throw new Error('El Calendar ID es requerido')
   }
