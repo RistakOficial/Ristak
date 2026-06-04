@@ -34,7 +34,6 @@ import {
   Image,
   LayoutTemplate,
   ListChecks,
-  Maximize2,
   Monitor,
   MoreVertical,
   MousePointerClick,
@@ -50,7 +49,14 @@ import {
   Type,
   Video
 } from 'lucide-react'
-import { Button, Loading } from '@/components/common'
+import {
+  Button,
+  Loading,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger
+} from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
 import {
   blockLabels,
@@ -253,6 +259,10 @@ const relLum = (hex: string): number => {
   return 0.2126 * lin(parseInt(h.slice(0, 2), 16)) + 0.7152 * lin(parseInt(h.slice(2, 4), 16)) + 0.0722 * lin(parseInt(h.slice(4, 6), 16))
 }
 
+// Readable foreground for a solid accent/button background. Mirrors the backend
+// onAccent resolution so the editor never renders white text on a white button.
+const onAccentFor = (hex: string): string => (isHex6(hex) && relLum(hex) > 0.6 ? '#08080a' : '#ffffff')
+
 // Mirrors the backend palette resolution so the editor canvas matches the published site.
 const userBgColor = (site: PublicSite): string | null => {
   const v = site.theme?.backgroundColor
@@ -292,6 +302,7 @@ const getCanvasThemeStyle = (site: PublicSite): React.CSSProperties => {
     return {
       ...pageVars,
       '--site-accent': meta?.accent || '#111827',
+      '--site-on-accent': onAccentFor(meta?.accent || '#111827'),
       '--site-background': id === 'tiktok' ? '#161616' : '#ffffff',
       '--site-surface': id === 'tiktok' ? '#161616' : '#ffffff',
       '--site-frame': id === 'tiktok' ? '#000000' : '#f0f2f5',
@@ -306,6 +317,7 @@ const getCanvasThemeStyle = (site: PublicSite): React.CSSProperties => {
   return {
     ...pageVars,
     '--site-accent': accent,
+    '--site-on-accent': onAccentFor(accent),
     '--site-background': surface,
     '--site-surface': surface,
     '--site-frame': bg,
@@ -789,11 +801,9 @@ export const Sites: React.FC = () => {
       ? (isFormSite(selectedSite) ? selectedSite : null)
       : null
   const isFocusedSitesMode = createFlow !== 'closed' || Boolean(editorSite)
-  const publicUrl = editorSite ? buildPublicUrl(editorSite, domainConfig) : ''
   const hasNextFunnelPage = Boolean(
     editorSite && isLanding(editorSite) && pages.length > 1 && activePage && pages.some(page => page.sortOrder > activePage.sortOrder)
   )
-  const editorTrackingStats = getTrackingStats(editorSite)
 
   const performUrlNavigation = useCallback((href: string) => {
     const target = new URL(href, window.location.href)
@@ -1335,13 +1345,6 @@ export const Sites: React.FC = () => {
     }
   }
 
-  const handleOpenFullEditor = () => {
-    if (!editorSite) return
-    const url = new URL(window.location.href)
-    url.searchParams.set('siteEditor', editorSite.id)
-    window.open(url.toString(), '_blank', 'noopener,noreferrer')
-  }
-
   const handleVerifyDomain = async () => {
     setVerifying(true)
     try {
@@ -1596,12 +1599,6 @@ export const Sites: React.FC = () => {
                   />
                   <Pencil size={14} />
                 </label>
-                <div className={styles.trackingSummary} aria-label="Metricas de tracking nativo">
-                  <span className={styles.trackingMetric}><span>{editorTrackingStats.views} vistas</span></span>
-                  <span className={styles.trackingMetric}><span>{editorTrackingStats.visitors} visitantes</span></span>
-                  <span className={styles.trackingMetric}><span>{editorTrackingStats.conversions} conversiones</span></span>
-                  <span className={styles.trackingMetric}><span>{editorTrackingStats.conversionRate}% conversion</span></span>
-                </div>
               </div>
               <div className={styles.editorTopControls}>
                 <label className={styles.compactField}>
@@ -1613,73 +1610,59 @@ export const Sites: React.FC = () => {
                     onBlur={() => handleSaveSite()}
                   />
                 </label>
-                <label className={`${styles.metaToggle} ${editorSite.metaCapiEnabled ? styles.metaToggleActive : ''}`}>
-                  <input
-                    type="checkbox"
-                    checked={editorSite.metaCapiEnabled}
-                    onChange={(event) => updateSelectedSite({ metaCapiEnabled: event.target.checked })}
-                  />
+                <div className={`${styles.metaCard} ${editorSite.metaCapiEnabled ? styles.metaCardActive : ''}`}>
                   <span className={styles.metaMark} aria-hidden="true">∞</span>
-                  <span>
+                  <div className={styles.metaCardInfo}>
                     <strong>Meta Pixel + CAPI</strong>
                     <small>{editorSite.metaCapiEnabled ? 'Activo' : 'Apagado'}</small>
-                  </span>
-                </label>
-                <label className={styles.compactField}>
-                  <span>Evento</span>
-                  <select
-                    value={editorSite.metaEventName || 'Lead'}
-                    disabled={!editorSite.metaCapiEnabled}
-                    onChange={(event) => updateSelectedSite({ metaEventName: event.target.value })}
-                    onBlur={() => handleSaveSite()}
-                  >
-                    {metaEventOptions.map(option => (
-                      <option key={option.value} value={option.value}>{option.label}</option>
-                    ))}
-                  </select>
-                </label>
-                {hasNextFunnelPage && (
-                  <label className={styles.compactField}>
-                    <span>Conversion</span>
+                  </div>
+                  <label className={styles.metaSwitch} title={editorSite.metaCapiEnabled ? 'Desactivar' : 'Activar'}>
+                    <input
+                      type="checkbox"
+                      checked={editorSite.metaCapiEnabled}
+                      onChange={(event) => updateSelectedSite({ metaCapiEnabled: event.target.checked })}
+                    />
+                    <span className={styles.metaSwitchTrack} aria-hidden="true" />
+                  </label>
+                  <span className={styles.metaCardDivider} aria-hidden="true" />
+                  <label className={styles.metaCardField}>
+                    <span>Evento</span>
                     <select
-                      value={editorSite.theme?.metaConversionTarget || 'same_page'}
+                      value={editorSite.metaEventName || 'Lead'}
                       disabled={!editorSite.metaCapiEnabled}
-                      onChange={(event) => patchSiteTheme({ metaConversionTarget: event.target.value as SiteTheme['metaConversionTarget'] })}
+                      onChange={(event) => updateSelectedSite({ metaEventName: event.target.value })}
                       onBlur={() => handleSaveSite()}
                     >
-                      <option value="same_page">Esta pagina</option>
-                      <option value="next_page">Pagina siguiente</option>
+                      {metaEventOptions.map(option => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
                     </select>
                   </label>
-                )}
-                <div className={styles.editorActions}>
-                  {publicUrl && (
-                    <a className={styles.iconLink} href={publicUrl} target="_blank" rel="noreferrer">
-                      <ExternalLink size={16} />
-                      Abrir
-                    </a>
+                  {hasNextFunnelPage && (
+                    <label className={styles.metaCardField}>
+                      <span>Conversion</span>
+                      <select
+                        value={editorSite.theme?.metaConversionTarget || 'same_page'}
+                        disabled={!editorSite.metaCapiEnabled}
+                        onChange={(event) => patchSiteTheme({ metaConversionTarget: event.target.value as SiteTheme['metaConversionTarget'] })}
+                        onBlur={() => handleSaveSite()}
+                      >
+                        <option value="same_page">Esta pagina</option>
+                        <option value="next_page">Pagina siguiente</option>
+                      </select>
+                    </label>
                   )}
-                  <div className={styles.deviceToggle}>
-                    <button type="button" className={device === 'desktop' ? styles.deviceActive : ''} onClick={() => setDevice('desktop')} title="Desktop">
-                      <Monitor size={16} />
-                    </button>
-                    <button type="button" className={device === 'mobile' ? styles.deviceActive : ''} onClick={() => setDevice('mobile')} title="Movil">
-                      <Smartphone size={16} />
-                    </button>
-                  </div>
-                  <Button variant="secondary" onClick={handleOpenFullEditor}>
-                    <Maximize2 size={16} />
-                    Pantalla grande
-                  </Button>
-                  <Button variant="secondary" onClick={handlePreviewSite}>
+                </div>
+                <div className={styles.editorActions}>
+                  <Button variant="secondary" size="lg" onClick={handlePreviewSite}>
                     <Eye size={16} />
                     Previsualizar
                   </Button>
-                  <Button variant="secondary" onClick={() => handleSaveSite()} loading={saving}>
+                  <Button variant="secondary" size="lg" onClick={() => handleSaveSite()} loading={saving}>
                     <Save size={16} />
                     Guardar
                   </Button>
-                  <Button onClick={() => handleSaveSite('published')} loading={saving}>
+                  <Button size="lg" onClick={() => handleSaveSite('published')} loading={saving}>
                     <Send size={16} />
                     Publicar
                   </Button>
@@ -1788,9 +1771,17 @@ export const Sites: React.FC = () => {
 
                 <section className={styles.canvasColumn}>
                   <div className={styles.canvasToolbar}>
-                    <div>
+                    <div className={styles.canvasToolbarTitle}>
                       <strong>{isLanding(editorSite) ? activePage?.title || 'Pagina 1' : 'Canvas'}</strong>
                       <span>{canvasBlocks.length} {canvasBlocks.length === 1 ? 'bloque' : 'bloques'}</span>
+                    </div>
+                    <div className={styles.deviceToggle} role="group" aria-label="Vista previa del dispositivo">
+                      <button type="button" className={device === 'desktop' ? styles.deviceActive : ''} onClick={() => setDevice('desktop')} title="Escritorio">
+                        <Monitor size={15} />
+                      </button>
+                      <button type="button" className={device === 'mobile' ? styles.deviceActive : ''} onClick={() => setDevice('mobile')} title="Movil">
+                        <Smartphone size={15} />
+                      </button>
                     </div>
                   </div>
                   <DndContext
@@ -1809,7 +1800,7 @@ export const Sites: React.FC = () => {
                         onDrop={handleCanvasDrop}
                       >
                         <div
-                          className={`${styles.pageCanvas} ${editorSite.siteType === 'interactive_form' ? styles.interactiveCanvas : ''} ${isSiteDark(editorSite) ? styles.darkCanvas : ''}`}
+                          className={`${styles.pageCanvas} ${isLanding(editorSite) ? styles.landingCanvas : styles.formCanvas} ${editorSite.siteType === 'interactive_form' ? styles.interactiveCanvas : ''} ${isSiteDark(editorSite) ? styles.darkCanvas : ''}`}
                           onClick={() => setSelectedBlockId('')}
                         >
                           {!isLanding(editorSite) && platformChromeFor(resolveTemplateId(editorSite)) && (
@@ -2214,143 +2205,102 @@ const CreateFlowPanel: React.FC<CreateFlowPanelProps> = ({ step, creating, onCre
   )
 }
 
-interface DesignControlsProps {
-  site: PublicSite
-  onPatchTheme: (patch: Partial<SiteTheme>) => void
-  onSave: () => void
+const clampNumber = (value: number, min: number, max: number) =>
+  Math.min(max, Math.max(min, Number.isFinite(value) ? value : min))
+
+interface DimensionFieldProps {
+  label: string
+  value: number
+  min: number
+  max: number
+  step?: number
+  unit?: string
+  onChange: (value: number) => void
+  onCommit: () => void
 }
 
-const CanvasStyleControls: React.FC<DesignControlsProps> = ({ site, onPatchTheme, onSave }) => {
-  const currentId = resolveTemplateId(site)
-  const platform = platformChromeFor(currentId)
-  if (platform) return null
-
-  const isForm = site.siteType !== 'landing_page'
-  const pageColorValue = userBgColor(site) || (isForm ? '#ffffff' : '#08080a')
-  const accentColorValue = userAccentColor(site) || (isForm ? '#111827' : '#ffffff')
-
+// Slider + numeric box so a value can be dialed in visually or typed exactly.
+const DimensionField: React.FC<DimensionFieldProps> = ({ label, value, min, max, step = 1, unit = 'px', onChange, onCommit }) => {
+  const set = (raw: number) => onChange(clampNumber(raw, min, max))
   return (
-    <div className={styles.canvasStyleControls} aria-label="Estilo de pagina">
-      <label>
-        <span>Fondo</span>
+    <label className={styles.dimensionField}>
+      <span>{label}</span>
+      <div className={styles.dimensionRow}>
         <input
-          type="color"
-          value={pageColorValue}
-          onChange={(event) => onPatchTheme({ backgroundColor: event.target.value })}
-          onBlur={onSave}
+          className={styles.dimensionSlider}
+          type="range"
+          min={min}
+          max={max}
+          step={step}
+          value={value}
+          onChange={(event) => set(Number(event.target.value))}
+          onPointerUp={onCommit}
+          onKeyUp={onCommit}
         />
-      </label>
-      <label>
-        <span>Acento</span>
-        <input
-          type="color"
-          value={accentColorValue}
-          onChange={(event) => onPatchTheme({ accentColor: event.target.value })}
-          onBlur={onSave}
-        />
-      </label>
-    </div>
+        <div className={styles.dimensionBox}>
+          <input
+            type="number"
+            min={min}
+            max={max}
+            step={step}
+            value={value}
+            onChange={(event) => set(Number(event.target.value))}
+            onBlur={onCommit}
+          />
+          <small>{unit}</small>
+        </div>
+      </div>
+    </label>
   )
 }
 
-const DesignControls: React.FC<DesignControlsProps> = ({ site, onPatchTheme, onSave }) => {
-  const currentId = resolveTemplateId(site)
-  const isFormSite = site.siteType !== 'landing_page'
-  const platform = platformChromeFor(currentId)
-  const theme = site.theme || {}
+interface ColorFieldProps {
+  label: string
+  value: string
+  onChange: (hex: string) => void
+  onCommit: () => void
+}
 
-  const pageColorValue = userBgColor(site) || (isFormSite ? '#ffffff' : '#08080a')
-  const accentColorValue = userAccentColor(site) || (isFormSite ? '#111827' : '#ffffff')
-  const pagePresets = isFormSite
-    ? ['#ffffff', '#f6f7f9', '#0a0b0d', '#0b1020']
-    : ['#08080a', '#0b1020', '#0f172a', '#f6f7f9']
-  const accentPresets = ['#ffffff', '#2563eb', '#6366f1', '#10b981', '#111827']
+// Custom color control: a live swatch (opens the native picker) plus an editable hex box.
+const ColorField: React.FC<ColorFieldProps> = ({ label, value, onChange, onCommit }) => {
+  const safe = isHex6(value) ? value.toLowerCase() : '#000000'
+  const [text, setText] = useState(safe)
+  useEffect(() => { setText(isHex6(value) ? value.toLowerCase() : (value || '')) }, [value])
+
+  const commitText = () => {
+    const norm = text.startsWith('#') ? text : `#${text}`
+    if (isHex6(norm)) {
+      onChange(norm.toLowerCase())
+      onCommit()
+    } else {
+      setText(safe)
+    }
+  }
 
   return (
-    <div className={styles.designBar}>
-      {!platform && (
-        <div className={styles.designRow}>
-          <div className={styles.colorField}>
-            <span>Color de página</span>
-            <div className={styles.colorPickRow}>
-              <input
-                type="color"
-                className={styles.colorInput}
-                value={pageColorValue}
-                onChange={(event) => onPatchTheme({ backgroundColor: event.target.value })}
-                onBlur={onSave}
-                aria-label="Color de página"
-              />
-              {pagePresets.map(color => (
-                <button
-                  key={color}
-                  type="button"
-                  className={`${styles.swatchBtn} ${pageColorValue.toLowerCase() === color ? styles.swatchBtnActive : ''}`}
-                  style={{ background: color }}
-                  onClick={() => { onPatchTheme({ backgroundColor: color }); window.setTimeout(onSave, 0) }}
-                  aria-label={color}
-                />
-              ))}
-            </div>
-          </div>
-          <div className={styles.colorField}>
-            <span>Color de acento</span>
-            <div className={styles.colorPickRow}>
-              <input
-                type="color"
-                className={styles.colorInput}
-                value={accentColorValue}
-                onChange={(event) => onPatchTheme({ accentColor: event.target.value })}
-                onBlur={onSave}
-                aria-label="Color de acento"
-              />
-              {accentPresets.map(color => (
-                <button
-                  key={color}
-                  type="button"
-                  className={`${styles.swatchBtn} ${accentColorValue.toLowerCase() === color ? styles.swatchBtnActive : ''}`}
-                  style={{ background: color }}
-                  onClick={() => { onPatchTheme({ accentColor: color }); window.setTimeout(onSave, 0) }}
-                  aria-label={color}
-                />
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-      {(isFormSite || platform) && (
-        <div className={styles.designRow}>
-          {isFormSite && (
-            <label className={styles.inlineField}>
-              <span>Texto del boton</span>
-              <input value={theme.submitText || ''} placeholder="Enviar" onChange={(event) => onPatchTheme({ submitText: event.target.value })} onBlur={onSave} />
-            </label>
-          )}
-          {platform && (
-            <>
-              <label className={styles.inlineField}>
-                <span>Nombre de la marca</span>
-                <input value={theme.brandName || ''} placeholder={site.title || 'Tu marca'} onChange={(event) => onPatchTheme({ brandName: event.target.value })} onBlur={onSave} />
-              </label>
-              <label className={styles.inlineField}>
-                <span>Etiqueta</span>
-                <input value={theme.brandSubtitle || ''} placeholder={platform === 'instagram' ? 'Publicacion pagada' : 'Patrocinado'} onChange={(event) => onPatchTheme({ brandSubtitle: event.target.value })} onBlur={onSave} />
-              </label>
-              <label className={styles.inlineField}>
-                <span>Avatar (URL)</span>
-                <input value={theme.brandAvatar || ''} placeholder="https://..." onChange={(event) => onPatchTheme({ brandAvatar: event.target.value })} onBlur={onSave} />
-              </label>
-              {platform === 'facebook' && (
-                <label className={styles.brandCheckbox}>
-                  <input type="checkbox" checked={theme.brandVerified !== false} onChange={(event) => { onPatchTheme({ brandVerified: event.target.checked }); window.setTimeout(onSave, 0) }} />
-                  <span>Verificado</span>
-                </label>
-              )}
-            </>
-          )}
-        </div>
-      )}
-    </div>
+    <label className={styles.colorField}>
+      <span>{label}</span>
+      <div className={styles.colorRow}>
+        <span className={styles.colorSwatch} style={{ background: safe }}>
+          <input
+            type="color"
+            value={safe}
+            onChange={(event) => { setText(event.target.value); onChange(event.target.value) }}
+            onBlur={onCommit}
+            aria-label={label}
+          />
+        </span>
+        <input
+          className={styles.colorHex}
+          value={text}
+          spellCheck={false}
+          maxLength={7}
+          onChange={(event) => setText(event.target.value)}
+          onBlur={commitText}
+          onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); commitText() } }}
+        />
+      </div>
+    </label>
   )
 }
 
@@ -2453,8 +2403,6 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
   onDragPage,
   onReorderPages
 }) => {
-  const [menuPageId, setMenuPageId] = useState<string | null>(null)
-
   return (
     <aside className={styles.pagesPanel}>
       <div className={styles.panelHeader}>
@@ -2492,28 +2440,31 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
               <GripVertical size={14} />
               <span>{page.title || `Pagina ${index + 1}`}</span>
             </button>
-            <div className={styles.pageMenuWrap}>
-              <button
-                type="button"
-                className={styles.pageMenuButton}
-                onClick={() => setMenuPageId(current => current === page.id ? null : page.id)}
-                aria-label="Opciones de pagina"
-              >
-                <MoreVertical size={15} />
-              </button>
-              {menuPageId === page.id && (
-                <div className={styles.pageMenu}>
-                  <button type="button" onClick={() => { setMenuPageId(null); onDuplicatePage(page.id) }}>
-                    <Copy size={14} />
-                    Duplicar pagina
-                  </button>
-                  <button type="button" disabled={pages.length <= 1} onClick={() => { setMenuPageId(null); onDeletePage(page.id) }}>
-                    <Trash2 size={14} />
-                    Eliminar pagina
-                  </button>
-                </div>
-              )}
-            </div>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  className={styles.pageMenuButton}
+                  aria-label="Opciones de pagina"
+                >
+                  <MoreVertical size={15} />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" sideOffset={6} className={styles.pageMenu}>
+                <DropdownMenuItem onSelect={() => onDuplicatePage(page.id)}>
+                  <Copy size={14} />
+                  Duplicar pagina
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  disabled={pages.length <= 1}
+                  className={styles.pageMenuDanger}
+                  onSelect={() => onDeletePage(page.id)}
+                >
+                  <Trash2 size={14} />
+                  Eliminar pagina
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         ))}
       </div>
@@ -2657,70 +2608,107 @@ const InlineBlockStyleControls: React.FC<{
   const supportsMedia = block.blockType === 'image'
 
   return (
-    <div className={styles.inlineBlockTools} onClick={(event) => event.stopPropagation()}>
-      <label>
-        <span>Fondo</span>
-        <input type="color" value={getSettingHex(settings, 'blockBg', '#ffffff')} onChange={(event) => onPatchSettings({ blockBg: event.target.value })} onBlur={onSave} />
-      </label>
-      <label>
-        <span>Texto</span>
-        <input type="color" value={getSettingHex(settings, 'blockText', '#111827')} onChange={(event) => onPatchSettings({ blockText: event.target.value })} onBlur={onSave} />
-      </label>
-      <label>
-        <span>Padding</span>
-        <input type="range" min="8" max="64" value={getSettingNumber(settings, 'blockPadding', 16, 8, 64)} onChange={(event) => onPatchSettings({ blockPadding: Number(event.target.value) })} onBlur={onSave} />
-      </label>
-      <label>
-        <span>Radio</span>
-        <input type="range" min="0" max="36" value={getSettingNumber(settings, 'blockRadius', 8, 0, 36)} onChange={(event) => onPatchSettings({ blockRadius: Number(event.target.value) })} onBlur={onSave} />
-      </label>
-      <label>
-        <span>Tamano</span>
-        <input type="range" min="12" max="72" value={getSettingNumber(settings, 'fontSize', 18, 12, 72)} onChange={(event) => onPatchSettings({ fontSize: Number(event.target.value) })} onBlur={onSave} />
-      </label>
-      <label>
-        <span>Fuente</span>
-        <select value={getSettingString(settings, 'fontFamily')} onChange={(event) => onPatchSettings({ fontFamily: event.target.value })} onBlur={onSave}>
-          <option value="">Sistema</option>
-          <option value="Inter, system-ui, sans-serif">Inter</option>
-          <option value="'Inter Tight', Inter, system-ui, sans-serif">Inter Tight</option>
-          <option value="Georgia, 'Times New Roman', serif">Serif</option>
-        </select>
-      </label>
-      <label className={styles.inlineCheck}>
-        <input
-          type="checkbox"
-          checked={settings.fontWeight === 'bold'}
-          onChange={(event) => {
-            onPatchSettings({ fontWeight: event.target.checked ? 'bold' : '' })
-            window.setTimeout(onSave, 0)
-          }}
+    <div className={styles.blockStyleControls} onClick={(event) => event.stopPropagation()}>
+      <div className={styles.panelSubheader}>Estilo del bloque</div>
+      <div className={styles.twoColumn}>
+        <ColorField
+          label="Fondo"
+          value={getSettingHex(settings, 'blockBg', '#ffffff')}
+          onChange={(value) => onPatchSettings({ blockBg: value })}
+          onCommit={onSave}
         />
-        <span>Bold</span>
-      </label>
-      {supportsButton && (
-        <label>
-          <span>Botones</span>
-          <input type="range" min="0" max="40" value={getSettingNumber(settings, 'buttonRadius', 8, 0, 40)} onChange={(event) => onPatchSettings({ buttonRadius: Number(event.target.value) })} onBlur={onSave} />
+        <ColorField
+          label="Texto"
+          value={getSettingHex(settings, 'blockText', '#111827')}
+          onChange={(value) => onPatchSettings({ blockText: value })}
+          onCommit={onSave}
+        />
+      </div>
+      <DimensionField
+        label="Padding"
+        value={getSettingNumber(settings, 'blockPadding', 16, 8, 64)}
+        min={8}
+        max={64}
+        onChange={(value) => onPatchSettings({ blockPadding: value })}
+        onCommit={onSave}
+      />
+      <div className={styles.twoColumn}>
+        <DimensionField
+          label="Radio"
+          value={getSettingNumber(settings, 'blockRadius', 8, 0, 36)}
+          min={0}
+          max={36}
+          onChange={(value) => onPatchSettings({ blockRadius: value })}
+          onCommit={onSave}
+        />
+        <DimensionField
+          label="Texto"
+          value={getSettingNumber(settings, 'fontSize', 18, 12, 72)}
+          min={12}
+          max={72}
+          unit="px"
+          onChange={(value) => onPatchSettings({ fontSize: value })}
+          onCommit={onSave}
+        />
+      </div>
+      <div className={styles.twoColumn}>
+        <label className={styles.field}>
+          <span>Fuente</span>
+          <select value={getSettingString(settings, 'fontFamily')} onChange={(event) => onPatchSettings({ fontFamily: event.target.value })} onBlur={onSave}>
+            <option value="">Sistema</option>
+            <option value="Inter, system-ui, sans-serif">Inter</option>
+            <option value="'Inter Tight', Inter, system-ui, sans-serif">Inter Tight</option>
+            <option value="Georgia, 'Times New Roman', serif">Serif</option>
+          </select>
         </label>
+        <label className={styles.checkboxLabel}>
+          <input
+            type="checkbox"
+            checked={settings.fontWeight === 'bold'}
+            onChange={(event) => {
+              onPatchSettings({ fontWeight: event.target.checked ? 'bold' : '' })
+              window.setTimeout(onSave, 0)
+            }}
+          />
+          <span>Negrita</span>
+        </label>
+      </div>
+      {supportsButton && (
+        <DimensionField
+          label="Radio de botones"
+          value={getSettingNumber(settings, 'buttonRadius', 8, 0, 40)}
+          min={0}
+          max={40}
+          onChange={(value) => onPatchSettings({ buttonRadius: value })}
+          onCommit={onSave}
+        />
       )}
       {supportsField && (
-        <>
-          <label>
-            <span>Caja</span>
-            <input type="color" value={getSettingHex(settings, 'fieldBg', '#ffffff')} onChange={(event) => onPatchSettings({ fieldBg: event.target.value })} onBlur={onSave} />
-          </label>
-          <label>
-            <span>Borde</span>
-            <input type="color" value={getSettingHex(settings, 'fieldBorder', '#dbe3ef')} onChange={(event) => onPatchSettings({ fieldBorder: event.target.value })} onBlur={onSave} />
-          </label>
-        </>
+        <div className={styles.twoColumn}>
+          <ColorField
+            label="Caja del campo"
+            value={getSettingHex(settings, 'fieldBg', '#ffffff')}
+            onChange={(value) => onPatchSettings({ fieldBg: value })}
+            onCommit={onSave}
+          />
+          <ColorField
+            label="Borde del campo"
+            value={getSettingHex(settings, 'fieldBorder', '#dbe3ef')}
+            onChange={(value) => onPatchSettings({ fieldBorder: value })}
+            onCommit={onSave}
+          />
+        </div>
       )}
       {supportsMedia && (
-        <label>
-          <span>Imagen</span>
-          <input type="range" min="30" max="100" value={getSettingNumber(settings, 'mediaWidth', 100, 30, 100)} onChange={(event) => onPatchSettings({ mediaWidth: Number(event.target.value) })} onBlur={onSave} />
-        </label>
+        <DimensionField
+          label="Ancho de imagen"
+          value={getSettingNumber(settings, 'mediaWidth', 100, 30, 100)}
+          min={30}
+          max={100}
+          unit="%"
+          onChange={(value) => onPatchSettings({ mediaWidth: value })}
+          onCommit={onSave}
+        />
       )}
     </div>
   )
@@ -3285,35 +3273,55 @@ const PageInspector: React.FC<{
       </div>
       <div className={styles.propertiesBody}>
         <div className={styles.settingsGroup}>
+          <div className={styles.panelSubheader}>Colores</div>
           <div className={styles.twoColumn}>
-            <label className={styles.field}>
-              <span>Fondo de pagina</span>
-              <input type="color" value={userBgColor(site) || getThemeHex(theme, 'backgroundColor', '#ffffff')} onChange={(event) => onPatchTheme({ backgroundColor: event.target.value })} onBlur={onSaveSite} />
-            </label>
-            <label className={styles.field}>
-              <span>Acento</span>
-              <input type="color" value={userAccentColor(site) || getThemeHex(theme, 'accentColor', '#111827')} onChange={(event) => onPatchTheme({ accentColor: event.target.value })} onBlur={onSaveSite} />
-            </label>
+            <ColorField
+              label="Fondo de pagina"
+              value={userBgColor(site) || resolvedPageBg(site)}
+              onChange={(value) => onPatchTheme({ backgroundColor: value })}
+              onCommit={onSaveSite}
+            />
+            <ColorField
+              label="Acento"
+              value={userAccentColor(site) || (isSiteDark(site) ? '#ffffff' : '#111827')}
+              onChange={(value) => onPatchTheme({ accentColor: value })}
+              onCommit={onSaveSite}
+            />
           </div>
+          <ColorField
+            label="Borde de la pagina"
+            value={getThemeHex(theme, 'pageBorderColor', '#111827')}
+            onChange={(value) => onPatchTheme({ pageBorderColor: value })}
+            onCommit={onSaveSite}
+          />
+
+          <div className={styles.panelSubheader}>Dimensiones</div>
+          <DimensionField
+            label="Ancho maximo"
+            value={getThemeNumber(theme, 'pageMaxWidth', isLanding(site) ? 1160 : 520, 360, 1440)}
+            min={360}
+            max={1440}
+            step={10}
+            onChange={(value) => onPatchTheme({ pageMaxWidth: value })}
+            onCommit={onSaveSite}
+          />
           <div className={styles.twoColumn}>
-            <label className={styles.field}>
-              <span>Padding pagina</span>
-              <input type="range" min="0" max="80" value={getThemeNumber(theme, 'pagePadding', isLanding(site) ? 18 : 22, 0, 80)} onChange={(event) => onPatchTheme({ pagePadding: Number(event.target.value) })} onBlur={onSaveSite} />
-            </label>
-            <label className={styles.field}>
-              <span>Ancho maximo</span>
-              <input type="range" min="360" max="1440" value={getThemeNumber(theme, 'pageMaxWidth', isLanding(site) ? 1160 : 520, 360, 1440)} onChange={(event) => onPatchTheme({ pageMaxWidth: Number(event.target.value) })} onBlur={onSaveSite} />
-            </label>
-          </div>
-          <div className={styles.twoColumn}>
-            <label className={styles.field}>
-              <span>Borde pagina</span>
-              <input type="color" value={getThemeHex(theme, 'pageBorderColor', '#111827')} onChange={(event) => onPatchTheme({ pageBorderColor: event.target.value })} onBlur={onSaveSite} />
-            </label>
-            <label className={styles.field}>
-              <span>Radio pagina</span>
-              <input type="range" min="0" max="40" value={getThemeNumber(theme, 'pageRadius', isLanding(site) ? 0 : 24, 0, 40)} onChange={(event) => onPatchTheme({ pageRadius: Number(event.target.value) })} onBlur={onSaveSite} />
-            </label>
+            <DimensionField
+              label="Padding"
+              value={getThemeNumber(theme, 'pagePadding', isLanding(site) ? 18 : 22, 0, 80)}
+              min={0}
+              max={80}
+              onChange={(value) => onPatchTheme({ pagePadding: value })}
+              onCommit={onSaveSite}
+            />
+            <DimensionField
+              label="Radio"
+              value={getThemeNumber(theme, 'pageRadius', isLanding(site) ? 0 : 24, 0, 40)}
+              min={0}
+              max={40}
+              onChange={(value) => onPatchTheme({ pageRadius: value })}
+              onCommit={onSaveSite}
+            />
           </div>
           {hasNextPage && site.metaCapiEnabled && (
             <label className={styles.field}>

@@ -2941,7 +2941,7 @@ const RSTK_BASE_CSS = `
   .rstk-kind-landing .rstk-list-grid article:hover{transform:translateY(-4px);border-color:color-mix(in srgb,var(--rstk-ink) 22%,transparent);box-shadow:0 30px 60px -42px rgba(0,0,0,.55)}
   .rstk-kind-landing .rstk-list-grid strong{font-size:1.06rem}
 
-  .rstk-kind-landing .rstk-checklist{padding:clamp(24px,3vw,40px);border:1px solid var(--rstk-border);border-radius:24px;background:var(--rstk-surface);max-width:720px;width:100%;margin-inline:auto}
+  .rstk-kind-landing .rstk-checklist{padding:clamp(24px,3vw,40px);border:1px solid var(--rstk-border);border-radius:24px;background:var(--rstk-surface);width:100%;margin-inline:auto}
   .rstk-kind-landing .rstk-checklist h2{text-align:center;margin-bottom:4px}
   .rstk-kind-landing .rstk-check-body strong{font-size:1.04rem}
 
@@ -2955,7 +2955,7 @@ const RSTK_BASE_CSS = `
   .rstk-kind-landing .rstk-button-link:hover{transform:translateY(-2px);box-shadow:0 18px 42px -14px color-mix(in srgb,var(--rstk-accent) 55%,transparent)}
 
   .rstk-kind-landing .rstk-media,.rstk-kind-landing .rstk-video,.rstk-kind-landing .rstk-embed{border-radius:clamp(16px,2vw,22px);box-shadow:0 40px 90px -52px rgba(0,0,0,.6)}
-  .rstk-kind-landing .rstk-embedded-form{padding:clamp(24px,3vw,40px);border:1px solid var(--rstk-border);border-radius:24px;background:var(--rstk-surface);max-width:560px;width:100%;margin-inline:auto}
+  .rstk-kind-landing .rstk-embedded-form{padding:clamp(24px,3vw,40px);border:1px solid var(--rstk-border);border-radius:24px;background:var(--rstk-surface);width:100%;margin-inline:auto}
 
   @media (max-width:640px){
     .rstk-kind-landing .rstk-hero{padding:clamp(32px,8vw,56px) 20px}

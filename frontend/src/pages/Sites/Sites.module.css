@@ -11,7 +11,7 @@
 }
 
 .containerFocused {
-  width: min(1840px, calc(100% - clamp(22px, 2.6vw, 52px)));
+  width: min(1960px, calc(100% - clamp(20px, 2.2vw, 44px)));
 }
 
 .header,
@@ -1159,7 +1159,7 @@
   border: 1px solid var(--site-accent);
   border-radius: var(--block-button-radius, 8px);
   background: var(--site-accent);
-  color: #fff;
+  color: var(--site-on-accent, #fff);
   padding: 0 16px;
   font: inherit;
   font-weight: 850;
@@ -1230,7 +1230,7 @@
   border-color: var(--site-accent);
   border-radius: var(--block-button-radius, 8px);
   background: var(--site-accent);
-  color: #fff;
+  color: var(--site-on-accent, #fff);
   padding: 0 16px;
   font-weight: 850;
 }
@@ -2326,22 +2326,28 @@
 
 /* Refinamiento del editor visual de Sites */
 .editorHeader {
+  --editor-control-h: 44px;
   display: grid;
-  grid-template-columns: minmax(260px, 0.85fr) minmax(620px, 1.8fr);
-  align-items: start;
+  grid-template-columns: minmax(220px, 0.7fr) minmax(640px, 2fr);
+  align-items: center;
+  gap: 18px;
 }
 
 .editorHeaderIdentity {
   min-width: 0;
   display: grid;
-  gap: 8px;
+  gap: 6px;
+  align-content: center;
 }
 
+/* Unified action bar: every control shares one baseline so the row reads as a
+   single toolbar. Captioned fields keep their label above and bottom-align with
+   the buttons and the Meta card. */
 .editorTopControls {
   display: flex;
   justify-content: flex-end;
-  align-items: end;
-  gap: 8px;
+  align-items: flex-end;
+  gap: 10px;
   flex-wrap: wrap;
 }
 
@@ -2384,61 +2390,92 @@
 }
 
 .compactField {
-  min-width: 132px;
+  min-width: 150px;
   display: grid;
-  gap: 5px;
+  gap: 6px;
   color: var(--color-text-primary);
 }
 
 .compactField span {
   color: var(--color-text-secondary);
-  font-size: 0.74rem;
+  font-size: 0.72rem;
   font-weight: 850;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
 }
 
 .compactField input,
 .compactField select {
   width: 100%;
-  min-height: 38px;
-  border: 1px solid rgba(148, 163, 184, 0.24);
-  border-radius: 8px;
+  height: var(--editor-control-h, 44px);
+  border: 1px solid rgba(148, 163, 184, 0.26);
+  border-radius: 10px;
   background: var(--color-background-primary);
   color: var(--color-text-primary);
-  padding: 8px 10px;
+  padding: 0 12px;
   font: inherit;
-  font-size: 0.84rem;
+  font-size: 0.88rem;
+  font-weight: 600;
   outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.compactField input:hover,
+.compactField select:hover {
+  border-color: rgba(148, 163, 184, 0.42);
+}
+
+.compactField input:focus,
+.compactField select:focus {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(var(--color-primary-rgb), 0.16);
 }
 
 .builderGridLanding {
-  grid-template-columns: 178px 204px minmax(560px, 1fr) minmax(280px, 340px);
+  grid-template-columns: 168px 196px minmax(0, 1fr) 300px;
 }
 
 .builderGridForm {
-  grid-template-columns: 210px minmax(560px, 1fr) minmax(280px, 340px);
+  grid-template-columns: 200px minmax(0, 1fr) 300px;
 }
 
 .canvasWrap,
 .canvasWrapDark {
   min-height: 720px;
-  border: 1px solid rgba(148, 163, 184, 0.14);
-  border-radius: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 12px;
   background: var(--site-frame, var(--site-background)) !important;
   background-image: none !important;
   background-size: auto !important;
-  padding: var(--site-page-padding, 18px);
+  /* Mirror the published .rstk-frame: vertical = page padding, generous sides so
+     the page sits centered like a real browser viewport. */
+  padding: var(--site-page-padding, 18px) clamp(16px, 4vw, 56px);
 }
 
 .pageCanvas {
   width: min(var(--site-page-max, 1040px), 100%);
   min-height: 680px;
-  gap: clamp(20px, 3vw, 42px);
+  gap: clamp(20px, 3vw, 48px);
   border: 1px solid var(--site-page-border, transparent);
   border-radius: var(--site-page-radius, 0);
-  background: var(--site-background);
   color: var(--site-text);
   padding: 0;
   box-shadow: none;
+}
+
+/* Landing: the page area shows the page background; blocks float on top with their
+   own surfaces, exactly like the published page. */
+.landingCanvas {
+  background: transparent;
+}
+
+/* Form: the shell is a surface card with comfortable inner padding, matching
+   the published .rstk-kind-form shell. */
+.formCanvas {
+  background: var(--site-background);
+  padding: clamp(20px, 3vw, 34px);
+  border-radius: var(--site-page-radius, 24px);
+  box-shadow: 0 30px 80px -60px rgba(15, 23, 42, 0.6);
 }
 
 .canvasBlock,
@@ -2530,7 +2567,7 @@
 
 .inlineButtonInput,
 .previewButton {
-  color: #fff !important;
+  color: var(--site-on-accent, #fff) !important;
 }
 
 .pageCanvas .inlineControls,
@@ -2554,9 +2591,9 @@
   width: 100%;
   min-height: 50px;
   border: 1px solid var(--site-accent);
-  border-radius: 14px;
+  border-radius: var(--site-page-radius, 14px);
   background: var(--site-accent);
-  color: #fff;
+  color: var(--site-on-accent, #fff);
   font: inherit;
   font-weight: 850;
 }
@@ -2576,6 +2613,7 @@
 @media (max-width: 1280px) {
   .editorHeader {
     grid-template-columns: 1fr;
+    align-items: start;
   }
 
   .editorTopControls {
@@ -2586,4 +2624,427 @@
   .builderGridForm {
     grid-template-columns: 1fr;
   }
+}
+
+/* ============================================================
+   Editor v2 — action bar, panel controls and canvas polish
+   ============================================================ */
+
+/* --- Meta Pixel + CAPI card (single-row, event selector inside) --- */
+.metaCard {
+  height: var(--editor-control-h, 44px);
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.26);
+  border-radius: 10px;
+  background: var(--color-background-primary);
+  padding: 0 12px;
+  transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+}
+
+.metaCardActive {
+  border-color: rgba(8, 102, 255, 0.45);
+  background:
+    linear-gradient(180deg, rgba(8, 102, 255, 0.1), rgba(8, 102, 255, 0.02)),
+    var(--color-background-primary);
+}
+
+.metaCard .metaMark {
+  width: 28px;
+  height: 28px;
+  font-size: 1.1rem;
+  border-radius: 7px;
+}
+
+.metaCardInfo {
+  display: grid;
+  gap: 1px;
+  line-height: 1.15;
+  white-space: nowrap;
+}
+
+.metaCardInfo strong {
+  color: var(--color-text-primary);
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.metaCardInfo small {
+  color: var(--color-text-tertiary);
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.metaCardActive .metaCardInfo small {
+  color: #3b82f6;
+}
+
+/* Pill switch */
+.metaSwitch {
+  position: relative;
+  flex: 0 0 auto;
+  width: 38px;
+  height: 22px;
+  cursor: pointer;
+}
+
+.metaSwitch input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.metaSwitchTrack {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.5);
+  transition: background 0.18s ease;
+}
+
+.metaSwitchTrack::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.35);
+  transition: transform 0.18s ease;
+}
+
+.metaSwitch input:checked + .metaSwitchTrack {
+  background: #0866ff;
+}
+
+.metaSwitch input:checked + .metaSwitchTrack::after {
+  transform: translateX(16px);
+}
+
+.metaSwitch input:focus-visible + .metaSwitchTrack {
+  box-shadow: 0 0 0 3px rgba(8, 102, 255, 0.28);
+}
+
+.metaCardDivider {
+  width: 1px;
+  height: 24px;
+  flex: 0 0 auto;
+  background: rgba(148, 163, 184, 0.3);
+}
+
+.metaCardField {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--color-text-secondary);
+}
+
+.metaCardField > span {
+  font-size: 0.68rem;
+  font-weight: 850;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+
+.metaCardField select {
+  height: 30px;
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  border-radius: 8px;
+  background: var(--color-background-secondary);
+  color: var(--color-text-primary);
+  padding: 0 28px 0 10px;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 700;
+  outline: none;
+}
+
+.metaCardField select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* --- Native selects styled as custom controls (chevron, no OS skin) --- */
+.compactField select,
+.metaCardField select,
+.field select,
+.dimensionField select {
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 11px center;
+  background-size: 12px 12px;
+  padding-right: 32px;
+  cursor: pointer;
+}
+
+/* --- Canvas toolbar (title + device toggle) --- */
+.canvasToolbar {
+  padding: 0 2px;
+}
+
+.canvasToolbarTitle {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.canvasToolbarTitle strong {
+  color: var(--color-text-primary);
+  font-size: 0.96rem;
+  font-weight: 800;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* --- Numeric dimension control (slider + typed value) --- */
+.dimensionField {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+
+.dimensionField > span {
+  color: var(--color-text-secondary);
+  font-size: 0.74rem;
+  font-weight: 800;
+}
+
+.dimensionRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 74px;
+  gap: 10px;
+  align-items: center;
+}
+
+.dimensionSlider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.32);
+  outline: none;
+  cursor: pointer;
+}
+
+.dimensionSlider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--color-primary);
+  border: 2px solid var(--color-background-primary);
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.35);
+  cursor: pointer;
+  transition: transform 0.12s ease;
+}
+
+.dimensionSlider::-webkit-slider-thumb:hover {
+  transform: scale(1.12);
+}
+
+.dimensionSlider::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--color-primary);
+  border: 2px solid var(--color-background-primary);
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.35);
+  cursor: pointer;
+}
+
+.dimensionSlider:focus-visible {
+  box-shadow: 0 0 0 3px rgba(var(--color-primary-rgb), 0.2);
+}
+
+.dimensionBox {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 36px;
+  border: 1px solid rgba(148, 163, 184, 0.26);
+  border-radius: 9px;
+  background: var(--color-background-primary);
+  padding: 0 9px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.dimensionBox:focus-within {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(var(--color-primary-rgb), 0.16);
+}
+
+.dimensionBox input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: 0.86rem;
+  font-weight: 700;
+  text-align: right;
+  outline: none;
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.dimensionBox input::-webkit-outer-spin-button,
+.dimensionBox input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.dimensionBox small {
+  flex: 0 0 auto;
+  color: var(--color-text-tertiary);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+/* --- Custom color control (swatch + hex) --- */
+.colorField {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+
+.colorField > span {
+  color: var(--color-text-secondary);
+  font-size: 0.74rem;
+  font-weight: 800;
+}
+
+.colorRow {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: 40px;
+  border: 1px solid rgba(148, 163, 184, 0.26);
+  border-radius: 10px;
+  background: var(--color-background-primary);
+  padding: 0 9px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.colorRow:hover {
+  border-color: rgba(148, 163, 184, 0.42);
+}
+
+.colorRow:focus-within {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(var(--color-primary-rgb), 0.16);
+}
+
+.colorSwatch {
+  position: relative;
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  overflow: hidden;
+  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.18);
+  cursor: pointer;
+}
+
+.colorSwatch input[type="color"] {
+  position: absolute;
+  inset: -6px;
+  width: calc(100% + 12px);
+  height: calc(100% + 12px);
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.colorHex {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: 0.84rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  outline: none;
+}
+
+/* --- Block style panel --- */
+.blockStyleControls {
+  display: grid;
+  gap: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--color-background-primary) 70%, transparent);
+  padding: 14px;
+}
+
+.blockStyleControls .panelSubheader {
+  margin: 0;
+}
+
+/* --- Pages context menu (Radix portal content) --- */
+.pageMenu {
+  min-width: 196px;
+  padding: 6px;
+  border-radius: 12px;
+}
+
+.pageMenu > * {
+  gap: 9px !important;
+  border-radius: 8px !important;
+  padding: 9px 10px !important;
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.pageMenuDanger {
+  color: var(--color-error, #ef4444) !important;
+}
+
+.pageMenuDanger:hover {
+  background: rgba(239, 68, 68, 0.12) !important;
+}
+
+.pageMenuButton {
+  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+
+.pageMenuButton:hover,
+.pageMenuButton[data-state="open"] {
+  border-color: rgba(148, 163, 184, 0.4);
+  background: rgba(148, 163, 184, 0.14);
+  color: var(--color-text-primary);
+}
+
+/* --- Right panel polish --- */
+.propertiesBody .panelSubheader {
+  margin-top: 2px;
+  padding-bottom: 2px;
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  color: var(--color-text-tertiary);
+  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+}
+
+.propertiesBody .panelSubheader:first-child {
+  margin-top: 0;
 }
