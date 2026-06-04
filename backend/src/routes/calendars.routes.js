@@ -14,6 +14,12 @@ router.get('/', calendarsController.getCalendars);
 // Crear calendario local de Ristak
 router.post('/', calendarsController.createCalendar);
 
+// Integración Google Calendar por Service Account
+router.get('/google-integration', calendarsController.getGoogleCalendarIntegration);
+router.put('/google-integration', calendarsController.saveGoogleCalendarIntegration);
+router.post('/google-integration/test', calendarsController.testGoogleCalendarIntegration);
+router.delete('/google-integration', calendarsController.deleteGoogleCalendarIntegration);
+
 // Obtener eventos/citas
 router.get('/events', calendarsController.getEvents);
 

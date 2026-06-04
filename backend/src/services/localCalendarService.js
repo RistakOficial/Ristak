@@ -691,6 +691,7 @@ function appointmentRowToApi(row = {}) {
   return {
     id: row.id,
     ghlAppointmentId: row.ghl_appointment_id || null,
+    googleEventId: row.google_event_id || null,
     calendarId: row.calendar_id || '',
     locationId: row.location_id || '',
     contactId: row.contact_id || undefined,
@@ -708,6 +709,9 @@ function appointmentRowToApi(row = {}) {
     syncStatus: row.sync_status || 'pending',
     syncError: row.sync_error || null,
     syncedAt: row.synced_at || null,
+    googleSyncStatus: row.google_sync_status || null,
+    googleSyncError: row.google_sync_error || null,
+    googleSyncedAt: row.google_synced_at || null,
     contactName: row.contact_name || '',
     contactEmail: row.contact_email || '',
     contactPhone: row.contact_phone || ''
@@ -718,12 +722,14 @@ function normalizeAppointmentRecord(raw = {}, options = {}) {
   const appointment = raw.appointment && typeof raw.appointment === 'object' ? raw.appointment : raw
   const source = options.source || appointment.source || (appointment.id && !String(appointment.id).startsWith(LOCAL_APPOINTMENT_PREFIX) ? 'ghl' : 'ristak')
   const ghlAppointmentId = cleanString(options.ghlAppointmentId || appointment.ghlAppointmentId || appointment.ghl_appointment_id || (source === 'ghl' ? appointment.id : '')) || null
+  const googleEventId = cleanString(options.googleEventId || appointment.googleEventId || appointment.google_event_id || (source === 'google' ? appointment.id : '')) || null
   const appointmentStatus = cleanString(appointment.appointmentStatus || appointment.appointment_status || appointment.status || 'confirmed') || 'confirmed'
   const id = cleanString(options.id || appointment.localId || appointment.local_id || appointment.id) || makeId(LOCAL_APPOINTMENT_PREFIX)
 
   return {
     id,
     ghlAppointmentId,
+    googleEventId,
     calendarId: cleanString(options.calendarId || appointment.calendarId || appointment.calendar_id || ''),
     contactId: cleanString(appointment.contactId || appointment.contact_id || '') || null,
     locationId: cleanString(options.locationId || appointment.locationId || appointment.location_id || '') || null,
@@ -739,7 +745,9 @@ function normalizeAppointmentRecord(raw = {}, options = {}) {
     dateUpdated: appointment.dateUpdated || appointment.date_updated || appointment.updatedAt || appointment.updated_at || new Date().toISOString(),
     source,
     syncStatus: options.syncStatus || appointment.syncStatus || appointment.sync_status || (source === 'ghl' ? 'synced' : 'pending'),
-    syncError: options.syncError || appointment.syncError || appointment.sync_error || null
+    syncError: options.syncError || appointment.syncError || appointment.sync_error || null,
+    googleSyncStatus: options.googleSyncStatus || appointment.googleSyncStatus || appointment.google_sync_status || (source === 'google' ? 'synced' : null),
+    googleSyncError: options.googleSyncError || appointment.googleSyncError || appointment.google_sync_error || null
   }
 }
 
@@ -764,14 +772,24 @@ export async function upsertLocalAppointment(raw = {}, options = {}) {
     normalized.id = existingByGhl.id
   }
 
+  const existingByGoogle = !existingByGhl && normalized.googleEventId
+    ? await db.get('SELECT id FROM appointments WHERE google_event_id = ?', [normalized.googleEventId])
+    : null
+
+  if (existingByGoogle?.id) {
+    normalized.id = existingByGoogle.id
+  }
+
   await db.run(`
     INSERT INTO appointments (
-      id, ghl_appointment_id, calendar_id, contact_id, location_id, title, status,
+      id, ghl_appointment_id, google_event_id, calendar_id, contact_id, location_id, title, status,
       appointment_status, assigned_user_id, notes, address, start_time, end_time,
-      date_added, date_updated, source, sync_status, sync_error, synced_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      date_added, date_updated, source, sync_status, sync_error, synced_at,
+      google_sync_status, google_sync_error, google_synced_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (id) DO UPDATE SET
       ghl_appointment_id = COALESCE(excluded.ghl_appointment_id, appointments.ghl_appointment_id),
+      google_event_id = COALESCE(excluded.google_event_id, appointments.google_event_id),
       calendar_id = COALESCE(excluded.calendar_id, appointments.calendar_id),
       contact_id = COALESCE(excluded.contact_id, appointments.contact_id),
       location_id = COALESCE(excluded.location_id, appointments.location_id),
@@ -789,10 +807,14 @@ export async function upsertLocalAppointment(raw = {}, options = {}) {
       sync_status = excluded.sync_status,
       sync_error = excluded.sync_error,
       synced_at = CASE WHEN excluded.sync_status = 'synced' THEN CURRENT_TIMESTAMP ELSE appointments.synced_at END,
+      google_sync_status = COALESCE(excluded.google_sync_status, appointments.google_sync_status),
+      google_sync_error = excluded.google_sync_error,
+      google_synced_at = CASE WHEN excluded.google_sync_status = 'synced' THEN CURRENT_TIMESTAMP ELSE appointments.google_synced_at END,
       deleted_at = NULL
   `, [
     normalized.id,
     normalized.ghlAppointmentId,
+    normalized.googleEventId,
     normalized.calendarId || null,
     normalized.contactId,
     normalized.locationId,
@@ -809,7 +831,10 @@ export async function upsertLocalAppointment(raw = {}, options = {}) {
     normalized.source,
     normalized.syncStatus,
     normalized.syncError,
-    normalized.syncStatus === 'synced' ? new Date().toISOString() : null
+    normalized.syncStatus === 'synced' ? new Date().toISOString() : null,
+    normalized.googleSyncStatus,
+    normalized.googleSyncError,
+    normalized.googleSyncStatus === 'synced' ? new Date().toISOString() : null
   ])
 
   if (normalized.contactId) {
@@ -853,9 +878,9 @@ export async function getLocalAppointment(appointmentId) {
       c.phone AS contact_phone
     FROM appointments a
     LEFT JOIN contacts c ON c.id = a.contact_id
-    WHERE a.id = ? OR a.ghl_appointment_id = ?
+    WHERE a.id = ? OR a.ghl_appointment_id = ? OR a.google_event_id = ?
     LIMIT 1
-  `, [appointmentId, appointmentId])
+  `, [appointmentId, appointmentId, appointmentId])
 
   return row ? appointmentRowToApi(row) : null
 }

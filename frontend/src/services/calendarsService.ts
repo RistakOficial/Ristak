@@ -89,6 +89,7 @@ export interface CalendarEvent {
   id: string;
   title: string;
   calendarId: string;
+  googleEventId?: string | null;
   locationId: string;
   contactId?: string;
   groupId?: string;
@@ -111,6 +112,21 @@ export interface CalendarEvent {
     source: string;
   };
   masterEventId?: string;
+}
+
+export interface GoogleCalendarIntegrationStatus {
+  connected: boolean;
+  calendarId: string;
+  serviceAccountEmail: string;
+  projectId: string;
+  privateKeyId: string;
+  calendarSummary: string;
+  calendarTimeZone: string;
+  lastTestAt: string | null;
+  lastTestStatus: 'success' | 'error' | null;
+  lastTestMessage: string;
+  connectedAt: string | null;
+  updatedAt: string | null;
 }
 
 export interface AppointmentStats {
@@ -155,6 +171,25 @@ export const calendarsService = {
     } catch (error) {
       return [];
     }
+  },
+
+  async getGoogleIntegration(): Promise<GoogleCalendarIntegrationStatus> {
+    return apiClient.get<GoogleCalendarIntegrationStatus>('/calendars/google-integration');
+  },
+
+  async saveGoogleIntegration(payload: {
+    calendarId: string;
+    serviceAccountJson: string;
+  }): Promise<GoogleCalendarIntegrationStatus> {
+    return apiClient.put<GoogleCalendarIntegrationStatus>('/calendars/google-integration', payload);
+  },
+
+  async testGoogleIntegration(): Promise<GoogleCalendarIntegrationStatus> {
+    return apiClient.post<GoogleCalendarIntegrationStatus>('/calendars/google-integration/test');
+  },
+
+  async deleteGoogleIntegration(): Promise<GoogleCalendarIntegrationStatus> {
+    return apiClient.delete<GoogleCalendarIntegrationStatus>('/calendars/google-integration');
   },
 
   /**

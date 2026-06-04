@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import * as calendarService from '../services/highlevelCalendarService.js';
 import * as localCalendarService from '../services/localCalendarService.js';
+import * as googleCalendarService from '../services/googleCalendarService.js';
 import { logger } from '../utils/logger.js';
 import { getGHLClient } from '../services/ghlClient.js';
 import { db } from '../config/database.js';
@@ -116,6 +117,15 @@ async function getCalendarFreeSlotsForPublic(calendar, { startDate, endDate, tim
     }
   }
 
+  await googleCalendarService.syncGoogleEventsForDateRange({
+    calendarId: calendar.id,
+    startDate,
+    endDate,
+    timezone
+  }).catch(error => {
+    logger.warn(`[Calendars Controller] Sync Google para slots publicos falló, usando DB local: ${error.message}`);
+  });
+
   if (!slots) {
     slots = await localCalendarService.getLocalFreeSlots(
       calendar.id,
@@ -126,6 +136,90 @@ async function getCalendarFreeSlotsForPublic(calendar, { startDate, endDate, tim
   }
 
   return slots;
+}
+
+/**
+ * GET /api/calendars/google-integration
+ * Estado publico de la integración Google Calendar por Service Account.
+ */
+export async function getGoogleCalendarIntegration(req, res) {
+  try {
+    res.json({
+      success: true,
+      data: await googleCalendarService.getGoogleCalendarConfig()
+    });
+  } catch (error) {
+    logger.error(`[Calendars Controller] Error en getGoogleCalendarIntegration: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+}
+
+/**
+ * PUT /api/calendars/google-integration
+ * Guarda credenciales cifradas de Service Account y Calendar ID.
+ */
+export async function saveGoogleCalendarIntegration(req, res) {
+  try {
+    const body = req.body || {};
+    const config = await googleCalendarService.saveGoogleCalendarConfig({
+      calendarId: body.calendarId || body.calendar_id,
+      credentials: body.credentials || body.serviceAccountJson || body.service_account_json
+    });
+
+    res.json({
+      success: true,
+      data: config
+    });
+  } catch (error) {
+    logger.warn(`[Calendars Controller] Error guardando Google Calendar: ${error.message}`);
+    res.status(400).json({
+      success: false,
+      error: error.message
+    });
+  }
+}
+
+/**
+ * POST /api/calendars/google-integration/test
+ * Valida lectura, creación, actualización y cancelación de eventos.
+ */
+export async function testGoogleCalendarIntegration(req, res) {
+  try {
+    const config = await googleCalendarService.testGoogleCalendarConnection();
+    res.json({
+      success: true,
+      data: config
+    });
+  } catch (error) {
+    logger.warn(`[Calendars Controller] Prueba Google Calendar falló: ${error.message}`);
+    res.status(400).json({
+      success: false,
+      error: error.message
+    });
+  }
+}
+
+/**
+ * DELETE /api/calendars/google-integration
+ * Desconecta la integración guardada.
+ */
+export async function deleteGoogleCalendarIntegration(req, res) {
+  try {
+    await googleCalendarService.deleteGoogleCalendarConfig();
+    res.json({
+      success: true,
+      data: await googleCalendarService.getGoogleCalendarConfig()
+    });
+  } catch (error) {
+    logger.error(`[Calendars Controller] Error desconectando Google Calendar: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
 }
 
 async function upsertPublicCalendarContact({ calendar, contact, host, sourceUrl }) {
@@ -369,6 +463,14 @@ export async function getEvents(req, res) {
       }
     }
 
+    await googleCalendarService.syncGoogleEventsToLocal({
+      startTime,
+      endTime,
+      calendarId
+    }).catch(error => {
+      logger.warn(`[Calendars Controller] No se pudo refrescar eventos Google, usando DB local: ${error.message}`);
+    });
+
     const events = await localCalendarService.listLocalAppointments({
       startTime,
       endTime,
@@ -581,6 +683,15 @@ export async function createPublicAppointment(req, res) {
       }
     }
 
+    try {
+      const googleResult = await googleCalendarService.syncAppointmentToGoogle(appointment);
+      if (googleResult?.appointment) {
+        appointment = googleResult.appointment;
+      }
+    } catch (error) {
+      logger.warn(`[Calendars Controller] Cita publica guardada local, sync Google pendiente/error: ${error.message}`);
+    }
+
     await triggerWhatsappAppointmentBookedEvent(contactId, {
       calendarId: calendar.id
     }).catch(error => {
@@ -636,6 +747,15 @@ export async function getFreeSlots(req, res) {
         logger.warn(`[Calendars Controller] Free slots GHL falló, usando local: ${error.message}`);
       }
     }
+
+    await googleCalendarService.syncGoogleEventsForDateRange({
+      calendarId: localCalendar?.id || id,
+      startDate,
+      endDate,
+      timezone
+    }).catch(error => {
+      logger.warn(`[Calendars Controller] Sync Google para slots falló, usando DB local: ${error.message}`);
+    });
 
     if (!slots) {
       slots = await localCalendarService.getLocalFreeSlots(
@@ -823,6 +943,15 @@ export async function createAppointment(req, res) {
       }
     }
 
+    try {
+      const googleResult = await googleCalendarService.syncAppointmentToGoogle(appointment);
+      if (googleResult?.appointment) {
+        appointment = googleResult.appointment;
+      }
+    } catch (error) {
+      logger.warn(`[Calendars Controller] Cita guardada local, sync Google pendiente/error: ${error.message}`);
+    }
+
     const contactId = appointmentData.contactId || appointmentData.contact_id || appointment?.contactId || appointment?.contact_id;
 
     if (contactId) {
@@ -874,6 +1003,15 @@ export async function updateAppointment(req, res) {
 
     if (!appointment) {
       appointment = await localCalendarService.updateLocalAppointment(id, updateData, { syncStatus: 'pending' });
+    }
+
+    try {
+      const googleResult = await googleCalendarService.syncAppointmentToGoogle(appointment);
+      if (googleResult?.appointment) {
+        appointment = googleResult.appointment;
+      }
+    } catch (error) {
+      logger.warn(`[Calendars Controller] Update local guardado, sync Google pendiente/error: ${error.message}`);
     }
 
     res.json({
@@ -951,6 +1089,10 @@ export async function deleteEvent(req, res) {
     const { accessToken } = await getHighLevelContext(req);
     const existing = await localCalendarService.getLocalAppointment(id);
 
+    if (existing?.googleEventId) {
+      await googleCalendarService.deleteGoogleEventForAppointment(existing);
+    }
+
     if (accessToken && existing?.ghlAppointmentId) {
       try {
         await calendarService.deleteEvent(existing.ghlAppointmentId, accessToken);
@@ -1020,5 +1162,9 @@ export default {
   createAppointment,
   updateAppointment,
   updateCalendar,
-  deleteEvent
+  deleteEvent,
+  getGoogleCalendarIntegration,
+  saveGoogleCalendarIntegration,
+  testGoogleCalendarIntegration,
+  deleteGoogleCalendarIntegration
 };

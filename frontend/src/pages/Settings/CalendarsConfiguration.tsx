@@ -1,11 +1,11 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { Card, Button, Modal, CustomSelect, Loading } from '@/components/common'
-import { Calendar, Loader2, CheckCircle, XCircle, Info, Settings, Plus, Copy, ExternalLink, Globe2 } from 'lucide-react'
+import { Calendar, Loader2, CheckCircle, XCircle, Info, Settings, Plus, Copy, ExternalLink, Globe2, KeyRound, TestTube2, Trash2, ShieldCheck } from 'lucide-react'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useAppConfig, useHighLevelConnected } from '@/hooks'
 import { useAuth } from '@/contexts/AuthContext'
-import { calendarsService, type Calendar as CalendarType } from '@/services/calendarsService'
+import { calendarsService, type Calendar as CalendarType, type GoogleCalendarIntegrationStatus } from '@/services/calendarsService'
 import styles from './HighLevelIntegration.module.css'
 
 export const CalendarsConfiguration: React.FC = () => {
@@ -24,6 +24,13 @@ export const CalendarsConfiguration: React.FC = () => {
   // Estados locales
   const [calendars, setCalendars] = useState<CalendarType[]>([])
   const [loadingCalendars, setLoadingCalendars] = useState(true)
+  const [googleIntegration, setGoogleIntegration] = useState<GoogleCalendarIntegrationStatus | null>(null)
+  const [loadingGoogleIntegration, setLoadingGoogleIntegration] = useState(true)
+  const [savingGoogleIntegration, setSavingGoogleIntegration] = useState(false)
+  const [testingGoogleIntegration, setTestingGoogleIntegration] = useState(false)
+  const [disconnectingGoogleIntegration, setDisconnectingGoogleIntegration] = useState(false)
+  const [googleCalendarId, setGoogleCalendarId] = useState('')
+  const [serviceAccountJson, setServiceAccountJson] = useState('')
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [creatingCalendar, setCreatingCalendar] = useState(false)
   const [newCalendar, setNewCalendar] = useState<Partial<CalendarType>>({
@@ -54,6 +61,10 @@ export const CalendarsConfiguration: React.FC = () => {
     loadCalendars()
   }, [locationId, accessToken, calendarSourcePreference])
 
+  useEffect(() => {
+    loadGoogleIntegration()
+  }, [])
+
   // Sin integración conectada el selector de origen queda oculto. Si había quedado
   // en "Solo HighLevel", se volvería a Ristak para no esconder sus calendarios
   // (de lo contrario no habría forma de recuperarlos sin el selector).
@@ -80,6 +91,105 @@ export const CalendarsConfiguration: React.FC = () => {
       showToast('error', 'Error al cargar calendarios', error.message)
     } finally {
       setLoadingCalendars(false)
+    }
+  }
+
+  const loadGoogleIntegration = async () => {
+    try {
+      setLoadingGoogleIntegration(true)
+      const data = await calendarsService.getGoogleIntegration()
+      setGoogleIntegration(data)
+      setGoogleCalendarId(data.calendarId || '')
+    } catch (error: any) {
+      showToast('error', 'Error al cargar Google Calendar', error.message || 'No se pudo leer la integración')
+    } finally {
+      setLoadingGoogleIntegration(false)
+    }
+  }
+
+  const parsedServiceAccountEmail = useMemo(() => {
+    if (!serviceAccountJson.trim()) return ''
+    try {
+      const parsed = JSON.parse(serviceAccountJson)
+      return typeof parsed?.client_email === 'string' ? parsed.client_email : ''
+    } catch {
+      return ''
+    }
+  }, [serviceAccountJson])
+
+  const serviceAccountEmailForSharing = parsedServiceAccountEmail || googleIntegration?.serviceAccountEmail || ''
+
+  const handleCopyServiceAccountEmail = async () => {
+    if (!serviceAccountEmailForSharing) {
+      showToast('warning', 'Email no disponible', 'Guarda o pega primero el JSON del Service Account')
+      return
+    }
+
+    try {
+      await navigator.clipboard.writeText(serviceAccountEmailForSharing)
+      showToast('success', 'Email copiado', serviceAccountEmailForSharing)
+    } catch {
+      showToast('error', 'No se pudo copiar', 'Copia el email manualmente')
+    }
+  }
+
+  const handleSaveGoogleIntegration = async () => {
+    if (!googleCalendarId.trim()) {
+      showToast('error', 'Calendar ID requerido', 'Pega el ID del calendario de Google que quieres conectar')
+      return
+    }
+
+    if (!serviceAccountJson.trim() && !googleIntegration?.connected) {
+      showToast('error', 'Credenciales requeridas', 'Pega el JSON del Service Account para conectar por primera vez')
+      return
+    }
+
+    setSavingGoogleIntegration(true)
+    try {
+      const data = await calendarsService.saveGoogleIntegration({
+        calendarId: googleCalendarId.trim(),
+        serviceAccountJson: serviceAccountJson.trim()
+      })
+      setGoogleIntegration(data)
+      setGoogleCalendarId(data.calendarId || googleCalendarId.trim())
+      setServiceAccountJson('')
+      showToast('success', 'Google Calendar guardado', 'Ahora prueba la conexión para validar permisos reales')
+    } catch (error: any) {
+      showToast('error', 'No se pudo guardar Google Calendar', error.message || 'Revisa el JSON y Calendar ID')
+    } finally {
+      setSavingGoogleIntegration(false)
+    }
+  }
+
+  const handleTestGoogleIntegration = async () => {
+    setTestingGoogleIntegration(true)
+    try {
+      const data = await calendarsService.testGoogleIntegration()
+      setGoogleIntegration(data)
+      setGoogleCalendarId(data.calendarId || googleCalendarId)
+      showToast('success', 'Google Calendar probado', data.lastTestMessage || 'Permisos validados correctamente')
+    } catch (error: any) {
+      await loadGoogleIntegration()
+      showToast('error', 'La prueba falló', error.message || 'Revisa permisos del calendario')
+    } finally {
+      setTestingGoogleIntegration(false)
+    }
+  }
+
+  const handleDisconnectGoogleIntegration = async () => {
+    if (!window.confirm('¿Desconectar Google Calendar de esta instalación? Las citas locales se conservan.')) return
+
+    setDisconnectingGoogleIntegration(true)
+    try {
+      const data = await calendarsService.deleteGoogleIntegration()
+      setGoogleIntegration(data)
+      setGoogleCalendarId('')
+      setServiceAccountJson('')
+      showToast('success', 'Google Calendar desconectado', 'La integración quedó removida de esta instalación')
+    } catch (error: any) {
+      showToast('error', 'No se pudo desconectar', error.message || 'Intenta nuevamente')
+    } finally {
+      setDisconnectingGoogleIntegration(false)
     }
   }
 
@@ -327,6 +437,188 @@ export const CalendarsConfiguration: React.FC = () => {
     document.body
   ) : null
 
+  const renderGoogleCalendarIntegrationSection = () => {
+    const isConnected = Boolean(googleIntegration?.connected)
+    const testOk = googleIntegration?.lastTestStatus === 'success'
+    const testFailed = googleIntegration?.lastTestStatus === 'error'
+
+    return (
+      <div className={styles.section}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap', marginBottom: 16 }}>
+          <div>
+            <h3 className={styles.sectionTitle}>Google Calendar</h3>
+            <p className={styles.sectionDescription} style={{ marginTop: 6 }}>
+              Conecta un calendario por Service Account, sin flujo OAuth. Cada instalación puede usar sus propias credenciales.
+            </p>
+          </div>
+          {loadingGoogleIntegration ? (
+            <div className={styles.statusWarning}>
+              <Loader2 size={16} className={styles.spinIcon} />
+              <span>Cargando</span>
+            </div>
+          ) : testOk ? (
+            <div className={styles.statusConnected}>
+              <CheckCircle size={16} />
+              <span>Probado</span>
+            </div>
+          ) : isConnected ? (
+            <div className={styles.statusWarning}>
+              <Info size={16} />
+              <span>Guardado</span>
+            </div>
+          ) : (
+            <div className={styles.statusDisconnected}>
+              <XCircle size={16} />
+              <span>Sin conectar</span>
+            </div>
+          )}
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 320px), 1fr))', gap: 18 }}>
+          <div>
+            <div className={styles.formField}>
+              <label className={styles.label}>Calendar ID</label>
+              <input
+                className={styles.input}
+                value={googleCalendarId}
+                onChange={(event) => setGoogleCalendarId(event.target.value)}
+                placeholder="cliente@empresa.com o nombre@group.calendar.google.com"
+                autoComplete="off"
+              />
+              <p className={styles.hint}>
+                Usa el ID exacto del calendario donde Ristak leerá y escribirá citas.
+              </p>
+            </div>
+
+            <div className={styles.formField}>
+              <label className={styles.label}>JSON del Service Account</label>
+              <textarea
+                className={styles.input}
+                value={serviceAccountJson}
+                onChange={(event) => setServiceAccountJson(event.target.value)}
+                placeholder='{"type":"service_account","project_id":"...","private_key":"-----BEGIN PRIVATE KEY-----\\n...","client_email":"..."}'
+                spellCheck={false}
+                style={{
+                  minHeight: 168,
+                  resize: 'vertical',
+                  fontFamily: 'var(--font-family-mono)',
+                  fontSize: 12,
+                  lineHeight: 1.5
+                }}
+              />
+              <p className={styles.hint}>
+                Se guarda cifrado en backend. Si ya está conectado, puedes dejarlo vacío para conservar la llave actual.
+              </p>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <Button
+                onClick={handleSaveGoogleIntegration}
+                disabled={savingGoogleIntegration || testingGoogleIntegration}
+              >
+                {savingGoogleIntegration ? (
+                  <>
+                    <Loader2 size={16} className={styles.spinIcon} />
+                    Guardando...
+                  </>
+                ) : (
+                  <>
+                    <KeyRound size={16} />
+                    Guardar conexión
+                  </>
+                )}
+              </Button>
+              <Button
+                variant="outline"
+                onClick={handleTestGoogleIntegration}
+                disabled={!isConnected || savingGoogleIntegration || testingGoogleIntegration}
+              >
+                {testingGoogleIntegration ? (
+                  <>
+                    <Loader2 size={16} className={styles.spinIcon} />
+                    Probando...
+                  </>
+                ) : (
+                  <>
+                    <TestTube2 size={16} />
+                    Probar conexión
+                  </>
+                )}
+              </Button>
+              {isConnected && (
+                <Button
+                  variant="ghost"
+                  onClick={handleDisconnectGoogleIntegration}
+                  disabled={disconnectingGoogleIntegration}
+                >
+                  {disconnectingGoogleIntegration ? (
+                    <>
+                      <Loader2 size={16} className={styles.spinIcon} />
+                      Desconectando...
+                    </>
+                  ) : (
+                    <>
+                      <Trash2 size={16} />
+                      Desconectar
+                    </>
+                  )}
+                </Button>
+              )}
+            </div>
+
+            {(testOk || testFailed) && (
+              <div style={{ marginTop: 14, fontSize: 13, color: testOk ? 'var(--color-success)' : 'var(--color-error)' }}>
+                {testOk ? 'Última prueba correcta' : 'Última prueba fallida'}: {googleIntegration?.lastTestMessage}
+              </div>
+            )}
+          </div>
+
+          <div className={styles.stepGuidePanel} style={{ marginBottom: 0 }}>
+            <div className={styles.stepGuideTitle}>
+              <ShieldCheck size={16} />
+              Instrucciones para el cliente
+            </div>
+            <ol className={styles.integrationGuide}>
+              <li>En Google Cloud, crea un Service Account y activa Google Calendar API en el proyecto.</li>
+              <li>Genera una llave JSON y pégala aquí junto con el Calendar ID.</li>
+              <li>En Google Calendar, abre Configuración del calendario y comparte el calendario con el email técnico.</li>
+              <li>Asigna permiso para hacer cambios en eventos. Luego guarda y presiona Probar conexión.</li>
+            </ol>
+
+            <div style={{ marginTop: 14 }}>
+              <label className={styles.label}>Email técnico para compartir</label>
+              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                <input
+                  className={styles.input}
+                  readOnly
+                  value={serviceAccountEmailForSharing || 'Pega o guarda el JSON para ver el email'}
+                  style={{ fontSize: 12 }}
+                />
+                <Button
+                  variant="outline"
+                  size="small"
+                  onClick={handleCopyServiceAccountEmail}
+                  disabled={!serviceAccountEmailForSharing}
+                >
+                  <Copy size={14} />
+                  Copiar
+                </Button>
+              </div>
+            </div>
+
+            {isConnected && (
+              <div style={{ display: 'grid', gap: 8, marginTop: 14, fontSize: 13, color: 'var(--color-text-secondary)' }}>
+                <div><strong style={{ color: 'var(--color-text-primary)' }}>Proyecto:</strong> {googleIntegration?.projectId || 'Sin dato'}</div>
+                <div><strong style={{ color: 'var(--color-text-primary)' }}>Calendario:</strong> {googleIntegration?.calendarSummary || googleIntegration?.calendarId}</div>
+                <div><strong style={{ color: 'var(--color-text-primary)' }}>Zona:</strong> {googleIntegration?.calendarTimeZone || 'Sin validar'}</div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   if (loadingCalendars) {
     return <Loading message="Cargando calendarios..." page="calendar-settings" />
   }
@@ -356,6 +648,8 @@ export const CalendarsConfiguration: React.FC = () => {
               </div>
             </div>
           </div>
+
+          {renderGoogleCalendarIntegrationSection()}
 
           <div className={styles.section}>
             <p style={{ color: 'var(--color-text-secondary)' }}>
@@ -414,6 +708,8 @@ export const CalendarsConfiguration: React.FC = () => {
             </div>
           </div>
         </div>
+
+        {renderGoogleCalendarIntegrationSection()}
 
         {/* Origen de calendarios: solo aplica cuando hay una integración de
             terceros conectada. Sin ella, Ristak es la única fuente. */}

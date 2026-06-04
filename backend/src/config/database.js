@@ -735,6 +735,10 @@ async function initTables() {
         end_time DATETIME,
         date_added DATETIME,
         date_updated DATETIME,
+        google_event_id TEXT UNIQUE,
+        google_sync_status TEXT,
+        google_sync_error TEXT,
+        google_synced_at DATETIME,
         FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE
       )
     `)
@@ -805,7 +809,11 @@ async function initTables() {
       ['sync_status', "TEXT DEFAULT 'synced'"],
       ['sync_error', 'TEXT'],
       ['synced_at', 'DATETIME'],
-      ['deleted_at', 'DATETIME']
+      ['deleted_at', 'DATETIME'],
+      ['google_event_id', 'TEXT'],
+      ['google_sync_status', 'TEXT'],
+      ['google_sync_error', 'TEXT'],
+      ['google_synced_at', 'DATETIME']
     ]) {
       try {
         await db.run(`ALTER TABLE appointments ADD COLUMN ${columnName} ${columnType}`)
@@ -818,6 +826,9 @@ async function initTables() {
       await db.run('CREATE INDEX IF NOT EXISTS idx_appointments_ghl ON appointments(ghl_appointment_id)')
       await db.run('CREATE INDEX IF NOT EXISTS idx_appointments_sync_status ON appointments(sync_status)')
       await db.run("CREATE UNIQUE INDEX IF NOT EXISTS idx_appointments_ghl_unique ON appointments(ghl_appointment_id) WHERE ghl_appointment_id IS NOT NULL AND ghl_appointment_id != ''")
+      await db.run('CREATE INDEX IF NOT EXISTS idx_appointments_google ON appointments(google_event_id)')
+      await db.run('CREATE INDEX IF NOT EXISTS idx_appointments_google_sync_status ON appointments(google_sync_status)')
+      await db.run("CREATE UNIQUE INDEX IF NOT EXISTS idx_appointments_google_unique ON appointments(google_event_id) WHERE google_event_id IS NOT NULL AND google_event_id != ''")
     } catch (err) {
       logger.warn('Advertencia al crear índices de sync de appointments:', err.message)
     }
