@@ -551,10 +551,24 @@ export async function createLocalProduct(input = {}, options = {}) {
     })
   }
 
+  const config = await getHighLevelConfig()
+  const highLevelConnected = Boolean(config?.api_token && config?.location_id)
+
   if (options.sync !== false) {
-    await syncProductWithSavedConfig(product.id).catch(error => {
+    try {
+      const syncResult = await syncProductWithSavedConfig(product.id)
+      if (highLevelConnected && syncResult?.skipped) {
+        throw new Error('HighLevel esta conectado, pero no se pudo iniciar la sincronizacion del producto.')
+      }
+    } catch (error) {
+      if (highLevelConnected) {
+        await db.run('DELETE FROM product_prices WHERE product_id = ?', [product.id])
+        await db.run('DELETE FROM products WHERE id = ?', [product.id])
+        throw new Error(`No se creo el producto porque HighLevel esta conectado y debe quedar espejado: ${error.message}`)
+      }
+
       logger.warn(`No se pudo sincronizar producto local ${product.id}: ${error.message}`)
-    })
+    }
   }
 
   const prices = await listLocalPrices(product.id)
@@ -570,10 +584,23 @@ export async function createLocalPrice(productId, input = {}, options = {}) {
     syncOrigin: 'ristak'
   })
 
+  const config = await getHighLevelConfig()
+  const highLevelConnected = Boolean(config?.api_token && config?.location_id)
+
   if (options.sync !== false) {
-    await syncProductWithSavedConfig(price.product_id).catch(error => {
+    try {
+      const syncResult = await syncProductWithSavedConfig(price.product_id)
+      if (highLevelConnected && syncResult?.skipped) {
+        throw new Error('HighLevel esta conectado, pero no se pudo iniciar la sincronizacion del precio.')
+      }
+    } catch (error) {
+      if (highLevelConnected) {
+        await db.run('DELETE FROM product_prices WHERE id = ?', [price.id])
+        throw new Error(`No se creo el precio porque HighLevel esta conectado y debe quedar espejado: ${error.message}`)
+      }
+
       logger.warn(`No se pudo sincronizar precio local ${price.id}: ${error.message}`)
-    })
+    }
   }
 
   const freshPrice = await getLocalPrice(price.id)
@@ -1042,4 +1069,3 @@ async function resolveInvoiceItemCatalogIds(item = {}, client, locationId) {
 
   return nextItem
 }
-
