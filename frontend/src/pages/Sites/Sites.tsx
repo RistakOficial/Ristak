@@ -174,6 +174,13 @@ const getStatusClass = (site: PublicSite) => {
   return styles.statusSuccess
 }
 
+const getTrackingStats = (site?: PublicSite | null) => ({
+  views: site?.trackingStats?.views || 0,
+  visitors: site?.trackingStats?.visitors || 0,
+  conversions: site?.trackingStats?.conversions || site?.submissionsCount || 0,
+  conversionRate: site?.trackingStats?.conversionRate || 0
+})
+
 const normalizeRouteInput = (value: string) => value
   .normalize('NFD')
   .replace(/[\u0300-\u036f]/g, '')
@@ -633,6 +640,7 @@ export const Sites: React.FC = () => {
       ? (isFormSite(selectedSite) ? selectedSite : null)
       : null
   const publicUrl = editorSite ? buildPublicUrl(editorSite) : ''
+  const editorTrackingStats = getTrackingStats(editorSite)
 
   const performUrlNavigation = useCallback((href: string) => {
     const target = new URL(href, window.location.href)
@@ -1362,18 +1370,26 @@ export const Sites: React.FC = () => {
                       <Globe2 size={22} />
                       <p>No hay nada creado todavia.</p>
                     </div>
-                  ) : (section === 'landings' ? landings : forms).map(site => (
-                    <button
-                      key={site.id}
-                      type="button"
-                      className={`${styles.siteItem} ${selectedSite?.id === site.id ? styles.siteItemActive : ''}`}
-                      onClick={() => selectSite(site.id)}
-                    >
-                      <span className={styles.siteName}>{site.name}</span>
-                      <span className={styles.siteDomain}>{site.domain ? `${site.domain}${getRoutePath(site)}` : getRoutePath(site)}</span>
-                      <span className={`${styles.statusPill} ${getStatusClass(site)}`}>{getStatusLabel(site)}</span>
-                    </button>
-                  ))}
+                  ) : (section === 'landings' ? landings : forms).map(site => {
+                    const stats = getTrackingStats(site)
+                    return (
+                      <button
+                        key={site.id}
+                        type="button"
+                        className={`${styles.siteItem} ${selectedSite?.id === site.id ? styles.siteItemActive : ''}`}
+                        onClick={() => selectSite(site.id)}
+                      >
+                        <span className={styles.siteName}>{site.name}</span>
+                        <span className={styles.siteDomain}>{site.domain ? `${site.domain}${getRoutePath(site)}` : getRoutePath(site)}</span>
+                        <span className={styles.siteStats}>
+                          <span>{stats.visitors} visitantes</span>
+                          <span>{stats.conversions} conv.</span>
+                          <span>{stats.conversionRate}%</span>
+                        </span>
+                        <span className={`${styles.statusPill} ${getStatusClass(site)}`}>{getStatusLabel(site)}</span>
+                      </button>
+                    )
+                  })}
                 </div>
               </div>
             )}
@@ -1406,6 +1422,12 @@ export const Sites: React.FC = () => {
                     <span className={`${styles.statusPill} ${getStatusClass(editorSite)}`}>{getStatusLabel(editorSite)}</span>
                     <h2>{editorSite.name}</h2>
                     <p>{editorSite.siteType === 'landing_page' ? 'Editor visual de landing page' : editorSite.siteType === 'interactive_form' ? 'Formulario interactivo, una pregunta por pantalla' : 'Formulario de una sola pagina'}</p>
+                    <div className={styles.trackingSummary} aria-label="Metricas de tracking nativo">
+                      <span className={styles.trackingMetric}><span>{editorTrackingStats.views} vistas</span></span>
+                      <span className={styles.trackingMetric}><span>{editorTrackingStats.visitors} visitantes</span></span>
+                      <span className={styles.trackingMetric}><span>{editorTrackingStats.conversions} conversiones</span></span>
+                      <span className={styles.trackingMetric}><span>{editorTrackingStats.conversionRate}% conversion</span></span>
+                    </div>
                   </div>
                   <div className={styles.editorActions}>
                     {publicUrl && (

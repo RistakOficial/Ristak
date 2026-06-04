@@ -161,6 +161,24 @@
   font-size: 0.82rem;
 }
 
+.siteStats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.siteStats span,
+.trackingMetric span {
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.08);
+  color: var(--color-text-secondary);
+  padding: 3px 7px;
+  font-size: 0.72rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
 .statusPill {
   width: fit-content;
   border-radius: 999px;
@@ -212,6 +230,17 @@
   margin: 5px 0 0;
   color: var(--color-text-tertiary);
   font-size: 0.92rem;
+}
+
+.trackingSummary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 10px;
+}
+
+.trackingMetric {
+  display: inline-flex;
 }
 
 .iconLink {

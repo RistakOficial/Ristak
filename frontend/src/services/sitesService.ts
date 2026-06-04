@@ -157,6 +157,13 @@ export interface PublicSite {
   createdAt: string
   updatedAt: string
   submissionsCount: number
+  trackingStats?: {
+    views: number
+    visitors: number
+    sessions: number
+    conversions: number
+    conversionRate: number
+  }
   blocks?: SiteBlock[]
   submissions?: SiteSubmission[]
 }

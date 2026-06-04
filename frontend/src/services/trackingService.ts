@@ -76,6 +76,19 @@ export interface TrackingSession {
   geo_region: string | null
   geo_city: string | null
 
+  // Tracking nativo de Sites
+  tracking_source?: string | null
+  site_id?: string | null
+  site_slug?: string | null
+  site_name?: string | null
+  site_type?: string | null
+  form_site_id?: string | null
+  form_site_name?: string | null
+  public_page_id?: string | null
+  public_page_title?: string | null
+  conversion_type?: string | null
+  submission_id?: string | null
+
   // Campos extras del JOIN con contacts
   contact_created_at?: string | null
   contact_purchases_count?: number | string | null
