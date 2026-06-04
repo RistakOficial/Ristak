@@ -198,6 +198,7 @@ export const formBlockTypes: SiteBlockType[] = [
   'title',
   'subtitle',
   'description',
+  'video',
   'embed'
 ]
 

@@ -512,7 +512,7 @@ Bloques permitidos para landing_page:
 hero, title, subtitle, text, image, video, button, benefits, testimonials, services, embed, form_embed, faq, cta.
 
 Bloques permitidos para formularios:
-short_text, paragraph, number, currency, dropdown, radio, checkboxes, phone, email, date, title, subtitle, description, embed.
+short_text, paragraph, number, currency, dropdown, radio, checkboxes, phone, email, date, title, subtitle, description, video, embed.
 
 Acciones permitidas por opcion:
 continue, cold_lead, warm_lead, hot_lead, disqualify, show_message, end_form, jump, tag, category.
@@ -641,7 +641,7 @@ function normalizeAIBlockOptions(blockType, options = []) {
 }
 
 function normalizeAIEmbeddedBlocks(siteId, embeddedBlocks = []) {
-  const allowedTypes = new Set([...FIELD_BLOCK_TYPES, 'title', 'subtitle', 'description', 'embed'])
+  const allowedTypes = new Set([...FIELD_BLOCK_TYPES, 'title', 'subtitle', 'description', 'video', 'embed'])
   return (Array.isArray(embeddedBlocks) ? embeddedBlocks : [])
     .map((block, index) => normalizeAIBlock({
       block,
@@ -735,7 +735,7 @@ function normalizeAISiteBlueprint(siteKind, aiSite = {}) {
   const id = crypto.randomUUID()
   const allowedTypes = siteType === 'landing_page'
     ? new Set(['hero', 'title', 'subtitle', 'text', 'image', 'video', 'button', 'benefits', 'testimonials', 'services', 'embed', 'form_embed', 'faq', 'cta'])
-    : new Set([...FIELD_BLOCK_TYPES, 'title', 'subtitle', 'description', 'embed'])
+    : new Set([...FIELD_BLOCK_TYPES, 'title', 'subtitle', 'description', 'video', 'embed'])
   const fallbackType = siteType === 'landing_page' ? 'text' : 'short_text'
   const blocksInput = Array.isArray(aiSite.blocks)
     ? aiSite.blocks
