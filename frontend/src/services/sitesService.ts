@@ -81,6 +81,7 @@ export interface SiteTheme {
   brandName?: string
   brandSubtitle?: string
   brandAvatar?: string
+  followers?: string
   brandVerified?: boolean
   submitText?: string
   finalMessages?: {

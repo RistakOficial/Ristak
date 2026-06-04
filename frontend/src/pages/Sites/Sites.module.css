@@ -1965,3 +1965,60 @@
   font-size: 0.84rem;
   line-height: 1.45;
 }
+
+/* ---- Color controls (page background + accent) ---- */
+.colorField {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.colorField > span {
+  color: var(--color-text-secondary);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.colorPickRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.colorInput {
+  width: 40px;
+  height: 38px;
+  padding: 0;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 9px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.colorInput::-webkit-color-swatch-wrapper {
+  padding: 3px;
+}
+
+.colorInput::-webkit-color-swatch {
+  border: 0;
+  border-radius: 6px;
+}
+
+.swatchBtn {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  cursor: pointer;
+  padding: 0;
+  transition: transform 0.1s ease, box-shadow 0.15s ease;
+}
+
+.swatchBtn:hover {
+  transform: scale(1.08);
+}
+
+.swatchBtnActive {
+  box-shadow: 0 0 0 2px var(--color-background-primary), 0 0 0 4px var(--color-primary);
+}

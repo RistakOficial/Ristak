@@ -240,23 +240,67 @@ const resolveTemplateId = (site?: PublicSite | null): SiteTemplateId => {
 
 const isDarkTemplate = (id: SiteTemplateId) => id === 'tiktok' || id === 'vsl' || id === 'interactive'
 
+const isHex6 = (value?: string): value is string => !!value && /^#[0-9a-f]{6}$/i.test(value)
+
+const relLum = (hex: string): number => {
+  const h = hex.replace('#', '')
+  const lin = (c: number) => {
+    const x = c / 255
+    return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4)
+  }
+  return 0.2126 * lin(parseInt(h.slice(0, 2), 16)) + 0.7152 * lin(parseInt(h.slice(2, 4), 16)) + 0.0722 * lin(parseInt(h.slice(4, 6), 16))
+}
+
+// Mirrors the backend palette resolution so the editor canvas matches the published site.
+const userBgColor = (site: PublicSite): string | null => {
+  const v = site.theme?.backgroundColor
+  return isHex6(v) && v.toLowerCase() !== '#ffffff' ? v : null
+}
+const userAccentColor = (site: PublicSite): string | null => {
+  const v = site.theme?.accentColor
+  return isHex6(v) && v.toLowerCase() !== '#111827' ? v : null
+}
+const resolvedPageBg = (site: PublicSite): string => {
+  const id = resolveTemplateId(site)
+  if (id === 'facebook') return '#f0f2f5'
+  if (id === 'instagram') return '#ffffff'
+  if (id === 'tiktok') return '#000000'
+  return userBgColor(site) || (site.siteType === 'landing_page' ? '#08080a' : '#ffffff')
+}
+const isSiteDark = (site: PublicSite): boolean => {
+  const id = resolveTemplateId(site)
+  if (id === 'tiktok') return true
+  if (id === 'facebook' || id === 'instagram') return false
+  return relLum(resolvedPageBg(site)) < 0.5
+}
+
 const getCanvasThemeStyle = (site: PublicSite): React.CSSProperties => {
   const id = resolveTemplateId(site)
   const meta = templateMetaById(id)
-  const themeAccent = site.theme?.accentColor
-  const accent = themeAccent && themeAccent.toLowerCase() !== '#111827' && id !== 'facebook' && id !== 'instagram' && id !== 'tiktok'
-    ? themeAccent
-    : meta?.accent || '#111827'
-  const dark = isDarkTemplate(id)
-  const surface = id === 'tiktok' ? '#161616' : '#ffffff'
+  const platform = id === 'facebook' || id === 'instagram' || id === 'tiktok'
+  const dark = isSiteDark(site)
+  if (platform) {
+    return {
+      '--site-accent': meta?.accent || '#111827',
+      '--site-background': id === 'tiktok' ? '#161616' : '#ffffff',
+      '--site-surface': id === 'tiktok' ? '#161616' : '#ffffff',
+      '--site-frame': id === 'tiktok' ? '#000000' : '#f0f2f5',
+      '--site-text': id === 'tiktok' ? '#ffffff' : '#0f172a',
+      '--site-muted': id === 'tiktok' ? '#a1a1aa' : '#64748b',
+      '--site-border': id === 'tiktok' ? 'rgba(255,255,255,0.14)' : '#e6e8ec'
+    } as React.CSSProperties
+  }
+  const bg = resolvedPageBg(site)
+  const accent = userAccentColor(site) || (dark ? '#ffffff' : '#111827')
+  const surface = dark ? `color-mix(in srgb, #ffffff 4%, ${bg})` : '#ffffff'
   return {
     '--site-accent': accent,
     '--site-background': surface,
     '--site-surface': surface,
-    '--site-frame': dark ? (id === 'tiktok' ? '#000000' : '#0a0b0d') : '#f4f6f8',
-    '--site-text': id === 'tiktok' ? '#ffffff' : '#0f172a',
-    '--site-muted': id === 'tiktok' ? '#a1a1aa' : '#64748b',
-    '--site-border': id === 'tiktok' ? 'rgba(255,255,255,0.14)' : '#e6e8ec'
+    '--site-frame': bg,
+    '--site-text': dark ? '#f4f4f6' : '#0f172a',
+    '--site-muted': dark ? '#a1a1aa' : '#64748b',
+    '--site-border': dark ? 'rgba(255,255,255,0.12)' : '#e6e8ec'
   } as React.CSSProperties
 }
 
@@ -1324,6 +1368,15 @@ export const Sites: React.FC = () => {
     })
   }
 
+  const patchBlockSettingsLocal = (block: SiteBlock, patch: Record<string, unknown>) => {
+    patchBlockLocal(block.id, {
+      settings: {
+        ...(block.settings || {}),
+        ...patch
+      }
+    })
+  }
+
   const handleSaveBlock = async (blockId = selectedBlock?.id) => {
     if (!selectedSite?.blocks || !blockId) return
     const block = selectedSite.blocks.find(item => item.id === blockId)
@@ -1478,10 +1531,25 @@ export const Sites: React.FC = () => {
             ) : editorSite ? (
               <section className={styles.builder}>
                 <div className={styles.builderHeader}>
-                  <div>
+                  <div className={styles.editorIdentity}>
                     <span className={`${styles.statusPill} ${getStatusClass(editorSite, domainConfig)}`}>{getStatusLabel(editorSite, domainConfig)}</span>
-                    <h2>{editorSite.name}</h2>
-                    <p>{editorSite.siteType === 'landing_page' ? 'Editor visual de landing page' : editorSite.siteType === 'interactive_form' ? 'Formulario interactivo, una pregunta por pantalla' : 'Formulario de una sola pagina'}</p>
+                    <label className={styles.editorNameField}>
+                      <Pencil size={15} />
+                      <input
+                        value={editorSite.name}
+                        aria-label="Nombre interno del site"
+                        onChange={(event) => updateSelectedSite({ name: event.target.value })}
+                        onBlur={() => handleSaveSite()}
+                      />
+                    </label>
+                    <input
+                      className={styles.publicTitleField}
+                      value={editorSite.title}
+                      aria-label="Titulo publico"
+                      placeholder="Titulo publico"
+                      onChange={(event) => updateSelectedSite({ title: event.target.value })}
+                      onBlur={() => handleSaveSite()}
+                    />
                     <div className={styles.trackingSummary} aria-label="Metricas de tracking nativo">
                       <span className={styles.trackingMetric}><span>{editorTrackingStats.views} vistas</span></span>
                       <span className={styles.trackingMetric}><span>{editorTrackingStats.visitors} visitantes</span></span>
@@ -1496,6 +1564,14 @@ export const Sites: React.FC = () => {
                         Abrir
                       </a>
                     )}
+                    <div className={styles.deviceToggle}>
+                      <button type="button" className={device === 'desktop' ? styles.deviceActive : ''} onClick={() => setDevice('desktop')} title="Desktop">
+                        <Monitor size={16} />
+                      </button>
+                      <button type="button" className={device === 'mobile' ? styles.deviceActive : ''} onClick={() => setDevice('mobile')} title="Movil">
+                        <Smartphone size={16} />
+                      </button>
+                    </div>
                     <Button variant="secondary" onClick={handlePreviewSite}>
                       <Eye size={16} />
                       Previsualizar
@@ -1507,9 +1583,6 @@ export const Sites: React.FC = () => {
                     <Button onClick={() => handleSaveSite('published')} loading={saving}>
                       <Send size={16} />
                       Publicar
-                    </Button>
-                    <Button variant="danger" onClick={() => void handleDeleteSite()}>
-                      <Trash2 size={16} />
                     </Button>
                   </div>
                 </div>
@@ -1523,39 +1596,13 @@ export const Sites: React.FC = () => {
                     onChange={(event) => updateSelectedSite({ slug: normalizeRouteInput(event.target.value) })}
                   />
                 </label>
-                <label className={styles.inlineField}>
-                  <span>Nombre</span>
-                  <input value={editorSite.name} onChange={(event) => updateSelectedSite({ name: event.target.value })} />
-                </label>
-                <label className={styles.inlineField}>
-                  <span>Titulo publico</span>
-                  <input value={editorSite.title} onChange={(event) => updateSelectedSite({ title: event.target.value })} />
-                </label>
-                <label className={styles.inlineField}>
-                  <span>Estado</span>
-                  <select value={editorSite.status} onChange={(event) => updateSelectedSite({ status: event.target.value as PublicSite['status'] })}>
-                    <option value="draft">Borrador</option>
-                    <option value="published">Publicado</option>
-                    <option value="archived">Archivado</option>
-                  </select>
-                </label>
-                <div className={styles.deviceToggle}>
-                  <button type="button" className={device === 'desktop' ? styles.deviceActive : ''} onClick={() => setDevice('desktop')} title="Desktop">
-                    <Monitor size={16} />
-                  </button>
-                  <button type="button" className={device === 'mobile' ? styles.deviceActive : ''} onClick={() => setDevice('mobile')} title="Movil">
-                    <Smartphone size={16} />
-                  </button>
-                </div>
-              </div>
-
-              <div className={styles.metaSettingsBar}>
                 <label className={`${styles.metaToggle} ${editorSite.metaCapiEnabled ? styles.metaToggleActive : ''}`}>
                   <input
                     type="checkbox"
                     checked={editorSite.metaCapiEnabled}
                     onChange={(event) => updateSelectedSite({ metaCapiEnabled: event.target.checked })}
                   />
+                  <span className={styles.metaMark} aria-hidden="true">∞</span>
                   <span>
                     <strong>Meta conversiones</strong>
                     <small>{editorSite.metaCapiEnabled ? 'Pixel frontend + CAPI servidor activos' : 'Desactivado para este site'}</small>
@@ -1577,8 +1624,6 @@ export const Sites: React.FC = () => {
                   Al publicar, el formulario dispara este evento con deduplicacion por eventID. El token privado se usa solo en backend.
                 </p>
               </div>
-
-              <DesignControls site={editorSite} onPatchTheme={patchSiteTheme} onSave={() => handleSaveSite()} />
 
               <div className={`${styles.builderGrid} ${isLanding(editorSite) ? styles.builderGridLanding : styles.builderGridForm}`}>
                 {isLanding(editorSite) && (
@@ -1606,8 +1651,11 @@ export const Sites: React.FC = () => {
 
                 <section className={styles.canvasColumn}>
                   <div className={styles.canvasToolbar}>
-                    <strong>{isLanding(editorSite) ? activePage?.title || 'Pagina 1' : 'Canvas'}</strong>
-                    <span>{canvasBlocks.length} {canvasBlocks.length === 1 ? 'bloque' : 'bloques'}</span>
+                    <div>
+                      <strong>{isLanding(editorSite) ? activePage?.title || 'Pagina 1' : 'Canvas'}</strong>
+                      <span>{canvasBlocks.length} {canvasBlocks.length === 1 ? 'bloque' : 'bloques'}</span>
+                    </div>
+                    <CanvasStyleControls site={editorSite} onPatchTheme={patchSiteTheme} onSave={() => handleSaveSite()} />
                   </div>
                   <DndContext
                     sensors={sensors}
@@ -1618,17 +1666,22 @@ export const Sites: React.FC = () => {
                   >
                     <SortableContext items={canvasBlocks.map(block => block.id)} strategy={verticalListSortingStrategy}>
                       <div
-                        className={`${styles.canvasWrap} ${device === 'mobile' ? styles.canvasWrapMobile : ''} ${paletteDragging ? styles.canvasWrapActive : ''} ${isDarkTemplate(resolveTemplateId(editorSite)) ? styles.canvasWrapDark : ''}`}
+                        className={`${styles.canvasWrap} ${device === 'mobile' ? styles.canvasWrapMobile : ''} ${paletteDragging ? styles.canvasWrapActive : ''} ${isSiteDark(editorSite) ? styles.canvasWrapDark : ''}`}
                         style={getCanvasThemeStyle(editorSite)}
                         onDragOver={handleCanvasDragOver}
                         onDragLeave={() => setPaletteDragging(false)}
                         onDrop={handleCanvasDrop}
                       >
                         <div
-                          className={`${styles.pageCanvas} ${editorSite.siteType === 'interactive_form' ? styles.interactiveCanvas : ''} ${isDarkTemplate(resolveTemplateId(editorSite)) ? styles.darkCanvas : ''}`}
+                          className={`${styles.pageCanvas} ${editorSite.siteType === 'interactive_form' ? styles.interactiveCanvas : ''} ${isSiteDark(editorSite) ? styles.darkCanvas : ''}`}
                         >
                           {!isLanding(editorSite) && platformChromeFor(resolveTemplateId(editorSite)) && (
-                            <CanvasChrome platform={platformChromeFor(resolveTemplateId(editorSite))!} site={editorSite} />
+                            <CanvasChrome
+                              platform={platformChromeFor(resolveTemplateId(editorSite))!}
+                              site={editorSite}
+                              onPatchTheme={patchSiteTheme}
+                              onSave={() => handleSaveSite()}
+                            />
                           )}
                           {canvasBlocks.length === 0 ? (
                             <div className={styles.dropEmpty}>
@@ -1644,8 +1697,13 @@ export const Sites: React.FC = () => {
                               site={editorSite}
                               forms={forms}
                               calendars={calendars}
+                              pages={pages}
+                              activePageId={activePage?.id || DEFAULT_FUNNEL_PAGE_ID}
                               onSelect={() => setSelectedBlockId(block.id)}
                               onDelete={() => handleDeleteBlock(block.id)}
+                              onPatchBlock={(patch) => patchBlockLocal(block.id, patch)}
+                              onPatchSettings={(patch) => patchBlockSettingsLocal(block, patch)}
+                              onSave={() => handleSaveBlock(block.id)}
                             />
                           ))}
                         </div>
@@ -1661,19 +1719,6 @@ export const Sites: React.FC = () => {
                   </DndContext>
                 </section>
 
-                <PropertiesPanel
-                  site={editorSite}
-                  block={selectedBlock}
-                  blocks={canvasBlocks}
-                  forms={forms}
-                  calendars={calendars}
-                  pages={pages}
-                  activePageId={activePage?.id || DEFAULT_FUNNEL_PAGE_ID}
-                  onPatchBlock={patchSelectedBlock}
-                  onPatchSettings={patchSelectedBlockSettings}
-                  onSave={() => handleSaveBlock()}
-                  onDelete={() => selectedBlock && handleDeleteBlock(selectedBlock.id)}
-                />
               </div>
             </section>
           ) : (
@@ -2006,16 +2051,104 @@ interface DesignControlsProps {
   onSave: () => void
 }
 
+const CanvasStyleControls: React.FC<DesignControlsProps> = ({ site, onPatchTheme, onSave }) => {
+  const currentId = resolveTemplateId(site)
+  const platform = platformChromeFor(currentId)
+  if (platform) return null
+
+  const isForm = site.siteType !== 'landing_page'
+  const pageColorValue = userBgColor(site) || (isForm ? '#ffffff' : '#08080a')
+  const accentColorValue = userAccentColor(site) || (isForm ? '#111827' : '#ffffff')
+
+  return (
+    <div className={styles.canvasStyleControls} aria-label="Estilo de pagina">
+      <label>
+        <span>Fondo</span>
+        <input
+          type="color"
+          value={pageColorValue}
+          onChange={(event) => onPatchTheme({ backgroundColor: event.target.value })}
+          onBlur={onSave}
+        />
+      </label>
+      <label>
+        <span>Acento</span>
+        <input
+          type="color"
+          value={accentColorValue}
+          onChange={(event) => onPatchTheme({ accentColor: event.target.value })}
+          onBlur={onSave}
+        />
+      </label>
+    </div>
+  )
+}
+
 const DesignControls: React.FC<DesignControlsProps> = ({ site, onPatchTheme, onSave }) => {
   const currentId = resolveTemplateId(site)
   const isFormSite = site.siteType !== 'landing_page'
   const platform = platformChromeFor(currentId)
   const theme = site.theme || {}
 
-  if (!isFormSite && !platform) return null
+  const pageColorValue = userBgColor(site) || (isFormSite ? '#ffffff' : '#08080a')
+  const accentColorValue = userAccentColor(site) || (isFormSite ? '#111827' : '#ffffff')
+  const pagePresets = isFormSite
+    ? ['#ffffff', '#f6f7f9', '#0a0b0d', '#0b1020']
+    : ['#08080a', '#0b1020', '#0f172a', '#f6f7f9']
+  const accentPresets = ['#ffffff', '#2563eb', '#6366f1', '#10b981', '#111827']
 
   return (
     <div className={styles.designBar}>
+      {!platform && (
+        <div className={styles.designRow}>
+          <div className={styles.colorField}>
+            <span>Color de página</span>
+            <div className={styles.colorPickRow}>
+              <input
+                type="color"
+                className={styles.colorInput}
+                value={pageColorValue}
+                onChange={(event) => onPatchTheme({ backgroundColor: event.target.value })}
+                onBlur={onSave}
+                aria-label="Color de página"
+              />
+              {pagePresets.map(color => (
+                <button
+                  key={color}
+                  type="button"
+                  className={`${styles.swatchBtn} ${pageColorValue.toLowerCase() === color ? styles.swatchBtnActive : ''}`}
+                  style={{ background: color }}
+                  onClick={() => { onPatchTheme({ backgroundColor: color }); window.setTimeout(onSave, 0) }}
+                  aria-label={color}
+                />
+              ))}
+            </div>
+          </div>
+          <div className={styles.colorField}>
+            <span>Color de acento</span>
+            <div className={styles.colorPickRow}>
+              <input
+                type="color"
+                className={styles.colorInput}
+                value={accentColorValue}
+                onChange={(event) => onPatchTheme({ accentColor: event.target.value })}
+                onBlur={onSave}
+                aria-label="Color de acento"
+              />
+              {accentPresets.map(color => (
+                <button
+                  key={color}
+                  type="button"
+                  className={`${styles.swatchBtn} ${accentColorValue.toLowerCase() === color ? styles.swatchBtnActive : ''}`}
+                  style={{ background: color }}
+                  onClick={() => { onPatchTheme({ accentColor: color }); window.setTimeout(onSave, 0) }}
+                  aria-label={color}
+                />
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
       {(isFormSite || platform) && (
         <div className={styles.designRow}>
           {isFormSite && (
@@ -2058,15 +2191,70 @@ const CanvasAvatar: React.FC<{ name: string; avatar?: string }> = ({ name, avata
   </span>
 )
 
-const CanvasChrome: React.FC<{ platform: 'facebook' | 'instagram' | 'tiktok'; site: PublicSite }> = ({ platform, site }) => {
+const CanvasChrome: React.FC<{
+  platform: 'facebook' | 'instagram' | 'tiktok'
+  site: PublicSite
+  onPatchTheme: (patch: Partial<SiteTheme>) => void
+  onSave: () => void
+}> = ({ platform, site, onPatchTheme, onSave }) => {
   const theme = site.theme || {}
   const name = theme.brandName || site.title || site.name || 'Tu marca'
   const subtitle = theme.brandSubtitle || (platform === 'instagram' ? 'Publicacion pagada' : 'Patrocinado')
   const handle = name.normalize('NFD').replace(/[^a-zA-Z0-9]/g, '').toLowerCase() || 'marca'
+  const followers = String(theme.followers || '')
+  const avatar = String(theme.brandAvatar || '')
+  const patchAndSave = (patch: Partial<SiteTheme>) => {
+    onPatchTheme(patch)
+    window.setTimeout(onSave, 0)
+  }
+
+  const controls = (
+    <div className={styles.socialProfileControls}>
+      <span>Social Media Profile</span>
+      <select
+        value={platform}
+        onChange={(event) => patchAndSave({ template: event.target.value as SiteTemplateId })}
+        aria-label="Red social"
+      >
+        <option value="facebook">Facebook</option>
+        <option value="instagram">Instagram</option>
+        <option value="tiktok">TikTok</option>
+      </select>
+      <input
+        value={name}
+        onChange={(event) => onPatchTheme({ brandName: event.target.value })}
+        onBlur={onSave}
+        placeholder="Nombre de la pagina"
+        aria-label="Nombre de la pagina"
+      />
+      <input
+        value={subtitle}
+        onChange={(event) => onPatchTheme({ brandSubtitle: event.target.value })}
+        onBlur={onSave}
+        placeholder="Subtitulo"
+        aria-label="Subtitulo de perfil"
+      />
+      <input
+        value={avatar}
+        onChange={(event) => onPatchTheme({ brandAvatar: event.target.value })}
+        onBlur={onSave}
+        placeholder="Avatar URL"
+        aria-label="Avatar URL"
+      />
+      <input
+        value={followers}
+        onChange={(event) => onPatchTheme({ followers: event.target.value })}
+        onBlur={onSave}
+        placeholder="Seguidores"
+        aria-label="Seguidores"
+      />
+    </div>
+  )
 
   if (platform === 'facebook') {
     return (
       <div className={`${styles.canvasChrome} ${styles.chromeFacebook}`}>
+        {controls}
         <CanvasAvatar name={name} avatar={theme.brandAvatar} />
         <div className={styles.chromeMeta}>
           <div className={styles.chromeName}>
@@ -2075,7 +2263,7 @@ const CanvasChrome: React.FC<{ platform: 'facebook' | 'instagram' | 'tiktok'; si
               <svg viewBox="0 0 24 24" width="14" height="14" className={styles.chromeVerified}><path fill="#1877f2" d="M12 2.2l2.3 1.7 2.85.05.95 2.7 2.25 1.8-.95 2.75.95 2.75-2.25 1.8-.95 2.7L14.3 18.6 12 20.3l-2.3-1.7-2.85-.05-.95-2.7L3.95 14.3l.95-2.75-.95-2.75 2.25-1.8.95-2.7L9.7 3.9z"/><path d="M8.4 12.3l2.4 2.4 4.8-4.9" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
             )}
           </div>
-          <div className={styles.chromeSub}>{subtitle} · <Globe2 size={11} /></div>
+          <div className={styles.chromeSub}>{subtitle}{followers ? ` · ${followers} seguidores` : ''} · <Globe2 size={11} /></div>
         </div>
         <span className={styles.chromeMark}>f</span>
       </div>
@@ -2085,10 +2273,11 @@ const CanvasChrome: React.FC<{ platform: 'facebook' | 'instagram' | 'tiktok'; si
   if (platform === 'instagram') {
     return (
       <div className={`${styles.canvasChrome} ${styles.chromeInstagram}`}>
+        {controls}
         <span className={styles.chromeRing}><CanvasAvatar name={name} avatar={theme.brandAvatar} /></span>
         <div className={styles.chromeMeta}>
           <div className={styles.chromeName}>{handle}</div>
-          <div className={styles.chromeSub}>{subtitle}</div>
+          <div className={styles.chromeSub}>{subtitle}{followers ? ` · ${followers} seguidores` : ''}</div>
         </div>
         <span className={styles.chromeDots}>···</span>
       </div>
@@ -2097,10 +2286,11 @@ const CanvasChrome: React.FC<{ platform: 'facebook' | 'instagram' | 'tiktok'; si
 
   return (
     <div className={`${styles.canvasChrome} ${styles.chromeTiktok}`}>
+      {controls}
       <CanvasAvatar name={name} avatar={theme.brandAvatar} />
       <div className={styles.chromeMeta}>
         <div className={styles.chromeName}>@{handle}</div>
-        <div className={styles.chromeSub}>{subtitle}</div>
+        <div className={styles.chromeSub}>{subtitle}{followers ? ` · ${followers} seguidores` : ''}</div>
       </div>
       <span className={styles.chromeMark}>♪</span>
     </div>
