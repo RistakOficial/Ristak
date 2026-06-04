@@ -439,59 +439,110 @@ export function renderPublicCalendarHtml(calendar, { host = '' } = {}) {
   <title>${escapeHtml(calendar.name || 'Calendario')}</title>
   <meta name="description" content="${escapeHtml(calendar.description || `Agenda ${title}`)}">
   <style>
-    :root{--accent:${escapeHtml(calendar.eventColor || DEFAULT_EVENT_COLOR)};--ink:#111827;--muted:#667085;--line:#e5e7eb;--bg:#f6f7f9;--surface:#fff;--danger:#b42318;--ok:#047857}
+    :root{--accent:${escapeHtml(calendar.eventColor || DEFAULT_EVENT_COLOR)};--accent-soft:color-mix(in srgb,var(--accent) 10%,#fff);--ink:#1f2937;--heading:#111827;--muted:#6b7280;--line:#e5e7eb;--bg:#f8fafc;--surface:#fff;--danger:#b42318;--ok:#047857}
     *{box-sizing:border-box}
     body{margin:0;min-height:100vh;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;letter-spacing:0;line-height:1.5}
-    .page{width:min(1040px,calc(100% - 28px));margin:0 auto;padding:clamp(28px,5vw,64px) 0}
-    .shell{display:grid;grid-template-columns:minmax(0,.9fr) minmax(320px,1.1fr);gap:22px;align-items:start}
-    .intro,.booking{background:var(--surface);border:1px solid var(--line);border-radius:14px;box-shadow:0 30px 70px -52px rgba(15,23,42,.55)}
-    .intro{padding:28px;position:sticky;top:22px}
-    .booking{padding:22px;display:grid;gap:18px}
-    .dot{width:12px;height:12px;border-radius:50%;background:var(--accent);display:inline-block;margin-right:8px}
-    h1{margin:10px 0 10px;font-size:clamp(2rem,4vw,3.6rem);line-height:1;letter-spacing:0;font-weight:850}
-    h2{font-size:1rem;margin:0 0 8px}
-    h3{font-size:.94rem;margin:0 0 10px;color:var(--muted);font-weight:750}
+    button,input,textarea{font:inherit}
+    .page{min-height:100vh;width:min(1180px,calc(100% - 32px));margin:0 auto;padding:clamp(24px,4vw,54px) 0;display:grid;place-items:center}
+    .shell{width:100%;min-height:min(760px,calc(100vh - 80px));display:grid;grid-template-columns:340px minmax(390px,1fr) minmax(260px,300px);background:var(--surface);border:1px solid var(--line);border-radius:16px;box-shadow:0 32px 90px -60px rgba(15,23,42,.45);overflow:hidden}
+    .intro{position:relative;padding:38px 34px;border-right:1px solid var(--line);display:grid;align-content:start;gap:20px}
+    .back{width:42px;height:42px;border:1px solid var(--line);border-radius:999px;background:#fff;color:var(--accent);display:grid;place-items:center;cursor:pointer}
+    .avatar{width:104px;height:104px;border-radius:4px;background:linear-gradient(135deg,var(--accent-soft),#fff);border:1px solid var(--line);display:grid;place-items:center;color:var(--accent);font-size:3rem;font-weight:850}
+    .host{margin:8px 0 0;color:var(--muted);font-size:.95rem;font-weight:750}
+    h1{margin:0;color:var(--heading);font-size:clamp(1.75rem,3vw,2.35rem);line-height:1.08;letter-spacing:0;font-weight:850}
+    h2{margin:0;color:var(--heading);font-size:1.45rem;line-height:1.2;font-weight:800}
+    h3{margin:0;color:var(--heading);font-size:1rem;font-weight:800}
     p{margin:0;color:var(--muted)}
-    .meta{display:flex;gap:10px;flex-wrap:wrap;margin-top:22px}
-    .pill{display:inline-flex;align-items:center;border:1px solid var(--line);border-radius:999px;min-height:34px;padding:0 12px;font-size:.9rem;font-weight:700;color:var(--ink);background:#fff}
-    .slotGroups{display:grid;gap:16px}
-    .slotGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(112px,1fr));gap:10px}
-    .slot{min-height:42px;border:1px solid var(--line);border-radius:10px;background:#fff;color:var(--ink);font:inherit;font-weight:750;cursor:pointer}
-    .slot:hover,.slot.selected{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 18%,transparent)}
-    .slot.selected{background:var(--accent);color:#fff}
-    form{display:grid;gap:12px;border-top:1px solid var(--line);padding-top:18px}
-    label{display:grid;gap:6px;font-size:.9rem;font-weight:750}
-    input,textarea{width:100%;border:1px solid var(--line);border-radius:10px;background:#fff;color:var(--ink);font:inherit;padding:11px 12px;outline:none}
-    input:focus,textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 18%,transparent)}
-    button.submit{min-height:46px;border:1px solid var(--accent);border-radius:10px;background:var(--accent);color:#fff;font:inherit;font-weight:850;cursor:pointer}
+    .description{font-size:.98rem}
+    .meta{display:grid;gap:12px;margin-top:6px;color:var(--muted);font-weight:750}
+    .meta span{display:flex;align-items:center;gap:10px}
+    .calendarPane{padding:38px 36px;display:grid;grid-template-rows:auto auto 1fr auto;gap:24px}
+    .paneTitle{display:grid;gap:6px}
+    .monthBar{display:grid;grid-template-columns:42px 1fr 42px;align-items:center;gap:12px}
+    .monthBar strong{text-align:center;font-size:1.08rem;font-weight:750;color:#374151}
+    .navBtn{width:42px;height:42px;border:0;border-radius:999px;background:#fff;color:#4b5563;display:grid;place-items:center;cursor:pointer}
+    .navBtn:hover,.navBtn:focus-visible{background:var(--accent-soft);color:var(--accent);outline:0}
+    .weekdays,.days{display:grid;grid-template-columns:repeat(7,1fr);justify-items:center}
+    .weekdays{gap:8px;color:#374151;font-size:.78rem;font-weight:750;text-transform:uppercase}
+    .days{gap:10px 8px}
+    .day{width:44px;height:44px;border:0;border-radius:999px;background:transparent;color:#6b7280;cursor:default;font-weight:650}
+    .day.available{color:var(--accent);cursor:pointer;font-weight:800}
+    .day.available:hover,.day.available:focus-visible{background:var(--accent-soft);outline:0}
+    .day.selected{background:var(--accent);color:#fff}
+    .day.today:not(.selected){box-shadow:inset 0 0 0 1px var(--accent)}
+    .day.outside{visibility:hidden}
+    .day:disabled{opacity:.34}
+    .timezone{display:flex;align-items:flex-start;gap:10px;color:var(--muted);font-size:.92rem;font-weight:650}
+    .timesPane{border-left:1px solid var(--line);padding:38px 24px;display:grid;grid-template-rows:auto minmax(0,1fr);gap:18px}
+    .selectedDate{display:grid;gap:4px;min-height:58px}
+    .slotList{display:grid;align-content:start;gap:10px;max-height:330px;overflow:auto;padding-right:2px}
+    .slot{width:100%;min-height:46px;border:1px solid var(--accent);border-radius:8px;background:#fff;color:var(--accent);font-weight:800;cursor:pointer}
+    .slot:hover,.slot.selected{background:var(--accent);color:#fff}
+    .slotEmpty{display:grid;place-items:center;min-height:160px;border:1px dashed var(--line);border-radius:12px;color:var(--muted);text-align:center;padding:18px}
+    form{display:none;gap:10px;border-top:1px solid var(--line);padding-top:16px}
+    form.visible{display:grid}
+    label{display:grid;gap:5px;font-size:.82rem;font-weight:750;color:#374151}
+    input,textarea{width:100%;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--ink);padding:10px 11px;outline:none}
+    textarea{resize:vertical}
+    input:focus,textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 16%,transparent)}
+    button.submit{min-height:44px;border:1px solid var(--accent);border-radius:8px;background:var(--accent);color:#fff;font-weight:850;cursor:pointer}
     button:disabled{opacity:.58;cursor:not-allowed}
-    .message{min-height:22px;font-weight:750;color:var(--muted)}
+    .message{min-height:20px;font-size:.88rem;font-weight:750;color:var(--muted)}
     .message.error{color:var(--danger)}
     .message.ok{color:var(--ok)}
-    .empty{padding:22px;border:1px dashed var(--line);border-radius:12px;color:var(--muted);text-align:center}
-    @media (max-width:800px){.shell{grid-template-columns:1fr}.intro{position:static}.page{width:min(100% - 20px,1040px);padding:18px 0}.intro,.booking{border-radius:12px;padding:18px}}
+    .loading{opacity:.62;pointer-events:none}
+    @media (max-width:1020px){.shell{grid-template-columns:320px minmax(360px,1fr)}.timesPane{grid-column:2;border-left:0;border-top:1px solid var(--line);padding-top:24px}.slotList{grid-template-columns:repeat(auto-fit,minmax(132px,1fr));max-height:none}}
+    @media (max-width:760px){.page{width:min(100% - 18px,1180px);padding:14px 0;place-items:start}.shell{grid-template-columns:1fr;min-height:0;border-radius:14px}.intro,.calendarPane,.timesPane{padding:24px 20px;border-right:0}.calendarPane,.timesPane{border-top:1px solid var(--line)}.avatar{width:82px;height:82px;font-size:2.25rem}.days{gap:6px 4px}.day{width:38px;height:38px}.slotList{grid-template-columns:1fr}}
   </style>
 </head>
 <body>
   <main class="page">
     <div class="shell">
       <section class="intro">
-        <span class="pill"><span class="dot" aria-hidden="true"></span>${escapeHtml(title)}</span>
+        <button class="back" type="button" onclick="history.length > 1 ? history.back() : null" aria-label="Regresar">
+          <svg viewBox="0 0 24 24" width="21" height="21" aria-hidden="true"><path d="M15 18 9 12l6-6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <div class="avatar" aria-hidden="true">${escapeHtml((calendar.name || 'R').trim()[0] || 'R')}</div>
+        <p class="host">${escapeHtml(calendar.eventTitle || 'Evento')}</p>
         <h1>${escapeHtml(calendar.name || 'Agenda tu cita')}</h1>
-        <p>${escapeHtml(calendar.description || 'Selecciona un horario disponible y deja tus datos para confirmar la cita.')}</p>
+        <p class="description">${escapeHtml(calendar.description || 'Selecciona una fecha y horario disponible para confirmar tu cita.')}</p>
         <div class="meta">
-          <span class="pill">${duration} min</span>
-          <span class="pill">Confirmacion ${calendar.autoConfirm ? 'automatica' : 'pendiente'}</span>
+          <span><svg viewBox="0 0 24 24" width="19" height="19" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 7v5l3 2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>${duration} min</span>
+          <span><svg viewBox="0 0 24 24" width="19" height="19" aria-hidden="true"><path d="M20 6 9 17l-5-5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>Confirmacion ${calendar.autoConfirm ? 'automatica' : 'pendiente'}</span>
         </div>
       </section>
 
-      <section class="booking">
-        <div>
-          <h2>Horarios disponibles</h2>
-          <p>Elige un horario para continuar.</p>
+      <section class="calendarPane" data-calendar-pane>
+        <div class="paneTitle">
+          <h2>Selecciona fecha y hora</h2>
+          <p>Elige un dia disponible para ver horarios.</p>
         </div>
-        <div class="slotGroups" data-slots>
-          <div class="empty">Cargando horarios...</div>
+        <div class="monthBar">
+          <button class="navBtn" type="button" data-prev aria-label="Mes anterior">
+            <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="m15 18-6-6 6-6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+          <strong data-month-label></strong>
+          <button class="navBtn" type="button" data-next aria-label="Mes siguiente">
+            <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="m9 18 6-6-6-6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+        </div>
+        <div class="weekdays" aria-hidden="true">
+          <span>Dom</span><span>Lun</span><span>Mar</span><span>Mie</span><span>Jue</span><span>Vie</span><span>Sab</span>
+        </div>
+        <div class="days" data-days></div>
+        <div class="timezone">
+          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+          <span>Zona horaria<br><strong data-timezone></strong></span>
+        </div>
+      </section>
+
+      <section class="timesPane">
+        <div class="selectedDate">
+          <h3 data-selected-title>Selecciona una fecha</h3>
+          <p data-selected-subtitle>Los horarios apareceran aqui.</p>
+        </div>
+        <div class="slotList" data-slots>
+          <div class="slotEmpty">Elige un dia con disponibilidad.</div>
         </div>
         <form data-form>
           <h2>Tus datos</h2>
@@ -508,22 +559,49 @@ export function renderPublicCalendarHtml(calendar, { host = '' } = {}) {
   <script>
     (() => {
       const calendar = ${jsonForInlineScript(payload)};
+      const calendarPane = document.querySelector('[data-calendar-pane]');
+      const daysEl = document.querySelector('[data-days]');
       const slotsEl = document.querySelector('[data-slots]');
+      const monthLabel = document.querySelector('[data-month-label]');
+      const prevButton = document.querySelector('[data-prev]');
+      const nextButton = document.querySelector('[data-next]');
+      const timezoneLabel = document.querySelector('[data-timezone]');
+      const selectedTitle = document.querySelector('[data-selected-title]');
+      const selectedSubtitle = document.querySelector('[data-selected-subtitle]');
       const form = document.querySelector('[data-form]');
       const submit = document.querySelector('[data-submit]');
       const message = document.querySelector('[data-message]');
+      const monthNames = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
       let selectedSlot = '';
+      let selectedDateKey = '';
+      let visibleMonth = new Date();
+      visibleMonth.setDate(1);
+      let slotsByDate = new Map();
       let timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 
       const pad = (value) => String(value).padStart(2, '0');
       const dateKey = (date) => date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate());
+      const monthKey = (date) => date.getFullYear() + '-' + pad(date.getMonth() + 1);
       const today = new Date();
-      const end = new Date(today);
-      end.setDate(today.getDate() + 21);
+      today.setHours(0, 0, 0, 0);
 
       const setMessage = (text, type = '') => {
         message.textContent = text || '';
         message.className = 'message' + (type ? ' ' + type : '');
+      };
+
+      const getZonedParts = (value) => {
+        const parts = new Intl.DateTimeFormat('en-CA', {
+          timeZone: timezone,
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit'
+        }).formatToParts(new Date(value));
+        const record = {};
+        parts.forEach(part => {
+          if (part.type !== 'literal') record[part.type] = part.value;
+        });
+        return record.year + '-' + record.month + '-' + record.day;
       };
 
       const formatDay = (iso) => new Intl.DateTimeFormat('es-MX', {
@@ -533,6 +611,13 @@ export function renderPublicCalendarHtml(calendar, { host = '' } = {}) {
         timeZone: timezone
       }).format(new Date(iso));
 
+      const formatCalendarDate = (date) => new Intl.DateTimeFormat('es-MX', {
+        weekday: 'long',
+        day: 'numeric',
+        month: 'long',
+        year: 'numeric'
+      }).format(date);
+
       const formatTime = (iso) => new Intl.DateTimeFormat('es-MX', {
         hour: '2-digit',
         minute: '2-digit',
@@ -540,20 +625,83 @@ export function renderPublicCalendarHtml(calendar, { host = '' } = {}) {
         timeZone: timezone
       }).format(new Date(iso));
 
-      const renderSlots = (days) => {
-        const groups = (Array.isArray(days) ? days : []).filter(day => Array.isArray(day.slots) && day.slots.length);
-        if (!groups.length) {
-          slotsEl.innerHTML = '<div class="empty">No hay horarios disponibles en los proximos dias.</div>';
+      const setLoading = (loading) => {
+        calendarPane.classList.toggle('loading', loading);
+        slotsEl.classList.toggle('loading', loading);
+      };
+
+      const resetForm = () => {
+        selectedSlot = '';
+        form.classList.remove('visible');
+        form.reset();
+        submit.disabled = true;
+        submit.textContent = 'Selecciona un horario';
+        setMessage('');
+      };
+
+      const renderMonth = () => {
+        monthLabel.textContent = monthNames[visibleMonth.getMonth()] + ' ' + visibleMonth.getFullYear();
+        const first = new Date(visibleMonth.getFullYear(), visibleMonth.getMonth(), 1);
+        const last = new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() + 1, 0);
+        const cells = [];
+
+        for (let i = 0; i < first.getDay(); i += 1) cells.push(null);
+        for (let day = 1; day <= last.getDate(); day += 1) {
+          cells.push(new Date(visibleMonth.getFullYear(), visibleMonth.getMonth(), day));
+        }
+        while (cells.length % 7 !== 0) cells.push(null);
+
+        daysEl.innerHTML = cells.map((date) => {
+          if (!date) return '<span class="day outside"></span>';
+          const key = dateKey(date);
+          const hasSlots = (slotsByDate.get(key) || []).length > 0;
+          const isPast = date < today;
+          const classes = [
+            'day',
+            hasSlots && !isPast ? 'available' : '',
+            key === selectedDateKey ? 'selected' : '',
+            key === dateKey(today) ? 'today' : ''
+          ].filter(Boolean).join(' ');
+          return '<button type="button" class="' + classes + '" data-date="' + key + '"' + (!hasSlots || isPast ? ' disabled' : '') + '>' + date.getDate() + '</button>';
+        }).join('');
+      };
+
+      const renderSlotsForDate = (key) => {
+        const slots = slotsByDate.get(key) || [];
+        resetForm();
+
+        if (!key) {
+          selectedTitle.textContent = 'Selecciona una fecha';
+          selectedSubtitle.textContent = 'Los horarios apareceran aqui.';
+          slotsEl.innerHTML = '<div class="slotEmpty">Elige un dia con disponibilidad.</div>';
           return;
         }
 
-        timezone = groups.find(day => day.timezone)?.timezone || timezone;
-        slotsEl.innerHTML = groups.map(day => {
-          const firstSlot = day.slots[0];
-          return '<section><h3>' + formatDay(firstSlot) + '</h3><div class="slotGrid">' +
-            day.slots.map(slot => '<button type="button" class="slot" data-slot="' + slot + '">' + formatTime(slot) + '</button>').join('') +
-            '</div></section>';
-        }).join('');
+        const [year, month, day] = key.split('-').map(Number);
+        const selectedDate = new Date(year, month - 1, day);
+        selectedTitle.textContent = formatCalendarDate(selectedDate);
+        selectedSubtitle.textContent = slots.length ? 'Elige un horario disponible.' : 'No hay horarios en este dia.';
+
+        if (!slots.length) {
+          slotsEl.innerHTML = '<div class="slotEmpty">No hay horarios disponibles este dia.</div>';
+          return;
+        }
+
+        slotsEl.innerHTML = slots.map(slot => '<button type="button" class="slot" data-slot="' + slot + '">' + formatTime(slot) + '</button>').join('');
+      };
+
+      const ingestSlots = (days) => {
+        const next = new Map();
+        (Array.isArray(days) ? days : []).forEach(day => {
+          if (day.timezone) timezone = day.timezone;
+          (Array.isArray(day.slots) ? day.slots : []).forEach(slot => {
+            const key = getZonedParts(slot);
+            if (!next.has(key)) next.set(key, []);
+            next.get(key).push(slot);
+          });
+        });
+        slotsByDate = next;
+        timezoneLabel.textContent = timezone;
       };
 
       slotsEl.addEventListener('click', (event) => {
@@ -562,26 +710,60 @@ export function renderPublicCalendarHtml(calendar, { host = '' } = {}) {
         selectedSlot = button.getAttribute('data-slot') || '';
         slotsEl.querySelectorAll('.slot').forEach(item => item.classList.remove('selected'));
         button.classList.add('selected');
+        form.classList.add('visible');
         submit.disabled = false;
         submit.textContent = 'Agendar cita';
         setMessage('Horario seleccionado: ' + formatDay(selectedSlot) + ' a las ' + formatTime(selectedSlot));
       });
 
+      daysEl.addEventListener('click', (event) => {
+        const button = event.target.closest('[data-date]');
+        if (!button || button.disabled) return;
+        selectedDateKey = button.getAttribute('data-date') || '';
+        renderMonth();
+        renderSlotsForDate(selectedDateKey);
+      });
+
       const loadSlots = async () => {
+        setLoading(true);
         try {
+          const start = new Date(visibleMonth.getFullYear(), visibleMonth.getMonth(), 1);
+          const end = new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() + 1, 0);
           const params = new URLSearchParams({
-            startDate: dateKey(today),
+            startDate: dateKey(start),
             endDate: dateKey(end),
             timezone
           });
           const response = await fetch('/api/calendars/public/' + encodeURIComponent(calendar.slug) + '/free-slots?' + params.toString());
           const payload = await response.json();
           if (!response.ok || payload.success === false) throw new Error(payload.error || 'No se pudieron cargar horarios');
-          renderSlots(payload.data || []);
+          ingestSlots(payload.data || []);
+          renderMonth();
+          if (selectedDateKey && selectedDateKey.startsWith(monthKey(visibleMonth))) {
+            renderSlotsForDate(selectedDateKey);
+          } else {
+            selectedDateKey = '';
+            renderSlotsForDate('');
+          }
         } catch (error) {
-          slotsEl.innerHTML = '<div class="empty">No se pudieron cargar horarios. Intenta mas tarde.</div>';
+          daysEl.innerHTML = '';
+          slotsEl.innerHTML = '<div class="slotEmpty">No se pudieron cargar horarios. Intenta mas tarde.</div>';
+        } finally {
+          setLoading(false);
         }
       };
+
+      prevButton.addEventListener('click', () => {
+        visibleMonth = new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() - 1, 1);
+        selectedDateKey = '';
+        loadSlots();
+      });
+
+      nextButton.addEventListener('click', () => {
+        visibleMonth = new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() + 1, 1);
+        selectedDateKey = '';
+        loadSlots();
+      });
 
       form.addEventListener('submit', async (event) => {
         event.preventDefault();
@@ -611,11 +793,12 @@ export function renderPublicCalendarHtml(calendar, { host = '' } = {}) {
           });
           const payload = await response.json();
           if (!response.ok || payload.success === false) throw new Error(payload.error || 'No se pudo agendar');
-          form.reset();
+          const successText = payload.data?.message || 'Listo. Tu cita quedo agendada.';
           selectedSlot = '';
-          slotsEl.querySelectorAll('.slot').forEach(item => item.classList.remove('selected'));
-          setMessage(payload.data?.message || 'Listo. Tu cita quedo agendada.', 'ok');
+          form.reset();
+          form.classList.remove('visible');
           await loadSlots();
+          setMessage(successText, 'ok');
         } catch (error) {
           setMessage(error.message || 'No se pudo agendar la cita.', 'error');
         } finally {
