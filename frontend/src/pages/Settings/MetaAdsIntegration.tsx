@@ -613,6 +613,7 @@ export const MetaAdsIntegration: React.FC = () => {
         setCredentials(prev => ({ ...prev, pageId }))
         await loadCredentials()
         setIsEditingMetaConfig(false)
+        void syncMetaAds({ automatic: true })
       } else {
         showToast('error', 'Error', data.error || 'No se pudo guardar el Page ID')
       }
@@ -744,9 +745,17 @@ export const MetaAdsIntegration: React.FC = () => {
     }
   }
 
-  const handleSyncMetaAds = async () => {
+  const syncMetaAds = async (options: { automatic?: boolean } = {}) => {
+    if (isSyncingMetaAds) return
+
     setIsSyncingMetaAds(true)
-    showToast('info', 'Sincronizando...', 'Iniciando sincronización de Meta Ads (últimos 35 meses)')
+    showToast(
+      'info',
+      options.automatic ? 'Sincronizando Meta' : 'Sincronizando...',
+      options.automatic
+        ? 'Ya quedó conectado; estamos trayendo los datos de Meta automáticamente'
+        : 'Iniciando sincronización de Meta Ads (últimos 35 meses)'
+    )
 
     try {
       const result = await campaignsService.syncMetaAds()
@@ -754,13 +763,13 @@ export const MetaAdsIntegration: React.FC = () => {
       if (result.success) {
         showToast(
           'success',
-          'Sincronización iniciada',
+          options.automatic ? 'Sincronización automática iniciada' : 'Sincronización iniciada',
           result.message || 'La sincronización de Meta Ads fue iniciada en segundo plano'
         )
       } else {
         showToast(
           'error',
-          'Error al sincronizar',
+          options.automatic ? 'Meta conectado, pero falta sincronizar' : 'Error al sincronizar',
           result.error || 'No se pudo completar la sincronización'
         )
       }
@@ -769,6 +778,10 @@ export const MetaAdsIntegration: React.FC = () => {
     } finally {
       setIsSyncingMetaAds(false)
     }
+  }
+
+  const handleSyncMetaAds = () => {
+    void syncMetaAds()
   }
 
   const hasAccessToken = Boolean(realAccessToken || isMaskedSecretValue(credentials.accessToken))
@@ -814,6 +827,13 @@ export const MetaAdsIntegration: React.FC = () => {
   ]
   const completedMetaSetupSteps = metaSetupSteps.filter(step => step.done).length
   const hasRailActions = Boolean((credentials.pixelId && !isRenderDomain) || (credentials.accessToken && credentials.adAccountId))
+  const shouldShowStepActions = activeStep > 0 || (
+    activeStep === 0 &&
+    hasAccessToken &&
+    !shouldShowAccessTokenAction &&
+    !isSavingToken &&
+    !isLoadingAccounts
+  )
 
   const getSelectedAdAccountLabel = () => {
     if (!credentials.adAccountId) return 'Pendiente'
@@ -1339,24 +1359,31 @@ export const MetaAdsIntegration: React.FC = () => {
                     <>
                       {renderStepContent()}
 
-                      <div className={styles.stepActions}>
-                        <Button type="button" variant="secondary" onClick={handlePreviousStep} disabled={activeStep === 0}>
-                          <ArrowLeft size={16} />
-                          Atrás
-                        </Button>
-                        {activeStep < metaSetupSteps.length - 1 && (
-                          <Button type="button" variant="secondary" onClick={handleNextStep}>
-                            {activeStep === 2 && !hasPixel ? 'Saltar a Page' : 'Siguiente'}
-                            <ArrowRight size={16} />
-                          </Button>
-                        )}
-                        {activeStep === metaSetupSteps.length - 1 && (
-                          <Button type="button" variant="primary" onClick={handleFinishWizard} disabled={!hasPageId || isSavingPageId}>
-                            Terminar
-                            <CheckCircle size={16} />
-                          </Button>
-                        )}
-                      </div>
+                      {shouldShowStepActions && (
+                        <div className={[
+                          styles.stepActions,
+                          activeStep === 0 ? styles.stepActionsEnd : ''
+                        ].filter(Boolean).join(' ')}>
+                          {activeStep > 0 && (
+                            <Button type="button" variant="secondary" onClick={handlePreviousStep}>
+                              <ArrowLeft size={16} />
+                              Atrás
+                            </Button>
+                          )}
+                          {activeStep < metaSetupSteps.length - 1 && (
+                            <Button type="button" variant="secondary" onClick={handleNextStep}>
+                              {activeStep === 2 && !hasPixel ? 'Saltar a Page' : 'Siguiente'}
+                              <ArrowRight size={16} />
+                            </Button>
+                          )}
+                          {activeStep === metaSetupSteps.length - 1 && (
+                            <Button type="button" variant="primary" onClick={handleFinishWizard} disabled={!hasPageId || isSavingPageId}>
+                              Terminar
+                              <CheckCircle size={16} />
+                            </Button>
+                          )}
+                        </div>
+                      )}
                     </>
                   )}
                 </div>
