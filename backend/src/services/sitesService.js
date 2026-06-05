@@ -2624,7 +2624,7 @@ function renderContentBlock(block, context = {}) {
     }
 
     const calendarName = cleanString(settings.calendarName || settings.calendar_name || block.label || 'Calendario')
-    return `<iframe class="rstk-embed rstk-calendar-embed" src="/calendar/${encodeURIComponent(calendarSlug)}" title="${escapeHtml(calendarName)}" loading="lazy" sandbox="allow-scripts allow-same-origin allow-forms allow-popups"></iframe>`
+    return `<iframe class="rstk-embed rstk-calendar-embed" src="/calendar/${encodeURIComponent(calendarSlug)}?test=1" title="${escapeHtml(calendarName)}" loading="lazy" sandbox="allow-scripts allow-same-origin allow-forms allow-popups"></iframe>`
   }
 
   if (block.blockType === 'embed') {

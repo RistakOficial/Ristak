@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Outlet, useNavigate } from 'react-router-dom'
 import { Layout } from '@/components/layout/Layout'
 import { Sidebar } from '@/components/layout/Sidebar'
@@ -17,6 +17,7 @@ const AI_AGENT_MIN_WIDTH = 360
 const AI_AGENT_DEFAULT_WIDTH = 640
 const AI_AGENT_MAX_WIDTH = 1600
 const AI_AGENT_MIN_MAIN_WIDTH = 320
+const SITES_EDITOR_ACTIVE_EVENT = 'ristak-sites-editor-active'
 
 function getInitialAIAgentOpenState() {
   try {
@@ -62,6 +63,7 @@ export const AppShell: React.FC = () => {
   const [aiAgentOpen, setAIAgentOpen] = useState(getInitialAIAgentOpenState)
   const [aiAgentWidth, setAIAgentWidth] = useState(getInitialAIAgentWidth)
   const [aiAgentResizing, setAIAgentResizing] = useState(false)
+  const [sitesEditorActive, setSitesEditorActive] = useState(false)
   const resizePointerIdRef = useRef<number | null>(null)
   const aiAgentWidthRef = useRef(aiAgentWidth)
   const lastSavedAIAgentWidthRef = useRef(aiAgentWidth)
@@ -126,6 +128,22 @@ export const AppShell: React.FC = () => {
       requestAIAgentClose()
     }
   }, [aiAgentOpen, syncProgressVisible])
+
+  useLayoutEffect(() => {
+    const handleSitesEditorActive = (event: Event) => {
+      setSitesEditorActive(Boolean((event as CustomEvent<{ active?: boolean }>).detail?.active))
+    }
+
+    window.addEventListener(SITES_EDITOR_ACTIVE_EVENT, handleSitesEditorActive)
+    return () => window.removeEventListener(SITES_EDITOR_ACTIVE_EVENT, handleSitesEditorActive)
+  }, [])
+
+  useEffect(() => {
+    if (sitesEditorActive && aiAgentOpen) {
+      setAIAgentOpen(false)
+      requestAIAgentClose()
+    }
+  }, [aiAgentOpen, sitesEditorActive])
 
   useEffect(() => {
     const handleResize = () => {
@@ -240,27 +258,29 @@ export const AppShell: React.FC = () => {
           </Layout>
         </div>
 
-        <div className={styles.aiAgentSlot}>
-          {aiAgentOpen && (
-            <button
-              type="button"
-              className={styles.aiAgentResizeHandle}
-              onPointerDown={handleResizePointerDown}
-              onPointerMove={handleResizePointerMove}
-              onPointerUp={stopResizingAIAgentPanel}
-              onPointerCancel={stopResizingAIAgentPanel}
-              onKeyDown={handleResizeKeyDown}
-              role="slider"
-              aria-label="Cambiar ancho del chat"
-              aria-orientation="horizontal"
-              aria-valuemin={AI_AGENT_MIN_WIDTH}
-              aria-valuemax={AI_AGENT_MAX_WIDTH}
-              aria-valuenow={aiAgentWidth}
-              title="Arrastra para cambiar el ancho del chat"
-            />
-          )}
-          <AIAgentPanel variant="docked" onOpenChange={setAIAgentOpen} />
-        </div>
+        {!sitesEditorActive && (
+          <div className={styles.aiAgentSlot}>
+            {aiAgentOpen && (
+              <button
+                type="button"
+                className={styles.aiAgentResizeHandle}
+                onPointerDown={handleResizePointerDown}
+                onPointerMove={handleResizePointerMove}
+                onPointerUp={stopResizingAIAgentPanel}
+                onPointerCancel={stopResizingAIAgentPanel}
+                onKeyDown={handleResizeKeyDown}
+                role="slider"
+                aria-label="Cambiar ancho del chat"
+                aria-orientation="horizontal"
+                aria-valuemin={AI_AGENT_MIN_WIDTH}
+                aria-valuemax={AI_AGENT_MAX_WIDTH}
+                aria-valuenow={aiAgentWidth}
+                title="Arrastra para cambiar el ancho del chat"
+              />
+            )}
+            <AIAgentPanel variant="docked" onOpenChange={setAIAgentOpen} />
+          </div>
+        )}
       </div>
     </>
   )

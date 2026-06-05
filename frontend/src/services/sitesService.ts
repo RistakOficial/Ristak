@@ -324,8 +324,11 @@ export const sitesService = {
     return apiClient.get<PublicSite>(`/sites/${siteId}`)
   },
 
-  async getPreviewHtml(siteId: string, pageId?: string) {
-    const params = pageId ? `?page=${encodeURIComponent(pageId)}` : ''
+  async getPreviewHtml(siteId: string, pageId?: string, options: { test?: boolean } = {}) {
+    const searchParams = new URLSearchParams()
+    if (pageId) searchParams.set('page', pageId)
+    if (options.test) searchParams.set('test', '1')
+    const params = searchParams.toString() ? `?${searchParams.toString()}` : ''
     const response = await fetch(`${API_BASE_URL}/api/sites/${siteId}/preview${params}`, {
       headers: getAuthHeaders()
     })
@@ -343,6 +346,10 @@ export const sitesService = {
     }
 
     return response.text()
+  },
+
+  getCalendarPreviewUrl(calendarSlug: string) {
+    return `${API_BASE_URL}/api/sites/public/calendar-preview/${encodeURIComponent(calendarSlug)}?test=1`
   },
 
   updateSite(siteId: string, payload: Partial<PublicSite>) {

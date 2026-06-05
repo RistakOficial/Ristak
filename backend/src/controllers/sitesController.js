@@ -104,6 +104,22 @@ export async function previewSiteHandler(req, res) {
   }
 }
 
+export async function previewCalendarHandler(req, res) {
+  try {
+    const calendar = await getPublicCalendarBySlug(req.params.slug)
+    if (!calendar) {
+      return res.status(404).type('html').send('Calendario no encontrado o inactivo')
+    }
+
+    return res.status(200).type('html').send(renderPublicCalendarHtml(calendar, {
+      host: getRequestHost(req) || ''
+    }))
+  } catch (error) {
+    logger.error(`Error previsualizando calendario de site: ${error.message}`)
+    return res.status(500).type('html').send('No se pudo previsualizar el calendario')
+  }
+}
+
 export async function updateSiteHandler(req, res) {
   try {
     const site = await updateSite(req.params.siteId, req.body || {})
@@ -253,12 +269,34 @@ function sendDomainError(req, res, status, message) {
   return res.status(status).type('html').send(renderDomainErrorHtml({ host, message }))
 }
 
+function decodePathSegment(segment) {
+  try {
+    return decodeURIComponent(segment)
+  } catch {
+    return segment
+  }
+}
+
+function isTrackingBypassRequest(req) {
+  const queryFlag = String(req.query?.test || req.query?.tracking || '').toLowerCase()
+  if (queryFlag === '1' || queryFlag === 'true' || queryFlag === 'test' || queryFlag === 'preview') {
+    return true
+  }
+
+  return req.path
+    .split('/')
+    .filter(Boolean)
+    .map(segment => decodePathSegment(segment).toLowerCase())
+    .includes('test')
+}
+
 export async function publicSiteHostMiddleware(req, res, next) {
   try {
     if (
       req.path === '/api/health' ||
       req.path === '/api/sites/public/submit' ||
       req.path === '/api/sites/public/meta-event' ||
+      req.path.startsWith('/api/sites/public/calendar-preview/') ||
       req.path === '/snip.js' ||
       req.path === '/collect' ||
       req.path === '/sync-visitor' ||
@@ -302,7 +340,7 @@ export async function publicSiteHostMiddleware(req, res, next) {
 
       return res.status(200).type('html').send(await renderPublicSiteHtml(resolution.site, {
         pageId: req.query?.page,
-        trackingEnabled: true
+        trackingEnabled: !isTrackingBypassRequest(req)
       }))
     }
 

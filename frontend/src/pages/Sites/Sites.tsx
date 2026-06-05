@@ -13,6 +13,8 @@ import {
 import {
   SortableContext,
   arrayMove,
+  defaultAnimateLayoutChanges,
+  type AnimateLayoutChanges,
   useSortable,
   verticalListSortingStrategy
 } from '@dnd-kit/sortable'
@@ -152,6 +154,7 @@ const ruleActions: Array<{ value: SiteOptionAction; label: string }> = [
 ]
 
 const SITES_AI_DRAFT_CREATED_EVENT = 'ristak-sites-ai-draft-created'
+const SITES_EDITOR_ACTIVE_EVENT = 'ristak-sites-editor-active'
 const DEFAULT_FUNNEL_PAGE_ID = 'page-1'
 const SOCIAL_PROFILE_SELECTED_ID = '__social_profile__'
 const LANDING_DEFAULT_PAGE_PADDING = 50
@@ -253,9 +256,10 @@ const normalizeRouteInput = (value: string) => value
   .replace(/^-+|-+$/g, '')
 
 const getRoutePath = (site?: PublicSite | null) => `/${normalizeRouteInput(site?.slug || '')}`
+const getTrackingSafeRoutePath = (site: PublicSite) => `${getRoutePath(site).replace(/\/$/, '')}/test`
 
 const buildPublicUrl = (site: PublicSite, domainConfig: SitesDomainConfig) =>
-  domainConfig.domain ? `https://${domainConfig.domain}${getRoutePath(site)}` : ''
+  domainConfig.domain ? `https://${domainConfig.domain}${getTrackingSafeRoutePath(site)}` : ''
 
 const getPublicRouteLabel = (site: PublicSite, domainConfig: SitesDomainConfig) =>
   domainConfig.domain ? `${domainConfig.domain}${getRoutePath(site)}` : getRoutePath(site)
@@ -1187,11 +1191,24 @@ export const Sites: React.FC = () => {
     : section === 'forms'
       ? (isFormSite(selectedSite) ? selectedSite : null)
       : null
+  const editorActive = Boolean(editorSite)
   const isFocusedSitesMode = createFlow !== 'closed' || Boolean(editorSite)
   const canvasTheme = editorSite ? buildCanvasTheme(editorSite, device) : null
   const palettePreviewBlock = editorSite && paletteDragBlockType
     ? makePreviewBlock(paletteDragBlockType, editorSite, isLanding(editorSite) ? activePage?.id : undefined)
     : null
+
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent(SITES_EDITOR_ACTIVE_EVENT, {
+      detail: { active: editorActive }
+    }))
+
+    return () => {
+      window.dispatchEvent(new CustomEvent(SITES_EDITOR_ACTIVE_EVENT, {
+        detail: { active: false }
+      }))
+    }
+  }, [editorActive])
 
   const performUrlNavigation = useCallback((href: string) => {
     const target = new URL(href, window.location.href)
@@ -1713,6 +1730,12 @@ export const Sites: React.FC = () => {
   const handleSaveSite = async (statusOverride?: PublicSite['status'], options: { silent?: boolean } = {}) => {
     const siteToSave = selectedSiteRef.current || selectedSite
     if (!siteToSave) return
+
+    if (statusOverride === 'published' && (!domainConfig.domain || !domainConfig.renderDomainVerified)) {
+      showToast('error', 'Dominio requerido', 'Configura y verifica un dominio antes de publicar este sitio.')
+      return
+    }
+
     setSaving(true)
     try {
       const site = await sitesService.updateSite(siteToSave.id, {
@@ -1748,7 +1771,7 @@ export const Sites: React.FC = () => {
 
     previewWindow.document.write('<!doctype html><title>Previsualizando...</title><body style="font-family: system-ui; padding: 24px;">Cargando previsualizacion...</body>')
     try {
-      const html = await sitesService.getPreviewHtml(editorSite.id, isLanding(editorSite) ? activePage?.id : undefined)
+      const html = await sitesService.getPreviewHtml(editorSite.id, isLanding(editorSite) ? activePage?.id : undefined, { test: true })
       previewWindow.document.open()
       previewWindow.document.write(html)
       previewWindow.document.close()
@@ -2076,6 +2099,22 @@ export const Sites: React.FC = () => {
                   />
                   <Pencil size={14} />
                 </label>
+                {isLanding(editorSite) && (
+                  <div className={styles.editorHeaderPages}>
+                    <FunnelPagesPanel
+                      pages={pages}
+                      activePageId={activePage?.id || DEFAULT_FUNNEL_PAGE_ID}
+                      draggingPageId={draggingPageId}
+                      onSelectPage={setActivePageId}
+                      onAddPage={handleAddPage}
+                      onDuplicatePage={handleDuplicatePage}
+                      onDeletePage={handleDeletePage}
+                      onDragPage={setDraggingPageId}
+                      onReorderPages={handleReorderPages}
+                      onRenamePage={handleRenamePage}
+                    />
+                  </div>
+                )}
               </div>
               <div className={styles.editorTopControls}>
                 <label className={styles.compactField}>
@@ -2238,20 +2277,6 @@ export const Sites: React.FC = () => {
                 </div>
 
                 <section className={styles.canvasColumn}>
-                  {isLanding(editorSite) && (
-                    <FunnelPagesPanel
-                      pages={pages}
-                      activePageId={activePage?.id || DEFAULT_FUNNEL_PAGE_ID}
-                      draggingPageId={draggingPageId}
-                      onSelectPage={setActivePageId}
-                      onAddPage={handleAddPage}
-                      onDuplicatePage={handleDuplicatePage}
-                      onDeletePage={handleDeletePage}
-                      onDragPage={setDraggingPageId}
-                      onReorderPages={handleReorderPages}
-                      onRenamePage={handleRenamePage}
-                    />
-                  )}
                   {!isLanding(editorSite) && (
                     <div className={styles.canvasToolbar}>
                       <div className={styles.canvasToolbarTitle}>
@@ -2346,7 +2371,7 @@ export const Sites: React.FC = () => {
                         </div>
                       </CanvasStage>
                     </SortableContext>
-                    <DragOverlay dropAnimation={null}>
+                    <DragOverlay dropAnimation={{ duration: 180, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' }}>
                       {activeDragBlock ? (
                         <div className={`rstkCanvas ${canvasTheme!.bodyClass}`} style={{ ...canvasTheme!.vars, width: 460, ['--rstk-scale' as string]: 1 } as React.CSSProperties}>
                           <div className="rstk-block-style">
@@ -3180,7 +3205,7 @@ const CanvasChrome: React.FC<{
 }
 
 const paletteGroups: Array<{ label: string; types: SiteBlockType[] }> = [
-  { label: 'Contenido', types: ['hero', 'section', 'title', 'subtitle', 'text', 'image', 'video', 'button', 'benefits', 'testimonials', 'services', 'faq', 'cta', 'embed', 'calendar_embed', 'form_embed'] },
+  { label: 'Arrastra o da click', types: ['hero', 'section', 'title', 'subtitle', 'text', 'image', 'video', 'button', 'benefits', 'testimonials', 'services', 'faq', 'cta', 'embed', 'calendar_embed', 'form_embed'] },
   { label: 'Campos', types: ['short_text', 'paragraph', 'email', 'phone', 'number', 'currency', 'date', 'dropdown', 'radio', 'checkboxes', 'description'] }
 ]
 
@@ -3360,7 +3385,6 @@ const Palette: React.FC<{
     <aside className={styles.palette}>
       <div className={styles.panelHeader}>
         <strong>Bloques</strong>
-        <span>Arrastra o da click</span>
       </div>
       <div className={styles.paletteGroups}>
         {groups.map(group => (
@@ -3525,6 +3549,19 @@ interface SortableCanvasBlockProps {
   onSave: () => void
 }
 
+const sortableTransition = {
+  duration: 190,
+  easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)'
+}
+
+const sortableAnimateLayoutChanges: AnimateLayoutChanges = (args) => {
+  if (args.isSorting || args.wasDragging) {
+    return defaultAnimateLayoutChanges(args)
+  }
+
+  return true
+}
+
 const SortableCanvasBlock: React.FC<SortableCanvasBlockProps> = ({
   block,
   blocks,
@@ -3541,14 +3578,24 @@ const SortableCanvasBlock: React.FC<SortableCanvasBlockProps> = ({
   onPatchSettings,
   onSave
 }) => {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: block.id })
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: block.id,
+    animateLayoutChanges: sortableAnimateLayoutChanges,
+    transition: sortableTransition
+  })
 
   return (
     <div
       ref={setNodeRef}
       data-rstk-block-index={index}
-      style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.6 : undefined, ...getBlockCanvasStyle(block) }}
-      className={`rstk-block-style rstkSel ${selected ? 'rstkSelActive' : ''}`}
+      style={{
+        transform: CSS.Transform.toString(transform),
+        transition: transition || 'transform 190ms cubic-bezier(0.2, 0.8, 0.2, 1)',
+        opacity: isDragging ? 0.34 : undefined,
+        zIndex: isDragging ? 8 : undefined,
+        ...getBlockCanvasStyle(block)
+      }}
+      className={`rstk-block-style rstkSel ${selected ? 'rstkSelActive' : ''} ${isDragging ? 'rstkSelDragging' : ''}`}
       onClick={(event) => {
         event.stopPropagation()
         onSelect()
@@ -4100,6 +4147,18 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
   if (block.blockType === 'calendar_embed') {
     const calendarName = getSettingString(settings, 'calendarName')
     const calendarSlug = getSettingString(settings, 'calendarSlug')
+    if (calendarSlug) {
+      return (
+        <iframe
+          className="rstk-embed rstk-calendar-embed"
+          src={sitesService.getCalendarPreviewUrl(calendarSlug)}
+          title={calendarName || `Calendario /${calendarSlug}`}
+          loading="lazy"
+          sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+        />
+      )
+    }
+
     return (
       <div className="rstk-embed rstk-embed-empty">
         <CalendarDays size={20} />

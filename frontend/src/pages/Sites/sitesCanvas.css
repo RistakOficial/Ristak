@@ -265,7 +265,18 @@
 
 /* Selectable block wrapper. */
 .rstkCanvas .rstk-block-style { position: relative; }
-.rstkCanvas .rstkSel { cursor: pointer; }
+.rstkCanvas .rstkSel {
+  cursor: pointer;
+  will-change: transform;
+  transition:
+    transform .19s cubic-bezier(.2,.8,.2,1),
+    opacity .12s ease,
+    box-shadow .12s ease;
+}
+.rstkCanvas .rstkSelDragging {
+  cursor: grabbing;
+  pointer-events: none;
+}
 .rstkCanvas .rstkSel::after {
   content: ""; position: absolute; inset: -6px; border-radius: 12px;
   border: 1.5px solid transparent; pointer-events: none;

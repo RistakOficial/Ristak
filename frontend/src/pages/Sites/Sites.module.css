@@ -4534,3 +4534,75 @@
     max-width: 100%;
   }
 }
+
+/* Final editor ergonomics: pages live in the header, route label sits inline,
+   and the canvas gets the recovered width. */
+.containerFocused .editorHeader {
+  grid-template-columns: minmax(460px, 1fr) minmax(720px, max-content);
+  align-items: start;
+}
+
+.editorHeaderPages {
+  width: min(920px, 100%);
+  margin-top: 10px;
+}
+
+.editorHeaderPages .pagesPanel {
+  width: 100%;
+  padding: 0;
+}
+
+.editorHeaderPages .pageList {
+  flex: 1 1 auto;
+}
+
+.containerFocused .builderGridLanding {
+  grid-template-columns: 188px minmax(0, 1fr) 292px;
+}
+
+.containerFocused .canvasColumn {
+  padding: 0 10px 0 0;
+}
+
+.editorTopControls {
+  align-items: center;
+}
+
+.editorTopControls .compactField {
+  min-width: 270px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.editorTopControls .compactField span {
+  flex: 0 0 auto;
+  margin: 0;
+  white-space: nowrap;
+}
+
+.editorTopControls .compactField input {
+  width: 180px;
+}
+
+.containerFocused .palette .panelHeader {
+  min-height: 28px;
+}
+
+.containerFocused .paletteGroupLabel {
+  color: var(--color-text-secondary);
+}
+
+@media (max-width: 1280px) {
+  .containerFocused .editorHeader {
+    grid-template-columns: 1fr;
+  }
+
+  .editorTopControls {
+    justify-content: flex-start;
+  }
+
+  .editorTopControls .compactField {
+    min-width: min(100%, 320px);
+  }
+}
