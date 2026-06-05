@@ -1048,6 +1048,8 @@ export const Sites: React.FC = () => {
   const [draggingPageId, setDraggingPageId] = useState<string | null>(null)
   const [activeDragId, setActiveDragId] = useState<string | null>(null)
   const [paletteDragging, setPaletteDragging] = useState(false)
+  const [paletteDragBlockType, setPaletteDragBlockType] = useState<SiteBlockType | null>(null)
+  const [paletteInsertIndex, setPaletteInsertIndex] = useState<number | null>(null)
   const [leadRows, setLeadRows] = useState<LeadRow[]>([])
   const [loadingLeads, setLoadingLeads] = useState(false)
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
@@ -2083,6 +2085,7 @@ export const Sites: React.FC = () => {
                       onDeletePage={handleDeletePage}
                       onDragPage={setDraggingPageId}
                       onReorderPages={handleReorderPages}
+                      onRenamePage={handleRenamePage}
                     />
                   </div>
                 )}
@@ -2091,6 +2094,12 @@ export const Sites: React.FC = () => {
                   <Palette
                     blockTypes={isLanding(editorSite) ? landingBlockTypes : formBlockTypes}
                     onAdd={handleAddBlock}
+                    onPaletteDragStart={(blockType) => {
+                      setPaletteDragBlockType(blockType)
+                      setPaletteDragging(true)
+                      setPaletteInsertIndex(canvasBlocks.length)
+                    }}
+                    onPaletteDragEnd={resetPaletteDrag}
                   />
                 </div>
 
@@ -2986,6 +2995,7 @@ interface FunnelPagesPanelProps {
   onDeletePage: (pageId: string) => void
   onDragPage: (pageId: string | null) => void
   onReorderPages: (sourcePageId: string, targetPageId: string) => void
+  onRenamePage: (pageId: string, title: string) => void
 }
 
 const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
