@@ -80,33 +80,33 @@ export const APIAccessSettings: React.FC = () => {
     loadApiToken()
   }, [user])
 
-  const handleRotateApiToken = async () => {
-    const rotateApiToken = async () => {
-      setIsRotatingApiToken(true)
+  const rotateApiToken = async () => {
+    setIsRotatingApiToken(true)
 
-      try {
-        const response = await fetch(`${API_URL}/api/api-access/token/rotate`, {
-          method: 'POST',
-          headers: authHeaders()
-        })
+    try {
+      const response = await fetch(`${API_URL}/api/api-access/token/rotate`, {
+        method: 'POST',
+        headers: authHeaders()
+      })
 
-        const data = await response.json()
+      const data = await response.json()
 
-        if (!response.ok || !data.success) {
-          throw new Error(data.message || 'No se pudo generar el API token')
-        }
-
-        setAppId(data.appId || appId)
-        setNewApiToken(data.apiToken)
-        setApiTokenMetadata(data.apiTokenMetadata)
-        showToast('success', 'API token listo', 'Cópialo ahora: no se vuelve a mostrar completo')
-      } catch (error: any) {
-        showToast('error', 'Error', error.message || 'No se pudo generar el API token')
-      } finally {
-        setIsRotatingApiToken(false)
+      if (!response.ok || !data.success) {
+        throw new Error(data.message || 'No se pudo generar el API token')
       }
-    }
 
+      setAppId(data.appId || appId)
+      setNewApiToken(data.apiToken)
+      setApiTokenMetadata(data.apiTokenMetadata)
+      showToast('success', 'API token listo', 'Cópialo ahora: no se vuelve a mostrar completo')
+    } catch (error: any) {
+      showToast('error', 'Error', error.message || 'No se pudo generar el API token')
+    } finally {
+      setIsRotatingApiToken(false)
+    }
+  }
+
+  const handleRotateApiToken = async () => {
     if (apiTokenMetadata?.hasToken) {
       showConfirm(
         'Generar nuevo API token',
@@ -135,6 +135,32 @@ export const APIAccessSettings: React.FC = () => {
     }
   }
 
+  const revokeApiToken = async () => {
+    setIsRevokingApiToken(true)
+
+    try {
+      const response = await fetch(`${API_URL}/api/api-access/token`, {
+        method: 'DELETE',
+        headers: authHeaders()
+      })
+
+      const data = await response.json()
+
+      if (!response.ok || !data.success) {
+        throw new Error(data.message || 'No se pudo revocar el API token')
+      }
+
+      setAppId(data.appId || appId)
+      setNewApiToken('')
+      setApiTokenMetadata(data.apiToken)
+      showToast('success', 'API token revocado', 'El acceso externo quedó desactivado')
+    } catch (error: any) {
+      showToast('error', 'Error', error.message || 'No se pudo revocar el API token')
+    } finally {
+      setIsRevokingApiToken(false)
+    }
+  }
+
   const handleRevokeApiToken = async () => {
     if (!apiTokenMetadata?.hasToken) return
 
@@ -142,32 +168,6 @@ export const APIAccessSettings: React.FC = () => {
       'Revocar API token',
       'Esto desactiva el acceso externo con este token. ¿Revocarlo?',
       () => {
-        const revokeApiToken = async () => {
-          setIsRevokingApiToken(true)
-
-          try {
-            const response = await fetch(`${API_URL}/api/api-access/token`, {
-              method: 'DELETE',
-              headers: authHeaders()
-            })
-
-            const data = await response.json()
-
-            if (!response.ok || !data.success) {
-              throw new Error(data.message || 'No se pudo revocar el API token')
-            }
-
-            setAppId(data.appId || appId)
-            setNewApiToken('')
-            setApiTokenMetadata(data.apiToken)
-            showToast('success', 'API token revocado', 'El acceso externo quedó desactivado')
-          } catch (error: any) {
-            showToast('error', 'Error', error.message || 'No se pudo revocar el API token')
-          } finally {
-            setIsRevokingApiToken(false)
-          }
-        }
-
         void revokeApiToken()
       },
       'Revocar',
