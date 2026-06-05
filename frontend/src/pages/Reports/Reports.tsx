@@ -1867,7 +1867,12 @@ export const Reports: React.FC = () => {
       },
       {
         key: 'spend',
-        header: 'Invertido, anuncios',
+        header: (
+          <div style={{ textAlign: 'center', lineHeight: '1.2' }}>
+            <div>Invertido</div>
+            <div style={{ fontSize: '0.75em', opacity: 0.7 }}>(Anuncios)</div>
+          </div>
+        ),
         sortable: true,
         render: (value: number) => <span className={styles.secondaryText}>{formatCurrency(value)}</span>
       },

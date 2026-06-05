@@ -17,7 +17,7 @@ import styles from './Table.module.css'
 
 export interface Column<T> {
   key: string
-  header: string
+  header: React.ReactNode
   render?: (value: any, item: T) => React.ReactNode
   searchValue?: (value: any, item: T) => unknown | unknown[]
   searchable?: boolean
