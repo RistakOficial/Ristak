@@ -2,7 +2,7 @@
 .mainCard {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 22px;
 }
 
 .header {
@@ -77,8 +77,8 @@
   display: inline-grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 4px;
-  width: min(100%, 440px);
-  flex: 0 1 440px;
+  width: min(100%, 520px);
+  flex: 0 1 520px;
   padding: 4px;
   border: 1px solid rgba(148, 163, 184, 0.16);
   border-radius: 10px;
@@ -98,6 +98,7 @@
   color: var(--color-text-secondary);
   font-size: 13px;
   font-weight: 650;
+  white-space: nowrap;
   cursor: pointer;
   transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
 }
@@ -174,28 +175,45 @@
 }
 
 .sourceControl {
-  display: inline-flex;
+  position: relative;
+  display: inline-grid;
+  grid-template-columns: auto auto minmax(92px, auto);
   align-items: center;
-  gap: 8px;
+  gap: 7px;
   min-height: 36px;
-  padding: 0 8px 0 10px;
+  padding: 0 30px 0 10px;
   border: 1px solid rgba(148, 163, 184, 0.16);
   border-radius: 8px;
-  background: transparent;
+  background: rgba(148, 163, 184, 0.035);
   color: var(--color-text-secondary);
   font-size: 12px;
   font-weight: 650;
 }
 
 .sourceSelect {
-  width: 150px;
+  width: 100%;
+  min-width: 92px;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  appearance: none;
+  background: transparent;
+  color: var(--color-text-primary);
+  font: inherit;
+  outline: none;
+  cursor: pointer;
 }
 
-.sourceSelect button {
-  min-height: 34px;
-  padding: 7px 9px;
-  border-radius: 7px;
-  font-size: 12px;
+.sourceSelect option {
+  color: #111827;
+  background: #ffffff;
+}
+
+.sourceChevron {
+  position: absolute;
+  right: 9px;
+  color: var(--color-text-tertiary);
+  pointer-events: none;
 }
 
 .compactHelp {
@@ -250,6 +268,11 @@
   gap: 10px;
 }
 
+.calendarItem {
+  display: flex;
+  flex-direction: column;
+}
+
 .calendarRow {
   position: relative;
   display: grid;
@@ -277,6 +300,11 @@
 .calendarRowDefault:hover {
   border-color: rgba(148, 163, 184, 0.32);
   background: rgba(148, 163, 184, 0.045);
+}
+
+.calendarRowEditing {
+  border-bottom-right-radius: 0;
+  border-bottom-left-radius: 0;
 }
 
 .calendarIdentity {
@@ -435,11 +463,11 @@
 
 /* ===== Per-calendar actions ===== */
 .calendarActions {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto auto;
   align-items: center;
   justify-content: flex-end;
-  gap: 10px;
-  flex-wrap: wrap;
+  gap: 14px;
 }
 
 .conversionControl {
@@ -457,6 +485,202 @@
 .conversionControlActive {
   border-color: rgba(148, 163, 184, 0.2);
   background: rgba(148, 163, 184, 0.045);
+}
+
+.rowActionColumn {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  min-width: 64px;
+}
+
+.rowActionColumn > span {
+  color: var(--color-text-tertiary);
+  font-size: 10px;
+  font-weight: 750;
+  line-height: 1;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.moreButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+
+.moreButton:hover,
+.moreButton[data-state='open'] {
+  border-color: rgba(148, 163, 184, 0.32);
+  background: rgba(148, 163, 184, 0.08);
+  color: var(--color-text-primary);
+}
+
+.actionsMenu {
+  min-width: 230px;
+  padding: 4px;
+}
+
+.menuItem {
+  gap: 10px;
+  min-height: 38px;
+  padding: 0 10px;
+  color: var(--color-text-primary);
+  font-size: 13px;
+}
+
+.menuItem svg {
+  flex: 0 0 auto;
+  color: var(--color-text-tertiary);
+}
+
+.dangerMenuItem {
+  color: var(--color-error);
+}
+
+.dangerMenuItem svg {
+  color: currentColor;
+}
+
+.calendarEditor {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-top: 0;
+  border-radius: 0 0 10px 10px;
+  background: rgba(148, 163, 184, 0.025);
+}
+
+.editorHeader,
+.editorFooter,
+.lookBusyRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.editorHeader h4 {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.editorHeader p {
+  margin: 4px 0 0;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+}
+
+.editorGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.editorField {
+  display: grid;
+  align-content: start;
+  gap: 7px;
+  min-width: 0;
+}
+
+.editorField > span,
+.lookBusyPercent > span {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.editorFieldWide {
+  grid-column: span 2;
+}
+
+.inlineFieldGroup {
+  display: grid;
+  grid-template-columns: minmax(72px, 0.8fr) minmax(112px, 1.2fr);
+  gap: 8px;
+}
+
+.colorInput {
+  width: 56px;
+  height: 40px;
+  padding: 3px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 8px;
+  background: var(--color-background-primary);
+  cursor: pointer;
+}
+
+.editorToggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  width: fit-content;
+  min-height: 38px;
+  padding: 0 12px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.045);
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.editorToggle span {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--color-text-tertiary);
+}
+
+.editorToggleActive span {
+  background: var(--color-success);
+}
+
+.lookBusyRow {
+  justify-content: flex-start;
+  padding: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  border-radius: 8px;
+  background: var(--color-background-primary);
+}
+
+.lookBusyRow label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.lookBusyPercent {
+  gap: 8px;
+}
+
+.lookBusyPercent input {
+  width: 86px;
+}
+
+.editorFooter {
+  justify-content: flex-end;
+  padding-top: 2px;
 }
 
 /* ===== Empty state ===== */
@@ -1157,6 +1381,10 @@
   .calendarActions {
     justify-content: flex-start;
   }
+
+  .editorGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 760px) {
@@ -1211,6 +1439,31 @@
 
   .calendarRow {
     padding: 14px;
+  }
+
+  .calendarActions {
+    grid-template-columns: minmax(0, 1fr) auto;
+    width: 100%;
+  }
+
+  .rowActionColumn {
+    justify-items: end;
+  }
+
+  .editorGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .editorFieldWide {
+    grid-column: auto;
+  }
+
+  .inlineFieldGroup {
+    grid-template-columns: 1fr;
+  }
+
+  .editorFooter button {
+    width: 100%;
   }
 
   .publicUrlLine {

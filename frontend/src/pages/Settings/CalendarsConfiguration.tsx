@@ -1,16 +1,25 @@
 import React, { useState, useEffect, useMemo } from 'react'
 import { createPortal } from 'react-dom'
-import { Card, Button, Modal, CustomSelect, Loading } from '@/components/common'
+import {
+  Card,
+  Button,
+  Modal,
+  CustomSelect,
+  Loading,
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator
+} from '@/components/common'
 import {
   Calendar,
   Loader2,
   CheckCircle,
   XCircle,
   Info,
-  Settings,
   Plus,
   Copy,
-  ExternalLink,
   Globe2,
   KeyRound,
   TestTube2,
@@ -24,7 +33,9 @@ import {
   SlidersHorizontal,
   RefreshCw,
   Pencil,
-  ChevronDown
+  ChevronDown,
+  MoreHorizontal,
+  Link2
 } from 'lucide-react'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useAppConfig, useHighLevelConnected } from '@/hooks'
@@ -181,10 +192,11 @@ export const CalendarsConfiguration: React.FC = () => {
     allowBookingForUnit: 'days'
   })
 
-  // Estados del modal de configuración
-  const [showConfigModal, setShowConfigModal] = useState(false)
+  // Estados de edición inline de calendario
+  const [expandedCalendarId, setExpandedCalendarId] = useState<string | null>(null)
   const [selectedCalendar, setSelectedCalendar] = useState<CalendarType | null>(null)
   const [savingConfig, setSavingConfig] = useState(false)
+  const [deletingCalendarId, setDeletingCalendarId] = useState<string | null>(null)
 
   // Cargar calendarios al montar
   useEffect(() => {
@@ -529,13 +541,19 @@ export const CalendarsConfiguration: React.FC = () => {
     }
   }
 
-  const handleOpenConfigModal = (calendar: CalendarType) => {
+  const handleOpenCalendarEditor = (calendar: CalendarType) => {
+    if (expandedCalendarId === calendar.id) {
+      setExpandedCalendarId(null)
+      setSelectedCalendar(null)
+      return
+    }
+
     setSelectedCalendar(calendar)
-    setShowConfigModal(true)
+    setExpandedCalendarId(calendar.id)
   }
 
-  const handleCloseConfigModal = () => {
-    setShowConfigModal(false)
+  const handleCloseCalendarEditor = () => {
+    setExpandedCalendarId(null)
     setSelectedCalendar(null)
   }
 
@@ -546,6 +564,10 @@ export const CalendarsConfiguration: React.FC = () => {
     try {
       // Construir payload con todos los campos editables
       const updateData: any = {
+        name: selectedCalendar.name?.trim() || 'Calendario',
+        eventTitle: selectedCalendar.eventTitle?.trim() || selectedCalendar.name?.trim() || 'Cita',
+        eventColor: selectedCalendar.eventColor || '#3b82f6',
+        isActive: selectedCalendar.isActive,
         slotDuration: selectedCalendar.slotDuration,
         slotDurationUnit: selectedCalendar.slotDurationUnit,
         slotInterval: selectedCalendar.slotInterval,
@@ -578,7 +600,7 @@ export const CalendarsConfiguration: React.FC = () => {
       await calendarsService.updateCalendar(selectedCalendar.id, updateData, accessToken || undefined)
 
       showToast('success', 'Configuración de calendario actualizada', accessToken ? `Los cambios se guardaron en ${selectedCalendar.name}` : `Los cambios quedaron guardados en Ristak y pendientes de sync`)
-      handleCloseConfigModal()
+      handleCloseCalendarEditor()
       loadCalendars() // Recargar calendarios para ver cambios
     } catch (error: any) {
       showToast('error', 'Error al actualizar calendario', error.message)
@@ -651,6 +673,54 @@ export const CalendarsConfiguration: React.FC = () => {
     } catch {
       showToast('error', 'No se pudo copiar', 'Copia la URL manualmente')
     }
+  }
+
+  const handleDeleteCalendar = (calendar: CalendarType) => {
+    const isExternalCalendar = calendar.source === 'google' || calendar.source === 'ghl'
+
+    showConfirm(
+      'Eliminar calendario',
+      isExternalCalendar
+        ? `${calendar.name} viene de ${calendar.source === 'google' ? 'Google Calendar' : 'HighLevel'}. Para quitarlo de verdad hay que desconectarlo o quitarlo desde el origen; Ristak no lo va a borrar porque se volveria a sincronizar.`
+        : `Se eliminará ${calendar.name} y sus citas locales asociadas. Esta acción no se puede deshacer.`,
+      () => {
+        const deleteCalendar = async () => {
+          if (isExternalCalendar) {
+            showToast('warning', 'Calendario sincronizado', 'Elimínalo o desconéctalo desde el origen para que no vuelva a aparecer.')
+            return
+          }
+
+          setDeletingCalendarId(calendar.id)
+          try {
+            await calendarsService.deleteCalendar(calendar.id, accessToken || undefined)
+
+            if (defaultCalendarId === calendar.id) {
+              const nextDefault = calendars.find(item => item.id !== calendar.id)?.id || ''
+              await setDefaultCalendarId(nextDefault)
+            }
+
+            if (attributionCalendarIds.includes(calendar.id)) {
+              await setAttributionCalendarIds(attributionCalendarIds.filter(id => id !== calendar.id))
+            }
+
+            if (expandedCalendarId === calendar.id) {
+              handleCloseCalendarEditor()
+            }
+
+            await loadCalendars()
+            showToast('success', 'Calendario eliminado', `${calendar.name} ya no aparece en Ristak`)
+          } catch (error: any) {
+            showToast('error', 'No se pudo eliminar', error.message || 'Intenta nuevamente')
+          } finally {
+            setDeletingCalendarId(null)
+          }
+        }
+
+        void deleteCalendar()
+      },
+      isExternalCalendar ? 'Entendido' : 'Eliminar',
+      'Cancelar'
+    )
   }
 
   const renderCreateCalendarModal = () => showCreateModal ? createPortal(
@@ -817,16 +887,22 @@ export const CalendarsConfiguration: React.FC = () => {
     ]
 
     return (
-      <div className={pageStyles.sourceControl}>
+      <label className={pageStyles.sourceControl}>
         <SlidersHorizontal size={16} />
         <span>Origen</span>
-        <CustomSelect
+        <select
           className={pageStyles.sourceSelect}
           value={calendarSourcePreference}
-          onChange={handleCalendarSourcePreferenceChange}
-          options={options}
-        />
-      </div>
+          onChange={(event) => void handleCalendarSourcePreferenceChange(event.target.value)}
+        >
+          {options.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+        <ChevronDown size={14} className={pageStyles.sourceChevron} />
+      </label>
     )
   }
 
@@ -836,102 +912,408 @@ export const CalendarsConfiguration: React.FC = () => {
     </span>
   )
 
+  const renderCalendarInlineEditor = (calendar: CalendarType) => {
+    if (expandedCalendarId !== calendar.id || !selectedCalendar || selectedCalendar.id !== calendar.id) {
+      return null
+    }
+
+    const updateSelectedCalendar = (patch: Partial<CalendarType>) => {
+      setSelectedCalendar({ ...selectedCalendar, ...patch })
+    }
+
+    return (
+      <div className={pageStyles.calendarEditor}>
+        <div className={pageStyles.editorHeader}>
+          <div>
+            <h4>Editar calendario</h4>
+            <p>{calendar.name}</p>
+          </div>
+          <Button
+            variant="ghost"
+            size="small"
+            onClick={handleCloseCalendarEditor}
+            disabled={savingConfig}
+          >
+            Cancelar
+          </Button>
+        </div>
+
+        <div className={pageStyles.editorGrid}>
+          <label className={`${pageStyles.editorField} ${pageStyles.editorFieldWide}`}>
+            <span>Nombre</span>
+            <input
+              className={styles.input}
+              value={selectedCalendar.name || ''}
+              onChange={(event) => updateSelectedCalendar({ name: event.target.value })}
+            />
+          </label>
+
+          <label className={pageStyles.editorField}>
+            <span>Título de evento</span>
+            <input
+              className={styles.input}
+              value={selectedCalendar.eventTitle || ''}
+              onChange={(event) => updateSelectedCalendar({ eventTitle: event.target.value })}
+            />
+          </label>
+
+          <label className={pageStyles.editorField}>
+            <span>Color</span>
+            <input
+              type="color"
+              className={pageStyles.colorInput}
+              value={selectedCalendar.eventColor || '#3b82f6'}
+              onChange={(event) => updateSelectedCalendar({ eventColor: event.target.value })}
+            />
+          </label>
+
+          <div className={pageStyles.editorField}>
+            <span>Estado</span>
+            <button
+              type="button"
+              className={`${pageStyles.editorToggle} ${selectedCalendar.isActive ? pageStyles.editorToggleActive : ''}`}
+              onClick={() => updateSelectedCalendar({ isActive: !selectedCalendar.isActive })}
+              aria-pressed={selectedCalendar.isActive}
+            >
+              <span />
+              {selectedCalendar.isActive ? 'Activo' : 'Inactivo'}
+            </button>
+          </div>
+
+          <label className={pageStyles.editorField}>
+            <span>Duración</span>
+            <div className={pageStyles.inlineFieldGroup}>
+              <input
+                type="number"
+                className={styles.input}
+                value={selectedCalendar.slotDuration}
+                onChange={(event) => updateSelectedCalendar({ slotDuration: parseInt(event.target.value, 10) || 0 })}
+                min="1"
+              />
+              <CustomSelect
+                value={selectedCalendar.slotDurationUnit}
+                onChange={(value) => updateSelectedCalendar({ slotDurationUnit: value })}
+                options={[
+                  { value: 'mins', label: 'Minutos' },
+                  { value: 'hours', label: 'Horas' }
+                ]}
+              />
+            </div>
+          </label>
+
+          <label className={pageStyles.editorField}>
+            <span>Intervalo</span>
+            <div className={pageStyles.inlineFieldGroup}>
+              <input
+                type="number"
+                className={styles.input}
+                value={selectedCalendar.slotInterval}
+                onChange={(event) => updateSelectedCalendar({ slotInterval: parseInt(event.target.value, 10) || 0 })}
+                min="1"
+              />
+              <CustomSelect
+                value={selectedCalendar.slotIntervalUnit}
+                onChange={(value) => updateSelectedCalendar({ slotIntervalUnit: value })}
+                options={[
+                  { value: 'mins', label: 'Minutos' },
+                  { value: 'hours', label: 'Horas' }
+                ]}
+              />
+            </div>
+          </label>
+
+          <label className={pageStyles.editorField}>
+            <span>Buffer antes</span>
+            <div className={pageStyles.inlineFieldGroup}>
+              <input
+                type="number"
+                className={styles.input}
+                value={selectedCalendar.preBuffer || 0}
+                onChange={(event) => updateSelectedCalendar({ preBuffer: parseInt(event.target.value, 10) || 0 })}
+                min="0"
+              />
+              <CustomSelect
+                value={selectedCalendar.preBufferUnit || 'mins'}
+                onChange={(value) => updateSelectedCalendar({ preBufferUnit: value })}
+                options={[
+                  { value: 'mins', label: 'Minutos' },
+                  { value: 'hours', label: 'Horas' }
+                ]}
+              />
+            </div>
+          </label>
+
+          <label className={pageStyles.editorField}>
+            <span>Buffer después</span>
+            <div className={pageStyles.inlineFieldGroup}>
+              <input
+                type="number"
+                className={styles.input}
+                value={selectedCalendar.slotBuffer || 0}
+                onChange={(event) => updateSelectedCalendar({ slotBuffer: parseInt(event.target.value, 10) || 0 })}
+                min="0"
+              />
+              <CustomSelect
+                value={selectedCalendar.slotBufferUnit || 'mins'}
+                onChange={(value) => updateSelectedCalendar({ slotBufferUnit: value })}
+                options={[
+                  { value: 'mins', label: 'Minutos' },
+                  { value: 'hours', label: 'Horas' }
+                ]}
+              />
+            </div>
+          </label>
+
+          <label className={pageStyles.editorField}>
+            <span>Personas por horario</span>
+            <input
+              type="number"
+              className={styles.input}
+              value={selectedCalendar.appoinmentPerSlot}
+              onChange={(event) => updateSelectedCalendar({ appoinmentPerSlot: parseInt(event.target.value, 10) || 1 })}
+              min="1"
+            />
+          </label>
+
+          <label className={pageStyles.editorField}>
+            <span>Límite diario</span>
+            <input
+              type="number"
+              className={styles.input}
+              value={selectedCalendar.appoinmentPerDay}
+              onChange={(event) => updateSelectedCalendar({ appoinmentPerDay: parseInt(event.target.value, 10) || 0 })}
+              min="0"
+            />
+          </label>
+
+          <label className={pageStyles.editorField}>
+            <span>Anticipación mínima</span>
+            <div className={pageStyles.inlineFieldGroup}>
+              <input
+                type="number"
+                className={styles.input}
+                value={selectedCalendar.allowBookingAfter || 0}
+                onChange={(event) => updateSelectedCalendar({ allowBookingAfter: parseInt(event.target.value, 10) || 0 })}
+                min="0"
+              />
+              <CustomSelect
+                value={selectedCalendar.allowBookingAfterUnit || 'hours'}
+                onChange={(value) => updateSelectedCalendar({ allowBookingAfterUnit: value })}
+                options={[
+                  { value: 'hours', label: 'Horas' },
+                  { value: 'days', label: 'Días' },
+                  { value: 'weeks', label: 'Semanas' },
+                  { value: 'months', label: 'Meses' }
+                ]}
+              />
+            </div>
+          </label>
+
+          <label className={pageStyles.editorField}>
+            <span>Ventana para agendar</span>
+            <div className={pageStyles.inlineFieldGroup}>
+              <input
+                type="number"
+                className={styles.input}
+                value={selectedCalendar.allowBookingFor || 30}
+                onChange={(event) => updateSelectedCalendar({ allowBookingFor: parseInt(event.target.value, 10) || 1 })}
+                min="1"
+              />
+              <CustomSelect
+                value={selectedCalendar.allowBookingForUnit || 'days'}
+                onChange={(value) => updateSelectedCalendar({ allowBookingForUnit: value })}
+                options={[
+                  { value: 'days', label: 'Días' },
+                  { value: 'weeks', label: 'Semanas' },
+                  { value: 'months', label: 'Meses' }
+                ]}
+              />
+            </div>
+          </label>
+
+          <label className={`${pageStyles.editorField} ${pageStyles.editorFieldWide}`}>
+            <span>Disponibilidad</span>
+            <CustomSelect
+              value={selectedCalendar.availabilityType !== undefined ? String(selectedCalendar.availabilityType) : ''}
+              onChange={(value) => updateSelectedCalendar({
+                availabilityType: value === '' ? undefined : parseInt(value, 10)
+              })}
+              options={[
+                { value: '', label: 'Horarios abiertos + disponibilidad personalizada' },
+                { value: '0', label: 'Solo horarios abiertos' },
+                { value: '1', label: 'Solo disponibilidad personalizada' }
+              ]}
+            />
+          </label>
+        </div>
+
+        <div className={pageStyles.lookBusyRow}>
+          <label>
+            <input
+              type="checkbox"
+              checked={selectedCalendar.lookBusyConfig?.enabled || false}
+              onChange={(event) => updateSelectedCalendar({
+                lookBusyConfig: {
+                  enabled: event.target.checked,
+                  LookBusyPercentage: selectedCalendar.lookBusyConfig?.LookBusyPercentage || 0
+                }
+              })}
+            />
+            Parecer ocupado
+          </label>
+
+          {selectedCalendar.lookBusyConfig?.enabled && (
+            <label className={pageStyles.lookBusyPercent}>
+              <span>Ocultar</span>
+              <input
+                type="number"
+                className={styles.input}
+                value={selectedCalendar.lookBusyConfig?.LookBusyPercentage || 0}
+                onChange={(event) => updateSelectedCalendar({
+                  lookBusyConfig: {
+                    enabled: true,
+                    LookBusyPercentage: parseInt(event.target.value, 10) || 0
+                  }
+                })}
+                min="0"
+                max="100"
+              />
+              <span>%</span>
+            </label>
+          )}
+        </div>
+
+        <div className={pageStyles.editorFooter}>
+          <Button
+            onClick={handleSaveCalendarConfig}
+            disabled={savingConfig}
+          >
+            {savingConfig ? (
+              <>
+                <Loader2 size={16} className={styles.spinIcon} />
+                Guardando...
+              </>
+            ) : (
+              'Guardar cambios'
+            )}
+          </Button>
+          <Button
+            variant="ghost"
+            onClick={handleCloseCalendarEditor}
+            disabled={savingConfig}
+          >
+            Cancelar
+          </Button>
+        </div>
+      </div>
+    )
+  }
+
   const renderCalendarRow = (calendar: CalendarType) => {
     const isAttributed = attributionCalendarIds.includes(calendar.id)
     const isDefault = defaultCalendarId === calendar.id
 
     return (
-      <article
-        key={calendar.id}
-        className={`${pageStyles.calendarRow} ${isDefault ? pageStyles.calendarRowDefault : ''}`}
-      >
-        <div className={pageStyles.calendarIdentity}>
-          <span
-            className={pageStyles.calendarColor}
-            style={{ backgroundColor: calendar.eventColor || 'var(--color-primary)' }}
-          />
-          <div className={pageStyles.calendarMain}>
-            <div className={pageStyles.calendarTitleLine}>
-              <h3>{calendar.name}</h3>
-              {isDefault && (
-                <span className={pageStyles.defaultPill}>
-                  <Star size={12} fill="currentColor" />
-                  Predeterminado
-                </span>
-              )}
-              {renderCalendarSourceBadge(calendar)}
-            </div>
-
-            <div className={pageStyles.calendarMeta}>
-              <span>{calendar.slotDuration} {calendar.slotDurationUnit}</span>
-              <span>Cada {calendar.slotInterval} {calendar.slotIntervalUnit}</span>
-              <span>{calendar.isActive ? 'Activo' : 'Inactivo'}</span>
-            </div>
-
-            {calendar.publicUrl && (
-              <div className={pageStyles.publicUrlLine}>
-                <Globe2 size={15} />
-                <span title={calendar.publicUrl}>
-                  {calendar.publicUrl}
-                </span>
-                <button
-                  type="button"
-                  className={pageStyles.iconAction}
-                  onClick={() => handleCopyPublicUrl(calendar)}
-                  title="Copiar URL"
-                >
-                  <Copy size={14} />
-                </button>
-                <a
-                  className={pageStyles.iconActionLink}
-                  href={calendar.publicUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  title="Abrir URL publica"
-                >
-                  <ExternalLink size={14} />
-                </a>
+      <div key={calendar.id} className={pageStyles.calendarItem}>
+        <article
+          className={`${pageStyles.calendarRow} ${isDefault ? pageStyles.calendarRowDefault : ''} ${expandedCalendarId === calendar.id ? pageStyles.calendarRowEditing : ''}`}
+        >
+          <div className={pageStyles.calendarIdentity}>
+            <span
+              className={pageStyles.calendarColor}
+              style={{ backgroundColor: calendar.eventColor || 'var(--color-primary)' }}
+            />
+            <div className={pageStyles.calendarMain}>
+              <div className={pageStyles.calendarTitleLine}>
+                <h3>{calendar.name}</h3>
+                {isDefault && (
+                  <span className={pageStyles.defaultPill}>
+                    <Star size={12} fill="currentColor" />
+                    Predeterminado
+                  </span>
+                )}
+                {renderCalendarSourceBadge(calendar)}
               </div>
-            )}
-          </div>
-        </div>
 
-        <div className={pageStyles.calendarActions}>
-          <div className={`${pageStyles.conversionControl} ${isAttributed ? pageStyles.conversionControlActive : ''}`}>
-            <span className={`${styles.toggleLabel} ${isAttributed ? styles.toggleLabelActive : ''}`}>
-              Conversión
-            </span>
-            <button
-              type="button"
-              className={`${styles.toggle} ${isAttributed ? styles.toggleActive : ''}`}
-              onClick={() => handleAttributionToggle(calendar.id)}
-              aria-pressed={isAttributed}
-              aria-label={`Conversión para ${calendar.name}`}
-              title="Cuenta como conversión"
-            >
-              <span className={styles.toggleThumb} />
-            </button>
+              <div className={pageStyles.calendarMeta}>
+                <span>{calendar.slotDuration} {calendar.slotDurationUnit}</span>
+                <span>Cada {calendar.slotInterval} {calendar.slotIntervalUnit}</span>
+                <span>{calendar.isActive ? 'Activo' : 'Inactivo'}</span>
+              </div>
+            </div>
           </div>
-          {!isDefault && (
-            <Button
-              variant="outline"
-              size="small"
-              onClick={() => handleDefaultCalendarChange(calendar.id)}
-            >
-              <Star size={15} />
-              Usar como predeterminado
-            </Button>
-          )}
-          <Button
-            variant="ghost"
-            size="small"
-            onClick={() => handleOpenConfigModal(calendar)}
-          >
-            <Settings size={15} />
-            Configurar
-          </Button>
-        </div>
-      </article>
+
+          <div className={pageStyles.calendarActions}>
+            <div className={`${pageStyles.conversionControl} ${isAttributed ? pageStyles.conversionControlActive : ''}`}>
+              <span className={`${styles.toggleLabel} ${isAttributed ? styles.toggleLabelActive : ''}`}>
+                Conversión
+              </span>
+              <button
+                type="button"
+                className={`${styles.toggle} ${isAttributed ? styles.toggleActive : ''}`}
+                onClick={() => handleAttributionToggle(calendar.id)}
+                aria-pressed={isAttributed}
+                aria-label={`Conversión para ${calendar.name}`}
+                title="Cuenta como conversión"
+              >
+                <span className={styles.toggleThumb} />
+              </button>
+            </div>
+            <div className={pageStyles.rowActionColumn}>
+              <span>Acciones</span>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    type="button"
+                    className={pageStyles.moreButton}
+                    aria-label={`Acciones para ${calendar.name}`}
+                  >
+                    <MoreHorizontal size={18} />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className={pageStyles.actionsMenu}>
+                  <DropdownMenuItem
+                    className={pageStyles.menuItem}
+                    disabled={isDefault}
+                    onSelect={() => void handleDefaultCalendarChange(calendar.id)}
+                  >
+                    <Star size={15} />
+                    Convertir en predeterminado
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    className={pageStyles.menuItem}
+                    onSelect={() => handleOpenCalendarEditor(calendar)}
+                  >
+                    <Pencil size={15} />
+                    Editar
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    className={pageStyles.menuItem}
+                    onSelect={() => void handleCopyPublicUrl(calendar)}
+                  >
+                    <Link2 size={15} />
+                    Enlace para compartir
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    className={`${pageStyles.menuItem} ${pageStyles.dangerMenuItem}`}
+                    disabled={deletingCalendarId === calendar.id}
+                    onSelect={() => handleDeleteCalendar(calendar)}
+                  >
+                    {deletingCalendarId === calendar.id ? (
+                      <Loader2 size={15} className={styles.spinIcon} />
+                    ) : (
+                      <Trash2 size={15} />
+                    )}
+                    Eliminar
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          </div>
+        </article>
+        {renderCalendarInlineEditor(calendar)}
+      </div>
     )
   }
 
@@ -1382,287 +1764,6 @@ export const CalendarsConfiguration: React.FC = () => {
 
       {renderCreateCalendarModal()}
       {renderGoogleDefaultPromptModal()}
-
-      {/* Modal de Configuración del Calendario */}
-      {showConfigModal && selectedCalendar && createPortal(
-        <Modal
-          isOpen={showConfigModal}
-          onClose={handleCloseConfigModal}
-          title={`Configurar: ${selectedCalendar.name}`}
-          size="lg"
-        >
-          <div style={{ padding: '24px' }}>
-            <div className={styles.calendarConfigGrid}>
-            {/* COLUMNA IZQUIERDA */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-              {/* Duración de cita */}
-              <div>
-                <label className={styles.label}>¿Cuánto dura cada cita?</label>
-                <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '8px' }}>
-                  <input
-                    type="number"
-                    className={styles.input}
-                    value={selectedCalendar.slotDuration}
-                    onChange={(e) => setSelectedCalendar({...selectedCalendar, slotDuration: parseInt(e.target.value) || 0})}
-                    min="1"
-                  />
-                  <CustomSelect
-                    value={selectedCalendar.slotDurationUnit}
-                    onChange={(value) => setSelectedCalendar({...selectedCalendar, slotDurationUnit: value})}
-                    options={[
-                      { value: 'mins', label: 'Minutos' },
-                      { value: 'hours', label: 'Horas' }
-                    ]}
-                  />
-                </div>
-                <p className={styles.hint}>Ej: 30 minutos, 1 hora, etc.</p>
-              </div>
-
-              {/* Intervalo entre slots */}
-              <div>
-                <label className={styles.label}>¿Cada cuánto mostrar horarios disponibles?</label>
-                <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '8px' }}>
-                  <input
-                    type="number"
-                    className={styles.input}
-                    value={selectedCalendar.slotInterval}
-                    onChange={(e) => setSelectedCalendar({...selectedCalendar, slotInterval: parseInt(e.target.value) || 0})}
-                    min="1"
-                  />
-                  <CustomSelect
-                    value={selectedCalendar.slotIntervalUnit}
-                    onChange={(value) => setSelectedCalendar({...selectedCalendar, slotIntervalUnit: value})}
-                    options={[
-                      { value: 'mins', label: 'Minutos' },
-                      { value: 'hours', label: 'Horas' }
-                    ]}
-                  />
-                </div>
-                <p className={styles.hint}>Si pones 30 min, los horarios serán: 9:00, 9:30, 10:00...</p>
-              </div>
-
-              {/* Pre-Buffer */}
-              <div>
-                <label className={styles.label}>Tiempo libre antes de cada cita</label>
-                <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '8px' }}>
-                  <input
-                    type="number"
-                    className={styles.input}
-                    value={selectedCalendar.preBuffer || 0}
-                    onChange={(e) => setSelectedCalendar({...selectedCalendar, preBuffer: parseInt(e.target.value) || 0})}
-                    min="0"
-                  />
-                  <CustomSelect
-                    value={selectedCalendar.preBufferUnit || 'mins'}
-                    onChange={(value) => setSelectedCalendar({...selectedCalendar, preBufferUnit: value})}
-                    options={[
-                      { value: 'mins', label: 'Minutos' },
-                      { value: 'hours', label: 'Horas' }
-                    ]}
-                  />
-                </div>
-                <p className={styles.hint}>Para prepararte antes de atender (revisar expediente, tomar café, etc.)</p>
-              </div>
-
-              {/* Slot Buffer */}
-              <div>
-                <label className={styles.label}>Tiempo libre después de cada cita</label>
-                <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '8px' }}>
-                  <input
-                    type="number"
-                    className={styles.input}
-                    value={selectedCalendar.slotBuffer || 0}
-                    onChange={(e) => setSelectedCalendar({...selectedCalendar, slotBuffer: parseInt(e.target.value) || 0})}
-                    min="0"
-                  />
-                  <CustomSelect
-                    value={selectedCalendar.slotBufferUnit || 'mins'}
-                    onChange={(value) => setSelectedCalendar({...selectedCalendar, slotBufferUnit: value})}
-                    options={[
-                      { value: 'mins', label: 'Minutos' },
-                      { value: 'hours', label: 'Horas' }
-                    ]}
-                  />
-                </div>
-                <p className={styles.hint}>Para cerrar la cita sin apuros (hacer notas, responder dudas, etc.)</p>
-              </div>
-
-              {/* Citas por slot */}
-              <div>
-                <label className={styles.label}>¿Cuántas personas por horario?</label>
-                <input
-                  type="number"
-                  className={styles.input}
-                  value={selectedCalendar.appoinmentPerSlot}
-                  onChange={(e) => setSelectedCalendar({...selectedCalendar, appoinmentPerSlot: parseInt(e.target.value) || 1})}
-                  min="1"
-                />
-                <p className={styles.hint}>Para citas grupales (ej: 5 personas a las 10:00am)</p>
-              </div>
-
-              {/* Citas por día */}
-              <div>
-                <label className={styles.label}>Límite de citas por día</label>
-                <input
-                  type="number"
-                  className={styles.input}
-                  value={selectedCalendar.appoinmentPerDay}
-                  onChange={(e) => setSelectedCalendar({...selectedCalendar, appoinmentPerDay: parseInt(e.target.value) || 0})}
-                  min="0"
-                />
-                <p className={styles.hint}>0 = sin límite. Ej: 10 citas máximo por día</p>
-              </div>
-            </div>
-
-            {/* COLUMNA DERECHA */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-              {/* Aviso mínimo para agendar */}
-              <div>
-                <label className={styles.label}>¿Con cuánta anticipación pueden agendar?</label>
-                <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '8px' }}>
-                  <input
-                    type="number"
-                    className={styles.input}
-                    value={selectedCalendar.allowBookingAfter || 0}
-                    onChange={(e) => setSelectedCalendar({...selectedCalendar, allowBookingAfter: parseInt(e.target.value) || 0})}
-                    min="0"
-                  />
-                  <CustomSelect
-                    value={selectedCalendar.allowBookingAfterUnit || 'hours'}
-                    onChange={(value) => setSelectedCalendar({...selectedCalendar, allowBookingAfterUnit: value})}
-                    options={[
-                      { value: 'hours', label: 'Horas' },
-                      { value: 'days', label: 'Días' },
-                      { value: 'weeks', label: 'Semanas' },
-                      { value: 'months', label: 'Meses' }
-                    ]}
-                  />
-                </div>
-                <p className={styles.hint}>
-                  Mínimo de tiempo antes de la cita. Ej: 2 horas = no pueden agendar a última hora
-                </p>
-              </div>
-
-              {/* Límite adelante */}
-              <div>
-                <label className={styles.label}>¿Hasta cuándo pueden agendar?</label>
-                <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '8px' }}>
-                  <input
-                    type="number"
-                    className={styles.input}
-                    value={selectedCalendar.allowBookingFor || 30}
-                    onChange={(e) => setSelectedCalendar({...selectedCalendar, allowBookingFor: parseInt(e.target.value) || 1})}
-                    min="1"
-                  />
-                  <CustomSelect
-                    value={selectedCalendar.allowBookingForUnit || 'days'}
-                    onChange={(value) => setSelectedCalendar({...selectedCalendar, allowBookingForUnit: value})}
-                    options={[
-                      { value: 'days', label: 'Días' },
-                      { value: 'weeks', label: 'Semanas' },
-                      { value: 'months', label: 'Meses' }
-                    ]}
-                  />
-                </div>
-                <p className={styles.hint}>
-                  Máximo de tiempo hacia adelante. Ej: 30 días = solo pueden agendar hasta 1 mes adelante
-                </p>
-              </div>
-
-              {/* Look Busy - Parecer Ocupado */}
-              <div style={{ marginTop: '8px', padding: '16px', backgroundColor: 'var(--color-background-secondary)', borderRadius: '8px', border: '1px solid var(--color-border)' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
-                  <input
-                    type="checkbox"
-                    id="lookBusyEnabled"
-                    checked={selectedCalendar.lookBusyConfig?.enabled || false}
-                    onChange={(e) => setSelectedCalendar({
-                      ...selectedCalendar,
-                      lookBusyConfig: {
-                        enabled: e.target.checked,
-                        LookBusyPercentage: selectedCalendar.lookBusyConfig?.LookBusyPercentage || 0
-                      }
-                    })}
-                  />
-                  <label htmlFor="lookBusyEnabled" style={{ fontWeight: 500, cursor: 'pointer', fontSize: '14px' }}>
-                    Parecer ocupado
-                  </label>
-                </div>
-
-                {selectedCalendar.lookBusyConfig?.enabled && (
-                  <div>
-                    <label className={styles.label} style={{ fontSize: '13px' }}>¿Qué porcentaje de horarios ocultar?</label>
-                    <input
-                      type="number"
-                      className={styles.input}
-                      value={selectedCalendar.lookBusyConfig?.LookBusyPercentage || 0}
-                      onChange={(e) => setSelectedCalendar({
-                        ...selectedCalendar,
-                        lookBusyConfig: {
-                          enabled: true,
-                          LookBusyPercentage: parseInt(e.target.value) || 0
-                        }
-                      })}
-                      min="0"
-                      max="100"
-                      placeholder="Ej: 30"
-                    />
-                    <p className={styles.hint} style={{ marginTop: '6px', fontSize: '12px' }}>
-                      Oculta horarios disponibles para dar sensación de alta demanda. Ej: 30% = oculta 3 de cada 10 horarios
-                    </p>
-                  </div>
-                )}
-              </div>
-
-              {/* Tipo de Disponibilidad */}
-              <div>
-                <label className={styles.label}>¿Cómo calcular los horarios disponibles?</label>
-                <CustomSelect
-                  value={selectedCalendar.availabilityType !== undefined ? String(selectedCalendar.availabilityType) : ''}
-                  onChange={(value) => setSelectedCalendar({
-                    ...selectedCalendar,
-                    availabilityType: value === '' ? undefined : parseInt(value)
-                  })}
-                  options={[
-                    { value: '', label: 'Ambos (horarios abiertos + personalizado)' },
-                    { value: '0', label: 'Solo horarios abiertos del calendario' },
-                    { value: '1', label: 'Solo disponibilidad personalizada' }
-                  ]}
-                />
-                <p className={styles.hint} style={{ marginTop: '6px' }}>
-                  Define si usar horarios fijos, personalizados, o combinar ambos
-                </p>
-              </div>
-            </div>
-          </div>
-
-            {/* Botones */}
-            <div style={{ display: 'flex', gap: '12px', marginTop: '24px', paddingTop: '24px', borderTop: '1px solid var(--color-border)' }}>
-            <Button
-              onClick={handleSaveCalendarConfig}
-              disabled={savingConfig}
-            >
-              {savingConfig ? (
-                <>
-                  <Loader2 size={18} className={styles.spinIcon} />
-                  Guardando...
-                </>
-              ) : (
-                'Guardar Cambios'
-              )}
-            </Button>
-            <Button
-              variant="ghost"
-              onClick={handleCloseConfigModal}
-              disabled={savingConfig}
-            >
-              Cancelar
-            </Button>
-          </div>
-          </div>
-        </Modal>,
-        document.body
-      )}
     </div>
   )
 }
