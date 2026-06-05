@@ -17,7 +17,7 @@ interface ApiTokenMetadata {
 
 export const APIAccessSettings: React.FC = () => {
   const { user } = useAuth()
-  const { showToast } = useNotification()
+  const { showToast, showConfirm } = useNotification()
   const [appId, setAppId] = useState('')
   const [apiTokenMetadata, setApiTokenMetadata] = useState<ApiTokenMetadata | null>(null)
   const [newApiToken, setNewApiToken] = useState(() => sessionStorage.getItem('ristak_latest_api_token') || '')
@@ -80,11 +80,7 @@ export const APIAccessSettings: React.FC = () => {
     loadApiToken()
   }, [user])
 
-  const handleRotateApiToken = async () => {
-    if (apiTokenMetadata?.hasToken && !window.confirm('Esto invalida el token actual. ¿Generar uno nuevo?')) {
-      return
-    }
-
+  const rotateApiToken = async () => {
     setIsRotatingApiToken(true)
 
     try {
@@ -110,6 +106,23 @@ export const APIAccessSettings: React.FC = () => {
     }
   }
 
+  const handleRotateApiToken = async () => {
+    if (apiTokenMetadata?.hasToken) {
+      showConfirm(
+        'Generar nuevo API token',
+        'Esto invalida el token actual. ¿Generar uno nuevo?',
+        () => {
+          void rotateApiToken()
+        },
+        'Generar token',
+        'Cancelar'
+      )
+      return
+    }
+
+    await rotateApiToken()
+  }
+
   const handleCopyApiToken = async () => {
     if (!newApiToken) return
 
@@ -122,12 +135,7 @@ export const APIAccessSettings: React.FC = () => {
     }
   }
 
-  const handleRevokeApiToken = async () => {
-    if (!apiTokenMetadata?.hasToken) return
-    if (!window.confirm('Esto desactiva el acceso externo con este token. ¿Revocarlo?')) {
-      return
-    }
-
+  const revokeApiToken = async () => {
     setIsRevokingApiToken(true)
 
     try {
@@ -151,6 +159,20 @@ export const APIAccessSettings: React.FC = () => {
     } finally {
       setIsRevokingApiToken(false)
     }
+  }
+
+  const handleRevokeApiToken = async () => {
+    if (!apiTokenMetadata?.hasToken) return
+
+    showConfirm(
+      'Revocar API token',
+      'Esto desactiva el acceso externo con este token. ¿Revocarlo?',
+      () => {
+        void revokeApiToken()
+      },
+      'Revocar',
+      'Cancelar'
+    )
   }
 
   return (
