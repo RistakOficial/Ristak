@@ -4806,23 +4806,12 @@
   min-width: 0;
   display: inline-flex;
   align-items: center;
-  gap: 8px;
   color: var(--color-text-primary);
-}
-
-.routeField > span:first-child {
-  flex: 0 0 auto;
-  color: var(--color-text-secondary);
-  font-size: 0.72rem;
-  font-weight: 850;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-  white-space: nowrap;
 }
 
 .publicRouteBox {
   min-width: 0;
-  max-width: min(420px, 100%);
+  max-width: min(620px, 100%);
   height: var(--editor-control-h, 44px);
   display: inline-flex;
   align-items: center;
@@ -4844,11 +4833,11 @@
 
 .publicRouteDomain {
   min-width: 0;
-  max-width: 230px;
+  max-width: 300px;
   height: 100%;
   display: inline-flex;
   align-items: center;
-  padding: 0 10px;
+  padding: 0 12px;
   border-right: 1px solid var(--color-border-subtle, rgba(148, 163, 184, 0.2));
   background: color-mix(in srgb, var(--color-background-tertiary) 72%, var(--color-background-primary) 28%);
   color: var(--color-text-tertiary);
@@ -4860,14 +4849,24 @@
   user-select: none;
 }
 
+.publicRouteSlash {
+  flex: 0 0 auto;
+  color: var(--color-text-secondary);
+  padding-left: 10px;
+  font-size: 0.9rem;
+  font-weight: 900;
+  user-select: none;
+}
+
 .publicRouteBox input {
-  width: 122px;
-  min-width: 98px;
+  flex: 1 1 136px;
+  width: auto;
+  min-width: 92px;
   height: 100%;
   border: 0;
   background: transparent;
   color: var(--color-text-primary);
-  padding: 0 12px;
+  padding: 0 12px 0 3px;
   font: inherit;
   font-size: 0.88rem;
   font-weight: 800;
@@ -5125,16 +5124,16 @@
 }
 
 .editorHeaderMain .routeField {
-  flex: 1 1 430px;
-  min-width: min(430px, 100%);
+  flex: 1 1 540px;
+  min-width: min(540px, 100%);
   max-width: 620px;
   justify-content: flex-end;
 }
 
 .editorHeaderMain .publicRouteBox {
-  flex: 0 0 184px;
-  width: 184px;
-  max-width: 184px;
+  flex: 1 1 540px;
+  width: 100%;
+  max-width: 620px;
 }
 
 .editorHeaderMain .editorTopControls .metaCard {
@@ -5176,30 +5175,19 @@
   color: var(--color-text-primary);
 }
 
-.editorHeaderMain .routeField > span:first-child {
-  min-width: 0;
-  flex: 1 1 auto;
-  color: var(--color-text-primary);
-  font-size: 0.86rem;
-  font-weight: 850;
-  letter-spacing: 0;
-  text-transform: none;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
 .editorHeaderMain .publicRouteDomain {
-  height: auto;
-  max-width: 360px;
-  padding: 0;
-  border-right: 0;
-  background: transparent;
+  height: 100%;
+  max-width: min(360px, 58%);
+  padding: 0 12px;
+  border-right: 1px solid var(--color-border-subtle, rgba(148, 163, 184, 0.2));
+  background: color-mix(in srgb, var(--color-background-tertiary) 72%, var(--color-background-primary) 28%);
   user-select: text;
 }
 
 .editorHeaderMain .publicRouteBox input,
 .editorHeaderMain .publicRouteBoxStandalone input {
-  width: 100%;
+  flex: 1 1 130px;
+  width: auto;
   min-width: 0;
 }
 

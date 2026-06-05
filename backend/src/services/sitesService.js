@@ -141,7 +141,17 @@ function slugify(value) {
 }
 
 function getDefaultRoutePrefix(siteType) {
-  return siteType === 'landing_page' ? 'site' : 'form'
+  return siteType === 'landing_page' ? 'embudo' : 'formulario'
+}
+
+function getDefaultSiteNamePrefix(siteType) {
+  return siteType === 'landing_page' ? 'Embudo' : 'Formulario'
+}
+
+function getDefaultSiteName(siteType, slug) {
+  const prefix = getDefaultSiteNamePrefix(siteType)
+  const suffix = cleanString(slug).match(/(\d+)$/)?.[1]
+  return suffix ? `${prefix} ${suffix.padStart(2, '0')}` : `${prefix} 01`
 }
 
 async function getNextDefaultSlug(siteType) {
@@ -1172,10 +1182,12 @@ export async function listSiteSubmissions(siteId) {
 
 export async function createSite(input = {}) {
   const id = crypto.randomUUID()
-  const name = cleanString(input.name) || 'Nuevo site'
   const siteType = validateSiteType(input.siteType || input.site_type)
   const slug = await ensureUniqueSlug(slugify(input.slug || await getNextDefaultSlug(siteType)))
-  const title = cleanString(input.title) || name
+  const name = cleanString(input.name) || getDefaultSiteName(siteType, slug)
+  const title = Object.prototype.hasOwnProperty.call(input, 'title')
+    ? cleanString(input.title)
+    : name
   const description = cleanString(input.description)
   const domain = ''
   const theme = { ...DEFAULT_THEME, ...(input.theme || {}) }
@@ -1322,7 +1334,9 @@ export async function updateSite(siteId, input = {}) {
     nextSiteType,
     nextStatus,
     nextDomain || null,
-    cleanString(input.title) || cleanString(input.name) || current.title || current.name,
+    Object.prototype.hasOwnProperty.call(input, 'title')
+      ? cleanString(input.title)
+      : current.title,
     input.description === undefined ? current.description : cleanString(input.description) || null,
     jsonString({ ...DEFAULT_THEME, ...(input.theme || current.theme || {}) }),
     input.metaCapiEnabled === undefined ? normalizeBoolean(current.metaCapiEnabled) : normalizeBoolean(input.metaCapiEnabled),

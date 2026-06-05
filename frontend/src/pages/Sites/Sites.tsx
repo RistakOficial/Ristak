@@ -300,19 +300,68 @@ const getPublicDomainPreview = (domainConfig: SitesDomainConfig) => {
   return domain || 'www.ejemplo-de-tu-dominio.com'
 }
 
-const getNextRouteSlug = (siteType: SiteType, existingSites: PublicSite[]) => {
-  const prefix = siteType === 'landing_page' ? 'site' : 'form'
+const getDefaultSiteNamePrefix = (siteType: SiteType) =>
+  siteType === 'landing_page' ? 'Embudo' : 'Formulario'
+
+const getDefaultRoutePrefix = (siteType: SiteType) =>
+  normalizeRouteInput(getDefaultSiteNamePrefix(siteType))
+
+const getRouteEditorValue = (site?: PublicSite | null) => normalizeRouteInput(site?.slug || '')
+
+const normalizeRouteEditorInput = (value: string, domainConfig: SitesDomainConfig) => {
+  const raw = value.trim()
+  if (/^https?:\/\//i.test(raw)) {
+    try {
+      return normalizeRouteInput(new URL(raw).pathname)
+    } catch {
+      return normalizeRouteInput(raw)
+    }
+  }
+
+  const withoutProtocol = raw.replace(/^https?:\/\//i, '')
+  const domain = getPublicDomainPreview(domainConfig).replace(/^https?:\/\//i, '').replace(/\/+$/, '')
+  const withoutDomain = withoutProtocol.toLowerCase().startsWith(`${domain.toLowerCase()}/`)
+    ? withoutProtocol.slice(domain.length)
+    : raw
+
+  return normalizeRouteInput(withoutDomain)
+}
+
+const getNextSiteIdentity = (siteType: SiteType, existingSites: PublicSite[]) => {
+  const namePrefix = getDefaultSiteNamePrefix(siteType)
+  const routePrefix = getDefaultRoutePrefix(siteType)
   const used = new Set(existingSites.map(site => normalizeRouteInput(site.slug)))
   let index = 1
-  let slug = `${prefix}-${String(index).padStart(2, '0')}`
+  let suffix = String(index).padStart(2, '0')
+  let slug = `${routePrefix}-${suffix}`
 
   while (used.has(slug)) {
     index += 1
-    slug = `${prefix}-${String(index).padStart(2, '0')}`
+    suffix = String(index).padStart(2, '0')
+    slug = `${routePrefix}-${suffix}`
   }
 
-  return slug
+  return {
+    name: `${namePrefix} ${suffix}`,
+    slug
+  }
 }
+
+const legacyPublicTitleDefaults = new Set([
+  'nuevo sitio embudo',
+  'nuevo sitio de embudo',
+  'nuevo formulario',
+  'nuevo formulario interactivo'
+])
+
+const isLegacyPublicTitleDefault = (site?: PublicSite | null) =>
+  Boolean(site?.title && legacyPublicTitleDefaults.has(site.title.trim().toLowerCase()))
+
+const getPublicTitleEditorValue = (site?: PublicSite | null) =>
+  isLegacyPublicTitleDefault(site) ? '' : site?.title || ''
+
+const getPublicTitleForSave = (site: PublicSite) =>
+  isLegacyPublicTitleDefault(site) ? '' : site.title
 
 const templateMetaById = (id?: string) => siteTemplates.find(template => template.id === id)
 
@@ -1760,10 +1809,10 @@ export const Sites: React.FC = () => {
   const saveSiteTheme = async (site: PublicSite, theme: SiteTheme) => {
     return sitesService.updateSite(site.id, {
       name: site.name,
-      slug: site.slug,
+      slug: normalizeRouteInput(site.slug) || normalizeRouteInput(site.name) || getDefaultRoutePrefix(site.siteType),
       siteType: site.siteType,
       status: site.status,
-      title: site.title,
+      title: getPublicTitleForSave(site),
       description: site.description,
       theme,
       metaCapiEnabled: site.metaCapiEnabled,
@@ -1917,11 +1966,12 @@ export const Sites: React.FC = () => {
     try {
       const template: SiteTemplateId = templateId
         || (siteType === 'interactive_form' ? 'interactive' : siteType === 'landing_page' ? 'ristak' : 'ristak')
+      const siteIdentity = getNextSiteIdentity(siteType, sites)
       let site = await sitesService.createSite({
-        name: siteType === 'landing_page' ? 'Nuevo sitio embudo' : siteType === 'interactive_form' ? 'Nuevo formulario interactivo' : 'Nuevo formulario',
+        name: siteIdentity.name,
         siteType,
-        slug: getNextRouteSlug(siteType, sites),
-        title: siteType === 'landing_page' ? 'Nuevo sitio embudo' : 'Nuevo formulario',
+        slug: siteIdentity.slug,
+        title: '',
         theme: {
           template,
           ...(siteType === 'landing_page'
@@ -1977,10 +2027,10 @@ export const Sites: React.FC = () => {
     try {
       const site = await sitesService.updateSite(siteToSave.id, {
         name: siteToSave.name,
-        slug: siteToSave.slug,
+        slug: normalizeRouteInput(siteToSave.slug) || normalizeRouteInput(siteToSave.name) || getDefaultRoutePrefix(siteToSave.siteType),
         siteType: siteToSave.siteType,
         status: statusOverride || siteToSave.status,
-        title: siteToSave.title,
+        title: getPublicTitleForSave(siteToSave),
         description: siteToSave.description,
         theme: siteToSave.theme,
         metaCapiEnabled: siteToSave.metaCapiEnabled,
@@ -2438,10 +2488,10 @@ export const Sites: React.FC = () => {
                   </label>
                   <label className={styles.publicTitleEditorField}>
                     <input
-                      value={editorSite.title}
-                      aria-label="Titulo publico"
-                      placeholder="Titulo publico"
-                      style={{ width: `calc(${Math.max((editorSite.title || '').length, 'Titulo publico'.length)}ch + 16px)` }}
+                      value={getPublicTitleEditorValue(editorSite)}
+                      aria-label="Nombre público"
+                      placeholder="Nombre público"
+                      style={{ width: `calc(${Math.max(getPublicTitleEditorValue(editorSite).length, 'Nombre público'.length)}ch + 16px)` }}
                       onChange={(event) => updateSelectedSite({ title: event.target.value })}
                       onBlur={() => handleSaveSite(undefined, { silent: true })}
                     />
@@ -2451,14 +2501,16 @@ export const Sites: React.FC = () => {
                 <div className={styles.editorTopControls}>
                   <div className={styles.editorPublishControls}>
                     <label className={styles.routeField}>
-                      <span className={styles.publicRouteDomain} title={getPublicDomainPreview(domainConfig)}>
-                        {getPublicDomainPreview(domainConfig)}
-                      </span>
                       <span className={`${styles.publicRouteBox} ${domainConfig.domain ? '' : styles.publicRouteBoxStandalone}`}>
+                        <span className={styles.publicRouteDomain} title={getPublicDomainPreview(domainConfig)}>
+                          {getPublicDomainPreview(domainConfig)}
+                        </span>
+                        <span className={styles.publicRouteSlash} aria-hidden="true">/</span>
                         <input
-                          value={getRoutePath(editorSite)}
-                          placeholder={editorSite.siteType === 'landing_page' ? '/site-01' : '/form-01'}
-                          onChange={(event) => updateSelectedSite({ slug: normalizeRouteInput(event.target.value) })}
+                          value={getRouteEditorValue(editorSite)}
+                          aria-label="Ruta pública"
+                          placeholder={editorSite.siteType === 'landing_page' ? 'embudo-01' : 'formulario-01'}
+                          onChange={(event) => updateSelectedSite({ slug: normalizeRouteEditorInput(event.target.value, domainConfig) })}
                           onBlur={() => handleSaveSite(undefined, { silent: true })}
                         />
                       </span>
