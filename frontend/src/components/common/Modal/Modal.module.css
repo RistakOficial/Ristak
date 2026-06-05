@@ -24,7 +24,7 @@
 
 .modal {
   background: var(--color-surface);
-  border-radius: 16px;
+  border-radius: 14px;
   width: 100%;
   max-height: 90vh;
   overflow: hidden;
@@ -74,7 +74,7 @@ body.dark .modal {
   color: var(--color-text-primary);
   margin: 0;
   line-height: 1.3;
-  letter-spacing: -0.02em;
+  letter-spacing: 0;
 }
 
 .closeButton {
@@ -394,5 +394,120 @@ body.dark .modal {
 
   .footer {
     padding: 10px 16px 16px;
+  }
+}
+
+.systemBackdrop {
+  align-items: center;
+  padding: clamp(16px, 4vw, 32px);
+}
+
+.modal.confirm,
+.modal.alert,
+.modal.info {
+  width: min(92vw, 430px);
+  max-width: 430px;
+  border-radius: 14px;
+  box-shadow: 0 22px 55px -34px rgba(15, 23, 42, 0.62);
+}
+
+body.dark .modal.confirm,
+body.dark .modal.alert,
+body.dark .modal.info,
+[data-theme="dark"] .modal.confirm,
+[data-theme="dark"] .modal.alert,
+[data-theme="dark"] .modal.info {
+  box-shadow: 0 24px 58px -32px rgba(0, 0, 0, 0.75);
+}
+
+.modal.confirm .header,
+.modal.alert .header,
+.modal.info .header {
+  align-items: flex-start;
+  padding: 22px 24px 8px;
+  border-bottom: 0;
+}
+
+.modal.confirm .titleWrapper,
+.modal.alert .titleWrapper,
+.modal.info .titleWrapper {
+  gap: 12px;
+  min-width: 0;
+  padding-right: 12px;
+}
+
+.modal.confirm .title,
+.modal.alert .title,
+.modal.info .title {
+  font-size: 16px;
+  line-height: 1.35;
+}
+
+.modal.confirm .closeButton,
+.modal.alert .closeButton,
+.modal.info .closeButton {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+}
+
+.modal.confirm .content,
+.modal.alert .content,
+.modal.info .content {
+  padding: 10px 24px 0;
+  max-height: min(58vh, 360px);
+}
+
+.modal.confirm .message,
+.modal.alert .message,
+.modal.info .message {
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.modal.confirm .footer,
+.modal.alert .footer,
+.modal.info .footer {
+  gap: 10px;
+  padding: 20px 24px 24px;
+  border-top: 0;
+  background: transparent;
+}
+
+.modal.destructive .iconWrapper {
+  color: var(--color-status-error);
+  opacity: 1;
+}
+
+@media (max-width: 640px) {
+  .systemBackdrop {
+    align-items: center;
+    padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
+  }
+
+  .modal.confirm,
+  .modal.alert,
+  .modal.info {
+    width: min(100%, 430px);
+    max-width: 430px;
+    max-height: calc(100dvh - 32px);
+  }
+
+  .modal.confirm .header,
+  .modal.alert .header,
+  .modal.info .header {
+    padding: 20px 20px 8px;
+  }
+
+  .modal.confirm .content,
+  .modal.alert .content,
+  .modal.info .content {
+    padding: 10px 20px 0;
+  }
+
+  .modal.confirm .footer,
+  .modal.alert .footer,
+  .modal.info .footer {
+    padding: 18px 20px 20px;
   }
 }

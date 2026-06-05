@@ -6,6 +6,7 @@ import styles from './Modal.module.css'
 
 type ModalType = 'confirm' | 'alert' | 'info' | 'custom'
 type ModalSize = 'sm' | 'md' | 'lg' | 'xl'
+type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'outline'
 
 interface ModalProps {
   isOpen: boolean
@@ -32,6 +33,37 @@ const icons = {
   custom: null
 }
 
+const destructiveConfirmTextSignals = [
+  'eliminar',
+  'borrar',
+  'desconectar',
+  'revocar',
+  'anular',
+  'reembolsar',
+  'salir sin guardar',
+  'cancelar plan',
+  'cancelar pago',
+  'cancelar factura'
+]
+
+const destructiveTitleSignals = [
+  ...destructiveConfirmTextSignals,
+  'cancelar suscripcion',
+  'cancelar subscripcion'
+]
+
+const genericConfirmTexts = new Set(['aceptar', 'confirmar', 'si', 'si continuar', 'si, continuar'])
+
+const normalizeModalText = (text = '') =>
+  text
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim()
+
+const includesSignal = (text: string, signals: string[]) =>
+  signals.some(signal => text.includes(signal))
+
 export const Modal: React.FC<ModalProps> = ({
   isOpen,
   onClose,
@@ -49,6 +81,15 @@ export const Modal: React.FC<ModalProps> = ({
   contentClassName = '',
   children
 }) => {
+  const normalizedConfirmText = normalizeModalText(confirmText)
+  const isGenericConfirmText = genericConfirmTexts.has(normalizedConfirmText)
+  const isDestructiveConfirm = type === 'confirm' && (
+    includesSignal(normalizedConfirmText, destructiveConfirmTextSignals) ||
+    (isGenericConfirmText && includesSignal(normalizeModalText(title), destructiveTitleSignals))
+  )
+  const confirmButtonVariant: ButtonVariant = isDestructiveConfirm ? 'danger' : 'primary'
+  const isSystemModal = type !== 'custom'
+
   const handleCancel = useCallback(() => {
     onCancel?.()
     onClose()
@@ -83,8 +124,8 @@ export const Modal: React.FC<ModalProps> = ({
   }
 
   const modalContent = (
-    <div className={`${styles.backdrop} ${backdropClassName}`.trim()} onClick={handleBackdropClick} data-phone-modal-root="true">
-      <div className={`${styles.modal} ${styles[type]} ${styles[size]} ${className}`.trim()}>
+    <div className={`${styles.backdrop} ${isSystemModal ? styles.systemBackdrop : ''} ${backdropClassName}`.trim()} onClick={handleBackdropClick} data-phone-modal-root="true">
+      <div className={`${styles.modal} ${styles[type]} ${styles[size]} ${isDestructiveConfirm ? styles.destructive : ''} ${className}`.trim()}>
         {/* Solo mostrar header si hay título o botón de cerrar */}
         {(title || showCloseButton) && (
           <div className={styles.header}>
@@ -127,7 +168,7 @@ export const Modal: React.FC<ModalProps> = ({
                   {cancelText}
                 </Button>
                 <Button
-                  variant="primary"
+                  variant={confirmButtonVariant}
                   onClick={() => {
                     onConfirm?.()
                     onClose()
