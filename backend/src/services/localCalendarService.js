@@ -855,6 +855,16 @@ export async function updateLocalCalendar(calendarId, updateData = {}, { syncSta
   })
 }
 
+export async function deleteLocalCalendar(calendarId) {
+  const existing = await getLocalCalendar(calendarId)
+  if (!existing) return null
+
+  await db.run('DELETE FROM appointments WHERE calendar_id = ?', [existing.id])
+  await db.run('DELETE FROM calendars WHERE id = ?', [existing.id])
+
+  return existing
+}
+
 export async function ensureDefaultLocalCalendar() {
   const existing = await db.get('SELECT * FROM calendars LIMIT 1')
   if (existing) return calendarRowToApi(existing)

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { createPortal } from 'react-dom';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { KpiCard, Card, Button, PageContainer, AppointmentModal, BlockedSlotModal, TabList, Loading } from '@/components/common';
-import { ChevronLeft, ChevronRight, Plus, ChevronDown, Check, Calendar as CalendarIcon, Search, X, Settings, Copy, ExternalLink } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Plus, ChevronDown, Check, Calendar as CalendarIcon, Search, X, Settings } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useNotification } from '@/contexts/NotificationContext';
 import { useTheme } from '@/contexts/ThemeContext';
@@ -217,19 +217,7 @@ export const Appointments: React.FC = () => {
   const [isCalendarDropdownOpen, setIsCalendarDropdownOpen] = useState(false);
   const [defaultCalendarId] = useAppConfig<string>('default_calendar_id', '');
 
-  const copyCalendarPublicUrl = async (calendar: Calendar | null) => {
-    if (!calendar?.publicUrl) {
-      showToast('warning', 'URL no disponible', calendar?.publicUrlUnavailableReason || 'Conecta el dominio publico general verificado primero.');
-      return;
-    }
 
-    try {
-      await navigator.clipboard.writeText(calendar.publicUrl);
-      showToast('success', 'URL copiada', calendar.publicUrl);
-    } catch {
-      showToast('error', 'No se pudo copiar', 'Copia la URL manualmente.');
-    }
-  };
 
   // Drag & Drop state
   const [draggedEvent, setDraggedEvent] = useState<CalendarEvent | null>(null);
@@ -1235,54 +1223,6 @@ export const Appointments: React.FC = () => {
             </>
           )}
         </div>
-
-          {selectedCalendar && (
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-              minWidth: 280,
-              maxWidth: 440,
-              flex: '1 1 320px'
-            }}>
-              <input
-                readOnly
-                value={selectedCalendar.publicUrl || selectedCalendar.publicUrlUnavailableReason || 'Conecta el dominio publico general'}
-                title={selectedCalendar.publicUrl || selectedCalendar.publicUrlUnavailableReason || 'Conecta el dominio publico general'}
-                style={{
-                  minWidth: 0,
-                  flex: 1,
-                  height: 40,
-                  border: '1px solid var(--color-border)',
-                  borderRadius: 8,
-                  background: 'var(--color-background-secondary)',
-                  color: selectedCalendar.publicUrl ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)',
-                  padding: '0 12px',
-                  fontSize: 13
-                }}
-              />
-              <Button
-                variant="secondary"
-                size="small"
-                onClick={() => copyCalendarPublicUrl(selectedCalendar)}
-                disabled={!selectedCalendar.publicUrl}
-              >
-                <Copy size={15} />
-                Copiar
-              </Button>
-              {selectedCalendar.publicUrl && (
-                <a
-                  href={selectedCalendar.publicUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  style={{ color: 'var(--color-text-secondary)', display: 'inline-flex', alignItems: 'center' }}
-                  title="Abrir URL publica"
-                >
-                  <ExternalLink size={17} />
-                </a>
-              )}
-            </div>
-          )}
 
           {/* Buscador de citas */}
           <div className={styles.searchContainer}>

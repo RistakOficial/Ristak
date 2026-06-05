@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react'
+import React, { useCallback, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { X, Info, AlertCircle, ShieldAlert } from 'lucide-react'
 import { Button } from '../Button'
@@ -17,6 +17,7 @@ interface ModalProps {
   confirmText?: string
   cancelText?: string
   onConfirm?: () => void
+  onCancel?: () => void
   showCloseButton?: boolean
   children?: React.ReactNode
 }
@@ -38,9 +39,15 @@ export const Modal: React.FC<ModalProps> = ({
   confirmText = 'Aceptar',
   cancelText = 'Cancelar',
   onConfirm,
+  onCancel,
   showCloseButton = true,
   children
 }) => {
+  const handleCancel = useCallback(() => {
+    onCancel?.()
+    onClose()
+  }, [onCancel, onClose])
+
   useEffect(() => {
     if (!isOpen) return
 
@@ -48,7 +55,7 @@ export const Modal: React.FC<ModalProps> = ({
 
     const handleEscape = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && isOpen) {
-        onClose()
+        handleCancel()
       }
     }
 
@@ -59,13 +66,13 @@ export const Modal: React.FC<ModalProps> = ({
       document.removeEventListener('keydown', handleEscape)
       document.body.style.overflow = previousBodyOverflow
     }
-  }, [isOpen, onClose])
+  }, [handleCancel, isOpen])
 
   if (!isOpen) return null
 
   const handleBackdropClick = (e: React.MouseEvent) => {
     if (e.target === e.currentTarget) {
-      onClose()
+      handleCancel()
     }
   }
 
@@ -86,7 +93,7 @@ export const Modal: React.FC<ModalProps> = ({
             {showCloseButton && (
               <button
                 className={styles.closeButton}
-                onClick={onClose}
+                onClick={handleCancel}
                 aria-label="Cerrar modal"
               >
                 <X size={20} />
@@ -108,7 +115,7 @@ export const Modal: React.FC<ModalProps> = ({
               <>
                 <Button
                   variant="secondary"
-                  onClick={onClose}
+                  onClick={handleCancel}
                   size="medium"
                 >
                   {cancelText}

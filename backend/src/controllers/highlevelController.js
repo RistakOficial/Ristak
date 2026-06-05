@@ -1,5 +1,5 @@
 import fetch from 'node-fetch';
-import { db } from '../config/database.js';
+import { db, getAppConfig, setAppConfig } from '../config/database.js';
 import { syncHighLevelData, getSyncProgress } from '../services/highlevelSyncService.js';
 import { syncSingleInvoice } from '../services/invoicesSyncService.js';
 import { logger } from '../utils/logger.js';
@@ -9,6 +9,7 @@ import { buildInvoicePaymentUrl } from '../utils/paymentUrl.js';
 import { createInstallmentPaymentFlow } from '../services/paymentFlowService.js';
 import { formatInvoiceMultilineText, formatInvoicePayloadText } from '../utils/invoiceTextFormatter.js';
 import { normalizePhoneForStorage } from '../utils/phoneUtils.js';
+import * as localCalendarService from '../services/localCalendarService.js';
 import {
   createLocalPrice,
   createLocalProduct,
@@ -270,6 +271,71 @@ async function clearAllData() {
   }
 }
 
+function normalizeConfigId(value) {
+  return String(value || '').trim();
+}
+
+function parseAttributionCalendarConfig(value) {
+  if (!value) return null;
+  if (Array.isArray(value)) {
+    return value.map(item => String(item || '').trim()).filter(Boolean);
+  }
+
+  if (typeof value !== 'string') return null;
+
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (!Array.isArray(parsed)) return null;
+    return parsed.map(item => String(item || '').trim()).filter(Boolean);
+  } catch {
+    return null;
+  }
+}
+
+async function ensureRistakCalendarDefaults() {
+  const defaultCalendar = await localCalendarService.ensureDefaultLocalCalendar();
+  if (!defaultCalendar?.id) return;
+
+  const configuredDefaultCalendarId = normalizeConfigId(await getAppConfig('default_calendar_id'));
+  const configuredAttributionCalendars = parseAttributionCalendarConfig(await getAppConfig('attribution_calendar_ids'));
+
+  const updates = {};
+
+  const resolvedDefaultCalendar = configuredDefaultCalendarId
+    ? await localCalendarService.getLocalCalendar(configuredDefaultCalendarId)
+    : null;
+
+  if (!configuredDefaultCalendarId || !resolvedDefaultCalendar) {
+    updates.default_calendar_id = defaultCalendar.id;
+  }
+
+  if (!configuredAttributionCalendars) {
+    updates.attribution_calendar_ids = [defaultCalendar.id];
+  } else if (configuredAttributionCalendars.length > 0) {
+    const resolvedAttributionCalendars = [];
+
+    for (const calendarId of [...new Set(configuredAttributionCalendars)]) {
+      const calendar = await localCalendarService.getLocalCalendar(calendarId);
+      if (calendar?.id) {
+        resolvedAttributionCalendars.push(calendar.id);
+      }
+    }
+
+    if (resolvedAttributionCalendars.length === 0) {
+      updates.attribution_calendar_ids = [defaultCalendar.id];
+    } else if (resolvedAttributionCalendars.length !== configuredAttributionCalendars.length) {
+      updates.attribution_calendar_ids = resolvedAttributionCalendars;
+    }
+  }
+
+  for (const [key, value] of Object.entries(updates)) {
+    await setAppConfig(key, value);
+  }
+}
+
 /**
  * Guarda la configuración de HighLevel y configura webhooks
  */
@@ -354,6 +420,10 @@ export const saveConfig = async (req, res) => {
       );
       logger.info('Configuración creada exitosamente');
     }
+
+    await ensureRistakCalendarDefaults().catch((error) => {
+      logger.warn(`No se pudo inicializar configuración de calendario predeterminado: ${error.message}`);
+    });
 
     // Iniciar sincronización automáticamente después de guardar
     logger.info('Iniciando sincronización automática después de guardar configuración');

@@ -455,6 +455,20 @@ export const calendarsService = {
   },
 
   /**
+   * Eliminar calendario local de Ristak.
+   */
+  async deleteCalendar(calendarId: string, accessToken?: string): Promise<boolean> {
+    try {
+      await apiClient.delete(`/calendars/${calendarId}`, undefined, {
+        params: accessToken ? { accessToken } : {}
+      });
+      return true;
+    } catch (error) {
+      throw error;
+    }
+  },
+
+  /**
    * Calcular estadísticas de citas
    * Nota: "pending" cuenta citas confirmadas que están próximas (futuras)
    */

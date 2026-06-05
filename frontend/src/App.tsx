@@ -166,6 +166,7 @@ const AppWithNotifications: React.FC = () => {
         confirmText={modal.confirmText}
         cancelText={modal.cancelText}
         onConfirm={modal.onConfirm}
+        onCancel={modal.onCancel}
       />
     </>
   )

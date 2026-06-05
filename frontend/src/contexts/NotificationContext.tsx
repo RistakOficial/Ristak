@@ -18,11 +18,12 @@ interface ModalData {
   confirmText?: string
   cancelText?: string
   onConfirm?: () => void
+  onCancel?: () => void
 }
 
 interface NotificationContextType {
   showToast: (type: ToastType, title: string, message?: string, duration?: number) => void
-  showConfirm: (title: string, message: string, onConfirm: () => void, confirmText?: string, cancelText?: string) => void
+  showConfirm: (title: string, message: string, onConfirm: () => void, confirmText?: string, cancelText?: string, onCancel?: () => void) => void
   showAlert: (title: string, message: string, confirmText?: string) => void
   showInfo: (title: string, message: string, confirmText?: string) => void
   toasts: ToastData[]
@@ -70,7 +71,8 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
     message: string,
     onConfirm: () => void,
     confirmText: string = 'Aceptar',
-    cancelText: string = 'Cancelar'
+    cancelText: string = 'Cancelar',
+    onCancel?: () => void
   ) => {
     setModal({
       isOpen: true,
@@ -79,7 +81,8 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
       message,
       confirmText,
       cancelText,
-      onConfirm
+      onConfirm,
+      onCancel
     })
   }, [])
 

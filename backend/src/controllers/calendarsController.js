@@ -1148,6 +1148,47 @@ export async function updateCalendar(req, res) {
 }
 
 /**
+ * DELETE /api/calendars/:id
+ * Eliminar un calendario local de Ristak.
+ */
+export async function deleteCalendar(req, res) {
+  try {
+    const { id } = req.params;
+    const existing = await localCalendarService.getLocalCalendar(id);
+
+    if (!existing) {
+      return res.status(404).json({
+        success: false,
+        error: 'Calendario no encontrado'
+      });
+    }
+
+    if (existing.source !== 'ristak') {
+      return res.status(409).json({
+        success: false,
+        error: 'Los calendarios sincronizados se eliminan desde su origen'
+      });
+    }
+
+    const deleted = await localCalendarService.deleteLocalCalendar(id);
+
+    res.json({
+      success: true,
+      data: {
+        id: deleted.id,
+        deleted: true
+      }
+    });
+  } catch (error) {
+    logger.error(`[Calendars Controller] Error en deleteCalendar: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+}
+
+/**
  * DELETE /api/calendars/events/:id
  * Eliminar un evento del calendario
  */
