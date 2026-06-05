@@ -7,6 +7,7 @@ import { getGHLClient } from '../services/ghlClient.js';
 import { db } from '../config/database.js';
 import { getAccountTimezone } from '../utils/dateUtils.js';
 import { triggerWhatsappAppointmentBookedEvent } from '../services/metaWhatsappEventsService.js';
+import { sendCalendarAppointmentNotification } from '../services/pushNotificationsService.js';
 import { getRequestHost, resolveConnectedPublicDomainForHost } from '../services/sitesService.js';
 import { normalizePhoneForStorage } from '../utils/phoneUtils.js';
 import {
@@ -766,6 +767,14 @@ export async function createPublicAppointment(req, res) {
       logger.warn(`[Calendars Controller] No se pudo disparar evento WhatsApp para cita publica: ${error.message}`);
     });
 
+    await sendCalendarAppointmentNotification(appointment, {
+      calendarId: calendar.id,
+      calendarName: calendar.name,
+      source: 'public_calendar'
+    }).catch(error => {
+      logger.warn(`[Calendars Controller] No se pudo enviar push de cita publica: ${error.message}`);
+    });
+
     res.status(201).json({
       success: true,
       data: {
@@ -1027,6 +1036,14 @@ export async function createAppointment(req, res) {
         calendarId: appointment?.calendarId || appointmentData.calendarId || appointmentData.calendar_id
       });
     }
+
+    await sendCalendarAppointmentNotification(appointment, {
+      calendarId: appointment?.calendarId || appointmentData.calendarId || appointmentData.calendar_id,
+      calendarName: localCalendar?.name || appointmentData.calendarName || 'Calendario',
+      source: 'admin_calendar'
+    }).catch(error => {
+      logger.warn(`[Calendars Controller] No se pudo enviar push de cita: ${error.message}`);
+    });
 
     res.status(201).json({
       success: true,

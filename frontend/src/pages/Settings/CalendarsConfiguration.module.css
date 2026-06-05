@@ -240,6 +240,147 @@
   line-height: 1.55;
 }
 
+.notificationsPanel {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 10px;
+  background: var(--color-background-primary);
+}
+
+.notificationsHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.notificationsTitle {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
+}
+
+.notificationsIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 auto;
+  border-radius: 8px;
+  color: #1d4ed8;
+  background: rgba(37, 99, 235, 0.1);
+}
+
+.notificationsTitle h3 {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: 15px;
+  font-weight: 750;
+  line-height: 1.25;
+}
+
+.notificationsTitle p {
+  margin: 5px 0 0;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.phoneInstallHint {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 36px;
+  width: fit-content;
+  max-width: 100%;
+  padding: 0 11px;
+  border: 1px solid rgba(20, 184, 166, 0.18);
+  border-radius: 8px;
+  color: var(--color-text-secondary);
+  background: rgba(20, 184, 166, 0.07);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.phoneInstallHint svg {
+  color: #0f766e;
+  flex: 0 0 auto;
+}
+
+.notificationCalendarPicker {
+  display: grid;
+  gap: 10px;
+}
+
+.notificationPickerHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.notificationPickerHeader strong {
+  color: var(--color-text-primary);
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.notificationPickerHeader span {
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.notificationAllButton,
+.notificationChip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 36px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 8px;
+  color: var(--color-text-primary);
+  background: transparent;
+  font-size: 12px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.notificationAllButton {
+  width: fit-content;
+  padding: 0 12px;
+}
+
+.notificationAllButtonActive,
+.notificationChipActive {
+  color: #1d4ed8;
+  border-color: rgba(37, 99, 235, 0.34);
+  background: rgba(37, 99, 235, 0.08);
+}
+
+.notificationChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.notificationChip {
+  gap: 7px;
+  max-width: 100%;
+  padding: 0 10px;
+}
+
+.notificationChip span {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  flex: 0 0 auto;
+}
+
 /* ===== Calendar cards ===== */
 .calendarList {
   display: flex;

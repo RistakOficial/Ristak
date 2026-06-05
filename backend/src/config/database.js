@@ -374,6 +374,28 @@ async function initTables() {
       logger.warn('Advertencia al asegurar unicidad de app_config.config_key:', err.message)
     }
 
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS push_subscriptions (
+        id TEXT PRIMARY KEY,
+        user_id TEXT,
+        endpoint TEXT UNIQUE NOT NULL,
+        subscription_json TEXT NOT NULL,
+        calendar_ids_json TEXT,
+        enabled INTEGER DEFAULT 1,
+        user_agent TEXT,
+        last_error TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+
+    try {
+      await db.run('CREATE INDEX IF NOT EXISTS idx_push_subscriptions_enabled ON push_subscriptions(enabled)')
+      await db.run('CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user ON push_subscriptions(user_id)')
+    } catch (err) {
+      logger.warn('Advertencia al crear índices de push_subscriptions:', err.message)
+    }
+
     // Sites públicos/formularios. El dashboard administra la estructura, pero
     // el render público se decide estrictamente por dominio verificado.
     await db.run(`

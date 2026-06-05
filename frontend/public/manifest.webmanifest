@@ -1,0 +1,50 @@
+{
+  "name": "Ristak",
+  "short_name": "Ristak",
+  "description": "Agenda, pagos y dashboard móvil de Ristak.",
+  "start_url": "/phone/calendar",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f8fafc",
+  "theme_color": "#111827",
+  "icons": [
+    {
+      "src": "/logo.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Calendario",
+      "short_name": "Agenda",
+      "url": "/phone/calendar",
+      "icons": [
+        {
+          "src": "/logo.svg",
+          "sizes": "any",
+          "type": "image/svg+xml"
+        }
+      ]
+    },
+    {
+      "name": "Pagos",
+      "short_name": "Pagos",
+      "url": "/phone/payments",
+      "icons": [
+        {
+          "src": "/logo.svg",
+          "sizes": "any",
+          "type": "image/svg+xml"
+        }
+      ]
+    }
+  ]
+}

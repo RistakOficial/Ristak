@@ -36,7 +36,10 @@ import {
   Pencil,
   ChevronDown,
   MoreHorizontal,
-  Link2
+  Link2,
+  Bell,
+  BellOff,
+  Smartphone
 } from 'lucide-react'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useAppConfig, useHighLevelConnected } from '@/hooks'
@@ -152,6 +155,8 @@ export const CalendarsConfiguration: React.FC = () => {
   const [attributionCalendarIds, setAttributionCalendarIds] = useAppConfig<string[]>('attribution_calendar_ids', [])
   const [calendarSourcePreference, setCalendarSourcePreference] = useAppConfig<CalendarSourcePreference>('calendar_source_preference', 'combined')
   const [googleDefaultPromptHandledIds, setGoogleDefaultPromptHandledIds] = useAppConfig<string[]>('google_default_calendar_prompt_handled_ids', [])
+  const [calendarPushEnabled, setCalendarPushEnabled] = useAppConfig<boolean>('calendar_push_notifications_enabled', false)
+  const [calendarPushNotificationIds, setCalendarPushNotificationIds] = useAppConfig<string[]>('calendar_push_notification_calendar_ids', [])
 
   // El origen de calendarios solo tiene sentido con una integración de terceros
   // (HighLevel). Sin ella, Ristak es la única fuente posible.
@@ -524,6 +529,49 @@ export const CalendarsConfiguration: React.FC = () => {
       showToast('success', 'Calendarios de atribución actualizados', `${newSelection.length} calendario${newSelection.length !== 1 ? 's' : ''} seleccionado${newSelection.length !== 1 ? 's' : ''}`)
     } catch (error: any) {
       showToast('error', 'Error al guardar', error.message)
+    }
+  }
+
+  const handleCalendarPushEnabledToggle = async () => {
+    try {
+      await setCalendarPushEnabled(!calendarPushEnabled)
+      showToast(
+        'success',
+        !calendarPushEnabled ? 'Avisos encendidos' : 'Avisos apagados',
+        !calendarPushEnabled
+          ? 'Ristak enviará avisos a los celulares que ya dieron permiso.'
+          : 'Ristak dejará de enviar avisos de nuevas citas.'
+      )
+    } catch (error: any) {
+      showToast('error', 'No se pudo guardar el ajuste', error.message || 'Intenta nuevamente')
+    }
+  }
+
+  const handleCalendarPushSelectionToggle = async (calendarId: string) => {
+    const newSelection = calendarPushNotificationIds.includes(calendarId)
+      ? calendarPushNotificationIds.filter(id => id !== calendarId)
+      : [...calendarPushNotificationIds, calendarId]
+
+    try {
+      await setCalendarPushNotificationIds(newSelection)
+      showToast(
+        'success',
+        'Calendarios de aviso actualizados',
+        newSelection.length
+          ? `${newSelection.length} calendario${newSelection.length !== 1 ? 's' : ''} enviarán avisos.`
+          : 'Todos los calendarios enviarán avisos.'
+      )
+    } catch (error: any) {
+      showToast('error', 'No se pudo guardar el ajuste', error.message || 'Intenta nuevamente')
+    }
+  }
+
+  const handleUseAllCalendarPushNotifications = async () => {
+    try {
+      await setCalendarPushNotificationIds([])
+      showToast('success', 'Avisos para todos', 'Todos los calendarios activos podrán avisar nuevas citas.')
+    } catch (error: any) {
+      showToast('error', 'No se pudo guardar el ajuste', error.message || 'Intenta nuevamente')
     }
   }
 
@@ -1230,6 +1278,71 @@ export const CalendarsConfiguration: React.FC = () => {
     )
   }
 
+  const renderCalendarNotificationsPanel = () => (
+    <section className={pageStyles.notificationsPanel}>
+      <div className={pageStyles.notificationsHeader}>
+        <div className={pageStyles.notificationsTitle}>
+          <span className={pageStyles.notificationsIcon}>
+            {calendarPushEnabled ? <Bell size={18} /> : <BellOff size={18} />}
+          </span>
+          <div>
+            <h3>Avisos en celulares</h3>
+            <p>Cuando alguien agenda, Ristak avisa a los celulares que ya dieron permiso.</p>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          className={`${pageStyles.editorToggle} ${calendarPushEnabled ? pageStyles.editorToggleActive : ''}`}
+          onClick={handleCalendarPushEnabledToggle}
+          aria-pressed={calendarPushEnabled}
+        >
+          <span />
+          {calendarPushEnabled ? 'Encendidos' : 'Apagados'}
+        </button>
+      </div>
+
+      <div className={pageStyles.phoneInstallHint}>
+        <Smartphone size={16} />
+        <span>El usuario debe abrir Ristak desde el icono del celular y tocar “Activar” en Avisos.</span>
+      </div>
+
+      <div className={pageStyles.notificationCalendarPicker}>
+        <div className={pageStyles.notificationPickerHeader}>
+          <strong>Calendarios que mandan aviso</strong>
+          <span>{calendarPushNotificationIds.length ? `${calendarPushNotificationIds.length} elegido${calendarPushNotificationIds.length === 1 ? '' : 's'}` : 'Todos'}</span>
+        </div>
+
+        <button
+          type="button"
+          className={`${pageStyles.notificationAllButton} ${calendarPushNotificationIds.length === 0 ? pageStyles.notificationAllButtonActive : ''}`}
+          onClick={handleUseAllCalendarPushNotifications}
+        >
+          Todos los calendarios
+        </button>
+
+        {calendars.length > 0 && (
+          <div className={pageStyles.notificationChips}>
+            {calendars.map((calendar) => {
+              const selected = calendarPushNotificationIds.includes(calendar.id)
+              return (
+                <button
+                  key={calendar.id}
+                  type="button"
+                  className={`${pageStyles.notificationChip} ${selected ? pageStyles.notificationChipActive : ''}`}
+                  onClick={() => handleCalendarPushSelectionToggle(calendar.id)}
+                >
+                  <span style={{ backgroundColor: calendar.eventColor || 'var(--color-primary)' }} />
+                  {calendar.name}
+                </button>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    </section>
+  )
+
   const renderCalendarRow = (calendar: CalendarType) => {
     const isAttributed = attributionCalendarIds.includes(calendar.id)
     const isDefault = defaultCalendarId === calendar.id
@@ -1361,6 +1474,8 @@ export const CalendarsConfiguration: React.FC = () => {
         <summary>¿Qué significa “conversión”?</summary>
         <p>Los calendarios marcados alimentan citas en reportes, campañas, viaje del cliente y eventos de Meta/WhatsApp. Si no marcas ninguno, Ristak toma todos.</p>
       </details>
+
+      {renderCalendarNotificationsPanel()}
 
       {calendars.length > 0 ? (
         <div className={pageStyles.calendarList}>

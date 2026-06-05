@@ -19,6 +19,7 @@ import { Analytics } from '@/pages/Analytics'
 import { Sites } from '@/pages/Sites'
 import { PhoneAgentChat } from '@/pages/PhoneAgentChat'
 import { PhoneApp } from '@/pages/PhoneApp'
+import { PhoneCalendar } from '@/pages/PhoneCalendar'
 import { PhonePayments } from '@/pages/PhonePayments'
 import { Login } from '@/pages/Login'
 import { Setup } from '@/pages/Login/Setup'
@@ -115,6 +116,22 @@ const AppWithNotifications: React.FC = () => {
             element={
               <ProtectedRoute>
                 <PhonePayments />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/phone/calendar"
+            element={
+              <ProtectedRoute>
+                <PhoneCalendar />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/phone/appointments"
+            element={
+              <ProtectedRoute>
+                <PhoneCalendar />
               </ProtectedRoute>
             }
           />

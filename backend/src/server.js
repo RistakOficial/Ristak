@@ -44,6 +44,7 @@ import mcpRoutes from './routes/mcp.routes.js'
 import whatsappApiRoutes from './routes/whatsappApi.routes.js'
 import productsRoutes from './routes/products.routes.js'
 import sitesRoutes from './routes/sites.routes.js'
+import pushRoutes from './routes/push.routes.js'
 import { publicSiteHostMiddleware } from './controllers/sitesController.js'
 
 const __filename = fileURLToPath(import.meta.url)
@@ -94,6 +95,7 @@ app.use('/api/integrations', integrationsRoutes)
 app.use('/api/attribution', attributionRoutes)
 app.use('/api/settings', settingsRoutes)
 app.use('/api/calendars', calendarsRoutes)
+app.use('/api/push', pushRoutes)
 app.use('/api/config', configRoutes)
 app.use('/api', costsRoutes)
 app.use('/api/maintenance', maintenanceRoutes)
