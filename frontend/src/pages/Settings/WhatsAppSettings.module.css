@@ -212,6 +212,40 @@
   background: var(--color-background-secondary);
 }
 
+.phoneInputGrid {
+  display: grid;
+  grid-template-columns: minmax(112px, 0.34fr) minmax(0, 1fr);
+  gap: 8px;
+}
+
+.countrySelectWrap {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 10px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 8px;
+  color: var(--color-text-primary);
+  background: var(--color-background-secondary);
+}
+
+.countrySelectWrap:focus-within {
+  border-color: rgba(20, 184, 166, 0.55);
+  box-shadow: 0 0 0 3px rgba(20, 184, 166, 0.12);
+}
+
+.countrySelectWrap select {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  color: var(--color-text-primary);
+  background: transparent;
+  font: inherit;
+  font-weight: 850;
+  cursor: pointer;
+}
+
 .inputWrap:focus-within,
 .selectWrap:focus-within {
   border-color: rgba(20, 184, 166, 0.55);

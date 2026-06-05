@@ -10,15 +10,35 @@ import styles from './WhatsAppSettings.module.css'
 type BusinessProfile = {
   businessName?: string
   name?: string
+  verifiedName?: string
   description?: string
+  about?: string
   email?: string
+  profilePictureUrl?: string
+  vertical?: string
   website?: string | string[]
+  websites?: string[]
   category?: string
 }
 
 type WhatsAppChannel = 'api' | 'web'
 
 const CONNECTION_FLOW_TIMEOUT_MS = 120_000
+
+const COUNTRY_DIAL_CODES = [
+  { code: 'MX', dial: '+52', flag: '🇲🇽', label: 'Mexico' },
+  { code: 'US', dial: '+1', flag: '🇺🇸', label: 'Estados Unidos' },
+  { code: 'CO', dial: '+57', flag: '🇨🇴', label: 'Colombia' },
+  { code: 'AR', dial: '+54', flag: '🇦🇷', label: 'Argentina' },
+  { code: 'CL', dial: '+56', flag: '🇨🇱', label: 'Chile' },
+  { code: 'PE', dial: '+51', flag: '🇵🇪', label: 'Peru' },
+  { code: 'ES', dial: '+34', flag: '🇪🇸', label: 'España' },
+  { code: 'GT', dial: '+502', flag: '🇬🇹', label: 'Guatemala' },
+  { code: 'CR', dial: '+506', flag: '🇨🇷', label: 'Costa Rica' },
+  { code: 'PA', dial: '+507', flag: '🇵🇦', label: 'Panama' },
+  { code: 'EC', dial: '+593', flag: '🇪🇨', label: 'Ecuador' },
+  { code: 'BR', dial: '+55', flag: '🇧🇷', label: 'Brasil' }
+]
 
 function parseJson<T>(value?: string | null): T | null {
   if (!value) return null
@@ -43,6 +63,31 @@ function formatDateTime(value?: string | null) {
 
 function formatMetric(value?: number | null) {
   return new Intl.NumberFormat('es-MX').format(Number(value || 0))
+}
+
+function onlyPhoneDigits(value?: string | null) {
+  return String(value || '').replace(/\D/g, '')
+}
+
+function splitPhoneByCountry(value?: string | null) {
+  const digits = onlyPhoneDigits(value)
+  const matchedCountry = [...COUNTRY_DIAL_CODES]
+    .sort((left, right) => onlyPhoneDigits(right.dial).length - onlyPhoneDigits(left.dial).length)
+    .find(country => digits.startsWith(onlyPhoneDigits(country.dial)))
+
+  if (!matchedCountry) {
+    return { countryDial: '+52', nationalNumber: digits }
+  }
+
+  return {
+    countryDial: matchedCountry.dial,
+    nationalNumber: digits.slice(onlyPhoneDigits(matchedCountry.dial).length)
+  }
+}
+
+function buildPhoneNumber(countryDial: string, nationalNumber: string) {
+  const digits = onlyPhoneDigits(nationalNumber)
+  return digits ? `${countryDial}${digits}` : ''
 }
 
 function formatCurrency(amount?: number | null, currency?: string | null) {
@@ -123,7 +168,8 @@ export const WhatsAppSettings: React.FC = () => {
   const [apiDisconnecting, setApiDisconnecting] = useState(false)
   const [apiKey, setApiKey] = useState('')
   const [selectedPhoneId, setSelectedPhoneId] = useState('')
-  const [manualPhone, setManualPhone] = useState('')
+  const [manualCountryDial, setManualCountryDial] = useState('+52')
+  const [manualNationalNumber, setManualNationalNumber] = useState('')
   const [selectedTemplateId, setSelectedTemplateId] = useState('')
   const [templateTo, setTemplateTo] = useState('')
   const [templateVariables, setTemplateVariables] = useState('[]')
@@ -158,6 +204,7 @@ export const WhatsAppSettings: React.FC = () => {
     return apiTemplates.find(template => template.id === selectedTemplateId) || approvedTemplates[0] || apiTemplates[0] || null
   }, [apiTemplates, approvedTemplates, selectedTemplateId])
   const selectedTemplateVariablesCount = getTemplateVariablesCount(selectedTemplate)
+  const manualPhone = buildPhoneNumber(manualCountryDial, manualNationalNumber)
 
   const canSubmitApi = Boolean(apiKey.trim() || apiStatus?.credentials.hasApiKey)
   const apiConnected = Boolean(apiStatus?.connected)
@@ -202,7 +249,9 @@ export const WhatsAppSettings: React.FC = () => {
       ''
 
     setSelectedPhoneId(preferredPhoneId)
-    setManualPhone(nextStatus.sender.phone || '')
+    const parsedPhone = splitPhoneByCountry(nextStatus.sender.phone || '')
+    setManualCountryDial(parsedPhone.countryDial)
+    setManualNationalNumber(parsedPhone.nationalNumber)
     setSelectedTemplateId((current) => {
       const templates = nextStatus.templates?.items || []
       if (current && templates.some(template => template.id === current)) return current
@@ -471,15 +520,31 @@ export const WhatsAppSettings: React.FC = () => {
       ) : (
         <label className={styles.fieldLabel}>
           <span>Numero emisor</span>
-          <div className={styles.inputWrap}>
-            <Smartphone size={17} />
-            <input
-              type="tel"
-              value={manualPhone}
-              onChange={(event) => setManualPhone(event.target.value)}
-              placeholder="+52..."
-              autoComplete="tel"
-            />
+          <div className={styles.phoneInputGrid}>
+            <div className={styles.countrySelectWrap}>
+              <select
+                value={manualCountryDial}
+                onChange={(event) => setManualCountryDial(event.target.value)}
+                aria-label="Lada del pais"
+              >
+                {COUNTRY_DIAL_CODES.map((country) => (
+                  <option key={country.code} value={country.dial}>
+                    {country.flag} {country.dial}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className={styles.inputWrap}>
+              <Smartphone size={17} />
+              <input
+                type="tel"
+                value={manualNationalNumber}
+                onChange={(event) => setManualNationalNumber(event.target.value)}
+                placeholder="Numero"
+                autoComplete="tel-national"
+                inputMode="tel"
+              />
+            </div>
           </div>
         </label>
       )}
@@ -506,17 +571,38 @@ export const WhatsAppSettings: React.FC = () => {
         if (left.status !== 'APPROVED' && right.status === 'APPROVED') return 1
         return getTemplateLabel(left).localeCompare(getTemplateLabel(right))
       })
+      const apiBusinessProfile = parseJson<BusinessProfile>(selectedApiPhone?.business_profile_json)
+      const apiProfileImage = selectedApiPhone?.profile_picture_url || apiBusinessProfile?.profilePictureUrl || ''
+      const apiDisplayNumber = apiStatus.sender.phone ||
+        selectedApiPhone?.display_phone_number ||
+        selectedApiPhone?.phone_number ||
+        'Numero conectado'
+      const apiDisplayName = selectedApiPhone?.verified_name ||
+        apiBusinessProfile?.verifiedName ||
+        apiBusinessProfile?.businessName ||
+        apiBusinessProfile?.name ||
+        'WhatsApp Business'
 
       return (
         <div className={styles.apiConnectedState}>
           <div className={styles.apiHero}>
-            <span className={styles.apiLogoMark}><Cloud size={38} /></span>
+            <div className={styles.avatar}>
+              {apiProfileImage ? (
+                <img src={apiProfileImage} alt="" />
+              ) : (
+                <SiWhatsapp size={58} />
+              )}
+              <span className={styles.checkBadge}><CheckCircle size={22} /></span>
+            </div>
             <span className={styles.connectedLabel}>
               <ShieldCheck size={18} />
-              WhatsApp_API activo
+              Conectado
             </span>
-            <h3>{apiStatus.sender.phone || 'Webhook conectado'}</h3>
-            <p>{selectedPhone?.verified_name || selectedPhone?.display_phone_number || 'YCloud'}</p>
+            <h3>{apiDisplayNumber}</h3>
+            <p>{apiDisplayName}</p>
+            {(apiBusinessProfile?.vertical || apiBusinessProfile?.category) && (
+              <span className={styles.profileCategory}>{apiBusinessProfile.vertical || apiBusinessProfile.category}</span>
+            )}
           </div>
 
           {alerts.length ? (

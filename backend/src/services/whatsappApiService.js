@@ -360,6 +360,62 @@ async function listYCloudTemplates(apiKey, { wabaId, status } = {}) {
       : []
 }
 
+async function listYCloudContacts(apiKey, { maxPages = 10 } = {}) {
+  const contacts = []
+  const limit = 100
+
+  for (let page = 1; page <= maxPages; page += 1) {
+    const data = await ycloudRequest('/contact/contacts', {
+      apiKey,
+      query: { page, limit, includeTotal: true }
+    })
+    const items = Array.isArray(data.items)
+      ? data.items
+      : Array.isArray(data.data)
+        ? data.data
+        : []
+
+    contacts.push(...items)
+    if (items.length < limit || (data.total && contacts.length >= Number(data.total))) break
+  }
+
+  return contacts
+}
+
+async function retrieveYCloudPhoneNumberProfile(apiKey, { wabaId, phoneNumber } = {}) {
+  const cleanWabaId = cleanString(wabaId)
+  const normalized = normalizePhoneForStorage(phoneNumber) || cleanString(phoneNumber)
+  if (!cleanWabaId || !normalized) return null
+
+  return ycloudRequest(`/whatsapp/phoneNumbers/${encodeURIComponent(cleanWabaId)}/${encodeURIComponent(normalized)}/profile`, {
+    apiKey
+  })
+}
+
+async function enrichPhoneNumbersWithProfiles(apiKey, phoneNumbers = []) {
+  return Promise.all(phoneNumbers.map(async (phoneNumber) => {
+    const normalized = normalizePhoneNumberRecord(phoneNumber)
+    if (!normalized.wabaId || !normalized.phoneNumber) return phoneNumber
+
+    try {
+      const profile = await retrieveYCloudPhoneNumberProfile(apiKey, {
+        wabaId: normalized.wabaId,
+        phoneNumber: normalized.phoneNumber
+      })
+      return {
+        ...phoneNumber,
+        profile,
+        profilePictureUrl: profile?.profilePictureUrl,
+        verifiedName: phoneNumber.verifiedName || profile?.verifiedName,
+        businessProfile: profile
+      }
+    } catch (error) {
+      logger.warn(`No se pudo leer perfil WhatsApp_API ${normalized.phoneNumber}: ${error.message}`)
+      return phoneNumber
+    }
+  }))
+}
+
 async function listYCloudWebhookEndpoints(apiKey) {
   const data = await ycloudRequest('/webhookEndpoints', {
     apiKey,
@@ -378,13 +434,16 @@ function normalizePhoneNumberRecord(record = {}) {
     cleanString(record.phoneNumber || record.displayPhoneNumber)
   const wabaId = cleanString(record.wabaId)
   const id = cleanString(record.id) || hashId('waapi_phone', `${wabaId}|${phoneNumber}`)
+  const businessProfile = record.businessProfile || record.profile || null
 
   return {
     id,
     wabaId,
     phoneNumber,
     displayPhoneNumber: cleanString(record.displayPhoneNumber) || phoneNumber,
-    verifiedName: cleanString(record.verifiedName || record.requestedVerifiedName || record.newName),
+    verifiedName: cleanString(record.verifiedName || businessProfile?.verifiedName || record.requestedVerifiedName || record.newName),
+    profilePictureUrl: cleanString(record.profilePictureUrl || businessProfile?.profilePictureUrl),
+    businessProfile,
     qualityRating: cleanString(record.qualityRating),
     messagingLimit: cleanString(record.messagingLimit || record.whatsappBusinessManagerMessagingLimit),
     status: cleanString(record.status || record.nameStatus || record.codeVerificationStatus),
@@ -744,13 +803,16 @@ async function syncPhoneNumbers(phoneNumbers = [], options = {}) {
     await db.run(`
       INSERT INTO whatsapp_api_phone_numbers (
         id, waba_id, phone_number, display_phone_number, verified_name,
-        quality_rating, messaging_limit, status, raw_payload_json, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        profile_picture_url, business_profile_json, quality_rating, messaging_limit,
+        status, raw_payload_json, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
       ON CONFLICT(id) DO UPDATE SET
         waba_id = excluded.waba_id,
         phone_number = excluded.phone_number,
         display_phone_number = excluded.display_phone_number,
         verified_name = excluded.verified_name,
+        profile_picture_url = COALESCE(NULLIF(excluded.profile_picture_url, ''), whatsapp_api_phone_numbers.profile_picture_url),
+        business_profile_json = COALESCE(excluded.business_profile_json, whatsapp_api_phone_numbers.business_profile_json),
         quality_rating = excluded.quality_rating,
         messaging_limit = excluded.messaging_limit,
         status = excluded.status,
@@ -762,6 +824,8 @@ async function syncPhoneNumbers(phoneNumbers = [], options = {}) {
       item.phoneNumber || null,
       item.displayPhoneNumber || null,
       item.verifiedName || null,
+      item.profilePictureUrl || null,
+      item.businessProfile ? safeJson(item.businessProfile) : null,
       item.qualityRating || null,
       item.messagingLimit || null,
       item.status || null,
@@ -769,6 +833,76 @@ async function syncPhoneNumbers(phoneNumbers = [], options = {}) {
     ])
 
     await syncPhoneNumberAlert(item, options)
+  }
+}
+
+function normalizeYCloudContactRecord(record = {}) {
+  const phone = normalizePhoneForStorage(record.phoneNumber) || cleanString(record.phoneNumber)
+  const profileName = normalizeDisplayText(record.nickname || record.name || record.fullName || record.email)
+  return {
+    id: cleanString(record.id) || hashId('ycloud_contact', phone || record.email),
+    phone,
+    email: cleanString(record.email),
+    profileName,
+    seenAt: toDateTime(record.lastSeen || record.createTime) || nowIso(),
+    sourceId: cleanString(record.sourceId),
+    sourceUrl: cleanString(record.sourceUrl),
+    sourceType: cleanString(record.sourceType),
+    raw: record
+  }
+}
+
+async function syncYCloudContacts(contacts = []) {
+  for (const contact of contacts.map(normalizeYCloudContactRecord).filter(item => item.phone)) {
+    const localContact = await upsertLocalContact({
+      phone: contact.phone,
+      profileName: contact.profileName,
+      messageText: '',
+      messageTimestamp: contact.seenAt,
+      attribution: {
+        sourceId: contact.sourceId,
+        sourceUrl: contact.sourceUrl,
+        sourceType: contact.sourceType || 'ycloud_contact',
+        sourceApp: SOURCE_NAME,
+        entryPoint: 'ycloud_contacts',
+        ctwaClid: '',
+        headline: contact.profileName || contact.sourceId || '',
+        body: ''
+      }
+    })
+
+    const apiContactId = hashId('waapi_profile', contact.phone)
+    await db.run(`
+      INSERT INTO whatsapp_api_contacts (
+        id, contact_id, phone, profile_name, raw_profile_json,
+        first_seen_at, last_seen_at, message_count, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, CURRENT_TIMESTAMP)
+      ON CONFLICT(phone) DO UPDATE SET
+        contact_id = COALESCE(excluded.contact_id, whatsapp_api_contacts.contact_id),
+        profile_name = COALESCE(NULLIF(excluded.profile_name, ''), whatsapp_api_contacts.profile_name),
+        raw_profile_json = excluded.raw_profile_json,
+        first_seen_at = CASE
+          WHEN whatsapp_api_contacts.first_seen_at IS NULL THEN excluded.first_seen_at
+          WHEN excluded.first_seen_at IS NULL THEN whatsapp_api_contacts.first_seen_at
+          WHEN excluded.first_seen_at < whatsapp_api_contacts.first_seen_at THEN excluded.first_seen_at
+          ELSE whatsapp_api_contacts.first_seen_at
+        END,
+        last_seen_at = CASE
+          WHEN whatsapp_api_contacts.last_seen_at IS NULL THEN excluded.last_seen_at
+          WHEN excluded.last_seen_at IS NULL THEN whatsapp_api_contacts.last_seen_at
+          WHEN excluded.last_seen_at > whatsapp_api_contacts.last_seen_at THEN excluded.last_seen_at
+          ELSE whatsapp_api_contacts.last_seen_at
+        END,
+        updated_at = CURRENT_TIMESTAMP
+    `, [
+      apiContactId,
+      localContact.id || null,
+      contact.phone,
+      contact.profileName || null,
+      safeJson(contact.raw),
+      contact.seenAt,
+      contact.seenAt
+    ])
   }
 }
 
@@ -866,7 +1000,8 @@ async function ensureWebhookEndpoint({ apiKey, webhookUrl, webhookEndpointId }) 
 async function getPhoneNumbersFromDb() {
   return db.all(`
     SELECT id, waba_id, phone_number, display_phone_number, verified_name,
-      quality_rating, messaging_limit, status, updated_at
+      profile_picture_url, business_profile_json, quality_rating, messaging_limit,
+      status, updated_at
     FROM whatsapp_api_phone_numbers
     ORDER BY updated_at DESC, phone_number ASC
   `)
@@ -1099,7 +1234,7 @@ export async function connectWhatsAppApi({ apiKey, senderPhone, phoneNumberId, w
   }
 
   try {
-    const [phoneNumbers, balance, templates] = await Promise.all([
+    const [phoneNumbers, balance, templates, ycloudContacts] = await Promise.all([
       listYCloudPhoneNumbers(cleanApiKey),
       retrieveYCloudBalance(cleanApiKey).catch(error => {
         logger.warn(`No se pudo leer balance YCloud: ${error.message}`)
@@ -1108,13 +1243,19 @@ export async function connectWhatsAppApi({ apiKey, senderPhone, phoneNumberId, w
       listYCloudTemplates(cleanApiKey, { wabaId }).catch(error => {
         logger.warn(`No se pudieron leer plantillas YCloud: ${error.message}`)
         return []
+      }),
+      listYCloudContacts(cleanApiKey).catch(error => {
+        logger.warn(`No se pudieron leer contactos YCloud: ${error.message}`)
+        return []
       })
     ])
-    await syncPhoneNumbers(phoneNumbers)
+    const enrichedPhoneNumbers = await enrichPhoneNumbersWithProfiles(cleanApiKey, phoneNumbers)
+    await syncPhoneNumbers(enrichedPhoneNumbers)
     if (balance) await syncBalance(balance)
     await syncTemplates(templates)
+    await syncYCloudContacts(ycloudContacts)
 
-    const selectedPhone = pickPhoneNumber(phoneNumbers, { senderPhone, phoneNumberId, wabaId })
+    const selectedPhone = pickPhoneNumber(enrichedPhoneNumbers, { senderPhone, phoneNumberId, wabaId })
     if (selectedPhone) {
       await syncPhoneNumbers([selectedPhone.raw || selectedPhone])
     }
@@ -1159,7 +1300,7 @@ export async function refreshWhatsAppApi() {
   }
 
   try {
-    const [phoneNumbers, balance, templates] = await Promise.all([
+    const [phoneNumbers, balance, templates, ycloudContacts] = await Promise.all([
       listYCloudPhoneNumbers(config.apiKey),
       retrieveYCloudBalance(config.apiKey).catch(error => {
         logger.warn(`No se pudo actualizar balance YCloud: ${error.message}`)
@@ -1168,11 +1309,17 @@ export async function refreshWhatsAppApi() {
       listYCloudTemplates(config.apiKey, { wabaId: config.wabaId }).catch(error => {
         logger.warn(`No se pudieron actualizar plantillas YCloud: ${error.message}`)
         return []
+      }),
+      listYCloudContacts(config.apiKey).catch(error => {
+        logger.warn(`No se pudieron actualizar contactos YCloud: ${error.message}`)
+        return []
       })
     ])
-    await syncPhoneNumbers(phoneNumbers)
+    const enrichedPhoneNumbers = await enrichPhoneNumbersWithProfiles(config.apiKey, phoneNumbers)
+    await syncPhoneNumbers(enrichedPhoneNumbers)
     if (balance) await syncBalance(balance)
     await syncTemplates(templates)
+    await syncYCloudContacts(ycloudContacts)
 
     if (config.webhookEndpointId) {
       try {

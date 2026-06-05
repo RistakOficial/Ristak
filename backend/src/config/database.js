@@ -1237,6 +1237,8 @@ async function initTables() {
         phone_number TEXT,
         display_phone_number TEXT,
         verified_name TEXT,
+        profile_picture_url TEXT,
+        business_profile_json TEXT,
         quality_rating TEXT,
         messaging_limit TEXT,
         status TEXT,
@@ -1245,6 +1247,17 @@ async function initTables() {
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
     `)
+
+    for (const [columnName, columnType] of [
+      ['profile_picture_url', 'TEXT'],
+      ['business_profile_json', 'TEXT']
+    ]) {
+      try {
+        await db.run(`ALTER TABLE whatsapp_api_phone_numbers ADD COLUMN ${columnName} ${columnType}`)
+      } catch (err) {
+        // Columna ya existe, ignorar.
+      }
+    }
 
     await db.run(`
       CREATE TABLE IF NOT EXISTS whatsapp_api_contacts (

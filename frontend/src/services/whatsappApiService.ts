@@ -6,6 +6,8 @@ export interface WhatsAppApiPhoneNumber {
   phone_number?: string | null
   display_phone_number?: string | null
   verified_name?: string | null
+  profile_picture_url?: string | null
+  business_profile_json?: string | null
   quality_rating?: string | null
   messaging_limit?: string | null
   status?: string | null
