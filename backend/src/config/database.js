@@ -155,6 +155,9 @@ const CONTACT_PHONE_REFERENCE_TABLES = [
   { table: 'whatsapp_web_messages', column: 'contact_id' },
   { table: 'whatsapp_web_attribution', column: 'contact_id' },
   { table: 'whatsapp_web_logs', column: 'contact_id' },
+  { table: 'whatsapp_api_contacts', column: 'contact_id' },
+  { table: 'whatsapp_api_messages', column: 'contact_id' },
+  { table: 'whatsapp_api_attribution', column: 'contact_id' },
   { table: 'payment_flows', column: 'contact_id' },
   { table: 'sessions', column: 'contact_id' }
 ]
@@ -164,7 +167,7 @@ function getContactPhoneScore(contact = {}, canonicalPhone = '') {
   const id = String(contact.id || '')
   const source = String(contact.source || '').toLowerCase()
 
-  if (!id.startsWith('waweb_contact_')) score += 1000
+  if (!id.startsWith('waweb_contact_') && !id.startsWith('waapi_contact_')) score += 1000
   if (Number(contact.total_paid || 0) > 0) score += 500
   if (Number(contact.purchases_count || 0) > 0) score += 250
   if (source.includes('gohighlevel') || source.includes('highlevel')) score += 150
@@ -207,6 +210,9 @@ async function syncContactPhoneColumns(contactId, canonicalPhone) {
     ['whatsapp_web_messages', 'phone'],
     ['whatsapp_web_attribution', 'phone'],
     ['whatsapp_web_logs', 'phone'],
+    ['whatsapp_api_contacts', 'phone'],
+    ['whatsapp_api_messages', 'phone'],
+    ['whatsapp_api_attribution', 'phone'],
     ['payment_flows', 'contact_phone']
   ]
 
@@ -1221,6 +1227,136 @@ async function initTables() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_web_attr_source ON whatsapp_web_attribution(detected_source_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_web_logs_session_created ON whatsapp_web_logs(session_id, created_at)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_web_logs_attribution ON whatsapp_web_logs(has_attribution, created_at)')
+
+    // Tablas de WhatsApp_API oficial via YCloud. Separadas de whatsapp_web/Baileys
+    // para mantener credenciales, webhooks, mensajes y atribución sin contaminar datos.
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS whatsapp_api_phone_numbers (
+        id TEXT PRIMARY KEY,
+        waba_id TEXT,
+        phone_number TEXT,
+        display_phone_number TEXT,
+        verified_name TEXT,
+        quality_rating TEXT,
+        messaging_limit TEXT,
+        status TEXT,
+        raw_payload_json TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS whatsapp_api_contacts (
+        id TEXT PRIMARY KEY,
+        contact_id TEXT,
+        phone TEXT UNIQUE,
+        profile_name TEXT,
+        raw_profile_json TEXT,
+        first_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        last_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        message_count INTEGER DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE SET NULL
+      )
+    `)
+
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS whatsapp_api_messages (
+        id TEXT PRIMARY KEY,
+        ycloud_message_id TEXT,
+        wamid TEXT,
+        waba_id TEXT,
+        whatsapp_api_contact_id TEXT,
+        contact_id TEXT,
+        phone TEXT,
+        from_phone TEXT,
+        to_phone TEXT,
+        business_phone TEXT,
+        direction TEXT,
+        message_type TEXT,
+        message_text TEXT,
+        status TEXT,
+        error_code TEXT,
+        error_message TEXT,
+        message_timestamp DATETIME,
+        raw_payload_json TEXT,
+        context_json TEXT,
+        referral_json TEXT,
+        detected_ctwa_clid TEXT,
+        detected_source_id TEXT,
+        detected_source_url TEXT,
+        detected_source_type TEXT,
+        detected_source_app TEXT,
+        detected_entry_point TEXT,
+        detected_headline TEXT,
+        detected_body TEXT,
+        detected_conversion_data TEXT,
+        detected_ctwa_payload TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (whatsapp_api_contact_id) REFERENCES whatsapp_api_contacts(id) ON DELETE SET NULL,
+        FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE SET NULL
+      )
+    `)
+
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS whatsapp_api_attribution (
+        id TEXT PRIMARY KEY,
+        whatsapp_api_message_id TEXT,
+        whatsapp_api_contact_id TEXT,
+        contact_id TEXT,
+        phone TEXT,
+        ycloud_message_id TEXT,
+        wamid TEXT,
+        detected_ctwa_clid TEXT,
+        detected_source_id TEXT,
+        detected_source_url TEXT,
+        detected_source_type TEXT,
+        detected_source_app TEXT,
+        detected_entry_point TEXT,
+        detected_headline TEXT,
+        detected_body TEXT,
+        detected_conversion_data TEXT,
+        detected_ctwa_payload TEXT,
+        referral_json TEXT,
+        raw_payload_json TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (whatsapp_api_message_id) REFERENCES whatsapp_api_messages(id) ON DELETE CASCADE,
+        FOREIGN KEY (whatsapp_api_contact_id) REFERENCES whatsapp_api_contacts(id) ON DELETE SET NULL,
+        FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE SET NULL
+      )
+    `)
+
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS whatsapp_api_webhook_events (
+        id TEXT PRIMARY KEY,
+        event_id TEXT UNIQUE,
+        event_type TEXT,
+        api_version TEXT,
+        webhook_endpoint_id TEXT,
+        signature_valid INTEGER,
+        processed_status TEXT DEFAULT 'received',
+        processed_error TEXT,
+        raw_payload_json TEXT,
+        ycloud_create_time DATETIME,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+
+    await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_phone_numbers_phone ON whatsapp_api_phone_numbers(phone_number)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_contacts_phone ON whatsapp_api_contacts(phone)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_contacts_contact ON whatsapp_api_contacts(contact_id)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_messages_contact ON whatsapp_api_messages(contact_id)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_messages_phone ON whatsapp_api_messages(phone)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_messages_created ON whatsapp_api_messages(created_at)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_messages_wamid ON whatsapp_api_messages(wamid)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_attr_contact ON whatsapp_api_attribution(contact_id)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_attr_source ON whatsapp_api_attribution(detected_source_id)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_attr_ctwa ON whatsapp_api_attribution(detected_ctwa_clid)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_events_type_created ON whatsapp_api_webhook_events(event_type, created_at)')
 
     // Tabla de versiones de Meta API (para auto-actualización)
     await db.run(`

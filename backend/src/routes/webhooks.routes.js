@@ -1,5 +1,8 @@
 import express from 'express'
 import {
+  handleYCloudWhatsAppApiWebhook
+} from '../controllers/whatsappApiController.js'
+import {
   handleContactWebhook,
   handlePaymentWebhook,
   handleRefundWebhook,
@@ -17,6 +20,7 @@ router.post('/refund', handleRefundWebhook)
 router.post('/appointment', handleAppointmentWebhook)
 router.post('/appointment/showed', handleAppointmentShowedWebhook)
 router.post('/whatsapp/attribution', handleWhatsAppAttributionWebhook)
+router.post('/whatsapp-api/ycloud', handleYCloudWhatsAppApiWebhook)
 router.post('/invoice', handleInvoiceWebhook)
 
 export default router

@@ -46,6 +46,47 @@
   letter-spacing: 0;
 }
 
+.channelTabs {
+  display: inline-grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  width: min(440px, 100%);
+  padding: 5px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 8px;
+  background: rgba(148, 163, 184, 0.05);
+}
+
+.channelTab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 8px;
+  color: var(--color-text-secondary);
+  background: transparent;
+  font-size: 13px;
+  font-weight: 850;
+  letter-spacing: 0;
+  cursor: pointer;
+  transition: background 160ms ease, color 160ms ease, box-shadow 160ms ease;
+}
+
+.channelTab:hover,
+.channelTab:focus-visible {
+  color: var(--color-text-primary);
+  background: rgba(148, 163, 184, 0.08);
+}
+
+.channelTabActive {
+  color: var(--color-text-primary);
+  background: var(--color-background-secondary);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+}
+
 .stage {
   display: flex;
   align-items: center;
@@ -60,7 +101,9 @@
 .qrState,
 .idleState,
 .disconnectedState,
-.connectedState {
+.connectedState,
+.apiIdleState,
+.apiConnectedState {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -68,6 +111,193 @@
   width: 100%;
   padding: 28px;
   text-align: center;
+}
+
+.apiConnectedState {
+  justify-content: flex-start;
+  gap: 20px;
+  min-height: 100%;
+}
+
+.apiIdleState {
+  gap: 18px;
+  color: #0f9f6e;
+}
+
+.apiIdleState h3 {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: 32px;
+  line-height: 1.1;
+  letter-spacing: 0;
+}
+
+.apiIdleState p {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 14px;
+}
+
+.apiHero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+}
+
+.apiLogoMark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 78px;
+  height: 78px;
+  border-radius: 8px;
+  color: #0f9f6e;
+  background: rgba(20, 184, 166, 0.1);
+  border: 1px solid rgba(20, 184, 166, 0.28);
+}
+
+.apiHero h3 {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: 36px;
+  line-height: 1.06;
+  letter-spacing: 0;
+  overflow-wrap: anywhere;
+}
+
+.apiHero p {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 15px;
+}
+
+.apiConnectForm,
+.apiInlineForm {
+  display: grid;
+  gap: 14px;
+  width: min(520px, 100%);
+}
+
+.apiInlineForm {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  align-items: end;
+  width: min(820px, 100%);
+  padding: 16px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 8px;
+  background: rgba(148, 163, 184, 0.045);
+}
+
+.fieldLabel {
+  display: grid;
+  gap: 7px;
+  text-align: left;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.inputWrap,
+.selectWrap {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 8px;
+  color: var(--color-text-tertiary);
+  background: var(--color-background-secondary);
+}
+
+.inputWrap:focus-within,
+.selectWrap:focus-within {
+  border-color: rgba(20, 184, 166, 0.55);
+  box-shadow: 0 0 0 3px rgba(20, 184, 166, 0.12);
+}
+
+.inputWrap input,
+.selectWrap select {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  color: var(--color-text-primary);
+  background: transparent;
+  font: inherit;
+}
+
+.selectWrap select {
+  cursor: pointer;
+}
+
+.apiMetricsGrid,
+.apiDetailsGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  width: min(820px, 100%);
+}
+
+.apiDetailsGrid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.apiMetricsGrid div,
+.apiDetailsGrid div {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 8px;
+  background: rgba(148, 163, 184, 0.045);
+  text-align: left;
+}
+
+.apiMetricsGrid span,
+.apiDetailsGrid span {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.apiMetricsGrid strong,
+.apiDetailsGrid strong {
+  color: var(--color-text-primary);
+  font-size: 22px;
+  line-height: 1;
+  letter-spacing: 0;
+  overflow-wrap: anywhere;
+}
+
+.apiDetailsGrid small {
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.apiNotice {
+  width: min(820px, 100%);
+  padding: 12px 14px;
+  border: 1px solid rgba(245, 158, 11, 0.28);
+  border-radius: 8px;
+  color: #b45309;
+  background: rgba(245, 158, 11, 0.1);
+  font-size: 13px;
+  font-weight: 800;
+  text-align: left;
+}
+
+.apiActions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
 }
 
 .qrState {
@@ -382,6 +612,26 @@
 
   .stage {
     min-height: 420px;
+  }
+
+  .channelTabs {
+    width: 100%;
+  }
+
+  .channelTab {
+    padding: 0 8px;
+    font-size: 12px;
+  }
+
+  .apiHero h3,
+  .apiIdleState h3 {
+    font-size: 28px;
+  }
+
+  .apiMetricsGrid,
+  .apiDetailsGrid,
+  .apiInlineForm {
+    grid-template-columns: 1fr;
   }
 
   .connectedCopy h3 {

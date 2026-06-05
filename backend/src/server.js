@@ -43,6 +43,7 @@ import searchRoutes from './routes/search.routes.js'
 import externalRoutes from './routes/external.routes.js'
 import mcpRoutes from './routes/mcp.routes.js'
 import whatsappWebRoutes from './routes/whatsappWeb.routes.js'
+import whatsappApiRoutes from './routes/whatsappApi.routes.js'
 import productsRoutes from './routes/products.routes.js'
 import sitesRoutes from './routes/sites.routes.js'
 import { publicSiteHostMiddleware } from './controllers/sitesController.js'
@@ -58,7 +59,12 @@ app.set('trust proxy', true)
 
 // Middlewares
 app.use(cors())
-app.use(express.json({ limit: '35mb' }))
+app.use(express.json({
+  limit: '35mb',
+  verify: (req, _res, buf) => {
+    req.rawBody = buf.toString('utf8')
+  }
+}))
 app.use(express.urlencoded({ extended: true, limit: '35mb' }))
 
 // Health check
@@ -99,6 +105,7 @@ app.use('/api/search', searchRoutes)
 app.use('/api/external', externalRoutes)
 app.use('/api/mcp', mcpRoutes)
 app.use('/api/whatsapp-web', whatsappWebRoutes)
+app.use('/api/whatsapp-api', whatsappApiRoutes)
 app.use('/webhook', webhooksRoutes)
 app.use('/webhooks', webhooksRoutes) // Alias para webhooks con 's'
 
