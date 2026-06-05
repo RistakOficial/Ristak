@@ -78,26 +78,21 @@ export const Domains: React.FC = () => {
 
   return (
     <div className={styles.container}>
-      <div className={styles.header}>
-        <div className={styles.headerIcon}>
-          <Globe2 size={26} />
-        </div>
-        <div>
-          <h2>Dominios</h2>
-          <p>Configura el dominio publico general para todos los formularios, sitios y landing pages.</p>
-        </div>
-        <Button variant="secondary" onClick={loadDomain}>
-          <RefreshCw size={16} />
-          Refrescar
-        </Button>
-      </div>
-
-      <div className={styles.infoBox}>
-        <strong>Dominio general</strong>
-        <span>Las paginas creadas se abren con este dominio y su ruta, por ejemplo /form-01 o /site-01.</span>
-      </div>
-
       <article className={styles.domainCard}>
+        <div className={styles.header}>
+          <div className={styles.headerIcon}>
+            <Globe2 size={26} />
+          </div>
+          <div>
+            <h2>Dominios</h2>
+            <p>Configura el dominio publico general para todos los formularios, sitios y landing pages.</p>
+          </div>
+          <Button variant="secondary" onClick={loadDomain}>
+            <RefreshCw size={16} />
+            Refrescar
+          </Button>
+        </div>
+
         <div className={styles.domainMeta}>
           <div>
             <h3>Dominio publico</h3>
