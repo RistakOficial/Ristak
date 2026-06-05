@@ -132,7 +132,7 @@ const getGoogleFailureHelp = (message = '') => {
 }
 
 export const CalendarsConfiguration: React.FC = () => {
-  const { showToast } = useNotification()
+  const { showToast, showConfirm } = useNotification()
   const { locationId, accessToken } = useAuth()
 
   // Estados de configuración (usa sistema híbrido)
@@ -462,22 +462,32 @@ export const CalendarsConfiguration: React.FC = () => {
   }
 
   const handleDisconnectGoogleIntegration = async () => {
-    if (!window.confirm('¿Desconectar Google Calendar de esta instalación? Las citas locales se conservan.')) return
+    showConfirm(
+      'Desconectar Google Calendar',
+      'Las citas locales se conservan, pero esta instalacion dejara de sincronizar con Google Calendar.',
+      () => {
+        const disconnectGoogleIntegration = async () => {
+          setDisconnectingGoogleIntegration(true)
+          try {
+            const data = await calendarsService.deleteGoogleIntegration()
+            setGoogleIntegration(data)
+            setGoogleCalendarId('')
+            setServiceAccountJson('')
+            setEditingGoogleIntegration(false)
+            await loadCalendars()
+            showToast('success', 'Google Calendar desconectado', 'La integración quedó removida de esta instalación')
+          } catch (error: any) {
+            showToast('error', 'No se pudo desconectar', error.message || 'Intenta nuevamente')
+          } finally {
+            setDisconnectingGoogleIntegration(false)
+          }
+        }
 
-    setDisconnectingGoogleIntegration(true)
-    try {
-      const data = await calendarsService.deleteGoogleIntegration()
-      setGoogleIntegration(data)
-      setGoogleCalendarId('')
-      setServiceAccountJson('')
-      setEditingGoogleIntegration(false)
-      await loadCalendars()
-      showToast('success', 'Google Calendar desconectado', 'La integración quedó removida de esta instalación')
-    } catch (error: any) {
-      showToast('error', 'No se pudo desconectar', error.message || 'Intenta nuevamente')
-    } finally {
-      setDisconnectingGoogleIntegration(false)
-    }
+        void disconnectGoogleIntegration()
+      },
+      'Desconectar',
+      'Cancelar'
+    )
   }
 
   // Guardado automático: Calendario predeterminado
@@ -858,21 +868,20 @@ export const CalendarsConfiguration: React.FC = () => {
               <span>{calendar.isActive ? 'Activo' : 'Inactivo'}</span>
             </div>
 
-            <div className={pageStyles.publicUrlLine}>
-              <Globe2 size={15} />
-              <span title={calendar.publicUrl || calendar.publicUrlUnavailableReason || ''}>
-                {calendar.publicUrl || calendar.publicUrlUnavailableReason || 'URL publica pendiente'}
-              </span>
-              <button
-                type="button"
-                className={pageStyles.iconAction}
-                onClick={() => handleCopyPublicUrl(calendar)}
-                disabled={!calendar.publicUrl}
-                title="Copiar URL"
-              >
-                <Copy size={14} />
-              </button>
-              {calendar.publicUrl && (
+            {calendar.publicUrl && (
+              <div className={pageStyles.publicUrlLine}>
+                <Globe2 size={15} />
+                <span title={calendar.publicUrl}>
+                  {calendar.publicUrl}
+                </span>
+                <button
+                  type="button"
+                  className={pageStyles.iconAction}
+                  onClick={() => handleCopyPublicUrl(calendar)}
+                  title="Copiar URL"
+                >
+                  <Copy size={14} />
+                </button>
                 <a
                   className={pageStyles.iconActionLink}
                   href={calendar.publicUrl}
@@ -882,8 +891,8 @@ export const CalendarsConfiguration: React.FC = () => {
                 >
                   <ExternalLink size={14} />
                 </a>
-              )}
-            </div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -971,9 +980,7 @@ export const CalendarsConfiguration: React.FC = () => {
 
   const renderGoogleCalendarTab = () => {
     const isConnected = Boolean(googleIntegration?.connected)
-    const testOk = googleIntegration?.lastTestStatus === 'success'
     const testFailed = googleIntegration?.lastTestStatus === 'error'
-    const syncOk = googleIntegration?.lastSyncStatus === 'success'
     const syncFailed = googleIntegration?.lastSyncStatus === 'error'
     const showWizard = !isConnected || editingGoogleIntegration
     const busyGoogleAction = savingGoogleIntegration || testingGoogleIntegration || syncingGoogleIntegration || disconnectingGoogleIntegration
@@ -1143,7 +1150,7 @@ export const CalendarsConfiguration: React.FC = () => {
               <div className={pageStyles.connectionHeader}>
                 <div>
                   <h2>{isConnected ? 'Editar Google Calendar' : 'Conectar Google Calendar'}</h2>
-                  <p>Conexión sin OAuth: pega el correo real del calendario y el JSON del Service Account.</p>
+                  <p>Service Account sin OAuth.</p>
                 </div>
                 <span className={`${pageStyles.statusPill} ${isConnected ? pageStyles.statusWarn : pageStyles.statusOff}`}>
                   {isConnected ? <Info size={15} /> : <XCircle size={15} />}
@@ -1152,10 +1159,8 @@ export const CalendarsConfiguration: React.FC = () => {
               </div>
 
               <div className={pageStyles.wizardIntro}>
-                <strong>Antes de guardar, revisa esto</strong>
-                <span>Ristak no entra a Google con tu usuario. Google solo deja leer y escribir si el calendario exacto está compartido con el email técnico del Service Account.</span>
-                <span>En el campo de calendario va el correo real de Gmail o el Calendar ID, no el correo largo del Service Account.</span>
-                <span>Si la prueba dice “Not Found”, casi siempre es Calendar ID equivocado o el calendario no fue compartido con ese email técnico.</span>
+                <strong>Clave</strong>
+                <span>Calendar ID = correo real del calendario. Service Account = email técnico para compartir permisos.</span>
               </div>
 
               <div className={pageStyles.formGrid}>
@@ -1168,7 +1173,7 @@ export const CalendarsConfiguration: React.FC = () => {
                     placeholder="cliente@gmail.com, cliente@empresa.com, nombre@group.calendar.google.com o link con cid"
                     autoComplete="off"
                   />
-                  <small>Para un calendario principal normalmente es el Gmail real del cliente. No pegues aquí el email técnico del Service Account; ese solo se usa para compartir el calendario.</small>
+                  <small>Normalmente es el Gmail real del cliente. No pegues el email técnico aquí.</small>
                 </label>
 
                 <label className={pageStyles.field}>
@@ -1179,7 +1184,7 @@ export const CalendarsConfiguration: React.FC = () => {
                     placeholder='{"type":"service_account","project_id":"...","private_key":"-----BEGIN PRIVATE KEY-----\\n...","client_email":"..."}'
                     spellCheck={false}
                   />
-                  <small>{isConnected ? 'El JSON guardado se precarga para que puedas editarlo o reemplazarlo. Se mantiene cifrado en backend.' : 'Se guarda cifrado en backend. Después de guardar se seguirá mostrando aquí para edición.'}</small>
+                  <small>{isConnected ? 'JSON guardado y editable. Se mantiene cifrado.' : 'Se guarda cifrado y queda disponible para edición.'}</small>
                 </label>
               </div>
 
@@ -1225,12 +1230,12 @@ export const CalendarsConfiguration: React.FC = () => {
             <>
               <div className={pageStyles.connectionHeader}>
                 <div>
-                  <h2>Google Calendar conectado</h2>
-                  <p>Ristak puede leer, crear, actualizar y cancelar citas usando esta conexión.</p>
+                  <h2>Google Calendar</h2>
+                  <p>Conexión activa para sincronizar citas.</p>
                 </div>
-                <span className={`${pageStyles.statusPill} ${testOk ? pageStyles.statusOk : pageStyles.statusWarn}`}>
-                  {testOk ? <CheckCircle size={15} /> : <Info size={15} />}
-                  {testOk ? 'Conectado y probado' : 'Falta probar'}
+                <span className={`${pageStyles.statusPill} ${pageStyles.statusOk}`}>
+                  <CheckCircle size={15} />
+                  Conectado
                 </span>
               </div>
 
@@ -1241,19 +1246,10 @@ export const CalendarsConfiguration: React.FC = () => {
                 <div className={pageStyles.connectedMain}>
                   <div className={pageStyles.connectedTitle}>
                     <h3>{googleIntegration?.calendarSummary || 'Google Calendar'}</h3>
-                    <span>{googleIntegration?.calendarTimeZone || 'Zona pendiente'}</span>
+                    <span>Conectado</span>
                   </div>
-                  <div className={pageStyles.connectedMeta}>
-                    <span><strong>Calendar ID</strong>{googleIntegration?.calendarId}</span>
-                    <span><strong>Service Account</strong>{googleIntegration?.serviceAccountEmail}</span>
-                    <span><strong>Proyecto</strong>{googleIntegration?.projectId || 'Sin dato'}</span>
-                  </div>
+                  <p>{googleIntegration?.calendarId || 'Calendar ID pendiente'}</p>
                 </div>
-              </div>
-
-              <div className={pageStyles.syncNote}>
-                <RefreshCw size={16} />
-                <span>Se importan calendarios compartidos con el Service Account y se sincronizan citas recientes hacia Ristak. Las citas creadas en Ristak se mandan al Calendar ID conectado. Si cambiaste el Calendar ID, vuelve a probar antes de sincronizar.</span>
               </div>
 
               <div className={pageStyles.connectedActions}>
@@ -1304,16 +1300,16 @@ export const CalendarsConfiguration: React.FC = () => {
             </>
           )}
 
-          {(testOk || testFailed || syncOk || syncFailed) && (
+          {(testFailed || syncFailed) && (
             <div className={pageStyles.resultStack}>
-              {(testOk || testFailed) && (
-                <div className={`${pageStyles.testResult} ${testOk ? pageStyles.testOk : pageStyles.testError}`}>
-                  {testOk ? 'Última prueba correcta' : 'Última prueba fallida'}: {googleIntegration?.lastTestMessage}
+              {testFailed && (
+                <div className={`${pageStyles.testResult} ${pageStyles.testError}`}>
+                  Última prueba fallida: {googleIntegration?.lastTestMessage}
                 </div>
               )}
-              {(syncOk || syncFailed) && (
-                <div className={`${pageStyles.testResult} ${syncOk ? pageStyles.testOk : pageStyles.testError}`}>
-                  {syncOk ? 'Última sincronización correcta' : 'Última sincronización fallida'}: {googleIntegration?.lastSyncMessage}
+              {syncFailed && (
+                <div className={`${pageStyles.testResult} ${pageStyles.testError}`}>
+                  Última sincronización fallida: {googleIntegration?.lastSyncMessage}
                 </div>
               )}
               {failureHelp && (
@@ -1354,7 +1350,7 @@ export const CalendarsConfiguration: React.FC = () => {
       >
         <Globe2 size={16} />
         Google Calendar
-        <span>{googleIntegration?.connected ? (googleIntegration.lastTestStatus === 'success' ? 'Probado' : 'Guardado') : 'Setup'}</span>
+        <span>{googleIntegration?.connected ? 'Conectado' : 'Setup'}</span>
       </button>
     </div>
   )
@@ -1369,13 +1365,14 @@ export const CalendarsConfiguration: React.FC = () => {
     <div className={styles.integrationContainer}>
       <Card className={`${styles.mainCard} ${pageStyles.mainCard}`}>
         <div className={pageStyles.header}>
-          <div>
-            <div className={pageStyles.eyebrow}>
-              <Calendar size={15} />
-              Configuración
+          <div className={pageStyles.headerIdentity}>
+            <div className={pageStyles.headerIcon}>
+              <Calendar size={20} />
             </div>
-            <h2>Configuración de calendario</h2>
-            <p>Administra tus calendarios, el predeterminado, las conversiones y la conexión con Google Calendar.</p>
+            <div>
+              <h2>Configuración de calendario</h2>
+              <p>Administra calendarios, predeterminado, conversiones y Google Calendar.</p>
+            </div>
           </div>
           {renderCalendarTabs()}
         </div>
