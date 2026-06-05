@@ -4984,6 +4984,12 @@
   padding-inline: 0;
 }
 
+.containerFocused:has(.createPanel):not(:has(.builder)) {
+  width: min(1960px, calc(100% - clamp(28px, 2.8vw, 64px)));
+  margin: clamp(16px, 2vw, 28px) auto;
+  padding: 18px;
+}
+
 .containerFocused .mainSurface,
 .containerFocused .builder {
   width: 100%;
