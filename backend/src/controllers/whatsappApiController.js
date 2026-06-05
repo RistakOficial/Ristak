@@ -4,6 +4,7 @@ import {
   getWhatsAppApiStatus,
   getWhatsAppApiTemplates,
   getWhatsAppApiWebhookPath,
+  previewWhatsAppApiPhoneNumbers,
   processYCloudWhatsAppWebhook,
   refreshWhatsAppApi,
   resetWhatsAppApiCredentials,
@@ -76,6 +77,21 @@ export async function refreshWhatsAppApiView(req, res) {
     res.status(400).json({
       success: false,
       error: error.message || 'No se pudo actualizar WhatsApp_API'
+    })
+  }
+}
+
+export async function previewWhatsAppApiPhoneNumbersView(req, res) {
+  try {
+    const data = await previewWhatsAppApiPhoneNumbers({
+      apiKey: req.body?.apiKey
+    })
+    res.json({ success: true, data })
+  } catch (error) {
+    logger.error(`Error leyendo numeros WhatsApp_API: ${error.message}`)
+    res.status(400).json({
+      success: false,
+      error: error.message || 'No se pudieron leer los numeros de WhatsApp Business'
     })
   }
 }

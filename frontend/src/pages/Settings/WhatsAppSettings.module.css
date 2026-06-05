@@ -203,6 +203,13 @@
   font-weight: 850;
 }
 
+.apiKeyRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+
 .inputWrap,
 .selectWrap {
   display: flex;
@@ -214,40 +221,6 @@
   border-radius: 8px;
   color: var(--color-text-tertiary);
   background: var(--color-background-secondary);
-}
-
-.phoneInputGrid {
-  display: grid;
-  grid-template-columns: minmax(112px, 0.34fr) minmax(0, 1fr);
-  gap: 8px;
-}
-
-.countrySelectWrap {
-  display: flex;
-  align-items: center;
-  min-height: 44px;
-  padding: 0 10px;
-  border: 1px solid rgba(148, 163, 184, 0.22);
-  border-radius: 8px;
-  color: var(--color-text-primary);
-  background: var(--color-background-secondary);
-}
-
-.countrySelectWrap:focus-within {
-  border-color: rgba(20, 184, 166, 0.55);
-  box-shadow: 0 0 0 3px rgba(20, 184, 166, 0.12);
-}
-
-.countrySelectWrap select {
-  width: 100%;
-  min-width: 0;
-  border: 0;
-  outline: none;
-  color: var(--color-text-primary);
-  background: transparent;
-  font: inherit;
-  font-weight: 850;
-  cursor: pointer;
 }
 
 .inputWrap:focus-within,
@@ -269,6 +242,27 @@
 
 .selectWrap select {
   cursor: pointer;
+}
+
+.apiEmptySelector {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  min-height: 44px;
+  padding: 11px 12px;
+  border: 1px dashed rgba(148, 163, 184, 0.24);
+  border-radius: 8px;
+  color: var(--color-text-secondary);
+  background: rgba(148, 163, 184, 0.045);
+  font-size: 12px;
+  font-weight: 760;
+  line-height: 1.4;
+  text-align: left;
+}
+
+.apiEmptySelector svg {
+  color: #0f9f6e;
 }
 
 .apiMetricsGrid,
@@ -583,6 +577,29 @@
   color: var(--color-text-secondary);
   font-size: 12px;
   line-height: 1.45;
+}
+
+.apiTutorialButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  width: fit-content;
+  min-height: 32px;
+  margin-top: 8px;
+  padding: 0 11px;
+  border: 1px solid rgba(20, 184, 166, 0.28);
+  border-radius: 8px;
+  color: #047857;
+  background: rgba(20, 184, 166, 0.08);
+  font-size: 12px;
+  font-weight: 900;
+  text-decoration: none;
+}
+
+.apiTutorialButton:hover,
+.apiTutorialButton:focus-visible {
+  border-color: rgba(20, 184, 166, 0.5);
+  background: rgba(20, 184, 166, 0.13);
 }
 
 .apiAlertList {
@@ -1136,6 +1153,10 @@
   .apiDetailsGrid,
   .apiInlineForm,
   .apiWorkspaceGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .apiKeyRow {
     grid-template-columns: 1fr;
   }
 

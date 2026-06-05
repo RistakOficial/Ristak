@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, ArrowLeft, CheckCircle, Cloud, FileText, KeyRound, RefreshCw, Send, ShieldCheck, Smartphone, Unplug } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, CheckCircle, Cloud, ExternalLink, FileText, KeyRound, RefreshCw, Send, ShieldCheck, Smartphone, Unplug } from 'lucide-react'
 import { SiWhatsapp } from 'react-icons/si'
 import { Button } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
@@ -25,21 +25,7 @@ type BusinessProfile = {
 type WhatsAppChannel = 'api' | 'web'
 
 const CONNECTION_FLOW_TIMEOUT_MS = 120_000
-
-const COUNTRY_DIAL_CODES = [
-  { code: 'MX', dial: '+52', flag: '🇲🇽', label: 'Mexico' },
-  { code: 'US', dial: '+1', flag: '🇺🇸', label: 'Estados Unidos' },
-  { code: 'CO', dial: '+57', flag: '🇨🇴', label: 'Colombia' },
-  { code: 'AR', dial: '+54', flag: '🇦🇷', label: 'Argentina' },
-  { code: 'CL', dial: '+56', flag: '🇨🇱', label: 'Chile' },
-  { code: 'PE', dial: '+51', flag: '🇵🇪', label: 'Peru' },
-  { code: 'ES', dial: '+34', flag: '🇪🇸', label: 'España' },
-  { code: 'GT', dial: '+502', flag: '🇬🇹', label: 'Guatemala' },
-  { code: 'CR', dial: '+506', flag: '🇨🇷', label: 'Costa Rica' },
-  { code: 'PA', dial: '+507', flag: '🇵🇦', label: 'Panama' },
-  { code: 'EC', dial: '+593', flag: '🇪🇨', label: 'Ecuador' },
-  { code: 'BR', dial: '+55', flag: '🇧🇷', label: 'Brasil' }
-]
+const YCLOUD_REGISTER_URL = 'https://www.ycloud.com/console/#/entry/register?'
 
 function parseJson<T>(value?: string | null): T | null {
   if (!value) return null
@@ -64,31 +50,6 @@ function formatDateTime(value?: string | null) {
 
 function formatMetric(value?: number | null) {
   return new Intl.NumberFormat('es-MX').format(Number(value || 0))
-}
-
-function onlyPhoneDigits(value?: string | null) {
-  return String(value || '').replace(/\D/g, '')
-}
-
-function splitPhoneByCountry(value?: string | null) {
-  const digits = onlyPhoneDigits(value)
-  const matchedCountry = [...COUNTRY_DIAL_CODES]
-    .sort((left, right) => onlyPhoneDigits(right.dial).length - onlyPhoneDigits(left.dial).length)
-    .find(country => digits.startsWith(onlyPhoneDigits(country.dial)))
-
-  if (!matchedCountry) {
-    return { countryDial: '+52', nationalNumber: digits }
-  }
-
-  return {
-    countryDial: matchedCountry.dial,
-    nationalNumber: digits.slice(onlyPhoneDigits(matchedCountry.dial).length)
-  }
-}
-
-function buildPhoneNumber(countryDial: string, nationalNumber: string) {
-  const digits = onlyPhoneDigits(nationalNumber)
-  return digits ? `${countryDial}${digits}` : ''
 }
 
 function formatCurrency(amount?: number | null, currency?: string | null) {
@@ -169,8 +130,9 @@ export const WhatsAppSettings: React.FC = () => {
   const [apiDisconnecting, setApiDisconnecting] = useState(false)
   const [apiKey, setApiKey] = useState('')
   const [selectedPhoneId, setSelectedPhoneId] = useState('')
-  const [manualCountryDial, setManualCountryDial] = useState('+52')
-  const [manualNationalNumber, setManualNationalNumber] = useState('')
+  const [discoveredApiPhones, setDiscoveredApiPhones] = useState<WhatsAppApiPhoneNumber[]>([])
+  const [apiPhoneLookupLoading, setApiPhoneLookupLoading] = useState(false)
+  const [apiPhoneLookupAttempted, setApiPhoneLookupAttempted] = useState(false)
   const [selectedTemplateId, setSelectedTemplateId] = useState('')
   const [templateTo, setTemplateTo] = useState('')
   const [templateVariables, setTemplateVariables] = useState('[]')
@@ -193,9 +155,13 @@ export const WhatsAppSettings: React.FC = () => {
   const showQr = qrRequested && !isConnected && Boolean(session?.qr_image) && !manualDisconnected
   const isWaitingForQr = connecting && !isConnected && !showQr && !manualDisconnected
 
+  const availableApiPhones = useMemo(() => {
+    return apiStatus?.phoneNumbers.length ? apiStatus.phoneNumbers : discoveredApiPhones
+  }, [apiStatus?.phoneNumbers, discoveredApiPhones])
+
   const selectedPhone = useMemo(() => {
-    return apiStatus?.phoneNumbers.find(phone => phone.id === selectedPhoneId) || null
-  }, [apiStatus?.phoneNumbers, selectedPhoneId])
+    return availableApiPhones.find(phone => phone.id === selectedPhoneId) || null
+  }, [availableApiPhones, selectedPhoneId])
 
   const apiTemplates = apiStatus?.templates?.items || []
   const approvedTemplates = useMemo(() => {
@@ -205,10 +171,11 @@ export const WhatsAppSettings: React.FC = () => {
     return apiTemplates.find(template => template.id === selectedTemplateId) || approvedTemplates[0] || apiTemplates[0] || null
   }, [apiTemplates, approvedTemplates, selectedTemplateId])
   const selectedTemplateVariablesCount = getTemplateVariablesCount(selectedTemplate)
-  const manualPhone = buildPhoneNumber(manualCountryDial, manualNationalNumber)
-
-  const canSubmitApi = Boolean(apiKey.trim() || apiStatus?.credentials.hasApiKey)
   const apiConnected = Boolean(apiStatus?.connected)
+  const hasApiCredential = Boolean(apiKey.trim() || apiStatus?.credentials.hasApiKey)
+  const canLookupApiPhones = hasApiCredential
+  const canSubmitApi = hasApiCredential &&
+    (apiConnected || (availableApiPhones.length > 0 && Boolean(selectedPhoneId)))
 
   const isConnectionFlowFresh = () => {
     return Boolean(connectionStartedAt.current && Date.now() - connectionStartedAt.current < CONNECTION_FLOW_TIMEOUT_MS)
@@ -243,6 +210,10 @@ export const WhatsAppSettings: React.FC = () => {
   const loadApiStatus = async () => {
     const nextStatus = await whatsappApiService.getStatus()
     setApiStatus(nextStatus)
+    if (nextStatus.phoneNumbers.length) {
+      setDiscoveredApiPhones([])
+      setApiPhoneLookupAttempted(false)
+    }
 
     const preferredPhoneId = nextStatus.sender.phoneNumberId ||
       nextStatus.phoneNumbers.find(phone => phone.phone_number === nextStatus.sender.phone)?.id ||
@@ -250,9 +221,6 @@ export const WhatsAppSettings: React.FC = () => {
       ''
 
     setSelectedPhoneId(preferredPhoneId)
-    const parsedPhone = splitPhoneByCountry(nextStatus.sender.phone || '')
-    setManualCountryDial(parsedPhone.countryDial)
-    setManualNationalNumber(parsedPhone.nationalNumber)
     setSelectedTemplateId((current) => {
       const templates = nextStatus.templates?.items || []
       if (current && templates.some(template => template.id === current)) return current
@@ -295,6 +263,33 @@ export const WhatsAppSettings: React.FC = () => {
     }
   }
 
+  const lookupApiPhoneNumbers = async () => {
+    if (!canLookupApiPhones || apiPhoneLookupLoading) return
+
+    setApiPhoneLookupLoading(true)
+    setApiPhoneLookupAttempted(true)
+    try {
+      const result = await whatsappApiService.previewPhoneNumbers(apiKey.trim() || undefined)
+      const phones = result.phoneNumbers || []
+      setDiscoveredApiPhones(phones)
+      setSelectedPhoneId((current) => {
+        if (current && phones.some(phone => phone.id === current)) return current
+        return phones[0]?.id || ''
+      })
+
+      if (phones.length) {
+        showToast('success', 'Numeros encontrados', 'Elige el numero de WhatsApp Business que vas a usar')
+      } else {
+        showToast('warning', 'Sin numeros', 'YCloud todavia no muestra numeros conectados en esta cuenta')
+      }
+    } catch (error) {
+      setDiscoveredApiPhones([])
+      showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudieron buscar tus numeros')
+    } finally {
+      setApiPhoneLookupLoading(false)
+    }
+  }
+
   const connectApi = async (event?: React.FormEvent) => {
     event?.preventDefault()
     if (!canSubmitApi || apiConnecting) return
@@ -304,10 +299,12 @@ export const WhatsAppSettings: React.FC = () => {
       const nextStatus = await whatsappApiService.connect({
         apiKey: apiKey.trim() || undefined,
         phoneNumberId: selectedPhone?.id || undefined,
-        senderPhone: selectedPhone?.phone_number || manualPhone.trim() || undefined,
+        senderPhone: selectedPhone?.phone_number || undefined,
         wabaId: selectedPhone?.waba_id || undefined
       })
       setApiStatus(nextStatus)
+      setDiscoveredApiPhones([])
+      setApiPhoneLookupAttempted(false)
       setApiKey('')
 
       if (nextStatus.requiresPhoneSelection) {
@@ -493,61 +490,57 @@ export const WhatsAppSettings: React.FC = () => {
     <form className={compact ? styles.apiInlineForm : styles.apiConnectForm} onSubmit={connectApi}>
       <label className={styles.fieldLabel}>
         <span>API key de YCloud</span>
-        <div className={styles.inputWrap}>
-          <KeyRound size={17} />
-          <input
-            type="password"
-            value={apiKey}
-            onChange={(event) => setApiKey(event.target.value)}
-            placeholder={apiStatus?.credentials.hasApiKey ? 'API key guardada' : 'X-API-Key'}
-            autoComplete="off"
-          />
+        <div className={styles.apiKeyRow}>
+          <div className={styles.inputWrap}>
+            <KeyRound size={17} />
+            <input
+              type="password"
+              value={apiKey}
+              onChange={(event) => {
+                setApiKey(event.target.value)
+                setApiPhoneLookupAttempted(false)
+                setDiscoveredApiPhones([])
+                if (!apiStatus?.phoneNumbers.length) setSelectedPhoneId('')
+              }}
+              placeholder={apiStatus?.credentials.hasApiKey ? 'Llave guardada' : 'Pega tu llave de YCloud'}
+              autoComplete="off"
+            />
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            loading={apiPhoneLookupLoading}
+            disabled={!canLookupApiPhones}
+            onClick={lookupApiPhoneNumbers}
+          >
+            <RefreshCw size={17} />
+            Buscar numeros
+          </Button>
         </div>
       </label>
 
-      {apiStatus?.phoneNumbers.length ? (
+      {availableApiPhones.length ? (
         <label className={styles.fieldLabel}>
-          <span>Numero emisor</span>
+          <span>Numero de WhatsApp Business</span>
           <div className={styles.selectWrap}>
             <Smartphone size={17} />
             <select value={selectedPhoneId} onChange={(event) => setSelectedPhoneId(event.target.value)}>
               <option value="">Elegir numero</option>
-              {apiStatus.phoneNumbers.map((phone) => (
+              {availableApiPhones.map((phone) => (
                 <option key={phone.id} value={phone.id}>{getPhoneLabel(phone)}</option>
               ))}
             </select>
           </div>
         </label>
       ) : (
-        <label className={styles.fieldLabel}>
-          <span>Numero emisor</span>
-          <div className={styles.phoneInputGrid}>
-            <div className={styles.countrySelectWrap}>
-              <select
-                value={manualCountryDial}
-                onChange={(event) => setManualCountryDial(event.target.value)}
-                aria-label="Lada del pais"
-              >
-                {COUNTRY_DIAL_CODES.map((country) => (
-                  <option key={country.code} value={country.dial}>
-                    {country.flag} {country.dial}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className={styles.inputWrap}>
-              <Smartphone size={17} />
-              <input
-                type="tel"
-                value={manualNationalNumber}
-                onChange={(event) => setManualNationalNumber(event.target.value)}
-                placeholder="Numero"
-                autoComplete="tel-national"
-                inputMode="tel"
-              />
-            </div>
-          </div>
-        </label>
+        <div className={styles.apiEmptySelector}>
+          <Smartphone size={18} />
+          <span>
+            {apiPhoneLookupAttempted
+              ? 'No encontramos numeros conectados en YCloud. Primero conecta tu WhatsApp Business en YCloud y vuelve a buscar.'
+              : 'Pega tu llave y toca Buscar numeros. Ristak los traera de YCloud para que solo elijas uno.'}
+          </span>
+        </div>
       )}
 
       <Button type="submit" loading={apiConnecting} disabled={!canSubmitApi}>
@@ -569,6 +562,10 @@ export const WhatsAppSettings: React.FC = () => {
           <div>
             <strong>Crea o entra a tu cuenta de YCloud</strong>
             <p>Usa el correo del negocio. No necesitas configurar nada raro todavia.</p>
+            <a className={styles.apiTutorialButton} href={YCLOUD_REGISTER_URL} target="_blank" rel="noopener noreferrer">
+              Abrir registro de YCloud
+              <ExternalLink size={14} />
+            </a>
           </div>
         </li>
         <li>

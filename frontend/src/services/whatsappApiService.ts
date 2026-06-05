@@ -130,6 +130,11 @@ export interface WhatsAppApiTemplatesResponse {
   items: WhatsAppApiTemplate[]
 }
 
+export interface WhatsAppApiPhoneNumbersPreviewResponse {
+  total: number
+  phoneNumbers: WhatsAppApiPhoneNumber[]
+}
+
 export interface WhatsAppApiTemplateSendPayload {
   to: string
   from?: string
@@ -144,6 +149,7 @@ export interface WhatsAppApiTemplateSendPayload {
 export const whatsappApiService = {
   getStatus: () => apiClient.get<WhatsAppApiStatus>('/whatsapp-api/status'),
   connect: (payload: WhatsAppApiConnectPayload) => apiClient.post<WhatsAppApiStatus>('/whatsapp-api/connect', payload),
+  previewPhoneNumbers: (apiKey?: string) => apiClient.post<WhatsAppApiPhoneNumbersPreviewResponse>('/whatsapp-api/phone-numbers/preview', { apiKey }),
   refresh: () => apiClient.post<WhatsAppApiStatus>('/whatsapp-api/refresh'),
   disconnect: () => apiClient.post<WhatsAppApiStatus>('/whatsapp-api/disconnect'),
   reset: () => apiClient.post<WhatsAppApiStatus>('/whatsapp-api/reset'),

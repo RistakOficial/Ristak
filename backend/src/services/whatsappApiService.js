@@ -477,6 +477,22 @@ function normalizePhoneNumberRecord(record = {}) {
   }
 }
 
+function mapPhoneNumberForResponse(record = {}) {
+  const item = normalizePhoneNumberRecord(record)
+  return {
+    id: item.id,
+    waba_id: item.wabaId || null,
+    phone_number: item.phoneNumber || null,
+    display_phone_number: item.displayPhoneNumber || null,
+    verified_name: item.verifiedName || null,
+    profile_picture_url: item.profilePictureUrl || null,
+    business_profile_json: item.businessProfile ? safeJson(item.businessProfile) : null,
+    quality_rating: item.qualityRating || null,
+    messaging_limit: item.messagingLimit || null,
+    status: item.status || null
+  }
+}
+
 function normalizeTemplateRecord(record = {}) {
   const wabaId = cleanString(record.wabaId)
   const name = cleanString(record.name)
@@ -1423,6 +1439,23 @@ export async function refreshWhatsAppApi() {
   } catch (error) {
     await setAppConfig(CONFIG_KEYS.lastError, error.message)
     throw error
+  }
+}
+
+export async function previewWhatsAppApiPhoneNumbers({ apiKey } = {}) {
+  const saved = await loadConfig({ includeSecrets: true })
+  const cleanApiKey = cleanString(apiKey) || saved.apiKey
+
+  if (!cleanApiKey) {
+    throw new Error('Pega la llave de YCloud para buscar tus numeros')
+  }
+
+  const phoneNumbers = await listYCloudPhoneNumbers(cleanApiKey)
+  const enrichedPhoneNumbers = await enrichPhoneNumbersWithProfiles(cleanApiKey, phoneNumbers)
+
+  return {
+    total: enrichedPhoneNumbers.length,
+    phoneNumbers: enrichedPhoneNumbers.map(mapPhoneNumberForResponse)
   }
 }
 
