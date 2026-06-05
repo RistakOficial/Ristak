@@ -2025,6 +2025,14 @@ export const Sites: React.FC = () => {
                   </label>
                 </div>
                 <div className={styles.editorActions}>
+                  <div className={styles.deviceToggle} role="group" aria-label="Vista previa del dispositivo">
+                    <button type="button" className={device === 'desktop' ? styles.deviceActive : ''} onClick={() => setDevice('desktop')} title="Escritorio">
+                      <Monitor size={15} />
+                    </button>
+                    <button type="button" className={device === 'mobile' ? styles.deviceActive : ''} onClick={() => setDevice('mobile')} title="Movil">
+                      <Smartphone size={15} />
+                    </button>
+                  </div>
                   <Button variant="secondary" size="lg" onClick={handlePreviewSite}>
                     <Eye size={16} />
                     Previsualizar
@@ -2146,20 +2154,13 @@ export const Sites: React.FC = () => {
                       onRenamePage={handleRenamePage}
                     />
                   )}
-                  <div className={styles.canvasToolbar}>
-                    <div className={styles.canvasToolbarTitle}>
-                      {!isLanding(editorSite) && <strong>Canvas</strong>}
-                      <span>{canvasBlocks.length} {canvasBlocks.length === 1 ? 'bloque' : 'bloques'}</span>
+                  {!isLanding(editorSite) && (
+                    <div className={styles.canvasToolbar}>
+                      <div className={styles.canvasToolbarTitle}>
+                        <strong>Canvas</strong>
+                      </div>
                     </div>
-                    <div className={styles.deviceToggle} role="group" aria-label="Vista previa del dispositivo">
-                      <button type="button" className={device === 'desktop' ? styles.deviceActive : ''} onClick={() => setDevice('desktop')} title="Escritorio">
-                        <Monitor size={15} />
-                      </button>
-                      <button type="button" className={device === 'mobile' ? styles.deviceActive : ''} onClick={() => setDevice('mobile')} title="Movil">
-                        <Smartphone size={15} />
-                      </button>
-                    </div>
-                  </div>
+                  )}
                   <DndContext
                     sensors={sensors}
                     collisionDetection={closestCenter}
@@ -3111,80 +3112,86 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
       </div>
       <div className={styles.pageList}>
         {pages.map((page, index) => (
-          <div
-            key={page.id}
-            className={`${styles.pageItemWrap} ${draggingPageId === page.id ? styles.pageItemDragging : ''}`}
-            draggable
-            onDragStart={(event) => {
-              if ((event.target as HTMLElement).closest('input')) {
-                event.preventDefault()
-                return
-              }
-              event.dataTransfer.setData('application/ristak-page', page.id)
-              onDragPage(page.id)
-            }}
-            onDragOver={(event) => {
-              if (event.dataTransfer.types.includes('application/ristak-page')) {
-                event.preventDefault()
-              }
-            }}
-            onDrop={(event) => {
-              event.preventDefault()
-              const sourcePageId = event.dataTransfer.getData('application/ristak-page')
-              onDragPage(null)
-              onReorderPages(sourcePageId, page.id)
-            }}
-            onDragEnd={() => onDragPage(null)}
-          >
+          <React.Fragment key={page.id}>
             <div
-              role="button"
-              tabIndex={0}
-              className={`${styles.pageItem} ${activePageId === page.id ? styles.pageItemActive : ''}`}
-              onClick={() => onSelectPage(page.id)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter' || event.key === ' ') onSelectPage(page.id)
+              className={`${styles.pageItemWrap} ${draggingPageId === page.id ? styles.pageItemDragging : ''}`}
+              draggable
+              onDragStart={(event) => {
+                if ((event.target as HTMLElement).closest('input,button')) {
+                  event.preventDefault()
+                  return
+                }
+                event.dataTransfer.setData('application/ristak-page', page.id)
+                onDragPage(page.id)
               }}
+              onDragOver={(event) => {
+                if (event.dataTransfer.types.includes('application/ristak-page')) {
+                  event.preventDefault()
+                }
+              }}
+              onDrop={(event) => {
+                event.preventDefault()
+                const sourcePageId = event.dataTransfer.getData('application/ristak-page')
+                onDragPage(null)
+                onReorderPages(sourcePageId, page.id)
+              }}
+              onDragEnd={() => onDragPage(null)}
             >
-              <GripVertical size={14} />
-              <EditablePageTitle
-                pageId={page.id}
-                title={page.title || `Pagina ${index + 1}`}
-                onFocus={() => onSelectPage(page.id)}
-                onRename={onRenamePage}
-              />
+              <div
+                role="button"
+                tabIndex={0}
+                className={`${styles.pageItem} ${activePageId === page.id ? styles.pageItemActive : ''}`}
+                onClick={() => onSelectPage(page.id)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') onSelectPage(page.id)
+                }}
+              >
+                <GripVertical size={14} />
+                <EditablePageTitle
+                  pageId={page.id}
+                  title={page.title || `Pagina ${index + 1}`}
+                  onFocus={() => onSelectPage(page.id)}
+                  onRename={onRenamePage}
+                />
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button
+                      type="button"
+                      className={styles.pageMenuButton}
+                      aria-label="Opciones de pagina"
+                      onClick={(event) => event.stopPropagation()}
+                      onPointerDown={(event) => event.stopPropagation()}
+                      onKeyDown={(event) => event.stopPropagation()}
+                    >
+                      <MoreVertical size={15} />
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" sideOffset={6} className={styles.pageMenu}>
+                    <DropdownMenuItem onSelect={() => onDuplicatePage(page.id)}>
+                      <Copy size={14} />
+                      Duplicar pagina
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      disabled={pages.length <= 1}
+                      className={styles.pageMenuDanger}
+                      onSelect={() => onDeletePage(page.id)}
+                    >
+                      <Trash2 size={14} />
+                      Eliminar pagina
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
             </div>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <button
-                  type="button"
-                  className={styles.pageMenuButton}
-                  aria-label="Opciones de pagina"
-                >
-                  <MoreVertical size={15} />
-                </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" sideOffset={6} className={styles.pageMenu}>
-                <DropdownMenuItem onSelect={() => onDuplicatePage(page.id)}>
-                  <Copy size={14} />
-                  Duplicar pagina
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  disabled={pages.length <= 1}
-                  className={styles.pageMenuDanger}
-                  onSelect={() => onDeletePage(page.id)}
-                >
-                  <Trash2 size={14} />
-                  Eliminar pagina
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
+            {activePageId === page.id && (
+              <button type="button" className={styles.addPageButton} onClick={onAddPage}>
+                <Plus size={15} />
+                Agregar pagina
+              </button>
+            )}
+          </React.Fragment>
         ))}
       </div>
-      <button type="button" className={styles.addPageButton} onClick={onAddPage}>
-        <Plus size={15} />
-        Agregar pagina
-      </button>
     </aside>
   )
 }
@@ -3359,7 +3366,7 @@ const CanvasStage: React.FC<CanvasStageProps> = ({
     const stage = stageRef.current
     if (!viewport || !stage) return
     const recompute = () => {
-      const avail = viewport.clientWidth - 36
+      const avail = viewport.clientWidth - 8
       const next = Math.max(0.2, Math.min(1, avail / designWidth))
       setScale(next)
       setStageHeight(stage.offsetHeight * next)

@@ -4209,24 +4209,24 @@
 }
 
 .builderGridLanding {
-  grid-template-columns: 208px minmax(0, 1fr) 312px;
+  grid-template-columns: 188px minmax(0, 1fr) 292px;
 }
 
 .builderGridForm {
-  grid-template-columns: 208px minmax(0, 1fr) 312px;
+  grid-template-columns: 188px minmax(0, 1fr) 292px;
 }
 
 .containerFocused .builderGridLanding {
-  grid-template-columns: 208px minmax(0, 1fr) 312px;
+  grid-template-columns: 188px minmax(0, 1fr) 292px;
 }
 
 .containerFocused .builderGridForm {
-  grid-template-columns: 208px minmax(0, 1fr) 312px;
+  grid-template-columns: 188px minmax(0, 1fr) 292px;
 }
 
 .containerFocused :global(.canvasViewport) {
-  min-height: calc(100vh - var(--header-height) - 194px);
-  max-height: calc(100vh - var(--header-height) - 194px);
+  min-height: calc(100vh - var(--header-height) - 154px);
+  max-height: calc(100vh - var(--header-height) - 154px);
 }
 
 .pagesPanel {
@@ -4235,10 +4235,9 @@
   gap: 8px;
   min-width: 0;
   border: 0;
-  border-bottom: 1px solid var(--color-border-subtle, rgba(148, 163, 184, 0.2));
   border-radius: 0;
   background: transparent;
-  padding: 0 0 10px;
+  padding: 0 0 8px;
   box-shadow: none;
 }
 
@@ -4253,7 +4252,7 @@
 }
 
 .pageList {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-width: 0;
   display: flex;
   gap: 6px;
@@ -4265,8 +4264,7 @@
 .pageItemWrap {
   flex: 0 0 auto;
   display: grid;
-  grid-template-columns: minmax(112px, 168px) 30px;
-  gap: 3px;
+  grid-template-columns: minmax(132px, 190px);
 }
 
 .pageItem,
@@ -4277,6 +4275,9 @@
 }
 
 .pageItem {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) 26px;
+  gap: 6px;
   background: transparent;
 }
 
@@ -4291,8 +4292,22 @@
   width: auto;
   margin-top: 0;
   border-style: solid;
-  padding: 0 10px;
+  padding: 0 12px;
   white-space: nowrap;
+}
+
+.pageMenuButton {
+  width: 26px;
+  height: 26px;
+  min-height: 26px;
+  border: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.pageMenuButton:hover,
+.pageMenuButton[data-state="open"] {
+  background: rgba(148, 163, 184, 0.14);
 }
 
 .containerFocused .pagesPanel,
@@ -4307,11 +4322,22 @@
 }
 
 .containerFocused .blocksRail {
-  padding-right: 14px;
+  border-right: 0;
+  padding: 0 10px 0 0;
 }
 
 .containerFocused .canvasColumn {
-  padding: 0 16px;
+  padding: 0 8px;
+}
+
+.containerFocused .propertiesPanel {
+  border-left: 0;
+  padding: 0 0 0 10px;
+}
+
+.containerFocused .canvasToolbar {
+  border-bottom: 0;
+  padding-bottom: 0;
 }
 
 .editorTopControls .metaCard {

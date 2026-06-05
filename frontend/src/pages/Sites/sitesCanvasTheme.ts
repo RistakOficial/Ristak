@@ -316,7 +316,8 @@ export const buildCanvasTheme = (site: PublicSite, device: 'desktop' | 'mobile' 
     site.siteType === 'interactive_form' ? 'rstk-interactive' : ''
   ].filter(Boolean).join(' ')
 
-  const designWidth = device === 'mobile' ? 390 : pageMaxWidth
+  const desktopChromePadding = isLandingType ? 48 : 32
+  const designWidth = device === 'mobile' ? 390 : pageMaxWidth + desktopChromePadding
 
   return {
     vars,
