@@ -335,11 +335,16 @@ async function ycloudRequest(path, { apiKey, method = 'GET', body, query } = {})
   }
 
   if (!response.ok) {
-    const message = data?.message ||
+    const message = data?.error?.error_user_msg ||
+      data?.error?.error_data ||
+      data?.message ||
       data?.error?.message ||
       data?.error ||
       `YCloud respondió ${response.status} ${response.statusText}`
-    throw new Error(message)
+    const error = new Error(typeof message === 'string' ? message : safeJson(message))
+    error.statusCode = response.status
+    error.ycloud = data
+    throw error
   }
 
   return data || {}
@@ -816,6 +821,39 @@ async function syncTemplates(templates = [], options = {}) {
     ])
 
     await syncTemplateAlert(item, options)
+    await syncLocalMessageTemplateFromYCloud(item)
+  }
+}
+
+async function syncLocalMessageTemplateFromYCloud(template) {
+  if (!template?.name || !template?.language) return
+
+  try {
+    await db.run(`
+      UPDATE whatsapp_message_templates
+      SET
+        ycloud_template_id = COALESCE(?, ycloud_template_id),
+        ycloud_status = ?,
+        ycloud_reason = ?,
+        ycloud_status_update_event = ?,
+        ycloud_quality_rating = ?,
+        ycloud_raw_payload_json = ?,
+        ycloud_synced_at = CURRENT_TIMESTAMP,
+        last_error = NULL,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE name = ? AND language = ?
+    `, [
+      template.officialTemplateId || template.id || null,
+      template.status || null,
+      template.reason || null,
+      template.statusUpdateEvent || null,
+      template.qualityRating || null,
+      safeJson(template.raw),
+      template.name,
+      template.language
+    ])
+  } catch (error) {
+    logger.warn(`No se pudo sincronizar plantilla local ${template.name}/${template.language}: ${error.message}`)
   }
 }
 
@@ -2259,6 +2297,69 @@ export async function getWhatsAppApiTemplates({ status, limit } = {}) {
     blocked: Math.max(0, total - approved),
     items
   }
+}
+
+export async function createWhatsAppApiTemplate(templatePayload = {}) {
+  const config = await loadConfig({ includeSecrets: true })
+  if (!config.enabled || !config.apiKey) {
+    throw new Error('WhatsApp Business no esta conectado con YCloud')
+  }
+
+  const wabaId = cleanString(templatePayload.wabaId || config.wabaId)
+  if (!wabaId) {
+    throw new Error('Falta el WABA ID de WhatsApp Business para crear la plantilla')
+  }
+
+  const body = {
+    ...templatePayload,
+    wabaId
+  }
+
+  const response = await ycloudRequest('/whatsapp/templates', {
+    apiKey: config.apiKey,
+    method: 'POST',
+    body
+  })
+
+  await syncTemplates([response], { eventType: 'manual_template_submit' })
+  return response
+}
+
+export async function retrieveWhatsAppApiTemplate({ wabaId, name, language } = {}) {
+  const config = await loadConfig({ includeSecrets: true })
+  if (!config.enabled || !config.apiKey) {
+    throw new Error('WhatsApp Business no esta conectado con YCloud')
+  }
+
+  const cleanWabaId = cleanString(wabaId || config.wabaId)
+  const cleanName = cleanString(name)
+  const cleanLanguage = cleanString(language)
+
+  if (!cleanWabaId) throw new Error('Falta el WABA ID de WhatsApp Business')
+  if (!cleanName) throw new Error('Falta el nombre de la plantilla')
+  if (!cleanLanguage) throw new Error('Falta el idioma de la plantilla')
+
+  const response = await ycloudRequest(
+    `/whatsapp/templates/${encodeURIComponent(cleanWabaId)}/${encodeURIComponent(cleanName)}/${encodeURIComponent(cleanLanguage)}`,
+    { apiKey: config.apiKey }
+  )
+
+  await syncTemplates([response], { eventType: 'manual_template_sync' })
+  return response
+}
+
+export async function syncWhatsAppApiTemplatesFromYCloud({ wabaId, status } = {}) {
+  const config = await loadConfig({ includeSecrets: true })
+  if (!config.enabled || !config.apiKey) {
+    throw new Error('WhatsApp Business no esta conectado con YCloud')
+  }
+
+  const items = await listYCloudTemplates(config.apiKey, {
+    wabaId: wabaId || config.wabaId,
+    status
+  })
+  await syncTemplates(items, { eventType: 'manual_templates_sync' })
+  return getWhatsAppApiTemplates({ status })
 }
 
 function normalizeTemplateVariables(value) {

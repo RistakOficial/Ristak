@@ -1,27 +1,35 @@
 import crypto from 'crypto'
 import { db } from '../config/database.js'
+import {
+  createWhatsAppApiTemplate,
+  retrieveWhatsAppApiTemplate,
+  sendWhatsAppApiTemplateMessage,
+  syncWhatsAppApiTemplatesFromYCloud
+} from './whatsappApiService.js'
 
 const TEMPLATE_CATEGORIES = new Set(['utility', 'marketing', 'authentication', 'service'])
 const TEMPLATE_STATUSES = new Set(['draft', 'active', 'archived'])
 const HEADER_TYPES = new Set(['none', 'text', 'image', 'video', 'document', 'location'])
 const BUTTON_TYPES = new Set(['quick_reply', 'website', 'phone', 'whatsapp_call'])
 const VARIABLE_PATTERN = /{{\s*([a-zA-Z0-9_.-]+)\s*}}/g
+const NUMERIC_VARIABLE_PATTERN = /{{\s*(\d+)\s*}}/g
+const TEXT_VARIABLE_TARGETS = new Set(['headerText', 'bodyText'])
 
 const BASE_CONTACT_VARIABLES = [
-  ['Full name', 'contact.name', 'Jane Smith'],
-  ['First name', 'contact.first_name', 'Jane'],
-  ['Last name', 'contact.last_name', 'Smith'],
+  ['Full Name', 'contact.name', 'Jane Smith'],
+  ['First Name', 'contact.first_name', 'Jane'],
+  ['Last Name', 'contact.last_name', 'Smith'],
   ['Email', 'contact.email', 'jane@smith.com'],
   ['Phone', 'contact.phone', '(515) 555-2345'],
-  ['Phone raw format', 'contact.phone_raw', '+15155552345'],
-  ['Company name', 'contact.company_name', 'Smith Plumbing'],
-  ['Full address', 'contact.full_address', '1234 W. Main St, Chicago, IL 60657'],
-  ['Address line 1', 'contact.address1', '1234 W. Main St'],
+  ['Phone Raw Format', 'contact.phone_raw', '+15155552345'],
+  ['Company Name', 'contact.company_name', 'Smith Plumbing'],
+  ['Full Address', 'contact.full_address', '1234 W. Main St, Chicago, IL 60657'],
+  ['Address Line 1', 'contact.address1', '1234 W. Main St'],
   ['City', 'contact.city', 'Chicago'],
   ['State/Region', 'contact.state', 'Illinois'],
-  ['Postal code', 'contact.postal_code', '60657'],
-  ['Time zone', 'contact.timezone', 'GMT-06:00 America/Chicago'],
-  ['Date of birth', 'contact.date_of_birth', 'Jan 3, 1980'],
+  ['Postal Code', 'contact.postal_code', '60657'],
+  ['Time Zone', 'contact.timezone', 'GMT-06:00 America/Chicago'],
+  ['Date Of Birth', 'contact.date_of_birth', 'Jan 3, 1980'],
   ['Source', 'contact.source', 'Referral'],
   ['Website', 'contact.website', 'www.example.com'],
   ['Contact ID', 'contact.id', 'FZDn5mYlkZuCCQe5Bep8']
@@ -155,6 +163,35 @@ function normalizeVariableExamples(value = {}) {
   )
 }
 
+function normalizeVariableBindings(value = {}) {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+  const normalized = {}
+
+  for (const target of TEXT_VARIABLE_TARGETS) {
+    const targetSource = source[target] && typeof source[target] === 'object' && !Array.isArray(source[target])
+      ? source[target]
+      : {}
+    const entries = {}
+
+    for (const [index, binding] of Object.entries(targetSource)) {
+      const variableIndex = cleanString(index).replace(/\D/g, '')
+      if (!variableIndex) continue
+
+      const bindingSource = binding && typeof binding === 'object' && !Array.isArray(binding) ? binding : {}
+      entries[variableIndex] = {
+        variableKey: clampText(bindingSource.variableKey, 120),
+        mergeField: clampText(bindingSource.mergeField, 160),
+        label: clampText(bindingSource.label, 120),
+        example: clampText(bindingSource.example, 140)
+      }
+    }
+
+    normalized[target] = entries
+  }
+
+  return normalized
+}
+
 function extractVariablesFromText(text, targetSet) {
   const content = cleanString(text)
   if (!content) return
@@ -177,6 +214,19 @@ function extractVariablesFromTemplate(template) {
   }
 
   return Array.from(variables).sort((a, b) => a.localeCompare(b))
+}
+
+function extractNumericVariableIndexes(text) {
+  const indexes = new Set()
+  const content = cleanString(text)
+  if (!content) return []
+
+  for (const match of content.matchAll(NUMERIC_VARIABLE_PATTERN)) {
+    const index = Number(match[1])
+    if (Number.isInteger(index) && index > 0) indexes.add(index)
+  }
+
+  return Array.from(indexes).sort((left, right) => left - right)
 }
 
 function normalizeTemplatePayload(payload = {}) {
@@ -205,6 +255,7 @@ function normalizeTemplatePayload(payload = {}) {
     footerText: clampText(payload.footerText, 60),
     buttons,
     variableExamples: normalizeVariableExamples(payload.variableExamples),
+    variableBindings: normalizeVariableBindings(payload.variableBindings),
     ycloudTemplateId: normalizeOptionalString(payload.ycloudTemplateId),
     ycloudStatus: normalizeOptionalString(payload.ycloudStatus)
   }
@@ -260,8 +311,16 @@ function mapTemplate(row) {
     buttons: parseJson(row.buttons_json, []),
     variables: parseJson(row.variables_json, []),
     variableExamples: parseJson(row.variable_examples_json, {}),
+    variableBindings: parseJson(row.variable_bindings_json, { headerText: {}, bodyText: {} }),
     ycloudTemplateId: row.ycloud_template_id || null,
     ycloudStatus: row.ycloud_status || null,
+    ycloudReason: row.ycloud_reason || null,
+    ycloudStatusUpdateEvent: row.ycloud_status_update_event || null,
+    ycloudQualityRating: row.ycloud_quality_rating || null,
+    ycloudRawPayload: parseJson(row.ycloud_raw_payload_json, null),
+    ycloudSubmittedAt: row.ycloud_submitted_at || null,
+    ycloudSyncedAt: row.ycloud_synced_at || null,
+    lastError: row.last_error || null,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   }
@@ -345,6 +404,220 @@ export async function previewMessageTemplate(payload = {}) {
   }
 }
 
+function getTemplateErrorMessage(error, fallback) {
+  const ycloudError = error?.ycloud?.error || error?.ycloud
+  return cleanString(
+    ycloudError?.error_user_msg ||
+    ycloudError?.error_data ||
+    ycloudError?.message ||
+    error?.message
+  ) || fallback
+}
+
+function normalizeYCloudTemplateStatus(value) {
+  const status = cleanString(value).toUpperCase()
+  return status || null
+}
+
+function normalizeYCloudCategory(category) {
+  const normalized = normalizeCategory(category).toUpperCase()
+  if (normalized === 'SERVICE') return 'UTILITY'
+  return normalized
+}
+
+function assertMetaVariableSyntax(text, label) {
+  const content = cleanString(text)
+  if (!content) return
+
+  for (const match of content.matchAll(VARIABLE_PATTERN)) {
+    const key = cleanString(match[1])
+    if (!/^\d+$/.test(key)) {
+      throw new Error(`${label} usa ${match[0]}. Para Meta/YCloud las variables deben ser {{1}}, {{2}}, {{3}}.`)
+    }
+  }
+}
+
+function getVariableExamplesForTarget(template, target, label) {
+  const indexes = extractNumericVariableIndexes(template[target])
+  if (!indexes.length) return []
+
+  indexes.forEach((index, position) => {
+    if (index !== position + 1) {
+      throw new Error(`${label} debe usar variables consecutivas empezando en {{1}}. Revisa {{${index}}}.`)
+    }
+  })
+
+  const bindings = template.variableBindings?.[target] || {}
+  return indexes.map((index) => {
+    const binding = bindings[String(index)] || {}
+    if (!cleanString(binding.variableKey) && !cleanString(binding.mergeField)) {
+      throw new Error(`Selecciona el dato dinamico para {{${index}}} en ${label}.`)
+    }
+    if (!cleanString(binding.example)) {
+      throw new Error(`Escribe el ejemplo que Meta revisara para {{${index}}} en ${label}.`)
+    }
+    return cleanString(binding.example)
+  })
+}
+
+function buildYCloudButtons(buttons = []) {
+  return buttons.map((button) => {
+    const label = clampText(button.label, 25)
+    if (!label) return null
+
+    if (button.type === 'website') {
+      const url = clampText(button.value, 2000)
+      if (!url) throw new Error(`El boton ${label} necesita URL`)
+      return { type: 'URL', text: label, url }
+    }
+
+    if (button.type === 'phone') {
+      const phoneNumber = clampText(button.value, 20)
+      if (!phoneNumber) throw new Error(`El boton ${label} necesita telefono`)
+      return { type: 'PHONE_NUMBER', text: label, phone_number: phoneNumber }
+    }
+
+    if (button.type === 'whatsapp_call') {
+      return { type: 'VOICE_CALL', text: label }
+    }
+
+    return { type: 'QUICK_REPLY', text: label }
+  }).filter(Boolean)
+}
+
+function buildYCloudTemplatePayload(template) {
+  assertMetaVariableSyntax(template.headerText, 'El encabezado')
+  assertMetaVariableSyntax(template.bodyText, 'El cuerpo')
+
+  const components = []
+
+  if (template.headerEnabled && template.headerType !== 'none') {
+    if (template.headerType === 'text') {
+      const headerExamples = getVariableExamplesForTarget(template, 'headerText', 'el encabezado')
+      if (headerExamples.length > 1) {
+        throw new Error('Meta solo permite una variable en el encabezado de texto.')
+      }
+
+      const headerComponent = {
+        type: 'HEADER',
+        format: 'TEXT',
+        text: template.headerText
+      }
+      if (headerExamples.length) {
+        headerComponent.example = { header_text: headerExamples }
+      }
+      components.push(headerComponent)
+    } else if (['image', 'video', 'document'].includes(template.headerType)) {
+      if (!template.headerMediaUrl) {
+        throw new Error('Agrega una URL de ejemplo para el archivo del encabezado.')
+      }
+      components.push({
+        type: 'HEADER',
+        format: template.headerType.toUpperCase(),
+        example: { header_url: [template.headerMediaUrl] }
+      })
+    } else if (template.headerType === 'location') {
+      components.push({
+        type: 'HEADER',
+        format: 'LOCATION'
+      })
+    }
+  }
+
+  const bodyExamples = getVariableExamplesForTarget(template, 'bodyText', 'el cuerpo')
+  const bodyComponent = {
+    type: 'BODY',
+    text: template.bodyText
+  }
+  if (bodyExamples.length) {
+    bodyComponent.example = { body_text: [bodyExamples] }
+  }
+  components.push(bodyComponent)
+
+  if (template.footerText) {
+    components.push({
+      type: 'FOOTER',
+      text: template.footerText
+    })
+  }
+
+  const buttons = buildYCloudButtons(template.buttons)
+  if (buttons.length) {
+    components.push({
+      type: 'BUTTONS',
+      buttons
+    })
+  }
+
+  return {
+    name: template.name,
+    language: template.language,
+    category: normalizeYCloudCategory(template.category),
+    components
+  }
+}
+
+function normalizeYCloudTemplateResponse(record = {}) {
+  return {
+    officialTemplateId: cleanString(record.officialTemplateId || record.id) || null,
+    status: normalizeYCloudTemplateStatus(record.status),
+    reason: cleanString(record.reason || record.whatsappApiError?.error_user_msg || record.whatsappApiError?.message || record.whatsappApiError?.error_data) || null,
+    statusUpdateEvent: normalizeYCloudTemplateStatus(record.statusUpdateEvent),
+    qualityRating: normalizeYCloudTemplateStatus(record.qualityRating),
+    raw: record
+  }
+}
+
+async function getMessageTemplateById(id) {
+  const row = await db.get('SELECT * FROM whatsapp_message_templates WHERE id = ?', [id])
+  if (!row) {
+    const error = new Error('Plantilla no encontrada')
+    error.statusCode = 404
+    throw error
+  }
+  return mapTemplate(row)
+}
+
+async function applyYCloudTemplateResponse(id, record = {}, { submitted = false } = {}) {
+  const normalized = normalizeYCloudTemplateResponse(record)
+  await db.run(`
+    UPDATE whatsapp_message_templates
+    SET
+      ycloud_template_id = COALESCE(?, ycloud_template_id),
+      ycloud_status = COALESCE(?, ycloud_status),
+      ycloud_reason = ?,
+      ycloud_status_update_event = ?,
+      ycloud_quality_rating = ?,
+      ycloud_raw_payload_json = ?,
+      ycloud_submitted_at = CASE WHEN ? = 1 THEN CURRENT_TIMESTAMP ELSE ycloud_submitted_at END,
+      ycloud_synced_at = CURRENT_TIMESTAMP,
+      last_error = NULL,
+      updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `, [
+    normalized.officialTemplateId,
+    normalized.status,
+    normalized.reason,
+    normalized.statusUpdateEvent,
+    normalized.qualityRating,
+    jsonString(normalized.raw),
+    submitted ? 1 : 0,
+    id
+  ])
+
+  return getMessageTemplateById(id)
+}
+
+async function saveTemplateLastError(id, error) {
+  const message = getTemplateErrorMessage(error, 'YCloud rechazo la solicitud')
+  await db.run(`
+    UPDATE whatsapp_message_templates
+    SET last_error = ?, ycloud_synced_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `, [message, id])
+  return message
+}
+
 export async function createMessageTemplate(payload = {}) {
   const template = normalizeTemplatePayload(payload)
   await assertFolderExists(template.folderId)
@@ -356,9 +629,9 @@ export async function createMessageTemplate(payload = {}) {
         id, folder_id, name, description, category, language, status,
         header_enabled, header_type, header_text, header_media_url, header_location_json,
         body_text, footer_text, buttons_json, variables_json, variable_examples_json,
-        ycloud_template_id, ycloud_status, created_at, updated_at
+        variable_bindings_json, ycloud_template_id, ycloud_status, created_at, updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
     `, [
       id,
       template.folderId,
@@ -377,6 +650,7 @@ export async function createMessageTemplate(payload = {}) {
       jsonString(template.buttons),
       jsonString(template.variables),
       jsonString(template.variableExamples),
+      jsonString(template.variableBindings),
       template.ycloudTemplateId,
       template.ycloudStatus
     ])
@@ -421,6 +695,7 @@ export async function updateMessageTemplate(id, payload = {}) {
         buttons_json = ?,
         variables_json = ?,
         variable_examples_json = ?,
+        variable_bindings_json = ?,
         ycloud_template_id = ?,
         ycloud_status = ?,
         updated_at = CURRENT_TIMESTAMP
@@ -442,6 +717,7 @@ export async function updateMessageTemplate(id, payload = {}) {
       jsonString(template.buttons),
       jsonString(template.variables),
       jsonString(template.variableExamples),
+      jsonString(template.variableBindings),
       template.ycloudTemplateId,
       template.ycloudStatus,
       id
@@ -455,6 +731,97 @@ export async function updateMessageTemplate(id, payload = {}) {
 
   const row = await db.get('SELECT * FROM whatsapp_message_templates WHERE id = ?', [id])
   return mapTemplate(row)
+}
+
+export async function submitMessageTemplateToYCloud(id) {
+  const template = await getMessageTemplateById(id)
+  const ycloudPayload = buildYCloudTemplatePayload(template)
+
+  try {
+    const response = await createWhatsAppApiTemplate(ycloudPayload)
+    return {
+      template: await applyYCloudTemplateResponse(id, response, { submitted: true }),
+      ycloud: response,
+      message: 'Plantilla enviada a revision de Meta por YCloud.'
+    }
+  } catch (error) {
+    const message = await saveTemplateLastError(id, error)
+    throw new Error(message)
+  }
+}
+
+export async function syncMessageTemplateStatus(id) {
+  const template = await getMessageTemplateById(id)
+
+  try {
+    const response = await retrieveWhatsAppApiTemplate({
+      name: template.name,
+      language: template.language
+    })
+    return {
+      template: await applyYCloudTemplateResponse(id, response),
+      ycloud: response,
+      message: 'Estado sincronizado con YCloud.'
+    }
+  } catch (error) {
+    const message = await saveTemplateLastError(id, error)
+    throw new Error(message)
+  }
+}
+
+export async function syncAllMessageTemplatesWithYCloud() {
+  await syncWhatsAppApiTemplatesFromYCloud()
+  return getMessageTemplateBundle()
+}
+
+function buildSendComponentsFromTemplate(template) {
+  const components = []
+  const headerExamples = getVariableExamplesForTarget(template, 'headerText', 'el encabezado')
+  if (headerExamples.length) {
+    components.push({
+      type: 'header',
+      parameters: headerExamples.map((example) => ({ type: 'text', text: example }))
+    })
+  }
+
+  const bodyExamples = getVariableExamplesForTarget(template, 'bodyText', 'el cuerpo')
+  if (bodyExamples.length) {
+    components.push({
+      type: 'body',
+      parameters: bodyExamples.map((example) => ({ type: 'text', text: example }))
+    })
+  }
+
+  return components
+}
+
+export async function sendMessageTemplateTest(id, payload = {}) {
+  const template = await getMessageTemplateById(id)
+  if (normalizeYCloudTemplateStatus(template.ycloudStatus) !== 'APPROVED') {
+    throw new Error('Meta/YCloud todavia no aprobaron esta plantilla. Solo se pueden enviar plantillas APPROVED.')
+  }
+
+  const to = cleanString(payload.to)
+  if (!to) throw new Error('Escribe el numero destino para enviar la prueba')
+
+  try {
+    const response = await sendWhatsAppApiTemplateMessage({
+      to,
+      from: payload.from,
+      templateName: template.name,
+      language: template.language,
+      components: buildSendComponentsFromTemplate(template),
+      externalId: payload.externalId
+    })
+    return {
+      sent: true,
+      response,
+      message: 'Plantilla enviada por WhatsApp Business.'
+    }
+  } catch (error) {
+    const message = await saveTemplateLastError(id, error)
+    throw new Error(message)
+  }
 }
 
 export async function deleteMessageTemplate(id) {

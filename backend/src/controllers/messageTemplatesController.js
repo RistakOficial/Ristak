@@ -9,6 +9,10 @@ import {
   getMessageTemplateBundle,
   getVariableCatalog,
   previewMessageTemplate,
+  sendMessageTemplateTest,
+  submitMessageTemplateToYCloud,
+  syncAllMessageTemplatesWithYCloud,
+  syncMessageTemplateStatus,
   updateMessageTemplate,
   updateTemplateFolder
 } from '../services/messageTemplatesService.js'
@@ -68,6 +72,46 @@ export async function updateMessageTemplateView(req, res) {
   } catch (error) {
     logger.error(`Error actualizando plantilla de WhatsApp: ${error.message}`)
     sendError(res, error, 'No se pudo actualizar la plantilla')
+  }
+}
+
+export async function submitMessageTemplateToYCloudView(req, res) {
+  try {
+    const data = await submitMessageTemplateToYCloud(req.params.id)
+    res.json({ success: true, data })
+  } catch (error) {
+    logger.error(`Error enviando plantilla a YCloud: ${error.message}`)
+    sendError(res, error, 'No se pudo enviar la plantilla a revision')
+  }
+}
+
+export async function syncMessageTemplateStatusView(req, res) {
+  try {
+    const data = await syncMessageTemplateStatus(req.params.id)
+    res.json({ success: true, data })
+  } catch (error) {
+    logger.error(`Error sincronizando plantilla con YCloud: ${error.message}`)
+    sendError(res, error, 'No se pudo sincronizar la plantilla')
+  }
+}
+
+export async function syncAllMessageTemplatesWithYCloudView(req, res) {
+  try {
+    const data = await syncAllMessageTemplatesWithYCloud()
+    res.json({ success: true, data })
+  } catch (error) {
+    logger.error(`Error sincronizando plantillas con YCloud: ${error.message}`)
+    sendError(res, error, 'No se pudieron sincronizar las plantillas')
+  }
+}
+
+export async function sendMessageTemplateTestView(req, res) {
+  try {
+    const data = await sendMessageTemplateTest(req.params.id, req.body || {})
+    res.json({ success: true, data })
+  } catch (error) {
+    logger.error(`Error enviando prueba de plantilla: ${error.message}`)
+    sendError(res, error, 'No se pudo enviar la plantilla')
   }
 }
 

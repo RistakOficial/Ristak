@@ -591,17 +591,43 @@ async function initTables() {
         buttons_json TEXT,
         variables_json TEXT,
         variable_examples_json TEXT,
+        variable_bindings_json TEXT,
         ycloud_template_id TEXT,
         ycloud_status TEXT,
+        ycloud_reason TEXT,
+        ycloud_status_update_event TEXT,
+        ycloud_quality_rating TEXT,
+        ycloud_raw_payload_json TEXT,
+        ycloud_submitted_at DATETIME,
+        ycloud_synced_at DATETIME,
+        last_error TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (folder_id) REFERENCES whatsapp_template_folders(id) ON DELETE SET NULL
       )
     `)
 
+    for (const [columnName, columnType] of [
+      ['variable_bindings_json', 'TEXT'],
+      ['ycloud_reason', 'TEXT'],
+      ['ycloud_status_update_event', 'TEXT'],
+      ['ycloud_quality_rating', 'TEXT'],
+      ['ycloud_raw_payload_json', 'TEXT'],
+      ['ycloud_submitted_at', 'DATETIME'],
+      ['ycloud_synced_at', 'DATETIME'],
+      ['last_error', 'TEXT']
+    ]) {
+      try {
+        await db.run(`ALTER TABLE whatsapp_message_templates ADD COLUMN ${columnName} ${columnType}`)
+      } catch (err) {
+        // Columna ya existe, ignorar.
+      }
+    }
+
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_template_folders_parent ON whatsapp_template_folders(parent_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_message_templates_folder ON whatsapp_message_templates(folder_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_message_templates_status ON whatsapp_message_templates(status)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_message_templates_ycloud ON whatsapp_message_templates(ycloud_status)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_template_custom_fields_key ON whatsapp_template_custom_fields(field_key)')
 
     // Tabla de contactos

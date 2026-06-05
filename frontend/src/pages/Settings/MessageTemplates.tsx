@@ -1,8 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import {
+  AlertCircle,
   ArrowLeft,
   Check,
-  Copy,
   Edit3,
   Eye,
   File,
@@ -17,11 +17,13 @@ import {
   MousePointerClick,
   Phone,
   Plus,
+  RefreshCw,
   Save,
   Search,
-  Tags,
+  Send,
   Trash2,
   Type,
+  UploadCloud,
   Video,
   X
 } from 'lucide-react'
@@ -37,12 +39,14 @@ import {
   type MessageTemplateHeaderType,
   type MessageTemplatePayload,
   type MessageTemplateStatus,
-  type MessageTemplateVariable
+  type MessageTemplateVariableBinding,
+  type MessageTemplateVariableTarget
 } from '@/services/messageTemplatesService'
 import styles from './MessageTemplates.module.css'
 
 const ROOT_FOLDER_KEY = '__root__'
 const VARIABLE_PATTERN = /{{\s*([a-zA-Z0-9_.-]+)\s*}}/g
+const META_VARIABLE_PATTERN = /{{\s*(\d+)\s*}}/g
 
 const emptyLocation = {
   latitude: '',
@@ -85,7 +89,12 @@ const buttonTypeOptions: Array<{ value: MessageTemplateButtonType; label: string
   { value: 'whatsapp_call', label: 'WhatsApp call', icon: <MessageSquare size={15} /> }
 ]
 
-function createEmptyDraft(folderId: string | null): MessageTemplatePayload {
+type MessageTemplateDraft = MessageTemplatePayload & Partial<Pick<
+  MessageTemplate,
+  'ycloudReason' | 'ycloudStatusUpdateEvent' | 'ycloudQualityRating' | 'ycloudSubmittedAt' | 'ycloudSyncedAt' | 'lastError'
+>>
+
+function createEmptyDraft(folderId: string | null): MessageTemplateDraft {
   return {
     folderId,
     name: '',
@@ -102,12 +111,13 @@ function createEmptyDraft(folderId: string | null): MessageTemplatePayload {
     footerText: '',
     buttons: [],
     variableExamples: {},
+    variableBindings: { headerText: {}, bodyText: {} },
     ycloudTemplateId: null,
     ycloudStatus: null
   }
 }
 
-function templateToDraft(template: MessageTemplate): MessageTemplatePayload {
+function templateToDraft(template: MessageTemplate): MessageTemplateDraft {
   return {
     folderId: template.folderId || null,
     name: template.name,
@@ -124,8 +134,15 @@ function templateToDraft(template: MessageTemplate): MessageTemplatePayload {
     footerText: template.footerText || '',
     buttons: template.buttons || [],
     variableExamples: template.variableExamples || {},
+    variableBindings: template.variableBindings || { headerText: {}, bodyText: {} },
     ycloudTemplateId: template.ycloudTemplateId || null,
-    ycloudStatus: template.ycloudStatus || null
+    ycloudStatus: template.ycloudStatus || null,
+    ycloudReason: template.ycloudReason || null,
+    ycloudStatusUpdateEvent: template.ycloudStatusUpdateEvent || null,
+    ycloudQualityRating: template.ycloudQualityRating || null,
+    ycloudSubmittedAt: template.ycloudSubmittedAt || null,
+    ycloudSyncedAt: template.ycloudSyncedAt || null,
+    lastError: template.lastError || null
   }
 }
 
@@ -139,25 +156,31 @@ function normalizeTemplateNameInput(value: string) {
     .replace(/_+/g, '_')
 }
 
-function normalizeFieldKeyInput(value: string) {
-  return normalizeTemplateNameInput(value).slice(0, 80)
-}
-
 function getErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback
 }
 
-function appendVariable(text: string | undefined, mergeField: string) {
-  const current = text || ''
-  return current ? `${current} ${mergeField}` : mergeField
+function extractMetaVariableIndexes(text: string | undefined) {
+  const indexes = new Set<number>()
+  if (!text) return []
+
+  for (const match of text.matchAll(META_VARIABLE_PATTERN)) {
+    const index = Number(match[1])
+    if (Number.isInteger(index) && index > 0) indexes.add(index)
+  }
+
+  return Array.from(indexes).sort((left, right) => left - right)
 }
 
-function extractVariablesFromText(text: string | undefined, targetSet: Set<string>) {
-  if (!text) return
-  for (const match of text.matchAll(VARIABLE_PATTERN)) {
-    const key = match[1]?.trim()
-    if (key) targetSet.add(`{{${key}}}`)
-  }
+function getNextMetaVariable(text: string | undefined) {
+  const indexes = extractMetaVariableIndexes(text)
+  return indexes.length ? Math.max(...indexes) + 1 : 1
+}
+
+function appendMetaVariable(text: string | undefined) {
+  const current = text || ''
+  const variable = `{{${getNextMetaVariable(current)}}}`
+  return current ? `${current} ${variable}` : variable
 }
 
 function getStatusLabel(status: MessageTemplateStatus) {
@@ -166,6 +189,26 @@ function getStatusLabel(status: MessageTemplateStatus) {
 
 function getCategoryLabel(category: MessageTemplateCategory) {
   return categoryOptions.find((option) => option.value === category)?.label || category
+}
+
+function getYCloudStatusTone(status?: string | null) {
+  const normalized = (status || '').toUpperCase()
+  if (normalized === 'APPROVED') return 'Success'
+  if (normalized === 'REJECTED' || normalized === 'DISABLED' || normalized === 'PAUSED') return 'Danger'
+  if (normalized === 'PENDING' || normalized === 'IN_APPEAL') return 'Warning'
+  return 'Neutral'
+}
+
+function getYCloudStatusLabel(status?: string | null) {
+  const normalized = (status || '').toUpperCase()
+  if (!normalized) return 'Sin enviar'
+  if (normalized === 'APPROVED') return 'Aprobada'
+  if (normalized === 'REJECTED') return 'Rechazada'
+  if (normalized === 'PENDING') return 'En revisión'
+  if (normalized === 'PAUSED') return 'Pausada'
+  if (normalized === 'DISABLED') return 'Deshabilitada'
+  if (normalized === 'ARCHIVED') return 'Archivada'
+  return normalized
 }
 
 interface MessageTemplatesProps {
@@ -190,16 +233,16 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
   const [view, setView] = useState<'list' | 'editor'>('list')
   const [activeFolderId, setActiveFolderId] = useState<string | null>(null)
   const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null)
-  const [draft, setDraft] = useState<MessageTemplatePayload>(() => createEmptyDraft(null))
+  const [draft, setDraft] = useState<MessageTemplateDraft>(() => createEmptyDraft(null))
   const [searchTerm, setSearchTerm] = useState('')
   const [saving, setSaving] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
+  const [syncing, setSyncing] = useState(false)
+  const [sendingTest, setSendingTest] = useState(false)
+  const [testPhone, setTestPhone] = useState('')
   const [showFolderForm, setShowFolderForm] = useState(false)
   const [folderName, setFolderName] = useState('')
   const [creatingFolder, setCreatingFolder] = useState(false)
-  const [showCustomFieldForm, setShowCustomFieldForm] = useState(false)
-  const [customFieldDraft, setCustomFieldDraft] = useState({ name: '', fieldKey: '', example: '' })
-  const [creatingCustomField, setCreatingCustomField] = useState(false)
-  const [activeTextTarget, setActiveTextTarget] = useState<'headerText' | 'bodyText' | 'footerText'>('bodyText')
 
   useEffect(() => {
     loadBundle()
@@ -291,30 +334,22 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
     new Map(bundle.variables.map((variable) => [variable.mergeField, variable]))
   ), [bundle.variables])
 
-  const variableGroups = useMemo(() => {
-    const groups = new Map<string, MessageTemplateVariable[]>()
-    for (const variable of bundle.variables) {
-      groups.set(variable.group, [...(groups.get(variable.group) || []), variable])
-    }
-    return Array.from(groups.entries())
-  }, [bundle.variables])
-
-  const usedVariables = useMemo(() => {
-    const variables = new Set<string>()
-    extractVariablesFromText(draft.headerText, variables)
-    extractVariablesFromText(draft.bodyText, variables)
-    extractVariablesFromText(draft.footerText, variables)
-    for (const button of draft.buttons || []) {
-      extractVariablesFromText(button.label, variables)
-      extractVariablesFromText(button.value, variables)
-    }
-    return Array.from(variables).sort((a, b) => a.localeCompare(b))
-  }, [draft])
+  const variableByKey = useMemo(() => (
+    new Map(bundle.variables.map((variable) => [variable.key, variable]))
+  ), [bundle.variables])
 
   const preview = useMemo(() => {
-    const resolveText = (text?: string) => {
+    const resolveText = (text: string | undefined, target?: MessageTemplateVariableTarget) => {
       if (!text) return ''
-      return text.replace(VARIABLE_PATTERN, (fullMatch, key) => {
+      const withMetaVariables = target
+        ? text.replace(META_VARIABLE_PATTERN, (fullMatch, key) => {
+          const binding = draft.variableBindings?.[target]?.[key]
+          return binding?.example || (binding?.variableKey ? variableByKey.get(binding.variableKey)?.example : '') || fullMatch
+        })
+        : text
+
+      return withMetaVariables.replace(VARIABLE_PATTERN, (fullMatch, key) => {
+        if (/^\d+$/.test(key)) return fullMatch
         const mergeField = `{{${key}}}`
         return draft.variableExamples?.[mergeField] ||
           draft.variableExamples?.[key] ||
@@ -324,8 +359,8 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
     }
 
     return {
-      headerText: resolveText(draft.headerText),
-      bodyText: resolveText(draft.bodyText),
+      headerText: resolveText(draft.headerText, 'headerText'),
+      bodyText: resolveText(draft.bodyText, 'bodyText'),
       footerText: resolveText(draft.footerText),
       buttons: (draft.buttons || []).map((button) => ({
         ...button,
@@ -333,7 +368,7 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
         value: resolveText(button.value)
       }))
     }
-  }, [draft, variableByMergeField])
+  }, [draft, variableByKey, variableByMergeField])
 
   const updateDraft = <K extends keyof MessageTemplatePayload>(key: K, value: MessageTemplatePayload[K]) => {
     setDraft((current) => ({ ...current, [key]: value }))
@@ -342,30 +377,49 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
   const startNewTemplate = () => {
     setSelectedTemplateId(null)
     setDraft(createEmptyDraft(activeFolderId))
-    setActiveTextTarget('bodyText')
+    setTestPhone('')
     setView('editor')
   }
 
   const editTemplate = (template: MessageTemplate) => {
     setSelectedTemplateId(template.id)
     setDraft(templateToDraft(template))
-    setActiveTextTarget('bodyText')
+    setTestPhone('')
     setView('editor')
   }
 
-  const saveTemplate = async () => {
+  const cleanBindingsForPayload = (payload: MessageTemplatePayload): MessageTemplatePayload => {
+    const cleanTarget = (target: MessageTemplateVariableTarget) => {
+      const indexes = extractMetaVariableIndexes(String(payload[target] || ''))
+      const current = payload.variableBindings?.[target] || {}
+      return Object.fromEntries(indexes.map((index) => {
+        const key = String(index)
+        return [key, current[key] || {}]
+      }))
+    }
+
+    return {
+      ...payload,
+      variableBindings: {
+        headerText: cleanTarget('headerText'),
+        bodyText: cleanTarget('bodyText')
+      }
+    }
+  }
+
+  const saveDraft = async (options: { silent?: boolean } = {}) => {
     if (!draft.name.trim()) {
       showToast('warning', 'Nombre requerido', 'Escribe un nombre para la plantilla')
-      return
+      return null
     }
     if (!draft.bodyText.trim()) {
       showToast('warning', 'Cuerpo requerido', 'Escribe el mensaje principal')
-      return
+      return null
     }
 
     setSaving(true)
     try {
-      const payload: MessageTemplatePayload = {
+      const payload: MessageTemplatePayload = cleanBindingsForPayload({
         ...draft,
         name: normalizeTemplateNameInput(draft.name),
         folderId: draft.folderId || null,
@@ -378,7 +432,7 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
           label: button.label.trim(),
           value: button.value?.trim() || ''
         })).filter((button) => button.label)
-      }
+      })
 
       const saved = selectedTemplateId
         ? await messageTemplatesService.updateTemplate(selectedTemplateId, payload)
@@ -388,11 +442,93 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
       setDraft(templateToDraft(saved))
       setActiveFolderId(saved.folderId || null)
       await loadBundle()
-      showToast('success', 'Plantilla guardada', `${saved.name} quedó lista`)
+      if (!options.silent) {
+        showToast('success', 'Plantilla guardada', `${saved.name} quedó lista`)
+      }
+      return saved
     } catch (error) {
       showToast('error', 'No se pudo guardar', getErrorMessage(error, 'Revisa la plantilla'))
+      return null
     } finally {
       setSaving(false)
+    }
+  }
+
+  const saveTemplate = async () => {
+    await saveDraft()
+  }
+
+  const submitTemplate = async () => {
+    const saved = await saveDraft({ silent: true })
+    if (!saved) return
+
+    setSubmitting(true)
+    try {
+      const result = await messageTemplatesService.submitTemplate(saved.id)
+      setSelectedTemplateId(result.template.id)
+      setDraft(templateToDraft(result.template))
+      await loadBundle()
+      showToast('success', 'Enviada a revisión', result.message || 'YCloud recibio la plantilla')
+    } catch (error) {
+      await loadBundle()
+      showToast('error', 'YCloud rechazo la plantilla', getErrorMessage(error, 'Revisa los errores de Meta/YCloud'))
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const syncCurrentTemplate = async () => {
+    if (!selectedTemplateId) {
+      showToast('warning', 'Guarda primero', 'La plantilla debe existir antes de sincronizar')
+      return
+    }
+
+    setSyncing(true)
+    try {
+      const result = await messageTemplatesService.syncTemplate(selectedTemplateId)
+      setDraft(templateToDraft(result.template))
+      await loadBundle()
+      showToast('success', 'Estado sincronizado', result.message || 'YCloud respondio correctamente')
+    } catch (error) {
+      await loadBundle()
+      showToast('error', 'No se pudo sincronizar', getErrorMessage(error, 'YCloud no regreso estado'))
+    } finally {
+      setSyncing(false)
+    }
+  }
+
+  const syncAllTemplates = async () => {
+    setSyncing(true)
+    try {
+      const data = await messageTemplatesService.syncAll()
+      setBundle(data)
+      showToast('success', 'Plantillas sincronizadas', 'Estados actualizados desde YCloud')
+    } catch (error) {
+      showToast('error', 'No se pudo sincronizar', getErrorMessage(error, 'Revisa la conexion con YCloud'))
+    } finally {
+      setSyncing(false)
+    }
+  }
+
+  const sendTestTemplate = async () => {
+    if (!selectedTemplateId) {
+      showToast('warning', 'Guarda primero', 'La plantilla debe existir antes de enviar prueba')
+      return
+    }
+    if (!testPhone.trim()) {
+      showToast('warning', 'Número requerido', 'Escribe el número destino en formato internacional')
+      return
+    }
+
+    setSendingTest(true)
+    try {
+      const result = await messageTemplatesService.sendTest(selectedTemplateId, { to: testPhone.trim() })
+      showToast('success', 'Prueba enviada', result.message || 'WhatsApp Business acepto el envio')
+    } catch (error) {
+      await loadBundle()
+      showToast('error', 'No se pudo enviar', getErrorMessage(error, 'Meta/YCloud rechazo el envio'))
+    } finally {
+      setSendingTest(false)
     }
   }
 
@@ -459,66 +595,52 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
     )
   }
 
-  const submitCustomField = async () => {
-    if (!customFieldDraft.name.trim()) {
-      showToast('warning', 'Nombre requerido', 'Escribe un nombre para el campo')
-      return
-    }
-
-    setCreatingCustomField(true)
-    try {
-      await messageTemplatesService.createCustomField({
-        name: customFieldDraft.name.trim(),
-        fieldKey: customFieldDraft.fieldKey.trim(),
-        example: customFieldDraft.example.trim(),
-        dataType: 'text'
-      })
-      setCustomFieldDraft({ name: '', fieldKey: '', example: '' })
-      setShowCustomFieldForm(false)
-      await loadBundle()
-      showToast('success', 'Variable creada', customFieldDraft.name.trim())
-    } catch (error) {
-      showToast('error', 'No se pudo crear', getErrorMessage(error, 'Intenta nuevamente'))
-    } finally {
-      setCreatingCustomField(false)
-    }
+  const resolveVariableOption = (value: string) => {
+    const query = value.trim().toLowerCase()
+    if (!query) return null
+    return bundle.variables.find((variable) => (
+      variable.label.toLowerCase() === query ||
+      variable.key.toLowerCase() === query ||
+      variable.mergeField.toLowerCase() === query
+    )) || null
   }
 
-  const confirmDeleteCustomField = (id: string) => {
-    const field = bundle.customFields.find((item) => item.id === id)
-    if (!field) return
-
-    showConfirm(
-      'Eliminar variable',
-      `Se eliminará ${field.name} del catálogo.`,
-      async () => {
-        try {
-          await messageTemplatesService.deleteCustomField(id)
-          await loadBundle()
-          showToast('success', 'Variable eliminada', field.name)
-        } catch (error) {
-          showToast('error', 'No se pudo eliminar', getErrorMessage(error, 'Intenta nuevamente'))
+  const addMetaVariable = (target: MessageTemplateVariableTarget) => {
+    setDraft((current) => {
+      const nextText = appendMetaVariable(String(current[target] || ''))
+      const index = String(getNextMetaVariable(String(current[target] || '')))
+      return {
+        ...current,
+        [target]: nextText,
+        variableBindings: {
+          ...(current.variableBindings || { headerText: {}, bodyText: {} }),
+          [target]: {
+            ...(current.variableBindings?.[target] || {}),
+            [index]: current.variableBindings?.[target]?.[index] || {}
+          }
         }
-      },
-      'Eliminar',
-      'Cancelar'
-    )
+      }
+    })
   }
 
-  const insertVariable = (variable: MessageTemplateVariable) => {
+  const updateVariableBinding = (
+    target: MessageTemplateVariableTarget,
+    index: number,
+    nextBinding: Partial<MessageTemplateVariableBinding>
+  ) => {
     setDraft((current) => ({
       ...current,
-      [activeTextTarget]: appendVariable(String(current[activeTextTarget] || ''), variable.mergeField)
+      variableBindings: {
+        ...(current.variableBindings || { headerText: {}, bodyText: {} }),
+        [target]: {
+          ...(current.variableBindings?.[target] || {}),
+          [String(index)]: {
+            ...(current.variableBindings?.[target]?.[String(index)] || {}),
+            ...nextBinding
+          }
+        }
+      }
     }))
-  }
-
-  const copyMergeField = async (variable: MessageTemplateVariable) => {
-    try {
-      await navigator.clipboard.writeText(variable.mergeField)
-      showToast('success', 'Copiado', variable.mergeField)
-    } catch {
-      showToast('error', 'No se pudo copiar', variable.mergeField)
-    }
   }
 
   const addButton = () => {
@@ -548,110 +670,61 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
     updateDraft('buttons', (draft.buttons || []).filter((_, buttonIndex) => buttonIndex !== index))
   }
 
-  const renderVariablesPanel = () => (
-    <aside className={styles.variablesPanel}>
-      <div className={styles.panelTitle}>
-        <Tags size={17} />
-        <span>Variables</span>
-      </div>
+  const renderVariableBindings = (target: MessageTemplateVariableTarget, text: string | undefined) => {
+    const indexes = extractMetaVariableIndexes(text)
+    if (!indexes.length) return null
 
-      {showCustomFieldForm ? (
-        <div className={styles.inlineForm}>
-          <label>
-            <span>Nombre</span>
-            <input
-              value={customFieldDraft.name}
-              onChange={(event) => {
-                const name = event.target.value
-                setCustomFieldDraft((current) => ({
-                  ...current,
-                  name,
-                  fieldKey: current.fieldKey ? current.fieldKey : normalizeFieldKeyInput(name)
-                }))
-              }}
-              placeholder="Fecha de cita"
-            />
-          </label>
-          <label>
-            <span>Llave</span>
-            <input
-              value={customFieldDraft.fieldKey}
-              onChange={(event) => setCustomFieldDraft((current) => ({
-                ...current,
-                fieldKey: normalizeFieldKeyInput(event.target.value)
-              }))}
-              placeholder="fecha_de_cita"
-            />
-          </label>
-          <label>
-            <span>Ejemplo</span>
-            <input
-              value={customFieldDraft.example}
-              onChange={(event) => setCustomFieldDraft((current) => ({
-                ...current,
-                example: event.target.value
-              }))}
-              placeholder="11 de marzo"
-            />
-          </label>
-          <div className={styles.inlineActions}>
-            <Button variant="ghost" size="sm" onClick={() => setShowCustomFieldForm(false)} disabled={creatingCustomField}>
-              <X size={15} />
-              Cancelar
-            </Button>
-            <Button size="sm" onClick={submitCustomField} loading={creatingCustomField}>
-              <Check size={15} />
-              Crear
-            </Button>
-          </div>
-        </div>
-      ) : (
-        <Button variant="outline" size="sm" onClick={() => setShowCustomFieldForm(true)}>
-          <Plus size={15} />
-          Campo personalizado
-        </Button>
-      )}
+    const datalistId = `template-variable-options-${target}`
 
-      <div className={styles.variableGroups}>
-        {variableGroups.map(([group, variables]) => (
-          <div key={group} className={styles.variableGroup}>
-            <strong>{group}</strong>
-            {variables.map((variable) => (
-              <div key={variable.mergeField} className={styles.variableRow}>
-                <button type="button" onClick={() => insertVariable(variable)}>
-                  <span>{variable.label}</span>
-                  <code>{variable.mergeField}</code>
-                </button>
-                <button
-                  type="button"
-                  className={styles.iconButton}
-                  onClick={() => copyMergeField(variable)}
-                  aria-label={`Copiar ${variable.mergeField}`}
-                  title="Copiar"
-                >
-                  <Copy size={14} />
-                </button>
-                {variable.source === 'custom' && variable.fieldKey && (
-                  <button
-                    type="button"
-                    className={styles.iconButton}
-                    onClick={() => {
-                      const field = bundle.customFields.find((item) => item.fieldKey === variable.fieldKey)
-                      if (field) confirmDeleteCustomField(field.id)
-                    }}
-                    aria-label={`Eliminar ${variable.mergeField}`}
-                    title="Eliminar"
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                )}
-              </div>
-            ))}
-          </div>
-        ))}
+    return (
+      <div className={styles.variableBindings}>
+        <datalist id={datalistId}>
+          {bundle.variables.map((variable) => (
+            <option key={variable.key} value={variable.label}>
+              {variable.group}
+            </option>
+          ))}
+        </datalist>
+
+        {indexes.map((index) => {
+          const binding = draft.variableBindings?.[target]?.[String(index)] || {}
+          const selectedVariable = binding.variableKey ? variableByKey.get(binding.variableKey) : null
+          const inputValue = binding.label || selectedVariable?.label || ''
+
+          return (
+            <div key={`${target}-${index}`} className={styles.variableBindingRow}>
+              <strong>{`{{${index}}}`}</strong>
+              <label>
+                <span>Dato dinámico</span>
+                <input
+                  list={datalistId}
+                  value={inputValue}
+                  onChange={(event) => {
+                    const value = event.target.value
+                    const match = resolveVariableOption(value)
+                    updateVariableBinding(target, index, {
+                      label: value,
+                      variableKey: match?.key || '',
+                      mergeField: match?.mergeField || ''
+                    })
+                  }}
+                  placeholder="Busca First Name, Email, Phone..."
+                />
+              </label>
+              <label>
+                <span>Ejemplo para Meta</span>
+                <input
+                  value={binding.example || ''}
+                  onChange={(event) => updateVariableBinding(target, index, { example: event.target.value })}
+                  placeholder={selectedVariable?.example || 'Jane'}
+                />
+              </label>
+            </div>
+          )
+        })}
       </div>
-    </aside>
-  )
+    )
+  }
 
   const renderPreviewHeader = () => {
     if (!draft.headerEnabled || draft.headerType === 'none') return null
@@ -730,6 +803,10 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
             <FolderPlus size={16} />
             {activeFolderId ? 'Subcarpeta' : 'Carpeta'}
           </Button>
+          <Button variant="outline" onClick={syncAllTemplates} loading={syncing}>
+            <RefreshCw size={16} />
+            Sincronizar
+          </Button>
           <Button onClick={startNewTemplate}>
             <Plus size={16} />
             Plantilla
@@ -799,6 +876,9 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
                 <span>
                   <strong>{template.name}</strong>
                   <small>{getCategoryLabel(template.category)} · {template.language} · {getStatusLabel(template.status)}</small>
+                  <span className={`${styles.ycloudBadge} ${styles[`ycloudBadge${getYCloudStatusTone(template.ycloudStatus)}`]}`}>
+                    {getYCloudStatusLabel(template.ycloudStatus)}
+                  </span>
                 </span>
               </button>
               <div className={styles.itemActions}>
@@ -821,7 +901,6 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
         </div>
       </section>
 
-      {renderVariablesPanel()}
     </div>
   )
 
@@ -845,15 +924,23 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
         </div>
 
         {draft.headerType === 'text' && (
-          <label className={styles.field}>
-            <span>Cuerpo del encabezado</span>
-            <input
-              value={draft.headerText || ''}
-              onFocus={() => setActiveTextTarget('headerText')}
-              onChange={(event) => updateDraft('headerText', event.target.value.slice(0, 60))}
-              placeholder="Hola {{contact.first_name}}"
-            />
-          </label>
+          <div className={styles.variableFieldBlock}>
+            <label className={styles.field}>
+              <span>Cuerpo del encabezado</span>
+              <input
+                value={draft.headerText || ''}
+                onChange={(event) => updateDraft('headerText', event.target.value.slice(0, 60))}
+                placeholder="Hola {{1}}"
+              />
+            </label>
+            <div className={styles.fieldInlineActions}>
+              <Button variant="secondary" size="sm" onClick={() => addMetaVariable('headerText')}>
+                <Plus size={15} />
+                Añadir variable
+              </Button>
+            </div>
+            {renderVariableBindings('headerText', draft.headerText)}
+          </div>
         )}
 
         {['image', 'video', 'document'].includes(draft.headerType) && (
@@ -915,10 +1002,22 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
             <ArrowLeft size={16} />
             Atrás
           </Button>
-          <Button onClick={saveTemplate} loading={saving}>
-            <Save size={16} />
-            Guardar
-          </Button>
+          <div className={styles.editorActionGroup}>
+            {selectedTemplateId && (
+              <Button variant="outline" onClick={syncCurrentTemplate} loading={syncing}>
+                <RefreshCw size={16} />
+                Sincronizar estado
+              </Button>
+            )}
+            <Button variant="secondary" onClick={saveTemplate} loading={saving}>
+              <Save size={16} />
+              Guardar
+            </Button>
+            <Button onClick={submitTemplate} loading={submitting}>
+              <UploadCloud size={16} />
+              Enviar a revisión
+            </Button>
+          </div>
         </div>
 
         <div className={styles.formGrid}>
@@ -965,6 +1064,30 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
           </label>
         </div>
 
+        <div className={styles.ycloudStatusPanel}>
+          <div>
+            <span className={`${styles.ycloudBadge} ${styles[`ycloudBadge${getYCloudStatusTone(draft.ycloudStatus)}`]}`}>
+              {getYCloudStatusLabel(draft.ycloudStatus)}
+            </span>
+            <strong>Estado Meta/YCloud</strong>
+          </div>
+          <p>
+            {(draft.ycloudStatus || '').toUpperCase() === 'APPROVED'
+              ? 'Plantilla aprobada y lista para enviarse por WhatsApp Business.'
+              : (draft.ycloudStatus || '').toUpperCase() === 'REJECTED'
+                ? draft.ycloudReason || draft.lastError || 'Meta rechazo la plantilla. Revisa el motivo y ajusta el contenido.'
+                : (draft.ycloudStatus || '').toUpperCase() === 'PENDING'
+                  ? 'Meta esta revisando la plantilla. Puedes sincronizar para actualizar el estado.'
+                  : draft.lastError || 'Guarda la plantilla y enviala a revision cuando este lista.'}
+          </p>
+          {(draft.ycloudReason || draft.lastError) && (
+            <div className={styles.ycloudError}>
+              <AlertCircle size={15} />
+              <span>{draft.ycloudReason || draft.lastError}</span>
+            </div>
+          )}
+        </div>
+
         <div className={styles.formSection}>
           <label className={styles.switchRow}>
             <input
@@ -982,16 +1105,24 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
         </div>
 
         <div className={styles.formSection}>
-          <label className={styles.field}>
-            <span>Cuerpo</span>
-            <textarea
-              value={draft.bodyText}
-              onFocus={() => setActiveTextTarget('bodyText')}
-              onChange={(event) => updateDraft('bodyText', event.target.value.slice(0, 1024))}
-              placeholder="Qué onda {{contact.first_name}}, tu cita es para {{contact.custom.fecha_de_cita}}."
-            />
-          </label>
-          <div className={styles.characterCount}>{draft.bodyText.length} / 1024</div>
+          <div className={styles.variableFieldBlock}>
+            <label className={styles.field}>
+              <span>Cuerpo</span>
+              <textarea
+                value={draft.bodyText}
+                onChange={(event) => updateDraft('bodyText', event.target.value.slice(0, 1024))}
+                placeholder="Qué onda {{1}}, tu cita es para {{2}}."
+              />
+            </label>
+            <div className={styles.fieldInlineActions}>
+              <span className={styles.characterCount}>{draft.bodyText.length} / 1024</span>
+              <Button variant="secondary" size="sm" onClick={() => addMetaVariable('bodyText')}>
+                <Plus size={15} />
+                Añadir variable
+              </Button>
+            </div>
+            {renderVariableBindings('bodyText', draft.bodyText)}
+          </div>
         </div>
 
         <div className={styles.formSection}>
@@ -999,7 +1130,6 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
             <span>Pie de página</span>
             <input
               value={draft.footerText || ''}
-              onFocus={() => setActiveTextTarget('footerText')}
               onChange={(event) => updateDraft('footerText', event.target.value.slice(0, 60))}
               placeholder="Mensaje automático"
             />
@@ -1043,38 +1173,28 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
           )}
         </div>
 
-        <div className={styles.formSection}>
-          <div className={styles.sectionHeading}>
-            <strong>Ejemplos de variables</strong>
-          </div>
-          {usedVariables.length ? (
-            <div className={styles.variableExamplesGrid}>
-              {usedVariables.map((mergeField) => {
-                const variable = variableByMergeField.get(mergeField)
-                return (
-                  <label key={mergeField} className={styles.field}>
-                    <span>{variable?.label || mergeField}</span>
-                    <input
-                      value={draft.variableExamples?.[mergeField] || ''}
-                      onChange={(event) => updateDraft('variableExamples', {
-                        ...(draft.variableExamples || {}),
-                        [mergeField]: event.target.value
-                      })}
-                      placeholder={variable?.example || mergeField}
-                    />
-                  </label>
-                )
-              })}
+        {(draft.ycloudStatus || '').toUpperCase() === 'APPROVED' && (
+          <div className={styles.formSection}>
+            <div className={styles.sectionHeading}>
+              <strong>Enviar prueba</strong>
             </div>
-          ) : (
-            <div className={styles.subtleEmpty}>Sin variables en uso</div>
-          )}
-        </div>
+            <div className={styles.testSendRow}>
+              <input
+                value={testPhone}
+                onChange={(event) => setTestPhone(event.target.value)}
+                placeholder="+526561234567"
+              />
+              <Button onClick={sendTestTemplate} loading={sendingTest}>
+                <Send size={15} />
+                Enviar
+              </Button>
+            </div>
+          </div>
+        )}
       </section>
 
       <div className={styles.editorSide}>
         {renderPreview()}
-        {renderVariablesPanel()}
       </div>
     </div>
   )

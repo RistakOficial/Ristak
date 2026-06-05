@@ -4,6 +4,7 @@ export type MessageTemplateCategory = 'utility' | 'marketing' | 'authentication'
 export type MessageTemplateStatus = 'draft' | 'active' | 'archived'
 export type MessageTemplateHeaderType = 'none' | 'text' | 'image' | 'video' | 'document' | 'location'
 export type MessageTemplateButtonType = 'quick_reply' | 'website' | 'phone' | 'whatsapp_call'
+export type MessageTemplateVariableTarget = 'headerText' | 'bodyText'
 
 export interface MessageTemplateFolder {
   id: string
@@ -67,15 +68,38 @@ export interface MessageTemplate {
   buttons: MessageTemplateButton[]
   variables: string[]
   variableExamples: Record<string, string>
+  variableBindings: Record<MessageTemplateVariableTarget, Record<string, MessageTemplateVariableBinding>>
   ycloudTemplateId?: string | null
   ycloudStatus?: string | null
+  ycloudReason?: string | null
+  ycloudStatusUpdateEvent?: string | null
+  ycloudQualityRating?: string | null
+  ycloudSubmittedAt?: string | null
+  ycloudSyncedAt?: string | null
+  lastError?: string | null
   createdAt?: string | null
   updatedAt?: string | null
 }
 
+export interface MessageTemplateVariableBinding {
+  variableKey?: string
+  mergeField?: string
+  label?: string
+  example?: string
+}
+
 export type MessageTemplatePayload = Omit<
   MessageTemplate,
-  'id' | 'variables' | 'createdAt' | 'updatedAt'
+  | 'id'
+  | 'variables'
+  | 'ycloudReason'
+  | 'ycloudStatusUpdateEvent'
+  | 'ycloudQualityRating'
+  | 'ycloudSubmittedAt'
+  | 'ycloudSyncedAt'
+  | 'lastError'
+  | 'createdAt'
+  | 'updatedAt'
 >
 
 export interface MessageTemplateBundle {
@@ -91,6 +115,18 @@ export interface MessageTemplatePreview {
   footer: string
   buttons: MessageTemplateButton[]
   variablesUsed: string[]
+}
+
+export interface MessageTemplateYCloudResult {
+  template: MessageTemplate
+  ycloud?: Record<string, any>
+  message: string
+}
+
+export interface MessageTemplateSendTestResult {
+  sent: boolean
+  response?: Record<string, any>
+  message: string
 }
 
 export interface CreateFolderPayload {
@@ -117,6 +153,16 @@ export const messageTemplatesService = {
   ),
   updateTemplate: (id: string, payload: MessageTemplatePayload) => (
     apiClient.put<MessageTemplate>(`/settings/message-templates/${id}`, payload)
+  ),
+  submitTemplate: (id: string) => (
+    apiClient.post<MessageTemplateYCloudResult>(`/settings/message-templates/${id}/submit`)
+  ),
+  syncTemplate: (id: string) => (
+    apiClient.post<MessageTemplateYCloudResult>(`/settings/message-templates/${id}/sync`)
+  ),
+  syncAll: () => apiClient.post<MessageTemplateBundle>('/settings/message-templates/sync'),
+  sendTest: (id: string, payload: { to: string; from?: string; externalId?: string }) => (
+    apiClient.post<MessageTemplateSendTestResult>(`/settings/message-templates/${id}/send-test`, payload)
   ),
   deleteTemplate: (id: string) => apiClient.delete<{ deleted: boolean }>(`/settings/message-templates/${id}`),
   createFolder: (payload: CreateFolderPayload) => (

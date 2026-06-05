@@ -60,7 +60,13 @@
   font-size: 0.92rem;
 }
 
-.managerGrid,
+.managerGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
 .editorGrid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(300px, 360px);
@@ -85,7 +91,7 @@
 
 .toolbar {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
   gap: 10px;
   align-items: center;
 }
@@ -251,6 +257,38 @@
   white-space: nowrap;
 }
 
+.ycloudBadge {
+  display: inline-flex;
+  align-items: center;
+  width: max-content;
+  min-height: 22px;
+  margin-top: 7px;
+  border-radius: 999px;
+  padding: 0 8px;
+  font-size: 0.74rem;
+  font-weight: 850;
+}
+
+.ycloudBadgeSuccess {
+  color: #047857;
+  background: rgba(16, 185, 129, 0.12);
+}
+
+.ycloudBadgeWarning {
+  color: #a16207;
+  background: rgba(234, 179, 8, 0.14);
+}
+
+.ycloudBadgeDanger {
+  color: #be123c;
+  background: rgba(244, 63, 94, 0.12);
+}
+
+.ycloudBadgeNeutral {
+  color: var(--color-text-secondary);
+  background: rgba(148, 163, 184, 0.14);
+}
+
 .itemActions {
   display: flex;
   align-items: center;
@@ -414,6 +452,13 @@
   gap: 10px;
 }
 
+.editorActionGroup {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .formGrid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -425,6 +470,46 @@
   gap: 12px;
   padding-top: 18px;
   border-top: 1px solid rgba(148, 163, 184, 0.16);
+}
+
+.ycloudStatusPanel {
+  display: grid;
+  gap: 9px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 8px;
+  padding: 12px;
+  background: rgba(148, 163, 184, 0.05);
+}
+
+.ycloudStatusPanel > div:first-child {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 9px;
+}
+
+.ycloudStatusPanel strong {
+  color: var(--color-text-primary);
+  font-size: 0.92rem;
+}
+
+.ycloudStatusPanel p {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 0.86rem;
+  line-height: 1.45;
+}
+
+.ycloudError {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  border-radius: 8px;
+  padding: 9px 10px;
+  color: #be123c;
+  background: rgba(244, 63, 94, 0.1);
+  font-size: 0.84rem;
+  line-height: 1.4;
 }
 
 .switchRow {
@@ -482,6 +567,83 @@
   color: var(--color-text-tertiary);
   font-size: 0.8rem;
   font-weight: 750;
+}
+
+.variableFieldBlock {
+  display: grid;
+  gap: 10px;
+}
+
+.fieldInlineActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.variableBindings {
+  display: grid;
+  gap: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 8px;
+  padding: 10px;
+  background: rgba(148, 163, 184, 0.05);
+}
+
+.variableBindingRow {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr) minmax(0, 0.85fr);
+  gap: 10px;
+  align-items: end;
+}
+
+.variableBindingRow strong {
+  display: inline-grid;
+  place-items: center;
+  min-height: 40px;
+  border-radius: 8px;
+  color: var(--color-primary);
+  background: rgba(var(--color-primary-rgb), 0.1);
+  font-size: 0.9rem;
+}
+
+.variableBindingRow label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.variableBindingRow span {
+  color: var(--color-text-secondary);
+  font-size: 0.78rem;
+  font-weight: 850;
+}
+
+.variableBindingRow input,
+.testSendRow input {
+  width: 100%;
+  height: 40px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 8px;
+  outline: 0;
+  color: var(--color-text-primary);
+  background: var(--color-background-primary);
+  padding: 0 11px;
+  font: inherit;
+}
+
+.variableBindingRow input:focus,
+.testSendRow input:focus {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(var(--color-primary-rgb), 0.14);
+}
+
+.testSendRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
 }
 
 .sectionHeading {
@@ -654,7 +816,9 @@
   .formGrid,
   .locationGrid,
   .variableExamplesGrid,
-  .buttonEditorRow {
+  .buttonEditorRow,
+  .variableBindingRow,
+  .testSendRow {
     grid-template-columns: 1fr;
   }
 
