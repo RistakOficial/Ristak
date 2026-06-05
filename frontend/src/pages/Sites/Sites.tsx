@@ -23,7 +23,9 @@ import {
   AlignCenter,
   AlignLeft,
   AlignRight,
+  ArrowDown,
   ArrowLeft,
+  ArrowUp,
   CalendarDays,
   Check,
   CheckCircle2,
@@ -255,6 +257,12 @@ type PaletteSectionTarget = {
   sectionColumn: number
 }
 
+type BlockMoveDirection = 'up' | 'down'
+type BlockMoveState = {
+  canMoveUp: boolean
+  canMoveDown: boolean
+}
+
 type AddBlockOptions = {
   insertIndex?: number
   initialSettings?: Record<string, unknown>
@@ -275,6 +283,12 @@ interface LandingSectionLane {
   columns: number
   columnBlocks: SiteBlock[][]
   sortOrder: number
+}
+
+type LandingBlockOrderGroup = {
+  id: string
+  sortOrder: number
+  blocks: SiteBlock[]
 }
 
 type ButtonAction = 'url' | 'next_page' | 'specific_page'
@@ -1016,6 +1030,7 @@ const getBlockPageId = (block: SiteBlock, pages: SitePage[]) => {
 
 const isSectionBlock = (block?: SiteBlock | null) => block?.blockType === SECTION_BLOCK_TYPE
 const isPanelBlock = (block?: SiteBlock | null) => Boolean(block && PANEL_BLOCK_TYPES.has(block.blockType))
+const isTopLevelLandingBlock = (block?: SiteBlock | null) => isSectionBlock(block) || isPanelBlock(block)
 
 const getSectionColumns = (block?: SiteBlock | null) => {
   const value = Number(block?.settings?.sectionColumns ?? block?.settings?.columns)
@@ -1100,6 +1115,48 @@ const buildLandingSectionLanes = (pageBlocks: SiteBlock[]): LandingSectionLane[]
       ...lane,
       columnBlocks: lane.columnBlocks.map(column => [...column].sort((a, b) => a.sortOrder - b.sortOrder))
     }))
+}
+
+const buildLandingBlockOrderGroups = (
+  pageBlocks: SiteBlock[],
+  lanes: LandingSectionLane[] = buildLandingSectionLanes(pageBlocks)
+): LandingBlockOrderGroup[] => {
+  const sortedBlocks = [...pageBlocks].sort((a, b) => a.sortOrder - b.sortOrder)
+  const laneBySectionId = new Map(lanes.filter(lane => lane.section).map(lane => [lane.section!.id, lane]))
+  const groupedIds = new Set<string>()
+  const groups = sortedBlocks
+    .filter(isTopLevelLandingBlock)
+    .map(anchor => {
+      const groupBlocks = [anchor]
+      groupedIds.add(anchor.id)
+
+      if (isSectionBlock(anchor)) {
+        const lane = laneBySectionId.get(anchor.id)
+        const laneChildIds = new Set((lane?.columnBlocks || []).flat().map(block => block.id))
+        const sectionChildren = sortedBlocks.filter(block => laneChildIds.has(block.id))
+        sectionChildren.forEach(block => groupedIds.add(block.id))
+        groupBlocks.push(...sectionChildren)
+      }
+
+      return {
+        id: anchor.id,
+        sortOrder: anchor.sortOrder,
+        blocks: groupBlocks
+      }
+    })
+
+  sortedBlocks
+    .filter(block => !groupedIds.has(block.id))
+    .forEach(block => {
+      groupedIds.add(block.id)
+      groups.push({
+        id: block.id,
+        sortOrder: block.sortOrder,
+        blocks: [block]
+      })
+    })
+
+  return groups.sort((a, b) => a.sortOrder - b.sortOrder)
 }
 
 const getButtonAction = (settings: Record<string, unknown>): ButtonAction => {
@@ -1619,6 +1676,7 @@ export const Sites: React.FC = () => {
   )
   const hasLandingCanvasContent = landingSectionLanes.length > 0 || canvasBlocks.some(isPanelBlock)
   const palettePreviewBlock = editorSite && paletteDragPayload
+    && paletteDragging
     ? makePreviewBlock(
       paletteDragPayload.blockType,
       editorSite,
@@ -2370,6 +2428,7 @@ export const Sites: React.FC = () => {
     if (!selectedSite) return
     try {
       const options = typeof addOptions === 'number' ? { insertIndex: addOptions } : addOptions
+      const previousBlockIds = new Set((selectedSite.blocks || []).map(block => block.id))
       const payload = defaultBlockPayload(blockType, selectedSite.id, selectedSite.siteType)
       const initialSettings = options.initialSettings || {}
       if (isLanding(selectedSite) && activePage) {
@@ -2436,13 +2495,14 @@ export const Sites: React.FC = () => {
       }
       let site = await sitesService.createBlock(selectedSite.id, payload)
       const sitePages = normalizeFunnelPages(site)
+      const activePageForAdd = activePage?.id || DEFAULT_FUNNEL_PAGE_ID
       syncSelectedSite(site)
       const added = [...(site.blocks || [])]
-        .filter(block => !isLanding(site) || getBlockPageId(block, sitePages) === (activePage?.id || DEFAULT_FUNNEL_PAGE_ID))
-        .sort((a, b) => b.sortOrder - a.sortOrder)[0]
+        .filter(block => !previousBlockIds.has(block.id))
+        .find(block => !isLanding(site) || getBlockPageId(block, sitePages) === activePageForAdd)
       if (added && Number.isFinite(options.insertIndex)) {
         const pageBlocks = [...(site.blocks || [])]
-          .filter(block => !isLanding(site) || getBlockPageId(block, sitePages) === (activePage?.id || DEFAULT_FUNNEL_PAGE_ID))
+          .filter(block => !isLanding(site) || getBlockPageId(block, sitePages) === activePageForAdd)
           .sort((a, b) => a.sortOrder - b.sortOrder)
         const withoutAdded = pageBlocks.filter(block => block.id !== added.id)
         const boundedIndex = Math.max(0, Math.min(Number(options.insertIndex), withoutAdded.length))
@@ -2568,6 +2628,110 @@ export const Sites: React.FC = () => {
     }
   }
 
+  const persistCanvasBlockOrder = async (orderedBlocks: SiteBlock[]) => {
+    if (!selectedSite) return false
+
+    const wasAlreadyDirty = hasUnsavedChanges
+    const nextPageBlocks = orderedBlocks.map((block, index) => ({ ...block, sortOrder: index }))
+    const nextPageBlocksById = new Map(nextPageBlocks.map(block => [block.id, block]))
+    const nextBlocks = blocks.map(block => nextPageBlocksById.get(block.id) || block)
+    const optimisticSite = { ...selectedSite, blocks: nextBlocks }
+
+    setHasUnsavedChanges(true)
+    selectedSiteRef.current = optimisticSite
+    setSelectedSite(optimisticSite)
+
+    try {
+      const site = await sitesService.reorderBlocks(
+        selectedSite.id,
+        nextPageBlocks.map(block => block.id),
+        isLanding(selectedSite) ? activePage?.id : undefined
+      )
+      syncSelectedSite(site)
+      if (!wasAlreadyDirty) {
+        setHasUnsavedChanges(false)
+      }
+      return true
+    } catch (error) {
+      showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo reordenar')
+      return false
+    }
+  }
+
+  const getLandingColumnBlocksForMove = (block: SiteBlock) => {
+    for (const lane of landingSectionLanes) {
+      const column = lane.columnBlocks.find(columnBlocks => columnBlocks.some(item => item.id === block.id))
+      if (column) return column
+    }
+    return []
+  }
+
+  const getBlockMoveState = (block: SiteBlock): BlockMoveState => {
+    if (!editorSite) return { canMoveUp: false, canMoveDown: false }
+
+    if (isLanding(editorSite)) {
+      if (isTopLevelLandingBlock(block)) {
+        const groups = buildLandingBlockOrderGroups(canvasBlocks, landingSectionLanes)
+        const groupIndex = groups.findIndex(group => group.id === block.id)
+        return {
+          canMoveUp: groupIndex > 0,
+          canMoveDown: groupIndex >= 0 && groupIndex < groups.length - 1
+        }
+      }
+
+      const columnBlocks = getLandingColumnBlocksForMove(block)
+      const columnIndex = columnBlocks.findIndex(item => item.id === block.id)
+      return {
+        canMoveUp: columnIndex > 0,
+        canMoveDown: columnIndex >= 0 && columnIndex < columnBlocks.length - 1
+      }
+    }
+
+    const index = canvasBlocks.findIndex(item => item.id === block.id)
+    return {
+      canMoveUp: index > 0,
+      canMoveDown: index >= 0 && index < canvasBlocks.length - 1
+    }
+  }
+
+  const handleMoveBlock = async (blockId: string, direction: BlockMoveDirection) => {
+    if (!selectedSite) return
+    const block = canvasBlocks.find(item => item.id === blockId)
+    if (!block) return
+
+    const offset = direction === 'up' ? -1 : 1
+    let nextPageBlocks: SiteBlock[] | null = null
+
+    if (isLanding(selectedSite)) {
+      if (isTopLevelLandingBlock(block)) {
+        const groups = buildLandingBlockOrderGroups(canvasBlocks, landingSectionLanes)
+        const groupIndex = groups.findIndex(group => group.id === block.id)
+        const nextGroupIndex = groupIndex + offset
+        if (groupIndex < 0 || nextGroupIndex < 0 || nextGroupIndex >= groups.length) return
+        nextPageBlocks = arrayMove(groups, groupIndex, nextGroupIndex).flatMap(group => group.blocks)
+      } else {
+        const columnBlocks = getLandingColumnBlocksForMove(block)
+        const columnIndex = columnBlocks.findIndex(item => item.id === block.id)
+        const nextColumnIndex = columnIndex + offset
+        const targetBlock = columnBlocks[nextColumnIndex]
+        if (columnIndex < 0 || !targetBlock) return
+        const oldIndex = canvasBlocks.findIndex(item => item.id === block.id)
+        const newIndex = canvasBlocks.findIndex(item => item.id === targetBlock.id)
+        if (oldIndex < 0 || newIndex < 0) return
+        nextPageBlocks = arrayMove(canvasBlocks, oldIndex, newIndex)
+      }
+    } else {
+      const oldIndex = canvasBlocks.findIndex(item => item.id === block.id)
+      const newIndex = oldIndex + offset
+      if (oldIndex < 0 || newIndex < 0 || newIndex >= canvasBlocks.length) return
+      nextPageBlocks = arrayMove(canvasBlocks, oldIndex, newIndex)
+    }
+
+    if (nextPageBlocks) {
+      await persistCanvasBlockOrder(nextPageBlocks)
+    }
+  }
+
   const handleDragStart = (event: DragStartEvent) => {
     setActiveDragId(String(event.active.id))
   }
@@ -2580,25 +2744,7 @@ export const Sites: React.FC = () => {
     const newIndex = canvasBlocks.findIndex(block => block.id === event.over?.id)
     if (oldIndex < 0 || newIndex < 0) return
 
-    const wasAlreadyDirty = hasUnsavedChanges
-    const nextPageBlocks = arrayMove(canvasBlocks, oldIndex, newIndex).map((block, index) => ({ ...block, sortOrder: index }))
-    const nextBlocks = blocks.map(block => nextPageBlocks.find(item => item.id === block.id) || block)
-    setHasUnsavedChanges(true)
-    setSelectedSite(current => current ? { ...current, blocks: nextBlocks } : current)
-
-    try {
-      const site = await sitesService.reorderBlocks(
-        selectedSite.id,
-        nextPageBlocks.map(block => block.id),
-        isLanding(selectedSite) ? activePage?.id : undefined
-      )
-      syncSelectedSite(site)
-      if (!wasAlreadyDirty) {
-        setHasUnsavedChanges(false)
-      }
-    } catch (error) {
-      showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo reordenar')
-    }
+    await persistCanvasBlockOrder(arrayMove(canvasBlocks, oldIndex, newIndex))
   }
 
   const getInsertIndexFromNodes = (nodes: HTMLElement[], y: number, fallbackIndex: number) => {
@@ -2976,8 +3122,8 @@ export const Sites: React.FC = () => {
 	                    onAdd={handleAddBlock}
 	                    onPaletteDragStart={(payload) => {
 	                      setPaletteDragPayload(payload)
-	                      setPaletteDragging(true)
-	                      setPaletteInsertIndex(canvasBlocks.length)
+	                      setPaletteDragging(false)
+	                      setPaletteInsertIndex(null)
 	                      setPaletteSectionTarget(null)
 	                    }}
                     onPaletteDragEnd={resetPaletteDrag}
@@ -3061,6 +3207,8 @@ export const Sites: React.FC = () => {
 	                                      paletteDragging={paletteDragging}
 	                                      onSelectBlock={setSelectedBlockId}
                                       onDeleteBlock={handleDeleteBlock}
+                                      onMoveBlock={handleMoveBlock}
+                                      getBlockMoveState={getBlockMoveState}
                                       onPatchBlock={patchBlockLocal}
                                       onPatchBlockSettings={patchBlockSettingsLocal}
                                       onSaveBlock={handleSaveBlock}
@@ -3081,29 +3229,36 @@ export const Sites: React.FC = () => {
                                   {palettePreviewBlock && paletteInsertIndex === 0 && (
                                     <PaletteInsertPreview block={palettePreviewBlock} forms={forms} calendars={calendars} />
                                   )}
-                                  {canvasBlocks.map((block, index) => (
-                                    <React.Fragment key={block.id}>
-                                      <SortableCanvasBlock
-                                        block={block}
-                                        blocks={canvasBlocks}
-                                        index={index}
-                                        selected={selectedBlock?.id === block.id}
-                                        site={editorSite}
-                                        forms={forms}
-                                        calendars={calendars}
-                                        pages={pages}
-                                        activePageId={activePage?.id || DEFAULT_FUNNEL_PAGE_ID}
-                                        onSelect={() => setSelectedBlockId(block.id)}
-                                        onDelete={() => handleDeleteBlock(block.id)}
-                                        onPatchBlock={(patch) => patchBlockLocal(block.id, patch)}
-                                        onPatchSettings={(patch) => patchBlockSettingsLocal(block, patch)}
-                                        onSave={() => handleSaveBlock(block.id)}
-                                      />
-                                      {palettePreviewBlock && paletteInsertIndex === index + 1 && (
-                                        <PaletteInsertPreview block={palettePreviewBlock} forms={forms} calendars={calendars} />
-                                      )}
-                                    </React.Fragment>
-                                  ))}
+                                  {canvasBlocks.map((block, index) => {
+                                    const moveState = getBlockMoveState(block)
+                                    return (
+                                      <React.Fragment key={block.id}>
+                                        <SortableCanvasBlock
+                                          block={block}
+                                          blocks={canvasBlocks}
+                                          index={index}
+                                          selected={selectedBlock?.id === block.id}
+                                          site={editorSite}
+                                          forms={forms}
+                                          calendars={calendars}
+                                          pages={pages}
+                                          activePageId={activePage?.id || DEFAULT_FUNNEL_PAGE_ID}
+                                          canMoveUp={moveState.canMoveUp}
+                                          canMoveDown={moveState.canMoveDown}
+                                          onSelect={() => setSelectedBlockId(block.id)}
+                                          onDelete={() => handleDeleteBlock(block.id)}
+                                          onMoveUp={() => handleMoveBlock(block.id, 'up')}
+                                          onMoveDown={() => handleMoveBlock(block.id, 'down')}
+                                          onPatchBlock={(patch) => patchBlockLocal(block.id, patch)}
+                                          onPatchSettings={(patch) => patchBlockSettingsLocal(block, patch)}
+                                          onSave={() => handleSaveBlock(block.id)}
+                                        />
+                                        {palettePreviewBlock && paletteInsertIndex === index + 1 && (
+                                          <PaletteInsertPreview block={palettePreviewBlock} forms={forms} calendars={calendars} />
+                                        )}
+                                      </React.Fragment>
+                                    )
+                                  })}
                                 </>
                               )}
                               {isFormSite(editorSite) && canvasBlocks.some(block => fieldBlockTypes.has(block.blockType)) && (
@@ -3116,7 +3271,7 @@ export const Sites: React.FC = () => {
                         </div>
                       </CanvasStage>
                     </SortableContext>
-	                    <DragOverlay dropAnimation={{ duration: 260, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' }}>
+	                    <DragOverlay dropAnimation={{ duration: 340, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' }}>
                       {activeDragBlock ? (
                         <div className={`rstkCanvas ${canvasTheme!.bodyClass}`} style={{ ...canvasTheme!.vars, width: 460, ['--rstk-scale' as string]: 1 } as React.CSSProperties}>
                           <div className={getBlockStyleClassName(activeDragBlock)} style={getBlockCanvasStyle(activeDragBlock)}>
@@ -4160,6 +4315,21 @@ const paletteGroups: Array<{ label: string; items: PaletteItem[] }> = [
   }
 ]
 
+const hideNativeDragPreview = (dataTransfer: DataTransfer) => {
+  if (typeof document === 'undefined') return
+  const ghost = document.createElement('span')
+  ghost.style.position = 'fixed'
+  ghost.style.top = '-1000px'
+  ghost.style.left = '-1000px'
+  ghost.style.width = '1px'
+  ghost.style.height = '1px'
+  ghost.style.opacity = '0'
+  ghost.style.pointerEvents = 'none'
+  document.body.appendChild(ghost)
+  dataTransfer.setDragImage(ghost, 0, 0)
+  window.setTimeout(() => ghost.remove(), 0)
+}
+
 interface FunnelPagesPanelProps {
   pages: SitePage[]
   activePageId: string
@@ -4363,6 +4533,7 @@ const Palette: React.FC<{
                     if (item.initialSettings) {
                       event.dataTransfer.setData('application/ristak-block-settings', JSON.stringify(item.initialSettings))
                     }
+                    hideNativeDragPreview(event.dataTransfer)
                     onPaletteDragStart({ blockType: item.blockType, initialSettings: item.initialSettings })
                   }}
                   onDragEnd={onPaletteDragEnd}
@@ -4521,15 +4692,19 @@ interface SortableCanvasBlockProps {
   calendars: CalendarType[]
   pages: SitePage[]
   activePageId: string
+  canMoveUp: boolean
+  canMoveDown: boolean
   onSelect: () => void
   onDelete: () => void
+  onMoveUp: () => void
+  onMoveDown: () => void
   onPatchBlock: (patch: Partial<SiteBlock>) => void
   onPatchSettings: (patch: Record<string, unknown>) => void
   onSave: () => void
 }
 
 const sortableTransition = {
-  duration: 320,
+  duration: 420,
   easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)'
 }
 
@@ -4551,8 +4726,12 @@ const SortableCanvasBlock: React.FC<SortableCanvasBlockProps> = ({
   calendars,
   pages,
   activePageId,
+  canMoveUp,
+  canMoveDown,
   onSelect,
   onDelete,
+  onMoveUp,
+  onMoveDown,
   onPatchBlock,
   onPatchSettings,
   onSave
@@ -4571,7 +4750,7 @@ const SortableCanvasBlock: React.FC<SortableCanvasBlockProps> = ({
 	      data-rstk-page-block={isPanelBlock(block) ? 'true' : undefined}
 	      style={{
         transform: CSS.Transform.toString(transform),
-	        transition: transition || 'transform 320ms cubic-bezier(0.2, 0.8, 0.2, 1)',
+	        transition: transition || 'transform 420ms cubic-bezier(0.2, 0.8, 0.2, 1)',
         opacity: isDragging ? 0.34 : undefined,
         zIndex: isDragging ? 8 : undefined,
         ...getBlockCanvasStyle(block)
@@ -4589,9 +4768,46 @@ const SortableCanvasBlock: React.FC<SortableCanvasBlockProps> = ({
         <button type="button" className="rstkBlockTool rstkBlockToolDrag" {...attributes} {...listeners} aria-label="Reordenar bloque">
           <GripVertical size={15} />
         </button>
-        <button type="button" className="rstkBlockTool rstkBlockToolDelete" onClick={(event) => { event.stopPropagation(); onDelete() }} aria-label="Eliminar bloque">
-          <Trash2 size={14} />
+        <button
+          type="button"
+          className="rstkBlockTool"
+          disabled={!canMoveUp}
+          onClick={(event) => { event.stopPropagation(); onMoveUp() }}
+          aria-label="Subir bloque"
+        >
+          <ArrowUp size={14} />
         </button>
+        <button
+          type="button"
+          className="rstkBlockTool"
+          disabled={!canMoveDown}
+          onClick={(event) => { event.stopPropagation(); onMoveDown() }}
+          aria-label="Bajar bloque"
+        >
+          <ArrowDown size={14} />
+        </button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              className="rstkBlockTool rstkBlockToolMenu"
+              onClick={(event) => event.stopPropagation()}
+              onPointerDown={(event) => event.stopPropagation()}
+              aria-label="Opciones del bloque"
+            >
+              <MoreVertical size={15} />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" sideOffset={6} className={styles.pageMenu}>
+            <DropdownMenuItem
+              className={styles.pageMenuDanger}
+              onSelect={() => onDelete()}
+            >
+              <Trash2 size={14} />
+              Eliminar
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
       <CanvasPreviewBlock
         block={block}
@@ -4624,6 +4840,8 @@ interface LandingCanvasSectionsProps {
   paletteDragging: boolean
   onSelectBlock: (blockId: string) => void
   onDeleteBlock: (blockId: string) => void
+  onMoveBlock: (blockId: string, direction: BlockMoveDirection) => void
+  getBlockMoveState: (block: SiteBlock) => BlockMoveState
   onPatchBlock: (blockId: string, patch: Partial<SiteBlock>) => void
   onPatchBlockSettings: (block: SiteBlock, patch: Record<string, unknown>) => void
   onSaveBlock: (blockId: string) => void
@@ -4644,6 +4862,8 @@ const LandingCanvasSections: React.FC<LandingCanvasSectionsProps> = ({
   paletteDragging,
   onSelectBlock,
   onDeleteBlock,
+  onMoveBlock,
+  getBlockMoveState,
   onPatchBlock,
   onPatchBlockSettings,
   onSaveBlock
@@ -4661,6 +4881,7 @@ const LandingCanvasSections: React.FC<LandingCanvasSectionsProps> = ({
         const topLevelPreviewBefore = showTopLevelPreview && paletteInsertIndex === blockInsertIndex
 
         if (isPanelBlock(block)) {
+          const moveState = getBlockMoveState(block)
           return (
             <React.Fragment key={block.id}>
               {topLevelPreviewBefore && palettePreviewBlock && (
@@ -4676,8 +4897,12 @@ const LandingCanvasSections: React.FC<LandingCanvasSectionsProps> = ({
                 calendars={calendars}
                 pages={pages}
                 activePageId={activePageId}
+                canMoveUp={moveState.canMoveUp}
+                canMoveDown={moveState.canMoveDown}
                 onSelect={() => onSelectBlock(block.id)}
                 onDelete={() => onDeleteBlock(block.id)}
+                onMoveUp={() => onMoveBlock(block.id, 'up')}
+                onMoveDown={() => onMoveBlock(block.id, 'down')}
                 onPatchBlock={(patch) => onPatchBlock(block.id, patch)}
                 onPatchSettings={(patch) => onPatchBlockSettings(block, patch)}
                 onSave={() => onSaveBlock(block.id)}
@@ -4706,6 +4931,8 @@ const LandingCanvasSections: React.FC<LandingCanvasSectionsProps> = ({
 	              paletteSectionTarget={paletteSectionTarget}
 	              onSelectBlock={onSelectBlock}
               onDeleteBlock={onDeleteBlock}
+              onMoveBlock={onMoveBlock}
+              getBlockMoveState={getBlockMoveState}
               onPatchBlock={onPatchBlock}
               onPatchBlockSettings={onPatchBlockSettings}
               onSaveBlock={onSaveBlock}
@@ -4736,6 +4963,8 @@ const LandingCanvasSections: React.FC<LandingCanvasSectionsProps> = ({
 	              paletteSectionTarget={paletteSectionTarget}
 	              onSelectBlock={onSelectBlock}
               onDeleteBlock={onDeleteBlock}
+              onMoveBlock={onMoveBlock}
+              getBlockMoveState={getBlockMoveState}
               onPatchBlock={onPatchBlock}
               onPatchBlockSettings={onPatchBlockSettings}
               onSaveBlock={onSaveBlock}
@@ -4762,6 +4991,8 @@ const LandingCanvasSections: React.FC<LandingCanvasSectionsProps> = ({
 	          paletteSectionTarget={paletteSectionTarget}
 	          onSelectBlock={onSelectBlock}
           onDeleteBlock={onDeleteBlock}
+          onMoveBlock={onMoveBlock}
+          getBlockMoveState={getBlockMoveState}
           onPatchBlock={onPatchBlock}
           onPatchBlockSettings={onPatchBlockSettings}
           onSaveBlock={onSaveBlock}
@@ -4787,6 +5018,8 @@ interface LandingSectionRenderProps {
   paletteSectionTarget?: PaletteSectionTarget | null
   onSelectBlock: (blockId: string) => void
   onDeleteBlock: (blockId: string) => void
+  onMoveBlock: (blockId: string, direction: BlockMoveDirection) => void
+  getBlockMoveState: (block: SiteBlock) => BlockMoveState
   onPatchBlock: (blockId: string, patch: Partial<SiteBlock>) => void
   onPatchBlockSettings: (block: SiteBlock, patch: Record<string, unknown>) => void
   onSaveBlock: (blockId: string) => void
@@ -4808,6 +5041,8 @@ const LandingSectionColumns: React.FC<LandingSectionRenderProps> = ({
   paletteSectionTarget,
   onSelectBlock,
   onDeleteBlock,
+  onMoveBlock,
+  getBlockMoveState,
   onPatchBlock,
   onPatchBlockSettings,
   onSaveBlock
@@ -4840,29 +5075,36 @@ const LandingSectionColumns: React.FC<LandingSectionRenderProps> = ({
             {isTargetColumn && columnBlocks.length === 0 && palettePreviewBlock && (
               <PaletteInsertPreview block={palettePreviewBlock} forms={forms} calendars={calendars} />
             )}
-            {columnBlocks.map(block => (
-              <React.Fragment key={block.id}>
-                {isTargetColumn && previewBeforeBlockId === block.id && palettePreviewBlock && (
-                  <PaletteInsertPreview block={palettePreviewBlock} forms={forms} calendars={calendars} />
-                )}
-                <SortableCanvasBlock
-                  block={block}
-                  blocks={blocks}
-                  index={blockIndexById.get(block.id) ?? 0}
-                  selected={selectedBlockId === block.id}
-                  site={site}
-                  forms={forms}
-                  calendars={calendars}
-                  pages={pages}
-                  activePageId={activePageId}
-                  onSelect={() => onSelectBlock(block.id)}
-                  onDelete={() => onDeleteBlock(block.id)}
-                  onPatchBlock={(patch) => onPatchBlock(block.id, patch)}
-                  onPatchSettings={(patch) => onPatchBlockSettings(block, patch)}
-                  onSave={() => onSaveBlock(block.id)}
-                />
-              </React.Fragment>
-            ))}
+            {columnBlocks.map(block => {
+              const moveState = getBlockMoveState(block)
+              return (
+                <React.Fragment key={block.id}>
+                  {isTargetColumn && previewBeforeBlockId === block.id && palettePreviewBlock && (
+                    <PaletteInsertPreview block={palettePreviewBlock} forms={forms} calendars={calendars} />
+                  )}
+                  <SortableCanvasBlock
+                    block={block}
+                    blocks={blocks}
+                    index={blockIndexById.get(block.id) ?? 0}
+                    selected={selectedBlockId === block.id}
+                    site={site}
+                    forms={forms}
+                    calendars={calendars}
+                    pages={pages}
+                    activePageId={activePageId}
+                    canMoveUp={moveState.canMoveUp}
+                    canMoveDown={moveState.canMoveDown}
+                    onSelect={() => onSelectBlock(block.id)}
+                    onDelete={() => onDeleteBlock(block.id)}
+                    onMoveUp={() => onMoveBlock(block.id, 'up')}
+                    onMoveDown={() => onMoveBlock(block.id, 'down')}
+                    onPatchBlock={(patch) => onPatchBlock(block.id, patch)}
+                    onPatchSettings={(patch) => onPatchBlockSettings(block, patch)}
+                    onSave={() => onSaveBlock(block.id)}
+                  />
+                </React.Fragment>
+              )
+            })}
             {showPreviewAfterColumn && palettePreviewBlock && (
               <PaletteInsertPreview block={palettePreviewBlock} forms={forms} calendars={calendars} />
             )}
@@ -4892,6 +5134,8 @@ const SortableLandingSection: React.FC<LandingSectionRenderProps> = ({
   paletteSectionTarget,
   onSelectBlock,
   onDeleteBlock,
+  onMoveBlock,
+  getBlockMoveState,
   onPatchBlock,
   onPatchBlockSettings,
   onSaveBlock
@@ -4899,6 +5143,7 @@ const SortableLandingSection: React.FC<LandingSectionRenderProps> = ({
   const section = lane.section!
   const settings = section.settings || {}
   const selected = selectedBlockId === section.id
+  const moveState = getBlockMoveState(section)
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: section.id,
     animateLayoutChanges: sortableAnimateLayoutChanges,
@@ -4917,7 +5162,7 @@ const SortableLandingSection: React.FC<LandingSectionRenderProps> = ({
       className={getBlockStyleClassName(section, `rstk-section-lane rstkSel ${selected ? 'rstkSelActive' : ''} ${isDragging ? 'rstkSelDragging' : ''}`)}
       style={{
         transform: CSS.Transform.toString(transform),
-	        transition: transition || 'transform 320ms cubic-bezier(0.2, 0.8, 0.2, 1)',
+	        transition: transition || 'transform 420ms cubic-bezier(0.2, 0.8, 0.2, 1)',
         opacity: isDragging ? 0.34 : undefined,
         zIndex: isDragging ? 8 : undefined,
         ...getBlockCanvasStyle(section)
@@ -4931,9 +5176,46 @@ const SortableLandingSection: React.FC<LandingSectionRenderProps> = ({
         <button type="button" className="rstkBlockTool rstkBlockToolDrag" {...attributes} {...listeners} aria-label="Reordenar franja">
           <GripVertical size={15} />
         </button>
-        <button type="button" className="rstkBlockTool rstkBlockToolDelete" onClick={(event) => { event.stopPropagation(); onDeleteBlock(section.id) }} aria-label="Eliminar franja">
-          <Trash2 size={14} />
+        <button
+          type="button"
+          className="rstkBlockTool"
+          disabled={!moveState.canMoveUp}
+          onClick={(event) => { event.stopPropagation(); onMoveBlock(section.id, 'up') }}
+          aria-label="Subir franja"
+        >
+          <ArrowUp size={14} />
         </button>
+        <button
+          type="button"
+          className="rstkBlockTool"
+          disabled={!moveState.canMoveDown}
+          onClick={(event) => { event.stopPropagation(); onMoveBlock(section.id, 'down') }}
+          aria-label="Bajar franja"
+        >
+          <ArrowDown size={14} />
+        </button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              className="rstkBlockTool rstkBlockToolMenu"
+              onClick={(event) => event.stopPropagation()}
+              onPointerDown={(event) => event.stopPropagation()}
+              aria-label="Opciones de la franja"
+            >
+              <MoreVertical size={15} />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" sideOffset={6} className={styles.pageMenu}>
+            <DropdownMenuItem
+              className={styles.pageMenuDanger}
+              onSelect={() => onDeleteBlock(section.id)}
+            >
+              <Trash2 size={14} />
+              Eliminar
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
       <div className="rstk-section-inner">
         {hasHeading && (
@@ -4958,6 +5240,8 @@ const SortableLandingSection: React.FC<LandingSectionRenderProps> = ({
 	          paletteSectionTarget={paletteSectionTarget}
 	          onSelectBlock={onSelectBlock}
           onDeleteBlock={onDeleteBlock}
+          onMoveBlock={onMoveBlock}
+          getBlockMoveState={getBlockMoveState}
           onPatchBlock={onPatchBlock}
           onPatchBlockSettings={onPatchBlockSettings}
           onSaveBlock={onSaveBlock}
