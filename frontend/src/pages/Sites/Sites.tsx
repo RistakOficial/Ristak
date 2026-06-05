@@ -3220,6 +3220,7 @@ export const Sites: React.FC = () => {
                         canvasStyle={canvasTheme!.vars}
                         active={paletteDragging}
                         pageSelected={selectedBlockId === PAGE_SELECTED_ID}
+                        fluidAboveDesign={isLanding(editorSite) && device === 'desktop'}
                         onClear={() => {
                           setSelectedBlockId(PAGE_SELECTED_ID)
                           setPaletteInsertIndex(null)
@@ -3248,6 +3249,7 @@ export const Sites: React.FC = () => {
                                   />
                                 </div>
                               )}
+                              <div className="rstk-form">
 	                              {isLanding(editorSite) ? (
 	                                !hasLandingCanvasContent ? (
 	                                  palettePreviewBlock && isTopLevelLandingBlockType(paletteDragPayload?.blockType) ? (
@@ -3334,6 +3336,7 @@ export const Sites: React.FC = () => {
                                   <button type="button" data-submit>{editorSite.theme?.submitText || 'Enviar'}</button>
                                 </div>
                               )}
+                              </div>
                             </div>
                           </main>
                         </div>
@@ -4696,6 +4699,7 @@ interface CanvasStageProps {
   canvasStyle: React.CSSProperties
   active?: boolean
   pageSelected?: boolean
+  fluidAboveDesign?: boolean
   onClear?: () => void
   onDragOver?: React.DragEventHandler<HTMLDivElement>
   onDragLeave?: React.DragEventHandler<HTMLDivElement>
@@ -4704,11 +4708,12 @@ interface CanvasStageProps {
 }
 
 const CanvasStage: React.FC<CanvasStageProps> = ({
-  designWidth, canvasClassName, canvasStyle, active, pageSelected, onClear, onDragOver, onDragLeave, onDrop, children
+  designWidth, canvasClassName, canvasStyle, active, pageSelected, fluidAboveDesign, onClear, onDragOver, onDragLeave, onDrop, children
 }) => {
   const viewportRef = useRef<HTMLDivElement>(null)
   const stageRef = useRef<HTMLDivElement>(null)
   const [scale, setScale] = useState(1)
+  const [renderWidth, setRenderWidth] = useState(designWidth)
   const [stageHeight, setStageHeight] = useState(0)
 
   useLayoutEffect(() => {
@@ -4716,8 +4721,10 @@ const CanvasStage: React.FC<CanvasStageProps> = ({
     const stage = stageRef.current
     if (!viewport || !stage) return
     const recompute = () => {
-      const avail = viewport.clientWidth - 8
-      const next = Math.max(0.2, Math.min(1, avail / designWidth))
+      const avail = Math.max(1, viewport.clientWidth - (fluidAboveDesign ? 0 : 8))
+      const nextRenderWidth = fluidAboveDesign && avail > designWidth ? avail : designWidth
+      const next = Math.max(0.2, Math.min(1, avail / nextRenderWidth))
+      setRenderWidth(nextRenderWidth)
       setScale(next)
       setStageHeight(stage.offsetHeight * next)
     }
@@ -4726,12 +4733,12 @@ const CanvasStage: React.FC<CanvasStageProps> = ({
     observer.observe(viewport)
     observer.observe(stage)
     return () => observer.disconnect()
-  }, [designWidth])
+  }, [designWidth, fluidAboveDesign])
 
   return (
     <div
       ref={viewportRef}
-      className={`canvasViewport ${active ? 'canvasViewportActive' : ''}`}
+      className={`canvasViewport ${fluidAboveDesign ? 'canvasViewportFlush' : ''} ${active ? 'canvasViewportActive' : ''}`}
       style={canvasStyle}
       onClick={onClear}
       onDragOver={onDragOver}
@@ -4740,12 +4747,12 @@ const CanvasStage: React.FC<CanvasStageProps> = ({
     >
       <div
         className="canvasScaler"
-        style={{ ...canvasStyle, width: Math.round(designWidth * scale), height: Math.round(stageHeight) } as React.CSSProperties}
+        style={{ ...canvasStyle, width: Math.round(renderWidth * scale), height: Math.round(stageHeight) } as React.CSSProperties}
       >
         <div
           ref={stageRef}
           className={`canvasStage ${canvasClassName} ${pageSelected ? 'canvasPageSelected' : ''}`}
-          style={{ ...canvasStyle, width: designWidth, transform: `scale(${scale})`, ['--rstk-scale' as string]: scale } as React.CSSProperties}
+          style={{ ...canvasStyle, width: renderWidth, transform: `scale(${scale})`, ['--rstk-scale' as string]: scale } as React.CSSProperties}
         >
           {children}
         </div>

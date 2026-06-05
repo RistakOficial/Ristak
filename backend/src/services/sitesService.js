@@ -5008,7 +5008,7 @@ const RSTK_BASE_CSS = `
     border-radius:var(--rstk-radius-lg);box-shadow:none;
     padding:var(--rstk-pad);overflow:hidden;
   }
-  form{display:grid;gap:18px;background:transparent;border:0;box-shadow:none;padding:0;margin:0}
+  form{width:100%;display:grid;gap:18px;background:transparent;border:0;box-shadow:none;padding:0;margin:0}
 
   .rstk-headline{margin:0;font-weight:var(--rstk-heading-weight);font-size:clamp(1.7rem,4.6vw,3rem);line-height:1.05;letter-spacing:0}
   .rstk-kind-landing .rstk-headline{font-size:clamp(2rem,5.4vw,3.6rem)}

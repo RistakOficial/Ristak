@@ -138,7 +138,7 @@
   border-radius: var(--rstk-radius-lg); box-shadow: none;
   padding: var(--rstk-pad); overflow: hidden;
 }
-.rstkCanvas .rstk-form { display: grid; gap: 18px; background: transparent; border: 0; box-shadow: none; padding: 0; margin: 0; }
+.rstkCanvas .rstk-form { width: 100%; display: grid; gap: 18px; background: transparent; border: 0; box-shadow: none; padding: 0; margin: 0; }
 
 .rstkCanvas .rstk-headline { margin: 0; font-weight: var(--rstk-heading-weight); font-size: clamp(1.7rem, 4.6vw, 3rem); line-height: 1.05; letter-spacing: 0; }
 .rstkCanvas.rstk-kind-landing .rstk-headline { font-size: clamp(2rem, 5.4vw, 3.6rem); }
@@ -310,6 +310,10 @@
 }
 .canvasViewport::-webkit-scrollbar { width: 0; height: 0; display: none; }
 .canvasViewportActive { box-shadow: 0 0 0 3px color-mix(in srgb, var(--rstk-accent, #2563eb) 22%, transparent); }
+
+.canvasViewportFlush,
+.canvasViewportFlush .canvasScaler,
+.canvasViewportFlush .canvasStage { border-radius: 0; }
 
 /* The scaler reserves the post-scale footprint; the inner page is rendered at
    its true design width and transform-scaled to fit (a real "compressed monitor"). */
