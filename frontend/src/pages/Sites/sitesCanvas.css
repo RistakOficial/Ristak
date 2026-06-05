@@ -28,14 +28,20 @@
 
 /* The frame carries the page background + image (published <body>). */
 .rstkCanvas .rstk-frame {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
   background-color: var(--rstk-page-bg);
   background-image: var(--rstk-page-image);
   background-position: var(--rstk-page-image-position, center top);
-  background-repeat: no-repeat;
+  background-repeat: var(--rstk-page-image-repeat, no-repeat);
   background-size: var(--rstk-page-image-size, auto);
+  background-attachment: var(--rstk-page-image-attachment, scroll);
   padding: var(--rstk-frame-pad, clamp(10px, 3vw, 32px)) 16px;
 }
-.rstkCanvas .rstk-page { width: 100%; max-width: var(--rstk-max); margin: 0 auto; border: var(--rstk-page-border-width, 0) solid var(--rstk-page-border, transparent); border-radius: var(--rstk-page-radius, 0); }
+.rstkCanvas .rstk-frame::before { content: ""; position: absolute; inset: 0; z-index: 1; background: var(--rstk-page-overlay, none); pointer-events: none; }
+.rstkCanvas .rstk-bg-video { position: absolute; inset: 0; z-index: 0; width: 100%; height: 100%; object-fit: var(--rstk-page-video-fit, cover); pointer-events: none; }
+.rstkCanvas .rstk-page { position: relative; z-index: 2; width: 100%; max-width: var(--rstk-max); margin: 0 auto; border: var(--rstk-page-border-width, 0) solid var(--rstk-page-border, transparent); border-radius: var(--rstk-page-radius, 0); }
 .rstkCanvas .rstk-shell { display: grid; gap: var(--rstk-gap); }
 .rstkCanvas.rstk-centered .rstk-shell { text-align: center; justify-items: center; }
 .rstkCanvas.rstk-centered .rstk-subheading, .rstkCanvas.rstk-centered .rstk-text { margin-inline: auto; }
@@ -100,9 +106,9 @@
 .rstkCanvas .rstk-subheading { margin: 0; color: var(--rstk-muted); font-size: clamp(1rem, 2vw, 1.18rem); max-width: var(--rstk-content-max, 60ch); }
 .rstkCanvas .rstk-kicker { margin: 0; color: var(--rstk-accent); font-size: .78rem; font-weight: 800; text-transform: uppercase; letter-spacing: .09em; }
 .rstkCanvas .rstk-text { margin: 0; color: color-mix(in srgb, var(--rstk-ink) 80%, transparent); max-width: var(--rstk-content-max, 66ch); }
-.rstkCanvas .rstk-hero, .rstkCanvas .rstk-cta, .rstkCanvas .rstk-section-list, .rstkCanvas .rstk-embedded-form { display: grid; gap: 14px; justify-items: var(--rstk-block-justify, stretch); text-align: var(--rstk-block-align, inherit); }
+.rstkCanvas .rstk-hero, .rstkCanvas .rstk-section-break, .rstkCanvas .rstk-cta, .rstkCanvas .rstk-section-list, .rstkCanvas .rstk-embedded-form { display: grid; gap: 14px; justify-items: var(--rstk-block-justify, stretch); text-align: var(--rstk-block-align, inherit); }
 .rstkCanvas .rstk-hero { gap: 16px; }
-.rstkCanvas .rstk-section-list h2, .rstkCanvas .rstk-cta h2, .rstkCanvas .rstk-embedded-form h2 { margin: 0; font-size: clamp(1.25rem, 2.6vw, 1.7rem); font-weight: var(--rstk-heading-weight); letter-spacing: 0; }
+.rstkCanvas .rstk-section-break h2, .rstkCanvas .rstk-section-list h2, .rstkCanvas .rstk-cta h2, .rstkCanvas .rstk-embedded-form h2 { margin: 0; font-size: clamp(1.25rem, 2.6vw, 1.7rem); font-weight: var(--rstk-heading-weight); letter-spacing: 0; }
 
 .rstkCanvas .rstk-button-link, .rstkCanvas .rstk-actions button {
   -webkit-appearance: none; appearance: none; cursor: pointer;
@@ -197,6 +203,10 @@
   margin-left: var(--rstk-content-margin-left, auto);
   margin-right: var(--rstk-content-margin-right, auto);
 }
+
+.rstkCanvas.rstk-kind-landing .rstk-section-break { min-height: clamp(160px, 24vw, 360px); align-content: center; padding: clamp(28px, 5vw, 76px) clamp(20px, 4vw, 56px); }
+.rstkCanvas.rstk-kind-landing .rstk-section-break h2 { font-family: var(--rstk-display); font-size: clamp(2rem, 4.6vw, 3.4rem); line-height: 1.08; }
+.rstkCanvas.rstk-kind-landing .rstk-section-break p { max-width: var(--rstk-content-max, 58ch); margin: 0; color: color-mix(in srgb, var(--rstk-block-text, var(--rstk-ink)) 74%, transparent); }
 
 .rstkCanvas.rstk-kind-landing .rstk-section-list { gap: clamp(20px, 3vw, 38px); }
 .rstkCanvas.rstk-kind-landing .rstk-section-list h2 { text-align: var(--rstk-block-align, center); max-width: var(--rstk-content-max, 20ch); margin-left: var(--rstk-content-margin-left, auto); margin-right: var(--rstk-content-margin-right, auto); font-size: clamp(1.85rem, 3.4vw, 2.85rem); line-height: 1.08; letter-spacing: 0; }

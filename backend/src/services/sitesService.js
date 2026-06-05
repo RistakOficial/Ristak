@@ -25,6 +25,7 @@ export const CONTENT_BLOCK_TYPES = new Set([
   'text',
   'embed',
   'calendar_embed',
+  'section',
   'hero',
   'image',
   'video',
@@ -570,6 +571,15 @@ function isCssColor(value) {
   return channels.every(channel => channel >= 0 && channel <= 255) && alpha >= 0 && alpha <= 1
 }
 
+function isCssGradient(value) {
+  const raw = cleanString(value)
+  return /^(linear|radial|conic)-gradient\(/i.test(raw) && !/[;{}<>]/.test(raw)
+}
+
+function isCssPaint(value) {
+  return isCssColor(value) || isCssGradient(value)
+}
+
 function normalizeCssColor(value, fallback = '') {
   const raw = cleanString(value).toLowerCase()
   if (!raw) return fallback
@@ -582,6 +592,12 @@ function normalizeCssColor(value, fallback = '') {
   const alpha = match[4] === undefined ? 1 : Math.round(Number(match[4]) * 100) / 100
   const toHex = channel => Math.max(0, Math.min(255, channel)).toString(16).padStart(2, '0')
   return alpha >= 1 ? `#${toHex(r)}${toHex(g)}${toHex(b)}` : `rgba(${r}, ${g}, ${b}, ${alpha})`
+}
+
+function normalizeCssPaint(value, fallback = '') {
+  const raw = cleanString(value)
+  if (isCssGradient(raw)) return raw
+  return normalizeCssColor(raw, fallback)
 }
 
 function normalizeAITheme(theme = {}) {
@@ -896,7 +912,7 @@ function normalizeAISiteBlueprint(siteKind, aiSite = {}) {
 
   const id = crypto.randomUUID()
   const allowedTypes = siteType === 'landing_page'
-    ? new Set(['hero', 'title', 'subtitle', 'text', 'image', 'video', 'button', 'benefits', 'testimonials', 'services', 'embed', 'calendar_embed', 'form_embed', 'faq', 'cta'])
+    ? new Set(['hero', 'section', 'title', 'subtitle', 'text', 'image', 'video', 'button', 'benefits', 'testimonials', 'services', 'embed', 'calendar_embed', 'form_embed', 'faq', 'cta'])
     : new Set([...FIELD_BLOCK_TYPES, 'title', 'subtitle', 'description', 'video', 'embed', 'calendar_embed'])
   const fallbackType = siteType === 'landing_page' ? 'text' : 'short_text'
   const blocksInput = Array.isArray(aiSite.blocks)
@@ -937,6 +953,7 @@ function normalizeAISiteBlueprint(siteKind, aiSite = {}) {
     description: limitString(aiSite.description || seo.description, 600),
     theme: {
       ...theme,
+      ...(siteType === 'landing_page' ? { pageMaxWidth: 1440 } : {}),
       ...(aiTemplate ? { template: aiTemplate } : {}),
       ...(successMessage || disqualifiedMessage
         ? {
@@ -947,7 +964,7 @@ function normalizeAISiteBlueprint(siteKind, aiSite = {}) {
           }
         : {})
     },
-    metaEventName: 'Lead',
+    metaEventName: SITE_META_NO_EVENT,
     blocks
   }
 }
@@ -1123,6 +1140,9 @@ export async function createSite(input = {}) {
   const description = cleanString(input.description)
   const domain = ''
   const theme = { ...DEFAULT_THEME, ...(input.theme || {}) }
+  if (siteType === 'landing_page' && theme.pageMaxWidth === undefined) {
+    theme.pageMaxWidth = 1440
+  }
   const status = validateSiteStatus(input.status || 'draft')
 
   await db.run(`
@@ -1141,7 +1161,7 @@ export async function createSite(input = {}) {
     description || null,
     jsonString(theme),
     normalizeBoolean(input.metaCapiEnabled),
-    normalizeSiteMetaEventName(input.metaEventName, { allowNone: true })
+    normalizeSiteMetaEventName(input.metaEventName, { allowNone: true, fallback: SITE_META_NO_EVENT })
   ])
 
   for (const block of buildDefaultBlocks(id, siteType, theme.template)) {
@@ -2305,6 +2325,10 @@ function blockSettingColor(settings, key) {
   return normalizeCssColor(settings && settings[key], '')
 }
 
+function blockSettingPaint(settings, key) {
+  return normalizeCssPaint(settings && settings[key], '')
+}
+
 function blockSettingNumber(settings, key, min, max) {
   const value = Number(settings && settings[key])
   if (!Number.isFinite(value)) return null
@@ -2370,15 +2394,15 @@ function marginForAlign(align) {
 function renderBlockStyleVars(block) {
   const settings = block.settings || {}
   const vars = []
-  const blockBg = blockSettingColor(settings, 'blockBg')
+  const blockBg = blockSettingPaint(settings, 'blockBg')
   const blockText = blockSettingColor(settings, 'blockText')
   const blockBorder = blockSettingColor(settings, 'blockBorderColor')
-  const buttonBg = blockSettingColor(settings, 'buttonBg')
+  const buttonBg = blockSettingPaint(settings, 'buttonBg')
   const buttonText = blockSettingColor(settings, 'buttonTextColor')
   const buttonBorder = blockSettingColor(settings, 'buttonBorderColor')
-  const cardBg = blockSettingColor(settings, 'cardBg')
+  const cardBg = blockSettingPaint(settings, 'cardBg')
   const cardBorder = blockSettingColor(settings, 'cardBorderColor')
-  const fieldBg = blockSettingColor(settings, 'fieldBg')
+  const fieldBg = blockSettingPaint(settings, 'fieldBg')
   const fieldBorder = blockSettingColor(settings, 'fieldBorder')
   const fontFamily = cleanString(settings.fontFamily)
   const fontSize = blockSettingNumber(settings, 'fontSize', 12, 72)
@@ -2477,6 +2501,15 @@ function renderContentBlock(block, context = {}) {
 
   if (block.blockType === 'headline' || block.blockType === 'title') {
     return `<h1 class="rstk-headline">${content || escapeHtml(block.label)}</h1>`
+  }
+
+  if (block.blockType === 'section') {
+    return `
+      <section class="rstk-section-break">
+        <h2>${content || escapeHtml(block.label || 'Nueva seccion')}</h2>
+        ${settings.subtitle ? `<p>${escapeHtml(settings.subtitle)}</p>` : ''}
+      </section>
+    `
   }
 
   if (block.blockType === 'subheading' || block.blockType === 'subtitle' || block.blockType === 'description') {
@@ -2908,57 +2941,26 @@ function renderAvatar(brand) {
   return `<span class="rstk-avatar">${escapeHtml(brand.initial)}</span>`
 }
 
+function getSocialPlatformIcon(platform) {
+  if (platform === 'instagram') return RSTK_ICONS.camera
+  if (platform === 'tiktok') return RSTK_ICONS.music
+  return ''
+}
+
 function renderBrandChrome(template, brand) {
-  const followerText = brand.followers ? ` <span aria-hidden="true">&middot;</span> ${escapeHtml(brand.followers)} seguidores` : ''
-
-  if (template.chrome === 'facebook') {
+  const platform = template.chrome
+  if (platform === 'facebook' || platform === 'instagram' || platform === 'tiktok') {
+    const platformLabel = platform === 'facebook' ? 'Facebook' : platform === 'instagram' ? 'Instagram' : 'TikTok'
+    const secondary = brand.followers ? `${escapeHtml(brand.followers)} seguidores` : escapeHtml(brand.subtitle)
     return `
-      <header class="rstk-chrome rstk-fb">
-        <span class="rstk-fb-line" aria-hidden="true"></span>
-        <div class="rstk-fb-row">
+      <header class="rstk-chrome rstk-social-profile rstk-social-profile-${platform}" aria-label="Perfil de ${platformLabel}">
+        <div class="rstk-social-image">
           ${renderAvatar(brand)}
-          <div class="rstk-fb-meta">
-            <div class="rstk-fb-name">${escapeHtml(brand.name)}${brand.verified ? RSTK_ICONS.verified : ''}</div>
-            <div class="rstk-fb-sub">${escapeHtml(brand.subtitle)}${followerText} <span aria-hidden="true">&middot;</span> ${RSTK_ICONS.globe}</div>
-          </div>
-          <span class="rstk-fb-mark" aria-hidden="true">f</span>
+          <span class="rstk-social-platform rstk-social-platform-${platform}" aria-hidden="true">${getSocialPlatformIcon(platform)}</span>
         </div>
-      </header>
-    `
-  }
-
-  if (template.chrome === 'instagram') {
-    return `
-      <header class="rstk-chrome rstk-ig">
-        <div class="rstk-ig-bar">
-          <span class="rstk-ig-cam" aria-hidden="true">${RSTK_ICONS.camera}</span>
-          <span class="rstk-ig-word">Instagram</span>
-          <span class="rstk-ig-dots" aria-hidden="true">&#8943;</span>
-        </div>
-        <div class="rstk-ig-profile">
-          <span class="rstk-ig-ring">${renderAvatar(brand)}</span>
-          <div class="rstk-ig-meta">
-            <div class="rstk-ig-name">${escapeHtml(brand.handle)}</div>
-            <div class="rstk-ig-sub">${escapeHtml(brand.subtitle)}${followerText}</div>
-          </div>
-        </div>
-      </header>
-    `
-  }
-
-  if (template.chrome === 'tiktok') {
-    return `
-      <header class="rstk-chrome rstk-tt">
-        <div class="rstk-tt-bar">
-          <span class="rstk-tt-note" aria-hidden="true">${RSTK_ICONS.music}</span>
-          <span>TikTok</span>
-        </div>
-        <div class="rstk-tt-profile">
-          ${renderAvatar(brand)}
-          <div class="rstk-tt-meta">
-            <div class="rstk-tt-name">@${escapeHtml(brand.handle)}</div>
-            <div class="rstk-tt-sub">${escapeHtml(brand.subtitle)}${followerText}</div>
-          </div>
+        <div class="rstk-social-details">
+          <div class="rstk-social-name">${escapeHtml(brand.name)}${brand.verified ? RSTK_ICONS.verified : ''}</div>
+          <div class="rstk-social-followers">${secondary}</div>
         </div>
       </header>
     `
@@ -2987,14 +2989,17 @@ const RSTK_BASE_CSS = `
     background-color:var(--rstk-page-bg);
     background-image:var(--rstk-page-image);
     background-position:var(--rstk-page-image-position,center top);
-    background-repeat:no-repeat;
+    background-repeat:var(--rstk-page-image-repeat,no-repeat);
     background-size:var(--rstk-page-image-size,auto);
+    background-attachment:var(--rstk-page-image-attachment,scroll);
     line-height:1.5;letter-spacing:0;
     -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
   }
   img{max-width:100%;display:block}
-  .rstk-frame{min-height:100vh;padding:var(--rstk-frame-pad,clamp(10px,3vw,32px)) 16px}
-  .rstk-page{width:100%;max-width:var(--rstk-max);margin:0 auto;border:var(--rstk-page-border-width,0) solid var(--rstk-page-border,transparent);border-radius:var(--rstk-page-radius,0)}
+  .rstk-frame{position:relative;isolation:isolate;overflow:hidden;min-height:100vh;padding:var(--rstk-frame-pad,clamp(10px,3vw,32px)) 16px;background-color:var(--rstk-page-bg);background-image:var(--rstk-page-image);background-position:var(--rstk-page-image-position,center top);background-repeat:var(--rstk-page-image-repeat,no-repeat);background-size:var(--rstk-page-image-size,auto);background-attachment:var(--rstk-page-image-attachment,scroll)}
+  .rstk-frame::before{content:"";position:absolute;inset:0;z-index:1;background:var(--rstk-page-overlay,none);pointer-events:none}
+  .rstk-bg-video{position:absolute;inset:0;z-index:0;width:100%;height:100%;object-fit:var(--rstk-page-video-fit,cover);pointer-events:none}
+  .rstk-page{position:relative;z-index:2;width:100%;max-width:var(--rstk-max);margin:0 auto;border:var(--rstk-page-border-width,0) solid var(--rstk-page-border,transparent);border-radius:var(--rstk-page-radius,0)}
   .rstk-shell{display:grid;gap:var(--rstk-gap)}
   .rstk-centered .rstk-shell{text-align:center;justify-items:center}
   .rstk-centered .rstk-subheading,.rstk-centered .rstk-text{margin-inline:auto}
@@ -3058,9 +3063,9 @@ const RSTK_BASE_CSS = `
   .rstk-subheading{margin:0;color:var(--rstk-muted);font-size:clamp(1rem,2vw,1.18rem);max-width:var(--rstk-content-max,60ch)}
   .rstk-kicker{margin:0;color:var(--rstk-accent);font-size:.78rem;font-weight:800;text-transform:uppercase;letter-spacing:.09em}
   .rstk-text{margin:0;color:color-mix(in srgb,var(--rstk-ink) 80%,transparent);max-width:var(--rstk-content-max,66ch)}
-  .rstk-hero,.rstk-cta,.rstk-section-list,.rstk-embedded-form{display:grid;gap:14px;justify-items:var(--rstk-block-justify,stretch);text-align:var(--rstk-block-align,inherit)}
+  .rstk-hero,.rstk-section-break,.rstk-cta,.rstk-section-list,.rstk-embedded-form{display:grid;gap:14px;justify-items:var(--rstk-block-justify,stretch);text-align:var(--rstk-block-align,inherit)}
   .rstk-hero{gap:16px}
-  .rstk-section-list h2,.rstk-cta h2,.rstk-embedded-form h2{margin:0;font-size:clamp(1.25rem,2.6vw,1.7rem);font-weight:var(--rstk-heading-weight);letter-spacing:0}
+  .rstk-section-break h2,.rstk-section-list h2,.rstk-cta h2,.rstk-embedded-form h2{margin:0;font-size:clamp(1.25rem,2.6vw,1.7rem);font-weight:var(--rstk-heading-weight);letter-spacing:0}
 
   .rstk-button-link,.rstk-actions button{
     -webkit-appearance:none;appearance:none;cursor:pointer;
@@ -3148,6 +3153,24 @@ const RSTK_BASE_CSS = `
 
   .rstk-chrome .rstk-avatar{width:46px;height:46px;border-radius:50%;display:grid;place-items:center;overflow:hidden;background:var(--rstk-accent);color:#fff;font-weight:800;font-size:1.15rem;flex:0 0 auto}
   .rstk-chrome .rstk-avatar img{width:100%;height:100%;object-fit:cover}
+  .rstk-social-profile{margin:calc(-1 * var(--rstk-pad)) calc(-1 * var(--rstk-pad)) 0;padding:20px var(--rstk-pad) 14px;display:flex;align-items:center;gap:8px;background:transparent;border:0}
+  .rstk-social-image{position:relative;display:inline-block;flex:0 0 auto}
+  .rstk-social-profile .rstk-avatar{width:64px;height:64px;font-size:1.35rem}
+  .rstk-social-platform{position:absolute;right:-1px;bottom:-1px;z-index:2;width:28px;height:28px;border-radius:50%;border:2px solid #fff;background:#fff;display:grid;place-items:center;padding:2px;color:#fff;overflow:hidden}
+  .rstk-social-platform-facebook{background:#fff url('https://storage.googleapis.com/msgsndr/cAEl3p2eZROgv2GFvMZM/media/67b7bb9d7c922f0d2f3b2adf.svg') center/contain no-repeat}
+  .rstk-social-platform-instagram{background:var(--rstk-gradient)}
+  .rstk-social-platform-tiktok{background:#050505;box-shadow:inset 1px 0 var(--rstk-cyan),inset -1px 0 var(--rstk-accent)}
+  .rstk-social-platform svg{width:16px;height:16px}
+  .rstk-social-details{display:flex;flex-direction:column;min-width:0}
+  .rstk-social-name{display:flex;align-items:center;gap:4px;min-width:0;font-size:18px;line-height:1.18;font-weight:800;color:var(--rstk-ink)}
+  .rstk-social-name .rstk-verified{width:14px;height:14px;margin-left:0;color:#1877f2;flex:0 0 auto;position:relative;top:1px}
+  .rstk-social-followers{margin-top:2px;color:var(--rstk-muted);font-size:14px;line-height:1.25;font-weight:600}
+  @media (max-width:480px){
+    .rstk-social-profile{padding:15px var(--rstk-pad) 12px}
+    .rstk-social-profile .rstk-avatar{width:60px;height:60px}
+    .rstk-social-name{font-size:18px}
+    .rstk-social-followers{font-size:12px}
+  }
 
   @media (max-width:540px){
     .rstk-actions{flex-direction:column-reverse}
@@ -3170,6 +3193,10 @@ const RSTK_BASE_CSS = `
   .rstk-kind-landing .rstk-hero::before,.rstk-kind-landing .rstk-hero::after{content:none}
   .rstk-kind-landing .rstk-hero .rstk-headline{font-size:clamp(2.6rem,6.2vw,4.6rem);max-width:var(--rstk-content-max,16ch)}
   .rstk-kind-landing .rstk-hero .rstk-subheading{margin-left:var(--rstk-content-margin-left,auto);margin-right:var(--rstk-content-margin-right,auto)}
+
+  .rstk-kind-landing .rstk-section-break{min-height:clamp(160px,24vw,360px);align-content:center;padding:clamp(28px,5vw,76px) clamp(20px,4vw,56px)}
+  .rstk-kind-landing .rstk-section-break h2{font-family:var(--rstk-display);font-size:clamp(2rem,4.6vw,3.4rem);line-height:1.08}
+  .rstk-kind-landing .rstk-section-break p{max-width:var(--rstk-content-max,58ch);margin:0;color:color-mix(in srgb,var(--rstk-block-text,var(--rstk-ink)) 74%,transparent)}
 
   .rstk-kind-landing .rstk-section-list{gap:clamp(20px,3vw,38px)}
   .rstk-kind-landing .rstk-section-list h2{text-align:var(--rstk-block-align,center);max-width:var(--rstk-content-max,20ch);margin-left:var(--rstk-content-margin-left,auto);margin-right:var(--rstk-content-margin-right,auto);font-size:clamp(1.85rem,3.4vw,2.85rem);line-height:1.08;letter-spacing:0}
@@ -3290,6 +3317,41 @@ function cssImageUrl(value) {
   return `url("${raw.replace(/["\\\n\r]/g, '')}")`
 }
 
+function cssMediaUrl(value) {
+  const raw = cleanString(value)
+  if (!raw) return ''
+  if (!/^https?:\/\//i.test(raw) && !raw.startsWith('/') && !/^data:video\//i.test(raw)) return ''
+  return raw.replace(/["\\\n\r]/g, '')
+}
+
+function paintLayer(paint) {
+  if (!paint) return 'none'
+  if (isCssGradient(paint)) return paint
+  return `linear-gradient(${paint}, ${paint})`
+}
+
+function backgroundFitValue(value) {
+  const raw = cleanString(value)
+  if (raw === 'contain') return 'contain'
+  if (raw === 'full_width') return '100% auto'
+  if (raw === 'auto') return 'auto'
+  return 'cover'
+}
+
+function backgroundRepeatValue(value) {
+  const raw = cleanString(value)
+  return ['repeat', 'repeat-x', 'repeat-y'].includes(raw) ? raw : 'no-repeat'
+}
+
+function backgroundPositionValue(value) {
+  const raw = cleanString(value)
+  return raw && !/[;{}<>]/.test(raw) ? raw : 'center center'
+}
+
+function backgroundAttachmentValue(value) {
+  return cleanString(value) === 'fixed' ? 'fixed' : 'scroll'
+}
+
 function deriveNeutralVars(template, bg, userAccent) {
   const dark = relLuminance(bg) < 0.5
   const ink = dark ? '#f4f4f6' : '#0f172a'
@@ -3340,15 +3402,21 @@ function buildStyleSheet(template, maxWidth, overrides = {}, pageVars = {}) {
   const baseFont = template.chrome === 'none' ? `'Inter', ${template.font}` : template.font
   const display = template.chrome === 'none' ? `'Inter Tight', 'Inter', ${template.font}` : template.font
   const pageImage = pageVars.pageImage || v.pageImage
+  const pageOverlay = pageVars.pageOverlay || 'none'
+  const pageBg = pageVars.pageBg || v.pageBg
   return `
   :root{
     --rstk-font:${baseFont};
     --rstk-display:${display};
     --rstk-ease:cubic-bezier(.16,.84,.44,1);
-    --rstk-page-bg:${v.pageBg};
+    --rstk-page-bg:${pageBg};
     --rstk-page-image:${pageImage};
-    --rstk-page-image-size:${pageImage === 'none' ? 'auto' : 'cover'};
-    --rstk-page-image-position:center top;
+    --rstk-page-overlay:${pageOverlay};
+    --rstk-page-image-size:${pageImage === 'none' ? 'auto' : (pageVars.pageImageSize || 'cover')};
+    --rstk-page-image-position:${pageVars.pageImagePosition || 'center center'};
+    --rstk-page-image-repeat:${pageVars.pageImageRepeat || 'no-repeat'};
+    --rstk-page-image-attachment:${pageVars.pageImageAttachment || 'scroll'};
+    --rstk-page-video-fit:${pageVars.pageVideoFit || 'cover'};
     --rstk-ink:${v.ink};
     --rstk-muted:${v.muted};
     --rstk-surface:${v.surface};
@@ -3486,18 +3554,34 @@ export async function renderPublicSiteHtml(site, { pageId, trackingEnabled = tru
   const nextPage = isLandingType ? getNextPage(site, activePage?.id) : null
   const nextPageUrl = nextPage ? pageHref(nextPage.id) : ''
   const submitText = cleanString(theme.submitText) || 'Enviar'
-  const pageMaxWidth = themeNumber(theme, 'pageMaxWidth', isLandingType ? 1160 : (template.id === 'interactive' ? 600 : 520), 360, 1440)
+  const storedPageMaxWidth = Number(theme && theme.pageMaxWidth)
+  const pageMaxWidth = isLandingType && storedPageMaxWidth === 1160
+    ? 1440
+    : themeNumber(theme, 'pageMaxWidth', isLandingType ? 1440 : (template.id === 'interactive' ? 600 : 520), 360, 1440)
   const pagePadding = themeNumber(theme, 'pagePadding', isLandingType ? 50 : 22, 0, 120)
   const pageRadius = themeNumber(theme, 'pageRadius', isLandingType ? 0 : 24, 0, 40)
   const pageBorderWidth = themeNumber(theme, 'pageBorderWidth', 0, 0, 12)
   const pageBorder = themeColor(theme, 'pageBorderColor') || 'transparent'
-  const pageImage = cssImageUrl(theme.backgroundImage)
+  const backgroundMediaType = cleanString(theme.backgroundMediaType) === 'video' ? 'video' : 'image'
+  const rawBackgroundPaint = normalizeCssPaint(theme.backgroundColor, '')
+  const backgroundPaint = rawBackgroundPaint.toLowerCase() === DEFAULT_THEME.backgroundColor ? '' : rawBackgroundPaint
+  const pageImage = backgroundMediaType === 'video' ? '' : cssImageUrl(theme.backgroundImage)
+  const pageVideo = backgroundMediaType === 'video' ? cssMediaUrl(theme.backgroundImage) : ''
+  const pageOverlay = paintLayer(backgroundPaint)
+  const pageBg = backgroundPaint && isCssColor(backgroundPaint) ? normalizeCssColor(backgroundPaint, '') : ''
   const maxWidth = `${pageMaxWidth}px`
   const styleSheet = buildStyleSheet(template, maxWidth, resolveRenderOverrides(template, theme, isLandingType), {
     framePad: `${pagePadding}px`,
     pageBorder,
     pageBorderWidth: `${pageBorderWidth}px`,
+    pageBg,
     pageImage,
+    pageOverlay,
+    pageImageSize: backgroundFitValue(theme.backgroundFit),
+    pageImagePosition: backgroundPositionValue(theme.backgroundPosition),
+    pageImageRepeat: backgroundRepeatValue(theme.backgroundRepeat),
+    pageImageAttachment: backgroundAttachmentValue(theme.backgroundAttachment),
+    pageVideoFit: backgroundFitValue(theme.backgroundFit),
     pageRadius: `${pageRadius}px`
   })
   const chrome = (!isLandingType && template.chrome && template.chrome !== 'none') ? renderBrandChrome(template, brand) : ''
@@ -3555,6 +3639,7 @@ export async function renderPublicSiteHtml(site, { pageId, trackingEnabled = tru
 </head>
 <body class="${bodyClass}">
   <div class="rstk-frame">
+    ${pageVideo ? `<video class="rstk-bg-video" src="${escapeHtml(pageVideo)}" autoplay muted loop playsinline aria-hidden="true"></video>` : ''}
     <main class="rstk-page">
       <div class="rstk-shell">
         ${chrome}

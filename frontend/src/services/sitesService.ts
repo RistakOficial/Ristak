@@ -21,6 +21,7 @@ export type SiteBlockType =
   | 'text'
   | 'embed'
   | 'calendar_embed'
+  | 'section'
   | 'hero'
   | 'image'
   | 'video'
@@ -80,6 +81,11 @@ export interface SiteTheme {
   accentColor?: string
   backgroundColor?: string
   backgroundImage?: string
+  backgroundMediaType?: 'image' | 'video'
+  backgroundFit?: 'cover' | 'contain' | 'full_width' | 'auto'
+  backgroundRepeat?: 'no-repeat' | 'repeat' | 'repeat-x' | 'repeat-y'
+  backgroundPosition?: string
+  backgroundAttachment?: 'scroll' | 'fixed'
   textColor?: string
   template?: SiteTemplateId
   pages?: SitePage[]
@@ -213,6 +219,7 @@ export const blockLabels: Record<SiteBlockType, string> = {
   text: 'Texto',
   embed: 'Embed',
   calendar_embed: 'Calendario',
+  section: 'Seccion',
   hero: 'Hero',
   image: 'Imagen',
   video: 'Video',
@@ -237,6 +244,7 @@ export const blockLabels: Record<SiteBlockType, string> = {
 
 export const landingBlockTypes: SiteBlockType[] = [
   'hero',
+  'section',
   'title',
   'subtitle',
   'text',

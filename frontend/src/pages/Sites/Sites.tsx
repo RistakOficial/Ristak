@@ -35,12 +35,14 @@ import {
   Globe2,
   GripVertical,
   Image,
+  Instagram,
   LayoutTemplate,
   Link2,
   ListChecks,
   Maximize2,
   Monitor,
   MoreVertical,
+  Music2,
   MousePointerClick,
   Pencil,
   Play,
@@ -205,7 +207,7 @@ const blockIcons: Partial<Record<SiteBlockType, React.ReactNode>> = {
 const isChoiceBlock = (blockType: SiteBlockType) =>
   blockType === 'dropdown' || blockType === 'radio' || blockType === 'checkboxes'
 
-const nativeBorderBlockTypes = new Set<SiteBlockType>(['hero', 'cta', 'benefits', 'testimonials', 'services', 'faq', 'form_embed', 'image', 'video', 'embed', 'calendar_embed'])
+const nativeBorderBlockTypes = new Set<SiteBlockType>(['hero', 'section', 'cta', 'benefits', 'testimonials', 'services', 'faq', 'form_embed', 'image', 'video', 'embed', 'calendar_embed'])
 
 const isLanding = (site?: PublicSite | null) => site?.siteType === 'landing_page'
 const isFormSite = (site?: PublicSite | null) => site?.siteType === 'standard_form' || site?.siteType === 'interactive_form'
@@ -298,6 +300,13 @@ const isCssColor = (value?: string): value is string => {
   return channels.every(channel => channel >= 0 && channel <= 255) && alpha >= 0 && alpha <= 1
 }
 
+const isCssGradient = (value?: string): value is string => {
+  const raw = String(value || '').trim()
+  return /^(linear|radial|conic)-gradient\(/i.test(raw) && !/[;{}<>]/.test(raw)
+}
+
+const isCssPaint = (value?: string): value is string => isCssColor(value) || isCssGradient(value)
+
 const normalizeCssColor = (value: string, fallback: string) => {
   const raw = String(value || '').trim().toLowerCase()
   if (!raw) return fallback
@@ -309,6 +318,12 @@ const normalizeCssColor = (value: string, fallback: string) => {
   const [r, g, b] = match.slice(1, 4).map(valuePart => Math.round(Number(valuePart)))
   const alpha = match[4] === undefined ? 1 : Math.round(Number(match[4]) * 100) / 100
   return alpha >= 1 ? rgbToHex(r, g, b) : `rgba(${r}, ${g}, ${b}, ${alpha})`
+}
+
+const normalizeCssPaint = (value: string, fallback: string) => {
+  const raw = String(value || '').trim()
+  if (isCssGradient(raw)) return raw
+  return normalizeCssColor(raw, fallback)
 }
 
 const parseCssColor = (value: string, fallback = '#000000') => {
@@ -459,14 +474,32 @@ const getSettingHex = (settings: Record<string, unknown>, key: string, fallback:
   return isCssColor(value) ? normalizeCssColor(value, fallback) : fallback
 }
 
+const getSettingPaint = (settings: Record<string, unknown>, key: string, fallback: string) => {
+  const value = getSettingString(settings, key)
+  return isCssPaint(value) ? normalizeCssPaint(value, fallback) : fallback
+}
+
 const getThemeHex = (theme: SiteTheme | undefined, key: keyof SiteTheme, fallback: string) => {
   const value = theme?.[key]
   return typeof value === 'string' && isCssColor(value) ? normalizeCssColor(value, fallback) : fallback
 }
 
+const getThemePaint = (theme: SiteTheme | undefined, key: keyof SiteTheme, fallback: string) => {
+  const value = theme?.[key]
+  return typeof value === 'string' && isCssPaint(value) ? normalizeCssPaint(value, fallback) : fallback
+}
+
 const getThemeString = (theme: SiteTheme | undefined, key: keyof SiteTheme) => {
   const value = theme?.[key]
   return typeof value === 'string' ? value : ''
+}
+
+const getThemeBackgroundVideo = (theme: SiteTheme | undefined) => {
+  const mediaType = getThemeString(theme, 'backgroundMediaType')
+  const url = getThemeString(theme, 'backgroundImage').trim()
+  if (mediaType !== 'video' || !url) return ''
+  if (!/^https?:\/\//i.test(url) && !url.startsWith('/') && !/^data:video\//i.test(url)) return ''
+  return url.replace(/["\\\n\r]/g, '')
 }
 
 const spacingSides = [
@@ -490,6 +523,41 @@ const buttonAlignOptions: Array<{ value: ButtonAlign; label: string; icon: React
   ...horizontalAlignOptions,
   { value: 'full', label: 'Completo', icon: <Maximize2 size={14} /> }
 ]
+
+const backgroundMediaTypeOptions = [
+  { value: 'image', label: 'Imagen' },
+  { value: 'video', label: 'Video' }
+] as const
+
+const backgroundVisualOptions = [
+  { value: 'cover', label: 'Centro completo' },
+  { value: 'full_width', label: 'Rellenar 100% ancho' },
+  { value: 'no-repeat', label: 'No repetir' },
+  { value: 'repeat', label: 'Repetir' },
+  { value: 'repeat-x', label: 'Repetir horizontal' },
+  { value: 'repeat-y', label: 'Repetir vertical' },
+  { value: 'repeat-x-fixed-top', label: 'Repetir horizontal fijo arriba' }
+] as const
+
+const getBackgroundVisualValue = (theme: SiteTheme | undefined) => {
+  if (theme?.backgroundAttachment === 'fixed' && theme.backgroundRepeat === 'repeat-x' && theme.backgroundPosition === 'center top') return 'repeat-x-fixed-top'
+  if (theme?.backgroundRepeat === 'repeat') return 'repeat'
+  if (theme?.backgroundRepeat === 'repeat-x') return 'repeat-x'
+  if (theme?.backgroundRepeat === 'repeat-y') return 'repeat-y'
+  if (theme?.backgroundRepeat === 'no-repeat' && theme.backgroundFit === 'full_width') return 'full_width'
+  if (theme?.backgroundRepeat === 'no-repeat' && theme.backgroundFit === 'contain') return 'no-repeat'
+  return 'cover'
+}
+
+const backgroundVisualPatch = (value: string): Partial<SiteTheme> => {
+  if (value === 'full_width') return { backgroundFit: 'full_width', backgroundRepeat: 'no-repeat', backgroundPosition: 'center top', backgroundAttachment: 'scroll' }
+  if (value === 'no-repeat') return { backgroundFit: 'contain', backgroundRepeat: 'no-repeat', backgroundPosition: 'center center', backgroundAttachment: 'scroll' }
+  if (value === 'repeat') return { backgroundFit: 'auto', backgroundRepeat: 'repeat', backgroundPosition: 'center top', backgroundAttachment: 'scroll' }
+  if (value === 'repeat-x') return { backgroundFit: 'auto', backgroundRepeat: 'repeat-x', backgroundPosition: 'center top', backgroundAttachment: 'scroll' }
+  if (value === 'repeat-y') return { backgroundFit: 'auto', backgroundRepeat: 'repeat-y', backgroundPosition: 'left top', backgroundAttachment: 'scroll' }
+  if (value === 'repeat-x-fixed-top') return { backgroundFit: 'auto', backgroundRepeat: 'repeat-x', backgroundPosition: 'center top', backgroundAttachment: 'fixed' }
+  return { backgroundFit: 'cover', backgroundRepeat: 'no-repeat', backgroundPosition: 'center center', backgroundAttachment: 'scroll' }
+}
 
 const isHorizontalAlign = (value: unknown): value is HorizontalAlign =>
   value === 'left' || value === 'center' || value === 'right'
@@ -566,19 +634,19 @@ const getBlockCanvasStyle = (block: SiteBlock): React.CSSProperties => {
   const blockHasNativeBorder = nativeBorderBlockTypes.has(block.blockType)
   const supportsButton = block.blockType === 'hero' || block.blockType === 'button' || block.blockType === 'cta'
 
-  if (isCssColor(bg)) style['--rstk-block-bg'] = normalizeCssColor(bg, '#ffffff')
+  if (isCssPaint(bg)) style['--rstk-block-bg'] = normalizeCssPaint(bg, '#ffffff')
   if (isCssColor(text)) style['--rstk-block-text'] = normalizeCssColor(text, '#111827')
-  if (isCssColor(buttonBg)) {
-    const normalized = normalizeCssColor(buttonBg, '#111827')
+  if (isCssPaint(buttonBg)) {
+    const normalized = normalizeCssPaint(buttonBg, '#111827')
     style['--rstk-button-bg'] = normalized
     style['--rstk-button-hover-bg'] = normalized
   }
   if (isCssColor(buttonText)) style['--rstk-button-text'] = normalizeCssColor(buttonText, '#ffffff')
   if (isCssColor(buttonBorder)) style['--rstk-button-border'] = normalizeCssColor(buttonBorder, '#111827')
-  if (isCssColor(cardBg)) style['--rstk-card-bg'] = normalizeCssColor(cardBg, '#ffffff')
+  if (isCssPaint(cardBg)) style['--rstk-card-bg'] = normalizeCssPaint(cardBg, '#ffffff')
   if (isCssColor(cardBorder)) style['--rstk-card-border'] = normalizeCssColor(cardBorder, '#dbe3ef')
   if (fontFamily) style['--rstk-block-font'] = fontFamily.replace(/[;"{}<>]/g, '')
-  if (isCssColor(fieldBg)) style['--rstk-field-bg'] = normalizeCssColor(fieldBg, '#ffffff')
+  if (isCssPaint(fieldBg)) style['--rstk-field-bg'] = normalizeCssPaint(fieldBg, '#ffffff')
   if (isCssColor(fieldBorder)) style['--rstk-field-border'] = normalizeCssColor(fieldBorder, '#dbe3ef')
   if (isCssColor(blockBorder)) style['--rstk-block-border'] = normalizeCssColor(blockBorder, '#dbe3ef')
   if (settings.fontWeight === 'bold') style['--rstk-block-weight'] = '850'
@@ -930,6 +998,30 @@ const defaultBlockPayload = (blockType: SiteBlockType, siteId: string, siteType?
         buttonText: 'Comenzar',
         buttonUrl: '#form',
         ...DEFAULT_BUTTON_SETTINGS
+      })
+    }
+  }
+
+  if (blockType === 'section') {
+    return {
+      blockType,
+      label,
+      content: 'Nueva seccion',
+      settings: blockSettings({
+        subtitle: 'Usa esta franja para separar zonas y cambiar el fondo.',
+        blockBg: 'transparent',
+        blockText: siteType === 'landing_page' ? '#f4f4f6' : '#111827',
+        blockPaddingTop: 80,
+        blockPaddingRight: 42,
+        blockPaddingBottom: 80,
+        blockPaddingLeft: 42,
+        blockMarginTop: 0,
+        blockMarginRight: 0,
+        blockMarginBottom: 0,
+        blockMarginLeft: 0,
+        textAlign: 'center',
+        blockRadius: 0,
+        blockBorderWidth: 0
       })
     }
   }
@@ -1578,8 +1670,14 @@ export const Sites: React.FC = () => {
         title: siteType === 'landing_page' ? 'Nuevo sitio embudo' : 'Nuevo formulario',
         theme: {
           template,
-          ...(siteType === 'landing_page' ? { pages: normalizePagesForSave([{ id: DEFAULT_FUNNEL_PAGE_ID, title: 'Pagina 1', sortOrder: 0 }]) } : {})
-        }
+          ...(siteType === 'landing_page'
+            ? {
+                pageMaxWidth: 1440,
+                pages: normalizePagesForSave([{ id: DEFAULT_FUNNEL_PAGE_ID, title: 'Pagina 1', sortOrder: 0 }])
+              }
+            : {})
+        },
+        metaEventName: 'none'
       })
 
       if (siteType === 'landing_page' && mode === 'blank') {
@@ -2180,6 +2278,7 @@ export const Sites: React.FC = () => {
                         onDrop={handleCanvasDrop}
                       >
                         <div className="rstk-frame">
+                          <CanvasBackgroundVideo theme={editorSite.theme} />
                           <main className="rstk-page">
                             <div className="rstk-shell">
                               {!isLanding(editorSite) && platformChromeFor(resolveTemplateId(editorSite)) && (
@@ -2329,6 +2428,7 @@ const LibrarySitePreview: React.FC<{
         style={{ ...canvasTheme.vars, ['--rstk-scale' as string]: 1 } as React.CSSProperties}
       >
         <div className="rstk-frame">
+          <CanvasBackgroundVideo theme={site.theme} />
           <main className="rstk-page">
             <div className="rstk-shell">
               {platform && (
@@ -2817,6 +2917,7 @@ const LinkedSpacingField: React.FC<LinkedSpacingFieldProps> = ({
 interface ColorFieldProps {
   label: string
   value: string
+  allowGradient?: boolean
   onChange: (color: string) => void
   onCommit: () => void
 }
@@ -2872,18 +2973,21 @@ const formatCssColor = ({ r, g, b, a }: { r: number; g: number; b: number; a: nu
   return alpha >= 1 ? rgbToHex(r, g, b) : `rgba(${Math.round(r)}, ${Math.round(g)}, ${Math.round(b)}, ${alpha})`
 }
 
-const swatchBackground = (color: string) => ({
-  backgroundColor: color,
-  backgroundImage: 'linear-gradient(45deg, rgba(148, 163, 184, 0.28) 25%, transparent 25%), linear-gradient(-45deg, rgba(148, 163, 184, 0.28) 25%, transparent 25%), linear-gradient(45deg, transparent 75%, rgba(148, 163, 184, 0.28) 75%), linear-gradient(-45deg, transparent 75%, rgba(148, 163, 184, 0.28) 75%)',
-  backgroundPosition: '0 0, 0 6px, 6px -6px, -6px 0',
-  backgroundSize: '12px 12px'
-} as React.CSSProperties)
+const swatchBackground = (color: string) => isCssGradient(color)
+  ? ({ backgroundImage: color } as React.CSSProperties)
+  : ({
+      backgroundColor: color,
+      backgroundImage: 'linear-gradient(45deg, rgba(148, 163, 184, 0.28) 25%, transparent 25%), linear-gradient(-45deg, rgba(148, 163, 184, 0.28) 25%, transparent 25%), linear-gradient(45deg, transparent 75%, rgba(148, 163, 184, 0.28) 75%), linear-gradient(-45deg, transparent 75%, rgba(148, 163, 184, 0.28) 75%)',
+      backgroundPosition: '0 0, 0 6px, 6px -6px, -6px 0',
+      backgroundSize: '12px 12px'
+    } as React.CSSProperties)
 
 // Ristak color control: no native OS picker, with hue, intensity and alpha.
-const ColorField: React.FC<ColorFieldProps> = ({ label, value, onChange, onCommit }) => {
+const ColorField: React.FC<ColorFieldProps> = ({ label, value, allowGradient = false, onChange, onCommit }) => {
   const rootRef = useRef<HTMLDivElement>(null)
-  const color = normalizeCssColor(value, '#000000')
-  const rgba = parseCssColor(color, '#000000')
+  const color = allowGradient ? normalizeCssPaint(value, '#000000') : normalizeCssColor(value, '#000000')
+  const colorForPicker = isCssGradient(color) ? '#000000' : color
+  const rgba = parseCssColor(colorForPicker, '#000000')
   const hsv = rgbToHsv(rgba)
   const hueRgb = hsvToRgb(hsv.h, 1, 1)
   const hueColor = rgbToHex(hueRgb.r, hueRgb.g, hueRgb.b)
@@ -2891,7 +2995,7 @@ const ColorField: React.FC<ColorFieldProps> = ({ label, value, onChange, onCommi
   const [text, setText] = useState(color)
   const [open, setOpen] = useState(false)
 
-  useEffect(() => { setText(normalizeCssColor(value, '#000000')) }, [value])
+  useEffect(() => { setText(allowGradient ? normalizeCssPaint(value, '#000000') : normalizeCssColor(value, '#000000')) }, [allowGradient, value])
 
   useEffect(() => {
     if (!open) return undefined
@@ -2917,7 +3021,13 @@ const ColorField: React.FC<ColorFieldProps> = ({ label, value, onChange, onCommi
   }
 
   const commitText = () => {
-    const normalized = normalizeCssColor(text.startsWith('#') || text.startsWith('rgb') || text === 'transparent' ? text : `#${text}`, '')
+    const raw = text.trim()
+    if (allowGradient && isCssGradient(raw)) {
+      onChange(raw)
+      onCommit()
+      return
+    }
+    const normalized = normalizeCssColor(raw.startsWith('#') || raw.startsWith('rgb') || raw === 'transparent' ? raw : `#${raw}`, '')
     if (normalized) {
       onChange(normalized)
       onCommit()
@@ -2948,7 +3058,7 @@ const ColorField: React.FC<ColorFieldProps> = ({ label, value, onChange, onCommi
           className={styles.colorHex}
           value={text}
           spellCheck={false}
-          maxLength={28}
+          maxLength={allowGradient ? 180 : 28}
           onChange={(event) => setText(event.target.value)}
           onBlur={commitText}
           onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); commitText() } }}
@@ -3003,79 +3113,74 @@ const ColorField: React.FC<ColorFieldProps> = ({ label, value, onChange, onCommi
   )
 }
 
+const CanvasBackgroundVideo: React.FC<{ theme?: SiteTheme }> = ({ theme }) => {
+  const src = getThemeBackgroundVideo(theme)
+  if (!src) return null
+
+  return (
+    <video className="rstk-bg-video" src={src} autoPlay muted loop playsInline aria-hidden="true" />
+  )
+}
+
 const CanvasAvatar: React.FC<{ name: string; avatar?: string }> = ({ name, avatar }) => (
   <span className={styles.chromeAvatar}>
     {avatar ? <img src={avatar} alt={name} /> : (name.trim()[0] || 'R').toUpperCase()}
   </span>
 )
 
+const SocialPlatformBadge: React.FC<{ platform: 'facebook' | 'instagram' | 'tiktok' }> = ({ platform }) => {
+  const platformClass = platform === 'facebook'
+    ? styles.socialPlatformFacebook
+    : platform === 'instagram'
+      ? styles.socialPlatformInstagram
+      : styles.socialPlatformTiktok
+
+  return (
+    <span className={`${styles.socialPlatformBadge} ${platformClass}`} aria-hidden="true">
+      {platform === 'instagram' && <Instagram size={16} strokeWidth={2.2} />}
+      {platform === 'tiktok' && <Music2 size={16} strokeWidth={2.2} />}
+    </span>
+  )
+}
+
 const CanvasChrome: React.FC<{
   platform: 'facebook' | 'instagram' | 'tiktok'
   site: PublicSite
   onPatchTheme: (patch: Partial<SiteTheme>) => void
   onSave: () => void
-}> = ({ platform, site, onPatchTheme, onSave }) => {
+}> = ({ platform, site }) => {
   const theme = site.theme || {}
   const name = theme.brandName || site.title || site.name || 'Tu marca'
   const subtitle = theme.brandSubtitle || (platform === 'instagram' ? 'Publicacion pagada' : 'Patrocinado')
-  const handle = name.normalize('NFD').replace(/[^a-zA-Z0-9]/g, '').toLowerCase() || 'marca'
   const followers = String(theme.followers || '')
-  const avatar = String(theme.brandAvatar || '')
-  const patchAndSave = (patch: Partial<SiteTheme>) => {
-    onPatchTheme(patch)
-    window.setTimeout(onSave, 0)
-  }
-
-  const controls = null
-
-  if (platform === 'facebook') {
-    return (
-      <div className={`${styles.canvasChrome} ${styles.chromeFacebook}`}>
-        {controls}
-        <CanvasAvatar name={name} avatar={theme.brandAvatar} />
-        <div className={styles.chromeMeta}>
-          <div className={styles.chromeName}>
-            {name}
-            {theme.brandVerified !== false && (
-              <svg viewBox="0 0 24 24" width="14" height="14" className={styles.chromeVerified}><path fill="#1877f2" d="M12 2.2l2.3 1.7 2.85.05.95 2.7 2.25 1.8-.95 2.75.95 2.75-2.25 1.8-.95 2.7L14.3 18.6 12 20.3l-2.3-1.7-2.85-.05-.95-2.7L3.95 14.3l.95-2.75-.95-2.75 2.25-1.8.95-2.7L9.7 3.9z"/><path d="M8.4 12.3l2.4 2.4 4.8-4.9" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
-            )}
-          </div>
-          <div className={styles.chromeSub}>{subtitle}{followers ? ` · ${followers} seguidores` : ''} · <Globe2 size={11} /></div>
-        </div>
-        <span className={styles.chromeMark}>f</span>
-      </div>
-    )
-  }
-
-  if (platform === 'instagram') {
-    return (
-      <div className={`${styles.canvasChrome} ${styles.chromeInstagram}`}>
-        {controls}
-        <span className={styles.chromeRing}><CanvasAvatar name={name} avatar={theme.brandAvatar} /></span>
-        <div className={styles.chromeMeta}>
-          <div className={styles.chromeName}>{handle}</div>
-          <div className={styles.chromeSub}>{subtitle}{followers ? ` · ${followers} seguidores` : ''}</div>
-        </div>
-        <span className={styles.chromeDots}>···</span>
-      </div>
-    )
-  }
+  const secondary = followers ? `${followers} seguidores` : subtitle
+  const platformClass = platform === 'facebook'
+    ? styles.chromeFacebook
+    : platform === 'instagram'
+      ? styles.chromeInstagram
+      : styles.chromeTiktok
 
   return (
-    <div className={`${styles.canvasChrome} ${styles.chromeTiktok}`}>
-      {controls}
-      <CanvasAvatar name={name} avatar={theme.brandAvatar} />
-      <div className={styles.chromeMeta}>
-        <div className={styles.chromeName}>@{handle}</div>
-        <div className={styles.chromeSub}>{subtitle}{followers ? ` · ${followers} seguidores` : ''}</div>
+    <div className={`${styles.canvasChrome} ${platformClass}`} aria-label={`Perfil de ${platform}`}>
+      <div className={styles.socialImageWrap}>
+        <CanvasAvatar name={name} avatar={theme.brandAvatar} />
+        <SocialPlatformBadge platform={platform} />
       </div>
-      <span className={styles.chromeMark}>♪</span>
+      <div className={styles.chromeMeta}>
+        <div className={styles.chromeName}>
+          {name}
+          {theme.brandVerified !== false && (
+            <svg viewBox="0 0 24 24" width="14" height="14" className={styles.chromeVerified}><path fill="#1877f2" d="M12 2.2l2.3 1.7 2.85.05.95 2.7 2.25 1.8-.95 2.75.95 2.75-2.25 1.8-.95 2.7L14.3 18.6 12 20.3l-2.3-1.7-2.85-.05-.95-2.7L3.95 14.3l.95-2.75-.95-2.75 2.25-1.8.95-2.7L9.7 3.9z"/><path d="M8.4 12.3l2.4 2.4 4.8-4.9" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+          )}
+        </div>
+        <div className={styles.chromeSub}>{secondary}</div>
+      </div>
     </div>
   )
 }
 
 const paletteGroups: Array<{ label: string; types: SiteBlockType[] }> = [
-  { label: 'Contenido', types: ['hero', 'title', 'subtitle', 'text', 'image', 'video', 'button', 'benefits', 'testimonials', 'services', 'faq', 'cta', 'embed', 'calendar_embed', 'form_embed'] },
+  { label: 'Contenido', types: ['hero', 'section', 'title', 'subtitle', 'text', 'image', 'video', 'button', 'benefits', 'testimonials', 'services', 'faq', 'cta', 'embed', 'calendar_embed', 'form_embed'] },
   { label: 'Campos', types: ['short_text', 'paragraph', 'email', 'phone', 'number', 'currency', 'date', 'dropdown', 'radio', 'checkboxes', 'description'] }
 ]
 
@@ -3183,14 +3288,17 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
                 </DropdownMenu>
               </div>
             </div>
-            {activePageId === page.id && (
-              <button type="button" className={styles.addPageButton} onClick={onAddPage}>
-                <Plus size={15} />
-                Agregar pagina
-              </button>
+            {index < pages.length - 1 && (
+              <span className={styles.pageFlowArrow} aria-hidden="true">
+                <ChevronRight size={14} />
+              </span>
             )}
           </React.Fragment>
         ))}
+        <button type="button" className={styles.addPageButton} onClick={onAddPage}>
+          <Plus size={15} />
+          Agregar pagina
+        </button>
       </div>
     </aside>
   )
@@ -3539,7 +3647,8 @@ const InlineBlockStyleControls: React.FC<{
           <div className={styles.twoColumn}>
             <ColorField
               label="Fondo"
-              value={getSettingHex(settings, 'blockBg', 'transparent')}
+              value={getSettingPaint(settings, 'blockBg', 'transparent')}
+              allowGradient
               onChange={(value) => onPatchSettings({ blockBg: value })}
               onCommit={onSave}
             />
@@ -3645,7 +3754,8 @@ const InlineBlockStyleControls: React.FC<{
           <div className={styles.twoColumn}>
             <ColorField
               label="Fondo del boton"
-              value={getSettingHex(settings, 'buttonBg', defaultAccent)}
+              value={getSettingPaint(settings, 'buttonBg', defaultAccent)}
+              allowGradient
               onChange={(value) => onPatchSettings({ buttonBg: value })}
               onCommit={onSave}
             />
@@ -3717,7 +3827,8 @@ const InlineBlockStyleControls: React.FC<{
           <div className={styles.twoColumn}>
             <ColorField
               label="Caja del campo"
-              value={getSettingHex(settings, 'fieldBg', '#ffffff')}
+              value={getSettingPaint(settings, 'fieldBg', '#ffffff')}
+              allowGradient
               onChange={(value) => onPatchSettings({ fieldBg: value })}
               onCommit={onSave}
             />
@@ -3803,7 +3914,8 @@ const InlineBlockStyleControls: React.FC<{
           <div className={styles.twoColumn}>
             <ColorField
               label="Fondo tarjeta"
-              value={getSettingHex(settings, 'cardBg', 'transparent')}
+              value={getSettingPaint(settings, 'cardBg', 'transparent')}
+              allowGradient
               onChange={(value) => onPatchSettings({ cardBg: value })}
               onCommit={onSave}
             />
@@ -3885,6 +3997,15 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
   if (block.blockType === 'text') {
     return (
       <InlineEditable as="div" className="rstk-text" multiline value={block.content || ''} placeholder="Texto de contenido" disabled={!editable} onChange={(value) => patchBlock({ content: value })} onCommit={save} />
+    )
+  }
+
+  if (block.blockType === 'section') {
+    return (
+      <section className="rstk-section-break">
+        <InlineEditable as="h2" value={block.content} placeholder="Titulo de seccion" disabled={!editable} onChange={(value) => patchBlock({ content: value })} onCommit={save} />
+        <InlineEditable as="p" multiline value={getSettingString(settings, 'subtitle')} placeholder="Texto breve opcional" disabled={!editable} onChange={(value) => patchSettings({ subtitle: value })} onCommit={save} />
+      </section>
     )
   }
 
@@ -4125,7 +4246,8 @@ const PageInspector: React.FC<{
           <div className={styles.twoColumn}>
             <ColorField
               label="Fondo de pagina"
-              value={userBgColor(site) || resolvedPageBg(site)}
+              value={getThemePaint(theme, 'backgroundColor', userBgColor(site) || resolvedPageBg(site))}
+              allowGradient
               onChange={(value) => onPatchTheme({ backgroundColor: value })}
               onCommit={onSaveSite}
             />
@@ -4137,19 +4259,45 @@ const PageInspector: React.FC<{
             />
           </div>
           <label className={styles.field}>
-            <span>Imagen de fondo</span>
+            <span>URL de fondo</span>
             <input
               value={getThemeString(theme, 'backgroundImage')}
-              placeholder="https://..."
+              placeholder={theme.backgroundMediaType === 'video' ? 'https://.../video.mp4' : 'https://...'}
               onChange={(event) => onPatchTheme({ backgroundImage: event.target.value })}
               onBlur={onSaveSite}
             />
           </label>
+          <div className={styles.twoColumn}>
+            <label className={styles.field}>
+              <span>Tipo</span>
+              <select
+                value={getThemeString(theme, 'backgroundMediaType') || 'image'}
+                onChange={(event) => onPatchTheme({ backgroundMediaType: event.target.value as SiteTheme['backgroundMediaType'] })}
+                onBlur={onSaveSite}
+              >
+                {backgroundMediaTypeOptions.map(option => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+            </label>
+            <label className={styles.field}>
+              <span>Visualizacion</span>
+              <select
+                value={getBackgroundVisualValue(theme)}
+                onChange={(event) => onPatchTheme(backgroundVisualPatch(event.target.value))}
+                onBlur={onSaveSite}
+              >
+                {backgroundVisualOptions.map(option => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+            </label>
+          </div>
 
           <div className={styles.panelSubheader}>Dimensiones</div>
           <DimensionField
             label="Ancho maximo"
-            value={getThemeNumber(theme, 'pageMaxWidth', isLanding(site) ? 1160 : 520, 360, 1440)}
+            value={isLanding(site) && Number(theme.pageMaxWidth) === 1160 ? 1440 : getThemeNumber(theme, 'pageMaxWidth', isLanding(site) ? 1440 : 520, 360, 1440)}
             min={360}
             max={1440}
             step={10}
@@ -4270,7 +4418,7 @@ const PageInspector: React.FC<{
 
         {platform && showSocialProfile && (
           <div className={styles.settingsGroup}>
-            <div className={styles.panelSubheader}>Social Media Profile</div>
+            <div className={styles.panelSubheader}>Perfil de red social</div>
             <label className={styles.field}>
               <span>Red social</span>
               <select value={platform} onChange={(event) => onPatchTheme({ template: event.target.value as SiteTemplateId })} onBlur={onSaveSite}>
@@ -4280,16 +4428,16 @@ const PageInspector: React.FC<{
               </select>
             </label>
             <label className={styles.field}>
-              <span>Nombre de pagina</span>
+              <span>Nombre que se vera</span>
               <input value={theme.brandName || ''} placeholder={site.title || site.name} onChange={(event) => onPatchTheme({ brandName: event.target.value })} onBlur={onSaveSite} />
             </label>
             <label className={styles.field}>
-              <span>Subtitulo</span>
+              <span>Texto secundario</span>
               <input value={theme.brandSubtitle || ''} placeholder={platform === 'instagram' ? 'Publicacion pagada' : 'Patrocinado'} onChange={(event) => onPatchTheme({ brandSubtitle: event.target.value })} onBlur={onSaveSite} />
             </label>
             <label className={styles.field}>
-              <span>Avatar URL</span>
-              <input value={theme.brandAvatar || ''} placeholder="https://..." onChange={(event) => onPatchTheme({ brandAvatar: event.target.value })} onBlur={onSaveSite} />
+              <span>Foto de perfil (URL)</span>
+              <input value={theme.brandAvatar || ''} placeholder="Pega la liga de la imagen" onChange={(event) => onPatchTheme({ brandAvatar: event.target.value })} onBlur={onSaveSite} />
             </label>
             <label className={styles.field}>
               <span>Seguidores</span>

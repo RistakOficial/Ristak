@@ -139,6 +139,11 @@ const isCssColor = (value?: string): value is string => {
   return channels.every(channel => channel >= 0 && channel <= 255) && alpha >= 0 && alpha <= 1
 }
 
+const isCssGradient = (value?: string): value is string => {
+  const raw = String(value || '').trim()
+  return /^(linear|radial|conic)-gradient\(/i.test(raw) && !/[;{}<>]/.test(raw)
+}
+
 const normalizeCssColor = (value: string, fallback: string) => {
   const raw = String(value || '').trim().toLowerCase()
   if (!raw) return fallback
@@ -150,6 +155,18 @@ const normalizeCssColor = (value: string, fallback: string) => {
   const [r, g, b] = match.slice(1, 4).map(valuePart => Math.round(Number(valuePart)))
   const alpha = match[4] === undefined ? 1 : Math.round(Number(match[4]) * 100) / 100
   return alpha >= 1 ? rgbToHex(r, g, b) : `rgba(${r}, ${g}, ${b}, ${alpha})`
+}
+
+const normalizeCssPaint = (value: string | undefined, fallback = '') => {
+  const raw = String(value || '').trim()
+  if (isCssGradient(raw)) return raw
+  return normalizeCssColor(raw, fallback)
+}
+
+const paintLayer = (paint: string) => {
+  if (!paint) return 'none'
+  if (isCssGradient(paint)) return paint
+  return `linear-gradient(${paint}, ${paint})`
 }
 
 const cssColorToHex = (value: string, fallback = '#ffffff') => {
@@ -166,6 +183,32 @@ const cssImageUrl = (value?: string) => {
   if (!/^https?:\/\//i.test(raw) && !raw.startsWith('/') && !/^data:image\//i.test(raw)) return ''
   return `url("${raw.replace(/["\\\n\r]/g, '')}")`
 }
+
+const cssMediaUrl = (value?: string) => {
+  const raw = String(value || '').trim()
+  if (!raw) return ''
+  if (!/^https?:\/\//i.test(raw) && !raw.startsWith('/') && !/^data:video\//i.test(raw)) return ''
+  return raw.replace(/["\\\n\r]/g, '')
+}
+
+const backgroundFitValue = (value: unknown) => {
+  if (value === 'contain') return 'contain'
+  if (value === 'full_width') return '100% auto'
+  if (value === 'auto') return 'auto'
+  return 'cover'
+}
+
+const backgroundRepeatValue = (value: unknown) => {
+  if (value === 'repeat' || value === 'repeat-x' || value === 'repeat-y') return value
+  return 'no-repeat'
+}
+
+const backgroundPositionValue = (value: unknown) => {
+  const raw = String(value || '').trim()
+  return raw && !/[;{}<>]/.test(raw) ? raw : 'center center'
+}
+
+const backgroundAttachmentValue = (value: unknown) => value === 'fixed' ? 'fixed' : 'scroll'
 
 const relLuminance = (hex: string): number => {
   const h = cssColorToHex(hex).replace('#', '')
@@ -264,21 +307,35 @@ export const buildCanvasTheme = (site: PublicSite, device: 'desktop' | 'mobile' 
   const baseFont = template.chrome === 'none' ? `'Inter', ${template.font}` : template.font
   const display = template.chrome === 'none' ? `'Inter Tight', 'Inter', ${template.font}` : template.font
 
-  const pageMaxWidth = themeNumber(theme, 'pageMaxWidth', isLandingType ? 1160 : (template.id === 'interactive' ? 600 : 520), 360, 1440)
+  const storedPageMaxWidth = Number(theme?.pageMaxWidth)
+  const pageMaxWidth = isLandingType && storedPageMaxWidth === 1160
+    ? 1440
+    : themeNumber(theme, 'pageMaxWidth', isLandingType ? 1440 : (template.id === 'interactive' ? 600 : 520), 360, 1440)
   const pagePadding = themeNumber(theme, 'pagePadding', isLandingType ? 50 : 22, 0, 120)
   const pageRadius = themeNumber(theme, 'pageRadius', isLandingType ? 0 : 24, 0, 40)
   const pageBorder = isCssColor(theme.pageBorderColor) ? normalizeCssColor(theme.pageBorderColor as string, 'transparent') : 'transparent'
   const pageBorderWidth = themeNumber(theme, 'pageBorderWidth', 0, 0, 12)
-  const pageImage = cssImageUrl(theme.backgroundImage) || v.pageImage
+  const rawBackgroundPaint = normalizeCssPaint(theme.backgroundColor, '')
+  const backgroundPaint = rawBackgroundPaint.toLowerCase() === DEFAULT_BG ? '' : rawBackgroundPaint
+  const backgroundMediaType = theme.backgroundMediaType === 'video' ? 'video' : 'image'
+  const pageImage = backgroundMediaType === 'video' ? 'none' : (cssImageUrl(theme.backgroundImage) || v.pageImage)
+  const pageVideo = backgroundMediaType === 'video' ? cssMediaUrl(theme.backgroundImage) : ''
+  const pageOverlay = backgroundPaint ? paintLayer(backgroundPaint) : 'none'
+  const pageBg = backgroundPaint && isCssColor(backgroundPaint) ? normalizeCssColor(backgroundPaint, v.pageBg) : v.pageBg
 
   const vars = {
     '--rstk-font': baseFont,
     '--rstk-display': display,
     '--rstk-ease': 'cubic-bezier(.16,.84,.44,1)',
-    '--rstk-page-bg': v.pageBg,
+    '--rstk-page-bg': pageBg,
     '--rstk-page-image': pageImage,
-    '--rstk-page-image-size': pageImage === 'none' ? 'auto' : 'cover',
-    '--rstk-page-image-position': 'center top',
+    '--rstk-page-overlay': pageOverlay,
+    '--rstk-page-video': pageVideo,
+    '--rstk-page-image-size': pageImage === 'none' ? 'auto' : backgroundFitValue(theme.backgroundFit),
+    '--rstk-page-image-position': backgroundPositionValue(theme.backgroundPosition),
+    '--rstk-page-image-repeat': backgroundRepeatValue(theme.backgroundRepeat),
+    '--rstk-page-image-attachment': backgroundAttachmentValue(theme.backgroundAttachment),
+    '--rstk-page-video-fit': backgroundFitValue(theme.backgroundFit),
     '--rstk-ink': v.ink,
     '--rstk-muted': v.muted,
     '--rstk-surface': v.surface,

@@ -2009,14 +2009,13 @@
 /* Chrome de plataforma en el preview */
 .canvasChrome {
   position: relative;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  display: flex;
   align-items: center;
-  gap: 10px;
-  margin: calc(-1 * clamp(18px, 3vw, 30px));
-  margin-bottom: 4px;
-  padding: 16px clamp(18px, 3vw, 30px) 12px;
-  border-bottom: 1px solid var(--site-border, #e6e8ec);
+  gap: 8px;
+  margin: calc(-1 * var(--rstk-pad, clamp(18px, 3vw, 30px))) calc(-1 * var(--rstk-pad, clamp(18px, 3vw, 30px))) 0;
+  padding: 20px var(--rstk-pad, clamp(18px, 3vw, 30px)) 14px;
+  background: transparent;
+  border: 0;
 }
 
 .socialProfileControls {
@@ -2033,18 +2032,24 @@
   font-weight: 900;
 }
 
+.socialImageWrap {
+  position: relative;
+  display: inline-block;
+  flex: 0 0 auto;
+}
+
 .chromeAvatar {
-  width: 42px;
-  height: 42px;
+  width: 64px;
+  height: 64px;
   flex: 0 0 auto;
   border-radius: 50%;
   display: grid;
   place-items: center;
   overflow: hidden;
-  background: var(--site-accent, #111827);
+  background: var(--rstk-accent, #111827);
   color: #fff;
   font-weight: 800;
-  font-size: 1.05rem;
+  font-size: 1.35rem;
 }
 
 .chromeAvatar img {
@@ -2053,94 +2058,84 @@
   object-fit: cover;
 }
 
+.socialPlatformBadge {
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  z-index: 2;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  padding: 2px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  background: #fff;
+  color: #fff;
+  overflow: hidden;
+}
+
+.socialPlatformFacebook {
+  background: #fff url("https://storage.googleapis.com/msgsndr/cAEl3p2eZROgv2GFvMZM/media/67b7bb9d7c922f0d2f3b2adf.svg") center / contain no-repeat;
+}
+
+.socialPlatformInstagram {
+  background: var(--rstk-gradient, linear-gradient(45deg, #feda75, #fa7e1e, #d62976, #962fbf, #4f5bd5));
+}
+
+.socialPlatformTiktok {
+  background: #050505;
+  box-shadow: inset 1px 0 var(--rstk-cyan, #25f4ee), inset -1px 0 var(--rstk-accent, #fe2c55);
+}
+
 .chromeMeta {
-  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
   min-width: 0;
 }
 
 .chromeName {
   display: flex;
   align-items: center;
-  gap: 5px;
-  font-weight: 700;
-  font-size: 0.95rem;
-  color: var(--site-text, #0f172a);
+  gap: 4px;
+  min-width: 0;
+  font-weight: 800;
+  font-size: 18px;
+  line-height: 1.18;
+  color: var(--rstk-ink, #050505);
 }
 
 .chromeVerified {
   flex: 0 0 auto;
+  position: relative;
+  top: 1px;
 }
 
 .chromeSub {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  color: var(--site-muted, #64748b);
-  font-size: 0.8rem;
-  margin-top: 1px;
+  color: var(--rstk-muted, #90949c);
+  font-size: 14px;
+  line-height: 1.25;
+  font-weight: 600;
+  margin-top: 2px;
 }
 
-.chromeMark {
-  flex: 0 0 auto;
-  width: 26px;
-  height: 26px;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  background: var(--site-accent, #111827);
-  color: #fff;
-  font-weight: 900;
-  font-family: Georgia, "Times New Roman", serif;
-}
+@media (max-width: 480px) {
+  .canvasChrome {
+    padding: 15px var(--rstk-pad, 18px) 12px;
+  }
 
-.chromeDots {
-  margin-left: auto;
-  color: var(--site-text, #0f172a);
-  font-weight: 800;
-  letter-spacing: 1px;
-}
+  .chromeAvatar {
+    width: 60px;
+    height: 60px;
+  }
 
-.chromeFacebook::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 4px;
-  background: #1877f2;
-}
+  .chromeName {
+    font-size: 18px;
+  }
 
-.chromeInstagram::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 4px;
-  background: linear-gradient(45deg, #feda75, #fa7e1e, #d62976, #962fbf, #4f5bd5);
-}
-
-.chromeRing {
-  flex: 0 0 auto;
-  display: inline-grid;
-  place-items: center;
-  padding: 2px;
-  border-radius: 50%;
-  background: linear-gradient(45deg, #feda75, #fa7e1e, #d62976, #962fbf, #4f5bd5);
-}
-
-.chromeRing .chromeAvatar {
-  width: 40px;
-  height: 40px;
-  border: 2px solid var(--site-surface, #fff);
-}
-
-.chromeTiktok .chromeMark {
-  background: transparent;
-  color: #fff;
-  font-family: inherit;
-  font-size: 1.2rem;
-  filter: drop-shadow(1.5px 0 #25f4ee) drop-shadow(-1.5px 0 #fe2c55);
+  .chromeSub {
+    font-size: 12px;
+  }
 }
 
 /* Galería de plantillas (flujo de creación) */
@@ -4311,6 +4306,15 @@
   grid-template-columns: minmax(132px, 190px);
 }
 
+.pageFlowArrow {
+  flex: 0 0 auto;
+  width: 18px;
+  min-height: 34px;
+  display: inline-grid;
+  place-items: center;
+  color: var(--color-text-tertiary);
+}
+
 .pageItem,
 .pageMenuButton,
 .addPageButton {
@@ -4425,6 +4429,16 @@
 .colorPopover {
   z-index: 2600;
   box-shadow: 0 24px 70px -42px rgba(15, 23, 42, 0.75);
+}
+
+.twoColumn > .colorField:first-child .colorPopover {
+  left: 0;
+  right: auto;
+}
+
+.twoColumn > .colorField:last-child .colorPopover {
+  left: auto;
+  right: 0;
 }
 
 .colorSlider input,
