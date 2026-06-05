@@ -2172,129 +2172,131 @@ export const Sites: React.FC = () => {
         <header className={`${styles.header} ${editorSite ? styles.editorHeader : ''}`}>
           {editorSite ? (
             <>
-              <div className={styles.editorHeaderIdentity}>
-                <div className={styles.titleRow}>
-                  <button type="button" className={styles.backButton} onClick={handleBackToLibrary}>
-                    <ArrowLeft size={16} />
-                    Volver
-                  </button>
-                  <span className={`${styles.statusPill} ${getStatusClass(editorSite, domainConfig)}`}>{getStatusLabel(editorSite, domainConfig)}</span>
-                </div>
-                <label className={styles.editorNameField}>
-                  <input
-                    value={editorSite.name}
-                    aria-label="Nombre interno del site"
-                    style={{ width: `calc(${Math.max((editorSite.name || '').length, 6)}ch + 16px)` }}
-                    onChange={(event) => updateSelectedSite({ name: event.target.value })}
-                    onBlur={() => handleSaveSite(undefined, { silent: true })}
-                  />
-                  <Pencil size={15} />
-                </label>
-                <label className={styles.publicTitleEditorField}>
-                  <input
-                    value={editorSite.title}
-                    aria-label="Titulo publico"
-                    placeholder="Titulo publico"
-                    style={{ width: `calc(${Math.max((editorSite.title || '').length, 'Titulo publico'.length)}ch + 16px)` }}
-                    onChange={(event) => updateSelectedSite({ title: event.target.value })}
-                    onBlur={() => handleSaveSite(undefined, { silent: true })}
-                  />
-                  <Pencil size={14} />
-                </label>
-                {isLanding(editorSite) && (
-                  <div className={styles.editorHeaderPages}>
-                    <FunnelPagesPanel
-                      pages={pages}
-                      activePageId={activePage?.id || DEFAULT_FUNNEL_PAGE_ID}
-                      draggingPageId={draggingPageId}
-                      onSelectPage={setActivePageId}
-                      onAddPage={handleAddPage}
-                      onDuplicatePage={handleDuplicatePage}
-                      onDeletePage={handleDeletePage}
-                      onDragPage={setDraggingPageId}
-                      onReorderPages={handleReorderPages}
-                      onRenamePage={handleRenamePage}
+              <div className={styles.editorHeaderMain}>
+                <div className={styles.editorHeaderIdentity}>
+                  <div className={styles.titleRow}>
+                    <button type="button" className={styles.backButton} onClick={handleBackToLibrary}>
+                      <ArrowLeft size={16} />
+                      Volver
+                    </button>
+                    <span className={`${styles.statusPill} ${getStatusClass(editorSite, domainConfig)}`}>{getStatusLabel(editorSite, domainConfig)}</span>
+                  </div>
+                  <label className={styles.editorNameField}>
+                    <input
+                      value={editorSite.name}
+                      aria-label="Nombre interno del site"
+                      style={{ width: `calc(${Math.max((editorSite.name || '').length, 6)}ch + 16px)` }}
+                      onChange={(event) => updateSelectedSite({ name: event.target.value })}
+                      onBlur={() => handleSaveSite(undefined, { silent: true })}
                     />
-                  </div>
-                )}
-              </div>
-              <div className={styles.editorTopControls}>
-                <div className={styles.editorPublishControls}>
-                  <label className={styles.routeField}>
-                    <span>Ruta publica</span>
-                    <span className={`${styles.publicRouteBox} ${domainConfig.domain ? '' : styles.publicRouteBoxStandalone}`}>
-                      {domainConfig.domain && (
-                        <span className={styles.publicRouteDomain} title={`https://${domainConfig.domain}`}>
-                          https://{domainConfig.domain}
-                        </span>
-                      )}
-                      <input
-                        value={getRoutePath(editorSite)}
-                        placeholder={editorSite.siteType === 'landing_page' ? '/site-01' : '/form-01'}
-                        onChange={(event) => updateSelectedSite({ slug: normalizeRouteInput(event.target.value) })}
-                        onBlur={() => handleSaveSite(undefined, { silent: true })}
-                      />
-                    </span>
+                    <Pencil size={15} />
                   </label>
-                  <div className={`${styles.metaCard} ${editorSite.metaCapiEnabled ? styles.metaCardActive : ''}`}>
-                    <span className={styles.metaMark} aria-hidden="true">∞</span>
-                    <div className={styles.metaCardInfo}>
-                      <strong>Meta Pixel + CAPI</strong>
-                      <small>{editorSite.metaCapiEnabled ? 'Page view' : 'Apagado'}</small>
-                    </div>
-                    <div className={styles.metaCardDivider} aria-hidden="true" />
-                    <label className={styles.metaCardField}>
-                      <span>Evento</span>
-                      <select
-                        value={normalizeMetaEventName(editorSite.metaEventName, 'none')}
-                        disabled={!editorSite.metaCapiEnabled}
-                        onChange={(event) => {
-                          updateSelectedSite({ metaEventName: event.target.value })
-                          window.setTimeout(() => handleSaveSite(undefined, { silent: true }), 0)
-                        }}
-                        onBlur={() => handleSaveSite(undefined, { silent: true })}
-                      >
-                        {metaEventOptions.map(option => (
-                          <option key={option.value} value={option.value}>{option.label}</option>
-                        ))}
-                      </select>
-                    </label>
-                    <label className={styles.metaSwitch} title={editorSite.metaCapiEnabled ? 'Desactivar' : 'Activar'}>
-                      <input
-                        type="checkbox"
-                        checked={editorSite.metaCapiEnabled}
-                        onChange={(event) => {
-                          updateSelectedSite({ metaCapiEnabled: event.target.checked })
-                          window.setTimeout(() => handleSaveSite(undefined, { silent: true }), 0)
-                        }}
-                      />
-                      <span className={styles.metaSwitchTrack} aria-hidden="true" />
-                    </label>
-                  </div>
+                  <label className={styles.publicTitleEditorField}>
+                    <input
+                      value={editorSite.title}
+                      aria-label="Titulo publico"
+                      placeholder="Titulo publico"
+                      style={{ width: `calc(${Math.max((editorSite.title || '').length, 'Titulo publico'.length)}ch + 16px)` }}
+                      onChange={(event) => updateSelectedSite({ title: event.target.value })}
+                      onBlur={() => handleSaveSite(undefined, { silent: true })}
+                    />
+                    <Pencil size={14} />
+                  </label>
                 </div>
-                <div className={styles.editorActions}>
-                  <div className={styles.deviceToggle} role="group" aria-label="Vista previa del dispositivo">
-                    <button type="button" className={device === 'desktop' ? styles.deviceActive : ''} onClick={() => setDevice('desktop')} title="Escritorio">
-                      <Monitor size={15} />
-                    </button>
-                    <button type="button" className={device === 'mobile' ? styles.deviceActive : ''} onClick={() => setDevice('mobile')} title="Movil">
-                      <Smartphone size={15} />
-                    </button>
+                <div className={styles.editorTopControls}>
+                  <div className={styles.editorPublishControls}>
+                    <label className={styles.routeField}>
+                      <span>Ruta publica</span>
+                      <span className={`${styles.publicRouteBox} ${domainConfig.domain ? '' : styles.publicRouteBoxStandalone}`}>
+                        {domainConfig.domain && (
+                          <span className={styles.publicRouteDomain} title={`https://${domainConfig.domain}`}>
+                            https://{domainConfig.domain}
+                          </span>
+                        )}
+                        <input
+                          value={getRoutePath(editorSite)}
+                          placeholder={editorSite.siteType === 'landing_page' ? '/site-01' : '/form-01'}
+                          onChange={(event) => updateSelectedSite({ slug: normalizeRouteInput(event.target.value) })}
+                          onBlur={() => handleSaveSite(undefined, { silent: true })}
+                        />
+                      </span>
+                    </label>
+                    <div className={`${styles.metaCard} ${editorSite.metaCapiEnabled ? styles.metaCardActive : ''}`}>
+                      <span className={styles.metaMark} aria-hidden="true">∞</span>
+                      <div className={styles.metaCardInfo}>
+                        <strong>Meta Pixel + CAPI</strong>
+                        <small>{editorSite.metaCapiEnabled ? 'Page view' : 'Apagado'}</small>
+                      </div>
+                      <div className={styles.metaCardDivider} aria-hidden="true" />
+                      <label className={styles.metaCardField}>
+                        <span>Evento</span>
+                        <select
+                          value={normalizeMetaEventName(editorSite.metaEventName, 'none')}
+                          disabled={!editorSite.metaCapiEnabled}
+                          onChange={(event) => {
+                            updateSelectedSite({ metaEventName: event.target.value })
+                            window.setTimeout(() => handleSaveSite(undefined, { silent: true }), 0)
+                          }}
+                          onBlur={() => handleSaveSite(undefined, { silent: true })}
+                        >
+                          {metaEventOptions.map(option => (
+                            <option key={option.value} value={option.value}>{option.label}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className={styles.metaSwitch} title={editorSite.metaCapiEnabled ? 'Desactivar' : 'Activar'}>
+                        <input
+                          type="checkbox"
+                          checked={editorSite.metaCapiEnabled}
+                          onChange={(event) => {
+                            updateSelectedSite({ metaCapiEnabled: event.target.checked })
+                            window.setTimeout(() => handleSaveSite(undefined, { silent: true }), 0)
+                          }}
+                        />
+                        <span className={styles.metaSwitchTrack} aria-hidden="true" />
+                      </label>
+                    </div>
                   </div>
-                  <Button variant="secondary" size="lg" onClick={handlePreviewSite}>
-                    <Eye size={16} />
-                    Previsualizar
-                  </Button>
-                  <Button variant="secondary" size="lg" onClick={() => handleSaveSite()} loading={saving}>
-                    <Save size={16} />
-                    Guardar
-                  </Button>
-                  <Button size="lg" onClick={() => handleSaveSite('published')} loading={saving}>
-                    <Send size={16} />
-                    Publicar
-                  </Button>
+                  <div className={styles.editorActions}>
+                    <div className={styles.deviceToggle} role="group" aria-label="Vista previa del dispositivo">
+                      <button type="button" className={device === 'desktop' ? styles.deviceActive : ''} onClick={() => setDevice('desktop')} title="Escritorio">
+                        <Monitor size={15} />
+                      </button>
+                      <button type="button" className={device === 'mobile' ? styles.deviceActive : ''} onClick={() => setDevice('mobile')} title="Movil">
+                        <Smartphone size={15} />
+                      </button>
+                    </div>
+                    <Button variant="secondary" size="lg" onClick={handlePreviewSite}>
+                      <Eye size={16} />
+                      Previsualizar
+                    </Button>
+                    <Button variant="secondary" size="lg" onClick={() => handleSaveSite()} loading={saving}>
+                      <Save size={16} />
+                      Guardar
+                    </Button>
+                    <Button size="lg" onClick={() => handleSaveSite('published')} loading={saving}>
+                      <Send size={16} />
+                      Publicar
+                    </Button>
+                  </div>
                 </div>
               </div>
+              {isLanding(editorSite) && (
+                <div className={styles.editorHeaderPages}>
+                  <FunnelPagesPanel
+                    pages={pages}
+                    activePageId={activePage?.id || DEFAULT_FUNNEL_PAGE_ID}
+                    draggingPageId={draggingPageId}
+                    onSelectPage={setActivePageId}
+                    onAddPage={handleAddPage}
+                    onDuplicatePage={handleDuplicatePage}
+                    onDeletePage={handleDeletePage}
+                    onDragPage={setDraggingPageId}
+                    onReorderPages={handleReorderPages}
+                    onRenamePage={handleRenamePage}
+                  />
+                </div>
+              )}
             </>
           ) : (
             <div>

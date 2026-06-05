@@ -46,6 +46,45 @@
 .rstkCanvas.rstk-centered .rstk-shell { text-align: center; justify-items: center; }
 .rstkCanvas.rstk-centered .rstk-subheading, .rstkCanvas.rstk-centered .rstk-text { margin-inline: auto; }
 
+.rstkCanvas .rstk-section-lane.rstk-block-style,
+.rstkCanvas .rstk-section-lane {
+  width: 100%;
+  margin: var(--rstk-block-margin, 0);
+  background: var(--rstk-block-bg, transparent);
+  color: var(--rstk-block-text, var(--rstk-ink));
+  border: var(--rstk-block-border-width, 0) solid var(--rstk-block-border, transparent);
+  border-radius: var(--rstk-block-radius, 0);
+  padding: 0;
+}
+.rstkCanvas .rstk-section-inner {
+  width: 100%;
+  max-width: var(--rstk-max);
+  margin: 0 auto;
+  padding: var(--rstk-block-pad, var(--rstk-frame-pad, clamp(28px, 5vw, 72px)));
+  display: grid;
+  gap: var(--rstk-section-gap, clamp(18px, 3vw, 30px));
+}
+.rstkCanvas .rstk-section-heading {
+  display: grid;
+  gap: 10px;
+  justify-items: var(--rstk-block-justify, stretch);
+  text-align: var(--rstk-block-align, inherit);
+}
+.rstkCanvas .rstk-section-heading h2,
+.rstkCanvas .rstk-section-heading p { margin: 0; }
+.rstkCanvas .rstk-section-columns {
+  display: grid;
+  grid-template-columns: repeat(var(--rstk-section-columns, 1), minmax(0, 1fr));
+  gap: var(--rstk-section-gap, clamp(18px, 3vw, 30px));
+  align-items: start;
+}
+.rstkCanvas .rstk-section-column {
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: var(--rstk-gap);
+}
+
 .rstkCanvas .rstk-block-style {
   width: auto;
   min-width: 0;
@@ -185,8 +224,9 @@
 }
 
 /* ---------- Premium landing ---------- */
-.rstkCanvas.rstk-kind-landing .rstk-frame { padding: var(--rstk-frame-pad, clamp(10px, 3vw, 28px)) clamp(14px, 3vw, 24px) clamp(32px, 5vw, 64px); }
-.rstkCanvas.rstk-kind-landing .rstk-shell { gap: clamp(24px, 4vw, 64px); padding-top: clamp(6px, 2vw, 20px); }
+.rstkCanvas.rstk-kind-landing .rstk-frame { padding: 0; }
+.rstkCanvas.rstk-kind-landing .rstk-page { max-width: none; margin: 0; border-radius: var(--rstk-page-radius, 0); overflow: hidden; }
+.rstkCanvas.rstk-kind-landing .rstk-shell { gap: 0; padding-top: 0; }
 .rstkCanvas.rstk-kind-landing .rstk-headline { font-family: var(--rstk-display); font-size: clamp(2.3rem, 5.6vw, 4rem); line-height: 1.03; letter-spacing: 0; background: none; color: var(--rstk-block-text, var(--rstk-ink)); }
 .rstkCanvas.rstk-kind-landing .rstk-subheading { font-size: clamp(1.05rem, 1.7vw, 1.28rem); max-width: 60ch; line-height: 1.6; }
 .rstkCanvas.rstk-kind-landing h2 { font-family: var(--rstk-display); }
@@ -227,6 +267,10 @@
 .rstkCanvas.rstk-kind-landing .rstk-button-link { border-radius: var(--rstk-block-button-radius, 999px); min-height: var(--rstk-button-height, 54px); padding: 0 var(--rstk-button-pad-x, 28px); font-family: var(--rstk-display); font-weight: 600; }
 .rstkCanvas.rstk-kind-landing .rstk-media, .rstkCanvas.rstk-kind-landing .rstk-video, .rstkCanvas.rstk-kind-landing .rstk-embed { border-radius: var(--rstk-media-radius, var(--rstk-block-radius, clamp(16px, 2vw, 22px))); box-shadow: none; }
 .rstkCanvas.rstk-kind-landing .rstk-embedded-form { padding: clamp(24px, 3vw, 40px); border: var(--rstk-block-border-width, 0) solid var(--rstk-block-border, transparent); border-radius: var(--rstk-block-radius, 0); background: var(--rstk-block-bg, transparent); width: 100%; margin-inline: auto; }
+
+@media (max-width: 760px) {
+  .rstkCanvas .rstk-section-columns { grid-template-columns: 1fr; }
+}
 
 /* ============================================================
  * Editor-only chrome (NOT part of the published page)
@@ -308,6 +352,26 @@
   border-radius: 12px;
   border: 1.5px dashed var(--rstk-accent);
   pointer-events: none;
+}
+
+.rstkCanvas .rstk-section-column-active {
+  min-height: 92px;
+  outline: 1px dashed color-mix(in srgb, var(--rstk-accent) 42%, transparent);
+  outline-offset: 8px;
+  border-radius: 10px;
+}
+
+.rstkCanvas .rstkColumnDropZone {
+  min-height: 82px;
+  display: grid;
+  place-items: center;
+  border: 1.5px dashed color-mix(in srgb, var(--rstk-accent) 34%, transparent);
+  border-radius: 10px;
+  color: color-mix(in srgb, var(--rstk-block-text, var(--rstk-ink)) 58%, transparent);
+  font-size: .9rem;
+  font-weight: 750;
+  text-align: center;
+  padding: 16px;
 }
 
 /* Block toolbar (drag + delete). Counter-scaled so it stays usable at any zoom. */

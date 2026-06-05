@@ -219,7 +219,7 @@ export const blockLabels: Record<SiteBlockType, string> = {
   text: 'Texto',
   embed: 'Embed',
   calendar_embed: 'Calendario',
-  section: 'Seccion',
+  section: 'Franja',
   hero: 'Hero',
   image: 'Imagen',
   video: 'Video',

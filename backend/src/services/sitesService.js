@@ -431,6 +431,45 @@ function buildDefaultBlocks(siteId, siteType, template) {
     settings_json: jsonString(extra.settings || {}),
     sort_order: extra.sortOrder || 0
   })
+  const makeLandingSection = (index, columns = 1) => {
+    const dark = index % 2 === 1
+    return makeBlock('section', `Franja ${index + 1}`, '', {
+      sortOrder: index * 2,
+      settings: {
+        sectionColumns: columns,
+        sectionGap: 24,
+        blockBg: dark ? '#111827' : '#ffffff',
+        blockText: dark ? '#ffffff' : '#111827',
+        blockPaddingTop: 80,
+        blockPaddingRight: 42,
+        blockPaddingBottom: 80,
+        blockPaddingLeft: 42,
+        blockMarginTop: 0,
+        blockMarginRight: 0,
+        blockMarginBottom: 0,
+        blockMarginLeft: 0,
+        textAlign: 'center',
+        blockRadius: 0,
+        blockBorderWidth: 0
+      }
+    })
+  }
+  const wrapLandingBlocksInSections = (contentBlocks) => contentBlocks.flatMap((block, index) => {
+    const section = makeLandingSection(index, 1)
+    const settings = parseJson(block.settings_json, {})
+    return [
+      section,
+      {
+        ...block,
+        sort_order: index * 2 + 1,
+        settings_json: jsonString({
+          ...settings,
+          sectionId: section.id,
+          sectionColumn: 0
+        })
+      }
+    ]
+  })
 
   const contactFields = (startOrder) => [
     makeBlock('short_text', 'Nombre completo', '', {
@@ -455,7 +494,7 @@ function buildDefaultBlocks(siteId, siteType, template) {
 
   if (siteType === 'landing_page') {
     if (tpl === 'vsl') {
-      return [
+      return wrapLandingBlocksInSections([
         makeBlock('headline', 'Titular', 'Mira esto antes de tomar una decision', {
           sortOrder: 0,
           settings: withLandingSpacing()
@@ -488,10 +527,10 @@ function buildDefaultBlocks(siteId, siteType, template) {
             ]
           })
         })
-      ]
+      ])
     }
 
-    return [
+    return wrapLandingBlocksInSections([
       makeBlock('hero', 'Hero', 'Agenda tu consulta', {
         sortOrder: 0,
         settings: withLandingSpacing({
@@ -523,7 +562,7 @@ function buildDefaultBlocks(siteId, siteType, template) {
           ...defaultButtonSettings
         })
       })
-    ]
+    ])
   }
 
   if (siteType === 'standard_form' && (tpl === 'facebook' || tpl === 'instagram' || tpl === 'tiktok')) {
@@ -1993,6 +2032,75 @@ function getPageBlocks(site, pageId) {
   return blocks.filter(block => getBlockPageId(block, pages) === activePage.id)
 }
 
+function isSectionBlock(block) {
+  return block && block.blockType === 'section'
+}
+
+function getSectionColumns(block) {
+  const value = Number(block?.settings?.sectionColumns ?? block?.settings?.columns)
+  if (!Number.isFinite(value)) return 1
+  return Math.min(3, Math.max(1, Math.round(value)))
+}
+
+function getBlockSectionId(block) {
+  return cleanString(block?.settings?.sectionId || block?.settings?.section_id)
+}
+
+function getBlockSectionColumn(block) {
+  const value = Number(block?.settings?.sectionColumn ?? block?.settings?.section_column)
+  if (!Number.isFinite(value)) return 0
+  return Math.min(2, Math.max(0, Math.round(value)))
+}
+
+function makeLandingSectionLane(section, sortOrder) {
+  const columns = section ? getSectionColumns(section) : 1
+  return {
+    id: section?.id || '__legacy-section__',
+    section,
+    columns,
+    columnBlocks: Array.from({ length: columns }, () => []),
+    sortOrder
+  }
+}
+
+function buildLandingSectionLanes(pageBlocks = []) {
+  const sortedBlocks = [...pageBlocks].sort((a, b) => a.sortOrder - b.sortOrder)
+  const lanes = sortedBlocks
+    .filter(isSectionBlock)
+    .map(block => makeLandingSectionLane(block, block.sortOrder))
+  const laneById = new Map(lanes.map(lane => [lane.id, lane]))
+  let legacyLane = null
+
+  const ensureLegacyLane = () => {
+    if (!legacyLane) {
+      legacyLane = makeLandingSectionLane(null, -1)
+      lanes.unshift(legacyLane)
+    }
+    return legacyLane
+  }
+
+  for (const block of sortedBlocks) {
+    if (isSectionBlock(block)) continue
+
+    const explicitSectionId = getBlockSectionId(block)
+    const explicitLane = explicitSectionId ? laneById.get(explicitSectionId) : null
+    const previousLane = explicitLane || [...lanes]
+      .filter(lane => lane.section && lane.sortOrder <= block.sortOrder)
+      .sort((a, b) => b.sortOrder - a.sortOrder)[0]
+    const lane = previousLane || ensureLegacyLane()
+    const columnIndex = Math.min(lane.columns - 1, getBlockSectionColumn(block))
+    lane.columnBlocks[columnIndex].push(block)
+  }
+
+  return lanes
+    .filter(lane => lane.section || lane.columnBlocks.some(column => column.length > 0))
+    .sort((a, b) => a.sortOrder - b.sortOrder)
+    .map(lane => ({
+      ...lane,
+      columnBlocks: lane.columnBlocks.map(column => [...column].sort((a, b) => a.sortOrder - b.sortOrder))
+    }))
+}
+
 function getNextPage(site, pageId) {
   const pages = normalizeSitePages(site)
   const index = pages.findIndex(page => page.id === pageId)
@@ -2423,7 +2531,8 @@ function renderBlockStyleVars(block) {
   const cardBorderWidth = blockSettingNumber(settings, 'cardBorderWidth', 0, 8)
   const listColumns = blockSettingNumber(settings, 'listColumns', 1, 4)
   const fieldRadius = blockSettingNumber(settings, 'fieldRadius', 0, 32)
-  const blockHasNativeBorder = ['hero', 'cta', 'benefits', 'testimonials', 'services', 'faq', 'form_embed', 'image', 'video', 'embed', 'calendar_embed'].includes(block.blockType)
+  const sectionGap = blockSettingNumber(settings, 'sectionGap', 0, 80)
+  const blockHasNativeBorder = ['hero', 'section', 'cta', 'benefits', 'testimonials', 'services', 'faq', 'form_embed', 'image', 'video', 'embed', 'calendar_embed'].includes(block.blockType)
   const supportsButton = ['hero', 'button', 'cta'].includes(block.blockType)
 
   if (blockBg) vars.push(`--rstk-block-bg:${blockBg}`)
@@ -2486,6 +2595,10 @@ function renderBlockStyleVars(block) {
   if (listColumns !== null) vars.push(`--rstk-list-columns:repeat(${listColumns},minmax(0,1fr))`)
   if (settings.cardAlign !== undefined) vars.push(`--rstk-card-align:${blockHorizontalAlign(settings, 'cardAlign', 'left')}`)
   if (fieldRadius !== null) vars.push(`--rstk-field-radius:${fieldRadius}px`)
+  if (block.blockType === 'section') {
+    vars.push(`--rstk-section-columns:${getSectionColumns(block)}`)
+    if (sectionGap !== null) vars.push(`--rstk-section-gap:${sectionGap}px`)
+  }
 
   return vars.length ? ` style="${escapeHtml(vars.join(';'))}"` : ''
 }
@@ -2506,6 +2619,58 @@ function wrapRenderedBlock(block, html) {
   const style = renderBlockStyleVars(block)
   const className = renderBlockStyleClassName(block)
   return style ? `<div class="${escapeHtml(className)}"${style}>${html}</div>` : html
+}
+
+function renderPublicBlock(block, context = {}) {
+  const html = FIELD_BLOCK_TYPES.has(block.blockType)
+    ? renderFieldBlock(block, context.isInteractive)
+    : renderContentBlock(block, context)
+  return wrapRenderedBlock(block, html)
+}
+
+function renderLandingSectionLane(lane, context = {}) {
+  const columnsHtml = lane.columnBlocks.map((columnBlocks, index) => `
+    <div class="rstk-section-column" data-section-column="${index}">
+      ${columnBlocks.map(block => renderPublicBlock(block, context)).join('\n')}
+    </div>
+  `).join('\n')
+
+  if (!lane.section) {
+    return `
+      <section class="rstk-section-lane rstk-section-lane-legacy">
+        <div class="rstk-section-inner">
+          <div class="rstk-section-columns">
+            ${columnsHtml}
+          </div>
+        </div>
+      </section>
+    `
+  }
+
+  const section = lane.section
+  const settings = section.settings || {}
+  const style = renderBlockStyleVars(section)
+  const className = `${renderBlockStyleClassName(section)} rstk-section-lane`
+  const hasHeading = cleanString(section.content) || cleanString(settings.subtitle)
+  const heading = hasHeading
+    ? `
+      <div class="rstk-section-heading">
+        ${cleanString(section.content) ? `<h2>${escapeHtml(section.content)}</h2>` : ''}
+        ${cleanString(settings.subtitle) ? `<p>${escapeHtml(settings.subtitle)}</p>` : ''}
+      </div>
+    `
+    : ''
+
+  return `
+    <section class="${escapeHtml(className)}"${style}>
+      <div class="rstk-section-inner">
+        ${heading}
+        <div class="rstk-section-columns">
+          ${columnsHtml}
+        </div>
+      </div>
+    </section>
+  `
 }
 
 function renderContentBlock(block, context = {}) {
@@ -3016,6 +3181,12 @@ const RSTK_BASE_CSS = `
   .rstk-shell{display:grid;gap:var(--rstk-gap)}
   .rstk-centered .rstk-shell{text-align:center;justify-items:center}
   .rstk-centered .rstk-subheading,.rstk-centered .rstk-text{margin-inline:auto}
+  .rstk-section-lane.rstk-block-style,.rstk-section-lane{width:100%;margin:var(--rstk-block-margin,0);background:var(--rstk-block-bg,transparent);color:var(--rstk-block-text,var(--rstk-ink));border:var(--rstk-block-border-width,0) solid var(--rstk-block-border,transparent);border-radius:var(--rstk-block-radius,0);padding:0}
+  .rstk-section-inner{width:100%;max-width:var(--rstk-max);margin:0 auto;padding:var(--rstk-block-pad,var(--rstk-frame-pad,clamp(28px,5vw,72px)));display:grid;gap:var(--rstk-section-gap,clamp(18px,3vw,30px))}
+  .rstk-section-heading{display:grid;gap:10px;justify-items:var(--rstk-block-justify,stretch);text-align:var(--rstk-block-align,inherit)}
+  .rstk-section-heading h2,.rstk-section-heading p{margin:0}
+  .rstk-section-columns{display:grid;grid-template-columns:repeat(var(--rstk-section-columns,1),minmax(0,1fr));gap:var(--rstk-section-gap,clamp(18px,3vw,30px));align-items:start}
+  .rstk-section-column{min-width:0;display:grid;align-content:start;gap:var(--rstk-gap)}
   .rstk-block-style{
     width:auto;
     min-width:0;
@@ -3192,8 +3363,9 @@ const RSTK_BASE_CSS = `
   }
 
   /* ---------- Premium landing ---------- */
-  .rstk-kind-landing .rstk-frame{padding:var(--rstk-frame-pad,clamp(10px,3vw,28px)) clamp(14px,3vw,24px) clamp(32px,5vw,64px)}
-  .rstk-kind-landing .rstk-shell{gap:clamp(24px,4vw,64px);padding-top:clamp(6px,2vw,20px)}
+  .rstk-kind-landing .rstk-frame{padding:0}
+  .rstk-kind-landing .rstk-page{max-width:none;margin:0;border-radius:var(--rstk-page-radius,0);overflow:hidden}
+  .rstk-kind-landing .rstk-shell{gap:0;padding-top:0}
   .rstk-kind-landing .rstk-headline{font-family:var(--rstk-display);font-size:clamp(2.3rem,5.6vw,4rem);line-height:1.03;letter-spacing:0;background:none;color:var(--rstk-block-text,var(--rstk-ink))}
   .rstk-kind-landing .rstk-subheading{font-size:clamp(1.05rem,1.7vw,1.28rem);max-width:var(--rstk-content-max,60ch);line-height:1.6}
   .rstk-kind-landing h2{font-family:var(--rstk-display)}
@@ -3233,6 +3405,7 @@ const RSTK_BASE_CSS = `
 
   .rstk-kind-landing .rstk-media,.rstk-kind-landing .rstk-video,.rstk-kind-landing .rstk-embed{border-radius:var(--rstk-media-radius,var(--rstk-block-radius,clamp(16px,2vw,22px)));box-shadow:none}
   .rstk-kind-landing .rstk-embedded-form{padding:clamp(24px,3vw,40px);border:var(--rstk-block-border-width,0) solid var(--rstk-block-border,transparent);border-radius:var(--rstk-block-radius,0);background:var(--rstk-block-bg,transparent);width:100%;margin-inline:auto}
+  @media (max-width:760px){.rstk-section-columns{grid-template-columns:1fr}}
   .rstkFontOverride .rstk-headline,.rstkFontOverride .rstk-subheading,.rstkFontOverride .rstk-text,.rstkFontOverride h2,.rstkFontOverride label,.rstkFontOverride .rstk-help,.rstkFontOverride .rstk-list-grid strong,.rstkFontOverride .rstk-list-grid p,.rstkFontOverride .rstk-check-body strong,.rstkFontOverride .rstk-check-body span{font-family:var(--rstk-block-font,inherit)}
   .rstkSizeOverride .rstk-headline,.rstkSizeOverride .rstk-subheading,.rstkSizeOverride .rstk-text,.rstkSizeOverride h2,.rstkSizeOverride label,.rstkSizeOverride .rstk-help,.rstkSizeOverride .rstk-list-grid strong,.rstkSizeOverride .rstk-list-grid p,.rstkSizeOverride .rstk-list-grid small,.rstkSizeOverride .rstk-check-body strong,.rstkSizeOverride .rstk-check-body span{font-size:var(--rstk-block-size)}
   .rstkWeightOverride .rstk-headline,.rstkWeightOverride .rstk-subheading,.rstkWeightOverride .rstk-text,.rstkWeightOverride h2,.rstkWeightOverride label,.rstkWeightOverride .rstk-help,.rstkWeightOverride .rstk-list-grid strong,.rstkWeightOverride .rstk-check-body strong{font-weight:var(--rstk-block-weight,850)}
@@ -3610,12 +3783,10 @@ export async function renderPublicSiteHtml(site, { pageId, trackingEnabled = tru
     isInteractive ? 'rstk-interactive' : ''
   ].filter(Boolean).join(' ')
 
-  const bodyBlocks = blocks.map(block => {
-    const html = FIELD_BLOCK_TYPES.has(block.blockType)
-      ? renderFieldBlock(block, isInteractive)
-      : renderContentBlock(block, { site, pageId: activePage?.id })
-    return wrapRenderedBlock(block, html)
-  }).join('\n')
+  const renderContext = { site, pageId: activePage?.id, isInteractive }
+  const bodyBlocks = isLandingType
+    ? buildLandingSectionLanes(blocks).map(lane => renderLandingSectionLane(lane, renderContext)).join('\n')
+    : blocks.map(block => renderPublicBlock(block, renderContext)).join('\n')
 
   const submitArea = hasForm
     ? `
