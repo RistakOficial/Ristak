@@ -88,6 +88,7 @@ import {
   type SiteOptionAction,
   type SitePage,
   type SiteSubmission,
+  type SiteTemplateMeta,
   type SiteTemplateId,
   type SiteTheme,
   type SiteType
@@ -3485,28 +3486,34 @@ const LANDING_TEMPLATE_CATEGORIES: TemplateGalleryCategory[] = [
     id: 'full-page',
     title: 'Paginas completas',
     description: 'Sitios grandes para explicar tu oferta, mostrar beneficios y llevar a una accion clara.',
-    ids: ['ristak', 'executive', 'launch', 'premium', 'local', 'vsl']
+    ids: ['ristak', 'executive', 'local']
+  },
+  {
+    id: 'sales-pages',
+    title: 'Cartas y lanzamientos',
+    description: 'Paginas grandes para vender una oferta, lanzar una promocion o presentar algo premium.',
+    ids: ['vsl', 'launch', 'premium']
   },
   {
     id: 'social',
     title: 'Redes sociales',
     description: 'Apariencias cortas para trafico que viene desde anuncios o perfiles sociales.',
     ids: ['facebook', 'instagram', 'tiktok']
-  },
-  {
-    id: 'capture',
-    title: 'Captura y registros',
-    description: 'Paginas directas para pedir datos, registrar interesados o mover rapido a una llamada.',
-    ids: ['compact', 'event']
   }
 ]
 
 const FORM_TEMPLATE_CATEGORIES: TemplateGalleryCategory[] = [
   {
-    id: 'business-forms',
-    title: 'Formularios de negocio',
-    description: 'Formularios compactos y genericos para capturar datos sin verse como anuncio.',
-    ids: ['compact', 'event', 'executive', 'local', 'premium', 'ristak']
+    id: 'capture-forms',
+    title: 'Captura rapida',
+    description: 'Formularios cortos para pedir datos, cotizar o preparar una llamada.',
+    ids: ['compact', 'quote', 'callback']
+  },
+  {
+    id: 'registration-forms',
+    title: 'Registros y cupos',
+    description: 'Formularios para eventos, listas de espera, clases, preventas o confirmaciones.',
+    ids: ['event', 'waitlist']
   },
   {
     id: 'social-forms',
@@ -3521,7 +3528,13 @@ const INTERACTIVE_TEMPLATE_CATEGORIES: TemplateGalleryCategory[] = [
     id: 'guided',
     title: 'Quiz y formularios guiados',
     description: 'Una pregunta por pantalla para calificar prospectos paso a paso.',
-    ids: ['interactive', 'compact', 'event']
+    ids: ['interactive', 'callback', 'quote']
+  },
+  {
+    id: 'guided-registration',
+    title: 'Registros paso a paso',
+    description: 'Secuencias simples para confirmar interes antes de pedir todos los datos.',
+    ids: ['event', 'waitlist']
   },
   {
     id: 'social-guided',
@@ -3531,12 +3544,32 @@ const INTERACTIVE_TEMPLATE_CATEGORIES: TemplateGalleryCategory[] = [
   }
 ]
 
+const getTemplatePreviewStyle = (meta: SiteTemplateMeta): React.CSSProperties => {
+  const image = typeof meta.defaultTheme?.backgroundImage === 'string' ? meta.defaultTheme.backgroundImage : ''
+  const paint = typeof meta.defaultTheme?.backgroundColor === 'string' ? meta.defaultTheme.backgroundColor : ''
+  if (!image) {
+    return { background: meta.swatchBg, color: meta.swatchInk }
+  }
+
+  const overlay = paint.startsWith('linear-gradient(')
+    ? paint
+    : 'linear-gradient(135deg, rgba(15,23,42,.16), rgba(15,23,42,.04))'
+
+  return {
+    backgroundColor: meta.swatchBg,
+    backgroundImage: `${overlay}, url("${image.replace(/["\\\n\r]/g, '')}")`,
+    backgroundPosition: 'center',
+    backgroundSize: 'cover',
+    color: meta.swatchInk
+  }
+}
+
 const TemplateCard: React.FC<{ id: SiteTemplateId; disabled: boolean; onPick: () => void }> = ({ id, disabled, onPick }) => {
   const meta = templateMetaById(id)
   if (!meta) return null
   return (
     <button type="button" className={styles.templateCard} disabled={disabled} onClick={onPick}>
-      <span className={styles.templatePreview} style={{ background: meta.swatchBg, color: meta.swatchInk } as React.CSSProperties}>
+      <span className={styles.templatePreview} style={getTemplatePreviewStyle(meta)}>
         <span className={styles.templatePreviewBar}>
           <span className={styles.templateDot} style={{ background: meta.accent }} />
           <span className={styles.templatePreviewName}>{meta.label}</span>
@@ -3583,7 +3616,7 @@ const CreateFlowPanel: React.FC<CreateFlowPanelProps> = ({ step, creating, onCre
           <button type="button" disabled={creating} onClick={() => onAdvance('landing-template')}>
             <LayoutTemplate size={22} />
             <strong>Desde plantilla</strong>
-            <p>Elige entre paginas completas, redes sociales y registros rapidos.</p>
+            <p>Elige entre paginas completas, cartas de venta, lanzamientos y redes sociales.</p>
             <ChevronRight size={18} />
           </button>
           <button type="button" disabled={creating} onClick={() => onCreate('landing_page', 'blank', 'ristak')}>
@@ -3651,7 +3684,7 @@ const CreateFlowPanel: React.FC<CreateFlowPanelProps> = ({ step, creating, onCre
 
       {step === 'form-template' && (
         <>
-          <p className={styles.galleryHint}>Elige un formulario compacto de negocio o uno con apariencia de red social.</p>
+          <p className={styles.galleryHint}>Elige un formulario de captura, registro o redes sociales.</p>
           <TemplateCategoryGallery
             categories={FORM_TEMPLATE_CATEGORIES}
             disabled={creating}

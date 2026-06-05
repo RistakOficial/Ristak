@@ -390,6 +390,17 @@ function normalizeOptionAction(value) {
   return OPTION_ACTIONS.has(resolvedAction) ? resolvedAction : 'continue'
 }
 
+const TEMPLATE_IMAGE_URLS = {
+  workspace: 'https://images.unsplash.com/photo-1497366754035-f200968a6e72?auto=format&fit=crop&w=1800&q=80',
+  planning: 'https://images.unsplash.com/photo-1517245386807-bb43f82c33c4?auto=format&fit=crop&w=1800&q=80',
+  premium: 'https://images.unsplash.com/photo-1556761175-b413da4baf72?auto=format&fit=crop&w=1800&q=80',
+  local: 'https://images.unsplash.com/photo-1556745757-8d76bdb6984b?auto=format&fit=crop&w=1800&q=80',
+  team: 'https://images.unsplash.com/photo-1551434678-e076c223a692?auto=format&fit=crop&w=1800&q=80',
+  quote: 'https://images.unsplash.com/photo-1553877522-43269d4ea984?auto=format&fit=crop&w=1800&q=80',
+  consult: 'https://images.unsplash.com/photo-1551836022-d5d88e9218df?auto=format&fit=crop&w=1800&q=80',
+  handshake: 'https://images.unsplash.com/photo-1521791136064-7986c2920216?auto=format&fit=crop&w=1800&q=80'
+}
+
 async function ensureUniqueSlug(baseSlug, ignoreSiteId = null) {
   let slug = baseSlug
   let suffix = 2
@@ -635,35 +646,203 @@ function buildDefaultBlocks(siteId, siteType, template) {
     blockPaddingLeft: 30,
     ...settings
   })
+  const landingImageBlock = (label, imageUrl, settings = {}) => makeBlock('image', label, '', {
+    settings: withLandingSpacing('image', {
+      mediaUrl: imageUrl,
+      mediaRadius: 24,
+      mediaWidth: 100,
+      blockBorderWidth: 0,
+      blockBg: 'transparent',
+      ...settings
+    })
+  })
+  const formImageBlock = (label, imageUrl, sortOrder, settings = {}) => makeBlock('image', label, '', {
+    sortOrder,
+    settings: {
+      mediaUrl: imageUrl,
+      mediaRadius: 18,
+      mediaWidth: 100,
+      blockBorderWidth: 0,
+      ...settings
+    }
+  })
 
   if (siteType === 'landing_page') {
+    if (tpl === 'ristak') {
+      return makeLandingLayout([
+        {
+          columns: 2,
+          settings: {
+            blockBg: 'linear-gradient(90deg, rgba(248,250,252,.96), rgba(248,250,252,.72))',
+            blockText: '#0f172a',
+            sectionGap: 40,
+            blockPaddingTop: 76,
+            blockPaddingBottom: 72
+          },
+          columnBlocks: [
+            [
+              makeBlock('hero', 'Hero', 'Convierte visitas en conversaciones de negocio', {
+                settings: withLandingSpacing('hero', {
+                  textAlign: 'left',
+                  kicker: 'Pagina completa',
+                  subtitle: 'Presenta tu oferta, muestra por que vale la pena y deja listo el siguiente paso para quien ya esta interesado.',
+                  buttonText: 'Quiero informacion',
+                  buttonUrl: '#form',
+                  buttonAlign: 'left',
+                  buttonBg: '#111827',
+                  ...defaultButtonSettings
+                })
+              })
+            ],
+            [
+              landingImageBlock('Foto principal', TEMPLATE_IMAGE_URLS.workspace, {
+                mediaRadius: 28,
+                blockBorderColor: 'rgba(15,23,42,.08)'
+              })
+            ]
+          ]
+        },
+        {
+          columns: 3,
+          settings: { blockBg: '#ffffff', blockText: '#0f172a', sectionGap: 18, blockPaddingTop: 50, blockPaddingBottom: 52 },
+          columnBlocks: [
+            [makeBlock('services', 'Claridad', 'Mensaje simple', {
+              settings: withLandingSpacing('services', {
+                listColumns: 1,
+                cardBg: '#f8fafc',
+                cardBorderColor: '#e2e8f0',
+                cardRadius: 16,
+                items: [{ title: 'Que haces', text: 'Explica tu servicio sin palabras complicadas.' }]
+              })
+            })],
+            [makeBlock('services', 'Confianza', 'Pruebas y beneficios', {
+              settings: withLandingSpacing('services', {
+                listColumns: 1,
+                cardBg: '#f8fafc',
+                cardBorderColor: '#e2e8f0',
+                cardRadius: 16,
+                items: [{ title: 'Por que elegirte', text: 'Muestra beneficios concretos y faciles de leer.' }]
+              })
+            })],
+            [makeBlock('services', 'Accion', 'Siguiente paso', {
+              settings: withLandingSpacing('services', {
+                listColumns: 1,
+                cardBg: '#f8fafc',
+                cardBorderColor: '#e2e8f0',
+                cardRadius: 16,
+                items: [{ title: 'Como avanzar', text: 'Lleva al prospecto a pedir informacion o agendar.' }]
+              })
+            })]
+          ]
+        },
+        {
+          columns: 2,
+          settings: { blockBg: '#111827', blockText: '#ffffff', sectionGap: 32, blockPaddingTop: 58, blockPaddingBottom: 60 },
+          columnBlocks: [
+            [
+              makeBlock('benefits', 'Beneficios', 'Lo que esta pagina deja claro', {
+                settings: withLandingSpacing('benefits', {
+                  items: [
+                    { title: '+ Oferta entendible', text: 'El visitante sabe si esto es para el.' },
+                    { title: '+ Datos listos', text: 'La informacion llega completa para dar seguimiento.' },
+                    { title: '+ Diseno editable', text: 'Puedes cambiar textos, colores, fotos y secciones.' }
+                  ]
+                })
+              })
+            ],
+            [
+              makeBlock('form_embed', 'Contacto', 'Pide informacion', {
+                settings: formEmbedSettings('Deja tus datos y tu equipo podra dar seguimiento.', {
+                  blockBg: '#ffffff',
+                  blockText: '#0f172a',
+                  fieldBorder: '#cbd5e1',
+                  fieldRadius: 12
+                })
+              })
+            ]
+          ]
+        },
+        {
+          settings: { blockBg: '#f8fafc', blockText: '#0f172a', textAlign: 'center', blockPaddingTop: 48, blockPaddingBottom: 54 },
+          blocks: [
+            makeBlock('cta', 'CTA final', 'Listo para presentar tu negocio?', {
+              settings: withLandingSpacing('cta', {
+                textAlign: 'center',
+                subtitle: 'Edita esta plantilla con tu oferta real y publicala cuando este lista.',
+                buttonText: 'Editar mi pagina',
+                buttonUrl: '#form',
+                ...defaultButtonSettings
+              })
+            })
+          ]
+        }
+      ])
+    }
+
     if (tpl === 'vsl') {
       return makeLandingLayout([
         {
-          settings: { blockBg: '#0a0b0d', blockText: '#ffffff', textAlign: 'center', blockPaddingTop: 64, blockPaddingBottom: 54 },
+          columns: 2,
+          settings: {
+            blockBg: 'linear-gradient(120deg, rgba(10,11,13,.96), rgba(17,24,39,.78))',
+            blockText: '#ffffff',
+            sectionGap: 34,
+            blockPaddingTop: 72,
+            blockPaddingBottom: 72
+          },
+          columnBlocks: [
+            [
+              makeBlock('hero', 'Hero', 'Una oferta clara para que el cliente diga: quiero saber mas', {
+                settings: withLandingSpacing('hero', {
+                  textAlign: 'left',
+                  kicker: 'Carta de ventas',
+                  subtitle: 'Cuenta el problema, presenta tu solucion y mueve al visitante hacia una decision concreta sin sonar tecnico.',
+                  buttonText: 'Ver detalles',
+                  buttonUrl: '#form',
+                  buttonAlign: 'left',
+                  buttonBg: '#ffffff',
+                  buttonTextColor: '#111827',
+                  ...defaultButtonSettings
+                })
+              })
+            ],
+            [
+              landingImageBlock('Imagen de confianza', TEMPLATE_IMAGE_URLS.handshake, {
+                mediaRadius: 24,
+                blockBorderColor: 'rgba(255,255,255,.14)'
+              })
+            ]
+          ]
+        },
+        {
+          settings: { blockBg: '#ffffff', blockText: '#111827', textAlign: 'center', blockPaddingTop: 52, blockPaddingBottom: 48 },
           blocks: [
-            makeBlock('headline', 'Titular', 'Una oferta clara para que mas clientes den el siguiente paso', {
-              settings: withLandingSpacing('headline', { contentMaxWidth: 18, textAlign: 'center' })
-            }),
-            makeBlock('subheading', 'Subtitulo', 'Usa esta carta de ventas para explicar el problema, presentar tu solucion y pedir contacto sin vueltas.', {
-              settings: withLandingSpacing('subheading', { contentMaxWidth: 62, textAlign: 'center' })
-            }),
-            makeBlock('video', 'Video', '', {
-              settings: withLandingSpacing('video', { mediaUrl: '', mediaRadius: 18, mediaWidth: 86 })
+            makeBlock('benefits', 'Lo que obtiene el cliente', 'Por que esta oferta le conviene', {
+              settings: withLandingSpacing('benefits', {
+                contentMaxWidth: 28,
+                items: [
+                  { title: '+ Resultado facil de entender', text: 'Explica el cambio que ayudas a lograr.' },
+                  { title: '+ Proceso sin confusion', text: 'Muestra que pasa despues de dejar sus datos.' },
+                  { title: '- Sin promesas raras', text: 'Mantiene la pagina generica y editable para cualquier negocio.' }
+                ]
+              })
             })
           ]
         },
         {
           columns: 2,
-          settings: { blockBg: '#ffffff', blockText: '#111827', sectionGap: 30, blockPaddingTop: 52, blockPaddingBottom: 52 },
+          settings: { blockBg: '#f8fafc', blockText: '#111827', sectionGap: 30, blockPaddingTop: 52, blockPaddingBottom: 54 },
           columnBlocks: [
             [
-              makeBlock('benefits', 'Lo que obtiene el cliente', 'Lo que obtiene el cliente', {
-                settings: withLandingSpacing('benefits', {
+              makeBlock('testimonials', 'Prueba social', 'Confianza para avanzar', {
+                settings: withLandingSpacing('testimonials', {
+                  listColumns: 1,
+                  cardBg: '#ffffff',
+                  cardBorderColor: '#e5e7eb',
+                  cardRadius: 16,
                   items: [
-                    { title: '+ Entiende rapido tu propuesta', text: 'La pagina explica que vendes, para quien es y por que conviene.' },
-                    { title: '+ Da el siguiente paso sin friccion', text: 'El llamado a la accion lleva directo al formulario.' },
-                    { title: '- Sin textos confusos', text: 'Cada seccion se puede editar con lenguaje de tu negocio.' }
+                    { title: 'Mensaje mas claro', text: 'La oferta se entiende antes de pedir una llamada.', author: 'Cliente actual' },
+                    { title: 'Seguimiento mas ordenado', text: 'Los datos llegan listos para contactar.', author: 'Equipo comercial' }
                   ]
                 })
               })
@@ -680,23 +859,12 @@ function buildDefaultBlocks(siteId, siteType, template) {
           ]
         },
         {
-          settings: { blockBg: '#111827', blockText: '#ffffff', textAlign: 'center', blockPaddingTop: 48, blockPaddingBottom: 52 },
+          settings: { blockBg: '#111827', blockText: '#ffffff', textAlign: 'center', blockPaddingTop: 46, blockPaddingBottom: 52 },
           blocks: [
-            makeBlock('testimonials', 'Prueba social', 'Confianza para avanzar', {
-              settings: withLandingSpacing('testimonials', {
-                cardBg: 'rgba(255,255,255,0.06)',
-                cardBorderColor: '#374151',
-                cardRadius: 16,
-                items: [
-                  { title: 'Respuesta mas clara', text: 'Ahora los interesados entienden la oferta antes de escribir.', author: 'Cliente actual' },
-                  { title: 'Seguimiento mas ordenado', text: 'Los datos llegan completos para contactar sin perseguir informacion.', author: 'Equipo comercial' }
-                ]
-              })
-            }),
             makeBlock('cta', 'CTA final', 'Listo para convertir mas visitas?', {
               settings: withLandingSpacing('cta', {
                 textAlign: 'center',
-                subtitle: 'Cambia el texto, ajusta el video y publica cuando tu oferta este lista.',
+                subtitle: 'Cambia el texto, la foto y los beneficios para aterrizar tu oferta real.',
                 buttonText: 'Quiero mas informacion',
                 buttonUrl: '#form',
                 ...defaultButtonSettings
@@ -711,7 +879,13 @@ function buildDefaultBlocks(siteId, siteType, template) {
       return makeLandingLayout([
         {
           columns: 2,
-          settings: { blockBg: '#f8fafc', blockText: '#0f172a', sectionGap: 34, blockPaddingTop: 70, blockPaddingBottom: 70 },
+          settings: {
+            blockBg: 'linear-gradient(110deg, rgba(248,250,252,.96), rgba(236,254,255,.72))',
+            blockText: '#0f172a',
+            sectionGap: 38,
+            blockPaddingTop: 74,
+            blockPaddingBottom: 70
+          },
           columnBlocks: [
             [
               makeBlock('hero', 'Hero', 'Servicios claros para hacer crecer tu negocio', {
@@ -722,38 +896,43 @@ function buildDefaultBlocks(siteId, siteType, template) {
                   buttonText: 'Agendar una llamada',
                   buttonUrl: '#form',
                   buttonAlign: 'left',
+                  buttonBg: '#0f766e',
                   ...defaultButtonSettings
                 })
               })
             ],
             [
-              makeBlock('services', 'Servicios', 'Como podemos ayudarte', {
-                settings: withLandingSpacing('services', {
-                  listColumns: 1,
-                  cardBg: '#ffffff',
-                  cardBorderColor: '#cbd5e1',
-                  cardRadius: 14,
-                  items: [
-                    { title: 'Diagnostico', text: 'Entendemos tu situacion y detectamos la mejor ruta.' },
-                    { title: 'Plan de accion', text: 'Definimos pasos claros para avanzar sin perder foco.' },
-                    { title: 'Seguimiento', text: 'Damos continuidad hasta que el prospecto tome decision.' }
-                  ]
-                })
+              landingImageBlock('Equipo de trabajo', TEMPLATE_IMAGE_URLS.team, {
+                mediaRadius: 18,
+                blockBorderColor: '#cbd5e1'
               })
             ]
           ]
         },
         {
+          columns: 3,
+          settings: { blockBg: '#ffffff', blockText: '#0f172a', sectionGap: 18, blockPaddingTop: 52, blockPaddingBottom: 54 },
+          columnBlocks: [
+            [makeBlock('text', 'Diagnostico', 'Diagnostico claro antes de vender una solucion.', { settings: withLandingSpacing('text', { blockBg: '#ecfeff', blockRadius: 16, blockPaddingTop: 22, blockPaddingRight: 22, blockPaddingBottom: 22, blockPaddingLeft: 22, blockBorderWidth: 1, blockBorderColor: '#a5f3fc' }) })],
+            [makeBlock('text', 'Plan', 'Ruta de trabajo simple para que el prospecto entienda que sigue.', { settings: withLandingSpacing('text', { blockBg: '#f8fafc', blockRadius: 16, blockPaddingTop: 22, blockPaddingRight: 22, blockPaddingBottom: 22, blockPaddingLeft: 22, blockBorderWidth: 1, blockBorderColor: '#e2e8f0' }) })],
+            [makeBlock('text', 'Seguimiento', 'Contacto ordenado con datos completos para no perder oportunidades.', { settings: withLandingSpacing('text', { blockBg: '#ecfdf5', blockRadius: 16, blockPaddingTop: 22, blockPaddingRight: 22, blockPaddingBottom: 22, blockPaddingLeft: 22, blockBorderWidth: 1, blockBorderColor: '#a7f3d0' }) })]
+          ]
+        },
+        {
           columns: 2,
-          settings: { blockBg: '#0f766e', blockText: '#ffffff', sectionGap: 28, blockPaddingTop: 54, blockPaddingBottom: 54 },
+          settings: { blockBg: '#0f766e', blockText: '#ffffff', sectionGap: 30, blockPaddingTop: 56, blockPaddingBottom: 58 },
           columnBlocks: [
             [
-              makeBlock('benefits', 'Beneficios', 'Por que esta pagina funciona', {
-                settings: withLandingSpacing('benefits', {
+              makeBlock('services', 'Servicios', 'Como podemos ayudarte', {
+                settings: withLandingSpacing('services', {
+                  listColumns: 1,
+                  cardBg: 'rgba(255,255,255,.12)',
+                  cardBorderColor: 'rgba(255,255,255,.22)',
+                  cardRadius: 16,
                   items: [
-                    { title: '+ Mensaje facil de entender', text: 'El visitante sabe que haces y que debe hacer.' },
-                    { title: '+ Captura datos completos', text: 'El formulario queda en la misma pagina.' },
-                    { title: '+ Lista para editar', text: 'Cambia textos, colores y bloques desde el builder.' }
+                    { title: 'Consultoria', text: 'Aterriza tu oferta y explica el valor.' },
+                    { title: 'Implementacion', text: 'Muestra como llevas al cliente al resultado.' },
+                    { title: 'Acompanamiento', text: 'Deja claro que hay seguimiento real.' }
                   ]
                 })
               })
@@ -776,7 +955,13 @@ function buildDefaultBlocks(siteId, siteType, template) {
     if (tpl === 'launch') {
       return makeLandingLayout([
         {
-          settings: { blockBg: '#fff7ed', blockText: '#1f2937', textAlign: 'center', blockPaddingTop: 72, blockPaddingBottom: 52 },
+          settings: {
+            blockBg: 'linear-gradient(135deg, rgba(255,247,237,.96), rgba(251,146,60,.34))',
+            blockText: '#1f2937',
+            textAlign: 'center',
+            blockPaddingTop: 78,
+            blockPaddingBottom: 58
+          },
           blocks: [
             makeBlock('hero', 'Hero', 'Lanza tu nueva oferta con una pagina lista para captar interesados', {
               settings: withLandingSpacing('hero', {
@@ -805,6 +990,12 @@ function buildDefaultBlocks(siteId, siteType, template) {
           settings: { blockBg: '#ffedd5', blockText: '#7c2d12', sectionGap: 30, blockPaddingTop: 54, blockPaddingBottom: 58 },
           columnBlocks: [
             [
+              landingImageBlock('Foto de lanzamiento', TEMPLATE_IMAGE_URLS.planning, {
+                mediaRadius: 22,
+                blockBorderColor: '#fdba74'
+              })
+            ],
+            [
               makeBlock('cta', 'CTA', 'Aparta tu lugar o pide informacion', {
                 settings: withLandingSpacing('cta', {
                   textAlign: 'left',
@@ -815,16 +1006,19 @@ function buildDefaultBlocks(siteId, siteType, template) {
                   ...defaultButtonSettings
                 })
               })
-            ],
-            [
-              makeBlock('form_embed', 'Registro', 'Registro rapido', {
-                settings: formEmbedSettings('Deja tus datos para recibir la informacion completa.', {
-                  blockBg: '#ffffff',
-                  blockText: '#1f2937',
-                  fieldBorder: '#fdba74'
-                })
-              })
             ]
+          ]
+        },
+        {
+          settings: { blockBg: '#fff7ed', blockText: '#7c2d12', textAlign: 'center', blockPaddingTop: 46, blockPaddingBottom: 56 },
+          blocks: [
+            makeBlock('form_embed', 'Registro', 'Registro rapido', {
+              settings: formEmbedSettings('Deja tus datos para recibir la informacion completa.', {
+                blockBg: '#ffffff',
+                blockText: '#1f2937',
+                fieldBorder: '#fdba74'
+              })
+            })
           ]
         }
       ])
@@ -834,7 +1028,13 @@ function buildDefaultBlocks(siteId, siteType, template) {
       return makeLandingLayout([
         {
           columns: 2,
-          settings: { blockBg: '#101010', blockText: '#f8fafc', sectionGap: 36, blockPaddingTop: 76, blockPaddingBottom: 70 },
+          settings: {
+            blockBg: 'linear-gradient(120deg, rgba(16,16,16,.96), rgba(16,16,16,.72))',
+            blockText: '#f8fafc',
+            sectionGap: 38,
+            blockPaddingTop: 78,
+            blockPaddingBottom: 72
+          },
           columnBlocks: [
             [
               makeBlock('hero', 'Hero', 'Una experiencia premium para presentar una oferta de alto valor', {
@@ -852,6 +1052,27 @@ function buildDefaultBlocks(siteId, siteType, template) {
               })
             ],
             [
+              landingImageBlock('Imagen premium', TEMPLATE_IMAGE_URLS.premium, {
+                mediaRadius: 16,
+                blockBorderColor: 'rgba(255,255,255,.16)'
+              })
+            ]
+          ]
+        },
+        {
+          columns: 3,
+          settings: { blockBg: '#18181b', blockText: '#f8fafc', sectionGap: 28, blockPaddingTop: 56, blockPaddingBottom: 58 },
+          columnBlocks: [
+            [makeBlock('text', 'Asesoria', 'Explica como acompanas al cliente antes de comprar.', { settings: withLandingSpacing('text', { blockBg: '#222225', blockRadius: 10, blockPaddingTop: 24, blockPaddingRight: 24, blockPaddingBottom: 24, blockPaddingLeft: 24, blockBorderWidth: 1, blockBorderColor: '#3f3f46' }) })],
+            [makeBlock('text', 'Implementacion', 'Muestra que hay proceso y entregables claros.', { settings: withLandingSpacing('text', { blockBg: '#222225', blockRadius: 10, blockPaddingTop: 24, blockPaddingRight: 24, blockPaddingBottom: 24, blockPaddingLeft: 24, blockBorderWidth: 1, blockBorderColor: '#3f3f46' }) })],
+            [makeBlock('text', 'Seguimiento', 'Deja claro que no termina en el primer contacto.', { settings: withLandingSpacing('text', { blockBg: '#222225', blockRadius: 10, blockPaddingTop: 24, blockPaddingRight: 24, blockPaddingBottom: 24, blockPaddingLeft: 24, blockBorderWidth: 1, blockBorderColor: '#3f3f46' }) })]
+          ]
+        },
+        {
+          columns: 2,
+          settings: { blockBg: '#101010', blockText: '#f8fafc', sectionGap: 30, blockPaddingTop: 58, blockPaddingBottom: 62 },
+          columnBlocks: [
+            [
               makeBlock('testimonials', 'Confianza', 'Por que confiar', {
                 settings: withLandingSpacing('testimonials', {
                   listColumns: 1,
@@ -861,27 +1082,6 @@ function buildDefaultBlocks(siteId, siteType, template) {
                   items: [
                     { title: 'Proceso cuidado', text: 'El cliente entiende cada paso antes de dejar sus datos.' },
                     { title: 'Presentacion sobria', text: 'El diseno ayuda a comunicar calidad sin saturar.' }
-                  ]
-                })
-              })
-            ]
-          ]
-        },
-        {
-          columns: 2,
-          settings: { blockBg: '#18181b', blockText: '#f8fafc', sectionGap: 28, blockPaddingTop: 56, blockPaddingBottom: 58 },
-          columnBlocks: [
-            [
-              makeBlock('services', 'Servicios', 'Incluye lo importante', {
-                settings: withLandingSpacing('services', {
-                  listColumns: 1,
-                  cardBg: '#222225',
-                  cardBorderColor: '#3f3f46',
-                  cardRadius: 10,
-                  items: [
-                    { title: 'Asesoria', text: 'Explica como acompanas al cliente.' },
-                    { title: 'Implementacion', text: 'Muestra como conviertes la propuesta en resultados.' },
-                    { title: 'Soporte', text: 'Deja claro que hay seguimiento despues del primer contacto.' }
                   ]
                 })
               })
@@ -906,49 +1106,44 @@ function buildDefaultBlocks(siteId, siteType, template) {
     if (tpl === 'local') {
       return makeLandingLayout([
         {
-          settings: { blockBg: '#f0fdf4', blockText: '#14532d', textAlign: 'center', blockPaddingTop: 66, blockPaddingBottom: 54 },
-          blocks: [
-            makeBlock('hero', 'Hero', 'Haz que mas personas encuentren y contacten tu negocio', {
-              settings: withLandingSpacing('hero', {
-                textAlign: 'center',
-                kicker: 'Negocio local',
-                subtitle: 'Una pagina sencilla para explicar que haces, mostrar beneficios y recibir mensajes de clientes interesados.',
-                buttonText: 'Quiero que me contacten',
-                buttonUrl: '#form',
-                ...defaultButtonSettings
-              })
-            })
-          ]
-        },
-        {
           columns: 2,
-          settings: { blockBg: '#ffffff', blockText: '#14532d', sectionGap: 28, blockPaddingTop: 52, blockPaddingBottom: 52 },
+          settings: {
+            blockBg: 'linear-gradient(110deg, rgba(240,253,244,.96), rgba(220,252,231,.74))',
+            blockText: '#14532d',
+            sectionGap: 34,
+            blockPaddingTop: 68,
+            blockPaddingBottom: 64
+          },
           columnBlocks: [
             [
-              makeBlock('services', 'Servicios', 'Servicios principales', {
-                settings: withLandingSpacing('services', {
-                  listColumns: 1,
-                  cardBg: '#f0fdf4',
-                  cardBorderColor: '#bbf7d0',
-                  cardRadius: 18,
-                  items: [
-                    { title: 'Atencion rapida', text: 'Responde a los interesados cuando estan listos para comprar.' },
-                    { title: 'Informacion clara', text: 'Explica horarios, servicios o promociones sin complicar.' },
-                    { title: 'Seguimiento facil', text: 'Cada respuesta queda lista para contactar.' }
-                  ]
-                })
+              landingImageBlock('Foto del negocio', TEMPLATE_IMAGE_URLS.local, {
+                mediaRadius: 26,
+                blockBorderColor: '#bbf7d0'
               })
             ],
             [
-              makeBlock('form_embed', 'Contacto', 'Pide informacion', {
-                settings: formEmbedSettings('Deja tus datos y te contactamos con mas detalles.', {
-                  blockBg: '#dcfce7',
-                  blockText: '#14532d',
-                  fieldBorder: '#86efac',
-                  fieldRadius: 14
+              makeBlock('hero', 'Hero', 'Haz que mas personas encuentren y contacten tu negocio', {
+                settings: withLandingSpacing('hero', {
+                  textAlign: 'left',
+                  kicker: 'Negocio local',
+                  subtitle: 'Una pagina sencilla para explicar que haces, mostrar beneficios y recibir mensajes de clientes interesados.',
+                  buttonText: 'Quiero que me contacten',
+                  buttonUrl: '#form',
+                  buttonAlign: 'left',
+                  buttonBg: '#15803d',
+                  ...defaultButtonSettings
                 })
               })
             ]
+          ]
+        },
+        {
+          columns: 3,
+          settings: { blockBg: '#ffffff', blockText: '#14532d', sectionGap: 28, blockPaddingTop: 52, blockPaddingBottom: 52 },
+          columnBlocks: [
+            [makeBlock('text', 'Atencion rapida', 'Responde cuando el cliente todavia trae interes caliente.', { settings: withLandingSpacing('text', { blockBg: '#f0fdf4', blockRadius: 18, blockPaddingTop: 22, blockPaddingRight: 22, blockPaddingBottom: 22, blockPaddingLeft: 22, blockBorderWidth: 1, blockBorderColor: '#bbf7d0' }) })],
+            [makeBlock('text', 'Informacion clara', 'Muestra horarios, servicios o promociones sin hacerlo pesado.', { settings: withLandingSpacing('text', { blockBg: '#f0fdf4', blockRadius: 18, blockPaddingTop: 22, blockPaddingRight: 22, blockPaddingBottom: 22, blockPaddingLeft: 22, blockBorderWidth: 1, blockBorderColor: '#bbf7d0' }) })],
+            [makeBlock('text', 'Seguimiento facil', 'Cada respuesta queda lista para contactar desde tu equipo.', { settings: withLandingSpacing('text', { blockBg: '#f0fdf4', blockRadius: 18, blockPaddingTop: 22, blockPaddingRight: 22, blockPaddingBottom: 22, blockPaddingLeft: 22, blockBorderWidth: 1, blockBorderColor: '#bbf7d0' }) })]
           ]
         },
         {
@@ -966,55 +1161,18 @@ function buildDefaultBlocks(siteId, siteType, template) {
               })
             })
           ]
-        }
-      ])
-    }
-
-    if (tpl === 'compact' || tpl === 'event') {
-      const isEvent = tpl === 'event'
-      return makeLandingLayout([
+        },
         {
-          columns: 2,
-          settings: {
-            blockBg: isEvent ? '#fdf2f8' : '#f8fafc',
-            blockText: isEvent ? '#500724' : '#0f172a',
-            sectionGap: 28,
-            blockPaddingTop: 64,
-            blockPaddingBottom: 64
-          },
-          columnBlocks: [
-            [
-              makeBlock('hero', 'Hero', isEvent ? 'Registra interesados en una sola pagina' : 'Captura datos rapido sin construir un sitio completo', {
-                settings: withLandingSpacing('hero', {
-                  textAlign: 'left',
-                  kicker: isEvent ? 'Registro simple' : 'Formulario compacto',
-                  subtitle: isEvent ? 'Usa esta pagina para llamadas, clases, eventos, cotizaciones o listas de espera.' : 'Ideal cuando solo necesitas explicar lo basico y pedir informacion de contacto.',
-                  buttonText: isEvent ? 'Registrarme' : 'Enviar mis datos',
-                  buttonUrl: '#form',
-                  buttonAlign: 'left',
-                  ...defaultButtonSettings
-                })
-              }),
-              makeBlock('benefits', 'Detalles', isEvent ? 'Antes de registrarte' : 'Que incluye', {
-                settings: withLandingSpacing('benefits', {
-                  items: [
-                    { title: '+ Informacion breve', text: 'El visitante entiende que va a recibir.' },
-                    { title: '+ Datos completos', text: 'Nombre, telefono y correo quedan listos para seguimiento.' },
-                    { title: '+ Edicion simple', text: 'Cambia preguntas, colores y texto cuando lo necesites.' }
-                  ]
-                })
+          settings: { blockBg: '#dcfce7', blockText: '#14532d', textAlign: 'center', blockPaddingTop: 48, blockPaddingBottom: 56 },
+          blocks: [
+            makeBlock('form_embed', 'Contacto', 'Pide informacion', {
+              settings: formEmbedSettings('Deja tus datos y te contactamos con mas detalles.', {
+                blockBg: '#ffffff',
+                blockText: '#14532d',
+                fieldBorder: '#86efac',
+                fieldRadius: 14
               })
-            ],
-            [
-              makeBlock('form_embed', isEvent ? 'Registro' : 'Formulario', isEvent ? 'Completa tu registro' : 'Deja tus datos', {
-                settings: formEmbedSettings(isEvent ? 'Te contactaremos para confirmar la informacion.' : 'Completa tus datos y te contactamos.', {
-                  blockBg: '#ffffff',
-                  blockText: isEvent ? '#500724' : '#0f172a',
-                  fieldBorder: isEvent ? '#f9a8d4' : '#cbd5e1',
-                  fieldRadius: isEvent ? 14 : 10
-                })
-              })
-            ]
+            })
           ]
         }
       ])
@@ -1106,64 +1264,220 @@ function buildDefaultBlocks(siteId, siteType, template) {
     ])
   }
 
+  if (siteType === 'interactive_form') {
+    if (tpl === 'callback') {
+      return [
+        makeBlock('title', 'Titulo', 'Veamos si tiene sentido hablar', { sortOrder: 0 }),
+        makeBlock('subtitle', 'Subtitulo', 'Contesta estas preguntas y te decimos el siguiente paso.', { sortOrder: 1 }),
+        makeBlock('radio', 'Que tan pronto quieres avanzar?', '', {
+          required: true,
+          options: [
+            { label: 'Esta semana', action: 'hot_lead', category: 'caliente' },
+            { label: 'Este mes', action: 'warm_lead', category: 'tibio' },
+            { label: 'Solo estoy comparando', action: 'cold_lead', category: 'frio' }
+          ],
+          settings: { internalName: 'urgency' },
+          sortOrder: 2
+        }),
+        makeBlock('paragraph', 'Que necesitas resolver?', '', {
+          placeholder: 'Escribe el contexto principal',
+          required: false,
+          settings: { internalName: 'need' },
+          sortOrder: 3
+        }),
+        ...contactFields(4)
+      ]
+    }
+
+    if (tpl === 'quote') {
+      return [
+        makeBlock('title', 'Titulo', 'Cotiza sin dar vueltas', { sortOrder: 0 }),
+        makeBlock('subtitle', 'Subtitulo', 'Primero entendemos lo que necesitas y despues pedimos tus datos.', { sortOrder: 1 }),
+        makeBlock('dropdown', 'Que tipo de ayuda necesitas?', '', {
+          required: true,
+          options: ['Servicio principal', 'Paquete completo', 'No estoy seguro'],
+          settings: { internalName: 'service_type' },
+          sortOrder: 2
+        }),
+        makeBlock('currency', 'Presupuesto aproximado', '', {
+          placeholder: '$',
+          required: false,
+          settings: { internalName: 'budget' },
+          sortOrder: 3
+        }),
+        makeBlock('paragraph', 'Cuentanos el contexto', '', {
+          placeholder: 'Que quieres lograr?',
+          required: false,
+          settings: { internalName: 'context' },
+          sortOrder: 4
+        }),
+        ...contactFields(5)
+      ]
+    }
+
+    if (tpl === 'event' || tpl === 'waitlist') {
+      const isWaitlist = tpl === 'waitlist'
+      return [
+        makeBlock('title', 'Titulo', isWaitlist ? 'Entra a la lista de espera' : 'Confirma tu registro', { sortOrder: 0 }),
+        makeBlock('subtitle', 'Subtitulo', isWaitlist ? 'Te avisamos cuando haya cupo o acceso disponible.' : 'Responde rapido para reservar tu lugar o recibir detalles.', { sortOrder: 1 }),
+        makeBlock('radio', isWaitlist ? 'Que acceso quieres?' : 'Que quieres recibir?', '', {
+          required: true,
+          options: isWaitlist
+            ? ['Acceso anticipado', 'Cupo prioritario', 'Mas informacion']
+            : ['Confirmar asistencia', 'Recibir detalles', 'Agendar una llamada'],
+          settings: { internalName: isWaitlist ? 'access_interest' : 'registration_interest' },
+          sortOrder: 2
+        }),
+        makeBlock('dropdown', 'Mejor horario de contacto', '', {
+          required: false,
+          options: ['Manana', 'Tarde', 'Noche'],
+          settings: { internalName: 'contact_window' },
+          sortOrder: 3
+        }),
+        ...contactFields(4)
+      ]
+    }
+
+    if (tpl === 'facebook' || tpl === 'instagram' || tpl === 'tiktok') {
+      return [
+        makeBlock('title', 'Titulo', 'Deja tus datos y te contactamos', { sortOrder: 0 }),
+        makeBlock('subtitle', 'Subtitulo', 'Completa el formulario y un asesor te contacta en minutos.', { sortOrder: 1 }),
+        ...contactFields(2)
+      ]
+    }
+
+    return [
+      makeBlock('title', 'Titulo', 'Vamos paso a paso', { sortOrder: 0 }),
+      makeBlock('subtitle', 'Subtitulo', 'Estas preguntas ayudan a saber si eres buen candidato.', { sortOrder: 1 }),
+      makeBlock('radio', 'Que buscas hoy?', '', {
+        required: true,
+        options: [
+          { label: 'Quiero comprar o contratar', action: 'hot_lead', category: 'caliente' },
+          { label: 'Necesito orientacion', action: 'warm_lead', category: 'tibio' },
+          { label: 'Solo estoy investigando', action: 'cold_lead', category: 'frio' }
+        ],
+        settings: { internalName: 'intent' },
+        sortOrder: 2
+      }),
+      makeBlock('paragraph', 'Cuentanos mas', '', {
+        placeholder: 'Escribe una respuesta breve',
+        required: false,
+        settings: { internalName: 'details' },
+        sortOrder: 3
+      }),
+      ...contactFields(4)
+    ]
+  }
+
   if (tpl === 'compact') {
     return [
       makeBlock('title', 'Titulo', 'Deja tus datos y te contactamos', { sortOrder: 0 }),
       makeBlock('subtitle', 'Subtitulo', 'Completa este formulario rapido para que podamos darte seguimiento.', { sortOrder: 1 }),
-      ...contactFields(2)
+      makeBlock('description', 'Nota', 'Tardas menos de un minuto. Usa este formato cuando solo necesitas datos basicos.', { sortOrder: 2 }),
+      ...contactFields(3)
     ]
   }
 
   if (tpl === 'event') {
     return [
-      makeBlock('title', 'Titulo', 'Registro rapido', { sortOrder: 0 }),
-      makeBlock('subtitle', 'Subtitulo', 'Deja tus datos para confirmar informacion y recibir los siguientes pasos.', { sortOrder: 1 }),
+      formImageBlock('Imagen de registro', TEMPLATE_IMAGE_URLS.planning, 0, { mediaRadius: 22 }),
+      makeBlock('title', 'Titulo', 'Registro rapido', { sortOrder: 1 }),
+      makeBlock('subtitle', 'Subtitulo', 'Deja tus datos para confirmar informacion y recibir los siguientes pasos.', { sortOrder: 2 }),
       makeBlock('dropdown', 'Que te interesa?', '', {
         required: true,
         options: ['Recibir informacion', 'Agendar una llamada', 'Cotizar un servicio'],
         settings: { internalName: 'interest' },
-        sortOrder: 2
+        sortOrder: 3
       }),
-      ...contactFields(3)
+      makeBlock('date', 'Fecha ideal', '', {
+        required: false,
+        settings: { internalName: 'preferred_date' },
+        sortOrder: 4
+      }),
+      ...contactFields(5)
     ]
   }
 
-  if (tpl === 'executive') {
+  if (tpl === 'quote') {
     return [
-      makeBlock('title', 'Titulo', 'Solicita una llamada', { sortOrder: 0 }),
-      makeBlock('subtitle', 'Subtitulo', 'Cuentanos que necesitas y un asesor revisara la mejor ruta contigo.', { sortOrder: 1 }),
+      formImageBlock('Imagen de cotizacion', TEMPLATE_IMAGE_URLS.quote, 0, { mediaRadius: 18 }),
+      makeBlock('title', 'Titulo', 'Cuentanos que necesitas cotizar', { sortOrder: 1 }),
+      makeBlock('subtitle', 'Subtitulo', 'Mientras mas claro sea el contexto, mas facil sera responderte bien.', { sortOrder: 2 }),
+      makeBlock('dropdown', 'Servicio de interes', '', {
+        required: true,
+        options: ['Servicio principal', 'Paquete completo', 'Aun no se'],
+        settings: { internalName: 'service_interest' },
+        sortOrder: 3
+      }),
+      makeBlock('currency', 'Presupuesto aproximado', '', {
+        placeholder: '$',
+        required: false,
+        settings: { internalName: 'budget' },
+        sortOrder: 4
+      }),
+      makeBlock('paragraph', 'Detalles importantes', '', {
+        placeholder: 'Cuentanos que quieres lograr',
+        required: false,
+        settings: { internalName: 'project_details' },
+        sortOrder: 5
+      }),
+      ...contactFields(6)
+    ]
+  }
+
+  if (tpl === 'callback') {
+    return [
+      makeBlock('title', 'Titulo', 'Solicita una llamada consultiva', { sortOrder: 0 }),
+      makeBlock('subtitle', 'Subtitulo', 'Este formulario ayuda a preparar la conversacion antes de contactarte.', { sortOrder: 1 }),
+      makeBlock('radio', 'Nivel de urgencia', '', {
+        required: true,
+        options: [
+          { label: 'Necesito resolverlo pronto', action: 'hot_lead', category: 'caliente' },
+          { label: 'Estoy evaluando opciones', action: 'warm_lead', category: 'tibio' },
+          { label: 'Solo quiero informacion', action: 'cold_lead', category: 'frio' }
+        ],
+        settings: { internalName: 'urgency' },
+        sortOrder: 2
+      }),
+      makeBlock('paragraph', 'Que te gustaria revisar?', '', {
+        placeholder: 'Describe brevemente tu situacion',
+        required: false,
+        settings: { internalName: 'call_topic' },
+        sortOrder: 3
+      }),
+      ...contactFields(4)
+    ]
+  }
+
+  if (tpl === 'waitlist') {
+    return [
+      makeBlock('title', 'Titulo', 'Entra a la lista de espera', { sortOrder: 0 }),
+      formImageBlock('Imagen de lista', TEMPLATE_IMAGE_URLS.handshake, 1, { mediaRadius: 26 }),
+      makeBlock('subtitle', 'Subtitulo', 'Deja tus datos y te avisamos cuando haya cupo, fecha o acceso disponible.', { sortOrder: 2 }),
+      makeBlock('dropdown', 'Que quieres recibir?', '', {
+        required: true,
+        options: ['Acceso anticipado', 'Aviso de cupo', 'Mas informacion'],
+        settings: { internalName: 'waitlist_interest' },
+        sortOrder: 3
+      }),
+      makeBlock('checkboxes', 'Temas de interes', '', {
+        required: false,
+        options: ['Promociones', 'Nuevas fechas', 'Paquetes especiales'],
+        settings: { internalName: 'topics' },
+        sortOrder: 4
+      }),
+      ...contactFields(5)
+    ]
+  }
+
+  if (tpl === 'executive' || tpl === 'local' || tpl === 'premium' || tpl === 'ristak') {
+    return [
+      makeBlock('title', 'Titulo', 'Solicita informacion', { sortOrder: 0 }),
+      makeBlock('subtitle', 'Subtitulo', 'Cuentanos que necesitas y te contactamos con el siguiente paso.', { sortOrder: 1 }),
       makeBlock('paragraph', 'Que necesitas resolver?', '', {
         placeholder: 'Escribe una descripcion breve',
         required: false,
         settings: { internalName: 'need' },
-        sortOrder: 2
-      }),
-      ...contactFields(3)
-    ]
-  }
-
-  if (tpl === 'local') {
-    return [
-      makeBlock('title', 'Titulo', 'Pide informacion del servicio', { sortOrder: 0 }),
-      makeBlock('subtitle', 'Subtitulo', 'Completa tus datos y te contactamos para ayudarte.', { sortOrder: 1 }),
-      makeBlock('dropdown', 'Servicio de interes', '', {
-        required: true,
-        options: ['Servicio principal', 'Promocion disponible', 'Necesito asesoria'],
-        settings: { internalName: 'service_interest' },
-        sortOrder: 2
-      }),
-      ...contactFields(3)
-    ]
-  }
-
-  if (tpl === 'premium') {
-    return [
-      makeBlock('title', 'Titulo', 'Solicitud personalizada', { sortOrder: 0 }),
-      makeBlock('subtitle', 'Subtitulo', 'Comparte tus datos y te contactamos con una respuesta cuidada.', { sortOrder: 1 }),
-      makeBlock('paragraph', 'Que estas buscando?', '', {
-        placeholder: 'Cuentanos el contexto',
-        required: false,
-        settings: { internalName: 'context' },
         sortOrder: 2
       }),
       ...contactFields(3)
@@ -3865,6 +4179,96 @@ const SITE_TEMPLATES = {
       radius: '14px',
       radiusLg: '24px',
       shadow: '0 30px 68px -44px rgba(131,24,67,.42)',
+      headingWeight: '850',
+      btnRadius: '999px',
+      btnWeight: '850'
+    }
+  },
+
+  quote: {
+    id: 'quote',
+    label: 'Cotizacion rapida',
+    mode: 'light',
+    chrome: 'none',
+    font: RSTK_SANS,
+    vars: {
+      pageBg: '#f5f3ff',
+      pageImage: 'none',
+      ink: '#2e1065',
+      muted: '#6d28d9',
+      surface: '#ffffff',
+      surface2: '#ede9fe',
+      border: '#ddd6fe',
+      accent: '#7c3aed',
+      accentStrong: '#6d28d9',
+      onAccent: '#ffffff',
+      ring: 'rgba(124,58,237,.2)',
+      inputBg: '#ffffff',
+      inputInk: '#2e1065',
+      inputBorder: '#c4b5fd',
+      radius: '12px',
+      radiusLg: '22px',
+      shadow: '0 30px 68px -44px rgba(76,29,149,.4)',
+      headingWeight: '850',
+      btnRadius: '14px',
+      btnWeight: '850'
+    }
+  },
+
+  callback: {
+    id: 'callback',
+    label: 'Llamada consultiva',
+    mode: 'light',
+    chrome: 'none',
+    font: RSTK_SANS,
+    vars: {
+      pageBg: '#ecfeff',
+      pageImage: 'none',
+      ink: '#164e63',
+      muted: '#0e7490',
+      surface: '#ffffff',
+      surface2: '#cffafe',
+      border: '#a5f3fc',
+      accent: '#0e7490',
+      accentStrong: '#155e75',
+      onAccent: '#ffffff',
+      ring: 'rgba(14,116,144,.2)',
+      inputBg: '#ffffff',
+      inputInk: '#164e63',
+      inputBorder: '#67e8f9',
+      radius: '10px',
+      radiusLg: '18px',
+      shadow: '0 28px 64px -42px rgba(22,78,99,.38)',
+      headingWeight: '800',
+      btnRadius: '10px',
+      btnWeight: '850'
+    }
+  },
+
+  waitlist: {
+    id: 'waitlist',
+    label: 'Lista de espera',
+    mode: 'light',
+    chrome: 'none',
+    font: RSTK_SANS,
+    vars: {
+      pageBg: '#fff7ed',
+      pageImage: 'none',
+      ink: '#7c2d12',
+      muted: '#9a3412',
+      surface: '#ffffff',
+      surface2: '#ffedd5',
+      border: '#fed7aa',
+      accent: '#c2410c',
+      accentStrong: '#9a3412',
+      onAccent: '#ffffff',
+      ring: 'rgba(194,65,12,.2)',
+      inputBg: '#ffffff',
+      inputInk: '#7c2d12',
+      inputBorder: '#fdba74',
+      radius: '16px',
+      radiusLg: '28px',
+      shadow: '0 30px 68px -44px rgba(124,45,18,.42)',
       headingWeight: '850',
       btnRadius: '999px',
       btnWeight: '850'

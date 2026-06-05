@@ -133,6 +133,42 @@ const SITE_TEMPLATES: Record<SiteTemplateId, Template> = {
       headingWeight: '850', btnRadius: '999px', btnWeight: '850'
     }
   },
+  quote: {
+    id: 'quote', mode: 'light', chrome: 'none', font: RSTK_SANS,
+    vars: {
+      pageBg: '#f5f3ff',
+      pageImage: 'none',
+      ink: '#2e1065', muted: '#6d28d9', surface: '#ffffff', surface2: '#ede9fe', border: '#ddd6fe',
+      accent: '#7c3aed', accentStrong: '#6d28d9', onAccent: '#ffffff', ring: 'rgba(124,58,237,.2)',
+      inputBg: '#ffffff', inputInk: '#2e1065', inputBorder: '#c4b5fd',
+      radius: '12px', radiusLg: '22px', shadow: '0 30px 68px -44px rgba(76,29,149,.4)',
+      headingWeight: '850', btnRadius: '14px', btnWeight: '850'
+    }
+  },
+  callback: {
+    id: 'callback', mode: 'light', chrome: 'none', font: RSTK_SANS,
+    vars: {
+      pageBg: '#ecfeff',
+      pageImage: 'none',
+      ink: '#164e63', muted: '#0e7490', surface: '#ffffff', surface2: '#cffafe', border: '#a5f3fc',
+      accent: '#0e7490', accentStrong: '#155e75', onAccent: '#ffffff', ring: 'rgba(14,116,144,.2)',
+      inputBg: '#ffffff', inputInk: '#164e63', inputBorder: '#67e8f9',
+      radius: '10px', radiusLg: '18px', shadow: '0 28px 64px -42px rgba(22,78,99,.38)',
+      headingWeight: '800', btnRadius: '10px', btnWeight: '850'
+    }
+  },
+  waitlist: {
+    id: 'waitlist', mode: 'light', chrome: 'none', font: RSTK_SANS,
+    vars: {
+      pageBg: '#fff7ed',
+      pageImage: 'none',
+      ink: '#7c2d12', muted: '#9a3412', surface: '#ffffff', surface2: '#ffedd5', border: '#fed7aa',
+      accent: '#c2410c', accentStrong: '#9a3412', onAccent: '#ffffff', ring: 'rgba(194,65,12,.2)',
+      inputBg: '#ffffff', inputInk: '#7c2d12', inputBorder: '#fdba74',
+      radius: '16px', radiusLg: '28px', shadow: '0 30px 68px -44px rgba(124,45,18,.42)',
+      headingWeight: '850', btnRadius: '999px', btnWeight: '850'
+    }
+  },
   facebook: {
     id: 'facebook', mode: 'light', chrome: 'facebook', font: RSTK_SANS,
     vars: {
