@@ -439,6 +439,54 @@ const getCreateFlowForSection = (section: SitesSection): CreateFlow => {
   return 'landing-start'
 }
 
+const getCreateFlowHeaderCopy = (step: CreateFlow) => {
+  if (step === 'landing-start') {
+    return {
+      title: 'Nuevo sitio embudo',
+      subtitle: 'Como quieres iniciar tu sitio embudo?'
+    }
+  }
+
+  if (step === 'landing-template') {
+    return {
+      title: 'Nuevo sitio embudo',
+      subtitle: 'Elige el estilo de tu sitio embudo'
+    }
+  }
+
+  if (step === 'form-kind') {
+    return {
+      title: 'Nuevo formulario',
+      subtitle: 'Que tipo de formulario quieres?'
+    }
+  }
+
+  if (step === 'form-template') {
+    return {
+      title: 'Nuevo formulario',
+      subtitle: 'Elige el estilo de tu formulario'
+    }
+  }
+
+  if (step === 'interactive-template') {
+    return {
+      title: 'Nuevo formulario interactivo',
+      subtitle: 'Elige el estilo de tu formulario interactivo'
+    }
+  }
+
+  return {
+    title: 'Sitios',
+    subtitle: 'Constructor visual controlado para sitios embudo, formularios, leads y publicacion por dominio verificado.'
+  }
+}
+
+const getPreviousCreateFlowStep = (step: CreateFlow): CreateFlow => {
+  if (step === 'landing-template') return 'landing-start'
+  if (step === 'form-template' || step === 'interactive-template') return 'form-kind'
+  return 'closed'
+}
+
 const getEmptyEditorMessage = (section: SitesSection) => {
   if (section === 'landings') return 'Crea un sitio embudo para entrar al editor visual.'
   if (section === 'forms') return 'Crea un formulario para entrar al editor visual.'
@@ -1204,6 +1252,7 @@ export const Sites: React.FC = () => {
       : null
   const editorActive = Boolean(editorSite)
   const isFocusedSitesMode = createFlow !== 'closed' || Boolean(editorSite)
+  const createFlowHeaderCopy = getCreateFlowHeaderCopy(createFlow)
   const canvasTheme = editorSite ? buildCanvasTheme(editorSite, device) : null
   const palettePreviewBlock = editorSite && paletteDragBlockType
     ? makePreviewBlock(paletteDragBlockType, editorSite, isLanding(editorSite) ? activePage?.id : undefined)
@@ -1504,6 +1553,19 @@ export const Sites: React.FC = () => {
       setCreateFlow('closed')
       setHasUnsavedChanges(false)
     })
+  }
+
+  const handleFocusedBack = () => {
+    if (!editorSite && createFlow !== 'closed') {
+      const previousStep = getPreviousCreateFlowStep(createFlow)
+
+      if (previousStep !== 'closed') {
+        setCreateFlow(previousStep)
+        return
+      }
+    }
+
+    handleBackToLibrary()
   }
 
   const syncSelectedSite = (site: PublicSite) => {
@@ -2200,14 +2262,14 @@ export const Sites: React.FC = () => {
             <div>
               <div className={styles.titleRow}>
                 {isFocusedSitesMode && (
-        <button type="button" className={styles.backButton} onClick={handleBackToLibrary}>
+                  <button type="button" className={styles.backButton} onClick={handleFocusedBack}>
                     <ArrowLeft size={16} />
                     Volver
                   </button>
                 )}
-                <h1 className={styles.title}>Sitios</h1>
+                <h1 className={styles.title}>{createFlowHeaderCopy.title}</h1>
               </div>
-              <p className={styles.subtitle}>Constructor visual controlado para sitios embudo, formularios, leads y publicacion por dominio verificado.</p>
+              <p className={styles.subtitle}>{createFlowHeaderCopy.subtitle}</p>
             </div>
           )}
         </header>
@@ -2692,33 +2754,8 @@ const TemplateCard: React.FC<{ id: SiteTemplateId; disabled: boolean; onPick: ()
 }
 
 const CreateFlowPanel: React.FC<CreateFlowPanelProps> = ({ step, creating, onCreate, onCreateWithAI, onAdvance }) => {
-  const isLandingFlow = step === 'landing-start' || step === 'landing-template'
-  const heading = step === 'landing-template'
-    ? 'Elige el estilo de tu sitio embudo'
-    : step === 'form-template'
-      ? 'Donde se va a abrir tu formulario?'
-      : step === 'interactive-template'
-        ? 'Elige el estilo de tu formulario interactivo'
-      : isLandingFlow
-        ? 'Como quieres iniciar tu sitio embudo?'
-        : 'Que tipo de formulario quieres?'
-
   return (
     <section className={styles.createPanel}>
-      <div className={styles.createHeader}>
-        {(step === 'form-template' || step === 'landing-template' || step === 'interactive-template') && (
-          <button
-            type="button"
-            className={styles.backLink}
-            onClick={() => onAdvance(step === 'landing-template' ? 'landing-start' : 'form-kind')}
-          >
-            <ChevronRight size={15} /> Volver
-          </button>
-        )}
-        <span>{isLandingFlow ? 'Nuevo sitio embudo' : 'Nuevo formulario'}</span>
-        <h2>{heading}</h2>
-      </div>
-
       {step === 'landing-start' && (
         <div className={styles.choiceGrid}>
           <button type="button" disabled={creating} onClick={() => onAdvance('landing-template')}>

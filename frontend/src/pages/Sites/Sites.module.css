@@ -4656,3 +4656,42 @@
   text-transform: none;
   letter-spacing: 0;
 }
+
+/* Sites library and creation flow share the same page-sized surface. */
+.container:not(.containerFocused) {
+  width: min(1960px, calc(100% - clamp(20px, 2.8vw, 48px)));
+  min-height: calc(100vh - var(--header-height) - 48px);
+  gap: 16px;
+  margin: 24px auto;
+  padding: 18px;
+  border: 1px solid var(--color-border-subtle, rgba(148, 163, 184, 0.24));
+  border-radius: 8px;
+  background: var(--color-background-secondary);
+  box-shadow: none;
+}
+
+.container:not(.containerFocused) .sitesShell {
+  min-height: 0;
+  grid-template-columns: minmax(220px, 292px) minmax(0, 1fr);
+}
+
+.container:not(.containerFocused) .libraryPanel,
+.container:not(.containerFocused) .dataPanel {
+  min-height: calc(100vh - var(--header-height) - 178px);
+}
+
+.containerFocused .mainSurface,
+.containerFocused .createPanel {
+  width: 100%;
+}
+
+.containerFocused .choiceGrid,
+.containerFocused .templateGallery {
+  width: 100%;
+  max-width: none;
+}
+
+.containerFocused .templateGallery {
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  align-items: stretch;
+}
