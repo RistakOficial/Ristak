@@ -1,10 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, ArrowLeft, CheckCircle, Cloud, FileText, KeyRound, RefreshCw, Send, ShieldCheck, Smartphone, Unplug } from 'lucide-react'
 import { SiWhatsapp } from 'react-icons/si'
-import { Button, Card } from '@/components/common'
+import { Button } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
 import { WhatsAppApiAlert, WhatsAppApiPhoneNumber, WhatsAppApiStatus, WhatsAppApiTemplate, whatsappApiService } from '@/services/whatsappApiService'
 import { WhatsAppWebLog, WhatsAppWebLogs, WhatsAppWebStatus, whatsappWebService } from '@/services/whatsappWebService'
+import { MessageTemplates } from './MessageTemplates'
 import styles from './WhatsAppSettings.module.css'
 
 type BusinessProfile = {
@@ -391,7 +392,7 @@ export const WhatsAppSettings: React.FC = () => {
 
   const confirmDisconnect = () => {
     showConfirm(
-      'Desconectar WhatsApp Business',
+      'Desconectar WhatsApp QR',
       'Se cerrara la conexion actual. Para volver a conectar, abre esta pagina otra vez y se generara un QR nuevo.',
       async () => {
         setDisconnecting(true)
@@ -402,7 +403,7 @@ export const WhatsAppSettings: React.FC = () => {
         try {
           const nextStatus = await whatsappWebService.disconnect()
           setStatus(nextStatus)
-          showToast('success', 'Desconectado', 'WhatsApp Business se desconecto correctamente')
+          showToast('success', 'Desconectado', 'WhatsApp QR se desconecto correctamente')
         } catch (error) {
           showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo desconectar')
         } finally {
@@ -604,12 +605,6 @@ export const WhatsAppSettings: React.FC = () => {
       const balance = apiStatus.balance
       const alerts = apiStatus.alerts?.items || []
       const selectedApiPhone = selectedPhone || apiStatus.selectedPhone
-      const visibleTemplates = apiTemplates.slice(0, 8)
-      const orderedTemplates = [...apiTemplates].sort((left, right) => {
-        if (left.status === 'APPROVED' && right.status !== 'APPROVED') return -1
-        if (left.status !== 'APPROVED' && right.status === 'APPROVED') return 1
-        return getTemplateLabel(left).localeCompare(getTemplateLabel(right))
-      })
       const apiBusinessProfile = parseJson<BusinessProfile>(selectedApiPhone?.business_profile_json)
       const apiProfileImage = selectedApiPhone?.profile_picture_url || apiBusinessProfile?.profilePictureUrl || ''
       const apiDisplayNumber = apiStatus.sender.phone ||
@@ -621,198 +616,132 @@ export const WhatsAppSettings: React.FC = () => {
         apiBusinessProfile?.businessName ||
         apiBusinessProfile?.name ||
         'WhatsApp Business'
+      const phoneRows = (apiStatus.phoneNumbers.length ? apiStatus.phoneNumbers : selectedApiPhone ? [selectedApiPhone] : [])
+        .filter(Boolean) as WhatsAppApiPhoneNumber[]
 
       return (
         <div className={styles.apiConnectedState}>
-          <div className={styles.apiHero}>
-            <div className={styles.avatar}>
-              {apiProfileImage ? (
-                <img src={apiProfileImage} alt="" />
-              ) : (
-                <SiWhatsapp size={58} />
-              )}
-              <span className={styles.checkBadge}><CheckCircle size={22} /></span>
-            </div>
-            <span className={styles.connectedLabel}>
-              <ShieldCheck size={18} />
-              Conectado
-            </span>
-            <h3>{apiDisplayNumber}</h3>
-            <p>{apiDisplayName}</p>
-            {(apiBusinessProfile?.vertical || apiBusinessProfile?.category) && (
-              <span className={styles.profileCategory}>{apiBusinessProfile.vertical || apiBusinessProfile.category}</span>
-            )}
-          </div>
-
-          {alerts.length ? (
-            <div className={styles.apiAlertList}>
-              {alerts.map((alert) => (
-                <div key={alert.id} className={`${styles.apiAlert} ${getAlertClass(alert)}`}>
-                  <AlertTriangle size={18} />
-                  <div>
-                    <strong>{alert.title}</strong>
-                    {alert.message && <p>{alert.message}</p>}
-                    <small>{alert.alert_type} · {formatDateTime(alert.updated_at) || 'Ahora'}</small>
-                  </div>
+          <section className={styles.connectionSection}>
+            <div className={styles.sectionTop}>
+              <div className={styles.connectionSummary}>
+                <div className={styles.connectionAvatar}>
+                  {apiProfileImage ? (
+                    <img src={apiProfileImage} alt="" />
+                  ) : (
+                    <SiWhatsapp size={24} />
+                  )}
                 </div>
-              ))}
-            </div>
-          ) : (
-            <div className={styles.apiHealthyBanner}>
-              <CheckCircle size={18} />
-              <span>Sin alertas activas de YCloud</span>
-            </div>
-          )}
-
-          {apiStatus.requiresPhoneSelection && (
-            <div className={styles.apiNotice}>
-              Selecciona el numero emisor para dejar el envio listo.
-            </div>
-          )}
-
-          <div className={styles.apiMetricsGrid}>
-            <div>
-              <span>Saldo</span>
-              <strong>{balance ? formatCurrency(balance.amount, balance.currency) : 'Pendiente'}</strong>
-            </div>
-            <div>
-              <span>Plantillas</span>
-              <strong>{formatMetric(apiStatus.templates?.approved || 0)} / {formatMetric(apiStatus.templates?.total || 0)}</strong>
-            </div>
-            <div>
-              <span>Alertas</span>
-              <strong>{formatMetric(apiStatus.alerts?.total || 0)}</strong>
-            </div>
-            <div>
-              <span>Envios plantilla</span>
-              <strong>{formatMetric(apiStatus.stats.templateSends || 0)}</strong>
-            </div>
-            <div><span>Mensajes</span><strong>{formatMetric(apiStatus.stats.messages)}</strong></div>
-            <div><span>Contactos</span><strong>{formatMetric(apiStatus.stats.contacts)}</strong></div>
-          </div>
-
-          <div className={styles.apiDetailsGrid}>
-            <div>
-              <span>Limite</span>
-              <strong>{selectedApiPhone?.messaging_limit || 'Sin dato'}</strong>
-              <small>Conversaciones iniciadas por el negocio</small>
-            </div>
-            <div>
-              <span>Calidad</span>
-              <strong>{selectedApiPhone?.quality_rating || 'UNKNOWN'}</strong>
-              <small>{selectedApiPhone?.status || 'Sin estado'}</small>
-            </div>
-          </div>
-
-          <div className={styles.apiWorkspaceGrid}>
-            <section className={styles.apiPanel}>
-              <div className={styles.apiPanelHeader}>
                 <div>
-                  <span>Plantillas</span>
-                  <strong>{formatMetric(apiStatus.templates?.approved || 0)} aprobadas</strong>
+                  <span className={styles.sectionEyebrow}>Conexión</span>
+                  <h3>{apiDisplayNumber}</h3>
+                  <p>{apiDisplayName}</p>
                 </div>
-                <FileText size={20} />
+                <span className={styles.connectedLabel}>
+                  <ShieldCheck size={16} />
+                  Conectado
+                </span>
               </div>
 
-              <div className={styles.templateList}>
-                {visibleTemplates.length ? visibleTemplates.map((template) => (
-                  <div key={template.id} className={styles.templateItem}>
+              <div className={styles.apiActions}>
+                <Button variant="outline" onClick={refreshApi} loading={apiRefreshing}>
+                  <RefreshCw size={17} />
+                  Sincronizar
+                </Button>
+                <Button variant="danger" onClick={confirmApiDisconnect} loading={apiDisconnecting}>
+                  <Unplug size={17} />
+                  Desconectar
+                </Button>
+              </div>
+            </div>
+
+            {alerts.length ? (
+              <div className={styles.apiAlertList}>
+                {alerts.map((alert) => (
+                  <div key={alert.id} className={`${styles.apiAlert} ${getAlertClass(alert)}`}>
+                    <AlertTriangle size={18} />
                     <div>
-                      <strong>{template.name}</strong>
-                      <small>{template.language} · {template.category || 'Sin categoria'}</small>
+                      <strong>{alert.title}</strong>
+                      {alert.message && <p>{alert.message}</p>}
+                      <small>{alert.alert_type} · {formatDateTime(alert.updated_at) || 'Ahora'}</small>
                     </div>
-                    <span className={`${styles.templateStatus} ${getTemplateStatusClass(template)}`}>
-                      {template.status || 'UNKNOWN'}
-                    </span>
                   </div>
-                )) : (
-                  <p className={styles.emptyText}>Sin plantillas sincronizadas</p>
-                )}
+                ))}
               </div>
-            </section>
+            ) : (
+              <div className={styles.apiHealthyBanner}>
+                <CheckCircle size={18} />
+                <span>Sin alertas activas de YCloud</span>
+              </div>
+            )}
 
-            <form className={styles.apiPanel} onSubmit={sendTemplate}>
-              <div className={styles.apiPanelHeader}>
-                <div>
-                  <span>Envio rapido</span>
-                  <strong>Plantilla aprobada</strong>
-                </div>
-                <Send size={20} />
+            {apiStatus.requiresPhoneSelection && (
+              <div className={styles.apiNotice}>
+                Selecciona el numero emisor para dejar el envio listo.
+              </div>
+            )}
+
+            <div className={styles.numberTable} role="table" aria-label="Numeros conectados a WhatsApp Business">
+              <div className={styles.numberTableHeader} role="row">
+                <span>Número</span>
+                <span>Nombre</span>
+                <span>Estado</span>
+                <span>Calidad</span>
               </div>
 
-              <label className={styles.fieldLabel}>
-                <span>Plantilla</span>
-                <div className={styles.selectWrap}>
-                  <FileText size={17} />
-                  <select
-                    value={selectedTemplateId || selectedTemplate?.id || ''}
-                    onChange={(event) => setSelectedTemplateId(event.target.value)}
-                    disabled={!orderedTemplates.length}
-                  >
-                    <option value="">Elegir plantilla</option>
-                    {orderedTemplates.map((template) => (
-                      <option key={template.id} value={template.id}>
-                        {getTemplateLabel(template)} · {template.status || 'UNKNOWN'}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </label>
+              {phoneRows.length ? phoneRows.map((phone) => {
+                const profile = parseJson<BusinessProfile>(phone.business_profile_json)
+                const phoneImage = phone.profile_picture_url || profile?.profilePictureUrl || ''
+                const isSender = phone.id === selectedPhoneId ||
+                  phone.phone_number === apiStatus.sender.phone ||
+                  phone.display_phone_number === apiStatus.sender.phone
 
-              <label className={styles.fieldLabel}>
-                <span>Destino</span>
-                <div className={styles.inputWrap}>
-                  <Smartphone size={17} />
-                  <input
-                    type="tel"
-                    value={templateTo}
-                    onChange={(event) => setTemplateTo(event.target.value)}
-                    placeholder="+52..."
-                    autoComplete="tel"
-                  />
-                </div>
-              </label>
+                return (
+                  <div key={phone.id} className={styles.numberTableRow} role="row">
+                    <span className={styles.numberCell}>
+                      <span className={styles.numberAvatar}>
+                        {phoneImage ? <img src={phoneImage} alt="" /> : <SiWhatsapp size={15} />}
+                      </span>
+                      <strong>{phone.display_phone_number || phone.phone_number || apiDisplayNumber}</strong>
+                    </span>
+                    <span>{phone.verified_name || profile?.verifiedName || profile?.businessName || profile?.name || 'Sin nombre'}</span>
+                    <span>
+                      <mark className={isSender ? styles.statusMarkActive : styles.statusMarkMuted}>
+                        {isSender ? 'Emisor' : phone.status || 'Disponible'}
+                      </mark>
+                    </span>
+                    <span>{phone.quality_rating || 'UNKNOWN'}</span>
+                  </div>
+                )
+              }) : (
+                <div className={styles.numberTableEmpty}>Sin número conectado</div>
+              )}
+            </div>
 
-              <label className={styles.fieldLabel}>
-                <span>Variables</span>
-                <div className={styles.textareaWrap}>
-                  <textarea
-                    value={templateVariables}
-                    onChange={(event) => setTemplateVariables(event.target.value)}
-                    placeholder={selectedTemplateVariablesCount ? '["valor_1", "valor_2"]' : '[]'}
-                    rows={3}
-                  />
-                </div>
-                <small className={styles.fieldHint}>
-                  {selectedTemplateVariablesCount ? `${selectedTemplateVariablesCount} variables detectadas` : 'Sin variables detectadas'}
-                </small>
-              </label>
+            <div className={styles.connectionStats}>
+              <span>Saldo: {balance ? formatCurrency(balance.amount, balance.currency) : 'Pendiente'}</span>
+              <span>Límite: {selectedApiPhone?.messaging_limit || 'Sin dato'}</span>
+              <span>{formatMetric(apiStatus.stats.messages)} mensajes</span>
+              <span>{formatMetric(apiStatus.stats.contacts)} contactos</span>
+              <span>{formatMetric(apiStatus.templates?.approved || 0)} / {formatMetric(apiStatus.templates?.total || 0)} plantillas aprobadas</span>
+              <span>{formatMetric(apiStatus.alerts?.total || 0)} alertas activas</span>
+              <span>{formatMetric(apiStatus.stats.templateSends || 0)} envíos con plantilla</span>
+            </div>
 
-              <Button
-                type="submit"
-                loading={templateSending}
-                disabled={!templateTo.trim() || !selectedTemplate || selectedTemplate.status !== 'APPROVED'}
-              >
-                <Send size={17} />
-                Enviar plantilla
-              </Button>
-            </form>
-          </div>
+            {apiStatus.lastError && <p className={styles.errorText}>{apiStatus.lastError}</p>}
 
-          {apiStatus.lastError && <p className={styles.errorText}>{apiStatus.lastError}</p>}
+            {apiStatus.requiresPhoneSelection && renderApiForm(true)}
+          </section>
 
-          {apiStatus.requiresPhoneSelection && renderApiForm(true)}
-
-          <div className={styles.apiActions}>
-            <Button variant="outline" onClick={refreshApi} loading={apiRefreshing}>
-              <RefreshCw size={17} />
-              Sincronizar
-            </Button>
-            <Button variant="danger" onClick={confirmApiDisconnect} loading={apiDisconnecting}>
-              <Unplug size={17} />
-              Desconectar
-            </Button>
-          </div>
+          <section className={styles.templatesSection}>
+            <div className={styles.sectionTop}>
+              <div>
+                <span className={styles.sectionEyebrow}>Plantillas</span>
+                <h3>Carpetas y mensajes</h3>
+                <p>Crea plantillas con variables dinámicas para usarlas después con WhatsApp Business.</p>
+              </div>
+            </div>
+            <MessageTemplates embedded />
+          </section>
         </div>
       )
     }
@@ -885,7 +814,7 @@ export const WhatsAppSettings: React.FC = () => {
         </div>
       ) : showQr ? (
         <div className={styles.qrState}>
-          <img src={session?.qr_image || ''} alt="Codigo QR para conectar WhatsApp Business" />
+          <img src={session?.qr_image || ''} alt="Codigo QR para conectar WhatsApp QR" />
           <p>Escanea el codigo desde WhatsApp para conectar la cuenta.</p>
           <Button variant="outline" size="md" onClick={startConnection}>
             <RefreshCw size={16} />
@@ -898,7 +827,7 @@ export const WhatsAppSettings: React.FC = () => {
           <h3>Desconectado</h3>
           <Button size="lg" onClick={startConnection} loading={connecting}>
             <SiWhatsapp size={18} />
-            Conectar WhatsApp
+            Conectar WhatsApp QR
           </Button>
         </div>
       ) : isWaitingForQr ? (
@@ -913,12 +842,12 @@ export const WhatsAppSettings: React.FC = () => {
       ) : (
         <div className={styles.idleState}>
           <SiWhatsapp size={58} />
-          <h3>Conectar WhatsApp Business</h3>
+          <h3>Conectar WhatsApp QR</h3>
           <p>Genera un QR nuevo y escanealo desde WhatsApp para conectar la cuenta.</p>
           {session?.last_error && <p className={styles.errorText}>{session.last_error}</p>}
           <Button size="lg" onClick={startConnection} loading={connecting}>
             <SiWhatsapp size={18} />
-            Conectar WhatsApp
+            Conectar WhatsApp QR
           </Button>
         </div>
       )}
@@ -927,7 +856,7 @@ export const WhatsAppSettings: React.FC = () => {
 
   if (loading || apiLoading) {
     return (
-      <Card className={styles.shell}>
+      <div className={styles.shell}>
         <div className={styles.skeletonHeaderRow} role="status" aria-live="polite" aria-label="Cargando configuracion">
           <div className={`${styles.skeletonBlock} ${styles.skeletonLogo}`} />
           <div className={styles.skeletonHeaderText}>
@@ -936,12 +865,12 @@ export const WhatsAppSettings: React.FC = () => {
           </div>
         </div>
         <div className={`${styles.skeletonBlock} ${styles.skeletonStage}`} />
-      </Card>
+      </div>
     )
   }
 
   return (
-    <Card className={styles.shell}>
+    <div className={styles.shell}>
       <div className={styles.header}>
         <span className={styles.logoMark}><SiWhatsapp size={30} /></span>
         <div>
@@ -965,13 +894,13 @@ export const WhatsAppSettings: React.FC = () => {
           onClick={() => setActiveChannel('web')}
         >
           <SiWhatsapp size={17} />
-          Baileys QR
+          WhatsApp QR
         </button>
       </div>
 
       <div className={styles.stage}>
         {activeChannel === 'api' ? renderApiStage() : renderWebStage()}
       </div>
-    </Card>
+    </div>
   )
 }

@@ -88,14 +88,13 @@
 }
 
 .stage {
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  display: block;
   flex: 1;
   min-height: 470px;
   border: 1px solid rgba(148, 163, 184, 0.16);
   border-radius: 8px;
   background: rgba(148, 163, 184, 0.035);
+  padding: 16px;
 }
 
 .qrState,
@@ -114,9 +113,14 @@
 }
 
 .apiConnectedState {
-  justify-content: flex-start;
+  display: grid;
+  grid-template-columns: 1fr;
+  align-items: stretch;
+  justify-content: stretch;
   gap: 20px;
   min-height: 100%;
+  padding: 0;
+  text-align: left;
 }
 
 .apiIdleState {
@@ -325,6 +329,187 @@
   font-size: 13px;
   font-weight: 800;
   text-align: left;
+}
+
+.connectionSection,
+.templatesSection {
+  display: grid;
+  gap: 16px;
+  width: 100%;
+  padding: 16px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--color-background-secondary) 96%, var(--color-primary) 4%);
+}
+
+.sectionTop {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.sectionTop h3 {
+  margin: 2px 0 0;
+  color: var(--color-text-primary);
+  font-size: 20px;
+  line-height: 1.15;
+  letter-spacing: 0;
+  overflow-wrap: anywhere;
+}
+
+.sectionTop p {
+  margin: 5px 0 0;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.sectionEyebrow {
+  color: #0f9f6e;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.connectionSummary {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.connectionAvatar,
+.numberAvatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: #0bbf5f;
+  background: rgba(16, 185, 129, 0.1);
+  border: 1px solid rgba(16, 185, 129, 0.26);
+  overflow: hidden;
+}
+
+.connectionAvatar {
+  width: 46px;
+  height: 46px;
+  border-radius: 8px;
+}
+
+.connectionAvatar img,
+.numberAvatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.numberAvatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+}
+
+.numberTable {
+  display: grid;
+  width: 100%;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.numberTableHeader,
+.numberTableRow {
+  display: grid;
+  grid-template-columns: minmax(150px, 1.3fr) minmax(110px, 1fr) minmax(82px, 0.72fr) minmax(76px, 0.62fr);
+  gap: 10px;
+  align-items: center;
+  padding: 11px 12px;
+}
+
+.numberTableHeader {
+  color: var(--color-text-tertiary);
+  background: rgba(148, 163, 184, 0.08);
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.numberTableRow {
+  color: var(--color-text-secondary);
+  background: var(--color-background-primary);
+  border-top: 1px solid rgba(148, 163, 184, 0.14);
+  font-size: 13px;
+}
+
+.numberTableRow > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.numberCell {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+
+.numberCell strong {
+  color: var(--color-text-primary);
+  font-weight: 900;
+  overflow-wrap: anywhere;
+}
+
+.numberTableEmpty {
+  padding: 18px;
+  color: var(--color-text-tertiary);
+  background: var(--color-background-primary);
+  text-align: center;
+  font-weight: 750;
+}
+
+.statusMarkActive,
+.statusMarkMuted {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  border-radius: 999px;
+  padding: 0 8px;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.statusMarkActive {
+  color: #047857;
+  background: rgba(16, 185, 129, 0.11);
+  border: 1px solid rgba(16, 185, 129, 0.22);
+}
+
+.statusMarkMuted {
+  color: var(--color-text-tertiary);
+  background: rgba(148, 163, 184, 0.09);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+.connectionStats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.connectionStats span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  border-radius: 999px;
+  padding: 0 10px;
+  color: var(--color-text-secondary);
+  background: rgba(148, 163, 184, 0.08);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  font-size: 12px;
+  font-weight: 850;
 }
 
 .apiTutorial {
@@ -615,7 +800,7 @@
 .apiActions {
   display: flex;
   flex-wrap: wrap;
-  justify-content: center;
+  justify-content: flex-end;
   gap: 10px;
 }
 
@@ -952,6 +1137,28 @@
   .apiInlineForm,
   .apiWorkspaceGrid {
     grid-template-columns: 1fr;
+  }
+
+  .sectionTop {
+    flex-direction: column;
+    justify-content: flex-start;
+  }
+
+  .connectionSummary {
+    grid-template-columns: 1fr;
+  }
+
+  .apiActions {
+    justify-content: flex-start;
+  }
+
+  .numberTableHeader {
+    display: none;
+  }
+
+  .numberTableRow {
+    grid-template-columns: 1fr;
+    gap: 8px;
   }
 
   .connectedCopy h3 {

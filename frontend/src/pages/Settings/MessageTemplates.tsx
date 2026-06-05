@@ -168,7 +168,17 @@ function getCategoryLabel(category: MessageTemplateCategory) {
   return categoryOptions.find((option) => option.value === category)?.label || category
 }
 
-export const MessageTemplates: React.FC = () => {
+interface MessageTemplatesProps {
+  embedded?: boolean
+  title?: string
+  subtitle?: string
+}
+
+export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
+  embedded = false,
+  title = 'Plantillas',
+  subtitle = 'WhatsApp · Variables · YCloud'
+}) => {
   const { showToast, showConfirm } = useNotification()
   const [bundle, setBundle] = useState<MessageTemplateBundle>({
     folders: [],
@@ -1074,20 +1084,22 @@ export const MessageTemplates: React.FC = () => {
   }
 
   return (
-    <div className={styles.container}>
-      <div className={styles.header}>
-        <div className={styles.headerIcon}>
-          <MessageSquare size={26} />
+    <div className={`${styles.container} ${embedded ? styles.embedded : ''}`}>
+      {!embedded && (
+        <div className={styles.header}>
+          <div className={styles.headerIcon}>
+            <MessageSquare size={26} />
+          </div>
+          <div>
+            <h2>{title}</h2>
+            <p>{subtitle}</p>
+          </div>
+          <Button variant="secondary" onClick={loadBundle}>
+            <ListTree size={16} />
+            Refrescar
+          </Button>
         </div>
-        <div>
-          <h2>Plantillas</h2>
-          <p>WhatsApp · Variables · YCloud</p>
-        </div>
-        <Button variant="secondary" onClick={loadBundle}>
-          <ListTree size={16} />
-          Refrescar
-        </Button>
-      </div>
+      )}
 
       {view === 'list' ? renderList() : renderEditor()}
     </div>
