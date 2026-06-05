@@ -3782,7 +3782,19 @@ const Palette: React.FC<{
                   onDragEnd={onPaletteDragEnd}
                   onClick={() => onAdd(item.blockType, { initialSettings: item.initialSettings })}
                 >
-                  <span className={styles.paletteIcon}>{blockIcons[item.blockType]}</span>
+                  <span className={styles.paletteIcon}>
+                    {item.blockType === SECTION_BLOCK_TYPE ? (
+                      <span
+                        className={styles.sectionPalettePreview}
+                        style={{ gridTemplateColumns: `repeat(${getSettingNumber(item.initialSettings || {}, 'sectionColumns', 1, 1, 3)}, minmax(0, 1fr))` }}
+                        aria-hidden="true"
+                      >
+                        {Array.from({ length: getSettingNumber(item.initialSettings || {}, 'sectionColumns', 1, 1, 3) }).map((_, index) => (
+                          <span key={index} />
+                        ))}
+                      </span>
+                    ) : blockIcons[item.blockType]}
+                  </span>
                   <span>{item.label}</span>
                   <GripVertical className={styles.paletteGrip} size={14} />
                 </button>
