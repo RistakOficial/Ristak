@@ -1712,8 +1712,8 @@ export const Sites: React.FC = () => {
                 <div className={`${styles.metaCard} ${editorSite.metaCapiEnabled ? styles.metaCardActive : ''}`}>
                   <span className={styles.metaMark} aria-hidden="true">∞</span>
                   <div className={styles.metaCardInfo}>
-                    <strong>Meta Pixel + CAPI</strong>
-                    <small>{editorSite.metaCapiEnabled ? 'Activo' : 'Apagado'}</small>
+                    <strong>Meta del sitio</strong>
+                    <small>{editorSite.metaCapiEnabled ? 'Pixel + CAPI activos' : 'Pixel + CAPI apagados'}</small>
                   </div>
                   <label className={styles.metaSwitch} title={editorSite.metaCapiEnabled ? 'Desactivar' : 'Activar'}>
                     <input
@@ -1725,7 +1725,7 @@ export const Sites: React.FC = () => {
                   </label>
                   <span className={styles.metaCardDivider} aria-hidden="true" />
                   <label className={styles.metaCardField}>
-                    <span>Evento</span>
+                    <span>Evento default</span>
                     <select
                       value={editorSite.metaEventName || 'Lead'}
                       disabled={!editorSite.metaCapiEnabled}
@@ -1739,15 +1739,15 @@ export const Sites: React.FC = () => {
                   </label>
                   {hasNextFunnelPage && (
                     <label className={styles.metaCardField}>
-                      <span>Conversion</span>
+                      <span>Envio de formulario</span>
                       <select
                         value={editorSite.theme?.metaConversionTarget || 'same_page'}
                         disabled={!editorSite.metaCapiEnabled}
                         onChange={(event) => patchSiteTheme({ metaConversionTarget: event.target.value as SiteTheme['metaConversionTarget'] })}
                         onBlur={() => handleSaveSite()}
                       >
-                        <option value="same_page">Esta pagina</option>
-                        <option value="next_page">Pagina siguiente</option>
+                        <option value="same_page">Pagina actual</option>
+                        <option value="next_page">Despues de avanzar</option>
                       </select>
                     </label>
                   )}
@@ -3312,7 +3312,6 @@ const PageInspector: React.FC<{
   const currentId = resolveTemplateId(site)
   const platform = platformChromeFor(currentId)
   const activePage = pages.find(page => page.id === activePageId) || pages[0] || null
-  const hasNextPage = isLanding(site) && pages.length > 1 && pages.some(page => page.sortOrder > (pages.find(item => item.id === activePageId)?.sortOrder || 0))
   const patchActivePage = (patch: Partial<SitePage>) => {
     if (!activePage) return
 
@@ -3403,12 +3402,12 @@ const PageInspector: React.FC<{
           </div>
           {isLanding(site) && activePage && (
             <>
-              <div className={styles.panelSubheader}>Evento de pagina</div>
+              <div className={styles.panelSubheader}>Conversion de esta pagina</div>
               <div className={`${styles.metaCard} ${activePage.metaCapiEnabled && site.metaCapiEnabled ? styles.metaCardActive : ''}`}>
                 <span className={styles.metaMark} aria-hidden="true">∞</span>
                 <div className={styles.metaCardInfo}>
-                  <strong>Meta Pixel + CAPI</strong>
-                  <small>{activePage.metaCapiEnabled && site.metaCapiEnabled ? 'Activo en esta pagina' : 'Apagado en esta pagina'}</small>
+                  <strong>Evento extra</strong>
+                  <small>{!site.metaCapiEnabled ? 'Requiere Meta del sitio' : activePage.metaCapiEnabled ? 'Override activo' : 'Sin conversion extra'}</small>
                 </div>
                 <label className={styles.metaSwitch} title={activePage.metaCapiEnabled ? 'Desactivar' : 'Activar'}>
                   <input
@@ -3422,7 +3421,7 @@ const PageInspector: React.FC<{
               </div>
               <div className={styles.twoColumn}>
                 <label className={styles.field}>
-                  <span>Disparo</span>
+                  <span>Cuando</span>
                   <select
                     value={normalizeMetaTrigger(activePage.metaTrigger)}
                     disabled={!site.metaCapiEnabled || !activePage.metaCapiEnabled}
@@ -3435,7 +3434,7 @@ const PageInspector: React.FC<{
                   </select>
                 </label>
                 <label className={styles.field}>
-                  <span>Evento</span>
+                  <span>Evento extra</span>
                   <select
                     value={normalizeMetaEventName(activePage.metaEventName, 'none')}
                     disabled={!site.metaCapiEnabled || !activePage.metaCapiEnabled}
@@ -3449,15 +3448,6 @@ const PageInspector: React.FC<{
                 </label>
               </div>
             </>
-          )}
-          {hasNextPage && site.metaCapiEnabled && (
-            <label className={styles.field}>
-              <span>Meta Pixel + CAPI sucede en</span>
-              <select value={theme.metaConversionTarget || 'same_page'} onChange={(event) => onPatchTheme({ metaConversionTarget: event.target.value as SiteTheme['metaConversionTarget'] })} onBlur={onSaveSite}>
-                <option value="same_page">Esta pagina</option>
-                <option value="next_page">Pagina siguiente</option>
-              </select>
-            </label>
           )}
           {isFormSite(site) && (
             <label className={styles.field}>
