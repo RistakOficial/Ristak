@@ -980,15 +980,6 @@
   font-weight: 850;
 }
 
-.canvasStyleControls input[type="color"] {
-  width: 26px;
-  height: 24px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  padding: 0;
-}
-
 .canvasWrap {
   min-height: 680px;
   display: flex;
@@ -1406,11 +1397,6 @@
 
 .inlineBlockTools {
   grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
-}
-
-.inlineBlockTools input[type="color"] {
-  height: 34px;
-  padding: 2px;
 }
 
 .inlineCheck {
@@ -2282,50 +2268,6 @@
   font-weight: 700;
 }
 
-.colorPickRow {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
-.colorInput {
-  width: 40px;
-  height: 38px;
-  padding: 0;
-  border: 1px solid rgba(148, 163, 184, 0.28);
-  border-radius: 9px;
-  background: transparent;
-  cursor: pointer;
-}
-
-.colorInput::-webkit-color-swatch-wrapper {
-  padding: 3px;
-}
-
-.colorInput::-webkit-color-swatch {
-  border: 0;
-  border-radius: 6px;
-}
-
-.swatchBtn {
-  width: 26px;
-  height: 26px;
-  border-radius: 7px;
-  border: 1px solid rgba(148, 163, 184, 0.3);
-  cursor: pointer;
-  padding: 0;
-  transition: transform 0.1s ease, box-shadow 0.15s ease;
-}
-
-.swatchBtn:hover {
-  transform: scale(1.08);
-}
-
-.swatchBtnActive {
-  box-shadow: 0 0 0 2px var(--color-background-primary), 0 0 0 4px var(--color-primary);
-}
-
 /* Refinamiento del editor visual de Sites */
 .editorHeader {
   --editor-control-h: 44px;
@@ -2969,28 +2911,6 @@
   box-shadow: 0 0 0 3px rgba(var(--color-primary-rgb), 0.16);
 }
 
-.colorSwatch {
-  position: relative;
-  flex: 0 0 auto;
-  width: 26px;
-  height: 26px;
-  border-radius: 7px;
-  overflow: hidden;
-  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.18);
-  cursor: pointer;
-}
-
-.colorSwatch input[type="color"] {
-  position: absolute;
-  inset: -6px;
-  width: calc(100% + 12px);
-  height: calc(100% + 12px);
-  border: 0;
-  padding: 0;
-  background: transparent;
-  cursor: pointer;
-}
-
 .colorHex {
   flex: 1;
   min-width: 0;
@@ -3340,6 +3260,60 @@
   font-weight: 800;
 }
 
+.alignmentControl {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+
+.alignmentControl > span {
+  color: var(--color-text-secondary);
+  font-size: 0.74rem;
+  font-weight: 850;
+}
+
+.alignmentControl > div {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(64px, 1fr));
+  gap: 6px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--color-background-primary) 92%, var(--color-primary) 8%);
+  padding: 4px;
+}
+
+.alignmentControl button {
+  min-width: 0;
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  padding: 0 7px;
+  font: inherit;
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.alignmentControl button small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: inherit;
+}
+
+.alignmentControl button:hover,
+.alignmentActive {
+  background: rgba(var(--color-primary-rgb), 0.14) !important;
+  color: var(--color-primary) !important;
+}
+
 .blockStyleControls,
 .settingsGroup,
 .optionRuleCard {
@@ -3556,7 +3530,8 @@
 .compactField,
 .dimensionField,
 .colorField,
-.spacingControl {
+.spacingControl,
+.alignmentControl {
   min-width: 0;
 }
 
@@ -4016,4 +3991,169 @@
   .containerFocused .editorHeader {
     padding-bottom: 12px;
   }
+}
+
+/* Custom Ristak color picker */
+.propertiesPanel,
+.containerFocused .propertiesPanel {
+  overflow-x: hidden;
+}
+
+.propertiesBody,
+.settingsGroup,
+.blockStyleControls,
+.twoColumn,
+.colorField {
+  min-width: 0;
+}
+
+.colorField {
+  position: relative;
+  width: 100%;
+}
+
+.colorRow {
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.colorRow[data-open="true"] {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(var(--color-primary-rgb), 0.14);
+}
+
+.colorSwatchButton {
+  width: 26px;
+  height: 26px;
+  flex: 0 0 auto;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 7px;
+  padding: 0;
+  cursor: pointer;
+}
+
+.colorHex {
+  width: 0;
+  min-width: 0;
+}
+
+.colorPopover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 90;
+  width: min(280px, calc(100vw - 48px));
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--color-border-subtle, rgba(148, 163, 184, 0.24));
+  border-radius: 8px;
+  background: var(--color-background-secondary);
+  padding: 10px;
+}
+
+.colorPlane {
+  position: relative;
+  height: 132px;
+  overflow: hidden;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 8px;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.colorPlane::before,
+.colorPlane::after {
+  position: absolute;
+  inset: 0;
+  content: '';
+  pointer-events: none;
+}
+
+.colorPlane::before {
+  background: linear-gradient(90deg, #fff, rgba(255, 255, 255, 0));
+}
+
+.colorPlane::after {
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0), #000);
+}
+
+.colorPlaneHandle {
+  position: absolute;
+  z-index: 2;
+  width: 14px;
+  height: 14px;
+  border: 2px solid #fff;
+  border-radius: 999px;
+  box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.45);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.colorSlider,
+.alphaSlider {
+  display: grid;
+  gap: 6px;
+  color: var(--color-text-secondary);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.colorSlider input,
+.alphaSlider input {
+  width: 100%;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--color-primary);
+}
+
+.colorSlider input {
+  border-radius: 999px;
+  background: linear-gradient(90deg, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00);
+}
+
+.alphaSlider input {
+  border-radius: 999px;
+}
+
+.colorPopoverActions {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.colorPopoverActions button {
+  min-height: 32px;
+  border: 1px solid var(--color-border-subtle, rgba(148, 163, 184, 0.24));
+  border-radius: 8px;
+  background: var(--color-background-primary);
+  color: var(--color-text-secondary);
+  padding: 0 10px;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.colorPopoverActions button:hover {
+  color: var(--color-text-primary);
+  border-color: rgba(var(--color-primary-rgb), 0.36);
+}
+
+.pageTitleInput {
+  min-width: 0;
+  width: 100%;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text-primary);
+  padding: 4px 5px;
+  font: inherit;
+  font-size: 0.86rem;
+  font-weight: 800;
+  outline: none;
+}
+
+.pageTitleInput:focus {
+  border-color: rgba(var(--color-primary-rgb), 0.32);
+  background: var(--color-background-secondary);
 }

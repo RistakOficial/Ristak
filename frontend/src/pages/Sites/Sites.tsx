@@ -18,6 +18,9 @@ import {
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import {
+  AlignCenter,
+  AlignLeft,
+  AlignRight,
   ArrowLeft,
   CalendarDays,
   Check,
@@ -35,6 +38,7 @@ import {
   LayoutTemplate,
   Link2,
   ListChecks,
+  Maximize2,
   Monitor,
   MoreVertical,
   MousePointerClick,
@@ -156,6 +160,12 @@ const LANDING_DEFAULT_BLOCK_SPACING = {
   blockMarginBottom: 50,
   blockMarginLeft: 0,
   blockPaddingLinked: true
+}
+const DEFAULT_BUTTON_SETTINGS = {
+  buttonAlign: 'center',
+  buttonRadius: 28,
+  buttonHeight: 54,
+  buttonPaddingX: 28
 }
 
 type ButtonAction = 'url' | 'next_page' | 'specific_page'
@@ -283,8 +293,63 @@ const isDarkTemplate = (id: SiteTemplateId) => id === 'tiktok' || id === 'vsl' |
 
 const isHex6 = (value?: string): value is string => !!value && /^#[0-9a-f]{6}$/i.test(value)
 
+const isCssColor = (value?: string): value is string => {
+  const raw = String(value || '').trim()
+  if (!raw) return false
+  if (raw === 'transparent') return true
+  if (isHex6(raw)) return true
+  const match = raw.match(/^rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})(?:\s*,\s*(0|1|0?\.\d+))?\s*\)$/i)
+  if (!match) return false
+  const channels = match.slice(1, 4).map(Number)
+  const alpha = match[4] === undefined ? 1 : Number(match[4])
+  return channels.every(channel => channel >= 0 && channel <= 255) && alpha >= 0 && alpha <= 1
+}
+
+const normalizeCssColor = (value: string, fallback: string) => {
+  const raw = String(value || '').trim().toLowerCase()
+  if (!raw) return fallback
+  if (raw === 'transparent') return 'rgba(0, 0, 0, 0)'
+  if (isHex6(raw)) return raw
+  if (!isCssColor(raw)) return fallback
+  const match = raw.match(/^rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})(?:\s*,\s*(0|1|0?\.\d+))?\s*\)$/i)
+  if (!match) return fallback
+  const [r, g, b] = match.slice(1, 4).map(valuePart => Math.round(Number(valuePart)))
+  const alpha = match[4] === undefined ? 1 : Math.round(Number(match[4]) * 100) / 100
+  return alpha >= 1 ? rgbToHex(r, g, b) : `rgba(${r}, ${g}, ${b}, ${alpha})`
+}
+
+const parseCssColor = (value: string, fallback = '#000000') => {
+  const raw = normalizeCssColor(value, fallback)
+  if (raw.startsWith('#')) {
+    const h = raw.replace('#', '')
+    return {
+      r: parseInt(h.slice(0, 2), 16),
+      g: parseInt(h.slice(2, 4), 16),
+      b: parseInt(h.slice(4, 6), 16),
+      a: 1
+    }
+  }
+  const match = raw.match(/^rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})(?:\s*,\s*(0|1|0?\.\d+))?\s*\)$/i)
+  if (!match) return parseCssColor(fallback, '#000000')
+  return {
+    r: Number(match[1]),
+    g: Number(match[2]),
+    b: Number(match[3]),
+    a: match[4] === undefined ? 1 : Number(match[4])
+  }
+}
+
+function rgbToHex(r: number, g: number, b: number) {
+  return `#${[r, g, b].map(channel => Math.max(0, Math.min(255, Math.round(channel))).toString(16).padStart(2, '0')).join('')}`
+}
+
+const cssColorToHex = (value: string, fallback = '#000000') => {
+  const { r, g, b } = parseCssColor(value, fallback)
+  return rgbToHex(r, g, b)
+}
+
 const relLum = (hex: string): number => {
-  const h = hex.replace('#', '')
+  const h = cssColorToHex(hex).replace('#', '')
   const lin = (c: number) => {
     const x = c / 255
     return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4)
@@ -294,16 +359,16 @@ const relLum = (hex: string): number => {
 
 // Readable foreground for a solid accent/button background. Mirrors the backend
 // onAccent resolution so the editor never renders white text on a white button.
-const onAccentFor = (hex: string): string => (isHex6(hex) && relLum(hex) > 0.6 ? '#08080a' : '#ffffff')
+const onAccentFor = (hex: string): string => (isCssColor(hex) && relLum(hex) > 0.6 ? '#08080a' : '#ffffff')
 
 // Mirrors the backend palette resolution so the editor canvas matches the published site.
 const userBgColor = (site: PublicSite): string | null => {
   const v = site.theme?.backgroundColor
-  return isHex6(v) && v.toLowerCase() !== '#ffffff' ? v : null
+  return typeof v === 'string' && isCssColor(v) && normalizeCssColor(v, '').toLowerCase() !== '#ffffff' ? normalizeCssColor(v, '#ffffff') : null
 }
 const userAccentColor = (site: PublicSite): string | null => {
   const v = site.theme?.accentColor
-  return isHex6(v) && v.toLowerCase() !== '#111827' ? v : null
+  return typeof v === 'string' && isCssColor(v) && normalizeCssColor(v, '').toLowerCase() !== '#111827' ? normalizeCssColor(v, '#111827') : null
 }
 const resolvedPageBg = (site: PublicSite): string => {
   const id = resolveTemplateId(site)
@@ -318,6 +383,9 @@ const isSiteDark = (site: PublicSite): boolean => {
   if (id === 'facebook' || id === 'instagram') return false
   return relLum(resolvedPageBg(site)) < 0.5
 }
+
+const defaultAccentForSite = (site: PublicSite): string =>
+  userAccentColor(site) || templateMetaById(resolveTemplateId(site))?.accent || (isSiteDark(site) ? '#ffffff' : '#111827')
 
 const platformChromeFor = (id: SiteTemplateId): 'facebook' | 'instagram' | 'tiktok' | null => {
   if (id === 'facebook' || id === 'instagram' || id === 'tiktok') return id
@@ -384,12 +452,12 @@ const getThemeNumber = (theme: SiteTheme | undefined, key: keyof SiteTheme, fall
 
 const getSettingHex = (settings: Record<string, unknown>, key: string, fallback: string) => {
   const value = getSettingString(settings, key)
-  return isHex6(value) ? value : fallback
+  return isCssColor(value) ? normalizeCssColor(value, fallback) : fallback
 }
 
 const getThemeHex = (theme: SiteTheme | undefined, key: keyof SiteTheme, fallback: string) => {
   const value = theme?.[key]
-  return typeof value === 'string' && isHex6(value) ? value : fallback
+  return typeof value === 'string' && isCssColor(value) ? normalizeCssColor(value, fallback) : fallback
 }
 
 const getThemeString = (theme: SiteTheme | undefined, key: keyof SiteTheme) => {
@@ -405,6 +473,48 @@ const spacingSides = [
 ] as const
 
 type SpacingBase = 'blockPadding' | 'blockMargin'
+type HorizontalAlign = 'left' | 'center' | 'right'
+type ButtonAlign = HorizontalAlign | 'full'
+
+const horizontalAlignOptions: Array<{ value: HorizontalAlign; label: string; icon: React.ReactNode }> = [
+  { value: 'left', label: 'Izquierda', icon: <AlignLeft size={14} /> },
+  { value: 'center', label: 'Centro', icon: <AlignCenter size={14} /> },
+  { value: 'right', label: 'Derecha', icon: <AlignRight size={14} /> }
+]
+
+const buttonAlignOptions: Array<{ value: ButtonAlign; label: string; icon: React.ReactNode }> = [
+  ...horizontalAlignOptions,
+  { value: 'full', label: 'Completo', icon: <Maximize2 size={14} /> }
+]
+
+const isHorizontalAlign = (value: unknown): value is HorizontalAlign =>
+  value === 'left' || value === 'center' || value === 'right'
+
+const isButtonAlign = (value: unknown): value is ButtonAlign =>
+  isHorizontalAlign(value) || value === 'full'
+
+const getHorizontalAlign = (settings: Record<string, unknown>, key: string, fallback: HorizontalAlign = 'left'): HorizontalAlign => {
+  const value = settings[key]
+  return isHorizontalAlign(value) ? value : fallback
+}
+
+const getButtonAlign = (settings: Record<string, unknown>, fallback: ButtonAlign = 'center'): ButtonAlign => {
+  const value = settings.buttonAlign
+  return isButtonAlign(value) ? value : fallback
+}
+
+const justifyForAlign = (align: HorizontalAlign | ButtonAlign) => {
+  if (align === 'center') return 'center'
+  if (align === 'right') return 'end'
+  if (align === 'full') return 'stretch'
+  return 'start'
+}
+
+const marginVarsForAlign = (align: HorizontalAlign | ButtonAlign) => {
+  if (align === 'center') return { left: 'auto', right: 'auto' }
+  if (align === 'right') return { left: 'auto', right: '0' }
+  return { left: '0', right: align === 'full' ? '0' : 'auto' }
+}
 
 const hasSpacingSideValue = (settings: Record<string, unknown>, base: SpacingBase) =>
   spacingSides.some(side => settings[`${base}${side.id}`] !== undefined)
@@ -440,20 +550,44 @@ const getBlockCanvasStyle = (block: SiteBlock): React.CSSProperties => {
   const style: Record<string, string> = {}
   const bg = getSettingString(settings, 'blockBg')
   const text = getSettingString(settings, 'blockText')
+  const buttonBg = getSettingString(settings, 'buttonBg')
+  const buttonText = getSettingString(settings, 'buttonTextColor')
+  const buttonBorder = getSettingString(settings, 'buttonBorderColor')
+  const cardBg = getSettingString(settings, 'cardBg')
+  const cardBorder = getSettingString(settings, 'cardBorderColor')
   const fontFamily = getSettingString(settings, 'fontFamily')
   const fieldBg = getSettingString(settings, 'fieldBg')
   const fieldBorder = getSettingString(settings, 'fieldBorder')
   const blockBorder = getSettingString(settings, 'blockBorderColor')
   const blockHasNativeBorder = nativeBorderBlockTypes.has(block.blockType)
+  const supportsButton = block.blockType === 'hero' || block.blockType === 'button' || block.blockType === 'cta'
 
-  if (isHex6(bg)) style['--rstk-block-bg'] = bg
-  if (isHex6(text)) style['--rstk-block-text'] = text
+  if (isCssColor(bg)) style['--rstk-block-bg'] = normalizeCssColor(bg, '#ffffff')
+  if (isCssColor(text)) style['--rstk-block-text'] = normalizeCssColor(text, '#111827')
+  if (isCssColor(buttonBg)) {
+    const normalized = normalizeCssColor(buttonBg, '#111827')
+    style['--rstk-button-bg'] = normalized
+    style['--rstk-button-hover-bg'] = normalized
+  }
+  if (isCssColor(buttonText)) style['--rstk-button-text'] = normalizeCssColor(buttonText, '#ffffff')
+  if (isCssColor(buttonBorder)) style['--rstk-button-border'] = normalizeCssColor(buttonBorder, '#111827')
+  if (isCssColor(cardBg)) style['--rstk-card-bg'] = normalizeCssColor(cardBg, '#ffffff')
+  if (isCssColor(cardBorder)) style['--rstk-card-border'] = normalizeCssColor(cardBorder, '#dbe3ef')
   if (fontFamily) style['--rstk-block-font'] = fontFamily.replace(/[;"{}<>]/g, '')
-  if (isHex6(fieldBg)) style['--rstk-field-bg'] = fieldBg
-  if (isHex6(fieldBorder)) style['--rstk-field-border'] = fieldBorder
-  if (isHex6(blockBorder)) style['--rstk-block-border'] = blockBorder
+  if (isCssColor(fieldBg)) style['--rstk-field-bg'] = normalizeCssColor(fieldBg, '#ffffff')
+  if (isCssColor(fieldBorder)) style['--rstk-field-border'] = normalizeCssColor(fieldBorder, '#dbe3ef')
+  if (isCssColor(blockBorder)) style['--rstk-block-border'] = normalizeCssColor(blockBorder, '#dbe3ef')
   if (settings.fontWeight === 'bold') style['--rstk-block-weight'] = '850'
 
+  if (settings.textAlign !== undefined) {
+    const align = getHorizontalAlign(settings, 'textAlign', 'left')
+    const margins = marginVarsForAlign(align)
+    style['--rstk-block-align'] = align
+    style['--rstk-block-justify'] = justifyForAlign(align)
+    style['--rstk-content-margin-left'] = margins.left
+    style['--rstk-content-margin-right'] = margins.right
+  }
+  if (settings.contentMaxWidth !== undefined) style['--rstk-content-max'] = `${getSettingNumber(settings, 'contentMaxWidth', 66, 10, 120)}ch`
   if (settings.fontSize !== undefined) style['--rstk-block-size'] = `${getSettingNumber(settings, 'fontSize', 18, 12, 72)}px`
   if (settings.blockPadding !== undefined || hasSpacingSideValue(settings, 'blockPadding')) {
     style['--rstk-block-pad'] = getSpacingShorthand(settings, 'blockPadding', 0, 0, 160)
@@ -467,8 +601,34 @@ const getBlockCanvasStyle = (block: SiteBlock): React.CSSProperties => {
     style['--rstk-block-border-width'] = width
     if (!blockHasNativeBorder) style['--rstk-block-shell-border-width'] = width
   }
-  if (settings.buttonRadius !== undefined) style['--rstk-block-button-radius'] = `${getSettingNumber(settings, 'buttonRadius', 8, 0, 48)}px`
+  if (supportsButton) {
+    const align = getButtonAlign(settings, 'center')
+    const margins = marginVarsForAlign(align)
+    style['--rstk-button-justify'] = justifyForAlign(align)
+    style['--rstk-button-margin-left'] = margins.left
+    style['--rstk-button-margin-right'] = margins.right
+    style['--rstk-button-width'] = align === 'full' ? '100%' : 'fit-content'
+  }
+  if (settings.buttonRadius !== undefined) style['--rstk-block-button-radius'] = `${getSettingNumber(settings, 'buttonRadius', 28, 0, 80)}px`
+  if (settings.buttonHeight !== undefined) style['--rstk-button-height'] = `${getSettingNumber(settings, 'buttonHeight', 54, 34, 88)}px`
+  if (settings.buttonPaddingX !== undefined) style['--rstk-button-pad-x'] = `${getSettingNumber(settings, 'buttonPaddingX', 28, 8, 72)}px`
+  if (settings.buttonFontSize !== undefined) style['--rstk-button-size'] = `${getSettingNumber(settings, 'buttonFontSize', 16, 11, 32)}px`
+  if (settings.buttonBorderWidth !== undefined) style['--rstk-button-border-width'] = `${getSettingNumber(settings, 'buttonBorderWidth', 1, 0, 8)}px`
   if (settings.mediaWidth !== undefined) style['--rstk-media-width'] = `${getSettingNumber(settings, 'mediaWidth', 100, 30, 100)}%`
+  if (settings.mediaAlign !== undefined) {
+    const align = getHorizontalAlign(settings, 'mediaAlign', 'center')
+    const margins = marginVarsForAlign(align)
+    style['--rstk-media-justify'] = justifyForAlign(align)
+    style['--rstk-media-margin-left'] = margins.left
+    style['--rstk-media-margin-right'] = margins.right
+  }
+  if (settings.mediaRadius !== undefined) style['--rstk-media-radius'] = `${getSettingNumber(settings, 'mediaRadius', 18, 0, 48)}px`
+  if (settings.embedHeight !== undefined) style['--rstk-embed-height'] = `${getSettingNumber(settings, 'embedHeight', EMBED_DEFAULT_HEIGHT, EMBED_MIN_HEIGHT, EMBED_MAX_HEIGHT)}px`
+  if (settings.cardRadius !== undefined) style['--rstk-card-radius'] = `${getSettingNumber(settings, 'cardRadius', 18, 0, 48)}px`
+  if (settings.cardBorderWidth !== undefined) style['--rstk-card-border-width'] = `${getSettingNumber(settings, 'cardBorderWidth', 1, 0, 8)}px`
+  if (settings.listColumns !== undefined) style['--rstk-list-columns'] = `repeat(${getSettingNumber(settings, 'listColumns', 3, 1, 4)}, minmax(0, 1fr))`
+  if (settings.cardAlign !== undefined) style['--rstk-card-align'] = getHorizontalAlign(settings, 'cardAlign', 'left')
+  if (settings.fieldRadius !== undefined) style['--rstk-field-radius'] = `${getSettingNumber(settings, 'fieldRadius', 12, 0, 32)}px`
 
   return style as React.CSSProperties
 }
@@ -759,7 +919,14 @@ const defaultBlockPayload = (blockType: SiteBlockType, siteId: string, siteType?
       blockType,
       label,
       content: 'Titular principal',
-      settings: blockSettings({ kicker: 'Nuevo', subtitle: 'Subtitulo de la landing', buttonText: 'Comenzar', buttonUrl: '#form' })
+      settings: blockSettings({
+        textAlign: 'center',
+        kicker: 'Nuevo',
+        subtitle: 'Subtitulo de la landing',
+        buttonText: 'Comenzar',
+        buttonUrl: '#form',
+        ...DEFAULT_BUTTON_SETTINGS
+      })
     }
   }
 
@@ -768,7 +935,13 @@ const defaultBlockPayload = (blockType: SiteBlockType, siteId: string, siteType?
       blockType,
       label,
       content: 'Listo para empezar?',
-      settings: blockSettings({ subtitle: 'Deja tus datos y te contactamos.', buttonText: 'Enviar solicitud', buttonUrl: '#form' })
+      settings: blockSettings({
+        textAlign: 'center',
+        subtitle: 'Deja tus datos y te contactamos.',
+        buttonText: 'Enviar solicitud',
+        buttonUrl: '#form',
+        ...DEFAULT_BUTTON_SETTINGS
+      })
     }
   }
 
@@ -777,7 +950,7 @@ const defaultBlockPayload = (blockType: SiteBlockType, siteId: string, siteType?
       blockType,
       label,
       content: 'Boton',
-      settings: blockSettings({ buttonText: 'Continuar', buttonUrl: '#form' })
+      settings: blockSettings({ buttonText: 'Continuar', buttonUrl: '#form', ...DEFAULT_BUTTON_SETTINGS })
     }
   }
 
@@ -830,6 +1003,27 @@ const defaultBlockPayload = (blockType: SiteBlockType, siteId: string, siteType?
         ]
       : [],
     settings: blockSettings(baseSettings)
+  }
+}
+
+const makePreviewBlock = (blockType: SiteBlockType, site: PublicSite, pageId?: string): SiteBlock => {
+  const payload = defaultBlockPayload(blockType, site.id, site.siteType)
+  return {
+    id: '__palette-preview__',
+    siteId: site.id,
+    blockType,
+    label: payload.label || blockLabels[blockType],
+    content: payload.content || '',
+    placeholder: payload.placeholder || '',
+    required: Boolean(payload.required),
+    options: payload.options || [],
+    settings: {
+      ...(payload.settings || {}),
+      ...(pageId ? { pageId } : {})
+    },
+    sortOrder: -1,
+    createdAt: '',
+    updatedAt: ''
   }
 }
 
@@ -892,6 +1086,9 @@ export const Sites: React.FC = () => {
       : null
   const isFocusedSitesMode = createFlow !== 'closed' || Boolean(editorSite)
   const canvasTheme = editorSite ? buildCanvasTheme(editorSite, device) : null
+  const palettePreviewBlock = editorSite && paletteDragBlockType
+    ? makePreviewBlock(paletteDragBlockType, editorSite, isLanding(editorSite) ? activePage?.id : undefined)
+    : null
 
   const performUrlNavigation = useCallback((href: string) => {
     const target = new URL(href, window.location.href)
@@ -1339,6 +1536,16 @@ export const Sites: React.FC = () => {
     void persistFunnelPages(arrayMove(pages, oldIndex, newIndex), activePageId)
   }
 
+  const handleRenamePage = (pageId: string, title: string) => {
+    const cleanTitle = title.trim()
+    if (!cleanTitle) return
+    const nextPages = pages.map((page, index) => page.id === pageId
+      ? { ...page, title: cleanTitle || `Pagina ${index + 1}` }
+      : page
+    )
+    void persistFunnelPages(nextPages, activePageId)
+  }
+
   const handleCreateSite = async (siteType: SiteType, mode: 'blank' | 'template' = 'template', templateId?: SiteTemplateId) => {
     setCreating(true)
     try {
@@ -1489,7 +1696,7 @@ export const Sites: React.FC = () => {
     )
   }
 
-  const handleAddBlock = async (blockType: SiteBlockType) => {
+  const handleAddBlock = async (blockType: SiteBlockType, insertIndex?: number) => {
     if (!selectedSite) return
     try {
       const payload = defaultBlockPayload(blockType, selectedSite.id, selectedSite.siteType)
@@ -1499,11 +1706,30 @@ export const Sites: React.FC = () => {
           pageId: activePage.id
         }
       }
-      const site = await sitesService.createBlock(selectedSite.id, payload)
+      let site = await sitesService.createBlock(selectedSite.id, payload)
+      const sitePages = normalizeFunnelPages(site)
       syncSelectedSite(site)
       const added = [...(site.blocks || [])]
-        .filter(block => !isLanding(site) || getBlockPageId(block, normalizeFunnelPages(site)) === (activePage?.id || DEFAULT_FUNNEL_PAGE_ID))
+        .filter(block => !isLanding(site) || getBlockPageId(block, sitePages) === (activePage?.id || DEFAULT_FUNNEL_PAGE_ID))
         .sort((a, b) => b.sortOrder - a.sortOrder)[0]
+      if (added && Number.isFinite(insertIndex)) {
+        const pageBlocks = [...(site.blocks || [])]
+          .filter(block => !isLanding(site) || getBlockPageId(block, sitePages) === (activePage?.id || DEFAULT_FUNNEL_PAGE_ID))
+          .sort((a, b) => a.sortOrder - b.sortOrder)
+        const withoutAdded = pageBlocks.filter(block => block.id !== added.id)
+        const boundedIndex = Math.max(0, Math.min(Number(insertIndex), withoutAdded.length))
+        const orderedBlocks = [
+          ...withoutAdded.slice(0, boundedIndex),
+          added,
+          ...withoutAdded.slice(boundedIndex)
+        ]
+        site = await sitesService.reorderBlocks(
+          selectedSite.id,
+          orderedBlocks.map(block => block.id),
+          isLanding(site) ? activePage?.id : undefined
+        )
+        syncSelectedSite(site)
+      }
       if (added) setSelectedBlockId(added.id)
     } catch (error) {
       showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo agregar el bloque')
@@ -1642,17 +1868,46 @@ export const Sites: React.FC = () => {
     }
   }
 
+  const getPaletteInsertIndex = (event: React.DragEvent<HTMLDivElement>) => {
+    const shell = (event.currentTarget as HTMLElement).querySelector('.rstk-shell')
+    if (!shell) return canvasBlocks.length
+    const blockNodes = Array.from(shell.querySelectorAll<HTMLElement>('[data-rstk-block-index]'))
+    const y = event.clientY
+    const targetIndex = blockNodes.findIndex(node => {
+      const rect = node.getBoundingClientRect()
+      return y < rect.top + rect.height / 2
+    })
+    return targetIndex < 0 ? blockNodes.length : targetIndex
+  }
+
+  const resetPaletteDrag = () => {
+    setPaletteDragging(false)
+    setPaletteDragBlockType(null)
+    setPaletteInsertIndex(null)
+  }
+
   const handleCanvasDrop = async (event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault()
-    setPaletteDragging(false)
     const blockType = event.dataTransfer.getData('application/ristak-block') as SiteBlockType
-    if (blockType) await handleAddBlock(blockType)
+    const insertIndex = paletteInsertIndex ?? getPaletteInsertIndex(event)
+    resetPaletteDrag()
+    if (blockType) await handleAddBlock(blockType, insertIndex)
   }
 
   const handleCanvasDragOver = (event: React.DragEvent<HTMLDivElement>) => {
     if (event.dataTransfer.types.includes('application/ristak-block')) {
       event.preventDefault()
+      event.dataTransfer.dropEffect = 'move'
+      const blockType = event.dataTransfer.getData('application/ristak-block') as SiteBlockType
       if (!paletteDragging) setPaletteDragging(true)
+      if (blockType && blockType !== paletteDragBlockType) setPaletteDragBlockType(blockType)
+      setPaletteInsertIndex(getPaletteInsertIndex(event))
+    }
+  }
+
+  const handleCanvasDragLeave = (event: React.DragEvent<HTMLDivElement>) => {
+    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+      resetPaletteDrag()
     }
   }
 
@@ -1867,7 +2122,7 @@ export const Sites: React.FC = () => {
                         active={paletteDragging}
                         onClear={() => setSelectedBlockId('')}
                         onDragOver={handleCanvasDragOver}
-                        onDragLeave={() => setPaletteDragging(false)}
+                        onDragLeave={handleCanvasDragLeave}
                         onDrop={handleCanvasDrop}
                       >
                         <div className="rstk-frame">
@@ -1890,29 +2145,44 @@ export const Sites: React.FC = () => {
                                 </div>
                               )}
                               {canvasBlocks.length === 0 ? (
+                                palettePreviewBlock ? (
+                                  <PaletteInsertPreview block={palettePreviewBlock} forms={forms} calendars={calendars} />
+                                ) : (
                                 <div className="rstkDropEmpty">
                                   <Plus size={22} />
                                   <p>Arrastra bloques desde la barra de la izquierda o haz click para agregarlos.</p>
                                 </div>
-                              ) : canvasBlocks.map((block, index) => (
-                                <SortableCanvasBlock
-                                  key={block.id}
-                                  block={block}
-                                  blocks={canvasBlocks}
-                                  index={index}
-                                  selected={selectedBlock?.id === block.id}
-                                  site={editorSite}
-                                  forms={forms}
-                                  calendars={calendars}
-                                  pages={pages}
-                                  activePageId={activePage?.id || DEFAULT_FUNNEL_PAGE_ID}
-                                  onSelect={() => setSelectedBlockId(block.id)}
-                                  onDelete={() => handleDeleteBlock(block.id)}
-                                  onPatchBlock={(patch) => patchBlockLocal(block.id, patch)}
-                                  onPatchSettings={(patch) => patchBlockSettingsLocal(block, patch)}
-                                  onSave={() => handleSaveBlock(block.id)}
-                                />
-                              ))}
+                                )
+                              ) : (
+                                <>
+                                  {palettePreviewBlock && paletteInsertIndex === 0 && (
+                                    <PaletteInsertPreview block={palettePreviewBlock} forms={forms} calendars={calendars} />
+                                  )}
+                                  {canvasBlocks.map((block, index) => (
+                                    <React.Fragment key={block.id}>
+                                      <SortableCanvasBlock
+                                        block={block}
+                                        blocks={canvasBlocks}
+                                        index={index}
+                                        selected={selectedBlock?.id === block.id}
+                                        site={editorSite}
+                                        forms={forms}
+                                        calendars={calendars}
+                                        pages={pages}
+                                        activePageId={activePage?.id || DEFAULT_FUNNEL_PAGE_ID}
+                                        onSelect={() => setSelectedBlockId(block.id)}
+                                        onDelete={() => handleDeleteBlock(block.id)}
+                                        onPatchBlock={(patch) => patchBlockLocal(block.id, patch)}
+                                        onPatchSettings={(patch) => patchBlockSettingsLocal(block, patch)}
+                                        onSave={() => handleSaveBlock(block.id)}
+                                      />
+                                      {palettePreviewBlock && paletteInsertIndex === index + 1 && (
+                                        <PaletteInsertPreview block={palettePreviewBlock} forms={forms} calendars={calendars} />
+                                      )}
+                                    </React.Fragment>
+                                  ))}
+                                </>
+                              )}
                               {isFormSite(editorSite) && canvasBlocks.some(block => fieldBlockTypes.has(block.blockType)) && (
                                 <div className="rstk-actions">
                                   <button type="button" data-submit>{editorSite.theme?.submitText || 'Enviar'}</button>
@@ -2310,6 +2580,36 @@ const DimensionField: React.FC<DimensionFieldProps> = ({ label, value, min, max,
   )
 }
 
+const AlignmentControl: React.FC<{
+  label: string
+  value: string
+  options: Array<{ value: string; label: string; icon: React.ReactNode }>
+  onChange: (value: string) => void
+  onCommit: () => void
+}> = ({ label, value, options, onChange, onCommit }) => (
+  <div className={styles.alignmentControl}>
+    <span>{label}</span>
+    <div role="group" aria-label={label}>
+      {options.map(option => (
+        <button
+          key={option.value}
+          type="button"
+          className={value === option.value ? styles.alignmentActive : ''}
+          onClick={() => {
+            onChange(option.value)
+            window.setTimeout(onCommit, 0)
+          }}
+          title={option.label}
+          aria-label={option.label}
+        >
+          {option.icon}
+          <small>{option.label}</small>
+        </button>
+      ))}
+    </div>
+  </div>
+)
+
 interface LinkedSpacingFieldProps {
   label: string
   base: SpacingBase
@@ -2414,50 +2714,187 @@ const LinkedSpacingField: React.FC<LinkedSpacingFieldProps> = ({
 interface ColorFieldProps {
   label: string
   value: string
-  onChange: (hex: string) => void
+  onChange: (color: string) => void
   onCommit: () => void
 }
 
-// Custom color control: a live swatch (opens the native picker) plus an editable hex box.
+const rgbToHsv = ({ r, g, b }: { r: number; g: number; b: number }) => {
+  const rn = r / 255
+  const gn = g / 255
+  const bn = b / 255
+  const max = Math.max(rn, gn, bn)
+  const min = Math.min(rn, gn, bn)
+  const delta = max - min
+  let h = 0
+
+  if (delta) {
+    if (max === rn) h = ((gn - bn) / delta) % 6
+    else if (max === gn) h = (bn - rn) / delta + 2
+    else h = (rn - gn) / delta + 4
+    h *= 60
+  }
+
+  return {
+    h: h < 0 ? h + 360 : h,
+    s: max === 0 ? 0 : delta / max,
+    v: max
+  }
+}
+
+const hsvToRgb = (h: number, s: number, v: number) => {
+  const c = v * s
+  const x = c * (1 - Math.abs((h / 60) % 2 - 1))
+  const m = v - c
+  const ranges = h < 60
+    ? [c, x, 0]
+    : h < 120
+      ? [x, c, 0]
+      : h < 180
+        ? [0, c, x]
+        : h < 240
+          ? [0, x, c]
+          : h < 300
+            ? [x, 0, c]
+            : [c, 0, x]
+
+  return {
+    r: Math.round((ranges[0] + m) * 255),
+    g: Math.round((ranges[1] + m) * 255),
+    b: Math.round((ranges[2] + m) * 255)
+  }
+}
+
+const formatCssColor = ({ r, g, b, a }: { r: number; g: number; b: number; a: number }) => {
+  const alpha = Math.max(0, Math.min(1, Math.round(a * 100) / 100))
+  return alpha >= 1 ? rgbToHex(r, g, b) : `rgba(${Math.round(r)}, ${Math.round(g)}, ${Math.round(b)}, ${alpha})`
+}
+
+const swatchBackground = (color: string) => ({
+  backgroundColor: color,
+  backgroundImage: 'linear-gradient(45deg, rgba(148, 163, 184, 0.28) 25%, transparent 25%), linear-gradient(-45deg, rgba(148, 163, 184, 0.28) 25%, transparent 25%), linear-gradient(45deg, transparent 75%, rgba(148, 163, 184, 0.28) 75%), linear-gradient(-45deg, transparent 75%, rgba(148, 163, 184, 0.28) 75%)',
+  backgroundPosition: '0 0, 0 6px, 6px -6px, -6px 0',
+  backgroundSize: '12px 12px'
+} as React.CSSProperties)
+
+// Ristak color control: no native OS picker, with hue, intensity and alpha.
 const ColorField: React.FC<ColorFieldProps> = ({ label, value, onChange, onCommit }) => {
-  const safe = isHex6(value) ? value.toLowerCase() : '#000000'
-  const [text, setText] = useState(safe)
-  useEffect(() => { setText(isHex6(value) ? value.toLowerCase() : (value || '')) }, [value])
+  const rootRef = useRef<HTMLDivElement>(null)
+  const color = normalizeCssColor(value, '#000000')
+  const rgba = parseCssColor(color, '#000000')
+  const hsv = rgbToHsv(rgba)
+  const hueRgb = hsvToRgb(hsv.h, 1, 1)
+  const hueColor = rgbToHex(hueRgb.r, hueRgb.g, hueRgb.b)
+  const [text, setText] = useState(color)
+  const [open, setOpen] = useState(false)
+
+  useEffect(() => { setText(normalizeCssColor(value, '#000000')) }, [value])
+
+  useEffect(() => {
+    if (!open) return undefined
+    const close = (event: MouseEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) {
+        setOpen(false)
+        onCommit()
+      }
+    }
+    document.addEventListener('mousedown', close)
+    return () => document.removeEventListener('mousedown', close)
+  }, [onCommit, open])
+
+  const patchColor = (next: { h?: number; s?: number; v?: number; a?: number }) => {
+    const nextH = next.h ?? hsv.h
+    const nextS = next.s ?? hsv.s
+    const nextV = next.v ?? hsv.v
+    const nextA = next.a ?? rgba.a
+    const rgb = hsvToRgb(nextH, nextS, nextV)
+    const formatted = formatCssColor({ ...rgb, a: nextA })
+    setText(formatted)
+    onChange(formatted)
+  }
 
   const commitText = () => {
-    const norm = text.startsWith('#') ? text : `#${text}`
-    if (isHex6(norm)) {
-      onChange(norm.toLowerCase())
+    const normalized = normalizeCssColor(text.startsWith('#') || text.startsWith('rgb') || text === 'transparent' ? text : `#${text}`, '')
+    if (normalized) {
+      onChange(normalized)
       onCommit()
     } else {
-      setText(safe)
+      setText(color)
     }
   }
 
+  const handlePlanePointer = (event: React.PointerEvent<HTMLDivElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect()
+    const x = Math.min(rect.width, Math.max(0, event.clientX - rect.left))
+    const y = Math.min(rect.height, Math.max(0, event.clientY - rect.top))
+    patchColor({ s: x / rect.width, v: 1 - y / rect.height })
+  }
+
   return (
-    <label className={styles.colorField}>
+    <div ref={rootRef} className={styles.colorField}>
       <span>{label}</span>
-      <div className={styles.colorRow}>
-        <span className={styles.colorSwatch} style={{ background: safe }}>
-          <input
-            type="color"
-            value={safe}
-            onChange={(event) => { setText(event.target.value); onChange(event.target.value) }}
-            onBlur={onCommit}
-            aria-label={label}
-          />
-        </span>
+      <div className={styles.colorRow} data-open={open ? 'true' : 'false'}>
+        <button
+          type="button"
+          className={styles.colorSwatchButton}
+          style={swatchBackground(color)}
+          onClick={() => setOpen(current => !current)}
+          aria-label={`Elegir ${label}`}
+        />
         <input
           className={styles.colorHex}
           value={text}
           spellCheck={false}
-          maxLength={7}
+          maxLength={28}
           onChange={(event) => setText(event.target.value)}
           onBlur={commitText}
           onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); commitText() } }}
         />
       </div>
-    </label>
+      {open && (
+        <div className={styles.colorPopover}>
+          <div
+            className={styles.colorPlane}
+            style={{ backgroundColor: hueColor }}
+            onPointerDown={(event) => {
+              event.currentTarget.setPointerCapture(event.pointerId)
+              handlePlanePointer(event)
+            }}
+            onPointerMove={(event) => { if (event.buttons) handlePlanePointer(event) }}
+          >
+            <span
+              className={styles.colorPlaneHandle}
+              style={{ left: `${hsv.s * 100}%`, top: `${(1 - hsv.v) * 100}%` }}
+            />
+          </div>
+          <label className={styles.colorSlider}>
+            <span>Tono</span>
+            <input
+              type="range"
+              min={0}
+              max={360}
+              value={Math.round(hsv.h)}
+              onChange={(event) => patchColor({ h: Number(event.target.value) })}
+              onBlur={onCommit}
+            />
+          </label>
+          <label className={styles.alphaSlider}>
+            <span>Transparencia</span>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              value={Math.round(rgba.a * 100)}
+              onChange={(event) => patchColor({ a: Number(event.target.value) / 100 })}
+              onBlur={onCommit}
+            />
+          </label>
+          <div className={styles.colorPopoverActions}>
+            <button type="button" onClick={() => patchColor({ a: 0 })}>Transparente</button>
+            <button type="button" onClick={() => { setOpen(false); onCommit() }}>Listo</button>
+          </div>
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -2558,7 +2995,8 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
   onDuplicatePage,
   onDeletePage,
   onDragPage,
-  onReorderPages
+  onReorderPages,
+  onRenamePage
 }) => {
   return (
     <aside className={styles.pagesPanel}>
@@ -2573,6 +3011,10 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
             className={`${styles.pageItemWrap} ${draggingPageId === page.id ? styles.pageItemDragging : ''}`}
             draggable
             onDragStart={(event) => {
+              if ((event.target as HTMLElement).closest('input')) {
+                event.preventDefault()
+                return
+              }
               event.dataTransfer.setData('application/ristak-page', page.id)
               onDragPage(page.id)
             }}
@@ -2589,14 +3031,23 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
             }}
             onDragEnd={() => onDragPage(null)}
           >
-            <button
-              type="button"
+            <div
+              role="button"
+              tabIndex={0}
               className={`${styles.pageItem} ${activePageId === page.id ? styles.pageItemActive : ''}`}
               onClick={() => onSelectPage(page.id)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') onSelectPage(page.id)
+              }}
             >
               <GripVertical size={14} />
-              <span>{page.title || `Pagina ${index + 1}`}</span>
-            </button>
+              <EditablePageTitle
+                pageId={page.id}
+                title={page.title || `Pagina ${index + 1}`}
+                onFocus={() => onSelectPage(page.id)}
+                onRename={onRenamePage}
+              />
+            </div>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <button
@@ -2633,7 +3084,53 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
   )
 }
 
-const Palette: React.FC<{ blockTypes: SiteBlockType[]; onAdd: (blockType: SiteBlockType) => void }> = ({ blockTypes, onAdd }) => {
+const EditablePageTitle: React.FC<{
+  pageId: string
+  title: string
+  onFocus: () => void
+  onRename: (pageId: string, title: string) => void
+}> = ({ pageId, title, onFocus, onRename }) => {
+  const [draft, setDraft] = useState(title)
+
+  useEffect(() => setDraft(title), [title])
+
+  const commit = () => {
+    const next = draft.trim() || title
+    setDraft(next)
+    if (next !== title) onRename(pageId, next)
+  }
+
+  return (
+    <input
+      className={styles.pageTitleInput}
+      value={draft}
+      draggable={false}
+      aria-label="Nombre de pagina"
+      onFocus={onFocus}
+      onPointerDown={(event) => event.stopPropagation()}
+      onClick={(event) => event.stopPropagation()}
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={commit}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter') {
+          event.preventDefault()
+          event.currentTarget.blur()
+        }
+        if (event.key === 'Escape') {
+          setDraft(title)
+          event.currentTarget.blur()
+        }
+      }}
+    />
+  )
+}
+
+const Palette: React.FC<{
+  blockTypes: SiteBlockType[]
+  onAdd: (blockType: SiteBlockType) => void
+  onPaletteDragStart: (blockType: SiteBlockType) => void
+  onPaletteDragEnd: () => void
+}> = ({ blockTypes, onAdd, onPaletteDragStart, onPaletteDragEnd }) => {
   const allowed = new Set(blockTypes)
   const groups = paletteGroups
     .map(group => ({ label: group.label, types: group.types.filter(type => allowed.has(type)) }))
@@ -2656,7 +3153,12 @@ const Palette: React.FC<{ blockTypes: SiteBlockType[]; onAdd: (blockType: SiteBl
                   type="button"
                   className={styles.paletteItem}
                   draggable
-                  onDragStart={(event) => event.dataTransfer.setData('application/ristak-block', blockType)}
+                  onDragStart={(event) => {
+                    event.dataTransfer.effectAllowed = 'move'
+                    event.dataTransfer.setData('application/ristak-block', blockType)
+                    onPaletteDragStart(blockType)
+                  }}
+                  onDragEnd={onPaletteDragEnd}
                   onClick={() => onAdd(blockType)}
                 >
                   <span className={styles.paletteIcon}>{blockIcons[blockType]}</span>
@@ -2823,6 +3325,7 @@ const SortableCanvasBlock: React.FC<SortableCanvasBlockProps> = ({
   return (
     <div
       ref={setNodeRef}
+      data-rstk-block-index={index}
       style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.6 : undefined, ...getBlockCanvasStyle(block) }}
       className={`rstk-block-style rstkSel ${selected ? 'rstkSelActive' : ''}`}
       onClick={(event) => {
@@ -2857,6 +3360,16 @@ const SortableCanvasBlock: React.FC<SortableCanvasBlockProps> = ({
   )
 }
 
+const PaletteInsertPreview: React.FC<{
+  block: SiteBlock
+  forms: PublicSite[]
+  calendars: CalendarType[]
+}> = ({ block, forms, calendars }) => (
+  <div className="rstk-block-style rstkPalettePreview" style={getBlockCanvasStyle(block)}>
+    <CanvasPreviewBlock block={block} forms={forms} calendars={calendars} />
+  </div>
+)
+
 const InlineButtonRouting: React.FC<{
   settings: Record<string, unknown>
   pages: SitePage[]
@@ -2870,33 +3383,24 @@ const InlineButtonRouting: React.FC<{
 )
 
 const InlineBlockStyleControls: React.FC<{
+  site: PublicSite
   block: SiteBlock
   onPatchSettings: (patch: Record<string, unknown>) => void
   onSave: () => void
-}> = ({ block, onPatchSettings, onSave }) => {
+}> = ({ site, block, onPatchSettings, onSave }) => {
   const settings = block.settings || {}
+  const defaultAccent = defaultAccentForSite(site)
   const supportsButton = block.blockType === 'hero' || block.blockType === 'button' || block.blockType === 'cta'
   const supportsField = fieldBlockTypes.has(block.blockType)
-  const supportsMedia = block.blockType === 'image'
+  const isHardEmbed = block.blockType === 'embed' || block.blockType === 'calendar_embed'
+  const supportsTextStyle = !supportsField && !isHardEmbed
+  const supportsMedia = block.blockType === 'image' || block.blockType === 'video'
+  const supportsCards = ['benefits', 'testimonials', 'services', 'faq'].includes(block.blockType)
   const defaultBorderWidth = nativeBorderBlockTypes.has(block.blockType) ? 1 : 0
 
   return (
     <div className={styles.blockStyleControls} onClick={(event) => event.stopPropagation()}>
       <div className={styles.panelSubheader}>Estilo del bloque</div>
-      <div className={styles.twoColumn}>
-        <ColorField
-          label="Fondo"
-          value={getSettingHex(settings, 'blockBg', '#ffffff')}
-          onChange={(value) => onPatchSettings({ blockBg: value })}
-          onCommit={onSave}
-        />
-        <ColorField
-          label="Texto"
-          value={getSettingHex(settings, 'blockText', '#111827')}
-          onChange={(value) => onPatchSettings({ blockText: value })}
-          onCommit={onSave}
-        />
-      </div>
       <LinkedSpacingField
         label="Padding"
         base="blockPadding"
@@ -2917,99 +3421,295 @@ const InlineBlockStyleControls: React.FC<{
         onChange={onPatchSettings}
         onCommit={onSave}
       />
-      <div className={styles.twoColumn}>
-        <DimensionField
-          label="Radio"
-          value={getSettingNumber(settings, 'blockRadius', 8, 0, 36)}
-          min={0}
-          max={36}
-          onChange={(value) => onPatchSettings({ blockRadius: value })}
-          onCommit={onSave}
-        />
-        <DimensionField
-          label="Texto"
-          value={getSettingNumber(settings, 'fontSize', 18, 12, 72)}
-          min={12}
-          max={72}
-          unit="px"
-          onChange={(value) => onPatchSettings({ fontSize: value })}
-          onCommit={onSave}
-        />
-      </div>
-      <div className={styles.twoColumn}>
-        <DimensionField
-          label="Grosor borde"
-          value={getSettingNumber(settings, 'blockBorderWidth', defaultBorderWidth, 0, 12)}
-          min={0}
-          max={12}
-          onChange={(value) => onPatchSettings({ blockBorderWidth: value })}
-          onCommit={onSave}
-        />
-        <ColorField
-          label="Color borde"
-          value={getSettingHex(settings, 'blockBorderColor', '#dbe3ef')}
-          onChange={(value) => onPatchSettings({ blockBorderColor: value })}
-          onCommit={onSave}
-        />
-      </div>
-      <div className={styles.twoColumn}>
-        <label className={styles.field}>
-          <span>Fuente</span>
-          <select value={getSettingString(settings, 'fontFamily')} onChange={(event) => onPatchSettings({ fontFamily: event.target.value })} onBlur={onSave}>
-            <option value="">Sistema</option>
-            <option value="Inter, system-ui, sans-serif">Inter</option>
-            <option value="'Inter Tight', Inter, system-ui, sans-serif">Inter Tight</option>
-            <option value="Georgia, 'Times New Roman', serif">Serif</option>
-          </select>
-        </label>
-        <label className={styles.checkboxLabel}>
-          <input
-            type="checkbox"
-            checked={settings.fontWeight === 'bold'}
-            onChange={(event) => {
-              onPatchSettings({ fontWeight: event.target.checked ? 'bold' : '' })
-              window.setTimeout(onSave, 0)
-            }}
+      {!isHardEmbed && (
+        <>
+          <div className={styles.twoColumn}>
+            <ColorField
+              label="Fondo"
+              value={getSettingHex(settings, 'blockBg', '#ffffff')}
+              onChange={(value) => onPatchSettings({ blockBg: value })}
+              onCommit={onSave}
+            />
+            <ColorField
+              label="Texto"
+              value={getSettingHex(settings, 'blockText', '#111827')}
+              onChange={(value) => onPatchSettings({ blockText: value })}
+              onCommit={onSave}
+            />
+          </div>
+          <div className={styles.twoColumn}>
+            <DimensionField
+              label="Radio"
+              value={getSettingNumber(settings, 'blockRadius', 8, 0, 48)}
+              min={0}
+              max={48}
+              onChange={(value) => onPatchSettings({ blockRadius: value })}
+              onCommit={onSave}
+            />
+            <DimensionField
+              label="Grosor borde"
+              value={getSettingNumber(settings, 'blockBorderWidth', defaultBorderWidth, 0, 12)}
+              min={0}
+              max={12}
+              onChange={(value) => onPatchSettings({ blockBorderWidth: value })}
+              onCommit={onSave}
+            />
+          </div>
+          <ColorField
+            label="Color borde"
+            value={getSettingHex(settings, 'blockBorderColor', '#dbe3ef')}
+            onChange={(value) => onPatchSettings({ blockBorderColor: value })}
+            onCommit={onSave}
           />
-          <span>Negrita</span>
-        </label>
-      </div>
+        </>
+      )}
+
+      {supportsTextStyle && (
+        <>
+          <div className={styles.panelSubheader}>Texto interno</div>
+          <AlignmentControl
+            label="Alineacion"
+            value={getHorizontalAlign(settings, 'textAlign', block.blockType === 'hero' || block.blockType === 'cta' ? 'center' : 'left')}
+            options={horizontalAlignOptions}
+            onChange={(value) => onPatchSettings({ textAlign: value })}
+            onCommit={onSave}
+          />
+          <div className={styles.twoColumn}>
+            <DimensionField
+              label="Tamano"
+              value={getSettingNumber(settings, 'fontSize', 18, 12, 72)}
+              min={12}
+              max={72}
+              unit="px"
+              onChange={(value) => onPatchSettings({ fontSize: value })}
+              onCommit={onSave}
+            />
+            <DimensionField
+              label="Ancho texto"
+              value={getSettingNumber(settings, 'contentMaxWidth', 66, 10, 120)}
+              min={10}
+              max={120}
+              unit="ch"
+              onChange={(value) => onPatchSettings({ contentMaxWidth: value })}
+              onCommit={onSave}
+            />
+          </div>
+          <div className={styles.twoColumn}>
+            <label className={styles.field}>
+              <span>Fuente</span>
+              <select value={getSettingString(settings, 'fontFamily')} onChange={(event) => onPatchSettings({ fontFamily: event.target.value })} onBlur={onSave}>
+                <option value="">Sistema</option>
+                <option value="Inter, system-ui, sans-serif">Inter</option>
+                <option value="'Inter Tight', Inter, system-ui, sans-serif">Inter Tight</option>
+                <option value="Georgia, 'Times New Roman', serif">Serif</option>
+              </select>
+            </label>
+            <label className={styles.checkboxLabel}>
+              <input
+                type="checkbox"
+                checked={settings.fontWeight === 'bold'}
+                onChange={(event) => {
+                  onPatchSettings({ fontWeight: event.target.checked ? 'bold' : '' })
+                  window.setTimeout(onSave, 0)
+                }}
+              />
+              <span>Negrita</span>
+            </label>
+          </div>
+        </>
+      )}
+
       {supportsButton && (
-        <DimensionField
-          label="Radio de botones"
-          value={getSettingNumber(settings, 'buttonRadius', 8, 0, 40)}
-          min={0}
-          max={40}
-          onChange={(value) => onPatchSettings({ buttonRadius: value })}
-          onCommit={onSave}
-        />
+        <>
+          <div className={styles.panelSubheader}>Boton interno</div>
+          <AlignmentControl
+            label="Alineacion"
+            value={getButtonAlign(settings, 'center')}
+            options={buttonAlignOptions}
+            onChange={(value) => onPatchSettings({ buttonAlign: value })}
+            onCommit={onSave}
+          />
+          <div className={styles.twoColumn}>
+            <ColorField
+              label="Fondo del boton"
+              value={getSettingHex(settings, 'buttonBg', defaultAccent)}
+              onChange={(value) => onPatchSettings({ buttonBg: value })}
+              onCommit={onSave}
+            />
+            <ColorField
+              label="Texto del boton"
+              value={getSettingHex(settings, 'buttonTextColor', onAccentFor(defaultAccent))}
+              onChange={(value) => onPatchSettings({ buttonTextColor: value })}
+              onCommit={onSave}
+            />
+          </div>
+          <div className={styles.twoColumn}>
+            <DimensionField
+              label="Radio boton"
+              value={getSettingNumber(settings, 'buttonRadius', 28, 0, 80)}
+              min={0}
+              max={80}
+              onChange={(value) => onPatchSettings({ buttonRadius: value })}
+              onCommit={onSave}
+            />
+            <DimensionField
+              label="Alto boton"
+              value={getSettingNumber(settings, 'buttonHeight', 54, 34, 88)}
+              min={34}
+              max={88}
+              onChange={(value) => onPatchSettings({ buttonHeight: value })}
+              onCommit={onSave}
+            />
+          </div>
+          <div className={styles.twoColumn}>
+            <DimensionField
+              label="Relleno lados"
+              value={getSettingNumber(settings, 'buttonPaddingX', 28, 8, 72)}
+              min={8}
+              max={72}
+              onChange={(value) => onPatchSettings({ buttonPaddingX: value })}
+              onCommit={onSave}
+            />
+            <DimensionField
+              label="Texto boton"
+              value={getSettingNumber(settings, 'buttonFontSize', 16, 11, 32)}
+              min={11}
+              max={32}
+              onChange={(value) => onPatchSettings({ buttonFontSize: value })}
+              onCommit={onSave}
+            />
+          </div>
+          <div className={styles.twoColumn}>
+            <DimensionField
+              label="Borde boton"
+              value={getSettingNumber(settings, 'buttonBorderWidth', 1, 0, 8)}
+              min={0}
+              max={8}
+              onChange={(value) => onPatchSettings({ buttonBorderWidth: value })}
+              onCommit={onSave}
+            />
+            <ColorField
+              label="Color borde"
+              value={getSettingHex(settings, 'buttonBorderColor', getSettingHex(settings, 'buttonBg', defaultAccent))}
+              onChange={(value) => onPatchSettings({ buttonBorderColor: value })}
+              onCommit={onSave}
+            />
+          </div>
+        </>
       )}
+
       {supportsField && (
-        <div className={styles.twoColumn}>
-          <ColorField
-            label="Caja del campo"
-            value={getSettingHex(settings, 'fieldBg', '#ffffff')}
-            onChange={(value) => onPatchSettings({ fieldBg: value })}
+        <>
+          <div className={styles.panelSubheader}>Campo</div>
+          <div className={styles.twoColumn}>
+            <ColorField
+              label="Caja del campo"
+              value={getSettingHex(settings, 'fieldBg', '#ffffff')}
+              onChange={(value) => onPatchSettings({ fieldBg: value })}
+              onCommit={onSave}
+            />
+            <ColorField
+              label="Borde del campo"
+              value={getSettingHex(settings, 'fieldBorder', '#dbe3ef')}
+              onChange={(value) => onPatchSettings({ fieldBorder: value })}
+              onCommit={onSave}
+            />
+          </div>
+          <DimensionField
+            label="Radio campo"
+            value={getSettingNumber(settings, 'fieldRadius', 12, 0, 32)}
+            min={0}
+            max={32}
+            onChange={(value) => onPatchSettings({ fieldRadius: value })}
             onCommit={onSave}
           />
-          <ColorField
-            label="Borde del campo"
-            value={getSettingHex(settings, 'fieldBorder', '#dbe3ef')}
-            onChange={(value) => onPatchSettings({ fieldBorder: value })}
-            onCommit={onSave}
-          />
-        </div>
+        </>
       )}
+
       {supportsMedia && (
-        <DimensionField
-          label="Ancho de imagen"
-          value={getSettingNumber(settings, 'mediaWidth', 100, 30, 100)}
-          min={30}
-          max={100}
-          unit="%"
-          onChange={(value) => onPatchSettings({ mediaWidth: value })}
-          onCommit={onSave}
-        />
+        <>
+          <div className={styles.panelSubheader}>{block.blockType === 'image' ? 'Imagen' : 'Video'}</div>
+          <AlignmentControl
+            label="Alineacion"
+            value={getHorizontalAlign(settings, 'mediaAlign', 'center')}
+            options={horizontalAlignOptions}
+            onChange={(value) => onPatchSettings({ mediaAlign: value })}
+            onCommit={onSave}
+          />
+          <div className={styles.twoColumn}>
+            <DimensionField
+              label={block.blockType === 'image' ? 'Ancho imagen' : 'Ancho video'}
+              value={getSettingNumber(settings, 'mediaWidth', 100, 30, 100)}
+              min={30}
+              max={100}
+              unit="%"
+              onChange={(value) => onPatchSettings({ mediaWidth: value })}
+              onCommit={onSave}
+            />
+            <DimensionField
+              label="Radio media"
+              value={getSettingNumber(settings, 'mediaRadius', 18, 0, 48)}
+              min={0}
+              max={48}
+              onChange={(value) => onPatchSettings({ mediaRadius: value })}
+              onCommit={onSave}
+            />
+          </div>
+        </>
+      )}
+
+      {supportsCards && (
+        <>
+          <div className={styles.panelSubheader}>Tarjetas</div>
+          <AlignmentControl
+            label="Texto tarjeta"
+            value={getHorizontalAlign(settings, 'cardAlign', 'left')}
+            options={horizontalAlignOptions}
+            onChange={(value) => onPatchSettings({ cardAlign: value })}
+            onCommit={onSave}
+          />
+          <div className={styles.twoColumn}>
+            <DimensionField
+              label="Columnas"
+              value={getSettingNumber(settings, 'listColumns', 3, 1, 4)}
+              min={1}
+              max={4}
+              unit=""
+              onChange={(value) => onPatchSettings({ listColumns: value })}
+              onCommit={onSave}
+            />
+            <DimensionField
+              label="Radio tarjeta"
+              value={getSettingNumber(settings, 'cardRadius', 18, 0, 48)}
+              min={0}
+              max={48}
+              onChange={(value) => onPatchSettings({ cardRadius: value })}
+              onCommit={onSave}
+            />
+          </div>
+          <div className={styles.twoColumn}>
+            <ColorField
+              label="Fondo tarjeta"
+              value={getSettingHex(settings, 'cardBg', '#ffffff')}
+              onChange={(value) => onPatchSettings({ cardBg: value })}
+              onCommit={onSave}
+            />
+            <ColorField
+              label="Borde tarjeta"
+              value={getSettingHex(settings, 'cardBorderColor', '#dbe3ef')}
+              onChange={(value) => onPatchSettings({ cardBorderColor: value })}
+              onCommit={onSave}
+            />
+          </div>
+          <DimensionField
+            label="Grosor tarjeta"
+            value={getSettingNumber(settings, 'cardBorderWidth', 1, 0, 8)}
+            min={0}
+            max={8}
+            onChange={(value) => onPatchSettings({ cardBorderWidth: value })}
+            onCommit={onSave}
+          />
+        </>
       )}
     </div>
   )
@@ -3599,9 +4299,10 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
         )}
 
         <InlineBlockStyleControls
+          site={site}
           block={block}
-          onPatchSettings={(patch) => onPatchCategorySettings(block, patch)}
-          onSave={() => onSaveCategory(block)}
+          onPatchSettings={onPatchSettings}
+          onSave={onSave}
         />
 
         {!isField && (

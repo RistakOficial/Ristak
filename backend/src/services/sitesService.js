@@ -408,6 +408,12 @@ function buildDefaultBlocks(siteId, siteType, template) {
     blockMarginLeft: 0,
     blockPaddingLinked: true
   }
+  const defaultButtonSettings = {
+    buttonAlign: 'center',
+    buttonRadius: 28,
+    buttonHeight: 54,
+    buttonPaddingX: 28
+  }
   const withLandingSpacing = (settings = {}) => ({
     ...landingSpacing,
     ...settings
@@ -463,7 +469,13 @@ function buildDefaultBlocks(siteId, siteType, template) {
         }),
         makeBlock('cta', 'CTA final', 'Quiero empezar ahora', {
           sortOrder: 3,
-          settings: withLandingSpacing({ subtitle: 'Deja tus datos y un asesor te contacta hoy mismo.', buttonText: 'Quiero mas informacion', buttonUrl: '#form' })
+          settings: withLandingSpacing({
+            textAlign: 'center',
+            subtitle: 'Deja tus datos y un asesor te contacta hoy mismo.',
+            buttonText: 'Quiero mas informacion',
+            buttonUrl: '#form',
+            ...defaultButtonSettings
+          })
         }),
         makeBlock('benefits', 'Lo que vas a lograr', 'Esto es lo que vas a lograr', {
           sortOrder: 4,
@@ -482,10 +494,12 @@ function buildDefaultBlocks(siteId, siteType, template) {
       makeBlock('hero', 'Hero', 'Agenda tu consulta', {
         sortOrder: 0,
         settings: withLandingSpacing({
+          textAlign: 'center',
           kicker: 'Nuevo',
           subtitle: 'Una pagina clara para convertir visitas en leads calificados.',
           buttonText: 'Quiero una consulta',
-          buttonUrl: '#form'
+          buttonUrl: '#form',
+          ...defaultButtonSettings
         })
       }),
       makeBlock('benefits', 'Beneficios', 'Por que elegirnos', {
@@ -501,9 +515,11 @@ function buildDefaultBlocks(siteId, siteType, template) {
       makeBlock('cta', 'CTA final', 'Listo para empezar?', {
         sortOrder: 2,
         settings: withLandingSpacing({
+          textAlign: 'center',
           subtitle: 'Deja tus datos y te contactamos.',
           buttonText: 'Contactar',
-          buttonUrl: '#form'
+          buttonUrl: '#form',
+          ...defaultButtonSettings
         })
       })
     ]
@@ -540,6 +556,32 @@ function normalizeInternalName(value, fallback = 'field') {
 function normalizeHexColor(value, fallback) {
   const color = cleanString(value)
   return /^#[0-9a-f]{6}$/i.test(color) ? color : fallback
+}
+
+function isCssColor(value) {
+  const raw = cleanString(value).toLowerCase()
+  if (!raw) return false
+  if (raw === 'transparent') return true
+  if (/^#[0-9a-f]{6}$/i.test(raw)) return true
+  const match = raw.match(/^rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})(?:\s*,\s*(0|1|0?\.\d+))?\s*\)$/i)
+  if (!match) return false
+  const channels = match.slice(1, 4).map(Number)
+  const alpha = match[4] === undefined ? 1 : Number(match[4])
+  return channels.every(channel => channel >= 0 && channel <= 255) && alpha >= 0 && alpha <= 1
+}
+
+function normalizeCssColor(value, fallback = '') {
+  const raw = cleanString(value).toLowerCase()
+  if (!raw) return fallback
+  if (raw === 'transparent') return 'rgba(0, 0, 0, 0)'
+  if (/^#[0-9a-f]{6}$/i.test(raw)) return raw
+  if (!isCssColor(raw)) return fallback
+  const match = raw.match(/^rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})(?:\s*,\s*(0|1|0?\.\d+))?\s*\)$/i)
+  if (!match) return fallback
+  const [r, g, b] = match.slice(1, 4).map(valuePart => Math.round(Number(valuePart)))
+  const alpha = match[4] === undefined ? 1 : Math.round(Number(match[4]) * 100) / 100
+  const toHex = channel => Math.max(0, Math.min(255, channel)).toString(16).padStart(2, '0')
+  return alpha >= 1 ? `#${toHex(r)}${toHex(g)}${toHex(b)}` : `rgba(${r}, ${g}, ${b}, ${alpha})`
 }
 
 function normalizeAITheme(theme = {}) {
@@ -2259,9 +2301,8 @@ function stripToneMarker(value) {
   return String(value || '').replace(/^\s*[+\-–—✓✔✗✘x×]\s*/i, '').trim()
 }
 
-function blockSettingHex(settings, key) {
-  const value = cleanString(settings && settings[key])
-  return /^#[0-9a-f]{6}$/i.test(value) ? value : ''
+function blockSettingColor(settings, key) {
+  return normalizeCssColor(settings && settings[key], '')
 }
 
 function blockSettingNumber(settings, key, min, max) {
@@ -2299,37 +2340,93 @@ function themeNumber(theme, key, fallback, min, max) {
   return Math.min(max, Math.max(min, value))
 }
 
-function themeHex(theme, key) {
-  const value = cleanString(theme && theme[key])
-  return /^#[0-9a-f]{6}$/i.test(value) ? value : ''
+function themeColor(theme, key) {
+  return normalizeCssColor(theme && theme[key], '')
+}
+
+function blockHorizontalAlign(settings, key, fallback = 'left') {
+  const value = cleanString(settings && settings[key])
+  return ['left', 'center', 'right'].includes(value) ? value : fallback
+}
+
+function blockButtonAlign(settings, fallback = 'center') {
+  const value = cleanString(settings && settings.buttonAlign)
+  return ['left', 'center', 'right', 'full'].includes(value) ? value : fallback
+}
+
+function justifyForAlign(align) {
+  if (align === 'center') return 'center'
+  if (align === 'right') return 'end'
+  if (align === 'full') return 'stretch'
+  return 'start'
+}
+
+function marginForAlign(align) {
+  if (align === 'center') return { left: 'auto', right: 'auto' }
+  if (align === 'right') return { left: 'auto', right: '0' }
+  return { left: '0', right: align === 'full' ? '0' : 'auto' }
 }
 
 function renderBlockStyleVars(block) {
   const settings = block.settings || {}
   const vars = []
-  const blockBg = blockSettingHex(settings, 'blockBg')
-  const blockText = blockSettingHex(settings, 'blockText')
-  const blockBorder = blockSettingHex(settings, 'blockBorderColor')
-  const fieldBg = blockSettingHex(settings, 'fieldBg')
-  const fieldBorder = blockSettingHex(settings, 'fieldBorder')
+  const blockBg = blockSettingColor(settings, 'blockBg')
+  const blockText = blockSettingColor(settings, 'blockText')
+  const blockBorder = blockSettingColor(settings, 'blockBorderColor')
+  const buttonBg = blockSettingColor(settings, 'buttonBg')
+  const buttonText = blockSettingColor(settings, 'buttonTextColor')
+  const buttonBorder = blockSettingColor(settings, 'buttonBorderColor')
+  const cardBg = blockSettingColor(settings, 'cardBg')
+  const cardBorder = blockSettingColor(settings, 'cardBorderColor')
+  const fieldBg = blockSettingColor(settings, 'fieldBg')
+  const fieldBorder = blockSettingColor(settings, 'fieldBorder')
   const fontFamily = cleanString(settings.fontFamily)
   const fontSize = blockSettingNumber(settings, 'fontSize', 12, 72)
+  const contentMaxWidth = blockSettingNumber(settings, 'contentMaxWidth', 10, 120)
   const blockPadding = renderBlockSpacing(settings, 'blockPadding', 0, 0, 160)
   const blockMargin = renderBlockSpacing(settings, 'blockMargin', 0, -80, 200)
   const blockRadius = blockSettingNumber(settings, 'blockRadius', 0, 48)
   const blockBorderWidth = blockSettingNumber(settings, 'blockBorderWidth', 0, 12)
-  const buttonRadius = blockSettingNumber(settings, 'buttonRadius', 0, 48)
+  const buttonRadius = blockSettingNumber(settings, 'buttonRadius', 0, 80)
+  const buttonHeight = blockSettingNumber(settings, 'buttonHeight', 34, 88)
+  const buttonPaddingX = blockSettingNumber(settings, 'buttonPaddingX', 8, 72)
+  const buttonFontSize = blockSettingNumber(settings, 'buttonFontSize', 11, 32)
+  const buttonBorderWidth = blockSettingNumber(settings, 'buttonBorderWidth', 0, 8)
   const mediaWidth = blockSettingNumber(settings, 'mediaWidth', 30, 100)
+  const mediaRadius = blockSettingNumber(settings, 'mediaRadius', 0, 48)
+  const embedHeight = blockSettingNumber(settings, 'embedHeight', EMBED_MIN_HEIGHT, EMBED_MAX_HEIGHT)
+  const cardRadius = blockSettingNumber(settings, 'cardRadius', 0, 48)
+  const cardBorderWidth = blockSettingNumber(settings, 'cardBorderWidth', 0, 8)
+  const listColumns = blockSettingNumber(settings, 'listColumns', 1, 4)
+  const fieldRadius = blockSettingNumber(settings, 'fieldRadius', 0, 32)
   const blockHasNativeBorder = ['hero', 'cta', 'benefits', 'testimonials', 'services', 'faq', 'form_embed', 'image', 'video', 'embed', 'calendar_embed'].includes(block.blockType)
+  const supportsButton = ['hero', 'button', 'cta'].includes(block.blockType)
 
   if (blockBg) vars.push(`--rstk-block-bg:${blockBg}`)
   if (blockText) vars.push(`--rstk-block-text:${blockText}`)
   if (blockBorder) vars.push(`--rstk-block-border:${blockBorder}`)
+  if (buttonBg) {
+    vars.push(`--rstk-button-bg:${buttonBg}`)
+    vars.push(`--rstk-button-hover-bg:${buttonBg}`)
+  }
+  if (buttonText) vars.push(`--rstk-button-text:${buttonText}`)
+  if (buttonBorder) vars.push(`--rstk-button-border:${buttonBorder}`)
+  if (cardBg) vars.push(`--rstk-card-bg:${cardBg}`)
+  if (cardBorder) vars.push(`--rstk-card-border:${cardBorder}`)
   if (fieldBg) vars.push(`--rstk-field-bg:${fieldBg}`)
   if (fieldBorder) vars.push(`--rstk-field-border:${fieldBorder}`)
   if (fontFamily) vars.push(`--rstk-block-font:${fontFamily.replace(/[;"{}<>]/g, '')}`)
   if (settings.fontWeight === 'bold') vars.push('--rstk-block-weight:850')
+  if (settings.textAlign !== undefined) {
+    const align = blockHorizontalAlign(settings, 'textAlign', 'left')
+    const margins = marginForAlign(align)
+    vars.push(`--rstk-block-align:${align}`)
+    vars.push(`--rstk-block-justify:${justifyForAlign(align)}`)
+    vars.push(`--rstk-content-margin-left:${margins.left}`)
+    vars.push(`--rstk-content-margin-right:${margins.right}`)
+  }
   if (fontSize !== null) vars.push(`--rstk-block-size:${fontSize}px`)
+  if (contentMaxWidth !== null) vars.push(`--rstk-content-max:${contentMaxWidth}ch`)
   if (blockPadding) vars.push(`--rstk-block-pad:${blockPadding}`)
   if (blockMargin) vars.push(`--rstk-block-margin:${blockMargin}`)
   if (blockRadius !== null) vars.push(`--rstk-block-radius:${blockRadius}px`)
@@ -2337,8 +2434,34 @@ function renderBlockStyleVars(block) {
     vars.push(`--rstk-block-border-width:${blockBorderWidth}px`)
     if (!blockHasNativeBorder) vars.push(`--rstk-block-shell-border-width:${blockBorderWidth}px`)
   }
+  if (supportsButton) {
+    const align = blockButtonAlign(settings, 'center')
+    const margins = marginForAlign(align)
+    vars.push(`--rstk-button-justify:${justifyForAlign(align)}`)
+    vars.push(`--rstk-button-margin-left:${margins.left}`)
+    vars.push(`--rstk-button-margin-right:${margins.right}`)
+    vars.push(`--rstk-button-width:${align === 'full' ? '100%' : 'fit-content'}`)
+  }
   if (buttonRadius !== null) vars.push(`--rstk-block-button-radius:${buttonRadius}px`)
+  if (buttonHeight !== null) vars.push(`--rstk-button-height:${buttonHeight}px`)
+  if (buttonPaddingX !== null) vars.push(`--rstk-button-pad-x:${buttonPaddingX}px`)
+  if (buttonFontSize !== null) vars.push(`--rstk-button-size:${buttonFontSize}px`)
+  if (buttonBorderWidth !== null) vars.push(`--rstk-button-border-width:${buttonBorderWidth}px`)
   if (mediaWidth !== null) vars.push(`--rstk-media-width:${mediaWidth}%`)
+  if (settings.mediaAlign !== undefined) {
+    const align = blockHorizontalAlign(settings, 'mediaAlign', 'center')
+    const margins = marginForAlign(align)
+    vars.push(`--rstk-media-justify:${justifyForAlign(align)}`)
+    vars.push(`--rstk-media-margin-left:${margins.left}`)
+    vars.push(`--rstk-media-margin-right:${margins.right}`)
+  }
+  if (mediaRadius !== null) vars.push(`--rstk-media-radius:${mediaRadius}px`)
+  if (embedHeight !== null) vars.push(`--rstk-embed-height:${embedHeight}px`)
+  if (cardRadius !== null) vars.push(`--rstk-card-radius:${cardRadius}px`)
+  if (cardBorderWidth !== null) vars.push(`--rstk-card-border-width:${cardBorderWidth}px`)
+  if (listColumns !== null) vars.push(`--rstk-list-columns:repeat(${listColumns},minmax(0,1fr))`)
+  if (settings.cardAlign !== undefined) vars.push(`--rstk-card-align:${blockHorizontalAlign(settings, 'cardAlign', 'left')}`)
+  if (fieldRadius !== null) vars.push(`--rstk-field-radius:${fieldRadius}px`)
 
   return vars.length ? ` style="${escapeHtml(vars.join(';'))}"` : ''
 }
@@ -2884,9 +3007,18 @@ const RSTK_BASE_CSS = `
     font-family:var(--rstk-block-font,var(--rstk-font));
     font-size:var(--rstk-block-size,inherit);
     font-weight:var(--rstk-block-weight,inherit);
+    text-align:var(--rstk-block-align,inherit);
     border:var(--rstk-block-shell-border-width,0) solid var(--rstk-block-border,transparent);
     border-radius:var(--rstk-block-radius,0);
     padding:var(--rstk-block-pad,0);
+  }
+  .rstk-block-style .rstk-headline,
+  .rstk-block-style h2,
+  .rstk-block-style .rstk-subheading,
+  .rstk-block-style .rstk-text,
+  .rstk-block-style .rstk-help{
+    margin-left:var(--rstk-content-margin-left,0);
+    margin-right:var(--rstk-content-margin-right,0);
   }
   .rstk-block-style .rstk-headline,
   .rstk-block-style h2,
@@ -2904,11 +3036,14 @@ const RSTK_BASE_CSS = `
   .rstk-block-style .rstk-option{
     background:var(--rstk-field-bg,var(--rstk-input-bg));
     border-color:var(--rstk-field-border,var(--rstk-input-border));
+    border-radius:var(--rstk-field-radius,var(--rstk-radius));
   }
   .rstk-block-style .rstk-media,
   .rstk-block-style .rstk-video{
+    justify-self:var(--rstk-media-justify,center);
     width:var(--rstk-media-width,100%);
-    margin-inline:auto;
+    margin-left:var(--rstk-media-margin-left,auto);
+    margin-right:var(--rstk-media-margin-right,auto);
   }
 
   .rstk-kind-form .rstk-shell{
@@ -2920,31 +3055,31 @@ const RSTK_BASE_CSS = `
 
   .rstk-headline{margin:0;font-weight:var(--rstk-heading-weight);font-size:clamp(1.7rem,4.6vw,3rem);line-height:1.05;letter-spacing:0}
   .rstk-kind-landing .rstk-headline{font-size:clamp(2rem,5.4vw,3.6rem)}
-  .rstk-subheading{margin:0;color:var(--rstk-muted);font-size:clamp(1rem,2vw,1.18rem);max-width:60ch}
+  .rstk-subheading{margin:0;color:var(--rstk-muted);font-size:clamp(1rem,2vw,1.18rem);max-width:var(--rstk-content-max,60ch)}
   .rstk-kicker{margin:0;color:var(--rstk-accent);font-size:.78rem;font-weight:800;text-transform:uppercase;letter-spacing:.09em}
-  .rstk-text{margin:0;color:color-mix(in srgb,var(--rstk-ink) 80%,transparent);max-width:66ch}
-  .rstk-hero,.rstk-cta,.rstk-section-list,.rstk-embedded-form{display:grid;gap:14px}
+  .rstk-text{margin:0;color:color-mix(in srgb,var(--rstk-ink) 80%,transparent);max-width:var(--rstk-content-max,66ch)}
+  .rstk-hero,.rstk-cta,.rstk-section-list,.rstk-embedded-form{display:grid;gap:14px;justify-items:var(--rstk-block-justify,stretch);text-align:var(--rstk-block-align,inherit)}
   .rstk-hero{gap:16px}
   .rstk-section-list h2,.rstk-cta h2,.rstk-embedded-form h2{margin:0;font-size:clamp(1.25rem,2.6vw,1.7rem);font-weight:var(--rstk-heading-weight);letter-spacing:0}
 
   .rstk-button-link,.rstk-actions button{
     -webkit-appearance:none;appearance:none;cursor:pointer;
-    min-height:50px;display:inline-flex;align-items:center;justify-content:center;gap:8px;
-    border:1px solid var(--rstk-accent);border-radius:var(--rstk-btn-radius);
-    background:var(--rstk-accent);color:var(--rstk-on-accent);
-    font:inherit;font-weight:var(--rstk-btn-weight);font-size:1.02rem;line-height:1;
-    padding:0 22px;text-decoration:none;
+    min-height:var(--rstk-button-height,50px);display:inline-flex;align-items:center;justify-content:center;gap:8px;
+    border:var(--rstk-button-border-width,1px) solid var(--rstk-button-border,var(--rstk-button-bg,var(--rstk-accent)));border-radius:var(--rstk-block-button-radius,var(--rstk-btn-radius));
+    background:var(--rstk-button-bg,var(--rstk-accent));color:var(--rstk-button-text,var(--rstk-on-accent));
+    font:inherit;font-weight:var(--rstk-btn-weight);font-size:var(--rstk-button-size,1.02rem);line-height:1;
+    padding:0 var(--rstk-button-pad-x,22px);text-decoration:none;
     transition:background .15s ease,border-color .15s ease,transform .04s ease,box-shadow .15s ease;
   }
-  .rstk-button-link{width:fit-content}
+  .rstk-button-link{justify-self:var(--rstk-button-justify,center);width:var(--rstk-button-width,fit-content);margin-left:var(--rstk-button-margin-left,auto);margin-right:var(--rstk-button-margin-right,auto)}
   .rstk-centered .rstk-button-link{margin-inline:auto}
-  .rstk-button-link:hover,.rstk-actions button:hover{background:var(--rstk-accent-strong);border-color:var(--rstk-accent-strong)}
+  .rstk-button-link:hover,.rstk-actions button:hover{background:var(--rstk-button-hover-bg,var(--rstk-accent-strong));border-color:var(--rstk-button-hover-border,var(--rstk-button-border,var(--rstk-button-hover-bg,var(--rstk-accent-strong))))}
   .rstk-actions button:active{transform:translateY(1px)}
   .rstk-actions button[disabled]{opacity:.6;cursor:not-allowed}
   .rstk-secondary{background:transparent !important;color:var(--rstk-ink) !important;border-color:var(--rstk-border) !important}
 
-  .rstk-list-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px}
-  .rstk-list-grid article{border:var(--rstk-block-border-width,1px) solid var(--rstk-block-border,var(--rstk-border));border-radius:var(--rstk-radius);background:var(--rstk-block-bg,var(--rstk-surface2));padding:16px;text-align:left}
+  .rstk-list-grid{display:grid;grid-template-columns:var(--rstk-list-columns,repeat(auto-fit,minmax(190px,1fr)));gap:12px}
+  .rstk-list-grid article{border:var(--rstk-card-border-width,var(--rstk-block-border-width,1px)) solid var(--rstk-card-border,var(--rstk-block-border,var(--rstk-border)));border-radius:var(--rstk-card-radius,var(--rstk-radius));background:var(--rstk-card-bg,var(--rstk-block-bg,var(--rstk-surface2)));padding:16px;text-align:var(--rstk-card-align,left)}
   .rstk-list-grid strong{display:block;font-weight:750}
   .rstk-list-grid p{margin:6px 0 0;color:var(--rstk-muted);font-size:.92rem}
   .rstk-list-grid small{display:block;margin-top:8px;color:var(--rstk-muted);font-weight:700}
@@ -2959,7 +3094,7 @@ const RSTK_BASE_CSS = `
   .rstk-check-body strong{font-weight:650;font-size:1rem}
   .rstk-check-body span{color:var(--rstk-muted);font-size:.92rem}
 
-  .rstk-media,.rstk-video{width:100%;margin:0;overflow:hidden;border:var(--rstk-block-border-width,1px) solid var(--rstk-block-border,var(--rstk-border));border-radius:var(--rstk-radius);background:var(--rstk-block-bg,var(--rstk-surface2))}
+  .rstk-media,.rstk-video{width:100%;margin:0;overflow:hidden;border:var(--rstk-block-border-width,1px) solid var(--rstk-block-border,var(--rstk-border));border-radius:var(--rstk-media-radius,var(--rstk-block-radius,var(--rstk-radius)));background:var(--rstk-block-bg,var(--rstk-surface2))}
   .rstk-media img,.rstk-video iframe{width:100%;display:block;border:0}
   .rstk-video{aspect-ratio:16/9;position:relative}
   .rstk-video iframe{height:100%}
@@ -2972,7 +3107,7 @@ const RSTK_BASE_CSS = `
   .rstk-required{color:#dc2626;margin-left:3px}
   .rstk-help{margin:0;color:var(--rstk-muted);font-size:.9rem}
   input,textarea,select{
-    width:100%;border:1px solid var(--rstk-input-border);border-radius:var(--rstk-radius);
+    width:100%;border:1px solid var(--rstk-input-border);border-radius:var(--rstk-field-radius,var(--rstk-radius));
     background:var(--rstk-input-bg);color:var(--rstk-input-ink);font:inherit;font-size:1rem;
     padding:13px 14px;outline:none;transition:border-color .15s ease,box-shadow .15s ease;
   }
@@ -2982,12 +3117,12 @@ const RSTK_BASE_CSS = `
   select{appearance:none;-webkit-appearance:none;background-image:linear-gradient(45deg,transparent 50%,var(--rstk-muted) 50%),linear-gradient(135deg,var(--rstk-muted) 50%,transparent 50%);background-position:calc(100% - 20px) calc(50% - 3px),calc(100% - 15px) calc(50% - 3px);background-size:5px 5px,5px 5px;background-repeat:no-repeat;padding-right:42px}
 
   .rstk-options{display:grid;gap:10px}
-  .rstk-option{display:flex;align-items:center;gap:11px;min-height:50px;border:1px solid var(--rstk-input-border);border-radius:var(--rstk-radius);padding:11px 14px;background:var(--rstk-input-bg);color:var(--rstk-input-ink);font-weight:600;cursor:pointer;transition:border-color .15s ease,background .15s ease}
+  .rstk-option{display:flex;align-items:center;gap:11px;min-height:50px;border:1px solid var(--rstk-input-border);border-radius:var(--rstk-field-radius,var(--rstk-radius));padding:11px 14px;background:var(--rstk-input-bg);color:var(--rstk-input-ink);font-weight:600;cursor:pointer;transition:border-color .15s ease,background .15s ease}
   .rstk-option:hover{border-color:var(--rstk-accent)}
   .rstk-option:has(input:checked){border-color:var(--rstk-accent);background:color-mix(in srgb,var(--rstk-accent) 8%,var(--rstk-input-bg))}
   .rstk-option input{width:19px;height:19px;padding:0;flex:0 0 auto;accent-color:var(--rstk-accent)}
 
-  .rstk-embed{width:100%;min-height:360px;display:block;border:var(--rstk-block-border-width,1px) solid var(--rstk-block-border,var(--rstk-border));border-radius:var(--rstk-radius);background:var(--rstk-block-bg,var(--rstk-surface2))}
+  .rstk-embed{width:100%;min-height:var(--rstk-embed-height,360px);display:block;border:var(--rstk-block-border-width,1px) solid var(--rstk-block-border,var(--rstk-border));border-radius:var(--rstk-block-radius,var(--rstk-radius));background:var(--rstk-block-bg,var(--rstk-surface2))}
   .rstk-calendar-embed{min-height:760px}
   iframe.rstk-embed{overflow:hidden}
   .rstk-embed-code{background:transparent}
@@ -3003,6 +3138,10 @@ const RSTK_BASE_CSS = `
   .rstk-progress-track{height:6px;border-radius:999px;background:color-mix(in srgb,var(--rstk-ink) 12%,transparent);overflow:hidden}
   .rstk-progress-fill{display:block;height:100%;width:0;border-radius:999px;background:var(--rstk-accent);transition:width .35s cubic-bezier(.4,0,.2,1)}
   .rstk-progress b{font-size:.8rem;color:var(--rstk-muted);font-weight:700}
+
+  @media (max-width:640px){
+    .rstk-list-grid{grid-template-columns:1fr}
+  }
 
   .rstk-footer{margin:6px 0 0;display:flex;align-items:center;justify-content:center;gap:6px;color:var(--rstk-muted);font-size:.78rem;text-align:center}
   .rstk-footer .rstk-lock{display:inline-flex}
@@ -3020,40 +3159,40 @@ const RSTK_BASE_CSS = `
   .rstk-kind-landing .rstk-frame{padding:var(--rstk-frame-pad,clamp(10px,3vw,28px)) clamp(14px,3vw,24px) clamp(32px,5vw,64px)}
   .rstk-kind-landing .rstk-shell{gap:clamp(24px,4vw,64px);padding-top:clamp(6px,2vw,20px)}
   .rstk-kind-landing .rstk-headline{font-family:var(--rstk-display);font-size:clamp(2.3rem,5.6vw,4rem);line-height:1.03;letter-spacing:0;background:none;color:var(--rstk-block-text,var(--rstk-ink))}
-  .rstk-kind-landing .rstk-subheading{font-size:clamp(1.05rem,1.7vw,1.28rem);max-width:60ch;line-height:1.6}
+  .rstk-kind-landing .rstk-subheading{font-size:clamp(1.05rem,1.7vw,1.28rem);max-width:var(--rstk-content-max,60ch);line-height:1.6}
   .rstk-kind-landing h2{font-family:var(--rstk-display)}
   .rstk-kind-landing .rstk-text{font-size:1.06rem;line-height:1.7}
 
   .rstk-kind-landing .rstk-kicker{display:inline-flex;align-items:center;gap:8px;width:fit-content;padding:7px 14px 7px 12px;border:var(--rstk-block-border-width,1px) solid var(--rstk-block-border,var(--rstk-border));border-radius:999px;background:var(--rstk-block-bg,var(--rstk-surface));color:var(--rstk-muted);font-size:.72rem;font-weight:700;letter-spacing:0;text-transform:uppercase}
   .rstk-kind-landing .rstk-kicker::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--rstk-accent)}
 
-  .rstk-kind-landing .rstk-hero{position:relative;isolation:isolate;overflow:hidden;gap:22px;justify-items:center;text-align:center;padding:clamp(32px,4.8vw,68px) clamp(20px,3.2vw,44px);border:var(--rstk-block-border-width,1px) solid var(--rstk-block-border,var(--rstk-border));border-radius:clamp(22px,3vw,32px);background:var(--rstk-block-bg,var(--rstk-surface))}
+  .rstk-kind-landing .rstk-hero{position:relative;isolation:isolate;overflow:hidden;gap:22px;justify-items:var(--rstk-block-justify,center);text-align:var(--rstk-block-align,center);padding:clamp(32px,4.8vw,68px) clamp(20px,3.2vw,44px);border:var(--rstk-block-border-width,1px) solid var(--rstk-block-border,var(--rstk-border));border-radius:var(--rstk-block-radius,clamp(22px,3vw,32px));background:var(--rstk-block-bg,var(--rstk-surface))}
   .rstk-kind-landing .rstk-hero::before,.rstk-kind-landing .rstk-hero::after{content:none}
-  .rstk-kind-landing .rstk-hero .rstk-headline{font-size:clamp(2.6rem,6.2vw,4.6rem);max-width:16ch}
-  .rstk-kind-landing .rstk-hero .rstk-subheading{margin-inline:auto}
+  .rstk-kind-landing .rstk-hero .rstk-headline{font-size:clamp(2.6rem,6.2vw,4.6rem);max-width:var(--rstk-content-max,16ch)}
+  .rstk-kind-landing .rstk-hero .rstk-subheading{margin-left:var(--rstk-content-margin-left,auto);margin-right:var(--rstk-content-margin-right,auto)}
 
   .rstk-kind-landing .rstk-section-list{gap:clamp(20px,3vw,38px)}
-  .rstk-kind-landing .rstk-section-list h2{text-align:center;max-width:20ch;margin-inline:auto;font-size:clamp(1.85rem,3.4vw,2.85rem);line-height:1.08;letter-spacing:0}
+  .rstk-kind-landing .rstk-section-list h2{text-align:var(--rstk-block-align,center);max-width:var(--rstk-content-max,20ch);margin-left:var(--rstk-content-margin-left,auto);margin-right:var(--rstk-content-margin-right,auto);font-size:clamp(1.85rem,3.4vw,2.85rem);line-height:1.08;letter-spacing:0}
   .rstk-kind-landing .rstk-list-grid{gap:16px}
-  .rstk-kind-landing .rstk-list-grid article{padding:24px;border-radius:18px;background:var(--rstk-block-bg,var(--rstk-surface));transition:border-color .15s ease}
+  .rstk-kind-landing .rstk-list-grid article{padding:24px;border-radius:var(--rstk-card-radius,18px);background:var(--rstk-card-bg,var(--rstk-block-bg,var(--rstk-surface)));transition:border-color .15s ease}
   .rstk-kind-landing .rstk-list-grid article:hover{border-color:color-mix(in srgb,var(--rstk-ink) 22%,transparent)}
   .rstk-kind-landing .rstk-list-grid strong{font-size:1.06rem}
 
-  .rstk-kind-landing .rstk-checklist{padding:clamp(24px,3vw,40px);border:var(--rstk-block-border-width,1px) solid var(--rstk-block-border,var(--rstk-border));border-radius:24px;background:var(--rstk-block-bg,var(--rstk-surface));width:100%;margin-inline:auto}
-  .rstk-kind-landing .rstk-checklist h2{text-align:center;margin-bottom:4px}
+  .rstk-kind-landing .rstk-checklist{padding:clamp(24px,3vw,40px);border:var(--rstk-block-border-width,1px) solid var(--rstk-block-border,var(--rstk-border));border-radius:var(--rstk-block-radius,24px);background:var(--rstk-block-bg,var(--rstk-surface));width:100%;margin-inline:auto}
+  .rstk-kind-landing .rstk-checklist h2{text-align:var(--rstk-block-align,center);margin-bottom:4px}
   .rstk-kind-landing .rstk-check-body strong{font-size:1.04rem}
 
-  .rstk-kind-landing .rstk-cta{position:relative;overflow:hidden;justify-items:center;text-align:center;gap:18px;padding:clamp(30px,4.4vw,62px) clamp(20px,3.2vw,44px);border:var(--rstk-block-border-width,1px) solid var(--rstk-block-border,var(--rstk-border));border-radius:clamp(24px,3vw,32px);background:var(--rstk-block-bg,var(--rstk-surface))}
+  .rstk-kind-landing .rstk-cta{position:relative;overflow:hidden;justify-items:var(--rstk-block-justify,center);text-align:var(--rstk-block-align,center);gap:18px;padding:clamp(30px,4.4vw,62px) clamp(20px,3.2vw,44px);border:var(--rstk-block-border-width,1px) solid var(--rstk-block-border,var(--rstk-border));border-radius:var(--rstk-block-radius,clamp(24px,3vw,32px));background:var(--rstk-block-bg,var(--rstk-surface))}
   .rstk-kind-landing .rstk-cta::after{content:none}
   .rstk-kind-landing .rstk-cta > *{position:relative;z-index:1}
   .rstk-kind-landing .rstk-cta h2{font-size:clamp(2rem,4vw,3.1rem)}
-  .rstk-kind-landing .rstk-cta p{font-size:1.1rem;max-width:52ch;margin-inline:auto}
+  .rstk-kind-landing .rstk-cta p{font-size:1.1rem;max-width:var(--rstk-content-max,52ch);margin-left:var(--rstk-content-margin-left,auto);margin-right:var(--rstk-content-margin-right,auto)}
 
-  .rstk-kind-landing .rstk-button-link{border-radius:999px;min-height:54px;padding:0 28px;font-family:var(--rstk-display);font-weight:600;transition:transform .25s var(--rstk-ease),box-shadow .25s var(--rstk-ease),background .2s ease}
+  .rstk-kind-landing .rstk-button-link{border-radius:var(--rstk-block-button-radius,999px);min-height:var(--rstk-button-height,54px);padding:0 var(--rstk-button-pad-x,28px);font-family:var(--rstk-display);font-weight:600;transition:transform .25s var(--rstk-ease),box-shadow .25s var(--rstk-ease),background .2s ease}
   .rstk-kind-landing .rstk-button-link:hover{transform:none;box-shadow:none}
 
-  .rstk-kind-landing .rstk-media,.rstk-kind-landing .rstk-video,.rstk-kind-landing .rstk-embed{border-radius:clamp(16px,2vw,22px);box-shadow:none}
-  .rstk-kind-landing .rstk-embedded-form{padding:clamp(24px,3vw,40px);border:var(--rstk-block-border-width,1px) solid var(--rstk-block-border,var(--rstk-border));border-radius:24px;background:var(--rstk-block-bg,var(--rstk-surface));width:100%;margin-inline:auto}
+  .rstk-kind-landing .rstk-media,.rstk-kind-landing .rstk-video,.rstk-kind-landing .rstk-embed{border-radius:var(--rstk-media-radius,var(--rstk-block-radius,clamp(16px,2vw,22px)));box-shadow:none}
+  .rstk-kind-landing .rstk-embedded-form{padding:clamp(24px,3vw,40px);border:var(--rstk-block-border-width,1px) solid var(--rstk-block-border,var(--rstk-border));border-radius:var(--rstk-block-radius,24px);background:var(--rstk-block-bg,var(--rstk-surface));width:100%;margin-inline:auto}
 
   @media (max-width:640px){
     .rstk-kind-landing .rstk-hero{padding:clamp(32px,8vw,56px) 20px}
@@ -3123,7 +3262,16 @@ const RSTK_TEMPLATE_EXTRAS = {
 }
 
 function relLuminance(hex) {
-  const h = String(hex || '').replace('#', '')
+  const normalized = normalizeCssColor(hex, '#ffffff')
+  let h = String(normalized || '').replace('#', '')
+  if (!/^#[0-9a-f]{6}$/i.test(normalized)) {
+    const match = normalized.match(/^rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})/i)
+    if (match) {
+      h = [match[1], match[2], match[3]]
+        .map(channel => Math.max(0, Math.min(255, Number(channel))).toString(16).padStart(2, '0'))
+        .join('')
+    }
+  }
   if (h.length < 6) return 1
   const toLin = (c) => {
     const x = c / 255
@@ -3168,12 +3316,12 @@ function deriveNeutralVars(template, bg, userAccent) {
 
 function resolveRenderOverrides(template, theme, isLandingType) {
   if (template.chrome !== 'none') return {}
-  const hex = (value) => (/^#[0-9a-f]{6}$/i.test(cleanString(value)) ? cleanString(value) : null)
+  const color = (value) => normalizeCssColor(value, '') || null
   // DEFAULT_THEME forces backgroundColor=#ffffff, so treat white as "not chosen":
   // landings default to the premium dark canvas; forms stay light until recolored.
-  const rawBg = hex(theme.backgroundColor)
+  const rawBg = color(theme.backgroundColor)
   const userBg = rawBg && rawBg.toLowerCase() !== String(DEFAULT_THEME.backgroundColor).toLowerCase() ? rawBg : null
-  const rawAccent = hex(theme.accentColor)
+  const rawAccent = color(theme.accentColor)
   const userAccent = rawAccent && rawAccent.toLowerCase() !== String(DEFAULT_THEME.accentColor).toLowerCase() ? rawAccent : null
   if (isLandingType) {
     return { vars: deriveNeutralVars(template, userBg || '#08080a', userAccent) }
@@ -3342,7 +3490,7 @@ export async function renderPublicSiteHtml(site, { pageId, trackingEnabled = tru
   const pagePadding = themeNumber(theme, 'pagePadding', isLandingType ? 50 : 22, 0, 120)
   const pageRadius = themeNumber(theme, 'pageRadius', isLandingType ? 0 : 24, 0, 40)
   const pageBorderWidth = themeNumber(theme, 'pageBorderWidth', 0, 0, 12)
-  const pageBorder = themeHex(theme, 'pageBorderColor') || 'transparent'
+  const pageBorder = themeColor(theme, 'pageBorderColor') || 'transparent'
   const pageImage = cssImageUrl(theme.backgroundImage)
   const maxWidth = `${pageMaxWidth}px`
   const styleSheet = buildStyleSheet(template, maxWidth, resolveRenderOverrides(template, theme, isLandingType), {

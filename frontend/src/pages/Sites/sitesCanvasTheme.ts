@@ -124,6 +124,42 @@ const DEFAULT_ACCENT = '#111827'
 
 const isHex6 = (value?: string): value is string => !!value && /^#[0-9a-f]{6}$/i.test(value)
 
+const rgbToHex = (r: number, g: number, b: number) =>
+  `#${[r, g, b].map(channel => Math.max(0, Math.min(255, Math.round(channel))).toString(16).padStart(2, '0')).join('')}`
+
+const isCssColor = (value?: string): value is string => {
+  const raw = String(value || '').trim()
+  if (!raw) return false
+  if (raw === 'transparent') return true
+  if (isHex6(raw)) return true
+  const match = raw.match(/^rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})(?:\s*,\s*(0|1|0?\.\d+))?\s*\)$/i)
+  if (!match) return false
+  const channels = match.slice(1, 4).map(Number)
+  const alpha = match[4] === undefined ? 1 : Number(match[4])
+  return channels.every(channel => channel >= 0 && channel <= 255) && alpha >= 0 && alpha <= 1
+}
+
+const normalizeCssColor = (value: string, fallback: string) => {
+  const raw = String(value || '').trim().toLowerCase()
+  if (!raw) return fallback
+  if (raw === 'transparent') return 'rgba(0, 0, 0, 0)'
+  if (isHex6(raw)) return raw
+  if (!isCssColor(raw)) return fallback
+  const match = raw.match(/^rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})(?:\s*,\s*(0|1|0?\.\d+))?\s*\)$/i)
+  if (!match) return fallback
+  const [r, g, b] = match.slice(1, 4).map(valuePart => Math.round(Number(valuePart)))
+  const alpha = match[4] === undefined ? 1 : Math.round(Number(match[4]) * 100) / 100
+  return alpha >= 1 ? rgbToHex(r, g, b) : `rgba(${r}, ${g}, ${b}, ${alpha})`
+}
+
+const cssColorToHex = (value: string, fallback = '#ffffff') => {
+  const normalized = normalizeCssColor(value, fallback)
+  if (normalized.startsWith('#')) return normalized
+  const match = normalized.match(/^rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})/i)
+  if (!match) return fallback
+  return rgbToHex(Number(match[1]), Number(match[2]), Number(match[3]))
+}
+
 const cssImageUrl = (value?: string) => {
   const raw = String(value || '').trim()
   if (!raw) return ''
@@ -132,7 +168,7 @@ const cssImageUrl = (value?: string) => {
 }
 
 const relLuminance = (hex: string): number => {
-  const h = hex.replace('#', '')
+  const h = cssColorToHex(hex).replace('#', '')
   if (h.length < 6) return 1
   const lin = (c: number) => {
     const x = c / 255
@@ -178,10 +214,10 @@ type Overrides = { vars?: TemplateVars; accent?: string }
 
 const resolveRenderOverrides = (template: Template, theme: PublicSite['theme'], isLandingType: boolean): Overrides => {
   if (template.chrome !== 'none') return {}
-  const hex = (value?: string) => (isHex6(value) ? (value as string) : null)
-  const rawBg = hex(theme.backgroundColor)
+  const color = (value?: string) => (isCssColor(value) ? normalizeCssColor(value as string, '') : null)
+  const rawBg = color(theme.backgroundColor)
   const userBg = rawBg && rawBg.toLowerCase() !== DEFAULT_BG ? rawBg : null
-  const rawAccent = hex(theme.accentColor)
+  const rawAccent = color(theme.accentColor)
   const userAccent = rawAccent && rawAccent.toLowerCase() !== DEFAULT_ACCENT.toLowerCase() ? rawAccent : null
   if (isLandingType) {
     return { vars: deriveNeutralVars(template, userBg || '#08080a', userAccent) }
@@ -231,7 +267,7 @@ export const buildCanvasTheme = (site: PublicSite, device: 'desktop' | 'mobile' 
   const pageMaxWidth = themeNumber(theme, 'pageMaxWidth', isLandingType ? 1160 : (template.id === 'interactive' ? 600 : 520), 360, 1440)
   const pagePadding = themeNumber(theme, 'pagePadding', isLandingType ? 50 : 22, 0, 120)
   const pageRadius = themeNumber(theme, 'pageRadius', isLandingType ? 0 : 24, 0, 40)
-  const pageBorder = isHex6(theme.pageBorderColor) ? (theme.pageBorderColor as string) : 'transparent'
+  const pageBorder = isCssColor(theme.pageBorderColor) ? normalizeCssColor(theme.pageBorderColor as string, 'transparent') : 'transparent'
   const pageBorderWidth = themeNumber(theme, 'pageBorderWidth', 0, 0, 12)
   const pageImage = cssImageUrl(theme.backgroundImage) || v.pageImage
 
