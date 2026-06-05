@@ -175,12 +175,70 @@
 
 .breadcrumbs button {
   border: 0;
-  padding: 0;
+  border-radius: 6px;
+  padding: 3px 6px;
   color: var(--color-primary);
   background: transparent;
   font: inherit;
   font-weight: 800;
   cursor: pointer;
+}
+
+.breadcrumbs button.dropTargetActive {
+  color: #047857;
+  background: rgba(16, 185, 129, 0.12);
+  box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.24);
+}
+
+.bulkBar {
+  display: grid;
+  grid-template-columns: auto auto minmax(180px, 1fr) auto auto auto auto;
+  gap: 8px;
+  align-items: center;
+  margin-top: 12px;
+  padding: 10px;
+  border: 1px solid rgba(20, 184, 166, 0.22);
+  border-radius: 8px;
+  background: rgba(20, 184, 166, 0.07);
+}
+
+.bulkBar strong {
+  color: var(--color-text-primary);
+  font-size: 0.86rem;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.bulkBar > button {
+  border: 0;
+  color: #047857;
+  background: transparent;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.bulkBar label {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+  color: var(--color-text-secondary);
+  font-size: 0.78rem;
+  font-weight: 850;
+}
+
+.bulkBar select {
+  min-width: 0;
+  height: 34px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 8px;
+  color: var(--color-text-primary);
+  background: var(--color-background-primary);
+  padding: 0 9px;
+  font: inherit;
 }
 
 .folderForm {
@@ -207,7 +265,7 @@
 
 .collectionItem {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   gap: 10px;
   align-items: center;
   min-height: 64px;
@@ -217,8 +275,38 @@
   background: var(--color-background-primary);
 }
 
+.collectionItem[draggable='true'] {
+  cursor: grab;
+}
+
 .collectionItem:hover {
   border-color: rgba(var(--color-primary-rgb), 0.28);
+}
+
+.collectionItemSelected {
+  border-color: rgba(20, 184, 166, 0.38);
+  background: rgba(20, 184, 166, 0.07);
+}
+
+.collectionItemDropTarget {
+  border-color: rgba(16, 185, 129, 0.58);
+  background: rgba(16, 185, 129, 0.1);
+  box-shadow: inset 0 0 0 1px rgba(16, 185, 129, 0.22);
+}
+
+.itemCheck {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+}
+
+.itemCheck input {
+  width: 16px;
+  height: 16px;
+  accent-color: #0f9f6e;
+  cursor: pointer;
 }
 
 .itemMain {
@@ -791,6 +879,7 @@
 @media (max-width: 780px) {
   .header,
   .toolbar,
+  .bulkBar,
   .folderForm,
   .formGrid,
   .locationGrid,
@@ -798,6 +887,10 @@
   .buttonEditorRow,
   .variableBindingRow,
   .testSendRow {
+    grid-template-columns: 1fr;
+  }
+
+  .bulkBar label {
     grid-template-columns: 1fr;
   }
 

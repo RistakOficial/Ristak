@@ -7,6 +7,7 @@ import {
   File,
   FileText,
   Folder,
+  FolderInput,
   FolderPlus,
   Globe2,
   Image,
@@ -35,6 +36,7 @@ import {
   type MessageTemplateButton,
   type MessageTemplateButtonType,
   type MessageTemplateCategory,
+  type MessageTemplateFolder,
   type MessageTemplateHeaderType,
   type MessageTemplatePayload,
   type MessageTemplateStatus,
@@ -44,6 +46,7 @@ import {
 import styles from './MessageTemplates.module.css'
 
 const ROOT_FOLDER_KEY = '__root__'
+const DRAG_DATA_TYPE = 'application/x-ristak-template-manager'
 const VARIABLE_PATTERN = /{{\s*([a-zA-Z0-9_.-]+)\s*}}/g
 const META_VARIABLE_PATTERN = /{{\s*(\d+)\s*}}/g
 
@@ -145,6 +148,29 @@ function templateToDraft(template: MessageTemplate): MessageTemplateDraft {
   }
 }
 
+function templateToPayload(template: MessageTemplate, folderId: string | null): MessageTemplatePayload {
+  return {
+    folderId,
+    name: template.name,
+    description: template.description || '',
+    category: template.category,
+    language: template.language,
+    status: template.status,
+    headerEnabled: template.headerEnabled,
+    headerType: template.headerType,
+    headerText: template.headerText || '',
+    headerMediaUrl: template.headerMediaUrl || '',
+    headerLocation: template.headerLocation || { ...emptyLocation },
+    bodyText: template.bodyText,
+    footerText: template.footerText || '',
+    buttons: template.buttons || [],
+    variableExamples: template.variableExamples || {},
+    variableBindings: template.variableBindings || { headerText: {}, bodyText: {} },
+    ycloudTemplateId: template.ycloudTemplateId || null,
+    ycloudStatus: template.ycloudStatus || null
+  }
+}
+
 function normalizeTemplateNameInput(value: string) {
   return value
     .normalize('NFD')
@@ -242,10 +268,24 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
   const [showFolderForm, setShowFolderForm] = useState(false)
   const [folderName, setFolderName] = useState('')
   const [creatingFolder, setCreatingFolder] = useState(false)
+  const [selectedTemplateIds, setSelectedTemplateIds] = useState<Set<string>>(() => new Set())
+  const [selectedFolderIds, setSelectedFolderIds] = useState<Set<string>>(() => new Set())
+  const [bulkTargetFolderId, setBulkTargetFolderId] = useState(ROOT_FOLDER_KEY)
+  const [bulkWorking, setBulkWorking] = useState(false)
+  const [dragging, setDragging] = useState<{ templateIds: string[]; folderIds: string[] } | null>(null)
+  const [dropTargetFolderId, setDropTargetFolderId] = useState<string | null>(null)
 
   useEffect(() => {
     loadBundle()
   }, [])
+
+  useEffect(() => {
+    const templateIds = new Set(bundle.templates.map((template) => template.id))
+    const folderIds = new Set(bundle.folders.map((folder) => folder.id))
+
+    setSelectedTemplateIds((current) => new Set([...current].filter((id) => templateIds.has(id))))
+    setSelectedFolderIds((current) => new Set([...current].filter((id) => folderIds.has(id))))
+  }, [bundle.templates, bundle.folders])
 
   const loadBundle = async () => {
     setLoading(true)
@@ -328,6 +368,57 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
     }
     return counts
   }, [bundle.templates])
+
+  const childFoldersByParent = useMemo(() => {
+    const rows = new Map<string, typeof bundle.folders>()
+    for (const folder of bundle.folders) {
+      const parentKey = folder.parentId || ROOT_FOLDER_KEY
+      rows.set(parentKey, [...(rows.get(parentKey) || []), folder])
+    }
+    return rows
+  }, [bundle.folders])
+
+  const descendantFolderIdsByFolder = useMemo(() => {
+    const rows = new Map<string, Set<string>>()
+    const collect = (folderId: string, target: Set<string>) => {
+      for (const child of childFoldersByParent.get(folderId) || []) {
+        if (target.has(child.id)) continue
+        target.add(child.id)
+        collect(child.id, target)
+      }
+    }
+
+    for (const folder of bundle.folders) {
+      const descendants = new Set<string>()
+      collect(folder.id, descendants)
+      rows.set(folder.id, descendants)
+    }
+
+    return rows
+  }, [bundle.folders, childFoldersByParent])
+
+  const selectedTemplates = useMemo(() => (
+    bundle.templates.filter((template) => selectedTemplateIds.has(template.id))
+  ), [bundle.templates, selectedTemplateIds])
+
+  const selectedFolders = useMemo(() => (
+    bundle.folders.filter((folder) => selectedFolderIds.has(folder.id))
+  ), [bundle.folders, selectedFolderIds])
+
+  const visibleTemplateIds = useMemo(() => (
+    visibleTemplates.map((template) => template.id)
+  ), [visibleTemplates])
+
+  const visibleFolderIds = useMemo(() => (
+    currentFolders.map((folder) => folder.id)
+  ), [currentFolders])
+
+  const selectedTotal = selectedTemplateIds.size + selectedFolderIds.size
+  const allVisibleSelected = Boolean(
+    (visibleTemplateIds.length || visibleFolderIds.length) &&
+    visibleTemplateIds.every((id) => selectedTemplateIds.has(id)) &&
+    visibleFolderIds.every((id) => selectedFolderIds.has(id))
+  )
 
   const variableByMergeField = useMemo(() => (
     new Map(bundle.variables.map((variable) => [variable.mergeField, variable]))
@@ -506,6 +597,210 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
       showToast('error', 'No se pudo sincronizar', getErrorMessage(error, 'Revisa la conexion con YCloud'))
     } finally {
       setSyncing(false)
+    }
+  }
+
+  const clearSelection = () => {
+    setSelectedTemplateIds(new Set())
+    setSelectedFolderIds(new Set())
+  }
+
+  const toggleTemplateSelection = (templateId: string) => {
+    setSelectedTemplateIds((current) => {
+      const next = new Set(current)
+      if (next.has(templateId)) next.delete(templateId)
+      else next.add(templateId)
+      return next
+    })
+  }
+
+  const toggleFolderSelection = (folderId: string) => {
+    setSelectedFolderIds((current) => {
+      const next = new Set(current)
+      if (next.has(folderId)) next.delete(folderId)
+      else next.add(folderId)
+      return next
+    })
+  }
+
+  const toggleVisibleSelection = () => {
+    if (allVisibleSelected) {
+      setSelectedTemplateIds((current) => {
+        const next = new Set(current)
+        visibleTemplateIds.forEach((id) => next.delete(id))
+        return next
+      })
+      setSelectedFolderIds((current) => {
+        const next = new Set(current)
+        visibleFolderIds.forEach((id) => next.delete(id))
+        return next
+      })
+      return
+    }
+
+    setSelectedTemplateIds((current) => new Set([...current, ...visibleTemplateIds]))
+    setSelectedFolderIds((current) => new Set([...current, ...visibleFolderIds]))
+  }
+
+  const canMoveFolderTo = (folderId: string, targetFolderId: string | null) => {
+    if (!targetFolderId) return true
+    if (folderId === targetFolderId) return false
+    return !descendantFolderIdsByFolder.get(folderId)?.has(targetFolderId)
+  }
+
+  const moveTemplatesToFolder = async (templates: MessageTemplate[], folderId: string | null) => {
+    for (const template of templates) {
+      if ((template.folderId || null) === folderId) continue
+      await messageTemplatesService.updateTemplate(template.id, templateToPayload(template, folderId))
+    }
+  }
+
+  const moveFoldersToFolder = async (folders: MessageTemplateFolder[], folderId: string | null) => {
+    const invalid = folders.find((folder) => !canMoveFolderTo(folder.id, folderId))
+    if (invalid) {
+      throw new Error(`No puedes meter ${invalid.name} dentro de si misma o de una subcarpeta propia`)
+    }
+
+    for (const folder of folders) {
+      if ((folder.parentId || null) === folderId) continue
+      await messageTemplatesService.updateFolder(folder.id, {
+        name: folder.name,
+        parentId: folderId,
+        sortOrder: folder.sortOrder
+      })
+    }
+  }
+
+  const moveSelectionToFolder = async (targetFolderIdValue = bulkTargetFolderId) => {
+    if (!selectedTotal || bulkWorking) return
+
+    const targetFolderId = targetFolderIdValue === ROOT_FOLDER_KEY ? null : targetFolderIdValue
+    setBulkWorking(true)
+    try {
+      await moveTemplatesToFolder(selectedTemplates, targetFolderId)
+      await moveFoldersToFolder(selectedFolders, targetFolderId)
+      clearSelection()
+      await loadBundle()
+      showToast('success', 'Movido', 'La seleccion quedo en su nueva carpeta')
+    } catch (error) {
+      showToast('error', 'No se pudo mover', getErrorMessage(error, 'Intenta con otra carpeta'))
+    } finally {
+      setBulkWorking(false)
+      setDragging(null)
+      setDropTargetFolderId(null)
+    }
+  }
+
+  const syncSelectedTemplates = async () => {
+    if (!selectedTemplates.length || bulkWorking) return
+
+    setBulkWorking(true)
+    try {
+      for (const template of selectedTemplates) {
+        await messageTemplatesService.syncTemplate(template.id)
+      }
+      await loadBundle()
+      showToast('success', 'Plantillas sincronizadas', 'Se actualizo el estado de la seleccion')
+    } catch (error) {
+      await loadBundle()
+      showToast('error', 'No se pudo sincronizar', getErrorMessage(error, 'Revisa la conexion con YCloud'))
+    } finally {
+      setBulkWorking(false)
+    }
+  }
+
+  const deleteSelection = () => {
+    if (!selectedTotal || bulkWorking) return
+
+    showConfirm(
+      'Eliminar seleccion',
+      `Se eliminaran ${selectedTotal} elemento${selectedTotal === 1 ? '' : 's'}. Las plantillas dentro de carpetas eliminadas quedaran sueltas.`,
+      async () => {
+        setBulkWorking(true)
+        try {
+          for (const template of selectedTemplates) {
+            await messageTemplatesService.deleteTemplate(template.id)
+          }
+          for (const folder of selectedFolders) {
+            await messageTemplatesService.deleteFolder(folder.id)
+          }
+          clearSelection()
+          await loadBundle()
+          showToast('success', 'Seleccion eliminada', 'Listo, ya no aparece en plantillas')
+        } catch (error) {
+          showToast('error', 'No se pudo eliminar', getErrorMessage(error, 'Intenta nuevamente'))
+        } finally {
+          setBulkWorking(false)
+        }
+      },
+      'Eliminar',
+      'Cancelar'
+    )
+  }
+
+  const getDragPayload = (type: 'template' | 'folder', id: string) => {
+    if (type === 'template') {
+      return {
+        templateIds: selectedTemplateIds.has(id) ? [...selectedTemplateIds] : [id],
+        folderIds: selectedFolderIds.has(id) ? [...selectedFolderIds] : []
+      }
+    }
+
+    return {
+      templateIds: selectedTemplateIds.has(id) ? [...selectedTemplateIds] : [],
+      folderIds: selectedFolderIds.has(id) ? [...selectedFolderIds] : [id]
+    }
+  }
+
+  const handleDragStart = (event: React.DragEvent, type: 'template' | 'folder', id: string) => {
+    const payload = getDragPayload(type, id)
+    setDragging(payload)
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData(DRAG_DATA_TYPE, JSON.stringify(payload))
+  }
+
+  const readDragPayload = (event: React.DragEvent) => {
+    if (dragging) return dragging
+    try {
+      const raw = event.dataTransfer.getData(DRAG_DATA_TYPE)
+      return raw ? JSON.parse(raw) as { templateIds: string[]; folderIds: string[] } : null
+    } catch {
+      return null
+    }
+  }
+
+  const handleFolderDragOver = (event: React.DragEvent, folderId: string | null) => {
+    const payload = dragging
+    if (!payload) return
+    const canDrop = payload.folderIds.every((draggedFolderId) => canMoveFolderTo(draggedFolderId, folderId))
+    if (!canDrop) return
+
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'move'
+    setDropTargetFolderId(folderId || ROOT_FOLDER_KEY)
+  }
+
+  const handleDropOnFolder = async (event: React.DragEvent, folderId: string | null) => {
+    event.preventDefault()
+    const payload = readDragPayload(event)
+    if (!payload || bulkWorking) return
+
+    const templates = bundle.templates.filter((template) => payload.templateIds.includes(template.id))
+    const folders = bundle.folders.filter((folder) => payload.folderIds.includes(folder.id))
+
+    setBulkWorking(true)
+    try {
+      await moveTemplatesToFolder(templates, folderId)
+      await moveFoldersToFolder(folders, folderId)
+      clearSelection()
+      await loadBundle()
+      showToast('success', 'Movido', folderId ? `Guardado en ${folderMap.get(folderId)?.name || 'carpeta'}` : 'Guardado en Inicio')
+    } catch (error) {
+      showToast('error', 'No se pudo mover', getErrorMessage(error, 'Intenta con otra carpeta'))
+    } finally {
+      setBulkWorking(false)
+      setDragging(null)
+      setDropTargetFolderId(null)
     }
   }
 
@@ -813,14 +1108,65 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
         </div>
 
         <div className={styles.breadcrumbs}>
-          <button type="button" onClick={() => setActiveFolderId(null)}>Inicio</button>
+          <button
+            type="button"
+            className={dropTargetFolderId === ROOT_FOLDER_KEY ? styles.dropTargetActive : ''}
+            onClick={() => setActiveFolderId(null)}
+            onDragOver={(event) => handleFolderDragOver(event, null)}
+            onDragLeave={() => setDropTargetFolderId(null)}
+            onDrop={(event) => handleDropOnFolder(event, null)}
+          >
+            Inicio
+          </button>
           {activeTrail.map((folder) => (
             <React.Fragment key={folder.id}>
               <span>/</span>
-              <button type="button" onClick={() => setActiveFolderId(folder.id)}>{folder.name}</button>
+              <button
+                type="button"
+                className={dropTargetFolderId === folder.id ? styles.dropTargetActive : ''}
+                onClick={() => setActiveFolderId(folder.id)}
+                onDragOver={(event) => handleFolderDragOver(event, folder.id)}
+                onDragLeave={() => setDropTargetFolderId(null)}
+                onDrop={(event) => handleDropOnFolder(event, folder.id)}
+              >
+                {folder.name}
+              </button>
             </React.Fragment>
           ))}
         </div>
+
+        {selectedTotal > 0 && (
+          <div className={styles.bulkBar}>
+            <strong>{selectedTotal} seleccionado{selectedTotal === 1 ? '' : 's'}</strong>
+            <button type="button" onClick={toggleVisibleSelection}>
+              {allVisibleSelected ? 'Quitar visibles' : 'Seleccionar visibles'}
+            </button>
+            <label>
+              <span>Mover a</span>
+              <select value={bulkTargetFolderId} onChange={(event) => setBulkTargetFolderId(event.target.value)}>
+                <option value={ROOT_FOLDER_KEY}>Inicio</option>
+                {folderOptions.map((option) => (
+                  <option key={option.id} value={option.id}>{option.label}</option>
+                ))}
+              </select>
+            </label>
+            <Button variant="outline" size="sm" onClick={() => moveSelectionToFolder()} loading={bulkWorking}>
+              <FolderInput size={15} />
+              Mover
+            </Button>
+            <Button variant="outline" size="sm" onClick={syncSelectedTemplates} disabled={!selectedTemplates.length || bulkWorking}>
+              <RefreshCw size={15} />
+              Sincronizar
+            </Button>
+            <Button variant="danger" size="sm" onClick={deleteSelection} disabled={bulkWorking}>
+              <Trash2 size={15} />
+              Eliminar
+            </Button>
+            <Button variant="ghost" size="sm" onClick={clearSelection} disabled={bulkWorking}>
+              <X size={15} />
+            </Button>
+          </div>
+        )}
 
         {showFolderForm && (
           <div className={styles.folderForm}>
@@ -845,7 +1191,26 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
 
         <div className={styles.collectionList}>
           {currentFolders.map((folder) => (
-            <article key={folder.id} className={styles.collectionItem}>
+            <article
+              key={folder.id}
+              className={`${styles.collectionItem} ${selectedFolderIds.has(folder.id) ? styles.collectionItemSelected : ''} ${dropTargetFolderId === folder.id ? styles.collectionItemDropTarget : ''}`}
+              draggable
+              onDragStart={(event) => handleDragStart(event, 'folder', folder.id)}
+              onDragEnd={() => {
+                setDragging(null)
+                setDropTargetFolderId(null)
+              }}
+              onDragOver={(event) => handleFolderDragOver(event, folder.id)}
+              onDragLeave={() => setDropTargetFolderId(null)}
+              onDrop={(event) => handleDropOnFolder(event, folder.id)}
+            >
+              <label className={styles.itemCheck} aria-label={`Seleccionar ${folder.name}`}>
+                <input
+                  type="checkbox"
+                  checked={selectedFolderIds.has(folder.id)}
+                  onChange={() => toggleFolderSelection(folder.id)}
+                />
+              </label>
               <button type="button" className={styles.itemMain} onClick={() => {
                 setActiveFolderId(folder.id)
                 setSearchTerm('')
@@ -869,7 +1234,23 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
           ))}
 
           {visibleTemplates.map((template) => (
-            <article key={template.id} className={styles.collectionItem}>
+            <article
+              key={template.id}
+              className={`${styles.collectionItem} ${selectedTemplateIds.has(template.id) ? styles.collectionItemSelected : ''}`}
+              draggable
+              onDragStart={(event) => handleDragStart(event, 'template', template.id)}
+              onDragEnd={() => {
+                setDragging(null)
+                setDropTargetFolderId(null)
+              }}
+            >
+              <label className={styles.itemCheck} aria-label={`Seleccionar ${template.name}`}>
+                <input
+                  type="checkbox"
+                  checked={selectedTemplateIds.has(template.id)}
+                  onChange={() => toggleTemplateSelection(template.id)}
+                />
+              </label>
               <button type="button" className={styles.itemMain} onClick={() => editTemplate(template)}>
                 <span className={styles.templateIcon}><FileText size={18} /></span>
                 <span>
