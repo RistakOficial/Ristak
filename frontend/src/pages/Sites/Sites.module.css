@@ -4023,6 +4023,81 @@
   max-width: calc(100% - 26px);
 }
 
+.libraryRouteEditor {
+  position: absolute;
+  right: 13px;
+  bottom: 8px;
+  left: 13px;
+  z-index: 3;
+  min-width: 0;
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--color-border-subtle, rgba(148, 163, 184, 0.24));
+  border-radius: 8px;
+  background: var(--color-background-secondary);
+  color: var(--color-text-primary);
+  padding: 4px;
+  cursor: default;
+}
+
+.libraryRouteDomain {
+  min-width: 0;
+  max-width: 46%;
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  padding-left: 6px;
+  font-size: 0.74rem;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.libraryRouteSlash {
+  color: var(--color-text-tertiary);
+  font-size: 0.86rem;
+  font-weight: 900;
+}
+
+.libraryRouteEditor input {
+  min-width: 42px;
+  flex: 1;
+  border: 0;
+  background: transparent;
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 850;
+  outline: none;
+}
+
+.libraryRouteEditor button {
+  width: 26px;
+  height: 26px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 7px;
+  background: rgba(148, 163, 184, 0.12);
+  color: var(--color-text-secondary);
+  padding: 0;
+  cursor: pointer;
+}
+
+.libraryRouteEditor button:hover {
+  background: rgba(var(--color-primary-rgb), 0.14);
+  color: var(--color-primary);
+}
+
+.libraryRouteEditor button:disabled,
+.libraryRouteEditor input:disabled {
+  cursor: wait;
+  opacity: 0.62;
+}
+
 .createLibraryIcon,
 .paletteIcon,
 .unsavedModalIcon {
