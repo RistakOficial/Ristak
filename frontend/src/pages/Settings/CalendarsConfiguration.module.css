@@ -1032,6 +1032,87 @@
   color: var(--color-text-primary);
 }
 
+/* ===== Google default prompt ===== */
+.defaultPromptModal {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 16px;
+  padding: 22px;
+}
+
+.defaultPromptIcon {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--color-success) 12%, transparent);
+  color: var(--color-success);
+}
+
+.defaultPromptBody {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.defaultPromptEyebrow {
+  margin: 0;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.defaultPromptBody h3 {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: 20px;
+  line-height: 1.25;
+}
+
+.defaultPromptBody p {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.defaultPromptCalendar {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 10px;
+  background: rgba(148, 163, 184, 0.045);
+}
+
+.defaultPromptCalendar strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-primary);
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.defaultPromptCalendar span {
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.defaultPromptActions {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding-top: 6px;
+}
+
 /* ===== Responsive ===== */
 @media (max-width: 1100px) {
   .calendarRow,
@@ -1106,6 +1187,19 @@
   .integrationFacts,
   .connectedMeta {
     grid-template-columns: 1fr;
+  }
+
+  .defaultPromptModal {
+    grid-template-columns: 1fr;
+    padding: 18px;
+  }
+
+  .defaultPromptActions {
+    justify-content: stretch;
+  }
+
+  .defaultPromptActions button {
+    width: 100%;
   }
 
   .connectedCard {

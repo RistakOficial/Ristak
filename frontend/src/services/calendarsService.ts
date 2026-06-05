@@ -170,12 +170,17 @@ export const calendarsService = {
   /**
    * Obtener todos los calendarios de la ubicación
    */
-  async getCalendars(locationId?: string | null, accessToken?: string | null): Promise<Calendar[]> {
+  async getCalendars(
+    locationId?: string | null,
+    accessToken?: string | null,
+    sourcePreference?: 'combined' | 'ristak' | 'ghl' | 'google'
+  ): Promise<Calendar[]> {
     try {
       const data = await apiClient.get<Calendar[]>('/calendars', {
         params: {
           ...(locationId ? { locationId } : {}),
-          ...(accessToken ? { accessToken } : {})
+          ...(accessToken ? { accessToken } : {}),
+          ...(sourcePreference ? { sourcePreference } : {})
         }
       });
       return Array.isArray(data) ? data : [];

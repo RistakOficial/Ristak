@@ -76,6 +76,12 @@ const normalizeGoogleCalendarIdInput = (value: string) => {
   return raw
 }
 
+const normalizeCalendarMatchValue = (value?: string | null) => String(value || '').trim().toLowerCase()
+
+const googleDefaultPromptKey = (calendar?: CalendarType | null) => (
+  normalizeCalendarMatchValue(calendar?.googleCalendarId || calendar?.id)
+)
+
 const getGoogleFailureHelp = (message = '') => {
   const lowerMessage = message.toLowerCase()
 
@@ -133,6 +139,7 @@ export const CalendarsConfiguration: React.FC = () => {
   const [defaultCalendarId, setDefaultCalendarId] = useAppConfig<string>('default_calendar_id', '')
   const [attributionCalendarIds, setAttributionCalendarIds] = useAppConfig<string[]>('attribution_calendar_ids', [])
   const [calendarSourcePreference, setCalendarSourcePreference] = useAppConfig<CalendarSourcePreference>('calendar_source_preference', 'combined')
+  const [googleDefaultPromptHandledIds, setGoogleDefaultPromptHandledIds] = useAppConfig<string[]>('google_default_calendar_prompt_handled_ids', [])
 
   // El origen de calendarios solo tiene sentido con una integración de terceros
   // (HighLevel). Sin ella, Ristak es la única fuente posible.
@@ -150,6 +157,8 @@ export const CalendarsConfiguration: React.FC = () => {
   const [disconnectingGoogleIntegration, setDisconnectingGoogleIntegration] = useState(false)
   const [editingGoogleIntegration, setEditingGoogleIntegration] = useState(false)
   const [googleGuideExpanded, setGoogleGuideExpanded] = useState(false)
+  const [googleDefaultPromptCalendar, setGoogleDefaultPromptCalendar] = useState<CalendarType | null>(null)
+  const [savingGoogleDefaultPrompt, setSavingGoogleDefaultPrompt] = useState(false)
   const [googleCalendarId, setGoogleCalendarId] = useState('')
   const [serviceAccountJson, setServiceAccountJson] = useState('')
   const [showCreateModal, setShowCreateModal] = useState(false)
@@ -211,8 +220,10 @@ export const CalendarsConfiguration: React.FC = () => {
       setLoadingCalendars(true)
       const data = await calendarsService.getCalendars(locationId, accessToken)
       setCalendars(data)
+      return data
     } catch (error: any) {
       showToast('error', 'Error al cargar calendarios', error.message)
+      return []
     } finally {
       setLoadingCalendars(false)
     }
@@ -253,6 +264,57 @@ export const CalendarsConfiguration: React.FC = () => {
   }, [serviceAccountJson])
 
   const serviceAccountEmailForSharing = parsedServiceAccountEmail || googleIntegration?.serviceAccountEmail || ''
+
+  const findConnectedGoogleCalendar = (
+    calendarList: CalendarType[] = calendars,
+    integrationStatus: GoogleCalendarIntegrationStatus | null = googleIntegration
+  ) => {
+    const connectedCalendarId = normalizeCalendarMatchValue(integrationStatus?.calendarId || googleCalendarId)
+    const googleCalendars = calendarList.filter((calendar) => calendar.source === 'google')
+
+    if (!googleCalendars.length) return null
+
+    return googleCalendars.find((calendar) => (
+      normalizeCalendarMatchValue(calendar.googleCalendarId) === connectedCalendarId ||
+      normalizeCalendarMatchValue(calendar.name) === connectedCalendarId
+    )) || (googleCalendars.length === 1 ? googleCalendars[0] : null)
+  }
+
+  const maybeShowGoogleDefaultPrompt = (
+    calendarList: CalendarType[],
+    integrationStatus: GoogleCalendarIntegrationStatus | null
+  ) => {
+    const importedCalendar = findConnectedGoogleCalendar(calendarList, integrationStatus)
+    if (!importedCalendar) return
+
+    const promptKey = googleDefaultPromptKey(importedCalendar)
+    if (!promptKey || googleDefaultPromptHandledIds.includes(promptKey)) return
+
+    const alreadyConfigured = defaultCalendarId === importedCalendar.id && attributionCalendarIds.includes(importedCalendar.id)
+    if (alreadyConfigured) return
+
+    setGoogleDefaultPromptCalendar(importedCalendar)
+  }
+
+  const maybeShowGoogleDefaultPromptFromCalendars = async (
+    calendarList: CalendarType[],
+    integrationStatus: GoogleCalendarIntegrationStatus | null
+  ) => {
+    if (findConnectedGoogleCalendar(calendarList, integrationStatus)) {
+      maybeShowGoogleDefaultPrompt(calendarList, integrationStatus)
+      return
+    }
+
+    const allCalendars = await calendarsService.getCalendars(locationId, accessToken, 'combined')
+    maybeShowGoogleDefaultPrompt(allCalendars, integrationStatus)
+  }
+
+  const markGoogleDefaultPromptHandled = async (calendar: CalendarType) => {
+    const promptKey = googleDefaultPromptKey(calendar)
+    if (!promptKey || googleDefaultPromptHandledIds.includes(promptKey)) return
+
+    await setGoogleDefaultPromptHandledIds([...googleDefaultPromptHandledIds, promptKey])
+  }
 
   const handleCopyServiceAccountEmail = async () => {
     if (!serviceAccountEmailForSharing) {
@@ -296,7 +358,8 @@ export const CalendarsConfiguration: React.FC = () => {
         setServiceAccountJson(serviceAccountJson.trim())
       }
       setEditingGoogleIntegration(false)
-      await loadCalendars()
+      const updatedCalendars = await loadCalendars()
+      await maybeShowGoogleDefaultPromptFromCalendars(updatedCalendars, data)
       showToast('success', 'Google Calendar guardado', 'La conexión quedó guardada. Ahora puedes probar o sincronizar manualmente.')
     } catch (error: any) {
       showToast('error', 'No se pudo guardar Google Calendar', error.message || 'Revisa el JSON y Calendar ID')
@@ -312,7 +375,8 @@ export const CalendarsConfiguration: React.FC = () => {
       setGoogleIntegration(data)
       setGoogleCalendarId(data.calendarId || googleCalendarId)
       setEditingGoogleIntegration(false)
-      await loadCalendars()
+      const updatedCalendars = await loadCalendars()
+      await maybeShowGoogleDefaultPromptFromCalendars(updatedCalendars, data)
       showToast('success', 'Google Calendar probado', data.lastTestMessage || 'Permisos validados correctamente')
     } catch (error: any) {
       await loadGoogleIntegration()
@@ -328,7 +392,8 @@ export const CalendarsConfiguration: React.FC = () => {
       const data = await calendarsService.syncGoogleIntegration()
       setGoogleIntegration(data)
       setGoogleCalendarId(data.calendarId || googleCalendarId)
-      await loadCalendars()
+      const updatedCalendars = await loadCalendars()
+      await maybeShowGoogleDefaultPromptFromCalendars(updatedCalendars, data)
       showToast('success', 'Google Calendar sincronizado', data.lastSyncMessage || 'Calendarios y citas importados a Ristak')
     } catch (error: any) {
       await loadGoogleIntegration()
@@ -336,6 +401,51 @@ export const CalendarsConfiguration: React.FC = () => {
     } finally {
       setSyncingGoogleIntegration(false)
     }
+  }
+
+  const handleAcceptGoogleDefaultPrompt = async () => {
+    if (!googleDefaultPromptCalendar) return
+
+    setSavingGoogleDefaultPrompt(true)
+    try {
+      await setDefaultCalendarId(googleDefaultPromptCalendar.id)
+
+      if (!attributionCalendarIds.includes(googleDefaultPromptCalendar.id)) {
+        await setAttributionCalendarIds([...attributionCalendarIds, googleDefaultPromptCalendar.id])
+      }
+
+      await markGoogleDefaultPromptHandled(googleDefaultPromptCalendar)
+      setGoogleDefaultPromptCalendar(null)
+      showToast(
+        'success',
+        'Calendario predeterminado actualizado',
+        `${googleDefaultPromptCalendar.name} quedó como calendario de citas y conversión`
+      )
+    } catch (error: any) {
+      showToast('error', 'No se pudo guardar el calendario predeterminado', error.message || 'Intenta nuevamente')
+    } finally {
+      setSavingGoogleDefaultPrompt(false)
+    }
+  }
+
+  const handleDismissGoogleDefaultPrompt = async () => {
+    if (!googleDefaultPromptCalendar) return
+
+    setSavingGoogleDefaultPrompt(true)
+    try {
+      await markGoogleDefaultPromptHandled(googleDefaultPromptCalendar)
+      setGoogleDefaultPromptCalendar(null)
+      showToast('info', 'Sin cambios', 'El calendario se queda conectado sin hacerlo predeterminado')
+    } catch (error: any) {
+      showToast('error', 'No se pudo cerrar la pregunta', error.message || 'Intenta nuevamente')
+    } finally {
+      setSavingGoogleDefaultPrompt(false)
+    }
+  }
+
+  const handleCloseGoogleDefaultPromptModal = () => {
+    if (savingGoogleDefaultPrompt) return
+    void handleDismissGoogleDefaultPrompt()
   }
 
   const handleEditGoogleIntegration = async () => {
@@ -607,6 +717,60 @@ export const CalendarsConfiguration: React.FC = () => {
           </Button>
           <Button variant="ghost" onClick={() => setShowCreateModal(false)} disabled={creatingCalendar}>
             Cancelar
+          </Button>
+        </div>
+      </div>
+    </Modal>,
+    document.body
+  ) : null
+
+  const renderGoogleDefaultPromptModal = () => googleDefaultPromptCalendar ? createPortal(
+    <Modal
+      isOpen={Boolean(googleDefaultPromptCalendar)}
+      onClose={handleCloseGoogleDefaultPromptModal}
+      title="Calendario importado desde Google"
+      size="md"
+      showCloseButton={!savingGoogleDefaultPrompt}
+    >
+      <div className={pageStyles.defaultPromptModal}>
+        <div className={pageStyles.defaultPromptIcon}>
+          <Calendar size={24} />
+        </div>
+        <div className={pageStyles.defaultPromptBody}>
+          <p className={pageStyles.defaultPromptEyebrow}>Google Calendar conectado</p>
+          <h3>¿Quieres convertirlo en tu calendario personalizado y predeterminado de citas?</h3>
+          <div className={pageStyles.defaultPromptCalendar}>
+            <strong>{googleDefaultPromptCalendar.name}</strong>
+            <span>{googleDefaultPromptCalendar.googleCalendarId || googleIntegration?.calendarId || 'Calendar ID pendiente'}</span>
+          </div>
+          <p>
+            Si eliges que sí, Ristak lo pondrá como calendario personalizado predeterminado y también lo marcará como calendario de conversión.
+            Si eliges que no, se queda conectado y puedes cambiarlo después desde la lista de calendarios.
+          </p>
+        </div>
+        <div className={pageStyles.defaultPromptActions}>
+          <Button
+            onClick={handleAcceptGoogleDefaultPrompt}
+            disabled={savingGoogleDefaultPrompt}
+          >
+            {savingGoogleDefaultPrompt ? (
+              <>
+                <Loader2 size={16} className={styles.spinIcon} />
+                Guardando...
+              </>
+            ) : (
+              <>
+                <Star size={16} />
+                Sí, convertirlo
+              </>
+            )}
+          </Button>
+          <Button
+            variant="ghost"
+            onClick={handleDismissGoogleDefaultPrompt}
+            disabled={savingGoogleDefaultPrompt}
+          >
+            No, dejarlo así
           </Button>
         </div>
       </div>
@@ -1220,6 +1384,7 @@ export const CalendarsConfiguration: React.FC = () => {
       </Card>
 
       {renderCreateCalendarModal()}
+      {renderGoogleDefaultPromptModal()}
 
       {/* Modal de Configuración del Calendario */}
       {showConfigModal && selectedCalendar && createPortal(

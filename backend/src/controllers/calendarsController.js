@@ -31,11 +31,19 @@ async function getHighLevelContext(req, source = {}) {
   };
 }
 
-async function getCalendarSourcePreference() {
+function normalizeCalendarSourcePreference(value) {
+  const normalized = cleanString(value || 'combined').toLowerCase();
+  return ['combined', 'ristak', 'ghl', 'google'].includes(normalized) ? normalized : 'combined';
+}
+
+async function getCalendarSourcePreference(override = '') {
+  if (override) {
+    return normalizeCalendarSourcePreference(override);
+  }
+
   try {
     const row = await db.get('SELECT config_value FROM app_config WHERE config_key = ?', ['calendar_source_preference']);
-    const value = row?.config_value || 'combined';
-    return ['combined', 'ristak', 'ghl', 'google'].includes(value) ? value : 'combined';
+    return normalizeCalendarSourcePreference(row?.config_value);
   } catch {
     return 'combined';
   }
@@ -370,7 +378,7 @@ export async function getCalendars(req, res) {
     });
 
     await localCalendarService.ensureDefaultLocalCalendar();
-    const sourcePreference = await getCalendarSourcePreference();
+    const sourcePreference = await getCalendarSourcePreference(req.query?.sourcePreference);
     const calendars = await localCalendarService.listLocalCalendars({ sourcePreference });
     const calendarsWithPublicUrls = await localCalendarService.attachPublicCalendarUrls(calendars);
 
