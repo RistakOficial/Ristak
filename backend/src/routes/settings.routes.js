@@ -1,5 +1,6 @@
 import express from 'express';
 import { getTimezone, setTimezone } from '../controllers/settingsController.js';
+import { getNotificationsView } from '../controllers/notificationsController.js';
 import {
   createMessageTemplateView,
   createTemplateCustomFieldView,
@@ -25,6 +26,9 @@ router.get('/timezone', getTimezone);
 
 // POST /api/settings/timezone
 router.post('/timezone', setTimezone);
+
+// GET /api/settings/notifications
+router.get('/notifications', getNotificationsView);
 
 // WhatsApp message templates
 router.get('/message-templates', getMessageTemplatesView);
