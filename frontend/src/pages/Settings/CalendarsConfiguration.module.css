@@ -963,6 +963,18 @@
   margin: 0;
 }
 
+.stepBody p {
+  overflow-wrap: anywhere;
+}
+
+.stepBody a {
+  color: var(--color-text-primary);
+  font-weight: 700;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+
 .stepBody span {
   position: relative;
   padding-left: 16px;

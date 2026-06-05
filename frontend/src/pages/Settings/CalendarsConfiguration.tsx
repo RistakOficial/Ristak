@@ -37,9 +37,11 @@ type CalendarSettingsTab = 'calendars' | 'google'
 type CalendarSourcePreference = 'combined' | 'ristak' | 'ghl' | 'google'
 
 const GOOGLE_HELP_LINKS = {
+  googleCloudWelcome: 'https://cloud.google.com/welcome',
   calendarApi: 'https://console.cloud.google.com/apis/library/calendar-json.googleapis.com',
   serviceAccounts: 'https://docs.cloud.google.com/iam/docs/service-accounts-create?hl=es-419',
   serviceAccountKeys: 'https://docs.cloud.google.com/iam/docs/keys-create-delete?hl=es-419',
+  googleCalendar: 'https://calendar.google.com',
   shareCalendar: 'https://support.google.com/calendar/answer/37082?hl=es-419',
   calendarId: 'https://support.google.com/calendar/answer/44105?hl=es-419',
   videoSearch: 'https://www.youtube.com/results?search_query=Google+Cloud+service+account+JSON+key+Google+Calendar+API'
@@ -840,87 +842,99 @@ export const CalendarsConfiguration: React.FC = () => {
 
         <div className={pageStyles.guidePreview}>
           <strong>Resumen rápido</strong>
-          <span>Google Cloud crea el email técnico y el JSON. Google Calendar decide a qué calendario entra ese email.</span>
+          <span>El correo real de Gmail identifica el calendario. El correo largo del Service Account solo sirve para compartir permisos. El JSON autentica a Ristak.</span>
         </div>
 
         {googleGuideExpanded && (
           <div className={pageStyles.guideBody}>
             <div className={pageStyles.setupNotice}>
               <strong>Antes de empezar</strong>
-              <span>Son dos permisos distintos: Service Account en Google Cloud y calendario compartido en Google Calendar.</span>
+              <span>Haz todo con la misma cuenta de Google donde vive el calendario. Revisa el perfil arriba a la derecha tanto en Google Cloud como en Google Calendar.</span>
+              <span>No confundas el correo real del calendario con el correo técnico del Service Account; son dos cosas distintas.</span>
             </div>
 
             <ol className={pageStyles.setupSteps}>
               <li>
                 <span className={pageStyles.stepNumber}>1</span>
                 <div className={pageStyles.stepBody}>
-                  <strong>Entra a Google Cloud Console</strong>
-                  <p>Usa la cuenta del cliente o una cuenta que pueda administrar su proyecto de Google Cloud.</p>
-                  <span>Si no hay proyecto, crea uno con un nombre reconocible, por ejemplo <code>Ristak Calendar Cliente</code>.</span>
+                  <strong>Entra a Google Cloud</strong>
+                  <p>Abre <a href={GOOGLE_HELP_LINKS.googleCloudWelcome} target="_blank" rel="noreferrer">cloud.google.com/welcome</a> con el mismo Gmail donde tienes el calendario que quieres conectar.</p>
+                  <span>En la esquina superior derecha confirma que el perfil seleccionado sea el correcto.</span>
                 </div>
               </li>
               <li>
                 <span className={pageStyles.stepNumber}>2</span>
                 <div className={pageStyles.stepBody}>
-                  <strong>Activa Google Calendar API</strong>
-                  <p>En APIs & Services, abre Library, busca Google Calendar API y presiona Enable.</p>
-                  <span>Si Google te pide habilitar IAM/API relacionadas, acepta. Sin Calendar API la prueba va a fallar aunque el JSON esté bien.</span>
+                  <strong>Crea o selecciona el proyecto</strong>
+                  <p>En la esquina superior izquierda, junto al logo de Google Cloud, abre el selector de proyecto.</p>
+                  <span>Si ya tienes un proyecto, selecciónalo. Si no tienes ninguno, crea uno llamado <code>Ristak - Google Calendar</code>.</span>
+                  <span>Si la página se queda rara después de crearlo, refresca y vuelve a seleccionar ese proyecto en el selector.</span>
                 </div>
               </li>
               <li>
                 <span className={pageStyles.stepNumber}>3</span>
                 <div className={pageStyles.stepBody}>
-                  <strong>Crea el Service Account</strong>
-                  <p>Ve a IAM & Admin, Service Accounts, Create service account. Nombre sugerido: <code>ristak-calendar</code>.</p>
-                  <span>En “Grant this service account access to project”, no selecciones Owner/Propietario. Para Ristak no hace falta rol del proyecto.</span>
-                  <span>En “Grant users access to this service account” o usuarios/admins del Service Account, déjalo vacío y termina con Done.</span>
+                  <strong>Activa Google Calendar API</strong>
+                  <p>En Google Cloud entra a <code>APIs y servicios</code>. Si no lo ves, usa la barra superior de búsqueda y escribe <code>APIs y servicios</code>.</p>
+                  <span>En el menú izquierdo abre <code>Biblioteca</code>, busca <code>Google Calendar</code>, selecciona <code>Google Calendar API</code> y presiona <code>Habilitar</code>.</span>
+                  <span>Sin esta API activa, Ristak no podrá probar la conexión aunque el JSON esté correcto.</span>
                 </div>
               </li>
               <li>
                 <span className={pageStyles.stepNumber}>4</span>
                 <div className={pageStyles.stepBody}>
-                  <strong>Genera la llave JSON</strong>
-                  <p>Abre el Service Account, entra a Keys, Add key, Create new key, JSON. Google descarga un archivo.</p>
-                  <span>Pega aquí el contenido completo del JSON. No pegues API key, OAuth Client ID ni solo el private_key.</span>
+                  <strong>Crea la cuenta de servicio</strong>
+                  <p>Abre el menú de navegación de Google Cloud, entra a <code>IAM y administración</code> y después a <code>Cuentas de servicio</code>.</p>
+                  <span>Si Google te pide un proyecto reciente, selecciona <code>Ristak - Google Calendar</code> o el proyecto que elegiste.</span>
+                  <span>Haz clic en <code>Crear cuenta de servicio</code> y ponle el nombre <code>Ristak - Google Calendar</code>.</span>
+                  <span>Cuando Google pida permisos del proyecto, déjalo en blanco y continúa. No necesitas elegir <code>Propietario</code> / <code>Owner</code>.</span>
+                  <span>La parte de <code>principales con acceso</code> o usuarios administradores también puede quedarse vacía; es opcional.</span>
                 </div>
               </li>
               <li>
                 <span className={pageStyles.stepNumber}>5</span>
                 <div className={pageStyles.stepBody}>
                   <strong>Copia el email técnico</strong>
-                  <p>Está dentro del JSON como <code>client_email</code> y también lo mostramos arriba después de pegarlo.</p>
-                  <span>Ese correo no es Gmail normal y no va a aceptar invitaciones. Solo necesita quedar agregado en el calendario.</span>
+                  <p>Al terminar, Google crea un correo largo del Service Account, parecido a <code>ristak-calendar@proyecto.iam.gserviceaccount.com</code>.</p>
+                  <span>Copia ese correo. No es tu Gmail y no es el Calendar ID; solo lo vas a usar para compartirle permisos al calendario.</span>
                 </div>
               </li>
               <li>
                 <span className={pageStyles.stepNumber}>6</span>
                 <div className={pageStyles.stepBody}>
-                  <strong>Comparte el calendario exacto</strong>
-                  <p>En Google Calendar de escritorio, en “My calendars”, abre los tres puntos del calendario, Settings and sharing, Shared with, Add people and groups.</p>
-                  <span>Pega el email técnico del Service Account y elige “Make changes to events” / “Hacer cambios en eventos”. Libre/ocupado no sirve.</span>
-                  <span>Si esa opción no aparece, probablemente un admin de Google Workspace bloqueó compartir fuera del dominio.</span>
+                  <strong>Comparte el calendario con ese email técnico</strong>
+                  <p>Abre <a href={GOOGLE_HELP_LINKS.googleCalendar} target="_blank" rel="noreferrer">calendar.google.com</a> con el mismo Gmail donde está el calendario.</p>
+                  <span>En la izquierda, abre <code>Mis calendarios</code>, encuentra el calendario, toca los tres puntitos y entra a <code>Configurar y compartir</code>.</span>
+                  <span>Busca <code>Compartir con personas o grupos específicos</code>, toca <code>Añadir personas y grupos</code> y pega el email técnico del Service Account.</span>
+                  <span>En permisos selecciona <code>Hacer cambios y gestionar el uso compartido</code>. Con solo libre/ocupado no alcanza para crear, editar o cancelar citas.</span>
                 </div>
               </li>
               <li>
                 <span className={pageStyles.stepNumber}>7</span>
                 <div className={pageStyles.stepBody}>
-                  <strong>Copia el Calendar ID correcto</strong>
-                  <p>En Settings and sharing del mismo calendario, baja a Integrate calendar y copia Calendar ID.</p>
-                  <span>Un calendario principal suele verse como <code>cliente@empresa.com</code>. Un calendario secundario suele terminar en <code>@group.calendar.google.com</code>.</span>
-                  <span>No uses el email técnico del Service Account, el link público, el Secret iCal ni una URL completa como ID final.</span>
+                  <strong>Crea la clave JSON</strong>
+                  <p>Regresa a Google Cloud, entra a <code>IAM y administración &gt; Cuentas de servicio</code> y abre la cuenta que creaste.</p>
+                  <span>En las pestañas superiores entra a <code>Claves</code>, luego <code>Agregar clave</code>, <code>Crear clave nueva</code>, elige <code>JSON</code> y presiona <code>Crear</code>.</span>
+                  <span>Copia el JSON completo. Debe incluir <code>type</code>, <code>project_id</code>, <code>private_key</code> y <code>client_email</code>.</span>
                 </div>
               </li>
               <li>
                 <span className={pageStyles.stepNumber}>8</span>
                 <div className={pageStyles.stepBody}>
-                  <strong>Guarda, prueba y sincroniza</strong>
-                  <p>Guarda la conexión. Luego presiona Probar conexión para validar lectura, creación, actualización y cancelación con un evento temporal.</p>
-                  <span>Si sale Not Found, revisa Calendar ID y permisos. Si sale éxito, usa Sincronizar ahora para traer calendarios y citas a Ristak.</span>
+                  <strong>Conecta en Ristak</strong>
+                  <p>Pega en Ristak el JSON completo y el correo real del calendario que quieres conectar.</p>
+                  <span>Para el calendario principal normalmente ese Calendar ID es tu Gmail, por ejemplo <code>cliente@gmail.com</code>.</span>
+                  <span>No pegues el correo largo del Service Account como Calendar ID, a menos que de verdad sea el ID del calendario.</span>
+                  <span>Después presiona <code>Conectar</code>, luego <code>Probar conexión</code> y finalmente <code>Sincronizar ahora</code>.</span>
                 </div>
               </li>
             </ol>
 
             <div className={pageStyles.supportLinks}>
+              <a href={GOOGLE_HELP_LINKS.googleCloudWelcome} target="_blank" rel="noreferrer">
+                <Globe2 size={16} />
+                Entrar a Google Cloud
+              </a>
               <a href={GOOGLE_HELP_LINKS.calendarApi} target="_blank" rel="noreferrer">
                 <ListChecks size={16} />
                 Activar Calendar API
@@ -932,6 +946,10 @@ export const CalendarsConfiguration: React.FC = () => {
               <a href={GOOGLE_HELP_LINKS.serviceAccountKeys} target="_blank" rel="noreferrer">
                 <FileKey2 size={16} />
                 Crear llave JSON
+              </a>
+              <a href={GOOGLE_HELP_LINKS.googleCalendar} target="_blank" rel="noreferrer">
+                <Calendar size={16} />
+                Abrir Google Calendar
               </a>
               <a href={GOOGLE_HELP_LINKS.shareCalendar} target="_blank" rel="noreferrer">
                 <Calendar size={16} />
@@ -961,7 +979,7 @@ export const CalendarsConfiguration: React.FC = () => {
               <div className={pageStyles.connectionHeader}>
                 <div>
                   <h2>{isConnected ? 'Editar Google Calendar' : 'Conectar Google Calendar'}</h2>
-                  <p>Conexión sin OAuth: pega el Calendar ID real y el JSON del Service Account.</p>
+                  <p>Conexión sin OAuth: pega el correo real del calendario y el JSON del Service Account.</p>
                 </div>
                 <span className={`${pageStyles.statusPill} ${isConnected ? pageStyles.statusWarn : pageStyles.statusOff}`}>
                   {isConnected ? <Info size={15} /> : <XCircle size={15} />}
@@ -972,20 +990,21 @@ export const CalendarsConfiguration: React.FC = () => {
               <div className={pageStyles.wizardIntro}>
                 <strong>Antes de guardar, revisa esto</strong>
                 <span>Ristak no entra a Google con tu usuario. Google solo deja leer y escribir si el calendario exacto está compartido con el email técnico del Service Account.</span>
-                <span>Si la prueba dice “Not Found”, casi siempre es Calendar ID equivocado o el calendario no fue compartido con ese email.</span>
+                <span>En el campo de calendario va el correo real de Gmail o el Calendar ID, no el correo largo del Service Account.</span>
+                <span>Si la prueba dice “Not Found”, casi siempre es Calendar ID equivocado o el calendario no fue compartido con ese email técnico.</span>
               </div>
 
               <div className={pageStyles.formGrid}>
                 <label className={pageStyles.field}>
-                  <span>Calendar ID del calendario real</span>
+                  <span>Correo del calendario o Calendar ID real</span>
                   <input
                     value={googleCalendarId}
                     onChange={(event) => setGoogleCalendarId(event.target.value)}
                     onBlur={() => setGoogleCalendarId(normalizeGoogleCalendarIdInput(googleCalendarId))}
-                    placeholder="cliente@empresa.com, nombre@group.calendar.google.com o link con cid"
+                    placeholder="cliente@gmail.com, cliente@empresa.com, nombre@group.calendar.google.com o link con cid"
                     autoComplete="off"
                   />
-                  <small>No pegues el email del Service Account aquí, salvo que ese sea realmente el Calendar ID. Si pegas un link de Google Calendar con cid, Ristak intenta extraer el ID automáticamente.</small>
+                  <small>Para un calendario principal normalmente es el Gmail real del cliente. No pegues aquí el email técnico del Service Account; ese solo se usa para compartir el calendario.</small>
                 </label>
 
                 <label className={pageStyles.field}>
@@ -1027,7 +1046,7 @@ export const CalendarsConfiguration: React.FC = () => {
                   ) : (
                     <>
                       <KeyRound size={16} />
-                      Guardar conexión
+                      {isConnected ? 'Guardar cambios' : 'Conectar'}
                     </>
                   )}
                 </Button>
