@@ -640,9 +640,10 @@
 
 /* Contenedor visual de sección de Fecha y Hora */
 .dateTimeSection {
-  border: 1px solid rgba(148, 163, 184, 0.18);
-  border-radius: 12px;
-  background: rgba(148, 163, 184, 0.03);
+  border: 0;
+  border-top: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 0;
+  background: transparent;
   padding: 1.25rem;
   display: flex;
   flex-direction: column;

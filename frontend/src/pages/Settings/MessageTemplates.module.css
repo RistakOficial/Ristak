@@ -89,6 +89,11 @@
   padding: 16px;
 }
 
+.listPanel {
+  border-color: transparent;
+  background: transparent;
+}
+
 .toolbar {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto auto;

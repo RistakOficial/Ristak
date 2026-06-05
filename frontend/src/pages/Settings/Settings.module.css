@@ -745,10 +745,11 @@ body.dark .select:focus {
   min-width: 0;
   flex-direction: column;
   gap: 16px;
-  padding: 16px;
-  border: 1px solid rgba(148, 163, 184, 0.16);
-  border-radius: 8px;
-  background: rgba(148, 163, 184, 0.045);
+  padding: 16px 0 0;
+  border: 0;
+  border-top: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 0;
+  background: transparent;
 }
 
 .accountSectionWide {

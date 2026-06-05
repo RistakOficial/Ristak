@@ -1898,10 +1898,11 @@ body.dark .switchInput:checked:disabled + .switchSlider:hover {
   flex-direction: column;
   gap: 14px;
   margin: 18px 0 0;
-  padding: 16px;
-  border: 1px solid rgba(148, 163, 184, 0.16);
-  border-radius: 8px;
-  background: rgba(148, 163, 184, 0.045);
+  padding: 18px 0 0;
+  border: 0;
+  border-top: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 0;
+  background: transparent;
   overflow: visible;
 }
 
@@ -2417,7 +2418,7 @@ textarea.input {
   }
 
   .section {
-    padding: 14px;
+    padding: 14px 0 0;
   }
 
   .headerLeft {

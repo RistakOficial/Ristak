@@ -113,20 +113,21 @@
 }
 
 .section {
-  padding: 18px;
-  border: 1px solid rgba(148, 163, 184, 0.16);
-  border-radius: 8px;
-  background: rgba(148, 163, 184, 0.04);
+  padding: 18px 0 0;
+  border: 0;
+  border-top: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 0;
+  background: transparent;
 }
 
 .wizardSection {
-  padding: 24px;
+  padding: 24px 0 0;
 }
 
 .connectedSection {
-  padding: 24px;
-  border-color: rgba(16, 185, 129, 0.22);
-  background: linear-gradient(135deg, rgba(16, 185, 129, 0.1), rgba(8, 102, 255, 0.045));
+  padding: 24px 0 0;
+  border-top-color: rgba(16, 185, 129, 0.22);
+  background: transparent;
 }
 
 .connectedHeader {
@@ -215,7 +216,7 @@
 }
 
 .connectedExtrasSection {
-  padding: 18px;
+  padding: 18px 0 0;
 }
 
 .connectedExtrasRows {
@@ -860,7 +861,7 @@
 }
 
 .eventSection {
-  padding: 18px;
+  padding: 18px 0 0;
 }
 
 .eventRow {
@@ -1044,7 +1045,7 @@
   }
 
   .section {
-    padding: 14px;
+    padding: 14px 0 0;
   }
 
   .headerLeft {

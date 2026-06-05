@@ -3866,6 +3866,16 @@
   box-shadow: none;
 }
 
+.libraryPanel,
+.createPanel,
+.dataPanel,
+.pagesPanel,
+.palette {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+
 .libraryCard,
 .createLibraryCard,
 .choiceGrid button,
