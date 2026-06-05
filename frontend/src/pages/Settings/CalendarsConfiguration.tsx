@@ -925,7 +925,7 @@ export const CalendarsConfiguration: React.FC = () => {
       <div className={pageStyles.calendarEditor}>
         <div className={pageStyles.editorHeader}>
           <div>
-            <h4>Editar calendario</h4>
+            <h4>Configuración del calendario</h4>
             <p>{calendar.name}</p>
           </div>
           <Button
@@ -938,249 +938,284 @@ export const CalendarsConfiguration: React.FC = () => {
           </Button>
         </div>
 
-        <div className={pageStyles.editorGrid}>
-          <label className={`${pageStyles.editorField} ${pageStyles.editorFieldWide}`}>
-            <span>Nombre</span>
-            <input
-              className={styles.input}
-              value={selectedCalendar.name || ''}
-              onChange={(event) => updateSelectedCalendar({ name: event.target.value })}
-            />
-          </label>
-
-          <label className={pageStyles.editorField}>
-            <span>Título de evento</span>
-            <input
-              className={styles.input}
-              value={selectedCalendar.eventTitle || ''}
-              onChange={(event) => updateSelectedCalendar({ eventTitle: event.target.value })}
-            />
-          </label>
-
-          <label className={pageStyles.editorField}>
-            <span>Color</span>
-            <input
-              type="color"
-              className={pageStyles.colorInput}
-              value={selectedCalendar.eventColor || '#3b82f6'}
-              onChange={(event) => updateSelectedCalendar({ eventColor: event.target.value })}
-            />
-          </label>
-
-          <div className={pageStyles.editorField}>
-            <span>Estado</span>
-            <button
-              type="button"
-              className={`${pageStyles.editorToggle} ${selectedCalendar.isActive ? pageStyles.editorToggleActive : ''}`}
-              onClick={() => updateSelectedCalendar({ isActive: !selectedCalendar.isActive })}
-              aria-pressed={selectedCalendar.isActive}
-            >
-              <span />
-              {selectedCalendar.isActive ? 'Activo' : 'Inactivo'}
-            </button>
-          </div>
-
-          <label className={pageStyles.editorField}>
-            <span>Duración</span>
-            <div className={pageStyles.inlineFieldGroup}>
-              <input
-                type="number"
-                className={styles.input}
-                value={selectedCalendar.slotDuration}
-                onChange={(event) => updateSelectedCalendar({ slotDuration: parseInt(event.target.value, 10) || 0 })}
-                min="1"
-              />
-              <CustomSelect
-                value={selectedCalendar.slotDurationUnit}
-                onChange={(value) => updateSelectedCalendar({ slotDurationUnit: value })}
-                options={[
-                  { value: 'mins', label: 'Minutos' },
-                  { value: 'hours', label: 'Horas' }
-                ]}
-              />
+        <div className={pageStyles.editorSections}>
+          <section className={pageStyles.editorSection}>
+            <div className={pageStyles.editorSectionHeader}>
+              <strong>Información</strong>
+              <span>Nombre, título y estado visible.</span>
             </div>
-          </label>
+            <div className={pageStyles.editorFields}>
+              <label className={`${pageStyles.editorField} ${pageStyles.editorFieldLarge}`}>
+                <span>Nombre</span>
+                <input
+                  className={styles.input}
+                  value={selectedCalendar.name || ''}
+                  onChange={(event) => updateSelectedCalendar({ name: event.target.value })}
+                />
+              </label>
 
-          <label className={pageStyles.editorField}>
-            <span>Intervalo</span>
-            <div className={pageStyles.inlineFieldGroup}>
-              <input
-                type="number"
-                className={styles.input}
-                value={selectedCalendar.slotInterval}
-                onChange={(event) => updateSelectedCalendar({ slotInterval: parseInt(event.target.value, 10) || 0 })}
-                min="1"
-              />
-              <CustomSelect
-                value={selectedCalendar.slotIntervalUnit}
-                onChange={(value) => updateSelectedCalendar({ slotIntervalUnit: value })}
-                options={[
-                  { value: 'mins', label: 'Minutos' },
-                  { value: 'hours', label: 'Horas' }
-                ]}
-              />
+              <label className={pageStyles.editorField}>
+                <span>Título de evento</span>
+                <input
+                  className={styles.input}
+                  value={selectedCalendar.eventTitle || ''}
+                  onChange={(event) => updateSelectedCalendar({ eventTitle: event.target.value })}
+                />
+              </label>
+
+              <label className={pageStyles.editorField}>
+                <span>Color</span>
+                <input
+                  type="color"
+                  className={pageStyles.colorInput}
+                  value={selectedCalendar.eventColor || '#3b82f6'}
+                  onChange={(event) => updateSelectedCalendar({ eventColor: event.target.value })}
+                />
+              </label>
+
+              <div className={pageStyles.editorField}>
+                <span>Estado</span>
+                <button
+                  type="button"
+                  className={`${pageStyles.editorToggle} ${selectedCalendar.isActive ? pageStyles.editorToggleActive : ''}`}
+                  onClick={() => updateSelectedCalendar({ isActive: !selectedCalendar.isActive })}
+                  aria-pressed={selectedCalendar.isActive}
+                >
+                  <span />
+                  {selectedCalendar.isActive ? 'Activo' : 'Inactivo'}
+                </button>
+              </div>
             </div>
-          </label>
+          </section>
 
-          <label className={pageStyles.editorField}>
-            <span>Buffer antes</span>
-            <div className={pageStyles.inlineFieldGroup}>
-              <input
-                type="number"
-                className={styles.input}
-                value={selectedCalendar.preBuffer || 0}
-                onChange={(event) => updateSelectedCalendar({ preBuffer: parseInt(event.target.value, 10) || 0 })}
-                min="0"
-              />
-              <CustomSelect
-                value={selectedCalendar.preBufferUnit || 'mins'}
-                onChange={(value) => updateSelectedCalendar({ preBufferUnit: value })}
-                options={[
-                  { value: 'mins', label: 'Minutos' },
-                  { value: 'hours', label: 'Horas' }
-                ]}
-              />
+          <section className={pageStyles.editorSection}>
+            <div className={pageStyles.editorSectionHeader}>
+              <strong>Horarios</strong>
+              <span>Duración, intervalo y fuente de disponibilidad.</span>
             </div>
-          </label>
+            <div className={pageStyles.editorFields}>
+              <label className={pageStyles.editorField}>
+                <span>Duración</span>
+                <div className={pageStyles.inlineFieldGroup}>
+                  <input
+                    type="number"
+                    className={styles.input}
+                    value={selectedCalendar.slotDuration}
+                    onChange={(event) => updateSelectedCalendar({ slotDuration: parseInt(event.target.value, 10) || 0 })}
+                    min="1"
+                  />
+                  <CustomSelect
+                    value={selectedCalendar.slotDurationUnit}
+                    onChange={(value) => updateSelectedCalendar({ slotDurationUnit: value })}
+                    options={[
+                      { value: 'mins', label: 'Minutos' },
+                      { value: 'hours', label: 'Horas' }
+                    ]}
+                  />
+                </div>
+              </label>
 
-          <label className={pageStyles.editorField}>
-            <span>Buffer después</span>
-            <div className={pageStyles.inlineFieldGroup}>
-              <input
-                type="number"
-                className={styles.input}
-                value={selectedCalendar.slotBuffer || 0}
-                onChange={(event) => updateSelectedCalendar({ slotBuffer: parseInt(event.target.value, 10) || 0 })}
-                min="0"
-              />
-              <CustomSelect
-                value={selectedCalendar.slotBufferUnit || 'mins'}
-                onChange={(value) => updateSelectedCalendar({ slotBufferUnit: value })}
-                options={[
-                  { value: 'mins', label: 'Minutos' },
-                  { value: 'hours', label: 'Horas' }
-                ]}
-              />
+              <label className={pageStyles.editorField}>
+                <span>Intervalo</span>
+                <div className={pageStyles.inlineFieldGroup}>
+                  <input
+                    type="number"
+                    className={styles.input}
+                    value={selectedCalendar.slotInterval}
+                    onChange={(event) => updateSelectedCalendar({ slotInterval: parseInt(event.target.value, 10) || 0 })}
+                    min="1"
+                  />
+                  <CustomSelect
+                    value={selectedCalendar.slotIntervalUnit}
+                    onChange={(value) => updateSelectedCalendar({ slotIntervalUnit: value })}
+                    options={[
+                      { value: 'mins', label: 'Minutos' },
+                      { value: 'hours', label: 'Horas' }
+                    ]}
+                  />
+                </div>
+              </label>
+
+              <label className={`${pageStyles.editorField} ${pageStyles.editorFieldLarge}`}>
+                <span>Disponibilidad</span>
+                <CustomSelect
+                  value={selectedCalendar.availabilityType !== undefined ? String(selectedCalendar.availabilityType) : ''}
+                  onChange={(value) => updateSelectedCalendar({
+                    availabilityType: value === '' ? undefined : parseInt(value, 10)
+                  })}
+                  options={[
+                    { value: '', label: 'Horarios abiertos + disponibilidad personalizada' },
+                    { value: '0', label: 'Solo horarios abiertos' },
+                    { value: '1', label: 'Solo disponibilidad personalizada' }
+                  ]}
+                />
+              </label>
             </div>
-          </label>
+          </section>
 
-          <label className={pageStyles.editorField}>
-            <span>Personas por horario</span>
-            <input
-              type="number"
-              className={styles.input}
-              value={selectedCalendar.appoinmentPerSlot}
-              onChange={(event) => updateSelectedCalendar({ appoinmentPerSlot: parseInt(event.target.value, 10) || 1 })}
-              min="1"
-            />
-          </label>
-
-          <label className={pageStyles.editorField}>
-            <span>Límite diario</span>
-            <input
-              type="number"
-              className={styles.input}
-              value={selectedCalendar.appoinmentPerDay}
-              onChange={(event) => updateSelectedCalendar({ appoinmentPerDay: parseInt(event.target.value, 10) || 0 })}
-              min="0"
-            />
-          </label>
-
-          <label className={pageStyles.editorField}>
-            <span>Anticipación mínima</span>
-            <div className={pageStyles.inlineFieldGroup}>
-              <input
-                type="number"
-                className={styles.input}
-                value={selectedCalendar.allowBookingAfter || 0}
-                onChange={(event) => updateSelectedCalendar({ allowBookingAfter: parseInt(event.target.value, 10) || 0 })}
-                min="0"
-              />
-              <CustomSelect
-                value={selectedCalendar.allowBookingAfterUnit || 'hours'}
-                onChange={(value) => updateSelectedCalendar({ allowBookingAfterUnit: value })}
-                options={[
-                  { value: 'hours', label: 'Horas' },
-                  { value: 'days', label: 'Días' },
-                  { value: 'weeks', label: 'Semanas' },
-                  { value: 'months', label: 'Meses' }
-                ]}
-              />
+          <section className={pageStyles.editorSection}>
+            <div className={pageStyles.editorSectionHeader}>
+              <strong>Reglas de reserva</strong>
+              <span>Cuándo y cuántas citas puede tomar este calendario.</span>
             </div>
-          </label>
+            <div className={pageStyles.editorFields}>
+              <label className={pageStyles.editorField}>
+                <span>Anticipación mínima</span>
+                <div className={pageStyles.inlineFieldGroup}>
+                  <input
+                    type="number"
+                    className={styles.input}
+                    value={selectedCalendar.allowBookingAfter || 0}
+                    onChange={(event) => updateSelectedCalendar({ allowBookingAfter: parseInt(event.target.value, 10) || 0 })}
+                    min="0"
+                  />
+                  <CustomSelect
+                    value={selectedCalendar.allowBookingAfterUnit || 'hours'}
+                    onChange={(value) => updateSelectedCalendar({ allowBookingAfterUnit: value })}
+                    options={[
+                      { value: 'hours', label: 'Horas' },
+                      { value: 'days', label: 'Días' },
+                      { value: 'weeks', label: 'Semanas' },
+                      { value: 'months', label: 'Meses' }
+                    ]}
+                  />
+                </div>
+              </label>
 
-          <label className={pageStyles.editorField}>
-            <span>Ventana para agendar</span>
-            <div className={pageStyles.inlineFieldGroup}>
-              <input
-                type="number"
-                className={styles.input}
-                value={selectedCalendar.allowBookingFor || 30}
-                onChange={(event) => updateSelectedCalendar({ allowBookingFor: parseInt(event.target.value, 10) || 1 })}
-                min="1"
-              />
-              <CustomSelect
-                value={selectedCalendar.allowBookingForUnit || 'days'}
-                onChange={(value) => updateSelectedCalendar({ allowBookingForUnit: value })}
-                options={[
-                  { value: 'days', label: 'Días' },
-                  { value: 'weeks', label: 'Semanas' },
-                  { value: 'months', label: 'Meses' }
-                ]}
-              />
+              <label className={pageStyles.editorField}>
+                <span>Ventana para agendar</span>
+                <div className={pageStyles.inlineFieldGroup}>
+                  <input
+                    type="number"
+                    className={styles.input}
+                    value={selectedCalendar.allowBookingFor || 30}
+                    onChange={(event) => updateSelectedCalendar({ allowBookingFor: parseInt(event.target.value, 10) || 1 })}
+                    min="1"
+                  />
+                  <CustomSelect
+                    value={selectedCalendar.allowBookingForUnit || 'days'}
+                    onChange={(value) => updateSelectedCalendar({ allowBookingForUnit: value })}
+                    options={[
+                      { value: 'days', label: 'Días' },
+                      { value: 'weeks', label: 'Semanas' },
+                      { value: 'months', label: 'Meses' }
+                    ]}
+                  />
+                </div>
+              </label>
+
+              <label className={pageStyles.editorField}>
+                <span>Personas por horario</span>
+                <input
+                  type="number"
+                  className={styles.input}
+                  value={selectedCalendar.appoinmentPerSlot}
+                  onChange={(event) => updateSelectedCalendar({ appoinmentPerSlot: parseInt(event.target.value, 10) || 1 })}
+                  min="1"
+                />
+              </label>
+
+              <label className={pageStyles.editorField}>
+                <span>Límite diario</span>
+                <input
+                  type="number"
+                  className={styles.input}
+                  value={selectedCalendar.appoinmentPerDay}
+                  onChange={(event) => updateSelectedCalendar({ appoinmentPerDay: parseInt(event.target.value, 10) || 0 })}
+                  min="0"
+                />
+              </label>
             </div>
-          </label>
+          </section>
 
-          <label className={`${pageStyles.editorField} ${pageStyles.editorFieldWide}`}>
-            <span>Disponibilidad</span>
-            <CustomSelect
-              value={selectedCalendar.availabilityType !== undefined ? String(selectedCalendar.availabilityType) : ''}
-              onChange={(value) => updateSelectedCalendar({
-                availabilityType: value === '' ? undefined : parseInt(value, 10)
-              })}
-              options={[
-                { value: '', label: 'Horarios abiertos + disponibilidad personalizada' },
-                { value: '0', label: 'Solo horarios abiertos' },
-                { value: '1', label: 'Solo disponibilidad personalizada' }
-              ]}
-            />
-          </label>
-        </div>
+          <section className={pageStyles.editorSection}>
+            <div className={pageStyles.editorSectionHeader}>
+              <strong>Espacios y demanda</strong>
+              <span>Buffers antes/después y disponibilidad simulada.</span>
+            </div>
+            <div className={pageStyles.editorFields}>
+              <label className={pageStyles.editorField}>
+                <span>Buffer antes</span>
+                <div className={pageStyles.inlineFieldGroup}>
+                  <input
+                    type="number"
+                    className={styles.input}
+                    value={selectedCalendar.preBuffer || 0}
+                    onChange={(event) => updateSelectedCalendar({ preBuffer: parseInt(event.target.value, 10) || 0 })}
+                    min="0"
+                  />
+                  <CustomSelect
+                    value={selectedCalendar.preBufferUnit || 'mins'}
+                    onChange={(value) => updateSelectedCalendar({ preBufferUnit: value })}
+                    options={[
+                      { value: 'mins', label: 'Minutos' },
+                      { value: 'hours', label: 'Horas' }
+                    ]}
+                  />
+                </div>
+              </label>
 
-        <div className={pageStyles.lookBusyRow}>
-          <label>
-            <input
-              type="checkbox"
-              checked={selectedCalendar.lookBusyConfig?.enabled || false}
-              onChange={(event) => updateSelectedCalendar({
-                lookBusyConfig: {
-                  enabled: event.target.checked,
-                  LookBusyPercentage: selectedCalendar.lookBusyConfig?.LookBusyPercentage || 0
-                }
-              })}
-            />
-            Parecer ocupado
-          </label>
+              <label className={pageStyles.editorField}>
+                <span>Buffer después</span>
+                <div className={pageStyles.inlineFieldGroup}>
+                  <input
+                    type="number"
+                    className={styles.input}
+                    value={selectedCalendar.slotBuffer || 0}
+                    onChange={(event) => updateSelectedCalendar({ slotBuffer: parseInt(event.target.value, 10) || 0 })}
+                    min="0"
+                  />
+                  <CustomSelect
+                    value={selectedCalendar.slotBufferUnit || 'mins'}
+                    onChange={(value) => updateSelectedCalendar({ slotBufferUnit: value })}
+                    options={[
+                      { value: 'mins', label: 'Minutos' },
+                      { value: 'hours', label: 'Horas' }
+                    ]}
+                  />
+                </div>
+              </label>
 
-          {selectedCalendar.lookBusyConfig?.enabled && (
-            <label className={pageStyles.lookBusyPercent}>
-              <span>Ocultar</span>
-              <input
-                type="number"
-                className={styles.input}
-                value={selectedCalendar.lookBusyConfig?.LookBusyPercentage || 0}
-                onChange={(event) => updateSelectedCalendar({
-                  lookBusyConfig: {
-                    enabled: true,
-                    LookBusyPercentage: parseInt(event.target.value, 10) || 0
-                  }
-                })}
-                min="0"
-                max="100"
-              />
-              <span>%</span>
-            </label>
-          )}
+              <div className={`${pageStyles.editorField} ${pageStyles.editorFieldLarge}`}>
+                <span>Parecer ocupado</span>
+                <div className={pageStyles.lookBusyRow}>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={selectedCalendar.lookBusyConfig?.enabled || false}
+                      onChange={(event) => updateSelectedCalendar({
+                        lookBusyConfig: {
+                          enabled: event.target.checked,
+                          LookBusyPercentage: selectedCalendar.lookBusyConfig?.LookBusyPercentage || 0
+                        }
+                      })}
+                    />
+                    Activar
+                  </label>
+
+                  {selectedCalendar.lookBusyConfig?.enabled && (
+                    <label className={pageStyles.lookBusyPercent}>
+                      <span>Ocultar</span>
+                      <input
+                        type="number"
+                        className={styles.input}
+                        value={selectedCalendar.lookBusyConfig?.LookBusyPercentage || 0}
+                        onChange={(event) => updateSelectedCalendar({
+                          lookBusyConfig: {
+                            enabled: true,
+                            LookBusyPercentage: parseInt(event.target.value, 10) || 0
+                          }
+                        })}
+                        min="0"
+                        max="100"
+                      />
+                      <span>%</span>
+                    </label>
+                  )}
+                </div>
+              </div>
+            </div>
+          </section>
         </div>
 
         <div className={pageStyles.editorFooter}>
@@ -1212,11 +1247,12 @@ export const CalendarsConfiguration: React.FC = () => {
   const renderCalendarRow = (calendar: CalendarType) => {
     const isAttributed = attributionCalendarIds.includes(calendar.id)
     const isDefault = defaultCalendarId === calendar.id
+    const isExpanded = expandedCalendarId === calendar.id
 
     return (
       <div key={calendar.id} className={pageStyles.calendarItem}>
         <article
-          className={`${pageStyles.calendarRow} ${isDefault ? pageStyles.calendarRowDefault : ''} ${expandedCalendarId === calendar.id ? pageStyles.calendarRowEditing : ''}`}
+          className={`${pageStyles.calendarRow} ${isDefault ? pageStyles.calendarRowDefault : ''} ${isExpanded ? pageStyles.calendarRowEditing : ''}`}
         >
           <div className={pageStyles.calendarIdentity}>
             <span
@@ -1261,54 +1297,66 @@ export const CalendarsConfiguration: React.FC = () => {
             </div>
             <div className={pageStyles.rowActionColumn}>
               <span>Acciones</span>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <button
-                    type="button"
-                    className={pageStyles.moreButton}
-                    aria-label={`Acciones para ${calendar.name}`}
-                  >
-                    <MoreHorizontal size={18} />
-                  </button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className={pageStyles.actionsMenu}>
-                  <DropdownMenuItem
-                    className={pageStyles.menuItem}
-                    disabled={isDefault}
-                    onSelect={() => void handleDefaultCalendarChange(calendar.id)}
-                  >
-                    <Star size={15} />
-                    Convertir en predeterminado
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    className={pageStyles.menuItem}
-                    onSelect={() => handleOpenCalendarEditor(calendar)}
-                  >
-                    <Pencil size={15} />
-                    Editar
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    className={pageStyles.menuItem}
-                    onSelect={() => void handleCopyPublicUrl(calendar)}
-                  >
-                    <Link2 size={15} />
-                    Enlace para compartir
-                  </DropdownMenuItem>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem
-                    className={`${pageStyles.menuItem} ${pageStyles.dangerMenuItem}`}
-                    disabled={deletingCalendarId === calendar.id}
-                    onSelect={() => handleDeleteCalendar(calendar)}
-                  >
-                    {deletingCalendarId === calendar.id ? (
-                      <Loader2 size={15} className={styles.spinIcon} />
-                    ) : (
-                      <Trash2 size={15} />
-                    )}
-                    Eliminar
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
+              <div className={pageStyles.rowActionButtons}>
+                <button
+                  type="button"
+                  className={`${pageStyles.expandButton} ${isExpanded ? pageStyles.expandButtonOpen : ''}`}
+                  onClick={() => handleOpenCalendarEditor(calendar)}
+                  aria-expanded={isExpanded}
+                  aria-label={`${isExpanded ? 'Contraer' : 'Expandir'} configuración de ${calendar.name}`}
+                  title={isExpanded ? 'Contraer configuración' : 'Expandir configuración'}
+                >
+                  <ChevronDown size={18} />
+                </button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button
+                      type="button"
+                      className={pageStyles.moreButton}
+                      aria-label={`Acciones para ${calendar.name}`}
+                    >
+                      <MoreHorizontal size={18} />
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className={pageStyles.actionsMenu}>
+                    <DropdownMenuItem
+                      className={pageStyles.menuItem}
+                      disabled={isDefault}
+                      onSelect={() => void handleDefaultCalendarChange(calendar.id)}
+                    >
+                      <Star size={15} />
+                      Convertir en predeterminado
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      className={pageStyles.menuItem}
+                      onSelect={() => handleOpenCalendarEditor(calendar)}
+                    >
+                      <Pencil size={15} />
+                      Editar
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      className={pageStyles.menuItem}
+                      onSelect={() => void handleCopyPublicUrl(calendar)}
+                    >
+                      <Link2 size={15} />
+                      Enlace para compartir
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      className={`${pageStyles.menuItem} ${pageStyles.dangerMenuItem}`}
+                      disabled={deletingCalendarId === calendar.id}
+                      onSelect={() => handleDeleteCalendar(calendar)}
+                    >
+                      {deletingCalendarId === calendar.id ? (
+                        <Loader2 size={15} className={styles.spinIcon} />
+                      ) : (
+                        <Trash2 size={15} />
+                      )}
+                      Eliminar
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
             </div>
           </div>
         </article>
@@ -1320,11 +1368,14 @@ export const CalendarsConfiguration: React.FC = () => {
   const renderCalendarsTab = () => (
     <div className={pageStyles.tabPanel}>
       <div className={pageStyles.panelToolbar}>
-        <p className={pageStyles.panelCount}>
-          <strong>{calendars.length}</strong> calendario{calendars.length !== 1 ? 's' : ''}
-          {' · '}
-          <strong>{attributionCalendarIds.length}</strong> como conversión
-        </p>
+        <div className={pageStyles.panelSummary}>
+          <strong>Tus calendarios</strong>
+          <span>
+            {calendars.length} calendario{calendars.length !== 1 ? 's' : ''}
+            {' · '}
+            {attributionCalendarIds.length} como conversión
+          </span>
+        </div>
         <div className={pageStyles.toolbarActions}>
           {renderCalendarSourceSelect()}
           <Button variant="ghost" size="small" onClick={handleSelectAllAttribution} disabled={calendars.length === 0}>
