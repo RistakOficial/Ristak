@@ -1234,11 +1234,17 @@ export const CalendarsConfiguration: React.FC = () => {
     const isAttributed = attributionCalendarIds.includes(calendar.id)
     const isDefault = defaultCalendarId === calendar.id
     const isExpanded = expandedCalendarId === calendar.id
+    const handleRowClick = (event: React.MouseEvent<HTMLElement>) => {
+      const target = event.target as HTMLElement
+      if (target.closest('button, a, input, select, textarea, [role="menuitem"]')) return
+      handleOpenCalendarEditor(calendar)
+    }
 
     return (
       <div key={calendar.id} className={pageStyles.calendarItem}>
         <article
           className={`${pageStyles.calendarRow} ${isDefault ? pageStyles.calendarRowDefault : ''} ${isExpanded ? pageStyles.calendarRowEditing : ''}`}
+          onClick={handleRowClick}
         >
           <div className={pageStyles.calendarIdentity}>
             <span
@@ -1265,7 +1271,7 @@ export const CalendarsConfiguration: React.FC = () => {
             </div>
           </div>
 
-          <div className={pageStyles.calendarActions}>
+          <div className={pageStyles.calendarActions} onClick={(event) => event.stopPropagation()}>
             <div className={`${pageStyles.conversionControl} ${isAttributed ? pageStyles.conversionControlActive : ''}`}>
               <span className={`${styles.toggleLabel} ${isAttributed ? styles.toggleLabelActive : ''}`}>
                 Conversión
@@ -1283,66 +1289,54 @@ export const CalendarsConfiguration: React.FC = () => {
             </div>
             <div className={pageStyles.rowActionColumn}>
               <span>Acciones</span>
-              <div className={pageStyles.rowActionButtons}>
-                <button
-                  type="button"
-                  className={`${pageStyles.expandButton} ${isExpanded ? pageStyles.expandButtonOpen : ''}`}
-                  onClick={() => handleOpenCalendarEditor(calendar)}
-                  aria-expanded={isExpanded}
-                  aria-label={`${isExpanded ? 'Contraer' : 'Expandir'} configuración de ${calendar.name}`}
-                  title={isExpanded ? 'Contraer configuración' : 'Expandir configuración'}
-                >
-                  <ChevronDown size={18} />
-                </button>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <button
-                      type="button"
-                      className={pageStyles.moreButton}
-                      aria-label={`Acciones para ${calendar.name}`}
-                    >
-                      <MoreHorizontal size={18} />
-                    </button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className={pageStyles.actionsMenu}>
-                    <DropdownMenuItem
-                      className={pageStyles.menuItem}
-                      disabled={isDefault}
-                      onSelect={() => void handleDefaultCalendarChange(calendar.id)}
-                    >
-                      <Star size={15} />
-                      Convertir en predeterminado
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      className={pageStyles.menuItem}
-                      onSelect={() => handleOpenCalendarEditor(calendar)}
-                    >
-                      <Pencil size={15} />
-                      Editar
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      className={pageStyles.menuItem}
-                      onSelect={() => void handleCopyPublicUrl(calendar)}
-                    >
-                      <Link2 size={15} />
-                      Enlace para compartir
-                    </DropdownMenuItem>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem
-                      className={`${pageStyles.menuItem} ${pageStyles.dangerMenuItem}`}
-                      disabled={deletingCalendarId === calendar.id}
-                      onSelect={() => handleDeleteCalendar(calendar)}
-                    >
-                      {deletingCalendarId === calendar.id ? (
-                        <Loader2 size={15} className={styles.spinIcon} />
-                      ) : (
-                        <Trash2 size={15} />
-                      )}
-                      Eliminar
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </div>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    type="button"
+                    className={pageStyles.moreButton}
+                    aria-label={`Acciones para ${calendar.name}`}
+                  >
+                    <MoreHorizontal size={18} />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className={pageStyles.actionsMenu}>
+                  <DropdownMenuItem
+                    className={pageStyles.menuItem}
+                    disabled={isDefault}
+                    onSelect={() => void handleDefaultCalendarChange(calendar.id)}
+                  >
+                    <Star size={15} />
+                    Convertir en predeterminado
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    className={pageStyles.menuItem}
+                    onSelect={() => handleOpenCalendarEditor(calendar)}
+                  >
+                    <Pencil size={15} />
+                    Editar
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    className={pageStyles.menuItem}
+                    onSelect={() => void handleCopyPublicUrl(calendar)}
+                  >
+                    <Link2 size={15} />
+                    Enlace para compartir
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    className={`${pageStyles.menuItem} ${pageStyles.dangerMenuItem}`}
+                    disabled={deletingCalendarId === calendar.id}
+                    onSelect={() => handleDeleteCalendar(calendar)}
+                  >
+                    {deletingCalendarId === calendar.id ? (
+                      <Loader2 size={15} className={styles.spinIcon} />
+                    ) : (
+                      <Trash2 size={15} />
+                    )}
+                    Eliminar
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
           </div>
         </article>
@@ -1354,20 +1348,12 @@ export const CalendarsConfiguration: React.FC = () => {
   const renderCalendarsTab = () => (
     <div className={pageStyles.tabPanel}>
       <div className={pageStyles.panelToolbar}>
-        <div className={pageStyles.panelSummary}>
-          <strong>Tus calendarios</strong>
-          <span>
-            {calendars.length} calendario{calendars.length !== 1 ? 's' : ''}
-            {' · '}
-            {attributionCalendarIds.length} como conversión
-          </span>
-        </div>
         <div className={pageStyles.toolbarActions}>
-          {renderCalendarSourceSelect()}
           <Button variant="outline" size="small" onClick={() => setShowCreateModal(true)}>
             <Plus size={16} />
             Crear calendario
           </Button>
+          {renderCalendarSourceSelect()}
         </div>
       </div>
 
