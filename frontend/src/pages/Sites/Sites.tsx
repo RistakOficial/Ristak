@@ -3597,6 +3597,7 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
                 aria-label={`Ruta de ${routeEditingSite.name}`}
                 autoFocus
                 disabled={routeSavingId === routeEditingSite.id}
+                placeholder={routeEditingSite.siteType === 'landing_page' ? 'embudo-01' : 'formulario-01'}
                 onFocus={(event) => event.currentTarget.select()}
                 onChange={(event) => setRouteDraft(normalizeRouteEditorInput(event.target.value, domainConfig))}
                 onKeyDown={(event) => {
@@ -3606,6 +3607,9 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
                   }
                 }}
               />
+              <span className={styles.libraryRouteEditHint} aria-hidden="true">
+                <Pencil size={16} />
+              </span>
             </label>
             <div className={styles.libraryRouteActions}>
               <button type="button" disabled={routeSavingId === routeEditingSite.id} onClick={cancelRouteEdit}>Cancelar</button>
