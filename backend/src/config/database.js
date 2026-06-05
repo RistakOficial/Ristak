@@ -545,6 +545,65 @@ async function initTables() {
       // Ignore si ya existe
     }
 
+    // Plantillas internas de WhatsApp. Son locales a Ristak y quedan listas para
+    // conectarse a YCloud sin depender de la estructura remota desde el inicio.
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS whatsapp_template_folders (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        parent_id TEXT,
+        sort_order INTEGER DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (parent_id) REFERENCES whatsapp_template_folders(id) ON DELETE CASCADE
+      )
+    `)
+
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS whatsapp_template_custom_fields (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        field_key TEXT UNIQUE NOT NULL,
+        merge_field TEXT UNIQUE NOT NULL,
+        example TEXT,
+        data_type TEXT DEFAULT 'text',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS whatsapp_message_templates (
+        id TEXT PRIMARY KEY,
+        folder_id TEXT,
+        name TEXT UNIQUE NOT NULL,
+        description TEXT,
+        category TEXT DEFAULT 'utility',
+        language TEXT DEFAULT 'es_MX',
+        status TEXT DEFAULT 'draft',
+        header_enabled INTEGER DEFAULT 0,
+        header_type TEXT DEFAULT 'none',
+        header_text TEXT,
+        header_media_url TEXT,
+        header_location_json TEXT,
+        body_text TEXT NOT NULL,
+        footer_text TEXT,
+        buttons_json TEXT,
+        variables_json TEXT,
+        variable_examples_json TEXT,
+        ycloud_template_id TEXT,
+        ycloud_status TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (folder_id) REFERENCES whatsapp_template_folders(id) ON DELETE SET NULL
+      )
+    `)
+
+    await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_template_folders_parent ON whatsapp_template_folders(parent_id)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_message_templates_folder ON whatsapp_message_templates(folder_id)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_message_templates_status ON whatsapp_message_templates(status)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_template_custom_fields_key ON whatsapp_template_custom_fields(field_key)')
+
     // Tabla de contactos
     await db.run(`
       CREATE TABLE IF NOT EXISTS contacts (

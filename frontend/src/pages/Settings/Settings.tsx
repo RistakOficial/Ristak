@@ -1,6 +1,6 @@
 import React from 'react'
 import { Routes, Route, Navigate, NavLink } from 'react-router-dom'
-import { Send, CreditCard, Activity, Calendar, UserCircle, TrendingDown, Bot, KeyRound, Globe2 } from 'lucide-react'
+import { Send, CreditCard, Activity, Calendar, UserCircle, TrendingDown, Bot, KeyRound, Globe2, FileText } from 'lucide-react'
 import { SiWhatsapp } from 'react-icons/si'
 import { HighLevelIntegration } from './HighLevelIntegration'
 import { Costs } from './Costs'
@@ -13,6 +13,7 @@ import { AccountSettings } from './AccountSettings'
 import { AIAgentSettings } from './AIAgentSettings'
 import { APIAccessSettings } from './APIAccessSettings'
 import { Domains } from './Domains'
+import { MessageTemplates } from './MessageTemplates'
 import { useTheme } from '@/contexts/ThemeContext'
 import styles from './Settings.module.css'
 
@@ -82,6 +83,11 @@ export const Settings: React.FC = () => {
       to: '/settings/account',
       label: 'Cuenta',
       icon: <UserCircle size={18} />
+    },
+    {
+      to: '/settings/templates',
+      label: 'Plantillas',
+      icon: <FileText size={18} />
     }
   ]
 
@@ -128,6 +134,7 @@ export const Settings: React.FC = () => {
               <Route path="ai-agent" element={<AIAgentSettings />} />
               <Route path="api-access" element={<APIAccessSettings />} />
               <Route path="account" element={<AccountSettings />} />
+              <Route path="templates" element={<MessageTemplates />} />
             </Routes>
           </div>
         </section>
