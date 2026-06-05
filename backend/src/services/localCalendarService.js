@@ -101,7 +101,7 @@ export async function getCalendarPublicUrlStatus() {
     return {
       enabled: false,
       domain: '',
-      reason: 'Conecta y verifica el dominio publico general para activar URLs publicas de calendarios.'
+      reason: ''
     }
   }
 
