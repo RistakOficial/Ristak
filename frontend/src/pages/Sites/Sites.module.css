@@ -2283,7 +2283,7 @@
 
 .templateGallery {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr));
   gap: 14px;
 }
 
@@ -5009,7 +5009,7 @@
 }
 
 .containerFocused .templateGallery {
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr));
   align-items: stretch;
 }
 
@@ -5721,4 +5721,20 @@
 
 .pageFrame .containerFocused:has(.builder) {
   margin: 0 auto;
+}
+
+.pageFrame .containerFocused:has(.createPanel):not(:has(.builder)) .sitesShellFocused,
+.pageFrame .containerFocused:has(.createPanel):not(:has(.builder)) .mainSurface,
+.pageFrame .containerFocused:has(.createPanel):not(:has(.builder)) .createPanel,
+.pageFrame .containerFocused:has(.createPanel):not(:has(.builder)) .templateCategoryStack,
+.pageFrame .containerFocused:has(.createPanel):not(:has(.builder)) .templateCategory,
+.pageFrame .containerFocused:has(.createPanel):not(:has(.builder)) .templateGallery,
+.pageFrame .containerFocused:has(.createPanel):not(:has(.builder)) .choiceGrid {
+  width: 100%;
+  max-width: none;
+}
+
+.pageFrame .containerFocused:has(.createPanel):not(:has(.builder)) .templateGallery,
+.pageFrame .containerFocused:has(.createPanel):not(:has(.builder)) .choiceGrid {
+  grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr));
 }

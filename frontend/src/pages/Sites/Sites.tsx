@@ -713,7 +713,7 @@ const getCreateFlowHeaderCopy = (step: CreateFlow) => {
   if (step === 'form-kind') {
     return {
       title: 'Nuevo formulario',
-      subtitle: 'Que tipo de formulario quieres?'
+      subtitle: 'Como quieres iniciar tu formulario?'
     }
   }
 
@@ -2055,8 +2055,16 @@ export const Sites: React.FC = () => {
 
   const handleStartCreateFlow = () => {
     requestLeaveEditor(() => {
+      selectedSiteRef.current = null
       setSelectedSite(null)
       setSelectedBlockId('')
+      setActivePageId(DEFAULT_FUNNEL_PAGE_ID)
+      setDraggingPageId(null)
+      setActiveDragId(null)
+      setPaletteDragging(false)
+      setPaletteDragPayload(null)
+      setPaletteInsertIndex(null)
+      setPaletteSectionTarget(null)
       setCreateFlow(getCreateFlowForSection(section))
       setHasUnsavedChanges(false)
     })
@@ -2064,8 +2072,16 @@ export const Sites: React.FC = () => {
 
   const handleBackToLibrary = () => {
     requestLeaveEditor(() => {
+      selectedSiteRef.current = null
       setSelectedSite(null)
       setSelectedBlockId('')
+      setActivePageId(DEFAULT_FUNNEL_PAGE_ID)
+      setDraggingPageId(null)
+      setActiveDragId(null)
+      setPaletteDragging(false)
+      setPaletteDragPayload(null)
+      setPaletteInsertIndex(null)
+      setPaletteSectionTarget(null)
       setCreateFlow('closed')
       setHasUnsavedChanges(false)
     })
@@ -2294,7 +2310,7 @@ export const Sites: React.FC = () => {
         metaEventName: 'none'
       })
 
-      if (siteType === 'landing_page' && mode === 'blank') {
+      if (mode === 'blank') {
         for (const block of site.blocks || []) {
           site = await sitesService.deleteBlock(site.id, block.id)
         }
@@ -3709,6 +3725,7 @@ type TemplateGalleryCategory = {
   title: string
   description: string
   ids: SiteTemplateId[]
+  siteType?: SiteType
 }
 
 const LANDING_TEMPLATE_CATEGORIES: TemplateGalleryCategory[] = [
@@ -3737,19 +3754,22 @@ const FORM_TEMPLATE_CATEGORIES: TemplateGalleryCategory[] = [
     id: 'capture-forms',
     title: 'Captura rapida',
     description: 'Formularios cortos para pedir datos, cotizar o preparar una llamada.',
-    ids: ['compact', 'quote', 'callback']
+    ids: ['compact', 'quote', 'callback'],
+    siteType: 'standard_form'
   },
   {
     id: 'registration-forms',
     title: 'Registros y cupos',
     description: 'Formularios para eventos, listas de espera, clases, preventas o confirmaciones.',
-    ids: ['event', 'waitlist']
+    ids: ['event', 'waitlist'],
+    siteType: 'standard_form'
   },
   {
     id: 'social-forms',
     title: 'Redes sociales',
     description: 'Formularios pequenos con apariencia nativa de Facebook, Instagram o TikTok.',
-    ids: ['facebook', 'instagram', 'tiktok']
+    ids: ['facebook', 'instagram', 'tiktok'],
+    siteType: 'standard_form'
   }
 ]
 
@@ -3758,19 +3778,22 @@ const INTERACTIVE_TEMPLATE_CATEGORIES: TemplateGalleryCategory[] = [
     id: 'guided',
     title: 'Quiz y formularios guiados',
     description: 'Una pregunta por pantalla para calificar prospectos paso a paso.',
-    ids: ['interactive', 'callback', 'quote']
+    ids: ['interactive', 'callback', 'quote'],
+    siteType: 'interactive_form'
   },
   {
     id: 'guided-registration',
     title: 'Registros paso a paso',
     description: 'Secuencias simples para confirmar interes antes de pedir todos los datos.',
-    ids: ['event', 'waitlist']
+    ids: ['event', 'waitlist'],
+    siteType: 'interactive_form'
   },
   {
     id: 'social-guided',
     title: 'Redes sociales',
     description: 'Quiz con apariencia de plataforma social para mantener el mismo contexto visual.',
-    ids: ['facebook', 'instagram', 'tiktok']
+    ids: ['facebook', 'instagram', 'tiktok'],
+    siteType: 'interactive_form'
   }
 ]
 
@@ -3819,7 +3842,7 @@ const TemplateCard: React.FC<{ id: SiteTemplateId; disabled: boolean; onPick: ()
 const TemplateCategoryGallery: React.FC<{
   categories: TemplateGalleryCategory[]
   disabled: boolean
-  onPick: (id: SiteTemplateId) => void
+  onPick: (id: SiteTemplateId, category: TemplateGalleryCategory) => void
 }> = ({ categories, disabled, onPick }) => (
   <div className={styles.templateCategoryStack}>
     {categories.map(category => (
@@ -3830,7 +3853,7 @@ const TemplateCategoryGallery: React.FC<{
         </div>
         <div className={styles.templateGallery}>
           {category.ids.map(id => (
-            <TemplateCard key={`${category.id}-${id}`} id={id} disabled={disabled} onPick={() => onPick(id)} />
+            <TemplateCard key={`${category.id}-${id}`} id={id} disabled={disabled} onPick={() => onPick(id, category)} />
           ))}
         </div>
       </section>
@@ -3843,16 +3866,16 @@ const CreateFlowPanel: React.FC<CreateFlowPanelProps> = ({ step, creating, onCre
     <section className={styles.createPanel}>
       {step === 'landing-start' && (
         <div className={styles.choiceGrid}>
-          <button type="button" disabled={creating} onClick={() => onAdvance('landing-template')}>
-            <LayoutTemplate size={22} />
-            <strong>Desde plantilla</strong>
-            <p>Elige embudos completos para web, ventas, lanzamientos o redes sociales.</p>
-            <ChevronRight size={18} />
-          </button>
           <button type="button" disabled={creating} onClick={() => onCreate('landing_page', 'blank', 'ristak')}>
             <FileText size={22} />
             <strong>En blanco</strong>
             <p>Canvas limpio para agregar solo los bloques que necesitas.</p>
+            <ChevronRight size={18} />
+          </button>
+          <button type="button" disabled={creating} onClick={() => onAdvance('landing-template')}>
+            <LayoutTemplate size={22} />
+            <strong>Desde plantilla</strong>
+            <p>Elige embudos completos para web, ventas, lanzamientos o redes sociales.</p>
             <ChevronRight size={18} />
           </button>
           <button type="button" disabled={creating} onClick={() => onCreateWithAI('landing')}>
@@ -3874,22 +3897,16 @@ const CreateFlowPanel: React.FC<CreateFlowPanelProps> = ({ step, creating, onCre
 
       {step === 'form-kind' && (
         <div className={styles.choiceGrid}>
+          <button type="button" disabled={creating} onClick={() => onCreate('standard_form', 'blank', 'ristak')}>
+            <FileText size={22} />
+            <strong>En blanco</strong>
+            <p>Formulario limpio para agregar solo los campos que necesitas.</p>
+            <ChevronRight size={18} />
+          </button>
           <button type="button" disabled={creating} onClick={() => onAdvance('form-template')}>
             <FormInput size={22} />
-            <strong>Una sola pagina</strong>
-            <p>Todos los campos en una pagina. Puedes usar estilos de negocio o redes sociales.</p>
-            <ChevronRight size={18} />
-          </button>
-          <button type="button" disabled={creating} onClick={() => onCreate('interactive_form', 'template', 'interactive')}>
-            <MousePointerClick size={22} />
-            <strong>Interactivo</strong>
-            <p>Una pregunta por pantalla, estilo quiz, con saltos y descalificacion.</p>
-            <ChevronRight size={18} />
-          </button>
-          <button type="button" disabled={creating} onClick={() => onAdvance('interactive-template')}>
-            <MousePointerClick size={22} />
-            <strong>Interactivo con plantilla social</strong>
-            <p>Usa el mismo look de Facebook, Instagram o TikTok para hacerlo ver nativo.</p>
+            <strong>Desde plantilla</strong>
+            <p>Elige formularios normales, registros, redes sociales o quiz guiados.</p>
             <ChevronRight size={18} />
           </button>
           <button type="button" disabled={creating} onClick={() => onCreateWithAI('form')}>
@@ -3916,9 +3933,9 @@ const CreateFlowPanel: React.FC<CreateFlowPanelProps> = ({ step, creating, onCre
         <>
           <p className={styles.galleryHint}>Elige un formulario de captura, registro o redes sociales.</p>
           <TemplateCategoryGallery
-            categories={FORM_TEMPLATE_CATEGORIES}
+            categories={[...FORM_TEMPLATE_CATEGORIES, ...INTERACTIVE_TEMPLATE_CATEGORIES]}
             disabled={creating}
-            onPick={(id) => onCreate('standard_form', 'template', id)}
+            onPick={(id, category) => onCreate(category.siteType === 'interactive_form' ? 'interactive_form' : 'standard_form', 'template', id)}
           />
         </>
       )}
