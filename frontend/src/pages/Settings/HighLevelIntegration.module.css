@@ -1936,6 +1936,115 @@ body.dark .switchInput:checked:disabled + .switchSlider:hover {
   gap: 14px;
 }
 
+.gatewayGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  gap: 12px;
+}
+
+.gatewayCard {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 128px;
+  padding: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 8px;
+  background: var(--color-background-primary);
+  color: var(--color-text-primary);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+
+.gatewayCard:hover {
+  border-color: rgba(100, 116, 139, 0.42);
+  background: rgba(148, 163, 184, 0.045);
+}
+
+.gatewayCard:focus-visible {
+  outline: none;
+  border-color: rgba(100, 116, 139, 0.55);
+  box-shadow: 0 0 0 3px rgba(100, 116, 139, 0.14);
+}
+
+.gatewayCardSelected {
+  border-color: rgba(16, 185, 129, 0.38);
+  box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.16);
+}
+
+.gatewayCardHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.gatewayCardName {
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 750;
+  line-height: 1.35;
+  color: var(--color-text-primary);
+}
+
+.gatewayCardDescription {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--color-text-secondary);
+}
+
+.gatewayStatusConnected,
+.gatewayStatusSoon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  min-height: 24px;
+  padding: 0 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 750;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.gatewayStatusConnected {
+  color: var(--color-status-success);
+  background: rgba(16, 185, 129, 0.1);
+  border: 1px solid rgba(16, 185, 129, 0.22);
+}
+
+.gatewayStatusSoon {
+  color: var(--color-text-tertiary);
+  background: rgba(148, 163, 184, 0.09);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+}
+
+.gatewayNotice {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 8px;
+  background: rgba(148, 163, 184, 0.055);
+}
+
+.gatewayNotice h4 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 750;
+  color: var(--color-text-primary);
+}
+
+.gatewayNotice p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--color-text-secondary);
+}
+
 .formGroup,
 .formField,
 .labelField {

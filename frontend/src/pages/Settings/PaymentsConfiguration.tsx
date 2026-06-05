@@ -1,12 +1,57 @@
 import React, { useEffect, useState } from 'react'
 import { Card, Button } from '@/components/common'
-import { CheckCircle, CreditCard, Loader2 } from 'lucide-react'
+import { CheckCircle, Clock, CreditCard, Loader2 } from 'lucide-react'
 import { useNotification } from '@/contexts/NotificationContext'
+import { useHighLevelConnected } from '@/hooks/useHighLevelConnected'
 import styles from './HighLevelIntegration.module.css'
+
+type PaymentGatewayId = 'highlevel' | 'stripe' | 'mercado-libre' | 'clip' | 'conekta' | 'other'
+
+interface PaymentGatewayOption {
+  id: PaymentGatewayId
+  name: string
+  description: string
+  status: 'connected' | 'soon'
+}
+
+const UPCOMING_PAYMENT_GATEWAYS: PaymentGatewayOption[] = [
+  {
+    id: 'stripe',
+    name: 'Stripe',
+    description: 'Para cobrar con tarjeta y links de pago cuando esta conexión esté lista.',
+    status: 'soon'
+  },
+  {
+    id: 'mercado-libre',
+    name: 'Mercado Libre',
+    description: 'Para preparar cobros con Mercado Pago dentro del flujo de Ristak.',
+    status: 'soon'
+  },
+  {
+    id: 'clip',
+    name: 'Clip',
+    description: 'Para ventas con terminal o links de pago conectados a Clip.',
+    status: 'soon'
+  },
+  {
+    id: 'conekta',
+    name: 'Conekta',
+    description: 'Para pagos con tarjeta, efectivo o transferencias cuando se libere.',
+    status: 'soon'
+  },
+  {
+    id: 'other',
+    name: 'Otros',
+    description: 'Para agregar otra pasarela de pago cuando el equipo la tenga disponible.',
+    status: 'soon'
+  }
+]
 
 export const PaymentsConfiguration: React.FC = () => {
   const { showToast } = useNotification()
+  const { connected: highLevelConnected, loading: loadingHighLevelConnection } = useHighLevelConnected()
 
+  const [selectedGateway, setSelectedGateway] = useState<PaymentGatewayId>('stripe')
   const [paymentTitle, setPaymentTitle] = useState('PAGO')
   const [paymentNumberPrefix, setPaymentNumberPrefix] = useState('INV-')
   const [paymentDueDays, setPaymentDueDays] = useState(7)
@@ -17,8 +62,29 @@ export const PaymentsConfiguration: React.FC = () => {
   const [loadingPaymentConfig, setLoadingPaymentConfig] = useState(false)
 
   useEffect(() => {
-    loadPaymentConfig()
-  }, [])
+    if (loadingHighLevelConnection) return
+
+    setSelectedGateway(highLevelConnected ? 'highlevel' : 'stripe')
+
+    if (highLevelConnected) {
+      loadPaymentConfig()
+    }
+  }, [highLevelConnected, loadingHighLevelConnection])
+
+  const gatewayOptions: PaymentGatewayOption[] = highLevelConnected
+    ? [
+      {
+        id: 'highlevel',
+        name: 'GoHighLevel',
+        description: 'Usa la conexión activa para cobros, links, domiciliación y parcialidades.',
+        status: 'connected'
+      },
+      ...UPCOMING_PAYMENT_GATEWAYS
+    ]
+    : UPCOMING_PAYMENT_GATEWAYS
+
+  const selectedGatewayOption = gatewayOptions.find((gateway) => gateway.id === selectedGateway)
+  const showHighLevelSettings = highLevelConnected && selectedGateway === 'highlevel'
 
   const loadPaymentConfig = async () => {
     try {
@@ -61,15 +127,23 @@ export const PaymentsConfiguration: React.FC = () => {
         throw new Error(error.error || 'Error al guardar configuración')
       }
 
-      showToast('success', 'Configuración de pagos guardada exitosamente')
+      showToast('success', 'Configuración guardada', 'Los pagos de GoHighLevel ya usan estos datos.')
       window.dispatchEvent(new CustomEvent('ristak-payment-config-changed', {
         detail: { ghlInvoiceMode }
       }))
       await loadPaymentConfig()
     } catch (error: any) {
-      showToast('error', error.message || 'Error al guardar configuración de pagos')
+      showToast('error', 'No se pudo guardar', error.message || 'Revisa la configuración de pagos.')
     } finally {
       setLoadingPaymentConfig(false)
+    }
+  }
+
+  const handleSelectGateway = (gateway: PaymentGatewayOption) => {
+    setSelectedGateway(gateway.id)
+
+    if (gateway.status === 'soon') {
+      showToast('info', 'Próximamente', `${gateway.name} todavía no está disponible para conectar.`)
     }
   }
 
@@ -85,154 +159,228 @@ export const PaymentsConfiguration: React.FC = () => {
               <div>
                 <h2 className={styles.pageTitle}>Pagos</h2>
                 <p className={styles.pageSubtitle}>
-                  Ristak usa GoHighLevel como fuente de cobros, links, domiciliación y parcialidades.
+                  Elige qué pasarela de pago usará Ristak para cobrar y dar seguimiento a tus pagos.
                 </p>
               </div>
             </div>
             <div className={styles.headerRight}>
-              <div className={styles.statusConnected}>
-                <CheckCircle size={16} />
-                <span>Plantilla activa</span>
-              </div>
+              {loadingHighLevelConnection ? (
+                <div className={styles.statusWarning}>
+                  <Loader2 size={16} className={styles.spinIcon} />
+                  <span>Revisando conexión</span>
+                </div>
+              ) : highLevelConnected ? (
+                <div className={styles.statusConnected}>
+                  <CheckCircle size={16} />
+                  <span>GoHighLevel conectado</span>
+                </div>
+              ) : (
+                <div className={styles.statusDisconnected}>
+                  <Clock size={16} />
+                  <span>Pasarela pendiente</span>
+                </div>
+              )}
             </div>
           </div>
         </div>
 
         <div className={styles.section}>
           <div className={styles.sectionHeader}>
-            <h3 className={styles.sectionTitle}>GoHighLevel Invoices</h3>
+            <div>
+              <h3 className={styles.sectionTitle}>
+                {highLevelConnected ? 'Pasarela para cobrar' : 'Conecta tu pasarela de pago'}
+              </h3>
+              <p className={styles.sectionDescription}>
+                {highLevelConnected
+                  ? 'Selecciona cuál conexión debe usar Ristak. Las nuevas pasarelas se activarán cuando estén listas.'
+                  : 'Elige la opción que quieres usar. Por ahora están en lista de espera y aparecerán como disponibles cuando se liberen.'}
+              </p>
+            </div>
           </div>
-          <p className={styles.sectionDescription} style={{ marginBottom: '24px' }}>
-            Personaliza cómo se ven tus pagos y documentos
-          </p>
 
-          <div className={styles.sectionContent}>
-            <div className={styles.formField}>
-              <label className={styles.label}>Modo de GoHighLevel Invoices</label>
-              <div className={styles.toggleContainer}>
-                <span className={`${styles.toggleLabel} ${ghlInvoiceMode === 'test' ? styles.toggleLabelActive : ''}`}>
-                  Prueba
-                </span>
+          <div className={styles.gatewayGrid}>
+            {gatewayOptions.map((gateway) => {
+              const isSelected = selectedGateway === gateway.id
+              const isConnected = gateway.status === 'connected'
+
+              return (
                 <button
+                  key={gateway.id}
                   type="button"
-                  onClick={() => setGhlInvoiceMode(ghlInvoiceMode === 'live' ? 'test' : 'live')}
-                  className={`${styles.toggle} ${ghlInvoiceMode === 'live' ? styles.toggleActive : ''}`}
-                  disabled={loadingPaymentConfig}
-                  aria-pressed={ghlInvoiceMode === 'live'}
-                  aria-label="Cambiar modo de GoHighLevel invoices"
+                  className={`${styles.gatewayCard} ${isSelected ? styles.gatewayCardSelected : ''}`}
+                  onClick={() => handleSelectGateway(gateway)}
+                  aria-pressed={isSelected}
                 >
-                  <span className={styles.toggleThumb} />
+                  <span className={styles.gatewayCardHeader}>
+                    <span className={styles.gatewayCardName}>{gateway.name}</span>
+                    <span className={isConnected ? styles.gatewayStatusConnected : styles.gatewayStatusSoon}>
+                      {isConnected ? 'Conectado' : 'Próximamente'}
+                    </span>
+                  </span>
+                  <span className={styles.gatewayCardDescription}>{gateway.description}</span>
                 </button>
-                <span className={`${styles.toggleLabel} ${ghlInvoiceMode === 'live' ? styles.toggleLabelActive : ''}`}>
-                  En vivo
-                </span>
+              )
+            })}
+          </div>
+
+          {!loadingHighLevelConnection && !highLevelConnected && (
+            <div className={styles.gatewayNotice}>
+              <h4>Primero conecta una pasarela</h4>
+              <p>
+                Cuando una pasarela esté disponible, aquí podrás activarla y Ristak mostrará sus ajustes. Mientras tanto no se muestran opciones de GoHighLevel porque esa conexión no está activa.
+              </p>
+            </div>
+          )}
+
+          {selectedGatewayOption?.status === 'soon' && (
+            <div className={styles.gatewayNotice}>
+              <h4>{selectedGatewayOption.name} estará disponible próximamente</h4>
+              <p>
+                Esta opción todavía no cobra ni guarda datos reales. La dejamos visible para que elijas el camino que quieres usar cuando se libere.
+              </p>
+            </div>
+          )}
+
+          {showHighLevelSettings && (
+            <>
+              <div className={styles.sectionHeader}>
+                <div>
+                  <h3 className={styles.sectionTitle}>GoHighLevel Invoices</h3>
+                  <p className={styles.sectionDescription}>
+                    Personaliza cómo se ven tus pagos y documentos de GoHighLevel.
+                  </p>
+                </div>
               </div>
-              <p className={styles.hint}>
-                En modo prueba, los invoices, links y parcialidades de GoHighLevel se crean con liveMode desactivado para simular pagos.
-              </p>
-            </div>
 
-            <div className={styles.formField}>
-              <label className={styles.label}>Título del Documento</label>
-              <input
-                type="text"
-                value={paymentTitle}
-                onChange={(e) => setPaymentTitle(e.target.value)}
-                placeholder="ej: PAGO, FACTURA, INVOICE"
-                className={styles.input}
-              />
-              <p className={styles.hint}>
-                Este título aparecerá en la parte superior del documento
-              </p>
-            </div>
+              <div className={styles.sectionContent}>
+                <div className={styles.formField}>
+                  <label className={styles.label}>Modo de GoHighLevel Invoices</label>
+                  <div className={styles.toggleContainer}>
+                    <span className={`${styles.toggleLabel} ${ghlInvoiceMode === 'test' ? styles.toggleLabelActive : ''}`}>
+                      Prueba
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setGhlInvoiceMode(ghlInvoiceMode === 'live' ? 'test' : 'live')}
+                      className={`${styles.toggle} ${ghlInvoiceMode === 'live' ? styles.toggleActive : ''}`}
+                      disabled={loadingPaymentConfig}
+                      aria-pressed={ghlInvoiceMode === 'live'}
+                      aria-label="Cambiar modo de GoHighLevel invoices"
+                    >
+                      <span className={styles.toggleThumb} />
+                    </button>
+                    <span className={`${styles.toggleLabel} ${ghlInvoiceMode === 'live' ? styles.toggleLabelActive : ''}`}>
+                      En vivo
+                    </span>
+                  </div>
+                  <p className={styles.hint}>
+                    En modo prueba, los cobros, links y parcialidades se crean para simular pagos sin afectar ventas reales.
+                  </p>
+                </div>
 
-            <div className={styles.formField}>
-              <label className={styles.label}>Prefijo de Número de Pago</label>
-              <input
-                type="text"
-                value={paymentNumberPrefix}
-                onChange={(e) => setPaymentNumberPrefix(e.target.value)}
-                placeholder="ej: INV-, PAY-, FACT-"
-                className={styles.input}
-              />
-              <p className={styles.hint}>
-                Prefijo que se agregará antes del número de pago
-              </p>
-            </div>
+                <div className={styles.formField}>
+                  <label className={styles.label}>Título del Documento</label>
+                  <input
+                    type="text"
+                    value={paymentTitle}
+                    onChange={(e) => setPaymentTitle(e.target.value)}
+                    placeholder="ej: PAGO, FACTURA, INVOICE"
+                    className={styles.input}
+                  />
+                  <p className={styles.hint}>
+                    Este título aparecerá en la parte superior del documento
+                  </p>
+                </div>
 
-            <div className={styles.formField}>
-              <label className={styles.label}>Días para Vencimiento</label>
-              <input
-                type="number"
-                min="1"
-                value={paymentDueDays}
-                onChange={(e) => setPaymentDueDays(parseInt(e.target.value) || 7)}
-                className={styles.input}
-              />
-              <p className={styles.hint}>
-                Número de días desde la fecha de emisión hasta el vencimiento
-              </p>
-            </div>
+                <div className={styles.formField}>
+                  <label className={styles.label}>Prefijo de Número de Pago</label>
+                  <input
+                    type="text"
+                    value={paymentNumberPrefix}
+                    onChange={(e) => setPaymentNumberPrefix(e.target.value)}
+                    placeholder="ej: INV-, PAY-, FACT-"
+                    className={styles.input}
+                  />
+                  <p className={styles.hint}>
+                    Prefijo que se agregará antes del número de pago
+                  </p>
+                </div>
 
-            <div className={styles.formField}>
-              <label className={styles.label}>Términos y Condiciones</label>
-              <textarea
-                value={paymentTermsNotes}
-                onChange={(e) => setPaymentTermsNotes(e.target.value)}
-                placeholder="Escribe tus términos y condiciones aquí..."
-                className={styles.input}
-                style={{ minHeight: '120px', resize: 'vertical' }}
-              />
-              <p className={styles.hint}>
-                Estos términos aparecerán al final del documento de pago
-              </p>
-            </div>
+                <div className={styles.formField}>
+                  <label className={styles.label}>Días para Vencimiento</label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={paymentDueDays}
+                    onChange={(e) => setPaymentDueDays(parseInt(e.target.value) || 7)}
+                    className={styles.input}
+                  />
+                  <p className={styles.hint}>
+                    Número de días desde la fecha de emisión hasta el vencimiento
+                  </p>
+                </div>
 
-            <div className={styles.formField}>
-              <label className={styles.label}>URL con Información para Transferencias</label>
-              <input
-                type="url"
-                value={transferInfoUrl}
-                onChange={(e) => setTransferInfoUrl(e.target.value)}
-                placeholder="ej: https://tu-sitio.com/como-transferir"
-                className={styles.input}
-              />
-              <p className={styles.hint}>
-                Este enlace aparecerá en el registro de pagos manuales para que el cajero lo copie y envíe al cliente
-              </p>
-            </div>
+                <div className={styles.formField}>
+                  <label className={styles.label}>Términos y Condiciones</label>
+                  <textarea
+                    value={paymentTermsNotes}
+                    onChange={(e) => setPaymentTermsNotes(e.target.value)}
+                    placeholder="Escribe tus términos y condiciones aquí..."
+                    className={styles.input}
+                    style={{ minHeight: '120px', resize: 'vertical' }}
+                  />
+                  <p className={styles.hint}>
+                    Estos términos aparecerán al final del documento de pago
+                  </p>
+                </div>
 
-            <div className={styles.formField}>
-              <label className={styles.label}>Monto para Domiciliar Tarjeta (MXN)</label>
-              <input
-                type="number"
-                min="1"
-                step="0.01"
-                value={cardSetupAmount}
-                onChange={(e) => setCardSetupAmount(Number(e.target.value) || 25)}
-                className={styles.input}
-              />
-              <p className={styles.hint}>
-                Se cobra solo cuando hace falta guardar o autorizar una tarjeta antes de activar parcialidades automáticas
-              </p>
-            </div>
-          </div>
+                <div className={styles.formField}>
+                  <label className={styles.label}>URL con Información para Transferencias</label>
+                  <input
+                    type="url"
+                    value={transferInfoUrl}
+                    onChange={(e) => setTransferInfoUrl(e.target.value)}
+                    placeholder="ej: https://tu-sitio.com/como-transferir"
+                    className={styles.input}
+                  />
+                  <p className={styles.hint}>
+                    Este enlace aparecerá en el registro de pagos manuales para que el cajero lo copie y envíe al cliente
+                  </p>
+                </div>
 
-          <div className={styles.actions}>
-            <Button
-              onClick={handleSavePaymentConfig}
-              disabled={loadingPaymentConfig}
-            >
-              {loadingPaymentConfig ? (
-                <>
-                  <Loader2 size={18} className={styles.spinIcon} />
-                  Guardando...
-                </>
-              ) : (
-                'Guardar Configuración de Pagos'
-              )}
-            </Button>
-          </div>
+                <div className={styles.formField}>
+                  <label className={styles.label}>Monto para Domiciliar Tarjeta (MXN)</label>
+                  <input
+                    type="number"
+                    min="1"
+                    step="0.01"
+                    value={cardSetupAmount}
+                    onChange={(e) => setCardSetupAmount(Number(e.target.value) || 25)}
+                    className={styles.input}
+                  />
+                  <p className={styles.hint}>
+                    Se cobra solo cuando hace falta guardar o autorizar una tarjeta antes de activar parcialidades automáticas
+                  </p>
+                </div>
+              </div>
+
+              <div className={styles.actions}>
+                <Button
+                  onClick={handleSavePaymentConfig}
+                  disabled={loadingPaymentConfig}
+                >
+                  {loadingPaymentConfig ? (
+                    <>
+                      <Loader2 size={18} className={styles.spinIcon} />
+                      Guardando...
+                    </>
+                  ) : (
+                    'Guardar configuración de GoHighLevel'
+                  )}
+                </Button>
+              </div>
+            </>
+          )}
         </div>
       </Card>
     </div>
