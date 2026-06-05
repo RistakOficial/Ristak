@@ -3003,7 +3003,7 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
         </button>
 
         {sites.map(site => {
-          const publicUrl = buildPublicUrl(site, domainConfig)
+          const siteKindLabel = isLanding(site) ? 'embudo' : 'formulario'
 
           return (
             <article
@@ -3020,11 +3020,34 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
               }}
             >
               <div className={styles.libraryCardPreview}>
-                <div className={styles.libraryBrowserDots} aria-hidden="true">
-                  <span />
-                  <span />
-                  <span />
-                </div>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button
+                      type="button"
+                      className={styles.libraryCardMenuButton}
+                      aria-label={`Acciones para ${site.name}`}
+                      onPointerDown={(event) => event.stopPropagation()}
+                      onClick={(event) => event.stopPropagation()}
+                      onKeyDown={(event) => event.stopPropagation()}
+                    >
+                      <MoreVertical size={17} />
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" sideOffset={6} className={styles.pageMenu}>
+                    <DropdownMenuItem onSelect={() => onEdit(site.id)}>
+                      <Pencil size={15} />
+                      Editar {siteKindLabel}
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onSelect={() => onConfigureDomain(site.id)}>
+                      <Settings2 size={15} />
+                      Cambiar ruta
+                    </DropdownMenuItem>
+                    <DropdownMenuItem className={styles.pageMenuDanger} onSelect={() => onDelete(site)}>
+                      <Trash2 size={15} />
+                      Eliminar {siteKindLabel}
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
                 <LibrarySitePreview site={site} forms={forms} calendars={calendars} />
                 <span className={styles.libraryPreviewType}>{getSiteTypeLabel(site)}</span>
               </div>
@@ -3035,51 +3058,6 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
                   <span className={`${styles.statusPill} ${getStatusClass(site, domainConfig)}`}>{getStatusLabel(site, domainConfig)}</span>
                 </div>
                 <span className={styles.siteDomain}>{getPublicRouteLabel(site, domainConfig)}</span>
-              </div>
-
-              <div className={styles.libraryCardActions} aria-label={`Acciones para ${site.name}`}>
-                <button
-                  type="button"
-                  onClick={(event) => {
-                    event.stopPropagation()
-                    onEdit(site.id)
-                  }}
-                >
-                  <Pencil size={15} />
-                  Editar
-                </button>
-                {publicUrl ? (
-                  <a
-                    href={publicUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    onClick={(event) => event.stopPropagation()}
-                  >
-                    <ExternalLink size={15} />
-                    Abrir
-                  </a>
-                ) : null}
-                <button
-                  type="button"
-                  onClick={(event) => {
-                    event.stopPropagation()
-                    onConfigureDomain(site.id)
-                  }}
-                >
-                  <Settings2 size={15} />
-                  Ruta
-                </button>
-                <button
-                  type="button"
-                  className={styles.libraryDangerAction}
-                  onClick={(event) => {
-                    event.stopPropagation()
-                    onDelete(site)
-                  }}
-                >
-                  <Trash2 size={15} />
-                  Eliminar
-                </button>
               </div>
             </article>
           )

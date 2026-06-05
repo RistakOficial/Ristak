@@ -458,21 +458,6 @@
   padding: 11px;
 }
 
-.libraryBrowserDots {
-  position: relative;
-  z-index: 2;
-  display: flex;
-  gap: 5px;
-  margin-bottom: 9px;
-}
-
-.libraryBrowserDots span {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: rgba(148, 163, 184, 0.5);
-}
-
 .libraryPreviewViewport {
   position: absolute;
   inset: 28px 10px 10px;
@@ -559,48 +544,32 @@
   white-space: nowrap;
 }
 
-.libraryCardActions {
+.libraryCardMenuButton {
   position: absolute;
-  inset: auto 10px 10px;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  opacity: 0;
-  transform: translateY(6px);
-  transition: opacity 160ms ease, transform 160ms ease;
-}
-
-.libraryCard:hover .libraryCardActions,
-.libraryCard:focus-within .libraryCardActions {
-  opacity: 1;
-  transform: translateY(0);
-}
-
-.libraryCardActions button,
-.libraryCardActions a {
-  min-height: 32px;
+  top: 10px;
+  right: 10px;
+  z-index: 4;
+  width: 34px;
+  height: 34px;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  justify-content: center;
   border: 1px solid rgba(148, 163, 184, 0.22);
   border-radius: 8px;
-  background: color-mix(in srgb, var(--color-background-secondary) 92%, #000 8%);
-  color: var(--color-text-primary);
-  padding: 0 9px;
+  background: color-mix(in srgb, var(--color-background-primary) 88%, transparent);
+  color: var(--color-text-secondary);
+  padding: 0;
   font: inherit;
-  font-size: 0.78rem;
-  font-weight: 850;
-  text-decoration: none;
-  box-shadow: 0 10px 28px -18px rgba(0, 0, 0, 0.75);
+  cursor: pointer;
+  backdrop-filter: blur(10px);
+  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
 }
 
-.libraryCardActions button:hover,
-.libraryCardActions a:hover {
-  background: color-mix(in srgb, var(--color-background-secondary) 84%, #fff 16%);
-}
-
-.libraryCardActions .libraryDangerAction {
-  color: var(--badge-danger-text, #fca5a5);
+.libraryCardMenuButton:hover,
+.libraryCardMenuButton[data-state="open"] {
+  border-color: rgba(148, 163, 184, 0.42);
+  background: var(--color-background-secondary);
+  color: var(--color-text-primary);
 }
 
 .trackingSummary {
@@ -1841,13 +1810,6 @@
 
   .libraryCard {
     grid-template-rows: 118px auto;
-  }
-
-  .libraryCardActions {
-    position: static;
-    padding: 0 13px 13px;
-    opacity: 1;
-    transform: none;
   }
 
   .paletteItems {
