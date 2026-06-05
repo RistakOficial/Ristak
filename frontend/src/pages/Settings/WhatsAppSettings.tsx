@@ -1,10 +1,21 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, ArrowLeft, CheckCircle, Cloud, ExternalLink, FileText, KeyRound, RefreshCw, Send, ShieldCheck, Smartphone, Unplug } from 'lucide-react'
+import React, { useEffect, useMemo, useState } from 'react'
+import {
+  AlertTriangle,
+  CheckCircle,
+  Cloud,
+  ExternalLink,
+  FileText,
+  KeyRound,
+  RefreshCw,
+  ShieldCheck,
+  Smartphone,
+  Unplug,
+  Wallet
+} from 'lucide-react'
 import { SiWhatsapp } from 'react-icons/si'
 import { Button } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
-import { WhatsAppApiAlert, WhatsAppApiPhoneNumber, WhatsAppApiStatus, WhatsAppApiTemplate, whatsappApiService } from '@/services/whatsappApiService'
-import { WhatsAppWebLog, WhatsAppWebLogs, WhatsAppWebStatus, whatsappWebService } from '@/services/whatsappWebService'
+import { WhatsAppApiAlert, WhatsAppApiPhoneNumber, WhatsAppApiStatus, whatsappApiService } from '@/services/whatsappApiService'
 import { MessageTemplates } from './MessageTemplates'
 import styles from './WhatsAppSettings.module.css'
 
@@ -12,19 +23,12 @@ type BusinessProfile = {
   businessName?: string
   name?: string
   verifiedName?: string
-  description?: string
-  about?: string
-  email?: string
   profilePictureUrl?: string
-  vertical?: string
-  website?: string | string[]
-  websites?: string[]
   category?: string
 }
 
-type WhatsAppChannel = 'api' | 'web'
+type WhatsAppSection = 'connection' | 'templates'
 
-const CONNECTION_FLOW_TIMEOUT_MS = 120_000
 const YCLOUD_REGISTER_URL = 'https://www.ycloud.com/console/#/entry/register?'
 
 function parseJson<T>(value?: string | null): T | null {
@@ -36,16 +40,10 @@ function parseJson<T>(value?: string | null): T | null {
   }
 }
 
-function formatLogDate(value?: string | null) {
-  if (!value) return ''
-  const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString()
-}
-
 function formatDateTime(value?: string | null) {
-  if (!value) return ''
+  if (!value) return 'Pendiente'
   const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString()
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString('es-MX')
 }
 
 function formatMetric(value?: number | null) {
@@ -70,14 +68,8 @@ function getPhoneLabel(phone: WhatsAppApiPhoneNumber) {
   return phone.verified_name ? `${number} · ${phone.verified_name}` : number
 }
 
-function getTemplateLabel(template: WhatsAppApiTemplate) {
-  return `${template.name} · ${template.language}`
-}
-
-function getTemplateVariablesCount(template?: WhatsAppApiTemplate | null) {
-  if (!template?.components?.length) return 0
-  const matches = JSON.stringify(template.components).match(/{{\s*\d+\s*}}/g)
-  return matches ? new Set(matches).size : 0
+function getPhoneProfile(phone?: WhatsAppApiPhoneNumber | null) {
+  return parseJson<BusinessProfile>(phone?.business_profile_json)
 }
 
 function getAlertClass(alert: WhatsAppApiAlert) {
@@ -86,43 +78,9 @@ function getAlertClass(alert: WhatsAppApiAlert) {
   return styles.apiAlertInfo
 }
 
-function getTemplateStatusClass(template: WhatsAppApiTemplate) {
-  if (template.status === 'APPROVED') return styles.templateStatusApproved
-  if (template.status === 'PENDING' || template.status === 'IN_APPEAL') return styles.templateStatusPending
-  return styles.templateStatusBlocked
-}
-
-function renderLog(log: WhatsAppWebLog) {
-  return (
-    <div key={log.id} className={styles.logItem}>
-      <div>{formatLogDate(log.message_timestamp || log.created_at)}</div>
-      <div>{log.direction || ''} · {log.message_type || ''}</div>
-      <div>{log.phone || ''} {log.push_name ? `· ${log.push_name}` : ''}</div>
-      <div>{log.message_text || '(sin texto)'}</div>
-      <div>contact_id: {log.contact_id || ''}</div>
-      <div>remote_jid: {log.remote_jid || ''}</div>
-      <div>source_id: {log.detected_source_id || ''}</div>
-      <div>ctwa: {log.detected_ctwa_clid || ''}</div>
-      <div>url: {log.detected_source_url || ''}</div>
-      <div>headline: {log.detected_headline || ''}</div>
-    </div>
-  )
-}
-
 export const WhatsAppSettings: React.FC = () => {
   const { showToast, showConfirm } = useNotification()
-  const [activeChannel, setActiveChannel] = useState<WhatsAppChannel>('api')
-
-  const [status, setStatus] = useState<WhatsAppWebStatus | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [disconnecting, setDisconnecting] = useState(false)
-  const [connecting, setConnecting] = useState(false)
-  const [qrRequested, setQrRequested] = useState(false)
-  const [manualDisconnected, setManualDisconnected] = useState(false)
-  const [showLogs, setShowLogs] = useState(false)
-  const [logs, setLogs] = useState<WhatsAppWebLogs | null>(null)
-  const [logsLoading, setLogsLoading] = useState(false)
-
+  const [activeSection, setActiveSection] = useState<WhatsAppSection>('connection')
   const [apiStatus, setApiStatus] = useState<WhatsAppApiStatus | null>(null)
   const [apiLoading, setApiLoading] = useState(true)
   const [apiConnecting, setApiConnecting] = useState(false)
@@ -133,83 +91,26 @@ export const WhatsAppSettings: React.FC = () => {
   const [discoveredApiPhones, setDiscoveredApiPhones] = useState<WhatsAppApiPhoneNumber[]>([])
   const [apiPhoneLookupLoading, setApiPhoneLookupLoading] = useState(false)
   const [apiPhoneLookupAttempted, setApiPhoneLookupAttempted] = useState(false)
-  const [selectedTemplateId, setSelectedTemplateId] = useState('')
-  const [templateTo, setTemplateTo] = useState('')
-  const [templateVariables, setTemplateVariables] = useState('[]')
-  const [templateSending, setTemplateSending] = useState(false)
 
-  const requestInFlight = useRef(false)
-  const connectionStartedAt = useRef<number | null>(null)
-
-  const session = status?.session
-  const isConnected = session?.status === 'connected'
-  const businessProfile = useMemo(
-    () => parseJson<BusinessProfile>(session?.business_profile_json),
-    [session?.business_profile_json]
-  )
-  const displayName = session?.push_name ||
-    businessProfile?.businessName ||
-    businessProfile?.name ||
-    'WhatsApp Business'
-  const profileImage = session?.profile_picture_url
-  const showQr = qrRequested && !isConnected && Boolean(session?.qr_image) && !manualDisconnected
-  const isWaitingForQr = connecting && !isConnected && !showQr && !manualDisconnected
+  const apiConnected = Boolean(apiStatus?.connected)
 
   const availableApiPhones = useMemo(() => {
     return apiStatus?.phoneNumbers.length ? apiStatus.phoneNumbers : discoveredApiPhones
   }, [apiStatus?.phoneNumbers, discoveredApiPhones])
 
   const selectedPhone = useMemo(() => {
-    return availableApiPhones.find(phone => phone.id === selectedPhoneId) || null
-  }, [availableApiPhones, selectedPhoneId])
+    return availableApiPhones.find(phone => phone.id === selectedPhoneId) || apiStatus?.selectedPhone || null
+  }, [apiStatus?.selectedPhone, availableApiPhones, selectedPhoneId])
 
-  const apiTemplates = apiStatus?.templates?.items || []
-  const approvedTemplates = useMemo(() => {
-    return apiTemplates.filter(template => template.status === 'APPROVED')
-  }, [apiTemplates])
-  const selectedTemplate = useMemo(() => {
-    return apiTemplates.find(template => template.id === selectedTemplateId) || approvedTemplates[0] || apiTemplates[0] || null
-  }, [apiTemplates, approvedTemplates, selectedTemplateId])
-  const selectedTemplateVariablesCount = getTemplateVariablesCount(selectedTemplate)
-  const apiConnected = Boolean(apiStatus?.connected)
   const hasApiCredential = Boolean(apiKey.trim() || apiStatus?.credentials.hasApiKey)
   const canLookupApiPhones = hasApiCredential
   const canSubmitApi = hasApiCredential &&
     (apiConnected || (availableApiPhones.length > 0 && Boolean(selectedPhoneId)))
 
-  const isConnectionFlowFresh = () => {
-    return Boolean(connectionStartedAt.current && Date.now() - connectionStartedAt.current < CONNECTION_FLOW_TIMEOUT_MS)
-  }
-
-  const loadStatus = async () => {
-    const nextStatus = await whatsappWebService.getStatus()
-    setStatus(nextStatus)
-    const currentStatus = nextStatus.session?.status
-
-    if (currentStatus === 'connected') {
-      setConnecting(false)
-      setQrRequested(false)
-      connectionStartedAt.current = null
-    } else if (currentStatus === 'qr') {
-      setConnecting(false)
-      setQrRequested(true)
-    } else if (currentStatus === 'connecting' || currentStatus === 'reconnecting') {
-      if (qrRequested && isConnectionFlowFresh()) setConnecting(true)
-    } else if (currentStatus === 'disconnected') {
-      if (qrRequested && isConnectionFlowFresh()) {
-        setConnecting(true)
-      } else {
-        setConnecting(false)
-        connectionStartedAt.current = null
-      }
-    }
-
-    return nextStatus
-  }
-
   const loadApiStatus = async () => {
     const nextStatus = await whatsappApiService.getStatus()
     setApiStatus(nextStatus)
+
     if (nextStatus.phoneNumbers.length) {
       setDiscoveredApiPhones([])
       setApiPhoneLookupAttempted(false)
@@ -221,47 +122,30 @@ export const WhatsAppSettings: React.FC = () => {
       ''
 
     setSelectedPhoneId(preferredPhoneId)
-    setSelectedTemplateId((current) => {
-      const templates = nextStatus.templates?.items || []
-      if (current && templates.some(template => template.id === current)) return current
-      return templates.find(template => template.status === 'APPROVED')?.id || templates[0]?.id || ''
-    })
-
     return nextStatus
   }
 
-  const startConnection = async () => {
-    if (requestInFlight.current) return
-    requestInFlight.current = true
-    setManualDisconnected(false)
-    setConnecting(true)
-    setQrRequested(true)
-    connectionStartedAt.current = Date.now()
+  useEffect(() => {
+    let cancelled = false
 
-    try {
-      const nextStatus = await whatsappWebService.connect({ reset: true })
-      setStatus(nextStatus)
-      const currentStatus = nextStatus.session?.status
-      if (currentStatus === 'connected') {
-        setConnecting(false)
-        setQrRequested(false)
-        connectionStartedAt.current = null
-      } else if (currentStatus === 'qr') {
-        setConnecting(false)
-        setQrRequested(true)
-      } else if (currentStatus === 'disconnected' && !isConnectionFlowFresh()) {
-        setConnecting(false)
-        connectionStartedAt.current = null
+    const bootstrap = async () => {
+      try {
+        await loadApiStatus()
+      } catch (error) {
+        if (!cancelled) {
+          showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo leer WhatsApp Business')
+        }
+      } finally {
+        if (!cancelled) setApiLoading(false)
       }
-    } catch (error) {
-      setConnecting(false)
-      connectionStartedAt.current = null
-      showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo generar el QR')
-    } finally {
-      requestInFlight.current = false
-      setLoading(false)
     }
-  }
+
+    bootstrap()
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const lookupApiPhoneNumbers = async () => {
     if (!canLookupApiPhones || apiPhoneLookupLoading) return
@@ -278,7 +162,7 @@ export const WhatsAppSettings: React.FC = () => {
       })
 
       if (phones.length) {
-        showToast('success', 'Numeros encontrados', 'Elige el numero de WhatsApp Business que vas a usar')
+        showToast('success', 'Numeros encontrados', 'Elige el numero que enviara mensajes')
       } else {
         showToast('warning', 'Sin numeros', 'YCloud todavia no muestra numeros conectados en esta cuenta')
       }
@@ -308,9 +192,9 @@ export const WhatsAppSettings: React.FC = () => {
       setApiKey('')
 
       if (nextStatus.requiresPhoneSelection) {
-        showToast('warning', 'WhatsApp Business conectado', 'Selecciona el numero emisor para terminar')
+        showToast('warning', 'Falta elegir numero', 'Selecciona el numero que enviara mensajes')
       } else {
-        showToast('success', 'WhatsApp Business conectado', 'YCloud y tu numero quedaron listos')
+        showToast('success', 'WhatsApp conectado', 'Tu numero quedo listo para enviar mensajes')
       }
     } catch (error) {
       showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo conectar WhatsApp Business')
@@ -325,97 +209,18 @@ export const WhatsAppSettings: React.FC = () => {
     try {
       const nextStatus = await whatsappApiService.refresh()
       setApiStatus(nextStatus)
-      showToast('success', 'Actualizado', 'WhatsApp Business se sincronizo con YCloud')
+      showToast('success', 'Actualizado', 'WhatsApp se sincronizo con YCloud')
     } catch (error) {
-      showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo actualizar WhatsApp Business')
+      showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo actualizar WhatsApp')
     } finally {
       setApiRefreshing(false)
     }
   }
 
-  useEffect(() => {
-    let cancelled = false
-
-    const bootstrap = async () => {
-      try {
-        await Promise.all([
-          loadStatus(),
-          loadApiStatus()
-        ])
-        if (cancelled) return
-      } catch (error) {
-        if (!cancelled) {
-          showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo leer WhatsApp')
-        }
-      } finally {
-        if (!cancelled) {
-          setLoading(false)
-          setApiLoading(false)
-        }
-      }
-    }
-
-    bootstrap()
-
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
-  useEffect(() => {
-    if (isConnected || manualDisconnected || !qrRequested) return
-
-    const interval = window.setInterval(async () => {
-      try {
-        await loadStatus()
-      } catch {
-        // El siguiente ciclo reintenta.
-      }
-    }, 2500)
-
-    return () => window.clearInterval(interval)
-  }, [isConnected, manualDisconnected, qrRequested])
-
-  useEffect(() => {
-    if (!apiStatus) return
-    const templates = apiStatus.templates?.items || []
-    if (!templates.length) {
-      if (selectedTemplateId) setSelectedTemplateId('')
-      return
-    }
-    if (selectedTemplateId && templates.some(template => template.id === selectedTemplateId)) return
-    setSelectedTemplateId(templates.find(template => template.status === 'APPROVED')?.id || templates[0]?.id || '')
-  }, [apiStatus, selectedTemplateId])
-
-  const confirmDisconnect = () => {
-    showConfirm(
-      'Desconectar WhatsApp QR',
-      'Se cerrara la conexion actual. Para volver a conectar, abre esta pagina otra vez y se generara un QR nuevo.',
-      async () => {
-        setDisconnecting(true)
-        setConnecting(false)
-        setQrRequested(false)
-        connectionStartedAt.current = null
-        setManualDisconnected(true)
-        try {
-          const nextStatus = await whatsappWebService.disconnect()
-          setStatus(nextStatus)
-          showToast('success', 'Desconectado', 'WhatsApp QR se desconecto correctamente')
-        } catch (error) {
-          showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo desconectar')
-        } finally {
-          setDisconnecting(false)
-        }
-      },
-      'Desconectar',
-      'Cancelar'
-    )
-  }
-
   const confirmApiDisconnect = () => {
     showConfirm(
-      'Desconectar WhatsApp Business',
-      'Se pausara la conexion con YCloud. Los mensajes y contactos guardados se quedan intactos.',
+      'Desconectar WhatsApp',
+      'Se pausara la conexion con YCloud. Los mensajes, contactos y plantillas guardadas se quedan intactos.',
       async () => {
         setApiDisconnecting(true)
         try {
@@ -423,7 +228,7 @@ export const WhatsAppSettings: React.FC = () => {
           setApiStatus(nextStatus)
           showToast('success', 'Desconectado', 'WhatsApp Business quedo pausado')
         } catch (error) {
-          showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo desconectar WhatsApp Business')
+          showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo desconectar WhatsApp')
         } finally {
           setApiDisconnecting(false)
         }
@@ -433,63 +238,31 @@ export const WhatsAppSettings: React.FC = () => {
     )
   }
 
-  const openLogs = async (event: React.MouseEvent<HTMLAnchorElement>) => {
-    event.preventDefault()
-    setShowLogs(true)
-    setLogsLoading(true)
-    try {
-      setLogs(await whatsappWebService.getLogs())
-    } catch (error) {
-      showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudieron leer los logs')
-    } finally {
-      setLogsLoading(false)
-    }
-  }
+  const connectionAlerts = useMemo(() => {
+    return (apiStatus?.alerts?.items || []).filter((alert) => {
+      const type = String(alert.alert_type || '').toLowerCase()
+      const entity = String(alert.entity_type || '').toLowerCase()
+      return entity !== 'template' && !type.includes('template')
+    })
+  }, [apiStatus?.alerts?.items])
 
-  const sendTemplate = async (event: React.FormEvent) => {
-    event.preventDefault()
-    if (!selectedTemplate || templateSending) return
+  const templateSummary = useMemo(() => {
+    const templates = apiStatus?.templates?.items || []
+    const pending = templates.filter(template => ['PENDING', 'IN_APPEAL'].includes(String(template.status || '').toUpperCase())).length
+    const rejected = templates.filter(template => ['REJECTED', 'DISABLED', 'PAUSED'].includes(String(template.status || '').toUpperCase())).length
 
-    if (selectedTemplate.status !== 'APPROVED') {
-      showToast('warning', 'Plantilla no aprobada', 'Solo se pueden enviar plantillas APPROVED')
-      return
+    return {
+      total: apiStatus?.templates?.total || templates.length,
+      approved: apiStatus?.templates?.approved || templates.filter(template => String(template.status || '').toUpperCase() === 'APPROVED').length,
+      pending,
+      rejected
     }
-
-    let parsedVariables: unknown = []
-    const cleanVariables = templateVariables.trim()
-    if (cleanVariables) {
-      try {
-        parsedVariables = JSON.parse(cleanVariables)
-      } catch {
-        showToast('error', 'Variables invalidas', 'Usa JSON valido para las variables de la plantilla')
-        return
-      }
-    }
-
-    setTemplateSending(true)
-    try {
-      await whatsappApiService.sendTemplate({
-        to: templateTo.trim(),
-        from: apiStatus?.sender.phone || undefined,
-        templateId: selectedTemplate.id,
-        templateName: selectedTemplate.name,
-        language: selectedTemplate.language,
-        variables: parsedVariables
-      })
-      showToast('success', 'Plantilla enviada', 'YCloud acepto el envio por WhatsApp Business')
-      setTemplateTo('')
-      await loadApiStatus()
-    } catch (error) {
-      showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo enviar la plantilla')
-    } finally {
-      setTemplateSending(false)
-    }
-  }
+  }, [apiStatus?.templates])
 
   const renderApiForm = (compact = false) => (
     <form className={compact ? styles.apiInlineForm : styles.apiConnectForm} onSubmit={connectApi}>
       <label className={styles.fieldLabel}>
-        <span>API key de YCloud</span>
+        <span>Llave de conexión de YCloud</span>
         <div className={styles.apiKeyRow}>
           <div className={styles.inputWrap}>
             <KeyRound size={17} />
@@ -521,7 +294,7 @@ export const WhatsAppSettings: React.FC = () => {
 
       {availableApiPhones.length ? (
         <label className={styles.fieldLabel}>
-          <span>Numero de WhatsApp Business</span>
+          <span>Numero que enviara mensajes</span>
           <div className={styles.selectWrap}>
             <Smartphone size={17} />
             <select value={selectedPhoneId} onChange={(event) => setSelectedPhoneId(event.target.value)}>
@@ -537,7 +310,7 @@ export const WhatsAppSettings: React.FC = () => {
           <Smartphone size={18} />
           <span>
             {apiPhoneLookupAttempted
-              ? 'No encontramos numeros conectados en YCloud. Primero conecta tu WhatsApp Business en YCloud y vuelve a buscar.'
+              ? 'No encontramos numeros conectados. Conecta tu WhatsApp Business en YCloud y vuelve a buscar.'
               : 'Pega tu llave y toca Buscar numeros. Ristak los traera de YCloud para que solo elijas uno.'}
           </span>
         </div>
@@ -545,7 +318,7 @@ export const WhatsAppSettings: React.FC = () => {
 
       <Button type="submit" loading={apiConnecting} disabled={!canSubmitApi}>
         <Cloud size={18} />
-        {apiConnected ? 'Actualizar conexion' : 'Conectar WhatsApp Business'}
+        {apiConnected ? 'Guardar numero' : 'Conectar WhatsApp'}
       </Button>
     </form>
   )
@@ -554,16 +327,16 @@ export const WhatsAppSettings: React.FC = () => {
     <div className={styles.apiTutorial}>
       <div className={styles.apiTutorialHeader}>
         <span>Guia rapida</span>
-        <strong>Conecta YCloud paso a paso</strong>
+        <strong>Conecta tu cuenta oficial</strong>
       </div>
       <ol className={styles.apiTutorialSteps}>
         <li>
           <span>1</span>
           <div>
-            <strong>Crea o entra a tu cuenta de YCloud</strong>
-            <p>Usa el correo del negocio. No necesitas configurar nada raro todavia.</p>
+            <strong>Entra a YCloud</strong>
+            <p>Usa la cuenta del negocio donde tienes tu WhatsApp Business.</p>
             <a className={styles.apiTutorialButton} href={YCLOUD_REGISTER_URL} target="_blank" rel="noopener noreferrer">
-              Abrir registro de YCloud
+              Abrir YCloud
               <ExternalLink size={14} />
             </a>
           </div>
@@ -571,290 +344,255 @@ export const WhatsAppSettings: React.FC = () => {
         <li>
           <span>2</span>
           <div>
-            <strong>Conecta el numero que ya usas</strong>
-            <p>En YCloud busca la opcion para usar tu mismo WhatsApp Business. Si aparece en ingles, elige WhatsApp Business App / Coexistence.</p>
+            <strong>Copia tu llave de conexión</strong>
+            <p>Pegala aqui y Ristak buscara los numeros disponibles.</p>
           </div>
         </li>
         <li>
           <span>3</span>
           <div>
-            <strong>Copia tu llave de conexion</strong>
-            <p>Cuando el numero ya salga conectado, copia la llave que YCloud llama API key y pegala aqui.</p>
-          </div>
-        </li>
-        <li>
-          <span>4</span>
-          <div>
-            <strong>Presiona conectar</strong>
-            <p>Ristak revisa la cuenta, guarda el numero, consulta saldo, plantillas y contactos disponibles automaticamente.</p>
+            <strong>Elige el numero</strong>
+            <p>Ese numero sera el que mande mensajes y plantillas.</p>
           </div>
         </li>
       </ol>
     </div>
   )
 
-  const renderApiStage = () => {
+  const renderConnectionStage = () => {
     if (apiLoading) {
       return <div className={`${styles.skeletonBlock} ${styles.skeletonStage}`} />
     }
 
-    if (apiConnected && apiStatus) {
-      const balance = apiStatus.balance
-      const alerts = apiStatus.alerts?.items || []
-      const selectedApiPhone = selectedPhone || apiStatus.selectedPhone
-      const apiBusinessProfile = parseJson<BusinessProfile>(selectedApiPhone?.business_profile_json)
-      const apiProfileImage = selectedApiPhone?.profile_picture_url || apiBusinessProfile?.profilePictureUrl || ''
-      const apiDisplayNumber = apiStatus.sender.phone ||
-        selectedApiPhone?.display_phone_number ||
-        selectedApiPhone?.phone_number ||
-        'Numero conectado'
-      const apiDisplayName = selectedApiPhone?.verified_name ||
-        apiBusinessProfile?.verifiedName ||
-        apiBusinessProfile?.businessName ||
-        apiBusinessProfile?.name ||
-        'WhatsApp Business'
-      const phoneRows = (apiStatus.phoneNumbers.length ? apiStatus.phoneNumbers : selectedApiPhone ? [selectedApiPhone] : [])
-        .filter(Boolean) as WhatsAppApiPhoneNumber[]
-
+    if (!apiConnected || !apiStatus) {
       return (
-        <div className={styles.apiConnectedState}>
-          <section className={styles.connectionSection}>
-            <div className={styles.sectionTop}>
-              <div className={styles.connectionSummary}>
-                <div className={styles.connectionAvatar}>
-                  {apiProfileImage ? (
-                    <img src={apiProfileImage} alt="" />
-                  ) : (
-                    <SiWhatsapp size={24} />
-                  )}
-                </div>
-                <div>
-                  <span className={styles.sectionEyebrow}>Conexión</span>
-                  <h3>{apiDisplayNumber}</h3>
-                  <p>{apiDisplayName}</p>
-                </div>
-                <span className={styles.connectedLabel}>
-                  <ShieldCheck size={16} />
-                  Conectado
-                </span>
-              </div>
+        <section className={styles.apiConnectPanel}>
+          <span className={styles.apiLogoMark}><Cloud size={38} /></span>
+          <div className={styles.apiConnectCopy}>
+            <h3>Conecta WhatsApp Business</h3>
+            <p>Usa YCloud para enviar mensajes oficiales, revisar saldo y mandar plantillas a Meta.</p>
+          </div>
+          {apiStatus?.lastError && <p className={styles.errorText}>{apiStatus.lastError}</p>}
+          <div className={styles.connectContent}>
+            {renderApiForm()}
+            {renderYCloudGuide()}
+          </div>
+        </section>
+      )
+    }
 
-              <div className={styles.apiActions}>
-                <Button variant="outline" onClick={refreshApi} loading={apiRefreshing}>
-                  <RefreshCw size={17} />
-                  Sincronizar
-                </Button>
-                <Button variant="danger" onClick={confirmApiDisconnect} loading={apiDisconnecting}>
-                  <Unplug size={17} />
-                  Desconectar
-                </Button>
+    const selectedApiPhone = selectedPhone || apiStatus.selectedPhone || apiStatus.phoneNumbers[0] || null
+    const profile = getPhoneProfile(selectedApiPhone)
+    const apiProfileImage = selectedApiPhone?.profile_picture_url || profile?.profilePictureUrl || ''
+    const apiDisplayNumber = apiStatus.sender.phone ||
+      selectedApiPhone?.display_phone_number ||
+      selectedApiPhone?.phone_number ||
+      'Numero conectado'
+    const apiDisplayName = selectedApiPhone?.verified_name ||
+      profile?.verifiedName ||
+      profile?.businessName ||
+      profile?.name ||
+      'WhatsApp Business'
+    const balance = apiStatus.balance
+    const phoneRows = apiStatus.phoneNumbers.length ? apiStatus.phoneNumbers : selectedApiPhone ? [selectedApiPhone] : []
+
+    return (
+      <div className={styles.connectionGrid}>
+        <section className={styles.connectionCard}>
+          <div className={styles.connectionHeader}>
+            <div className={styles.connectionIdentity}>
+              <span className={styles.connectionAvatar}>
+                {apiProfileImage ? <img src={apiProfileImage} alt="" /> : <SiWhatsapp size={24} />}
+              </span>
+              <div>
+                <span className={styles.sectionEyebrow}>Conexión</span>
+                <h3>{apiDisplayNumber}</h3>
+                <p>{apiDisplayName}</p>
               </div>
             </div>
+            <span className={styles.connectedLabel}>
+              <ShieldCheck size={16} />
+              Conectado
+            </span>
+          </div>
 
-            {alerts.length ? (
-              <div className={styles.apiAlertList}>
-                {alerts.map((alert) => (
-                  <div key={alert.id} className={`${styles.apiAlert} ${getAlertClass(alert)}`}>
-                    <AlertTriangle size={18} />
-                    <div>
-                      <strong>{alert.title}</strong>
-                      {alert.message && <p>{alert.message}</p>}
-                      <small>{alert.alert_type} · {formatDateTime(alert.updated_at) || 'Ahora'}</small>
-                    </div>
+          <div className={styles.connectionActions}>
+            <Button variant="outline" onClick={refreshApi} loading={apiRefreshing}>
+              <RefreshCw size={17} />
+              Sincronizar
+            </Button>
+            <Button variant="danger" onClick={confirmApiDisconnect} loading={apiDisconnecting}>
+              <Unplug size={17} />
+              Desconectar
+            </Button>
+            <a className={styles.externalButton} href={YCLOUD_REGISTER_URL} target="_blank" rel="noopener noreferrer">
+              <ExternalLink size={16} />
+              Abrir YCloud
+            </a>
+          </div>
+
+          {connectionAlerts.length ? (
+            <div className={styles.apiAlertList}>
+              {connectionAlerts.map((alert) => (
+                <div key={alert.id} className={`${styles.apiAlert} ${getAlertClass(alert)}`}>
+                  <AlertTriangle size={18} />
+                  <div>
+                    <strong>{alert.title}</strong>
+                    {alert.message && <p>{alert.message}</p>}
                   </div>
-                ))}
-              </div>
-            ) : (
-              <div className={styles.apiHealthyBanner}>
-                <CheckCircle size={18} />
-                <span>Sin alertas activas de YCloud</span>
-              </div>
-            )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className={styles.apiHealthyBanner}>
+              <CheckCircle size={18} />
+              <span>Listo para enviar mensajes</span>
+            </div>
+          )}
 
-            {apiStatus.requiresPhoneSelection && (
-              <div className={styles.apiNotice}>
-                Selecciona el numero emisor para dejar el envio listo.
-              </div>
-            )}
+          {apiStatus.requiresPhoneSelection && (
+            <div className={styles.apiNotice}>
+              Elige el numero que enviara mensajes para terminar la conexión.
+            </div>
+          )}
 
-            <div className={styles.numberTable} role="table" aria-label="Numeros conectados a WhatsApp Business">
-              <div className={styles.numberTableHeader} role="row">
-                <span>Número</span>
-                <span>Nombre</span>
-                <span>Estado</span>
-                <span>Calidad</span>
-              </div>
+          <div className={styles.connectionFacts}>
+            <div className={styles.connectionFact}>
+              <span>Puede enviar</span>
+              <strong>{apiStatus.requiresPhoneSelection ? 'Falta numero' : 'Si'}</strong>
+            </div>
+            <div className={styles.connectionFact}>
+              <span>Saldo</span>
+              <strong>{balance ? formatCurrency(balance.amount, balance.currency) : 'Pendiente'}</strong>
+            </div>
+            <div className={styles.connectionFact}>
+              <span>Calidad</span>
+              <strong>{selectedApiPhone?.quality_rating || 'Sin dato'}</strong>
+            </div>
+            <div className={styles.connectionFact}>
+              <span>Limite</span>
+              <strong>{selectedApiPhone?.messaging_limit || 'Sin dato'}</strong>
+            </div>
+            <div className={styles.connectionFact}>
+              <span>Contactos</span>
+              <strong>{formatMetric(apiStatus.stats.contacts)}</strong>
+            </div>
+            <div className={styles.connectionFact}>
+              <span>Ultima sincronización</span>
+              <strong>{formatDateTime(apiStatus.timestamps.lastSyncedAt)}</strong>
+            </div>
+          </div>
 
-              {phoneRows.length ? phoneRows.map((phone) => {
-                const profile = parseJson<BusinessProfile>(phone.business_profile_json)
-                const phoneImage = phone.profile_picture_url || profile?.profilePictureUrl || ''
+          {phoneRows.length > 1 && (
+            <div className={styles.phoneList}>
+              {phoneRows.map((phone) => {
+                const phoneProfile = getPhoneProfile(phone)
                 const isSender = phone.id === selectedPhoneId ||
                   phone.phone_number === apiStatus.sender.phone ||
                   phone.display_phone_number === apiStatus.sender.phone
 
                 return (
-                  <div key={phone.id} className={styles.numberTableRow} role="row">
-                    <span className={styles.numberCell}>
-                      <span className={styles.numberAvatar}>
-                        {phoneImage ? <img src={phoneImage} alt="" /> : <SiWhatsapp size={15} />}
-                      </span>
-                      <strong>{phone.display_phone_number || phone.phone_number || apiDisplayNumber}</strong>
-                    </span>
-                    <span>{phone.verified_name || profile?.verifiedName || profile?.businessName || profile?.name || 'Sin nombre'}</span>
-                    <span>
-                      <mark className={isSender ? styles.statusMarkActive : styles.statusMarkMuted}>
-                        {isSender ? 'Emisor' : phone.status || 'Disponible'}
-                      </mark>
-                    </span>
-                    <span>{phone.quality_rating || 'UNKNOWN'}</span>
+                  <div key={phone.id} className={styles.phoneListItem}>
+                    <span className={styles.phoneAvatar}><SiWhatsapp size={15} /></span>
+                    <div>
+                      <strong>{phone.display_phone_number || phone.phone_number || 'Numero'}</strong>
+                      <small>{phone.verified_name || phoneProfile?.verifiedName || phoneProfile?.businessName || phoneProfile?.name || 'Sin nombre'}</small>
+                    </div>
+                    <mark>{isSender ? 'Emisor' : 'Disponible'}</mark>
                   </div>
                 )
-              }) : (
-                <div className={styles.numberTableEmpty}>Sin número conectado</div>
-              )}
+              })}
             </div>
+          )}
 
-            <div className={styles.connectionStats}>
-              <span>Saldo: {balance ? formatCurrency(balance.amount, balance.currency) : 'Pendiente'}</span>
-              <span>Límite: {selectedApiPhone?.messaging_limit || 'Sin dato'}</span>
-              <span>{formatMetric(apiStatus.stats.messages)} mensajes</span>
-              <span>{formatMetric(apiStatus.stats.contacts)} contactos</span>
-              <span>{formatMetric(apiStatus.templates?.approved || 0)} / {formatMetric(apiStatus.templates?.total || 0)} plantillas aprobadas</span>
-              <span>{formatMetric(apiStatus.alerts?.total || 0)} alertas activas</span>
-              <span>{formatMetric(apiStatus.stats.templateSends || 0)} envíos con plantilla</span>
+          {apiStatus.lastError && <p className={styles.errorText}>{apiStatus.lastError}</p>}
+          {apiStatus.requiresPhoneSelection && renderApiForm(true)}
+        </section>
+
+        <section className={styles.templateSummaryCard}>
+          <div className={styles.summaryHeader}>
+            <span className={styles.summaryIcon}><FileText size={20} /></span>
+            <div>
+              <span className={styles.sectionEyebrow}>Plantillas</span>
+              <h3>Estado general</h3>
             </div>
-
-            {apiStatus.lastError && <p className={styles.errorText}>{apiStatus.lastError}</p>}
-
-            {apiStatus.requiresPhoneSelection && renderApiForm(true)}
-          </section>
-
-          <section className={styles.templatesSection}>
-            <div className={styles.sectionTop}>
-              <div>
-                <span className={styles.sectionEyebrow}>Plantillas</span>
-                <h3>Carpetas y mensajes</h3>
-                <p>Crea plantillas con variables dinámicas para usarlas después con WhatsApp Business.</p>
-              </div>
+          </div>
+          <div className={styles.templateSummary}>
+            <div className={styles.templateSummaryItem}>
+              <span>Total</span>
+              <strong>{formatMetric(templateSummary.total)}</strong>
             </div>
-            <MessageTemplates embedded />
-          </section>
-        </div>
-      )
-    }
+            <div className={styles.templateSummaryItem}>
+              <span>Aprobadas</span>
+              <strong>{formatMetric(templateSummary.approved)}</strong>
+            </div>
+            <div className={styles.templateSummaryItem}>
+              <span>En revisión</span>
+              <strong>{formatMetric(templateSummary.pending)}</strong>
+            </div>
+            <div className={styles.templateSummaryItem}>
+              <span>Rechazadas</span>
+              <strong>{formatMetric(templateSummary.rejected)}</strong>
+            </div>
+          </div>
+          <Button variant="outline" onClick={() => setActiveSection('templates')}>
+            <FileText size={16} />
+            Ver plantillas
+          </Button>
+        </section>
 
-    return (
-      <div className={styles.apiIdleState}>
-        <span className={styles.apiLogoMark}><Cloud size={42} /></span>
-        <h3>Conectar WhatsApp Business</h3>
-        <p>YCloud · WhatsApp Business oficial</p>
-        {apiStatus?.lastError && <p className={styles.errorText}>{apiStatus.lastError}</p>}
-        {renderYCloudGuide()}
-        {renderApiForm()}
+        <section className={styles.templateSummaryCard}>
+          <div className={styles.summaryHeader}>
+            <span className={styles.summaryIcon}><Wallet size={20} /></span>
+            <div>
+              <span className={styles.sectionEyebrow}>Saldo</span>
+              <h3>{balance ? formatCurrency(balance.amount, balance.currency) : 'Pendiente'}</h3>
+            </div>
+          </div>
+          <p className={styles.emptyText}>Si el saldo baja demasiado, YCloud puede detener los envios.</p>
+        </section>
       </div>
     )
   }
 
-  const renderWebStage = () => (
-    <>
-      {showLogs ? (
-        <div className={styles.logsView}>
-          <button type="button" className={styles.logsBackButton} onClick={() => setShowLogs(false)}>
-            <ArrowLeft size={15} />
-            Volver
-          </button>
-          {logsLoading ? (
-            <p>Cargando logs...</p>
-          ) : (
-            <>
-              <div>
-                <h3>Chats recientes</h3>
-                {(logs?.recent || []).length ? (logs?.recent || []).map(renderLog) : <p>Sin logs</p>}
-              </div>
-              <div>
-                <h3>Con atribucion detectada</h3>
-                {(logs?.attributed || []).length ? (logs?.attributed || []).map(renderLog) : <p>Sin atribucion</p>}
-              </div>
-            </>
-          )}
-        </div>
-      ) : isConnected ? (
-        <div className={styles.connectedState}>
-          <div className={styles.avatar}>
-            {profileImage ? (
-              <img src={profileImage} alt="" />
-            ) : (
-              <SiWhatsapp size={58} />
-            )}
-            <span className={styles.checkBadge}><CheckCircle size={22} /></span>
-          </div>
+  const renderTemplatesStage = () => {
+    if (!apiConnected) {
+      return (
+        <section className={styles.templatesLocked}>
+          <FileText size={36} />
+          <h3>Conecta WhatsApp para enviar plantillas a Meta</h3>
+          <p>Cuando la conexión esté lista, aquí podrás crear plantillas, enviarlas a revisión y ver si Meta las aprobó o rechazó.</p>
+          <Button onClick={() => setActiveSection('connection')}>
+            <Cloud size={17} />
+            Ir a conexión
+          </Button>
+        </section>
+      )
+    }
 
-          <div className={styles.connectedCopy}>
-            <span className={styles.connectedLabel}>
-              <ShieldCheck size={18} />
-              Conectado
-            </span>
-            <h3>{session?.phone || 'Numero conectado'}</h3>
-            <p>{displayName}</p>
-            {businessProfile?.category && (
-              <span className={styles.profileCategory}>{businessProfile.category}</span>
-            )}
+    return (
+      <section className={styles.templatesWorkspace}>
+        <div className={styles.templatesHeader}>
+          <div>
+            <span className={styles.sectionEyebrow}>Plantillas</span>
+            <h3>Mensajes aprobados por Meta</h3>
+            <p>Crea, manda a revisión y sincroniza el estado real desde YCloud.</p>
           </div>
-
-          <div className={styles.connectedActions}>
-            <Button variant="danger" onClick={confirmDisconnect} loading={disconnecting}>
-              <Unplug size={17} />
-              Desconectar
-            </Button>
-            <a href="#" className={styles.logsLink} onClick={openLogs}>Ver logs</a>
+          <div className={styles.templatesSummaryBar}>
+            <span>{formatMetric(templateSummary.approved)} aprobadas</span>
+            <span>{formatMetric(templateSummary.pending)} en revisión</span>
+            <span>{formatMetric(templateSummary.rejected)} rechazadas</span>
           </div>
         </div>
-      ) : showQr ? (
-        <div className={styles.qrState}>
-          <img src={session?.qr_image || ''} alt="Codigo QR para conectar WhatsApp QR" />
-          <p>Escanea el codigo desde WhatsApp para conectar la cuenta.</p>
-          <Button variant="outline" size="md" onClick={startConnection}>
-            <RefreshCw size={16} />
-            Generar QR nuevo
-          </Button>
-        </div>
-      ) : manualDisconnected ? (
-        <div className={styles.disconnectedState}>
-          <SiWhatsapp size={52} />
-          <h3>Desconectado</h3>
-          <Button size="lg" onClick={startConnection} loading={connecting}>
-            <SiWhatsapp size={18} />
-            Conectar WhatsApp QR
-          </Button>
-        </div>
-      ) : isWaitingForQr ? (
-        <div className={styles.qrState} role="status" aria-live="polite" aria-label="Generando QR">
-          <div className={`${styles.skeletonBlock} ${styles.skeletonQr}`} />
-          {session?.last_error && <p className={styles.errorText}>{session.last_error}</p>}
-          <Button variant="outline" size="md" onClick={startConnection}>
-            <RefreshCw size={16} />
-            Generar QR nuevo
-          </Button>
-        </div>
-      ) : (
-        <div className={styles.idleState}>
-          <SiWhatsapp size={58} />
-          <h3>Conectar WhatsApp QR</h3>
-          <p>Genera un QR nuevo y escanealo desde WhatsApp para conectar la cuenta.</p>
-          {session?.last_error && <p className={styles.errorText}>{session.last_error}</p>}
-          <Button size="lg" onClick={startConnection} loading={connecting}>
-            <SiWhatsapp size={18} />
-            Conectar WhatsApp QR
-          </Button>
-        </div>
-      )}
-    </>
-  )
+        <MessageTemplates embedded />
+      </section>
+    )
+  }
 
-  if (loading || apiLoading) {
+  if (apiLoading) {
     return (
       <div className={styles.shell}>
-        <div className={styles.skeletonHeaderRow} role="status" aria-live="polite" aria-label="Cargando configuracion">
+        <div className={styles.skeletonHeaderRow} role="status" aria-live="polite" aria-label="Cargando WhatsApp">
           <div className={`${styles.skeletonBlock} ${styles.skeletonLogo}`} />
           <div className={styles.skeletonHeaderText}>
             <div className={`${styles.skeletonBlock} ${styles.skeletonEyebrow}`} />
@@ -870,33 +608,34 @@ export const WhatsAppSettings: React.FC = () => {
     <div className={styles.shell}>
       <div className={styles.header}>
         <span className={styles.logoMark}><SiWhatsapp size={30} /></span>
-        <div>
+        <div className={styles.headerCopy}>
           <p className={styles.eyebrow}>Configuracion</p>
           <h2 className={styles.title}>WhatsApp</h2>
+          <span>Conexión oficial por API para mensajes, saldo y plantillas.</span>
         </div>
       </div>
 
-      <div className={styles.channelTabs} role="tablist" aria-label="Canales de WhatsApp">
+      <div className={styles.sectionSwitch} aria-label="Secciones de WhatsApp">
         <button
           type="button"
-          className={`${styles.channelTab} ${activeChannel === 'api' ? styles.channelTabActive : ''}`}
-          onClick={() => setActiveChannel('api')}
+          className={`${styles.sectionSwitchButton} ${activeSection === 'connection' ? styles.sectionSwitchButtonActive : ''}`}
+          onClick={() => setActiveSection('connection')}
         >
-          <Cloud size={17} />
-          WhatsApp Business
+          <ShieldCheck size={17} />
+          Conexión
         </button>
         <button
           type="button"
-          className={`${styles.channelTab} ${activeChannel === 'web' ? styles.channelTabActive : ''}`}
-          onClick={() => setActiveChannel('web')}
+          className={`${styles.sectionSwitchButton} ${activeSection === 'templates' ? styles.sectionSwitchButtonActive : ''}`}
+          onClick={() => setActiveSection('templates')}
         >
-          <SiWhatsapp size={17} />
-          WhatsApp QR
+          <FileText size={17} />
+          Plantillas
         </button>
       </div>
 
       <div className={styles.stage}>
-        {activeChannel === 'api' ? renderApiStage() : renderWebStage()}
+        {activeSection === 'connection' ? renderConnectionStage() : renderTemplatesStage()}
       </div>
     </div>
   )

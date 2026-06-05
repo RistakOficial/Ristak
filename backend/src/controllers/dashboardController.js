@@ -4,7 +4,6 @@ import { resolveDateRange, resolveDateRangeWithGHLTimezone } from '../utils/date
 import { normalizeTrafficSource } from '../utils/trafficSourceNormalizer.js';
 import { getGroupExpression } from '../services/analyticsService.js';
 import { getManualBusinessExpensesTotalForRange } from '../services/manualBusinessExpensesService.js';
-import { getWhatsAppTrafficSourcesForRange } from '../services/whatsappAnalyticsService.js';
 import { getContactSourceBreakdown } from '../services/contactSourceService.js';
 import { getTrafficDistributions, getLeadsContactIds } from '../services/originDistributionService.js';
 import { DateTime } from 'luxon';
@@ -910,7 +909,7 @@ export const getStorageStatus = async (req, res) => {
  */
 export const getTrafficSources = async (req, res) => {
   try {
-    const { startDate, endDate, includeWeb = '1', includeWhatsapp = '1' } = req.query
+    const { startDate, endDate, includeWeb = '1' } = req.query
 
     if (!startDate || !endDate) {
       return res.status(400).json({ success: false, error: 'Se requieren startDate y endDate' })
@@ -918,7 +917,6 @@ export const getTrafficSources = async (req, res) => {
 
     const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate })
     const shouldIncludeWeb = String(includeWeb) !== '0'
-    const shouldIncludeWhatsapp = String(includeWhatsapp) !== '0'
 
     // Cada visitante debe contar una sola vez. Tomamos su primera sesión del rango y
     // normalizamos en JS con la misma lógica robusta que usa Analytics.
@@ -961,18 +959,6 @@ export const getTrafficSources = async (req, res) => {
       })
 
       sourcesMap.set(sourceName, (sourcesMap.get(sourceName) || 0) + 1)
-    })
-
-    const whatsappSources = shouldIncludeWhatsapp
-      ? await getWhatsAppTrafficSourcesForRange({
-          startDate,
-          endDate,
-          limit: 50
-        })
-      : []
-
-    whatsappSources.forEach(source => {
-      sourcesMap.set(source.name, (sourcesMap.get(source.name) || 0) + Number(source.value || 0))
     })
 
     // Mapear colores por plataforma
@@ -1026,7 +1012,7 @@ export const getTrafficSources = async (req, res) => {
  * - appointments: contactos con cita (date_added) dentro del rango.
  * - conversions: contactos cuyo PRIMER pago exitoso cae en el rango (clientes nuevos),
  *   misma definición que la etapa "Clientes" del embudo en vista "Todos".
- * En ambos casos se agrupa por la fuente resuelta del contacto (sesión web + WhatsApp/Meta).
+ * En ambos casos se agrupa por la fuente resuelta del contacto (sesión web + Meta).
  * @param {'appointments'|'conversions'} metric
  * @param {{ startUtc: string, endUtc: string }} range
  * @returns {Promise<Array<{ name: string, value: number }>>}

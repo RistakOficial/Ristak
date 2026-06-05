@@ -1433,7 +1433,7 @@ export async function syncLocalCalendarsToHighLevel(locationId, apiToken) {
 async function ensureHighLevelContactForAppointment(client, appointment = {}) {
   if (!appointment.contactId) return null
 
-  if (!String(appointment.contactId).startsWith('rstk_') && !String(appointment.contactId).startsWith('waweb_contact_')) {
+  if (!String(appointment.contactId).startsWith('rstk_') && !String(appointment.contactId).startsWith('waapi_contact_')) {
     return appointment.contactId
   }
 

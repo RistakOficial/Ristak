@@ -9,10 +9,6 @@ const CONTACT_REFERENCE_TABLES = [
   { table: 'appointment_attendance_signals', column: 'contact_id', deleteOnConflict: true },
   { table: 'meta_conversion_event_logs', column: 'contact_id' },
   { table: 'whatsapp_attribution', column: 'contact_id' },
-  { table: 'whatsapp_web_chats', column: 'contact_id' },
-  { table: 'whatsapp_web_contacts', column: 'contact_id' },
-  { table: 'whatsapp_web_messages', column: 'contact_id' },
-  { table: 'whatsapp_web_attribution', column: 'contact_id' },
   { table: 'whatsapp_api_contacts', column: 'contact_id' },
   { table: 'whatsapp_api_messages', column: 'contact_id' },
   { table: 'whatsapp_api_attribution', column: 'contact_id' },
@@ -25,7 +21,7 @@ function contactPriorityScore(contact = {}) {
   const id = String(contact.id || '')
   const source = String(contact.source || '').toLowerCase()
 
-  if (!id.startsWith('waweb_contact_') && !id.startsWith('waapi_contact_')) score += 1000
+  if (!id.startsWith('waapi_contact_')) score += 1000
   if (Number(contact.total_paid || 0) > 0) score += 500
   if (Number(contact.purchases_count || 0) > 0) score += 250
   if (source.includes('gohighlevel') || source.includes('highlevel')) score += 150
@@ -66,10 +62,6 @@ async function syncContactPhoneColumns(contactId, canonicalPhone) {
 
   const updates = [
     ['whatsapp_attribution', 'phone'],
-    ['whatsapp_web_chats', 'phone'],
-    ['whatsapp_web_contacts', 'phone'],
-    ['whatsapp_web_messages', 'phone'],
-    ['whatsapp_web_attribution', 'phone'],
     ['whatsapp_api_contacts', 'phone'],
     ['whatsapp_api_messages', 'phone'],
     ['whatsapp_api_attribution', 'phone'],

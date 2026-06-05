@@ -48,13 +48,13 @@ function contactAnalyticsSourceCondition(alias = 'c') {
     OR LOWER(COALESCE(${prefix}source, '')) LIKE '%whatsapp%'
     OR EXISTS (
       SELECT 1
-      FROM whatsapp_web_messages wwm
-      WHERE wwm.contact_id = ${prefix}id
+      FROM whatsapp_api_messages wam
+      WHERE wam.contact_id = ${prefix}id
     )
     OR EXISTS (
       SELECT 1
-      FROM whatsapp_web_attribution wwa
-      WHERE wwa.contact_id = ${prefix}id
+      FROM whatsapp_api_attribution waa
+      WHERE waa.contact_id = ${prefix}id
     )
     OR EXISTS (
       SELECT 1

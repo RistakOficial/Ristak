@@ -17,7 +17,7 @@ export const firstText = (...values) => {
 }
 
 /**
- * Carga la PRIMERA atribución de WhatsApp de cada contacto (oficial + web).
+ * Carga la PRIMERA atribución de WhatsApp de cada contacto (oficial + API).
  * Devuelve un Map<contact_id, row>.
  */
 export async function loadFirstWhatsAppAttributions(contactIds = []) {
@@ -46,39 +46,6 @@ export async function loadFirstWhatsAppAttributions(contactIds = []) {
   `, ids)
 
   officialRows.forEach(row => {
-    if (row.contact_id && !byContact.has(row.contact_id)) {
-      byContact.set(row.contact_id, row)
-    }
-  })
-
-  const webRows = await db.all(`
-    SELECT
-      msg.contact_id,
-      COALESCE(attr.detected_source_url, msg.detected_source_url) as referral_source_url,
-      COALESCE(attr.detected_source_type, msg.detected_source_type) as referral_source_type,
-      COALESCE(attr.detected_source_id, msg.detected_source_id) as referral_source_id,
-      COALESCE(attr.detected_headline, msg.detected_headline) as referral_headline,
-      COALESCE(attr.detected_body, msg.detected_body) as referral_body,
-      COALESCE(attr.detected_ctwa_clid, msg.detected_ctwa_clid) as referral_ctwa_clid,
-      COALESCE(attr.detected_source_app, msg.detected_source_app) as referral_source_app,
-      COALESCE(attr.detected_entry_point, msg.detected_entry_point) as referral_entry_point,
-      COALESCE(msg.message_timestamp, msg.created_at) as created_at,
-      'whatsapp_web' as attribution_source
-    FROM whatsapp_web_messages msg
-    LEFT JOIN whatsapp_web_attribution attr ON attr.whatsapp_web_message_id = msg.id
-    WHERE msg.contact_id IN (${placeholders})
-      AND msg.direction = 'inbound'
-      AND (
-        attr.id IS NOT NULL
-        OR msg.detected_ctwa_clid IS NOT NULL
-        OR msg.detected_source_id IS NOT NULL
-        OR msg.detected_source_url IS NOT NULL
-        OR msg.detected_headline IS NOT NULL
-      )
-    ORDER BY COALESCE(msg.message_timestamp, msg.created_at) ASC, msg.id ASC
-  `, ids)
-
-  webRows.forEach(row => {
     if (row.contact_id && !byContact.has(row.contact_id)) {
       byContact.set(row.contact_id, row)
     }

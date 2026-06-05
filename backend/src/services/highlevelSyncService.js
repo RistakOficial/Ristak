@@ -904,7 +904,7 @@ async function getWhatsAppOnlyContactsForHighLevelUpload() {
       attribution_url, attribution_session_source, attribution_medium, attribution_ctwa_clid,
       attribution_ad_name, attribution_ad_id, custom_fields, created_at
     FROM contacts
-    WHERE id LIKE 'waweb_contact_%'
+    WHERE id LIKE 'waapi_contact_%'
       AND phone IS NOT NULL
       AND phone != ''
     ORDER BY created_at ASC

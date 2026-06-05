@@ -27,7 +27,6 @@ import {
   type ContactConversionsByDate
 } from '../../services/analyticsService'
 import { trackingService, type TrackingSession } from '../../services/trackingService'
-import { whatsappWebService, type WhatsAppWebAnalytics } from '../../services/whatsappWebService'
 import { formatDateToISO, parseLocalDateString, formatUrlParameter, formatChartNumber } from '../../utils/format'
 import { normalizeTrafficSource } from '../../utils/trafficSourceNormalizer'
 
@@ -35,6 +34,16 @@ type ViewType = 'day' | 'month' | 'year'
 type MonthPreset = 'last12' | 'thisYear' | 'custom'
 type AnalyticsMainChartView = 'traffic' | 'visitors-registrations' | 'sessions-visitors' | 'identity-returning'
 type AnalyticsConversionChartView = 'registrations-customers' | 'appointments-attendances' | 'prospects-customers' | 'messages-appointments' | 'appointments-patients'
+type WhatsAppAnalytics = {
+  metrics?: {
+    inboundMessages?: number
+    conversations?: number
+    contacts?: number
+    attributionRate?: number
+  }
+  trend?: Array<{ label: string; messages?: number }>
+  status?: { connected?: boolean; hasData?: boolean }
+}
 
 const monthNamesShort = [
   'ene', 'feb', 'mar', 'abr', 'may', 'jun',
@@ -711,7 +720,7 @@ const Analytics: React.FC = () => {
   const [loading, setLoading] = useState(false)
   const [hasLoadedAnalytics, setHasLoadedAnalytics] = useState(false)
   const [webTrackingConfigured, setWebTrackingConfigured] = useState(false)
-  const [whatsAppAnalytics, setWhatsAppAnalytics] = useState<WhatsAppWebAnalytics | null>(null)
+  const [whatsAppAnalytics, setWhatsAppAnalytics] = useState<WhatsAppAnalytics | null>(null)
 
   const leadLabel = appLabels.lead?.trim() || 'Prospecto'
   const leadsLabel = appLabels.leads?.trim() || `${leadLabel}s`
@@ -813,20 +822,18 @@ const Analytics: React.FC = () => {
           contactsData,
           prevContactsData,
           contactConversionRows,
-          trackingConfig,
-          whatsappAnalyticsData
+          trackingConfig
         ] = await Promise.all([
           getSessionsByDateRange(startDate, endDate),
           getSessionsByDateRange(prevStartDate, prevEndDate),
           getContactsByDate(startDate, endDate),
           getContactsByDate(prevStartDate, prevEndDate),
           getContactConversionsByDate(startDate, endDate),
-          trackingService.getTrackingConfig().catch(() => null),
-          whatsappWebService.getAnalytics({ start: startDate, end: endDate, groupBy: viewType }).catch(() => null)
+          trackingService.getTrackingConfig().catch(() => null)
         ])
 
         setWebTrackingConfigured(Boolean(trackingConfig?.isConfigured) || currentSessions.length > 0)
-        setWhatsAppAnalytics(whatsappAnalyticsData)
+        setWhatsAppAnalytics(null)
         setContactConversionsByDate(contactConversionRows || [])
 
         if (currentSessions.length > 0) {

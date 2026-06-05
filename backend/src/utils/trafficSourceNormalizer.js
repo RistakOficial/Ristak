@@ -241,12 +241,6 @@ const SOURCE_CODE_MAP = {
   // WhatsApp - TODAS las variaciones
   'whatsapp': 'WhatsApp',
   'wa': 'WhatsApp',
-  'waweb': 'WhatsApp',
-  'whatsapp_web': 'WhatsApp',
-  'whatsapp_websource_url': 'WhatsApp',
-  'whatsapp_web_source_url': 'WhatsApp',
-  'whatsapp websource url': 'WhatsApp',
-  'whatsapp-websource-url': 'WhatsApp',
   'click_to_whatsapp': 'WhatsApp',
   'ctwa': 'WhatsApp',
   'whatsapp_ad': 'WhatsApp',
