@@ -4825,3 +4825,46 @@
     justify-content: flex-start;
   }
 }
+
+/* Landing editor density: use the extra horizontal room for the side tools,
+   while the page canvas keeps its 1440-ish working limit. Forms keep the
+   narrower grid above because their canvases are intentionally slim. */
+.containerFocused:has(.builderGridLanding) {
+  width: min(2200px, calc(100% - clamp(8px, 1vw, 20px)));
+  padding-inline: 12px;
+}
+
+.containerFocused .builderGridLanding {
+  grid-template-columns: minmax(220px, 240px) minmax(0, 1488px) minmax(320px, 340px);
+  justify-content: center;
+}
+
+.containerFocused .builderGridLanding .blocksRail {
+  padding-right: 18px;
+}
+
+.containerFocused .builderGridLanding .canvasColumn {
+  padding: 0;
+}
+
+.containerFocused .builderGridLanding .propertiesPanel {
+  padding-left: 18px;
+}
+
+@media (max-width: 1280px) {
+  .containerFocused:has(.builderGridLanding) {
+    width: min(1960px, calc(100% - clamp(20px, 2.8vw, 48px)));
+    padding-inline: 18px;
+  }
+
+  .containerFocused .builderGridLanding {
+    grid-template-columns: 1fr;
+    justify-content: stretch;
+  }
+
+  .containerFocused .builderGridLanding .blocksRail,
+  .containerFocused .builderGridLanding .propertiesPanel,
+  .containerFocused .builderGridLanding .canvasColumn {
+    padding-inline: 0;
+  }
+}
