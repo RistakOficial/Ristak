@@ -5031,7 +5031,7 @@
 }
 
 .editorHeaderMain .editorPublishControls {
-  flex: 1 1 620px;
+  flex: 1 1 640px;
   min-width: 0;
   display: flex;
   flex-wrap: wrap;
@@ -5042,20 +5042,25 @@
 }
 
 .editorHeaderMain .routeField {
-  flex: 1 1 320px;
-  min-width: min(320px, 100%);
-  max-width: 460px;
+  flex: 1 1 430px;
+  min-width: min(430px, 100%);
+  max-width: 620px;
+  justify-content: flex-end;
 }
 
 .editorHeaderMain .publicRouteBox {
-  flex: 1 1 auto;
-  max-width: 100%;
+  flex: 0 0 184px;
+  width: 184px;
+  max-width: 184px;
 }
 
 .editorHeaderMain .editorTopControls .metaCard {
-  flex: 0 1 360px;
-  min-width: min(340px, 100%);
-  max-width: 380px;
+  flex: 0 0 auto;
+  min-width: 0;
+  max-width: none;
+  height: var(--editor-control-h, 44px);
+  gap: 5px;
+  padding: 3px;
 }
 
 .editorHeaderMain .editorActions {
@@ -5064,7 +5069,7 @@
 }
 
 .editorHeaderMain .metaCardField select {
-  width: 136px;
+  width: 148px;
   opacity: 1;
   cursor: pointer;
 }
@@ -5072,6 +5077,105 @@
 .editorHeaderMain .metaSwitch {
   flex: 0 0 auto;
   pointer-events: auto;
+}
+
+.containerFocused .backButton {
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--color-text-secondary);
+}
+
+.containerFocused .backButton:hover {
+  background: transparent;
+  color: var(--color-text-primary);
+}
+
+.editorHeaderMain .routeField > span:first-child {
+  min-width: 0;
+  flex: 1 1 auto;
+  color: var(--color-text-primary);
+  font-size: 0.86rem;
+  font-weight: 850;
+  letter-spacing: 0;
+  text-transform: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.editorHeaderMain .publicRouteDomain {
+  height: auto;
+  max-width: 360px;
+  padding: 0;
+  border-right: 0;
+  background: transparent;
+  user-select: text;
+}
+
+.editorHeaderMain .publicRouteBox input,
+.editorHeaderMain .publicRouteBoxStandalone input {
+  width: 100%;
+  min-width: 0;
+}
+
+.editorHeaderMain .metaPixelButton {
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 0;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--color-background-tertiary) 76%, var(--color-background-primary) 24%);
+  color: var(--color-text-primary);
+  padding: 0 10px;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 850;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.editorHeaderMain .metaPixelButton .metaMark {
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  font-size: 0.95rem;
+}
+
+.editorHeaderMain .metaPixelButton small {
+  color: var(--color-text-tertiary);
+  font-size: 0.68rem;
+  font-weight: 800;
+}
+
+.editorHeaderMain .metaCardActive .metaPixelButton {
+  background: #0866ff;
+  color: #ffffff;
+}
+
+.editorHeaderMain .metaCardActive .metaPixelButton small {
+  color: rgba(255, 255, 255, 0.82);
+}
+
+.editorHeaderMain .metaCardField {
+  min-width: 0;
+  height: 36px;
+  gap: 6px;
+  padding: 0 6px;
+}
+
+.editorHeaderMain .metaCardField > span {
+  font-size: 0.64rem;
+}
+
+.editorHeaderMain .metaCardField select {
+  height: 32px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  padding-left: 9px;
 }
 
 .editorHeaderPages {

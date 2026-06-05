@@ -282,10 +282,11 @@
   max-height: calc(100vh - 230px);
   overflow: auto;
   border: 0;
-  border-radius: 18px;
+  border-radius: 0;
   background: transparent;
   padding: 0;
   display: flex;
+  align-items: flex-start;
   justify-content: center;
   scrollbar-width: none;
   -ms-overflow-style: none;
@@ -295,7 +296,12 @@
 
 /* The scaler reserves the post-scale footprint; the inner page is rendered at
    its true design width and transform-scaled to fit (a real "compressed monitor"). */
-.canvasScaler { position: relative; flex: 0 0 auto; }
+.canvasScaler {
+  position: relative;
+  flex: 0 0 auto;
+  overflow: hidden;
+  background: var(--rstk-page-bg, transparent);
+}
 .canvasStage {
   transform-origin: top left;
   overflow: hidden;

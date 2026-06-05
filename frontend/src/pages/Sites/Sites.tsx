@@ -90,6 +90,7 @@ import {
   type SiteTheme,
   type SiteType
 } from '@/services/sitesService'
+import { campaignsService } from '@/services/campaignsService'
 import { calendarsService, type Calendar as CalendarType } from '@/services/calendarsService'
 import { requestAIAgentOpen, type AIAgentSitesCreationKind } from '@/utils/aiAgentEvents'
 import styles from './Sites.module.css'
@@ -293,6 +294,11 @@ const buildPublicUrl = (site: PublicSite, domainConfig: SitesDomainConfig) =>
 
 const getPublicRouteLabel = (site: PublicSite, domainConfig: SitesDomainConfig) =>
   domainConfig.domain ? `${domainConfig.domain}${getRoutePath(site)}` : getRoutePath(site)
+
+const getPublicDomainPreview = (domainConfig: SitesDomainConfig) => {
+  const domain = domainConfig.domain.trim().replace(/^https?:\/\//i, '').replace(/\/+$/, '')
+  return domain || 'www.ejemplo-de-tu-dominio.com'
+}
 
 const getNextRouteSlug = (siteType: SiteType, existingSites: PublicSite[]) => {
   const prefix = siteType === 'landing_page' ? 'site' : 'form'
@@ -1318,6 +1324,7 @@ export const Sites: React.FC = () => {
   const [domainConfig, setDomainConfig] = useState<SitesDomainConfig>(emptySitesDomainConfig)
   const [domainInput, setDomainInput] = useState('')
   const [calendars, setCalendars] = useState<CalendarType[]>([])
+  const [metaPixelConnected, setMetaPixelConnected] = useState(false)
   const [selectedSite, setSelectedSite] = useState<PublicSite | null>(null)
   const [selectedBlockId, setSelectedBlockId] = useState<string>('')
   const [loading, setLoading] = useState(true)
@@ -1373,6 +1380,7 @@ export const Sites: React.FC = () => {
     : section === 'forms'
       ? (isFormSite(selectedSite) ? selectedSite : null)
       : null
+  const metaPixelActive = Boolean(editorSite?.metaCapiEnabled || metaPixelConnected)
   const editorActive = Boolean(editorSite)
   const isFocusedSitesMode = createFlow !== 'closed' || Boolean(editorSite)
   const createFlowHeaderCopy = getCreateFlowHeaderCopy(createFlow)
@@ -1458,6 +1466,23 @@ export const Sites: React.FC = () => {
     const initialEditorId = new URLSearchParams(window.location.search).get('siteEditor') || undefined
     loadSites(initialEditorId)
     loadCalendarsForBuilder()
+  }, [])
+
+  useEffect(() => {
+    let mounted = true
+
+    campaignsService.getMetaConfig()
+      .then(response => {
+        if (!mounted) return
+        setMetaPixelConnected(Boolean(response.config?.pixelId))
+      })
+      .catch(() => {
+        if (mounted) setMetaPixelConnected(false)
+      })
+
+    return () => {
+      mounted = false
+    }
   }, [])
 
   useEffect(() => {
@@ -1966,6 +1991,13 @@ export const Sites: React.FC = () => {
     }
   }
 
+  useEffect(() => {
+    if (!metaPixelConnected || !editorSite || editorSite.metaCapiEnabled) return
+
+    updateSelectedSite({ metaCapiEnabled: true })
+    window.setTimeout(() => handleSaveSite(undefined, { silent: true }), 0)
+  }, [editorSite?.id, editorSite?.metaCapiEnabled, metaPixelConnected])
+
   const handlePreviewSite = async () => {
     if (!editorSite) return
     const previewWindow = window.open('', '_blank')
@@ -2412,13 +2444,10 @@ export const Sites: React.FC = () => {
                 <div className={styles.editorTopControls}>
                   <div className={styles.editorPublishControls}>
                     <label className={styles.routeField}>
-                      <span>Ruta publica</span>
+                      <span className={styles.publicRouteDomain} title={getPublicDomainPreview(domainConfig)}>
+                        {getPublicDomainPreview(domainConfig)}
+                      </span>
                       <span className={`${styles.publicRouteBox} ${domainConfig.domain ? '' : styles.publicRouteBoxStandalone}`}>
-                        {domainConfig.domain && (
-                          <span className={styles.publicRouteDomain} title={`https://${domainConfig.domain}`}>
-                            https://{domainConfig.domain}
-                          </span>
-                        )}
                         <input
                           value={getRoutePath(editorSite)}
                           placeholder={editorSite.siteType === 'landing_page' ? '/site-01' : '/form-01'}
@@ -2427,19 +2456,28 @@ export const Sites: React.FC = () => {
                         />
                       </span>
                     </label>
-                    <div className={`${styles.metaCard} ${editorSite.metaCapiEnabled ? styles.metaCardActive : ''}`}>
-                      <span className={styles.metaMark} aria-hidden="true">∞</span>
-                      <div className={styles.metaCardInfo}>
-                        <strong>Meta Pixel + CAPI</strong>
-                        <small>{editorSite.metaCapiEnabled ? 'Page view' : 'Apagado'}</small>
-                      </div>
-                      <div className={styles.metaCardDivider} aria-hidden="true" />
+                    <div className={`${styles.metaCard} ${metaPixelActive ? styles.metaCardActive : ''}`}>
+                      <button
+                        type="button"
+                        className={styles.metaPixelButton}
+                        aria-pressed={metaPixelActive}
+                        onClick={() => {
+                          if (!editorSite.metaCapiEnabled) {
+                            updateSelectedSite({ metaCapiEnabled: true })
+                            window.setTimeout(() => handleSaveSite(undefined, { silent: true }), 0)
+                          }
+                        }}
+                      >
+                        <span className={styles.metaMark} aria-hidden="true">∞</span>
+                        <span>Meta Pixel</span>
+                        <small>{metaPixelActive ? 'Encendido' : 'Activar'}</small>
+                      </button>
                       <label className={styles.metaCardField}>
                         <span>Evento</span>
                         <select
                           value={normalizeMetaEventName(editorSite.metaEventName, 'none')}
                           onChange={(event) => {
-                            updateSelectedSite({ metaEventName: event.target.value })
+                            updateSelectedSite({ metaCapiEnabled: true, metaEventName: event.target.value })
                             window.setTimeout(() => handleSaveSite(undefined, { silent: true }), 0)
                           }}
                           onBlur={() => handleSaveSite(undefined, { silent: true })}
@@ -2448,17 +2486,6 @@ export const Sites: React.FC = () => {
                             <option key={option.value} value={option.value}>{option.label}</option>
                           ))}
                         </select>
-                      </label>
-                      <label className={styles.metaSwitch} title={editorSite.metaCapiEnabled ? 'Desactivar' : 'Activar'}>
-                        <input
-                          type="checkbox"
-                          checked={editorSite.metaCapiEnabled}
-                          onChange={(event) => {
-                            updateSelectedSite({ metaCapiEnabled: event.target.checked })
-                            window.setTimeout(() => handleSaveSite(undefined, { silent: true }), 0)
-                          }}
-                        />
-                        <span className={styles.metaSwitchTrack} aria-hidden="true" />
                       </label>
                     </div>
                   </div>
@@ -3906,7 +3933,10 @@ const CanvasStage: React.FC<CanvasStageProps> = ({
       onDragLeave={onDragLeave}
       onDrop={onDrop}
     >
-      <div className="canvasScaler" style={{ width: Math.round(designWidth * scale), height: Math.round(stageHeight) }}>
+      <div
+        className="canvasScaler"
+        style={{ ...canvasStyle, width: Math.round(designWidth * scale), height: Math.round(stageHeight) } as React.CSSProperties}
+      >
         <div
           ref={stageRef}
           className={`canvasStage ${canvasClassName}`}
