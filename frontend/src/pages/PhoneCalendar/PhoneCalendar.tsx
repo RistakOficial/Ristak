@@ -2,15 +2,20 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import {
   Bell,
+  CalendarClock,
   CalendarDays,
+  CalendarRange,
   Check,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
-  Clock,
+  Grid3X3,
+  LayoutList,
+  List,
   Loader2,
   MonitorX,
   Plus,
+  Rows3,
   Search,
   Settings,
   X
@@ -39,8 +44,9 @@ const MONTH_NAMES = [
   'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'
 ]
 
-const DAYS_SHORT = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom']
-const DAYS_COMPACT = ['L', 'M', 'M', 'J', 'V', 'S', 'D']
+const DAYS_COMPACT = ['D', 'L', 'M', 'M', 'J', 'V', 'S']
+const TIMELINE_START_HOUR = 8
+const TIMELINE_END_HOUR = 20
 
 const STATUS_LABELS: Record<CalendarEvent['appointmentStatus'], string> = {
   confirmed: 'Confirmada',
@@ -52,7 +58,9 @@ const STATUS_LABELS: Record<CalendarEvent['appointmentStatus'], string> = {
 }
 
 type AccessState = 'checking' | 'allowed' | 'blocked'
-type SheetView = 'calendar' | 'search' | 'settings' | null
+type SheetView = 'calendar' | 'search' | 'settings' | 'view' | null
+type CalendarView = 'month' | 'week' | 'day'
+type AgendaView = 'details' | 'stacked' | 'list'
 
 interface DayCell {
   date: Date
@@ -142,7 +150,7 @@ function isSameDay(a: Date, b: Date) {
 
 function startOfWeek(date: Date) {
   const next = new Date(date)
-  const dayOfWeek = (next.getDay() + 6) % 7
+  const dayOfWeek = next.getDay()
   next.setDate(next.getDate() - dayOfWeek)
   next.setHours(0, 0, 0, 0)
   return next
@@ -156,7 +164,7 @@ function startOfMonthGrid(date: Date) {
 function buildMonthRange(date: Date) {
   const start = startOfMonthGrid(date)
   const end = new Date(date.getFullYear(), date.getMonth() + 1, 0)
-  const lastDayOfWeek = (end.getDay() + 6) % 7
+  const lastDayOfWeek = end.getDay()
   end.setDate(end.getDate() + (6 - lastDayOfWeek))
   end.setHours(23, 59, 59, 999)
 
@@ -207,7 +215,8 @@ export const PhoneCalendar: React.FC = () => {
   const [refreshKey, setRefreshKey] = useState(0)
   const [currentDate, setCurrentDate] = useState(() => new Date())
   const [selectedDate, setSelectedDate] = useState(() => new Date())
-  const [monthExpanded, setMonthExpanded] = useState(false)
+  const [calendarView, setCalendarView] = useState<CalendarView>('month')
+  const [agendaView, setAgendaView] = useState<AgendaView>('details')
   const [sheetView, setSheetView] = useState<SheetView>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null)
@@ -232,6 +241,27 @@ export const PhoneCalendar: React.FC = () => {
       hour12: true
     }).format(date)
   }, [timezone])
+
+  const formatShortDate = useCallback((date: Date) => {
+    return new Intl.DateTimeFormat('es-MX', {
+      day: 'numeric',
+      month: 'short'
+    }).format(date).replace('.', '')
+  }, [])
+
+  const getEventDate = useCallback((event: CalendarEvent, fallback = new Date()) => {
+    return toDateInTimeZone(event.startTime, timezone) ?? new Date(event.startTime || fallback)
+  }, [timezone])
+
+  const getEventEndDate = useCallback((event: CalendarEvent, fallback = new Date()) => {
+    return toDateInTimeZone(event.endTime, timezone) ?? new Date(event.endTime || event.startTime || fallback)
+  }, [timezone])
+
+  const getEventColor = useCallback((event: CalendarEvent) => {
+    return calendars.find((calendar) => calendar.id === event.calendarId)?.eventColor ||
+      selectedCalendar?.eventColor ||
+      '#ef4444'
+  }, [calendars, selectedCalendar])
 
   const persistLastSelectedCalendar = useCallback((calendarId: string | null) => {
     if (typeof window === 'undefined') return
@@ -575,9 +605,9 @@ export const PhoneCalendar: React.FC = () => {
     return eventsByDate[formatDateKey(selectedDate)] || []
   }, [eventsByDate, selectedDate])
 
-  const visibleDays = useMemo(() => {
+  const weekDays = useMemo(() => {
     const base = startOfWeek(selectedDate)
-    return Array.from({ length: 14 }).map((_, index) => {
+    return Array.from({ length: 7 }).map((_, index) => {
       const date = new Date(base)
       date.setDate(base.getDate() + index)
       return {
@@ -588,8 +618,9 @@ export const PhoneCalendar: React.FC = () => {
   }, [eventsByDate, selectedDate])
 
   const monthCells = useMemo((): DayCell[] => {
-    const { start } = buildMonthRange(currentDate)
-    return Array.from({ length: 42 }).map((_, index) => {
+    const { start, end } = buildMonthRange(currentDate)
+    const dayCount = Math.floor((end.getTime() - start.getTime()) / (24 * 60 * 60 * 1000)) + 1
+    return Array.from({ length: dayCount }).map((_, index) => {
       const date = new Date(start)
       date.setDate(start.getDate() + index)
       return {
@@ -599,6 +630,43 @@ export const PhoneCalendar: React.FC = () => {
       }
     })
   }, [currentDate, eventsByDate])
+
+  const timelineHours = useMemo(() => {
+    return Array.from({ length: TIMELINE_END_HOUR - TIMELINE_START_HOUR + 1 }).map((_, index) => (
+      TIMELINE_START_HOUR + index
+    ))
+  }, [])
+
+  const timelineEvents = useMemo(() => {
+    const totalMinutes = (TIMELINE_END_HOUR - TIMELINE_START_HOUR) * 60
+
+    return selectedDayEvents
+      .map((event) => {
+        const start = getEventDate(event, selectedDate)
+        const end = getEventEndDate(event, start)
+        const startMinutes = start.getHours() * 60 + start.getMinutes()
+        const endMinutes = Math.max(startMinutes + 30, end.getHours() * 60 + end.getMinutes())
+        const isVisible = endMinutes >= TIMELINE_START_HOUR * 60 && startMinutes <= TIMELINE_END_HOUR * 60
+        const visibleStart = Math.max(TIMELINE_START_HOUR * 60, startMinutes)
+        const visibleEnd = Math.min(TIMELINE_END_HOUR * 60, endMinutes)
+        const top = Math.max(0, ((visibleStart - TIMELINE_START_HOUR * 60) / totalMinutes) * 100)
+        const height = Math.max(7, ((visibleEnd - visibleStart) / totalMinutes) * 100)
+
+        return { event, top, height, isVisible }
+      })
+      .filter(({ top, isVisible }) => isVisible && top <= 100)
+  }, [getEventDate, getEventEndDate, selectedDate, selectedDayEvents])
+
+  const currentTimePercent = useMemo(() => {
+    const now = toDateInTimeZone(new Date().toISOString(), timezone) ?? new Date()
+    if (!isSameDay(now, selectedDate)) return null
+
+    const totalMinutes = (TIMELINE_END_HOUR - TIMELINE_START_HOUR) * 60
+    const currentMinutes = now.getHours() * 60 + now.getMinutes()
+    if (currentMinutes < TIMELINE_START_HOUR * 60 || currentMinutes > TIMELINE_END_HOUR * 60) return null
+
+    return ((currentMinutes - TIMELINE_START_HOUR * 60) / totalMinutes) * 100
+  }, [selectedDate, timezone])
 
   const preparedSearch = useMemo(() => prepareSearchQuery(searchQuery), [searchQuery])
 
@@ -635,18 +703,33 @@ export const PhoneCalendar: React.FC = () => {
     setSheetView(null)
   }
 
-  const handlePrevMonth = () => {
-    const next = new Date(currentDate)
-    next.setMonth(next.getMonth() - 1)
+  const movePeriod = (direction: -1 | 1) => {
+    const next = new Date(calendarView === 'month' ? currentDate : selectedDate)
+
+    if (calendarView === 'month') {
+      next.setMonth(next.getMonth() + direction)
+      const daysInMonth = new Date(next.getFullYear(), next.getMonth() + 1, 0).getDate()
+      const adjustedSelection = new Date(
+        next.getFullYear(),
+        next.getMonth(),
+        Math.min(selectedDate.getDate(), daysInMonth)
+      )
+      setCurrentDate(next)
+      setSelectedDate(adjustedSelection)
+      return
+    }
+
+    next.setDate(next.getDate() + (calendarView === 'week' ? direction * 7 : direction))
+    setSelectedDate(next)
     setCurrentDate(next)
-    setSelectedDate(new Date(next.getFullYear(), next.getMonth(), Math.min(selectedDate.getDate(), 28)))
   }
 
-  const handleNextMonth = () => {
-    const next = new Date(currentDate)
-    next.setMonth(next.getMonth() + 1)
-    setCurrentDate(next)
-    setSelectedDate(new Date(next.getFullYear(), next.getMonth(), Math.min(selectedDate.getDate(), 28)))
+  const handlePrevPeriod = () => {
+    movePeriod(-1)
+  }
+
+  const handleNextPeriod = () => {
+    movePeriod(1)
   }
 
   const handleToday = () => {
@@ -808,21 +891,100 @@ export const PhoneCalendar: React.FC = () => {
     day: 'numeric',
     month: 'long'
   }).format(selectedDate)
+  const selectedDayShortLabel = formatShortDate(selectedDate)
+  const weekStart = weekDays[0]?.date ?? selectedDate
+  const weekEnd = weekDays[6]?.date ?? selectedDate
+  const selectedViewLabel = calendarView === 'month'
+    ? 'Mes'
+    : calendarView === 'week'
+      ? 'Semana'
+      : 'Día'
+  const agendaViewLabel = agendaView === 'details'
+    ? 'Detalles'
+    : agendaView === 'stacked'
+      ? 'Apilada'
+      : 'Lista'
+  const viewTitle = calendarView === 'month'
+    ? MONTH_NAMES[currentDate.getMonth()]
+    : calendarView === 'week'
+      ? `${formatShortDate(weekStart)} - ${formatShortDate(weekEnd)}`
+      : selectedDayShortLabel
+  const viewSubtitle = calendarView === 'month'
+    ? String(currentDate.getFullYear())
+    : `${MONTH_NAMES[selectedDate.getMonth()]} ${selectedDate.getFullYear()}`
+
+  const renderEventItem = (event: CalendarEvent) => {
+    const eventColor = getEventColor(event)
+    const startLabel = formatEventTime(event.startTime)
+    const endLabel = formatEventTime(event.endTime)
+
+    return (
+      <button
+        key={event.id}
+        type="button"
+        className={`${styles.eventCard} ${styles[`eventCard_${agendaView}`]}`}
+        style={{ '--event-color': eventColor } as React.CSSProperties}
+        onClick={() => handleOpenEvent(event)}
+      >
+        <span className={styles.eventAccent} aria-hidden="true" />
+        <span className={styles.eventMain}>
+          <strong>{event.title || '(Sin título)'}</strong>
+          <small>
+            {agendaView === 'list'
+              ? getStatusLabel(event.appointmentStatus)
+              : `${getStatusLabel(event.appointmentStatus)}${event.address ? ` · ${event.address}` : ''}`}
+          </small>
+        </span>
+        <span className={styles.eventTimeStack}>
+          <strong>{startLabel}</strong>
+          <small>{endLabel}</small>
+        </span>
+      </button>
+    )
+  }
 
   return (
     <main className={styles.phonePage} aria-label="Calendario móvil de Ristak">
       <div className={styles.phoneFrame}>
         <header className={styles.header}>
-          <div className={styles.headerMain}>
+          <div className={styles.headerToolbar}>
             <button
               type="button"
-              className={styles.monthButton}
-              onClick={() => setMonthExpanded((current) => !current)}
-              aria-expanded={monthExpanded}
+              className={styles.periodChip}
+              onClick={() => setSheetView('view')}
             >
-              <span>{selectedMonthLabel}</span>
-              <ChevronDown size={16} className={monthExpanded ? styles.rotateIcon : undefined} />
+              <CalendarRange size={18} />
+              <span>{selectedViewLabel}</span>
+              <ChevronDown size={16} />
             </button>
+
+            <div className={styles.headerCapsule} aria-label="Acciones rápidas">
+              <button type="button" onClick={() => setSheetView('view')} aria-label="Cambiar vista">
+                <LayoutList size={22} />
+              </button>
+              <button type="button" onClick={() => setSheetView('search')} aria-label="Buscar citas">
+                <Search size={23} />
+              </button>
+              <button type="button" onClick={() => openCreateModal()} aria-label="Crear cita">
+                <Plus size={25} />
+              </button>
+            </div>
+          </div>
+
+          <div className={styles.titleRow}>
+            <button type="button" className={styles.titleNavButton} onClick={handlePrevPeriod} aria-label="Anterior">
+              <ChevronLeft size={24} />
+            </button>
+            <div>
+              <h1>{viewTitle}</h1>
+              <p>{viewSubtitle}</p>
+            </div>
+            <button type="button" className={styles.titleNavButton} onClick={handleNextPeriod} aria-label="Siguiente">
+              <ChevronRight size={24} />
+            </button>
+          </div>
+
+          <div className={styles.headerMeta}>
             <button
               type="button"
               className={styles.calendarButton}
@@ -836,107 +998,125 @@ export const PhoneCalendar: React.FC = () => {
               />
               <span>{selectedCalendar?.name || 'Calendario'}</span>
             </button>
-          </div>
-          <div className={styles.headerActions}>
-            <button type="button" className={styles.iconButton} onClick={() => setSheetView('search')} aria-label="Buscar citas">
-              <Search size={18} />
-            </button>
             <button type="button" className={styles.iconButton} onClick={() => setSheetView('settings')} aria-label="Ajustes">
               <Settings size={18} />
             </button>
           </div>
         </header>
 
-        <section className={styles.monthNav} aria-label="Navegar calendario">
-          <button type="button" className={styles.navButton} onClick={handlePrevMonth} aria-label="Mes anterior">
-            <ChevronLeft size={18} />
-          </button>
-          <button type="button" className={styles.todayButton} onClick={handleToday}>
-            Hoy
-          </button>
-          <button type="button" className={styles.navButton} onClick={handleNextMonth} aria-label="Mes siguiente">
-            <ChevronRight size={18} />
-          </button>
-        </section>
-
-        <section
-          ref={stripRef}
-          className={styles.dayStrip}
-          aria-label="Días cercanos"
-          data-phone-nav-scrollable="true"
-        >
-          {visibleDays.map(({ date, events: dayEvents }) => {
-            const isSelected = isSameDay(date, selectedDate)
-            const isToday = isSameDay(date, new Date())
-            return (
-              <button
-                key={formatDateKey(date)}
-                type="button"
-                data-selected-day={isSelected || undefined}
-                className={`${styles.dayPill} ${isSelected ? styles.dayPillSelected : ''} ${isToday ? styles.dayPillToday : ''}`}
-                onClick={() => handleSelectDate(date)}
-              >
-                <span>{DAYS_COMPACT[(date.getDay() + 6) % 7]}</span>
-                <strong>{date.getDate()}</strong>
-                <i>{dayEvents.length ? dayEvents.length : ''}</i>
-              </button>
-            )
-          })}
-        </section>
-
-        {monthExpanded && (
-          <section className={styles.monthGridPanel} aria-label="Vista de mes">
-            <div className={styles.weekdayRow}>
-              {DAYS_SHORT.map((day) => <span key={day}>{day}</span>)}
+        <section className={styles.calendarSurface} aria-label={`Vista de ${selectedViewLabel.toLowerCase()}`}>
+          {calendarView === 'month' && (
+            <div className={styles.monthGridPanel}>
+              <div className={styles.weekdayRow}>
+                {DAYS_COMPACT.map((day, index) => <span key={`${day}-${index}`}>{day}</span>)}
+              </div>
+              <div className={styles.monthGrid}>
+                {monthCells.map((cell) => {
+                  const isSelected = isSameDay(cell.date, selectedDate)
+                  const isToday = isSameDay(cell.date, new Date())
+                  return (
+                    <button
+                      key={formatDateKey(cell.date)}
+                      type="button"
+                      className={`${styles.monthDay} ${!cell.isCurrentMonth ? styles.monthDayMuted : ''} ${isSelected ? styles.monthDaySelected : ''} ${isToday ? styles.monthDayToday : ''}`}
+                      onClick={() => handleSelectDate(cell.date)}
+                    >
+                      <span>{cell.date.getDate()}</span>
+                      {cell.events.length > 0 && (
+                        <i className={styles.monthMarkers}>
+                          {cell.events.slice(0, 3).map((event) => (
+                            <b key={event.id} style={{ backgroundColor: getEventColor(event) }} />
+                          ))}
+                        </i>
+                      )}
+                    </button>
+                  )
+                })}
+              </div>
             </div>
-            <div className={styles.monthGrid}>
-              {monthCells.map((cell) => {
-                const isSelected = isSameDay(cell.date, selectedDate)
-                const isToday = isSameDay(cell.date, new Date())
-                return (
-                  <button
-                    key={formatDateKey(cell.date)}
-                    type="button"
-                    className={`${styles.monthDay} ${!cell.isCurrentMonth ? styles.monthDayMuted : ''} ${isSelected ? styles.monthDaySelected : ''} ${isToday ? styles.monthDayToday : ''}`}
-                    onClick={() => handleSelectDate(cell.date)}
-                  >
-                    <span>{cell.date.getDate()}</span>
-                    {cell.events.length > 0 && <i>{cell.events.length}</i>}
-                  </button>
-                )
-              })}
+          )}
+
+          {calendarView !== 'month' && (
+            <div className={styles.timelineWrap}>
+              {calendarView === 'week' && (
+                <section
+                  ref={stripRef}
+                  className={styles.weekStrip}
+                  aria-label="Semana"
+                  data-phone-nav-scrollable="true"
+                >
+                  {weekDays.map(({ date, events: dayEvents }) => {
+                    const isSelected = isSameDay(date, selectedDate)
+                    const isToday = isSameDay(date, new Date())
+                    return (
+                      <button
+                        key={formatDateKey(date)}
+                        type="button"
+                        data-selected-day={isSelected || undefined}
+                        className={`${styles.weekDay} ${isSelected ? styles.weekDaySelected : ''} ${isToday ? styles.weekDayToday : ''}`}
+                        onClick={() => handleSelectDate(date)}
+                      >
+                        <span>{DAYS_COMPACT[date.getDay()]}</span>
+                        <strong>{date.getDate()}</strong>
+                        {dayEvents.length > 0 && <i>{dayEvents.length}</i>}
+                      </button>
+                    )
+                  })}
+                </section>
+              )}
+
+              <section className={styles.timelinePanel} aria-label="Horario del día">
+                <div className={styles.timelineHourColumn}>
+                  {timelineHours.map((hour) => (
+                    <span key={hour}>{hour > 12 ? `${hour - 12} p.m.` : hour === 12 ? '12 p.m.' : `${hour} a.m.`}</span>
+                  ))}
+                </div>
+                <div className={styles.timelineGrid}>
+                  {timelineHours.map((hour) => <span key={hour} />)}
+                  {currentTimePercent !== null && (
+                    <div className={styles.nowLine} style={{ top: `${currentTimePercent}%` }}>
+                      <strong>{formatEventTime(new Date().toISOString())}</strong>
+                    </div>
+                  )}
+                  {timelineEvents.map(({ event, top, height }) => {
+                    const eventColor = getEventColor(event)
+                    return (
+                      <button
+                        key={event.id}
+                        type="button"
+                        className={styles.timelineEvent}
+                        style={{
+                          top: `${top}%`,
+                          height: `${height}%`,
+                          '--event-color': eventColor
+                        } as React.CSSProperties}
+                        onClick={() => handleOpenEvent(event)}
+                      >
+                        <strong>{event.title || '(Sin título)'}</strong>
+                        <span>{formatEventTime(event.startTime)} - {formatEventTime(event.endTime)}</span>
+                      </button>
+                    )
+                  })}
+                </div>
+              </section>
             </div>
-          </section>
-        )}
+          )}
+        </section>
 
         <section className={styles.agendaHeader}>
           <div>
             <p>{selectedDayLabel}</p>
             <h1>{selectedDayEvents.length ? `${selectedDayEvents.length} cita${selectedDayEvents.length === 1 ? '' : 's'}` : 'Agenda libre'}</h1>
           </div>
+          <button type="button" className={styles.agendaViewButton} onClick={() => setSheetView('view')}>
+            {agendaViewLabel}
+          </button>
           {loading && <Loader2 size={18} className={styles.spinIcon} />}
         </section>
 
-        <section className={styles.agendaList} data-phone-scrollable="true" aria-label="Citas del día">
+        <section className={`${styles.agendaList} ${styles[`agendaList_${agendaView}`]}`} data-phone-scrollable="true" aria-label="Citas del día">
           {selectedDayEvents.length > 0 ? (
-            selectedDayEvents.map((event) => (
-              <button
-                key={event.id}
-                type="button"
-                className={styles.eventCard}
-                onClick={() => handleOpenEvent(event)}
-              >
-                <span className={styles.eventAccent} aria-hidden="true" />
-                <span className={styles.eventTime}>
-                  <Clock size={15} />
-                  {formatEventTime(event.startTime)}
-                </span>
-                <span className={styles.eventMain}>
-                  <strong>{event.title || '(Sin título)'}</strong>
-                  <small>{formatEventTime(event.startTime)} - {formatEventTime(event.endTime)} · {getStatusLabel(event.appointmentStatus)}</small>
-                </span>
-              </button>
-            ))
+            selectedDayEvents.map(renderEventItem)
           ) : (
             <div className={styles.emptyAgenda}>
               <CalendarDays size={30} />
@@ -951,17 +1131,17 @@ export const PhoneCalendar: React.FC = () => {
             <CalendarDays size={18} />
             <span>Hoy</span>
           </button>
-          <button type="button" className={styles.bottomButton} onClick={() => setSheetView('calendar')}>
-            <ChevronDown size={18} />
-            <span>Cambiar</span>
+          <button type="button" className={styles.bottomButton} onClick={() => setSheetView('view')}>
+            <Grid3X3 size={18} />
+            <span>Vista</span>
           </button>
           <button type="button" className={styles.addButton} onClick={() => openCreateModal()}>
             <Plus size={24} />
             <span>Agendar</span>
           </button>
-          <button type="button" className={styles.bottomButton} onClick={() => setSheetView('search')}>
-            <Search size={18} />
-            <span>Buscar</span>
+          <button type="button" className={styles.bottomButton} onClick={() => setSheetView('calendar')}>
+            <ChevronDown size={18} />
+            <span>Calendarios</span>
           </button>
           <button type="button" className={styles.bottomButton} onClick={() => setSheetView('settings')}>
             <Bell size={18} />
@@ -979,6 +1159,7 @@ export const PhoneCalendar: React.FC = () => {
                 {sheetView === 'calendar' && 'Calendarios'}
                 {sheetView === 'search' && 'Buscar cita'}
                 {sheetView === 'settings' && 'Ajustes'}
+                {sheetView === 'view' && 'Vista'}
               </h2>
               <button type="button" className={styles.closeSheetButton} onClick={() => setSheetView(null)} aria-label="Cerrar">
                 <X size={18} />
@@ -1005,6 +1186,65 @@ export const PhoneCalendar: React.FC = () => {
                     {selectedCalendar?.id === calendar.id && <Check size={18} />}
                   </button>
                 ))}
+              </div>
+            )}
+
+            {sheetView === 'view' && (
+              <div className={styles.viewPanel} data-phone-scrollable="true">
+                <section className={styles.settingBlock}>
+                  <div className={styles.settingBlockHeader}>
+                    <strong>Ver calendario</strong>
+                    <span>{selectedMonthLabel}</span>
+                  </div>
+                  <div className={styles.viewChoiceGrid}>
+                    {([
+                      ['month', 'Mes', CalendarDays],
+                      ['week', 'Semana', CalendarRange],
+                      ['day', 'Día', CalendarClock]
+                    ] as const).map(([value, label, Icon]) => (
+                      <button
+                        key={value}
+                        type="button"
+                        className={`${styles.viewChoice} ${calendarView === value ? styles.viewChoiceActive : ''}`}
+                        onClick={() => {
+                          setCalendarView(value)
+                          setCurrentDate(selectedDate)
+                          setSheetView(null)
+                        }}
+                      >
+                        <Icon size={19} />
+                        <span>{label}</span>
+                      </button>
+                    ))}
+                  </div>
+                </section>
+
+                <section className={styles.settingBlock}>
+                  <div className={styles.settingBlockHeader}>
+                    <strong>Lista de citas</strong>
+                    <span>{agendaViewLabel}</span>
+                  </div>
+                  <div className={styles.viewChoiceGrid}>
+                    {([
+                      ['details', 'Detalles', LayoutList],
+                      ['stacked', 'Apilada', Rows3],
+                      ['list', 'Lista', List]
+                    ] as const).map(([value, label, Icon]) => (
+                      <button
+                        key={value}
+                        type="button"
+                        className={`${styles.viewChoice} ${agendaView === value ? styles.viewChoiceActive : ''}`}
+                        onClick={() => {
+                          setAgendaView(value)
+                          setSheetView(null)
+                        }}
+                      >
+                        <Icon size={19} />
+                        <span>{label}</span>
+                      </button>
+                    ))}
+                  </div>
+                </section>
               </div>
             )}
 
