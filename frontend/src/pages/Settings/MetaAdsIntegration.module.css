@@ -83,9 +83,9 @@
 }
 
 .statusConnected {
-  color: var(--color-status-success);
-  background: rgba(16, 185, 129, 0.1);
-  border: 1px solid rgba(16, 185, 129, 0.28);
+  color: var(--color-primary);
+  background: rgba(var(--color-primary-rgb), 0.1);
+  border: 1px solid rgba(var(--color-primary-rgb), 0.28);
 }
 
 .statusDisconnected {
@@ -126,7 +126,7 @@
 
 .connectedSection {
   padding: 24px 0 0;
-  border-top-color: rgba(16, 185, 129, 0.22);
+  border-top-color: rgba(var(--color-primary-rgb), 0.22);
   background: transparent;
 }
 
@@ -144,10 +144,10 @@
   flex-shrink: 0;
   width: 54px;
   height: 54px;
-  border: 1px solid rgba(16, 185, 129, 0.3);
+  border: 1px solid rgba(var(--color-primary-rgb), 0.3);
   border-radius: 8px;
-  color: var(--color-status-success);
-  background: rgba(16, 185, 129, 0.12);
+  color: var(--color-primary);
+  background: rgba(var(--color-primary-rgb), 0.12);
 }
 
 .connectedCopy {
@@ -274,9 +274,9 @@
 }
 
 .whatsappSectionIcon {
-  border-color: rgba(37, 211, 102, 0.28);
-  color: #25d366;
-  background: rgba(37, 211, 102, 0.1);
+  border-color: rgba(var(--color-primary-rgb), 0.28);
+  color: var(--color-primary);
+  background: rgba(var(--color-primary-rgb), 0.1);
 }
 
 .stepCount {
@@ -355,9 +355,9 @@
 }
 
 .progressDone .progressDot {
-  color: var(--color-status-success);
-  border-color: rgba(16, 185, 129, 0.28);
-  background: rgba(16, 185, 129, 0.1);
+  color: var(--color-primary);
+  border-color: rgba(var(--color-primary-rgb), 0.28);
+  background: rgba(var(--color-primary-rgb), 0.1);
 }
 
 .progressCopy {

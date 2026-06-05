@@ -1,4 +1,11 @@
 .shell {
+  --settings-brand-color: var(--color-primary);
+  --settings-brand-rgb: var(--color-primary-rgb);
+  --settings-brand-bg: rgba(var(--settings-brand-rgb), 0.1);
+  --settings-brand-bg-muted: rgba(var(--settings-brand-rgb), 0.06);
+  --settings-brand-border: rgba(var(--settings-brand-rgb), 0.24);
+  --settings-brand-border-strong: rgba(var(--settings-brand-rgb), 0.34);
+  --settings-brand-surface: color-mix(in srgb, var(--color-background-secondary) 96%, var(--settings-brand-color) 4%);
   display: flex;
   flex-direction: column;
   gap: 22px;
@@ -22,9 +29,9 @@
   width: 52px;
   height: 52px;
   border-radius: 8px;
-  color: #0f9f6e;
-  background: rgba(16, 185, 129, 0.1);
-  border: 1px solid rgba(16, 185, 129, 0.26);
+  color: var(--settings-brand-color);
+  background: var(--settings-brand-bg);
+  border: 1px solid var(--settings-brand-border);
 }
 
 .headerCopy {
@@ -41,7 +48,7 @@
 .eyebrow,
 .sectionEyebrow {
   margin: 0;
-  color: #0f9f6e;
+  color: var(--settings-brand-color);
   font-size: 11px;
   font-weight: 900;
   letter-spacing: 0;
@@ -86,14 +93,14 @@
 .sectionSwitchButton:hover,
 .sectionSwitchButton:focus-visible {
   color: var(--color-text-primary);
-  border-color: rgba(16, 185, 129, 0.28);
-  background: rgba(16, 185, 129, 0.06);
+  border-color: var(--settings-brand-border);
+  background: var(--settings-brand-bg-muted);
 }
 
 .sectionSwitchButtonActive {
-  color: #047857;
-  border-color: rgba(16, 185, 129, 0.34);
-  background: rgba(16, 185, 129, 0.1);
+  color: var(--settings-brand-color);
+  border-color: var(--settings-brand-border-strong);
+  background: var(--settings-brand-bg);
   box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
 }
 
@@ -117,7 +124,7 @@
 .apiConnectPanel {
   border: 1px solid rgba(148, 163, 184, 0.16);
   border-radius: 8px;
-  background: color-mix(in srgb, var(--color-background-secondary) 96%, #10b981 4%);
+  background: var(--settings-brand-surface);
 }
 
 .connectionCard {
@@ -173,9 +180,9 @@
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  color: #0f9f6e;
-  background: rgba(16, 185, 129, 0.1);
-  border: 1px solid rgba(16, 185, 129, 0.24);
+  color: var(--settings-brand-color);
+  background: var(--settings-brand-bg);
+  border: 1px solid var(--settings-brand-border);
   overflow: hidden;
 }
 
@@ -210,9 +217,9 @@
   min-height: 32px;
   padding: 0 11px;
   border-radius: 999px;
-  color: #047857;
-  background: rgba(16, 185, 129, 0.1);
-  border: 1px solid rgba(16, 185, 129, 0.24);
+  color: var(--settings-brand-color);
+  background: var(--settings-brand-bg);
+  border: 1px solid var(--settings-brand-border);
   font-size: 12px;
   font-weight: 900;
   white-space: nowrap;
@@ -243,7 +250,7 @@
 .externalButton:hover,
 .externalButton:focus-visible {
   color: var(--color-text-primary);
-  border-color: rgba(16, 185, 129, 0.32);
+  border-color: var(--settings-brand-border-strong);
 }
 
 .apiAlertList {
@@ -293,9 +300,9 @@
 
 .apiAlertInfo,
 .apiHealthyBanner {
-  color: #0f766e;
-  border-color: rgba(20, 184, 166, 0.24);
-  background: rgba(20, 184, 166, 0.08);
+  color: var(--settings-brand-color);
+  border-color: var(--settings-brand-border);
+  background: var(--settings-brand-bg-muted);
 }
 
 .apiNotice {
@@ -382,11 +389,11 @@
 }
 
 .phoneListItem mark {
-  border: 1px solid rgba(16, 185, 129, 0.22);
+  border: 1px solid var(--settings-brand-border);
   border-radius: 999px;
   padding: 5px 8px;
-  color: #047857;
-  background: rgba(16, 185, 129, 0.1);
+  color: var(--settings-brand-color);
+  background: var(--settings-brand-bg);
   font-size: 10px;
   font-weight: 900;
 }
@@ -473,8 +480,8 @@
 
 .inputWrap:focus-within,
 .selectWrap:focus-within {
-  border-color: rgba(20, 184, 166, 0.55);
-  box-shadow: 0 0 0 3px rgba(20, 184, 166, 0.12);
+  border-color: var(--settings-brand-border-strong);
+  box-shadow: 0 0 0 3px var(--color-primary-light);
 }
 
 .inputWrap input,
@@ -509,7 +516,7 @@
 }
 
 .apiEmptySelector svg {
-  color: #0f9f6e;
+  color: var(--settings-brand-color);
 }
 
 .apiTutorial {
@@ -528,7 +535,7 @@
 }
 
 .apiTutorialHeader span {
-  color: #0f9f6e;
+  color: var(--settings-brand-color);
   font-size: 11px;
   font-weight: 900;
   text-transform: uppercase;
@@ -561,9 +568,9 @@
   width: 28px;
   height: 28px;
   border-radius: 999px;
-  color: #047857;
-  background: rgba(16, 185, 129, 0.12);
-  border: 1px solid rgba(16, 185, 129, 0.24);
+  color: var(--settings-brand-color);
+  background: var(--settings-brand-bg);
+  border: 1px solid var(--settings-brand-border);
   font-size: 12px;
   font-weight: 950;
 }
@@ -591,10 +598,10 @@
   min-height: 32px;
   margin-top: 8px;
   padding: 0 11px;
-  border: 1px solid rgba(20, 184, 166, 0.28);
+  border: 1px solid var(--settings-brand-border);
   border-radius: 8px;
-  color: #047857;
-  background: rgba(20, 184, 166, 0.08);
+  color: var(--settings-brand-color);
+  background: var(--settings-brand-bg-muted);
   font-size: 12px;
   font-weight: 900;
   text-decoration: none;
@@ -638,7 +645,7 @@
   justify-items: center;
   gap: 12px;
   padding: 36px 18px;
-  color: #0f9f6e;
+  color: var(--settings-brand-color);
   text-align: center;
 }
 
