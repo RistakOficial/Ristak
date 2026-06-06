@@ -102,7 +102,6 @@ import {
 import { campaignsService } from '@/services/campaignsService'
 import { calendarsService, type Calendar as CalendarType } from '@/services/calendarsService'
 import { requestAIAgentOpen, type AIAgentSitesCreationKind } from '@/utils/aiAgentEvents'
-import { useTheme } from '@/contexts/ThemeContext'
 import styles from './Sites.module.css'
 import './sitesCanvas.css'
 import { buildCanvasTheme } from './sitesCanvasTheme'
@@ -1965,7 +1964,6 @@ const makePreviewBlock = (blockType: SiteBlockType, site: PublicSite, pageId?: s
 
 export const Sites: React.FC = () => {
   const { showToast, showConfirm } = useNotification()
-  const { theme } = useTheme()
   const navigate = useNavigate()
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }))
   const [section, setSection] = useState<SitesSection>('landings')
@@ -2041,8 +2039,6 @@ export const Sites: React.FC = () => {
     : section === 'forms'
       ? (isFormSite(selectedSite) ? selectedSite : null)
       : null
-  const showMetaPixelControls = metaPixelConnected
-  const metaPixelActive = Boolean(editorSite?.metaCapiEnabled && metaPixelConnected)
   const editorActive = Boolean(editorSite)
   const isCanvasFocusMode = editorFocusMode && Boolean(editorSite)
   const isFocusedSitesMode = createFlow !== 'closed' || Boolean(editorSite)
@@ -3554,47 +3550,6 @@ export const Sites: React.FC = () => {
                         />
                       </span>
                     </label>
-                    {showMetaPixelControls && (
-                      <div className={`${styles.metaCard} ${metaPixelActive ? styles.metaCardActive : ''}`}>
-                        <button
-                          type="button"
-                          className={styles.metaPixelButton}
-                          aria-pressed={metaPixelActive}
-                          onClick={() => {
-                            updateSelectedSite({ metaCapiEnabled: !editorSite.metaCapiEnabled })
-                            window.setTimeout(() => handleSaveSite(undefined, { silent: true }), 0)
-                          }}
-                        >
-                          <img
-                            className={styles.metaPixelLogo}
-                            src={theme === 'dark'
-                              ? 'https://img.icons8.com/ios-filled/150/FFFFFF/meta.png'
-                              : 'https://img.icons8.com/ios-filled/150/meta.png'
-                            }
-                            alt=""
-                            aria-hidden="true"
-                          />
-                          <span>Pixel</span>
-                          <small>{metaPixelActive ? 'Encendido' : 'Apagado'}</small>
-                        </button>
-                        <label className={styles.metaCardField}>
-                          <span>Evento</span>
-                          <select
-                            value={normalizeMetaEventName(editorSite.metaEventName, 'none')}
-                            disabled={!editorSite.metaCapiEnabled}
-                            onChange={(event) => {
-                              updateSelectedSite({ metaCapiEnabled: true, metaEventName: event.target.value })
-                              window.setTimeout(() => handleSaveSite(undefined, { silent: true }), 0)
-                            }}
-                            onBlur={() => handleSaveSite(undefined, { silent: true })}
-                          >
-                            {metaEventOptions.map(option => (
-                              <option key={option.value} value={option.value}>{option.label}</option>
-                            ))}
-                          </select>
-                        </label>
-                      </div>
-                    )}
                   </div>
                   <div className={styles.editorActions}>
                     <div className={styles.deviceToggle} role="group" aria-label="Vista previa del dispositivo">
@@ -7161,6 +7116,30 @@ const PageInspector: React.FC<{
               onCommit={onSaveSite}
             />
           </div>
+          {metaPixelConnected && (
+            <>
+              <div className={styles.panelSubheader}>Medicion Meta</div>
+              <div className={`${styles.metaCard} ${site.metaCapiEnabled ? styles.metaCardActive : ''}`}>
+                <span className={styles.metaMark} aria-hidden="true">∞</span>
+                <div className={styles.metaCardInfo}>
+                  <strong>{site.metaCapiEnabled ? 'Meta encendido' : 'Meta apagado'}</strong>
+                  <small>{site.metaCapiEnabled ? 'Se mediran visitas y conversiones' : 'Activalo para enviar eventos'}</small>
+                </div>
+                <label className={styles.metaSwitch}>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(site.metaCapiEnabled)}
+                    aria-label="Activar medicion de Meta"
+                    onChange={(event) => {
+                      onPatchSite({ metaCapiEnabled: event.target.checked })
+                      window.setTimeout(onSaveSite, 0)
+                    }}
+                  />
+                  <span className={styles.metaSwitchTrack} />
+                </label>
+              </div>
+            </>
+          )}
           {metaPixelConnected && isLanding(site) && activePage && (
             <>
               <div className={styles.panelSubheader}>Conversion de esta pagina</div>

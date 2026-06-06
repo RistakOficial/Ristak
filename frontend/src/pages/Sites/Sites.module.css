@@ -6130,6 +6130,7 @@
   .containerFocused:has(.builder) .propertiesPanel {
     position: relative;
     top: auto;
+    grid-column: auto !important;
     height: 100%;
     max-height: 100%;
     overflow-y: auto;
@@ -6922,39 +6923,41 @@
 
 /* Editor toolbar v2: actions pinned top-right, pages integrated under title. */
 .containerFocused:has(.builder) .editorHeader {
-  --editor-control-h: 28px;
+  --editor-control-h: 34px;
   gap: 0;
-  padding: 3px 8px 2px;
+  padding: 7px 12px 6px;
   border: 0;
   border-bottom: 1px solid rgba(148, 163, 184, 0.12);
   border-radius: 0;
-  background: color-mix(in srgb, var(--color-background-secondary) 92%, var(--color-background-primary) 8%);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.035), transparent),
+    color-mix(in srgb, var(--color-background-secondary) 94%, var(--color-background-primary) 6%);
   box-shadow: none;
 }
 
 .editorUnifiedToolbar {
   min-width: 0;
   display: grid;
-  gap: 2px;
+  gap: 6px;
 }
 
 .editorToolbarTop {
   min-width: 0;
-  min-height: 30px;
+  min-height: 36px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  align-items: start;
-  gap: 8px;
+  align-items: center;
+  gap: 12px;
 }
 
 .editorToolbarLeft {
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 8px;
   overflow-x: auto;
   overflow-y: hidden;
-  padding: 0 2px 1px 0;
+  padding: 1px 2px 2px 0;
   scrollbar-width: none;
 }
 
@@ -6966,67 +6969,67 @@
   height: var(--editor-control-h);
   min-height: var(--editor-control-h);
   flex: 0 0 auto;
-  gap: 5px;
+  gap: 6px;
   border: 1px solid rgba(148, 163, 184, 0.18);
   border-radius: 7px;
   background: rgba(148, 163, 184, 0.07);
-  padding: 0 8px;
-  font-size: 0.74rem;
+  padding: 0 10px;
+  font-size: 0.78rem;
   line-height: 1;
 }
 
 .editorToolbarTop .statusPill {
   flex: 0 0 auto;
-  padding: 3px 7px;
-  font-size: 0.64rem;
+  padding: 5px 8px;
+  font-size: 0.68rem;
   line-height: 1;
   white-space: nowrap;
 }
 
 .editorToolbarTop .editorToolbarNameField {
   height: var(--editor-control-h);
-  flex: 0 1 190px;
-  min-width: 118px;
-  max-width: 230px;
+  flex: 0 1 220px;
+  min-width: 140px;
+  max-width: 260px;
 }
 
 .editorToolbarTop .editorToolbarNameField input {
   width: 100% !important;
   height: var(--editor-control-h);
-  padding: 0 5px;
-  font-size: 0.82rem;
+  padding: 0 8px;
+  font-size: 0.84rem;
   line-height: 1;
 }
 
 .editorToolbarTop .routeField {
-  flex: 1 1 260px;
-  min-width: 180px;
-  max-width: 440px;
+  flex: 1 1 320px;
+  min-width: 220px;
+  max-width: 520px;
 }
 
 .editorToolbarTop .publicRouteBox {
   width: 100%;
   max-width: none;
   height: var(--editor-control-h);
-  border-radius: 7px;
+  border-radius: 8px;
 }
 
 .editorToolbarTop .publicRouteDomain {
-  max-width: 170px;
-  padding: 0 7px;
-  font-size: 0.7rem;
+  max-width: 200px;
+  padding: 0 9px;
+  font-size: 0.72rem;
 }
 
 .editorToolbarTop .publicRouteSlash {
-  padding-left: 4px;
-  font-size: 0.76rem;
+  padding-left: 5px;
+  font-size: 0.8rem;
 }
 
 .editorToolbarTop .publicRouteBox input,
 .editorToolbarTop .publicRouteBoxStandalone input {
-  min-width: 58px;
-  padding: 0 7px 0 2px;
-  font-size: 0.74rem;
+  min-width: 72px;
+  padding: 0 9px 0 3px;
+  font-size: 0.78rem;
 }
 
 .editorToolbarTop .metaCard {
@@ -7081,34 +7084,34 @@
 }
 
 .editorToolbarTop .editorActions {
-  align-self: start;
+  align-self: center;
   justify-self: end;
   min-width: max-content;
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 5px;
+  gap: 7px;
   flex-wrap: nowrap;
 }
 
 .editorToolbarTop .deviceToggle {
   height: var(--editor-control-h);
-  padding: 2px;
-  border-radius: 7px;
+  padding: 3px;
+  border-radius: 8px;
 }
 
 .editorToolbarTop .deviceToggle button {
-  width: 24px;
-  height: 22px;
-  border-radius: 5px;
+  width: 28px;
+  height: 26px;
+  border-radius: 6px;
 }
 
 .editorIconAction,
 .editorToolbarTop .editorActions > button {
   height: var(--editor-control-h);
   min-height: var(--editor-control-h);
-  border-radius: 7px;
-  font-size: 0.75rem;
+  border-radius: 8px;
+  font-size: 0.78rem;
   white-space: nowrap;
 }
 
@@ -7129,12 +7132,12 @@
 }
 
 .editorToolbarTop .editorActions > button {
-  padding-inline: 8px;
+  padding-inline: 10px;
 }
 
 .editorToolbarTop .editorActions > button:last-child {
-  margin-left: 1px;
-  padding-inline: 10px;
+  margin-left: 2px;
+  padding-inline: 12px;
 }
 
 .editorToolbarTop .editorActions > button svg {
@@ -7144,31 +7147,31 @@
 
 .editorToolbarSub {
   min-width: 0;
-  min-height: 24px;
+  min-height: 30px;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   overflow: hidden;
-  padding: 0 1px;
+  padding: 1px 1px 0;
 }
 
 .publicTitleToolbarField {
-  height: 24px;
-  flex: 0 0 min(268px, 34vw);
-  min-width: 180px;
+  height: 28px;
+  flex: 0 0 min(300px, 35vw);
+  min-width: 200px;
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   border: 1px solid rgba(148, 163, 184, 0.14);
-  border-radius: 7px;
+  border-radius: 8px;
   background: rgba(148, 163, 184, 0.055);
   color: var(--color-text-tertiary);
-  padding: 0 6px;
+  padding: 0 8px;
 }
 
 .publicTitleToolbarField > span {
   flex: 0 0 auto;
-  font-size: 0.62rem;
+  font-size: 0.65rem;
   font-weight: 850;
   line-height: 1;
   white-space: nowrap;
@@ -7177,13 +7180,13 @@
 .publicTitleToolbarField input {
   min-width: 0;
   flex: 1 1 auto;
-  height: 20px;
+  height: 22px;
   border: 0;
   outline: 0;
   background: transparent;
   color: var(--color-text-primary);
   font: inherit;
-  font-size: 0.74rem;
+  font-size: 0.76rem;
   font-weight: 800;
   line-height: 1;
 }
@@ -7203,7 +7206,7 @@
 .editorInlinePages .pagesPanel {
   width: 100%;
   min-width: 0;
-  min-height: 24px;
+  min-height: 28px;
   display: flex;
   align-items: center;
   border: 0;
@@ -7222,10 +7225,10 @@
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   overflow-x: auto;
   overflow-y: hidden;
-  padding: 0;
+  padding: 0 1px;
   scrollbar-width: none;
 }
 
@@ -7237,51 +7240,56 @@
   flex: 0 0 auto;
   width: auto;
   display: grid;
-  grid-template-columns: minmax(86px, 132px);
+  grid-template-columns: minmax(108px, 158px);
 }
 
 .editorInlinePages .pageItem {
-  height: 23px;
-  min-height: 23px;
+  height: 28px;
+  min-height: 28px;
   display: grid;
-  grid-template-columns: 11px minmax(0, 1fr) 17px;
+  grid-template-columns: 14px minmax(0, 1fr) 20px;
   align-items: center;
-  gap: 3px;
-  border-radius: 6px;
-  padding: 0 5px;
-  font-size: 0.7rem;
+  gap: 5px;
+  border-radius: 8px;
+  padding: 0 7px;
+  font-size: 0.74rem;
 }
 
 .editorInlinePages .pageTitleInput {
-  height: 19px;
+  height: 22px;
   min-height: 0;
-  padding: 0;
-  font-size: 0.7rem;
+  padding: 0 1px;
+  font-size: 0.74rem;
   line-height: 1;
 }
 
 .editorInlinePages .pageMenuButton {
-  width: 17px;
-  height: 17px;
-  min-height: 17px;
-  border-radius: 5px;
+  width: 20px;
+  height: 20px;
+  min-height: 20px;
+  border-radius: 6px;
 }
 
 .editorInlinePages .pageFlowArrow {
-  width: 9px;
-  min-height: 23px;
+  width: 12px;
+  min-height: 28px;
 }
 
 .editorInlinePages .addPageButton {
   width: auto;
-  height: 23px;
-  min-height: 23px;
+  height: 28px;
+  min-height: 28px;
   flex: 0 0 auto;
-  gap: 4px;
+  gap: 5px;
   margin: 0;
-  border-radius: 6px;
-  padding: 0 7px;
-  font-size: 0.7rem;
+  border-radius: 8px;
+  padding: 0 9px;
+  font-size: 0.74rem;
+}
+
+.propertiesPanel .metaCard {
+  width: 100%;
+  justify-content: space-between;
 }
 
 .containerFocused:has(.builder) .sitesShell,
@@ -7294,8 +7302,8 @@
 }
 
 .containerFocused:has(.builder):not(.containerEditorFocus) :global(.canvasViewport) {
-  min-height: calc(100dvh - var(--header-height, 48px) - 58px) !important;
-  max-height: calc(100dvh - var(--header-height, 48px) - 58px) !important;
+  min-height: calc(100dvh - var(--header-height, 48px) - 74px) !important;
+  max-height: calc(100dvh - var(--header-height, 48px) - 74px) !important;
 }
 
 @media (max-width: 1220px) {
@@ -7308,6 +7316,80 @@
   }
 
   .publicTitleToolbarField {
-    flex-basis: min(240px, 45vw);
+    flex-basis: min(260px, 45vw);
+  }
+}
+
+@media (min-width: 1181px) and (max-width: 1280px) {
+  .containerFocused:has(.builder) {
+    height: calc(100dvh - var(--header-height, 84px));
+    min-height: 0;
+    margin: 0 auto;
+    overflow: hidden;
+  }
+
+  .containerFocused:has(.builder) .sitesShellFocused,
+  .containerFocused:has(.builder) .mainSurface,
+  .containerFocused:has(.builder) .builder,
+  .containerFocused:has(.builder) .builderGrid,
+  .containerFocused:has(.builder) .blocksRail,
+  .containerFocused:has(.builder) .canvasColumn,
+  .containerFocused:has(.builder) .propertiesPanel {
+    min-height: 0;
+  }
+
+  .containerFocused:has(.builder) .sitesShellFocused {
+    flex: 1 1 auto;
+    overflow: hidden;
+  }
+
+  .containerFocused:has(.builder) .mainSurface,
+  .containerFocused:has(.builder) .builder,
+  .containerFocused:has(.builder) .builderGrid {
+    height: 100%;
+    overflow: hidden;
+  }
+
+  .containerFocused:has(.builder) .builderGridLanding,
+  .containerFocused:has(.builder) .builderGridForm {
+    grid-template-columns: minmax(220px, 248px) minmax(420px, 1fr) minmax(300px, 332px) !important;
+    gap: 10px;
+  }
+
+  .containerFocused:has(.builder) .builderGridLanding > .blocksRail,
+  .containerFocused:has(.builder) .builderGridForm > .blocksRail {
+    grid-column: 1 !important;
+    grid-row: 1 !important;
+  }
+
+  .containerFocused:has(.builder) .builderGridLanding > .canvasColumn,
+  .containerFocused:has(.builder) .builderGridForm > .canvasColumn {
+    grid-column: 2 !important;
+    grid-row: 1 !important;
+  }
+
+  .containerFocused:has(.builder) .builderGridLanding > .propertiesPanel,
+  .containerFocused:has(.builder) .builderGridForm > .propertiesPanel {
+    grid-column: 3 !important;
+    grid-row: 1 !important;
+  }
+
+  .containerFocused:has(.builder) .blocksRail,
+  .containerFocused:has(.builder) .propertiesPanel {
+    position: relative;
+    top: auto;
+    height: 100%;
+    max-height: 100%;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding-inline: 8px;
+  }
+
+  .containerFocused:has(.builder) .canvasColumn {
+    height: 100%;
+    display: grid;
+    grid-template-rows: minmax(0, 1fr);
+    padding: 0;
+    overflow: hidden;
   }
 }
