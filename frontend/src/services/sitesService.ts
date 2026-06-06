@@ -89,6 +89,7 @@ export type SiteTemplateId =
   | 'tiktok'
   | 'vsl'
   | 'interactive'
+  | 'imported_html'
 
 export interface SitePage {
   id: string
@@ -112,6 +113,8 @@ export interface SiteTheme {
   textColor?: string
   textColorCustom?: boolean
   template?: SiteTemplateId
+  importedHtml?: boolean
+  importId?: string
   pages?: SitePage[]
   pagePadding?: number
   pageRadius?: number
@@ -239,6 +242,9 @@ export interface SiteSubmission {
   contactId: string | null
   domain: string
   responses: Record<string, string | string[]>
+  rawFields?: Record<string, string | string[]>
+  mappedFields?: Record<string, unknown>
+  derivedFields?: Record<string, unknown>
   meta: Record<string, unknown>
   status: string
   createdAt: string
@@ -286,6 +292,47 @@ export interface SitesDomainConfig {
     verified: boolean
     error: string | null
   }
+}
+
+export type ImportedFieldDestinationType = 'standard' | 'custom' | 'ignored'
+
+export interface ImportedSiteFieldMapping {
+  fieldId: string
+  sourceName: string
+  label: string
+  type: string
+  destinationType: ImportedFieldDestinationType
+  destinationKey: string
+  saveMode?: string
+  confidence?: number
+  ignored?: boolean
+  options?: Array<{ label: string; value: string }>
+}
+
+export interface ImportedSiteFormMapping {
+  formId: string
+  formTitle: string
+  purpose?: string
+  submitText?: string
+  fields: ImportedSiteFieldMapping[]
+}
+
+export interface ImportedSiteImport {
+  id: string
+  siteId: string
+  originalFilename: string
+  importType: string
+  detectedForms: Array<Record<string, unknown>>
+  formMappings: ImportedSiteFormMapping[]
+  securityReport: string[]
+  status: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface ImportedSiteCreateResult {
+  site: PublicSite
+  import: ImportedSiteImport
 }
 
 export type SitesAICreationKind = 'landing' | 'form' | 'interactive_form'
@@ -415,6 +462,19 @@ export const sitesService = {
 
   createWithAI(payload: { siteKind: SitesAICreationKind; messages: SitesAICreationMessage[] }) {
     return apiClient.post<SitesAICreationResult>('/sites/ai-create', payload)
+  },
+
+  importHtmlSite(payload: {
+    siteType: SiteType
+    filename: string
+    fileBase64: string
+    metaCapiEnabled?: boolean
+  }) {
+    return apiClient.post<ImportedSiteCreateResult>('/sites/import-html', payload)
+  },
+
+  updateImportMapping(siteId: string, formMappings: ImportedSiteFormMapping[]) {
+    return apiClient.put<ImportedSiteImport>(`/sites/${siteId}/import-mapping`, { formMappings })
   },
 
   getSite(siteId: string) {

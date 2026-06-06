@@ -38,6 +38,7 @@ export function normalizeCustomFieldDefinition(field = {}) {
 
   return {
     id,
+    definitionId: cleanString(field.definitionId || field.definition_id),
     key: fieldKey || id,
     fieldKey: fieldKey || null,
     label: name || 'Campo personalizado',
@@ -50,7 +51,18 @@ export function normalizeCustomFieldDefinition(field = {}) {
         ? field.options
         : [],
     isAllowedCustomOption: Boolean(field.isAllowedCustomOption),
-    model: field.model || 'contact'
+    model: field.model || 'contact',
+    syncTarget: cleanString(field.syncTarget || field.sync_target),
+    sourceType: cleanString(field.sourceType || field.source_type),
+    sourceId: cleanString(field.sourceId || field.source_id),
+    sourceSiteId: cleanString(field.sourceSiteId || field.source_site_id),
+    sourcePageId: cleanString(field.sourcePageId || field.source_page_id),
+    sourceFormId: cleanString(field.sourceFormId || field.source_form_id),
+    sourceFormName: cleanString(field.sourceFormName || field.source_form_name),
+    sourceFieldId: cleanString(field.sourceFieldId || field.source_field_id),
+    sourceFieldName: cleanString(field.sourceFieldName || field.source_field_name),
+    sourceLabel: cleanString(field.sourceLabel || field.source_label),
+    sourceContext: field.sourceContext || field.source_context || null
   }
 }
 
@@ -60,6 +72,7 @@ export function getContactCustomFieldValues(contact = {}) {
   if (Array.isArray(rawCustomFields)) {
     return rawCustomFields.map((field) => ({
       id: cleanString(field?.id || field?.fieldId || field?.customFieldId),
+      definitionId: cleanString(field?.definitionId || field?.definition_id),
       key: cleanString(field?.key || field?.fieldKey || field?.field_key),
       fieldKey: cleanString(field?.fieldKey || field?.field_key || field?.key),
       label: cleanString(field?.label || field?.name || field?.title),
@@ -70,7 +83,18 @@ export function getContactCustomFieldValues(contact = {}) {
         : Array.isArray(field?.picklistOptions)
           ? field.picklistOptions
           : [],
-      value: pickValue(field || {})
+      value: pickValue(field || {}),
+      syncTarget: cleanString(field?.syncTarget || field?.sync_target),
+      sourceType: cleanString(field?.sourceType || field?.source_type),
+      sourceId: cleanString(field?.sourceId || field?.source_id),
+      sourceSiteId: cleanString(field?.sourceSiteId || field?.source_site_id),
+      sourcePageId: cleanString(field?.sourcePageId || field?.source_page_id),
+      sourceFormId: cleanString(field?.sourceFormId || field?.source_form_id),
+      sourceFormName: cleanString(field?.sourceFormName || field?.source_form_name),
+      sourceFieldId: cleanString(field?.sourceFieldId || field?.source_field_id),
+      sourceFieldName: cleanString(field?.sourceFieldName || field?.source_field_name),
+      sourceLabel: cleanString(field?.sourceLabel || field?.source_label),
+      sourceContext: field?.sourceContext || field?.source_context || null
     }))
   }
 
@@ -79,6 +103,7 @@ export function getContactCustomFieldValues(contact = {}) {
       const field = isPlainObject(value) ? value : { value }
       return {
         id: cleanString(field.id || field.fieldId || field.customFieldId || key),
+        definitionId: cleanString(field.definitionId || field.definition_id),
         key: cleanString(field.key || field.fieldKey || field.field_key || key),
         fieldKey: cleanString(field.fieldKey || field.field_key || field.key || key),
         label: cleanString(field.label || field.name || field.title || key),
@@ -89,7 +114,18 @@ export function getContactCustomFieldValues(contact = {}) {
           : Array.isArray(field.picklistOptions)
             ? field.picklistOptions
             : [],
-        value: pickValue(field)
+        value: pickValue(field),
+        syncTarget: cleanString(field.syncTarget || field.sync_target),
+        sourceType: cleanString(field.sourceType || field.source_type),
+        sourceId: cleanString(field.sourceId || field.source_id),
+        sourceSiteId: cleanString(field.sourceSiteId || field.source_site_id),
+        sourcePageId: cleanString(field.sourcePageId || field.source_page_id),
+        sourceFormId: cleanString(field.sourceFormId || field.source_form_id),
+        sourceFormName: cleanString(field.sourceFormName || field.source_form_name),
+        sourceFieldId: cleanString(field.sourceFieldId || field.source_field_id),
+        sourceFieldName: cleanString(field.sourceFieldName || field.source_field_name),
+        sourceLabel: cleanString(field.sourceLabel || field.source_label),
+        sourceContext: field.sourceContext || field.source_context || null
       }
     })
   }
@@ -102,7 +138,7 @@ function buildDefinitionLookup(definitions = []) {
 
   for (const rawDefinition of definitions) {
     const definition = normalizeCustomFieldDefinition(rawDefinition)
-    for (const key of [definition.id, definition.key, definition.fieldKey]) {
+    for (const key of [definition.id, definition.definitionId, definition.key, definition.fieldKey]) {
       if (key) lookup.set(key, definition)
     }
   }
@@ -117,11 +153,13 @@ export function normalizeContactCustomFields(contact = {}, definitions = []) {
   return values
     .map((field, index) => {
       const definition = definitionLookup.get(field.id) ||
+        definitionLookup.get(field.definitionId) ||
         definitionLookup.get(field.key) ||
         definitionLookup.get(field.fieldKey) ||
         null
 
       const id = field.id || definition?.id || ''
+      const definitionId = field.definitionId || definition?.definitionId || ''
       const key = field.key || field.fieldKey || definition?.fieldKey || definition?.key || ''
       const label = definition?.label ||
         field.label ||
@@ -132,6 +170,7 @@ export function normalizeContactCustomFields(contact = {}, definitions = []) {
 
       return {
         id,
+        definitionId,
         key,
         fieldKey: definition?.fieldKey || field.fieldKey || key || null,
         label,
@@ -139,7 +178,18 @@ export function normalizeContactCustomFields(contact = {}, definitions = []) {
         dataType: definition?.dataType || field.dataType || null,
         value: field.value ?? null,
         options: definition?.options?.length ? definition.options : field.options || [],
-        model: definition?.model || 'contact'
+        model: definition?.model || field.model || 'contact',
+        syncTarget: field.syncTarget || definition?.syncTarget || null,
+        sourceType: field.sourceType || definition?.sourceType || null,
+        sourceId: field.sourceId || definition?.sourceId || null,
+        sourceSiteId: field.sourceSiteId || definition?.sourceSiteId || null,
+        sourcePageId: field.sourcePageId || definition?.sourcePageId || null,
+        sourceFormId: field.sourceFormId || definition?.sourceFormId || null,
+        sourceFormName: field.sourceFormName || definition?.sourceFormName || null,
+        sourceFieldId: field.sourceFieldId || definition?.sourceFieldId || null,
+        sourceFieldName: field.sourceFieldName || definition?.sourceFieldName || null,
+        sourceLabel: field.sourceLabel || definition?.sourceLabel || null,
+        sourceContext: field.sourceContext || definition?.sourceContext || null
       }
     })
     .filter((field) => field.id || field.key || field.label)
@@ -204,11 +254,15 @@ export function mergeContactCustomFields(existingFields = [], updates = [], defi
 export function buildHighLevelCustomFieldsPayload(customFields = []) {
   return normalizeContactCustomFields({ customFields })
     .map((field) => {
+      const syncTarget = cleanString(field.syncTarget).toLowerCase()
+      if (['local', 'internal', 'none', 'ristak'].includes(syncTarget)) return null
+
       const payload = {}
       if (field.id) payload.id = field.id
       if (field.key || field.fieldKey) payload.key = field.fieldKey || field.key
       payload.field_value = field.value ?? null
       return payload
     })
+    .filter(Boolean)
     .filter((field) => field.id || field.key)
 }

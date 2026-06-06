@@ -68,6 +68,7 @@ export type ContactCustomFieldValue =
 
 export interface ContactCustomField {
   id?: string | null
+  definitionId?: string | null
   key?: string | null
   fieldKey?: string | null
   label?: string | null
@@ -76,6 +77,63 @@ export interface ContactCustomField {
   value?: ContactCustomFieldValue
   options?: unknown[]
   model?: string | null
+  syncTarget?: string | null
+  sourceType?: string | null
+  sourceId?: string | null
+  sourceSiteId?: string | null
+  sourcePageId?: string | null
+  sourceFormId?: string | null
+  sourceFormName?: string | null
+  sourceFieldId?: string | null
+  sourceFieldName?: string | null
+  sourceLabel?: string | null
+  sourceContext?: Record<string, unknown> | null
+}
+
+export interface ContactCustomFieldDefinition {
+  definitionId: string
+  key: string
+  fieldKey: string
+  label: string
+  name: string
+  description?: string
+  dataType: string
+  options?: unknown[]
+  fieldGroup?: string
+  syncTarget?: string
+  sourceType?: string
+  sourceId?: string
+  sourceSiteId?: string
+  sourcePageId?: string
+  sourceFormId?: string
+  sourceFormName?: string
+  sourceFieldId?: string
+  sourceFieldName?: string
+  sourceLabel?: string
+  sourceContext?: Record<string, unknown> | null
+  ownerUserId?: number | null
+  archived?: boolean
+  sources?: ContactCustomFieldDefinitionSource[]
+  createdAt?: string | null
+  updatedAt?: string | null
+}
+
+export interface ContactCustomFieldDefinitionSource {
+  id: string
+  definitionId: string
+  sourceType: string
+  sourceId?: string
+  sourceSiteId?: string
+  sourcePageId?: string
+  sourceFormId?: string
+  sourceFormName?: string
+  sourceFieldId?: string
+  sourceFieldName?: string
+  sourceLabel?: string
+  sourceContext?: Record<string, unknown> | null
+  occurrenceCount?: number
+  firstSeenAt?: string | null
+  lastSeenAt?: string | null
 }
 
 export interface Contact {

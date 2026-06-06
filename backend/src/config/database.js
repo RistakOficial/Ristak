@@ -466,9 +466,30 @@ async function initTables() {
         contact_id TEXT,
         domain TEXT,
         response_json TEXT NOT NULL,
+        raw_fields_json TEXT,
+        mapped_fields_json TEXT,
+        derived_fields_json TEXT,
         meta_json TEXT,
         status TEXT DEFAULT 'received',
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (site_id) REFERENCES public_sites(id) ON DELETE CASCADE
+      )
+    `)
+
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS public_site_imports (
+        id TEXT PRIMARY KEY,
+        site_id TEXT NOT NULL UNIQUE,
+        original_filename TEXT,
+        import_type TEXT DEFAULT 'html',
+        html_original TEXT,
+        html_sanitized TEXT NOT NULL,
+        detected_forms_json TEXT,
+        form_mappings_json TEXT,
+        security_report_json TEXT,
+        status TEXT DEFAULT 'mapping_pending',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (site_id) REFERENCES public_sites(id) ON DELETE CASCADE
       )
     `)
@@ -494,11 +515,26 @@ async function initTables() {
       }
     }
 
+    for (const [columnName, columnType] of [
+      ['raw_fields_json', 'TEXT'],
+      ['mapped_fields_json', 'TEXT'],
+      ['derived_fields_json', 'TEXT']
+    ]) {
+      try {
+        await db.run(`ALTER TABLE public_site_submissions ADD COLUMN ${columnName} ${columnType}`)
+      } catch (err) {
+        if (!err.message.includes('duplicate column') && !err.message.includes('already exists')) {
+          logger.warn(`Advertencia al migrar public_site_submissions.${columnName}: ${err.message}`)
+        }
+      }
+    }
+
     try {
       await db.run('CREATE INDEX IF NOT EXISTS idx_public_sites_status ON public_sites(status)')
       await db.run('CREATE INDEX IF NOT EXISTS idx_public_site_blocks_site_order ON public_site_blocks(site_id, sort_order)')
       await db.run('CREATE INDEX IF NOT EXISTS idx_public_site_submissions_site ON public_site_submissions(site_id, created_at)')
       await db.run('CREATE INDEX IF NOT EXISTS idx_public_site_submissions_contact ON public_site_submissions(contact_id)')
+      await db.run('CREATE INDEX IF NOT EXISTS idx_public_site_imports_site ON public_site_imports(site_id)')
       await db.run("CREATE UNIQUE INDEX IF NOT EXISTS idx_public_sites_domain_lower ON public_sites(LOWER(domain)) WHERE domain IS NOT NULL AND domain != ''")
     } catch (err) {
       logger.warn('Advertencia al crear índices de public sites:', err.message)
@@ -662,6 +698,74 @@ async function initTables() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_message_templates_status ON whatsapp_message_templates(status)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_message_templates_ycloud ON whatsapp_message_templates(ycloud_status)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_template_custom_fields_key ON whatsapp_template_custom_fields(field_key)')
+
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS contact_custom_field_definitions (
+        id TEXT PRIMARY KEY,
+        owner_user_id INTEGER,
+        field_key TEXT NOT NULL,
+        label TEXT NOT NULL,
+        description TEXT,
+        data_type TEXT DEFAULT 'text',
+        field_group TEXT DEFAULT 'general',
+        options_json TEXT,
+        sync_target TEXT DEFAULT 'local',
+        source_type TEXT DEFAULT 'manual',
+        source_id TEXT,
+        source_site_id TEXT,
+        source_page_id TEXT,
+        source_form_id TEXT,
+        source_form_name TEXT,
+        source_field_id TEXT,
+        source_field_name TEXT,
+        source_label TEXT,
+        source_context_json TEXT,
+        archived INTEGER DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+
+    await db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_contact_custom_field_definitions_owner_key ON contact_custom_field_definitions(COALESCE(owner_user_id, 0), LOWER(field_key))')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_contact_custom_field_definitions_source_site ON contact_custom_field_definitions(source_site_id)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_contact_custom_field_definitions_archived ON contact_custom_field_definitions(archived)')
+
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS contact_custom_field_definition_sources (
+        id TEXT PRIMARY KEY,
+        definition_id TEXT NOT NULL,
+        source_type TEXT DEFAULT 'manual',
+        source_id TEXT,
+        source_site_id TEXT,
+        source_page_id TEXT,
+        source_form_id TEXT,
+        source_form_name TEXT,
+        source_field_id TEXT,
+        source_field_name TEXT,
+        source_label TEXT,
+        source_context_json TEXT,
+        occurrence_count INTEGER DEFAULT 1,
+        first_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        last_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (definition_id) REFERENCES contact_custom_field_definitions(id) ON DELETE CASCADE
+      )
+    `)
+
+    await db.run(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_contact_custom_field_definition_sources_unique
+      ON contact_custom_field_definition_sources(
+        definition_id,
+        source_type,
+        COALESCE(source_id, ''),
+        COALESCE(source_site_id, ''),
+        COALESCE(source_page_id, ''),
+        COALESCE(source_form_id, ''),
+        COALESCE(source_field_id, ''),
+        LOWER(COALESCE(source_field_name, ''))
+      )
+    `)
+    await db.run('CREATE INDEX IF NOT EXISTS idx_contact_custom_field_definition_sources_definition ON contact_custom_field_definition_sources(definition_id)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_contact_custom_field_definition_sources_site ON contact_custom_field_definition_sources(source_site_id)')
 
     // Tabla de contactos
     await db.run(`

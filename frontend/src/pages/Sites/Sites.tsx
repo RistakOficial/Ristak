@@ -67,6 +67,7 @@ import {
   Type,
   Underline,
   Unlink2,
+  Upload,
   Video,
   X
 } from 'lucide-react'
@@ -84,6 +85,9 @@ import {
   blockLabels,
   fieldBlockTypes,
   formBlockTypes,
+  type ImportedSiteFieldMapping,
+  type ImportedSiteFormMapping,
+  type ImportedSiteImport,
   landingBlockTypes,
   siteTemplates,
   sitesService,
@@ -122,6 +126,11 @@ type CreateFlow =
 
 interface LeadRow extends SiteSubmission {
   siteName: string
+}
+
+interface ImportReviewState {
+  site: PublicSite
+  importData: ImportedSiteImport
 }
 
 const sectionItems: Array<{ id: SitesSection; label: string; icon: React.ReactNode }> = [
@@ -365,6 +374,14 @@ const normalizeLegacyLandingBlockSpacing = (block: SiteBlock): SiteBlock => {
 const normalizeSiteForEditor = (site: PublicSite): PublicSite => ({
   ...site,
   blocks: site.blocks?.map(normalizeLegacyLandingBlockSpacing)
+})
+const isImportedHtmlSite = (site?: PublicSite | null) =>
+  Boolean(site?.theme?.importedHtml || site?.theme?.template === 'imported_html')
+const fileToBase64 = (file: File) => new Promise<string>((resolve, reject) => {
+  const reader = new FileReader()
+  reader.onload = () => resolve(String(reader.result || ''))
+  reader.onerror = () => reject(reader.error || new Error('No se pudo leer el archivo'))
+  reader.readAsDataURL(file)
 })
 const DEFAULT_BUTTON_SETTINGS = {
   buttonAlign: 'center',
@@ -2249,7 +2266,12 @@ export const Sites: React.FC = () => {
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
   const [editorFocusMode, setEditorFocusMode] = useState(false)
   const [seoModalOpen, setSeoModalOpen] = useState(false)
+  const [pendingImportSiteType, setPendingImportSiteType] = useState<SiteType>('landing_page')
+  const [importReview, setImportReview] = useState<ImportReviewState | null>(null)
+  const [savingImportMapping, setSavingImportMapping] = useState(false)
   const selectedSiteRef = useRef<PublicSite | null>(null)
+  const importFileInputRef = useRef<HTMLInputElement | null>(null)
+  const pendingImportSiteTypeRef = useRef<SiteType>('landing_page')
   const paletteDragPayloadRef = useRef<PaletteDragPayload | null>(null)
   const undoStackRef = useRef<EditorHistoryEntry[]>([])
   const redoStackRef = useRef<EditorHistoryEntry[]>([])
@@ -3062,6 +3084,72 @@ export const Sites: React.FC = () => {
     showToast('info', 'IA abierta', 'Responde las preguntas y se va a crear un borrador editable en Sites.')
   }
 
+  const handleOpenImportHtml = (siteType: SiteType) => {
+    pendingImportSiteTypeRef.current = siteType
+    setPendingImportSiteType(siteType)
+    if (importFileInputRef.current) {
+      importFileInputRef.current.value = ''
+      importFileInputRef.current.click()
+    }
+  }
+
+  const handleImportHtmlFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+
+    if (/\.zip$/i.test(file.name)) {
+      showToast('warning', 'ZIP pendiente', 'Por ahora sube un archivo HTML. El ZIP lo conectamos cuando haya storage para imagenes y assets.')
+      return
+    }
+
+    if (!/\.html?$/i.test(file.name)) {
+      showToast('error', 'Archivo no valido', 'Sube un archivo .html')
+      return
+    }
+
+    setCreating(true)
+    try {
+      const siteType = pendingImportSiteTypeRef.current || pendingImportSiteType
+      const fileBase64 = await fileToBase64(file)
+      const result = await sitesService.importHtmlSite({
+        siteType,
+        filename: file.name,
+        fileBase64,
+        metaCapiEnabled: metaPixelConnected
+      })
+      const site = normalizeSiteForEditor(result.site)
+      setSites(current => [site, ...current])
+      setSelectedSite(site)
+      selectedSiteRef.current = site
+      setSelectedBlockId('')
+      setActivePageId(DEFAULT_FUNNEL_PAGE_ID)
+      setSection(siteType === 'landing_page' ? 'landings' : 'forms')
+      setCreateFlow('closed')
+      setHasUnsavedChanges(false)
+      setImportReview({ site, importData: result.import })
+      showToast('success', 'HTML importado', 'Revisa los campos detectados antes de publicar.')
+    } catch (error) {
+      showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo importar el HTML')
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  const handleConfirmImportMapping = async (formMappings: ImportedSiteFormMapping[]) => {
+    if (!importReview) return
+    setSavingImportMapping(true)
+    try {
+      await sitesService.updateImportMapping(importReview.site.id, formMappings)
+      setImportReview(null)
+      showToast('success', 'Campos guardados', 'Ristak ya sabe como guardar los datos de este HTML.')
+    } catch (error) {
+      showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo guardar el mapeo')
+    } finally {
+      setSavingImportMapping(false)
+    }
+  }
+
   const handleSaveSite = async (statusOverride?: PublicSite['status'], options: { silent?: boolean } = {}) => {
     const siteToSave = selectedSiteRef.current || selectedSite
     if (!siteToSave) return
@@ -3804,6 +3892,13 @@ export const Sites: React.FC = () => {
 
   return (
     <div className={styles.pageFrame}>
+      <input
+        ref={importFileInputRef}
+        type="file"
+        accept=".html,.htm,text/html"
+        className={styles.hiddenFileInput}
+        onChange={handleImportHtmlFile}
+      />
       <div className={`${styles.container} ${isFocusedSitesMode ? styles.containerFocused : ''} ${isCanvasFocusMode ? styles.containerEditorFocus : ''}`}>
         <header className={`${styles.header} ${editorSite ? styles.editorHeader : ''}`}>
           {editorSite ? (
@@ -3959,6 +4054,7 @@ export const Sites: React.FC = () => {
                 creating={creating}
                 onCreate={handleCreateSite}
                 onCreateWithAI={handleCreateSiteWithAI}
+                onImportHtml={handleOpenImportHtml}
                 onAdvance={setCreateFlow}
               />
             ) : section === 'leads' ? (
@@ -4023,6 +4119,14 @@ export const Sites: React.FC = () => {
                   </button>
                 </div>
               )}
+              {isImportedHtmlSite(editorSite) ? (
+                <ImportedHtmlEditorPanel
+                  site={editorSite}
+                  saving={saving}
+                  onPreview={handlePreviewSite}
+                  onPublish={() => handleSaveSite('published')}
+                />
+              ) : (
               <div className={`${styles.builderGrid} ${isLanding(editorSite) ? styles.builderGridLanding : styles.builderGridForm}`}>
                 <div className={styles.blocksRail}>
                   <Palette
@@ -4196,6 +4300,7 @@ export const Sites: React.FC = () => {
                 />
 
               </div>
+              )}
             </section>
           ) : (
             <div className={styles.emptyEditor}>
@@ -4218,8 +4323,224 @@ export const Sites: React.FC = () => {
             <span>{blockLabels[palettePreviewBlock.blockType] || palettePreviewBlock.label}</span>
           </div>
         )}
+        {importReview && (
+          <ImportedHtmlReviewModal
+            review={importReview}
+            saving={savingImportMapping}
+            onClose={() => setImportReview(null)}
+            onConfirm={handleConfirmImportMapping}
+          />
+        )}
       </div>
     </div>
+    </div>
+  )
+}
+
+const ImportedHtmlEditorPanel: React.FC<{
+  site: PublicSite
+  saving: boolean
+  onPreview: () => void
+  onPublish: () => void
+}> = ({ site, saving, onPreview, onPublish }) => (
+  <div className={styles.importedEditorPanel}>
+    <div className={styles.importedEditorCopy}>
+      <Upload size={24} />
+      <div>
+        <strong>{site.title || site.name}</strong>
+        <p>Esta pagina usa el archivo que subiste. Puedes previsualizarla, ajustar su ruta y publicarla cuando el dominio este listo.</p>
+      </div>
+    </div>
+    <div className={styles.importedEditorActions}>
+      <Button variant="secondary" onClick={onPreview}>
+        <Eye size={15} />
+        Previsualizar
+      </Button>
+      <Button onClick={onPublish} loading={saving}>
+        <Send size={15} />
+        Publicar
+      </Button>
+    </div>
+  </div>
+)
+
+const importedStandardFieldOptions = [
+  { value: 'full_name', label: 'Nombre completo' },
+  { value: 'first_name', label: 'Nombre' },
+  { value: 'last_name', label: 'Apellido' },
+  { value: 'email', label: 'Email' },
+  { value: 'phone', label: 'Telefono' },
+  { value: 'message', label: 'Mensaje o nota' }
+]
+
+const normalizeImportedDestinationKey = (value: string, fallback: string) =>
+  (value || fallback || 'campo_personalizado')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '') || 'campo_personalizado'
+
+const inferImportedStandardKey = (field: ImportedSiteFieldMapping) => {
+  const current = normalizeImportedDestinationKey(field.destinationKey, '')
+  if (importedStandardFieldOptions.some(option => option.value === current)) return current
+  const text = `${field.type || ''} ${field.sourceName || ''} ${field.label || ''}`.toLowerCase()
+  if (field.type === 'email' || text.includes('email') || text.includes('correo')) return 'email'
+  if (field.type === 'tel' || text.includes('phone') || text.includes('telefono') || text.includes('teléfono') || text.includes('whatsapp')) return 'phone'
+  if (text.includes('apellido')) return 'last_name'
+  if (text.includes('nombre')) return 'full_name'
+  if (text.includes('mensaje') || text.includes('comentario') || text.includes('nota')) return 'message'
+  return 'full_name'
+}
+
+const cloneImportedFormMappings = (mappings: ImportedSiteFormMapping[]) =>
+  mappings.map(form => ({
+    ...form,
+    fields: form.fields.map(field => ({ ...field }))
+  }))
+
+const ImportedHtmlReviewModal: React.FC<{
+  review: ImportReviewState
+  saving: boolean
+  onClose: () => void
+  onConfirm: (formMappings: ImportedSiteFormMapping[]) => void
+}> = ({ review, saving, onClose, onConfirm }) => {
+  const [draft, setDraft] = useState<ImportedSiteFormMapping[]>(() => cloneImportedFormMappings(review.importData.formMappings || []))
+
+  useEffect(() => {
+    setDraft(cloneImportedFormMappings(review.importData.formMappings || []))
+  }, [review.importData])
+
+  const patchField = (formIndex: number, fieldIndex: number, patch: Partial<ImportedSiteFieldMapping>) => {
+    setDraft(current => current.map((form, currentFormIndex) => {
+      if (currentFormIndex !== formIndex) return form
+      return {
+        ...form,
+        fields: form.fields.map((field, currentFieldIndex) => (
+          currentFieldIndex === fieldIndex ? { ...field, ...patch } : field
+        ))
+      }
+    }))
+  }
+
+  const updateDestinationType = (formIndex: number, fieldIndex: number, field: ImportedSiteFieldMapping, destinationType: ImportedSiteFieldMapping['destinationType']) => {
+    const nextKey = destinationType === 'standard'
+      ? inferImportedStandardKey(field)
+      : destinationType === 'custom'
+        ? normalizeImportedDestinationKey(field.destinationKey || field.sourceName || field.label, 'campo_personalizado')
+        : field.destinationKey
+    patchField(formIndex, fieldIndex, {
+      destinationType,
+      ignored: destinationType === 'ignored',
+      saveMode: destinationType,
+      destinationKey: nextKey
+    })
+  }
+
+  return (
+    <div className={styles.importReviewOverlay} role="dialog" aria-modal="true" aria-labelledby="import-review-title">
+      <div className={styles.importReviewDialog}>
+        <header className={styles.importReviewHeader}>
+          <div>
+            <span>HTML importado</span>
+            <h2 id="import-review-title">Revisa donde se guarda cada campo</h2>
+            <p>{review.importData.originalFilename || review.site.name}</p>
+          </div>
+          <button type="button" className={styles.importReviewClose} onClick={onClose} aria-label="Cerrar">
+            <X size={18} />
+          </button>
+        </header>
+
+        {review.importData.securityReport?.length > 0 && (
+          <div className={styles.importSecurityNote}>
+            <AlertTriangle size={16} />
+            <span>Se limpiaron partes inseguras del archivo antes de publicarlo.</span>
+          </div>
+        )}
+
+        <div className={styles.importReviewForms}>
+          {draft.length === 0 ? (
+            <div className={styles.importEmptyFields}>
+              <CheckCircle2 size={20} />
+              <p>No encontramos formularios en este HTML. Puedes previsualizarlo y publicarlo como pagina informativa.</p>
+            </div>
+          ) : draft.map((form, formIndex) => (
+            <section key={form.formId || formIndex} className={styles.importFormSection}>
+              <div className={styles.importFormHeader}>
+                <strong>{form.formTitle || `Formulario ${formIndex + 1}`}</strong>
+                <span>{form.fields.length} campos detectados</span>
+              </div>
+              <div className={styles.importFieldList}>
+                {form.fields.map((field, fieldIndex) => {
+                  const destinationType = field.ignored ? 'ignored' : field.destinationType || 'custom'
+                  return (
+                    <div key={`${field.fieldId}-${fieldIndex}`} className={styles.importFieldRow}>
+                      <div className={styles.importFieldSource}>
+                        <strong>{field.label || field.sourceName || `Campo ${fieldIndex + 1}`}</strong>
+                        <span>{field.sourceName || field.fieldId}</span>
+                      </div>
+                      <label>
+                        <span>Guardar como</span>
+                        <select
+                          value={destinationType}
+                          onChange={(event) => updateDestinationType(
+                            formIndex,
+                            fieldIndex,
+                            field,
+                            event.target.value as ImportedSiteFieldMapping['destinationType']
+                          )}
+                        >
+                          <option value="standard">Dato del contacto</option>
+                          <option value="custom">Campo personalizado</option>
+                          <option value="ignored">No guardar</option>
+                        </select>
+                      </label>
+                      {destinationType === 'standard' ? (
+                        <label>
+                          <span>Dato</span>
+                          <select
+                            value={field.destinationKey || inferImportedStandardKey(field)}
+                            onChange={(event) => patchField(formIndex, fieldIndex, {
+                              destinationKey: event.target.value,
+                              ignored: false
+                            })}
+                          >
+                            {importedStandardFieldOptions.map(option => (
+                              <option key={option.value} value={option.value}>{option.label}</option>
+                            ))}
+                          </select>
+                        </label>
+                      ) : (
+                        <label>
+                          <span>Nombre interno</span>
+                          <input
+                            value={field.destinationKey || ''}
+                            disabled={destinationType === 'ignored'}
+                            placeholder="campo_personalizado"
+                            onChange={(event) => patchField(formIndex, fieldIndex, {
+                              destinationKey: normalizeImportedDestinationKey(event.target.value, field.sourceName || field.label)
+                            })}
+                          />
+                        </label>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            </section>
+          ))}
+        </div>
+
+        <footer className={styles.importReviewFooter}>
+          <Button variant="secondary" onClick={onClose} disabled={saving}>
+            Revisar despues
+          </Button>
+          <Button onClick={() => onConfirm(draft)} loading={saving}>
+            <Check size={15} />
+            Guardar campos
+          </Button>
+        </footer>
+      </div>
     </div>
   )
 }
@@ -4525,6 +4846,7 @@ interface CreateFlowPanelProps {
   creating: boolean
   onCreate: (siteType: SiteType, mode?: 'blank' | 'template', templateId?: SiteTemplateId) => void
   onCreateWithAI: (siteKind: AIAgentSitesCreationKind) => void
+  onImportHtml: (siteType: SiteType) => void
   onAdvance: (step: CreateFlow) => void
 }
 
@@ -4684,7 +5006,7 @@ const TemplateCategoryGallery: React.FC<{
   </div>
 )
 
-const CreateFlowPanel: React.FC<CreateFlowPanelProps> = ({ step, creating, onCreate, onCreateWithAI, onAdvance }) => {
+const CreateFlowPanel: React.FC<CreateFlowPanelProps> = ({ step, creating, onCreate, onCreateWithAI, onImportHtml, onAdvance }) => {
   return (
     <section className={styles.createPanel}>
       {step === 'landing-start' && (
@@ -4705,6 +5027,12 @@ const CreateFlowPanel: React.FC<CreateFlowPanelProps> = ({ step, creating, onCre
             <Sparkles size={22} />
             <strong>Usando IA</strong>
             <p>El asistente pregunta lo necesario y crea un borrador con bloques editables.</p>
+            <ChevronRight size={18} />
+          </button>
+          <button type="button" disabled={creating} onClick={() => onImportHtml('landing_page')}>
+            <Upload size={22} />
+            <strong>Subir HTML propio</strong>
+            <p>Usa tu pagina actual y Ristak detecta sus formularios para guardar contactos.</p>
             <ChevronRight size={18} />
           </button>
         </div>
@@ -4756,6 +5084,12 @@ const CreateFlowPanel: React.FC<CreateFlowPanelProps> = ({ step, creating, onCre
             <p>El asistente arma el formulario y sus paginas finales editables.</p>
             <ChevronRight size={18} />
           </button>
+          <button type="button" disabled={creating} onClick={() => onImportHtml('standard_form')}>
+            <Upload size={22} />
+            <strong>Subir HTML propio</strong>
+            <p>Conserva tu formulario actual y decide como guardar cada campo detectado.</p>
+            <ChevronRight size={18} />
+          </button>
         </div>
       )}
 
@@ -4777,6 +5111,12 @@ const CreateFlowPanel: React.FC<CreateFlowPanelProps> = ({ step, creating, onCre
             <Sparkles size={22} />
             <strong>Usando IA</strong>
             <p>El asistente arma un borrador interactivo con preguntas por pasos y reglas de calificacion.</p>
+            <ChevronRight size={18} />
+          </button>
+          <button type="button" disabled={creating} onClick={() => onImportHtml('interactive_form')}>
+            <Upload size={22} />
+            <strong>Subir HTML propio</strong>
+            <p>Importa el diseno y revisa que datos se guardan en el contacto.</p>
             <ChevronRight size={18} />
           </button>
         </div>

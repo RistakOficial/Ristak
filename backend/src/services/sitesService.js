@@ -4,8 +4,14 @@ import fetch from 'node-fetch'
 import { db, getAppConfig, setAppConfig } from '../config/database.js'
 import { API_URLS } from '../config/constants.js'
 import { logger } from '../utils/logger.js'
+import {
+  mergeContactCustomFields,
+  parseContactCustomFields,
+  serializeContactCustomFieldsForDb
+} from '../utils/contactCustomFields.js'
 import { normalizePhoneForStorage } from '../utils/phoneUtils.js'
 import { getAIAgentConfig, getOpenAIApiKey } from './aiAgentService.js'
+import { prepareContactCustomFieldsForStorage } from './contactCustomFieldDefinitionsService.js'
 import {
   finalizePreparedPhoneUpsert,
   findContactByPhoneCandidates,
@@ -95,6 +101,33 @@ const SITES_PUBLIC_DOMAIN_CONFIG_KEYS = {
 }
 const SOCIAL_TEMPLATE_IDS = new Set(['facebook', 'instagram', 'tiktok'])
 const SOCIAL_PROFILE_BLOCK_READY_KEY = 'socialProfileBlockReady'
+const IMPORTED_SITE_TEMPLATE = 'imported_html'
+const IMPORTED_HTML_MAX_BYTES = 2 * 1024 * 1024
+const IMPORTED_FORM_STANDARD_FIELDS = new Set(['full_name', 'first_name', 'last_name', 'phone', 'email', 'message'])
+const IMPORTED_FORM_CUSTOM_FIELD_HINTS = new Map([
+  ['tratamiento', 'treatment_interest'],
+  ['treatment', 'treatment_interest'],
+  ['servicio', 'service_interest'],
+  ['service', 'service_interest'],
+  ['sucursal', 'branch'],
+  ['branch', 'branch'],
+  ['fecha', 'preferred_date'],
+  ['date', 'preferred_date'],
+  ['hora', 'preferred_time'],
+  ['time', 'preferred_time'],
+  ['presupuesto', 'budget'],
+  ['budget', 'budget'],
+  ['ciudad', 'city'],
+  ['city', 'city'],
+  ['edad', 'age'],
+  ['age', 'age'],
+  ['genero', 'gender'],
+  ['gender', 'gender'],
+  ['motivo', 'appointment_reason'],
+  ['reason', 'appointment_reason'],
+  ['nota', 'notes'],
+  ['notes', 'notes']
+])
 
 function cleanString(value) {
   return String(value || '').trim()
@@ -133,6 +166,285 @@ function jsonString(value) {
   } catch {
     return JSON.stringify(null)
   }
+}
+
+function decodeBase64Text(value) {
+  const raw = cleanString(value)
+  if (!raw) return ''
+  const base64 = raw.includes(',') ? raw.split(',').pop() : raw
+  return Buffer.from(base64, 'base64').toString('utf8')
+}
+
+function decodeHtmlEntities(value = '') {
+  return cleanString(value)
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+}
+
+function stripHtmlTags(value = '') {
+  return decodeHtmlEntities(String(value || '').replace(/<[^>]+>/g, ' '))
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function parseHtmlAttributes(attributeText = '') {
+  const attrs = {}
+  const pattern = /([:\w-]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g
+  let match
+  while ((match = pattern.exec(attributeText || ''))) {
+    const key = cleanString(match[1]).toLowerCase()
+    if (!key) continue
+    attrs[key] = decodeHtmlEntities(match[2] ?? match[3] ?? match[4] ?? '')
+  }
+  return attrs
+}
+
+function normalizeImportedFieldKey(value, fallback = 'custom_field') {
+  return cleanString(value || fallback)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '') || fallback
+}
+
+function sanitizeImportedHtml(html = '') {
+  const report = []
+  let sanitized = String(html || '')
+
+  if (!sanitized.trim()) {
+    throw new Error('El archivo HTML esta vacio')
+  }
+
+  if (Buffer.byteLength(sanitized, 'utf8') > IMPORTED_HTML_MAX_BYTES) {
+    throw new Error('El HTML es demasiado grande. Sube un archivo de maximo 2 MB.')
+  }
+
+  const removals = [
+    { pattern: /<script\b[\s\S]*?<\/script>/gi, label: 'scripts' },
+    { pattern: /<iframe\b[\s\S]*?<\/iframe>/gi, label: 'iframes' },
+    { pattern: /<object\b[\s\S]*?<\/object>/gi, label: 'objects' },
+    { pattern: /<embed\b[\s\S]*?>/gi, label: 'embeds' },
+    { pattern: /<meta\b[^>]*http-equiv\s*=\s*["']?refresh["']?[^>]*>/gi, label: 'meta refresh' },
+    { pattern: /<base\b[^>]*>/gi, label: 'base tags' }
+  ]
+
+  for (const removal of removals) {
+    const count = (sanitized.match(removal.pattern) || []).length
+    if (count) report.push(`Se quitaron ${count} ${removal.label}`)
+    sanitized = sanitized.replace(removal.pattern, '')
+  }
+
+  sanitized = sanitized.replace(/\s(on[a-z]+)\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, (_match, attr) => {
+    report.push(`Se quito atributo ${attr}`)
+    return ''
+  })
+  sanitized = sanitized.replace(/\s(href|src|action)\s*=\s*(["'])\s*javascript:[\s\S]*?\2/gi, (_match, attr) => {
+    report.push(`Se bloqueo ${attr} con javascript`)
+    return ` ${attr}="#"`;
+  })
+  sanitized = sanitized.replace(/<form\b([^>]*)>/gi, '<form$1 data-rstk-import-form novalidate>')
+
+  if (!/<html[\s>]/i.test(sanitized)) {
+    sanitized = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head><body>${sanitized}</body></html>`
+  }
+
+  return {
+    html: sanitized,
+    report: Array.from(new Set(report))
+  }
+}
+
+function getLabelForField(html = '', attrs = {}) {
+  const id = cleanString(attrs.id)
+  if (id) {
+    const escapedId = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const labelMatch = html.match(new RegExp(`<label\\b[^>]*for=["']?${escapedId}["']?[^>]*>([\\s\\S]*?)<\\/label>`, 'i'))
+    if (labelMatch) return stripHtmlTags(labelMatch[1])
+  }
+
+  return ''
+}
+
+function getNearbyText(html = '', startIndex = 0) {
+  const before = html.slice(Math.max(0, startIndex - 360), startIndex)
+  const headingMatch = before.match(/<(h1|h2|h3|legend|strong|b|p)\b[^>]*>([\s\S]*?)<\/\1>/gi)
+  const lastHeading = headingMatch?.[headingMatch.length - 1] || ''
+  return stripHtmlTags(lastHeading || before.slice(-180))
+}
+
+function extractImportedFields(formHtml = '', formIndex = 0) {
+  const fields = []
+  const fieldPattern = /<(input|select|textarea)\b([^>]*)>([\s\S]*?<\/select>|[\s\S]*?<\/textarea>)?/gi
+  let match
+  let index = 0
+
+  while ((match = fieldPattern.exec(formHtml))) {
+    const tag = match[1].toLowerCase()
+    const attrs = parseHtmlAttributes(match[2] || '')
+    const type = tag === 'input' ? cleanString(attrs.type || 'text').toLowerCase() : tag
+    if (['hidden', 'submit', 'button', 'reset', 'image'].includes(type)) continue
+
+    const explicitField = cleanString(attrs['data-ristack-field'] || attrs['data-ristak-field'])
+    const sourceName = cleanString(attrs.name || attrs.id || explicitField || `field_${formIndex + 1}_${index + 1}`)
+    const fieldId = normalizeImportedFieldKey(sourceName, `field_${formIndex + 1}_${index + 1}`)
+    const label = getLabelForField(formHtml, attrs) || cleanString(attrs['aria-label']) || cleanString(attrs.placeholder) || sourceName
+    const options = []
+    if (tag === 'select') {
+      const optionPattern = /<option\b([^>]*)>([\s\S]*?)<\/option>/gi
+      const selectHtml = match[3] || ''
+      let optionMatch
+      while ((optionMatch = optionPattern.exec(selectHtml))) {
+        const optionAttrs = parseHtmlAttributes(optionMatch[1] || '')
+        const optionLabel = stripHtmlTags(optionMatch[2] || '')
+        const value = cleanString(optionAttrs.value || optionLabel)
+        if (value || optionLabel) {
+          options.push({ label: optionLabel || value, value })
+        }
+      }
+    }
+
+    fields.push({
+      id: fieldId,
+      sourceName,
+      name: cleanString(attrs.name),
+      htmlId: cleanString(attrs.id),
+      type,
+      tag,
+      placeholder: cleanString(attrs.placeholder),
+      label,
+      nearbyText: getNearbyText(formHtml, match.index),
+      explicitField,
+      required: attrs.required !== undefined || cleanString(attrs['aria-required']).toLowerCase() === 'true',
+      options
+    })
+    index += 1
+  }
+
+  return fields
+}
+
+function detectImportedForms(html = '') {
+  const forms = []
+  const formPattern = /<form\b([^>]*)>([\s\S]*?)<\/form>/gi
+  let formMatch
+  let formIndex = 0
+
+  while ((formMatch = formPattern.exec(html))) {
+    const attrs = parseHtmlAttributes(formMatch[1] || '')
+    const formHtml = formMatch[2] || ''
+    const explicitForm = cleanString(attrs['data-ristack-form'] || attrs['data-ristak-form'])
+    const fields = extractImportedFields(formHtml, formIndex)
+    const buttonMatch = formHtml.match(/<button\b([^>]*)>([\s\S]*?)<\/button>|<input\b([^>]*type=["']?submit["']?[^>]*)>/i)
+    const submitText = buttonMatch
+      ? stripHtmlTags(buttonMatch[2] || parseHtmlAttributes(buttonMatch[3] || '').value || 'Enviar')
+      : 'Enviar'
+    const title = getNearbyText(html, formMatch.index) || explicitForm || `Formulario ${formIndex + 1}`
+
+    if (fields.length) {
+      forms.push({
+        id: normalizeImportedFieldKey(explicitForm || attrs.id || attrs.name || `form_${formIndex + 1}`, `form_${formIndex + 1}`),
+        explicitForm,
+        title,
+        purpose: 'lead_capture',
+        submitText,
+        fields
+      })
+      formIndex += 1
+    }
+  }
+
+  if (forms.length === 0) {
+    const fields = extractImportedFields(html, 0)
+    if (fields.length) {
+      forms.push({
+        id: 'form_1',
+        explicitForm: '',
+        title: getNearbyText(html, 0) || 'Formulario detectado',
+        purpose: 'lead_capture',
+        submitText: 'Enviar',
+        fields
+      })
+    }
+  }
+
+  return forms
+}
+
+function inferImportedFieldDestination(field = {}) {
+  const explicit = normalizeImportedFieldKey(field.explicitField, '')
+  const haystack = [
+    explicit,
+    field.name,
+    field.htmlId,
+    field.label,
+    field.placeholder,
+    field.nearbyText
+  ].map(value => normalizeImportedFieldKey(value, '')).filter(Boolean).join(' ')
+
+  if (explicit && IMPORTED_FORM_STANDARD_FIELDS.has(explicit)) {
+    return { destinationType: 'standard', destinationKey: explicit, confidence: 0.98 }
+  }
+
+  if (explicit) {
+    return { destinationType: 'custom', destinationKey: explicit, confidence: 0.94 }
+  }
+
+  if (field.type === 'email' || /\b(email|correo|mail)\b/.test(haystack)) {
+    return { destinationType: 'standard', destinationKey: 'email', confidence: 0.92 }
+  }
+
+  if (field.type === 'tel' || /\b(phone|telefono|telefono|celular|whatsapp|movil|mobile)\b/.test(haystack)) {
+    return { destinationType: 'standard', destinationKey: 'phone', confidence: 0.9 }
+  }
+
+  if (/\b(full_name|nombre_completo|nombre_y_apellido|name|nombre)\b/.test(haystack)) {
+    return { destinationType: 'standard', destinationKey: 'full_name', confidence: 0.82 }
+  }
+
+  if (field.tag === 'textarea' || /\b(message|mensaje|comentario|comments|observaciones)\b/.test(haystack)) {
+    return { destinationType: 'standard', destinationKey: 'message', confidence: 0.78 }
+  }
+
+  for (const [hint, key] of IMPORTED_FORM_CUSTOM_FIELD_HINTS.entries()) {
+    if (haystack.includes(hint)) {
+      return { destinationType: 'custom', destinationKey: key, confidence: 0.76 }
+    }
+  }
+
+  return {
+    destinationType: 'custom',
+    destinationKey: normalizeImportedFieldKey(field.name || field.label || field.placeholder || field.id, 'custom_field'),
+    confidence: 0.45
+  }
+}
+
+function buildDefaultImportedFormMappings(forms = []) {
+  return forms.map(form => ({
+    formId: form.id,
+    formTitle: form.title,
+    purpose: form.purpose || 'lead_capture',
+    submitText: form.submitText || 'Enviar',
+    fields: form.fields.map(field => {
+      const inferred = inferImportedFieldDestination(field)
+      return {
+        fieldId: field.id,
+        sourceName: field.sourceName,
+        label: field.label || field.placeholder || field.sourceName,
+        type: field.type,
+        destinationType: inferred.destinationType,
+        destinationKey: inferred.destinationKey,
+        saveMode: inferred.destinationType === 'standard' ? 'standard' : 'custom',
+        confidence: inferred.confidence,
+        ignored: false,
+        options: field.options || []
+      }
+    })
+  }))
 }
 
 function isSocialTemplate(value) {
@@ -363,6 +675,9 @@ function mapSubmission(row) {
     contactId: row.contact_id || null,
     domain: row.domain || '',
     responses: parseJson(row.response_json, {}),
+    rawFields: parseJson(row.raw_fields_json, {}),
+    mappedFields: parseJson(row.mapped_fields_json, {}),
+    derivedFields: parseJson(row.derived_fields_json, {}),
     meta: parseJson(row.meta_json, {}),
     status: row.status || 'received',
     createdAt: row.created_at,
@@ -2944,6 +3259,129 @@ export async function createSite(input = {}) {
   }
 
   return getSite(id, { includeBlocks: true, includeSubmissions: true })
+}
+
+function getImportedHtmlTitle(html = '', fallback = 'Pagina importada') {
+  const titleMatch = String(html || '').match(/<title\b[^>]*>([\s\S]*?)<\/title>/i)
+  return limitString(stripHtmlTags(titleMatch?.[1] || fallback), 120)
+}
+
+async function getImportedSiteBySiteId(siteId) {
+  const row = await db.get('SELECT * FROM public_site_imports WHERE site_id = ? LIMIT 1', [siteId])
+  if (!row) return null
+  return {
+    id: row.id,
+    siteId: row.site_id,
+    originalFilename: row.original_filename || '',
+    importType: row.import_type || 'html',
+    htmlOriginal: row.html_original || '',
+    htmlSanitized: row.html_sanitized || '',
+    detectedForms: parseJson(row.detected_forms_json, []),
+    formMappings: parseJson(row.form_mappings_json, []),
+    securityReport: parseJson(row.security_report_json, []),
+    status: row.status || 'mapping_pending',
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  }
+}
+
+export async function createImportedSiteFromHtml(input = {}) {
+  const filename = cleanString(input.filename || input.name || 'pagina.html')
+  const extension = filename.split('.').pop()?.toLowerCase() || ''
+  if (extension === 'zip') {
+    const error = new Error('Por ahora sube un archivo HTML. El ZIP se habilita cuando conectemos storage persistente para assets.')
+    error.status = 400
+    throw error
+  }
+  if (!['html', 'htm'].includes(extension)) {
+    const error = new Error('Sube un archivo .html')
+    error.status = 400
+    throw error
+  }
+
+  const rawHtml = input.html || decodeBase64Text(input.fileBase64 || input.contentBase64 || input.content)
+  const sanitized = sanitizeImportedHtml(rawHtml)
+  const detectedForms = detectImportedForms(sanitized.html)
+  const mappings = buildDefaultImportedFormMappings(detectedForms)
+  const siteType = validateSiteType(input.siteType || input.site_type || 'landing_page')
+  const publicTitle = getImportedHtmlTitle(sanitized.html, filename.replace(/\.[^.]+$/, '') || 'Pagina importada')
+  const slug = await ensureUniqueSlug(slugify(input.slug || publicTitle || 'pagina-importada'))
+  const siteId = crypto.randomUUID()
+  const importId = `site_import_${crypto.randomUUID()}`
+  const theme = {
+    ...DEFAULT_THEME,
+    template: IMPORTED_SITE_TEMPLATE,
+    importedHtml: true,
+    importId,
+    pages: [{ id: DEFAULT_FUNNEL_PAGE_ID, title: 'Pagina importada', sortOrder: 0 }]
+  }
+
+  await db.run(`
+    INSERT INTO public_sites (
+      id, name, slug, site_type, status, domain, title, description, theme_json,
+      meta_capi_enabled, meta_event_name, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, 'draft', NULL, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+  `, [
+    siteId,
+    limitString(input.name || publicTitle || 'Pagina importada', 100),
+    slug,
+    siteType,
+    publicTitle,
+    'Pagina importada desde HTML propio',
+    jsonString(theme),
+    normalizeBoolean(input.metaCapiEnabled),
+    normalizeSiteMetaEventName(input.metaEventName, { allowNone: true, fallback: SITE_META_NO_EVENT })
+  ])
+
+  await db.run(`
+    INSERT INTO public_site_imports (
+      id, site_id, original_filename, import_type, html_original, html_sanitized,
+      detected_forms_json, form_mappings_json, security_report_json, status,
+      created_at, updated_at
+    ) VALUES (?, ?, ?, 'html', ?, ?, ?, ?, ?, 'mapping_pending', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+  `, [
+    importId,
+    siteId,
+    filename,
+    rawHtml,
+    sanitized.html,
+    jsonString(detectedForms),
+    jsonString(mappings),
+    jsonString(sanitized.report)
+  ])
+
+  return {
+    site: await getSite(siteId, { includeBlocks: true, includeSubmissions: true }),
+    import: await getImportedSiteBySiteId(siteId)
+  }
+}
+
+export async function updateImportedSiteFormMappings(siteId, input = {}) {
+  const current = await getImportedSiteBySiteId(siteId)
+  if (!current) {
+    const error = new Error('Importacion no encontrada')
+    error.status = 404
+    throw error
+  }
+
+  const mappings = Array.isArray(input.formMappings)
+    ? input.formMappings
+    : Array.isArray(input.form_mappings)
+      ? input.form_mappings
+      : current.formMappings
+
+  await db.run(`
+    UPDATE public_site_imports SET
+      form_mappings_json = ?,
+      status = 'mapping_confirmed',
+      updated_at = CURRENT_TIMESTAMP
+    WHERE site_id = ?
+  `, [
+    jsonString(mappings),
+    siteId
+  ])
+
+  return getImportedSiteBySiteId(siteId)
 }
 
 export async function createSiteWithAI(input = {}) {
@@ -5813,7 +6251,7 @@ const RSTK_BASE_CSS = `
   .rstk-chrome .rstk-avatar{width:46px;height:46px;border-radius:50%;display:grid;place-items:center;overflow:hidden;background:var(--rstk-accent);color:#fff;font-weight:800;font-size:1.15rem;flex:0 0 auto}
   .rstk-chrome .rstk-avatar img{width:100%;height:100%;object-fit:cover}
 	  .rstk-social-profile{margin:calc(-1 * var(--rstk-pad)) calc(-1 * var(--rstk-pad)) 0;padding:20px var(--rstk-pad) 14px;display:flex;align-items:center;gap:8px;background:transparent;border:0}
-	  .rstk-social-profile-block{width:100%;margin:0;padding:16px;border:1px solid var(--rstk-border);border-radius:var(--rstk-radius-lg);background:var(--rstk-surface2);gap:12px}
+	  .rstk-social-profile-block{width:100%;margin:0;padding:0;border:0;border-radius:0;background:transparent;gap:12px}
 	  .rstk-social-image{position:relative;display:inline-block;flex:0 0 auto}
 	  .rstk-social-profile .rstk-avatar{width:64px;height:64px;font-size:1.35rem}
 	  .rstk-social-profile-block .rstk-avatar{width:56px;height:56px;font-size:1.2rem}
@@ -6282,7 +6720,200 @@ async function buildMetaPixelSnippet(site, trackingEnabled, activePage = null) {
   <noscript><img height="1" width="1" style="display:none" src="https://www.facebook.com/tr?id=${encodeURIComponent(pixelId)}&ev=PageView&noscript=1"/></noscript>`
 }
 
+function isImportedHtmlSite(site = {}) {
+  return site?.theme?.importedHtml === true || cleanString(site?.theme?.template) === IMPORTED_SITE_TEMPLATE
+}
+
+function buildImportedFormCaptureScript(site, imported) {
+  const mappings = Array.isArray(imported?.formMappings) ? imported.formMappings : []
+
+  return `
+  <script>
+    (() => {
+      const SITE_ID = ${scriptJson(site.id)};
+      const FORMS = ${scriptJson(mappings)};
+      const DEFAULT_FORM_ID = ${scriptJson(mappings[0]?.formId || 'form_1')};
+      const TRACKING = window.ristakNativeTracking || {};
+
+      const cssEscape = (value) => String(value || '').replace(/["\\\\]/g, '\\\\$&');
+      const readCookie = (name) => {
+        const escaped = String(name || '').replace(/[^a-zA-Z0-9_-]/g, '');
+        return (document.cookie.match(new RegExp('(?:^|; )' + escaped + '=([^;]+)')) || [])[1] || null;
+      };
+      const getParams = () => {
+        try {
+          return Object.fromEntries(new URL(window.location.href).searchParams.entries());
+        } catch (_) {
+          return {};
+        }
+      };
+      const getFieldKey = (field, fallback) => (
+        field.getAttribute('data-ristack-field') ||
+        field.getAttribute('data-ristak-field') ||
+        field.getAttribute('name') ||
+        field.getAttribute('id') ||
+        fallback
+      );
+      const readFieldValue = (field, form) => {
+        const type = String(field.type || '').toLowerCase();
+        if (type === 'checkbox') {
+          const name = field.getAttribute('name');
+          if (!name) return field.checked ? (field.value || 'true') : '';
+          return Array.from(form.querySelectorAll('[name="' + cssEscape(name) + '"]'))
+            .filter(item => item.checked)
+            .map(item => item.value || 'true');
+        }
+        if (type === 'radio') {
+          const name = field.getAttribute('name');
+          const checked = name ? form.querySelector('[name="' + cssEscape(name) + '"]:checked') : (field.checked ? field : null);
+          return checked ? checked.value : '';
+        }
+        if (field.tagName === 'SELECT' && field.multiple) {
+          return Array.from(field.selectedOptions || []).map(option => option.value || option.textContent || '').filter(Boolean);
+        }
+        return field.value || '';
+      };
+      const collectRawFields = (form) => {
+        const raw = {};
+        const fields = Array.from(form.querySelectorAll('input, select, textarea'));
+        fields.forEach((field, index) => {
+          const type = String(field.type || '').toLowerCase();
+          if (['submit', 'button', 'reset', 'image', 'hidden'].includes(type)) return;
+          const key = getFieldKey(field, 'field_' + (index + 1));
+          if (!key) return;
+          const value = readFieldValue(field, form);
+          if (Array.isArray(value) ? value.length > 0 : String(value || '').trim()) {
+            raw[key] = value;
+          }
+        });
+        return raw;
+      };
+      const resolveFormId = (form, index) => (
+        form.getAttribute('data-ristack-form') ||
+        form.getAttribute('data-ristak-form') ||
+        form.getAttribute('data-rstk-form-id') ||
+        form.getAttribute('id') ||
+        form.getAttribute('name') ||
+        (FORMS[index] && FORMS[index].formId) ||
+        DEFAULT_FORM_ID
+      );
+      const setMessage = (form, text, state) => {
+        let message = form.querySelector('[data-rstk-import-message]');
+        if (!message) {
+          message = document.createElement('div');
+          message.setAttribute('data-rstk-import-message', 'true');
+          message.style.marginTop = '12px';
+          message.style.font = '500 14px/1.45 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+          form.appendChild(message);
+        }
+        message.textContent = text;
+        message.style.color = state === 'error' ? '#b91c1c' : '#166534';
+      };
+
+      Array.from(document.querySelectorAll('form')).forEach((form, index) => {
+        form.setAttribute('data-rstk-import-form', 'true');
+        form.addEventListener('submit', async (event) => {
+          event.preventDefault();
+          const submitter = event.submitter || form.querySelector('[type="submit"], button');
+          if (submitter) submitter.disabled = true;
+          setMessage(form, 'Enviando...', 'loading');
+          try {
+            const rawFields = collectRawFields(form);
+            const response = await fetch('/api/sites/public/submit', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                siteId: SITE_ID,
+                importedFormId: resolveFormId(form, index),
+                rawFields,
+                meta: {
+                  pageId: ${scriptJson(DEFAULT_FUNNEL_PAGE_ID)},
+                  pageUrl: window.location.href,
+                  referrer: document.referrer,
+                  params: getParams(),
+                  visitorId: TRACKING.visitorId || null,
+                  sessionId: TRACKING.sessionId || null,
+                  tracking: TRACKING,
+                  fbp: readCookie('_fbp'),
+                  fbc: readCookie('_fbc')
+                }
+              })
+            });
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok || payload.success === false) {
+              throw new Error(payload.error || 'No se pudo enviar el formulario');
+            }
+            const submission = payload.data || {};
+            const metaEventId = submission.capi && submission.capi.eventId
+              ? submission.capi.eventId
+              : (submission.submissionId ? 'site_' + SITE_ID + '_' + submission.submissionId : '');
+            if (window.ristakMetaTrackSiteSubmit) {
+              window.ristakMetaTrackSiteSubmit(metaEventId, {
+                status: submission.status || 'received',
+                conversion_type: 'form_submit',
+                imported_html: true
+              }, submission.capi && submission.capi.eventName);
+            }
+            if (window.ristakNativeRememberContact && submission.contactId) {
+              window.ristakNativeRememberContact({
+                contactId: submission.contactId,
+                fullName: submission.contactName || '',
+                email: submission.contactEmail || ''
+              });
+            }
+            form.reset();
+            setMessage(form, submission.message || 'Listo. Recibimos tu informacion.', 'success');
+            window.dispatchEvent(new CustomEvent('ristak:submitted', { detail: submission }));
+          } catch (error) {
+            setMessage(form, error && error.message ? error.message : 'No se pudo enviar el formulario', 'error');
+          } finally {
+            if (submitter) submitter.disabled = false;
+          }
+        });
+      });
+    })();
+  </script>`
+}
+
+async function renderImportedPublicSiteHtml(site, { trackingEnabled = true } = {}) {
+  const imported = await getImportedSiteBySiteId(site.id)
+  if (!imported) {
+    return renderDomainErrorHtml({
+      host: site.domain,
+      message: 'La pagina importada no se encontro. Vuelve a subir el HTML desde Sites.'
+    })
+  }
+
+  const metaPixelSnippet = await buildMetaPixelSnippet(site, trackingEnabled, { id: DEFAULT_FUNNEL_PAGE_ID, title: site.title || site.name })
+  const nativeTrackingScript = trackingEnabled
+    ? buildNativeSiteTrackingScript({
+      siteId: site.id,
+      siteSlug: site.slug,
+      siteName: site.name,
+      siteType: site.siteType,
+      pageId: DEFAULT_FUNNEL_PAGE_ID,
+      pageTitle: site.title || site.name,
+      formSiteId: site.id,
+      formSiteName: site.name,
+      endpoint: '/collect'
+    })
+    : ''
+  const captureScript = buildImportedFormCaptureScript(site, imported)
+  const injection = `${metaPixelSnippet}${nativeTrackingScript}${captureScript}`
+  const html = imported.htmlSanitized || imported.htmlOriginal || '<!doctype html><html><body></body></html>'
+
+  if (/<\/body>/i.test(html)) {
+    return html.replace(/<\/body>/i, `${injection}</body>`)
+  }
+
+  return `${html}${injection}`
+}
+
 export async function renderPublicSiteHtml(site, { pageId, trackingEnabled = true } = {}) {
+  if (isImportedHtmlSite(site)) {
+    return renderImportedPublicSiteHtml(site, { trackingEnabled })
+  }
+
   const theme = { ...DEFAULT_THEME, ...(site.theme || {}) }
   const template = resolveTemplate(site)
   const brand = getBrand(site, template)
@@ -7292,6 +7923,325 @@ async function recordNativeSiteConversionEvent({ site, blocks, submittedPageId, 
   }
 }
 
+function isEmptyImportedValue(value) {
+  if (Array.isArray(value)) return value.length === 0
+  return !cleanString(value)
+}
+
+function normalizeImportedValue(value) {
+  if (Array.isArray(value)) {
+    return value.map(item => cleanString(item)).filter(Boolean)
+  }
+
+  if (value && typeof value === 'object') {
+    return jsonString(value)
+  }
+
+  return cleanString(value)
+}
+
+function normalizeImportedRawFields(rawFields = {}) {
+  if (!rawFields || typeof rawFields !== 'object' || Array.isArray(rawFields)) return {}
+
+  return Object.entries(rawFields).reduce((acc, [key, value]) => {
+    const rawKey = cleanString(key)
+    if (!rawKey) return acc
+    const normalizedValue = normalizeImportedValue(value)
+    if (isEmptyImportedValue(normalizedValue)) return acc
+    acc[rawKey] = normalizedValue
+    return acc
+  }, {})
+}
+
+function getImportedFormMapping(imported, formId) {
+  const mappings = Array.isArray(imported?.formMappings) ? imported.formMappings : []
+  if (!mappings.length) return null
+
+  const requested = normalizeImportedFieldKey(formId, '')
+  return mappings.find(mapping => normalizeImportedFieldKey(mapping.formId, '') === requested) || mappings[0]
+}
+
+function getImportedRawFieldValue(rawFields = {}, mapping = {}) {
+  const directKeys = [
+    mapping.sourceName,
+    mapping.fieldId,
+    mapping.destinationKey
+  ].map(cleanString).filter(Boolean)
+
+  for (const key of directKeys) {
+    if (Object.prototype.hasOwnProperty.call(rawFields, key)) {
+      return { key, value: rawFields[key] }
+    }
+  }
+
+  const normalizedLookup = new Map(
+    Object.keys(rawFields).map(key => [normalizeImportedFieldKey(key, ''), key])
+  )
+
+  for (const key of directKeys) {
+    const foundKey = normalizedLookup.get(normalizeImportedFieldKey(key, ''))
+    if (foundKey) return { key: foundKey, value: rawFields[foundKey] }
+  }
+
+  return { key: '', value: null }
+}
+
+function inferImportedDataType(mapping = {}, value = '') {
+  const type = normalizeImportedFieldKey(mapping.type || mapping.dataType, '')
+  if (type === 'textarea') return 'textarea'
+  if (type === 'select') return Array.isArray(value) ? 'multiselect' : 'select'
+  if (['radio', 'dropdown'].includes(type)) return 'select'
+  if (['checkbox', 'checkboxes'].includes(type)) return 'multiselect'
+  if (['number', 'currency', 'date', 'time', 'email', 'phone'].includes(type)) return type
+  if (Array.isArray(value)) return 'multiselect'
+  return 'text'
+}
+
+function addImportedCustomField(customFields, field = {}, value, context = {}) {
+  const key = normalizeImportedFieldKey(field.destinationKey || field.key || field.sourceName || field.label, 'custom_field')
+  if (!key || isEmptyImportedValue(value)) return
+
+  customFields.push({
+    key,
+    fieldKey: key,
+    label: cleanString(field.label) || key,
+    name: cleanString(field.label) || key,
+    dataType: inferImportedDataType(field, value),
+    options: Array.isArray(field.options) ? field.options : [],
+    value,
+    syncTarget: 'local',
+    sourceType: 'imported_html',
+    sourceId: context.importId || '',
+    sourceSiteId: context.siteId || '',
+    sourcePageId: DEFAULT_FUNNEL_PAGE_ID,
+    sourceFormId: context.formId || '',
+    sourceFormName: context.formTitle || '',
+    sourceFieldId: cleanString(field.fieldId || field.id),
+    sourceFieldName: cleanString(field.sourceName || field.name),
+    sourceLabel: cleanString(field.label),
+    sourceContext: {
+      originalFilename: context.originalFilename || '',
+      confidence: field.confidence ?? null,
+      imported: true
+    }
+  })
+}
+
+function buildImportedSubmissionLayers({ site, imported, formId, rawFields }) {
+  const formMapping = getImportedFormMapping(imported, formId)
+  const mappedFields = {
+    standard: {},
+    custom: {},
+    ignored: {}
+  }
+  const derivedFields = {}
+  const customFields = []
+  const consumedRawKeys = new Set()
+  const context = {
+    importId: imported?.id || '',
+    siteId: site.id,
+    formId: formMapping?.formId || formId || 'form_1',
+    formTitle: formMapping?.formTitle || 'Formulario importado',
+    originalFilename: imported?.originalFilename || ''
+  }
+
+  for (const field of Array.isArray(formMapping?.fields) ? formMapping.fields : []) {
+    const { key: rawKey, value } = getImportedRawFieldValue(rawFields, field)
+    if (!rawKey || isEmptyImportedValue(value)) continue
+
+    consumedRawKeys.add(rawKey)
+    const destinationType = field.ignored ? 'ignored' : cleanString(field.destinationType || field.saveMode || 'custom')
+    const destinationKey = normalizeImportedFieldKey(field.destinationKey || field.sourceName || rawKey, 'custom_field')
+
+    if (destinationType === 'ignored') {
+      mappedFields.ignored[rawKey] = value
+      continue
+    }
+
+    if (destinationType === 'standard' && IMPORTED_FORM_STANDARD_FIELDS.has(destinationKey)) {
+      mappedFields.standard[destinationKey] = value
+      continue
+    }
+
+    mappedFields.custom[destinationKey] = value
+    addImportedCustomField(customFields, { ...field, destinationKey }, value, context)
+  }
+
+  for (const [rawKey, value] of Object.entries(rawFields)) {
+    if (consumedRawKeys.has(rawKey) || isEmptyImportedValue(value)) continue
+    const key = normalizeImportedFieldKey(rawKey, 'custom_field')
+    mappedFields.custom[key] = value
+    addImportedCustomField(customFields, {
+      destinationKey: key,
+      sourceName: rawKey,
+      label: rawKey,
+      type: Array.isArray(value) ? 'checkboxes' : 'text'
+    }, value, context)
+  }
+
+  if (mappedFields.standard.full_name) {
+    const names = splitName(mappedFields.standard.full_name)
+    if (names.firstName && !mappedFields.standard.first_name) derivedFields.first_name = names.firstName
+    if (names.lastName && !mappedFields.standard.last_name) derivedFields.last_name = names.lastName
+  }
+
+  if (!mappedFields.standard.full_name && (mappedFields.standard.first_name || mappedFields.standard.last_name)) {
+    derivedFields.full_name = [mappedFields.standard.first_name, mappedFields.standard.last_name].map(cleanString).filter(Boolean).join(' ')
+  }
+
+  if (mappedFields.standard.email) {
+    derivedFields.email = normalizeEmail(mappedFields.standard.email)
+  }
+
+  if (mappedFields.standard.phone) {
+    derivedFields.phone = normalizePhoneForStorage(mappedFields.standard.phone) || cleanString(mappedFields.standard.phone)
+  }
+
+  return {
+    formMapping,
+    rawFields,
+    mappedFields,
+    derivedFields,
+    customFields
+  }
+}
+
+async function upsertImportedContactFromSubmission({ site, contact, customFields, meta, imported, formMapping }) {
+  const contactId = await upsertContactFromSubmission({ site, contact, meta })
+  if (!contactId || !Array.isArray(customFields) || customFields.length === 0) return contactId
+
+  const preparedFields = await prepareContactCustomFieldsForStorage(customFields, {
+    sourceType: 'imported_html',
+    sourceId: imported?.id || '',
+    sourceSiteId: site.id,
+    sourcePageId: DEFAULT_FUNNEL_PAGE_ID,
+    sourceFormId: formMapping?.formId || meta?.importedFormId || '',
+    sourceFormName: formMapping?.formTitle || '',
+    syncTarget: 'local'
+  })
+  const existing = await db.get('SELECT custom_fields FROM contacts WHERE id = ?', [contactId])
+  const merged = mergeContactCustomFields(
+    parseContactCustomFields(existing?.custom_fields),
+    preparedFields
+  )
+
+  await db.run(`
+    UPDATE contacts SET
+      custom_fields = ${process.env.DATABASE_URL ? '?::jsonb' : '?'},
+      updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `, [
+    serializeContactCustomFieldsForDb(merged),
+    contactId
+  ])
+
+  return contactId
+}
+
+async function createImportedSubmissionFromRequest({ req, body, site, host }) {
+  const imported = await getImportedSiteBySiteId(site.id)
+  if (!imported) {
+    const error = new Error('Importacion de HTML no encontrada')
+    error.status = 404
+    throw error
+  }
+
+  const importedFormId = cleanString(body.importedFormId || body.imported_form_id || body.formId || body.form_id || 'form_1')
+  const rawFields = normalizeImportedRawFields(body.rawFields || body.raw_fields || body.responses || {})
+  const layers = buildImportedSubmissionLayers({
+    site,
+    imported,
+    formId: importedFormId,
+    rawFields
+  })
+  const standard = layers.mappedFields.standard || {}
+  const derived = layers.derivedFields || {}
+  const fullName = cleanString(standard.full_name || derived.full_name || [
+    standard.first_name || derived.first_name,
+    standard.last_name || derived.last_name
+  ].map(cleanString).filter(Boolean).join(' '))
+  const contact = {
+    fullName,
+    email: normalizeEmail(standard.email || derived.email),
+    phone: normalizePhoneForStorage(standard.phone || derived.phone) || cleanString(standard.phone || derived.phone)
+  }
+  const meta = {
+    ...(body.meta && typeof body.meta === 'object' ? body.meta : {}),
+    host,
+    importedHtml: true,
+    importedFormId: layers.formMapping?.formId || importedFormId,
+    importedFormTitle: layers.formMapping?.formTitle || '',
+    userAgent: req.headers['user-agent'] || '',
+    submittedAt: new Date().toISOString()
+  }
+  const contactId = await upsertImportedContactFromSubmission({
+    site,
+    contact,
+    customFields: layers.customFields,
+    meta,
+    imported,
+    formMapping: layers.formMapping
+  })
+  const submissionId = crypto.randomUUID()
+
+  await db.run(`
+    INSERT INTO public_site_submissions (
+      id, site_id, contact_id, domain, response_json, raw_fields_json,
+      mapped_fields_json, derived_fields_json, meta_json, status, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'received', CURRENT_TIMESTAMP)
+  `, [
+    submissionId,
+    site.id,
+    contactId,
+    host,
+    jsonString(layers.mappedFields),
+    jsonString(layers.rawFields),
+    jsonString(layers.mappedFields),
+    jsonString(layers.derivedFields),
+    jsonString(meta)
+  ])
+
+  const capi = await sendSiteLeadMetaEvent({
+    site,
+    submissionId,
+    submittedPageId: DEFAULT_FUNNEL_PAGE_ID,
+    contactId,
+    contact,
+    requestMeta: {
+      ip: getClientIp(req),
+      userAgent: req.headers['user-agent'] || '',
+      meta
+    }
+  })
+
+  await recordNativeSiteConversionEvent({
+    site,
+    blocks: [],
+    submittedPageId: DEFAULT_FUNNEL_PAGE_ID,
+    submissionId,
+    contactId,
+    contact,
+    req,
+    meta
+  }).catch(error => {
+    logger.warn(`No se pudo registrar conversion nativa de HTML importado ${site.id}: ${error.message}`)
+  })
+
+  return {
+    submissionId,
+    siteId: site.id,
+    contactId,
+    contactName: contact.fullName,
+    contactEmail: contact.email,
+    status: 'received',
+    message: 'Listo. Recibimos tu informacion.',
+    rawFields: layers.rawFields,
+    mappedFields: layers.mappedFields,
+    derivedFields: layers.derivedFields,
+    capi
+  }
+}
+
 export async function createSubmissionFromRequest(req, body = {}) {
   const host = getRequestHost(req)
   const domainResolution = await resolveConnectedPublicDomainForHost(host)
@@ -7320,6 +8270,10 @@ export async function createSubmissionFromRequest(req, body = {}) {
   }
 
   site.domain = domainResolution.domain || host
+  if (isImportedHtmlSite(site)) {
+    return createImportedSubmissionFromRequest({ req, body, site, host })
+  }
+
   site.blocks = await hydrateEmbeddedForms(await listSiteBlocks(site.id))
 
   const blocks = Array.isArray(site.blocks) && site.blocks.length

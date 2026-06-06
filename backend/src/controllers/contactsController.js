@@ -13,6 +13,12 @@ import { loadFirstWhatsAppAttributions, buildContactAttributionFields } from '..
 import { findWhatsAppProfilePictureUrl, warmWhatsAppApiProfilePictures } from '../services/whatsappApiService.js'
 import { warmWhatsAppQrProfilePictures } from '../services/whatsappQrService.js'
 import {
+  listContactCustomFieldDefinitions,
+  prepareContactCustomFieldsForStorage,
+  updateContactCustomFieldDefinition,
+  upsertContactCustomFieldDefinition
+} from '../services/contactCustomFieldDefinitionsService.js'
+import {
   buildHighLevelCustomFieldsPayload,
   mergeContactCustomFields,
   parseContactCustomFields,
@@ -459,7 +465,7 @@ const getMetaAttributionForContact = async (contact = {}, firstSession = null, w
       creative_video_url,
       creative_preview_url
     FROM meta_ads
-  `
+`
 
   const adIdCandidates = uniqueValues([
     contact.attribution_ad_id,
@@ -501,6 +507,79 @@ const getMetaAttributionForContact = async (contact = {}, firstSession = null, w
   }
 
   return null
+}
+
+export const getContactCustomFieldDefinitions = async (req, res) => {
+  try {
+    const includeArchived = String(req.query?.includeArchived || req.query?.include_archived || '').toLowerCase() === 'true'
+    const definitions = await listContactCustomFieldDefinitions({
+      includeArchived,
+      userId: req.user?.userId
+    })
+
+    res.json({
+      success: true,
+      data: definitions
+    })
+  } catch (error) {
+    logger.error(`Error listando campos personalizados de contacto: ${error.message}`)
+    res.status(500).json({
+      success: false,
+      error: 'No se pudieron cargar los campos personalizados'
+    })
+  }
+}
+
+export const createContactCustomFieldDefinition = async (req, res) => {
+  try {
+    const definition = await upsertContactCustomFieldDefinition(req.body || {}, {
+      sourceType: 'manual',
+      ownerUserId: req.user?.userId,
+      syncTarget: req.body?.syncTarget || req.body?.sync_target || 'local'
+    })
+
+    if (!definition) {
+      return res.status(400).json({
+        success: false,
+        error: 'Ese campo pertenece a los datos principales del contacto'
+      })
+    }
+
+    res.status(201).json({
+      success: true,
+      data: definition
+    })
+  } catch (error) {
+    logger.error(`Error creando campo personalizado de contacto: ${error.message}`)
+    res.status(error.status || 500).json({
+      success: false,
+      error: error.message || 'No se pudo crear el campo personalizado'
+    })
+  }
+}
+
+export const updateContactCustomFieldDefinitionHandler = async (req, res) => {
+  try {
+    const definition = await updateContactCustomFieldDefinition(req.params.definitionId, req.body || {})
+
+    if (!definition) {
+      return res.status(404).json({
+        success: false,
+        error: 'Campo personalizado no encontrado'
+      })
+    }
+
+    res.json({
+      success: true,
+      data: definition
+    })
+  } catch (error) {
+    logger.error(`Error actualizando campo personalizado de contacto: ${error.message}`)
+    res.status(error.status || 500).json({
+      success: false,
+      error: error.message || 'No se pudo actualizar el campo personalizado'
+    })
+  }
 }
 
 /**
@@ -1778,9 +1857,16 @@ export const updateContact = async (req, res) => {
       })
     }
 
-    const highLevelCustomFields = hasCustomFieldsUpdate
-      ? buildHighLevelCustomFieldsPayload(customFields)
+    const preparedCustomFields = hasCustomFieldsUpdate
+      ? await prepareContactCustomFieldsForStorage(customFields, {
+        sourceType: 'manual',
+        ownerUserId: req.user?.userId
+      })
       : null
+    const highLevelCustomFields = hasCustomFieldsUpdate
+      ? buildHighLevelCustomFieldsPayload(preparedCustomFields)
+      : null
+    const shouldSyncHighLevelCustomFields = Array.isArray(highLevelCustomFields) && highLevelCustomFields.length > 0
     const normalizedPhone = phone !== undefined
       ? (normalizePhoneForStorage(phone) || phone || null)
       : undefined
@@ -1854,7 +1940,7 @@ export const updateContact = async (req, res) => {
       if (phone) ghlUpdateData.phone = phoneUpsert?.phone || normalizedPhone
       if (source) ghlUpdateData.source = source
       if (tags !== undefined) ghlUpdateData.tags = tags
-      if (hasCustomFieldsUpdate) ghlUpdateData.customFields = highLevelCustomFields
+      if (shouldSyncHighLevelCustomFields) ghlUpdateData.customFields = highLevelCustomFields
       if (dnd !== undefined) {
         ghlUpdateData.dnd = dnd
         if (dndSettings) ghlUpdateData.dndSettings = dndSettings
@@ -1865,7 +1951,7 @@ export const updateContact = async (req, res) => {
         logger.info(`Contacto actualizado en HighLevel: ${id}`)
       }
     } catch (error) {
-      if (hasCustomFieldsUpdate) {
+      if (shouldSyncHighLevelCustomFields) {
         logger.warn(`No se pudieron actualizar custom fields en HighLevel para ${id}: ${error.message}`)
         return res.status(502).json({
           success: false,
@@ -1880,7 +1966,7 @@ export const updateContact = async (req, res) => {
     if (hasCustomFieldsUpdate) {
       mergedCustomFields = mergeContactCustomFields(
         parseContactCustomFields(existing.custom_fields),
-        customFields
+        preparedCustomFields
       )
       updates.push(`custom_fields = ${process.env.DATABASE_URL ? '?::jsonb' : '?'}`)
       params.push(serializeContactCustomFieldsForDb(mergedCustomFields))

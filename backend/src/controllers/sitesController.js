@@ -1,5 +1,6 @@
 import {
   createBlock,
+  createImportedSiteFromHtml,
   createMetaPageEventFromRequest,
   createSite,
   createSiteWithAI,
@@ -20,6 +21,7 @@ import {
   resolvePublicSiteForHost,
   restoreBlocks,
   updateBlock,
+  updateImportedSiteFormMappings,
   updateSite
 } from '../services/sitesService.js'
 import {
@@ -67,6 +69,31 @@ export async function createSiteWithAIHandler(req, res) {
     logger.error(`Error creando site con IA: ${error.message}`)
     error.status = error.status || 400
     sendError(res, error, 'Error creando site con IA')
+  }
+}
+
+export async function importSiteHtmlHandler(req, res) {
+  try {
+    const result = await createImportedSiteFromHtml({
+      ...(req.body || {}),
+      userId: req.user?.userId || req.user?.id
+    })
+    res.status(201).json({ success: true, data: result })
+  } catch (error) {
+    logger.error(`Error importando HTML de site: ${error.message}`)
+    error.status = error.status || 400
+    sendError(res, error, 'Error importando HTML')
+  }
+}
+
+export async function updateImportedSiteMappingHandler(req, res) {
+  try {
+    const result = await updateImportedSiteFormMappings(req.params.siteId, req.body || {})
+    res.json({ success: true, data: result })
+  } catch (error) {
+    logger.error(`Error actualizando mapeo de HTML importado: ${error.message}`)
+    error.status = error.status || 400
+    sendError(res, error, 'Error actualizando mapeo')
   }
 }
 

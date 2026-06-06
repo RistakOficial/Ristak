@@ -3,6 +3,296 @@
   background: var(--design-sidebar-bg, var(--color-background-secondary));
 }
 
+.hiddenFileInput {
+  display: none;
+}
+
+.importedEditorPanel {
+  min-height: min(560px, calc(100dvh - 220px));
+  display: grid;
+  place-items: center;
+  padding: clamp(24px, 5vw, 56px);
+  background: #f8fafc;
+}
+
+.importedEditorCopy {
+  width: min(720px, 100%);
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+  color: #0f172a;
+}
+
+.importedEditorCopy > svg {
+  width: 44px;
+  height: 44px;
+  padding: 10px;
+  border-radius: 8px;
+  background: #111827;
+  color: #ffffff;
+}
+
+.importedEditorCopy strong {
+  display: block;
+  font-size: clamp(1.3rem, 2vw, 2rem);
+  line-height: 1.12;
+  letter-spacing: 0;
+}
+
+.importedEditorCopy p {
+  max-width: 620px;
+  margin: 10px 0 0;
+  color: #64748b;
+  font-size: 0.98rem;
+  line-height: 1.6;
+}
+
+.importedEditorActions {
+  width: min(720px, 100%);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 28px;
+  padding-left: 60px;
+}
+
+.importReviewOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(15, 23, 42, 0.48);
+}
+
+.importReviewDialog {
+  width: min(1040px, 100%);
+  max-height: min(760px, calc(100dvh - 40px));
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  overflow: hidden;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #0f172a;
+  box-shadow: 0 28px 80px -36px rgba(15, 23, 42, 0.72);
+}
+
+.importReviewHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 24px 26px 18px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.importReviewHeader span {
+  display: block;
+  margin-bottom: 6px;
+  color: #64748b;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.importReviewHeader h2 {
+  margin: 0;
+  font-size: clamp(1.35rem, 2vw, 1.9rem);
+  letter-spacing: 0;
+}
+
+.importReviewHeader p {
+  margin: 8px 0 0;
+  color: #64748b;
+}
+
+.importReviewClose {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #334155;
+  cursor: pointer;
+}
+
+.importSecurityNote {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 16px 26px 0;
+  padding: 10px 12px;
+  border: 1px solid #fde68a;
+  border-radius: 8px;
+  background: #fffbeb;
+  color: #92400e;
+  font-size: 0.9rem;
+}
+
+.importReviewForms {
+  min-height: 0;
+  overflow: auto;
+  padding: 18px 26px 20px;
+}
+
+.importEmptyFields {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 20px 0;
+  color: #475569;
+}
+
+.importFormSection + .importFormSection {
+  margin-top: 22px;
+  padding-top: 22px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.importFormHeader {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 12px;
+}
+
+.importFormHeader strong {
+  font-size: 1rem;
+}
+
+.importFormHeader span {
+  color: #64748b;
+  font-size: 0.88rem;
+}
+
+.importFieldList {
+  display: grid;
+  gap: 10px;
+}
+
+.importFieldRow {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.2fr) minmax(150px, 0.8fr) minmax(190px, 1fr);
+  gap: 12px;
+  align-items: end;
+  padding: 12px 0;
+  border-bottom: 1px solid #eef2f7;
+}
+
+.importFieldSource {
+  min-width: 0;
+}
+
+.importFieldSource strong {
+  display: block;
+  overflow: hidden;
+  color: #0f172a;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.importFieldSource span {
+  display: block;
+  margin-top: 4px;
+  overflow: hidden;
+  color: #64748b;
+  font-size: 0.82rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.importFieldRow label {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.importFieldRow label > span {
+  color: #64748b;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.importFieldRow select,
+.importFieldRow input {
+  width: 100%;
+  min-height: 38px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #0f172a;
+  font: inherit;
+}
+
+.importFieldRow input {
+  padding: 0 11px;
+}
+
+.importFieldRow select {
+  padding: 0 10px;
+}
+
+.importFieldRow input:disabled {
+  background: #f8fafc;
+  color: #94a3b8;
+}
+
+.importReviewFooter {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 18px 26px 24px;
+  border-top: 1px solid #e2e8f0;
+}
+
+@media (max-width: 760px) {
+  .importedEditorPanel {
+    align-content: start;
+    place-items: stretch;
+  }
+
+  .importedEditorCopy {
+    grid-template-columns: 1fr;
+  }
+
+  .importedEditorActions {
+    padding-left: 0;
+  }
+
+  .importReviewOverlay {
+    padding: 0;
+  }
+
+  .importReviewDialog {
+    width: 100%;
+    height: 100dvh;
+    max-height: none;
+    border-radius: 0;
+  }
+
+  .importReviewHeader,
+  .importReviewForms,
+  .importReviewFooter {
+    padding-left: 18px;
+    padding-right: 18px;
+  }
+
+  .importFieldRow {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .importReviewFooter {
+    flex-direction: column-reverse;
+  }
+}
+
 .container {
   display: flex;
   flex-direction: column;

@@ -1,4 +1,4 @@
-import type { Contact as ContactType } from '@/types'
+import type { Contact as ContactType, ContactCustomFieldDefinition } from '@/types'
 import { dedupeContacts } from '@/utils/contactDedup'
 import { formatName } from '@/utils/format'
 import apiClient from './apiClient'
@@ -196,6 +196,20 @@ export const contactsService = {
       // TODO: Implement proper logging service
       return []
     }
+  },
+
+  getCustomFieldDefinitions(params: { includeArchived?: boolean } = {}) {
+    return apiClient.get<ContactCustomFieldDefinition[]>('/contacts/custom-fields', {
+      params: params.includeArchived ? { includeArchived: 'true' } : undefined
+    })
+  },
+
+  createCustomFieldDefinition(payload: Partial<ContactCustomFieldDefinition>) {
+    return apiClient.post<ContactCustomFieldDefinition>('/contacts/custom-fields', payload)
+  },
+
+  updateCustomFieldDefinition(definitionId: string, payload: Partial<ContactCustomFieldDefinition>) {
+    return apiClient.put<ContactCustomFieldDefinition>(`/contacts/custom-fields/${definitionId}`, payload)
   },
 
   async getContactsChart(startDate?: string, endDate?: string): Promise<ContactChartData[]> {
