@@ -4780,6 +4780,7 @@
 .propertiesBody,
 .settingsGroup,
 .blockStyleControls,
+.formGlobalControls,
 .twoColumn,
 .colorField {
   min-width: 0;
@@ -5468,7 +5469,8 @@
 }
 
 .settingsGroup,
-.blockStyleControls {
+.blockStyleControls,
+.formGlobalControls {
   background: var(--color-background-primary);
   background-image: none;
   overflow: visible;
