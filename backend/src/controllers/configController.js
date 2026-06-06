@@ -1,6 +1,20 @@
 import { getAppConfig, setAppConfig, db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 
+const SENSITIVE_CONFIG_KEY_PATTERN = /(private_key|secret|password|api_token|access_token|refresh_token|service_account|client_secret|webhook_secret)/i
+
+function isSensitiveConfigKey(key = '') {
+  return SENSITIVE_CONFIG_KEY_PATTERN.test(String(key || ''))
+}
+
+function getSafeConfigValue(key, value) {
+  return isSensitiveConfigKey(key) ? null : value
+}
+
+function getSafeLogValue(key, value) {
+  return isSensitiveConfigKey(key) ? '[redacted]' : value
+}
+
 /**
  * Obtiene TODA la configuración de la app (o una clave específica)
  * GET /api/config
@@ -17,7 +31,7 @@ export async function getConfig(req, res) {
 
       for (const key of keyArray) {
         const value = await getAppConfig(key)
-        config[key] = value
+        config[key] = getSafeConfigValue(key, value)
       }
 
       return res.json({
@@ -31,7 +45,7 @@ export async function getConfig(req, res) {
 
     const config = {}
     rows.forEach(row => {
-      config[row.config_key] = row.config_value
+      config[row.config_key] = getSafeConfigValue(row.config_key, row.config_value)
     })
 
     res.json({
@@ -60,7 +74,7 @@ export async function saveConfig(req, res) {
     // Modo 1: Guardar una sola key
     if (key && value !== undefined) {
       await setAppConfig(key, value)
-      logger.info(`Configuración guardada: ${key} = ${value}`)
+      logger.info(`Configuración guardada: ${key} = ${getSafeLogValue(key, value)}`)
 
       return res.json({
         success: true,

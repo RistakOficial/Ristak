@@ -31,6 +31,8 @@ npx -p node@22 -p @capacitor/cli@8.4.0 cap sync
 
 Web/PWA:
 
+Estas llaves son opcionales. Si faltan, el servidor crea un par estable una sola vez y lo guarda en la base de datos para que los celulares puedan registrarse desde la versión web/PWA.
+
 ```bash
 WEB_PUSH_PUBLIC_KEY=
 WEB_PUSH_PRIVATE_KEY=

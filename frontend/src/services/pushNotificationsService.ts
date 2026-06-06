@@ -58,7 +58,7 @@ export const pushNotificationsService = {
     if (!config.configured || !config.publicKey) {
       return {
         status: 'not_configured',
-        reason: 'Falta guardar la llave de avisos en el servidor para poder enviar notificaciones a este celular.'
+        reason: 'El servidor todavía no pudo preparar los avisos para este celular. Cierra y vuelve a abrir Ristak; si sigue igual, revisa la configuración de avisos del servidor.'
       }
     }
 

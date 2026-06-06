@@ -2,12 +2,14 @@ import crypto from 'crypto'
 import fs from 'fs/promises'
 import http2 from 'http2'
 import webPush from 'web-push'
-import { db, getAppConfig } from '../config/database.js'
+import { db, getAppConfig, setAppConfig } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 
-const VAPID_PUBLIC_KEY = process.env.WEB_PUSH_PUBLIC_KEY || process.env.VAPID_PUBLIC_KEY || ''
-const VAPID_PRIVATE_KEY = process.env.WEB_PUSH_PRIVATE_KEY || process.env.VAPID_PRIVATE_KEY || ''
+const ENV_VAPID_PUBLIC_KEY = process.env.WEB_PUSH_PUBLIC_KEY || process.env.VAPID_PUBLIC_KEY || ''
+const ENV_VAPID_PRIVATE_KEY = process.env.WEB_PUSH_PRIVATE_KEY || process.env.VAPID_PRIVATE_KEY || ''
 const VAPID_SUBJECT = process.env.WEB_PUSH_SUBJECT || process.env.VAPID_SUBJECT || 'mailto:soporte@ristak.com'
+const WEB_PUSH_PUBLIC_CONFIG_KEY = 'web_push_public_key'
+const WEB_PUSH_PRIVATE_CONFIG_KEY = 'web_push_private_key'
 const FCM_PROJECT_ID = process.env.FCM_PROJECT_ID || process.env.FIREBASE_PROJECT_ID || ''
 const FCM_SERVICE_ACCOUNT_JSON = process.env.FCM_SERVICE_ACCOUNT_JSON || process.env.FIREBASE_SERVICE_ACCOUNT_JSON || ''
 const FCM_SERVICE_ACCOUNT_FILE = process.env.FCM_SERVICE_ACCOUNT_FILE || process.env.GOOGLE_APPLICATION_CREDENTIALS || ''
@@ -18,6 +20,59 @@ const APNS_PRIVATE_KEY = process.env.APNS_PRIVATE_KEY || ''
 const APNS_PRIVATE_KEY_FILE = process.env.APNS_PRIVATE_KEY_FILE || ''
 const APNS_ENV = String(process.env.APNS_ENV || process.env.NODE_ENV || 'production').toLowerCase()
 
+async function resolveWebPushKeys() {
+  const envPublicKey = String(ENV_VAPID_PUBLIC_KEY || '').trim()
+  const envPrivateKey = String(ENV_VAPID_PRIVATE_KEY || '').trim()
+
+  if (envPublicKey && envPrivateKey) {
+    return {
+      publicKey: envPublicKey,
+      privateKey: envPrivateKey,
+      source: 'environment'
+    }
+  }
+
+  if (envPublicKey || envPrivateKey) {
+    logger.warn('[Push] Llaves VAPID incompletas en variables de entorno; se usará configuración guardada o se crearán nuevas llaves web.')
+  }
+
+  const [storedPublicKey, storedPrivateKey] = await Promise.all([
+    getAppConfig(WEB_PUSH_PUBLIC_CONFIG_KEY).catch(() => ''),
+    getAppConfig(WEB_PUSH_PRIVATE_CONFIG_KEY).catch(() => '')
+  ])
+
+  const cleanStoredPublicKey = String(storedPublicKey || '').trim()
+  const cleanStoredPrivateKey = String(storedPrivateKey || '').trim()
+  if (cleanStoredPublicKey && cleanStoredPrivateKey) {
+    return {
+      publicKey: cleanStoredPublicKey,
+      privateKey: cleanStoredPrivateKey,
+      source: 'database'
+    }
+  }
+
+  const generated = webPush.generateVAPIDKeys()
+  await Promise.all([
+    setAppConfig(WEB_PUSH_PUBLIC_CONFIG_KEY, generated.publicKey),
+    setAppConfig(WEB_PUSH_PRIVATE_CONFIG_KEY, generated.privateKey)
+  ])
+
+  logger.success('[Push] Llaves web push creadas y guardadas para activar avisos en celulares PWA.')
+
+  return {
+    publicKey: generated.publicKey,
+    privateKey: generated.privateKey,
+    source: 'generated'
+  }
+}
+
+const resolvedWebPushKeys = await resolveWebPushKeys().catch((error) => {
+  logger.warn(`[Push] No se pudieron preparar llaves web push: ${error.message}`)
+  return { publicKey: '', privateKey: '', source: 'unavailable' }
+})
+
+const VAPID_PUBLIC_KEY = resolvedWebPushKeys.publicKey
+const VAPID_PRIVATE_KEY = resolvedWebPushKeys.privateKey
 const pushConfigured = Boolean(VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY)
 const fcmConfigured = Boolean(FCM_PROJECT_ID && (FCM_SERVICE_ACCOUNT_JSON || FCM_SERVICE_ACCOUNT_FILE))
 const apnsConfigured = Boolean(APNS_KEY_ID && APNS_TEAM_ID && APNS_BUNDLE_ID && (APNS_PRIVATE_KEY || APNS_PRIVATE_KEY_FILE))
@@ -27,6 +82,9 @@ let apnsJwtCache = { token: '', expiresAt: 0 }
 
 if (pushConfigured) {
   webPush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY)
+  if (resolvedWebPushKeys.source !== 'environment') {
+    logger.info(`[Push] Web Push activo con llaves ${resolvedWebPushKeys.source === 'generated' ? 'creadas automáticamente' : 'guardadas en base de datos'}.`)
+  }
 } else {
   logger.warn('[Push] Web Push sin llaves VAPID; las suscripciones se guardan, pero no se enviarán avisos.')
 }
