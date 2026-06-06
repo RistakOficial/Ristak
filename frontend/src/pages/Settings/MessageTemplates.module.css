@@ -466,6 +466,27 @@
   cursor: pointer;
 }
 
+.collectionTable tbody .itemCheck input:not(:checked) {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--transition-fast);
+}
+
+.collectionTable tbody tr:hover .itemCheck input,
+.collectionTable tbody tr:focus-within .itemCheck input,
+.collectionTable tbody .itemCheck input:checked,
+.collectionRowSelected .itemCheck input {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+@media (hover: none), (pointer: coarse) {
+  .collectionTable tbody .itemCheck input:not(:checked) {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
 .collectionTypeBadge {
   display: inline-flex;
   align-items: center;

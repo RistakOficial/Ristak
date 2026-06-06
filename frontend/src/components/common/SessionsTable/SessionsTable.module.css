@@ -67,6 +67,30 @@
   background: rgba(var(--color-primary-rgb), 0.08);
 }
 
+.selectionCheckbox {
+  cursor: pointer;
+  transition: opacity var(--transition-fast);
+}
+
+.table tbody .selectionCheckbox:not(:checked) {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.table tbody tr:hover .selectionCheckbox,
+.table tbody tr:focus-within .selectionCheckbox,
+.table tbody .selectionCheckbox:checked {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+@media (hover: none), (pointer: coarse) {
+  .table tbody .selectionCheckbox:not(:checked) {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
 /* Empty state */
 .emptyState {
   display: flex;

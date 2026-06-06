@@ -733,6 +733,7 @@ export const SessionsTable: React.FC<SessionsTableProps> = ({
                       zIndex: 11
                     }}>
                       <input
+                        className={styles.selectionCheckbox}
                         type="checkbox"
                         checked={allSelected}
                         ref={input => {
@@ -799,6 +800,7 @@ export const SessionsTable: React.FC<SessionsTableProps> = ({
                       >
                         <td style={{ padding: '8px' }}>
                           <input
+                            className={styles.selectionCheckbox}
                             type="checkbox"
                             checked={isSelected}
                             onChange={(e) => handleSelectRow(session.id, e.target.checked)}
