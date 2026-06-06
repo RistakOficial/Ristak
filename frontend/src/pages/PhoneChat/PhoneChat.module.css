@@ -300,7 +300,7 @@
   align-items: center;
   gap: 8px;
   width: 100%;
-  min-height: 60px;
+  min-height: 66px;
   padding: 0 14px;
   border: 0;
   color: var(--phone-chat-text);
@@ -321,7 +321,7 @@
 }
 
 .archiveRow {
-  min-height: 42px;
+  min-height: 48px;
   grid-template-columns: 50px minmax(0, 1fr) auto;
   color: #707070;
 }
@@ -353,7 +353,7 @@
 
 .chatSwipeRow {
   position: relative;
-  min-height: 60px;
+  min-height: 66px;
   overflow: hidden;
   border-radius: 0 !important;
   isolation: isolate;
@@ -367,7 +367,7 @@
   display: grid;
   grid-template-columns: 84px 100px;
   width: 184px;
-  min-height: 60px;
+  min-height: 66px;
   border-radius: 0 !important;
   overflow: hidden;
 }
@@ -412,14 +412,14 @@
   z-index: 1;
   border-radius: 0 !important;
   background: var(--phone-chat-bg);
-  transition: transform 180ms ease;
+  transition: transform 260ms ease;
   will-change: transform;
   backface-visibility: hidden;
   transform: translate3d(0, 0, 0);
 }
 
 .chatSwipeRowOpen .chatSwipeContent {
-  transition-duration: 140ms;
+  transition-duration: 260ms;
 }
 
 .chatSwipeRowDragging .chatSwipeContent {

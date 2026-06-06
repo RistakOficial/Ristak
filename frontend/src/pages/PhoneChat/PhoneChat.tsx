@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import {
-  Archive,
   BadgeDollarSign,
   Bell,
   BellOff,
@@ -42,6 +41,7 @@ import {
   User,
   X
 } from 'lucide-react'
+import { MdArchive } from 'react-icons/md'
 import { AppointmentModal, Icon, RecordPaymentModal } from '@/components/common'
 import { PhoneEcosystemNav } from '@/components/phone/PhoneEcosystemNav'
 import { useAuth } from '@/contexts/AuthContext'
@@ -79,9 +79,10 @@ const CHAT_MUTED_STATE_KEY = 'ristak_phone_chat_muted_state_v1'
 const AI_AGENT_CHAT_ID = 'ristak-ai-agent-mobile-chat'
 const AI_AGENT_MESSAGES_KEY = 'ristak_phone_chat_ai_agent_messages_v1'
 const CHAT_SWIPE_ACTION_WIDTH = 184
-const CHAT_SWIPE_OPEN_THRESHOLD = 78
-const CHAT_SWIPE_ACTIVATE_THRESHOLD = 12
-const CHAT_SWIPE_RENDER_STEP = 2
+const CHAT_SWIPE_OPEN_THRESHOLD = 44
+const CHAT_SWIPE_CLOSE_THRESHOLD = 132
+const CHAT_SWIPE_ACTIVATE_THRESHOLD = 7
+const CHAT_SWIPE_RENDER_STEP = 1
 const MAX_VOICE_MESSAGE_BYTES = 16 * 1024 * 1024
 const MIN_VOICE_RECORDING_MS = 600
 const MAX_VOICE_RECORDING_MS = 3 * 60 * 1000
@@ -1813,6 +1814,13 @@ export const PhoneChat: React.FC = () => {
   }, [archivedViewOpen, chatFilter, chatQuery, selectedChatPhoneId])
 
   useEffect(() => {
+    if (!conversationOpen) return
+    setOpenSwipeChatId(null)
+    setDraggingSwipe(null)
+    chatSwipeGestureRef.current = null
+  }, [conversationOpen])
+
+  useEffect(() => {
     if (showArchivedChats) return
     setArchivedViewOpen(false)
   }, [showArchivedChats])
@@ -2297,6 +2305,7 @@ export const PhoneChat: React.FC = () => {
   const handleSelectContact = (contact: Contact) => {
     const chatContact = (chats.find((item) => item.id === contact.id) || contact) as ChatContact
     const nextContact = ensureChatContact(contact)
+    closeSwipeActions()
     handleCancelVoiceDraft()
     markContactReadState(chatContact)
     setActiveContactId(nextContact.id)
@@ -2313,6 +2322,7 @@ export const PhoneChat: React.FC = () => {
   }
 
   const handleOpenAIAgentChat = () => {
+    closeSwipeActions()
     handleCancelVoiceDraft()
     setActiveContactId(AI_AGENT_CHAT_ID)
     setConversationOpen(true)
@@ -2325,6 +2335,7 @@ export const PhoneChat: React.FC = () => {
   }
 
   const handleBackToChats = () => {
+    closeSwipeActions()
     handleCancelVoiceDraft()
     setConversationOpen(false)
     setSheet(null)
@@ -2489,7 +2500,8 @@ export const PhoneChat: React.FC = () => {
     if (!gesture) return
 
     if (gesture.active) {
-      setOpenSwipeChatId(gesture.offset >= CHAT_SWIPE_OPEN_THRESHOLD ? gesture.contactId : null)
+      const openThreshold = gesture.startOffset > 0 ? CHAT_SWIPE_CLOSE_THRESHOLD : CHAT_SWIPE_OPEN_THRESHOLD
+      setOpenSwipeChatId(gesture.offset >= openThreshold ? gesture.contactId : null)
       setDraggingSwipe(null)
       ignoreNextChatClickRef.current = true
       window.setTimeout(() => {
@@ -3169,7 +3181,7 @@ export const PhoneChat: React.FC = () => {
               handleArchiveChat(contact)
             }}
           >
-            <Archive size={30} />
+            <MdArchive size={32} />
             <span>{isArchived ? 'Restaurar' : 'Archivar'}</span>
           </button>
         </div>
@@ -3281,7 +3293,7 @@ export const PhoneChat: React.FC = () => {
             onClick={() => setArchivedViewOpen(true)}
             aria-label={`Ver ${archivedChatCount} chats archivados`}
           >
-            <Archive size={21} />
+            <MdArchive size={22} />
             <strong>Archivados</strong>
             <span>{archivedChatCount}</span>
           </button>
