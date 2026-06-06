@@ -10,6 +10,7 @@ import { nonTestPaymentCondition } from '../utils/paymentMode.js'
 import { buildContactSearchClause, buildContactSearchRank } from '../utils/searchText.js'
 import { normalizeWhatsAppAttributionPlatform } from '../utils/trafficSourceNormalizer.js'
 import { loadFirstWhatsAppAttributions, buildContactAttributionFields } from '../services/contactSourceService.js'
+import { warmWhatsAppQrProfilePictures } from '../services/whatsappQrService.js'
 import {
   buildHighLevelCustomFieldsPayload,
   mergeContactCustomFields,
@@ -54,6 +55,38 @@ const APPOINTMENT_ATTENDED_STATUSES = new Set(['showed', 'attended', 'completed'
 const sqlList = values => [...values].map(value => `'${value}'`).join(', ')
 const ACTIVE_APPOINTMENT_CONDITION = `LOWER(COALESCE(appointment_status, status, '')) NOT IN (${sqlList(APPOINTMENT_CANCELED_STATUSES)})`
 const ATTENDED_APPOINTMENT_CONDITION = `LOWER(COALESCE(appointment_status, status, '')) IN (${sqlList(APPOINTMENT_ATTENDED_STATUSES)})`
+const CONTACT_WHATSAPP_PROFILE_SELECTS = `
+        (
+          SELECT raw_profile_json
+          FROM whatsapp_api_contacts
+          WHERE contact_id = c.id OR phone = c.phone
+          ORDER BY updated_at DESC
+          LIMIT 1
+        ) AS whatsapp_raw_profile_json,
+        (
+          SELECT profile_picture_url
+          FROM whatsapp_api_contacts
+          WHERE contact_id = c.id OR phone = c.phone
+          ORDER BY CASE WHEN NULLIF(profile_picture_url, '') IS NULL THEN 1 ELSE 0 END,
+                   profile_picture_updated_at DESC,
+                   updated_at DESC
+          LIMIT 1
+        ) AS whatsapp_profile_picture_url,
+        (
+          SELECT profile_picture_updated_at
+          FROM whatsapp_api_contacts
+          WHERE contact_id = c.id OR phone = c.phone
+          ORDER BY profile_picture_updated_at DESC, updated_at DESC
+          LIMIT 1
+        ) AS whatsapp_profile_picture_updated_at`
+const CONTACT_META_PROFILE_SELECT = `
+        (
+          SELECT profile_picture_url
+          FROM meta_social_contacts
+          WHERE contact_id = c.id
+          ORDER BY updated_at DESC
+          LIMIT 1
+        ) AS meta_social_profile_picture_url`
 
 const cleanString = (value) => String(value || '').trim()
 const hasOwn = (object, key) => Object.prototype.hasOwnProperty.call(object || {}, key)
@@ -168,6 +201,8 @@ const getProfilePhotoFromRawProfile = (rawProfile) => {
 const getContactProfilePhotoUrl = (contact = {}) =>
   cleanString(contact.profile_photo_url) ||
   cleanString(contact.profile_picture_url) ||
+  cleanString(contact.whatsapp_profile_picture_url) ||
+  cleanString(contact.whatsapp_qr_profile_picture_url) ||
   cleanString(contact.meta_social_profile_picture_url) ||
   cleanString(contact.avatar_url) ||
   cleanString(contact.photo_url) ||
@@ -430,20 +465,8 @@ export const getChatContacts = async (req, res) => {
         c.attribution_ad_id,
         c.preferred_whatsapp_phone_number_id,
         c.custom_fields,
-        (
-          SELECT raw_profile_json
-          FROM whatsapp_api_contacts
-          WHERE contact_id = c.id OR phone = c.phone
-          ORDER BY updated_at DESC
-          LIMIT 1
-        ) AS whatsapp_raw_profile_json,
-        (
-          SELECT profile_picture_url
-          FROM meta_social_contacts
-          WHERE contact_id = c.id
-          ORDER BY updated_at DESC
-          LIMIT 1
-        ) AS meta_social_profile_picture_url,
+${CONTACT_WHATSAPP_PROFILE_SELECTS},
+${CONTACT_META_PROFILE_SELECT},
         COALESCE(ps.total_paid, 0) AS total_paid,
         COALESCE(ps.purchases_count, 0) AS purchases_count,
         ps.last_purchase_date AS last_purchase_date,
@@ -504,9 +527,22 @@ export const getChatContacts = async (req, res) => {
       LIMIT ?
     `, [...whatsappMessageParams, ...params, limitNumber])
 
+    let responseRows = rows
+    try {
+      const warmedPictures = await warmWhatsAppQrProfilePictures(rows, { limit: 8 })
+      if (warmedPictures.size > 0) {
+        responseRows = rows.map(row => {
+          const profilePictureUrl = warmedPictures.get(row.id)
+          return profilePictureUrl ? { ...row, whatsapp_profile_picture_url: profilePictureUrl } : row
+        })
+      }
+    } catch (error) {
+      logger.warn(`No se pudieron preparar fotos QR para chats: ${error.message}`)
+    }
+
     res.json({
       success: true,
-      data: rows.map(mapChatContactRowForResponse)
+      data: responseRows.map(mapChatContactRowForResponse)
     })
   } catch (error) {
     logger.error(`Error obteniendo chats: ${error.message}`)
@@ -655,6 +691,8 @@ export const getContacts = async (req, res) => {
         c.attribution_ad_id,
         c.preferred_whatsapp_phone_number_id,
         c.custom_fields,
+${CONTACT_WHATSAPP_PROFILE_SELECTS},
+${CONTACT_META_PROFILE_SELECT},
         COALESCE(ps.total_paid, 0) AS total_paid,
         COALESCE(ps.purchases_count, 0) AS purchases_count,
         ps.last_purchase_date AS last_purchase_date,
@@ -809,6 +847,7 @@ export const getContacts = async (req, res) => {
         ad_id: c.attribution_ad_id,
         preferredWhatsAppPhoneNumberId: c.preferred_whatsapp_phone_number_id || '',
         preferred_whatsapp_phone_number_id: c.preferred_whatsapp_phone_number_id || '',
+        profilePhotoUrl: getContactProfilePhotoUrl(c) || null,
         customFields: parseContactCustomFields(c.custom_fields),
         firstSession: firstSession ? {
           started_at: firstSession.started_at,
@@ -911,6 +950,8 @@ export const getContactById = async (req, res) => {
         c.attribution_ad_id,
         c.preferred_whatsapp_phone_number_id,
         c.custom_fields,
+${CONTACT_WHATSAPP_PROFILE_SELECTS},
+${CONTACT_META_PROFILE_SELECT},
         COALESCE(ps.total_paid, 0) AS total_paid,
         COALESCE(ps.purchases_count, 0) AS purchases_count,
         ps.last_purchase_date AS last_purchase_date,
@@ -1202,6 +1243,7 @@ export const getContactById = async (req, res) => {
       ad_id: contact.attribution_ad_id,
       preferredWhatsAppPhoneNumberId: contact.preferred_whatsapp_phone_number_id || '',
       preferred_whatsapp_phone_number_id: contact.preferred_whatsapp_phone_number_id || '',
+      profilePhotoUrl: getContactProfilePhotoUrl(contact) || null,
       customFields: parseContactCustomFields(contact.custom_fields),
       notes: '',
       payments,
@@ -1306,6 +1348,8 @@ export const searchContacts = async (req, res) => {
         c.source,
         c.attribution_ad_name,
         c.attribution_ad_id,
+${CONTACT_WHATSAPP_PROFILE_SELECTS},
+${CONTACT_META_PROFILE_SELECT},
         (
           SELECT COUNT(*) > 0
           FROM appointments
@@ -1360,6 +1404,7 @@ export const searchContacts = async (req, res) => {
         source: c.source,
         ad_name: c.attribution_ad_name,
         ad_id: c.attribution_ad_id,
+        profilePhotoUrl: getContactProfilePhotoUrl(c) || null,
         notes: ''
       }
     })

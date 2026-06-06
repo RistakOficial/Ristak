@@ -1,4 +1,5 @@
 import pino from 'pino'
+import crypto from 'crypto'
 import { db } from '../config/database.js'
 import { buildPhoneMatchCandidates, normalizePhoneDigits, normalizePhoneForStorage } from '../utils/phoneUtils.js'
 import { logger } from '../utils/logger.js'
@@ -7,6 +8,9 @@ const QR_CONSENT_TEXT = 'Acepto que esta conexion usa WhatsApp Web por QR y no l
 const CONNECT_TIMEOUT_MS = 20000
 const QR_SEND_ACK_TIMEOUT_MS = 10000
 const QR_RECENT_ACK_RETENTION_MS = 90000
+const QR_PROFILE_PICTURE_TIMEOUT_MS = 4500
+const QR_PROFILE_PICTURE_CACHE_TTL_MS = 24 * 60 * 60 * 1000
+const QR_PROFILE_PICTURE_BATCH_LIMIT = 8
 const RECONNECT_BASE_DELAY_MS = 2500
 const RECONNECT_MAX_DELAY_MS = 60000
 const MAX_RECONNECT_ATTEMPTS = 8
@@ -43,6 +47,10 @@ function cleanString(value) {
 
 function nowIso() {
   return new Date().toISOString()
+}
+
+function hashId(prefix, value) {
+  return `${prefix}_${crypto.createHash('sha256').update(String(value || crypto.randomUUID())).digest('hex').slice(0, 24)}`
 }
 
 function createDeferred() {
@@ -647,6 +655,201 @@ async function resolveQrPhone({ phoneNumberId, from } = {}) {
   return getPhoneRow(row.id)
 }
 
+function isFreshDate(value, ttlMs) {
+  if (!value) return false
+  const time = new Date(value).getTime()
+  return Number.isFinite(time) && Date.now() - time < ttlMs
+}
+
+function getNonQrProfilePictureUrl(contact = {}) {
+  return cleanString(contact.profile_photo_url) ||
+    cleanString(contact.profile_picture_url) ||
+    cleanString(contact.meta_social_profile_picture_url) ||
+    cleanString(contact.avatar_url) ||
+    cleanString(contact.photo_url) ||
+    cleanString(contact.picture_url)
+}
+
+function buildQrProfileRawProfile({ recipient, profilePictureUrl, type, errorMessage } = {}) {
+  return {
+    source: 'baileys_qr',
+    jid: recipient?.jid || '',
+    verifiedPhone: recipient?.verifiedPhone || '',
+    profilePictureUrl: profilePictureUrl || '',
+    profilePictureType: type || 'preview',
+    profilePictureFetchedAt: nowIso(),
+    profilePictureError: errorMessage || ''
+  }
+}
+
+async function upsertQrProfilePicture({
+  contactId,
+  phone,
+  profileName,
+  profilePictureUrl,
+  recipient,
+  type = 'preview'
+} = {}) {
+  const canonicalPhone = normalizePhoneForStorage(phone) || cleanString(phone)
+  if (!canonicalPhone) return ''
+
+  const rawProfile = buildQrProfileRawProfile({ recipient, profilePictureUrl, type })
+  await db.run(`
+    INSERT INTO whatsapp_api_contacts (
+      id, contact_id, phone, profile_name, profile_picture_url,
+      profile_picture_source, profile_picture_updated_at, profile_picture_error,
+      raw_profile_json, first_seen_at, last_seen_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, 'baileys_qr', CURRENT_TIMESTAMP, NULL, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    ON CONFLICT(phone) DO UPDATE SET
+      contact_id = COALESCE(excluded.contact_id, whatsapp_api_contacts.contact_id),
+      profile_name = COALESCE(NULLIF(excluded.profile_name, ''), whatsapp_api_contacts.profile_name),
+      profile_picture_url = excluded.profile_picture_url,
+      profile_picture_source = excluded.profile_picture_source,
+      profile_picture_updated_at = excluded.profile_picture_updated_at,
+      profile_picture_error = NULL,
+      raw_profile_json = COALESCE(NULLIF(excluded.raw_profile_json, 'null'), whatsapp_api_contacts.raw_profile_json),
+      last_seen_at = excluded.last_seen_at,
+      updated_at = CURRENT_TIMESTAMP
+  `, [
+    hashId('waapi_profile', canonicalPhone),
+    cleanString(contactId) || null,
+    canonicalPhone,
+    cleanString(profileName) || null,
+    cleanString(profilePictureUrl) || null,
+    safeJson(rawProfile)
+  ])
+
+  return cleanString(profilePictureUrl)
+}
+
+async function markQrProfilePictureError({ contactId, phone, profileName, errorMessage } = {}) {
+  const canonicalPhone = normalizePhoneForStorage(phone) || cleanString(phone)
+  if (!canonicalPhone) return
+
+  await db.run(`
+    INSERT INTO whatsapp_api_contacts (
+      id, contact_id, phone, profile_name, profile_picture_source,
+      profile_picture_updated_at, profile_picture_error,
+      first_seen_at, last_seen_at, updated_at
+    ) VALUES (?, ?, ?, ?, 'baileys_qr', CURRENT_TIMESTAMP, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    ON CONFLICT(phone) DO UPDATE SET
+      contact_id = COALESCE(excluded.contact_id, whatsapp_api_contacts.contact_id),
+      profile_name = COALESCE(NULLIF(excluded.profile_name, ''), whatsapp_api_contacts.profile_name),
+      profile_picture_source = excluded.profile_picture_source,
+      profile_picture_updated_at = excluded.profile_picture_updated_at,
+      profile_picture_error = excluded.profile_picture_error,
+      last_seen_at = excluded.last_seen_at,
+      updated_at = CURRENT_TIMESTAMP
+  `, [
+    hashId('waapi_profile', canonicalPhone),
+    cleanString(contactId) || null,
+    canonicalPhone,
+    cleanString(profileName) || null,
+    cleanString(errorMessage).slice(0, 500) || null
+  ])
+}
+
+function sortQrPhoneRowsForContact(rows = [], contact = {}) {
+  const preferredIds = [
+    contact.preferred_whatsapp_phone_number_id,
+    contact.preferredWhatsAppPhoneNumberId,
+    contact.last_inbound_business_phone_number_id,
+    contact.lastInboundBusinessPhoneNumberId,
+    contact.last_business_phone_number_id,
+    contact.lastBusinessPhoneNumberId
+  ].map(cleanString).filter(Boolean)
+
+  const preferredPhones = [
+    contact.last_inbound_business_phone,
+    contact.lastInboundBusinessPhone,
+    contact.last_business_phone,
+    contact.lastBusinessPhone
+  ].map(cleanString).filter(Boolean)
+
+  const scoreRow = (row = {}) => {
+    const idIndex = preferredIds.indexOf(cleanString(row.id))
+    if (idIndex >= 0) return idIndex
+
+    const rowPhone = row.phone_number || row.display_phone_number || row.qr_connected_phone
+    const phoneIndex = preferredPhones.findIndex(phone => phoneMatches(rowPhone, phone))
+    if (phoneIndex >= 0) return 10 + phoneIndex
+
+    return Number(row.is_default_sender || 0) === 1 ? 50 : 100
+  }
+
+  return [...rows].sort((left, right) => scoreRow(left) - scoreRow(right))
+}
+
+async function getConnectedQrPhoneRowsForContact(contact = {}) {
+  const rows = await db.all(`
+    SELECT *
+    FROM whatsapp_api_phone_numbers
+    WHERE qr_send_enabled = 1
+      AND LOWER(COALESCE(qr_status, '')) IN ('connected', 'reconnecting', 'restarting')
+    ORDER BY updated_at DESC
+  `)
+
+  const sortedRows = sortQrPhoneRowsForContact(rows || [], contact)
+  const fullRows = []
+  for (const row of sortedRows) {
+    const phone = await getPhoneRow(row.id).catch(error => {
+      logger.warn(`[WhatsApp QR] No se pudo preparar numero QR ${row.id} para foto de perfil: ${error.message}`)
+      return null
+    })
+    if (phone) fullRows.push(phone)
+  }
+  return fullRows
+}
+
+async function fetchQrProfilePictureForContact(contact = {}, { force = false, type = 'preview' } = {}) {
+  const contactId = cleanString(contact.id)
+  const toPhone = normalizePhoneForStorage(contact.phone) || cleanString(contact.phone)
+  if (!toPhone) return ''
+
+  if (!force && isFreshDate(contact.whatsapp_profile_picture_updated_at, QR_PROFILE_PICTURE_CACHE_TTL_MS)) {
+    return ''
+  }
+
+  const qrPhones = await getConnectedQrPhoneRowsForContact(contact)
+  if (!qrPhones.length) return ''
+
+  for (const phone of qrPhones) {
+    try {
+      if (await markMissingAuthStateIfNeeded(phone)) continue
+      const sock = await ensureOpenSocket(phone)
+      if (typeof sock?.profilePictureUrl !== 'function') {
+        throw new Error('Baileys no trae lectura de foto de perfil en esta version')
+      }
+
+      const recipient = await resolveRecipientJid(sock, toPhone)
+      const profilePictureUrl = cleanString(
+        await sock.profilePictureUrl(recipient.jid, type, QR_PROFILE_PICTURE_TIMEOUT_MS)
+      )
+      return upsertQrProfilePicture({
+        contactId,
+        phone: recipient.verifiedPhone || toPhone,
+        profileName: contact.full_name || contact.name,
+        profilePictureUrl,
+        recipient,
+        type
+      })
+    } catch (error) {
+      const message = error?.message || 'No se pudo leer la foto de perfil por QR'
+      logger.warn(`[WhatsApp QR] No se pudo leer foto de perfil ${toPhone} con ${phone.id}: ${message}`)
+      await markQrProfilePictureError({
+        contactId,
+        phone: toPhone,
+        profileName: contact.full_name || contact.name,
+        errorMessage: message
+      }).catch(dbError => {
+        logger.warn(`[WhatsApp QR] No se pudo guardar error de foto de perfil ${toPhone}: ${dbError.message}`)
+      })
+    }
+  }
+
+  return ''
+}
+
 async function getSessionRow(phoneNumberId) {
   return db.get(`
     SELECT *
@@ -1118,6 +1321,47 @@ async function ensureOpenSocket(phone) {
   await Promise.race([openPromise, timeout])
   const currentLive = liveSessions.get(phone.id)
   return currentLive?.sock || sock
+}
+
+export async function warmWhatsAppQrProfilePictures(contacts = [], {
+  limit = QR_PROFILE_PICTURE_BATCH_LIMIT,
+  force = false,
+  type = 'preview'
+} = {}) {
+  const uniqueContacts = []
+  const seenKeys = new Set()
+
+  for (const contact of Array.isArray(contacts) ? contacts : []) {
+    const phone = normalizePhoneForStorage(contact?.phone) || cleanString(contact?.phone)
+    const key = cleanString(contact?.id) || phone
+    if (!phone || !key || seenKeys.has(key)) continue
+    if (!force && getNonQrProfilePictureUrl(contact)) continue
+    if (!force && isFreshDate(contact?.whatsapp_profile_picture_updated_at, QR_PROFILE_PICTURE_CACHE_TTL_MS)) continue
+
+    seenKeys.add(key)
+    uniqueContacts.push(contact)
+    if (uniqueContacts.length >= Math.max(Number(limit) || QR_PROFILE_PICTURE_BATCH_LIMIT, 1)) break
+  }
+
+  const results = new Map()
+  if (!uniqueContacts.length) return results
+
+  const warmed = await Promise.allSettled(
+    uniqueContacts.map(contact => fetchQrProfilePictureForContact(contact, { force, type }))
+  )
+
+  warmed.forEach((result, index) => {
+    if (result.status !== 'fulfilled') {
+      const contact = uniqueContacts[index]
+      logger.warn(`[WhatsApp QR] No se pudo preparar avatar QR ${contact?.id || contact?.phone || ''}: ${result.reason?.message || result.reason}`)
+      return
+    }
+
+    const url = cleanString(result.value)
+    if (url) results.set(cleanString(uniqueContacts[index]?.id) || cleanString(uniqueContacts[index]?.phone), url)
+  })
+
+  return results
 }
 
 export async function getWhatsAppQrSessions() {

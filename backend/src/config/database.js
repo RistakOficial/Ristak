@@ -1272,6 +1272,10 @@ async function initTables() {
         contact_id TEXT,
         phone TEXT UNIQUE,
         profile_name TEXT,
+        profile_picture_url TEXT,
+        profile_picture_source TEXT,
+        profile_picture_updated_at DATETIME,
+        profile_picture_error TEXT,
         raw_profile_json TEXT,
         first_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         last_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -1281,6 +1285,19 @@ async function initTables() {
         FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE SET NULL
       )
     `)
+
+    for (const [columnName, columnType] of [
+      ['profile_picture_url', 'TEXT'],
+      ['profile_picture_source', 'TEXT'],
+      ['profile_picture_updated_at', 'DATETIME'],
+      ['profile_picture_error', 'TEXT']
+    ]) {
+      try {
+        await db.run(`ALTER TABLE whatsapp_api_contacts ADD COLUMN ${columnName} ${columnType}`)
+      } catch (err) {
+        // Columna ya existe, ignorar.
+      }
+    }
 
     await db.run(`
       CREATE TABLE IF NOT EXISTS whatsapp_api_messages (
