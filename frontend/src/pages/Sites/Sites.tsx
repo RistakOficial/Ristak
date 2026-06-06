@@ -798,7 +798,7 @@ const getSiteTypeLabel = (site: PublicSite) => {
 }
 
 const getCreateFlowForSection = (section: SitesSection): CreateFlow => {
-  if (section === 'forms') return 'form-kind'
+  if (section === 'forms') return 'form-start'
   return 'landing-start'
 }
 
@@ -826,14 +826,14 @@ const getCreateFlowHeaderCopy = (step: CreateFlow) => {
 
   if (step === 'form-start') {
     return {
-      title: 'Formulario con paginas finales',
-      subtitle: 'Ahora elige si quieres empezar en blanco, con plantilla o con IA.'
+      title: 'Nuevo formulario',
+      subtitle: 'Elige si quieres empezar en blanco, con plantilla o con IA.'
     }
   }
 
   if (step === 'form-template') {
     return {
-      title: 'Formulario con paginas finales',
+      title: 'Nuevo formulario',
       subtitle: 'Elige el estilo de tu formulario'
     }
   }
@@ -860,7 +860,8 @@ const getCreateFlowHeaderCopy = (step: CreateFlow) => {
 
 const getPreviousCreateFlowStep = (step: CreateFlow): CreateFlow => {
   if (step === 'landing-template') return 'landing-start'
-  if (step === 'form-start' || step === 'interactive-start') return 'form-kind'
+  if (step === 'form-start') return 'closed'
+  if (step === 'interactive-start') return 'form-start'
   if (step === 'form-template') return 'form-start'
   if (step === 'interactive-template') return 'interactive-start'
   return 'closed'
