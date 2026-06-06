@@ -94,6 +94,39 @@ const getCustomFieldIdentity = (field: ContactCustomField, index: number) =>
 const getCustomFieldLabel = (field: ContactCustomField, index: number) =>
   field.label || field.name || field.key || field.fieldKey || field.id || `Campo personalizado ${index + 1}`
 
+const WHATSAPP_RESERVED_CUSTOM_FIELD_KEYS = new Set([
+  'whatsapp_api_provider',
+  'whatsapp_api_first_message',
+  'whatsapp_api_source_id',
+  'whatsapp_api_ctwa_clid',
+  'whatsapp_api_source_url'
+])
+
+const normalizeCustomFieldToken = (value?: string | null) =>
+  String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+
+const isWhatsAppReservedCustomField = (field: ContactCustomField) => {
+  const tokens = [
+    field.id,
+    field.key,
+    field.fieldKey,
+    field.label,
+    field.name
+  ].map(normalizeCustomFieldToken).filter(Boolean)
+
+  return tokens.some(token =>
+    WHATSAPP_RESERVED_CUSTOM_FIELD_KEYS.has(token) ||
+    token.startsWith('whatsapp_api_') ||
+    token.includes('_ctwa_') ||
+    token === 'ctwa' ||
+    token === 'ctwa_clid'
+  )
+}
+
 const isObjectValue = (value: ContactCustomFieldValue | undefined): value is Record<string, unknown> =>
   Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 
@@ -172,6 +205,10 @@ export function ContactDetailsModal({
   const [customFieldError, setCustomFieldError] = useState<string | null>(null)
   const { labels } = useLabels()
   const { formatLocalDateShort, formatLocalDateTime, timezone } = useTimezone()
+  const visibleCustomFields = useMemo(
+    () => (selectedContact?.customFields || []).filter(field => !isWhatsAppReservedCustomField(field)),
+    [selectedContact?.customFields]
+  )
 
   // Seleccionar automáticamente el primer contacto cuando se abre el modal
   useEffect(() => {
@@ -195,15 +232,15 @@ export function ContactDetailsModal({
     setRefundsExpanded(false)
     setAppointmentsExpanded(false)
     setCustomFieldsExpanded(false)
-    setCustomFieldDrafts(buildCustomFieldDrafts(selectedContact?.customFields || []))
+    setCustomFieldDrafts({})
     setSavingCustomField(null)
     setCustomFieldError(null)
   }, [selectedContact?.id])
 
   useEffect(() => {
     if (!selectedContact) return
-    setCustomFieldDrafts(buildCustomFieldDrafts(selectedContact.customFields || []))
-  }, [selectedContact?.id, selectedContact?.customFields])
+    setCustomFieldDrafts(buildCustomFieldDrafts(visibleCustomFields))
+  }, [selectedContact?.id, visibleCustomFields])
 
   const preparedContactSearch = useMemo(() => prepareSearchQuery(searchQuery), [searchQuery])
   const contactSearchIndexes = useMemo(() => {
@@ -294,6 +331,7 @@ export function ContactDetailsModal({
 
   const saveCustomField = async (field: ContactCustomField, index: number) => {
     if (!selectedContact || !onUpdateCustomFields) return
+    if (isWhatsAppReservedCustomField(field)) return
 
     const identity = getCustomFieldIdentity(field, index)
     const draft = customFieldDrafts[identity] ?? formatCustomFieldDraft(field.value)
@@ -307,7 +345,7 @@ export function ContactDetailsModal({
 
       const customFields = await onUpdateCustomFields(selectedContact.id, [updatedField])
       setSelectedContact(prev => prev?.id === selectedContact.id ? { ...prev, customFields } : prev)
-      setCustomFieldDrafts(buildCustomFieldDrafts(customFields))
+      setCustomFieldDrafts(buildCustomFieldDrafts(customFields.filter(field => !isWhatsAppReservedCustomField(field))))
     } catch (error) {
       const message = error instanceof Error ? error.message : 'No se pudo guardar el campo personalizado.'
       setCustomFieldError(message)
@@ -540,16 +578,16 @@ export function ContactDetailsModal({
                       Campos personalizados
                     </span>
                     <span className={styles.customFieldsToggleMeta}>
-                      {(selectedContact.customFields || []).length}
+                      {visibleCustomFields.length}
                     </span>
                   </button>
 
                   {customFieldsExpanded && (
                     <div className={styles.customFieldsList}>
-                      {(selectedContact.customFields || []).length === 0 ? (
+                      {visibleCustomFields.length === 0 ? (
                         <p className={styles.emptyText}>Sin campos personalizados</p>
                       ) : (
-                        selectedContact.customFields?.map((field, index) => {
+                        visibleCustomFields.map((field, index) => {
                           const identity = getCustomFieldIdentity(field, index)
                           const isSaving = savingCustomField === identity
                           const isComplex = isComplexCustomField(field)
