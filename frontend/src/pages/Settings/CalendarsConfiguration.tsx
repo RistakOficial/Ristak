@@ -1157,13 +1157,17 @@ export const CalendarsConfiguration: React.FC = () => {
       ...(highLevelConnected ? [{ value: 'ghl', label: 'Solo HighLevel' }] : []),
       ...(googleIntegration?.connected ? [{ value: 'google', label: 'Solo Google' }] : [])
     ]
+    const selectedSourceLabel = options.find((option) => option.value === calendarSourcePreference)?.label ?? 'Todos'
 
     return (
       <label className={pageStyles.sourceControl}>
         <SlidersHorizontal size={16} />
-        <span>Origen</span>
+        <span className={pageStyles.sourceLabel}>Origen</span>
+        <span className={pageStyles.sourceValue}>{selectedSourceLabel}</span>
+        <ChevronDown size={14} className={pageStyles.sourceChevron} />
         <select
           className={pageStyles.sourceSelect}
+          aria-label="Elegir origen de calendarios"
           value={calendarSourcePreference}
           onChange={(event) => void handleCalendarSourcePreferenceChange(event.target.value)}
         >
@@ -1173,7 +1177,6 @@ export const CalendarsConfiguration: React.FC = () => {
             </option>
           ))}
         </select>
-        <ChevronDown size={14} className={pageStyles.sourceChevron} />
       </label>
     )
   }

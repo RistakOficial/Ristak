@@ -226,31 +226,65 @@
 .sourceControl {
   position: relative;
   display: inline-grid;
-  grid-template-columns: auto auto minmax(92px, auto);
+  grid-template-columns: auto auto minmax(68px, auto) auto;
   align-items: center;
   gap: 8px;
   min-height: 38px;
-  padding: 0 32px 0 12px;
+  padding: 0 12px;
   border: 1px solid rgba(148, 163, 184, 0.16);
   border-radius: 8px;
   background: var(--color-background-primary);
   color: var(--color-text-secondary);
   font-size: 12px;
   font-weight: 650;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.sourceControl:focus-within,
+.sourceControl:hover {
+  border-color: rgba(148, 163, 184, 0.32);
+  background: rgba(148, 163, 184, 0.06);
+}
+
+.sourceControl > svg,
+.sourceLabel,
+.sourceValue {
+  position: relative;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.sourceLabel {
+  color: var(--color-text-secondary);
+}
+
+.sourceValue {
+  min-width: 0;
+  color: var(--color-text-primary);
+  font-weight: 750;
+  white-space: nowrap;
 }
 
 .sourceSelect {
-  width: 100%;
-  min-width: 92px;
-  height: 34px;
-  padding: 0;
-  border: 0;
-  appearance: none;
-  background: transparent;
-  color: var(--color-text-primary);
-  font: inherit;
-  outline: none;
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: inherit !important;
+  appearance: none !important;
+  background: transparent !important;
+  background-image: none !important;
+  box-shadow: none !important;
+  color: transparent !important;
   cursor: pointer;
+  opacity: 0;
+  outline: none;
 }
 
 .sourceSelect option {
@@ -259,8 +293,9 @@
 }
 
 .sourceChevron {
-  position: absolute;
-  right: 9px;
+  position: relative;
+  z-index: 1;
+  flex-shrink: 0;
   color: var(--color-text-tertiary);
   pointer-events: none;
 }
@@ -1857,7 +1892,7 @@
 
   .sourceControl {
     display: grid;
-    grid-template-columns: auto auto minmax(0, 1fr);
+    grid-template-columns: auto auto minmax(0, 1fr) auto;
   }
 
   .googleLayout {
