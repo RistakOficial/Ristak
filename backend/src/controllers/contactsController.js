@@ -168,6 +168,7 @@ const getProfilePhotoFromRawProfile = (rawProfile) => {
 const getContactProfilePhotoUrl = (contact = {}) =>
   cleanString(contact.profile_photo_url) ||
   cleanString(contact.profile_picture_url) ||
+  cleanString(contact.meta_social_profile_picture_url) ||
   cleanString(contact.avatar_url) ||
   cleanString(contact.photo_url) ||
   cleanString(contact.picture_url) ||
@@ -209,6 +210,7 @@ const mapChatContactRowForResponse = (contact = {}) => ({
   ...mapContactRowForResponse(contact),
   lastMessageText: contact.last_message_text || '',
   lastMessageType: contact.last_message_type || '',
+  lastMessageChannel: contact.last_message_channel || '',
   lastMessageDate: contact.last_message_date || contact.created_at,
   lastMessageDirection: contact.last_message_direction || '',
   lastBusinessPhone: contact.last_business_phone || '',
@@ -322,22 +324,23 @@ export const getChatContacts = async (req, res) => {
     const searchTerm = cleanString(q)
     const phoneNumberIdFilter = cleanString(businessPhoneNumberId)
     const businessPhoneFilter = normalizePhoneForStorage(businessPhone)
-    const messageConditions = ['contact_id IS NOT NULL']
-    const messageParams = []
+    const whatsappMessageConditions = ['contact_id IS NOT NULL']
+    const whatsappMessageParams = []
     const conditions = []
     const params = []
+    const includeMetaSocialMessages = !phoneNumberIdFilter && !businessPhoneFilter
 
     if (phoneNumberIdFilter || businessPhoneFilter) {
       const phoneClauses = []
       if (phoneNumberIdFilter) {
         phoneClauses.push('business_phone_number_id = ?')
-        messageParams.push(phoneNumberIdFilter)
+        whatsappMessageParams.push(phoneNumberIdFilter)
       }
       if (businessPhoneFilter) {
         phoneClauses.push('business_phone = ?')
-        messageParams.push(businessPhoneFilter)
+        whatsappMessageParams.push(businessPhoneFilter)
       }
-      messageConditions.push(`(${phoneClauses.join(' OR ')})`)
+      whatsappMessageConditions.push(`(${phoneClauses.join(' OR ')})`)
     }
 
     if (searchTerm) {
@@ -353,15 +356,48 @@ export const getChatContacts = async (req, res) => {
     }
 
     const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
+    const messageRowsSql = `
+        SELECT
+          contact_id,
+          'whatsapp:' || id AS message_row_id,
+          message_text,
+          message_type,
+          direction,
+          business_phone,
+          business_phone_number_id,
+          COALESCE(message_timestamp, created_at) AS message_date,
+          created_at,
+          'whatsapp' AS message_channel
+        FROM whatsapp_api_messages
+        WHERE ${whatsappMessageConditions.join(' AND ')}
+        ${includeMetaSocialMessages ? `
+        UNION ALL
+        SELECT
+          contact_id,
+          'meta:' || id AS message_row_id,
+          message_text,
+          message_type,
+          direction,
+          NULL AS business_phone,
+          NULL AS business_phone_number_id,
+          COALESCE(message_timestamp, created_at) AS message_date,
+          created_at,
+          platform AS message_channel
+        FROM meta_social_messages
+        WHERE contact_id IS NOT NULL
+        ` : ''}
+    `
 
     const rows = await db.all(`
-      WITH chat_stats AS (
+      WITH message_rows AS (
+        ${messageRowsSql}
+      ),
+      chat_stats AS (
         SELECT
           contact_id,
           COUNT(*) AS message_count,
-          MAX(COALESCE(message_timestamp, created_at)) AS last_message_date
-        FROM whatsapp_api_messages
-        WHERE ${messageConditions.join(' AND ')}
+          MAX(message_date) AS last_message_date
+        FROM message_rows
         GROUP BY contact_id
       ),
       payment_stats AS (
@@ -401,6 +437,13 @@ export const getChatContacts = async (req, res) => {
           ORDER BY updated_at DESC
           LIMIT 1
         ) AS whatsapp_raw_profile_json,
+        (
+          SELECT profile_picture_url
+          FROM meta_social_contacts
+          WHERE contact_id = c.id
+          ORDER BY updated_at DESC
+          LIMIT 1
+        ) AS meta_social_profile_picture_url,
         COALESCE(ps.total_paid, 0) AS total_paid,
         COALESCE(ps.purchases_count, 0) AS purchases_count,
         ps.last_purchase_date AS last_purchase_date,
@@ -430,6 +473,7 @@ export const getChatContacts = async (req, res) => {
         chat_stats.last_message_date,
         lm.message_text AS last_message_text,
         lm.message_type AS last_message_type,
+        lm.message_channel AS last_message_channel,
         lm.direction AS last_message_direction,
         lm.business_phone AS last_business_phone,
         lm.business_phone_number_id AS last_business_phone_number_id,
@@ -439,26 +483,26 @@ export const getChatContacts = async (req, res) => {
       FROM chat_stats
       JOIN contacts c ON c.id = chat_stats.contact_id
       LEFT JOIN payment_stats ps ON ps.contact_id = c.id
-      LEFT JOIN whatsapp_api_messages lm ON lm.id = (
-        SELECT id
-        FROM whatsapp_api_messages
+      LEFT JOIN message_rows lm ON lm.message_row_id = (
+        SELECT message_row_id
+        FROM message_rows
         WHERE contact_id = c.id
-        ORDER BY COALESCE(message_timestamp, created_at) DESC, created_at DESC
+        ORDER BY message_date DESC, created_at DESC
         LIMIT 1
       )
-      LEFT JOIN whatsapp_api_messages lim ON lim.id = (
-        SELECT id
-        FROM whatsapp_api_messages
+      LEFT JOIN message_rows lim ON lim.message_row_id = (
+        SELECT message_row_id
+        FROM message_rows
         WHERE contact_id = c.id
           AND direction = 'inbound'
           AND (business_phone_number_id IS NOT NULL OR business_phone IS NOT NULL)
-        ORDER BY COALESCE(message_timestamp, created_at) DESC, created_at DESC
+        ORDER BY message_date DESC, created_at DESC
         LIMIT 1
       )
       ${whereClause}
       ORDER BY chat_stats.last_message_date DESC
       LIMIT ?
-    `, [...messageParams, ...params, limitNumber])
+    `, [...whatsappMessageParams, ...params, limitNumber])
 
     res.json({
       success: true,
@@ -2048,6 +2092,64 @@ export const getContactJourney = async (req, res) => {
     })
 
     addWhatsAppJourneyEvents(whatsappJourneyEvents)
+
+    const metaSocialMessages = await db.all(
+      `SELECT
+          msg.id as meta_social_message_id,
+          msg.meta_message_id,
+          msg.platform,
+          msg.message_text,
+          msg.message_type,
+          msg.media_url,
+          msg.media_mime_type,
+          msg.message_timestamp,
+          msg.created_at,
+          msg.sender_id,
+          msg.recipient_id,
+          msg.page_id,
+          msg.instagram_account_id,
+          msg.direction,
+          msg.postback_payload,
+          msg.referral_json,
+          profile.profile_name,
+          profile.username
+       FROM meta_social_messages msg
+       LEFT JOIN meta_social_contacts profile ON profile.id = msg.meta_social_contact_id
+       WHERE msg.contact_id = ?
+       ORDER BY COALESCE(msg.message_timestamp, msg.created_at) ASC`,
+      [id]
+    )
+
+    metaSocialMessages.forEach(msg => {
+      const platform = cleanString(msg.platform)
+      const source = platform === 'instagram' ? 'Instagram DM' : 'Messenger'
+
+      journey.push({
+        type: 'meta_message',
+        date: msg.message_timestamp || msg.created_at,
+        data: {
+          source,
+          social_platform: platform,
+          sender_id: msg.sender_id,
+          recipient_id: msg.recipient_id,
+          page_id: msg.page_id,
+          instagram_account_id: msg.instagram_account_id,
+          profile_name: msg.profile_name,
+          username: msg.username,
+          message_text: msg.message_text,
+          message_type: msg.message_type,
+          media_url: msg.media_url,
+          media_mime_type: msg.media_mime_type,
+          postback_payload: msg.postback_payload,
+          referral_json: msg.referral_json,
+          attribution_source: 'meta_social',
+          meta_social_message_id: msg.meta_social_message_id,
+          meta_message_id: msg.meta_message_id,
+          direction: msg.direction || 'inbound',
+          transport: platform === 'instagram' ? 'instagram' : 'messenger'
+        }
+      })
+    })
 
     // 3. Contacto creado
     journey.push({

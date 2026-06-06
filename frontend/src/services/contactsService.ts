@@ -19,7 +19,7 @@ export interface ContactStats {
 }
 
 export interface JourneyEvent {
-  type: 'page_visit' | 'whatsapp_message' | 'contact_created' | 'appointment' | 'payment'
+  type: 'page_visit' | 'whatsapp_message' | 'meta_message' | 'contact_created' | 'appointment' | 'payment'
   date: string
   data: Record<string, any>
 }

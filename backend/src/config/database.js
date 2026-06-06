@@ -1036,7 +1036,73 @@ async function initTables() {
         access_token TEXT NOT NULL,
         app_id TEXT,
         app_secret TEXT,
+        instagram_account_id TEXT,
         token_expires_at DATETIME,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS meta_social_contacts (
+        id TEXT PRIMARY KEY,
+        contact_id TEXT,
+        platform TEXT NOT NULL,
+        sender_id TEXT NOT NULL,
+        recipient_id TEXT,
+        page_id TEXT,
+        instagram_account_id TEXT,
+        profile_name TEXT,
+        username TEXT,
+        profile_picture_url TEXT,
+        raw_profile_json TEXT,
+        first_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        last_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        message_count INTEGER DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(platform, sender_id),
+        FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE SET NULL
+      )
+    `)
+
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS meta_social_messages (
+        id TEXT PRIMARY KEY,
+        platform TEXT NOT NULL,
+        meta_message_id TEXT,
+        meta_social_contact_id TEXT,
+        contact_id TEXT,
+        sender_id TEXT,
+        recipient_id TEXT,
+        page_id TEXT,
+        instagram_account_id TEXT,
+        direction TEXT,
+        message_type TEXT,
+        message_text TEXT,
+        media_url TEXT,
+        media_mime_type TEXT,
+        postback_payload TEXT,
+        message_timestamp DATETIME,
+        raw_payload_json TEXT,
+        referral_json TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (meta_social_contact_id) REFERENCES meta_social_contacts(id) ON DELETE SET NULL,
+        FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE SET NULL
+      )
+    `)
+
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS meta_social_webhook_events (
+        id TEXT PRIMARY KEY,
+        platform TEXT,
+        object_type TEXT,
+        event_type TEXT,
+        signature_valid INTEGER,
+        processed_status TEXT DEFAULT 'received',
+        processed_error TEXT,
+        raw_payload_json TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
@@ -1710,6 +1776,14 @@ async function initTables() {
       }
 
       try {
+        await db.run('ALTER TABLE meta_config ADD COLUMN instagram_account_id TEXT')
+      } catch (err) {
+        if (!err.message.includes('duplicate column name') && !err.message.includes('already exists')) {
+          throw err
+        }
+      }
+
+      try {
         if (usePostgres) {
           await db.run('ALTER TABLE meta_config ALTER COLUMN ad_account_id DROP NOT NULL')
         } else {
@@ -1734,17 +1808,18 @@ async function initTables() {
                 timezone_offset_hours_utc INTEGER,
                 pixel_id TEXT,
                 pixel_api_token TEXT,
-                page_id TEXT
+                page_id TEXT,
+                instagram_account_id TEXT
               );
               INSERT INTO meta_config_shared_token_migration (
                 id, ad_account_id, access_token, app_id, app_secret, token_expires_at,
                 created_at, updated_at, timezone_id, timezone_name, timezone_offset_hours_utc,
-                pixel_id, pixel_api_token, page_id
+                pixel_id, pixel_api_token, page_id, instagram_account_id
               )
               SELECT
                 id, ad_account_id, access_token, app_id, app_secret, token_expires_at,
                 created_at, updated_at, timezone_id, timezone_name, timezone_offset_hours_utc,
-                pixel_id, pixel_api_token, page_id
+                pixel_id, pixel_api_token, page_id, instagram_account_id
               FROM meta_config;
               DROP TABLE meta_config;
               ALTER TABLE meta_config_shared_token_migration RENAME TO meta_config;
@@ -1778,6 +1853,14 @@ async function initTables() {
           }
         }
       }
+
+      await db.run('CREATE INDEX IF NOT EXISTS idx_meta_social_contacts_contact ON meta_social_contacts(contact_id)')
+      await db.run('CREATE INDEX IF NOT EXISTS idx_meta_social_contacts_sender ON meta_social_contacts(platform, sender_id)')
+      await db.run('CREATE INDEX IF NOT EXISTS idx_meta_social_messages_contact ON meta_social_messages(contact_id)')
+      await db.run('CREATE INDEX IF NOT EXISTS idx_meta_social_messages_sender ON meta_social_messages(platform, sender_id)')
+      await db.run('CREATE INDEX IF NOT EXISTS idx_meta_social_messages_created ON meta_social_messages(created_at)')
+      await db.run('CREATE INDEX IF NOT EXISTS idx_meta_social_messages_meta_id ON meta_social_messages(meta_message_id)')
+      await db.run('CREATE INDEX IF NOT EXISTS idx_meta_social_events_status ON meta_social_webhook_events(processed_status, created_at)')
 
       // Agregar columnas de configuración de invoices/pagos
       try {

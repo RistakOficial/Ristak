@@ -35,6 +35,7 @@ const META_CUSTOM_VALUE_FIELDS = [
   { key: 'accessToken', names: ['Facebook - App Access Token'], secret: true },
   { key: 'pixelId', names: ['Facebook - Pixel ID', 'pixel_id'] },
   { key: 'pageId', names: ['Facebook - Page ID'] },
+  { key: 'instagramAccountId', names: ['Facebook - Instagram Account ID', 'Instagram Account ID'] },
   { key: 'pixelApiToken', names: ['Facebook - Pixel API Token'], secret: true },
   { key: 'whatsappBusinessAccountId', names: ['Facebook - WhatsApp Business Account ID', 'WhatsApp Business Account ID', 'WABA ID'] }
 ]
@@ -204,6 +205,7 @@ function buildLocalMetaCredentials(metaConfig = {}, whatsappBusinessAccountId = 
     accessToken: cleanString(metaConfig.access_token),
     pixelId: cleanString(metaConfig.pixel_id),
     pageId: cleanString(metaConfig.page_id),
+    instagramAccountId: cleanString(metaConfig.instagram_account_id),
     pixelApiToken: cleanString(metaConfig.pixel_api_token),
     whatsappBusinessAccountId: cleanString(whatsappBusinessAccountId)
   }
@@ -216,6 +218,7 @@ function maskMetaCredentials(credentials = {}) {
     accessToken: maskSecret(credentials.accessToken),
     pixelId: cleanString(credentials.pixelId),
     pageId: cleanString(credentials.pageId),
+    instagramAccountId: cleanString(credentials.instagramAccountId),
     pixelApiToken: maskSecret(credentials.pixelApiToken),
     whatsappBusinessAccountId: cleanString(credentials.whatsappBusinessAccountId)
   }
@@ -229,6 +232,7 @@ function mergeMetaCredentials(primary = {}, fallback = {}) {
     accessToken: cleanString(primary.accessToken || fallback.accessToken),
     pixelId: cleanString(primary.pixelId || fallback.pixelId),
     pageId: cleanString(primary.pageId || fallback.pageId),
+    instagramAccountId: cleanString(primary.instagramAccountId || fallback.instagramAccountId),
     pixelApiToken: cleanString(primary.pixelApiToken || fallback.pixelApiToken),
     whatsappBusinessAccountId: cleanString(primary.whatsappBusinessAccountId || fallback.whatsappBusinessAccountId)
   }
@@ -237,7 +241,7 @@ function mergeMetaCredentials(primary = {}, fallback = {}) {
 function credentialsMissingValues(target = {}, source = {}) {
   target = target || {}
   source = source || {}
-  return ['pixelId', 'pageId', 'pixelApiToken', 'whatsappBusinessAccountId'].some(key =>
+  return ['pixelId', 'pageId', 'instagramAccountId', 'pixelApiToken', 'whatsappBusinessAccountId'].some(key =>
     !cleanString(target[key]) && cleanString(source[key])
   )
 }
@@ -1540,7 +1544,8 @@ export async function reconcileMetaBusinessWithHighLevel(locationId, apiToken, o
         credentialsToSave.accessToken,
         credentialsToSave.pixelId || null,
         credentialsToSave.pixelApiToken || null,
-        credentialsToSave.pageId || null
+        credentialsToSave.pageId || null,
+        credentialsToSave.instagramAccountId || null
       )
 
       if (credentialsToSave.whatsappBusinessAccountId) {
@@ -1568,7 +1573,8 @@ export async function reconcileMetaBusinessWithHighLevel(locationId, apiToken, o
           mergedLocal.accessToken,
           mergedLocal.pixelId || null,
           mergedLocal.pixelApiToken || null,
-          mergedLocal.pageId || null
+          mergedLocal.pageId || null,
+          mergedLocal.instagramAccountId || null
         )
 
         if (mergedLocal.whatsappBusinessAccountId) {
@@ -1608,7 +1614,8 @@ export async function reconcileMetaBusinessWithHighLevel(locationId, apiToken, o
         credentialsToSave.accessToken,
         credentialsToSave.pixelId || null,
         credentialsToSave.pixelApiToken || null,
-        credentialsToSave.pageId || null
+        credentialsToSave.pageId || null,
+        credentialsToSave.instagramAccountId || null
       )
 
       if (credentialsToSave.whatsappBusinessAccountId) {
@@ -1656,7 +1663,7 @@ export async function fetchAndSaveMetaConfig(locationId, apiToken) {
     const maskedCredentials = maskMetaCredentials(rawCredentials)
 
     // Debug: Ver qué valores se encontraron
-    logger.info(`Valores encontrados - AdAccountId: ${rawCredentials.adAccountId ? 'SÍ' : 'NO'}, AccessToken: ${rawCredentials.accessToken ? 'SÍ' : 'NO'}, PixelId: ${rawCredentials.pixelId ? 'SÍ' : 'NO'}, PageId: ${rawCredentials.pageId ? 'SÍ' : 'NO'}, PixelApiToken: ${rawCredentials.pixelApiToken ? 'SÍ' : 'NO'}, WABA: ${rawCredentials.whatsappBusinessAccountId ? 'SÍ' : 'NO'}`)
+    logger.info(`Valores encontrados - AdAccountId: ${rawCredentials.adAccountId ? 'SÍ' : 'NO'}, AccessToken: ${rawCredentials.accessToken ? 'SÍ' : 'NO'}, PixelId: ${rawCredentials.pixelId ? 'SÍ' : 'NO'}, PageId: ${rawCredentials.pageId ? 'SÍ' : 'NO'}, Instagram: ${rawCredentials.instagramAccountId ? 'SÍ' : 'NO'}, PixelApiToken: ${rawCredentials.pixelApiToken ? 'SÍ' : 'NO'}, WABA: ${rawCredentials.whatsappBusinessAccountId ? 'SÍ' : 'NO'}`)
 
     if (rawCredentials.whatsappBusinessAccountId) {
       await setAppConfig('meta_whatsapp_business_account_id', rawCredentials.whatsappBusinessAccountId)

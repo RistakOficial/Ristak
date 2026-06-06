@@ -4,7 +4,7 @@ import { ArrowLeft, ArrowRight, CheckCircle, ExternalLink, Pencil, Power, Refres
 import { useNotification } from '@/contexts/NotificationContext'
 import { useTheme } from '@/contexts/ThemeContext'
 import { useAppConfig, useIsRenderDomain } from '@/hooks'
-import { campaignsService } from '@/services/campaignsService'
+import { campaignsService, type ConnectedSocialProfile } from '@/services/campaignsService'
 import styles from './MetaAdsIntegration.module.css'
 
 interface MetaCredentials {
@@ -12,6 +12,7 @@ interface MetaCredentials {
   accessToken: string
   pixelId: string
   pageId: string
+  instagramAccountId: string
   pixelApiToken: string
 }
 
@@ -41,6 +42,12 @@ interface MetaPage {
 interface FetchCollectionResult {
   success: boolean
   count: number
+}
+
+interface MetaWebhookInfo {
+  webhookUrl: string
+  verifyToken: string
+  fields: string[]
 }
 
 type SecretTokenField = 'accessToken'
@@ -79,7 +86,16 @@ const tokenSetupGuideSteps = [
   }
 ]
 
-const tokenSetupScopes = ['ads_management', 'ads_read', 'business_management', 'pages_show_list']
+const tokenSetupScopes = [
+  'ads_management',
+  'ads_read',
+  'business_management',
+  'pages_show_list',
+  'pages_manage_metadata',
+  'pages_messaging',
+  'instagram_basic',
+  'instagram_manage_messages'
+]
 
 export const MetaAdsIntegration: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true)
@@ -88,19 +104,25 @@ export const MetaAdsIntegration: React.FC = () => {
     accessToken: '',
     pixelId: '',
     pageId: '',
+    instagramAccountId: '',
     pixelApiToken: ''
   })
   const [adAccounts, setAdAccounts] = useState<AdAccount[]>([])
   const [pixels, setPixels] = useState<Pixel[]>([])
   const [pages, setPages] = useState<MetaPage[]>([])
+  const [instagramAccounts, setInstagramAccounts] = useState<ConnectedSocialProfile[]>([])
   const [isLoadingAccounts, setIsLoadingAccounts] = useState(false)
   const [isLoadingPixels, setIsLoadingPixels] = useState(false)
   const [isLoadingPages, setIsLoadingPages] = useState(false)
+  const [isLoadingInstagramAccounts, setIsLoadingInstagramAccounts] = useState(false)
   const [realAccessToken, setRealAccessToken] = useState('')
   const [isSavingToken, setIsSavingToken] = useState(false)
   const [isRevealingAccessToken, setIsRevealingAccessToken] = useState(false)
   const [isSavingPageId, setIsSavingPageId] = useState(false)
+  const [isSavingInstagramAccountId, setIsSavingInstagramAccountId] = useState(false)
   const [savedPageId, setSavedPageId] = useState('')
+  const [savedInstagramAccountId, setSavedInstagramAccountId] = useState('')
+  const [metaWebhookInfo, setMetaWebhookInfo] = useState<MetaWebhookInfo | null>(null)
   const [isSyncingSnippet, setIsSyncingSnippet] = useState(false)
   const [isSyncingMetaAds, setIsSyncingMetaAds] = useState(false)
   const [isEditingMetaConfig, setIsEditingMetaConfig] = useState(false)
@@ -118,7 +140,20 @@ export const MetaAdsIntegration: React.FC = () => {
 
   useEffect(() => {
     loadCredentials()
+    loadMetaWebhookInfo()
   }, [])
+
+  const loadMetaWebhookInfo = async () => {
+    try {
+      const response = await fetch('/api/meta/webhook-info')
+      const data = await response.json()
+      if (data.success && data.data) {
+        setMetaWebhookInfo(data.data)
+      }
+    } catch {
+      setMetaWebhookInfo(null)
+    }
+  }
 
   const loadCredentials = async () => {
     setIsLoading(true)
@@ -129,6 +164,7 @@ export const MetaAdsIntegration: React.FC = () => {
       if (data.success && data.data) {
         setCredentials(data.data)
         setSavedPageId(data.data.pageId || '')
+        setSavedInstagramAccountId(data.data.instagramAccountId || '')
 
         if (data.data.accessToken) {
           let tokenToUse = data.data.accessToken
@@ -150,6 +186,7 @@ export const MetaAdsIntegration: React.FC = () => {
           setRealAccessToken(tokenToUse)
           await fetchAdAccounts(tokenToUse, data.data.adAccountId, { silent: true })
           await fetchPages(tokenToUse, data.data.pageId, { silent: true })
+          await fetchInstagramAccounts(tokenToUse, data.data.instagramAccountId, { silent: true })
 
           if (data.data.adAccountId) {
             const accountIdWithPrefix = data.data.adAccountId.startsWith('act_')
@@ -341,12 +378,73 @@ export const MetaAdsIntegration: React.FC = () => {
     }
   }
 
+  const fetchInstagramAccounts = async (
+    token: string,
+    savedInstagramAccountId?: string,
+    options: { silent?: boolean } = {}
+  ): Promise<FetchCollectionResult> => {
+    if (!token) {
+      if (!options.silent) {
+        showToast('error', 'Token requerido', 'Primero ingresa tu Access Token')
+      }
+      return { success: false, count: 0 }
+    }
+
+    setIsLoadingInstagramAccounts(true)
+    try {
+      const result = await campaignsService.getConnectedSocialProfiles({
+        accessToken: token,
+        pageId: credentials.pageId || savedPageId,
+        instagramAccountId: savedInstagramAccountId
+      })
+      const accounts = result.profiles.filter(profile => profile.platform === 'instagram')
+
+      if (result.success && accounts.length > 0) {
+        setInstagramAccounts(accounts)
+
+        if (savedInstagramAccountId) {
+          const matchingAccount = accounts.find(account => account.sourceId === savedInstagramAccountId)
+          if (matchingAccount) {
+            setCredentials(prev => ({
+              ...prev,
+              instagramAccountId: matchingAccount.sourceId
+            }))
+          }
+        }
+
+        if (!options.silent) {
+          showToast('success', 'Instagram cargado', `Se encontraron ${accounts.length} cuentas de Instagram`)
+        }
+
+        return { success: true, count: accounts.length }
+      }
+
+      setInstagramAccounts([])
+      if (!options.silent) {
+        showToast('info', 'Sin Instagram', 'No encontramos cuentas de Instagram conectadas a tus páginas de Meta')
+      }
+      return { success: result.success, count: 0 }
+    } catch {
+      setInstagramAccounts([])
+      if (!options.silent) {
+        showToast('error', 'Error', 'No se pudieron cargar las cuentas de Instagram')
+      }
+      return { success: false, count: 0 }
+    } finally {
+      setIsLoadingInstagramAccounts(false)
+    }
+  }
+
   const handleSelectAdAccount = (account: AdAccount) => {
     handleSelectAndSaveAccount(account)
   }
 
   const handleSelectPixel = (pixel: Pixel) => {
     handleSelectAndSavePixel(pixel)
+  }
+
+  const handleSelectInstagramAccount = (account: ConnectedSocialProfile) => {
+    void saveInstagramAccountId(account.sourceId)
   }
 
   const handleRemoveCredential = (field: keyof MetaCredentials) => {
@@ -356,13 +454,16 @@ export const MetaAdsIntegration: React.FC = () => {
         accessToken: '',
         pixelId: '',
         pageId: '',
+        instagramAccountId: '',
         pixelApiToken: ''
       })
       setRealAccessToken('')
       setAdAccounts([])
       setPixels([])
       setPages([])
+      setInstagramAccounts([])
       setSavedPageId('')
+      setSavedInstagramAccountId('')
       setActiveStep(0)
     } else if (field === 'adAccountId') {
       setCredentials(prev => ({
@@ -383,6 +484,9 @@ export const MetaAdsIntegration: React.FC = () => {
     } else if (field === 'pageId') {
       setCredentials(prev => ({ ...prev, pageId: '' }))
       setSavedPageId('')
+    } else if (field === 'instagramAccountId') {
+      setCredentials(prev => ({ ...prev, instagramAccountId: '' }))
+      setSavedInstagramAccountId('')
     } else if (field === 'pixelApiToken') {
       setCredentials(prev => ({ ...prev, pixelApiToken: '' }))
     } else {
@@ -470,13 +574,16 @@ export const MetaAdsIntegration: React.FC = () => {
       accessToken: '',
       pixelId: '',
       pageId: '',
+      instagramAccountId: '',
       pixelApiToken: ''
     })
     setAdAccounts([])
     setPixels([])
     setPages([])
+    setInstagramAccounts([])
     setRealAccessToken('')
     setSavedPageId('')
+    setSavedInstagramAccountId('')
     setActiveStep(0)
     setIsEditingMetaConfig(false)
   }
@@ -500,6 +607,7 @@ export const MetaAdsIntegration: React.FC = () => {
       }
 
       await fetchPages(credentials.accessToken, credentials.pageId, { silent: true })
+      await fetchInstagramAccounts(credentials.accessToken, credentials.instagramAccountId, { silent: true })
 
       if (accountsResult.count > 0) {
         showToast('success', 'Token válido', 'Selecciona tu cuenta de anuncios')
@@ -527,6 +635,7 @@ export const MetaAdsIntegration: React.FC = () => {
           accessToken: realAccessToken || credentials.accessToken,
           pixelId: credentials.pixelId,
           pageId: credentials.pageId,
+          instagramAccountId: credentials.instagramAccountId,
           pixelApiToken: ''
         })
       })
@@ -540,6 +649,7 @@ export const MetaAdsIntegration: React.FC = () => {
         if (token) {
           fetchPixels(account.id, token)
           fetchPages(token, credentials.pageId, { silent: true })
+          fetchInstagramAccounts(token, credentials.instagramAccountId, { silent: true })
         }
       } else {
         showToast('error', 'Error', data.error || 'No se pudo guardar la cuenta')
@@ -561,6 +671,7 @@ export const MetaAdsIntegration: React.FC = () => {
           accessToken: realAccessToken || credentials.accessToken,
           pixelId: pixel.id,
           pageId: credentials.pageId,
+          instagramAccountId: credentials.instagramAccountId,
           pixelApiToken: ''
         })
       })
@@ -601,6 +712,7 @@ export const MetaAdsIntegration: React.FC = () => {
           accessToken: realAccessToken || credentials.accessToken,
           pixelId: credentials.pixelId || '',
           pageId,
+          instagramAccountId: credentials.instagramAccountId || '',
           pixelApiToken: credentials.pixelApiToken || ''
         })
       })
@@ -627,6 +739,51 @@ export const MetaAdsIntegration: React.FC = () => {
   const handleSelectAndSavePage = async (page: MetaPage) => {
     setCredentials(prev => ({ ...prev, pageId: page.id }))
     await savePageId(page.id)
+  }
+
+  const saveInstagramAccountId = async (instagramAccountId: string) => {
+    if (!instagramAccountId) {
+      showToast('error', 'Instagram requerido', 'Selecciona una cuenta de Instagram primero')
+      return
+    }
+
+    if (!credentials.adAccountId) {
+      showToast('warning', 'Configura primero', 'Primero debes conectar tu cuenta de anuncios')
+      return
+    }
+
+    setIsSavingInstagramAccountId(true)
+
+    try {
+      const response = await fetch('/api/meta/save-and-sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          adAccountId: credentials.adAccountId,
+          accessToken: realAccessToken || credentials.accessToken,
+          pixelId: credentials.pixelId || '',
+          pageId: credentials.pageId || savedPageId || '',
+          instagramAccountId,
+          pixelApiToken: credentials.pixelApiToken || ''
+        })
+      })
+
+      const data = await response.json()
+
+      if (data.success) {
+        showToast('success', 'Instagram conectado', 'La cuenta quedó guardada para recibir DMs')
+        setSavedInstagramAccountId(instagramAccountId)
+        setCredentials(prev => ({ ...prev, instagramAccountId }))
+        await loadCredentials()
+        void syncMetaAds({ automatic: true })
+      } else {
+        showToast('error', 'Error', data.error || 'No se pudo guardar Instagram')
+      }
+    } catch {
+      showToast('error', 'Error', 'No se pudo guardar Instagram')
+    } finally {
+      setIsSavingInstagramAccountId(false)
+    }
   }
 
   const handleFinishWizard = () => {
@@ -754,7 +911,7 @@ export const MetaAdsIntegration: React.FC = () => {
       options.automatic ? 'Sincronizando Meta' : 'Sincronizando...',
       options.automatic
         ? 'Ya quedó conectado; estamos trayendo los datos de Meta automáticamente'
-        : 'Iniciando sincronización de Meta Ads (últimos 35 meses)'
+        : 'Iniciando sincronización de anuncios de Meta (últimos 35 meses)'
     )
 
     try {
@@ -764,7 +921,7 @@ export const MetaAdsIntegration: React.FC = () => {
         showToast(
           'success',
           options.automatic ? 'Sincronización automática iniciada' : 'Sincronización iniciada',
-          result.message || 'La sincronización de Meta Ads fue iniciada en segundo plano'
+          result.message || 'La sincronización de anuncios de Meta fue iniciada en segundo plano'
         )
       } else {
         showToast(
@@ -788,6 +945,7 @@ export const MetaAdsIntegration: React.FC = () => {
   const hasAdAccount = Boolean(credentials.adAccountId)
   const hasPixel = Boolean(credentials.pixelId)
   const hasPageId = Boolean(savedPageId)
+  const hasInstagramAccount = Boolean(savedInstagramAccountId || credentials.instagramAccountId)
   const isMetaConfigured = Boolean(hasAccessToken && hasAdAccount && hasPageId)
   const shouldShowWizard = !isMetaConfigured || isEditingMetaConfig
   const shouldShowAccessTokenAction = Boolean(
@@ -823,6 +981,13 @@ export const MetaAdsIntegration: React.FC = () => {
       done: hasPageId,
       required: false,
       unlocked: hasAdAccount
+    },
+    {
+      title: 'Instagram',
+      description: 'DMs y contactos',
+      done: hasInstagramAccount,
+      required: false,
+      unlocked: hasPageId
     }
   ]
   const completedMetaSetupSteps = metaSetupSteps.filter(step => step.done).length
@@ -860,6 +1025,15 @@ export const MetaAdsIntegration: React.FC = () => {
     return matchingPage ? `${matchingPage.name} (${pageId})` : pageId
   }
 
+  const getSelectedInstagramLabel = () => {
+    if (!credentials.instagramAccountId && !savedInstagramAccountId) return 'Opcional'
+    const instagramAccountId = credentials.instagramAccountId || savedInstagramAccountId
+    const matchingAccount = instagramAccounts.find(account => account.sourceId === instagramAccountId)
+    if (!matchingAccount) return instagramAccountId
+    const username = matchingAccount.username ? `@${matchingAccount.username}` : matchingAccount.name
+    return `${username} (${instagramAccountId})`
+  }
+
   const getStepBlockMessage = (stepIndex = activeStep) => {
     if (stepIndex === 1 && !hasAccessToken) {
       return 'Primero valida el Access Token para cargar tus cuentas de anuncios'
@@ -867,6 +1041,10 @@ export const MetaAdsIntegration: React.FC = () => {
 
     if ((stepIndex === 2 || stepIndex === 3) && !hasAdAccount) {
       return 'Primero selecciona y guarda una cuenta de anuncios'
+    }
+
+    if (stepIndex === 4 && !hasPageId) {
+      return 'Primero selecciona y guarda una Facebook Page'
     }
 
     return 'Completa el paso anterior para continuar'
@@ -1086,7 +1264,7 @@ export const MetaAdsIntegration: React.FC = () => {
             <span className={styles.stepEyebrow}>Paso 3</span>
             <h3 className={styles.stepTitle}>Elige el Meta Pixel</h3>
             <p className={styles.stepText}>
-              Es opcional para conectar Meta Ads, pero necesario si quieres incluir el pixel en el snippet o usar Conversions API.
+              Es opcional para reportes de anuncios, pero necesario si quieres incluir el pixel en el snippet o usar Conversions API.
             </p>
           </div>
 
@@ -1148,82 +1326,183 @@ export const MetaAdsIntegration: React.FC = () => {
       )
     }
 
+    if (activeStep === 3) {
+      return (
+        <>
+          <div className={styles.stepIntro}>
+            <span className={styles.stepEyebrow}>Paso 4</span>
+            <h3 className={styles.stepTitle}>Selecciona la Facebook Page</h3>
+            <p className={styles.stepText}>
+              La Página se obtiene desde Meta con el permiso pages_show_list. También es la base para activar Messenger e Instagram DM en el mismo webhook.
+            </p>
+            <a href="https://business.facebook.com/latest/settings/pages" target="_blank" rel="noopener noreferrer" className={styles.inlineDocLink}>
+              Abrir páginas en Meta Business
+              <ExternalLink size={14} />
+            </a>
+          </div>
+
+          {!hasAdAccount ? (
+            <p className={styles.stepHint}>{getStepBlockMessage(3)}</p>
+          ) : (
+            <div className={`${styles.formGroup} ${styles.formGroupWide}`}>
+              <span className={styles.formLabel}>Facebook Page</span>
+              {savedPageId && credentials.pageId === savedPageId ? (
+                <div className={styles.filterChip}>
+                  <span className={styles.chipText}>{getSelectedPageLabel()}</span>
+                  <button
+                    onClick={() => handleRemoveCredential('pageId')}
+                    className={styles.chipDeleteButton}
+                    type="button"
+                    aria-label="Eliminar Page ID"
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+              ) : isLoadingPages ? (
+                <div className={styles.inlineStatus}>
+                  <RefreshCw size={14} className={styles.spinning} />
+                  Cargando páginas...
+                </div>
+              ) : pages.length > 0 ? (
+                <select
+                  className={styles.formInput}
+                  onChange={(event) => {
+                    const page = pages.find(item => item.id === event.target.value)
+                    if (page) handleSelectAndSavePage(page)
+                  }}
+                  value={credentials.pageId || ''}
+                  disabled={isSavingPageId}
+                >
+                  <option value="">-- Selecciona una Página --</option>
+                  {pages.map((page) => (
+                    <option key={page.id} value={page.id}>
+                      {page.name} ({page.id}){page.category ? ` - ${page.category}` : ''}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <div className={styles.emptyPagesState}>
+                  <p>
+                    No encontramos páginas para este token. Revisa que el usuario del sistema tenga asignada la Página y que el token incluya pages_show_list.
+                  </p>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() => fetchPages(realAccessToken || credentials.accessToken)}
+                    disabled={isLoadingPages || !(realAccessToken || credentials.accessToken)}
+                  >
+                    <RefreshCw size={16} className={isLoadingPages ? styles.spinning : ''} />
+                    Volver a cargar
+                  </Button>
+                </div>
+              )}
+              {isSavingPageId && (
+                <div className={styles.inlineStatus}>
+                  <RefreshCw size={14} className={styles.spinning} />
+                  Guardando página...
+                </div>
+              )}
+            </div>
+          )}
+        </>
+      )
+    }
+
     return (
       <>
         <div className={styles.stepIntro}>
-          <span className={styles.stepEyebrow}>Paso 4</span>
-          <h3 className={styles.stepTitle}>Selecciona la Facebook Page</h3>
+          <span className={styles.stepEyebrow}>Paso 5</span>
+          <h3 className={styles.stepTitle}>Selecciona Instagram y activa DMs</h3>
           <p className={styles.stepText}>
-            La Página se obtiene desde Meta con el permiso pages_show_list. Así los eventos de WhatsApp quedan ligados a la Página correcta sin copiar IDs a mano.
+            Si tienes Instagram conectado a tu Página, elige la cuenta que recibirá DMs. Los mensajes nuevos entrarán al chat del celular como contactos de Meta.
           </p>
-          <a href="https://business.facebook.com/latest/settings/pages" target="_blank" rel="noopener noreferrer" className={styles.inlineDocLink}>
-            Abrir páginas en Meta Business
+          <a href="https://business.facebook.com/latest/settings/instagram-account" target="_blank" rel="noopener noreferrer" className={styles.inlineDocLink}>
+            Abrir Instagram en Meta Business
             <ExternalLink size={14} />
           </a>
         </div>
 
-        {!hasAdAccount ? (
+        {!hasPageId ? (
           <p className={styles.stepHint}>{getStepBlockMessage(4)}</p>
         ) : (
-          <div className={`${styles.formGroup} ${styles.formGroupWide}`}>
-            <span className={styles.formLabel}>Facebook Page</span>
-            {savedPageId && credentials.pageId === savedPageId ? (
-              <div className={styles.filterChip}>
-                <span className={styles.chipText}>{getSelectedPageLabel()}</span>
-                <button
-                  onClick={() => handleRemoveCredential('pageId')}
-                  className={styles.chipDeleteButton}
-                  type="button"
-                  aria-label="Eliminar Page ID"
+          <>
+            <div className={`${styles.formGroup} ${styles.formGroupWide}`}>
+              <span className={styles.formLabel}>Cuenta de Instagram</span>
+              {savedInstagramAccountId && credentials.instagramAccountId === savedInstagramAccountId ? (
+                <div className={styles.filterChip}>
+                  <span className={styles.chipText}>{getSelectedInstagramLabel()}</span>
+                  <button
+                    onClick={() => handleRemoveCredential('instagramAccountId')}
+                    className={styles.chipDeleteButton}
+                    type="button"
+                    aria-label="Eliminar Instagram"
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+              ) : isLoadingInstagramAccounts ? (
+                <div className={styles.inlineStatus}>
+                  <RefreshCw size={14} className={styles.spinning} />
+                  Cargando Instagram...
+                </div>
+              ) : instagramAccounts.length > 0 ? (
+                <select
+                  className={styles.formInput}
+                  onChange={(event) => {
+                    const account = instagramAccounts.find(item => item.sourceId === event.target.value)
+                    if (account) handleSelectInstagramAccount(account)
+                  }}
+                  value={credentials.instagramAccountId || ''}
+                  disabled={isSavingInstagramAccountId}
                 >
-                  <Trash2 size={16} />
-                </button>
-              </div>
-            ) : isLoadingPages ? (
-              <div className={styles.inlineStatus}>
-                <RefreshCw size={14} className={styles.spinning} />
-                Cargando páginas...
-              </div>
-            ) : pages.length > 0 ? (
-              <select
-                className={styles.formInput}
-                onChange={(event) => {
-                  const page = pages.find(item => item.id === event.target.value)
-                  if (page) handleSelectAndSavePage(page)
-                }}
-                value={credentials.pageId || ''}
-                disabled={isSavingPageId}
-              >
-                <option value="">-- Selecciona una Página --</option>
-                {pages.map((page) => (
-                  <option key={page.id} value={page.id}>
-                    {page.name} ({page.id}){page.category ? ` - ${page.category}` : ''}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <div className={styles.emptyPagesState}>
-                <p>
-                  No encontramos páginas para este token. Revisa que el usuario del sistema tenga asignada la Página y que el token incluya pages_show_list.
+                  <option value="">-- Sin Instagram por ahora --</option>
+                  {instagramAccounts.map((account) => (
+                    <option key={account.sourceId} value={account.sourceId}>
+                      {account.username ? `@${account.username}` : account.name} ({account.sourceId})
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <div className={styles.emptyPagesState}>
+                  <p>
+                    No encontramos Instagram conectado. Puedes terminar y volver cuando la cuenta esté ligada a la Página en Meta Business.
+                  </p>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() => fetchInstagramAccounts(realAccessToken || credentials.accessToken, credentials.instagramAccountId)}
+                    disabled={isLoadingInstagramAccounts || !(realAccessToken || credentials.accessToken)}
+                  >
+                    <RefreshCw size={16} className={isLoadingInstagramAccounts ? styles.spinning : ''} />
+                    Volver a cargar
+                  </Button>
+                </div>
+              )}
+              {isSavingInstagramAccountId && (
+                <div className={styles.inlineStatus}>
+                  <RefreshCw size={14} className={styles.spinning} />
+                  Guardando Instagram...
+                </div>
+              )}
+            </div>
+
+            {metaWebhookInfo && (
+              <div className={styles.setupGuide}>
+                <span className={styles.scopeBlockLabel}>Webhook para Messenger e Instagram DM</span>
+                <label className={`${styles.formGroup} ${styles.formGroupWide}`}>
+                  <span className={styles.formLabel}>URL del webhook</span>
+                  <input className={styles.formInput} value={metaWebhookInfo.webhookUrl} readOnly />
+                </label>
+                <label className={`${styles.formGroup} ${styles.formGroupWide}`}>
+                  <span className={styles.formLabel}>Token de verificación</span>
+                  <input className={styles.formInput} value={metaWebhookInfo.verifyToken} readOnly />
+                </label>
+                <p className={styles.stepHint}>
+                  En Meta Developers suscribe la app a la Página con estos campos: {metaWebhookInfo.fields.join(', ')}.
                 </p>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  onClick={() => fetchPages(realAccessToken || credentials.accessToken)}
-                  disabled={isLoadingPages || !(realAccessToken || credentials.accessToken)}
-                >
-                  <RefreshCw size={16} className={isLoadingPages ? styles.spinning : ''} />
-                  Volver a cargar
-                </Button>
               </div>
             )}
-            {isSavingPageId && (
-              <div className={styles.inlineStatus}>
-                <RefreshCw size={14} className={styles.spinning} />
-                Guardando página...
-              </div>
-            )}
-          </div>
+          </>
         )}
       </>
     )
@@ -1245,9 +1524,9 @@ export const MetaAdsIntegration: React.FC = () => {
                 />
               </span>
               <div>
-                <h2 className={styles.pageTitle}>Meta Ads</h2>
+                <h2 className={styles.pageTitle}>Meta</h2>
                 <p className={styles.pageSubtitle}>
-                  Sigue el wizard y conecta token, cuenta, pixel y Página sin copiar IDs a mano.
+                  Conecta anuncios, Página, Messenger e Instagram DM desde un solo lugar.
                 </p>
               </div>
             </div>
@@ -1279,10 +1558,10 @@ export const MetaAdsIntegration: React.FC = () => {
                     <CheckCircle size={28} />
                   </span>
                   <div className={styles.connectedCopy}>
-                    <span className={styles.stepEyebrow}>Meta Ads</span>
+                    <span className={styles.stepEyebrow}>Meta</span>
                     <h3 className={styles.connectedTitle}>Configuración activa</h3>
                     <p className={styles.connectedText}>
-                      La cuenta está lista para reportes, sincronización y eventos server-side.
+                      La cuenta está lista para reportes, eventos y mensajes nuevos de Meta.
                     </p>
                   </div>
                   <div className={styles.connectedActions}>
@@ -1310,6 +1589,10 @@ export const MetaAdsIntegration: React.FC = () => {
                     <span>Meta Pixel</span>
                     <strong>{hasPixel ? getSelectedPixelLabel() : 'Sin pixel'}</strong>
                   </div>
+                  <div className={styles.connectedMetaItem}>
+                    <span>Instagram</span>
+                    <strong>{hasInstagramAccount ? getSelectedInstagramLabel() : 'Sin Instagram'}</strong>
+                  </div>
                 </div>
               </section>
             )}
@@ -1320,10 +1603,10 @@ export const MetaAdsIntegration: React.FC = () => {
                 <div>
                   <h3 className={styles.sectionTitle}>Wizard de configuración</h3>
                   <p className={styles.sectionDescription}>
-                    Crea el token correcto y después selecciona los activos que Meta devuelve por API.
+                    Crea el token correcto y después selecciona los activos que Meta devuelve.
                   </p>
                 </div>
-                <span className={styles.stepCount}>{completedMetaSetupSteps}/4 listo</span>
+                <span className={styles.stepCount}>{completedMetaSetupSteps}/5 listo</span>
               </div>
 
               <div className={styles.wizardShell}>
@@ -1443,7 +1726,7 @@ export const MetaAdsIntegration: React.FC = () => {
                     disabled={isSyncingMetaAds}
                   >
                     <RefreshCw size={16} className={isSyncingMetaAds ? styles.spinning : ''} />
-                    {isSyncingMetaAds ? 'Sincronizando' : 'Sincronizar Meta Ads'}
+                    {isSyncingMetaAds ? 'Sincronizando' : 'Sincronizar anuncios'}
                   </button>
                 </div>
               </section>
@@ -1536,6 +1819,8 @@ export const MetaAdsIntegration: React.FC = () => {
                 <strong>{hasPixel ? getSelectedPixelLabel() : '-'}</strong>
                 <span>Page</span>
                 <strong>{hasPageId ? getSelectedPageLabel() : '-'}</strong>
+                <span>Instagram</span>
+                <strong>{hasInstagramAccount ? getSelectedInstagramLabel() : '-'}</strong>
               </div>
             </div>
 
@@ -1579,7 +1864,7 @@ export const MetaAdsIntegration: React.FC = () => {
                   disabled={isSyncingMetaAds}
                 >
                   <RefreshCw size={16} className={isSyncingMetaAds ? styles.spinning : ''} />
-                  {isSyncingMetaAds ? 'Sincronizando' : 'Sincronizar Meta Ads'}
+                  {isSyncingMetaAds ? 'Sincronizando' : 'Sincronizar anuncios'}
                 </button>
               )}
 

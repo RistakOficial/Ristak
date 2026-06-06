@@ -50,7 +50,7 @@ export const Settings: React.FC = () => {
     },
     {
       to: '/settings/meta-ads',
-      label: 'Meta Ads',
+      label: 'Meta',
       icon: (
         <img
           src={theme === 'dark'

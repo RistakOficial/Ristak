@@ -4,6 +4,7 @@ import {
   getConfig,
   revealMetaToken,
   revealMetaPixelApiToken,
+  getMetaWebhookInfo,
   syncAds,
   getSyncProgressEndpoint,
   updateRecent,
@@ -37,6 +38,7 @@ router.get('/config', getConfig)
 router.delete('/config', deleteMetaConfig)
 router.get('/config/reveal/access_token', revealMetaToken)
 router.get('/config/reveal/pixel_api_token', revealMetaPixelApiToken)
+router.get('/webhook-info', getMetaWebhookInfo)
 router.get('/verify-token', verifyToken)
 
 // Obtener datos de Meta para dropdowns

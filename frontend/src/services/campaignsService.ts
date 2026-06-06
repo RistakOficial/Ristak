@@ -33,6 +33,7 @@ export interface ConnectedSocialProfile {
   followers?: number | null
   followersLabel?: string
   isConfiguredPage?: boolean
+  isConfiguredInstagram?: boolean
   updatedAt?: string
 }
 
@@ -366,6 +367,7 @@ class CampaignsService {
           adAccountId: string
           accessToken: string
           pageId: string | null
+          instagramAccountId: string | null
           pixelId: string | null
           pixelApiToken: string | null
           timezoneId: number | null
@@ -477,7 +479,11 @@ class CampaignsService {
     }
   }
 
-  async getConnectedSocialProfiles(): Promise<{
+  async getConnectedSocialProfiles(params: {
+    accessToken?: string
+    pageId?: string
+    instagramAccountId?: string
+  } = {}): Promise<{
     success: boolean
     connected: boolean
     updatedAt: string | null
@@ -485,7 +491,9 @@ class CampaignsService {
     error?: string
   }> {
     try {
-      const data = await apiClient.get('/meta/social-profiles') as {
+      const data = await apiClient.get('/meta/social-profiles', {
+        params
+      }) as {
         connected?: boolean
         updatedAt?: string
         profiles?: ConnectedSocialProfile[]

@@ -30,6 +30,7 @@ import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/
 import { parseContactCustomFields } from '../utils/contactCustomFields.js';
 import { API_URLS } from '../config/constants.js';
 import fetch from 'node-fetch';
+import { getMetaWebhookVerifyToken } from '../services/metaSocialMessagingService.js';
 
 const SUCCESS_PAYMENT_STATUSES = new Set([
   'succeeded',
@@ -63,6 +64,18 @@ function normalizeMetaAdAccountId(value) {
   return cleanString(value).replace(/^act_/i, '');
 }
 
+function normalizeBaseUrl(value = '') {
+  return cleanString(value).replace(/\/+$/, '');
+}
+
+function getPublicBaseUrl(req) {
+  return normalizeBaseUrl(
+    process.env.RENDER_EXTERNAL_URL ||
+    process.env.PUBLIC_URL ||
+    `${req.protocol}://${req.get('host')}`
+  );
+}
+
 function hasUsableLocalMetaConfig(metaConfig) {
   return Boolean(metaConfig?.access_token);
 }
@@ -73,6 +86,7 @@ function toMaskedMetaCredentials(metaConfig = {}, whatsappBusinessAccountId = ''
     accessToken: maskSecret(metaConfig.access_token),
     pixelId: cleanString(metaConfig.pixel_id),
     pageId: cleanString(metaConfig.page_id),
+    instagramAccountId: cleanString(metaConfig.instagram_account_id),
     pixelApiToken: maskSecret(metaConfig.pixel_api_token),
     whatsappBusinessAccountId: cleanString(whatsappBusinessAccountId)
   };
@@ -298,7 +312,7 @@ async function hydrateMissingCreativeMedia(rows = []) {
  */
 export const saveConfig = async (req, res) => {
   try {
-    const { ad_account_id, access_token, pixel_id, pixel_api_token, page_id } = req.body;
+    const { ad_account_id, access_token, pixel_id, pixel_api_token, page_id, instagram_account_id } = req.body;
 
     if (!ad_account_id || !access_token) {
       return res.status(400).json({
@@ -314,7 +328,8 @@ export const saveConfig = async (req, res) => {
       access_token,
       pixel_id || null,
       pixel_api_token || null,
-      page_id || null
+      page_id || null,
+      instagram_account_id || null
     );
     await setAppConfig('meta_config_disconnected', '0');
 
@@ -340,7 +355,7 @@ export const saveConfig = async (req, res) => {
 export const getConfig = async (req, res) => {
   try {
     const config = await db.get(
-      'SELECT ad_account_id, access_token, pixel_id, pixel_api_token, page_id, timezone_id, timezone_name, timezone_offset_hours_utc, updated_at FROM meta_config LIMIT 1'
+      'SELECT ad_account_id, access_token, pixel_id, pixel_api_token, page_id, instagram_account_id, timezone_id, timezone_name, timezone_offset_hours_utc, updated_at FROM meta_config LIMIT 1'
     );
 
     if (!config) {
@@ -363,6 +378,7 @@ export const getConfig = async (req, res) => {
         accessToken: '***' + config.access_token.substring(config.access_token.length - 8),
         pixelId: config.pixel_id || null,
         pageId: config.page_id || null,
+        instagramAccountId: config.instagram_account_id || null,
         pixelApiToken: config.pixel_api_token ? '***' + config.pixel_api_token.substring(config.pixel_api_token.length - 8) : null,
         updatedAt: config.updated_at,
         isEncrypted: tokenEncrypted, // Mostrar si está encriptado
@@ -443,6 +459,28 @@ export const revealMetaPixelApiToken = async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Error al revelar el Pixel API Token de Meta'
+    });
+  }
+};
+
+export const getMetaWebhookInfo = async (req, res) => {
+  try {
+    const baseUrl = getPublicBaseUrl(req);
+    const verifyToken = await getMetaWebhookVerifyToken();
+
+    res.json({
+      success: true,
+      data: {
+        webhookUrl: `${baseUrl}/webhook/meta`,
+        verifyToken,
+        fields: ['messages', 'messaging_postbacks', 'message_reactions', 'messaging_referrals']
+      }
+    });
+  } catch (error) {
+    logger.error(`Error en getMetaWebhookInfo: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      error: 'Error al obtener datos del webhook de Meta'
     });
   }
 };
@@ -2170,6 +2208,7 @@ export const getMetaCustomValues = async (req, res) => {
         metaCustomValues.accessToken ||
         metaCustomValues.pixelId ||
         metaCustomValues.pageId ||
+        metaCustomValues.instagramAccountId ||
         metaCustomValues.pixelApiToken ||
         metaCustomValues.whatsappBusinessAccountId
       )) {
@@ -2221,6 +2260,7 @@ export const getMetaCustomValues = async (req, res) => {
         accessToken: '',
         pixelId: '',
         pageId: '',
+        instagramAccountId: '',
         pixelApiToken: '',
         whatsappBusinessAccountId: ''
       },
@@ -2242,7 +2282,7 @@ export const getMetaCustomValues = async (req, res) => {
  */
 export const saveAndSyncMeta = async (req, res) => {
   try {
-    const { adAccountId, accessToken, pixelId, pageId, pixelApiToken, whatsappBusinessAccountId } = req.body;
+    const { adAccountId, accessToken, pixelId, pageId, instagramAccountId, pixelApiToken, whatsappBusinessAccountId } = req.body;
 
     logger.info('Guardando credenciales de Meta Business...');
 
@@ -2289,6 +2329,7 @@ export const saveAndSyncMeta = async (req, res) => {
     const normalizedAdAccountId = normalizeMetaAdAccountId(adAccountId);
     const normalizedPixelId = cleanString(pixelId);
     const normalizedPageId = cleanString(pageId);
+    const normalizedInstagramAccountId = cleanString(instagramAccountId);
     const normalizedWhatsappBusinessAccountId = cleanString(whatsappBusinessAccountId);
 
     // 3. Guardar en meta_config local (encriptado)
@@ -2297,7 +2338,8 @@ export const saveAndSyncMeta = async (req, res) => {
       effectiveAccessToken,
       normalizedPixelId || null,
       cleanString(effectivePixelApiToken) || null,
-      normalizedPageId || null
+      normalizedPageId || null,
+      normalizedInstagramAccountId || null
     );
     await setAppConfig('meta_config_disconnected', '0');
 
@@ -2322,6 +2364,7 @@ export const saveAndSyncMeta = async (req, res) => {
           accessToken: effectiveAccessToken,
           pixelId: normalizedPixelId || '',
           pageId: normalizedPageId || '',
+          instagramAccountId: normalizedInstagramAccountId || '',
           pixelApiToken: cleanString(effectivePixelApiToken) || '',
           whatsappBusinessAccountId: normalizedWhatsappBusinessAccountId || ''
         });
@@ -2407,6 +2450,7 @@ export const saveAndSyncMeta = async (req, res) => {
         savedInHighLevel: highLevelSyncResult.success === true,
         highLevelSync: highLevelSyncResult,
         adAccountId: normalizedAdAccountId,
+        instagramAccountId: normalizedInstagramAccountId,
         tokenValid: validation.valid,
         syncStarted: true
       }
@@ -2755,7 +2799,11 @@ export const getPages = async (req, res) => {
  */
 export const getSocialProfiles = async (req, res) => {
   try {
-    const result = await getConnectedMetaSocialProfiles();
+    const result = await getConnectedMetaSocialProfiles({
+      accessToken: req.query?.accessToken,
+      pageId: req.query?.pageId,
+      instagramAccountId: req.query?.instagramAccountId
+    });
     res.json({
       success: true,
       data: result
@@ -2810,6 +2858,7 @@ export const savePixelToken = async (req, res) => {
           accessToken: metaConfig.access_token,
           pixelId: metaConfig.pixel_id || '',
           pageId: metaConfig.page_id || '',
+          instagramAccountId: metaConfig.instagram_account_id || '',
           pixelApiToken: pixelApiToken // Token fresco del request body
         };
 
@@ -2840,7 +2889,8 @@ export const savePixelToken = async (req, res) => {
       metaConfig.access_token, // Mantener el access_token existente
       metaConfig.pixel_id || null,
       pixelApiToken, // Actualizar solo este campo
-      metaConfig.page_id || null
+      metaConfig.page_id || null,
+      metaConfig.instagram_account_id || null
     );
 
     logger.info('Pixel API Token guardado en base de datos local');

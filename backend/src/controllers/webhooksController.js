@@ -22,10 +22,53 @@ import {
 } from '../services/contactIdentityService.js';
 import { normalizePhoneForStorage } from '../utils/phoneUtils.js';
 import { detectWhatsAppAttributionFields } from '../utils/whatsappAttribution.js';
+import {
+  META_SIGNATURE_HEADER,
+  getMetaWebhookVerifyToken,
+  processMetaSocialWebhook
+} from '../services/metaSocialMessagingService.js';
 
 function firstValue(...values) {
   return values.find(value => value !== undefined && value !== null && value !== '');
 }
+
+export const verifyMetaSocialWebhook = async (req, res) => {
+  try {
+    const mode = String(req.query['hub.mode'] || '').trim();
+    const token = String(req.query['hub.verify_token'] || '').trim();
+    const challenge = String(req.query['hub.challenge'] || '').trim();
+    const expectedToken = await getMetaWebhookVerifyToken();
+
+    if (mode === 'subscribe' && token && token === expectedToken) {
+      logger.info('Webhook de Meta verificado correctamente');
+      return res.status(200).send(challenge);
+    }
+
+    logger.warn('Intento de verificación Meta rechazado');
+    return res.sendStatus(403);
+  } catch (error) {
+    logger.error(`Error verificando webhook Meta: ${error.message}`);
+    return res.sendStatus(500);
+  }
+};
+
+export const handleMetaSocialWebhook = async (req, res) => {
+  try {
+    await processMetaSocialWebhook({
+      payload: req.body || {},
+      rawBody: req.rawBody || JSON.stringify(req.body || {}),
+      signatureHeader: req.get(META_SIGNATURE_HEADER) || ''
+    });
+
+    res.status(200).json({ success: true });
+  } catch (error) {
+    logger.error(`Error procesando webhook Meta: ${error.message}`);
+    res.status(error.statusCode || 200).json({
+      success: error.statusCode ? false : true,
+      error: error.statusCode ? error.message : undefined
+    });
+  }
+};
 
 function extractInvoiceWebhookPayload(data) {
   return data.invoice || data.invoiceData || data.data || data.resource || data.object || {};

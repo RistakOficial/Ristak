@@ -92,7 +92,7 @@ function normalizeFacebookProfile(page = {}, updatedAt, configuredPageId = '') {
   }
 }
 
-function normalizeInstagramProfile(page = {}, updatedAt, configuredPageId = '') {
+function normalizeInstagramProfile(page = {}, updatedAt, configuredPageId = '', configuredInstagramAccountId = '') {
   const instagram = page.instagram_business_account || page.connected_instagram_account
   const sourceId = cleanString(instagram?.id)
   if (!sourceId) return null
@@ -114,6 +114,7 @@ function normalizeInstagramProfile(page = {}, updatedAt, configuredPageId = '') 
     followers: followerCount,
     followersLabel: formatFollowers(followerCount),
     isConfiguredPage: Boolean(configuredPageId && cleanString(page.id) === configuredPageId),
+    isConfiguredInstagram: Boolean(configuredInstagramAccountId && sourceId === configuredInstagramAccountId),
     updatedAt
   }
 }
@@ -220,7 +221,11 @@ async function fetchMetaPages(accessToken, params) {
 
 export async function getConnectedMetaSocialProfiles(options = {}) {
   const config = options.accessToken
-    ? { access_token: cleanString(options.accessToken) }
+    ? {
+        access_token: cleanString(options.accessToken),
+        page_id: cleanString(options.pageId),
+        instagram_account_id: cleanString(options.instagramAccountId)
+      }
     : await getMetaConfig().catch(error => {
       logger.warn(`No se pudo leer configuracion Meta para perfiles sociales: ${error.message}`)
       return null
@@ -228,6 +233,7 @@ export async function getConnectedMetaSocialProfiles(options = {}) {
 
   const accessToken = cleanString(config?.access_token)
   const configuredPageId = cleanString(config?.page_id)
+  const configuredInstagramAccountId = cleanString(config?.instagram_account_id)
   const updatedAt = new Date().toISOString()
 
   if (!accessToken) {
@@ -241,7 +247,8 @@ export async function getConnectedMetaSocialProfiles(options = {}) {
     'picture{url}',
     'fan_count',
     'followers_count',
-    'instagram_business_account{id,username,name,profile_picture_url,followers_count}'
+    'instagram_business_account{id,username,name,profile_picture_url,followers_count}',
+    'connected_instagram_account{id,username,name,profile_picture_url,followers_count}'
   ].join(',')
 
   const fallbackFields = [
@@ -249,7 +256,8 @@ export async function getConnectedMetaSocialProfiles(options = {}) {
     'name',
     'category',
     'picture{url}',
-    'instagram_business_account{id,username,name,profile_picture_url}'
+    'instagram_business_account{id,username,name,profile_picture_url}',
+    'connected_instagram_account{id,username,name,profile_picture_url}'
   ].join(',')
 
   const params = new URLSearchParams({
@@ -275,7 +283,7 @@ export async function getConnectedMetaSocialProfiles(options = {}) {
 
   for (const page of pages) {
     const facebook = normalizeFacebookProfile(page, updatedAt, configuredPageId)
-    const instagram = normalizeInstagramProfile(page, updatedAt, configuredPageId)
+    const instagram = normalizeInstagramProfile(page, updatedAt, configuredPageId, configuredInstagramAccountId)
     if (facebook) profiles.push(facebook)
     if (instagram) profiles.push(instagram)
   }

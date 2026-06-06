@@ -480,7 +480,7 @@ export async function generatePixelCapiToken(pixelId, accessToken) {
 /**
  * Sincroniza custom values de Meta en HighLevel
  */
-async function syncMetaCustomValues(adAccountId, accessToken, pixelId, pixelApiToken = null) {
+async function syncMetaCustomValues(adAccountId, accessToken, pixelId, pixelApiToken = null, pageId = null, instagramAccountId = null) {
   try {
     // Obtener configuración de HighLevel
     const ghlConfig = await db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1')
@@ -497,7 +497,9 @@ async function syncMetaCustomValues(adAccountId, accessToken, pixelId, pixelApiT
       'Facebook - Ad Account ID': adAccountId,
       'Facebook - App Access Token': accessToken,
       'Facebook - Pixel ID': pixelId || '',
-      'Facebook - Pixel API Token': pixelApiToken || ''
+      'Facebook - Pixel API Token': pixelApiToken || '',
+      'Facebook - Page ID': pageId || '',
+      'Facebook - Instagram Account ID': instagramAccountId || ''
     }
 
     // Obtener custom values existentes
@@ -604,7 +606,7 @@ async function syncMetaCustomValues(adAccountId, accessToken, pixelId, pixelApiT
  * CREA/ACTUALIZA custom values en HighLevel automáticamente
  * GENERA AUTOMÁTICAMENTE el Pixel API Token si se proporciona pixelId
  */
-export async function saveMetaConfig(adAccountId, accessToken, pixelId = null, pixelApiToken = null, pageId = null) {
+export async function saveMetaConfig(adAccountId, accessToken, pixelId = null, pixelApiToken = null, pageId = null, instagramAccountId = null) {
   try {
     // Encriptar el access_token
     const encryptedToken = encrypt(accessToken)
@@ -649,14 +651,15 @@ export async function saveMetaConfig(adAccountId, accessToken, pixelId = null, p
 
     // Insertar la nueva configuración (System User - solo necesita access_token + ad_account_id)
     await db.run(`
-      INSERT INTO meta_config (ad_account_id, access_token, pixel_id, pixel_api_token, page_id, timezone_id, timezone_name, timezone_offset_hours_utc)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO meta_config (ad_account_id, access_token, pixel_id, pixel_api_token, page_id, instagram_account_id, timezone_id, timezone_name, timezone_offset_hours_utc)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       adAccountId,
       encryptedToken,
       pixelId,
       encryptedPixelApiToken,
       pageId,
+      instagramAccountId,
       timezoneData?.timezone_id,
       timezoneData?.timezone_name,
       timezoneData?.timezone_offset_hours_utc
@@ -666,7 +669,7 @@ export async function saveMetaConfig(adAccountId, accessToken, pixelId = null, p
 
     // Sincronizar custom values en HighLevel (no bloquear si falla)
     // Incluye Pixel API Token si fue generado o proporcionado
-    syncMetaCustomValues(adAccountId, accessToken, pixelId, finalPixelApiToken).catch(err => {
+    syncMetaCustomValues(adAccountId, accessToken, pixelId, finalPixelApiToken, pageId, instagramAccountId).catch(err => {
       logger.warn('No se pudieron sincronizar custom values de Meta en HighLevel:', err.message)
     })
 

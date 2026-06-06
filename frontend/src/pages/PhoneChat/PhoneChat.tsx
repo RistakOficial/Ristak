@@ -198,6 +198,7 @@ interface VoiceDraftAttachment {
 interface ChatContact extends Contact {
   lastMessageText?: string
   lastMessageType?: string
+  lastMessageChannel?: string
   lastMessageDate?: string
   lastMessageDirection?: string
   lastBusinessPhone?: string
@@ -634,7 +635,8 @@ function getJourneyMediaAttachment(event: JourneyEvent): ChatMessage['attachment
 }
 
 function getJourneyMessage(event: JourneyEvent, index: number): ChatMessage | null {
-  if (event.type !== 'whatsapp_message') return null
+  const isMetaMessage = event.type === 'meta_message'
+  if (event.type !== 'whatsapp_message' && !isMetaMessage) return null
 
   const text = String(
     event.data?.message_text ||
@@ -650,27 +652,33 @@ function getJourneyMessage(event: JourneyEvent, index: number): ChatMessage | nu
   const direction = String(event.data?.direction || '').toLowerCase() === 'outbound' ? 'outbound' : 'inbound'
 
   return {
-    id: String(event.data?.whatsapp_api_message_id || event.data?.whatsapp_message_id || event.data?.attribution_record_id || `message-${index}`),
-    text: text || (attachment ? '' : getMessageTypeLabel(messageType)),
+    id: String(
+      isMetaMessage
+        ? event.data?.meta_social_message_id || event.data?.meta_message_id || `meta-message-${index}`
+        : event.data?.whatsapp_api_message_id || event.data?.whatsapp_message_id || event.data?.attribution_record_id || `message-${index}`
+    ),
+    text: text || (attachment ? '' : getMessageTypeLabel(messageType, isMetaMessage ? 'Mensaje de Meta' : 'Mensaje de WhatsApp')),
     date: event.date,
     direction,
     status: String(event.data?.status || ''),
     errorReason: getJourneyMessageError(event),
     businessPhone: String(event.data?.business_phone || ''),
     businessPhoneNumberId: String(event.data?.business_phone_number_id || ''),
-    transport: String(event.data?.transport || 'api'),
+    transport: String(event.data?.transport || (isMetaMessage ? event.data?.social_platform || 'meta' : 'api')),
     attachment
   }
 }
 
-function getMessageTypeLabel(type = '') {
+function getMessageTypeLabel(type = '', fallback = 'Mensaje de WhatsApp') {
   const normalized = type.toLowerCase()
   if (normalized.includes('image')) return 'Foto'
   if (normalized.includes('video')) return 'Video'
   if (normalized.includes('audio') || normalized.includes('voice')) return 'Mensaje de voz'
   if (normalized.includes('document')) return 'Documento'
   if (normalized.includes('location')) return 'Ubicación'
-  return 'Mensaje de WhatsApp'
+  if (normalized.includes('postback')) return 'Respuesta rápida'
+  if (normalized.includes('reaction')) return 'Reacción'
+  return fallback
 }
 
 function getReadableValue(value?: string | number | null) {
@@ -830,6 +838,7 @@ function getJourneyEventLabel(event: JourneyEvent, leadLabel: string) {
   if (event.type === 'appointment') return 'Agendó una cita'
   if (event.type === 'payment') return 'Registró un pago'
   if (event.type === 'whatsapp_message') return 'WhatsApp'
+  if (event.type === 'meta_message') return getReadableValue(event.data?.source) || 'Meta'
   return 'Actividad'
 }
 
@@ -844,6 +853,7 @@ function isWhatsAppJourneyEvent(event?: JourneyEvent | null) {
 function getJourneyPlatformLabel(event?: JourneyEvent | null) {
   if (!event) return ''
   const data = event.data || {}
+  if (event.type === 'meta_message') return getReadableValue(data.source) || 'Meta'
   const platform = getReadableValue(data.ad_platform)
   if (platform) return platform
 
@@ -866,6 +876,7 @@ function getJourneyPlatformLabel(event?: JourneyEvent | null) {
 function getJourneyPlatformIconName(platform?: string | null) {
   const normalized = String(platform || '').toLowerCase()
   if (normalized.includes('instagram')) return 'instagram'
+  if (normalized.includes('messenger')) return 'facebook'
   if (normalized.includes('facebook')) return 'facebook'
   if (normalized.includes('tiktok')) return 'tiktok'
   if (normalized.includes('google')) return 'google'
@@ -1055,6 +1066,10 @@ function getJourneyEventNetworkBadge(event: JourneyEvent) {
 
 function getJourneyEventIcon(event: JourneyEvent) {
   if (isWhatsAppJourneyEvent(event)) return <Icon name="whatsapp" size={15} />
+  if (event.type === 'meta_message') {
+    const platformIcon = getJourneyPlatformIconName(getJourneyPlatformLabel(event))
+    return platformIcon ? <Icon name={platformIcon} size={15} /> : <Icon name="meta-ads" size={15} />
+  }
 
   if (event.type === 'page_visit') {
     const platformIcon = getJourneyPlatformIconName(getJourneyPlatformLabel(event))
@@ -1069,6 +1084,7 @@ function getJourneyEventIcon(event: JourneyEvent) {
 
 function getJourneyEventIconClass(event: JourneyEvent) {
   if (isWhatsAppJourneyEvent(event)) return styles.contactInfoTimelineIconWhatsapp
+  if (event.type === 'meta_message') return getJourneyPlatformClass(getJourneyPlatformLabel(event)) || styles.contactInfoTimelineIconMeta
 
   if (event.type === 'page_visit') return getJourneyPlatformClass(getJourneyPlatformLabel(event)) || styles.contactInfoTimelineIconVisit
   if (event.type === 'contact_created') return styles.contactInfoTimelineIconContact
@@ -1122,6 +1138,16 @@ function getJourneyEventDescription(event: JourneyEvent) {
     return messageText || getMessageTypeLabel(String(data.message_type || '')) || 'Conversación por WhatsApp'
   }
 
+  if (event.type === 'meta_message') {
+    const source = getReadableValue(data.source) || 'Meta'
+    const sender = getReadableValue(data.profile_name || data.username)
+    const messageText = getReadableValue(data.message_text || data.message || data.body)
+
+    return [source, sender, messageText || getMessageTypeLabel(String(data.message_type || ''), 'Mensaje recibido')]
+      .filter(Boolean)
+      .join(' · ')
+  }
+
   return ''
 }
 
@@ -1153,7 +1179,9 @@ function getResolvedMetaAttribution(contact?: Contact | null, journey: JourneyEv
 
 function getChatPreview(contact: ChatContact) {
   const text = String(contact.lastMessageText || '').trim()
-  const typeLabel = text ? text : getMessageTypeLabel(contact.lastMessageType || '')
+  const channel = String(contact.lastMessageChannel || '').toLowerCase()
+  const fallback = channel === 'instagram' || channel === 'messenger' ? 'Mensaje de Meta' : 'Mensaje de WhatsApp'
+  const typeLabel = text ? text : getMessageTypeLabel(contact.lastMessageType || '', fallback)
   return contact.lastMessageDirection === 'outbound' ? `Tú: ${typeLabel}` : typeLabel
 }
 
@@ -3399,13 +3427,13 @@ export const PhoneChat: React.FC = () => {
         ) : (
           <div className={styles.emptyChats}>
             <span className={styles.emptyChatsIcon}>
-              <Icon name="whatsapp" size={30} />
+              <MessageCircle size={30} />
             </span>
-            <strong>{archivedViewOpen ? 'No hay chats archivados' : chats.length === 0 ? 'Aún no hay chats de WhatsApp' : 'No hay chats en este filtro'}</strong>
+            <strong>{archivedViewOpen ? 'No hay chats archivados' : chats.length === 0 ? 'Aún no hay chats' : 'No hay chats en este filtro'}</strong>
             <small>
               {archivedViewOpen
                 ? 'Cuando archives una conversación, aparecerá en esta sección.'
-                : chats.length === 0 ? 'Cuando llegue un mensaje de WhatsApp aparecerá aquí.' : 'Cambia el filtro o busca un contacto para iniciar una conversación.'}
+                : chats.length === 0 ? 'Cuando llegue un mensaje de WhatsApp, Messenger o Instagram aparecerá aquí.' : 'Cambia el filtro o busca un contacto para iniciar una conversación.'}
             </small>
           </div>
         )}

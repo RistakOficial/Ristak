@@ -9,7 +9,9 @@ import {
   handleAppointmentWebhook,
   handleAppointmentShowedWebhook,
   handleWhatsAppAttributionWebhook,
-  handleInvoiceWebhook
+  handleInvoiceWebhook,
+  handleMetaSocialWebhook,
+  verifyMetaSocialWebhook
 } from '../controllers/webhooksController.js'
 
 const router = express.Router()
@@ -22,5 +24,7 @@ router.post('/appointment/showed', handleAppointmentShowedWebhook)
 router.post('/whatsapp/attribution', handleWhatsAppAttributionWebhook)
 router.post('/whatsapp-api/ycloud', handleYCloudWhatsAppApiWebhook)
 router.post('/invoice', handleInvoiceWebhook)
+router.get('/meta', verifyMetaSocialWebhook)
+router.post('/meta', handleMetaSocialWebhook)
 
 export default router
