@@ -18,14 +18,19 @@ const navItems = [
 ] as const
 
 export const PhoneEcosystemNav: React.FC<PhoneEcosystemNavProps> = ({ active, badges = {} }) => (
-  <nav className={styles.dock} aria-label="Secciones de Ristak Chat">
+  <nav
+    className={styles.dock}
+    aria-label="Secciones de Ristak Chat"
+    onContextMenu={(event) => event.preventDefault()}
+    onDragStart={(event) => event.preventDefault()}
+  >
     {navItems.map(({ key, label, to, Icon }) => {
       const badgeCount = Math.max(0, Number(badges[key] || 0))
 
       return (
-        <Link key={key} to={to} className={active === key ? styles.active : undefined}>
+        <Link key={key} to={to} className={active === key ? styles.active : undefined} draggable={false}>
           <span className={styles.iconWrap}>
-            <Icon size={key === 'chat' ? 25 : 24} />
+            <Icon size={key === 'chat' ? 25 : 24} aria-hidden="true" focusable="false" />
             {badgeCount > 0 && (
               <i aria-label={`${badgeCount} mensajes no leídos`}>
                 {badgeCount > 99 ? '99+' : badgeCount}
