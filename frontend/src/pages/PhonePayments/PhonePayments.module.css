@@ -6,6 +6,9 @@
   --phone-payments-muted: var(--phone-chat-muted, #737373);
   --phone-payments-border: var(--phone-chat-border, rgba(17, 24, 39, 0.08));
   --phone-payments-primary: var(--phone-chat-primary, #111111);
+  --phone-payments-accent: var(--phone-chat-accent, #25d366);
+  --phone-payments-accent-rgb: var(--phone-chat-accent-rgb, 37, 211, 102);
+  --phone-payments-text-on-accent: var(--phone-chat-text-on-primary, #ffffff);
   position: fixed;
   inset: 0;
   isolation: isolate;
@@ -56,15 +59,18 @@
 :global(body[data-phone-chat-tone="dark"]) .recentPeriodPicker button,
 :global(body[data-phone-chat-tone="dark"]) .productIconButton,
 :global(body[data-phone-chat-tone="dark"]) .productSecondaryButton,
+:global(body[data-phone-chat-tone="dark"]) .productFormHeader button,
 :global(body[data-phone-chat-tone="dark"]) .productItemActions button {
   color: var(--phone-payments-text);
   background: var(--phone-payments-soft);
 }
 
 :global(body[data-phone-chat-tone="dark"]) .brandMark,
-:global(body[data-phone-chat-tone="dark"]) .recentPeriodPicker .recentPeriodActive {
+:global(body[data-phone-chat-tone="dark"]) .recentPeriodPicker .recentPeriodActive,
+:global(body[data-phone-chat-tone="dark"]) .productPrimaryButton,
+:global(body[data-phone-chat-tone="dark"]) .productItemIcon {
   color: #07140d;
-  background: var(--phone-chat-accent);
+  background: var(--phone-payments-accent);
 }
 
 :global(body[data-phone-chat-tone="dark"]) .headerMain h1,
@@ -122,6 +128,23 @@
 :global(body[data-phone-chat-tone="dark"]) .productField textarea {
   color: var(--phone-payments-text);
   background: var(--phone-payments-soft);
+}
+
+:global(body[data-phone-chat-tone="dark"]) .productField input::placeholder,
+:global(body[data-phone-chat-tone="dark"]) .productField textarea::placeholder {
+  color: var(--phone-payments-muted);
+  opacity: 0.8;
+}
+
+:global(body[data-phone-chat-tone="dark"]) .productFormHeader button,
+:global(body[data-phone-chat-tone="dark"]) .productFormActions .productSecondaryButton,
+:global(body[data-phone-chat-tone="dark"]) .productItemActions button {
+  background: var(--phone-payments-surface);
+}
+
+:global(body[data-phone-chat-tone="dark"]) .productItemActions .productDeleteButton {
+  color: #fecaca;
+  background: rgba(239, 68, 68, 0.18);
 }
 
 :global(body[data-phone-chat-tone="dark"]) .blockedPanel {
@@ -578,7 +601,7 @@
   display: flex;
   flex-direction: column;
   gap: 14px;
-  padding: 0 16px calc(96px + env(safe-area-inset-bottom, 0px));
+  padding: 0 16px calc(132px + env(safe-area-inset-bottom, 0px));
   background: var(--phone-payments-surface);
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
@@ -643,7 +666,7 @@
   gap: 7px;
   padding: 0 13px;
   border-radius: 999px;
-  color: var(--phone-chat-text-on-primary, #ffffff);
+  color: var(--phone-payments-text-on-accent);
   background: #111111;
   font-size: 13px;
 }
@@ -667,6 +690,7 @@
 .productForm {
   display: grid;
   gap: 12px;
+  margin-bottom: 8px;
   padding: 14px;
   border: 1px solid rgba(17, 24, 39, 0.08);
   border-radius: 8px;
@@ -758,9 +782,23 @@
 }
 
 .productFormActions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+  padding-top: 2px;
+}
+
+.productFormActions .productPrimaryButton,
+.productFormActions .productSecondaryButton {
+  width: 100%;
+  min-height: 46px;
+  box-sizing: border-box;
+  font-size: 14px;
+}
+
+.productFormActions .productSecondaryButton {
+  border: 1px solid var(--phone-payments-border);
+  background: var(--phone-payments-surface);
 }
 
 .productsState,
@@ -791,24 +829,27 @@
 
 .productsList {
   display: grid;
-  gap: 0;
+  gap: 10px;
 }
 
 .productItem {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   min-height: 78px;
-  padding: 13px 0;
-  border-top: 1px solid rgba(17, 24, 39, 0.08);
+  padding: 12px;
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  border-radius: 8px;
+  background: #ffffff;
 }
 
 .productItemMain {
-  display: flex;
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
   align-items: center;
   min-width: 0;
-  gap: 11px;
+  gap: 12px;
 }
 
 .productItemIcon {
@@ -816,10 +857,12 @@
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
-  width: 36px;
-  height: 36px;
-  color: #111111;
-  background: #f7f6f2;
+  width: 44px;
+  height: 44px;
+  border-radius: 999px;
+  color: #15803d;
+  background: rgba(var(--phone-payments-accent-rgb), 0.14);
+  overflow: hidden;
 }
 
 .productItemCopy {
@@ -862,7 +905,8 @@
 }
 
 .productItemActions button {
-  width: 36px;
+  width: 38px;
+  height: 38px;
   border-radius: 999px;
   color: #111111;
   background: #f7f6f2;
