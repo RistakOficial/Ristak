@@ -774,9 +774,11 @@
 }
 
 .cacheRefreshPill {
-  display: inline-flex;
+  display: flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
+  width: fit-content;
   min-height: 28px;
   padding: 0 10px;
   border-radius: 999px;

@@ -338,7 +338,6 @@ export const PhoneCalendar: React.FC = () => {
 
     if (cachedCalendars) {
       applyCalendars(Array.isArray(cachedCalendars.data) ? cachedCalendars.data : [])
-      setCacheRefreshing(true)
     }
 
     const calendarsData = await calendarsService.getCalendars(locationId, accessToken)
@@ -368,7 +367,6 @@ export const PhoneCalendar: React.FC = () => {
     if (cachedEvents) {
       setEvents(Array.isArray(cachedEvents.data.events) ? cachedEvents.data.events : [])
       setFutureEvents(Array.isArray(cachedEvents.data.futureEvents) ? cachedEvents.data.futureEvents : [])
-      setCacheRefreshing(true)
     }
 
     const eventsData = await calendarsService.getEvents(

@@ -1618,7 +1618,8 @@ export const PhoneChat: React.FC = () => {
     return nextChats
   }, [activeContactId, aiAgentChatEnabled, conversationOpen])
 
-  const loadChats = useCallback(async () => {
+  const loadChats = useCallback(async (options: { showCacheRefresh?: boolean } = {}) => {
+    const showCacheRefresh = options.showCacheRefresh === true
     setChatsError('')
     const trimmed = chatQuery.trim()
     const phoneFilterParams = chatPhoneFilterEnabled && selectedChatPhoneId !== 'all' && selectedChatPhone
@@ -1645,7 +1646,7 @@ export const PhoneChat: React.FC = () => {
         : null
       applyLoadedChats(cachedList, cachedRequestedContact)
       setChatsLoading(false)
-      setChatsRefreshing(true)
+      setChatsRefreshing(showCacheRefresh)
     } else {
       setChatsLoading(true)
       setChatsRefreshing(false)
@@ -1720,7 +1721,8 @@ export const PhoneChat: React.FC = () => {
     }
   }, [])
 
-  const loadConversation = useCallback(async (contactId: string) => {
+  const loadConversation = useCallback(async (contactId: string, options: { showCacheRefresh?: boolean } = {}) => {
+    const showCacheRefresh = options.showCacheRefresh === true
     const cacheKey = getPhoneDailyCacheKey('phone-chat', 'conversation', locationId || 'default', contactId)
     const cachedConversation = readPhoneDailyCache<{ journey: JourneyEvent[]; messages: ChatMessage[] }>(cacheKey)
     const showedCachedConversation = Boolean(cachedConversation)
@@ -1729,7 +1731,7 @@ export const PhoneChat: React.FC = () => {
       setContactJourney(Array.isArray(cachedConversation.data.journey) ? cachedConversation.data.journey : [])
       setMessages(Array.isArray(cachedConversation.data.messages) ? cachedConversation.data.messages : [])
       setMessagesLoading(false)
-      setMessagesRefreshing(true)
+      setMessagesRefreshing(showCacheRefresh)
     } else {
       setMessagesLoading(true)
       setMessagesRefreshing(false)
@@ -3346,7 +3348,7 @@ export const PhoneChat: React.FC = () => {
       return (
         <div className={styles.centerState}>
           <span>{chatsError}</span>
-          <button type="button" onClick={loadChats}>Intentar otra vez</button>
+          <button type="button" onClick={() => loadChats({ showCacheRefresh: true })}>Intentar otra vez</button>
         </div>
       )
     }
