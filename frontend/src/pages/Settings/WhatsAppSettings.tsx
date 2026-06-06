@@ -85,6 +85,7 @@ function getQrStatusLabel(status?: string | null) {
   if (normalized === 'connected') return 'QR conectado'
   if (normalized === 'qr_pending') return 'Escanea QR'
   if (normalized === 'starting') return 'Preparando QR'
+  if (normalized === 'restarting') return 'Reiniciando QR'
   if (normalized === 'number_mismatch') return 'Numero incorrecto'
   if (normalized.startsWith('disconnected')) return 'QR desconectado'
   return 'QR apagado'
@@ -93,7 +94,7 @@ function getQrStatusLabel(status?: string | null) {
 function getQrStatusClass(status?: string | null) {
   const normalized = String(status || '').toLowerCase()
   if (normalized === 'connected') return styles.qrBadgeConnected
-  if (normalized === 'qr_pending' || normalized === 'starting') return styles.qrBadgePending
+  if (normalized === 'qr_pending' || normalized === 'starting' || normalized === 'restarting') return styles.qrBadgePending
   if (normalized === 'number_mismatch' || normalized.includes('disconnect')) return styles.qrBadgeWarning
   return styles.qrBadgeMuted
 }
@@ -178,7 +179,7 @@ export const WhatsAppSettings: React.FC = () => {
   useEffect(() => {
     const hasPendingQr = apiStatus?.phoneNumbers.some((phone) => {
       const status = String(qrSessionsByPhoneId.get(phone.id)?.status || phone.qr_status || '').toLowerCase()
-      return status === 'starting' || status === 'qr_pending'
+      return status === 'starting' || status === 'qr_pending' || status === 'restarting'
     })
 
     if (!hasPendingQr && !qrConnectingPhoneId) return
@@ -591,7 +592,7 @@ export const WhatsAppSettings: React.FC = () => {
                 const isSender = phone.id === selectedPhoneId ||
                   phone.phone_number === apiStatus.sender.phone ||
                   phone.display_phone_number === apiStatus.sender.phone
-                const qrPending = ['starting', 'qr_pending'].includes(String(qrStatus).toLowerCase())
+                const qrPending = ['starting', 'qr_pending', 'restarting'].includes(String(qrStatus).toLowerCase())
                 const qrConnected = String(qrStatus).toLowerCase() === 'connected'
 
                 return (
