@@ -1097,7 +1097,9 @@
 }
 
 .attachmentsSheet {
-  min-height: min(410px, 58dvh);
+  gap: 7px;
+  min-height: min(188px, 31dvh);
+  padding-top: 7px;
   background: #dedede;
 }
 
@@ -1150,8 +1152,8 @@
 .attachmentGrid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 22px 10px;
-  padding: 12px 0 18px;
+  gap: 12px 8px;
+  padding: 7px 0 10px;
 }
 
 .attachmentGrid button {
@@ -1196,24 +1198,8 @@
   background: #56c89a;
 }
 
-.attachmentGrid .actionGray {
-  background: #6b737a;
-}
-
 .attachmentGrid .actionSky {
   background: #469bd9;
-}
-
-.attachmentGrid .actionGold {
-  background: #f5b94f;
-}
-
-.attachmentGrid .actionRed {
-  background: #d92847;
-}
-
-.attachmentGrid .actionPurple {
-  background: #7c5cff;
 }
 
 .newChatStack {
@@ -1512,7 +1498,7 @@
   }
 
   .attachmentGrid {
-    gap: 18px 8px;
+    gap: 12px 8px;
   }
 
   .attachmentGrid button span {

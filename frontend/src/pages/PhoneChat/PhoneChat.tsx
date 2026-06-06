@@ -2,8 +2,8 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import {
   Archive,
+  BadgeDollarSign,
   Bell,
-  Bot,
   CalendarDays,
   Camera,
   Check,
@@ -32,7 +32,6 @@ import {
   Smartphone,
   Tag,
   User,
-  Video,
   X
 } from 'lucide-react'
 import { AppointmentModal, Icon, RecordPaymentModal } from '@/components/common'
@@ -1688,11 +1687,18 @@ export const PhoneChat: React.FC = () => {
             )}
 
             <div className={styles.callActions}>
-              <button type="button" onClick={() => handleUnavailableAttachment('Video call')} aria-label="Video call">
-                <Video size={26} />
+              <button type="button" onClick={() => setSheet('appointment')} aria-label="Agendar cita">
+                <CalendarDays size={25} />
               </button>
-              <button type="button" onClick={() => handleUnavailableAttachment('Call')} aria-label="Call">
-                <Phone size={25} />
+              <button
+                type="button"
+                onClick={() => {
+                  setPaymentMode('single')
+                  setSheet('payment')
+                }}
+                aria-label="Cobrar"
+              >
+                <BadgeDollarSign size={25} />
               </button>
             </div>
           </header>
