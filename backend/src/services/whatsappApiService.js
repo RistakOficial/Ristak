@@ -1377,6 +1377,110 @@ async function getOfficialApiFallbackDecision({ config, fromPhone, phoneNumberId
   }
 }
 
+async function activateOfficialApiRestrictionFromFailedMessage({ normalizedMessage, businessPhoneNumberId, businessPhone, reason } = {}) {
+  const wabaId = cleanString(normalizedMessage?.wabaId || normalizedMessage?.waba_id || 'business_account')
+  const label = cleanString(businessPhone || normalizedMessage?.from || normalizedMessage?.senderPhone || '')
+  const message = `${label ? `${label}: ` : ''}${reason || 'WhatsApp API reporto que la cuenta no puede enviar.'}`
+
+  await upsertAlert({
+    severity: 'critical',
+    alertType: 'business_account',
+    title: 'WhatsApp API bloqueado',
+    message,
+    entityType: 'business_account',
+    entityId: wabaId || 'business_account',
+    raw: { message: normalizedMessage }
+  })
+
+  if (businessPhoneNumberId) {
+    await upsertAlert({
+      severity: 'critical',
+      alertType: 'phone_status',
+      title: 'Numero con WhatsApp API bloqueado',
+      message,
+      entityType: 'phone_number',
+      entityId: businessPhoneNumberId,
+      raw: { message: normalizedMessage }
+    })
+  }
+}
+
+async function retryFailedOfficialApiMessageViaQr({
+  normalizedMessage,
+  identity,
+  businessPhoneNumberId,
+  messageId,
+  messageType,
+  messageText,
+  reason,
+  existingMessage
+} = {}) {
+  const previousStatus = cleanString(existingMessage?.status).toLowerCase()
+  const currentStatus = cleanString(normalizedMessage?.status).toLowerCase()
+  if (previousStatus === 'failed' || currentStatus !== 'failed') return null
+
+  const phoneRow = await findBusinessPhoneRowForSender({
+    phoneNumberId: businessPhoneNumberId,
+    fromPhone: identity?.businessPhone || normalizedMessage?.from
+  })
+  if (!isQrFallbackReady(phoneRow)) {
+    logger.warn(`[WhatsApp API] Cuenta restringida pero QR no esta listo para ${identity?.businessPhone || normalizedMessage?.from || 'numero desconocido'}`)
+    return null
+  }
+
+  const fromPhone = identity?.businessPhone || normalizedMessage?.from
+  const toPhone = identity?.phone || normalizedMessage?.to
+  const fallbackExternalId = `${cleanString(normalizedMessage?.externalId || messageId) || hashId('waapi_failed', safeJson(normalizedMessage))}-qr-fallback`
+
+  try {
+    if (messageType === 'text' && messageText) {
+      return await sendTextViaQrFallback({
+        phoneNumberId: phoneRow.id,
+        fromPhone,
+        toPhone,
+        body: messageText,
+        externalId: fallbackExternalId,
+        fallbackReason: reason
+      })
+    }
+
+    if (messageType === 'image') {
+      const image = normalizedMessage?.image || {}
+      const link = cleanString(image.link || image.url)
+      if (!link) return null
+      return await sendImageViaQrFallback({
+        phoneNumberId: phoneRow.id,
+        fromPhone,
+        toPhone,
+        requestImage: {
+          link,
+          ...(image.caption ? { caption: image.caption } : {})
+        },
+        externalId: fallbackExternalId,
+        fallbackReason: reason
+      })
+    }
+
+    if (messageType === 'audio') {
+      const audio = normalizedMessage?.audio || {}
+      const link = cleanString(audio.link || audio.url)
+      if (!link) return null
+      return await sendAudioViaQrFallback({
+        phoneNumberId: phoneRow.id,
+        fromPhone,
+        toPhone,
+        requestAudio: { link },
+        externalId: fallbackExternalId,
+        fallbackReason: reason
+      })
+    }
+  } catch (error) {
+    logger.warn(`[WhatsApp API] No se pudo reintentar por QR ${messageId}: ${error.message}`)
+  }
+
+  return null
+}
+
 function normalizeYCloudContactRecord(record = {}) {
   const phone = normalizePhoneForStorage(record.phoneNumber) || cleanString(record.phoneNumber)
   const profileName = normalizeDisplayText(record.nickname || record.name || record.fullName || record.email)
@@ -2356,10 +2460,12 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
   const ycloudMessageId = cleanString(normalizedMessage.id)
   const wamid = cleanString(normalizedMessage.wamid || normalizedMessage.context?.id)
   const messageId = hashId('waapi_msg', ycloudMessageId || wamid || `${payload.id}|${identity.direction}|${identity.phone}`)
-  const existingMessage = await db.get('SELECT id FROM whatsapp_api_messages WHERE id = ?', [messageId]).catch(() => null)
+  const existingMessage = await db.get('SELECT id, status, transport FROM whatsapp_api_messages WHERE id = ?', [messageId]).catch(() => null)
   const businessPhoneNumberId = await findBusinessPhoneNumberId(identity.businessPhone)
   const status = cleanString(normalizedMessage.status)
   const error = Array.isArray(normalizedMessage.errors) ? normalizedMessage.errors[0] : normalizedMessage.error
+  const errorCode = cleanString(error?.code || normalizedMessage.errorCode)
+  const errorMessage = cleanString(error?.message || error?.title || normalizedMessage.errorMessage)
   const messageType = cleanString(normalizedMessage.type) || 'unknown'
 
   await db.run(`
@@ -2420,8 +2526,8 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
     messageType,
     messageText || null,
     status || null,
-    cleanString(error?.code || normalizedMessage.errorCode) || null,
-    cleanString(error?.message || error?.title || normalizedMessage.errorMessage) || null,
+    errorCode || null,
+    errorMessage || null,
     messageTimestamp,
     safeJson(normalizedMessage),
     safeJson(normalizedMessage.context || normalizedMessage.contextInfo || null),
@@ -2437,6 +2543,32 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
     attribution.conversionData || null,
     attribution.ctwaPayload || null
   ])
+
+  const restrictionReason = cleanString(status).toLowerCase() === 'failed'
+    ? getOfficialApiRestrictionErrorReason({
+        message: `${errorCode} ${errorMessage}`.trim(),
+        ycloud: normalizedMessage
+      })
+    : ''
+
+  if (cleanTransport === 'api' && identity.direction === 'outbound' && restrictionReason) {
+    await activateOfficialApiRestrictionFromFailedMessage({
+      normalizedMessage,
+      businessPhoneNumberId,
+      businessPhone: identity.businessPhone,
+      reason: restrictionReason
+    })
+    await retryFailedOfficialApiMessageViaQr({
+      normalizedMessage,
+      identity,
+      businessPhoneNumberId,
+      messageId,
+      messageType,
+      messageText,
+      reason: restrictionReason,
+      existingMessage
+    })
+  }
 
   if (attribution.hasAttribution) {
     const attributionId = hashId('waapi_attr', `${messageId}|${attribution.sourceId}|${attribution.ctwaClid}`)
