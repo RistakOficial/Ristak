@@ -437,6 +437,16 @@
   transition: none !important;
 }
 
+.conversationOpen .chatSwipeActions {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.conversationOpen .chatSwipeContent {
+  transform: translate3d(0, 0, 0) !important;
+  transition: none !important;
+}
+
 .chatItem::after {
   content: "";
   position: absolute;

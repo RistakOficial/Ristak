@@ -1832,6 +1832,13 @@ export const PhoneChat: React.FC = () => {
   }, [conversationOpen])
 
   useEffect(() => {
+    if (!activeContactId) return
+    setOpenSwipeChatId(null)
+    setDraggingSwipe(null)
+    chatSwipeGestureRef.current = null
+  }, [activeContactId])
+
+  useEffect(() => {
     if (showArchivedChats) return
     setArchivedViewOpen(false)
   }, [showArchivedChats])
@@ -2533,7 +2540,6 @@ export const PhoneChat: React.FC = () => {
 
     if (openSwipeChatId === contact.id) {
       closeSwipeActions()
-      return
     }
 
     handleSelectContact(contact)
@@ -3182,19 +3188,22 @@ export const PhoneChat: React.FC = () => {
       )
     }
 
-    const isDraggingSwipe = draggingSwipe?.contactId === contact.id
-    const swipeOffset = isDraggingSwipe
-      ? draggingSwipe.offset
-      : openSwipeChatId === contact.id ? CHAT_SWIPE_ACTION_WIDTH : 0
+    const swipeLocked = conversationOpen
+    const isDraggingSwipe = !swipeLocked && draggingSwipe?.contactId === contact.id
+    const swipeOffset = swipeLocked
+      ? 0
+      : isDraggingSwipe
+        ? draggingSwipe.offset
+        : openSwipeChatId === contact.id ? CHAT_SWIPE_ACTION_WIDTH : 0
 
     return (
       <div
         key={contact.id}
         className={`${styles.chatSwipeRow} ${swipeOffset > 0 ? styles.chatSwipeRowOpen : ''} ${isDraggingSwipe ? styles.chatSwipeRowDragging : ''}`}
-        onTouchStart={(event) => handleChatTouchStart(contact.id, event)}
-        onTouchMove={handleChatTouchMove}
-        onTouchEnd={handleChatTouchEnd}
-        onTouchCancel={handleChatTouchEnd}
+        onTouchStart={swipeLocked ? undefined : (event) => handleChatTouchStart(contact.id, event)}
+        onTouchMove={swipeLocked ? undefined : handleChatTouchMove}
+        onTouchEnd={swipeLocked ? undefined : handleChatTouchEnd}
+        onTouchCancel={swipeLocked ? undefined : handleChatTouchEnd}
       >
         <div className={styles.chatSwipeActions} aria-hidden={swipeOffset === 0}>
           <button
