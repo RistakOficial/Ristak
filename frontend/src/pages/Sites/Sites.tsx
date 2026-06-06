@@ -5428,6 +5428,7 @@ const SortableLandingSection: React.FC<LandingSectionRenderProps> = ({
   const section = lane.section!
   const settings = section.settings || {}
   const selected = selectedBlockId === section.id
+  const [toolbarEdge, setToolbarEdge] = useState<'top' | 'bottom'>('top')
   const moveState = getBlockMoveState(section)
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: section.id,
@@ -5435,6 +5436,13 @@ const SortableLandingSection: React.FC<LandingSectionRenderProps> = ({
     transition: sortableTransition
   })
   const hasHeading = Boolean(section.content || getSettingString(settings, 'subtitle'))
+  const updateToolbarEdge = useCallback((event: React.PointerEvent<HTMLElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect()
+    const distanceToTop = Math.abs(event.clientY - rect.top)
+    const distanceToBottom = Math.abs(rect.bottom - event.clientY)
+    const nextEdge = distanceToBottom < distanceToTop ? 'bottom' : 'top'
+    setToolbarEdge(current => current === nextEdge ? current : nextEdge)
+  }, [])
 
   return (
 	    <section
@@ -5444,7 +5452,7 @@ const SortableLandingSection: React.FC<LandingSectionRenderProps> = ({
 	      data-rstk-page-block="true"
 	      data-rstk-section-index={blockIndexById.get(section.id) ?? 0}
       data-rstk-section-id={section.id}
-      className={getBlockStyleClassName(section, `rstk-section-lane rstkSel ${selected ? 'rstkSelActive' : ''} ${isDragging ? 'rstkSelDragging' : ''}`)}
+      className={getBlockStyleClassName(section, `rstk-section-lane rstkSel ${selected ? 'rstkSelActive' : ''} ${toolbarEdge === 'bottom' ? 'rstkSectionToolsBottom' : ''} ${isDragging ? 'rstkSelDragging' : ''}`)}
       style={{
         transform: CSS.Transform.toString(transform),
 	        transition: transition || 'transform 520ms cubic-bezier(0.2, 0.8, 0.2, 1)',
@@ -5452,6 +5460,9 @@ const SortableLandingSection: React.FC<LandingSectionRenderProps> = ({
         zIndex: isDragging ? 8 : undefined,
         ...getBlockCanvasStyle(section)
       }}
+      onPointerEnter={updateToolbarEdge}
+      onPointerMove={updateToolbarEdge}
+      onPointerDown={updateToolbarEdge}
       onClick={(event) => {
         event.stopPropagation()
         onSelectBlock(section.id)

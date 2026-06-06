@@ -502,12 +502,19 @@
 .rstkCanvas [data-rstk-page-block="true"] > .rstkBlockTools,
 .rstkCanvas .rstk-section-lane > .rstkBlockTools {
   top: 0;
+  bottom: auto;
   left: 50%;
   right: auto;
   gap: 6px;
   opacity: 0;
   transform: translate(-50%, -50%) scale(calc(1 / var(--rstk-scale, 1)));
   transform-origin: top center;
+}
+.rstkCanvas .rstk-section-lane.rstkSectionToolsBottom > .rstkBlockTools {
+  top: auto;
+  bottom: 0;
+  transform: translate(-50%, 50%) scale(calc(1 / var(--rstk-scale, 1)));
+  transform-origin: bottom center;
 }
 .rstkCanvas.rstk-kind-landing .rstk-section-column > .rstkSel > .rstkBlockTools {
   top: 50%;
