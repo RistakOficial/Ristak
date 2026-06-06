@@ -144,6 +144,16 @@
   gap: 8px;
   padding: calc(env(safe-area-inset-top) + 8px) 14px 0;
   background: var(--phone-chat-bg);
+  transition:
+    gap 260ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    padding 260ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    box-shadow 220ms ease;
+}
+
+.chatListHeader.chatListHeaderSearchExpanded {
+  gap: 0;
+  padding-bottom: 7px;
+  box-shadow: 0 1px 0 var(--phone-chat-border);
 }
 
 .topActionRow {
@@ -151,6 +161,15 @@
   align-items: center;
   justify-content: space-between;
   min-height: 40px;
+  max-height: 44px;
+  overflow: hidden;
+  opacity: 1;
+  transform: translate3d(0, 0, 0);
+  transition:
+    max-height 260ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    min-height 260ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    opacity 180ms ease,
+    transform 260ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
 .topRightActions {
@@ -193,6 +212,14 @@
   justify-content: space-between;
   gap: 10px;
   min-width: 0;
+  max-height: 56px;
+  overflow: hidden;
+  opacity: 1;
+  transform: translate3d(0, 0, 0);
+  transition:
+    max-height 280ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    opacity 180ms ease,
+    transform 260ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
 .chatTitleRow h1 {
@@ -239,6 +266,14 @@
   background: var(--phone-chat-surface-soft);
 }
 
+.searchBox {
+  transition:
+    min-height 260ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    background-color 220ms ease,
+    box-shadow 220ms ease,
+    transform 260ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
 .searchBox input,
 .sheetSearchBox input {
   min-width: 0;
@@ -276,14 +311,54 @@
   display: flex;
   gap: 8px;
   min-width: 0;
+  max-height: 36px;
   margin-right: -16px;
   padding: 0 16px 2px 0;
   overflow-x: auto;
+  opacity: 1;
   overscroll-behavior-x: contain;
   scrollbar-width: none;
   scroll-snap-type: x proximity;
   touch-action: pan-x;
   -webkit-overflow-scrolling: touch;
+  transform: translate3d(0, 0, 0);
+  transition:
+    max-height 240ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    opacity 160ms ease,
+    padding 220ms ease,
+    transform 240ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.chatListHeaderSearchExpanded .topActionRow,
+.chatListHeaderSearchExpanded .chatTitleRow,
+.chatListHeaderSearchExpanded .filterChips {
+  pointer-events: none;
+}
+
+.chatListHeaderSearchExpanded .topActionRow {
+  min-height: 0;
+  max-height: 0;
+  opacity: 0;
+  transform: translate3d(0, -12px, 0);
+}
+
+.chatListHeaderSearchExpanded .chatTitleRow {
+  max-height: 0;
+  opacity: 0;
+  transform: translate3d(0, -12px, 0);
+}
+
+.chatListHeaderSearchExpanded .filterChips {
+  max-height: 0;
+  padding-bottom: 0;
+  opacity: 0;
+  transform: translate3d(0, -8px, 0);
+}
+
+.chatListHeaderSearchExpanded .searchBox {
+  min-height: 44px;
+  background: var(--phone-chat-surface);
+  box-shadow: 0 10px 24px rgba(var(--phone-chat-primary-rgb), 0.09);
 }
 
 .filterChips::-webkit-scrollbar {

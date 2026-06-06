@@ -1694,6 +1694,7 @@ export const PhoneChat: React.FC = () => {
     ), 0),
     [archivedChatIdSet, chats]
   )
+  const chatSearchExpanded = chatQuery.trim().length > 0
   const cameraShareSelectedIds = useMemo(
     () => new Set(cameraShareSelectedContacts.map((contact) => contact.id)),
     [cameraShareSelectedContacts]
@@ -5298,8 +5299,8 @@ export const PhoneChat: React.FC = () => {
     >
       <div className={styles.phoneFrame}>
         <section className={styles.chatListScreen} aria-label="Lista de chats">
-          <header className={styles.chatListHeader}>
-            <div className={styles.topActionRow}>
+          <header className={`${styles.chatListHeader} ${chatSearchExpanded ? styles.chatListHeaderSearchExpanded : ''}`}>
+            <div className={styles.topActionRow} aria-hidden={chatSearchExpanded}>
               <button
                 type="button"
                 className={styles.roundButton}
@@ -5320,7 +5321,7 @@ export const PhoneChat: React.FC = () => {
                 </button>
               </div>
             </div>
-            <div className={styles.chatTitleRow}>
+            <div className={styles.chatTitleRow} aria-hidden={chatSearchExpanded}>
               <h1>Chats</h1>
               {chatPhoneFilterEnabled && (
                 <label className={styles.chatPhoneSelector}>
@@ -5357,7 +5358,7 @@ export const PhoneChat: React.FC = () => {
                 </button>
               )}
             </div>
-            <div className={styles.filterChips} data-phone-chat-scrollable="true">
+            <div className={styles.filterChips} data-phone-chat-scrollable="true" aria-hidden={chatSearchExpanded}>
               {([
                 ['all', 'Todos'],
                 ['unread', unreadTotal > 0 ? `No leídos ${unreadTotal > 99 ? '99+' : unreadTotal}` : 'No leídos'],
