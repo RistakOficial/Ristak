@@ -2,9 +2,9 @@ import React, { useEffect, useMemo, useState } from 'react'
 import {
   Activity,
   Banknote,
-  BarChart3,
   CalendarDays,
   CheckCircle2,
+  ChevronDown,
   CreditCard,
   DollarSign,
   Loader2,
@@ -28,7 +28,7 @@ import { whatsappApiService, type WhatsAppApiPhoneNumber } from '@/services/what
 import { formatCurrency, formatNumber, formatRoas } from '@/utils/format'
 import styles from './PhoneAnalytics.module.css'
 
-type AnalyticsPeriod = 'today' | '7d' | '30d' | '90d'
+type AnalyticsPeriod = '30d' | '60d' | '180d' | 'year'
 type ChartView = 'revenue-spend' | 'visitors-leads' | 'leads-appointments' | 'appointments-attendances' | 'attendances-sales'
 type ScopeType = 'all' | 'attribution' | 'campaigns'
 type OriginTab = 'traffic' | 'leads' | 'appointments' | 'conversions'
@@ -63,11 +63,11 @@ interface PhoneNumberOriginRow {
   statusLabel: string
 }
 
-const PERIOD_OPTIONS: Array<{ id: AnalyticsPeriod; label: string; days: number }> = [
-  { id: 'today', label: 'Hoy', days: 0 },
-  { id: '7d', label: '7 días', days: 7 },
-  { id: '30d', label: '30 días', days: 30 },
-  { id: '90d', label: '90 días', days: 90 }
+const PERIOD_OPTIONS: Array<{ id: AnalyticsPeriod; label: string; menuLabel: string; days: number }> = [
+  { id: '30d', label: '30 días', menuLabel: 'Últimos 30 días', days: 30 },
+  { id: '60d', label: '60 días', menuLabel: 'Últimos 60 días', days: 60 },
+  { id: '180d', label: '180 días', menuLabel: 'Últimos 180 días', days: 180 },
+  { id: 'year', label: 'Año', menuLabel: 'Último año', days: 365 }
 ]
 
 const SCOPE_OPTIONS: Array<{ id: ScopeType; label: string }> = [
@@ -99,7 +99,7 @@ const shortNumberFormatter = new Intl.NumberFormat('es-MX', {
 })
 
 function getAnalyticsRange(period: AnalyticsPeriod) {
-  const option = PERIOD_OPTIONS.find((item) => item.id === period) || PERIOD_OPTIONS[2]
+  const option = PERIOD_OPTIONS.find((item) => item.id === period) || PERIOD_OPTIONS[0]
   const end = new Date()
   const start = new Date()
 
@@ -114,7 +114,7 @@ function getAnalyticsRange(period: AnalyticsPeriod) {
 }
 
 function getGroupBy(period: AnalyticsPeriod): 'day' | 'month' {
-  return period === '90d' ? 'month' : 'day'
+  return period === '180d' || period === 'year' ? 'month' : 'day'
 }
 
 function combineSeries(first: Array<{ label: string; value: number }>, second: Array<{ label: string; value: number }>): ChartPoint[] {
@@ -288,6 +288,7 @@ function MobileDualLineChart({
 export const PhoneAnalytics: React.FC = () => {
   const { labels } = useLabels()
   const [period, setPeriod] = useState<AnalyticsPeriod>('30d')
+  const [periodMenuOpen, setPeriodMenuOpen] = useState(false)
   const [chartView, setChartView] = useState<ChartView>('revenue-spend')
   const [financialScope, setFinancialScope] = useState<ScopeType>('all')
   const [funnelScope, setFunnelScope] = useState<ScopeType>('all')
@@ -304,6 +305,7 @@ export const PhoneAnalytics: React.FC = () => {
 
   const range = useMemo(() => getAnalyticsRange(period), [period])
   const groupBy = useMemo(() => getGroupBy(period), [period])
+  const activePeriod = PERIOD_OPTIONS.find((option) => option.id === period) || PERIOD_OPTIONS[0]
 
   useEffect(() => {
     document.title = 'Analíticas móviles | Ristak Chat'
@@ -514,6 +516,10 @@ export const PhoneAnalytics: React.FC = () => {
   )
   const showPhoneNumberOrigin = phoneNumberRows.length >= 2
   const phoneNumberMax = Math.max(1, ...phoneNumberRows.map((item) => item.value || 0))
+  const handlePeriodSelect = (nextPeriod: AnalyticsPeriod) => {
+    setPeriod(nextPeriod)
+    setPeriodMenuOpen(false)
+  }
 
   return (
     <main className={styles.phoneAnalyticsPage} aria-label="Analíticas de Ristak Chat">
@@ -521,25 +527,36 @@ export const PhoneAnalytics: React.FC = () => {
         <header className={styles.header}>
           <div>
             <p className={styles.eyebrow}>Ristak Chat</p>
-            <h1>Analíticas</h1>
+            <div className={styles.titleRow}>
+              <h1>Analíticas</h1>
+              <button
+                type="button"
+                className={`${styles.periodToggle} ${periodMenuOpen ? styles.periodToggleOpen : ''}`}
+                aria-expanded={periodMenuOpen}
+                aria-controls="phone-analytics-period-menu"
+                onClick={() => setPeriodMenuOpen((open) => !open)}
+              >
+                <span>{activePeriod.label}</span>
+                <ChevronDown size={16} className={styles.periodChevron} />
+              </button>
+            </div>
           </div>
-          <span className={styles.headerIcon} aria-hidden="true">
-            <BarChart3 size={25} />
-          </span>
         </header>
 
-        <div className={styles.periodScroller} role="group" aria-label="Periodo de analíticas">
-          {PERIOD_OPTIONS.map((option) => (
-            <button
-              key={option.id}
-              type="button"
-              className={period === option.id ? styles.chipActive : ''}
-              onClick={() => setPeriod(option.id)}
-            >
-              {option.label}
-            </button>
-          ))}
-        </div>
+        {periodMenuOpen && (
+          <div id="phone-analytics-period-menu" className={styles.periodMenu} role="group" aria-label="Periodo de analíticas">
+            {PERIOD_OPTIONS.map((option) => (
+              <button
+                key={option.id}
+                type="button"
+                className={period === option.id ? styles.periodOptionActive : ''}
+                onClick={() => handlePeriodSelect(option.id)}
+              >
+                {option.menuLabel}
+              </button>
+            ))}
+          </div>
+        )}
 
         <section className={styles.metricsGrid} aria-label="Tarjetas principales">
           {metricCards.map(({ key, title, Icon, tone, formatter }) => {
