@@ -525,7 +525,7 @@ export const PhoneAnalytics: React.FC = () => {
     <main className={styles.phoneAnalyticsPage} aria-label="Analíticas de Ristak Chat">
       <section className={styles.phoneFrame} data-phone-scrollable="true">
         <header className={styles.header}>
-          <div>
+          <div className={styles.headerContent}>
             <p className={styles.eyebrow}>Ristak Chat</p>
             <div className={styles.titleRow}>
               <h1>Analíticas</h1>
@@ -540,23 +540,27 @@ export const PhoneAnalytics: React.FC = () => {
                 <ChevronDown size={16} className={styles.periodChevron} />
               </button>
             </div>
+            <div
+              id="phone-analytics-period-menu"
+              className={`${styles.periodMenu} ${periodMenuOpen ? styles.periodMenuOpen : ''}`}
+              role="group"
+              aria-label="Periodo de analíticas"
+              aria-hidden={!periodMenuOpen}
+            >
+              {PERIOD_OPTIONS.map((option) => (
+                <button
+                  key={option.id}
+                  type="button"
+                  className={period === option.id ? styles.periodOptionActive : ''}
+                  tabIndex={periodMenuOpen ? 0 : -1}
+                  onClick={() => handlePeriodSelect(option.id)}
+                >
+                  {option.menuLabel}
+                </button>
+              ))}
+            </div>
           </div>
         </header>
-
-        {periodMenuOpen && (
-          <div id="phone-analytics-period-menu" className={styles.periodMenu} role="group" aria-label="Periodo de analíticas">
-            {PERIOD_OPTIONS.map((option) => (
-              <button
-                key={option.id}
-                type="button"
-                className={period === option.id ? styles.periodOptionActive : ''}
-                onClick={() => handlePeriodSelect(option.id)}
-              >
-                {option.menuLabel}
-              </button>
-            ))}
-          </div>
-        )}
 
         <section className={styles.metricsGrid} aria-label="Tarjetas principales">
           {metricCards.map(({ key, title, Icon, tone, formatter }) => {
