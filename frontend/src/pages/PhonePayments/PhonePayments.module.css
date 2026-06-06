@@ -44,6 +44,7 @@
 :global(body[data-phone-chat-tone="dark"]) .header,
 :global(body[data-phone-chat-tone="dark"]) .selectStack,
 :global(body[data-phone-chat-tone="dark"]) .formHost,
+:global(body[data-phone-chat-tone="dark"]) .productsHost,
 :global(body[data-phone-chat-tone="dark"]) .loadingPage,
 :global(body[data-phone-chat-tone="dark"]) .blockedPage {
   background: var(--phone-payments-surface);
@@ -52,7 +53,10 @@
 :global(body[data-phone-chat-tone="dark"]) .chatBackButton,
 :global(body[data-phone-chat-tone="dark"]) .backButton,
 :global(body[data-phone-chat-tone="dark"]) .recentPaymentsRefresh,
-:global(body[data-phone-chat-tone="dark"]) .recentPeriodPicker button {
+:global(body[data-phone-chat-tone="dark"]) .recentPeriodPicker button,
+:global(body[data-phone-chat-tone="dark"]) .productIconButton,
+:global(body[data-phone-chat-tone="dark"]) .productSecondaryButton,
+:global(body[data-phone-chat-tone="dark"]) .productItemActions button {
   color: var(--phone-payments-text);
   background: var(--phone-payments-soft);
 }
@@ -72,7 +76,11 @@
 :global(body[data-phone-chat-tone="dark"]) .recentPaymentsToggle svg,
 :global(body[data-phone-chat-tone="dark"]) .recentPaymentItem,
 :global(body[data-phone-chat-tone="dark"]) .recentPaymentMain strong,
-:global(body[data-phone-chat-tone="dark"]) .recentPaymentMeta span {
+:global(body[data-phone-chat-tone="dark"]) .recentPaymentMeta span,
+:global(body[data-phone-chat-tone="dark"]) .productsToolbarCopy strong,
+:global(body[data-phone-chat-tone="dark"]) .productFormHeader strong,
+:global(body[data-phone-chat-tone="dark"]) .productField span,
+:global(body[data-phone-chat-tone="dark"]) .productItemCopy strong {
   color: var(--phone-payments-text);
 }
 
@@ -86,14 +94,34 @@
 :global(body[data-phone-chat-tone="dark"]) .recentPaymentsRefresh,
 :global(body[data-phone-chat-tone="dark"]) .recentPaymentMeta,
 :global(body[data-phone-chat-tone="dark"]) .recentPaymentMeta small,
+:global(body[data-phone-chat-tone="dark"]) .productsToolbarCopy small,
+:global(body[data-phone-chat-tone="dark"]) .productFormHeader small,
+:global(body[data-phone-chat-tone="dark"]) .productItemCopy span,
+:global(body[data-phone-chat-tone="dark"]) .productItemCopy small,
+:global(body[data-phone-chat-tone="dark"]) .productsState,
+:global(body[data-phone-chat-tone="dark"]) .productsEmpty span,
 :global(body[data-phone-chat-tone="dark"]) .blockedCopy p:last-child {
   color: var(--phone-payments-muted);
 }
 
 :global(body[data-phone-chat-tone="dark"]) .choiceCard + .choiceCard,
 :global(body[data-phone-chat-tone="dark"]) .recentPaymentsSection,
-:global(body[data-phone-chat-tone="dark"]) .recentPaymentItem {
+:global(body[data-phone-chat-tone="dark"]) .recentPaymentItem,
+:global(body[data-phone-chat-tone="dark"]) .productForm,
+:global(body[data-phone-chat-tone="dark"]) .productItem,
+:global(body[data-phone-chat-tone="dark"]) .productField input,
+:global(body[data-phone-chat-tone="dark"]) .productField select,
+:global(body[data-phone-chat-tone="dark"]) .productField textarea {
   border-color: var(--phone-payments-border);
+}
+
+:global(body[data-phone-chat-tone="dark"]) .productForm,
+:global(body[data-phone-chat-tone="dark"]) .productItem,
+:global(body[data-phone-chat-tone="dark"]) .productField input,
+:global(body[data-phone-chat-tone="dark"]) .productField select,
+:global(body[data-phone-chat-tone="dark"]) .productField textarea {
+  color: var(--phone-payments-text);
+  background: var(--phone-payments-soft);
 }
 
 :global(body[data-phone-chat-tone="dark"]) .blockedPanel {
@@ -542,6 +570,307 @@
   top: 8px;
   right: 8px;
   color: #16a34a;
+}
+
+.productsHost {
+  grid-row: 2;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 0 16px calc(96px + env(safe-area-inset-bottom, 0px));
+  background: var(--phone-payments-surface);
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.productsToolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 4px;
+}
+
+.productsToolbarCopy {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.productsToolbarCopy strong {
+  color: #111111;
+  font-size: 22px;
+  font-weight: 850;
+  line-height: 1.1;
+}
+
+.productsToolbarCopy small {
+  color: #737373;
+  font-size: 12px;
+  font-weight: 720;
+}
+
+.productsToolbarActions {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 8px;
+}
+
+.productIconButton,
+.productPrimaryButton,
+.productSecondaryButton,
+.productItemActions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 38px;
+  border: 0;
+  font-weight: 800;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.productIconButton {
+  width: 38px;
+  border-radius: 999px;
+  color: #111111;
+  background: #f7f6f2;
+}
+
+.productPrimaryButton {
+  gap: 7px;
+  padding: 0 13px;
+  border-radius: 999px;
+  color: var(--phone-chat-text-on-primary, #ffffff);
+  background: #111111;
+  font-size: 13px;
+}
+
+.productSecondaryButton {
+  padding: 0 13px;
+  border-radius: 999px;
+  color: #111111;
+  background: #f7f6f2;
+  font-size: 13px;
+}
+
+.productIconButton:disabled,
+.productPrimaryButton:disabled,
+.productSecondaryButton:disabled,
+.productItemActions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.productForm {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  border-radius: 8px;
+  background: #f7f6f2;
+}
+
+.productFormHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.productFormHeader > div {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.productFormHeader strong {
+  color: #111111;
+  font-size: 17px;
+  font-weight: 850;
+  line-height: 1.15;
+}
+
+.productFormHeader small {
+  color: #737373;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.productFormHeader button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  border: 0;
+  border-radius: 999px;
+  color: #111111;
+  background: #ffffff;
+}
+
+.productField {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.productField span {
+  color: #111111;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.productField input,
+.productField select,
+.productField textarea {
+  width: 100%;
+  min-width: 0;
+  min-height: 42px;
+  box-sizing: border-box;
+  padding: 0 11px;
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  border-radius: 8px;
+  color: #111111;
+  background: #ffffff;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 650;
+  outline: none;
+}
+
+.productField textarea {
+  min-height: 82px;
+  padding-top: 10px;
+  padding-bottom: 10px;
+  resize: vertical;
+}
+
+.productFormGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 96px;
+  gap: 10px;
+}
+
+.productFormActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.productsState,
+.productsEmpty {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  min-height: 170px;
+  padding: 22px 12px;
+  color: #737373;
+  text-align: center;
+}
+
+.productsState strong,
+.productsEmpty strong {
+  color: var(--phone-payments-text);
+  font-size: 17px;
+  font-weight: 850;
+}
+
+.productsState span,
+.productsEmpty span {
+  color: #737373;
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.42;
+}
+
+.productsList {
+  display: grid;
+  gap: 0;
+}
+
+.productItem {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 78px;
+  padding: 13px 0;
+  border-top: 1px solid rgba(17, 24, 39, 0.08);
+}
+
+.productItemMain {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 11px;
+}
+
+.productItemIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 36px;
+  height: 36px;
+  color: #111111;
+  background: #f7f6f2;
+}
+
+.productItemCopy {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.productItemCopy strong,
+.productItemCopy span,
+.productItemCopy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.productItemCopy strong {
+  color: #111111;
+  font-size: 16px;
+  font-weight: 840;
+  line-height: 1.1;
+}
+
+.productItemCopy span {
+  color: #737373;
+  font-size: 12px;
+  font-weight: 640;
+}
+
+.productItemCopy small {
+  color: #737373;
+  font-size: 12px;
+  font-weight: 780;
+}
+
+.productItemActions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.productItemActions button {
+  width: 36px;
+  border-radius: 999px;
+  color: #111111;
+  background: #f7f6f2;
+}
+
+.productItemActions .productDeleteButton {
+  color: #b91c1c;
+  background: #fef2f2;
 }
 
 .spinIcon {

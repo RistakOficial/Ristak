@@ -607,6 +607,105 @@ export async function createLocalPrice(productId, input = {}, options = {}) {
   return priceRowToApi(freshPrice)
 }
 
+export async function updateLocalProduct(productId, input = {}, options = {}) {
+  const existing = await getLocalProduct(productId)
+  if (!existing?.id) {
+    throw new Error('Producto no encontrado.')
+  }
+
+  const updated = await upsertLocalProduct({
+    ...existing,
+    ...input,
+    id: existing.id,
+    ghlProductId: existing.ghl_product_id,
+    locationId: existing.location_id,
+    source: existing.source || 'ristak',
+    syncOrigin: existing.sync_origin || existing.source || 'ristak',
+    isActive: input.isActive ?? input.is_active ?? existing.is_active
+  }, {
+    id: existing.id,
+    ghlProductId: existing.ghl_product_id,
+    locationId: existing.location_id,
+    source: existing.source || 'ristak',
+    syncStatus: 'pending',
+    syncOrigin: existing.sync_origin || existing.source || 'ristak'
+  })
+
+  const priceInput = Array.isArray(input.prices) && input.prices.length
+    ? input.prices[0]
+    : (input.price !== undefined || input.amount !== undefined || input.productPrice !== undefined)
+      ? {
+          name: input.priceName || input.name || 'Precio',
+          amount: input.price ?? input.amount ?? input.productPrice,
+          currency: input.currency,
+          type: input.priceType || DEFAULT_PRICE_TYPE,
+          description: input.priceDescription || input.description || ''
+        }
+      : null
+
+  if (priceInput) {
+    const existingPrices = await listLocalPrices(existing.id)
+    const existingPrice = existingPrices[0] || null
+    await upsertLocalPrice({
+      ...existingPrice,
+      ...priceInput,
+      id: existingPrice?.localId || existingPrice?.id,
+      ghlPriceId: existingPrice?.ghlPriceId,
+      productId: existing.id,
+      localProductId: existing.id,
+      ghlProductId: existing.ghl_product_id
+    }, {
+      id: existingPrice?.localId,
+      productId: existing.id,
+      ghlProductId: existing.ghl_product_id,
+      locationId: existing.location_id,
+      source: existingPrice?.source || existing.source || 'ristak',
+      syncStatus: 'pending',
+      syncOrigin: existingPrice?.syncOrigin || existing.sync_origin || existing.source || 'ristak'
+    })
+  }
+
+  const config = await getHighLevelConfig()
+  const highLevelConnected = Boolean(config?.api_token && config?.location_id)
+
+  if (options.sync !== false) {
+    try {
+      const syncResult = await syncProductWithSavedConfig(existing.id)
+      if (highLevelConnected && syncResult?.skipped) {
+        throw new Error('HighLevel esta conectado, pero no se pudo iniciar la sincronizacion del producto.')
+      }
+    } catch (error) {
+      if (highLevelConnected) {
+        throw new Error(`No se actualizo el producto en HighLevel: ${error.message}`)
+      }
+
+      logger.warn(`No se pudo sincronizar producto actualizado ${existing.id}: ${error.message}`)
+    }
+  }
+
+  const prices = await listLocalPrices(existing.id)
+  const freshProduct = await getLocalProduct(updated.id)
+  return productRowToApi(freshProduct, prices)
+}
+
+export async function deleteLocalProduct(productId) {
+  const existing = await getLocalProduct(productId)
+  if (!existing?.id) {
+    throw new Error('Producto no encontrado.')
+  }
+
+  await db.run(
+    `UPDATE products
+     SET is_active = 0,
+         sync_status = CASE WHEN COALESCE(ghl_product_id, '') = '' THEN sync_status ELSE 'pending' END,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?`,
+    [existing.id]
+  )
+
+  return { id: existing.ghl_product_id || existing.id, localId: existing.id, deleted: true }
+}
+
 function buildGhlProductPayload(row = {}, locationId) {
   const payload = {
     name: row.name,

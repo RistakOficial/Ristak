@@ -13,6 +13,7 @@ import {
   Megaphone,
   MessageCircle,
   MonitorX,
+  Package,
   RefreshCw,
   TrendingUp,
   Users,
@@ -20,6 +21,7 @@ import {
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { useDateRange } from '@/contexts/DateRangeContext'
+import { useHighLevelConnected } from '@/hooks'
 import { AccountSettings } from '@/pages/Settings/AccountSettings'
 import { AIAgentSettings } from '@/pages/Settings/AIAgentSettings'
 import { calendarsService, type AppointmentStats, type Calendar, type CalendarEvent } from '@/services/calendarsService'
@@ -1021,6 +1023,7 @@ interface TransactionsSectionProps {
 }
 
 function TransactionsSection({ summary, transactions }: TransactionsSectionProps) {
+  const { connected: highLevelConnected } = useHighLevelConnected()
   const revenueDelta = calculateDelta(summary.totalRevenue, summary.totalRevenuePrev)
   const paidDelta = calculateDelta(summary.completedPayments, summary.completedPaymentsPrev)
 
@@ -1033,20 +1036,32 @@ function TransactionsSection({ summary, transactions }: TransactionsSectionProps
         >
           <CreditCard size={18} />
           <span>
-            <strong>Charge customer</strong>
-            <small>Send a payment link or record a manual payment</small>
+            <strong>Registrar pago</strong>
+            <small>Envía un enlace de pago o guarda un pago manual</small>
           </span>
         </Link>
         <Link
-          to="/phone/payments?mode=partial"
+          to="/phone/payments?mode=products"
           className={styles.paymentActionButton}
         >
-          <CalendarDays size={18} />
+          <Package size={18} />
           <span>
-            <strong>Payment plan</strong>
-            <small>Open installment options in the form</small>
+            <strong>Productos</strong>
+            <small>Crear, editar o eliminar productos para cobrar</small>
           </span>
         </Link>
+        {highLevelConnected && (
+          <Link
+            to="/phone/payments?mode=partial"
+            className={styles.paymentActionButton}
+          >
+            <CalendarDays size={18} />
+            <span>
+              <strong>Plan de pagos</strong>
+              <small>Abre parcialidades automáticas</small>
+            </span>
+          </Link>
+        )}
       </div>
 
       <div className={styles.metricGrid}>

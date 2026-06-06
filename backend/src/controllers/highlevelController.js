@@ -14,10 +14,12 @@ import * as localCalendarService from '../services/localCalendarService.js';
 import {
   createLocalPrice,
   createLocalProduct,
+  deleteLocalProduct,
   listLocalPrices,
   listLocalProducts,
   prepareInvoiceCatalogItemsForHighLevel,
-  syncProductsWithSavedConfig
+  syncProductsWithSavedConfig,
+  updateLocalProduct
 } from '../services/localProductService.js';
 
 const normalizeGhlInvoiceMode = (mode) => mode === 'test' ? 'test' : 'live';
@@ -1005,6 +1007,52 @@ export const createProduct = async (req, res) => {
     res.status(500).json({
       success: false,
       error: error.message || 'Error al crear producto'
+    });
+  }
+};
+
+/**
+ * Actualiza un producto local de Ristak y su precio base si viene incluido.
+ */
+export const updateProduct = async (req, res) => {
+  try {
+    const { productId } = req.params;
+    const product = await updateLocalProduct(productId, req.body || {});
+
+    res.json({
+      success: true,
+      product,
+      message: product.ghlProductId
+        ? 'Producto actualizado y sincronizado con HighLevel'
+        : 'Producto actualizado'
+    });
+  } catch (error) {
+    logger.error(`Error en updateProduct: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Error al actualizar producto'
+    });
+  }
+};
+
+/**
+ * Quita un producto del catálogo visible.
+ */
+export const deleteProduct = async (req, res) => {
+  try {
+    const { productId } = req.params;
+    const result = await deleteLocalProduct(productId);
+
+    res.json({
+      success: true,
+      ...result,
+      message: 'Producto eliminado del catálogo'
+    });
+  } catch (error) {
+    logger.error(`Error en deleteProduct: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Error al eliminar producto'
     });
   }
 };

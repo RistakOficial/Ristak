@@ -17,6 +17,8 @@ import {
   listPrices,
   createProduct,
   createPrice,
+  updateProduct,
+  deleteProduct,
   syncProducts,
   createInvoice,
   createInvoiceSchedule,
@@ -68,6 +70,8 @@ router.post('/invoice-config', saveInvoiceConfig)
 router.get('/products', listProducts)
 router.post('/products', createProduct)
 router.post('/products/sync', syncProducts)
+router.put('/products/:productId', updateProduct)
+router.delete('/products/:productId', deleteProduct)
 router.get('/products/:productId/prices', listPrices)
 router.post('/products/:productId/prices', createPrice)
 router.post('/invoices', createInvoice)

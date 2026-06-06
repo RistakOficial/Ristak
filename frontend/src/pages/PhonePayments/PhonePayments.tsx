@@ -1,8 +1,11 @@
 import React, { useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { ArrowLeft, CalendarDays, Check, ChevronDown, ChevronRight, CreditCard, Loader2, MonitorX } from 'lucide-react'
+import { ArrowLeft, CalendarDays, Check, ChevronDown, ChevronRight, CreditCard, Loader2, MonitorX, Package, Pencil, Plus, RefreshCw, Save, Trash2, X } from 'lucide-react'
 import { RecordPaymentModal } from '@/components/common'
 import { PhoneEcosystemNav } from '@/components/phone/PhoneEcosystemNav'
+import { useNotification } from '@/contexts/NotificationContext'
+import { useHighLevelConnected } from '@/hooks'
+import apiClient from '@/services/apiClient'
 import { getPhoneDailyCacheKey, readPhoneDailyCache, writePhoneDailyCache } from '@/services/phoneDailyCache'
 import { transactionsService, type Transaction } from '@/services/transactionsService'
 import styles from './PhonePayments.module.css'
@@ -14,8 +17,41 @@ const MOBILE_OR_TABLET_USER_AGENT_PATTERN = /Android|iPad|iPhone|iPod|IEMobile|O
 const SCROLLABLE_PHONE_SELECTOR = '[data-phone-scrollable="true"], textarea'
 
 type AccessState = 'checking' | 'allowed' | 'blocked'
-type PaymentView = 'select' | 'single' | 'partial'
+type PaymentView = 'select' | 'single' | 'partial' | 'products'
 type RecentPaymentsPeriod = 'today' | '7d' | '30d' | '90d'
+type ProductFormMode = 'create' | 'edit' | null
+
+interface ProductPrice {
+  id?: string
+  _id?: string
+  localId?: string
+  name?: string
+  amount?: number
+  price?: number
+  currency?: string
+}
+
+interface ProductItem {
+  id?: string
+  _id?: string
+  localId?: string
+  name: string
+  description?: string
+  currency?: string
+  productType?: string
+  source?: string
+  syncStatus?: string
+  syncError?: string | null
+  prices?: ProductPrice[]
+}
+
+interface ProductFormState {
+  name: string
+  description: string
+  priceName: string
+  amount: string
+  currency: string
+}
 
 const SUCCESS_PAYMENT_STATUSES = new Set(['paid', 'partial'])
 
@@ -45,7 +81,7 @@ function getAccessState(): AccessState {
 }
 
 function getInitialView(mode: string | null): PaymentView {
-  if (mode === 'single' || mode === 'partial') return mode
+  if (mode === 'single' || mode === 'partial' || mode === 'products') return mode
   return 'select'
 }
 
@@ -116,8 +152,36 @@ function getContactLabel(transaction: Transaction) {
   return transaction.contactName || transaction.email || transaction.phone || 'Cliente sin nombre'
 }
 
+function getProductId(product: ProductItem) {
+  return product.localId || product.id || product._id || ''
+}
+
+function getPriceId(price?: ProductPrice | null) {
+  return price?.localId || price?.id || price?._id || ''
+}
+
+function getPrimaryPrice(product?: ProductItem | null) {
+  return product?.prices?.[0] || null
+}
+
+function getPriceAmount(price?: ProductPrice | null) {
+  return Number(price?.amount ?? price?.price ?? 0) || 0
+}
+
+function createEmptyProductForm(): ProductFormState {
+  return {
+    name: '',
+    description: '',
+    priceName: 'Precio base',
+    amount: '',
+    currency: 'MXN'
+  }
+}
+
 export const PhonePayments: React.FC = () => {
   const [searchParams] = useSearchParams()
+  const { connected: highLevelConnected } = useHighLevelConnected()
+  const { showConfirm, showToast } = useNotification()
   const [accessState, setAccessState] = useState<AccessState>(getAccessState)
   const [view, setView] = useState<PaymentView>(() => getInitialView(searchParams.get('mode')))
   const [recentPaymentsOpen, setRecentPaymentsOpen] = useState(false)
@@ -126,6 +190,152 @@ export const PhonePayments: React.FC = () => {
   const [recentPaymentsLoading, setRecentPaymentsLoading] = useState(false)
   const [recentPaymentsRefreshing, setRecentPaymentsRefreshing] = useState(false)
   const [selectedRecentPaymentId, setSelectedRecentPaymentId] = useState<string | null>(null)
+  const [products, setProducts] = useState<ProductItem[]>([])
+  const [productsLoading, setProductsLoading] = useState(false)
+  const [productsRefreshing, setProductsRefreshing] = useState(false)
+  const [productsError, setProductsError] = useState('')
+  const [productFormMode, setProductFormMode] = useState<ProductFormMode>(null)
+  const [editingProduct, setEditingProduct] = useState<ProductItem | null>(null)
+  const [productForm, setProductForm] = useState<ProductFormState>(createEmptyProductForm)
+  const [savingProduct, setSavingProduct] = useState(false)
+  const [deletingProductId, setDeletingProductId] = useState<string | null>(null)
+
+  const loadProducts = async ({ refresh = false }: { refresh?: boolean } = {}) => {
+    if (refresh) {
+      setProductsRefreshing(true)
+    } else {
+      setProductsLoading(true)
+    }
+    setProductsError('')
+
+    try {
+      const data = await apiClient.get<{ products?: ProductItem[]; total?: number }>('/products', {
+        params: {
+          limit: '100',
+          includePrices: 'true'
+        }
+      })
+      setProducts(Array.isArray(data.products) ? data.products : [])
+    } catch (error: any) {
+      const message = error?.message || 'No se pudieron cargar los productos.'
+      setProductsError(message)
+      showToast('error', 'No se cargaron los productos', message)
+    } finally {
+      setProductsLoading(false)
+      setProductsRefreshing(false)
+    }
+  }
+
+  const openCreateProduct = () => {
+    setEditingProduct(null)
+    setProductForm(createEmptyProductForm())
+    setProductFormMode('create')
+  }
+
+  const openEditProduct = (product: ProductItem) => {
+    const price = getPrimaryPrice(product)
+    setEditingProduct(product)
+    setProductForm({
+      name: product.name || '',
+      description: product.description || '',
+      priceName: price?.name || 'Precio base',
+      amount: getPriceAmount(price) ? String(getPriceAmount(price)) : '',
+      currency: price?.currency || product.currency || 'MXN'
+    })
+    setProductFormMode('edit')
+  }
+
+  const closeProductForm = () => {
+    setProductFormMode(null)
+    setEditingProduct(null)
+    setProductForm(createEmptyProductForm())
+  }
+
+  const updateProductForm = (field: keyof ProductFormState, value: string) => {
+    setProductForm((current) => ({ ...current, [field]: value }))
+  }
+
+  const handleSaveProduct = async () => {
+    const name = productForm.name.trim()
+    const amount = Number(productForm.amount)
+    const currency = productForm.currency || 'MXN'
+
+    if (!name) {
+      showToast('warning', 'Falta el nombre', 'Escribe cómo se llama el producto.')
+      return
+    }
+
+    if (!Number.isFinite(amount) || amount <= 0) {
+      showToast('warning', 'Falta el precio', 'Escribe un precio válido para poder cobrarlo.')
+      return
+    }
+
+    const currentPrice = editingProduct ? getPrimaryPrice(editingProduct) : null
+    const payload = {
+      name,
+      description: productForm.description.trim(),
+      currency,
+      prices: [
+        {
+          id: getPriceId(currentPrice),
+          localId: currentPrice?.localId,
+          name: productForm.priceName.trim() || 'Precio base',
+          amount,
+          currency,
+          type: 'one_time'
+        }
+      ]
+    }
+
+    setSavingProduct(true)
+    try {
+      if (productFormMode === 'edit' && editingProduct) {
+        await apiClient.put(`/products/${getProductId(editingProduct)}`, payload)
+        showToast('success', 'Producto actualizado', `${name} ya quedó listo para cobrar.`)
+      } else {
+        await apiClient.post('/products', payload)
+        showToast('success', 'Producto creado', `${name} ya aparece en tu catálogo.`)
+      }
+
+      closeProductForm()
+      await loadProducts({ refresh: true })
+    } catch (error: any) {
+      showToast('error', 'No se guardó el producto', error?.message || 'Intenta otra vez.')
+    } finally {
+      setSavingProduct(false)
+    }
+  }
+
+  const confirmDeleteProduct = async (product: ProductItem) => {
+    const productId = getProductId(product)
+    if (!productId) return
+
+    setDeletingProductId(productId)
+    try {
+      await apiClient.delete(`/products/${productId}`)
+      setProducts((current) => current.filter((item) => getProductId(item) !== productId))
+      if (editingProduct && getProductId(editingProduct) === productId) {
+        closeProductForm()
+      }
+      showToast('success', 'Producto eliminado', `${product.name} ya no aparece para cobrar.`)
+    } catch (error: any) {
+      showToast('error', 'No se eliminó', error?.message || 'Intenta otra vez.')
+    } finally {
+      setDeletingProductId(null)
+    }
+  }
+
+  const handleDeleteProduct = (product: ProductItem) => {
+    showConfirm(
+      'Eliminar producto',
+      `Se quitará "${product.name}" de la lista para cobrar. Los pagos anteriores no se borran.`,
+      () => {
+        void confirmDeleteProduct(product)
+      },
+      'Eliminar',
+      'Cancelar'
+    )
+  }
 
   useEffect(() => {
     document.title = 'Pagos móviles | Ristak'
@@ -294,6 +504,189 @@ export const PhonePayments: React.FC = () => {
     }
   }, [accessState, recentPaymentsOpen, recentPaymentsPeriod])
 
+  useEffect(() => {
+    if (highLevelConnected || view !== 'partial') return
+    setView('single')
+  }, [highLevelConnected, view])
+
+  useEffect(() => {
+    if (accessState !== 'allowed' || view !== 'products') return
+    loadProducts()
+  }, [accessState, view])
+
+  const renderProductsView = () => (
+    <section className={styles.productsHost} data-phone-scrollable="true" aria-label="Productos disponibles">
+      <div className={styles.productsToolbar}>
+        <div className={styles.productsToolbarCopy}>
+          <strong>Productos</strong>
+          <small>{products.length === 1 ? '1 disponible' : `${products.length} disponibles`}</small>
+        </div>
+        <div className={styles.productsToolbarActions}>
+          <button
+            type="button"
+            className={styles.productIconButton}
+            onClick={() => loadProducts({ refresh: true })}
+            disabled={productsLoading || productsRefreshing}
+            aria-label="Actualizar productos"
+          >
+            <RefreshCw size={18} className={productsRefreshing ? styles.spinIcon : ''} />
+          </button>
+          <button
+            type="button"
+            className={styles.productPrimaryButton}
+            onClick={openCreateProduct}
+            disabled={savingProduct}
+          >
+            <Plus size={17} />
+            Nuevo
+          </button>
+        </div>
+      </div>
+
+      {productFormMode && (
+        <form
+          className={styles.productForm}
+          onSubmit={(event) => {
+            event.preventDefault()
+            void handleSaveProduct()
+          }}
+        >
+          <div className={styles.productFormHeader}>
+            <div>
+              <strong>{productFormMode === 'edit' ? 'Editar producto' : 'Nuevo producto'}</strong>
+              <small>Estos datos aparecerán al cobrar desde productos guardados.</small>
+            </div>
+            <button type="button" onClick={closeProductForm} aria-label="Cerrar formulario">
+              <X size={18} />
+            </button>
+          </div>
+
+          <label className={styles.productField}>
+            <span>Nombre del producto</span>
+            <input
+              value={productForm.name}
+              onChange={(event) => updateProductForm('name', event.target.value)}
+              placeholder="Ej. Consulta inicial"
+            />
+          </label>
+
+          <div className={styles.productFormGrid}>
+            <label className={styles.productField}>
+              <span>Precio</span>
+              <input
+                value={productForm.amount}
+                onChange={(event) => updateProductForm('amount', event.target.value)}
+                inputMode="decimal"
+                type="number"
+                min="0"
+                step="0.01"
+                placeholder="0.00"
+              />
+            </label>
+            <label className={styles.productField}>
+              <span>Moneda</span>
+              <select
+                value={productForm.currency}
+                onChange={(event) => updateProductForm('currency', event.target.value)}
+              >
+                <option value="MXN">MXN</option>
+                <option value="USD">USD</option>
+              </select>
+            </label>
+          </div>
+
+          <label className={styles.productField}>
+            <span>Nombre del precio</span>
+            <input
+              value={productForm.priceName}
+              onChange={(event) => updateProductForm('priceName', event.target.value)}
+              placeholder="Precio base"
+            />
+          </label>
+
+          <label className={styles.productField}>
+            <span>Descripción</span>
+            <textarea
+              value={productForm.description}
+              onChange={(event) => updateProductForm('description', event.target.value)}
+              placeholder="Agrega una nota corta para reconocerlo."
+              rows={3}
+            />
+          </label>
+
+          <div className={styles.productFormActions}>
+            <button type="button" className={styles.productSecondaryButton} onClick={closeProductForm} disabled={savingProduct}>
+              Cancelar
+            </button>
+            <button type="submit" className={styles.productPrimaryButton} disabled={savingProduct}>
+              {savingProduct ? <Loader2 size={17} className={styles.spinIcon} /> : <Save size={17} />}
+              Guardar
+            </button>
+          </div>
+        </form>
+      )}
+
+      {productsLoading && products.length === 0 ? (
+        <div className={styles.productsState}>
+          <Loader2 size={18} className={styles.spinIcon} />
+          Cargando productos...
+        </div>
+      ) : productsError && products.length === 0 ? (
+        <div className={styles.productsState}>
+          <strong>No se pudieron cargar</strong>
+          <span>{productsError}</span>
+        </div>
+      ) : products.length === 0 ? (
+        <div className={styles.productsEmpty}>
+          <Package size={28} />
+          <strong>Sin productos todavía</strong>
+          <span>Crea tu primer producto para cobrarlo rápido desde el celular.</span>
+          <button type="button" className={styles.productPrimaryButton} onClick={openCreateProduct}>
+            <Plus size={17} />
+            Crear producto
+          </button>
+        </div>
+      ) : (
+        <div className={styles.productsList}>
+          {products.map((product) => {
+            const productId = getProductId(product)
+            const price = getPrimaryPrice(product)
+            const deleting = deletingProductId === productId
+
+            return (
+              <article key={productId || product.name} className={styles.productItem}>
+                <div className={styles.productItemMain}>
+                  <div className={styles.productItemIcon}>
+                    <Package size={20} />
+                  </div>
+                  <div className={styles.productItemCopy}>
+                    <strong>{product.name || 'Producto sin nombre'}</strong>
+                    <span>{product.description || 'Sin descripción'}</span>
+                    <small>{price ? `${price.name || 'Precio'} · ${formatCurrency(getPriceAmount(price), price.currency || product.currency || 'MXN')}` : 'Sin precio guardado'}</small>
+                  </div>
+                </div>
+                <div className={styles.productItemActions}>
+                  <button type="button" onClick={() => openEditProduct(product)} aria-label={`Editar ${product.name}`}>
+                    <Pencil size={17} />
+                  </button>
+                  <button
+                    type="button"
+                    className={styles.productDeleteButton}
+                    onClick={() => handleDeleteProduct(product)}
+                    disabled={deleting}
+                    aria-label={`Eliminar ${product.name}`}
+                  >
+                    {deleting ? <Loader2 size={17} className={styles.spinIcon} /> : <Trash2 size={17} />}
+                  </button>
+                </div>
+              </article>
+            )
+          })}
+        </div>
+      )}
+    </section>
+  )
+
   if (accessState === 'checking') {
     return (
       <main className={styles.loadingPage}>
@@ -325,8 +718,9 @@ export const PhonePayments: React.FC = () => {
   }
 
   const isForm = view !== 'select'
+  const isPaymentForm = view === 'single' || view === 'partial'
   const formMode = view === 'partial' ? 'partial' : 'single'
-  const formTitle = view === 'partial' ? 'Plan de pago' : 'Registrar pago'
+  const formTitle = view === 'products' ? 'Productos' : view === 'partial' ? 'Plan de pago' : 'Registrar pago'
   const selectedRecentPeriod = RECENT_PAYMENT_PERIODS.find((period) => period.id === recentPaymentsPeriod) || RECENT_PAYMENT_PERIODS[2]
   const selectedRecentPayment = recentPayments.find((payment) => payment.id === selectedRecentPaymentId) || null
 
@@ -347,7 +741,7 @@ export const PhonePayments: React.FC = () => {
           </header>
         )}
 
-        {isForm ? (
+        {isPaymentForm ? (
           <div className={styles.formHost} data-phone-scrollable="true">
             <RecordPaymentModal
               key={formMode}
@@ -358,6 +752,8 @@ export const PhonePayments: React.FC = () => {
               onSuccess={() => setView('select')}
             />
           </div>
+        ) : view === 'products' ? (
+          renderProductsView()
         ) : (
           <section className={styles.selectStack} aria-label="Elige el tipo de pago" data-phone-scrollable="true">
             <h1 className={styles.selectTitle}>Elige cómo quieres pagar</h1>
@@ -377,17 +773,34 @@ export const PhonePayments: React.FC = () => {
               <ChevronRight size={20} className={styles.choiceChevron} aria-hidden="true" />
             </button>
 
+            {highLevelConnected && (
+              <button
+                type="button"
+                className={styles.choiceCard}
+                onClick={() => setView('partial')}
+              >
+                <span className={`${styles.choiceIcon} ${styles.choiceIconBlue}`}>
+                  <CalendarDays size={26} />
+                </span>
+                <span className={styles.choiceText}>
+                  <strong>Planes de pago</strong>
+                  <small>Parcialidades automáticas con enganche y cobros recurrentes.</small>
+                </span>
+                <ChevronRight size={20} className={styles.choiceChevron} aria-hidden="true" />
+              </button>
+            )}
+
             <button
               type="button"
               className={styles.choiceCard}
-              onClick={() => setView('partial')}
+              onClick={() => setView('products')}
             >
               <span className={`${styles.choiceIcon} ${styles.choiceIconBlue}`}>
-                <CalendarDays size={26} />
+                <Package size={26} />
               </span>
               <span className={styles.choiceText}>
-                <strong>Planes de pago</strong>
-                <small>Parcialidades automáticas con enganche y cobros recurrentes.</small>
+                <strong>Productos</strong>
+                <small>Revisa, crea, modifica o elimina productos para cobrarlos desde el celular.</small>
               </span>
               <ChevronRight size={20} className={styles.choiceChevron} aria-hidden="true" />
             </button>
