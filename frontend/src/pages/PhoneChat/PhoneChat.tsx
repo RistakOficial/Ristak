@@ -1524,6 +1524,9 @@ export const PhoneChat: React.FC = () => {
   const selectedChatPhone = useMemo(() => (
     businessPhones.find((phone) => phone.id === selectedChatPhoneId) || null
   ), [businessPhones, selectedChatPhoneId])
+  const selectedChatPhoneFilterActive = Boolean(chatPhoneFilterEnabled && selectedChatPhoneId !== 'all' && selectedChatPhone)
+  const effectiveSelectedChatPhoneId = selectedChatPhoneFilterActive ? selectedChatPhoneId : 'all'
+  const effectiveSelectedChatPhone = selectedChatPhoneFilterActive ? selectedChatPhone : null
   const selectedBusinessPhone = useMemo(() => {
     const preferredBusinessPhoneId = activeContact?.preferredWhatsAppPhoneNumberId ||
       activeContact?.preferred_whatsapp_phone_number_id ||
@@ -1590,12 +1593,12 @@ export const PhoneChat: React.FC = () => {
   ])
   const selectedBusinessPhoneValue = getBusinessPhoneValue(selectedBusinessPhone)
   const cameraShareBusinessPhone = useMemo(() => (
-    selectedChatPhone ||
+    effectiveSelectedChatPhone ||
     businessPhones.find((phone) => phone.is_default_sender) ||
     whatsappStatus?.selectedPhone ||
     businessPhones[0] ||
     null
-  ), [businessPhones, selectedChatPhone, whatsappStatus?.selectedPhone])
+  ), [businessPhones, effectiveSelectedChatPhone, whatsappStatus?.selectedPhone])
   const cameraShareBusinessPhoneValue = getBusinessPhoneValue(cameraShareBusinessPhone)
   const lastInboundForSelectedPhone = useMemo(() => {
     return [...messages]
@@ -1664,11 +1667,10 @@ export const PhoneChat: React.FC = () => {
     return contact.status === 'lead'
   }, [isAppointmentContact, isCustomerContact])
   const filteredChats = useMemo(() => {
-    const phoneFilteredChats = chatPhoneFilterEnabled && selectedChatPhoneId !== 'all'
+    const phoneFilteredChats = selectedChatPhoneFilterActive && effectiveSelectedChatPhone
       ? listBaseChats.filter((contact) => {
-          if (contact.lastBusinessPhoneNumberId && contact.lastBusinessPhoneNumberId === selectedChatPhoneId) return true
-          if (!selectedChatPhone) return false
-          return phoneLooksSame(contact.lastBusinessPhone, getBusinessPhoneValue(selectedChatPhone))
+          if (contact.lastBusinessPhoneNumberId && contact.lastBusinessPhoneNumberId === effectiveSelectedChatPhoneId) return true
+          return phoneLooksSame(contact.lastBusinessPhone, getBusinessPhoneValue(effectiveSelectedChatPhone))
         })
       : listBaseChats
 
@@ -1689,14 +1691,14 @@ export const PhoneChat: React.FC = () => {
     })
   }, [
     chatFilter,
-    chatPhoneFilterEnabled,
     conversationSortMode,
+    effectiveSelectedChatPhone,
+    effectiveSelectedChatPhoneId,
     isAppointmentContact,
     isCustomerContact,
     isLeadContact,
     listBaseChats,
-    selectedChatPhone,
-    selectedChatPhoneId
+    selectedChatPhoneFilterActive
   ])
   const unreadTotal = useMemo(
     () => chats.reduce((total, contact) => (
@@ -1769,10 +1771,10 @@ export const PhoneChat: React.FC = () => {
     const showCacheRefresh = options.showCacheRefresh === true
     setChatsError('')
     const trimmed = chatQuery.trim()
-    const phoneFilterParams = chatPhoneFilterEnabled && selectedChatPhoneId !== 'all' && selectedChatPhone
+    const phoneFilterParams = selectedChatPhoneFilterActive && effectiveSelectedChatPhone
       ? {
-          businessPhoneNumberId: selectedChatPhoneId,
-          businessPhone: getBusinessPhoneValue(selectedChatPhone)
+          businessPhoneNumberId: effectiveSelectedChatPhoneId,
+          businessPhone: getBusinessPhoneValue(effectiveSelectedChatPhone)
         }
       : {}
     const cacheEnabled = !trimmed
@@ -1780,7 +1782,7 @@ export const PhoneChat: React.FC = () => {
       'phone-chat',
       'chats',
       locationId || 'default',
-      selectedChatPhoneId,
+      effectiveSelectedChatPhoneId,
       phoneFilterParams.businessPhone || 'all'
     )
     const cachedChats = cacheEnabled ? readPhoneDailyCache<ChatContact[]>(cacheKey) : null
@@ -1836,12 +1838,12 @@ export const PhoneChat: React.FC = () => {
     }
   }, [
     applyLoadedChats,
-    chatPhoneFilterEnabled,
     chatQuery,
+    effectiveSelectedChatPhone,
+    effectiveSelectedChatPhoneId,
     locationId,
     requestedContactParam,
-    selectedChatPhone,
-    selectedChatPhoneId
+    selectedChatPhoneFilterActive
   ])
 
   const loadContactResults = useCallback(async (query: string) => {
@@ -5353,7 +5355,7 @@ export const PhoneChat: React.FC = () => {
                 <label className={styles.chatPhoneSelector}>
                   <span>Número</span>
                   <PhoneSelect
-                    value={selectedChatPhoneId}
+                    value={effectiveSelectedChatPhoneId}
                     onChange={(value) => saveConfigPreference(setSelectedChatPhoneId, value)}
                     ariaLabel="Elegir número de WhatsApp para ver chats"
                     options={[
