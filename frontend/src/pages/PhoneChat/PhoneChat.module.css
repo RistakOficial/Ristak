@@ -38,6 +38,7 @@
   background: var(--phone-chat-bg);
   font-family: var(--phone-chat-font);
   color-scheme: light;
+  isolation: isolate;
   user-select: none;
   -webkit-user-select: none;
   -webkit-touch-callout: none;
@@ -69,6 +70,24 @@
   --phone-chat-panel: #101820;
   --phone-chat-shadow: 0 18px 42px rgba(0, 0, 0, 0.34);
   color-scheme: dark;
+}
+
+.phoneChatPage[data-phone-chat-tone="dark"]::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 65;
+  pointer-events: none;
+  background:
+    radial-gradient(120% 46% at 50% -18%, rgba(var(--phone-chat-accent-rgb), 0.14), transparent 48%),
+    radial-gradient(120% 46% at 50% 118%, rgba(var(--phone-chat-accent-rgb), 0.12), transparent 50%),
+    radial-gradient(42% 112% at -18% 50%, rgba(var(--phone-chat-accent-rgb), 0.1), transparent 54%),
+    radial-gradient(42% 112% at 118% 50%, rgba(var(--phone-chat-accent-rgb), 0.1), transparent 54%);
+  box-shadow:
+    inset 0 0 0 1px rgba(var(--phone-chat-accent-rgb), 0.07),
+    inset 0 0 30px rgba(var(--phone-chat-accent-rgb), 0.08);
+  opacity: 0.5;
+  mix-blend-mode: screen;
 }
 
 .phoneChatPage button,
