@@ -136,7 +136,7 @@
 .titleRow h1 {
   overflow: hidden;
   color: #050505;
-  font-size: clamp(28px, 7.6vw, 36px);
+  font-size: clamp(32px, 8.4vw, 42px);
   font-weight: 850;
   line-height: 0.98;
   letter-spacing: 0;
@@ -213,16 +213,16 @@
   appearance: none;
   -webkit-appearance: none;
   display: grid;
-  grid-template-rows: minmax(16px, auto) 6px;
+  grid-template-rows: minmax(20px, auto) 7px;
   place-items: center;
   min-width: 0;
-  min-height: clamp(23px, 3.2dvh, 30px);
+  min-height: clamp(30px, 4dvh, 38px);
   border: 0;
   border-radius: 0;
   background: transparent;
   box-shadow: none;
   color: #050505;
-  font-size: clamp(13px, 3.5vw, 17px);
+  font-size: clamp(17px, 4.4vw, 22px);
   font-weight: 780;
   line-height: 1;
 }
@@ -250,8 +250,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: clamp(21px, 5.4vw, 26px);
-  height: clamp(21px, 5.4vw, 26px);
+  width: clamp(25px, 6.4vw, 32px);
+  height: clamp(25px, 6.4vw, 32px);
   border-radius: 999px;
   color: #ffffff;
   background: var(--apple-red);
@@ -1273,12 +1273,12 @@
   }
 
   .titleRow h1 {
-    font-size: 30px;
+    font-size: 36px;
   }
 
   .monthDay {
-    font-size: 13px;
-    min-height: 26px;
+    font-size: 17px;
+    min-height: 34px;
   }
 
   .eventCard {
