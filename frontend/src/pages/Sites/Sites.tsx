@@ -3904,13 +3904,6 @@ export const Sites: React.FC = () => {
                 </div>
 
                 <section className={styles.canvasColumn}>
-                  {!isLanding(editorSite) && (
-                    <div className={styles.canvasToolbar}>
-                      <div className={styles.canvasToolbarTitle}>
-                        <strong>Canvas</strong>
-                      </div>
-                    </div>
-                  )}
                   <DndContext
                     sensors={sensors}
                     collisionDetection={closestCenter}

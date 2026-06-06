@@ -258,7 +258,7 @@ export const AppShell: React.FC = () => {
             sidebar={<Sidebar locationName={locationName} locationLogo={locationLogo} />}
           >
             <div className="flex flex-col min-h-full">
-              <Header onLogout={handleLogout} sitesEditorActive={sitesEditorActive} />
+              {!sitesEditorActive && <Header onLogout={handleLogout} />}
               <div className="flex-1 overflow-auto">
                 <Outlet />
               </div>
