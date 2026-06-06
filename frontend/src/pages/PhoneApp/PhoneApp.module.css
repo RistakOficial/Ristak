@@ -1,5 +1,10 @@
 .phonePage {
-  --phone-frame-bg: #ffffff;
+  --phone-frame-bg: var(--phone-chat-bg, #ffffff);
+  --phone-app-surface: var(--phone-chat-surface, var(--color-background-secondary));
+  --phone-app-soft: var(--phone-chat-surface-soft, #f7f6f2);
+  --phone-app-text: var(--phone-chat-text, #111111);
+  --phone-app-muted: var(--phone-chat-muted, #737373);
+  --phone-app-border: var(--phone-chat-border, rgba(148, 163, 184, 0.16));
   position: fixed;
   inset: 0;
   isolation: isolate;
@@ -11,7 +16,7 @@
   height: 100dvh;
   min-height: 100dvh;
   max-height: 100dvh;
-  color: #111111;
+  color: var(--phone-app-text);
   background: var(--phone-frame-bg);
   overflow: visible;
   overscroll-behavior: none;
@@ -33,6 +38,56 @@
   box-shadow: none;
   contain: size layout paint;
   overflow: hidden;
+}
+
+:global(body[data-phone-chat-tone="dark"]) .phonePage {
+  color-scheme: dark;
+}
+
+:global(body[data-phone-chat-tone="dark"]) .phoneFrame,
+:global(body[data-phone-chat-tone="dark"]) .header,
+:global(body[data-phone-chat-tone="dark"]) .periodPanel,
+:global(body[data-phone-chat-tone="dark"]) .content,
+:global(body[data-phone-chat-tone="dark"]) .settingsShell,
+:global(body[data-phone-chat-tone="dark"]) .loadingPage,
+:global(body[data-phone-chat-tone="dark"]) .blockedPage {
+  background: var(--phone-frame-bg);
+}
+
+:global(body[data-phone-chat-tone="dark"]) .iconButton,
+:global(body[data-phone-chat-tone="dark"]) .periodButton,
+:global(body[data-phone-chat-tone="dark"]) .sectionTabs,
+:global(body[data-phone-chat-tone="dark"]) .settingsSwitcher,
+:global(body[data-phone-chat-tone="dark"]) .settingsSwitchButton {
+  color: var(--phone-app-text);
+  background: var(--phone-app-soft);
+}
+
+:global(body[data-phone-chat-tone="dark"]) .headerMain h1,
+:global(body[data-phone-chat-tone="dark"]) .sectionTitle,
+:global(body[data-phone-chat-tone="dark"]) .cardTitle,
+:global(body[data-phone-chat-tone="dark"]) .metricValue,
+:global(body[data-phone-chat-tone="dark"]) .listItem strong,
+:global(body[data-phone-chat-tone="dark"]) .blockedCopy h1 {
+  color: var(--phone-app-text);
+}
+
+:global(body[data-phone-chat-tone="dark"]) .eyebrow,
+:global(body[data-phone-chat-tone="dark"]) .cardSubtitle,
+:global(body[data-phone-chat-tone="dark"]) .metricDetail,
+:global(body[data-phone-chat-tone="dark"]) .listItem small,
+:global(body[data-phone-chat-tone="dark"]) .blockedCopy p:last-child {
+  color: var(--phone-app-muted);
+}
+
+:global(body[data-phone-chat-tone="dark"]) .metricTile,
+:global(body[data-phone-chat-tone="dark"]) .summaryCard,
+:global(body[data-phone-chat-tone="dark"]) .chartCard,
+:global(body[data-phone-chat-tone="dark"]) .listCard,
+:global(body[data-phone-chat-tone="dark"]) .actionCard,
+:global(body[data-phone-chat-tone="dark"]) .blockedPanel {
+  border-color: var(--phone-app-border);
+  background: var(--phone-app-surface);
 }
 
 .header {
@@ -70,8 +125,8 @@
   width: 44px;
   height: 44px;
   border-radius: 999px;
-  color: #ffffff;
-  background: #111827;
+  color: #07140d;
+  background: var(--phone-chat-accent, #111827);
   font-size: 18px;
   font-weight: 900;
   letter-spacing: 0;
@@ -79,7 +134,7 @@
 
 .headerMain h1 {
   margin: 2px 0 0;
-  color: #050505;
+  color: var(--phone-app-text);
   font-size: clamp(34px, 10vw, 48px);
   font-weight: 850;
   line-height: 1.08;
@@ -92,7 +147,7 @@
 
 .eyebrow {
   margin: 0;
-  color: #737373;
+  color: var(--phone-app-muted);
   font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.08em;
@@ -115,8 +170,8 @@
   height: 44px;
   border: 0;
   border-radius: 999px;
-  color: #111111;
-  background: #f7f6f2;
+  color: var(--phone-app-text);
+  background: var(--phone-app-soft);
   text-decoration: none;
   transition: transform 160ms ease, border-color 160ms ease, background 160ms ease;
 }

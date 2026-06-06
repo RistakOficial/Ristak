@@ -2076,6 +2076,7 @@ body[data-design-preset][data-phone-chat-theme='active'] {
   --phone-chat-border: rgba(20, 20, 20, 0.09);
   --phone-chat-primary: #101010;
   --phone-chat-primary-rgb: 16, 16, 16;
+  --phone-chat-text-on-primary: #ffffff;
   --phone-chat-accent: #25d366;
   --phone-chat-accent-rgb: 37, 211, 102;
   --phone-chat-accent-soft: #dff8e8;
@@ -2159,6 +2160,7 @@ body[data-design-preset][data-phone-chat-theme='active'][data-phone-chat-tone='d
   --phone-chat-border: rgba(233, 237, 239, 0.1);
   --phone-chat-primary: #25d366;
   --phone-chat-primary-rgb: 37, 211, 102;
+  --phone-chat-text-on-primary: #07140d;
   --phone-chat-accent: #25d366;
   --phone-chat-accent-rgb: 37, 211, 102;
   --phone-chat-accent-soft: rgba(37, 211, 102, 0.16);

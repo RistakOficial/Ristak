@@ -1,9 +1,14 @@
 .phonePage {
-  --phone-frame-bg: #ffffff;
-  --apple-red: #101010;
-  --chat-green: #25d366;
-  --line: rgba(0, 0, 0, 0.1);
-  --soft-line: rgba(0, 0, 0, 0.06);
+  --phone-frame-bg: var(--phone-chat-bg, #ffffff);
+  --phone-calendar-surface: var(--phone-chat-surface, #ffffff);
+  --phone-calendar-soft: var(--phone-chat-surface-soft, #f7f6f2);
+  --phone-calendar-panel: var(--phone-chat-panel, #f7f6f2);
+  --phone-calendar-text: var(--phone-chat-text, #111111);
+  --phone-calendar-muted: var(--phone-chat-muted, #8e8e93);
+  --apple-red: var(--phone-chat-primary, #101010);
+  --chat-green: var(--phone-chat-accent, #25d366);
+  --line: var(--phone-chat-border, rgba(0, 0, 0, 0.1));
+  --soft-line: color-mix(in srgb, var(--phone-chat-border, rgba(0, 0, 0, 0.1)) 58%, transparent);
   position: fixed;
   inset: 0;
   display: grid;
@@ -13,7 +18,7 @@
   height: 100dvh;
   min-height: 100dvh;
   max-height: 100dvh;
-  color: #111111;
+  color: var(--phone-calendar-text);
   background: var(--phone-frame-bg);
   overflow: hidden;
   overscroll-behavior: none;
@@ -33,6 +38,78 @@
   overscroll-behavior: none;
 }
 
+:global(body[data-phone-chat-tone="dark"]) .phonePage {
+  color-scheme: dark;
+}
+
+:global(body[data-phone-chat-tone="dark"]) .header,
+:global(body[data-phone-chat-tone="dark"]) .calendarSurface,
+:global(body[data-phone-chat-tone="dark"]) .agendaScroller,
+:global(body[data-phone-chat-tone="dark"]) .dayTimeline,
+:global(body[data-phone-chat-tone="dark"]) .timelineHeader,
+:global(body[data-phone-chat-tone="dark"]) .timelineBody,
+:global(body[data-phone-chat-tone="dark"]) .loadingPage,
+:global(body[data-phone-chat-tone="dark"]) .blockedPage {
+  background: var(--phone-calendar-surface);
+}
+
+:global(body[data-phone-chat-tone="dark"]) .periodChip,
+:global(body[data-phone-chat-tone="dark"]) .headerCapsule,
+:global(body[data-phone-chat-tone="dark"]) .backButton,
+:global(body[data-phone-chat-tone="dark"]) .todayPill,
+:global(body[data-phone-chat-tone="dark"]) .actionPillGroup,
+:global(body[data-phone-chat-tone="dark"]) .viewOption,
+:global(body[data-phone-chat-tone="dark"]) .searchInput,
+:global(body[data-phone-chat-tone="dark"]) .calendarOption,
+:global(body[data-phone-chat-tone="dark"]) .alertCard,
+:global(body[data-phone-chat-tone="dark"]) .allCalendarsButton {
+  color: var(--phone-calendar-text);
+  background: var(--phone-calendar-soft);
+}
+
+:global(body[data-phone-chat-tone="dark"]) .titleRow h1,
+:global(body[data-phone-chat-tone="dark"]) .monthDay,
+:global(body[data-phone-chat-tone="dark"]) .agendaDateButton,
+:global(body[data-phone-chat-tone="dark"]) .eventCard strong,
+:global(body[data-phone-chat-tone="dark"]) .emptyAgenda strong,
+:global(body[data-phone-chat-tone="dark"]) .sheetHeader h2,
+:global(body[data-phone-chat-tone="dark"]) .calendarOption,
+:global(body[data-phone-chat-tone="dark"]) .settingsPanel strong,
+:global(body[data-phone-chat-tone="dark"]) .blockedCopy h1 {
+  color: var(--phone-calendar-text);
+}
+
+:global(body[data-phone-chat-tone="dark"]) .weekdayRow span,
+:global(body[data-phone-chat-tone="dark"]) .monthDayMuted,
+:global(body[data-phone-chat-tone="dark"]) .agendaDateButton span,
+:global(body[data-phone-chat-tone="dark"]) .eventCard small,
+:global(body[data-phone-chat-tone="dark"]) .emptyAgenda,
+:global(body[data-phone-chat-tone="dark"]) .calendarOption small,
+:global(body[data-phone-chat-tone="dark"]) .settingsPanel span,
+:global(body[data-phone-chat-tone="dark"]) .eyebrow,
+:global(body[data-phone-chat-tone="dark"]) .blockedCopy p:last-child {
+  color: var(--phone-calendar-muted);
+}
+
+:global(body[data-phone-chat-tone="dark"]) .sheet {
+  border-color: var(--phone-chat-border);
+  background: var(--phone-calendar-panel);
+  box-shadow: 0 -24px 60px rgba(0, 0, 0, 0.52);
+}
+
+:global(body[data-phone-chat-tone="dark"]) .closeSheetButton {
+  color: var(--phone-calendar-text);
+  background: var(--phone-calendar-surface);
+}
+
+:global(body[data-phone-chat-tone="dark"]) .eventCard,
+:global(body[data-phone-chat-tone="dark"]) .appointmentCard,
+:global(body[data-phone-chat-tone="dark"]) .timelineEvent,
+:global(body[data-phone-chat-tone="dark"]) .blockedPanel {
+  border-color: var(--phone-chat-border);
+  background: var(--phone-calendar-surface);
+}
+
 .header {
   position: relative;
   z-index: 6;
@@ -40,7 +117,7 @@
   gap: 5px;
   flex: 0 0 auto;
   padding: calc(env(safe-area-inset-top) + 8px) 14px 4px;
-  background: #ffffff;
+  background: var(--phone-calendar-surface);
 }
 
 .headerToolbar,
@@ -69,8 +146,8 @@
   padding: 0 12px 0 9px;
   border: 0;
   border-radius: 999px;
-  color: #111111;
-  background: #f7f6f2;
+  color: var(--phone-calendar-text);
+  background: var(--phone-calendar-soft);
   box-shadow: 0 6px 16px rgba(17, 24, 39, 0.05);
   font-size: 13px;
   font-weight: 760;
@@ -90,7 +167,7 @@
   padding: 0 5px;
   border: 0;
   border-radius: 999px;
-  background: #f7f6f2;
+  background: var(--phone-calendar-soft);
   box-shadow: 0 6px 16px rgba(17, 24, 39, 0.05);
 }
 
@@ -102,7 +179,7 @@
   height: 31px;
   border: 0;
   border-radius: 999px;
-  color: #111111;
+  color: var(--phone-calendar-text);
   background: transparent;
 }
 
@@ -135,7 +212,7 @@
 
 .titleRow h1 {
   overflow: hidden;
-  color: #050505;
+  color: var(--phone-calendar-text);
   font-size: clamp(32px, 8.4vw, 42px);
   font-weight: 850;
   line-height: 0.98;
@@ -161,7 +238,7 @@
 .titleRow[data-calendar-view="year"],
 .titleRow[data-calendar-view="years"] {
   padding-bottom: 8px;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+  border-bottom: 1px solid var(--soft-line);
 }
 
 .calendarSurface {
@@ -172,7 +249,7 @@
   padding: 0;
   border-bottom: 0;
   overflow: hidden;
-  background: #ffffff;
+  background: var(--phone-calendar-surface);
 }
 
 .monthGridPanel {
@@ -196,7 +273,7 @@
 }
 
 .weekdayRow span {
-  color: #8e8e93;
+  color: var(--phone-calendar-muted);
   font-size: 11px;
   font-weight: 780;
   line-height: 1;

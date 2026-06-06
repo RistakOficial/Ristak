@@ -48,7 +48,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useLabels } from '@/contexts/LabelsContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
-import { useAppConfig } from '@/hooks'
+import { useAppConfig, usePhoneTheme, type PhoneThemePreference } from '@/hooks'
 import { aiAgentService, type AIAgentMessage, type AIAgentViewContext } from '@/services/aiAgentService'
 import apiClient from '@/services/apiClient'
 import { calendarsService, type Calendar, type CalendarEvent } from '@/services/calendarsService'
@@ -70,7 +70,6 @@ import styles from './PhoneChat.module.css'
 const PORTABLE_WIDTH_QUERY = '(max-width: 1366px)'
 const PHONE_WIDTH_QUERY = '(max-width: 900px)'
 const COARSE_POINTER_QUERY = '(pointer: coarse)'
-const SYSTEM_DARK_MODE_QUERY = '(prefers-color-scheme: dark)'
 const MOBILE_OR_TABLET_USER_AGENT_PATTERN = /Android|iPad|iPhone|iPod|IEMobile|Opera Mini|Mobile|Tablet/i
 const SCROLLABLE_CHAT_SELECTOR = '[data-phone-chat-scrollable="true"], [contenteditable="true"], textarea, input, select'
 const CHAT_READ_STATE_KEY = 'ristak_phone_chat_read_state_v1'
@@ -81,10 +80,6 @@ const AI_AGENT_MESSAGES_KEY = 'ristak_phone_chat_ai_agent_messages_v1'
 const CHAT_SWIPE_ACTION_WIDTH = 184
 const CHAT_SWIPE_OPEN_THRESHOLD = 78
 const CHAT_SWIPE_ACTIVATE_THRESHOLD = 12
-const DAY_START_HOUR = 6
-const NIGHT_START_HOUR = 19
-const PHONE_CHAT_LIGHT_THEME_COLOR = '#fbfaf6'
-const PHONE_CHAT_DARK_THEME_COLOR = '#0b0f14'
 const MAX_VOICE_MESSAGE_BYTES = 16 * 1024 * 1024
 const MIN_VOICE_RECORDING_MS = 600
 const MAX_VOICE_RECORDING_MS = 3 * 60 * 1000
@@ -104,8 +99,6 @@ type TemplateMode = 'choice' | 'send' | 'create'
 type ChatSettingsSection = 'appearance' | 'templates' | 'numbers' | 'notifications' | 'agent' | 'chats' | null
 type WhatsAppNumberMode = 'merged' | 'separated'
 type ConversationSortMode = 'recent' | 'unread'
-type PhoneChatThemePreference = 'system' | 'light' | 'dark' | 'auto'
-type PhoneChatThemeTone = 'light' | 'dark'
 
 interface ChatSwipeGesture {
   contactId: string
@@ -137,7 +130,7 @@ const QUICK_TEMPLATE_LANGUAGES = [
   { value: 'en_US', label: 'Inglés Estados Unidos' }
 ]
 const PHONE_CHAT_THEME_OPTIONS: Array<{
-  id: PhoneChatThemePreference
+  id: PhoneThemePreference
   label: string
   description: string
   Icon: React.ElementType
@@ -252,63 +245,6 @@ function hasPortableAccess() {
 function getAccessState(): AccessState {
   if (typeof window === 'undefined') return 'checking'
   return hasPortableAccess() ? 'allowed' : 'blocked'
-}
-
-function isPhoneChatThemePreference(value: unknown): value is PhoneChatThemePreference {
-  return value === 'system' || value === 'light' || value === 'dark' || value === 'auto'
-}
-
-function getTimeBasedPhoneChatTheme(now: Date = new Date()): PhoneChatThemeTone {
-  const hour = now.getHours()
-  return hour >= NIGHT_START_HOUR || hour < DAY_START_HOUR ? 'dark' : 'light'
-}
-
-function msUntilNextPhoneChatThemeSwitch(now: Date = new Date()): number {
-  const currentHour = now.getHours()
-  const nextSwitch = new Date(now)
-
-  if (currentHour >= DAY_START_HOUR && currentHour < NIGHT_START_HOUR) {
-    nextSwitch.setHours(NIGHT_START_HOUR, 0, 0, 0)
-  } else if (currentHour >= NIGHT_START_HOUR) {
-    nextSwitch.setDate(now.getDate() + 1)
-    nextSwitch.setHours(DAY_START_HOUR, 0, 0, 0)
-  } else {
-    nextSwitch.setHours(DAY_START_HOUR, 0, 0, 0)
-  }
-
-  return Math.max(1000, nextSwitch.getTime() - now.getTime())
-}
-
-function getSystemDarkModeMedia() {
-  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return null
-  return window.matchMedia(SYSTEM_DARK_MODE_QUERY)
-}
-
-function canReadSystemTheme() {
-  return Boolean(getSystemDarkModeMedia())
-}
-
-function getSystemPhoneChatTheme(): PhoneChatThemeTone {
-  const media = getSystemDarkModeMedia()
-  return media?.matches ? 'dark' : 'light'
-}
-
-function resolvePhoneChatTheme(preference: PhoneChatThemePreference): PhoneChatThemeTone {
-  if (preference === 'light' || preference === 'dark') return preference
-  if (preference === 'auto') return getTimeBasedPhoneChatTheme()
-  return canReadSystemTheme() ? getSystemPhoneChatTheme() : getTimeBasedPhoneChatTheme()
-}
-
-function getPhoneThemeDeviceLabel() {
-  if (mobileAppService.getPlatform() === 'ios') return 'iPhone'
-  if (mobileAppService.getPlatform() === 'android') return 'Android'
-  if (typeof navigator === 'undefined') return 'este celular'
-
-  const userAgent = navigator.userAgent || ''
-  if (/iPad/i.test(userAgent)) return 'iPad'
-  if (/iPhone|iPod/i.test(userAgent)) return 'iPhone'
-  if (/Android/i.test(userAgent)) return 'Android'
-  return 'este equipo'
 }
 
 function readChatReadState(): ChatReadState {
@@ -1305,12 +1241,17 @@ export const PhoneChat: React.FC = () => {
   const [openLastConversation, setOpenLastConversation] = useAppConfig<boolean>('mobile_chat_open_last_conversation', false)
   const [lastConversationId, setLastConversationId] = useAppConfig<string>('mobile_chat_last_conversation_id', '')
   const [aiReplySuggestionsEnabled, setAiReplySuggestionsEnabled] = useAppConfig<boolean>('mobile_chat_ai_reply_suggestions_enabled', false)
-  const [chatThemePreference, setChatThemePreference] = useAppConfig<PhoneChatThemePreference>('mobile_chat_theme_preference', 'system')
-  const safeChatThemePreference = isPhoneChatThemePreference(chatThemePreference) ? chatThemePreference : 'system'
+  const {
+    safePreference: safeChatThemePreference,
+    setPreference: setChatThemePreference,
+    resolvedTheme: resolvedPhoneChatTheme,
+    resolvedThemeLabel: resolvedPhoneChatThemeLabel,
+    themeMeta: chatThemeMeta,
+    systemThemeAvailable,
+    deviceLabel: phoneThemeDeviceLabel
+  } = usePhoneTheme({ active: false })
 
   const [accessState, setAccessState] = useState<AccessState>(getAccessState)
-  const [resolvedPhoneChatTheme, setResolvedPhoneChatTheme] = useState<PhoneChatThemeTone>(() => resolvePhoneChatTheme(safeChatThemePreference))
-  const [systemThemeAvailable, setSystemThemeAvailable] = useState(canReadSystemTheme)
   const [chats, setChats] = useState<ChatContact[]>([])
   const [chatsLoading, setChatsLoading] = useState(true)
   const [chatsError, setChatsError] = useState('')
@@ -1590,13 +1531,6 @@ export const PhoneChat: React.FC = () => {
     ), 0),
     [archivedChatIdSet, chats]
   )
-  const phoneThemeDeviceLabel = useMemo(getPhoneThemeDeviceLabel, [])
-  const resolvedPhoneChatThemeLabel = resolvedPhoneChatTheme === 'dark' ? 'Noche' : 'Claro'
-  const chatThemePreferenceLabel = PHONE_CHAT_THEME_OPTIONS.find((option) => option.id === safeChatThemePreference)?.label || 'Sistema'
-  const chatThemeMeta = safeChatThemePreference === 'light' || safeChatThemePreference === 'dark'
-    ? chatThemePreferenceLabel
-    : `${chatThemePreferenceLabel}: ${resolvedPhoneChatThemeLabel}`
-
   const ensureChatContact = useCallback((contact: Contact) => {
     const nextContact = toChatContact(contact)
     setChats((current) => {
@@ -1763,146 +1697,6 @@ export const PhoneChat: React.FC = () => {
   const saveConfigPreference = useCallback(<T,>(setter: (value: T) => Promise<void>, value: T) => {
     setter(value).catch(() => showToast('error', 'No se guardó la configuración', 'Intenta otra vez.'))
   }, [showToast])
-
-  useEffect(() => {
-    if (chatThemePreference === safeChatThemePreference) return
-    setChatThemePreference(safeChatThemePreference).catch(() => undefined)
-  }, [chatThemePreference, safeChatThemePreference, setChatThemePreference])
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return
-
-    const systemMedia = getSystemDarkModeMedia()
-    let timeoutId: ReturnType<typeof window.setTimeout> | null = null
-
-    const updateTheme = () => {
-      setSystemThemeAvailable(Boolean(systemMedia))
-      setResolvedPhoneChatTheme(resolvePhoneChatTheme(safeChatThemePreference))
-    }
-
-    const runAutoThemeLoop = () => {
-      updateTheme()
-      timeoutId = window.setTimeout(runAutoThemeLoop, msUntilNextPhoneChatThemeSwitch())
-    }
-
-    if (safeChatThemePreference === 'auto') {
-      runAutoThemeLoop()
-    } else {
-      updateTheme()
-    }
-
-    if (safeChatThemePreference === 'system' && systemMedia) {
-      systemMedia.addEventListener('change', updateTheme)
-    }
-
-    return () => {
-      if (timeoutId !== null) {
-        window.clearTimeout(timeoutId)
-      }
-      if (systemMedia) {
-        systemMedia.removeEventListener('change', updateTheme)
-      }
-    }
-  }, [safeChatThemePreference])
-
-  useEffect(() => {
-    const root = document.documentElement
-    const body = document.body
-    const previousRootTone = root.dataset.phoneChatTone
-    const previousBodyTone = body.dataset.phoneChatTone
-    const previousRootMode = root.dataset.phoneChatMode
-    const previousBodyMode = body.dataset.phoneChatMode
-
-    root.dataset.phoneChatTone = resolvedPhoneChatTheme
-    body.dataset.phoneChatTone = resolvedPhoneChatTheme
-    root.dataset.phoneChatMode = safeChatThemePreference
-    body.dataset.phoneChatMode = safeChatThemePreference
-
-    return () => {
-      if (previousRootTone !== undefined) {
-        root.dataset.phoneChatTone = previousRootTone
-      } else {
-        delete root.dataset.phoneChatTone
-      }
-
-      if (previousBodyTone !== undefined) {
-        body.dataset.phoneChatTone = previousBodyTone
-      } else {
-        delete body.dataset.phoneChatTone
-      }
-
-      if (previousRootMode !== undefined) {
-        root.dataset.phoneChatMode = previousRootMode
-      } else {
-        delete root.dataset.phoneChatMode
-      }
-
-      if (previousBodyMode !== undefined) {
-        body.dataset.phoneChatMode = previousBodyMode
-      } else {
-        delete body.dataset.phoneChatMode
-      }
-    }
-  }, [resolvedPhoneChatTheme, safeChatThemePreference])
-
-  useEffect(() => {
-    const metaThemeColor = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')
-    const meta = metaThemeColor || document.createElement('meta')
-    const previousThemeColor = metaThemeColor?.getAttribute('content') ?? null
-    const createdMeta = !metaThemeColor
-
-    if (createdMeta) {
-      meta.setAttribute('name', 'theme-color')
-      document.head.appendChild(meta)
-    }
-
-    meta.setAttribute('content', resolvedPhoneChatTheme === 'dark' ? PHONE_CHAT_DARK_THEME_COLOR : PHONE_CHAT_LIGHT_THEME_COLOR)
-
-    return () => {
-      if (createdMeta) {
-        meta.remove()
-      } else if (previousThemeColor !== null) {
-        meta.setAttribute('content', previousThemeColor)
-      } else {
-        meta.removeAttribute('content')
-      }
-    }
-  }, [resolvedPhoneChatTheme])
-
-  useEffect(() => {
-    if (accessState !== 'allowed') return
-    mobileAppService.setShellTheme(resolvedPhoneChatTheme).catch(() => undefined)
-  }, [accessState, resolvedPhoneChatTheme])
-
-  useEffect(() => {
-    return () => {
-      mobileAppService.setShellTheme('light').catch(() => undefined)
-    }
-  }, [])
-
-  useEffect(() => {
-    const root = document.documentElement
-    const body = document.body
-    const previousRootTheme = root.dataset.phoneChatTheme
-    const previousBodyTheme = body.dataset.phoneChatTheme
-
-    root.dataset.phoneChatTheme = 'active'
-    body.dataset.phoneChatTheme = 'active'
-
-    return () => {
-      if (previousRootTheme !== undefined) {
-        root.dataset.phoneChatTheme = previousRootTheme
-      } else {
-        delete root.dataset.phoneChatTheme
-      }
-
-      if (previousBodyTheme !== undefined) {
-        body.dataset.phoneChatTheme = previousBodyTheme
-      } else {
-        delete body.dataset.phoneChatTheme
-      }
-    }
-  }, [])
 
   useEffect(() => {
     document.title = aiAgentConversationOpen

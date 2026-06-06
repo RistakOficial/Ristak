@@ -1,5 +1,6 @@
 // Hooks personalizados de la app
 export { useAppConfig, useTableConfig } from './useAppConfig'
+export { usePhoneTheme, isPhoneThemePreference, type PhoneThemePreference, type PhoneThemeTone } from './usePhoneTheme'
 export { useChartHover } from './useChartHover'
 export { useMetaTimezone } from './useMetaTimezone'
 export { useLogoContrast } from './useLogoContrast'

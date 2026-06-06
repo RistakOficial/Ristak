@@ -6,6 +6,7 @@ import { ThemeProvider } from '@/contexts/ThemeContext'
 import { NotificationProvider, useNotification } from '@/contexts/NotificationContext'
 import { TimezoneProvider } from '@/contexts/TimezoneContext'
 import { LabelsProvider } from '@/contexts/LabelsContext'
+import { usePhoneTheme } from '@/hooks'
 import { AppShell } from '@/components/layout/AppShell'
 import { Dashboard } from '@/pages/Dashboard'
 import { Reports } from '@/pages/Reports'
@@ -39,6 +40,11 @@ type RedirectLocation = {
 type RouteLocationState = {
   from?: RedirectLocation
 } | null
+
+const PhoneThemeRouteEffects: React.FC = () => {
+  usePhoneTheme({ active: true })
+  return null
+}
 
 function getRedirectPath(from?: RedirectLocation) {
   const pathname = from?.pathname
@@ -114,13 +120,13 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) =
 
 const PhoneRouteEffects: React.FC = () => {
   const location = useLocation()
+  const isPhoneRoute = location.pathname.startsWith('/phone')
 
   React.useEffect(() => {
     const body = document.body
     const root = document.documentElement
     const previousBodyPhoneApp = body.dataset.phoneApp
     const previousRootPhoneApp = root.dataset.phoneApp
-    const isPhoneRoute = location.pathname.startsWith('/phone')
 
     if (isPhoneRoute) {
       body.dataset.phoneApp = 'active'
@@ -143,9 +149,9 @@ const PhoneRouteEffects: React.FC = () => {
         delete root.dataset.phoneApp
       }
     }
-  }, [location.pathname])
+  }, [isPhoneRoute])
 
-  return null
+  return isPhoneRoute ? <PhoneThemeRouteEffects /> : null
 }
 
 const AppWithNotifications: React.FC = () => {
