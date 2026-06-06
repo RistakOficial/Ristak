@@ -5549,7 +5549,7 @@ export const PhoneChat: React.FC = () => {
 
       {sheet && (
         <div
-          className={`${styles.sheetBackdrop} ${sheet === 'settings' ? styles.settingsSheetBackdrop : ''}`}
+          className={`${styles.sheetBackdrop} ${sheet === 'settings' ? styles.settingsSheetBackdrop : ''} ${sheet === 'payment' || sheet === 'settings' ? styles.darkSheetBackdrop : ''}`}
           style={actionSheetDismiss.backdropStyle}
           onClick={actionSheetDismiss.requestClose}
         >
