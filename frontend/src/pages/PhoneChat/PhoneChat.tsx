@@ -3354,7 +3354,9 @@ export const PhoneChat: React.FC = () => {
             className={`${styles.archiveRow} ${styles.archiveRowActive}`}
             onClick={() => setArchivedViewOpen(false)}
           >
-            <ChevronLeft size={22} />
+            <span className={styles.archiveRowIcon}>
+              <ChevronLeft size={22} />
+            </span>
             <strong>Archivados</strong>
             <span>{archivedChatCount}</span>
           </button>
@@ -3366,7 +3368,9 @@ export const PhoneChat: React.FC = () => {
             onClick={() => setArchivedViewOpen(true)}
             aria-label={`Ver ${archivedChatCount} chats archivados`}
           >
-            <MdArchive size={22} />
+            <span className={styles.archiveRowIcon}>
+              <MdArchive size={22} />
+            </span>
             <strong>Archivados</strong>
             <span>{archivedChatCount}</span>
           </button>
