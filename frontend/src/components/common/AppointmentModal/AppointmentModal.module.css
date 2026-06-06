@@ -56,6 +56,8 @@
 }
 
 .mobileSheetModal {
+  display: flex;
+  flex-direction: column;
   width: 100vw !important;
   max-width: none !important;
   height: 100dvh;
@@ -93,7 +95,9 @@
 }
 
 .mobileSheetContent {
-  height: calc(100dvh - 68px);
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
   max-height: none !important;
   overflow: hidden !important;
   background: #f5f5f7;
@@ -104,6 +108,7 @@
   max-width: none;
   max-height: none;
   height: 100%;
+  min-height: 0;
   margin: 0;
   gap: 1rem;
   padding: 0 18px calc(env(safe-area-inset-bottom) + 22px);
@@ -111,6 +116,7 @@
   overflow-y: auto;
   overscroll-behavior-y: contain;
   -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
 }
 
 @keyframes mobileSheetRise {
@@ -476,6 +482,17 @@
   justify-content: flex-end;
   padding-top: 1.25rem;
   border-top: 1px solid var(--color-border);
+}
+
+.mobileSheetContainer .actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 4;
+  margin: 0 -18px calc(env(safe-area-inset-bottom) * -1);
+  padding: 14px 18px calc(env(safe-area-inset-bottom) + 14px);
+  background: rgba(245, 245, 247, 0.94);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
 }
 
 .actionsRight {

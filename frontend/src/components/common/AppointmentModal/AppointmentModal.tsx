@@ -741,11 +741,11 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
           return;
         }
 
-        // Validación: en Round Robin, team member es OBLIGATORIO
+        // Validación: en calendarios que reparten citas, debe elegirse quién atiende.
         const isRoundRobin = calendar?.calendarType === 'round_robin';
 
         if (isRoundRobin && !formData.assignedUserId) {
-          showToast('error', 'Team member requerido', 'Para calendarios Round Robin debes seleccionar un team member');
+          showToast('error', 'Persona del equipo requerida', 'Selecciona quién atenderá esta cita.');
           setIsSaving(false);
           return;
         }
@@ -903,16 +903,19 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
 
   return (
     <>
-    <Modal
-      isOpen={isOpen}
-      onClose={onClose}
-      title={isMobileSheet ? (isCreateMode ? 'Nueva cita' : 'Editar cita') : ''}
-      size="lg"
-      className={isMobileSheet ? styles.mobileSheetModal : undefined}
-      backdropClassName={isMobileSheet ? styles.mobileSheetBackdrop : undefined}
-      contentClassName={isMobileSheet ? styles.mobileSheetContent : undefined}
-    >
-      <div className={`${styles.container} ${isMobileSheet ? styles.mobileSheetContainer : ''}`}>
+      <Modal
+        isOpen={isOpen}
+        onClose={onClose}
+        title={isMobileSheet ? (isCreateMode ? 'Nueva cita' : 'Editar cita') : ''}
+        size="lg"
+        className={isMobileSheet ? styles.mobileSheetModal : undefined}
+        backdropClassName={isMobileSheet ? styles.mobileSheetBackdrop : undefined}
+        contentClassName={isMobileSheet ? styles.mobileSheetContent : undefined}
+      >
+        <div
+          className={`${styles.container} ${isMobileSheet ? styles.mobileSheetContainer : ''}`}
+          data-phone-scrollable={isMobileSheet ? 'true' : undefined}
+        >
         <div className={styles.summary}>
           <div className={styles.summaryBody}>
             <h3 className={styles.summaryTitle}>{formData.title.trim() || '(Sin título)'}</h3>
@@ -987,7 +990,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                     <Search size={16} className={styles.searchIcon} />
                     <input
                       type="text"
-                      placeholder="Buscar por nombre, email o teléfono..."
+                      placeholder="Buscar por nombre, correo o teléfono..."
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
                       className={styles.input}
@@ -1032,8 +1035,6 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
             {(() => {
               const isRoundRobin = calendar?.calendarType === 'round_robin';
 
-              
-
               // En modo view, si hay usuario asignado, buscarlo y mostrarlo
               if (!isCreateMode && formData.assignedUserId && users.length > 0) {
                 const assignedUser = users.find(u => u.id === formData.assignedUserId);
@@ -1041,11 +1042,11 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                   return (
                     <div className={styles.sectionBlock}>
                       <label className={styles.label}>
-                        {isRoundRobin ? 'Miembro del equipo' : 'Usuario asignado'}
+                        {isRoundRobin ? 'Miembro del equipo' : 'Persona asignada'}
                       </label>
                       <div className={styles.selectedContact}>
                         <div className={styles.contactInfo}>
-                          <p className={styles.contactName}>{assignedUser.name || assignedUser.email || 'Usuario'}</p>
+                          <p className={styles.contactName}>{assignedUser.name || assignedUser.email || 'Persona'}</p>
                           <p className={styles.contactDetail}>{assignedUser.email || ''}</p>
                         </div>
                       </div>
@@ -1056,12 +1057,12 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
 
               // En modo crear, mostrar selector solo si hay usuarios cargados
               if (isCreateMode) {
-                // Si es Round Robin y no hay usuarios, mostrar error
+                // Si reparte citas entre el equipo y no hay usuarios, mostrar error
                 if (isRoundRobin && users.length === 0 && !loadingUsers) {
                   return (
                     <div className={styles.sectionBlock}>
                       <p className={styles.helpText}>
-                        ⚠️ No se pudieron cargar los usuarios. Revisa la consola.
+                        No pudimos cargar al equipo. Cierra esta ventana y vuelve a intentar.
                       </p>
                     </div>
                   );
@@ -1080,13 +1081,13 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                           Elegir miembro del equipo <span className={styles.required}>*</span>
                         </>
                       ) : (
-                        'Usuario asignado (opcional)'
+                        'Persona asignada (opcional)'
                       )}
                     </label>
 
                     {isRoundRobin && (
                       <p className={styles.helpText}>
-                        Este calendario usa Round Robin. Selecciona el miembro del equipo para esta cita.
+                        Este calendario reparte citas entre el equipo. Selecciona quién atenderá esta cita.
                       </p>
                     )}
 

@@ -29,12 +29,13 @@
   padding-bottom: calc(86px + env(safe-area-inset-bottom));
   background: var(--phone-frame-bg);
   overflow-x: hidden;
-  overflow-y: auto;
-  overscroll-behavior-y: contain;
-  -webkit-overflow-scrolling: touch;
+  overflow-y: hidden;
+  overscroll-behavior: none;
 }
 
 .header {
+  position: relative;
+  z-index: 6;
   display: grid;
   gap: 5px;
   flex: 0 0 auto;
@@ -158,11 +159,14 @@
 }
 
 .calendarSurface {
+  position: relative;
+  z-index: 5;
   flex: 0 0 auto;
   min-height: 0;
   padding: 0;
   border-bottom: 0;
-  overflow: visible;
+  overflow: hidden;
+  background: #ffffff;
 }
 
 .monthGridPanel {
@@ -375,7 +379,17 @@
 .timelineWrap {
   display: block;
   min-height: 1392px;
-  overflow: hidden;
+  overflow: visible;
+}
+
+.timelineScroller {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+  background: #ffffff;
 }
 
 .weekStrip {
@@ -434,7 +448,7 @@
 
 .timelinePanel {
   display: grid;
-  grid-template-columns: 56px minmax(0, 1fr);
+  grid-template-columns: 64px minmax(0, 1fr);
   min-height: 0;
   overflow: hidden;
 }
@@ -514,18 +528,31 @@
 
 .nowLine strong {
   position: absolute;
-  left: -70px;
+  left: 8px;
   top: -16px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   min-width: 60px;
+  max-width: calc(100% - 16px);
   height: 30px;
+  padding: 0 8px;
   border-radius: 999px;
   color: #ffffff;
   background: var(--apple-red);
+  box-sizing: border-box;
   font-size: 13px;
   font-weight: 800;
+}
+
+.agendaScroller {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+  background: #ffffff;
 }
 
 .agendaHeader {
@@ -546,7 +573,6 @@
   color: #8e8e93;
   font-size: 13px;
   font-weight: 760;
-  text-transform: capitalize;
 }
 
 .agendaHeader h1 {
@@ -578,7 +604,7 @@
   flex-direction: column;
   flex: 0 0 auto;
   min-height: 0;
-  padding: 0 16px 96px;
+  padding: 0 16px 16px;
   overflow: visible;
 }
 
