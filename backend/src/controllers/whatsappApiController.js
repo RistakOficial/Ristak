@@ -219,6 +219,7 @@ export async function sendWhatsAppApiImageMessageView(req, res) {
       imageUrl: req.body?.imageUrl,
       caption: req.body?.caption,
       externalId: req.body?.externalId,
+      transport: req.body?.transport,
       phoneNumberId: req.body?.phoneNumberId,
       publicBaseUrl: getPublicBaseUrl(req)
     })

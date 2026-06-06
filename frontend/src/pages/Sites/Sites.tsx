@@ -177,9 +177,123 @@ const SITES_EDITOR_ACTIVE_EVENT = 'ristak-sites-editor-active'
 const DEFAULT_FUNNEL_PAGE_ID = 'page-1'
 const FORM_THANK_YOU_PAGE_ID = 'page-2'
 const FORM_DISQUALIFIED_PAGE_ID = 'page-3'
-const SOCIAL_PROFILE_SELECTED_ID = '__social_profile__'
+const PREVIEW_LOADING_HTML = `<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Previsualizando...</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: #f7f9fc;
+        color: #162033;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        min-height: 100vh;
+        margin: 0;
+        display: grid;
+        place-items: center;
+        background:
+          radial-gradient(circle at top, rgba(38, 99, 235, 0.11), transparent 34rem),
+          linear-gradient(180deg, #ffffff 0%, #f3f6fb 100%);
+      }
+
+      main {
+        width: min(92vw, 34rem);
+        display: grid;
+        justify-items: center;
+        gap: 1.35rem;
+        padding: 2rem;
+        text-align: center;
+      }
+
+      .preview-wheel {
+        position: relative;
+        width: clamp(4.5rem, 18vw, 6rem);
+        aspect-ratio: 1;
+        border-radius: 50%;
+        background: conic-gradient(from 0deg, #2563eb, #16a34a, #f59e0b, #ef4444, #7c3aed, #2563eb);
+        box-shadow: 0 1.35rem 3rem rgba(37, 99, 235, 0.18);
+        animation: preview-spin 1.05s linear infinite;
+      }
+
+      .preview-wheel::before {
+        content: "";
+        position: absolute;
+        inset: 0.55rem;
+        border-radius: inherit;
+        background: #f7f9fc;
+        box-shadow: inset 0 0 0 1px rgba(22, 32, 51, 0.08);
+      }
+
+      .preview-wheel::after {
+        content: "";
+        position: absolute;
+        top: 0.28rem;
+        left: 50%;
+        width: 0.85rem;
+        aspect-ratio: 1;
+        border-radius: 50%;
+        background: #ffffff;
+        box-shadow: 0 0.35rem 0.9rem rgba(22, 32, 51, 0.16);
+        transform: translateX(-50%);
+      }
+
+      h1 {
+        margin: 0;
+        font-size: clamp(1.45rem, 5vw, 2rem);
+        font-weight: 750;
+        line-height: 1.12;
+        letter-spacing: 0;
+      }
+
+      p {
+        max-width: 25rem;
+        margin: 0.55rem auto 0;
+        color: #596579;
+        font-size: 1rem;
+        line-height: 1.55;
+      }
+
+      @keyframes preview-spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .preview-wheel {
+          animation: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main aria-live="polite" aria-busy="true">
+      <div class="preview-wheel" role="img" aria-label="Cargando"></div>
+      <section>
+        <h1>Cargando previsualizacion</h1>
+        <p>Estamos preparando tu pagina para verla completa.</p>
+      </section>
+    </main>
+  </body>
+</html>`
+
+const writePreviewLoadingPage = (previewWindow: Window) => {
+  previewWindow.document.open()
+  previewWindow.document.write(PREVIEW_LOADING_HTML)
+  previewWindow.document.close()
+}
+
 const PAGE_SELECTED_ID = '__page__'
-const isEditorSurfaceSelection = (id: string) => id === SOCIAL_PROFILE_SELECTED_ID || id === PAGE_SELECTED_ID
+const isEditorSurfaceSelection = (id: string) => id === PAGE_SELECTED_ID
 const LANDING_DEFAULT_PAGE_PADDING = 36
 const HEADER_PANEL_BLOCK_TYPE: SiteBlockType = 'header_panel'
 const FOOTER_PANEL_BLOCK_TYPE: SiteBlockType = 'footer_panel'
@@ -394,7 +508,7 @@ const blockIcons: Partial<Record<SiteBlockType, React.ReactNode>> = {
 const isChoiceBlock = (blockType: SiteBlockType) =>
   blockType === 'dropdown' || blockType === 'radio' || blockType === 'checkboxes'
 
-const nativeBorderBlockTypes = new Set<SiteBlockType>(['hero', 'section', 'cta', 'benefits', 'testimonials', 'services', 'faq', 'form_embed', 'image', 'video', 'embed', 'calendar_embed'])
+const nativeBorderBlockTypes = new Set<SiteBlockType>(['hero', 'section', 'cta', 'benefits', 'testimonials', 'services', 'faq', 'form_embed', 'social_profile', 'image', 'video', 'embed', 'calendar_embed'])
 
 const isLanding = (site?: PublicSite | null) => site?.siteType === 'landing_page'
 const isStandardForm = (site?: PublicSite | null) => site?.siteType === 'standard_form'
@@ -619,7 +733,7 @@ const resolveTemplateId = (site?: PublicSite | null): SiteTemplateId => {
 
 const isDarkTemplate = (id: SiteTemplateId) => id === 'tiktok' || id === 'vsl' || id === 'interactive' || id === 'premium'
 
-const isHex6 = (value?: string): boolean => !!value && /^#[0-9a-f]{6}$/i.test(value)
+const isHex6 = (value?: string) => !!value && /^#[0-9a-f]{6}$/i.test(value)
 
 const isCssColor = (value?: string): value is string => {
   const raw = String(value || '').trim()
@@ -1012,12 +1126,17 @@ const socialProfileOptionLabel = (profile: ConnectedSocialProfile) => {
   return `${platform}: ${profile.name}${owner}${followers}`
 }
 
-const connectedThemeProfilePatch = (profile: ConnectedSocialProfile): Partial<SiteTheme> => ({
-  ...(profile.platform === 'facebook' || profile.platform === 'instagram' ? { template: profile.platform } : {}),
+const connectedSocialProfileBlockPatch = (profile: ConnectedSocialProfile): Record<string, unknown> => ({
+  platform: profile.platform,
   brandName: profile.name,
-  brandSubtitle: profile.platform === 'instagram' ? 'Perfil de Instagram conectado' : profile.platform === 'facebook' ? 'Pagina de Facebook conectada' : 'Perfil conectado',
+  brandSubtitle: profile.platform === 'instagram'
+    ? 'Perfil de Instagram conectado'
+    : profile.platform === 'facebook'
+      ? 'Pagina de Facebook conectada'
+      : 'Perfil conectado',
   brandAvatar: profile.avatarUrl || '',
   followers: profile.followersLabel || '',
+  brandVerified: true,
   socialAutoSync: true,
   socialSourceProfileId: profile.id,
   socialSourcePlatform: profile.platform,
@@ -1026,6 +1145,29 @@ const connectedThemeProfilePatch = (profile: ConnectedSocialProfile): Partial<Si
   socialSourceName: profile.name,
   socialSyncedAt: profile.updatedAt || new Date().toISOString()
 })
+
+const socialProfileDefaultsForSite = (site?: PublicSite | null): Record<string, unknown> => {
+  const theme = site?.theme || {}
+  const templatePlatform = platformChromeFor(resolveTemplateId(site))
+  const sourcePlatform = normalizeSocialPlatform(theme.socialSourcePlatform)
+  const platform = templatePlatform || sourcePlatform || 'facebook'
+
+  return {
+    platform,
+    brandName: theme.brandName || getPublicTitleEditorValue(site) || site?.name || 'Tu marca',
+    brandSubtitle: theme.brandSubtitle || (platform === 'instagram' ? 'Publicacion pagada' : 'Patrocinado'),
+    brandAvatar: theme.brandAvatar || '',
+    followers: theme.followers || '',
+    brandVerified: theme.brandVerified === undefined ? true : theme.brandVerified !== false,
+    socialAutoSync: theme.socialAutoSync,
+    socialSourceProfileId: theme.socialSourceProfileId || '',
+    socialSourcePlatform: theme.socialSourcePlatform || '',
+    socialSourceId: theme.socialSourceId || '',
+    socialSourcePageId: theme.socialSourcePageId || '',
+    socialSourceName: theme.socialSourceName || '',
+    socialSyncedAt: theme.socialSyncedAt || ''
+  }
+}
 
 const getBackgroundVisualValue = (theme: SiteTheme | undefined) => {
   if (theme?.backgroundAttachment === 'fixed' && theme.backgroundRepeat === 'repeat-x' && theme.backgroundPosition === 'center top') return 'repeat-x-fixed-top'
@@ -1144,7 +1286,7 @@ const getBlockRadiusFallback = (_site: PublicSite, _block: SiteBlock) => 0
 
 const getBlockBorderWidthFallback = (site: PublicSite, block: SiteBlock) => {
   if (block.blockType === 'image' || block.blockType === 'video' || block.blockType === 'embed' || block.blockType === 'calendar_embed') return 1
-  if (isLanding(site) && ['hero', 'section', 'cta', 'benefits', 'testimonials', 'services', 'faq', 'form_embed'].includes(block.blockType)) return 0
+  if (isLanding(site) && ['hero', 'section', 'cta', 'benefits', 'testimonials', 'services', 'faq', 'form_embed', 'social_profile'].includes(block.blockType)) return 0
   return nativeBorderBlockTypes.has(block.blockType) ? 1 : 0
 }
 
@@ -1865,13 +2007,16 @@ const createEmbeddedBlocks = (siteId: string): SiteBlock[] => [
   }
 ]
 
-const defaultBlockPayload = (blockType: SiteBlockType, siteId: string, siteType?: SiteType) => {
+const defaultBlockPayload = (blockType: SiteBlockType, siteOrId: PublicSite | string, siteType?: SiteType) => {
+  const site = typeof siteOrId === 'string' ? null : siteOrId
+  const siteId = typeof siteOrId === 'string' ? siteOrId : siteOrId.id
+  const resolvedSiteType = site?.siteType || siteType
   const isField = fieldBlockTypes.has(blockType)
   const label = blockLabels[blockType]
   const baseSettings: Record<string, unknown> = isField
     ? { internalName: slugifyName(label), validation: blockType === 'email' ? 'email' : blockType === 'phone' ? 'phone' : '' }
     : {}
-  const landingSettings = siteType === 'landing_page' && !isField ? getLandingDefaultBlockSpacing(blockType) : {}
+  const landingSettings = resolvedSiteType === 'landing_page' && !isField ? getLandingDefaultBlockSpacing(blockType) : {}
   const blockSettings = (settings: Record<string, unknown> = {}) => ({
     ...landingSettings,
     ...settings
@@ -1903,7 +2048,7 @@ const defaultBlockPayload = (blockType: SiteBlockType, siteId: string, siteType?
         sectionColumns: 1,
         sectionGap: DEFAULT_SECTION_GAP,
         blockBg: 'transparent',
-        blockText: siteType === 'landing_page' ? '#f4f4f6' : '#111827',
+        blockText: resolvedSiteType === 'landing_page' ? '#f4f4f6' : '#111827',
         blockPaddingTop: 48,
         blockPaddingRight: 42,
         blockPaddingBottom: 48,
@@ -2010,15 +2155,8 @@ const defaultBlockPayload = (blockType: SiteBlockType, siteId: string, siteType?
     return {
       blockType,
       label,
-      content: 'Perfil social',
-      settings: blockSettings({
-        platform: 'facebook',
-        brandName: 'Tu marca',
-        brandSubtitle: 'Patrocinado',
-        brandAvatar: '',
-        followers: '',
-        brandVerified: true
-      })
+      content: 'Perfil de red social',
+      settings: blockSettings(socialProfileDefaultsForSite(site))
     }
   }
 
@@ -2057,7 +2195,7 @@ const defaultBlockPayload = (blockType: SiteBlockType, siteId: string, siteType?
 }
 
 const makePreviewBlock = (blockType: SiteBlockType, site: PublicSite, pageId?: string, initialSettings: Record<string, unknown> = {}): SiteBlock => {
-  const payload = defaultBlockPayload(blockType, site.id, site.siteType)
+  const payload = defaultBlockPayload(blockType, site)
   return {
     id: '__palette-preview__',
     siteId: site.id,
@@ -2966,7 +3104,7 @@ export const Sites: React.FC = () => {
       return
     }
 
-    previewWindow.document.write('<!doctype html><title>Previsualizando...</title><body style="font-family: system-ui; padding: 24px;">Cargando previsualizacion...</body>')
+    writePreviewLoadingPage(previewWindow)
     try {
       const html = await sitesService.getPreviewHtml(editorSite.id, hasEditablePages(editorSite) ? activePage?.id : undefined, { test: true })
       previewWindow.document.open()
@@ -2995,7 +3133,7 @@ export const Sites: React.FC = () => {
       return
     }
 
-    previewWindow.document.write('<!doctype html><title>Previsualizando...</title><body style="font-family: system-ui; padding: 24px;">Cargando previsualizacion...</body>')
+    writePreviewLoadingPage(previewWindow)
     try {
       const pageId = hasEditablePages(site) ? normalizeFunnelPages(site)[0]?.id : undefined
       const html = await sitesService.getPreviewHtml(site.id, pageId, { test: true })
@@ -3089,7 +3227,7 @@ export const Sites: React.FC = () => {
     try {
       const options = typeof addOptions === 'number' ? { insertIndex: addOptions } : addOptions
       const previousBlockIds = new Set((selectedSite.blocks || []).map(block => block.id))
-      const payload = defaultBlockPayload(blockType, selectedSite.id, selectedSite.siteType)
+      const payload = defaultBlockPayload(blockType, selectedSite)
       const initialSettings = options.initialSettings || {}
       if (isLanding(selectedSite) && activePage) {
         const pageSectionIds = new Set(canvasBlocks.filter(isSectionBlock).map(block => block.id))
@@ -3931,22 +4069,6 @@ export const Sites: React.FC = () => {
                           <CanvasBackgroundVideo theme={editorSite.theme} />
                           <main className="rstk-page">
                             <div className="rstk-shell">
-                              {platformChromeFor(resolveTemplateId(editorSite)) && (
-                                <div
-                                  className={`${styles.socialProfileSelectable} ${selectedBlockId === SOCIAL_PROFILE_SELECTED_ID ? styles.socialProfileSelected : ''}`}
-                                  onClick={(event) => {
-                                    event.stopPropagation()
-                                    setSelectedBlockId(SOCIAL_PROFILE_SELECTED_ID)
-                                  }}
-                                >
-                                  <CanvasChrome
-                                    platform={platformChromeFor(resolveTemplateId(editorSite))!}
-                                    site={editorSite}
-                                    onPatchTheme={patchSiteTheme}
-                                    onSave={() => handleSaveSite(undefined, { silent: true })}
-                                  />
-                                </div>
-                              )}
                               <div className="rstk-form">
                                 {isLanding(editorSite) ? (
                                   !hasLandingCanvasContent ? (
@@ -4063,7 +4185,6 @@ export const Sites: React.FC = () => {
                   metaPixelConnected={metaPixelConnected}
                   connectedSocialProfiles={connectedSocialProfiles}
                   loadingSocialProfiles={loadingSocialProfiles}
-                  showSocialProfile={selectedBlockId === SOCIAL_PROFILE_SELECTED_ID}
                   onPatchSite={updateSelectedSite}
                   onPatchTheme={patchSiteTheme}
                   onSaveSite={() => handleSaveSite(undefined, { silent: true })}
@@ -4099,7 +4220,7 @@ export const Sites: React.FC = () => {
         )}
       </div>
     </div>
-  </div>
+    </div>
   )
 }
 
@@ -4126,7 +4247,6 @@ const LibrarySitePreview: React.FC<{
   const activePageId = pages[0]?.id || DEFAULT_FUNNEL_PAGE_ID
   const blocks = getLibraryPreviewBlocks(site)
   const canvasTheme = buildCanvasTheme(site, 'desktop')
-  const platform = platformChromeFor(resolveTemplateId(site))
   const hasFields = isFormSite(site) && blocks.some(block => fieldBlockTypes.has(block.blockType))
   const isLandingPreview = isLanding(site)
   const previewDesignWidth = canvasTheme.designWidth
@@ -4162,14 +4282,6 @@ const LibrarySitePreview: React.FC<{
             <CanvasBackgroundVideo theme={site.theme} />
             <main className="rstk-page">
               <div className="rstk-shell">
-                {platform && (
-                  <CanvasChrome
-                    platform={platform}
-                    site={site}
-                    onPatchTheme={() => {}}
-                    onSave={() => {}}
-                  />
-                )}
                 {blocks.length ? (
                   blocks.map(block => (
                     <div key={block.id} className={getBlockStyleClassName(block)} style={getBlockCanvasStyle(block)}>
@@ -5202,120 +5314,6 @@ const ColorField: React.FC<ColorFieldProps> = ({ label, value, allowGradient = t
               onBlur={onCommit}
             />
           </label>
-          {allowGradient && (
-            <section className={styles.gradientPanel} aria-label={`Degradado para ${label}`}>
-              <div className={styles.gradientPanelHeader}>
-                <span>Degradado</span>
-                {isGradient ? (
-                  <button type="button" className={styles.gradientClearButton} onClick={() => setMode('solid')} aria-label="Quitar degradado">
-                    <X size={14} />
-                    <span>Sin degradado</span>
-                  </button>
-                ) : (
-                  <button type="button" className={styles.gradientCreateButton} onClick={() => setMode('gradient')}>
-                    <Plus size={14} />
-                    <span>Crear degradado</span>
-                  </button>
-                )}
-              </div>
-              {!isGradient ? (
-                <div className={styles.gradientEmptyState}>
-                  <X size={15} />
-                  <span>Sin degradado</span>
-                </div>
-              ) : (
-                <div className={styles.gradientEditor}>
-                  <div className={styles.gradientPresetGrid} aria-label="Paletas de degradado">
-                    {gradientPresets.map(preset => (
-                      <button
-                        key={preset.label}
-                        type="button"
-                        style={swatchBackground(preset.value)}
-                        onClick={() => emitPaint(preset.value)}
-                        title={preset.label}
-                        aria-label={preset.label}
-                      />
-                    ))}
-                  </div>
-                  <div className={styles.gradientStops}>
-                    <div
-                      className={styles.gradientStopRail}
-                      style={{ backgroundImage: formatEditableGradient(gradient) }}
-                      aria-label="Distancia entre colores del degradado"
-                    >
-                      {gradient.stops.map((stop, index) => (
-                        <button
-                          key={`${stop.color}-${index}`}
-                          type="button"
-                          className={styles.gradientStopHandle}
-                          data-active={safeActiveStopIndex === index ? 'true' : 'false'}
-                          style={{ left: `${stop.position}%`, ...swatchBackground(stop.color) }}
-                          onPointerDown={(event) => {
-                            event.currentTarget.setPointerCapture(event.pointerId)
-                            setActiveStopIndex(index)
-                            handleStopRailPointer(event, index)
-                          }}
-                          onPointerMove={(event) => {
-                            if (event.buttons) handleStopRailPointer(event, index)
-                          }}
-                          onPointerUp={onCommit}
-                          aria-label={`Mover color ${index + 1}`}
-                        />
-                      ))}
-                    </div>
-                    <div className={styles.gradientStopActions}>
-                      <button type="button" onClick={addGradientStop} disabled={gradient.stops.length >= MAX_GRADIENT_STOPS}>
-                        Agregar punto
-                      </button>
-                      <button type="button" onClick={removeActiveGradientStop} disabled={gradient.stops.length <= 2}>
-                        Quitar punto
-                      </button>
-                    </div>
-                    <label className={styles.colorSlider}>
-                      <span>Direccion</span>
-                      <input
-                        type="range"
-                        min={0}
-                        max={360}
-                        value={Math.round(gradient.angle)}
-                        onChange={(event) => patchGradient({ angle: Number(event.target.value) })}
-                        onBlur={onCommit}
-                      />
-                    </label>
-                    {gradient.stops.map((stop, index) => (
-                      <div key={index} className={styles.gradientStopRow} data-active={safeActiveStopIndex === index ? 'true' : 'false'}>
-                        <button
-                          type="button"
-                          className={styles.gradientStopButton}
-                          style={swatchBackground(stop.color)}
-                          onClick={() => setActiveStopIndex(index)}
-                          aria-label={`Editar color ${index + 1}`}
-                        />
-                        <input
-                          value={stop.color}
-                          spellCheck={false}
-                          onFocus={() => setActiveStopIndex(index)}
-                          onChange={(event) => patchStopText(index, event.target.value)}
-                          onBlur={onCommit}
-                        />
-                        <div className={styles.gradientStopPosition}>
-                          <NumberInput
-                            min={0}
-                            max={100}
-                            value={Math.round(stop.position)}
-                            onFocus={() => setActiveStopIndex(index)}
-                            onValueChange={(value) => patchStopPosition(index, value)}
-                            onBlur={onCommit}
-                          />
-                          <small>%</small>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </section>
-          )}
           <label className={styles.alphaSlider}>
             <span>Transparencia</span>
             <input
@@ -5328,6 +5326,115 @@ const ColorField: React.FC<ColorFieldProps> = ({ label, value, allowGradient = t
               onBlur={onCommit}
             />
           </label>
+          {allowGradient && (
+            <section className={`${styles.gradientPanel} ${!isGradient ? styles.gradientPanelCollapsed : ''}`} aria-label={`Degradado para ${label}`}>
+              {!isGradient ? (
+                <button type="button" className={styles.gradientCreateButton} onClick={() => setMode('gradient')}>
+                  <Plus size={14} />
+                  <span>Crear degradado</span>
+                </button>
+              ) : (
+                <>
+                  <div className={styles.gradientPanelHeader}>
+                    <span>Degradado</span>
+                    <button type="button" className={styles.gradientClearButton} onClick={() => setMode('solid')} aria-label="Quitar degradado">
+                      <X size={14} />
+                      <span>Quitar</span>
+                    </button>
+                  </div>
+                  <div className={styles.gradientEditor}>
+                    <div className={styles.gradientPresetGrid} aria-label="Paletas de degradado">
+                      {gradientPresets.map(preset => (
+                        <button
+                          key={preset.label}
+                          type="button"
+                          style={swatchBackground(preset.value)}
+                          onClick={() => emitPaint(preset.value)}
+                          title={preset.label}
+                          aria-label={preset.label}
+                        />
+                      ))}
+                    </div>
+                    <div className={styles.gradientStops}>
+                      <div
+                        className={styles.gradientStopRail}
+                        style={{ backgroundImage: formatEditableGradient(gradient) }}
+                        aria-label="Distancia entre colores del degradado"
+                      >
+                        {gradient.stops.map((stop, index) => (
+                          <button
+                            key={`${stop.color}-${index}`}
+                            type="button"
+                            className={styles.gradientStopHandle}
+                            data-active={safeActiveStopIndex === index ? 'true' : 'false'}
+                            style={{ left: `${stop.position}%`, ...swatchBackground(stop.color) }}
+                            onPointerDown={(event) => {
+                              event.currentTarget.setPointerCapture(event.pointerId)
+                              setActiveStopIndex(index)
+                              handleStopRailPointer(event, index)
+                            }}
+                            onPointerMove={(event) => {
+                              if (event.buttons) handleStopRailPointer(event, index)
+                            }}
+                            onPointerUp={onCommit}
+                            aria-label={`Mover color ${index + 1}`}
+                          />
+                        ))}
+                      </div>
+                      <div className={styles.gradientStopActions}>
+                        <button type="button" onClick={addGradientStop} disabled={gradient.stops.length >= MAX_GRADIENT_STOPS}>
+                          Agregar punto
+                        </button>
+                        <button type="button" onClick={removeActiveGradientStop} disabled={gradient.stops.length <= 2}>
+                          Quitar punto
+                        </button>
+                      </div>
+                      <label className={styles.colorSlider}>
+                        <span>Direccion</span>
+                        <input
+                          type="range"
+                          min={0}
+                          max={360}
+                          value={Math.round(gradient.angle)}
+                          onChange={(event) => patchGradient({ angle: Number(event.target.value) })}
+                          onBlur={onCommit}
+                        />
+                      </label>
+                      {gradient.stops.map((stop, index) => (
+                        <div key={index} className={styles.gradientStopRow} data-active={safeActiveStopIndex === index ? 'true' : 'false'}>
+                          <button
+                            type="button"
+                            className={styles.gradientStopButton}
+                            style={swatchBackground(stop.color)}
+                            onClick={() => setActiveStopIndex(index)}
+                            aria-label={`Editar color ${index + 1}`}
+                          />
+                          <input
+                            value={stop.color}
+                            spellCheck={false}
+                            onFocus={() => setActiveStopIndex(index)}
+                            onChange={(event) => patchStopText(index, event.target.value)}
+                            onBlur={onCommit}
+                          />
+                          <div className={styles.gradientStopPosition}>
+                            <NumberInput
+                              min={0}
+                              max={100}
+                              value={Math.round(stop.position)}
+                              onFocus={() => setActiveStopIndex(index)}
+                              onValueChange={(value) => patchStopPosition(index, value)}
+                              onBlur={onCommit}
+                            />
+                            <small>%</small>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
+            </section>
+          )}
           <div className={styles.colorPopoverActions}>
             <button type="button" onClick={() => patchActiveColor({ a: 0 })}>Transparente</button>
             <button type="button" onClick={() => { setOpen(false); onCommit() }}>Listo</button>
@@ -6817,7 +6924,7 @@ const InlineBlockStyleControls: React.FC<{
   const supportsButton = block.blockType === 'hero' || block.blockType === 'button' || block.blockType === 'cta'
   const supportsField = fieldBlockTypes.has(block.blockType)
   const isHardEmbed = block.blockType === 'embed' || block.blockType === 'calendar_embed'
-  const supportsTextStyle = isSection || ['headline', 'title', 'subheading', 'subtitle', 'description', 'text', 'hero', 'cta', 'benefits', 'testimonials', 'services', 'faq', 'form_embed'].includes(block.blockType)
+  const supportsTextStyle = isSection || ['headline', 'title', 'subheading', 'subtitle', 'description', 'text', 'hero', 'cta', 'benefits', 'testimonials', 'services', 'faq', 'form_embed', 'social_profile'].includes(block.blockType)
   const supportsMedia = block.blockType === 'image' || block.blockType === 'video'
   const supportsCards = ['benefits', 'testimonials', 'services', 'faq'].includes(block.blockType)
   const defaultBorderWidth = getBlockBorderWidthFallback(site, block)
@@ -7523,7 +7630,6 @@ interface PropertiesPanelProps {
   metaPixelConnected: boolean
   connectedSocialProfiles: ConnectedSocialProfile[]
   loadingSocialProfiles: boolean
-  showSocialProfile: boolean
   onPatchSite: (patch: Partial<PublicSite>) => void
   onPatchTheme: (patch: Partial<SiteTheme>) => void
   onSaveSite: () => void
@@ -7668,16 +7774,11 @@ const PageInspector: React.FC<{
   pages: SitePage[]
   activePageId: string
   metaPixelConnected: boolean
-  connectedSocialProfiles: ConnectedSocialProfile[]
-  loadingSocialProfiles: boolean
-  showSocialProfile: boolean
   onPatchSite: (patch: Partial<PublicSite>) => void
   onPatchTheme: (patch: Partial<SiteTheme>) => void
   onSaveSite: () => void
-}> = ({ site, pages, activePageId, metaPixelConnected, connectedSocialProfiles, loadingSocialProfiles, showSocialProfile, onPatchSite, onPatchTheme, onSaveSite }) => {
+}> = ({ site, pages, activePageId, metaPixelConnected, onPatchSite, onPatchTheme, onSaveSite }) => {
   const theme = site.theme || {}
-  const currentId = resolveTemplateId(site)
-  const platform = platformChromeFor(currentId)
   const activePage = pages.find(page => page.id === activePageId) || pages[0] || null
   const activePageEventName = activePage?.metaCapiEnabled
     ? normalizeMetaEventName(activePage.metaEventName, 'none')
@@ -7694,59 +7795,14 @@ const PageInspector: React.FC<{
       )))
     })
   }
-  const connectedProfilesForPlatform = platform
-    ? connectedSocialProfiles.filter(profile => profile.platform === platform)
-    : []
-  const selectedConnectedProfileId = theme.socialSourceProfileId || ''
-  const selectedConnectedProfile = connectedProfilesForPlatform.find(profile => profile.id === selectedConnectedProfileId) || null
-  const preferredConnectedProfile = selectedConnectedProfile
-    || connectedProfilesForPlatform.find(profile => profile.isConfiguredPage)
-    || connectedProfilesForPlatform[0]
-    || null
-  const connectedProfileLocked = Boolean(selectedConnectedProfile && theme.socialAutoSync === true)
-  const connectedProfilesKey = connectedProfilesForPlatform
-    .map(profile => `${profile.id}:${profile.updatedAt || ''}:${profile.followersLabel || ''}`)
-    .join('|')
-
-  useEffect(() => {
-    if (!showSocialProfile || !platform || platform === 'tiktok' || loadingSocialProfiles) return
-    if (theme.socialAutoSync === false) return
-    if (!preferredConnectedProfile) return
-
-    const nextPatch = connectedThemeProfilePatch(preferredConnectedProfile)
-    const alreadySynced =
-      theme.socialSourceProfileId === preferredConnectedProfile.id
-      && theme.socialSyncedAt === nextPatch.socialSyncedAt
-      && theme.brandName === nextPatch.brandName
-      && theme.brandAvatar === nextPatch.brandAvatar
-      && theme.followers === nextPatch.followers
-
-    if (alreadySynced) return
-    onPatchTheme(nextPatch)
-    window.setTimeout(onSaveSite, 0)
-  }, [
-    showSocialProfile,
-    platform,
-    loadingSocialProfiles,
-    connectedProfilesKey,
-    preferredConnectedProfile?.id,
-    theme.socialAutoSync,
-    theme.socialSourceProfileId,
-    theme.socialSyncedAt,
-    theme.brandName,
-    theme.brandAvatar,
-    theme.followers
-  ])
-
   return (
     <aside className={styles.propertiesPanel}>
       <div className={styles.panelHeader}>
-        <strong>{platform && showSocialProfile ? 'Perfil de red social' : 'Pagina'}</strong>
+        <strong>Pagina</strong>
         <span>{isLanding(site) ? 'Sitio embudo' : 'Formulario'}</span>
       </div>
       <div className={styles.propertiesBody}>
-        {!(platform && showSocialProfile) && (
-          <>
+        <>
             <div className={styles.settingsGroup}>
               <div className={styles.panelSubheader}>Colores</div>
           <div className={styles.twoColumn}>
@@ -7836,8 +7892,8 @@ const PageInspector: React.FC<{
               onCommit={onSaveSite}
             />
           </div>
-          <div className={styles.panelSubheader}>Borde de pagina</div>
-          <div className={styles.twoColumn}>
+	          <div className={styles.panelSubheader}>Borde de pagina</div>
+	          <div className={styles.twoColumn}>
             <DimensionField
               label="Grosor"
               value={getThemeNumber(theme, 'pageBorderWidth', 0, 0, 12)}
@@ -7950,11 +8006,7 @@ const PageInspector: React.FC<{
                   ))}
                 </select>
               </label>
-              <label className={styles.field}>
-                <span>Texto del boton de envio</span>
-                <input value={theme.submitText || ''} placeholder="Enviar" onChange={(event) => onPatchTheme({ submitText: event.target.value })} onBlur={onSaveSite} />
-              </label>
-              {isStandardForm(site) && (
+	              {isStandardForm(site) && (
                 <>
                   <label className={styles.field}>
                     <span>Al enviar formulario</span>
@@ -7993,110 +8045,7 @@ const PageInspector: React.FC<{
             </>
           )}
         </div>
-          </>
-        )}
-
-        {platform && showSocialProfile && (
-          <div className={styles.settingsGroup}>
-            <div className={styles.panelSubheader}>Perfil de red social</div>
-            <label className={styles.field}>
-              <span>Red social</span>
-              <select
-                value={platform}
-                onChange={(event) => onPatchTheme({
-                  template: event.target.value as SiteTemplateId,
-                  socialAutoSync: false,
-                  socialSourceProfileId: '',
-                  socialSourcePlatform: '',
-                  socialSourceId: '',
-                  socialSourcePageId: '',
-                  socialSourceName: ''
-                })}
-                onBlur={onSaveSite}
-              >
-                <option value="facebook">Facebook</option>
-                <option value="instagram">Instagram</option>
-                <option value="tiktok">TikTok</option>
-              </select>
-            </label>
-            <label className={styles.field}>
-              <span>Perfil conectado</span>
-              <select
-                value={selectedConnectedProfileId}
-                disabled={loadingSocialProfiles || platform === 'tiktok' || connectedProfilesForPlatform.length === 0}
-                onChange={(event) => {
-                  const profile = connectedProfilesForPlatform.find(item => item.id === event.target.value)
-                  if (profile) {
-                    onPatchTheme(connectedThemeProfilePatch(profile))
-                    window.setTimeout(onSaveSite, 0)
-                    return
-                  }
-                  onPatchTheme({
-                    socialAutoSync: false,
-                    socialSourceProfileId: '',
-                    socialSourcePlatform: '',
-                    socialSourceId: '',
-                    socialSourcePageId: '',
-                    socialSourceName: ''
-                  })
-                }}
-                onBlur={onSaveSite}
-              >
-                <option value="">{loadingSocialProfiles ? 'Buscando perfiles...' : 'Escribir manualmente'}</option>
-                {connectedProfilesForPlatform.map(profile => (
-                  <option key={profile.id} value={profile.id}>{socialProfileOptionLabel(profile)}</option>
-                ))}
-              </select>
-            </label>
-            <p className={styles.muted}>
-              {connectedProfileLocked
-                ? 'Estos datos vienen de Meta y se actualizan una vez al dia.'
-                : platform === 'tiktok'
-                  ? 'TikTok se llena manualmente porque no viene desde el token de Meta.'
-                  : 'Si Meta ya tiene una pagina conectada, se selecciona aqui y los datos quedan bloqueados.'}
-            </p>
-            <label className={styles.field}>
-              <span>Nombre que se vera</span>
-              <input
-                value={theme.brandName || ''}
-                placeholder={site.title || site.name}
-                disabled={connectedProfileLocked}
-                onChange={(event) => onPatchTheme({ brandName: event.target.value })}
-                onBlur={onSaveSite}
-              />
-            </label>
-            <label className={styles.field}>
-              <span>Texto secundario</span>
-              <input
-                value={theme.brandSubtitle || ''}
-                placeholder={platform === 'instagram' ? 'Publicacion pagada' : 'Patrocinado'}
-                disabled={connectedProfileLocked}
-                onChange={(event) => onPatchTheme({ brandSubtitle: event.target.value })}
-                onBlur={onSaveSite}
-              />
-            </label>
-            <label className={styles.field}>
-              <span>Foto de perfil (URL)</span>
-              <input
-                value={theme.brandAvatar || ''}
-                placeholder="Pega la liga de la imagen"
-                disabled={connectedProfileLocked}
-                onChange={(event) => onPatchTheme({ brandAvatar: event.target.value })}
-                onBlur={onSaveSite}
-              />
-            </label>
-            <label className={styles.field}>
-              <span>Seguidores</span>
-              <input
-                value={theme.followers || ''}
-                placeholder={connectedProfileLocked ? 'Se llena desde Meta' : '12 mil'}
-                disabled={connectedProfileLocked}
-                onChange={(event) => onPatchTheme({ followers: event.target.value })}
-                onBlur={onSaveSite}
-              />
-            </label>
-          </div>
-        )}
+        </>
       </div>
     </aside>
   )
@@ -8113,7 +8062,6 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   metaPixelConnected,
   connectedSocialProfiles,
   loadingSocialProfiles,
-  showSocialProfile,
   onPatchSite,
   onPatchTheme,
   onSaveSite,
@@ -8130,9 +8078,6 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
         pages={pages}
         activePageId={activePageId}
         metaPixelConnected={metaPixelConnected}
-        connectedSocialProfiles={connectedSocialProfiles}
-        loadingSocialProfiles={loadingSocialProfiles}
-        showSocialProfile={showSocialProfile}
         onPatchSite={onPatchSite}
         onPatchTheme={onPatchTheme}
         onSaveSite={onSaveSite}
@@ -8241,6 +8186,8 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
             calendars={calendars}
             pages={pages}
             activePageId={activePageId}
+            connectedSocialProfiles={connectedSocialProfiles}
+            loadingSocialProfiles={loadingSocialProfiles}
             onPatchSettings={onPatchSettings}
             onSave={onSave}
           />
@@ -8386,6 +8333,8 @@ interface LandingBlockSettingsProps {
   calendars: CalendarType[]
   pages: SitePage[]
   activePageId: string
+  connectedSocialProfiles: ConnectedSocialProfile[]
+  loadingSocialProfiles: boolean
   onPatchSettings: (patch: Record<string, unknown>) => void
   onSave: () => void
 }
@@ -8431,7 +8380,7 @@ const ButtonActionFields: React.FC<{
   )
 }
 
-const LandingBlockSettings: React.FC<LandingBlockSettingsProps> = ({ site, block, forms, calendars, pages, activePageId, onPatchSettings, onSave }) => {
+const LandingBlockSettings: React.FC<LandingBlockSettingsProps> = ({ site, block, forms, calendars, pages, activePageId, connectedSocialProfiles, loadingSocialProfiles, onPatchSettings, onSave }) => {
   const settings = block.settings || {}
 
   if (isPanelBlock(block)) {
@@ -8518,19 +8467,67 @@ const LandingBlockSettings: React.FC<LandingBlockSettingsProps> = ({ site, block
   }
 
   if (block.blockType === 'social_profile') {
-    const platform = normalizeSocialPlatform(settings.platform)
+    const platform = normalizeSocialPlatform(settings.platform || platformChromeFor(resolveTemplateId(site)))
+    const connectedProfilesForPlatform = connectedSocialProfiles.filter(profile => profile.platform === platform)
+    const selectedConnectedProfileId = getSettingString(settings, 'socialSourceProfileId')
 
     return (
       <div className={styles.settingsGroup}>
-        <div className={styles.panelSubheader}>Perfil social</div>
+        <div className={styles.panelSubheader}>Perfil de red social</div>
         <label className={styles.field}>
           <span>Red social</span>
-          <select value={platform} onChange={(event) => onPatchSettings({ platform: event.target.value })} onBlur={onSave}>
+          <select
+            value={platform}
+            onChange={(event) => onPatchSettings({
+              platform: event.target.value,
+              socialAutoSync: false,
+              socialSourceProfileId: '',
+              socialSourcePlatform: '',
+              socialSourceId: '',
+              socialSourcePageId: '',
+              socialSourceName: ''
+            })}
+            onBlur={onSave}
+          >
             {socialPlatformOptions.map(option => (
               <option key={option.value} value={option.value}>{option.label}</option>
             ))}
           </select>
         </label>
+        <label className={styles.field}>
+          <span>Perfil conectado</span>
+          <select
+            value={selectedConnectedProfileId}
+            disabled={loadingSocialProfiles || connectedProfilesForPlatform.length === 0}
+            onChange={(event) => {
+              const profile = connectedProfilesForPlatform.find(item => item.id === event.target.value)
+              if (profile) {
+                onPatchSettings(connectedSocialProfileBlockPatch(profile))
+                window.setTimeout(onSave, 0)
+                return
+              }
+              onPatchSettings({
+                socialAutoSync: false,
+                socialSourceProfileId: '',
+                socialSourcePlatform: '',
+                socialSourceId: '',
+                socialSourcePageId: '',
+                socialSourceName: ''
+              })
+            }}
+            onBlur={onSave}
+          >
+            <option value="">{loadingSocialProfiles ? 'Buscando perfiles...' : 'Escribir manualmente'}</option>
+            {connectedProfilesForPlatform.map(profile => (
+              <option key={profile.id} value={profile.id}>{socialProfileOptionLabel(profile)}</option>
+            ))}
+          </select>
+        </label>
+        <p className={styles.muted}>
+          {connectedProfilesForPlatform.length > 0
+            ? 'Elige un perfil para llenar los datos. Despues puedes cambiar el texto, foto o seguidores aqui mismo.'
+            : 'Puedes llenar este perfil manualmente y moverlo dentro del formulario como cualquier bloque.'}
+        </p>
         <label className={styles.field}>
           <span>Nombre que se vera</span>
           <input value={getSettingString(settings, 'brandName')} placeholder={site.title || site.name || 'Tu marca'} onChange={(event) => onPatchSettings({ brandName: event.target.value })} onBlur={onSave} />

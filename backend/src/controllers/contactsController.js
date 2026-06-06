@@ -2234,6 +2234,10 @@ export const getContactJourney = async (req, res) => {
           msg.status,
           msg.error_code,
           msg.error_message,
+          msg.media_url,
+          msg.media_mime_type,
+          msg.media_filename,
+          msg.media_duration_ms,
           msg.raw_payload_json,
           COALESCE(attr.id, '') as attribution_id,
           COALESCE(attr.detected_ctwa_clid, msg.detected_ctwa_clid) as detected_ctwa_clid,
@@ -2261,7 +2265,14 @@ export const getContactJourney = async (req, res) => {
         msg.detected_source_url ||
         msg.detected_headline
       )
-      const media = getWhatsAppMediaFromPayload(msg.raw_payload_json, msg.message_type)
+      const payloadMedia = getWhatsAppMediaFromPayload(msg.raw_payload_json, msg.message_type)
+      const media = {
+        media_url: cleanString(msg.media_url) || payloadMedia.media_url,
+        media_id: payloadMedia.media_id,
+        media_mime_type: cleanString(msg.media_mime_type) || payloadMedia.media_mime_type,
+        media_filename: cleanString(msg.media_filename) || payloadMedia.media_filename,
+        media_duration_ms: Number(msg.media_duration_ms || 0) || payloadMedia.media_duration_ms
+      }
       const data = {
         source: 'WhatsApp',
         phone: msg.phone,

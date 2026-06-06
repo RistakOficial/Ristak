@@ -2355,8 +2355,33 @@
 .canvasChromeEmbedded {
   width: 100%;
   margin: 0;
-  padding: 0;
+  padding: 16px;
   gap: 12px;
+  border: 1px solid var(--rstk-border, #dbe3ef);
+  border-radius: var(--rstk-radius-lg, 16px);
+  background: var(--rstk-surface2, #f8fafc);
+}
+
+.canvasChromeEmbedded .chromeAvatar {
+  width: 56px;
+  height: 56px;
+  font-size: 1.2rem;
+}
+
+.canvasChromeEmbedded .chromeName {
+  color: var(--rstk-block-text, var(--rstk-ink, #050505));
+  font-family: var(--rstk-block-font, inherit);
+  font-size: var(--rstk-block-size, 18px);
+  font-style: var(--rstk-block-font-style, normal);
+  font-weight: var(--rstk-block-weight, 800);
+  text-decoration: var(--rstk-block-text-decoration, none);
+}
+
+.canvasChromeEmbedded .chromeSub {
+  color: color-mix(in srgb, var(--rstk-block-text, var(--rstk-ink, #050505)) 68%, var(--rstk-muted, #90949c) 32%);
+  font-family: var(--rstk-block-font, inherit);
+  font-style: var(--rstk-block-font-style, normal);
+  text-decoration: var(--rstk-block-text-decoration, none);
 }
 
 .chromeFacebook,
@@ -2964,20 +2989,6 @@
   color: var(--site-on-accent, #fff);
   font: inherit;
   font-weight: 850;
-}
-
-.socialProfileSelectable {
-  width: 100%;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  padding: 0;
-  cursor: pointer;
-}
-
-.socialProfileSelectable:hover,
-.socialProfileSelected {
-  border-color: color-mix(in srgb, var(--site-accent) 55%, transparent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--site-accent) 14%, transparent);
 }
 
 @media (max-width: 1280px) {
@@ -4935,6 +4946,13 @@
   border-radius: 8px;
   background: color-mix(in srgb, var(--color-background-primary) 96%, var(--color-primary) 4%);
   padding: 8px;
+}
+
+.gradientPanelCollapsed {
+  width: fit-content;
+  border: 0;
+  background: transparent;
+  padding: 0;
 }
 
 .gradientPanelHeader {
@@ -7675,6 +7693,104 @@
   font-size: 0.78rem;
 }
 
+/* Keep page tabs visually centered and sized like the block palette buttons. */
+.containerFocused:has(.builder) .editorToolbarSub {
+  --editor-page-tab-h: 40px;
+  min-height: 46px;
+  display: grid;
+  grid-template-columns: minmax(260px, 320px) minmax(0, 1fr) minmax(260px, 320px);
+  align-items: center;
+  gap: 12px;
+  padding: 3px 1px;
+}
+
+.containerFocused:has(.builder) .editorToolbarSub::after {
+  content: "";
+  min-width: 0;
+  height: 1px;
+}
+
+.containerFocused:has(.builder) .seoToolbarButton {
+  height: var(--editor-page-tab-h);
+  justify-self: start;
+  padding-inline: 12px;
+}
+
+.containerFocused:has(.builder) .editorInlinePages {
+  min-width: 0;
+  justify-self: center;
+  width: min(100%, 760px);
+  justify-content: center;
+}
+
+.containerFocused:has(.builder) .editorInlinePages .pagesPanel {
+  min-height: var(--editor-page-tab-h);
+  justify-content: center;
+}
+
+.containerFocused:has(.builder) .editorInlinePages .pageList {
+  width: auto;
+  max-width: 100%;
+  justify-content: center;
+  gap: 8px;
+  padding-inline: 0;
+}
+
+.containerFocused:has(.builder) .editorInlinePages .pageItemWrap {
+  grid-template-columns: minmax(150px, 206px);
+}
+
+.containerFocused:has(.builder) .editorInlinePages .pageItem {
+  height: var(--editor-page-tab-h);
+  min-height: var(--editor-page-tab-h);
+  grid-template-columns: 16px minmax(0, 1fr) 28px;
+  gap: 8px;
+  border-radius: 8px;
+  padding: 0 10px;
+  font-size: 0.82rem;
+}
+
+.containerFocused:has(.builder) .editorInlinePages .pageMenuButton {
+  width: 28px;
+  height: 28px;
+  min-height: 28px;
+  border-radius: 7px;
+}
+
+.containerFocused:has(.builder) .editorInlinePages .pageFlowArrow {
+  width: 16px;
+  min-height: var(--editor-page-tab-h);
+}
+
+.containerFocused:has(.builder) .editorInlinePages .addPageButton {
+  height: var(--editor-page-tab-h);
+  min-height: var(--editor-page-tab-h);
+  border-radius: 8px;
+  padding: 0 12px;
+  font-size: 0.82rem;
+}
+
+@media (max-width: 1180px) {
+  .containerFocused:has(.builder) .editorToolbarSub {
+    display: flex;
+    min-height: 44px;
+  }
+
+  .containerFocused:has(.builder) .editorToolbarSub::after {
+    content: none;
+  }
+
+  .containerFocused:has(.builder) .editorInlinePages {
+    width: auto;
+    justify-content: flex-start;
+  }
+
+  .containerFocused:has(.builder) .editorInlinePages .pagesPanel,
+  .containerFocused:has(.builder) .editorInlinePages .pageList {
+    justify-content: flex-start;
+  }
+}
+
 .propertiesPanel .metaCard {
   width: 100%;
   justify-content: space-between;
@@ -7856,5 +7972,76 @@
   .containerEditorFocus .builderGridForm {
     grid-template-columns: minmax(210px, 240px) minmax(420px, 1fr) minmax(270px, 320px) !important;
     overflow-x: auto;
+  }
+}
+
+/* Final height correction for the sites editor.
+   The app header is hidden while editing, so the editor must use the full
+   viewport instead of subtracting --header-height again. */
+@media (min-width: 1181px) {
+  .pageFrame:has(.containerFocused .builder),
+  .pageFrame .containerFocused:has(.builder) {
+    height: 100dvh;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .pageFrame .containerFocused:has(.builder) {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    margin: 0 auto;
+    padding: 0;
+  }
+
+  .pageFrame .containerFocused:has(.builder) .sitesShellFocused,
+  .pageFrame .containerFocused:has(.builder) .mainSurface,
+  .pageFrame .containerFocused:has(.builder) .builder,
+  .pageFrame .containerFocused:has(.builder) .builderGrid {
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .pageFrame .containerFocused:has(.builder) .builderGrid {
+    align-items: stretch;
+  }
+
+  .pageFrame .containerFocused:has(.builder) .blocksRail,
+  .pageFrame .containerFocused:has(.builder) .canvasColumn,
+  .pageFrame .containerFocused:has(.builder) .propertiesPanel {
+    height: 100%;
+    min-height: 0;
+    max-height: 100%;
+  }
+
+  .pageFrame .containerFocused:has(.builder) .blocksRail,
+  .pageFrame .containerFocused:has(.builder) .propertiesPanel {
+    position: relative;
+    top: auto;
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+
+  .pageFrame .containerFocused:has(.builder) .canvasColumn {
+    display: grid;
+    grid-template-rows: minmax(0, 1fr);
+    overflow: hidden;
+  }
+
+  .pageFrame .containerFocused:has(.builder):not(.containerEditorFocus) :global(.canvasViewport),
+  .pageFrame .containerEditorFocus.containerFocused:has(.builder) :global(.canvasViewport) {
+    height: 100% !important;
+    min-height: 0 !important;
+    max-height: 100% !important;
+  }
+
+  .pageFrame .containerEditorFocus.containerFocused:has(.builder),
+  .pageFrame .containerEditorFocus .blocksRail,
+  .pageFrame .containerEditorFocus .propertiesPanel {
+    max-height: 100dvh;
+  }
+
+  .pageFrame .containerEditorFocus .focusModeBar {
+    top: 8px;
   }
 }

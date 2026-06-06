@@ -1317,6 +1317,10 @@ async function initTables() {
         direction TEXT,
         message_type TEXT,
         message_text TEXT,
+        media_url TEXT,
+        media_mime_type TEXT,
+        media_filename TEXT,
+        media_duration_ms INTEGER,
         status TEXT,
         error_code TEXT,
         error_message TEXT,
@@ -1343,7 +1347,11 @@ async function initTables() {
 
     for (const [columnName, columnType] of [
       ['business_phone_number_id', 'TEXT'],
-      ['transport', "TEXT DEFAULT 'api'"]
+      ['transport', "TEXT DEFAULT 'api'"],
+      ['media_url', 'TEXT'],
+      ['media_mime_type', 'TEXT'],
+      ['media_filename', 'TEXT'],
+      ['media_duration_ms', 'INTEGER']
     ]) {
       try {
         await db.run(`ALTER TABLE whatsapp_api_messages ADD COLUMN ${columnName} ${columnType}`)

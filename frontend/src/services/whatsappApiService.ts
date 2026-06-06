@@ -177,6 +177,7 @@ export interface WhatsAppApiImageSendPayload {
   imageUrl?: string
   caption?: string
   externalId?: string
+  transport?: 'api' | 'qr'
   phoneNumberId?: string
 }
 

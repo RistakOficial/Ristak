@@ -328,6 +328,25 @@ function requirePublicHttpsBaseUrl(baseUrl = '') {
   return normalized
 }
 
+function buildLocalMediaUrl(localMedia, publicBaseUrl = '') {
+  const publicPath = cleanString(localMedia?.publicPath)
+  if (!publicPath) return ''
+
+  const baseUrl = normalizePublicBaseUrl(publicBaseUrl || process.env.RENDER_EXTERNAL_URL || process.env.PUBLIC_URL)
+  if (!baseUrl) return publicPath
+
+  try {
+    const parsed = new URL(baseUrl)
+    if (parsed.protocol === 'https:' || parsed.protocol === 'http:') {
+      return `${baseUrl}${publicPath}`
+    }
+  } catch {
+    return publicPath
+  }
+
+  return publicPath
+}
+
 function parseImageDataUrl(value = '') {
   const match = cleanString(value).match(/^data:(image\/(?:jpeg|jpg|png|webp));base64,([a-z0-9+/=\s]+)$/i)
   if (!match) {
@@ -2172,6 +2191,37 @@ function extractMessageText(message = {}) {
   )
 }
 
+function extractMessageMedia(message = {}) {
+  const messageType = cleanString(message.type).toLowerCase()
+  const candidates = [
+    messageType ? message[messageType] : null,
+    message.image,
+    message.audio,
+    message.video,
+    message.document,
+    message.sticker,
+    message.media,
+    message.file
+  ].filter(isPlainObject)
+  const media = candidates[0] || null
+
+  if (!media) {
+    return {
+      mediaUrl: '',
+      mediaMimeType: '',
+      mediaFilename: '',
+      mediaDurationMs: null
+    }
+  }
+
+  return {
+    mediaUrl: cleanString(media.link || media.url || media.href || media.publicUrl || media.downloadUrl),
+    mediaMimeType: cleanString(media.mimeType || media.mime_type || media.mimetype || media.contentType),
+    mediaFilename: cleanString(media.filename || media.fileName || media.name),
+    mediaDurationMs: Number(media.durationMs || media.duration_ms || 0) || null
+  }
+}
+
 function findReferralObject(payload = {}, message = {}) {
   const candidates = [
     message.referral,
@@ -2529,18 +2579,20 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
   const errorCode = cleanString(error?.code || normalizedMessage.errorCode)
   const errorMessage = cleanString(error?.message || error?.title || normalizedMessage.errorMessage)
   const messageType = cleanString(normalizedMessage.type) || 'unknown'
+  const media = extractMessageMedia(normalizedMessage)
 
   await db.run(`
     INSERT INTO whatsapp_api_messages (
       id, ycloud_message_id, wamid, waba_id, business_phone_number_id,
       whatsapp_api_contact_id, contact_id,
       phone, from_phone, to_phone, business_phone, transport, direction, message_type,
-      message_text, status, error_code, error_message, message_timestamp,
+      message_text, media_url, media_mime_type, media_filename, media_duration_ms,
+      status, error_code, error_message, message_timestamp,
       raw_payload_json, context_json, referral_json,
       detected_ctwa_clid, detected_source_id, detected_source_url, detected_source_type,
       detected_source_app, detected_entry_point, detected_headline, detected_body,
       detected_conversion_data, detected_ctwa_payload, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
     ON CONFLICT(id) DO UPDATE SET
       business_phone_number_id = COALESCE(excluded.business_phone_number_id, whatsapp_api_messages.business_phone_number_id),
       whatsapp_api_contact_id = COALESCE(excluded.whatsapp_api_contact_id, whatsapp_api_messages.whatsapp_api_contact_id),
@@ -2553,6 +2605,10 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
       direction = COALESCE(NULLIF(excluded.direction, ''), whatsapp_api_messages.direction),
       message_type = COALESCE(NULLIF(excluded.message_type, ''), whatsapp_api_messages.message_type),
       message_text = COALESCE(NULLIF(excluded.message_text, ''), whatsapp_api_messages.message_text),
+      media_url = COALESCE(NULLIF(excluded.media_url, ''), whatsapp_api_messages.media_url),
+      media_mime_type = COALESCE(NULLIF(excluded.media_mime_type, ''), whatsapp_api_messages.media_mime_type),
+      media_filename = COALESCE(NULLIF(excluded.media_filename, ''), whatsapp_api_messages.media_filename),
+      media_duration_ms = COALESCE(excluded.media_duration_ms, whatsapp_api_messages.media_duration_ms),
       status = COALESCE(NULLIF(excluded.status, ''), whatsapp_api_messages.status),
       error_code = COALESCE(NULLIF(excluded.error_code, ''), whatsapp_api_messages.error_code),
       error_message = COALESCE(NULLIF(excluded.error_message, ''), whatsapp_api_messages.error_message),
@@ -2587,6 +2643,10 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
     identity.direction,
     messageType,
     messageText || null,
+    media.mediaUrl || null,
+    media.mediaMimeType || null,
+    media.mediaFilename || null,
+    media.mediaDurationMs,
     status || null,
     errorCode || null,
     errorMessage || null,
@@ -3503,18 +3563,25 @@ async function sendTextViaQrFallback({ fromPhone, toPhone, body, externalId, pho
   }
 }
 
-async function sendImageViaQrFallback({ fromPhone, toPhone, requestImage, imageDataUrl, externalId, phoneNumberId, localMedia, fallbackReason, originalError } = {}) {
+async function sendImageViaQrFallback({ fromPhone, toPhone, requestImage, imageDataUrl, externalId, phoneNumberId, localMedia, publicBaseUrl, fallbackReason, originalError } = {}) {
   try {
+    const localMediaUrl = buildLocalMediaUrl(localMedia, publicBaseUrl)
     const response = await sendWhatsAppQrImageMessage({
       phoneNumberId,
       from: fromPhone,
       to: toPhone,
       imageDataUrl,
-      imageUrl: requestImage?.link,
+      imageUrl: requestImage?.link || localMediaUrl,
       caption: requestImage?.caption,
       externalId
     })
-    const finalImage = response.image || requestImage
+    const finalImage = {
+      ...(requestImage || {}),
+      ...(response.image || {}),
+      link: cleanString(response.image?.link || requestImage?.link || localMediaUrl),
+      mimeType: cleanString(response.image?.mimeType || requestImage?.mimeType || localMedia?.mimeType),
+      ...(requestImage?.caption || response.image?.caption ? { caption: requestImage?.caption || response.image?.caption } : {})
+    }
 
     await upsertMessage({
       payload: {
@@ -3541,7 +3608,9 @@ async function sendImageViaQrFallback({ fromPhone, toPhone, requestImage, imageD
     return {
       ...decorateQrFallbackResponse(response, fallbackReason),
       image: finalImage,
-      localMedia
+      localMedia: localMedia
+        ? { ...localMedia, publicUrl: localMediaUrl }
+        : localMedia
     }
   } catch (fallbackError) {
     if (originalError) throw buildQrFallbackError(originalError, fallbackError)
@@ -3705,11 +3774,13 @@ export async function sendWhatsAppApiImageMessage({
   imageUrl,
   caption,
   externalId,
+  transport = 'api',
   publicBaseUrl,
   phoneNumberId
 } = {}) {
   const config = await loadConfig({ includeSecrets: true })
-  if (!config.enabled || !config.apiKey) {
+  const cleanTransport = cleanString(transport).toLowerCase() === 'qr' ? 'qr' : 'api'
+  if (cleanTransport !== 'qr' && (!config.enabled || !config.apiKey)) {
     throw new Error('WhatsApp_API no está conectado')
   }
 
@@ -3725,12 +3796,16 @@ export async function sendWhatsAppApiImageMessage({
   let savedImage = null
 
   if (!link) {
-    const baseUrl = requirePublicHttpsBaseUrl(publicBaseUrl || process.env.RENDER_EXTERNAL_URL || process.env.PUBLIC_URL)
     savedImage = await saveWhatsAppImageDataUrl(imageDataUrl)
-    link = `${baseUrl}${savedImage.publicPath}`
+    if (cleanTransport === 'qr') {
+      link = buildLocalMediaUrl(savedImage, publicBaseUrl)
+    } else {
+      const baseUrl = requirePublicHttpsBaseUrl(publicBaseUrl || process.env.RENDER_EXTERNAL_URL || process.env.PUBLIC_URL)
+      link = `${baseUrl}${savedImage.publicPath}`
+    }
   }
 
-  if (!/^https:\/\//i.test(link)) {
+  if (cleanTransport !== 'qr' && !/^https:\/\//i.test(link)) {
     throw new Error('La foto necesita un enlace público HTTPS para poder enviarse por WhatsApp.')
   }
 
@@ -3747,6 +3822,22 @@ export async function sendWhatsAppApiImageMessage({
     ...(externalId ? { externalId } : {})
   }
 
+  if (cleanTransport === 'qr') {
+    return sendImageViaQrFallback({
+      phoneNumberId,
+      fromPhone,
+      toPhone,
+      requestImage: {
+        ...requestBody.image,
+        ...(savedImage?.mimeType ? { mimeType: savedImage.mimeType } : {})
+      },
+      imageDataUrl,
+      externalId,
+      localMedia: savedImage,
+      publicBaseUrl
+    })
+  }
+
   const fallbackDecision = await getOfficialApiFallbackDecision({
     config,
     fromPhone,
@@ -3761,6 +3852,7 @@ export async function sendWhatsAppApiImageMessage({
       imageDataUrl,
       externalId,
       localMedia: savedImage,
+      publicBaseUrl,
       fallbackReason: fallbackDecision.reason
     })
   }
@@ -3789,6 +3881,7 @@ export async function sendWhatsAppApiImageMessage({
         imageDataUrl,
         externalId,
         localMedia: savedImage,
+        publicBaseUrl,
         fallbackReason: retryDecision.reason,
         originalError: error
       })

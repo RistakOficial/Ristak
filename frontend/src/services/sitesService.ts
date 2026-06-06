@@ -321,7 +321,7 @@ export const blockLabels: Record<SiteBlockType, string> = {
   testimonials: 'Testimonios',
   services: 'Servicios',
   form_embed: 'Formulario embebido',
-  social_profile: 'Perfil social',
+  social_profile: 'Perfil de red social',
   faq: 'Preguntas frecuentes',
   cta: 'CTA final',
   short_text: 'Respuesta corta',

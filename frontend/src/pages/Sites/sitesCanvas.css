@@ -112,11 +112,23 @@
 .rstkCanvas .rstk-block-style .rstk-headline,
 .rstkCanvas .rstk-block-style h2,
 .rstkCanvas .rstk-block-style label,
-.rstkCanvas .rstk-block-style strong { color: var(--rstk-block-text, var(--rstk-ink)); }
+.rstkCanvas .rstk-block-style strong,
+.rstkCanvas .rstk-block-style .rstk-social-name { color: var(--rstk-block-text, var(--rstk-ink)); }
 .rstkCanvas .rstk-block-style .rstk-subheading,
 .rstkCanvas .rstk-block-style .rstk-text,
 .rstkCanvas .rstk-block-style .rstk-help,
-.rstkCanvas .rstk-block-style p { color: color-mix(in srgb, var(--rstk-block-text, var(--rstk-ink)) 68%, var(--rstk-muted) 32%); }
+.rstkCanvas .rstk-block-style p,
+.rstkCanvas .rstk-block-style .rstk-social-followers { color: color-mix(in srgb, var(--rstk-block-text, var(--rstk-ink)) 68%, var(--rstk-muted) 32%); }
+.rstkCanvas .rstk-block-style .rstk-social-name,
+.rstkCanvas .rstk-block-style .rstk-social-followers {
+  font-family: var(--rstk-block-font, var(--rstk-font));
+  font-style: var(--rstk-block-font-style, normal);
+  text-decoration: var(--rstk-block-text-decoration, none);
+}
+.rstkCanvas .rstk-block-style .rstk-social-name {
+  font-size: var(--rstk-block-size, 18px);
+  font-weight: var(--rstk-block-weight, 800);
+}
 .rstkCanvas .rstk-block-style .rstk-button-link,
 .rstkCanvas .rstk-block-style button { border-radius: var(--rstk-block-button-radius, var(--rstk-btn-radius)); }
 .rstkCanvas .rstk-block-style input,

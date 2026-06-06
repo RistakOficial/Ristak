@@ -93,6 +93,8 @@ const SITES_PUBLIC_DOMAIN_CONFIG_KEYS = {
   checkedAt: 'sites_public_domain_checked_at',
   error: 'sites_public_domain_error'
 }
+const SOCIAL_TEMPLATE_IDS = new Set(['facebook', 'instagram', 'tiktok'])
+const SOCIAL_PROFILE_BLOCK_READY_KEY = 'socialProfileBlockReady'
 
 function cleanString(value) {
   return String(value || '').trim()
@@ -130,6 +132,40 @@ function jsonString(value) {
     return JSON.stringify(value ?? null)
   } catch {
     return JSON.stringify(null)
+  }
+}
+
+function isSocialTemplate(value) {
+  return SOCIAL_TEMPLATE_IDS.has(cleanString(value))
+}
+
+function getSocialProfileDefaults(site = {}, platform = 'facebook') {
+  const theme = site.theme || {}
+  const normalizedPlatform = isSocialTemplate(platform) ? platform : 'facebook'
+
+  return {
+    platform: normalizedPlatform,
+    brandName: cleanString(theme.brandName) || cleanString(site.title) || cleanString(site.name) || 'Tu marca',
+    brandSubtitle: cleanString(theme.brandSubtitle) || (normalizedPlatform === 'instagram' ? 'Publicacion pagada' : 'Patrocinado'),
+    brandAvatar: cleanString(theme.brandAvatar),
+    followers: cleanString(theme.followers),
+    brandVerified: theme.brandVerified === undefined ? true : theme.brandVerified !== false
+  }
+}
+
+function getSocialProfileLandingSpacing() {
+  return {
+    blockMarginLinked: false,
+    blockMarginTop: 0,
+    blockMarginRight: 0,
+    blockMarginBottom: 18,
+    blockMarginLeft: 0,
+    blockPaddingLinked: true,
+    blockPadding: 0,
+    blockPaddingTop: 0,
+    blockPaddingRight: 0,
+    blockPaddingBottom: 0,
+    blockPaddingLeft: 0
   }
 }
 
@@ -514,7 +550,7 @@ async function ensureUniqueSlug(baseSlug, ignoreSiteId = null) {
   }
 }
 
-function buildDefaultBlocks(siteId, siteType, template) {
+function buildDefaultBlocks(siteId, siteType, template, siteContext = {}) {
   const tpl = cleanString(template)
   const templateHeaderPanelOverlap = -42
   const makeLandingSpacing = (top, bottom, right = 0, left = 0) => ({
@@ -548,6 +584,7 @@ function buildDefaultBlocks(siteId, siteType, template) {
     services: makeLandingSpacing(0, 0),
     faq: makeLandingSpacing(0, 0),
     form_embed: makeLandingSpacing(18, 0),
+    social_profile: getSocialProfileLandingSpacing(),
     cta: makeLandingSpacing(0, 0),
     header_panel: makeLandingSpacing(0, 0),
     footer_panel: makeLandingSpacing(0, 0)
@@ -767,6 +804,18 @@ function buildDefaultBlocks(siteId, siteType, template) {
       mediaRadius: 18,
       mediaWidth: 100,
       blockBorderWidth: 0,
+      ...settings
+    }
+  })
+  const socialProfileBlock = (sortOrder = 0, settings = {}) => makeBlock('social_profile', 'Perfil de red social', 'Perfil de red social', {
+    sortOrder,
+    settings: {
+      ...withLandingSpacing('social_profile'),
+      ...getSocialProfileDefaults({
+        name: siteContext.name,
+        title: siteContext.title,
+        theme: { ...(siteContext.theme || {}), template: tpl }
+      }, tpl),
       ...settings
     }
   })
@@ -1659,6 +1708,7 @@ function buildDefaultBlocks(siteId, siteType, template) {
         {
           settings: { blockBg: tpl === 'tiktok' ? '#000000' : '#ffffff', blockText: tpl === 'tiktok' ? '#ffffff' : '#111827', textAlign: 'center', blockPaddingTop: 46, blockPaddingBottom: 46 },
           blocks: [
+            socialProfileBlock(),
             makeBlock('hero', 'Hero', 'Conoce esta oferta y deja tus datos', {
               settings: withLandingSpacing('hero', {
                 textAlign: 'center',
@@ -1816,9 +1866,10 @@ function buildDefaultBlocks(siteId, siteType, template) {
 
     if (tpl === 'facebook' || tpl === 'instagram' || tpl === 'tiktok') {
       return [
-        makeBlock('title', 'Titulo', 'Deja tus datos y te contactamos', { sortOrder: 0 }),
-        makeBlock('subtitle', 'Subtitulo', 'Completa el formulario y un asesor te contacta en minutos.', { sortOrder: 1 }),
-        ...contactFields(2)
+        socialProfileBlock(0),
+        makeBlock('title', 'Titulo', 'Deja tus datos y te contactamos', { sortOrder: 1 }),
+        makeBlock('subtitle', 'Subtitulo', 'Completa el formulario y un asesor te contacta en minutos.', { sortOrder: 2 }),
+        ...contactFields(3)
       ]
     }
 
@@ -1962,9 +2013,10 @@ function buildDefaultBlocks(siteId, siteType, template) {
 
   if (tpl === 'facebook' || tpl === 'instagram' || tpl === 'tiktok') {
     return withStandardFormPages([
-      makeBlock('title', 'Titulo', 'Deja tus datos y te contactamos', { sortOrder: 0 }),
-      makeBlock('subtitle', 'Subtitulo', 'Completa el formulario y un asesor te contacta en minutos.', { sortOrder: 1 }),
-      ...contactFields(2)
+      socialProfileBlock(0),
+      makeBlock('title', 'Titulo', 'Deja tus datos y te contactamos', { sortOrder: 1 }),
+      makeBlock('subtitle', 'Subtitulo', 'Completa el formulario y un asesor te contacta en minutos.', { sortOrder: 2 }),
+      ...contactFields(3)
     ])
   }
 
@@ -2617,7 +2669,7 @@ export async function getSite(siteId, { includeBlocks = true, includeSubmissions
   site.trackingStats = await getSiteTrackingStats(site.id)
 
   if (includeBlocks) {
-    site.blocks = await listSiteBlocks(site.id)
+    site.blocks = await ensureSocialProfileBlock(site, await listSiteBlocks(site.id))
   }
 
   if (includeSubmissions) {
@@ -2631,7 +2683,7 @@ export async function getSitePreview(siteId) {
   const site = await getSite(siteId, { includeBlocks: false, includeSubmissions: false })
   if (!site) return null
 
-  site.blocks = await hydrateEmbeddedForms(await listSiteBlocks(site.id))
+  site.blocks = await hydrateEmbeddedForms(await ensureSocialProfileBlock(site, await listSiteBlocks(site.id)))
   return site
 }
 
@@ -2641,6 +2693,158 @@ export async function listSiteBlocks(siteId) {
     [siteId]
   )
   return rows.map(mapBlock)
+}
+
+async function markSocialProfileBlockReady(site) {
+  if (site?.theme?.[SOCIAL_PROFILE_BLOCK_READY_KEY] === true) return
+
+  site.theme = {
+    ...(site.theme || {}),
+    [SOCIAL_PROFILE_BLOCK_READY_KEY]: true
+  }
+  await db.run('UPDATE public_sites SET theme_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [
+    jsonString(site.theme),
+    site.id
+  ])
+}
+
+function isGenericSocialProfileName(value) {
+  const name = cleanString(value).toLowerCase()
+  return !name || name === 'tu marca' || name === 'perfil de red social'
+}
+
+function isGenericSocialProfileSubtitle(value) {
+  const subtitle = cleanString(value).toLowerCase()
+  return !subtitle || subtitle === 'patrocinado' || subtitle === 'publicacion pagada'
+}
+
+function isSupportedSocialPlatform(value) {
+  return ['facebook', 'instagram', 'tiktok', 'threads'].includes(cleanString(value))
+}
+
+async function refreshLegacySocialProfileBlock(site, block, platform) {
+  if (!block) return false
+
+  const settings = block.settings || {}
+  const defaults = getSocialProfileDefaults(site, platform)
+  const nextSettings = { ...settings }
+  let changed = false
+  const setIfChanged = (key, value) => {
+    if (nextSettings[key] === value) return
+    nextSettings[key] = value
+    changed = true
+  }
+
+  if (!isSupportedSocialPlatform(settings.platform)) {
+    const sourcePlatform = isSupportedSocialPlatform(settings.socialSourcePlatform)
+      ? cleanString(settings.socialSourcePlatform)
+      : defaults.platform
+    setIfChanged('platform', sourcePlatform)
+  }
+  if (isGenericSocialProfileName(settings.brandName) && cleanString(defaults.brandName)) {
+    setIfChanged('brandName', defaults.brandName)
+  }
+  if (isGenericSocialProfileSubtitle(settings.brandSubtitle) && cleanString(defaults.brandSubtitle)) {
+    setIfChanged('brandSubtitle', defaults.brandSubtitle)
+  }
+  if (!cleanString(settings.brandAvatar) && cleanString(defaults.brandAvatar)) {
+    setIfChanged('brandAvatar', defaults.brandAvatar)
+  }
+  if (!cleanString(settings.followers) && cleanString(defaults.followers)) {
+    setIfChanged('followers', defaults.followers)
+  }
+  if (settings.brandVerified === undefined && defaults.brandVerified !== undefined) {
+    setIfChanged('brandVerified', defaults.brandVerified)
+  }
+
+  if (!changed) return false
+
+  await db.run(
+    'UPDATE public_site_blocks SET settings_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND site_id = ?',
+    [jsonString(nextSettings), block.id, site.id]
+  )
+  return true
+}
+
+async function ensureSocialProfileBlock(site, currentBlocks = null) {
+  const template = cleanString(site?.theme?.template)
+  const blocks = Array.isArray(currentBlocks) ? currentBlocks : await listSiteBlocks(site.id)
+
+  if (!site || !isSocialTemplate(template)) return blocks
+
+  const pages = normalizeSitePages(site)
+  const entryPageId = pages[0]?.id || DEFAULT_FUNNEL_PAGE_ID
+  const existingProfile = blocks.find(block => block.blockType === 'social_profile')
+
+  if (existingProfile) {
+    const refreshed = await refreshLegacySocialProfileBlock(site, existingProfile, template)
+    await markSocialProfileBlockReady(site)
+    return refreshed ? listSiteBlocks(site.id) : blocks
+  }
+
+  if (site.theme?.[SOCIAL_PROFILE_BLOCK_READY_KEY] === true) {
+    return blocks
+  }
+
+  const pageBlocks = blocks
+    .filter(block => getBlockPageId(block, pages) === entryPageId)
+    .sort((a, b) => a.sortOrder - b.sortOrder)
+
+  const id = crypto.randomUUID()
+  const firstSection = site.siteType === 'landing_page' ? pageBlocks.find(isSectionBlock) : null
+  const baseSettings = getSocialProfileDefaults(site, template)
+  const settings = {
+    ...(site.siteType === 'landing_page' ? getSocialProfileLandingSpacing() : {}),
+    ...baseSettings,
+    pageId: entryPageId,
+    ...(firstSection ? { sectionId: firstSection.id, sectionColumn: 0 } : {})
+  }
+
+  await db.run(`
+    INSERT INTO public_site_blocks (
+      id, site_id, block_type, label, content, placeholder, required,
+      options_json, settings_json, sort_order, created_at, updated_at
+    ) VALUES (?, ?, 'social_profile', ?, ?, '', 0, ?, ?, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+  `, [
+    id,
+    site.id,
+    'Perfil de red social',
+    'Perfil de red social',
+    jsonString([]),
+    jsonString(settings)
+  ])
+
+  const nextBlocks = await listSiteBlocks(site.id)
+  const nextPageBlocks = nextBlocks
+    .filter(block => getBlockPageId(block, pages) === entryPageId)
+    .sort((a, b) => a.sortOrder - b.sortOrder)
+  const inserted = nextPageBlocks.find(block => block.id === id)
+
+  if (inserted) {
+    const withoutInserted = nextPageBlocks.filter(block => block.id !== id)
+    const sectionIndex = firstSection ? withoutInserted.findIndex(block => block.id === firstSection.id) : -1
+    const headerIndex = withoutInserted.findIndex(block => block.blockType === 'header_panel')
+    const insertIndex = sectionIndex >= 0
+      ? sectionIndex + 1
+      : headerIndex >= 0
+        ? headerIndex + 1
+        : 0
+    const orderedBlocks = [
+      ...withoutInserted.slice(0, insertIndex),
+      inserted,
+      ...withoutInserted.slice(insertIndex)
+    ]
+
+    for (const [index, block] of orderedBlocks.entries()) {
+      await db.run(
+        'UPDATE public_site_blocks SET sort_order = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND site_id = ?',
+        [index, block.id, site.id]
+      )
+    }
+  }
+
+  await markSocialProfileBlockReady(site)
+  return listSiteBlocks(site.id)
 }
 
 export async function listSiteSubmissions(siteId) {
@@ -2693,6 +2897,9 @@ export async function createSite(input = {}) {
   } else if (siteType === 'interactive_form' && (!Array.isArray(theme.pages) || theme.pages.length === 0)) {
     theme.pages = normalizeSitePages({ theme: {} })
   }
+  if (isSocialTemplate(theme.template)) {
+    theme[SOCIAL_PROFILE_BLOCK_READY_KEY] = true
+  }
   const status = validateSiteStatus(input.status || 'draft')
 
   await db.run(`
@@ -2715,7 +2922,7 @@ export async function createSite(input = {}) {
   ])
 
   if (!blankCanvas) {
-    for (const block of buildDefaultBlocks(id, siteType, theme.template)) {
+    for (const block of buildDefaultBlocks(id, siteType, theme.template, { name, title, theme })) {
       await db.run(`
         INSERT INTO public_site_blocks (
           id, site_id, block_type, label, content, placeholder, required,
@@ -3401,7 +3608,7 @@ export async function resolvePublicSiteForHost(hostValue, { forceRefresh = false
     return { ok: false, status: 404, reason: 'site_not_published', message: 'Este site no esta publicado', site }
   }
 
-  site.blocks = await hydrateEmbeddedForms(await listSiteBlocks(site.id))
+  site.blocks = await hydrateEmbeddedForms(await ensureSocialProfileBlock(site, await listSiteBlocks(site.id)))
   site.domain = domainResolution.domain || host
   return { ok: true, site, host, domain: domainResolution.domain || host, path }
 }
@@ -5332,37 +5539,17 @@ function getSocialPlatformIcon(platform) {
   return ''
 }
 
-function renderBrandChrome(template, brand) {
-  const platform = template.chrome
-  if (platform === 'facebook' || platform === 'instagram' || platform === 'tiktok') {
-    const platformLabel = platform === 'facebook' ? 'Facebook' : platform === 'instagram' ? 'Instagram' : 'TikTok'
-    const secondary = brand.followers ? `${escapeHtml(brand.followers)} seguidores` : escapeHtml(brand.subtitle)
-    return `
-      <header class="rstk-chrome rstk-social-profile rstk-social-profile-${platform}" aria-label="Perfil de ${platformLabel}">
-        <div class="rstk-social-image">
-          ${renderAvatar(brand)}
-          <span class="rstk-social-platform rstk-social-platform-${platform}" aria-hidden="true">${getSocialPlatformIcon(platform)}</span>
-        </div>
-        <div class="rstk-social-details">
-          <div class="rstk-social-name">${escapeHtml(brand.name)}${brand.verified ? RSTK_ICONS.verified : ''}</div>
-          <div class="rstk-social-followers">${secondary}</div>
-        </div>
-      </header>
-    `
-  }
-
-  return ''
-}
-
-function normalizeSocialPlatform(value) {
+function normalizeSocialPlatform(value, fallback = 'facebook') {
   const platform = cleanString(value)
-  return ['facebook', 'instagram', 'tiktok', 'threads'].includes(platform) ? platform : 'facebook'
+  return isSupportedSocialPlatform(platform) ? platform : fallback
 }
 
 function renderSocialProfileBlock(block, context = {}) {
   const settings = block.settings || {}
-  const platform = normalizeSocialPlatform(settings.platform)
-  const template = SITE_TEMPLATES[platform] || resolveTemplate(context.site)
+  const siteTemplate = resolveTemplate(context.site)
+  const fallbackPlatform = isSocialTemplate(siteTemplate.id) ? siteTemplate.id : 'facebook'
+  const platform = normalizeSocialPlatform(settings.platform || settings.socialSourcePlatform, fallbackPlatform)
+  const template = SITE_TEMPLATES[platform] || siteTemplate
   const siteBrand = getBrand(context.site || {}, template)
   const name = cleanString(settings.brandName) || siteBrand.name
   const subtitleDefault = platform === 'instagram' ? 'Publicacion pagada' : 'Patrocinado'
@@ -5465,11 +5652,16 @@ const RSTK_BASE_CSS = `
   .rstk-block-style .rstk-headline,
   .rstk-block-style h2,
   .rstk-block-style label,
-  .rstk-block-style strong{color:var(--rstk-block-text,var(--rstk-ink))}
+  .rstk-block-style strong,
+  .rstk-block-style .rstk-social-name{color:var(--rstk-block-text,var(--rstk-ink))}
   .rstk-block-style .rstk-subheading,
   .rstk-block-style .rstk-text,
   .rstk-block-style .rstk-help,
-  .rstk-block-style p{color:color-mix(in srgb,var(--rstk-block-text,var(--rstk-ink)) 68%,var(--rstk-muted) 32%)}
+  .rstk-block-style p,
+  .rstk-block-style .rstk-social-followers{color:color-mix(in srgb,var(--rstk-block-text,var(--rstk-ink)) 68%,var(--rstk-muted) 32%)}
+  .rstk-block-style .rstk-social-name,
+  .rstk-block-style .rstk-social-followers{font-family:var(--rstk-block-font,var(--rstk-font));font-style:var(--rstk-block-font-style,normal);text-decoration:var(--rstk-block-text-decoration,none)}
+  .rstk-block-style .rstk-social-name{font-size:var(--rstk-block-size,18px);font-weight:var(--rstk-block-weight,800)}
   .rstk-block-style .rstk-button-link,
   .rstk-block-style button{border-radius:var(--rstk-block-button-radius,var(--rstk-btn-radius))}
   .rstk-block-style input,
@@ -6163,7 +6355,6 @@ export async function renderPublicSiteHtml(site, { pageId, trackingEnabled = tru
 	    textPaint,
 	    theme
 	  })
-  const chrome = template.chrome && template.chrome !== 'none' ? renderBrandChrome(template, brand) : ''
   const footer = (hasForm && !isLandingType) ? renderLegalFooter(brand) : ''
   const bodyClass = [
     `rstk-tpl-${template.id}`,
@@ -6222,7 +6413,6 @@ export async function renderPublicSiteHtml(site, { pageId, trackingEnabled = tru
     ${pageVideo ? `<video class="rstk-bg-video" src="${escapeHtml(pageVideo)}" autoplay muted loop playsinline aria-hidden="true"></video>` : ''}
     <main class="rstk-page">
       <div class="rstk-shell">
-        ${chrome}
         ${isInteractive && hasForm && interactivePageCount > 1 ? `<div class="rstk-progress" data-progress><span class="rstk-progress-track"><span class="rstk-progress-fill" data-progress-fill></span></span><b data-progress-label>Pantalla ${interactiveInitialIndex + 1} de ${interactivePageCount}</b></div>` : ''}
         <form data-site-form data-site-id="${escapeHtml(site.id)}" data-page-id="${escapeHtml(activePage?.id || '')}" novalidate>
           ${bodyBlocks}
