@@ -10,7 +10,7 @@
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 0;
-  min-height: 66px;
+  min-height: 58px;
   padding: var(--dock-padding-y) var(--dock-padding-x);
   border: 1px solid var(--phone-chat-border, rgba(17, 24, 39, 0.08));
   border-radius: 999px;
@@ -33,7 +33,6 @@
   place-items: center;
   align-content: center;
   min-width: 0;
-  gap: 2px;
   border-radius: 999px;
   color: var(--phone-chat-text, #111111);
   text-decoration: none;
@@ -99,8 +98,8 @@
   align-items: center;
   justify-content: center;
   overflow: visible;
-  min-width: 28px;
-  min-height: 25px;
+  min-width: 32px;
+  min-height: 32px;
   transition: transform 220ms ease;
 }
 
@@ -142,11 +141,7 @@
 
     right: max(6px, env(safe-area-inset-right));
     left: max(6px, env(safe-area-inset-left));
-    min-height: 62px;
-  }
-
-  .dock span {
-    font-size: 9.5px;
+    min-height: 54px;
   }
 }
 

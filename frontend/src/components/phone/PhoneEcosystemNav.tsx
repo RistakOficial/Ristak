@@ -55,6 +55,7 @@ export const PhoneEcosystemNav: React.FC<PhoneEcosystemNavProps> = ({ active, ba
             to={to}
             className={active === key ? styles.active : undefined}
             draggable={false}
+            aria-label={label}
             aria-current={active === key ? 'page' : undefined}
             onClick={() => storePhoneNavIntent(activeIndex, clampPhoneNavIndex(itemIndex))}
           >
@@ -66,7 +67,6 @@ export const PhoneEcosystemNav: React.FC<PhoneEcosystemNavProps> = ({ active, ba
                 </i>
               )}
             </span>
-            <span>{label}</span>
           </Link>
         )
       })}

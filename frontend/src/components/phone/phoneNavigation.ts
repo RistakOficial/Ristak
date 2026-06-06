@@ -1,4 +1,4 @@
-import { BarChart3, CalendarDays, CreditCard, MessageCircle, Settings, type LucideIcon } from 'lucide-react'
+import { BarChart3, CalendarDays, CircleDollarSign, MessageCircle, Settings, type LucideIcon } from 'lucide-react'
 
 export type PhoneSection = 'chat' | 'calendar' | 'payments' | 'analytics' | 'settings'
 export type PhoneRouteDirection = 'forward' | 'back' | 'none'
@@ -14,7 +14,7 @@ export const PHONE_NAV_ITEMS: PhoneNavItem[] = [
   { key: 'settings', label: 'Ajustes', to: '/phone/settings', Icon: Settings },
   { key: 'chat', label: 'Chats', to: '/phone/chat', Icon: MessageCircle },
   { key: 'calendar', label: 'Citas', to: '/phone/calendar', Icon: CalendarDays },
-  { key: 'payments', label: 'Pagos', to: '/phone/payments', Icon: CreditCard },
+  { key: 'payments', label: 'Pagos', to: '/phone/payments', Icon: CircleDollarSign },
   { key: 'analytics', label: 'Analíticas', to: '/phone/analytics', Icon: BarChart3 }
 ]
 
