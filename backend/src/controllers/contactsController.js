@@ -90,6 +90,22 @@ const CONTACT_META_PROFILE_SELECT = `
 
 const cleanString = (value) => String(value || '').trim()
 const hasOwn = (object, key) => Object.prototype.hasOwnProperty.call(object || {}, key)
+const HIGHLEVEL_MESSAGE_REFRESH_LIMIT = 12
+const HIGHLEVEL_REFRESHABLE_STATUS = new Set(['', 'pending', 'queued', 'processing', 'scheduled', 'sent', 'accepted'])
+const HIGHLEVEL_STATUS_PRIORITY = {
+  '': 0,
+  pending: 1,
+  queued: 1,
+  processing: 1,
+  scheduled: 1,
+  sent: 2,
+  accepted: 2,
+  delivered: 3,
+  failed: 4,
+  undelivered: 4,
+  rejected: 4,
+  read: 5
+}
 
 const parseJsonObject = (value) => {
   if (!value) return null
@@ -99,6 +115,156 @@ const parseJsonObject = (value) => {
     return parsed && typeof parsed === 'object' ? parsed : null
   } catch {
     return null
+  }
+}
+
+const safeJsonStringify = (value, fallback = null) => {
+  try {
+    return JSON.stringify(value ?? null)
+  } catch {
+    return fallback
+  }
+}
+
+const normalizeHighLevelConversationStatus = (value = '') => {
+  const status = cleanString(value).toLowerCase().replace(/[\s-]+/g, '_')
+  if (!status) return ''
+  if (['read', 'seen', 'opened', 'played'].includes(status)) return 'read'
+  if (['delivered', 'delivery_ack'].includes(status)) return 'delivered'
+  if (['sent', 'accepted', 'complete', 'completed', 'success', 'succeeded'].includes(status)) return 'sent'
+  if (['queued', 'pending', 'processing', 'scheduled'].includes(status)) return 'pending'
+  if (['failed', 'error', 'undelivered', 'bounced', 'rejected'].includes(status)) return 'failed'
+  return ''
+}
+
+const firstDefinedValue = (...values) => values.find(value => value !== undefined && value !== null && value !== '')
+
+const getHighLevelMessageObject = (response = {}) => {
+  const candidates = [
+    response.message,
+    response.data?.message,
+    response.data?.messages?.[0],
+    response.messages?.[0],
+    response.data,
+    response
+  ]
+  return candidates.find(candidate => candidate && typeof candidate === 'object' && !Array.isArray(candidate)) || {}
+}
+
+const extractHighLevelConversationStatus = (response = {}) => {
+  const message = getHighLevelMessageObject(response)
+  return normalizeHighLevelConversationStatus(firstDefinedValue(
+    message.status,
+    message.messageStatus,
+    message.message_status,
+    message.deliveryStatus,
+    message.delivery_status,
+    message.statusName,
+    response.status,
+    response.messageStatus,
+    response.message_status,
+    response.deliveryStatus,
+    response.delivery_status,
+    response.data?.status,
+    response.data?.messageStatus,
+    response.data?.message_status,
+    response.data?.deliveryStatus,
+    response.data?.delivery_status
+  ))
+}
+
+const shouldRefreshHighLevelStatus = (status = '') => {
+  return HIGHLEVEL_REFRESHABLE_STATUS.has(normalizeHighLevelConversationStatus(status) || cleanString(status).toLowerCase())
+}
+
+const pickBestHighLevelStatus = (currentStatus = '', nextStatus = '') => {
+  const current = normalizeHighLevelConversationStatus(currentStatus) || cleanString(currentStatus).toLowerCase()
+  const next = normalizeHighLevelConversationStatus(nextStatus)
+  if (!next) return current || ''
+  if (!current) return next
+  return (HIGHLEVEL_STATUS_PRIORITY[next] || 0) >= (HIGHLEVEL_STATUS_PRIORITY[current] || 0) ? next : current
+}
+
+const buildHighLevelStatusPayload = (rawPayload, response) => {
+  const current = parseJsonObject(rawPayload) || {}
+  return safeJsonStringify({
+    ...current,
+    lastStatusRefresh: {
+      provider: 'highlevel',
+      refreshedAt: new Date().toISOString(),
+      response
+    }
+  }, rawPayload || null)
+}
+
+async function refreshHighLevelConversationMessageStatuses(contactId) {
+  try {
+    const [whatsappRows, metaRows] = await Promise.all([
+      db.all(
+        `SELECT id, ycloud_message_id, wamid, status, raw_payload_json
+         FROM whatsapp_api_messages
+         WHERE contact_id = ?
+           AND LOWER(COALESCE(direction, '')) = 'outbound'
+           AND COALESCE(ycloud_message_id, wamid, '') != ''
+           AND LOWER(COALESCE(transport, '')) IN ('ghl_whatsapp', 'ghl_sms')
+         ORDER BY COALESCE(message_timestamp, created_at) DESC
+         LIMIT ?`,
+        [contactId, HIGHLEVEL_MESSAGE_REFRESH_LIMIT]
+      ),
+      db.all(
+        `SELECT id, meta_message_id, status, raw_payload_json
+         FROM meta_social_messages
+         WHERE contact_id = ?
+           AND LOWER(COALESCE(direction, '')) = 'outbound'
+           AND COALESCE(meta_message_id, '') != ''
+           AND raw_payload_json LIKE ?
+         ORDER BY COALESCE(message_timestamp, created_at) DESC
+         LIMIT ?`,
+        [contactId, '%"provider":"highlevel"%', HIGHLEVEL_MESSAGE_REFRESH_LIMIT]
+      ).catch(error => {
+        logger.warn(`[HighLevel Conversations] No se pudieron leer mensajes sociales para refrescar estados: ${error.message}`)
+        return []
+      })
+    ])
+
+    const rows = [
+      ...whatsappRows.map(row => ({ ...row, table: 'whatsapp', remoteId: row.ycloud_message_id || row.wamid })),
+      ...metaRows.map(row => ({ ...row, table: 'meta', remoteId: row.meta_message_id }))
+    ].filter(row => row.remoteId && shouldRefreshHighLevelStatus(row.status))
+
+    if (rows.length === 0) return
+
+    const ghlClient = await getGHLClient()
+    await Promise.all(rows.map(async row => {
+      try {
+        const response = await ghlClient.getConversationMessage(row.remoteId)
+        const remoteStatus = extractHighLevelConversationStatus(response)
+        const nextStatus = pickBestHighLevelStatus(row.status, remoteStatus)
+        if (!nextStatus || nextStatus === cleanString(row.status).toLowerCase()) return
+
+        const rawPayload = buildHighLevelStatusPayload(row.raw_payload_json, response)
+        if (row.table === 'meta') {
+          await db.run(
+            `UPDATE meta_social_messages
+             SET status = ?, raw_payload_json = COALESCE(?, raw_payload_json), updated_at = CURRENT_TIMESTAMP
+             WHERE id = ?`,
+            [nextStatus, rawPayload, row.id]
+          )
+          return
+        }
+
+        await db.run(
+          `UPDATE whatsapp_api_messages
+           SET status = ?, raw_payload_json = COALESCE(?, raw_payload_json), updated_at = CURRENT_TIMESTAMP
+           WHERE id = ?`,
+          [nextStatus, rawPayload, row.id]
+        )
+      } catch (error) {
+        logger.warn(`[HighLevel Conversations] No se pudo refrescar estado del mensaje ${row.remoteId}: ${error.message}`)
+      }
+    }))
+  } catch (error) {
+    logger.warn(`[HighLevel Conversations] No se pudieron refrescar estados para el contacto ${contactId}: ${error.message}`)
   }
 }
 
@@ -1908,6 +2074,8 @@ export const getContactJourney = async (req, res) => {
     }
 
     const journey = []
+    await refreshHighLevelConversationMessageStatuses(id)
+
     const successfulPaymentsCondition = `
       contact_id = ?
       AND amount > 0
@@ -2154,6 +2322,7 @@ export const getContactJourney = async (req, res) => {
           msg.page_id,
           msg.instagram_account_id,
           msg.direction,
+          msg.status,
           msg.postback_payload,
           msg.referral_json,
           profile.profile_name,
@@ -2191,6 +2360,7 @@ export const getContactJourney = async (req, res) => {
           meta_social_message_id: msg.meta_social_message_id,
           meta_message_id: msg.meta_message_id,
           direction: msg.direction || 'inbound',
+          status: msg.status || null,
           transport: platform === 'instagram' ? 'instagram' : 'messenger'
         }
       })

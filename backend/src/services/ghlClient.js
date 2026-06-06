@@ -222,6 +222,18 @@ class GHLClient {
     })
   }
 
+  async getConversationMessage(messageId) {
+    const cleanMessageId = cleanString(messageId)
+    if (!cleanMessageId) {
+      throw new Error('Se requiere el ID del mensaje de HighLevel')
+    }
+
+    return this.request(`/conversations/messages/${encodeURIComponent(cleanMessageId)}`, {
+      method: 'GET',
+      version: GHL_CONVERSATIONS_API_VERSION
+    })
+  }
+
   // ============================================
   // CONTACTS
   // ============================================

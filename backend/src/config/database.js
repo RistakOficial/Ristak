@@ -1078,6 +1078,7 @@ async function initTables() {
         page_id TEXT,
         instagram_account_id TEXT,
         direction TEXT,
+        status TEXT,
         message_type TEXT,
         message_text TEXT,
         media_url TEXT,
@@ -1890,6 +1891,14 @@ async function initTables() {
       await db.run('CREATE INDEX IF NOT EXISTS idx_meta_social_messages_created ON meta_social_messages(created_at)')
       await db.run('CREATE INDEX IF NOT EXISTS idx_meta_social_messages_meta_id ON meta_social_messages(meta_message_id)')
       await db.run('CREATE INDEX IF NOT EXISTS idx_meta_social_events_status ON meta_social_webhook_events(processed_status, created_at)')
+
+      try {
+        await db.run('ALTER TABLE meta_social_messages ADD COLUMN status TEXT')
+      } catch (err) {
+        if (!err.message.includes('duplicate column') && !err.message.includes('already exists')) {
+          throw err
+        }
+      }
 
       // Agregar columnas de configuración de invoices/pagos
       try {

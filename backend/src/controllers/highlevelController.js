@@ -1645,16 +1645,23 @@ function getHighLevelMessageId(response = {}, externalId = '') {
     Array.isArray(response.messageIds) ? response.messageIds[0] : '',
     response.id,
     response.message?.id,
+    response.message?.messageId,
+    response.data?.id,
     response.data?.messageId,
+    response.data?.message?.id,
+    response.data?.message?.messageId,
     externalId
   ));
 }
 
 function normalizeHighLevelMessageStatus(value = '') {
-  const status = cleanString(value).toLowerCase();
-  if (['delivered', 'failed', 'pending', 'read', 'sent', 'scheduled', 'undelivered'].includes(status)) {
-    return status;
-  }
+  const status = cleanString(value).toLowerCase().replace(/[\s-]+/g, '_');
+  if (!status) return '';
+  if (['read', 'seen', 'opened', 'played'].includes(status)) return 'read';
+  if (['delivered', 'delivery_ack'].includes(status)) return 'delivered';
+  if (['sent', 'accepted', 'complete', 'completed', 'success', 'succeeded'].includes(status)) return 'sent';
+  if (['queued', 'pending', 'processing', 'scheduled'].includes(status)) return 'pending';
+  if (['failed', 'error', 'undelivered', 'bounced', 'rejected'].includes(status)) return 'failed';
   return '';
 }
 
@@ -1662,7 +1669,16 @@ function getHighLevelResponseStatus(response = {}) {
   const explicitStatus = normalizeHighLevelMessageStatus(firstDefined(
     response.status,
     response.messageStatus,
+    response.message_status,
+    response.deliveryStatus,
+    response.delivery_status,
     response.message?.status,
+    response.message?.messageStatus,
+    response.message?.deliveryStatus,
+    response.data?.messageStatus,
+    response.data?.message_status,
+    response.data?.deliveryStatus,
+    response.data?.delivery_status,
     response.data?.status
   ));
   if (explicitStatus) return explicitStatus;
@@ -1767,9 +1783,9 @@ async function saveHighLevelMetaMirror({ contact, channel, text, externalId, req
     INSERT INTO meta_social_messages (
       id, platform, meta_message_id, meta_social_contact_id, contact_id,
       sender_id, recipient_id, page_id, instagram_account_id,
-      direction, message_type, message_text, media_url, media_mime_type,
+      direction, status, message_type, message_text, media_url, media_mime_type,
       postback_payload, message_timestamp, raw_payload_json, referral_json, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
     ON CONFLICT(id) DO UPDATE SET
       meta_social_contact_id = COALESCE(excluded.meta_social_contact_id, meta_social_messages.meta_social_contact_id),
       contact_id = COALESCE(excluded.contact_id, meta_social_messages.contact_id),
@@ -1778,6 +1794,7 @@ async function saveHighLevelMetaMirror({ contact, channel, text, externalId, req
       page_id = COALESCE(NULLIF(excluded.page_id, ''), meta_social_messages.page_id),
       instagram_account_id = COALESCE(NULLIF(excluded.instagram_account_id, ''), meta_social_messages.instagram_account_id),
       direction = COALESCE(NULLIF(excluded.direction, ''), meta_social_messages.direction),
+      status = COALESCE(NULLIF(excluded.status, ''), meta_social_messages.status),
       message_type = COALESCE(NULLIF(excluded.message_type, ''), meta_social_messages.message_type),
       message_text = COALESCE(NULLIF(excluded.message_text, ''), meta_social_messages.message_text),
       message_timestamp = COALESCE(excluded.message_timestamp, meta_social_messages.message_timestamp),
@@ -1794,6 +1811,7 @@ async function saveHighLevelMetaMirror({ contact, channel, text, externalId, req
     profile?.page_id || null,
     profile?.instagram_account_id || null,
     'outbound',
+    deliveryStatus,
     'message',
     text,
     null,
