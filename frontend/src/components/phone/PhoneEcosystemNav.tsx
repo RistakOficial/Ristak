@@ -3,7 +3,6 @@ import { Link } from 'react-router-dom'
 import {
   PHONE_NAV_ACTIVE_INDEX_KEY,
   PHONE_NAV_ITEMS,
-  clampPhoneNavIndex,
   getPhoneSectionIndex,
   readStoredPhoneNavIndex,
   storePhoneNavIntent,
@@ -46,7 +45,7 @@ export const PhoneEcosystemNav: React.FC<PhoneEcosystemNavProps> = ({ active, ba
         style={{ transform: `translate3d(${indicatorIndex * 100}%, 0, 0)` }}
         aria-hidden="true"
       />
-      {PHONE_NAV_ITEMS.map(({ key, label, to, Icon }, itemIndex) => {
+      {PHONE_NAV_ITEMS.map(({ key, label, to, Icon }) => {
         const badgeCount = Math.max(0, Number(badges[key] || 0))
 
         return (
@@ -57,7 +56,7 @@ export const PhoneEcosystemNav: React.FC<PhoneEcosystemNavProps> = ({ active, ba
             draggable={false}
             aria-label={label}
             aria-current={active === key ? 'page' : undefined}
-            onClick={() => storePhoneNavIntent(activeIndex, clampPhoneNavIndex(itemIndex))}
+            onClick={() => storePhoneNavIntent(active, key)}
           >
             <span className={styles.iconWrap}>
               <Icon size={key === 'chat' ? 25 : 24} aria-hidden="true" focusable="false" />
