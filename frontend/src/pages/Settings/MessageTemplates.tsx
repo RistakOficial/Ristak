@@ -21,6 +21,7 @@ import {
   Save,
   Search,
   Send,
+  SlidersHorizontal,
   Trash2,
   Type,
   UploadCloud,
@@ -43,6 +44,7 @@ import {
   type MessageTemplateVariableBinding,
   type MessageTemplateVariableTarget
 } from '@/services/messageTemplatesService'
+import { whatsappApiService, type WhatsAppApiPhoneNumber } from '@/services/whatsappApiService'
 import styles from './MessageTemplates.module.css'
 
 const ROOT_FOLDER_KEY = '__root__'
@@ -75,6 +77,23 @@ const statusOptions: Array<{ value: MessageTemplateStatus; label: string }> = [
   { value: 'active', label: 'Lista' },
   { value: 'archived', label: 'Archivada' }
 ]
+
+type TemplateReviewStatusFilter = 'all' | 'active' | 'pending' | 'rejected' | 'draft' | 'paused' | 'archived'
+
+const reviewStatusFilterOptions: Array<{ value: TemplateReviewStatusFilter; label: string }> = [
+  { value: 'all', label: 'Todos los estados' },
+  { value: 'active', label: 'Activas' },
+  { value: 'pending', label: 'Pendientes' },
+  { value: 'rejected', label: 'Rechazadas' },
+  { value: 'draft', label: 'Borradores' },
+  { value: 'paused', label: 'Pausadas' },
+  { value: 'archived', label: 'Archivadas' }
+]
+
+const templateAssociationKeys = {
+  waba: new Set(['wabaid', 'waba_id', 'whatsappbusinessaccountid', 'whatsapp_business_account_id']),
+  phone: new Set(['phonenumberid', 'phone_number_id', 'businessphonenumberid', 'business_phone_number_id'])
+}
 
 const headerTypeOptions: Array<{ value: MessageTemplateHeaderType; label: string; icon: React.ReactNode }> = [
   { value: 'text', label: 'Texto', icon: <Type size={18} /> },
@@ -236,6 +255,68 @@ function getYCloudStatusLabel(status?: string | null) {
   return normalized
 }
 
+function normalizeFilterValue(value?: string | null) {
+  return String(value || '').trim().toLowerCase()
+}
+
+function getPhoneFilterLabel(phone: WhatsAppApiPhoneNumber) {
+  const number = phone.display_phone_number || phone.phone_number || 'Número'
+  return phone.verified_name ? `${number} · ${phone.verified_name}` : number
+}
+
+function getTemplateReviewStatus(template: MessageTemplate): TemplateReviewStatusFilter {
+  const ycloudStatus = String(template.ycloudStatus || '').toUpperCase()
+
+  if (ycloudStatus === 'APPROVED') return 'active'
+  if (ycloudStatus === 'PENDING' || ycloudStatus === 'IN_APPEAL') return 'pending'
+  if (ycloudStatus === 'REJECTED') return 'rejected'
+  if (ycloudStatus === 'PAUSED' || ycloudStatus === 'DISABLED') return 'paused'
+  if (ycloudStatus === 'ARCHIVED') return 'archived'
+  if (template.status === 'archived') return 'archived'
+  if (template.status === 'active') return 'active'
+  return 'draft'
+}
+
+function collectAssociationValues(source: unknown, keys: Set<string>, depth = 0, output = new Set<string>()) {
+  if (!source || depth > 4) return output
+
+  if (Array.isArray(source)) {
+    source.forEach((item) => collectAssociationValues(item, keys, depth + 1, output))
+    return output
+  }
+
+  if (typeof source !== 'object') return output
+
+  for (const [key, value] of Object.entries(source as Record<string, unknown>)) {
+    const normalizedKey = key.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()
+    if (keys.has(normalizedKey) && typeof value !== 'object') {
+      const normalizedValue = normalizeFilterValue(String(value))
+      if (normalizedValue) output.add(normalizedValue)
+      continue
+    }
+
+    collectAssociationValues(value, keys, depth + 1, output)
+  }
+
+  return output
+}
+
+function templateMatchesPhone(template: MessageTemplate, phone?: WhatsAppApiPhoneNumber | null) {
+  if (!phone) return true
+
+  const rawPayload = template.ycloudRawPayload || null
+  const templateWabaIds = collectAssociationValues(rawPayload, templateAssociationKeys.waba)
+  const templatePhoneIds = collectAssociationValues(rawPayload, templateAssociationKeys.phone)
+  const selectedWabaId = normalizeFilterValue(phone.waba_id)
+  const selectedPhoneId = normalizeFilterValue(phone.id)
+
+  if (!templateWabaIds.size && !templatePhoneIds.size) return true
+  if (selectedPhoneId && templatePhoneIds.has(selectedPhoneId)) return true
+  if (selectedWabaId && templateWabaIds.has(selectedWabaId)) return true
+
+  return false
+}
+
 interface MessageTemplatesProps {
   embedded?: boolean
   title?: string
@@ -260,6 +341,10 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
   const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null)
   const [draft, setDraft] = useState<MessageTemplateDraft>(() => createEmptyDraft(null))
   const [searchTerm, setSearchTerm] = useState('')
+  const [templatePhoneFilter, setTemplatePhoneFilter] = useState('all')
+  const [templateCategoryFilter, setTemplateCategoryFilter] = useState<'all' | MessageTemplateCategory>('all')
+  const [templateStatusFilter, setTemplateStatusFilter] = useState<TemplateReviewStatusFilter>('all')
+  const [whatsappPhones, setWhatsappPhones] = useState<WhatsAppApiPhoneNumber[]>([])
   const [saving, setSaving] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [syncing, setSyncing] = useState(false)
@@ -277,6 +362,7 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
 
   useEffect(() => {
     loadBundle()
+    loadWhatsAppPhones()
   }, [])
 
   useEffect(() => {
@@ -287,6 +373,12 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
     setSelectedFolderIds((current) => new Set([...current].filter((id) => folderIds.has(id))))
   }, [bundle.templates, bundle.folders])
 
+  useEffect(() => {
+    if (templatePhoneFilter === 'all') return
+    if (whatsappPhones.some((phone) => phone.id === templatePhoneFilter)) return
+    setTemplatePhoneFilter('all')
+  }, [templatePhoneFilter, whatsappPhones])
+
   const loadBundle = async () => {
     setLoading(true)
     try {
@@ -296,6 +388,15 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
       showToast('error', 'Error', getErrorMessage(error, 'No se pudieron cargar las plantillas'))
     } finally {
       setLoading(false)
+    }
+  }
+
+  const loadWhatsAppPhones = async () => {
+    try {
+      const status = await whatsappApiService.getStatus()
+      setWhatsappPhones(status.phoneNumbers || [])
+    } catch {
+      setWhatsappPhones([])
     }
   }
 
@@ -339,6 +440,18 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
     return trail
   }, [activeFolderId, folderMap])
 
+  const phoneById = useMemo(() => (
+    new Map(whatsappPhones.map((phone) => [phone.id, phone]))
+  ), [whatsappPhones])
+
+  const selectedFilterPhone = templatePhoneFilter === 'all' ? null : phoneById.get(templatePhoneFilter) || null
+
+  const hasTemplateFilters = Boolean(
+    templatePhoneFilter !== 'all' ||
+    templateCategoryFilter !== 'all' ||
+    templateStatusFilter !== 'all'
+  )
+
   const currentFolders = useMemo(() => {
     const query = searchTerm.trim().toLowerCase()
     if (query) {
@@ -350,15 +463,23 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
   const visibleTemplates = useMemo(() => {
     const query = searchTerm.trim().toLowerCase()
     return bundle.templates.filter((template) => {
-      if (!query) return (template.folderId || null) === activeFolderId
-      return [
+      const matchesLocation = !query
+        ? (template.folderId || null) === activeFolderId
+        : [
         template.name,
         template.bodyText,
         template.headerText || '',
         template.footerText || ''
       ].some((value) => value.toLowerCase().includes(query))
+
+      if (!matchesLocation) return false
+      if (templateCategoryFilter !== 'all' && template.category !== templateCategoryFilter) return false
+      if (templateStatusFilter !== 'all' && getTemplateReviewStatus(template) !== templateStatusFilter) return false
+      if (templatePhoneFilter !== 'all' && !templateMatchesPhone(template, selectedFilterPhone)) return false
+
+      return true
     })
-  }, [activeFolderId, bundle.templates, searchTerm])
+  }, [activeFolderId, bundle.templates, searchTerm, selectedFilterPhone, templateCategoryFilter, templatePhoneFilter, templateStatusFilter])
 
   const templateCountsByFolder = useMemo(() => {
     const counts = new Map<string, number>()
@@ -1107,6 +1228,63 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
           </Button>
         </div>
 
+        <div className={styles.filterBar}>
+          <div className={styles.filterTitle}>
+            <SlidersHorizontal size={16} />
+            <span>Filtros</span>
+          </div>
+          <label className={styles.filterControl}>
+            <span>Número</span>
+            <select
+              value={templatePhoneFilter}
+              onChange={(event) => setTemplatePhoneFilter(event.target.value)}
+              disabled={!whatsappPhones.length}
+            >
+              <option value="all">{whatsappPhones.length ? 'Todos los números' : 'Sin números conectados'}</option>
+              {whatsappPhones.map((phone) => (
+                <option key={phone.id} value={phone.id}>{getPhoneFilterLabel(phone)}</option>
+              ))}
+            </select>
+          </label>
+          <label className={styles.filterControl}>
+            <span>Tipo</span>
+            <select
+              value={templateCategoryFilter}
+              onChange={(event) => setTemplateCategoryFilter(event.target.value as 'all' | MessageTemplateCategory)}
+            >
+              <option value="all">Todos los tipos</option>
+              {categoryOptions.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </label>
+          <label className={styles.filterControl}>
+            <span>Estado</span>
+            <select
+              value={templateStatusFilter}
+              onChange={(event) => setTemplateStatusFilter(event.target.value as TemplateReviewStatusFilter)}
+            >
+              {reviewStatusFilterOptions.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </label>
+          <span className={styles.filterCount}>{visibleTemplates.length} de {bundle.templates.length} plantillas</span>
+          {hasTemplateFilters && (
+            <button
+              type="button"
+              className={styles.clearFiltersButton}
+              onClick={() => {
+                setTemplatePhoneFilter('all')
+                setTemplateCategoryFilter('all')
+                setTemplateStatusFilter('all')
+              }}
+            >
+              Limpiar filtros
+            </button>
+          )}
+        </div>
+
         <div className={styles.breadcrumbs}>
           <button
             type="button"
@@ -1275,7 +1453,8 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
           {!currentFolders.length && !visibleTemplates.length && (
             <div className={styles.emptyState}>
               <ListTree size={28} />
-              <strong>Sin plantillas</strong>
+              <strong>{hasTemplateFilters ? 'Sin resultados' : 'Sin plantillas'}</strong>
+              {hasTemplateFilters && <span>Prueba con otro número, tipo o estado.</span>}
             </div>
           )}
         </div>

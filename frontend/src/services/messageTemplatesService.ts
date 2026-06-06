@@ -74,6 +74,7 @@ export interface MessageTemplate {
   ycloudReason?: string | null
   ycloudStatusUpdateEvent?: string | null
   ycloudQualityRating?: string | null
+  ycloudRawPayload?: Record<string, any> | null
   ycloudSubmittedAt?: string | null
   ycloudSyncedAt?: string | null
   lastError?: string | null
@@ -95,6 +96,7 @@ export type MessageTemplatePayload = Omit<
   | 'ycloudReason'
   | 'ycloudStatusUpdateEvent'
   | 'ycloudQualityRating'
+  | 'ycloudRawPayload'
   | 'ycloudSubmittedAt'
   | 'ycloudSyncedAt'
   | 'lastError'
