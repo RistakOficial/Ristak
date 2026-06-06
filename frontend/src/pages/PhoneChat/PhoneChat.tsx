@@ -48,7 +48,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useLabels } from '@/contexts/LabelsContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
-import { useAppConfig, usePhoneTheme, type PhoneThemePreference } from '@/hooks'
+import { useAppConfig, useHighLevelConnected, usePhoneTheme, type PhoneThemePreference } from '@/hooks'
 import { aiAgentService, type AIAgentMessage, type AIAgentViewContext } from '@/services/aiAgentService'
 import apiClient from '@/services/apiClient'
 import { calendarsService, type Calendar, type CalendarEvent } from '@/services/calendarsService'
@@ -1245,6 +1245,7 @@ export const PhoneChat: React.FC = () => {
   const [openLastConversation, setOpenLastConversation] = useAppConfig<boolean>('mobile_chat_open_last_conversation', false)
   const [lastConversationId, setLastConversationId] = useAppConfig<string>('mobile_chat_last_conversation_id', '')
   const [aiReplySuggestionsEnabled, setAiReplySuggestionsEnabled] = useAppConfig<boolean>('mobile_chat_ai_reply_suggestions_enabled', false)
+  const { connected: highLevelConnected } = useHighLevelConnected()
   const {
     safePreference: safeChatThemePreference,
     setPreference: setChatThemePreference,
@@ -1383,6 +1384,7 @@ export const PhoneChat: React.FC = () => {
   )
 
   const initialContact = useMemo(() => toPaymentContact(activeContact), [activeContact])
+  const activePhonePaymentMode: PaymentMode = highLevelConnected ? paymentMode : 'single'
   const defaultAppointmentRange = useMemo(() => createDefaultAppointmentRange(timezone), [timezone])
   const whatsappConnected = Boolean(whatsappStatus?.connected && whatsappStatus?.configured)
   const businessPhones = whatsappStatus?.phoneNumbers || []
@@ -1850,6 +1852,11 @@ export const PhoneChat: React.FC = () => {
     if (aiAgentChatEnabled || !aiReplySuggestionsEnabled) return
     setAiReplySuggestionsEnabled(false).catch(() => undefined)
   }, [aiAgentChatEnabled, aiReplySuggestionsEnabled, setAiReplySuggestionsEnabled])
+
+  useEffect(() => {
+    if (highLevelConnected || paymentMode !== 'partial') return
+    setPaymentMode('single')
+  }, [highLevelConnected, paymentMode])
 
   useEffect(() => {
     if (
@@ -4532,7 +4539,7 @@ export const PhoneChat: React.FC = () => {
       },
       {
         label: 'Registrar pagos',
-        description: 'Guardar un pago o plan de pagos.',
+        description: highLevelConnected ? 'Guardar un pago o plan de pagos.' : 'Guardar un pago único.',
         Icon: CircleDollarSign,
         className: styles.chatMorePayment,
         onClick: () => handleChatMoreAction(chatActionContact, 'payment')
@@ -4871,28 +4878,30 @@ export const PhoneChat: React.FC = () => {
 
             {sheet === 'payment' && (
               <>
-                <div className={styles.segmentedControl}>
-                  <button
-                    type="button"
-                    className={paymentMode === 'single' ? styles.segmentActive : ''}
-                    onClick={() => setPaymentMode('single')}
-                  >
-                    Pago único
-                  </button>
-                  <button
-                    type="button"
-                    className={paymentMode === 'partial' ? styles.segmentActive : ''}
-                    onClick={() => setPaymentMode('partial')}
-                  >
-                    Plan de pagos
-                  </button>
-                </div>
+                {highLevelConnected && (
+                  <div className={styles.segmentedControl}>
+                    <button
+                      type="button"
+                      className={activePhonePaymentMode === 'single' ? styles.segmentActive : ''}
+                      onClick={() => setPaymentMode('single')}
+                    >
+                      Pago único
+                    </button>
+                    <button
+                      type="button"
+                      className={activePhonePaymentMode === 'partial' ? styles.segmentActive : ''}
+                      onClick={() => setPaymentMode('partial')}
+                    >
+                      Plan de pagos
+                    </button>
+                  </div>
+                )}
                 <div className={styles.embeddedPayment}>
                   <RecordPaymentModal
-                    key={`${paymentMode}-${initialContact?.id || 'empty'}`}
+                    key={`${activePhonePaymentMode}-${initialContact?.id || 'empty'}`}
                     variant="embedded"
                     isOpen
-                    initialPaymentMode={paymentMode}
+                    initialPaymentMode={activePhonePaymentMode}
                     initialContact={initialContact}
                     onClose={() => setSheet(null)}
                     onSuccess={() => {
