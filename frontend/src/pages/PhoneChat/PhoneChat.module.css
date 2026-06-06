@@ -13,6 +13,7 @@
   user-select: none;
   -webkit-user-select: none;
   -webkit-touch-callout: none;
+  -webkit-text-size-adjust: 100%;
 }
 
 .phoneChatPage button,
@@ -27,9 +28,11 @@
 .phoneChatPage input,
 .phoneChatPage textarea,
 .phoneChatPage [contenteditable="true"] {
+  font-size: max(16px, 1rem);
   user-select: text;
   -webkit-user-select: text;
   -webkit-touch-callout: default;
+  -webkit-text-size-adjust: 100%;
 }
 
 .phoneFrame {
@@ -1301,7 +1304,7 @@
   color: #111111;
   background: transparent;
   font: inherit;
-  font-size: 16px;
+  font-size: 17px;
   line-height: 1.32;
   letter-spacing: 0;
   white-space: pre-wrap;
@@ -1313,6 +1316,7 @@
   user-select: text;
   -webkit-user-select: text;
   -webkit-overflow-scrolling: touch;
+  transform: translateZ(0);
 }
 
 .composerInput:empty::before {
@@ -1367,7 +1371,7 @@
   background: #ffffff;
   box-shadow: 0 1px 0 rgba(0, 0, 0, 0.08);
   font: inherit;
-  font-size: 15px;
+  font-size: 16px;
   line-height: 1.3;
   resize: none;
 }

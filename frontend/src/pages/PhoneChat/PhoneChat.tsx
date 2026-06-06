@@ -1663,21 +1663,56 @@ export const PhoneChat: React.FC = () => {
 
     const html = document.documentElement
     const body = document.body
+    const viewportMeta = document.querySelector<HTMLMetaElement>('meta[name="viewport"]')
+    const previousViewportContent = viewportMeta?.getAttribute('content') || ''
     const previousHtmlOverflow = html.style.overflow
     const previousHtmlHeight = html.style.height
     const previousHtmlOverscroll = html.style.overscrollBehavior
+    const previousHtmlTextSizeAdjust = html.style.getPropertyValue('-webkit-text-size-adjust')
     const previousBodyOverflow = body.style.overflow
     const previousBodyHeight = body.style.height
     const previousBodyOverscroll = body.style.overscrollBehavior
+    const previousBodyTextSizeAdjust = body.style.getPropertyValue('-webkit-text-size-adjust')
     let startX = 0
     let startY = 0
+
+    if (viewportMeta) {
+      viewportMeta.setAttribute(
+        'content',
+        'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content'
+      )
+    }
 
     html.style.overflow = 'hidden'
     html.style.height = '100%'
     html.style.overscrollBehavior = 'none'
+    html.style.setProperty('-webkit-text-size-adjust', '100%')
     body.style.overflow = 'hidden'
     body.style.height = '100%'
     body.style.overscrollBehavior = 'none'
+    body.style.setProperty('-webkit-text-size-adjust', '100%')
+
+    const keepViewportStable = (force = false) => {
+      if (!force && html.getAttribute('data-phone-chat-keyboard') !== 'true') return
+
+      window.setTimeout(() => {
+        window.scrollTo({ top: 0, left: 0, behavior: 'auto' })
+        html.scrollTop = 0
+        body.scrollTop = 0
+        if (html.getAttribute('data-phone-chat-keyboard') === 'true') {
+          messagesEndRef.current?.scrollIntoView({ block: 'end' })
+        }
+      }, 60)
+    }
+
+    const resetViewportAfterKeyboard = () => {
+      window.setTimeout(() => {
+        html.removeAttribute('data-phone-chat-keyboard')
+        window.scrollTo({ top: 0, left: 0, behavior: 'auto' })
+        html.scrollTop = 0
+        body.scrollTop = 0
+      }, 90)
+    }
 
     const getScrollableElement = (target: EventTarget | null) => {
       if (!(target instanceof Element)) return null
@@ -1722,18 +1757,45 @@ export const PhoneChat: React.FC = () => {
       }
     }
 
+    const handleFocusIn = (event: FocusEvent) => {
+      if (!(event.target instanceof Element)) return
+      if (!event.target.closest('[data-phone-chat-composer="true"]')) return
+
+      html.setAttribute('data-phone-chat-keyboard', 'true')
+      keepViewportStable(true)
+    }
+
+    const handleFocusOut = (event: FocusEvent) => {
+      if (!(event.target instanceof Element)) return
+      if (!event.target.closest('[data-phone-chat-composer="true"]')) return
+
+      resetViewportAfterKeyboard()
+    }
+
     window.addEventListener('touchstart', handleTouchStart, { passive: false })
     window.addEventListener('touchmove', handleTouchMove, { passive: false })
+    window.addEventListener('focusin', handleFocusIn)
+    window.addEventListener('focusout', handleFocusOut)
+    window.visualViewport?.addEventListener('resize', keepViewportStable)
 
     return () => {
       window.removeEventListener('touchstart', handleTouchStart)
       window.removeEventListener('touchmove', handleTouchMove)
+      window.removeEventListener('focusin', handleFocusIn)
+      window.removeEventListener('focusout', handleFocusOut)
+      window.visualViewport?.removeEventListener('resize', keepViewportStable)
+      html.removeAttribute('data-phone-chat-keyboard')
+      if (viewportMeta) {
+        viewportMeta.setAttribute('content', previousViewportContent)
+      }
       html.style.overflow = previousHtmlOverflow
       html.style.height = previousHtmlHeight
       html.style.overscrollBehavior = previousHtmlOverscroll
+      html.style.setProperty('-webkit-text-size-adjust', previousHtmlTextSizeAdjust)
       body.style.overflow = previousBodyOverflow
       body.style.height = previousBodyHeight
       body.style.overscrollBehavior = previousBodyOverscroll
+      body.style.setProperty('-webkit-text-size-adjust', previousBodyTextSizeAdjust)
     }
   }, [accessState])
 
@@ -3796,7 +3858,7 @@ export const PhoneChat: React.FC = () => {
             <div ref={messagesEndRef} />
           </div>
 
-          <div className={styles.composerShell}>
+          <div className={styles.composerShell} data-phone-chat-composer="true">
             {aiAgentConversationOpen ? (
               renderAIAgentComposer()
             ) : (
