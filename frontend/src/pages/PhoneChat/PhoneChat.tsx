@@ -76,6 +76,9 @@ interface ChatMessage {
   date: string
   direction: 'inbound' | 'outbound' | 'system'
   status?: string
+  businessPhone?: string
+  businessPhoneNumberId?: string
+  transport?: 'api' | 'qr' | string
   attachment?: {
     type: 'image'
     dataUrl: string
@@ -304,7 +307,10 @@ function getJourneyMessage(event: JourneyEvent, index: number): ChatMessage | nu
     text: text || getMessageTypeLabel(String(event.data?.message_type || '')),
     date: event.date,
     direction,
-    status: String(event.data?.status || '')
+    status: String(event.data?.status || ''),
+    businessPhone: String(event.data?.business_phone || ''),
+    businessPhoneNumberId: String(event.data?.business_phone_number_id || ''),
+    transport: String(event.data?.transport || 'api')
   }
 }
 
@@ -578,6 +584,32 @@ function getNotificationPermissionLabel() {
   return 'Toca Activar para permitir alertas en este celular.'
 }
 
+function normalizePhoneValue(value?: string | null) {
+  return String(value || '').replace(/\D/g, '')
+}
+
+function phoneLooksSame(left?: string | null, right?: string | null) {
+  const leftDigits = normalizePhoneValue(left)
+  const rightDigits = normalizePhoneValue(right)
+  if (!leftDigits || !rightDigits) return false
+  return leftDigits === rightDigits || leftDigits.endsWith(rightDigits) || rightDigits.endsWith(leftDigits)
+}
+
+function getBusinessPhoneValue(phone?: WhatsAppApiStatus['phoneNumbers'][number] | null) {
+  return phone?.phone_number || phone?.display_phone_number || ''
+}
+
+function getBusinessPhoneLabel(phone?: WhatsAppApiStatus['phoneNumbers'][number] | null) {
+  return phone?.label || phone?.display_phone_number || phone?.phone_number || 'WhatsApp'
+}
+
+function isInsideReplyWindow(date?: string | null) {
+  if (!date) return false
+  const timestamp = Date.parse(date)
+  if (!Number.isFinite(timestamp)) return false
+  return Date.now() - timestamp < 24 * 60 * 60 * 1000
+}
+
 function toPaymentContact(contact: Contact | null) {
   if (!contact) return null
   return {
@@ -642,6 +674,7 @@ export const PhoneChat: React.FC = () => {
   const [draftAttachments, setDraftAttachments] = useState<MobilePhotoAttachment[]>([])
   const [composerStatus, setComposerStatus] = useState<ComposerStatus>('idle')
   const [whatsappStatus, setWhatsappStatus] = useState<WhatsAppApiStatus | null>(null)
+  const [selectedBusinessPhoneId, setSelectedBusinessPhoneId] = useState('')
   const [calendars, setCalendars] = useState<Calendar[]>([])
   const [selectedCalendarId, setSelectedCalendarId] = useState('')
   const [sheet, setSheet] = useState<ActionSheet>(null)
@@ -705,6 +738,26 @@ export const PhoneChat: React.FC = () => {
   const initialContact = useMemo(() => toPaymentContact(activeContact), [activeContact])
   const defaultAppointmentRange = useMemo(() => createDefaultAppointmentRange(timezone), [timezone])
   const whatsappConnected = Boolean(whatsappStatus?.connected && whatsappStatus?.configured)
+  const businessPhones = whatsappStatus?.phoneNumbers || []
+  const selectedBusinessPhone = useMemo(() => {
+    return businessPhones.find((phone) => phone.id === selectedBusinessPhoneId) ||
+      businessPhones.find((phone) => phone.is_default_sender) ||
+      whatsappStatus?.selectedPhone ||
+      businessPhones[0] ||
+      null
+  }, [businessPhones, selectedBusinessPhoneId, whatsappStatus?.selectedPhone])
+  const selectedBusinessPhoneValue = getBusinessPhoneValue(selectedBusinessPhone)
+  const lastInboundForSelectedPhone = useMemo(() => {
+    return [...messages]
+      .filter((message) => {
+        if (message.direction !== 'inbound') return false
+        if (!selectedBusinessPhoneValue) return true
+        return phoneLooksSame(message.businessPhone, selectedBusinessPhoneValue)
+      })
+      .sort((left, right) => Date.parse(right.date) - Date.parse(left.date))[0] || null
+  }, [messages, selectedBusinessPhoneValue])
+  const apiReplyWindowOpen = isInsideReplyWindow(lastInboundForSelectedPhone?.date)
+  const selectedQrReady = Boolean(selectedBusinessPhone?.qr_send_enabled && String(selectedBusinessPhone?.qr_status || '').toLowerCase() === 'connected')
   const canSendMessage = Boolean(activeContact?.phone && (messageText.trim() || draftAttachments.length > 0) && composerStatus !== 'sending')
   const hasChats = chats.length > 0
   const customerLabel = labels.customer?.trim() || 'Cliente'
@@ -857,6 +910,31 @@ export const PhoneChat: React.FC = () => {
   useEffect(() => {
     document.title = activeContact ? `${getContactName(activeContact)} | Ristak Chat` : 'Ristak Chat'
   }, [activeContact])
+
+  useEffect(() => {
+    if (!businessPhones.length) {
+      setSelectedBusinessPhoneId('')
+      return
+    }
+
+    setSelectedBusinessPhoneId((current) => {
+      if (current && businessPhones.some((phone) => phone.id === current)) return current
+
+      const lastInboundBusinessPhone = [...messages]
+        .filter((message) => message.direction === 'inbound' && message.businessPhone)
+        .sort((left, right) => Date.parse(right.date) - Date.parse(left.date))[0]?.businessPhone
+
+      const fromConversation = lastInboundBusinessPhone
+        ? businessPhones.find((phone) => phoneLooksSame(getBusinessPhoneValue(phone), lastInboundBusinessPhone))
+        : null
+
+      return fromConversation?.id ||
+        businessPhones.find((phone) => phone.is_default_sender)?.id ||
+        whatsappStatus?.selectedPhone?.id ||
+        businessPhones[0]?.id ||
+        ''
+    })
+  }, [businessPhones, messages, whatsappStatus?.selectedPhone?.id])
 
   useEffect(() => {
     const updateAccess = () => setAccessState(getAccessState())
@@ -1175,7 +1253,7 @@ export const PhoneChat: React.FC = () => {
     setDraftAttachments((current) => current.filter((attachment) => attachment.id !== attachmentId))
   }
 
-  const handleSendMessage = async () => {
+  const handleSendMessage = async (transport: 'api' | 'qr' = 'api') => {
     const text = messageText.trim()
     const attachmentsToSend = draftAttachments
     if (!activeContact || (!text && attachmentsToSend.length === 0)) return
@@ -1187,6 +1265,28 @@ export const PhoneChat: React.FC = () => {
 
     if (!whatsappConnected) {
       showToast('error', 'WhatsApp no está conectado', 'Conecta WhatsApp API en configuración para enviar mensajes desde Ristak.')
+      return
+    }
+
+    if (!selectedBusinessPhoneValue) {
+      showToast('error', 'Falta el número emisor', 'Elige el WhatsApp del negocio que responderá este chat.')
+      return
+    }
+
+    if (transport === 'qr' && attachmentsToSend.length > 0) {
+      showToast('warning', 'QR solo manda texto', 'Quita la foto o envía con la conexión oficial si todavía está disponible.')
+      return
+    }
+
+    if (transport === 'api' && !apiReplyWindowOpen) {
+      showToast('warning', 'Ya pasaron 24 horas', selectedQrReady
+        ? 'Usa el botón QR o manda una plantilla aprobada desde WhatsApp.'
+        : 'Manda una plantilla aprobada o conecta el QR de este número en Configuración.')
+      return
+    }
+
+    if (transport === 'qr' && !selectedQrReady) {
+      showToast('error', 'QR no conectado', 'Conecta este número por QR en Configuración > WhatsApp.')
       return
     }
 
@@ -1205,6 +1305,9 @@ export const PhoneChat: React.FC = () => {
           date: sentAt,
           direction: 'outbound',
           status: 'enviando',
+          businessPhone: selectedBusinessPhoneValue,
+          businessPhoneNumberId: selectedBusinessPhone?.id || '',
+          transport,
           attachment: {
             type: 'image',
             dataUrl: attachment.dataUrl,
@@ -1216,7 +1319,10 @@ export const PhoneChat: React.FC = () => {
           text,
           date: sentAt,
           direction: 'outbound',
-          status: 'enviando'
+          status: transport === 'qr' ? 'enviando por QR' : 'enviando',
+          businessPhone: selectedBusinessPhoneValue,
+          businessPhoneNumberId: selectedBusinessPhone?.id || '',
+          transport
         }]
 
     setMessages((current) => [...current, ...optimisticMessages])
@@ -1237,6 +1343,7 @@ export const PhoneChat: React.FC = () => {
         await Promise.all(attachmentsToSend.map((attachment, index) => (
           whatsappApiService.sendImage({
             to: activeContact.phone || '',
+            from: selectedBusinessPhoneValue,
             imageDataUrl: attachment.dataUrl,
             caption: index === 0 ? text : '',
             externalId: `${optimisticId}-image-${index}`
@@ -1248,8 +1355,11 @@ export const PhoneChat: React.FC = () => {
       } else {
         await whatsappApiService.sendText({
           to: activeContact.phone,
+          from: selectedBusinessPhoneValue,
           text,
-          externalId: optimisticId
+          externalId: optimisticId,
+          transport,
+          phoneNumberId: selectedBusinessPhone?.id || undefined
         })
         setMessages((current) => current.map((message) => (
           message.id === optimisticId ? { ...message, status: 'sent' } : message
@@ -1481,6 +1591,7 @@ export const PhoneChat: React.FC = () => {
           )}
           {message.text && <p>{message.text}</p>}
           <span>
+            {message.transport === 'qr' && <em className={styles.messageTransport}>QR</em>}
             {formatMessageTime(message.date)}
             {message.direction === 'outbound' && (
               <Check size={15} className={message.status === 'error' ? styles.messageErrorIcon : undefined} />
@@ -1504,6 +1615,49 @@ export const PhoneChat: React.FC = () => {
             </button>
           </figure>
         ))}
+      </div>
+    )
+  }
+
+  const renderSenderBar = () => {
+    if (!activeContact || businessPhones.length === 0) return null
+
+    const windowLabel = apiReplyWindowOpen
+      ? 'API disponible'
+      : selectedQrReady
+        ? 'Fuera de 24 h · QR listo'
+        : 'Fuera de 24 h'
+
+    return (
+      <div className={styles.senderBar}>
+        <div className={styles.senderSelectWrap}>
+          <Smartphone size={15} />
+          <select
+            value={selectedBusinessPhone?.id || ''}
+            onChange={(event) => setSelectedBusinessPhoneId(event.target.value)}
+            aria-label="Numero de WhatsApp que respondera"
+          >
+            {businessPhones.map((phone) => (
+              <option key={phone.id} value={phone.id}>
+                {getBusinessPhoneLabel(phone)}
+              </option>
+            ))}
+          </select>
+        </div>
+        <span className={apiReplyWindowOpen ? styles.senderStatusOpen : styles.senderStatusClosed}>
+          {windowLabel}
+        </span>
+        {!apiReplyWindowOpen && selectedQrReady && messageText.trim() && draftAttachments.length === 0 && (
+          <button
+            type="button"
+            className={styles.senderQrButton}
+            onClick={() => handleSendMessage('qr')}
+            disabled={composerStatus === 'sending'}
+          >
+            <Send size={14} />
+            Enviar QR
+          </button>
+        )}
       </div>
     )
   }
@@ -1934,6 +2088,7 @@ export const PhoneChat: React.FC = () => {
           </div>
 
           <div className={styles.composerShell}>
+            {renderSenderBar()}
             {renderDraftAttachments()}
             <div className={styles.composer}>
               <button type="button" className={styles.composerPlus} onClick={() => setSheet('attachments')} aria-label="Abrir adjuntos">

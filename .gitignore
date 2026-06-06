@@ -25,6 +25,7 @@ logs/
 *.sqlite3
 ristak.db
 backend/uploads/
+backend/storage/whatsapp-qr-auth/
 
 # OS files
 .DS_Store

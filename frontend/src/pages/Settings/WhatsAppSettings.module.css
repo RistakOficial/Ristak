@@ -359,12 +359,18 @@
 .phoneListItem {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
+  align-items: start;
   gap: 10px;
   padding: 10px 12px;
   border: 1px solid rgba(148, 163, 184, 0.14);
   border-radius: 8px;
   background: var(--color-background-primary);
+}
+
+.phoneListMain {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
 }
 
 .phoneAvatar {
@@ -388,7 +394,19 @@
   font-size: 11px;
 }
 
-.phoneListItem mark {
+.phoneBadges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.phoneListItem mark,
+.phoneBadges mark {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  max-width: 100%;
   border: 1px solid var(--settings-brand-border);
   border-radius: 999px;
   padding: 5px 8px;
@@ -396,6 +414,101 @@
   background: var(--settings-brand-bg);
   font-size: 10px;
   font-weight: 900;
+  line-height: 1.1;
+  overflow-wrap: anywhere;
+}
+
+.phoneBadges .qrBadgeConnected {
+  color: #047857;
+  border-color: rgba(16, 185, 129, 0.28);
+  background: rgba(16, 185, 129, 0.1);
+}
+
+.phoneBadges .qrBadgePending {
+  color: #b45309;
+  border-color: rgba(245, 158, 11, 0.28);
+  background: rgba(245, 158, 11, 0.1);
+}
+
+.phoneBadges .qrBadgeWarning {
+  color: #b91c1c;
+  border-color: rgba(220, 38, 38, 0.28);
+  background: rgba(220, 38, 38, 0.08);
+}
+
+.phoneBadges .qrBadgeMuted {
+  color: var(--color-text-tertiary);
+  border-color: rgba(148, 163, 184, 0.2);
+  background: rgba(148, 163, 184, 0.08);
+}
+
+.phoneActions {
+  display: grid;
+  gap: 6px;
+  justify-items: end;
+}
+
+.phoneActionButton,
+.phoneActionDanger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--settings-brand-border);
+  border-radius: 8px;
+  color: var(--settings-brand-color);
+  background: var(--settings-brand-bg-muted);
+  font-size: 11px;
+  font-weight: 900;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.phoneActionDanger {
+  color: #b91c1c;
+  border-color: rgba(220, 38, 38, 0.26);
+  background: rgba(220, 38, 38, 0.06);
+}
+
+.phoneActionButton:disabled,
+.phoneActionDanger:disabled {
+  opacity: 0.62;
+  cursor: wait;
+}
+
+.qrPreview {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  max-width: 420px;
+  margin-top: 6px;
+  padding: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 8px;
+  background: var(--color-background-secondary);
+}
+
+.qrPreview img {
+  display: block;
+  width: 112px;
+  height: 112px;
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.qrPreview span,
+.phoneError {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.phoneError {
+  color: #b91c1c;
 }
 
 .templateSummaryCard {
@@ -761,6 +874,21 @@
   .connectionFacts,
   .templateSummary {
     grid-template-columns: 1fr;
+  }
+
+  .phoneListItem,
+  .qrPreview {
+    grid-template-columns: 1fr;
+  }
+
+  .phoneAvatar {
+    display: none;
+  }
+
+  .phoneActions,
+  .phoneActionButton,
+  .phoneActionDanger {
+    width: 100%;
   }
 
   .apiKeyRow {

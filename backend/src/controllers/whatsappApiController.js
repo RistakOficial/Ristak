@@ -1,13 +1,17 @@
 import {
+  connectWhatsAppQrForPhone,
   connectWhatsAppApi,
+  disconnectWhatsAppQrForPhone,
   disconnectWhatsAppApi,
   getWhatsAppApiStatus,
   getWhatsAppApiTemplates,
   getWhatsAppApiWebhookPath,
+  getWhatsAppQrForPhone,
   previewWhatsAppApiPhoneNumbers,
   processYCloudWhatsAppWebhook,
   refreshWhatsAppApi,
   resetWhatsAppApiCredentials,
+  sendWhatsAppApiAudioMessage,
   sendWhatsAppApiImageMessage,
   sendWhatsAppApiTemplateMessage,
   sendWhatsAppApiTextMessage
@@ -123,13 +127,62 @@ export async function resetWhatsAppApiCredentialsView(req, res) {
   }
 }
 
+export async function connectWhatsAppQrView(req, res) {
+  try {
+    const data = await connectWhatsAppQrForPhone({
+      phoneNumberId: req.body?.phoneNumberId,
+      acceptedRisk: req.body?.acceptedRisk,
+      acceptedBy: req.user?.username || req.user?.email || 'usuario'
+    })
+    res.json({ success: true, data })
+  } catch (error) {
+    logger.error(`Error conectando WhatsApp QR: ${error.message}`)
+    res.status(400).json({
+      success: false,
+      error: error.message || 'No se pudo conectar el QR de WhatsApp'
+    })
+  }
+}
+
+export async function getWhatsAppQrView(req, res) {
+  try {
+    const data = await getWhatsAppQrForPhone({
+      phoneNumberId: req.query?.phoneNumberId
+    })
+    res.json({ success: true, data })
+  } catch (error) {
+    logger.error(`Error leyendo WhatsApp QR: ${error.message}`)
+    res.status(400).json({
+      success: false,
+      error: error.message || 'No se pudo leer el QR de WhatsApp'
+    })
+  }
+}
+
+export async function disconnectWhatsAppQrView(req, res) {
+  try {
+    const data = await disconnectWhatsAppQrForPhone({
+      phoneNumberId: req.body?.phoneNumberId
+    })
+    res.json({ success: true, data })
+  } catch (error) {
+    logger.error(`Error desconectando WhatsApp QR: ${error.message}`)
+    res.status(400).json({
+      success: false,
+      error: error.message || 'No se pudo desconectar el QR de WhatsApp'
+    })
+  }
+}
+
 export async function sendWhatsAppApiTextMessageView(req, res) {
   try {
     const data = await sendWhatsAppApiTextMessage({
       to: req.body?.to,
       from: req.body?.from,
       text: req.body?.text,
-      externalId: req.body?.externalId
+      externalId: req.body?.externalId,
+      transport: req.body?.transport,
+      phoneNumberId: req.body?.phoneNumberId
     })
     res.json({ success: true, data })
   } catch (error) {
@@ -158,6 +211,27 @@ export async function sendWhatsAppApiImageMessageView(req, res) {
     res.status(400).json({
       success: false,
       error: error.message || 'No se pudo enviar la foto por WhatsApp_API'
+    })
+  }
+}
+
+export async function sendWhatsAppApiAudioMessageView(req, res) {
+  try {
+    const data = await sendWhatsAppApiAudioMessage({
+      to: req.body?.to,
+      from: req.body?.from,
+      audioDataUrl: req.body?.audioDataUrl,
+      audioUrl: req.body?.audioUrl,
+      externalId: req.body?.externalId,
+      durationMs: req.body?.durationMs,
+      publicBaseUrl: getPublicBaseUrl(req)
+    })
+    res.json({ success: true, data })
+  } catch (error) {
+    logger.error(`Error enviando audio WhatsApp_API: ${error.message}`)
+    res.status(400).json({
+      success: false,
+      error: error.message || 'No se pudo enviar el audio por WhatsApp_API'
     })
   }
 }

@@ -6,6 +6,7 @@ import {
   ExternalLink,
   FileText,
   KeyRound,
+  QrCode,
   RefreshCw,
   ShieldCheck,
   Smartphone,
@@ -15,7 +16,7 @@ import {
 import { SiWhatsapp } from 'react-icons/si'
 import { Button } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
-import { WhatsAppApiAlert, WhatsAppApiPhoneNumber, WhatsAppApiStatus, whatsappApiService } from '@/services/whatsappApiService'
+import { WhatsAppApiAlert, WhatsAppApiPhoneNumber, WhatsAppApiStatus, WhatsAppQrSession, whatsappApiService } from '@/services/whatsappApiService'
 import { MessageTemplates } from './MessageTemplates'
 import styles from './WhatsAppSettings.module.css'
 
@@ -79,6 +80,24 @@ function getAlertClass(alert: WhatsAppApiAlert) {
   return styles.apiAlertInfo
 }
 
+function getQrStatusLabel(status?: string | null) {
+  const normalized = String(status || '').toLowerCase()
+  if (normalized === 'connected') return 'QR conectado'
+  if (normalized === 'qr_pending') return 'Escanea QR'
+  if (normalized === 'starting') return 'Preparando QR'
+  if (normalized === 'number_mismatch') return 'Numero incorrecto'
+  if (normalized.startsWith('disconnected')) return 'QR desconectado'
+  return 'QR apagado'
+}
+
+function getQrStatusClass(status?: string | null) {
+  const normalized = String(status || '').toLowerCase()
+  if (normalized === 'connected') return styles.qrBadgeConnected
+  if (normalized === 'qr_pending' || normalized === 'starting') return styles.qrBadgePending
+  if (normalized === 'number_mismatch' || normalized.includes('disconnect')) return styles.qrBadgeWarning
+  return styles.qrBadgeMuted
+}
+
 export const WhatsAppSettings: React.FC = () => {
   const { showToast, showConfirm } = useNotification()
   const [activeSection, setActiveSection] = useState<WhatsAppSection>('connection')
@@ -92,6 +111,8 @@ export const WhatsAppSettings: React.FC = () => {
   const [discoveredApiPhones, setDiscoveredApiPhones] = useState<WhatsAppApiPhoneNumber[]>([])
   const [apiPhoneLookupLoading, setApiPhoneLookupLoading] = useState(false)
   const [apiPhoneLookupAttempted, setApiPhoneLookupAttempted] = useState(false)
+  const [qrConnectingPhoneId, setQrConnectingPhoneId] = useState('')
+  const [qrDisconnectingPhoneId, setQrDisconnectingPhoneId] = useState('')
 
   const apiConnected = Boolean(apiStatus?.connected)
 
@@ -102,6 +123,12 @@ export const WhatsAppSettings: React.FC = () => {
   const selectedPhone = useMemo(() => {
     return availableApiPhones.find(phone => phone.id === selectedPhoneId) || apiStatus?.selectedPhone || null
   }, [apiStatus?.selectedPhone, availableApiPhones, selectedPhoneId])
+
+  const qrSessionsByPhoneId = useMemo(() => {
+    return new Map<string, WhatsAppQrSession>(
+      (apiStatus?.qr?.sessions || []).map((session) => [session.phoneNumberId, session])
+    )
+  }, [apiStatus?.qr?.sessions])
 
   const hasApiCredential = Boolean(apiKey.trim() || apiStatus?.credentials.hasApiKey)
   const canLookupApiPhones = hasApiCredential
@@ -147,6 +174,21 @@ export const WhatsAppSettings: React.FC = () => {
       cancelled = true
     }
   }, [])
+
+  useEffect(() => {
+    const hasPendingQr = apiStatus?.phoneNumbers.some((phone) => {
+      const status = String(qrSessionsByPhoneId.get(phone.id)?.status || phone.qr_status || '').toLowerCase()
+      return status === 'starting' || status === 'qr_pending'
+    })
+
+    if (!hasPendingQr && !qrConnectingPhoneId) return
+
+    const timer = window.setInterval(() => {
+      loadApiStatus().catch(() => null)
+    }, 4000)
+
+    return () => window.clearInterval(timer)
+  }, [apiStatus?.phoneNumbers, qrConnectingPhoneId, qrSessionsByPhoneId])
 
   const lookupApiPhoneNumbers = async () => {
     if (!canLookupApiPhones || apiPhoneLookupLoading) return
@@ -232,6 +274,61 @@ export const WhatsAppSettings: React.FC = () => {
           showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo desconectar WhatsApp')
         } finally {
           setApiDisconnecting(false)
+        }
+      },
+      'Desconectar',
+      'Cancelar'
+    )
+  }
+
+  const connectQrForPhone = (phone: WhatsAppApiPhoneNumber) => {
+    const label = getPhoneLabel(phone)
+    const consent = apiStatus?.qr?.consentText ||
+      'Acepto que esta conexion usa WhatsApp Web por QR y no la API oficial de Meta. Entiendo que puede desconectarse, fallar o poner en riesgo el numero. Ristak solo la usara para mensajes individuales cuando yo lo active.'
+
+    showConfirm(
+      'Conectar por QR',
+      `${label}\n\n${consent}\n\nEscanea el QR solamente con ese mismo numero. Si conectas otro, Ristak lo rechazara.`,
+      async () => {
+        setQrConnectingPhoneId(phone.id)
+        try {
+          const session = await whatsappApiService.connectQr({
+            phoneNumberId: phone.id,
+            acceptedRisk: true
+          })
+          await loadApiStatus()
+          if (session.status === 'connected') {
+            showToast('success', 'QR conectado', 'Este numero ya puede mandar mensajes individuales por QR')
+          } else if (session.status === 'qr_pending') {
+            showToast('info', 'Escanea el QR', 'Usa WhatsApp en ese mismo numero para completar la conexion')
+          } else {
+            showToast('warning', 'QR pendiente', session.lastError || 'Revisa el estado del codigo QR')
+          }
+        } catch (error) {
+          showToast('error', 'No se pudo abrir QR', error instanceof Error ? error.message : 'Intenta nuevamente')
+        } finally {
+          setQrConnectingPhoneId('')
+        }
+      },
+      'Acepto y conectar',
+      'Cancelar'
+    )
+  }
+
+  const disconnectQrForPhone = (phone: WhatsAppApiPhoneNumber) => {
+    showConfirm(
+      'Desconectar QR',
+      `Se apagara el envio por QR para ${getPhoneLabel(phone)}. La conexion oficial de YCloud y los mensajes guardados se quedan intactos.`,
+      async () => {
+        setQrDisconnectingPhoneId(phone.id)
+        try {
+          await whatsappApiService.disconnectQr(phone.id)
+          await loadApiStatus()
+          showToast('success', 'QR desconectado', 'Este numero ya no enviara mensajes por QR')
+        } catch (error) {
+          showToast('error', 'No se pudo desconectar', error instanceof Error ? error.message : 'Intenta nuevamente')
+        } finally {
+          setQrDisconnectingPhoneId('')
         }
       },
       'Desconectar',
@@ -484,22 +581,60 @@ export const WhatsAppSettings: React.FC = () => {
             </div>
           </div>
 
-          {phoneRows.length > 1 && (
+          {phoneRows.length > 0 && (
             <div className={styles.phoneList}>
               {phoneRows.map((phone) => {
                 const phoneProfile = getPhoneProfile(phone)
+                const qrSession = qrSessionsByPhoneId.get(phone.id)
+                const qrStatus = qrSession?.status || phone.qr_status || ''
+                const qrError = qrSession?.lastError || phone.qr_last_error || ''
                 const isSender = phone.id === selectedPhoneId ||
                   phone.phone_number === apiStatus.sender.phone ||
                   phone.display_phone_number === apiStatus.sender.phone
+                const qrPending = ['starting', 'qr_pending'].includes(String(qrStatus).toLowerCase())
+                const qrConnected = String(qrStatus).toLowerCase() === 'connected'
 
                 return (
                   <div key={phone.id} className={styles.phoneListItem}>
                     <span className={styles.phoneAvatar}><SiWhatsapp size={15} /></span>
-                    <div>
+                    <div className={styles.phoneListMain}>
                       <strong>{phone.display_phone_number || phone.phone_number || 'Numero'}</strong>
                       <small>{phone.verified_name || phoneProfile?.verifiedName || phoneProfile?.businessName || phoneProfile?.name || 'Sin nombre'}</small>
+                      <div className={styles.phoneBadges}>
+                        <mark>{isSender ? 'Emisor principal' : 'API oficial'}</mark>
+                        <mark className={getQrStatusClass(qrStatus)}>{getQrStatusLabel(qrStatus)}</mark>
+                      </div>
+                      {qrSession?.qrCodeDataUrl && qrPending && (
+                        <div className={styles.qrPreview}>
+                          <img src={qrSession.qrCodeDataUrl} alt={`QR para ${phone.display_phone_number || phone.phone_number || 'WhatsApp'}`} />
+                          <span>Escanea este codigo desde WhatsApp en el mismo numero.</span>
+                        </div>
+                      )}
+                      {qrError && <p className={styles.phoneError}>{qrError}</p>}
                     </div>
-                    <mark>{isSender ? 'Emisor' : 'Disponible'}</mark>
+                    <div className={styles.phoneActions}>
+                      {qrConnected ? (
+                        <button
+                          type="button"
+                          className={styles.phoneActionDanger}
+                          onClick={() => disconnectQrForPhone(phone)}
+                          disabled={qrDisconnectingPhoneId === phone.id}
+                        >
+                          <Unplug size={14} />
+                          {qrDisconnectingPhoneId === phone.id ? 'Apagando' : 'Apagar QR'}
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          className={styles.phoneActionButton}
+                          onClick={() => connectQrForPhone(phone)}
+                          disabled={qrConnectingPhoneId === phone.id}
+                        >
+                          <QrCode size={14} />
+                          {qrConnectingPhoneId === phone.id ? 'Abriendo' : qrPending ? 'Nuevo QR' : 'Conectar QR'}
+                        </button>
+                      )}
+                    </div>
                   </div>
                 )
               })}

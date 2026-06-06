@@ -11,6 +11,16 @@ export interface WhatsAppApiPhoneNumber {
   quality_rating?: string | null
   messaging_limit?: string | null
   status?: string | null
+  label?: string | null
+  is_default_sender?: boolean
+  api_send_enabled?: boolean
+  qr_send_enabled?: boolean
+  qr_status?: string | null
+  qr_connected_phone?: string | null
+  qr_consent_accepted_at?: string | null
+  qr_last_connected_at?: string | null
+  qr_last_disconnected_at?: string | null
+  qr_last_error?: string | null
   updated_at?: string | null
 }
 
@@ -94,6 +104,10 @@ export interface WhatsAppApiStatus {
     highestSeverity?: string
     items: WhatsAppApiAlert[]
   }
+  qr?: {
+    consentText: string
+    sessions: WhatsAppQrSession[]
+  }
   stats: {
     phoneNumbers: number
     contacts: number
@@ -151,6 +165,8 @@ export interface WhatsAppApiTextSendPayload {
   from?: string
   text: string
   externalId?: string
+  transport?: 'api' | 'qr'
+  phoneNumberId?: string
 }
 
 export interface WhatsAppApiImageSendPayload {
@@ -162,6 +178,29 @@ export interface WhatsAppApiImageSendPayload {
   externalId?: string
 }
 
+export interface WhatsAppQrSession {
+  id: string
+  phoneNumberId: string
+  expectedPhone: string
+  connectedPhone?: string | null
+  status: string
+  qrCode?: string
+  qrCodeDataUrl?: string
+  consentAccepted?: boolean
+  consentText?: string
+  consentAcceptedAt?: string | null
+  consentAcceptedBy?: string | null
+  lastError?: string
+  lastConnectedAt?: string | null
+  lastDisconnectedAt?: string | null
+  updatedAt?: string | null
+}
+
+export interface WhatsAppQrConnectPayload {
+  phoneNumberId: string
+  acceptedRisk: boolean
+}
+
 export const whatsappApiService = {
   getStatus: () => apiClient.get<WhatsAppApiStatus>('/whatsapp-api/status'),
   connect: (payload: WhatsAppApiConnectPayload) => apiClient.post<WhatsAppApiStatus>('/whatsapp-api/connect', payload),
@@ -169,6 +208,11 @@ export const whatsappApiService = {
   refresh: () => apiClient.post<WhatsAppApiStatus>('/whatsapp-api/refresh'),
   disconnect: () => apiClient.post<WhatsAppApiStatus>('/whatsapp-api/disconnect'),
   reset: () => apiClient.post<WhatsAppApiStatus>('/whatsapp-api/reset'),
+  getQr: (phoneNumberId?: string) => apiClient.get<WhatsAppQrSession | WhatsAppQrSession[]>('/whatsapp-api/qr', {
+    params: phoneNumberId ? { phoneNumberId } : undefined
+  }),
+  connectQr: (payload: WhatsAppQrConnectPayload) => apiClient.post<WhatsAppQrSession>('/whatsapp-api/qr/connect', payload),
+  disconnectQr: (phoneNumberId: string) => apiClient.post<WhatsAppQrSession>('/whatsapp-api/qr/disconnect', { phoneNumberId }),
   getTemplates: (status?: string) => apiClient.get<WhatsAppApiTemplatesResponse>('/whatsapp-api/templates', {
     params: status ? { status } : undefined
   }),

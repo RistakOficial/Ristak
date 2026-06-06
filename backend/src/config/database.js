@@ -1172,7 +1172,18 @@ async function initTables() {
 
     for (const [columnName, columnType] of [
       ['profile_picture_url', 'TEXT'],
-      ['business_profile_json', 'TEXT']
+      ['business_profile_json', 'TEXT'],
+      ['label', 'TEXT'],
+      ['is_default_sender', 'INTEGER DEFAULT 0'],
+      ['api_send_enabled', 'INTEGER DEFAULT 1'],
+      ['qr_send_enabled', 'INTEGER DEFAULT 0'],
+      ['qr_consent_accepted_at', 'DATETIME'],
+      ['qr_consent_accepted_by', 'TEXT'],
+      ['qr_status', 'TEXT'],
+      ['qr_connected_phone', 'TEXT'],
+      ['qr_last_connected_at', 'DATETIME'],
+      ['qr_last_disconnected_at', 'DATETIME'],
+      ['qr_last_error', 'TEXT']
     ]) {
       try {
         await db.run(`ALTER TABLE whatsapp_api_phone_numbers ADD COLUMN ${columnName} ${columnType}`)
@@ -1203,12 +1214,14 @@ async function initTables() {
         ycloud_message_id TEXT,
         wamid TEXT,
         waba_id TEXT,
+        business_phone_number_id TEXT,
         whatsapp_api_contact_id TEXT,
         contact_id TEXT,
         phone TEXT,
         from_phone TEXT,
         to_phone TEXT,
         business_phone TEXT,
+        transport TEXT DEFAULT 'api',
         direction TEXT,
         message_type TEXT,
         message_text TEXT,
@@ -1235,6 +1248,17 @@ async function initTables() {
         FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE SET NULL
       )
     `)
+
+    for (const [columnName, columnType] of [
+      ['business_phone_number_id', 'TEXT'],
+      ['transport', "TEXT DEFAULT 'api'"]
+    ]) {
+      try {
+        await db.run(`ALTER TABLE whatsapp_api_messages ADD COLUMN ${columnName} ${columnType}`)
+      } catch (err) {
+        // Columna ya existe, ignorar.
+      }
+    }
 
     await db.run(`
       CREATE TABLE IF NOT EXISTS whatsapp_api_attribution (
@@ -1356,11 +1380,36 @@ async function initTables() {
       )
     `)
 
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS whatsapp_qr_sessions (
+        id TEXT PRIMARY KEY,
+        phone_number_id TEXT NOT NULL,
+        expected_phone TEXT NOT NULL,
+        connected_phone TEXT,
+        status TEXT DEFAULT 'disconnected',
+        qr_code TEXT,
+        qr_code_data_url TEXT,
+        consent_accepted INTEGER DEFAULT 0,
+        consent_text TEXT,
+        consent_accepted_at DATETIME,
+        consent_accepted_by TEXT,
+        last_error TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        last_connected_at DATETIME,
+        last_disconnected_at DATETIME,
+        FOREIGN KEY (phone_number_id) REFERENCES whatsapp_api_phone_numbers(id) ON DELETE CASCADE
+      )
+    `)
+
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_phone_numbers_phone ON whatsapp_api_phone_numbers(phone_number)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_phone_numbers_default ON whatsapp_api_phone_numbers(is_default_sender)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_contacts_phone ON whatsapp_api_contacts(phone)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_contacts_contact ON whatsapp_api_contacts(contact_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_messages_contact ON whatsapp_api_messages(contact_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_messages_phone ON whatsapp_api_messages(phone)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_messages_business_phone ON whatsapp_api_messages(business_phone)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_messages_business_phone_id ON whatsapp_api_messages(business_phone_number_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_messages_created ON whatsapp_api_messages(created_at)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_messages_wamid ON whatsapp_api_messages(wamid)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_attr_contact ON whatsapp_api_attribution(contact_id)')
@@ -1374,6 +1423,8 @@ async function initTables() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_alerts_entity ON whatsapp_api_alerts(entity_type, entity_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_template_sends_created ON whatsapp_api_template_sends(created_at)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_template_sends_status ON whatsapp_api_template_sends(status)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_qr_sessions_phone ON whatsapp_qr_sessions(phone_number_id)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_qr_sessions_status ON whatsapp_qr_sessions(status, updated_at)')
 
     // Tabla de versiones de Meta API (para auto-actualización)
     await db.run(`

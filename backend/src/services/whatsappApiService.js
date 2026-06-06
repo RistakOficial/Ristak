@@ -1,11 +1,21 @@
 import crypto from 'crypto'
+import { spawn } from 'child_process'
 import fs from 'fs/promises'
+import { tmpdir } from 'os'
 import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
 import fetch from 'node-fetch'
 import { db, getAppConfig, setAppConfig } from '../config/database.js'
 import { findContactByPhoneCandidates } from './contactIdentityService.js'
 import { sendChatMessageNotification } from './pushNotificationsService.js'
+import {
+  QR_CONSENT_TEXT,
+  disconnectWhatsAppQrConnection,
+  getWhatsAppQrSession,
+  getWhatsAppQrSessions,
+  sendWhatsAppQrTextMessage,
+  startWhatsAppQrConnection
+} from './whatsappQrService.js'
 import { decrypt, encrypt } from '../utils/encryption.js'
 import { buildPhoneMatchCandidates, normalizePhoneDigits, normalizePhoneForStorage } from '../utils/phoneUtils.js'
 import { detectWhatsAppAttributionFields } from '../utils/whatsappAttribution.js'
@@ -21,12 +31,32 @@ const GENERIC_CONTACT_NAME = 'Contacto WhatsApp_API'
 const WHATSAPP_IMAGE_UPLOAD_ROOT = join(__dirname, '../../uploads/whatsapp-images')
 const WHATSAPP_IMAGE_PUBLIC_PATH = '/uploads/whatsapp-images'
 const MAX_WHATSAPP_IMAGE_BYTES = 8 * 1024 * 1024
+const WHATSAPP_AUDIO_UPLOAD_ROOT = join(__dirname, '../../uploads/whatsapp-audio')
+const WHATSAPP_AUDIO_PUBLIC_PATH = '/uploads/whatsapp-audio'
+const MAX_WHATSAPP_AUDIO_BYTES = 16 * 1024 * 1024
 const IMAGE_EXTENSION_BY_MIME = {
   'image/jpeg': 'jpg',
   'image/jpg': 'jpg',
   'image/png': 'png',
   'image/webp': 'webp'
 }
+const AUDIO_EXTENSION_BY_MIME = {
+  'audio/aac': 'aac',
+  'audio/amr': 'amr',
+  'audio/mp4': 'm4a',
+  'audio/mpeg': 'mp3',
+  'audio/ogg': 'ogg',
+  'audio/webm': 'webm',
+  'audio/wav': 'wav',
+  'audio/x-wav': 'wav'
+}
+const WHATSAPP_DIRECT_AUDIO_MIME_TYPES = new Set([
+  'audio/aac',
+  'audio/amr',
+  'audio/mp4',
+  'audio/mpeg',
+  'audio/ogg'
+])
 
 const REQUIRED_WEBHOOK_EVENTS = [
   'whatsapp.inbound_message.received',
@@ -265,6 +295,100 @@ function parseImageDataUrl(value = '') {
   return { buffer, mimeType, extension }
 }
 
+function parseAudioDataUrl(value = '') {
+  const match = cleanString(value).match(/^data:([^;,]+)((?:;[^;,=]+=[^;,]+)*);base64,([a-z0-9+/=\s]+)$/i)
+  if (!match) {
+    throw new Error('El audio no llegó en un formato válido.')
+  }
+
+  const mimeType = match[1].toLowerCase()
+  const params = String(match[2] || '').toLowerCase()
+  const extension = AUDIO_EXTENSION_BY_MIME[mimeType]
+  if (!extension) {
+    throw new Error('WhatsApp no acepta este formato de audio. Graba otra vez o usa un audio compatible.')
+  }
+
+  const buffer = Buffer.from(match[3].replace(/\s/g, ''), 'base64')
+  if (!buffer.length) {
+    throw new Error('El audio está vacío.')
+  }
+
+  if (buffer.length > MAX_WHATSAPP_AUDIO_BYTES) {
+    throw new Error('El audio pesa demasiado. Graba uno más corto para poder enviarlo por WhatsApp.')
+  }
+
+  return { buffer, mimeType, params, extension }
+}
+
+function audioNeedsWhatsAppConversion({ mimeType, params }) {
+  if (mimeType === 'audio/ogg') return !String(params || '').includes('opus')
+  return !WHATSAPP_DIRECT_AUDIO_MIME_TYPES.has(mimeType)
+}
+
+function runFfmpeg(args = []) {
+  return new Promise((resolve, reject) => {
+    const binary = process.env.FFMPEG_PATH || 'ffmpeg'
+    const child = spawn(binary, args)
+    let stderr = ''
+
+    child.stderr.on('data', chunk => {
+      stderr += chunk.toString()
+    })
+
+    child.on('error', () => {
+      reject(new Error('El audio salió en un formato que WhatsApp no acepta y este servidor no pudo adaptarlo. Intenta grabarlo otra vez.'))
+    })
+
+    child.on('close', code => {
+      if (code === 0) {
+        resolve()
+        return
+      }
+
+      const detail = stderr.trim().slice(0, 240)
+      reject(new Error(detail || 'No se pudo preparar el audio para WhatsApp. Intenta grabarlo otra vez.'))
+    })
+  })
+}
+
+async function convertAudioToOggOpus({ buffer, extension }) {
+  const folder = await fs.mkdtemp(join(tmpdir(), 'ristak-whatsapp-audio-'))
+  const inputPath = join(folder, `input.${extension || 'audio'}`)
+  const outputPath = join(folder, 'voice.ogg')
+
+  try {
+    await fs.writeFile(inputPath, buffer)
+    await runFfmpeg([
+      '-y',
+      '-i',
+      inputPath,
+      '-vn',
+      '-ac',
+      '1',
+      '-ar',
+      '48000',
+      '-c:a',
+      'libopus',
+      '-b:a',
+      '48k',
+      outputPath
+    ])
+
+    const converted = await fs.readFile(outputPath)
+    if (!converted.length) {
+      throw new Error('El audio convertido quedó vacío. Intenta grabarlo otra vez.')
+    }
+
+    if (converted.length > MAX_WHATSAPP_AUDIO_BYTES) {
+      throw new Error('El audio pesa demasiado. Graba uno más corto para poder enviarlo por WhatsApp.')
+    }
+
+    return converted
+  } finally {
+    await fs.rm(folder, { recursive: true, force: true }).catch(() => undefined)
+  }
+}
+
 async function saveWhatsAppImageDataUrl(dataUrl = '') {
   const { buffer, mimeType, extension } = parseImageDataUrl(dataUrl)
   const dayKey = new Date().toISOString().slice(0, 10)
@@ -279,6 +403,37 @@ async function saveWhatsAppImageDataUrl(dataUrl = '') {
     mimeType,
     size: buffer.length,
     publicPath: `${WHATSAPP_IMAGE_PUBLIC_PATH}/${dayKey}/${filename}`,
+    filename
+  }
+}
+
+async function saveWhatsAppAudioDataUrl(dataUrl = '') {
+  const parsed = parseAudioDataUrl(dataUrl)
+  const originalMimeType = parsed.mimeType
+  const media = audioNeedsWhatsAppConversion(parsed)
+    ? {
+        buffer: await convertAudioToOggOpus(parsed),
+        mimeType: 'audio/ogg',
+        extension: 'ogg'
+      }
+    : {
+        buffer: parsed.buffer,
+        mimeType: parsed.mimeType,
+        extension: parsed.extension
+      }
+  const dayKey = new Date().toISOString().slice(0, 10)
+  const folder = join(WHATSAPP_AUDIO_UPLOAD_ROOT, dayKey)
+  const filename = `${crypto.randomUUID()}.${media.extension}`
+  const filePath = join(folder, filename)
+
+  await fs.mkdir(folder, { recursive: true })
+  await fs.writeFile(filePath, media.buffer)
+
+  return {
+    mimeType: media.mimeType,
+    originalMimeType,
+    size: media.buffer.length,
+    publicPath: `${WHATSAPP_AUDIO_PUBLIC_PATH}/${dayKey}/${filename}`,
     filename
   }
 }
@@ -578,7 +733,17 @@ function mapPhoneNumberForResponse(record = {}) {
     business_profile_json: item.businessProfile ? safeJson(item.businessProfile) : null,
     quality_rating: item.qualityRating || null,
     messaging_limit: item.messagingLimit || null,
-    status: item.status || null
+    status: item.status || null,
+    label: cleanString(record.label) || null,
+    is_default_sender: Number(record.is_default_sender || 0) === 1,
+    api_send_enabled: record.api_send_enabled === undefined ? true : Number(record.api_send_enabled || 0) === 1,
+    qr_send_enabled: Number(record.qr_send_enabled || 0) === 1,
+    qr_status: cleanString(record.qr_status) || null,
+    qr_connected_phone: cleanString(record.qr_connected_phone) || null,
+    qr_consent_accepted_at: record.qr_consent_accepted_at || null,
+    qr_last_connected_at: record.qr_last_connected_at || null,
+    qr_last_disconnected_at: record.qr_last_disconnected_at || null,
+    qr_last_error: cleanString(record.qr_last_error) || null
   }
 }
 
@@ -1000,6 +1165,35 @@ async function syncPhoneNumbers(phoneNumbers = [], options = {}) {
   }
 }
 
+async function setDefaultSenderPhoneNumber(phoneNumberId) {
+  const cleanPhoneNumberId = cleanString(phoneNumberId)
+  if (!cleanPhoneNumberId) return
+
+  await db.run(`
+    UPDATE whatsapp_api_phone_numbers
+    SET is_default_sender = CASE WHEN id = ? THEN 1 ELSE 0 END,
+      updated_at = CURRENT_TIMESTAMP
+  `, [cleanPhoneNumberId])
+}
+
+async function findBusinessPhoneNumberId(phone = '') {
+  const normalized = normalizePhoneForStorage(phone) || cleanString(phone)
+  if (!normalized) return null
+
+  const rows = await db.all(`
+    SELECT id, phone_number, display_phone_number
+    FROM whatsapp_api_phone_numbers
+  `).catch(() => [])
+
+  const candidates = buildPhoneMatchCandidates(normalized)
+  const match = rows.find(row => {
+    const rowCandidates = buildPhoneMatchCandidates(row.phone_number || row.display_phone_number)
+    return rowCandidates.some(candidate => candidates.includes(candidate))
+  })
+
+  return match?.id || null
+}
+
 function normalizeYCloudContactRecord(record = {}) {
   const phone = normalizePhoneForStorage(record.phoneNumber) || cleanString(record.phoneNumber)
   const profileName = normalizeDisplayText(record.nickname || record.name || record.fullName || record.email)
@@ -1165,9 +1359,12 @@ async function getPhoneNumbersFromDb() {
   return db.all(`
     SELECT id, waba_id, phone_number, display_phone_number, verified_name,
       profile_picture_url, business_profile_json, quality_rating, messaging_limit,
-      status, updated_at
+      status, label, is_default_sender, api_send_enabled, qr_send_enabled,
+      qr_consent_accepted_at, qr_consent_accepted_by, qr_status,
+      qr_connected_phone, qr_last_connected_at, qr_last_disconnected_at,
+      qr_last_error, updated_at
     FROM whatsapp_api_phone_numbers
-    ORDER BY updated_at DESC, phone_number ASC
+    ORDER BY is_default_sender DESC, updated_at DESC, phone_number ASC
   `)
 }
 
@@ -1318,18 +1515,23 @@ async function getStats() {
 
 export async function getWhatsAppApiStatus() {
   const config = await loadConfig()
-  const [stats, phoneNumbers, balance, templates, alerts] = await Promise.all([
+  const [stats, phoneNumbers, balance, templates, alerts, qrSessions] = await Promise.all([
     getStats(),
     getPhoneNumbersFromDb(),
     getBalanceFromDb(),
     getTemplatesFromDb({ limit: 12 }),
-    getActiveAlertsFromDb({ limit: 12 })
+    getActiveAlertsFromDb({ limit: 12 }),
+    getWhatsAppQrSessions().catch(error => {
+      logger.warn(`No se pudieron leer sesiones QR WhatsApp: ${error.message}`)
+      return []
+    })
   ])
 
   const connected = Boolean(config.enabled && config.hasApiKey && config.webhookEndpointId)
   const requiresPhoneSelection = connected && !config.senderPhone && phoneNumbers.length > 1
   const selectedPhone = phoneNumbers.find(phone => phone.id === config.phoneNumberId) ||
     phoneNumbers.find(phone => phone.phone_number === config.senderPhone) ||
+    phoneNumbers.find(phone => Number(phone.is_default_sender || 0) === 1) ||
     phoneNumbers[0] ||
     null
   const highestSeverity = alerts.reduce((highest, alert) => {
@@ -1378,6 +1580,10 @@ export async function getWhatsAppApiStatus() {
       critical: stats.criticalAlerts,
       highestSeverity: highestSeverity || '',
       items: alerts
+    },
+    qr: {
+      consentText: QR_CONSENT_TEXT,
+      sessions: qrSessions
     },
     stats,
     timestamps: {
@@ -1448,6 +1654,7 @@ export async function connectWhatsAppApi({ apiKey, senderPhone, phoneNumberId, w
       await setAppConfig(CONFIG_KEYS.senderPhone, selectedPhone.phoneNumber)
       await setAppConfig(CONFIG_KEYS.phoneNumberId, selectedPhone.id || '')
       await setAppConfig(CONFIG_KEYS.wabaId, selectedPhone.wabaId || '')
+      await setDefaultSenderPhoneNumber(selectedPhone.id)
     }
 
     await backfillStoredWhatsAppApiMessageEvents({
@@ -1491,6 +1698,9 @@ export async function refreshWhatsAppApi() {
     ])
     const enrichedPhoneNumbers = await enrichPhoneNumbersWithProfiles(config.apiKey, phoneNumbers)
     await syncPhoneNumbers(enrichedPhoneNumbers)
+    if (config.phoneNumberId) {
+      await setDefaultSenderPhoneNumber(config.phoneNumberId)
+    }
     if (balance) await syncBalance(balance)
     await syncTemplates(templates)
     await syncYCloudContacts(ycloudContacts)
@@ -1914,9 +2124,10 @@ function normalizeWebhookMessage(rawMessage = {}) {
   return normalized
 }
 
-async function upsertMessage({ payload, message, direction, businessPhoneHints = [] }) {
+async function upsertMessage({ payload, message, direction, businessPhoneHints = [], transport = 'api' }) {
   const normalizedMessage = normalizeWebhookMessage(message)
   const identity = getMessageIdentity({ payload, direction, message: normalizedMessage, businessPhoneHints })
+  const cleanTransport = cleanString(normalizedMessage.transport || payload.transport || transport || 'api').toLowerCase() || 'api'
   const messageText = extractMessageText(normalizedMessage)
   const messageTimestamp = toDateTime(normalizedMessage.sendTime || normalizedMessage.createTime || normalizedMessage.updateTime || payload.createTime) || nowIso()
   const profileName = normalizedMessage.customerProfile?.name || normalizedMessage.profile?.name || ''
@@ -1940,27 +2151,31 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
   const wamid = cleanString(normalizedMessage.wamid || normalizedMessage.context?.id)
   const messageId = hashId('waapi_msg', ycloudMessageId || wamid || `${payload.id}|${identity.direction}|${identity.phone}`)
   const existingMessage = await db.get('SELECT id FROM whatsapp_api_messages WHERE id = ?', [messageId]).catch(() => null)
+  const businessPhoneNumberId = await findBusinessPhoneNumberId(identity.businessPhone)
   const status = cleanString(normalizedMessage.status)
   const error = Array.isArray(normalizedMessage.errors) ? normalizedMessage.errors[0] : normalizedMessage.error
   const messageType = cleanString(normalizedMessage.type) || 'unknown'
 
   await db.run(`
     INSERT INTO whatsapp_api_messages (
-      id, ycloud_message_id, wamid, waba_id, whatsapp_api_contact_id, contact_id,
-      phone, from_phone, to_phone, business_phone, direction, message_type,
+      id, ycloud_message_id, wamid, waba_id, business_phone_number_id,
+      whatsapp_api_contact_id, contact_id,
+      phone, from_phone, to_phone, business_phone, transport, direction, message_type,
       message_text, status, error_code, error_message, message_timestamp,
       raw_payload_json, context_json, referral_json,
       detected_ctwa_clid, detected_source_id, detected_source_url, detected_source_type,
       detected_source_app, detected_entry_point, detected_headline, detected_body,
       detected_conversion_data, detected_ctwa_payload, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
     ON CONFLICT(id) DO UPDATE SET
+      business_phone_number_id = COALESCE(excluded.business_phone_number_id, whatsapp_api_messages.business_phone_number_id),
       whatsapp_api_contact_id = COALESCE(excluded.whatsapp_api_contact_id, whatsapp_api_messages.whatsapp_api_contact_id),
       contact_id = COALESCE(excluded.contact_id, whatsapp_api_messages.contact_id),
       phone = COALESCE(NULLIF(excluded.phone, ''), whatsapp_api_messages.phone),
       from_phone = COALESCE(NULLIF(excluded.from_phone, ''), whatsapp_api_messages.from_phone),
       to_phone = COALESCE(NULLIF(excluded.to_phone, ''), whatsapp_api_messages.to_phone),
       business_phone = COALESCE(NULLIF(excluded.business_phone, ''), whatsapp_api_messages.business_phone),
+      transport = COALESCE(NULLIF(excluded.transport, ''), whatsapp_api_messages.transport),
       direction = COALESCE(NULLIF(excluded.direction, ''), whatsapp_api_messages.direction),
       message_type = COALESCE(NULLIF(excluded.message_type, ''), whatsapp_api_messages.message_type),
       message_text = COALESCE(NULLIF(excluded.message_text, ''), whatsapp_api_messages.message_text),
@@ -1987,12 +2202,14 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
     ycloudMessageId || null,
     wamid || null,
     cleanString(message.wabaId) || null,
+    businessPhoneNumberId,
     apiContactId,
     localContact.id,
     identity.phone || null,
     identity.fromPhone || null,
     identity.toPhone || null,
     identity.businessPhone || null,
+    cleanTransport,
     identity.direction,
     messageType,
     messageText || null,
@@ -2071,6 +2288,9 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
     attribution,
     direction: identity.direction,
     phone: identity.phone,
+    businessPhone: identity.businessPhone,
+    businessPhoneNumberId,
+    transport: cleanTransport,
     profileName,
     messageText,
     messageType,
@@ -2449,6 +2669,19 @@ export async function getWhatsAppApiTemplates({ status, limit } = {}) {
   }
 }
 
+export async function connectWhatsAppQrForPhone({ phoneNumberId, acceptedRisk, acceptedBy } = {}) {
+  return startWhatsAppQrConnection({ phoneNumberId, acceptedRisk, acceptedBy })
+}
+
+export async function getWhatsAppQrForPhone({ phoneNumberId } = {}) {
+  if (phoneNumberId) return getWhatsAppQrSession(phoneNumberId)
+  return getWhatsAppQrSessions()
+}
+
+export async function disconnectWhatsAppQrForPhone({ phoneNumberId } = {}) {
+  return disconnectWhatsAppQrConnection({ phoneNumberId })
+}
+
 export async function createWhatsAppApiTemplate(templatePayload = {}) {
   const config = await loadConfig({ includeSecrets: true })
   if (!config.enabled || !config.apiKey) {
@@ -2690,15 +2923,17 @@ export async function sendWhatsAppApiTemplateMessage({
       to: response.to || toPhone,
       type: response.type || 'template',
       template: response.template || requestBody.template,
+      transport: 'api',
       createTime: response.createTime || nowIso()
     },
-    direction: 'outbound'
+    direction: 'outbound',
+    transport: 'api'
   })
 
   return response
 }
 
-export async function sendWhatsAppApiTextMessage({ to, text, from, externalId } = {}) {
+export async function sendWhatsAppApiTextMessage({ to, text, from, externalId, transport = 'api', phoneNumberId } = {}) {
   const config = await loadConfig({ includeSecrets: true })
   if (!config.enabled || !config.apiKey) {
     throw new Error('WhatsApp_API no está conectado')
@@ -2707,10 +2942,44 @@ export async function sendWhatsAppApiTextMessage({ to, text, from, externalId } 
   const fromPhone = normalizePhoneForStorage(from || config.senderPhone) || cleanString(from || config.senderPhone)
   const toPhone = normalizePhoneForStorage(to) || cleanString(to)
   const body = cleanString(text)
+  const cleanTransport = cleanString(transport).toLowerCase() === 'qr' ? 'qr' : 'api'
 
   if (!fromPhone) throw new Error('Falta el número emisor de WhatsApp_API')
   if (!toPhone) throw new Error('Falta el número destino')
   if (!body) throw new Error('Falta el texto del mensaje')
+
+  if (cleanTransport === 'qr') {
+    const response = await sendWhatsAppQrTextMessage({
+      phoneNumberId,
+      from: fromPhone,
+      to: toPhone,
+      text: body,
+      externalId
+    })
+
+    await upsertMessage({
+      payload: {
+        id: response.id || externalId || hashId('waqr_send_event', `${fromPhone}|${toPhone}|${body}`),
+        type: 'whatsapp.qr.message.sent',
+        transport: 'qr',
+        createTime: response.createTime || nowIso(),
+        whatsappMessage: response
+      },
+      message: {
+        ...response,
+        from: response.from || fromPhone,
+        to: response.to || toPhone,
+        type: response.type || 'text',
+        text: response.text || { body },
+        transport: 'qr',
+        createTime: response.createTime || nowIso()
+      },
+      direction: 'outbound',
+      transport: 'qr'
+    })
+
+    return response
+  }
 
   const response = await ycloudRequest('/whatsapp/messages', {
     apiKey: config.apiKey,
@@ -2737,9 +3006,11 @@ export async function sendWhatsAppApiTextMessage({ to, text, from, externalId } 
       to: response.to || toPhone,
       type: response.type || 'text',
       text: response.text || { body },
+      transport: 'api',
       createTime: response.createTime || nowIso()
     },
-    direction: 'outbound'
+    direction: 'outbound',
+    transport: 'api'
   })
 
   return response
@@ -2812,15 +3083,99 @@ export async function sendWhatsAppApiImageMessage({
       to: response.to || toPhone,
       type: response.type || 'image',
       image: response.image || requestBody.image,
+      transport: 'api',
       createTime: response.createTime || nowIso()
     },
-    direction: 'outbound'
+    direction: 'outbound',
+    transport: 'api'
   })
 
   return {
     ...response,
     image: response.image || requestBody.image,
     localMedia: savedImage
+  }
+}
+
+export async function sendWhatsAppApiAudioMessage({
+  to,
+  from,
+  audioDataUrl,
+  audioUrl,
+  externalId,
+  publicBaseUrl,
+  durationMs
+} = {}) {
+  const config = await loadConfig({ includeSecrets: true })
+  if (!config.enabled || !config.apiKey) {
+    throw new Error('WhatsApp_API no está conectado')
+  }
+
+  const fromPhone = normalizePhoneForStorage(from || config.senderPhone) || cleanString(from || config.senderPhone)
+  const toPhone = normalizePhoneForStorage(to) || cleanString(to)
+  const cleanAudioUrl = cleanString(audioUrl)
+
+  if (!fromPhone) throw new Error('Falta el número emisor de WhatsApp_API')
+  if (!toPhone) throw new Error('Falta el número destino')
+
+  let link = cleanAudioUrl
+  let savedAudio = null
+
+  if (!link) {
+    const baseUrl = requirePublicHttpsBaseUrl(publicBaseUrl || process.env.RENDER_EXTERNAL_URL || process.env.PUBLIC_URL)
+    savedAudio = await saveWhatsAppAudioDataUrl(audioDataUrl)
+    link = `${baseUrl}${savedAudio.publicPath}`
+  }
+
+  if (!/^https:\/\//i.test(link)) {
+    throw new Error('El audio necesita un enlace público HTTPS para poder enviarse por WhatsApp.')
+  }
+
+  const requestBody = {
+    from: fromPhone,
+    to: toPhone,
+    type: 'audio',
+    audio: {
+      link
+    },
+    filterUnsubscribed: true,
+    filterBlocked: true,
+    ...(externalId ? { externalId } : {})
+  }
+
+  const response = await ycloudRequest('/whatsapp/messages', {
+    apiKey: config.apiKey,
+    method: 'POST',
+    body: requestBody
+  })
+
+  await upsertMessage({
+    payload: {
+      id: response.id || externalId || hashId('waapi_audio_event', `${fromPhone}|${toPhone}|${link}`),
+      type: 'whatsapp.message.updated',
+      createTime: nowIso(),
+      whatsappMessage: response
+    },
+    message: {
+      ...response,
+      from: response.from || fromPhone,
+      to: response.to || toPhone,
+      type: response.type || 'audio',
+      audio: response.audio || {
+        ...requestBody.audio,
+        ...(durationMs ? { durationMs } : {})
+      },
+      transport: 'api',
+      createTime: response.createTime || nowIso()
+    },
+    direction: 'outbound',
+    transport: 'api'
+  })
+
+  return {
+    ...response,
+    audio: response.audio || requestBody.audio,
+    localMedia: savedAudio
   }
 }
 

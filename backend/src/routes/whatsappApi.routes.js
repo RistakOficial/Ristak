@@ -1,12 +1,16 @@
 import express from 'express'
 import {
   connectWhatsAppApiView,
+  connectWhatsAppQrView,
   disconnectWhatsAppApiView,
+  disconnectWhatsAppQrView,
   getWhatsAppApiConnectionStatus,
   getWhatsAppApiTemplatesView,
+  getWhatsAppQrView,
   previewWhatsAppApiPhoneNumbersView,
   refreshWhatsAppApiView,
   resetWhatsAppApiCredentialsView,
+  sendWhatsAppApiAudioMessageView,
   sendWhatsAppApiImageMessageView,
   sendWhatsAppApiTemplateMessageView,
   sendWhatsAppApiTextMessageView
@@ -20,8 +24,12 @@ router.post('/phone-numbers/preview', previewWhatsAppApiPhoneNumbersView)
 router.post('/refresh', refreshWhatsAppApiView)
 router.post('/disconnect', disconnectWhatsAppApiView)
 router.post('/reset', resetWhatsAppApiCredentialsView)
+router.get('/qr', getWhatsAppQrView)
+router.post('/qr/connect', connectWhatsAppQrView)
+router.post('/qr/disconnect', disconnectWhatsAppQrView)
 router.post('/messages/text', sendWhatsAppApiTextMessageView)
 router.post('/messages/image', sendWhatsAppApiImageMessageView)
+router.post('/messages/audio', sendWhatsAppApiAudioMessageView)
 router.get('/templates', getWhatsAppApiTemplatesView)
 router.post('/templates/send', sendWhatsAppApiTemplateMessageView)
 

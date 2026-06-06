@@ -10,6 +10,18 @@
   color: #111111;
   background: #ffffff;
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", Inter, sans-serif;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.phoneChatPage button,
+.phoneChatPage a,
+.phoneChatPage label,
+.phoneChatPage select {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .phoneFrame {
@@ -124,6 +136,9 @@
   font: inherit;
   font-size: 15px;
   letter-spacing: 0;
+  user-select: text;
+  -webkit-user-select: text;
+  -webkit-touch-callout: default;
 }
 
 .searchBox input::placeholder,
@@ -861,6 +876,15 @@
   color: #111111;
   background: #ffffff;
   box-shadow: 0 1px 1px rgba(0, 0, 0, 0.08);
+  user-select: text;
+  -webkit-user-select: text;
+  -webkit-touch-callout: default;
+}
+
+.messageBubble * {
+  user-select: text;
+  -webkit-user-select: text;
+  -webkit-touch-callout: default;
 }
 
 .messageRow_outbound .messageBubble {
@@ -890,6 +914,9 @@
   border-radius: 8px;
   object-fit: cover;
   background: #d7d2c8;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .messageBubble span {
@@ -904,6 +931,20 @@
   font-weight: 560;
 }
 
+.messageTransport {
+  display: inline-flex;
+  align-items: center;
+  min-height: 15px;
+  padding: 0 4px;
+  border-radius: 999px;
+  color: #0f5132;
+  background: rgba(15, 81, 50, 0.1);
+  font-style: normal;
+  font-size: 9px;
+  font-weight: 850;
+  letter-spacing: 0;
+}
+
 .messageErrorIcon {
   color: #dc2626;
 }
@@ -913,6 +954,75 @@
   min-width: 0;
   background: #f6f2eb;
   -webkit-text-size-adjust: 100%;
+}
+
+.senderBar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 8px 2px;
+  border-top: 1px solid rgba(0, 0, 0, 0.04);
+}
+
+.senderSelectWrap {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  min-height: 30px;
+  padding: 0 9px;
+  border-radius: 999px;
+  color: #0f5132;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.senderSelectWrap select {
+  min-width: 0;
+  height: 28px;
+  border: 0;
+  outline: 0;
+  color: #111111;
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 780;
+}
+
+.senderStatusOpen,
+.senderStatusClosed,
+.senderQrButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  border-radius: 999px;
+  padding: 0 9px;
+  font-size: 11px;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.senderStatusOpen {
+  color: #0f5132;
+  background: #dcf8d3;
+}
+
+.senderStatusClosed {
+  color: #9a3412;
+  background: #ffedd5;
+}
+
+.senderQrButton {
+  gap: 5px;
+  border: 0;
+  color: #ffffff;
+  background: #111111;
+}
+
+.senderQrButton:disabled {
+  opacity: 0.56;
 }
 
 .composer {
@@ -1540,6 +1650,15 @@
     min-height: 31px;
     padding-inline: 12px;
     font-size: 14px;
+  }
+
+  .senderBar {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .senderQrButton {
+    grid-column: 1 / -1;
+    width: 100%;
   }
 
   .attachmentGrid {
