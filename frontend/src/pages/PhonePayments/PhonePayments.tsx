@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { ArrowLeft, CalendarDays, ChevronRight, CreditCard, MonitorX } from 'lucide-react'
 import { RecordPaymentModal } from '@/components/common'
+import { PhoneEcosystemNav } from '@/components/phone/PhoneEcosystemNav'
 import styles from './PhonePayments.module.css'
 
 const PORTABLE_WIDTH_QUERY = '(max-width: 1366px)'
@@ -200,13 +201,11 @@ export const PhonePayments: React.FC = () => {
             </button>
           ) : (
             <div className={styles.headerMain}>
-              <Link className={styles.chatBackButton} to="/phone/chat" aria-label="Volver a chats">
-                <ArrowLeft size={18} />
-                <span>Chats</span>
-              </Link>
-              <span className={styles.brandMark}>R</span>
+              <span className={styles.brandMark}>
+                <CreditCard size={22} />
+              </span>
               <div>
-                <p className={styles.eyebrow}>Ristak Phone</p>
+                <p className={styles.eyebrow}>Ristak Chat</p>
                 <h1>Pagos</h1>
               </div>
             </div>
@@ -262,6 +261,7 @@ export const PhonePayments: React.FC = () => {
           </section>
         )}
       </div>
+      <PhoneEcosystemNav active="payments" />
     </main>
   )
 }

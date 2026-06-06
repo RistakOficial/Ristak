@@ -2,14 +2,20 @@
   "id": "/phone/chat",
   "name": "Ristak Chat",
   "short_name": "Ristak Chat",
-  "description": "Chat móvil de Ristak para conversaciones de WhatsApp.",
+  "description": "Chat móvil premium de Ristak para conversaciones, citas, pagos y agente AI.",
   "start_url": "/phone/chat",
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#ffffff",
-  "theme_color": "#25D366",
+  "background_color": "#111111",
+  "theme_color": "#111111",
   "icons": [
+    {
+      "src": "/ristak-chat-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
     {
       "src": "/ristak-chat-icon-192.png",
       "sizes": "192x192",
@@ -28,6 +34,54 @@
       "name": "Chat",
       "short_name": "Chat",
       "url": "/phone/chat",
+      "icons": [
+        {
+          "src": "/ristak-chat-icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    },
+    {
+      "name": "Dashboard",
+      "short_name": "Dashboard",
+      "url": "/phone/dashboard",
+      "icons": [
+        {
+          "src": "/ristak-chat-icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    },
+    {
+      "name": "Citas",
+      "short_name": "Citas",
+      "url": "/phone/calendario",
+      "icons": [
+        {
+          "src": "/ristak-chat-icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    },
+    {
+      "name": "Pagos",
+      "short_name": "Pagos",
+      "url": "/phone/pagos",
+      "icons": [
+        {
+          "src": "/ristak-chat-icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    },
+    {
+      "name": "Agente",
+      "short_name": "Agente",
+      "url": "/phone/agente-ia",
       "icons": [
         {
           "src": "/ristak-chat-icon-192.png",

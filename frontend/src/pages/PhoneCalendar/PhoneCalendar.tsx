@@ -15,6 +15,7 @@ import {
   X
 } from 'lucide-react'
 import { AppointmentModal } from '@/components/common'
+import { PhoneEcosystemNav } from '@/components/phone/PhoneEcosystemNav'
 import { useAuth } from '@/contexts/AuthContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
@@ -1332,6 +1333,7 @@ export const PhoneCalendar: React.FC = () => {
           </div>
         </nav>
       </div>
+      <PhoneEcosystemNav active="calendar" />
 
       {sheetView && (
         <div className={styles.sheetBackdrop} onClick={() => setSheetView(null)}>

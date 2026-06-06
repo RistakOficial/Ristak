@@ -1,20 +1,23 @@
 .phonePage {
-  --phone-frame-bg: #fbfbfd;
-  --apple-red: #ef4444;
-  --line: rgba(60, 60, 67, 0.14);
-  --soft-line: rgba(60, 60, 67, 0.09);
+  --phone-frame-bg: #ffffff;
+  --apple-red: #101010;
+  --chat-green: #25d366;
+  --line: rgba(0, 0, 0, 0.1);
+  --soft-line: rgba(0, 0, 0, 0.06);
   position: fixed;
   inset: 0;
-  display: flex;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
   width: 100vw;
   max-width: 100%;
   height: 100dvh;
   min-height: 100dvh;
   max-height: 100dvh;
-  color: #09090b;
+  color: #111111;
   background: var(--phone-frame-bg);
   overflow: hidden;
   overscroll-behavior: none;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", Inter, sans-serif;
 }
 
 .phoneFrame {
@@ -22,10 +25,8 @@
   display: flex;
   flex-direction: column;
   width: 100%;
-  height: 100dvh;
-  min-height: 100dvh;
-  max-height: 100dvh;
-  padding-bottom: calc(env(safe-area-inset-bottom) + 94px);
+  min-height: 0;
+  padding-bottom: calc(148px + env(safe-area-inset-bottom));
   background: var(--phone-frame-bg);
   overflow-x: hidden;
   overflow-y: auto;
@@ -37,8 +38,8 @@
   display: grid;
   gap: 7px;
   flex: 0 0 auto;
-  padding: calc(env(safe-area-inset-top) + 8px) 13px 4px;
-  background: linear-gradient(180deg, rgba(251, 251, 253, 0.98), rgba(251, 251, 253, 0.92));
+  padding: calc(env(safe-area-inset-top) + 10px) 16px 5px;
+  background: #ffffff;
 }
 
 .headerToolbar,
@@ -65,12 +66,12 @@
   min-height: 36px;
   max-width: 38vw;
   padding: 0 12px 0 9px;
-  border: 1px solid rgba(229, 231, 235, 0.9);
+  border: 0;
   border-radius: 999px;
-  color: #111827;
-  background: rgba(255, 255, 255, 0.82);
-  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.06);
-  font-size: 16px;
+  color: #111111;
+  background: #f7f6f2;
+  box-shadow: 0 16px 34px rgba(17, 24, 39, 0.08);
+  font-size: 15px;
   font-weight: 760;
 }
 
@@ -86,10 +87,10 @@
   align-items: center;
   min-height: 42px;
   padding: 0 6px;
-  border: 1px solid rgba(229, 231, 235, 0.88);
+  border: 0;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.88);
-  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.07);
+  background: #f7f6f2;
+  box-shadow: 0 16px 34px rgba(17, 24, 39, 0.08);
 }
 
 .headerCapsule button {
@@ -100,7 +101,7 @@
   height: 36px;
   border: 0;
   border-radius: 999px;
-  color: #111827;
+  color: #111111;
   background: transparent;
 }
 
@@ -126,7 +127,7 @@
 .titleRow h1 {
   overflow: hidden;
   color: #050505;
-  font-size: clamp(42px, 13vw, 62px);
+  font-size: clamp(40px, 10.8vw, 54px);
   font-weight: 850;
   line-height: 0.98;
   letter-spacing: 0;
@@ -136,7 +137,7 @@
 
 .titleRow p {
   margin-top: 3px;
-  color: var(--apple-red);
+  color: var(--chat-green);
   font-size: 15px;
   font-weight: 760;
   line-height: 1;
@@ -145,7 +146,7 @@
 .titleRow[data-calendar-view="year"] h1,
 .titleRow[data-calendar-view="years"] h1 {
   color: var(--apple-red);
-  font-size: clamp(48px, 15vw, 72px);
+  font-size: clamp(42px, 11.8vw, 58px);
 }
 
 .calendarSurface {
@@ -218,7 +219,7 @@
 }
 
 .monthDayToday span {
-  color: var(--apple-red);
+  color: var(--chat-green);
 }
 
 .monthDaySelected span {
@@ -316,7 +317,7 @@
 }
 
 .miniDayToday > span {
-  color: var(--apple-red);
+  color: var(--chat-green);
 }
 
 .miniDaySelected > span {
@@ -414,7 +415,7 @@
 }
 
 .weekDayToday strong {
-  color: var(--apple-red);
+  color: var(--chat-green);
 }
 
 .weekDaySelected strong {
@@ -434,7 +435,7 @@
   grid-template-rows: repeat(13, minmax(46px, 1fr));
   border-right: 1px solid var(--line);
   color: #8e8e93;
-  background: #fbfbfd;
+  background: #f7f6f2;
 }
 
 .timelineHourColumn span {
@@ -555,10 +556,10 @@
   gap: 6px;
   min-height: 32px;
   padding: 0 10px;
-  border: 1px solid rgba(229, 231, 235, 0.9);
+  border: 0;
   border-radius: 999px;
   color: #111827;
-  background: rgba(255, 255, 255, 0.84);
+  background: #f7f6f2;
   font-size: 12px;
   font-weight: 790;
 }
@@ -607,7 +608,7 @@
 .eventCard_stacked {
   min-height: 78px;
   padding: 12px;
-  border: 1px solid rgba(229, 231, 235, 0.86);
+  border: 1px solid rgba(0, 0, 0, 0.08);
   border-radius: 8px;
   background: #ffffff;
   box-shadow: 0 10px 26px rgba(15, 23, 42, 0.08);
@@ -717,13 +718,13 @@
   position: fixed;
   left: 18px;
   right: 18px;
-  bottom: 0;
+  bottom: calc(78px + env(safe-area-inset-bottom));
   z-index: 8;
   display: flex;
   align-items: center;
   justify-content: space-between;
   pointer-events: none;
-  padding-bottom: calc(env(safe-area-inset-bottom) + 10px);
+  padding-bottom: 8px;
 }
 
 .todayPill,
@@ -732,8 +733,8 @@
   align-items: center;
   justify-content: center;
   border: 0;
-  color: #111827;
-  background: rgba(255, 255, 255, 0.9);
+  color: #111111;
+  background: rgba(255, 255, 255, 0.94);
   box-shadow: 0 18px 42px rgba(15, 23, 42, 0.12);
   backdrop-filter: blur(22px);
   pointer-events: auto;
@@ -784,8 +785,8 @@
   padding: 8px 14px calc(env(safe-area-inset-bottom) + 18px);
   border: 1px solid rgba(229, 231, 235, 0.9);
   border-bottom: 0;
-  border-radius: 16px 16px 0 0;
-  background: #f5f5f7;
+  border-radius: 24px 24px 0 0;
+  background: #f7f6f2;
   box-shadow: 0 -24px 60px rgba(15, 23, 42, 0.24);
 }
 
@@ -859,7 +860,7 @@
 }
 
 .calendarOptionActive {
-  box-shadow: inset 0 0 0 2px rgba(239, 68, 68, 0.24);
+  box-shadow: inset 0 0 0 2px rgba(37, 211, 102, 0.24);
 }
 
 .calendarOptionDot {
@@ -1069,9 +1070,9 @@
 
 .allCalendarsButtonActive,
 .calendarChipActive {
-  border-color: rgba(239, 68, 68, 0.38);
-  background: rgba(239, 68, 68, 0.1);
-  color: var(--apple-red);
+  border-color: rgba(17, 17, 17, 0.22);
+  background: rgba(17, 17, 17, 0.08);
+  color: #111111;
 }
 
 .calendarChipGrid {
@@ -1115,7 +1116,7 @@
   min-height: 100dvh;
   padding: 24px;
   color: #050505;
-  background: #fbfbfd;
+  background: #ffffff;
   place-items: center;
 }
 

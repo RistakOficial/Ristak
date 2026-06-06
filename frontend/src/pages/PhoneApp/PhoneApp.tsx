@@ -771,7 +771,7 @@ export const PhoneApp: React.FC = () => {
             >
               <RefreshCw size={18} className={loading ? styles.spinIcon : undefined} />
             </button>
-            <Link className={styles.iconButton} to="/phone/agent-chat" aria-label="Abrir agente AI" title="Abrir agente AI">
+            <Link className={styles.iconButton} to="/phone/agente-ia" aria-label="Abrir agente AI" title="Abrir agente AI">
               <Bot size={18} />
             </Link>
           </div>
@@ -988,7 +988,7 @@ function TransactionsSection({ summary, transactions }: TransactionsSectionProps
     <div className={styles.sectionStack}>
       <div className={styles.paymentActionGrid}>
         <Link
-          to="/phone/payments?mode=single"
+          to="/phone/pagos?mode=single"
           className={`${styles.paymentActionButton} ${styles.paymentActionPrimary}`}
         >
           <CreditCard size={18} />
@@ -998,7 +998,7 @@ function TransactionsSection({ summary, transactions }: TransactionsSectionProps
           </span>
         </Link>
         <Link
-          to="/phone/payments?mode=partial"
+          to="/phone/pagos?mode=partial"
           className={styles.paymentActionButton}
         >
           <CalendarDays size={18} />

@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { ArrowLeft, MonitorX } from 'lucide-react'
+import { MonitorX } from 'lucide-react'
 import { AIAgentPanel } from '@/components/ai'
+import { PhoneEcosystemNav } from '@/components/phone/PhoneEcosystemNav'
 import styles from './PhoneAgentChat.module.css'
 
 const PORTABLE_WIDTH_QUERY = '(max-width: 1366px)'
@@ -161,11 +162,10 @@ export const PhoneAgentChat: React.FC = () => {
 
   return (
     <main className={styles.mobilePage} aria-label="Chat movil y tablet del agente AI">
-      <Link className={styles.chatBackButton} to="/phone/chat" aria-label="Volver a chats">
-        <ArrowLeft size={18} />
-        <span>Chats</span>
-      </Link>
-      <AIAgentPanel variant="embedded" />
+      <section className={styles.agentPanelHost}>
+        <AIAgentPanel variant="embedded" />
+      </section>
+      <PhoneEcosystemNav active="agent" />
     </main>
   )
 }

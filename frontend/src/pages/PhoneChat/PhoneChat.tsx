@@ -28,6 +28,7 @@ import {
   X
 } from 'lucide-react'
 import { AppointmentModal, Icon, RecordPaymentModal } from '@/components/common'
+import { PhoneEcosystemNav } from '@/components/phone/PhoneEcosystemNav'
 import { useAuth } from '@/contexts/AuthContext'
 import { useLabels } from '@/contexts/LabelsContext'
 import { useNotification } from '@/contexts/NotificationContext'
@@ -1000,24 +1001,7 @@ export const PhoneChat: React.FC = () => {
             {renderChats()}
           </div>
 
-          <nav className={styles.mobileDock} aria-label="Secciones móviles">
-            <Link to="/phone/chat" className={styles.mobileDockActive}>
-              <MessageCircle size={25} />
-              <span>Chats</span>
-            </Link>
-            <Link to="/phone/calendar">
-              <CalendarDays size={24} />
-              <span>Citas</span>
-            </Link>
-            <Link to="/phone/payments">
-              <CreditCard size={24} />
-              <span>Pagos</span>
-            </Link>
-            <Link to="/phone/agent-chat">
-              <Bot size={24} />
-              <span>Agente</span>
-            </Link>
-          </nav>
+          <PhoneEcosystemNav active="chat" />
         </section>
 
         <section className={styles.conversationScreen} aria-label="Conversación">

@@ -120,7 +120,31 @@ const AppWithNotifications: React.FC = () => {
           <Route path="/setup" element={<SetupRoute><Setup /></SetupRoute>} />
           <Route path="/login" element={<Login />} />
           <Route
+            path="/phone"
+            element={
+              <ProtectedRoute>
+                <Navigate to="/phone/chat" replace />
+              </ProtectedRoute>
+            }
+          />
+          <Route
             path="/phone/agent-chat"
+            element={
+              <ProtectedRoute>
+                <PhoneAgentChat />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/phone/agent-ai"
+            element={
+              <ProtectedRoute>
+                <PhoneAgentChat />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/phone/agente-ia"
             element={
               <ProtectedRoute>
                 <PhoneAgentChat />
@@ -152,7 +176,23 @@ const AppWithNotifications: React.FC = () => {
             }
           />
           <Route
+            path="/phone/pagos"
+            element={
+              <ProtectedRoute>
+                <PhonePayments />
+              </ProtectedRoute>
+            }
+          />
+          <Route
             path="/phone/calendar"
+            element={
+              <ProtectedRoute>
+                <PhoneCalendar />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/phone/calendario"
             element={
               <ProtectedRoute>
                 <PhoneCalendar />

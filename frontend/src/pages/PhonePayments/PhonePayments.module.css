@@ -1,23 +1,20 @@
 .phonePage {
-  --phone-frame-bg: color-mix(in srgb, var(--color-background-primary) 92%, #ffffff 8%);
+  --phone-frame-bg: #ffffff;
   position: fixed;
   inset: 0;
   isolation: isolate;
-  display: flex;
-  align-items: stretch;
-  justify-content: center;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
   width: 100vw;
   max-width: 100%;
   height: 100dvh;
   min-height: 100dvh;
   max-height: 100dvh;
-  color: var(--color-text-primary);
-  background:
-    linear-gradient(180deg, rgba(16, 185, 129, 0.08), transparent 34%),
-    linear-gradient(135deg, rgba(59, 130, 246, 0.08), transparent 42%),
-    var(--phone-frame-bg);
-  overflow: visible;
+  color: #111111;
+  background: var(--phone-frame-bg);
+  overflow: hidden;
   overscroll-behavior: none;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", Inter, sans-serif;
 }
 
 .phoneFrame {
@@ -28,9 +25,7 @@
   grid-template-rows: auto minmax(0, 1fr);
   width: 100%;
   max-width: none;
-  height: 100dvh;
-  min-height: 100dvh;
-  max-height: 100dvh;
+  min-height: 0;
   background: var(--phone-frame-bg);
   box-shadow: none;
   overflow: hidden;
@@ -42,13 +37,13 @@
   grid-row: 1;
   z-index: 2;
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
   min-width: 0;
-  min-height: calc(74px + env(safe-area-inset-top));
-  padding: calc(env(safe-area-inset-top) + 14px) 14px 12px;
-  background: transparent;
+  min-height: calc(94px + env(safe-area-inset-top));
+  padding: calc(env(safe-area-inset-top) + 12px) 16px 12px;
+  background: #ffffff;
   backdrop-filter: none;
 }
 
@@ -60,15 +55,15 @@
 }
 
 .chatBackButton {
-  display: inline-flex;
+  display: none;
   align-items: center;
   justify-content: center;
   gap: 5px;
   min-height: 36px;
   padding: 0 10px;
   border-radius: 999px;
-  color: var(--color-text-primary);
-  background: color-mix(in srgb, var(--color-background-secondary) 86%, #ffffff 14%);
+  color: #111111;
+  background: #f7f6f2;
   font-size: 13px;
   font-weight: 760;
   text-decoration: none;
@@ -91,19 +86,19 @@
   flex: 0 0 auto;
   width: 44px;
   height: 44px;
-  border-radius: 8px;
+  border-radius: 999px;
   color: #ffffff;
-  background: #111827;
+  background: #111111;
   font-size: 18px;
   font-weight: 900;
 }
 
 .headerMain h1 {
   margin: 2px 0 0;
-  color: var(--color-text-primary);
-  font-size: clamp(22px, 6.2vw, 30px);
+  color: #000000;
+  font-size: clamp(40px, 10.8vw, 54px);
   font-weight: 850;
-  line-height: 1.08;
+  line-height: 0.98;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -111,7 +106,7 @@
 
 .eyebrow {
   margin: 0;
-  color: var(--color-text-tertiary);
+  color: #737373;
   font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.08em;
@@ -124,10 +119,12 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 6px 6px 0;
+  min-height: 40px;
+  padding: 0 12px 0 10px;
   border: 0;
-  background: transparent;
-  color: var(--color-text-primary);
+  border-radius: 999px;
+  background: #f7f6f2;
+  color: #111111;
   font-size: 16px;
   font-weight: 650;
   cursor: pointer;
@@ -140,7 +137,7 @@
 
 .headerFormTitle {
   margin: 0;
-  color: var(--color-text-primary);
+  color: #111111;
   font-size: 17px;
   font-weight: 750;
   white-space: nowrap;
@@ -154,6 +151,8 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
+  box-sizing: border-box;
+  padding-bottom: calc(86px + env(safe-area-inset-bottom));
   overflow: hidden;
 }
 
@@ -163,31 +162,31 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  padding: 20px 16px calc(env(safe-area-inset-bottom, 0px) + 22px);
+  gap: 10px;
+  padding: 8px 16px calc(env(safe-area-inset-bottom, 0px) + 96px);
   overflow-y: auto;
 }
 
 .choiceCard {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 12px;
   width: 100%;
-  padding: 20px 18px;
-  border: 1px solid rgba(148, 163, 184, 0.18);
-  border-radius: 16px;
-  background: var(--color-surface, var(--color-background-secondary));
-  color: var(--color-text-primary);
+  padding: 15px 14px;
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  border-radius: 8px;
+  background: #ffffff;
+  color: #111111;
   text-align: left;
   cursor: pointer;
-  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.08);
+  box-shadow: 0 10px 26px rgba(15, 23, 42, 0.06);
   transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
   -webkit-tap-highlight-color: transparent;
 }
 
 .choiceCard:active {
   transform: scale(0.99);
-  border-color: rgba(59, 130, 246, 0.4);
+  border-color: rgba(37, 211, 102, 0.42);
 }
 
 .choiceIcon {
@@ -195,19 +194,19 @@
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
-  width: 52px;
-  height: 52px;
-  border-radius: 14px;
+  width: 48px;
+  height: 48px;
+  border-radius: 999px;
 }
 
 .choiceIconGreen {
-  color: #047857;
-  background: rgba(16, 185, 129, 0.14);
+  color: #ffffff;
+  background: #25d366;
 }
 
 .choiceIconBlue {
-  color: #1d4ed8;
-  background: rgba(59, 130, 246, 0.14);
+  color: #ffffff;
+  background: #111111;
 }
 
 .choiceText {
@@ -219,7 +218,7 @@
 }
 
 .choiceText strong {
-  font-size: 18px;
+  font-size: 19px;
   font-weight: 800;
   line-height: 1.15;
 }
@@ -227,17 +226,17 @@
 .choiceText small {
   font-size: 13px;
   line-height: 1.4;
-  color: var(--color-text-secondary);
+  color: #737373;
 }
 
 .choiceChevron {
   flex: 0 0 auto;
-  color: var(--color-text-tertiary);
+  color: #737373;
 }
 
 .selectHint {
   margin: 2px 4px 0;
-  color: var(--color-text-tertiary);
+  color: #737373;
   font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.06em;
