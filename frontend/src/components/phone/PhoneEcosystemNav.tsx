@@ -7,6 +7,7 @@ type PhoneSection = 'chat' | 'calendar' | 'payments' | 'agent'
 
 interface PhoneEcosystemNavProps {
   active: PhoneSection
+  badges?: Partial<Record<PhoneSection, number>>
 }
 
 const navItems = [
@@ -16,13 +17,24 @@ const navItems = [
   { key: 'agent', label: 'Agente', to: '/phone/agent-ai', Icon: Bot }
 ] as const
 
-export const PhoneEcosystemNav: React.FC<PhoneEcosystemNavProps> = ({ active }) => (
+export const PhoneEcosystemNav: React.FC<PhoneEcosystemNavProps> = ({ active, badges = {} }) => (
   <nav className={styles.dock} aria-label="Secciones de Ristak Chat">
-    {navItems.map(({ key, label, to, Icon }) => (
-      <Link key={key} to={to} className={active === key ? styles.active : undefined}>
-        <Icon size={key === 'chat' ? 25 : 24} />
-        <span>{label}</span>
-      </Link>
-    ))}
+    {navItems.map(({ key, label, to, Icon }) => {
+      const badgeCount = Math.max(0, Number(badges[key] || 0))
+
+      return (
+        <Link key={key} to={to} className={active === key ? styles.active : undefined}>
+          <span className={styles.iconWrap}>
+            <Icon size={key === 'chat' ? 25 : 24} />
+            {badgeCount > 0 && (
+              <i aria-label={`${badgeCount} mensajes no leídos`}>
+                {badgeCount > 99 ? '99+' : badgeCount}
+              </i>
+            )}
+          </span>
+          <span>{label}</span>
+        </Link>
+      )
+    })}
   </nav>
 )

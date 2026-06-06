@@ -237,6 +237,15 @@
   background: #f4fbf6;
 }
 
+.chatItemUnread .chatMain strong {
+  font-weight: 880;
+}
+
+.chatItemUnread .chatMain small {
+  color: #5f5f5f;
+  font-weight: 650;
+}
+
 .avatar {
   display: inline-flex;
   align-items: center;
@@ -306,6 +315,11 @@
   font-weight: 560;
 }
 
+.chatMeta .chatUnreadTime {
+  color: #19c96b;
+  font-weight: 820;
+}
+
 .chatMeta i {
   display: inline-flex;
   align-items: center;
@@ -314,7 +328,7 @@
   height: 22px;
   padding: 0 6px;
   border-radius: 999px;
-  color: #ffffff;
+  color: #07140d;
   background: #25d366;
   font-style: normal;
   font-size: 13px;

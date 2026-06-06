@@ -58,6 +58,7 @@ const PHONE_WIDTH_QUERY = '(max-width: 900px)'
 const COARSE_POINTER_QUERY = '(pointer: coarse)'
 const MOBILE_OR_TABLET_USER_AGENT_PATTERN = /Android|iPad|iPhone|iPod|IEMobile|Opera Mini|Mobile|Tablet/i
 const SCROLLABLE_CHAT_SELECTOR = '[data-phone-chat-scrollable="true"], [contenteditable="true"], textarea, input, select'
+const CHAT_READ_STATE_KEY = 'ristak_phone_chat_read_state_v1'
 
 type AccessState = 'checking' | 'allowed' | 'blocked'
 type ComposerStatus = 'idle' | 'sending'
@@ -95,6 +96,13 @@ interface ChatContact extends Contact {
   profile_picture_url?: string | null
 }
 
+interface ChatReadStateItem {
+  lastMessageDate: string
+  messageCount: number
+}
+
+type ChatReadState = Record<string, ChatReadStateItem>
+
 interface ContactInfoPayment {
   id: string
   amount: number
@@ -125,6 +133,101 @@ function hasPortableAccess() {
 function getAccessState(): AccessState {
   if (typeof window === 'undefined') return 'checking'
   return hasPortableAccess() ? 'allowed' : 'blocked'
+}
+
+function readChatReadState(): ChatReadState {
+  if (typeof window === 'undefined') return {}
+
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(CHAT_READ_STATE_KEY) || '{}')
+    return parsed && typeof parsed === 'object' ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
+function writeChatReadState(state: ChatReadState) {
+  if (typeof window === 'undefined') return
+  window.localStorage.setItem(CHAT_READ_STATE_KEY, JSON.stringify(state))
+}
+
+function getContactMessageCount(contact: ChatContact) {
+  return Number(contact.messageCount || 0)
+}
+
+function applyLocalUnreadState(contact: ChatContact, readState: ChatReadState): ChatContact {
+  const serverUnread = Math.max(0, Number(contact.unreadCount || 0))
+  const lastDirection = String(contact.lastMessageDirection || '').toLowerCase()
+
+  if (serverUnread > 0 || lastDirection !== 'inbound') {
+    return { ...contact, unreadCount: serverUnread }
+  }
+
+  const stored = readState[contact.id]
+  if (!stored) return { ...contact, unreadCount: 0 }
+
+  const messageCount = getContactMessageCount(contact)
+  const countDelta = messageCount - Number(stored.messageCount || 0)
+  const lastMessageDate = contact.lastMessageDate || ''
+  const hasNewerMessage = Boolean(lastMessageDate && stored.lastMessageDate && Date.parse(lastMessageDate) > Date.parse(stored.lastMessageDate))
+  const unreadCount = countDelta > 0 ? countDelta : hasNewerMessage ? 1 : 0
+
+  return { ...contact, unreadCount: Math.max(0, unreadCount) }
+}
+
+function ensureReadBaselines(contacts: ChatContact[], readState: ChatReadState) {
+  let changed = false
+  const nextState: ChatReadState = { ...readState }
+
+  contacts.forEach((contact) => {
+    if (nextState[contact.id]) return
+    nextState[contact.id] = {
+      lastMessageDate: contact.lastMessageDate || contact.createdAt || '',
+      messageCount: getContactMessageCount(contact)
+    }
+    changed = true
+  })
+
+  if (changed) writeChatReadState(nextState)
+  return nextState
+}
+
+function syncReadStateForVisibleReadChats(contacts: ChatContact[], readState: ChatReadState) {
+  let changed = false
+  const nextState: ChatReadState = { ...readState }
+
+  contacts.forEach((contact) => {
+    if (Number(contact.unreadCount || 0) > 0) return
+
+    const nextValue = {
+      lastMessageDate: contact.lastMessageDate || contact.createdAt || '',
+      messageCount: getContactMessageCount(contact)
+    }
+    const currentValue = nextState[contact.id]
+    if (
+      currentValue?.lastMessageDate === nextValue.lastMessageDate &&
+      Number(currentValue?.messageCount || 0) === nextValue.messageCount
+    ) {
+      return
+    }
+
+    nextState[contact.id] = nextValue
+    changed = true
+  })
+
+  if (changed) writeChatReadState(nextState)
+}
+
+function markContactReadState(contact: ChatContact) {
+  const currentState = readChatReadState()
+  const nextState = {
+    ...currentState,
+    [contact.id]: {
+      lastMessageDate: contact.lastMessageDate || contact.createdAt || new Date().toISOString(),
+      messageCount: getContactMessageCount(contact)
+    }
+  }
+  writeChatReadState(nextState)
 }
 
 function getContactName(contact?: Partial<Contact> | null) {
@@ -560,6 +663,10 @@ export const PhoneChat: React.FC = () => {
     if (chatFilter === 'leads') return chats.filter(isLeadContact)
     return chats
   }, [chatFilter, chats, isAppointmentContact, isCustomerContact, isLeadContact])
+  const unreadTotal = useMemo(
+    () => chats.reduce((total, contact) => total + Math.max(0, Number(contact.unreadCount || 0)), 0),
+    [chats]
+  )
 
   const ensureChatContact = useCallback((contact: Contact) => {
     const nextContact = toChatContact(contact)
@@ -596,6 +703,20 @@ export const PhoneChat: React.FC = () => {
         }
       }
 
+      const readState = ensureReadBaselines(nextChats, readChatReadState())
+      nextChats = nextChats.map((contact) => applyLocalUnreadState(contact, readState))
+
+      if (activeContactId && conversationOpen) {
+        const activeLoadedContact = nextChats.find((contact) => contact.id === activeContactId)
+        if (activeLoadedContact) {
+          markContactReadState(activeLoadedContact)
+          nextChats = nextChats.map((contact) => (
+            contact.id === activeContactId ? { ...contact, unreadCount: 0 } : contact
+          ))
+        }
+      }
+      syncReadStateForVisibleReadChats(nextChats, readState)
+
       setChats(nextChats)
       setActiveContactId((current) => {
         if (requestedContact) return requestedContact.id
@@ -612,7 +733,7 @@ export const PhoneChat: React.FC = () => {
     } finally {
       setChatsLoading(false)
     }
-  }, [chatQuery, requestedContactParam])
+  }, [activeContactId, chatQuery, conversationOpen, requestedContactParam])
 
   const loadContactResults = useCallback(async (query: string) => {
     setContactsLoading(true)
@@ -790,6 +911,30 @@ export const PhoneChat: React.FC = () => {
 
   useEffect(() => {
     if (accessState !== 'allowed') return
+
+    const refreshVisibleChats = () => {
+      if (document.visibilityState === 'visible') {
+        loadChats()
+      }
+    }
+    const refreshInterval = window.setInterval(() => {
+      if (document.visibilityState === 'visible' && !chatQuery.trim()) {
+        loadChats()
+      }
+    }, 20000)
+
+    window.addEventListener('focus', refreshVisibleChats)
+    document.addEventListener('visibilitychange', refreshVisibleChats)
+
+    return () => {
+      window.clearInterval(refreshInterval)
+      window.removeEventListener('focus', refreshVisibleChats)
+      document.removeEventListener('visibilitychange', refreshVisibleChats)
+    }
+  }, [accessState, chatQuery, loadChats])
+
+  useEffect(() => {
+    if (accessState !== 'allowed') return
     loadSupportData()
   }, [accessState, loadSupportData])
 
@@ -830,8 +975,13 @@ export const PhoneChat: React.FC = () => {
   }, [messages, messagesLoading, conversationOpen])
 
   const handleSelectContact = (contact: Contact) => {
+    const chatContact = (chats.find((item) => item.id === contact.id) || contact) as ChatContact
     const nextContact = ensureChatContact(contact)
+    markContactReadState(chatContact)
     setActiveContactId(nextContact.id)
+    setChats((current) => current.map((item) => (
+      item.id === nextContact.id ? { ...item, unreadCount: 0 } : item
+    )))
     setConversationOpen(true)
     setSheet(null)
     setContactInfoOpen(false)
@@ -1130,12 +1280,13 @@ export const PhoneChat: React.FC = () => {
     const subtitle = source === 'chat' ? getChatPreview(chatContact) : getContactDetail(contact)
     const dateLabel = source === 'chat' ? formatMessageDate(chatContact.lastMessageDate || contact.createdAt) : ''
     const unreadCount = Number(chatContact.unreadCount || 0)
+    const hasUnread = source === 'chat' && unreadCount > 0
 
     return (
       <button
         key={contact.id}
         type="button"
-        className={`${styles.chatItem} ${activeContact?.id === contact.id ? styles.chatItemActive : ''}`}
+        className={`${styles.chatItem} ${activeContact?.id === contact.id ? styles.chatItemActive : ''} ${hasUnread ? styles.chatItemUnread : ''}`}
         onClick={() => handleSelectContact(contact)}
       >
         {renderAvatar(contact)}
@@ -1144,8 +1295,8 @@ export const PhoneChat: React.FC = () => {
           <small>{subtitle}</small>
         </span>
         <span className={styles.chatMeta}>
-          {dateLabel && <small>{dateLabel}</small>}
-          {unreadCount > 0 && <i>{unreadCount}</i>}
+          {dateLabel && <small className={hasUnread ? styles.chatUnreadTime : undefined}>{dateLabel}</small>}
+          {hasUnread && <i aria-label={`${unreadCount} mensajes no leídos`}>{unreadCount > 9 ? '9+' : unreadCount}</i>}
         </span>
       </button>
     )
@@ -1633,7 +1784,7 @@ export const PhoneChat: React.FC = () => {
             <div className={styles.filterChips} data-phone-chat-scrollable="true">
               {([
                 ['all', 'Todos'],
-                ['unread', 'No leídos'],
+                ['unread', unreadTotal > 0 ? `No leídos ${unreadTotal > 99 ? '99+' : unreadTotal}` : 'No leídos'],
                 ['appointments', 'Agendados'],
                 ['customers', customersLabel],
                 ['leads', leadsLabel]
@@ -1655,7 +1806,7 @@ export const PhoneChat: React.FC = () => {
             {renderChats()}
           </div>
 
-          <PhoneEcosystemNav active="chat" />
+          <PhoneEcosystemNav active="chat" badges={{ chat: unreadTotal }} />
         </section>
 
         <section className={styles.conversationScreen} aria-label="Conversación">

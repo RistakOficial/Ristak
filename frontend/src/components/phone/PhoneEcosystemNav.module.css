@@ -39,6 +39,40 @@
   white-space: nowrap;
 }
 
+.iconWrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  overflow: visible;
+  min-width: 28px;
+  min-height: 26px;
+}
+
+.dock a .iconWrap {
+  overflow: visible;
+}
+
+.iconWrap i {
+  position: absolute;
+  top: -7px;
+  right: -12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border-radius: 999px;
+  color: #07140d;
+  background: #25d366;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.92);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 850;
+  line-height: 1;
+}
+
 .active {
   color: #050505;
   background: #ececec;
