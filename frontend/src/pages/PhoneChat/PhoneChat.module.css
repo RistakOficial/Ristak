@@ -608,6 +608,25 @@
   background: color-mix(in srgb, var(--phone-chat-accent-soft) 56%, transparent);
 }
 
+.chatItemUnread {
+  background: color-mix(in srgb, var(--phone-chat-accent-soft) 78%, var(--phone-chat-bg) 22%);
+}
+
+.chatItemUnread::before {
+  content: "";
+  position: absolute;
+  top: 12px;
+  bottom: 12px;
+  left: 0;
+  width: 3px;
+  border-radius: 0 999px 999px 0;
+  background: var(--phone-chat-accent);
+}
+
+.chatItemUnread::after {
+  background: color-mix(in srgb, var(--phone-chat-accent) 28%, var(--phone-chat-border));
+}
+
 .chatItemUnread .chatMain strong {
   font-weight: 880;
 }

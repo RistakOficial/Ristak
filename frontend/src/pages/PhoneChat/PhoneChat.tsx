@@ -3797,7 +3797,7 @@ export const PhoneChat: React.FC = () => {
         key={AI_AGENT_CHAT_ID}
         role="button"
         tabIndex={0}
-        className={`${styles.chatItem} ${styles.aiAgentChatItem} ${aiAgentConversationOpen ? styles.chatItemActive : ''}`}
+        className={`${styles.chatItem} ${styles.aiAgentChatItem}`}
         onClick={handleOpenAIAgentChat}
         onKeyDown={(event) => handleChatRowKeyDown(event, handleOpenAIAgentChat)}
       >
@@ -3904,7 +3904,7 @@ export const PhoneChat: React.FC = () => {
         <div
           role="button"
           tabIndex={0}
-          className={`${styles.chatItem} ${styles.chatSwipeContent} ${activeContact?.id === contact.id ? styles.chatItemActive : ''} ${hasUnread ? styles.chatItemUnread : ''}`}
+          className={`${styles.chatItem} ${styles.chatSwipeContent} ${hasUnread ? styles.chatItemUnread : ''}`}
           style={{ transform: `translate3d(-${swipeOffset}px, 0, 0)` }}
           onClick={() => handleChatItemPress(contact)}
           onKeyDown={(event) => handleChatRowKeyDown(event, () => handleChatItemPress(contact))}
