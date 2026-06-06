@@ -8,6 +8,7 @@ import {
   CalendarDays,
   Camera,
   Check,
+  CheckCheck,
   ChevronLeft,
   ChevronRight,
   CircleAlert,
@@ -640,6 +641,31 @@ function isMessageFailed(message: ChatMessage) {
 function isMessagePending(message: ChatMessage) {
   const status = String(message.status || '').trim().toLowerCase()
   return PENDING_MESSAGE_STATUSES.has(status) || status.startsWith('enviando')
+}
+
+type MessageReceiptStatus = 'sent' | 'delivered' | 'read'
+
+function getMessageReceiptStatus(message: ChatMessage): MessageReceiptStatus {
+  const status = String(message.status || '').trim().toLowerCase().replace(/[\s-]+/g, '_')
+  if (['read', 'seen', 'played'].includes(status)) return 'read'
+  if (['delivered', 'delivery_ack'].includes(status)) return 'delivered'
+  return 'sent'
+}
+
+function getMessageReceiptLabel(status: MessageReceiptStatus) {
+  if (status === 'read') return 'Leído'
+  if (status === 'delivered') return 'Entregado'
+  return 'Enviado'
+}
+
+function shouldTrackOutboundReceipt(message: ChatMessage) {
+  if (message.direction !== 'outbound' || isMessageFailed(message)) return false
+  const status = getMessageReceiptStatus(message)
+  if (status === 'read') return false
+
+  const sentAt = new Date(message.date).getTime()
+  if (!Number.isFinite(sentAt)) return true
+  return Date.now() - sentAt < 30 * 60 * 1000
 }
 
 function getJourneyMediaAttachment(event: JourneyEvent): ChatMessage['attachment'] | undefined {
@@ -2296,6 +2322,23 @@ export const PhoneChat: React.FC = () => {
     }
     loadConversation(activeContact.id)
   }, [accessState, activeContact?.id, loadConversation])
+
+  const shouldRefreshReceipts = useMemo(
+    () => messages.some(shouldTrackOutboundReceipt),
+    [messages]
+  )
+
+  useEffect(() => {
+    if (!activeContact?.id || accessState !== 'allowed' || !conversationVisible || !shouldRefreshReceipts) return
+
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        loadConversation(activeContact.id, { showCacheRefresh: true })
+      }
+    }, 12000)
+
+    return () => window.clearInterval(interval)
+  }, [accessState, activeContact?.id, conversationVisible, loadConversation, shouldRefreshReceipts])
 
   useEffect(() => {
     if (!conversationOpen || conversationVisible || chatsLoading) return
@@ -4073,6 +4116,8 @@ export const PhoneChat: React.FC = () => {
         {messages.map((message) => {
           const failed = message.direction === 'outbound' && isMessageFailed(message)
           const pending = message.direction === 'outbound' && !failed && isMessagePending(message)
+          const receiptStatus = getMessageReceiptStatus(message)
+          const receiptLabel = getMessageReceiptLabel(receiptStatus)
           const transportBadge = getMessageTransportBadge(message.transport)
 
           return (
@@ -4091,7 +4136,7 @@ export const PhoneChat: React.FC = () => {
                   </div>
                 )}
                 {message.text && <p>{message.text}</p>}
-                <span>
+                <span className={styles.messageMeta}>
                   {transportBadge && <em className={styles.messageTransport}>{transportBadge}</em>}
                   {formatMessageTime(message.date)}
                   {message.direction === 'outbound' && (failed ? (
@@ -4105,8 +4150,18 @@ export const PhoneChat: React.FC = () => {
                     </button>
                   ) : pending ? (
                     <Loader2 size={14} className={`${styles.spinIcon} ${styles.messageSendingIcon}`} />
+                  ) : receiptStatus === 'delivered' || receiptStatus === 'read' ? (
+                    <span
+                      className={`${styles.messageReceipt} ${receiptStatus === 'read' ? styles.messageReceiptRead : ''}`}
+                      title={receiptLabel}
+                      aria-label={receiptLabel}
+                    >
+                      <CheckCheck size={15} />
+                    </span>
                   ) : (
-                    <Check size={15} />
+                    <span className={styles.messageReceipt} title={receiptLabel} aria-label={receiptLabel}>
+                      <Check size={15} />
+                    </span>
                   ))}
                 </span>
               </div>

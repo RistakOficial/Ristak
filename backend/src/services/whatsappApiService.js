@@ -230,6 +230,51 @@ function nowIso() {
   return new Date().toISOString()
 }
 
+function normalizeMessageDeliveryStatus(status = '') {
+  const normalized = cleanString(status).toLowerCase().replace(/[\s-]+/g, '_')
+  if (normalized === 'seen') return 'read'
+  if (normalized === 'delivery_ack') return 'delivered'
+  if (normalized === 'server_ack') return 'sent'
+  return normalized
+}
+
+function getMessageDeliveryStatusPriority(status = '') {
+  switch (normalizeMessageDeliveryStatus(status)) {
+    case 'failed':
+    case 'error':
+    case 'undelivered':
+    case 'rejected':
+      return 100
+    case 'read':
+    case 'played':
+      return 90
+    case 'delivered':
+      return 80
+    case 'sent':
+      return 70
+    case 'accepted':
+      return 60
+    case 'warning':
+      return 55
+    case 'pending':
+    case 'queued':
+    case 'scheduled':
+      return 20
+    default:
+      return 0
+  }
+}
+
+function pickBestMessageDeliveryStatus(currentStatus = '', incomingStatus = '') {
+  const incoming = normalizeMessageDeliveryStatus(incomingStatus)
+  if (!incoming) return cleanString(currentStatus)
+
+  const current = normalizeMessageDeliveryStatus(currentStatus)
+  return getMessageDeliveryStatusPriority(incoming) >= getMessageDeliveryStatusPriority(current)
+    ? incoming
+    : current
+}
+
 function isPostgres() {
   return Boolean(process.env.DATABASE_URL)
 }
@@ -2399,6 +2444,13 @@ function normalizeWebhookMessage(rawMessage = {}) {
   normalized.wabaId = cleanString(normalized.wabaId || normalized.waba_id || normalized.whatsappBusinessAccountId) || normalized.wabaId
   normalized.from = cleanString(normalized.from || normalized.fromPhone || normalized.from_phone || normalized.sender || normalized.senderPhone) || normalized.from
   normalized.to = cleanString(normalized.to || normalized.toPhone || normalized.to_phone || normalized.recipient || normalized.recipientPhone) || normalized.to
+  normalized.status = cleanString(
+    normalized.status ||
+    normalized.messageStatus ||
+    normalized.message_status ||
+    normalized.deliveryStatus ||
+    normalized.delivery_status
+  ) || normalized.status
   normalized.sendTime = normalized.sendTime || normalized.send_time || normalized.timestamp || normalized.messageTimestamp || normalized.createdAt
   normalized.createTime = normalized.createTime || normalized.create_time || normalized.createdAt
   normalized.updateTime = normalized.updateTime || normalized.update_time || normalized.updatedAt
@@ -2459,10 +2511,20 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
 
   const ycloudMessageId = cleanString(normalizedMessage.id)
   const wamid = cleanString(normalizedMessage.wamid || normalizedMessage.context?.id)
-  const messageId = hashId('waapi_msg', ycloudMessageId || wamid || `${payload.id}|${identity.direction}|${identity.phone}`)
-  const existingMessage = await db.get('SELECT id, status, transport FROM whatsapp_api_messages WHERE id = ?', [messageId]).catch(() => null)
+  const computedMessageId = hashId('waapi_msg', ycloudMessageId || wamid || `${payload.id}|${identity.direction}|${identity.phone}`)
+  const existingMessage = await db.get(`
+    SELECT id, status, transport
+    FROM whatsapp_api_messages
+    WHERE id = ?
+      OR (? != '' AND ycloud_message_id = ?)
+      OR (? != '' AND wamid = ?)
+    ORDER BY updated_at DESC
+    LIMIT 1
+  `, [computedMessageId, ycloudMessageId, ycloudMessageId, wamid, wamid]).catch(() => null)
+  const messageId = existingMessage?.id || computedMessageId
   const businessPhoneNumberId = await findBusinessPhoneNumberId(identity.businessPhone)
-  const status = cleanString(normalizedMessage.status)
+  const incomingStatus = normalizeMessageDeliveryStatus(normalizedMessage.status)
+  const status = pickBestMessageDeliveryStatus(existingMessage?.status, incomingStatus)
   const error = Array.isArray(normalizedMessage.errors) ? normalizedMessage.errors[0] : normalizedMessage.error
   const errorCode = cleanString(error?.code || normalizedMessage.errorCode)
   const errorMessage = cleanString(error?.message || error?.title || normalizedMessage.errorMessage)
@@ -2544,7 +2606,7 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
     attribution.ctwaPayload || null
   ])
 
-  const restrictionReason = cleanString(status).toLowerCase() === 'failed'
+  const restrictionReason = incomingStatus === 'failed'
     ? getOfficialApiRestrictionErrorReason({
         message: `${errorCode} ${errorMessage}`.trim(),
         ycloud: normalizedMessage

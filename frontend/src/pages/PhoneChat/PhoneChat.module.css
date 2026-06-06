@@ -1769,7 +1769,7 @@
   height: 34px;
 }
 
-.messageBubble span {
+.messageMeta {
   display: inline-flex;
   align-items: center;
   justify-content: flex-end;
@@ -1781,8 +1781,23 @@
   font-weight: 560;
 }
 
-.messageRow_outbound .messageBubble span {
+.messageRow_outbound .messageMeta {
   color: var(--phone-chat-outbound-meta);
+}
+
+.messageReceipt {
+  display: inline-flex;
+  align-items: center;
+  color: currentColor;
+  line-height: 1;
+}
+
+.messageReceipt svg {
+  stroke-width: 2.35;
+}
+
+.messageReceiptRead {
+  color: #34b7f1;
 }
 
 .messageTransport {
