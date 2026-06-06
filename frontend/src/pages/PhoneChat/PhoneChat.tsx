@@ -47,7 +47,7 @@ const PORTABLE_WIDTH_QUERY = '(max-width: 1366px)'
 const PHONE_WIDTH_QUERY = '(max-width: 900px)'
 const COARSE_POINTER_QUERY = '(pointer: coarse)'
 const MOBILE_OR_TABLET_USER_AGENT_PATTERN = /Android|iPad|iPhone|iPod|IEMobile|Opera Mini|Mobile|Tablet/i
-const SCROLLABLE_CHAT_SELECTOR = '[data-phone-chat-scrollable="true"], textarea, input, select'
+const SCROLLABLE_CHAT_SELECTOR = '[data-phone-chat-scrollable="true"], [contenteditable="true"], textarea, input, select'
 
 type AccessState = 'checking' | 'allowed' | 'blocked'
 type ComposerStatus = 'idle' | 'sending'
@@ -271,6 +271,7 @@ export const PhoneChat: React.FC = () => {
   const [appointmentOpen, setAppointmentOpen] = useState(false)
   const [requestingPush, setRequestingPush] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement | null>(null)
+  const composerInputRef = useRef<HTMLDivElement | null>(null)
   const cameraInputRef = useRef<HTMLInputElement | null>(null)
   const photosInputRef = useRef<HTMLInputElement | null>(null)
 
@@ -642,6 +643,25 @@ export const PhoneChat: React.FC = () => {
     input?.click()
   }
 
+  const syncComposerText = (element: HTMLDivElement) => {
+    const nextText = element.innerText.replace(/\u00a0/g, ' ')
+    const normalizedText = nextText.replace(/\n{3,}/g, '\n\n')
+    if (!normalizedText.trim()) {
+      element.textContent = ''
+      setMessageText('')
+      return
+    }
+    setMessageText(normalizedText)
+  }
+
+  const handleComposerPaste = (event: React.ClipboardEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    const text = event.clipboardData.getData('text/plain')
+    if (!text) return
+    document.execCommand('insertText', false, text)
+    syncComposerText(event.currentTarget)
+  }
+
   const removeDraftAttachment = (attachmentId: string) => {
     setDraftAttachments((current) => current.filter((attachment) => attachment.id !== attachmentId))
   }
@@ -665,6 +685,9 @@ export const PhoneChat: React.FC = () => {
     const sentAt = new Date().toISOString()
     setComposerStatus('sending')
     setMessageText('')
+    if (composerInputRef.current) {
+      composerInputRef.current.textContent = ''
+    }
     setDraftAttachments([])
     const optimisticMessages: ChatMessage[] = attachmentsToSend.length > 0
       ? attachmentsToSend.map((attachment, index) => ({
@@ -1187,12 +1210,21 @@ export const PhoneChat: React.FC = () => {
                 <Plus size={34} />
               </button>
               <div className={styles.messageInputWrap}>
-                <textarea
-                  value={messageText}
-                  onChange={(event) => setMessageText(event.target.value)}
-                  placeholder={activeContact?.phone ? '' : 'No phone'}
-                  rows={1}
-                  disabled={!activeContact?.phone || composerStatus === 'sending'}
+                <div
+                  ref={composerInputRef}
+                  className={styles.composerInput}
+                  role="textbox"
+                  aria-multiline="true"
+                  aria-label="Mensaje"
+                  aria-disabled={!activeContact?.phone || composerStatus === 'sending'}
+                  data-placeholder={activeContact?.phone ? '' : 'Sin teléfono'}
+                  contentEditable={Boolean(activeContact?.phone && composerStatus !== 'sending')}
+                  suppressContentEditableWarning
+                  spellCheck
+                  autoCorrect="on"
+                  autoCapitalize="sentences"
+                  onInput={(event) => syncComposerText(event.currentTarget)}
+                  onPaste={handleComposerPaste}
                   onKeyDown={(event) => {
                     if (event.key === 'Enter' && !event.shiftKey) {
                       event.preventDefault()

@@ -524,12 +524,13 @@
   display: grid;
   min-width: 0;
   background: #f6f2eb;
+  -webkit-text-size-adjust: 100%;
 }
 
 .composer {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto auto;
-  align-items: center;
+  align-items: end;
   gap: 8px;
   min-height: calc(50px + env(safe-area-inset-bottom));
   padding: 5px 8px max(6px, env(safe-area-inset-bottom));
@@ -556,7 +557,7 @@
 .messageInputWrap {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
+  align-items: end;
   min-height: 38px;
   border: 1px solid rgba(0, 0, 0, 0.14);
   border-radius: 999px;
@@ -564,24 +565,47 @@
   overflow: hidden;
 }
 
-.messageInputWrap textarea {
+.composerInput {
   width: 100%;
   min-height: 37px;
   max-height: 116px;
-  resize: none;
   padding: 8px 6px 7px 12px;
   border: 0;
   outline: none;
   color: #111111;
   background: transparent;
   font: inherit;
-  font-size: 14px;
-  line-height: 1.35;
+  font-size: 16px;
+  line-height: 1.32;
+  letter-spacing: 0;
+  white-space: pre-wrap;
+  overflow-x: hidden;
+  overflow-y: auto;
+  word-break: break-word;
+  caret-color: #25d366;
+  cursor: text;
+  user-select: text;
+  -webkit-user-select: text;
+  -webkit-overflow-scrolling: touch;
+}
+
+.composerInput:empty::before {
+  content: attr(data-placeholder);
+  color: #8e8e93;
+  pointer-events: none;
+}
+
+.composerInput[contenteditable="false"] {
+  color: #8e8e93;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .messageInputWrap button {
   width: 38px;
   height: 38px;
+  margin-bottom: 0;
 }
 
 .composerIconButton {
