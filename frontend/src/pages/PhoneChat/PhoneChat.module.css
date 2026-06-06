@@ -1964,6 +1964,13 @@
   will-change: transform, opacity, clip-path;
 }
 
+.newChatSheet {
+  grid-template-rows: auto auto minmax(0, 1fr);
+  align-content: stretch;
+  height: min(82dvh, 720px);
+  min-height: 0;
+}
+
 .chatMoreSheet {
   min-height: 292px;
   background: var(--phone-chat-panel);
@@ -2156,8 +2163,11 @@
 
 .newChatStack {
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 12px;
   min-height: 0;
+  height: 100%;
+  overflow: hidden;
 }
 
 .templatesStack {
@@ -2403,7 +2413,11 @@
 
 .sheetList {
   min-height: 0;
+  max-height: 100%;
+  padding-bottom: 12px;
   overflow-y: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
   -webkit-overflow-scrolling: touch;
 }
 

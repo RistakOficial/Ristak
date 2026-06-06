@@ -4939,7 +4939,7 @@ export const PhoneChat: React.FC = () => {
           onClick={() => setSheet(null)}
         >
           <section
-            className={`${styles.sheetPanel} ${sheet === 'payment' ? styles.paymentSheet : ''} ${sheet === 'attachments' ? styles.attachmentsSheet : ''} ${sheet === 'templates' ? styles.templatesSheet : ''} ${sheet === 'settings' ? styles.settingsSheet : ''} ${sheet === 'chatMore' ? styles.chatMoreSheet : ''}`}
+            className={`${styles.sheetPanel} ${sheet === 'payment' ? styles.paymentSheet : ''} ${sheet === 'attachments' ? styles.attachmentsSheet : ''} ${sheet === 'templates' ? styles.templatesSheet : ''} ${sheet === 'settings' ? styles.settingsSheet : ''} ${sheet === 'newChat' ? styles.newChatSheet : ''} ${sheet === 'chatMore' ? styles.chatMoreSheet : ''}`}
             onClick={(event) => event.stopPropagation()}
             aria-label="Acciones del chat"
           >
