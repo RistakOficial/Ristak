@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { X, Info, AlertCircle, ShieldAlert } from 'lucide-react'
+import { useBottomSheetDismiss } from '@/hooks'
 import { Button } from '../Button'
 import styles from './Modal.module.css'
 
@@ -25,6 +26,7 @@ interface ModalProps {
   contentClassName?: string
   closeIcon?: React.ReactNode
   closeAriaLabel?: string
+  draggableSheet?: boolean
   children?: React.ReactNode
 }
 
@@ -83,6 +85,7 @@ export const Modal: React.FC<ModalProps> = ({
   contentClassName = '',
   closeIcon,
   closeAriaLabel = 'Cerrar modal',
+  draggableSheet = false,
   children
 }) => {
   const normalizedConfirmText = normalizeModalText(confirmText)
@@ -98,6 +101,11 @@ export const Modal: React.FC<ModalProps> = ({
     onCancel?.()
     onClose()
   }, [onCancel, onClose])
+  const bottomSheetDismiss = useBottomSheetDismiss({
+    isOpen: isOpen && draggableSheet,
+    onClose: handleCancel
+  })
+  const closeWithSheetAnimation = bottomSheetDismiss.requestClose
 
   useEffect(() => {
     if (!isOpen) return
@@ -106,7 +114,8 @@ export const Modal: React.FC<ModalProps> = ({
 
     const handleEscape = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && isOpen) {
-        handleCancel()
+        if (draggableSheet) closeWithSheetAnimation()
+        else handleCancel()
       }
     }
 
@@ -117,19 +126,31 @@ export const Modal: React.FC<ModalProps> = ({
       document.removeEventListener('keydown', handleEscape)
       document.body.style.overflow = previousBodyOverflow
     }
-  }, [handleCancel, isOpen])
+  }, [closeWithSheetAnimation, draggableSheet, handleCancel, isOpen])
 
   if (!isOpen) return null
 
   const handleBackdropClick = (e: React.MouseEvent) => {
     if (e.target === e.currentTarget) {
-      handleCancel()
+      if (draggableSheet) closeWithSheetAnimation()
+      else handleCancel()
     }
   }
 
   const modalContent = (
-    <div className={`${styles.backdrop} ${isSystemModal ? styles.systemBackdrop : ''} ${backdropClassName}`.trim()} onClick={handleBackdropClick} data-phone-modal-root="true">
-      <div className={`${styles.modal} ${styles[type]} ${styles[size]} ${isDestructiveConfirm ? styles.destructive : ''} ${className}`.trim()}>
+    <div
+      className={`${styles.backdrop} ${isSystemModal ? styles.systemBackdrop : ''} ${draggableSheet ? styles.bottomSheetBackdrop : ''} ${backdropClassName}`.trim()}
+      style={draggableSheet ? bottomSheetDismiss.backdropStyle : undefined}
+      onClick={handleBackdropClick}
+      data-phone-modal-root="true"
+    >
+      <div
+        className={`${styles.modal} ${styles[type]} ${styles[size]} ${isDestructiveConfirm ? styles.destructive : ''} ${draggableSheet ? styles.bottomSheetModal : ''} ${className}`.trim()}
+        style={draggableSheet ? bottomSheetDismiss.sheetStyle : undefined}
+      >
+        {draggableSheet && (
+          <div className={styles.bottomSheetHandle} aria-hidden="true" {...bottomSheetDismiss.dragHandleProps} />
+        )}
         {/* Solo mostrar header si hay título o botón de cerrar */}
         {(title || showCloseButton) && (
           <div className={styles.header}>
@@ -144,7 +165,7 @@ export const Modal: React.FC<ModalProps> = ({
             {showCloseButton && (
               <button
                 className={styles.closeButton}
-                onClick={handleCancel}
+                onClick={draggableSheet ? closeWithSheetAnimation : handleCancel}
                 aria-label={closeAriaLabel}
               >
                 {closeIcon ?? <X size={20} />}

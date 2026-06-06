@@ -14,7 +14,7 @@ import { PhoneEcosystemNav } from '@/components/phone/PhoneEcosystemNav'
 import { useAuth } from '@/contexts/AuthContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
-import { useAppConfig } from '@/hooks'
+import { useAppConfig, useBottomSheetDismiss } from '@/hooks'
 import { calendarsService, type Calendar, type CalendarEvent } from '@/services/calendarsService'
 import { getPhoneDailyCacheKey, readPhoneDailyCache, writePhoneDailyCache } from '@/services/phoneDailyCache'
 import { pushNotificationsService } from '@/services/pushNotificationsService'
@@ -244,6 +244,11 @@ export const PhoneCalendar: React.FC = () => {
   const timelineScrollRef = useRef<HTMLElement | null>(null)
   const handledOpenAppointmentRef = useRef<string | null>(null)
   const calendarTouchStartRef = useRef<{ x: number; y: number } | null>(null)
+  const closeSheetViewNow = useCallback(() => setSheetView(null), [])
+  const calendarSheetDismiss = useBottomSheetDismiss({
+    isOpen: Boolean(sheetView),
+    onClose: closeSheetViewNow
+  })
 
   const formatEventTime = useCallback((value?: string | null) => {
     const date = toDateInTimeZone(value, timezone)
@@ -809,7 +814,7 @@ export const PhoneCalendar: React.FC = () => {
     if (calendarView === 'year' || calendarView === 'years') {
       setCalendarView('month')
     }
-    setSheetView(null)
+    calendarSheetDismiss.requestClose()
   }
 
   const movePeriod = (direction: -1 | 1) => {
@@ -979,7 +984,7 @@ export const PhoneCalendar: React.FC = () => {
     const eventDate = toDateInTimeZone(event.startTime, timezone) ?? new Date(event.startTime)
     setSelectedDate(eventDate)
     setCurrentDate(eventDate)
-    setSheetView(null)
+    calendarSheetDismiss.requestClose()
     setSearchQuery('')
     handleOpenEvent(event)
   }
@@ -1397,11 +1402,16 @@ export const PhoneCalendar: React.FC = () => {
       <PhoneEcosystemNav active="calendar" />
 
       {sheetView && (
-        <div className={styles.sheetBackdrop} onClick={() => setSheetView(null)}>
-          <section className={styles.sheet} onClick={(event) => event.stopPropagation()} aria-label="Panel del calendario">
-            <div className={styles.sheetHandle} />
+        <div className={styles.sheetBackdrop} style={calendarSheetDismiss.backdropStyle} onClick={calendarSheetDismiss.requestClose}>
+          <section
+            className={styles.sheet}
+            style={calendarSheetDismiss.sheetStyle}
+            onClick={(event) => event.stopPropagation()}
+            aria-label="Panel del calendario"
+          >
+            <div className={styles.sheetHandle} aria-hidden="true" {...calendarSheetDismiss.dragHandleProps} />
             <header className={styles.sheetHeader}>
-              <button type="button" className={styles.closeSheetButton} onClick={() => setSheetView(null)} aria-label="Volver al calendario">
+              <button type="button" className={styles.closeSheetButton} onClick={calendarSheetDismiss.requestClose} aria-label="Volver al calendario">
                 <ChevronLeft size={24} />
               </button>
               <h2>
@@ -1420,7 +1430,7 @@ export const PhoneCalendar: React.FC = () => {
                     className={`${styles.calendarOption} ${selectedCalendar?.id === calendar.id ? styles.calendarOptionActive : ''}`}
                     onClick={() => {
                       selectCalendar(calendar)
-                      setSheetView(null)
+                      calendarSheetDismiss.requestClose()
                     }}
                   >
                     <span className={styles.calendarOptionDot} style={{ backgroundColor: calendar.eventColor || '#2563eb' }} />

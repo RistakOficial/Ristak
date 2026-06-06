@@ -50,7 +50,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useLabels } from '@/contexts/LabelsContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
-import { useAppConfig, useHighLevelConnected, usePhoneTheme, type PhoneThemePreference } from '@/hooks'
+import { useAppConfig, useBottomSheetDismiss, useHighLevelConnected, usePhoneTheme, type PhoneThemePreference } from '@/hooks'
 import { aiAgentService, type AIAgentMessage, type AIAgentViewContext } from '@/services/aiAgentService'
 import apiClient from '@/services/apiClient'
 import { calendarsService, type Calendar, type CalendarEvent } from '@/services/calendarsService'
@@ -1359,6 +1359,11 @@ export const PhoneChat: React.FC = () => {
   const voiceCancelRef = useRef(false)
   const autoOpenedLastConversationRef = useRef(false)
   const chatSwipeGestureRef = useRef<ChatSwipeGesture | null>(null)
+  const closeSheetNow = useCallback(() => setSheet(null), [])
+  const actionSheetDismiss = useBottomSheetDismiss({
+    isOpen: Boolean(sheet),
+    onClose: closeSheetNow
+  })
   const chatSwipeGenerationRef = useRef(0)
   const ignoreNextChatClickRef = useRef(false)
 
@@ -2386,7 +2391,7 @@ export const PhoneChat: React.FC = () => {
       item.id === nextContact.id ? { ...item, unreadCount: 0 } : item
     )))
     setConversationOpen(true)
-    setSheet(null)
+    actionSheetDismiss.requestClose()
     setContactInfoOpen(false)
     setContactQuery('')
     setDraftAttachments([])
@@ -2399,7 +2404,7 @@ export const PhoneChat: React.FC = () => {
     handleCancelVoiceDraft()
     setActiveContactId(AI_AGENT_CHAT_ID)
     setConversationOpen(true)
-    setSheet(null)
+    actionSheetDismiss.requestClose()
     setContactInfoOpen(false)
     setContactQuery('')
     setDraftAttachments([])
@@ -2412,7 +2417,7 @@ export const PhoneChat: React.FC = () => {
     closeSwipeActions()
     handleCancelVoiceDraft()
     setConversationOpen(false)
-    setSheet(null)
+    actionSheetDismiss.requestClose()
     setContactInfoOpen(false)
     setDraftAttachments([])
     setVoiceDraft(null)
@@ -2421,7 +2426,7 @@ export const PhoneChat: React.FC = () => {
   const handleOpenContactInfo = async () => {
     if (!activeContact) return
 
-    setSheet(null)
+    actionSheetDismiss.requestClose()
     setContactInfoOpen(true)
     setContactInfoError('')
 
@@ -2472,7 +2477,7 @@ export const PhoneChat: React.FC = () => {
     if (activeContactId === contact.id && !alreadyArchived) {
       setConversationOpen(false)
       setContactInfoOpen(false)
-      setSheet(null)
+      actionSheetDismiss.requestClose()
     }
 
     showToast(
@@ -2492,7 +2497,7 @@ export const PhoneChat: React.FC = () => {
       return [contact.id, ...current.filter((id) => id !== contact.id)]
     })
 
-    setSheet(null)
+    actionSheetDismiss.requestClose()
     setChatActionContactId(null)
     closeSwipeActions()
     showToast(
@@ -2516,7 +2521,7 @@ export const PhoneChat: React.FC = () => {
     if (contact?.id) setActiveContactId(contact.id)
     setChatActionContactId(null)
     setContactInfoOpen(false)
-    setSheet(null)
+    actionSheetDismiss.requestClose()
     setAppointmentOpen(true)
     closeSwipeActions()
   }
@@ -2671,7 +2676,7 @@ export const PhoneChat: React.FC = () => {
   }
 
   const handlePickPhoto = async (source: 'camera' | 'photos') => {
-    setSheet(null)
+    actionSheetDismiss.requestClose()
 
     if (mobileAppService.isNative()) {
       try {
@@ -2730,7 +2735,7 @@ export const PhoneChat: React.FC = () => {
     const sentAt = new Date().toISOString()
     const preview = getTemplateBodyPreview(template)
     setTemplateSendingId(template.id)
-    setSheet(null)
+    actionSheetDismiss.requestClose()
     setMessages((current) => [
       ...current,
       {
@@ -3064,7 +3069,7 @@ export const PhoneChat: React.FC = () => {
       }, accessToken || undefined)
 
       setAppointmentOpen(false)
-      setSheet(null)
+      actionSheetDismiss.requestClose()
       showToast('success', 'Cita agendada', 'La cita quedó guardada.')
       setMessages((current) => [
         ...current,
@@ -4947,17 +4952,19 @@ export const PhoneChat: React.FC = () => {
       {sheet && (
         <div
           className={`${styles.sheetBackdrop} ${sheet === 'settings' ? styles.settingsSheetBackdrop : ''}`}
-          onClick={() => setSheet(null)}
+          style={actionSheetDismiss.backdropStyle}
+          onClick={actionSheetDismiss.requestClose}
         >
           <section
             className={`${styles.sheetPanel} ${sheet === 'payment' ? styles.paymentSheet : ''} ${sheet === 'attachments' ? styles.attachmentsSheet : ''} ${sheet === 'templates' ? styles.templatesSheet : ''} ${sheet === 'settings' ? styles.settingsSheet : ''} ${sheet === 'newChat' ? styles.newChatSheet : ''} ${sheet === 'chatMore' ? styles.chatMoreSheet : ''}`}
+            style={actionSheetDismiss.sheetStyle}
             onClick={(event) => event.stopPropagation()}
             aria-label="Acciones del chat"
           >
-            <div className={styles.sheetHandle} />
+            <div className={styles.sheetHandle} aria-hidden="true" {...actionSheetDismiss.dragHandleProps} />
             {sheet !== 'attachments' && (
               <div className={styles.sheetHeader}>
-                <button type="button" onClick={() => setSheet(null)} aria-label="Volver al chat">
+                <button type="button" onClick={actionSheetDismiss.requestClose} aria-label="Volver al chat">
                   <ChevronLeft size={24} />
                 </button>
                 <div>
@@ -5010,9 +5017,9 @@ export const PhoneChat: React.FC = () => {
                     initialPaymentMode={activePhonePaymentMode}
                     initialContact={initialContact}
                     lockInitialContact={Boolean(initialContact?.id)}
-                    onClose={() => setSheet(null)}
+                    onClose={actionSheetDismiss.requestClose}
                     onSuccess={() => {
-                      setSheet(null)
+                      actionSheetDismiss.requestClose()
                       setMessages((current) => [
                         ...current,
                         {

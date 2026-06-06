@@ -1,6 +1,7 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { CalendarDays, ChevronLeft, ChevronRight } from 'lucide-react'
+import { useBottomSheetDismiss } from '@/hooks'
 import styles from './PhoneDateField.module.css'
 
 interface PhoneDateFieldProps {
@@ -97,18 +98,24 @@ export const PhoneDateField: React.FC<PhoneDateFieldProps> = ({
   const [viewDate, setViewDate] = useState<Date>(() => selectedDate || minDate || new Date())
   const days = useMemo(() => getCalendarDays(viewDate), [viewDate])
   const today = useMemo(() => new Date(), [])
+  const closeDateSheetNow = useCallback(() => setOpen(false), [])
+  const sheetDismiss = useBottomSheetDismiss({
+    isOpen: open,
+    onClose: closeDateSheetNow
+  })
+  const closeSheet = sheetDismiss.requestClose
 
   useEffect(() => {
     if (!open) return
 
     setViewDate(selectedDate || minDate || new Date())
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setOpen(false)
+      if (event.key === 'Escape') closeSheet()
     }
 
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [minDate, open, selectedDate])
+  }, [closeSheet, minDate, open, selectedDate])
 
   const changeMonth = (delta: number) => {
     setViewDate((current) => {
@@ -121,15 +128,22 @@ export const PhoneDateField: React.FC<PhoneDateFieldProps> = ({
   const selectDate = (date: Date) => {
     if (minDate && date < minDate) return
     onChange(formatDateInput(date))
-    setOpen(false)
+    closeSheet()
   }
 
   const sheet = open ? (
-    <div className={styles.overlay} role="presentation" onClick={() => setOpen(false)}>
-      <div className={styles.sheet} role="dialog" aria-modal="true" aria-label={title} onClick={(event) => event.stopPropagation()}>
-        <div className={styles.handle} aria-hidden="true" />
+    <div className={styles.overlay} style={sheetDismiss.backdropStyle} role="presentation" onClick={closeSheet}>
+      <div
+        className={styles.sheet}
+        style={sheetDismiss.sheetStyle}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className={styles.handle} aria-hidden="true" {...sheetDismiss.dragHandleProps} />
         <div className={styles.header}>
-          <button type="button" className={styles.backButton} onClick={() => setOpen(false)} aria-label="Volver">
+          <button type="button" className={styles.backButton} onClick={closeSheet} aria-label="Volver">
             <ChevronLeft size={22} />
           </button>
           <strong>{title}</strong>

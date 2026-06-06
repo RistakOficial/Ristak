@@ -1,6 +1,7 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Check, ChevronDown, ChevronLeft } from 'lucide-react'
+import { useBottomSheetDismiss } from '@/hooks'
 import styles from './PhoneSelect.module.css'
 
 export interface PhoneSelectOption {
@@ -40,42 +41,49 @@ export const PhoneSelect: React.FC<PhoneSelectProps> = ({
   const [open, setOpen] = useState(false)
   const sheetRef = useRef<HTMLDivElement>(null)
   const selectedOption = useMemo(() => options.find((option) => option.value === value), [options, value])
+  const closeSelectNow = useCallback(() => setOpen(false), [])
+  const sheetDismiss = useBottomSheetDismiss({
+    isOpen: open,
+    onClose: closeSelectNow
+  })
+  const closeSheet = sheetDismiss.requestClose
 
   useEffect(() => {
     if (!open) return
 
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setOpen(false)
+      if (event.key === 'Escape') closeSheet()
     }
 
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [open])
+  }, [closeSheet, open])
 
   const handleSelect = (option: PhoneSelectOption) => {
     if (option.disabled) return
     onChange(option.value)
-    setOpen(false)
+    closeSheet()
   }
 
   const sheet = open ? (
-    <div className={styles.overlay} role="presentation" onClick={() => setOpen(false)}>
+    <div className={styles.overlay} style={sheetDismiss.backdropStyle} role="presentation" onClick={closeSheet}>
       <div
         ref={sheetRef}
         className={`${styles.sheet} ${sheetClassName}`}
+        style={sheetDismiss.sheetStyle}
         role="dialog"
         aria-modal="true"
         aria-label={title}
         onClick={(event) => event.stopPropagation()}
       >
-        <div className={styles.handle} aria-hidden="true" />
+        <div className={styles.handle} aria-hidden="true" {...sheetDismiss.dragHandleProps} />
         <div className={styles.sheetHeader}>
-          <button type="button" className={styles.backButton} onClick={() => setOpen(false)} aria-label="Volver">
+          <button type="button" className={styles.backButton} onClick={closeSheet} aria-label="Volver">
             <ChevronLeft size={22} />
           </button>
           <strong>{title}</strong>
         </div>
-        <div className={styles.options} role="listbox" aria-label={title}>
+        <div className={styles.options} role="listbox" aria-label={title} data-phone-scrollable="true">
           {options.map((option) => {
             const selected = option.value === value
 

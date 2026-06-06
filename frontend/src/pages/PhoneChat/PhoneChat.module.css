@@ -2001,11 +2001,15 @@
   z-index: 80;
   display: grid;
   align-items: end;
-  background: rgba(var(--phone-chat-primary-rgb), 0.28);
+  background:
+    linear-gradient(180deg, rgba(var(--phone-chat-primary-rgb), 0.18), rgba(var(--phone-chat-primary-rgb), 0.68)),
+    rgba(var(--phone-chat-primary-rgb), 0.54);
+  animation: phoneChatSheetBackdropIn 240ms ease-out both;
+  will-change: opacity;
 }
 
 .settingsSheetBackdrop {
-  animation: settingsBackdropFade 620ms ease-out both;
+  animation: phoneChatSheetBackdropIn 620ms ease-out both;
 }
 
 .sheetPanel {
@@ -2019,6 +2023,8 @@
   background: var(--phone-chat-surface);
   box-shadow: 0 -22px 70px rgba(var(--phone-chat-primary-rgb), 0.28);
   overflow: hidden;
+  animation: phoneChatSheetRise 280ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  will-change: transform;
 }
 
 .attachmentsSheet {
@@ -2067,11 +2073,24 @@
 }
 
 .sheetHandle {
+  position: relative;
   width: 42px;
-  height: 4px;
+  height: 5px;
   justify-self: center;
   border-radius: 999px;
   background: rgba(107, 114, 128, 0.42);
+  cursor: grab;
+  touch-action: none;
+}
+
+.sheetHandle::before {
+  content: '';
+  position: absolute;
+  inset: -12px -120px;
+}
+
+.sheetHandle:active {
+  cursor: grabbing;
 }
 
 .sheetHeader {
@@ -3190,12 +3209,23 @@
   }
 }
 
-@keyframes settingsBackdropFade {
+@keyframes phoneChatSheetBackdropIn {
   from {
-    background: rgba(var(--phone-chat-primary-rgb), 0);
+    opacity: 0;
   }
   to {
-    background: rgba(var(--phone-chat-primary-rgb), 0.28);
+    opacity: 1;
+  }
+}
+
+@keyframes phoneChatSheetRise {
+  from {
+    opacity: 0.92;
+    transform: translateY(36px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 
@@ -3218,8 +3248,11 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .sheetBackdrop,
+  .sheetPanel,
   .settingsSheetBackdrop,
   .settingsSheet {
     animation-duration: 1ms;
+    transition-duration: 1ms !important;
   }
 }

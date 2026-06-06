@@ -1200,6 +1200,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
         contentClassName={isMobileSheet ? styles.mobileSheetContent : undefined}
         closeIcon={isMobileSheet ? <ChevronLeft size={24} /> : undefined}
         closeAriaLabel={isMobileSheet ? 'Volver al calendario' : undefined}
+        draggableSheet={isMobileSheet}
       >
         <div
           className={`${styles.container} ${isMobileSheet ? styles.mobileSheetContainer : ''}`}
