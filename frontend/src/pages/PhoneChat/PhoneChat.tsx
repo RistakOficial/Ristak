@@ -5031,6 +5031,8 @@ export const PhoneChat: React.FC = () => {
         defaultTimeZone={defaultAppointmentRange.timeZone}
         defaultTitle={initialContact?.name || ''}
         initialContact={initialContact}
+        lockInitialContact={Boolean(initialContact?.id)}
+        enableGuests
         defaultScheduleMode="default"
         accessToken={accessToken || undefined}
         locationId={locationId || undefined}

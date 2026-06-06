@@ -31,6 +31,8 @@ interface AppointmentModalProps {
   calendarsLoading?: boolean;
   selectedCalendarId?: string;
   onCalendarChange?: (calendarId: string) => void;
+  lockInitialContact?: boolean;
+  enableGuests?: boolean;
   onSave: (eventIdOrPayload: string | any, updates?: Partial<CalendarEvent>) => Promise<void>;
   onDelete?: (eventId: string) => Promise<void>;
 }
@@ -71,6 +73,13 @@ interface SelectOption {
   disabled?: boolean;
 }
 
+interface AppointmentGuest {
+  id: string;
+  name: string;
+  contact: string;
+  contactId?: string;
+}
+
 const STATUS_OPTIONS = [
   { value: 'pending', label: 'Pendiente', color: '#f97316' },
   { value: 'confirmed', label: 'Confirmada', color: '#22c55e' },
@@ -98,6 +107,20 @@ const ALL_TIMEZONES: string[] =
 
 const DEFAULT_TIMEZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 const CONTACT_SEARCH_DELAY_MS = 90;
+
+const createGuestId = () => `guest-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+const getContactDisplayName = (contact: Partial<Contact>) => (
+  contact.name ||
+  `${contact.firstName || ''} ${contact.lastName || ''}`.trim() ||
+  contact.email ||
+  contact.phone ||
+  'Sin nombre'
+);
+
+const getContactDelivery = (contact: Partial<Contact>) => (
+  contact.phone || contact.email || ''
+);
 
 /**
  * Formatea slot completo con duración
@@ -270,6 +293,8 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   calendarsLoading = false,
   selectedCalendarId,
   onCalendarChange,
+  lockInitialContact = false,
+  enableGuests = false,
   onSave,
   onDelete
 }) => {
@@ -285,6 +310,13 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
   const [showContactDropdown, setShowContactDropdown] = useState(false);
+  const [appointmentGuests, setAppointmentGuests] = useState<AppointmentGuest[]>([]);
+  const [guestSearchQuery, setGuestSearchQuery] = useState('');
+  const [guestContacts, setGuestContacts] = useState<Contact[]>([]);
+  const [searchingGuest, setSearchingGuest] = useState(false);
+  const [showGuestDropdown, setShowGuestDropdown] = useState(false);
+  const [guestName, setGuestName] = useState('');
+  const [guestContact, setGuestContact] = useState('');
 
   // Users (assigned users)
   const [users, setUsers] = useState<User[]>([]);
@@ -298,6 +330,9 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   const [loadingSlots, setLoadingSlots] = useState(false);
   const [selectedDate, setSelectedDate] = useState<string>('');
   const [selectedSlot, setSelectedSlot] = useState<string>('');
+  const contactLocked = Boolean(lockInitialContact && initialContact?.id && isCreateMode);
+  const showGuestsSection = Boolean(enableGuests && isCreateMode);
+  const showContactAssignment = !contactLocked;
 
   // Validación de slots DESHABILITADA en modo custom: Como admin, puedes agendar en cualquier horario
   // En modo default: Solo permite seleccionar de los slots disponibles según configuración del calendario
@@ -455,9 +490,74 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   };
 
   const handleClearContact = () => {
+    if (contactLocked) return;
     setSelectedContact(null);
     setFormData({ ...formData, contactId: '' });
     setSearchQuery('');
+  };
+
+  const handleAddGuest = (guest: Omit<AppointmentGuest, 'id'>) => {
+    const name = guest.name.trim();
+    const contactValue = guest.contact.trim();
+
+    if (!name || !contactValue) {
+      showToast('warning', 'Faltan datos del invitado', 'Escribe nombre completo y WhatsApp o correo.');
+      return;
+    }
+
+    setAppointmentGuests((current) => {
+      const normalizedContact = contactValue.toLowerCase();
+      const alreadyAdded = current.some((item) => (
+        (guest.contactId && item.contactId === guest.contactId) ||
+        item.contact.toLowerCase() === normalizedContact
+      ));
+
+      if (alreadyAdded) return current;
+
+      return [
+        ...current,
+        {
+          id: createGuestId(),
+          name,
+          contact: contactValue,
+          contactId: guest.contactId
+        }
+      ];
+    });
+  };
+
+  const handleSelectGuestContact = (contact: Contact) => {
+    const contactName = getContactDisplayName(contact);
+    const delivery = getContactDelivery(contact);
+
+    if (!delivery) {
+      showToast('warning', 'Invitado sin contacto', 'Este contacto no tiene WhatsApp ni correo guardado.');
+      return;
+    }
+
+    handleAddGuest({
+      name: contactName,
+      contact: delivery,
+      contactId: contact.id
+    });
+    setGuestSearchQuery('');
+    setShowGuestDropdown(false);
+    setGuestContacts([]);
+  };
+
+  const handleAddManualGuest = () => {
+    handleAddGuest({
+      name: guestName,
+      contact: guestContact
+    });
+    if (guestName.trim() && guestContact.trim()) {
+      setGuestName('');
+      setGuestContact('');
+    }
+  };
+
+  const handleRemoveGuest = (guestId: string) => {
+    setAppointmentGuests((current) => current.filter((guest) => guest.id !== guestId));
   };
 
   // VALIDACIÓN DE SLOTS ELIMINADA
@@ -574,6 +674,76 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
       controller.abort();
     };
   }, [searchQuery]);
+
+  useEffect(() => {
+    if (!showGuestsSection) {
+      setGuestContacts([]);
+      setShowGuestDropdown(false);
+      setSearchingGuest(false);
+      return;
+    }
+
+    const query = guestSearchQuery.trim();
+
+    if (query.length < 2) {
+      setGuestContacts([]);
+      setShowGuestDropdown(false);
+      setSearchingGuest(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    setSearchingGuest(true);
+    setShowGuestDropdown(true);
+
+    const timer = window.setTimeout(async () => {
+      try {
+        const response = await fetch('/api/highlevel/contacts/search', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          signal: controller.signal,
+          body: JSON.stringify({
+            query,
+            limit: 10
+          })
+        });
+
+        if (!response.ok) {
+          throw new Error('Error al buscar invitados');
+        }
+
+        const data = await response.json();
+        const formattedContacts = (data.contacts || []).map((contact: any) => ({
+          id: contact.id,
+          name: contact.name || 'Sin nombre',
+          email: contact.email || '',
+          phone: contact.phone || '',
+          firstName: contact.firstName || '',
+          lastName: contact.lastName || ''
+        }));
+
+        if (!controller.signal.aborted) {
+          setGuestContacts(formattedContacts);
+          setShowGuestDropdown(true);
+        }
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          setGuestContacts([]);
+        }
+      } finally {
+        if (!controller.signal.aborted) {
+          setSearchingGuest(false);
+        }
+      }
+    }, CONTACT_SEARCH_DELAY_MS);
+
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [guestSearchQuery, showGuestsSection]);
 
   // Validar slot cuando cambien las fechas (solo en modo crear)
   // useEffect de validación de slots ELIMINADO
@@ -692,10 +862,22 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
       });
       setSelectedContact(resolvedInitialContact);
       setSearchQuery('');
+      setAppointmentGuests([]);
+      setGuestSearchQuery('');
+      setGuestContacts([]);
+      setShowGuestDropdown(false);
+      setGuestName('');
+      setGuestContact('');
     } else if (!isOpen) {
       setFormData(INITIAL_FORM_STATE);
       setSelectedContact(null);
       setSearchQuery('');
+      setAppointmentGuests([]);
+      setGuestSearchQuery('');
+      setGuestContacts([]);
+      setShowGuestDropdown(false);
+      setGuestName('');
+      setGuestContact('');
     }
   }, [event, isOpen, isCreateMode, defaultStart, defaultEnd, defaultTimeZone, defaultTitle, initialContact?.id, initialContact?.email, initialContact?.phone, initialContact?.name]);
 
@@ -772,7 +954,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
         // Validación: en calendarios que reparten citas, debe elegirse quién atiende.
         const isRoundRobin = calendar?.calendarType === 'round_robin';
 
-        if (isRoundRobin && !formData.assignedUserId) {
+        if (isRoundRobin && !formData.assignedUserId && !contactLocked) {
           showToast('error', 'Persona del equipo requerida', 'Selecciona quién atenderá esta cita.');
           setIsSaving(false);
           return;
@@ -798,10 +980,15 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
         }
 
         // Modo crear: enviar payload completo
+        const guestsNotes = appointmentGuests.length > 0
+          ? `Invitados:\n${appointmentGuests.map((guest) => `- ${guest.name}: ${guest.contact}`).join('\n')}`
+          : '';
+        const notesWithGuests = [formData.notes.trim(), guestsNotes].filter(Boolean).join('\n\n');
+
         const payload: any = {
           title: formData.title.trim(),
           appointmentStatus: formData.appointmentStatus,
-          notes: formData.notes,
+          notes: notesWithGuests,
           address: formData.address,
           timeZone: formData.timeZone,
           startTime: '',
@@ -1072,19 +1259,20 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
           </div>
         </div>
 
-        <div className={styles.twoColumnLayout}>
-          {/* COLUMNA IZQUIERDA: Selección de contacto y asignación */}
-          <div className={styles.leftColumn}>
-            <h4 className={styles.columnTitle}>
-              <UserPlus size={18} />
-              Asignación
-            </h4>
+	        <div className={styles.twoColumnLayout}>
+	          {/* COLUMNA IZQUIERDA: Contacto o invitados */}
+	          <div className={styles.leftColumn}>
+	            <h4 className={styles.columnTitle}>
+	              <UserPlus size={18} />
+	              {showGuestsSection ? 'Invitados' : 'Asignación'}
+	            </h4>
 
-            {/* Contacto asignado */}
-            <div className={styles.sectionBlock}>
-              <label className={styles.label}>
-                Contacto {isCreateMode && <span className={styles.required}>*</span>}
-              </label>
+	            {/* Contacto asignado */}
+	            {showContactAssignment && (
+	            <div className={styles.sectionBlock}>
+	              <label className={styles.label}>
+	                Contacto {isCreateMode && <span className={styles.required}>*</span>}
+	              </label>
 
               {selectedContact ? (
                 <div className={styles.selectedContact}>
@@ -1146,12 +1334,114 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                   )}
                 </div>
               ) : (
-                <p className={styles.helpText}>Sin contacto asignado</p>
-              )}
-            </div>
+	                <p className={styles.helpText}>Sin contacto asignado</p>
+	              )}
+	            </div>
+	            )}
 
-            {/* Usuario asignado */}
-            {(() => {
+	            {showGuestsSection && (
+	              <div className={styles.sectionBlock}>
+	                <label className={styles.label}>Agregar invitados</label>
+	                <p className={styles.helpText}>Busca un contacto guardado o captura un invitado nuevo para esta cita.</p>
+
+	                <div className={styles.searchWrapper}>
+	                  <div className={styles.searchInput}>
+	                    <Search size={16} className={styles.searchIcon} />
+	                    <input
+	                      type="text"
+	                      placeholder="Buscar en contactos..."
+	                      value={guestSearchQuery}
+	                      onChange={(e) => setGuestSearchQuery(e.target.value)}
+	                      className={styles.input}
+	                    />
+	                    {searchingGuest && <Loader2 size={16} className={styles.loadingIcon} />}
+	                  </div>
+
+	                  {showGuestDropdown && (
+	                    <div className={styles.dropdown}>
+	                      {searchingGuest && guestContacts.length === 0 ? (
+	                        <div className={styles.dropdownEmpty}>
+	                          Buscando invitados...
+	                        </div>
+	                      ) : guestContacts.length > 0 ? (
+	                        guestContacts.map((contact) => (
+	                          <button
+	                            key={contact.id}
+	                            type="button"
+	                            className={styles.dropdownItem}
+	                            onClick={() => handleSelectGuestContact(contact)}
+	                          >
+	                            <p className={styles.dropdownName}>{getContactDisplayName(contact)}</p>
+	                            <p className={styles.dropdownDetail}>
+	                              {getContactDelivery(contact) || 'Sin WhatsApp ni correo'}
+	                            </p>
+	                          </button>
+	                        ))
+	                      ) : (
+	                        <div className={styles.dropdownEmpty}>
+	                          No se encontraron contactos
+	                        </div>
+	                      )}
+	                    </div>
+	                  )}
+	                </div>
+
+	                <div className={styles.guestBuilder}>
+	                  <div className={styles.field}>
+	                    <label className={styles.label} htmlFor="guestName">
+	                      Nombre completo <span className={styles.required}>*</span>
+	                    </label>
+	                    <input
+	                      id="guestName"
+	                      type="text"
+	                      className={styles.input}
+	                      value={guestName}
+	                      placeholder="Ej. Ana López"
+	                      onChange={(event) => setGuestName(event.target.value)}
+	                    />
+	                  </div>
+
+	                  <div className={styles.field}>
+	                    <label className={styles.label} htmlFor="guestContact">
+	                      Num Whats o correo <span className={styles.required}>*</span>
+	                    </label>
+	                    <input
+	                      id="guestContact"
+	                      type="text"
+	                      className={styles.input}
+	                      value={guestContact}
+	                      placeholder="Ej. +52 656 000 0000 o correo@dominio.com"
+	                      onChange={(event) => setGuestContact(event.target.value)}
+	                    />
+	                  </div>
+
+	                  <button type="button" className={styles.guestAddButton} onClick={handleAddManualGuest}>
+	                    Agregar invitado
+	                  </button>
+	                </div>
+
+	                {appointmentGuests.length > 0 ? (
+	                  <div className={styles.guestList} aria-label="Invitados agregados">
+	                    {appointmentGuests.map((guest) => (
+	                      <div key={guest.id} className={styles.guestItem}>
+	                        <span>
+	                          <strong>{guest.name}</strong>
+	                          <small>{guest.contact}</small>
+	                        </span>
+	                        <button type="button" onClick={() => handleRemoveGuest(guest.id)} aria-label={`Quitar ${guest.name}`}>
+	                          <X size={15} />
+	                        </button>
+	                      </div>
+	                    ))}
+	                  </div>
+	                ) : (
+	                  <p className={styles.helpText}>Todavía no agregas invitados.</p>
+	                )}
+	              </div>
+	            )}
+
+	            {/* Usuario asignado */}
+	            {showContactAssignment && (() => {
               const isRoundRobin = calendar?.calendarType === 'round_robin';
 
               // En modo view, si hay usuario asignado, buscarlo y mostrarlo
