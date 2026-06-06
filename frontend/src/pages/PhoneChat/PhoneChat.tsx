@@ -1425,8 +1425,9 @@ function createDefaultAppointmentRange(timeZone: string) {
 }
 
 export const PhoneChat: React.FC = () => {
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const requestedContactParam = searchParams.get('contact')
+  const requestedActionParam = searchParams.get('action')
   const { locationId, accessToken } = useAuth()
   const { labels } = useLabels()
   const { showToast } = useNotification()
@@ -1543,6 +1544,7 @@ export const PhoneChat: React.FC = () => {
     idleTimer: 0,
     lastTop: 0
   })
+  const handledRouteAppointmentRef = useRef<string | null>(null)
   const closeSheetNow = useCallback(() => setSheet(null), [])
   const actionSheetDismiss = useBottomSheetDismiss({
     isOpen: Boolean(sheet),
@@ -2886,6 +2888,42 @@ export const PhoneChat: React.FC = () => {
     setAppointmentOpen(true)
     closeSwipeActions()
   }
+
+  useEffect(() => {
+    if (accessState !== 'allowed') return
+
+    if (requestedActionParam !== 'appointment' || !requestedContactParam) {
+      if (requestedActionParam !== 'appointment') {
+        handledRouteAppointmentRef.current = null
+      }
+      return
+    }
+
+    if (chatsLoading) return
+
+    const targetContact = chats.find((contact) => contact.id === requestedContactParam) || null
+    if (!targetContact) return
+
+    const routeKey = `${requestedContactParam}:appointment`
+    if (handledRouteAppointmentRef.current === routeKey) return
+    handledRouteAppointmentRef.current = routeKey
+
+    handleOpenAppointmentForm(targetContact)
+    setConversationOpen(true)
+
+    const nextParams = new URLSearchParams(searchParams)
+    nextParams.delete('action')
+    nextParams.delete('contact')
+    setSearchParams(nextParams, { replace: true })
+  }, [
+    accessState,
+    chats,
+    chatsLoading,
+    requestedActionParam,
+    requestedContactParam,
+    searchParams,
+    setSearchParams
+  ])
 
   const handleChatMoreAction = (contact: Contact, nextSheet: Exclude<ActionSheet, 'attachments' | 'templates' | 'settings' | 'newChat' | 'chatMore' | null>) => {
     setActiveContactId(contact.id)

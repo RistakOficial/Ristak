@@ -1,12 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   CalendarDays,
   Check,
   ChevronLeft,
   Loader2,
   MonitorX,
-  Plus
+  Plus,
+  Search,
+  User
 } from 'lucide-react'
 import { AppointmentModal } from '@/components/common'
 import { PhoneEcosystemNav } from '@/components/phone/PhoneEcosystemNav'
@@ -15,8 +17,11 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
 import { useAppConfig, useBottomSheetDismiss } from '@/hooks'
+import apiClient from '@/services/apiClient'
 import { calendarsService, type Calendar, type CalendarEvent } from '@/services/calendarsService'
+import { contactsService } from '@/services/contactsService'
 import { getPhoneDailyCacheKey, readPhoneDailyCache, writePhoneDailyCache } from '@/services/phoneDailyCache'
+import type { Contact } from '@/types'
 import { buildSearchIndex, prepareSearchQuery, searchIndexIncludes } from '@/utils/searchText'
 import { convertLocalToUTC } from '@/utils/timezone'
 import styles from './PhoneCalendar.module.css'
@@ -55,7 +60,7 @@ const STATUS_LABELS: Record<CalendarEvent['appointmentStatus'], string> = {
 }
 
 type AccessState = 'checking' | 'allowed' | 'blocked'
-type SheetView = 'calendar' | null
+type SheetView = 'calendar' | 'contactPicker' | null
 type CalendarView = 'month' | 'week' | 'day' | 'year' | 'years'
 
 interface DayCell {
@@ -185,6 +190,42 @@ function capitalizeFirst(value: string) {
   return value ? `${value.charAt(0).toUpperCase()}${value.slice(1)}` : value
 }
 
+function getContactName(contact?: Partial<Contact> | null) {
+  return contact?.name || contact?.email || contact?.phone || 'Contacto sin nombre'
+}
+
+function getContactDetail(contact?: Partial<Contact> | null) {
+  return contact?.phone || contact?.email || 'Sin teléfono guardado'
+}
+
+function getContactInitials(contact?: Partial<Contact> | null) {
+  const label = getContactName(contact)
+  const parts = label.split(' ').filter(Boolean)
+  if (parts.length >= 2) return `${parts[0][0]}${parts[1][0]}`.toUpperCase()
+  return label.slice(0, 2).toUpperCase()
+}
+
+function getContactPhotoUrl(contact?: (Partial<Contact> & Record<string, unknown>) | null) {
+  const candidates = [
+    contact?.profilePhotoUrl,
+    contact?.avatarUrl,
+    contact?.photoUrl,
+    contact?.pictureUrl,
+    contact?.profile_picture_url
+  ]
+  return candidates.find((value): value is string => typeof value === 'string' && value.trim().length > 0) || ''
+}
+
+function getContactSortTime(contact: Contact) {
+  const rawValue =
+    (contact as Contact & { lastMessageDate?: string | null }).lastMessageDate ||
+    contact.nextAppointmentDate ||
+    contact.firstAppointmentDate ||
+    contact.createdAt
+  const time = Date.parse(rawValue || '')
+  return Number.isFinite(time) ? time : 0
+}
+
 function normalizeCalendarEvent(event: any, fallbackId: string): CalendarEvent {
   return {
     ...event,
@@ -211,6 +252,7 @@ export const PhoneCalendar: React.FC = () => {
   const { locationId, accessToken } = useAuth()
   const { showToast } = useNotification()
   const { timezone, formatLocalDateShort } = useTimezone()
+  const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const [defaultCalendarId] = useAppConfig<string>('default_calendar_id', '')
 
@@ -227,6 +269,10 @@ export const PhoneCalendar: React.FC = () => {
   const [calendarView, setCalendarView] = useState<CalendarView>('month')
   const [sheetView, setSheetView] = useState<SheetView>(null)
   const [searchQuery, setSearchQuery] = useState('')
+  const [appointmentContactQuery, setAppointmentContactQuery] = useState('')
+  const [appointmentContacts, setAppointmentContacts] = useState<Contact[]>([])
+  const [appointmentContactsLoading, setAppointmentContactsLoading] = useState(false)
+  const [appointmentContactsError, setAppointmentContactsError] = useState('')
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null)
   const [isEventModalOpen, setIsEventModalOpen] = useState(false)
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false)
@@ -327,6 +373,56 @@ export const PhoneCalendar: React.FC = () => {
     })
     setIsCreateModalOpen(true)
   }, [buildCreateDefaultTimes, selectedCalendar, selectedDate, showToast, timezone])
+
+  const openAppointmentContactPicker = useCallback(() => {
+    setAppointmentContactQuery('')
+    setAppointmentContactsError('')
+    setSheetView('contactPicker')
+  }, [])
+
+  const loadAppointmentContacts = useCallback(async (query: string) => {
+    setAppointmentContactsLoading(true)
+    setAppointmentContactsError('')
+
+    try {
+      const trimmed = query.trim()
+      const data = trimmed.length >= 2
+        ? await contactsService.searchContacts(trimmed)
+        : await apiClient.get<Contact[]>('/contacts', {
+            params: {
+              page: '1',
+              limit: '60',
+              sortBy: 'created_at',
+              sortOrder: 'DESC'
+            }
+          })
+
+      const contacts = Array.isArray(data) ? data : []
+      setAppointmentContacts(
+        contacts
+          .filter((contact) => Boolean(contact.id))
+          .sort((left, right) => getContactSortTime(right) - getContactSortTime(left))
+      )
+    } catch {
+      setAppointmentContacts([])
+      setAppointmentContactsError('No se pudieron cargar los contactos.')
+    } finally {
+      setAppointmentContactsLoading(false)
+    }
+  }, [])
+
+  const handleSelectAppointmentContact = useCallback((contact: Contact) => {
+    if (!contact.id) return
+
+    calendarSheetDismiss.requestClose()
+    window.setTimeout(() => {
+      const params = new URLSearchParams({
+        contact: contact.id,
+        action: 'appointment'
+      })
+      navigate(`/phone/chat?${params.toString()}`)
+    }, 140)
+  }, [calendarSheetDismiss, navigate])
 
   const loadCalendars = useCallback(async () => {
     const cacheKey = getPhoneDailyCacheKey('phone-calendar', 'calendars', locationId || 'default')
@@ -574,6 +670,16 @@ export const PhoneCalendar: React.FC = () => {
       cancelled = true
     }
   }, [accessState, loadEvents, refreshKey, showToast])
+
+  useEffect(() => {
+    if (accessState !== 'allowed' || sheetView !== 'contactPicker') return
+
+    const timer = window.setTimeout(() => {
+      loadAppointmentContacts(appointmentContactQuery)
+    }, appointmentContactQuery.trim() ? 140 : 0)
+
+    return () => window.clearTimeout(timer)
+  }, [accessState, appointmentContactQuery, loadAppointmentContacts, sheetView])
 
   useEffect(() => {
     const selectedButton = stripRef.current?.querySelector<HTMLButtonElement>('[data-selected-day="true"]')
@@ -1115,7 +1221,7 @@ export const PhoneCalendar: React.FC = () => {
 	              <button type="button" onClick={() => setSheetView('calendar')} aria-label="Calendarios">
 	                <CalendarDays size={22} />
 	              </button>
-	              <button type="button" onClick={() => openCreateModal()} aria-label="Crear cita">
+	              <button type="button" onClick={openAppointmentContactPicker} aria-label="Crear cita">
 	                <Plus size={25} />
 	              </button>
 	            </div>
@@ -1353,11 +1459,16 @@ export const PhoneCalendar: React.FC = () => {
           >
             <div className={styles.sheetHandle} aria-hidden="true" />
             <header className={styles.sheetHeader}>
-              <button type="button" className={styles.closeSheetButton} onClick={calendarSheetDismiss.requestClose} aria-label="Volver al calendario">
-                <ChevronLeft size={24} />
-              </button>
+              {sheetView === 'calendar' ? (
+                <button type="button" className={styles.closeSheetButton} onClick={calendarSheetDismiss.requestClose} aria-label="Volver al calendario">
+                  <ChevronLeft size={24} />
+                </button>
+              ) : (
+                <span className={styles.sheetHeaderSpacer} aria-hidden="true" />
+              )}
               <h2>
                 {sheetView === 'calendar' && 'Calendarios'}
+                {sheetView === 'contactPicker' && 'Agendar con'}
               </h2>
               <span className={styles.sheetHeaderSpacer} aria-hidden="true" />
             </header>
@@ -1382,6 +1493,69 @@ export const PhoneCalendar: React.FC = () => {
                     {selectedCalendar?.id === calendar.id && <Check size={18} />}
                   </button>
                 ))}
+              </div>
+            )}
+
+            {sheetView === 'contactPicker' && (
+              <div className={styles.contactPickerStack}>
+                <div className={styles.sheetSearchBox}>
+                  <Search size={18} />
+                  <input
+                    value={appointmentContactQuery}
+                    onChange={(event) => setAppointmentContactQuery(event.target.value)}
+                    placeholder="Buscar contacto"
+                    aria-label="Buscar contacto para agendar"
+                  />
+                  {appointmentContactQuery && (
+                    <button type="button" onClick={() => setAppointmentContactQuery('')} aria-label="Limpiar búsqueda">
+                      x
+                    </button>
+                  )}
+                </div>
+
+                <div className={styles.contactList} data-phone-scrollable="true">
+                  {appointmentContactsLoading ? (
+                    <div className={styles.contactListState}>
+                      <Loader2 size={19} className={styles.spinIcon} />
+                      <span>Cargando contactos...</span>
+                    </div>
+                  ) : appointmentContactsError ? (
+                    <div className={styles.contactListState}>
+                      <User size={22} />
+                      <strong>No cargaron</strong>
+                      <span>{appointmentContactsError}</span>
+                      <button type="button" onClick={() => loadAppointmentContacts(appointmentContactQuery)}>
+                        Intentar otra vez
+                      </button>
+                    </div>
+                  ) : appointmentContacts.length > 0 ? (
+                    appointmentContacts.map((contact) => {
+                      const photoUrl = getContactPhotoUrl(contact as Partial<Contact> & Record<string, unknown>)
+                      return (
+                        <button
+                          key={contact.id}
+                          type="button"
+                          className={styles.contactOption}
+                          onClick={() => handleSelectAppointmentContact(contact)}
+                        >
+                          <span className={styles.contactAvatar}>
+                            {photoUrl ? <img src={photoUrl} alt="" loading="lazy" referrerPolicy="no-referrer" /> : getContactInitials(contact)}
+                          </span>
+                          <span className={styles.contactMain}>
+                            <strong>{getContactName(contact)}</strong>
+                            <small>{getContactDetail(contact)}</small>
+                          </span>
+                        </button>
+                      )
+                    })
+                  ) : (
+                    <div className={styles.contactListState}>
+                      <User size={22} />
+                      <strong>No hay contactos</strong>
+                      <span>Busca por nombre, número o correo para agendar desde su chat.</span>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
 
