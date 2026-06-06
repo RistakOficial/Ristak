@@ -4,7 +4,7 @@ import { Capacitor } from '@capacitor/core'
 import { Device } from '@capacitor/device'
 import { Filesystem } from '@capacitor/filesystem'
 import { Haptics, ImpactStyle } from '@capacitor/haptics'
-import { Keyboard } from '@capacitor/keyboard'
+import { Keyboard, KeyboardResize } from '@capacitor/keyboard'
 import { PushNotifications, type ActionPerformed, type Token } from '@capacitor/push-notifications'
 import { SplashScreen } from '@capacitor/splash-screen'
 import { StatusBar, Style } from '@capacitor/status-bar'
@@ -217,7 +217,8 @@ export const mobileAppService = {
     await SplashScreen.hide().catch(() => undefined)
 
     if (getPlatform() === 'ios') {
-      await Keyboard.setAccessoryBarVisible({ isVisible: true }).catch(() => undefined)
+      await Keyboard.setAccessoryBarVisible({ isVisible: false }).catch(() => undefined)
+      await Keyboard.setResizeMode({ mode: KeyboardResize.Native }).catch(() => undefined)
     }
 
     await App.addListener('appUrlOpen', (event) => {

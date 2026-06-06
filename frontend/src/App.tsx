@@ -136,7 +136,44 @@ const PhoneRouteEffects: React.FC = () => {
       delete root.dataset.phoneApp
     }
 
+    let viewportFrame = 0
+    const syncPhoneViewport = () => {
+      const visualViewport = window.visualViewport
+      const layoutHeight = Math.max(root.clientHeight, window.innerHeight)
+      const visibleHeight = visualViewport?.height ?? window.innerHeight
+      const viewportTop = visualViewport?.offsetTop ?? 0
+      const keyboardInset = Math.max(0, layoutHeight - visibleHeight - viewportTop)
+      const roundedInset = keyboardInset > 48 ? Math.round(keyboardInset) : 0
+
+      root.style.setProperty('--phone-visual-viewport-height', `${Math.round(visibleHeight)}px`)
+      root.style.setProperty('--phone-visual-viewport-top', `${Math.round(viewportTop)}px`)
+      root.style.setProperty('--phone-keyboard-inset', `${roundedInset}px`)
+    }
+    const schedulePhoneViewportSync = () => {
+      if (viewportFrame) window.cancelAnimationFrame(viewportFrame)
+      viewportFrame = window.requestAnimationFrame(syncPhoneViewport)
+    }
+
+    if (isPhoneRoute) {
+      syncPhoneViewport()
+      window.visualViewport?.addEventListener('resize', schedulePhoneViewportSync)
+      window.visualViewport?.addEventListener('scroll', schedulePhoneViewportSync)
+      window.addEventListener('resize', schedulePhoneViewportSync)
+    } else {
+      root.style.removeProperty('--phone-visual-viewport-height')
+      root.style.removeProperty('--phone-visual-viewport-top')
+      root.style.removeProperty('--phone-keyboard-inset')
+    }
+
     return () => {
+      if (viewportFrame) window.cancelAnimationFrame(viewportFrame)
+      window.visualViewport?.removeEventListener('resize', schedulePhoneViewportSync)
+      window.visualViewport?.removeEventListener('scroll', schedulePhoneViewportSync)
+      window.removeEventListener('resize', schedulePhoneViewportSync)
+      root.style.removeProperty('--phone-visual-viewport-height')
+      root.style.removeProperty('--phone-visual-viewport-top')
+      root.style.removeProperty('--phone-keyboard-inset')
+
       if (previousBodyPhoneApp !== undefined) {
         body.dataset.phoneApp = previousBodyPhoneApp
       } else {

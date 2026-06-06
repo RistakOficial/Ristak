@@ -2050,6 +2050,7 @@ export const PhoneChat: React.FC = () => {
     window.addEventListener('focusin', handleFocusIn)
     window.addEventListener('focusout', handleFocusOut)
     window.visualViewport?.addEventListener('resize', keepViewportStable)
+    window.visualViewport?.addEventListener('scroll', keepViewportStable)
 
     return () => {
       window.removeEventListener('touchstart', handleTouchStart)
@@ -2057,6 +2058,7 @@ export const PhoneChat: React.FC = () => {
       window.removeEventListener('focusin', handleFocusIn)
       window.removeEventListener('focusout', handleFocusOut)
       window.visualViewport?.removeEventListener('resize', keepViewportStable)
+      window.visualViewport?.removeEventListener('scroll', keepViewportStable)
       html.removeAttribute('data-phone-chat-keyboard')
       if (viewportMeta) {
         viewportMeta.setAttribute('content', previousViewportContent)
