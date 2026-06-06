@@ -111,12 +111,49 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) =
   return <>{children}</>
 }
 
+const PhoneRouteEffects: React.FC = () => {
+  const location = useLocation()
+
+  React.useEffect(() => {
+    const body = document.body
+    const root = document.documentElement
+    const previousBodyPhoneApp = body.dataset.phoneApp
+    const previousRootPhoneApp = root.dataset.phoneApp
+    const isPhoneRoute = location.pathname.startsWith('/phone')
+
+    if (isPhoneRoute) {
+      body.dataset.phoneApp = 'active'
+      root.dataset.phoneApp = 'active'
+    } else {
+      delete body.dataset.phoneApp
+      delete root.dataset.phoneApp
+    }
+
+    return () => {
+      if (previousBodyPhoneApp !== undefined) {
+        body.dataset.phoneApp = previousBodyPhoneApp
+      } else {
+        delete body.dataset.phoneApp
+      }
+
+      if (previousRootPhoneApp !== undefined) {
+        root.dataset.phoneApp = previousRootPhoneApp
+      } else {
+        delete root.dataset.phoneApp
+      }
+    }
+  }, [location.pathname])
+
+  return null
+}
+
 const AppWithNotifications: React.FC = () => {
   const { toasts, removeToast, modal, closeModal } = useNotification()
 
   return (
     <>
       <BrowserRouter>
+        <PhoneRouteEffects />
         <Routes>
           <Route path="/setup" element={<SetupRoute><Setup /></SetupRoute>} />
           <Route path="/login" element={<Login />} />

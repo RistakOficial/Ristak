@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react'
+import React, { useEffect, useState } from 'react'
 import { X, CheckCircle2, XCircle, Info, AlertTriangle } from 'lucide-react'
 import styles from './Toast.module.css'
 
@@ -20,6 +20,8 @@ const icons = {
   warning: <AlertTriangle size={20} strokeWidth={2} />
 }
 
+const EXIT_ANIMATION_MS = 260
+
 export const Toast: React.FC<ToastProps> = ({
   id,
   type,
@@ -28,17 +30,33 @@ export const Toast: React.FC<ToastProps> = ({
   duration = 5000,
   onClose
 }) => {
+  const [isClosing, setIsClosing] = useState(false)
+
   useEffect(() => {
     if (duration > 0) {
       const timer = setTimeout(() => {
-        onClose(id)
+        setIsClosing(true)
       }, duration)
       return () => clearTimeout(timer)
     }
-  }, [duration, id, onClose])
+  }, [duration])
+
+  useEffect(() => {
+    if (!isClosing) return
+
+    const timer = setTimeout(() => {
+      onClose(id)
+    }, EXIT_ANIMATION_MS)
+
+    return () => clearTimeout(timer)
+  }, [id, isClosing, onClose])
+
+  const handleClose = () => {
+    setIsClosing(true)
+  }
 
   return (
-    <div className={`${styles.toast} ${styles[type]}`}>
+    <div className={`${styles.toast} ${styles[type]} ${isClosing ? styles.closing : ''}`}>
       <div className={styles.icon}>{icons[type]}</div>
       <div className={styles.content}>
         <div className={styles.title}>{title}</div>
@@ -46,7 +64,7 @@ export const Toast: React.FC<ToastProps> = ({
       </div>
       <button
         className={styles.closeButton}
-        onClick={() => onClose(id)}
+        onClick={handleClose}
         aria-label="Cerrar notificación"
       >
         <X size={16} strokeWidth={2} />

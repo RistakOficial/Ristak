@@ -11,6 +11,11 @@
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
 }
 
+.closing {
+  pointer-events: none;
+  animation: toastSlideOut 0.26s cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+
 :global(body.dark) .toast {
   border: 1px solid rgba(255, 255, 255, 0.1);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
@@ -25,6 +30,39 @@
   100% {
     transform: translateY(0);
     opacity: 1;
+  }
+}
+
+@keyframes toastSlideOut {
+  0% {
+    transform: translateY(0);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(20px);
+    opacity: 0;
+  }
+}
+
+@keyframes phoneToastDropIn {
+  0% {
+    transform: translateY(calc(-100% - 22px)) scale(0.98);
+    opacity: 0;
+  }
+  100% {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes phoneToastRiseOut {
+  0% {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(calc(-100% - 22px)) scale(0.98);
+    opacity: 0;
   }
 }
 
@@ -127,4 +165,81 @@
 
 :global(body.dark) .info .icon {
   color: #3b82f6;
+}
+
+:global(body[data-phone-app='active']) .toast {
+  align-items: center;
+  gap: 10px;
+  width: min(100%, 430px);
+  min-height: 54px;
+  padding: 10px 13px;
+  border: 1px solid rgba(20, 20, 20, 0.08);
+  border-radius: 20px;
+  color: var(--phone-chat-text, #0b0b0d);
+  background: color-mix(in srgb, var(--phone-chat-surface, #ffffff) 88%, transparent);
+  box-shadow: 0 14px 34px rgba(var(--phone-chat-primary-rgb, 16, 16, 16), 0.18);
+  backdrop-filter: blur(24px) saturate(1.12);
+  -webkit-backdrop-filter: blur(24px) saturate(1.12);
+  animation: phoneToastDropIn 0.34s cubic-bezier(0.2, 0.9, 0.2, 1) both;
+}
+
+:global(body[data-phone-app='active']) .closing {
+  animation: phoneToastRiseOut 0.26s cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+
+:global(body[data-phone-app='active']) .icon {
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  color: #ffffff;
+  background: var(--phone-chat-primary, #101010);
+}
+
+:global(body[data-phone-app='active']) .content {
+  min-width: 0;
+}
+
+:global(body[data-phone-app='active']) .title {
+  margin: 0;
+  overflow: hidden;
+  color: var(--phone-chat-text, #0b0b0d);
+  font-size: 14px;
+  font-weight: 820;
+  line-height: 1.18;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+:global(body[data-phone-app='active']) .message {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--phone-chat-muted, #77736c);
+  font-size: 12px;
+  line-height: 1.24;
+  opacity: 1;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+:global(body[data-phone-app='active']) .closeButton {
+  display: none;
+}
+
+:global(body[data-phone-app='active']) .success .icon {
+  background: var(--phone-chat-accent, #25d366);
+}
+
+:global(body[data-phone-app='active']) .error .icon {
+  background: #ef4444;
+}
+
+:global(body[data-phone-app='active']) .warning .icon {
+  background: #f59e0b;
+}
+
+:global(body[data-phone-app='active']) .info .icon {
+  background: #128c7e;
 }
