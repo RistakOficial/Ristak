@@ -44,15 +44,17 @@ type RouteLocationState = {
 type AppBranding = {
   title: string
   favicon: string
+  faviconType: string
   manifest: string
   appleTouchIcon: string
   themeColor: string
 }
 
-const ROUTE_BRANDING: Record<'ristak' | 'phone', AppBranding> = {
+const ROUTE_BRANDING: Record<'ristak' | 'phone' | 'phoneChat', AppBranding> = {
   ristak: {
     title: 'Ristak',
     favicon: '/logo.svg',
+    faviconType: 'image/svg+xml',
     manifest: '/manifest.webmanifest',
     appleTouchIcon: '/apple-touch-icon.png',
     themeColor: '#ffffff'
@@ -60,10 +62,31 @@ const ROUTE_BRANDING: Record<'ristak' | 'phone', AppBranding> = {
   phone: {
     title: 'Ristak Chat',
     favicon: '/ristak-chat-icon.svg',
+    faviconType: 'image/svg+xml',
     manifest: '/manifest.phone.webmanifest',
     appleTouchIcon: '/ristak-chat-apple-touch-icon.png',
     themeColor: '#050505'
+  },
+  phoneChat: {
+    title: 'Ristak Chat',
+    favicon: '/ristak-chat-home-icon-192.png',
+    faviconType: 'image/png',
+    manifest: '/manifest.phone-chat.webmanifest',
+    appleTouchIcon: '/ristak-chat-home-apple-touch-icon.png',
+    themeColor: '#050505'
   }
+}
+
+function getRouteBranding(pathname: string) {
+  if (pathname === '/phone/chat' || pathname.startsWith('/phone/chat/')) {
+    return ROUTE_BRANDING.phoneChat
+  }
+
+  if (pathname.startsWith('/phone')) {
+    return ROUTE_BRANDING.phone
+  }
+
+  return ROUTE_BRANDING.ristak
 }
 
 function setHeadLink(selector: string, attributes: Record<string, string>) {
@@ -92,15 +115,16 @@ function setHeadMeta(selector: string, attributes: Record<string, string>) {
   })
 }
 
-function applyRouteBranding(isPhoneRoute: boolean) {
-  const branding = isPhoneRoute ? ROUTE_BRANDING.phone : ROUTE_BRANDING.ristak
+function applyRouteBranding(pathname: string) {
+  const branding = getRouteBranding(pathname)
+  const isPhoneRoute = pathname.startsWith('/phone')
 
   document.title = branding.title
   document.documentElement.dataset.appBrand = isPhoneRoute ? 'ristak-chat' : 'ristak'
 
   setHeadLink('link[rel="icon"]', {
     rel: 'icon',
-    type: 'image/svg+xml',
+    type: branding.faviconType,
     href: branding.favicon
   })
   setHeadLink('link[rel="manifest"]', {
@@ -208,8 +232,8 @@ const PhoneRouteEffects: React.FC = () => {
   const isPhoneRoute = location.pathname.startsWith('/phone')
 
   React.useEffect(() => {
-    applyRouteBranding(isPhoneRoute)
-  }, [isPhoneRoute])
+    applyRouteBranding(location.pathname)
+  }, [location.pathname])
 
   React.useEffect(() => {
     const body = document.body

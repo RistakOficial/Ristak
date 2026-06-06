@@ -1,0 +1,46 @@
+{
+  "id": "/phone/chat",
+  "name": "Ristak Chat",
+  "short_name": "Ristak Chat",
+  "description": "Acceso movil de Ristak Chat para responder mensajes, revisar citas, cobrar y usar el agente de IA.",
+  "start_url": "/phone/chat",
+  "scope": "/phone/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#050505",
+  "theme_color": "#050505",
+  "icons": [
+    {
+      "src": "/ristak-chat-home-icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/ristak-chat-home-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/ristak-chat-home-icon.png",
+      "sizes": "1024x1024",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Chat",
+      "short_name": "Chat",
+      "url": "/phone/chat",
+      "icons": [
+        {
+          "src": "/ristak-chat-home-icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    }
+  ]
+}
