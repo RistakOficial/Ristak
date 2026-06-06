@@ -1919,6 +1919,12 @@
   overflow: hidden;
 }
 
+.replyWindowSenderBar {
+  justify-content: center;
+  padding-right: 12px;
+  padding-left: 12px;
+}
+
 .senderChannelSelect {
   display: inline-flex;
   align-items: center;
@@ -1967,6 +1973,7 @@
 .replyWindowNotice {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
   min-height: 30px;
   max-width: 100%;
@@ -1974,6 +1981,7 @@
   border-radius: 999px;
   font-size: 12px;
   font-weight: 820;
+  text-align: center;
   white-space: nowrap;
   color: #9a3412;
   background: #ffedd5;

@@ -3477,12 +3477,12 @@ export const PhoneChat: React.FC = () => {
     }
 
     if (resolvedTransport === 'qr' && !selectedQrReady) {
-      showToast('error', 'Baileys no está conectado', 'Conecta este número por QR en Configuración > WhatsApp.')
+      showToast('error', 'QR no está conectado', 'Conecta este número por QR en Configuración > WhatsApp.')
       return
     }
 
     if (resolvedTransport === 'qr' && (attachmentsToSend.length > 0 || voiceToSend)) {
-      showToast('warning', 'Baileys solo manda texto', 'Quita el archivo o manda una plantilla aprobada.')
+      showToast('warning', 'QR solo manda texto', 'Quita el archivo o manda una plantilla aprobada.')
       return
     }
 
@@ -3534,7 +3534,7 @@ export const PhoneChat: React.FC = () => {
           text,
           date: sentAt,
           direction: 'outbound',
-          status: resolvedTransport === 'qr' ? 'enviando por Baileys' : 'enviando',
+          status: resolvedTransport === 'qr' ? 'enviando por QR' : 'enviando',
           businessPhone: selectedBusinessPhoneValue,
           businessPhoneNumberId: selectedBusinessPhone?.id || '',
           transport: resolvedTransport
@@ -4414,10 +4414,10 @@ export const PhoneChat: React.FC = () => {
     if (!outsideReplyWindow || !selectedQrReady) return null
 
     return (
-      <div className={styles.senderBar}>
+      <div className={`${styles.senderBar} ${styles.replyWindowSenderBar}`}>
         <span className={styles.replyWindowNotice}>
           <Clock size={14} />
-          Fuera de 24 h · se enviará por Baileys
+          Fuera de 24 h · se enviará por QR
         </span>
       </div>
     )
