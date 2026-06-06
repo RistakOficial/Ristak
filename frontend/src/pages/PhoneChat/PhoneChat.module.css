@@ -120,6 +120,47 @@
   line-height: 0.98;
 }
 
+.chatTitleRow {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.chatTitleRow h1 {
+  min-width: 0;
+}
+
+.chatPhoneSelector {
+  display: grid;
+  flex: 0 1 176px;
+  min-width: 128px;
+  gap: 2px;
+}
+
+.chatPhoneSelector span {
+  color: #777777;
+  font-size: 10px;
+  font-weight: 820;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.chatPhoneSelector select {
+  width: 100%;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid #e2e2e2;
+  border-radius: 999px;
+  outline: 0;
+  color: #111111;
+  background: #f7f6f2;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 760;
+}
+
 .searchBox,
 .sheetSearchBox {
   display: grid;
@@ -294,6 +335,15 @@
   object-fit: cover;
 }
 
+.aiAgentAvatar {
+  color: #ffffff;
+  background: linear-gradient(135deg, #111827, #0f766e);
+}
+
+.aiAgentChatItem {
+  background: linear-gradient(90deg, rgba(15, 118, 110, 0.08), transparent 72%);
+}
+
 .chatMain {
   display: grid;
   min-width: 0;
@@ -356,6 +406,12 @@
   font-style: normal;
   font-size: 13px;
   font-weight: 800;
+}
+
+.chatMeta .aiAgentPin {
+  color: #0f5132;
+  background: rgba(37, 211, 102, 0.18);
+  font-size: 11px;
 }
 
 .contactResultGroup {
@@ -490,6 +546,12 @@
   border: 0;
   color: #111111;
   background: transparent;
+}
+
+.conversationHeaderSpacer {
+  display: block;
+  width: 42px;
+  height: 40px;
 }
 
 .contactInfoScreen {
@@ -918,6 +980,11 @@
   font-size: 15px;
   line-height: 1.25;
   letter-spacing: 0;
+  white-space: pre-wrap;
+}
+
+.aiMessageBubble {
+  max-width: min(82%, 580px);
 }
 
 .messageImage {
@@ -977,6 +1044,22 @@
 
 .messageErrorIcon {
   color: #dc2626;
+}
+
+.messageErrorButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  color: #dc2626;
+  background: transparent;
+  line-height: 1;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .composerShell {
@@ -1053,6 +1136,48 @@
 
 .senderQrButton:disabled {
   opacity: 0.56;
+}
+
+.aiSuggestionBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  padding: 7px 8px 2px;
+  color: #0f5132;
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.aiSuggestionBar span,
+.aiSuggestionBar button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.aiSuggestionBar span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.aiSuggestionBar button {
+  flex: 0 0 auto;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 999px;
+  color: #ffffff;
+  background: #111111;
+  font-size: 12px;
+  font-weight: 820;
+}
+
+.aiSuggestionBar button:disabled {
+  opacity: 0.55;
 }
 
 .composer {
@@ -1147,6 +1272,47 @@
 
 .composerMicRecording {
   color: #dc2626;
+}
+
+.aiComposer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 44px;
+  align-items: end;
+  gap: 8px;
+  padding: 8px 10px max(8px, env(safe-area-inset-bottom));
+}
+
+.aiComposer textarea {
+  width: 100%;
+  min-height: 42px;
+  max-height: 116px;
+  padding: 10px 13px;
+  border: 0;
+  border-radius: 18px;
+  outline: 0;
+  color: #111111;
+  background: #ffffff;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.08);
+  font: inherit;
+  font-size: 15px;
+  line-height: 1.3;
+  resize: none;
+}
+
+.aiComposer button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 42px;
+  border: 0;
+  border-radius: 999px;
+  color: #ffffff;
+  background: #25d366;
+}
+
+.aiComposer button:disabled {
+  opacity: 0.45;
 }
 
 .draftAttachments {
@@ -1374,6 +1540,10 @@
   height: min(86dvh, 820px);
 }
 
+.templatesSheet {
+  height: min(78dvh, 720px);
+}
+
 .sheetHandle {
   width: 42px;
   height: 4px;
@@ -1469,10 +1639,244 @@
   background: #469bd9;
 }
 
+.attachmentGrid .actionTemplate {
+  background: #111111;
+}
+
 .newChatStack {
   display: grid;
   gap: 12px;
   min-height: 0;
+}
+
+.templatesStack {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.templateChoiceGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.templateChoiceGrid button {
+  display: grid;
+  justify-items: start;
+  gap: 7px;
+  min-width: 0;
+  min-height: 124px;
+  padding: 14px;
+  border: 1px solid #e5e7eb;
+  border-radius: 18px;
+  color: #111111;
+  background: #ffffff;
+  text-align: left;
+}
+
+.templateChoiceGrid button span,
+.templateRowIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 999px;
+  color: #ffffff;
+  background: #111111;
+}
+
+.templateChoiceGrid strong,
+.templateRowMain strong,
+.templateSubHeader strong {
+  color: #111111;
+  font-size: 15px;
+  font-weight: 840;
+}
+
+.templateChoiceGrid small,
+.templateRowMain small,
+.templateRowMain em,
+.templateAlert small {
+  color: #737373;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.templateAlertList {
+  display: grid;
+  gap: 8px;
+}
+
+.templateAlert {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 9px;
+  align-items: start;
+  padding: 11px 12px;
+  border: 1px solid rgba(220, 38, 38, 0.14);
+  border-radius: 14px;
+  color: #dc2626;
+  background: #fff7f7;
+}
+
+.templateAlert strong {
+  display: block;
+  color: #7f1d1d;
+  font-size: 13px;
+  font-weight: 840;
+}
+
+.templateSubHeader {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+}
+
+.templateSubHeader button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 34px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 999px;
+  color: #111111;
+  background: #f2f2f2;
+  font-size: 12px;
+  font-weight: 820;
+}
+
+.quickTemplateForm {
+  display: grid;
+  gap: 10px;
+}
+
+.quickTemplateForm label {
+  display: grid;
+  gap: 6px;
+}
+
+.quickTemplateForm label span {
+  color: #606060;
+  font-size: 12px;
+  font-weight: 820;
+}
+
+.quickTemplateForm input,
+.quickTemplateForm select,
+.quickTemplateForm textarea {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid #dfe3e8;
+  border-radius: 14px;
+  color: #111111;
+  background: #ffffff;
+  font: inherit;
+  font-size: 16px;
+}
+
+.quickTemplateForm input,
+.quickTemplateForm select {
+  min-height: 44px;
+  padding: 0 12px;
+}
+
+.quickTemplateForm textarea {
+  resize: vertical;
+  min-height: 118px;
+  padding: 11px 12px;
+  line-height: 1.35;
+}
+
+.quickTemplateSplit {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 9px;
+}
+
+.templateList {
+  display: grid;
+  gap: 8px;
+}
+
+.templateRow {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid #e5e7eb;
+  border-radius: 16px;
+  color: #111111;
+  background: #ffffff;
+  text-align: left;
+}
+
+.templateRow:disabled {
+  opacity: 0.72;
+}
+
+.templateRowMain {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.templateRowMain strong,
+.templateRowMain small,
+.templateRowMain em {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.templateRowMain small {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.templateRowMain em {
+  display: block;
+  color: #9f1239;
+  font-style: normal;
+  white-space: nowrap;
+}
+
+.templateStatus {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 24px;
+  max-width: 94px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.templateStatusApproved {
+  color: #0f5132;
+  background: rgba(37, 211, 102, 0.16);
+}
+
+.templateStatusPending {
+  color: #92400e;
+  background: #fef3c7;
+}
+
+.templateStatusBlocked {
+  color: #991b1b;
+  background: #fee2e2;
 }
 
 .sheetList {
@@ -1518,6 +1922,93 @@
   gap: 12px;
   min-height: 0;
   overflow-y: auto;
+}
+
+.chatSettingsStack {
+  display: grid;
+  gap: 12px;
+  min-height: 0;
+  padding-bottom: 4px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.settingsSection {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  background: #fbfbfb;
+}
+
+.settingsSectionTitle {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 9px;
+}
+
+.settingsSectionTitle > svg {
+  margin-top: 1px;
+  color: #0f766e;
+}
+
+.settingsSectionTitle span {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.settingsSectionTitle strong,
+.settingsField > strong {
+  color: #111111;
+  font-size: 15px;
+  font-weight: 850;
+}
+
+.settingsSectionTitle small {
+  color: #737373;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.settingsSegmented {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+  padding: 4px;
+  border-radius: 999px;
+  background: #ededed;
+}
+
+.settingsSegmented button {
+  min-height: 38px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 999px;
+  color: #666666;
+  background: transparent;
+  font-size: 13px;
+  font-weight: 820;
+}
+
+.settingsSegmented .settingsSegmentActive {
+  color: #111111;
+  background: #ffffff;
+  box-shadow: 0 8px 18px rgba(17, 24, 39, 0.08);
+}
+
+.settingsHint {
+  margin: 0;
+  color: #737373;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.settingsField {
+  display: grid;
+  gap: 8px;
 }
 
 .setupCard,
@@ -1619,6 +2110,14 @@
   height: 23px;
   accent-color: #25d366;
   flex: 0 0 auto;
+}
+
+.toggleRowDisabled {
+  opacity: 0.58;
+}
+
+.toggleRowDisabled input {
+  cursor: not-allowed;
 }
 
 .loadingPage,
@@ -1751,6 +2250,19 @@
 
   .chatListHeader h1 {
     font-size: clamp(34px, 9vw, 44px);
+  }
+
+  .chatTitleRow {
+    align-items: end;
+  }
+
+  .chatPhoneSelector {
+    flex-basis: 150px;
+    min-width: 116px;
+  }
+
+  .chatPhoneSelector select {
+    font-size: 11px;
   }
 
   .searchBox input,

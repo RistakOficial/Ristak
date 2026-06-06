@@ -208,6 +208,8 @@ const mapChatContactRowForResponse = (contact = {}) => ({
   lastMessageType: contact.last_message_type || '',
   lastMessageDate: contact.last_message_date || contact.created_at,
   lastMessageDirection: contact.last_message_direction || '',
+  lastBusinessPhone: contact.last_business_phone || '',
+  lastBusinessPhoneNumberId: contact.last_business_phone_number_id || '',
   messageCount: Number(contact.message_count || 0),
   unreadCount: Number(contact.unread_count || 0)
 })
@@ -310,11 +312,28 @@ const getMetaAttributionForContact = async (contact = {}, firstSession = null, w
  */
 export const getChatContacts = async (req, res) => {
   try {
-    const { q = '', limit = 60 } = req.query
+    const { q = '', limit = 60, businessPhoneNumberId = '', businessPhone = '' } = req.query
     const limitNumber = Math.min(Number(limit) || 60, 100)
     const searchTerm = cleanString(q)
+    const phoneNumberIdFilter = cleanString(businessPhoneNumberId)
+    const businessPhoneFilter = normalizePhoneForStorage(businessPhone)
+    const messageConditions = ['contact_id IS NOT NULL']
+    const messageParams = []
     const conditions = []
     const params = []
+
+    if (phoneNumberIdFilter || businessPhoneFilter) {
+      const phoneClauses = []
+      if (phoneNumberIdFilter) {
+        phoneClauses.push('business_phone_number_id = ?')
+        messageParams.push(phoneNumberIdFilter)
+      }
+      if (businessPhoneFilter) {
+        phoneClauses.push('business_phone = ?')
+        messageParams.push(businessPhoneFilter)
+      }
+      messageConditions.push(`(${phoneClauses.join(' OR ')})`)
+    }
 
     if (searchTerm) {
       const searchClause = buildContactSearchClause('c', searchTerm)
@@ -337,7 +356,7 @@ export const getChatContacts = async (req, res) => {
           COUNT(*) AS message_count,
           MAX(COALESCE(message_timestamp, created_at)) AS last_message_date
         FROM whatsapp_api_messages
-        WHERE contact_id IS NOT NULL
+        WHERE ${messageConditions.join(' AND ')}
         GROUP BY contact_id
       ),
       payment_stats AS (
@@ -406,6 +425,8 @@ export const getChatContacts = async (req, res) => {
         lm.message_text AS last_message_text,
         lm.message_type AS last_message_type,
         lm.direction AS last_message_direction,
+        lm.business_phone AS last_business_phone,
+        lm.business_phone_number_id AS last_business_phone_number_id,
         0 AS unread_count
       FROM chat_stats
       JOIN contacts c ON c.id = chat_stats.contact_id
@@ -420,7 +441,7 @@ export const getChatContacts = async (req, res) => {
       ${whereClause}
       ORDER BY chat_stats.last_message_date DESC
       LIMIT ?
-    `, [...params, limitNumber])
+    `, [...messageParams, ...params, limitNumber])
 
     res.json({
       success: true,
@@ -1904,6 +1925,9 @@ export const getContactJourney = async (req, res) => {
           msg.business_phone_number_id,
           msg.transport,
           msg.direction,
+          msg.status,
+          msg.error_code,
+          msg.error_message,
           msg.raw_payload_json,
           COALESCE(attr.id, '') as attribution_id,
           COALESCE(attr.detected_ctwa_clid, msg.detected_ctwa_clid) as detected_ctwa_clid,
@@ -1958,6 +1982,9 @@ export const getContactJourney = async (req, res) => {
         whatsapp_api_message_id: msg.whatsapp_api_message_id,
         whatsapp_message_id: msg.wamid || msg.ycloud_message_id,
         direction: msg.direction || 'inbound',
+        status: msg.status || null,
+        error_code: msg.error_code || null,
+        error_message: msg.error_message || null,
         is_ad_attributed: isAdAttributed
       }
 

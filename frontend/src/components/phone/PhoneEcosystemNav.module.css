@@ -5,7 +5,7 @@
   left: max(10px, env(safe-area-inset-left));
   z-index: 70;
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 2px;
   min-height: 66px;
   padding: 6px 8px;

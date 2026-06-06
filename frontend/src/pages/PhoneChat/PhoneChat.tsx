@@ -4,10 +4,13 @@ import {
   Archive,
   BadgeDollarSign,
   Bell,
+  Bot,
   CalendarDays,
   Camera,
   Check,
   ChevronLeft,
+  CircleAlert,
+  Cog,
   Clock,
   CreditCard,
   DollarSign,
@@ -22,13 +25,13 @@ import {
   MessageCircle,
   Mic,
   MonitorX,
-  MoreHorizontal,
   MousePointerClick,
   Phone,
   Plus,
   ReceiptText,
   Search,
   Send,
+  Sparkles,
   Smartphone,
   Tag,
   User,
@@ -41,12 +44,18 @@ import { useLabels } from '@/contexts/LabelsContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
 import { useAppConfig } from '@/hooks'
+import { aiAgentService, type AIAgentMessage, type AIAgentViewContext } from '@/services/aiAgentService'
 import apiClient from '@/services/apiClient'
 import { calendarsService, type Calendar, type CalendarEvent } from '@/services/calendarsService'
 import { contactsService, type JourneyEvent } from '@/services/contactsService'
+import {
+  messageTemplatesService,
+  type MessageTemplateCategory,
+  type MessageTemplatePayload
+} from '@/services/messageTemplatesService'
 import { mobileAppService, type MobilePhotoAttachment } from '@/services/mobileAppService'
 import { pushNotificationsService } from '@/services/pushNotificationsService'
-import { whatsappApiService, type WhatsAppApiStatus } from '@/services/whatsappApiService'
+import { whatsappApiService, type WhatsAppApiStatus, type WhatsAppApiTemplate } from '@/services/whatsappApiService'
 import type { Contact } from '@/types'
 import { getContactStageBadge } from '@/utils/contactStageBadge'
 import { formatCurrency, formatUrlParameter } from '@/utils/format'
@@ -59,6 +68,8 @@ const COARSE_POINTER_QUERY = '(pointer: coarse)'
 const MOBILE_OR_TABLET_USER_AGENT_PATTERN = /Android|iPad|iPhone|iPod|IEMobile|Opera Mini|Mobile|Tablet/i
 const SCROLLABLE_CHAT_SELECTOR = '[data-phone-chat-scrollable="true"], [contenteditable="true"], textarea, input, select'
 const CHAT_READ_STATE_KEY = 'ristak_phone_chat_read_state_v1'
+const AI_AGENT_CHAT_ID = 'ristak-ai-agent-mobile-chat'
+const AI_AGENT_MESSAGES_KEY = 'ristak_phone_chat_ai_agent_messages_v1'
 const MAX_VOICE_MESSAGE_BYTES = 16 * 1024 * 1024
 const MIN_VOICE_RECORDING_MS = 600
 const MAX_VOICE_RECORDING_MS = 3 * 60 * 1000
@@ -72,11 +83,32 @@ const VOICE_MIME_CANDIDATES = [
 type AccessState = 'checking' | 'allowed' | 'blocked'
 type ComposerStatus = 'idle' | 'sending'
 type PaymentMode = 'single' | 'partial'
-type ActionSheet = 'attachments' | 'payment' | 'appointment' | 'notifications' | 'newChat' | null
+type ActionSheet = 'attachments' | 'templates' | 'payment' | 'appointment' | 'settings' | 'newChat' | null
 type ChatFilter = 'all' | 'unread' | 'appointments' | 'customers' | 'leads'
+type TemplateMode = 'choice' | 'send' | 'create'
+type WhatsAppNumberMode = 'merged' | 'separated'
+type ConversationSortMode = 'recent' | 'unread'
 
 const SUCCESS_PAYMENT_STATUSES = new Set(['succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success'])
 const CANCELED_APPOINTMENT_STATUSES = new Set(['cancelled', 'canceled', 'no_show', 'noshow', 'deleted', 'failed', 'invalid'])
+const FAILED_MESSAGE_STATUSES = new Set(['error', 'failed', 'undelivered', 'rejected'])
+const TEMPLATE_DISABLED_STATUSES = new Set(['REJECTED', 'PAUSED', 'DISABLED', 'ARCHIVED', 'DELETED', 'PENDING', 'IN_APPEAL'])
+const EMPTY_TEMPLATE_LOCATION = {
+  latitude: '',
+  longitude: '',
+  name: '',
+  address: ''
+}
+const QUICK_TEMPLATE_CATEGORIES: Array<{ value: MessageTemplateCategory; label: string }> = [
+  { value: 'utility', label: 'Utilidad' },
+  { value: 'marketing', label: 'Marketing' },
+  { value: 'authentication', label: 'Autenticación' }
+]
+const QUICK_TEMPLATE_LANGUAGES = [
+  { value: 'es_MX', label: 'Español México' },
+  { value: 'es', label: 'Español' },
+  { value: 'en_US', label: 'Inglés Estados Unidos' }
+]
 
 interface ChatMessage {
   id: string
@@ -84,6 +116,7 @@ interface ChatMessage {
   date: string
   direction: 'inbound' | 'outbound' | 'system'
   status?: string
+  errorReason?: string
   businessPhone?: string
   businessPhoneNumberId?: string
   transport?: 'api' | 'qr' | string
@@ -111,6 +144,8 @@ interface ChatContact extends Contact {
   lastMessageType?: string
   lastMessageDate?: string
   lastMessageDirection?: string
+  lastBusinessPhone?: string
+  lastBusinessPhoneNumberId?: string
   messageCount?: number
   unreadCount?: number
   profilePhotoUrl?: string | null
@@ -173,6 +208,58 @@ function readChatReadState(): ChatReadState {
 function writeChatReadState(state: ChatReadState) {
   if (typeof window === 'undefined') return
   window.localStorage.setItem(CHAT_READ_STATE_KEY, JSON.stringify(state))
+}
+
+function createAIAgentMobileMessage(role: AIAgentMessage['role'], content: string): AIAgentMessage {
+  return {
+    id: `ai-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    role,
+    content,
+    createdAt: new Date().toISOString()
+  }
+}
+
+function createAIAgentWelcomeMessage() {
+  return createAIAgentMobileMessage(
+    'assistant',
+    'Hola, soy tu agente de inteligencia artificial. Puedes preguntarme por tus clientes, pagos, citas, campañas o pedir ayuda para responder mejor.'
+  )
+}
+
+function readAIAgentMobileMessages(): AIAgentMessage[] {
+  if (typeof window === 'undefined') return []
+
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(AI_AGENT_MESSAGES_KEY) || '[]')
+    if (!Array.isArray(parsed)) return []
+
+    return parsed
+      .filter((message) => (
+        message &&
+        (message.role === 'user' || message.role === 'assistant') &&
+        typeof message.content === 'string'
+      ))
+      .map((message) => ({
+        id: typeof message.id === 'string' ? message.id : `ai-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        role: message.role,
+        content: message.content,
+        createdAt: typeof message.createdAt === 'string' ? message.createdAt : new Date().toISOString()
+      }))
+      .slice(-60)
+  } catch {
+    return []
+  }
+}
+
+function writeAIAgentMobileMessages(messages: AIAgentMessage[]) {
+  if (typeof window === 'undefined') return
+  window.localStorage.setItem(AI_AGENT_MESSAGES_KEY, JSON.stringify(messages.slice(-60)))
+}
+
+function getAIAgentMessagePreview(message?: AIAgentMessage | null) {
+  const content = String(message?.content || '').replace(/\s+/g, ' ').trim()
+  if (!content) return 'Pregúntame lo que necesites de Ristak.'
+  return message?.role === 'user' ? `Tú: ${content}` : content
 }
 
 function getContactMessageCount(contact: ChatContact) {
@@ -337,6 +424,110 @@ function formatVoiceDuration(durationMs = 0) {
   return `${minutes}:${String(seconds).padStart(2, '0')}`
 }
 
+function getErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof Error && error.message) return error.message
+  if (error && typeof error === 'object' && 'message' in error) {
+    return String((error as { message?: unknown }).message || fallback)
+  }
+  return fallback
+}
+
+function normalizeTemplateNameInput(value: string) {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9_]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+}
+
+function getTemplateStatus(template?: WhatsAppApiTemplate | null) {
+  return String(template?.status || '').trim().toUpperCase()
+}
+
+function getTemplateStatusLabel(status = '') {
+  const normalized = status.trim().toUpperCase()
+  const labels: Record<string, string> = {
+    APPROVED: 'Aprobada',
+    PENDING: 'En revisión',
+    REJECTED: 'Rechazada',
+    PAUSED: 'Pausada',
+    DISABLED: 'Bloqueada',
+    ARCHIVED: 'Archivada',
+    DELETED: 'Eliminada',
+    IN_APPEAL: 'En apelación'
+  }
+  return labels[normalized] || formatPlainStatus(normalized || 'Sin estado')
+}
+
+function getTemplateBodyPreview(template: WhatsAppApiTemplate) {
+  const components = Array.isArray(template.components) ? template.components : []
+  const body = components.find((component) => String(component?.type || '').toLowerCase() === 'body')
+  const header = components.find((component) => String(component?.type || '').toLowerCase() === 'header')
+  const text = String(body?.text || body?.body || header?.text || '').trim()
+  return text || `${template.name} · ${template.language}`
+}
+
+function getTemplateBlockedReason(template: WhatsAppApiTemplate, alertMessage = '') {
+  const status = getTemplateStatus(template)
+  if (status === 'APPROVED') return ''
+  return (
+    template.reason ||
+    alertMessage ||
+    `${getTemplateStatusLabel(status)}. Solo se pueden enviar plantillas aprobadas.`
+  )
+}
+
+function createQuickTemplatePayload({
+  name,
+  bodyText,
+  category,
+  language
+}: {
+  name: string
+  bodyText: string
+  category: MessageTemplateCategory
+  language: string
+}): MessageTemplatePayload {
+  return {
+    folderId: null,
+    name,
+    description: 'Creada desde Ristak Chat',
+    category,
+    language,
+    status: 'draft',
+    headerEnabled: false,
+    headerType: 'none',
+    headerText: '',
+    headerMediaUrl: '',
+    headerLocation: { ...EMPTY_TEMPLATE_LOCATION },
+    bodyText,
+    footerText: '',
+    buttons: [],
+    variableExamples: {},
+    variableBindings: { headerText: {}, bodyText: {} },
+    ycloudTemplateId: null,
+    ycloudStatus: null
+  }
+}
+
+function getJourneyMessageError(event: JourneyEvent) {
+  return String(
+    event.data?.error_message ||
+    event.data?.errorMessage ||
+    event.data?.error_reason ||
+    event.data?.errorReason ||
+    event.data?.failure_reason ||
+    event.data?.reason ||
+    event.data?.error_code ||
+    ''
+  ).trim()
+}
+
+function isMessageFailed(message: ChatMessage) {
+  return FAILED_MESSAGE_STATUSES.has(String(message.status || '').trim().toLowerCase()) || Boolean(message.errorReason)
+}
+
 function getJourneyMediaAttachment(event: JourneyEvent): ChatMessage['attachment'] | undefined {
   const messageType = String(event.data?.message_type || '').toLowerCase()
   const mediaUrl = String(event.data?.media_url || event.data?.mediaUrl || '').trim()
@@ -389,6 +580,7 @@ function getJourneyMessage(event: JourneyEvent, index: number): ChatMessage | nu
     date: event.date,
     direction,
     status: String(event.data?.status || ''),
+    errorReason: getJourneyMessageError(event),
     businessPhone: String(event.data?.business_phone || ''),
     businessPhoneNumberId: String(event.data?.business_phone_number_id || ''),
     transport: String(event.data?.transport || 'api'),
@@ -737,6 +929,16 @@ export const PhoneChat: React.FC = () => {
   const [chatPushEnabled, setChatPushEnabled] = useAppConfig<boolean>('chat_push_notifications_enabled', true)
   const [paymentPushEnabled, setPaymentPushEnabled] = useAppConfig<boolean>('payment_push_notifications_enabled', true)
   const [pushCalendarIds] = useAppConfig<string[]>('calendar_push_notification_calendar_ids', [])
+  const [whatsappNumberMode, setWhatsappNumberMode] = useAppConfig<WhatsAppNumberMode>('mobile_chat_whatsapp_number_mode', 'merged')
+  const [selectedChatPhoneId, setSelectedChatPhoneId] = useAppConfig<string>('mobile_chat_selected_whatsapp_phone_id', 'all')
+  const [aiAgentChatEnabled, setAiAgentChatEnabled] = useAppConfig<boolean>('mobile_chat_ai_agent_enabled', true)
+  const [showArchivedChats, setShowArchivedChats] = useAppConfig<boolean>('mobile_chat_show_archived', true)
+  const [conversationSortMode, setConversationSortMode] = useAppConfig<ConversationSortMode>('mobile_chat_sort_mode', 'recent')
+  const [showLastMessagePreview, setShowLastMessagePreview] = useAppConfig<boolean>('mobile_chat_show_last_preview', true)
+  const [showUnreadIndicators, setShowUnreadIndicators] = useAppConfig<boolean>('mobile_chat_show_unread_indicators', true)
+  const [openLastConversation, setOpenLastConversation] = useAppConfig<boolean>('mobile_chat_open_last_conversation', false)
+  const [lastConversationId, setLastConversationId] = useAppConfig<string>('mobile_chat_last_conversation_id', '')
+  const [aiReplySuggestionsEnabled, setAiReplySuggestionsEnabled] = useAppConfig<boolean>('mobile_chat_ai_reply_suggestions_enabled', false)
 
   const [accessState, setAccessState] = useState<AccessState>(getAccessState)
   const [chats, setChats] = useState<ChatContact[]>([])
@@ -770,6 +972,23 @@ export const PhoneChat: React.FC = () => {
   const [paymentMode, setPaymentMode] = useState<PaymentMode>('single')
   const [appointmentOpen, setAppointmentOpen] = useState(false)
   const [requestingPush, setRequestingPush] = useState(false)
+  const [templateMode, setTemplateMode] = useState<TemplateMode>('choice')
+  const [templates, setTemplates] = useState<WhatsAppApiTemplate[]>([])
+  const [templatesLoading, setTemplatesLoading] = useState(false)
+  const [templatesError, setTemplatesError] = useState('')
+  const [templateSendingId, setTemplateSendingId] = useState<string | null>(null)
+  const [creatingTemplate, setCreatingTemplate] = useState(false)
+  const [newTemplateName, setNewTemplateName] = useState('')
+  const [newTemplateBody, setNewTemplateBody] = useState('')
+  const [newTemplateCategory, setNewTemplateCategory] = useState<MessageTemplateCategory>('utility')
+  const [newTemplateLanguage, setNewTemplateLanguage] = useState('es_MX')
+  const [aiMessages, setAiMessages] = useState<AIAgentMessage[]>(() => {
+    const storedMessages = readAIAgentMobileMessages()
+    return storedMessages.length > 0 ? storedMessages : [createAIAgentWelcomeMessage()]
+  })
+  const [aiMessageText, setAiMessageText] = useState('')
+  const [aiSending, setAiSending] = useState(false)
+  const [aiSuggestionLoading, setAiSuggestionLoading] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement | null>(null)
   const composerInputRef = useRef<HTMLDivElement | null>(null)
   const cameraInputRef = useRef<HTMLInputElement | null>(null)
@@ -780,10 +999,12 @@ export const PhoneChat: React.FC = () => {
   const voiceStartedAtRef = useRef(0)
   const voiceTimerRef = useRef<number | null>(null)
   const voiceCancelRef = useRef(false)
+  const autoOpenedLastConversationRef = useRef(false)
 
+  const aiAgentConversationOpen = activeContactId === AI_AGENT_CHAT_ID
   const activeContact = useMemo(
-    () => chats.find((contact) => contact.id === activeContactId) || null,
-    [activeContactId, chats]
+    () => aiAgentConversationOpen ? null : chats.find((contact) => contact.id === activeContactId) || null,
+    [activeContactId, aiAgentConversationOpen, chats]
   )
   const contactInfoData = contactInfoContact || activeContact
   const contactInfoPayments = useMemo(
@@ -830,6 +1051,10 @@ export const PhoneChat: React.FC = () => {
   const defaultAppointmentRange = useMemo(() => createDefaultAppointmentRange(timezone), [timezone])
   const whatsappConnected = Boolean(whatsappStatus?.connected && whatsappStatus?.configured)
   const businessPhones = whatsappStatus?.phoneNumbers || []
+  const chatPhoneFilterEnabled = whatsappNumberMode === 'separated' && businessPhones.length > 1
+  const selectedChatPhone = useMemo(() => (
+    businessPhones.find((phone) => phone.id === selectedChatPhoneId) || null
+  ), [businessPhones, selectedChatPhoneId])
   const selectedBusinessPhone = useMemo(() => {
     return businessPhones.find((phone) => phone.id === selectedBusinessPhoneId) ||
       businessPhones.find((phone) => phone.is_default_sender) ||
@@ -851,6 +1076,16 @@ export const PhoneChat: React.FC = () => {
   const selectedQrReady = Boolean(selectedBusinessPhone?.qr_send_enabled && String(selectedBusinessPhone?.qr_status || '').toLowerCase() === 'connected')
   const hasComposerContent = Boolean(messageText.trim() || draftAttachments.length > 0 || voiceDraft)
   const canSendMessage = Boolean(activeContact?.phone && hasComposerContent && composerStatus !== 'sending' && !voiceRecording)
+  const activeTemplateAlerts = useMemo(() => (
+    (whatsappStatus?.alerts?.items || []).filter((alert) => String(alert.entity_type || '').toLowerCase() === 'template')
+  ), [whatsappStatus?.alerts?.items])
+  const templateAlertByEntity = useMemo(() => {
+    const alertMap = new Map<string, string>()
+    activeTemplateAlerts.forEach((alert) => {
+      if (alert.entity_id) alertMap.set(alert.entity_id, alert.message || alert.title)
+    })
+    return alertMap
+  }, [activeTemplateAlerts])
   const hasChats = chats.length > 0
   const customerLabel = labels.customer?.trim() || 'Cliente'
   const leadLabel = labels.lead?.trim() || 'Interesado'
@@ -863,12 +1098,40 @@ export const PhoneChat: React.FC = () => {
     return contact.status === 'lead'
   }, [isAppointmentContact, isCustomerContact])
   const filteredChats = useMemo(() => {
-    if (chatFilter === 'unread') return chats.filter((contact) => Number(contact.unreadCount || 0) > 0)
-    if (chatFilter === 'appointments') return chats.filter(isAppointmentContact)
-    if (chatFilter === 'customers') return chats.filter(isCustomerContact)
-    if (chatFilter === 'leads') return chats.filter(isLeadContact)
-    return chats
-  }, [chatFilter, chats, isAppointmentContact, isCustomerContact, isLeadContact])
+    const phoneFilteredChats = chatPhoneFilterEnabled && selectedChatPhoneId !== 'all'
+      ? chats.filter((contact) => {
+          if (contact.lastBusinessPhoneNumberId && contact.lastBusinessPhoneNumberId === selectedChatPhoneId) return true
+          if (!selectedChatPhone) return false
+          return phoneLooksSame(contact.lastBusinessPhone, getBusinessPhoneValue(selectedChatPhone))
+        })
+      : chats
+
+    const chipFilteredChats = phoneFilteredChats.filter((contact) => {
+      if (chatFilter === 'unread') return Number(contact.unreadCount || 0) > 0
+      if (chatFilter === 'appointments') return isAppointmentContact(contact)
+      if (chatFilter === 'customers') return isCustomerContact(contact)
+      if (chatFilter === 'leads') return isLeadContact(contact)
+      return true
+    })
+
+    if (conversationSortMode !== 'unread') return chipFilteredChats
+
+    return [...chipFilteredChats].sort((left, right) => {
+      const unreadDelta = Number(right.unreadCount || 0) - Number(left.unreadCount || 0)
+      if (unreadDelta !== 0) return unreadDelta
+      return Date.parse(right.lastMessageDate || right.createdAt) - Date.parse(left.lastMessageDate || left.createdAt)
+    })
+  }, [
+    chatFilter,
+    chatPhoneFilterEnabled,
+    chats,
+    conversationSortMode,
+    isAppointmentContact,
+    isCustomerContact,
+    isLeadContact,
+    selectedChatPhone,
+    selectedChatPhoneId
+  ])
   const unreadTotal = useMemo(
     () => chats.reduce((total, contact) => total + Math.max(0, Number(contact.unreadCount || 0)), 0),
     [chats]
@@ -889,10 +1152,17 @@ export const PhoneChat: React.FC = () => {
 
     try {
       const trimmed = chatQuery.trim()
+      const phoneFilterParams = chatPhoneFilterEnabled && selectedChatPhoneId !== 'all' && selectedChatPhone
+        ? {
+            businessPhoneNumberId: selectedChatPhoneId,
+            businessPhone: getBusinessPhoneValue(selectedChatPhone)
+          }
+        : {}
       const data = await apiClient.get<ChatContact[]>('/contacts/chats', {
         params: {
           limit: '60',
-          ...(trimmed ? { q: trimmed } : {})
+          ...(trimmed ? { q: trimmed } : {}),
+          ...phoneFilterParams
         }
       })
 
@@ -926,6 +1196,7 @@ export const PhoneChat: React.FC = () => {
       setChats(nextChats)
       setActiveContactId((current) => {
         if (requestedContact) return requestedContact.id
+        if (current === AI_AGENT_CHAT_ID && aiAgentChatEnabled) return current
         if (current && nextChats.some((contact) => contact.id === current)) return current
         return null
       })
@@ -939,7 +1210,16 @@ export const PhoneChat: React.FC = () => {
     } finally {
       setChatsLoading(false)
     }
-  }, [activeContactId, chatQuery, conversationOpen, requestedContactParam])
+  }, [
+    activeContactId,
+    aiAgentChatEnabled,
+    chatPhoneFilterEnabled,
+    chatQuery,
+    conversationOpen,
+    requestedContactParam,
+    selectedChatPhone,
+    selectedChatPhoneId
+  ])
 
   const loadContactResults = useCallback(async (query: string) => {
     setContactsLoading(true)
@@ -999,9 +1279,40 @@ export const PhoneChat: React.FC = () => {
     if (status) setWhatsappStatus(status)
   }, [accessToken, defaultCalendarId, locationId])
 
+  const loadTemplates = useCallback(async () => {
+    setTemplatesLoading(true)
+    setTemplatesError('')
+
+    try {
+      const refreshedStatus = await whatsappApiService.refresh().catch(() => null)
+      const [status, response] = await Promise.all([
+        refreshedStatus ? Promise.resolve(refreshedStatus) : whatsappApiService.getStatus().catch(() => null),
+        whatsappApiService.getTemplates()
+      ])
+
+      if (status) setWhatsappStatus(status)
+      setTemplates(Array.isArray(response.items) ? response.items : [])
+    } catch (error) {
+      setTemplates([])
+      setTemplatesError(getErrorMessage(error, 'No se pudieron cargar las plantillas.'))
+    } finally {
+      setTemplatesLoading(false)
+    }
+  }, [])
+
+  const saveConfigPreference = useCallback(<T,>(setter: (value: T) => Promise<void>, value: T) => {
+    setter(value).catch(() => showToast('error', 'No se guardó la configuración', 'Intenta otra vez.'))
+  }, [showToast])
+
   useEffect(() => {
-    document.title = activeContact ? `${getContactName(activeContact)} | Ristak Chat` : 'Ristak Chat'
-  }, [activeContact])
+    document.title = aiAgentConversationOpen
+      ? 'Agente de IA | Ristak Chat'
+      : activeContact ? `${getContactName(activeContact)} | Ristak Chat` : 'Ristak Chat'
+  }, [activeContact, aiAgentConversationOpen])
+
+  useEffect(() => {
+    writeAIAgentMobileMessages(aiMessages)
+  }, [aiMessages])
 
   useEffect(() => {
     if (!businessPhones.length) {
@@ -1027,6 +1338,65 @@ export const PhoneChat: React.FC = () => {
         ''
     })
   }, [businessPhones, messages, whatsappStatus?.selectedPhone?.id])
+
+  useEffect(() => {
+    if (!chatPhoneFilterEnabled || selectedChatPhoneId === 'all') return
+    if (businessPhones.some((phone) => phone.id === selectedChatPhoneId)) return
+    setSelectedChatPhoneId('all').catch(() => undefined)
+  }, [businessPhones, chatPhoneFilterEnabled, selectedChatPhoneId, setSelectedChatPhoneId])
+
+  useEffect(() => {
+    if (aiAgentChatEnabled || !aiAgentConversationOpen) return
+    setConversationOpen(false)
+    setActiveContactId(null)
+  }, [aiAgentChatEnabled, aiAgentConversationOpen])
+
+  useEffect(() => {
+    if (aiAgentChatEnabled || !aiReplySuggestionsEnabled) return
+    setAiReplySuggestionsEnabled(false).catch(() => undefined)
+  }, [aiAgentChatEnabled, aiReplySuggestionsEnabled, setAiReplySuggestionsEnabled])
+
+  useEffect(() => {
+    if (
+      accessState !== 'allowed' ||
+      !openLastConversation ||
+      autoOpenedLastConversationRef.current ||
+      conversationOpen ||
+      requestedContactParam ||
+      chatsLoading ||
+      !lastConversationId
+    ) {
+      return
+    }
+
+    if (lastConversationId === AI_AGENT_CHAT_ID) {
+      if (!aiAgentChatEnabled) return
+      autoOpenedLastConversationRef.current = true
+      setActiveContactId(AI_AGENT_CHAT_ID)
+      setConversationOpen(true)
+      return
+    }
+
+    const lastContact = chats.find((contact) => contact.id === lastConversationId)
+    if (!lastContact) return
+
+    autoOpenedLastConversationRef.current = true
+    markContactReadState(lastContact)
+    setChats((current) => current.map((contact) => (
+      contact.id === lastContact.id ? { ...contact, unreadCount: 0 } : contact
+    )))
+    setActiveContactId(lastContact.id)
+    setConversationOpen(true)
+  }, [
+    accessState,
+    aiAgentChatEnabled,
+    chats,
+    chatsLoading,
+    conversationOpen,
+    lastConversationId,
+    openLastConversation,
+    requestedContactParam
+  ])
 
   useEffect(() => {
     const updateAccess = () => setAccessState(getAccessState())
@@ -1202,6 +1572,12 @@ export const PhoneChat: React.FC = () => {
   }, [accessState, chatQuery, contactQuery, hasChats, loadContactResults, sheet])
 
   useEffect(() => {
+    if (accessState !== 'allowed' || sheet !== 'templates') return
+    setTemplateMode('choice')
+    loadTemplates()
+  }, [accessState, loadTemplates, sheet])
+
+  useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ block: 'end' })
   }, [messages, messagesLoading, conversationOpen])
 
@@ -1375,6 +1751,19 @@ export const PhoneChat: React.FC = () => {
     setContactQuery('')
     setDraftAttachments([])
     setVoiceDraft(null)
+    setLastConversationId(nextContact.id).catch(() => undefined)
+  }
+
+  const handleOpenAIAgentChat = () => {
+    handleCancelVoiceDraft()
+    setActiveContactId(AI_AGENT_CHAT_ID)
+    setConversationOpen(true)
+    setSheet(null)
+    setContactInfoOpen(false)
+    setContactQuery('')
+    setDraftAttachments([])
+    setVoiceDraft(null)
+    setLastConversationId(AI_AGENT_CHAT_ID).catch(() => undefined)
   }
 
   const handleBackToChats = () => {
@@ -1411,7 +1800,7 @@ export const PhoneChat: React.FC = () => {
     }
   }
 
-  const handleContactInfoAction = (nextSheet: Exclude<ActionSheet, 'newChat' | 'notifications' | null>) => {
+  const handleContactInfoAction = (nextSheet: Exclude<ActionSheet, 'newChat' | 'settings' | null>) => {
     if (nextSheet === 'payment') setPaymentMode('single')
     setContactInfoOpen(false)
     setSheet(nextSheet)
@@ -1479,6 +1868,140 @@ export const PhoneChat: React.FC = () => {
 
     const input = source === 'camera' ? cameraInputRef.current : photosInputRef.current
     input?.click()
+  }
+
+  const getTemplateAlertMessage = (template: WhatsAppApiTemplate) => (
+    templateAlertByEntity.get(template.id) ||
+    templateAlertByEntity.get(`${template.waba_id || ''}|${template.name}|${template.language}`) ||
+    ''
+  )
+
+  const handleOpenTemplatesSheet = () => {
+    setTemplateMode('choice')
+    setSheet('templates')
+  }
+
+  const handleShowMessageError = (message: ChatMessage) => {
+    const reason = message.errorReason || 'WhatsApp no entregó la razón exacta. Intenta reenviar o revisa el estado de la conexión.'
+    showToast('error', 'No se pudo enviar', reason)
+  }
+
+  const handleSendTemplate = async (template: WhatsAppApiTemplate) => {
+    if (!activeContact?.phone) {
+      showToast('error', 'Falta el teléfono', 'Guarda el número del contacto antes de enviar una plantilla.')
+      return
+    }
+
+    if (!whatsappConnected) {
+      showToast('error', 'WhatsApp no está conectado', 'Conecta WhatsApp API en configuración para enviar plantillas.')
+      return
+    }
+
+    if (!selectedBusinessPhoneValue) {
+      showToast('error', 'Falta el número emisor', 'Elige el WhatsApp del negocio que responderá este chat.')
+      return
+    }
+
+    const status = getTemplateStatus(template)
+    const blockedReason = getTemplateBlockedReason(template, getTemplateAlertMessage(template))
+    if (status !== 'APPROVED') {
+      showToast('warning', getTemplateStatusLabel(status), blockedReason)
+      return
+    }
+
+    const optimisticId = `template-${Date.now()}`
+    const sentAt = new Date().toISOString()
+    const preview = getTemplateBodyPreview(template)
+    setTemplateSendingId(template.id)
+    setSheet(null)
+    setMessages((current) => [
+      ...current,
+      {
+        id: optimisticId,
+        text: preview,
+        date: sentAt,
+        direction: 'outbound',
+        status: 'enviando',
+        businessPhone: selectedBusinessPhoneValue,
+        businessPhoneNumberId: selectedBusinessPhone?.id || '',
+        transport: 'api'
+      }
+    ])
+    setChats((current) => current.map((contact) => (
+      contact.id === activeContact.id
+        ? {
+            ...contact,
+            lastMessageText: preview || `Plantilla: ${template.name}`,
+            lastMessageDate: sentAt,
+            lastMessageDirection: 'outbound',
+            messageCount: Number(contact.messageCount || 0) + 1
+          }
+        : contact
+    )))
+
+    try {
+      await whatsappApiService.sendTemplate({
+        to: activeContact.phone,
+        from: selectedBusinessPhoneValue,
+        templateId: template.id,
+        templateName: template.name,
+        language: template.language,
+        externalId: optimisticId
+      })
+      setMessages((current) => current.map((message) => (
+        message.id === optimisticId ? { ...message, status: 'sent', errorReason: '' } : message
+      )))
+      showToast('success', 'Plantilla enviada', `${template.name} se mandó por WhatsApp.`)
+      await loadConversation(activeContact.id)
+      await loadChats()
+      await loadTemplates()
+    } catch (error) {
+      const errorMessage = getErrorMessage(error, 'Intenta enviar la plantilla otra vez.')
+      setMessages((current) => current.map((message) => (
+        message.id === optimisticId ? { ...message, status: 'error', errorReason: errorMessage } : message
+      )))
+      showToast('error', 'No se envió la plantilla', errorMessage)
+    } finally {
+      setTemplateSendingId(null)
+    }
+  }
+
+  const handleCreateQuickTemplate = async () => {
+    const name = normalizeTemplateNameInput(newTemplateName)
+    const bodyText = newTemplateBody.trim()
+
+    if (!name) {
+      showToast('warning', 'Falta el nombre', 'Escribe un nombre corto para identificar la plantilla.')
+      return
+    }
+
+    if (!bodyText) {
+      showToast('warning', 'Falta el mensaje', 'Escribe el texto que quieres mandar al cliente.')
+      return
+    }
+
+    setCreatingTemplate(true)
+    try {
+      const saved = await messageTemplatesService.createTemplate(createQuickTemplatePayload({
+        name,
+        bodyText,
+        category: newTemplateCategory,
+        language: newTemplateLanguage
+      }))
+      await messageTemplatesService.submitTemplate(saved.id)
+      setNewTemplateName('')
+      setNewTemplateBody('')
+      setNewTemplateCategory('utility')
+      setNewTemplateLanguage('es_MX')
+      setTemplateMode('send')
+      showToast('success', 'Plantilla enviada a revisión', 'Cuando Meta la apruebe, aparecerá lista para enviar aquí mismo.')
+      await loadTemplates()
+    } catch (error) {
+      showToast('error', 'No se pudo crear', getErrorMessage(error, 'Revisa la plantilla e intenta otra vez.'))
+      await loadTemplates()
+    } finally {
+      setCreatingTemplate(false)
+    }
   }
 
   const syncComposerText = (element: HTMLDivElement) => {
@@ -1650,12 +2173,15 @@ export const PhoneChat: React.FC = () => {
       await loadConversation(activeContact.id)
       await loadChats()
     } catch (error: any) {
+      const errorMessage = getErrorMessage(error, 'Intenta enviar el mensaje otra vez.')
       setMessages((current) => current.map((message) => (
-        message.id === optimisticId || message.id === `${optimisticId}-audio` || message.id.startsWith(`${optimisticId}-image-`) ? { ...message, status: 'error' } : message
+        message.id === optimisticId || message.id === `${optimisticId}-audio` || message.id.startsWith(`${optimisticId}-image-`)
+          ? { ...message, status: 'error', errorReason: errorMessage }
+          : message
       )))
       setDraftAttachments(attachmentsToSend)
       setVoiceDraft(voiceToSend)
-      showToast('error', 'No se envió el mensaje', error?.message || 'Intenta enviar el mensaje otra vez.')
+      showToast('error', 'No se envió el mensaje', errorMessage)
     } finally {
       setComposerStatus('idle')
     }
@@ -1731,6 +2257,79 @@ export const PhoneChat: React.FC = () => {
     }
   }
 
+  const getAIAgentViewContext = (visibleText?: string): AIAgentViewContext => ({
+    path: '/phone/chat',
+    title: document.title || 'Ristak Chat',
+    routeLabel: 'Chat móvil',
+    visibleText: visibleText || 'El usuario está usando la pantalla móvil de chats de Ristak.'
+  })
+
+  const handleSendAIAgentMessage = async () => {
+    const text = aiMessageText.trim()
+    if (!text || aiSending) return
+
+    const userMessage = createAIAgentMobileMessage('user', text)
+    const nextMessages = [...aiMessages, userMessage]
+    setAiMessages(nextMessages)
+    setAiMessageText('')
+    setAiSending(true)
+
+    try {
+      const result = await aiAgentService.sendMessage(nextMessages, getAIAgentViewContext())
+      setAiMessages((current) => [
+        ...current,
+        createAIAgentMobileMessage('assistant', result.reply || 'Listo, sigo contigo.')
+      ])
+    } catch (error) {
+      setAiMessages((current) => [
+        ...current,
+        createAIAgentMobileMessage('assistant', getErrorMessage(error, 'No pude responder ahorita. Revisa la configuración del agente de IA.'))
+      ])
+    } finally {
+      setAiSending(false)
+    }
+  }
+
+  const applyComposerSuggestion = (text: string) => {
+    setMessageText(text)
+    window.requestAnimationFrame(() => {
+      if (composerInputRef.current) {
+        composerInputRef.current.textContent = text
+      }
+    })
+  }
+
+  const handleSuggestReply = async () => {
+    if (!activeContact || aiSuggestionLoading) return
+
+    const recentConversation = messages.slice(-10).map((message) => {
+      const sender = message.direction === 'outbound' ? 'Negocio' : message.direction === 'inbound' ? 'Cliente' : 'Sistema'
+      const text = message.text || getMessageTypeLabel(message.attachment?.type || '')
+      return `${sender}: ${text}`
+    }).join('\n')
+
+    setAiSuggestionLoading(true)
+    try {
+      const prompt = [
+        `Sugiere una respuesta breve, clara y natural para contestarle por WhatsApp a ${getContactName(activeContact)}.`,
+        'No agregues explicación, solo escribe el mensaje listo para enviar.',
+        '',
+        recentConversation || 'Todavía no hay mensajes visibles en esta conversación.'
+      ].join('\n')
+      const result = await aiAgentService.sendMessage([
+        createAIAgentMobileMessage('user', prompt)
+      ], getAIAgentViewContext(recentConversation))
+      const suggestion = String(result.reply || '').trim()
+      if (!suggestion) throw new Error('El agente no devolvió una sugerencia.')
+      applyComposerSuggestion(suggestion)
+      showToast('success', 'Sugerencia lista', 'Revisa el texto antes de enviarlo.')
+    } catch (error) {
+      showToast('error', 'No se pudo sugerir', getErrorMessage(error, 'Revisa la configuración del agente de IA.'))
+    } finally {
+      setAiSuggestionLoading(false)
+    }
+  }
+
   const renderAvatar = (contact: Contact) => {
     const photoUrl = getContactProfilePhoto(contact as ChatContact)
 
@@ -1743,12 +2342,45 @@ export const PhoneChat: React.FC = () => {
     )
   }
 
+  const renderAIAgentAvatar = () => (
+    <span className={`${styles.avatar} ${styles.aiAgentAvatar}`}>
+      <Bot size={23} />
+    </span>
+  )
+
+  const renderAIAgentChatButton = () => {
+    const lastAiMessage = aiMessages[aiMessages.length - 1]
+    const dateLabel = formatMessageDate(lastAiMessage?.createdAt)
+    const subtitle = showLastMessagePreview
+      ? getAIAgentMessagePreview(lastAiMessage)
+      : 'Agente de Ristak'
+
+    return (
+      <button
+        key={AI_AGENT_CHAT_ID}
+        type="button"
+        className={`${styles.chatItem} ${styles.aiAgentChatItem} ${aiAgentConversationOpen ? styles.chatItemActive : ''}`}
+        onClick={handleOpenAIAgentChat}
+      >
+        {renderAIAgentAvatar()}
+        <span className={styles.chatMain}>
+          <strong>Agente de inteligencia artificial</strong>
+          <small>{subtitle}</small>
+        </span>
+        <span className={styles.chatMeta}>
+          {dateLabel && <small>{dateLabel}</small>}
+          <i className={styles.aiAgentPin}>Fijo</i>
+        </span>
+      </button>
+    )
+  }
+
   const renderContactButton = (contact: Contact, source: 'chat' | 'contact') => {
     const chatContact = contact as ChatContact
-    const subtitle = source === 'chat' ? getChatPreview(chatContact) : getContactDetail(contact)
+    const subtitle = source === 'chat' && showLastMessagePreview ? getChatPreview(chatContact) : getContactDetail(contact)
     const dateLabel = source === 'chat' ? formatMessageDate(chatContact.lastMessageDate || contact.createdAt) : ''
     const unreadCount = Number(chatContact.unreadCount || 0)
-    const hasUnread = source === 'chat' && unreadCount > 0
+    const hasUnread = showUnreadIndicators && source === 'chat' && unreadCount > 0
 
     return (
       <button
@@ -1771,6 +2403,11 @@ export const PhoneChat: React.FC = () => {
   }
 
   const renderChats = () => {
+    const normalizedChatQuery = chatQuery.trim().toLowerCase()
+    const showAIAgentListItem = aiAgentChatEnabled &&
+      chatFilter === 'all' &&
+      (!normalizedChatQuery || 'agente inteligencia artificial ia ristak'.includes(normalizedChatQuery))
+
     if (chatsLoading) {
       return (
         <div className={styles.centerState}>
@@ -1809,7 +2446,7 @@ export const PhoneChat: React.FC = () => {
       }
     }
 
-    if (chats.length === 0) {
+    if (chats.length === 0 && !showAIAgentListItem) {
       return (
         <div className={styles.emptyChats}>
           <span className={styles.emptyChatsIcon}>
@@ -1827,11 +2464,14 @@ export const PhoneChat: React.FC = () => {
 
     return (
       <>
-        <button type="button" className={styles.archiveRow}>
-          <Archive size={21} />
-          <strong>Archivados</strong>
-          <span>0</span>
-        </button>
+        {showAIAgentListItem && renderAIAgentChatButton()}
+        {showArchivedChats && chats.length > 0 && (
+          <button type="button" className={styles.archiveRow}>
+            <Archive size={21} />
+            <strong>Archivados</strong>
+            <span>0</span>
+          </button>
+        )}
         {filteredChats.length > 0 ? (
           filteredChats.map((contact) => renderContactButton(contact, 'chat'))
         ) : (
@@ -1839,8 +2479,8 @@ export const PhoneChat: React.FC = () => {
             <span className={styles.emptyChatsIcon}>
               <Icon name="whatsapp" size={30} />
             </span>
-            <strong>No hay chats en este filtro</strong>
-            <small>Cambia el filtro o busca un contacto para iniciar una conversación.</small>
+            <strong>{chats.length === 0 ? 'Aún no hay chats de WhatsApp' : 'No hay chats en este filtro'}</strong>
+            <small>{chats.length === 0 ? 'Cuando llegue un mensaje de WhatsApp aparecerá aquí.' : 'Cambia el filtro o busca un contacto para iniciar una conversación.'}</small>
           </div>
         )}
       </>
@@ -1848,6 +2488,32 @@ export const PhoneChat: React.FC = () => {
   }
 
   const renderMessages = () => {
+    if (aiAgentConversationOpen) {
+      return (
+        <>
+          {aiMessages.map((message) => (
+            <div
+              key={message.id}
+              className={`${styles.messageRow} ${message.role === 'user' ? styles.messageRow_outbound : styles.messageRow_inbound}`}
+            >
+              <div className={`${styles.messageBubble} ${styles.aiMessageBubble}`}>
+                <p>{message.content}</p>
+                <span>{formatMessageTime(message.createdAt)}</span>
+              </div>
+            </div>
+          ))}
+          {aiSending && (
+            <div className={`${styles.messageRow} ${styles.messageRow_inbound}`}>
+              <div className={`${styles.messageBubble} ${styles.aiMessageBubble}`}>
+                <p>Pensando...</p>
+                <span><Loader2 size={13} className={styles.spinIcon} /></span>
+              </div>
+            </div>
+          )}
+        </>
+      )
+    }
+
     if (!activeContact) {
       return (
         <div className={styles.emptyConversation}>
@@ -1877,32 +2543,45 @@ export const PhoneChat: React.FC = () => {
       )
     }
 
-    return messages.map((message) => (
-      <div
-        key={message.id}
-        className={`${styles.messageRow} ${styles[`messageRow_${message.direction}`]}`}
-      >
-        <div className={styles.messageBubble}>
-          {message.attachment?.type === 'image' && (message.attachment.dataUrl || message.attachment.url) && (
-            <img className={styles.messageImage} src={message.attachment.dataUrl || message.attachment.url} alt={message.attachment.name || 'Foto enviada'} />
-          )}
-          {message.attachment?.type === 'audio' && (message.attachment.dataUrl || message.attachment.url) && (
-            <div className={styles.messageAudio}>
-              <Mic size={18} />
-              <audio controls preload="metadata" src={message.attachment.dataUrl || message.attachment.url} />
-            </div>
-          )}
-          {message.text && <p>{message.text}</p>}
-          <span>
-            {message.transport === 'qr' && <em className={styles.messageTransport}>QR</em>}
-            {formatMessageTime(message.date)}
-            {message.direction === 'outbound' && (
-              <Check size={15} className={message.status === 'error' ? styles.messageErrorIcon : undefined} />
+    return messages.map((message) => {
+      const failed = message.direction === 'outbound' && isMessageFailed(message)
+
+      return (
+        <div
+          key={message.id}
+          className={`${styles.messageRow} ${styles[`messageRow_${message.direction}`]}`}
+        >
+          <div className={styles.messageBubble}>
+            {message.attachment?.type === 'image' && (message.attachment.dataUrl || message.attachment.url) && (
+              <img className={styles.messageImage} src={message.attachment.dataUrl || message.attachment.url} alt={message.attachment.name || 'Foto enviada'} />
             )}
-          </span>
+            {message.attachment?.type === 'audio' && (message.attachment.dataUrl || message.attachment.url) && (
+              <div className={styles.messageAudio}>
+                <Mic size={18} />
+                <audio controls preload="metadata" src={message.attachment.dataUrl || message.attachment.url} />
+              </div>
+            )}
+            {message.text && <p>{message.text}</p>}
+            <span>
+              {message.transport === 'qr' && <em className={styles.messageTransport}>QR</em>}
+              {formatMessageTime(message.date)}
+              {message.direction === 'outbound' && (failed ? (
+                <button
+                  type="button"
+                  className={styles.messageErrorButton}
+                  onClick={() => handleShowMessageError(message)}
+                  aria-label="Ver razón del error"
+                >
+                  <CircleAlert size={15} />
+                </button>
+              ) : (
+                <Check size={15} />
+              ))}
+            </span>
+          </div>
         </div>
-      </div>
-    ))
+      )
+    })
   }
 
   const renderDraftAttachments = () => {
@@ -1943,6 +2622,23 @@ export const PhoneChat: React.FC = () => {
         </span>
         <button type="button" onClick={handleCancelVoiceDraft} aria-label={voiceRecording ? 'Cancelar grabación' : 'Borrar audio'}>
           <X size={17} />
+        </button>
+      </div>
+    )
+  }
+
+  const renderAISuggestionBar = () => {
+    if (!activeContact || !aiReplySuggestionsEnabled || aiAgentConversationOpen) return null
+
+    return (
+      <div className={styles.aiSuggestionBar}>
+        <span>
+          <Sparkles size={15} />
+          El agente puede ayudarte a contestar
+        </span>
+        <button type="button" onClick={handleSuggestReply} disabled={aiSuggestionLoading}>
+          {aiSuggestionLoading ? <Loader2 size={14} className={styles.spinIcon} /> : <Bot size={14} />}
+          Sugerir
         </button>
       </div>
     )
@@ -1990,6 +2686,33 @@ export const PhoneChat: React.FC = () => {
       </div>
     )
   }
+
+  const renderAIAgentComposer = () => (
+    <div className={styles.aiComposer}>
+      <textarea
+        value={aiMessageText}
+        onChange={(event) => setAiMessageText(event.target.value)}
+        placeholder="Escribe al agente"
+        aria-label="Mensaje para el agente de inteligencia artificial"
+        rows={1}
+        disabled={aiSending}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' && !event.shiftKey) {
+            event.preventDefault()
+            handleSendAIAgentMessage()
+          }
+        }}
+      />
+      <button
+        type="button"
+        onClick={handleSendAIAgentMessage}
+        disabled={aiSending || !aiMessageText.trim()}
+        aria-label="Enviar mensaje al agente"
+      >
+        {aiSending ? <Loader2 size={20} className={styles.spinIcon} /> : <Send size={22} />}
+      </button>
+    </div>
+  )
 
   const renderContactInfoRow = (
     key: string,
@@ -2253,8 +2976,399 @@ export const PhoneChat: React.FC = () => {
     </div>
   )
 
+  const renderChatSettingsSheet = () => (
+    <div className={styles.chatSettingsStack} data-phone-chat-scrollable="true">
+      <section className={styles.settingsSection}>
+        <div className={styles.settingsSectionTitle}>
+          <Smartphone size={18} />
+          <span>
+            <strong>Números de WhatsApp</strong>
+            <small>Elige cómo quieres ver las conversaciones cuando hay más de un número conectado.</small>
+          </span>
+        </div>
+        <div className={styles.settingsSegmented} role="group" aria-label="Modo de números de WhatsApp">
+          <button
+            type="button"
+            className={whatsappNumberMode === 'merged' ? styles.settingsSegmentActive : ''}
+            onClick={() => saveConfigPreference(setWhatsappNumberMode, 'merged')}
+          >
+            Todos juntos
+          </button>
+          <button
+            type="button"
+            className={whatsappNumberMode === 'separated' ? styles.settingsSegmentActive : ''}
+            onClick={() => saveConfigPreference(setWhatsappNumberMode, 'separated')}
+          >
+            Números separados
+          </button>
+        </div>
+        {businessPhones.length <= 1 && (
+          <p className={styles.settingsHint}>Cuando conectes otro número, aparecerá el selector junto al título Chats.</p>
+        )}
+      </section>
+
+      <section className={styles.settingsSection}>
+        <div className={styles.settingsSectionTitle}>
+          <Bell size={18} />
+          <span>
+            <strong>Notificaciones</strong>
+            <small>Controla qué avisos llegan a este celular.</small>
+          </span>
+        </div>
+
+        <section className={styles.permissionCard}>
+          <span>
+            <Smartphone size={18} />
+          </span>
+          <div>
+            <strong>Este celular</strong>
+            <small>{getNotificationPermissionLabel()}</small>
+          </div>
+          <button type="button" onClick={handleRequestPush} disabled={requestingPush}>
+            {requestingPush ? <Loader2 size={16} className={styles.spinIcon} /> : <Bell size={16} />}
+            Activar
+          </button>
+        </section>
+
+        <label className={styles.toggleRow}>
+          <span>
+            <strong>Mensajes del chat</strong>
+            <small>Avísame cuando llegue un WhatsApp nuevo.</small>
+          </span>
+          <input
+            type="checkbox"
+            checked={chatPushEnabled}
+            onChange={(event) => saveConfigPreference(setChatPushEnabled, event.target.checked)}
+          />
+        </label>
+
+        <label className={styles.toggleRow}>
+          <span>
+            <strong>Citas</strong>
+            <small>Avísame cuando alguien agende una cita.</small>
+          </span>
+          <input
+            type="checkbox"
+            checked={calendarPushEnabled}
+            onChange={(event) => saveConfigPreference(setCalendarPushEnabled, event.target.checked)}
+          />
+        </label>
+
+        <label className={styles.toggleRow}>
+          <span>
+            <strong>Pagos</strong>
+            <small>Avísame cuando se registre un pago.</small>
+          </span>
+          <input
+            type="checkbox"
+            checked={paymentPushEnabled}
+            onChange={(event) => saveConfigPreference(setPaymentPushEnabled, event.target.checked)}
+          />
+        </label>
+      </section>
+
+      <section className={styles.settingsSection}>
+        <div className={styles.settingsSectionTitle}>
+          <Bot size={18} />
+          <span>
+            <strong>Agente de inteligencia artificial</strong>
+            <small>Úsalo como una conversación normal dentro de Chats.</small>
+          </span>
+        </div>
+
+        <label className={styles.toggleRow}>
+          <span>
+            <strong>Mostrar como primer chat</strong>
+            <small>El agente aparece fijo arriba de tus conversaciones.</small>
+          </span>
+          <input
+            type="checkbox"
+            checked={aiAgentChatEnabled}
+            onChange={(event) => saveConfigPreference(setAiAgentChatEnabled, event.target.checked)}
+          />
+        </label>
+
+        <label className={`${styles.toggleRow} ${!aiAgentChatEnabled ? styles.toggleRowDisabled : ''}`}>
+          <span>
+            <strong>Sugerir respuestas</strong>
+            <small>El agente puede preparar un texto para responder en chats reales.</small>
+          </span>
+          <input
+            type="checkbox"
+            checked={aiReplySuggestionsEnabled}
+            disabled={!aiAgentChatEnabled}
+            onChange={(event) => saveConfigPreference(setAiReplySuggestionsEnabled, event.target.checked)}
+          />
+        </label>
+      </section>
+
+      <section className={styles.settingsSection}>
+        <div className={styles.settingsSectionTitle}>
+          <MessageCircle size={18} />
+          <span>
+            <strong>Lista de chats</strong>
+            <small>Ajusta cómo quieres revisar tus conversaciones en móvil.</small>
+          </span>
+        </div>
+
+        <div className={styles.settingsField}>
+          <strong>Ordenar conversaciones</strong>
+          <div className={styles.settingsSegmented} role="group" aria-label="Orden de conversaciones">
+            <button
+              type="button"
+              className={conversationSortMode === 'recent' ? styles.settingsSegmentActive : ''}
+              onClick={() => saveConfigPreference(setConversationSortMode, 'recent')}
+            >
+              Más recientes
+            </button>
+            <button
+              type="button"
+              className={conversationSortMode === 'unread' ? styles.settingsSegmentActive : ''}
+              onClick={() => saveConfigPreference(setConversationSortMode, 'unread')}
+            >
+              No leídas primero
+            </button>
+          </div>
+        </div>
+
+        <label className={styles.toggleRow}>
+          <span>
+            <strong>Mostrar archivados</strong>
+            <small>Deja visible el acceso a chats archivados.</small>
+          </span>
+          <input
+            type="checkbox"
+            checked={showArchivedChats}
+            onChange={(event) => saveConfigPreference(setShowArchivedChats, event.target.checked)}
+          />
+        </label>
+
+        <label className={styles.toggleRow}>
+          <span>
+            <strong>Vista previa del último mensaje</strong>
+            <small>Muestra un resumen debajo del nombre del contacto.</small>
+          </span>
+          <input
+            type="checkbox"
+            checked={showLastMessagePreview}
+            onChange={(event) => saveConfigPreference(setShowLastMessagePreview, event.target.checked)}
+          />
+        </label>
+
+        <label className={styles.toggleRow}>
+          <span>
+            <strong>Indicadores de no leídos</strong>
+            <small>Muestra el contador verde cuando hay mensajes nuevos.</small>
+          </span>
+          <input
+            type="checkbox"
+            checked={showUnreadIndicators}
+            onChange={(event) => saveConfigPreference(setShowUnreadIndicators, event.target.checked)}
+          />
+        </label>
+
+        <label className={styles.toggleRow}>
+          <span>
+            <strong>Abrir el último chat</strong>
+            <small>Al entrar a Chats, abre la última conversación que usaste.</small>
+          </span>
+          <input
+            type="checkbox"
+            checked={openLastConversation}
+            onChange={(event) => saveConfigPreference(setOpenLastConversation, event.target.checked)}
+          />
+        </label>
+      </section>
+    </div>
+  )
+
+  const renderTemplatesSheet = () => {
+    const renderTemplateAlerts = () => {
+      if (activeTemplateAlerts.length === 0) return null
+
+      return (
+        <div className={styles.templateAlertList}>
+          {activeTemplateAlerts.slice(0, 3).map((alert) => (
+            <div key={alert.id} className={styles.templateAlert}>
+              <CircleAlert size={17} />
+              <span>
+                <strong>{alert.title}</strong>
+                <small>{alert.message || 'Revisa esta plantilla antes de usarla.'}</small>
+              </span>
+            </div>
+          ))}
+        </div>
+      )
+    }
+
+    if (templateMode === 'choice') {
+      return (
+        <div className={styles.templatesStack} data-phone-chat-scrollable="true">
+          <div className={styles.templateChoiceGrid}>
+            <button type="button" onClick={() => setTemplateMode('send')}>
+              <span>
+                <Send size={20} />
+              </span>
+              <strong>Enviar creada</strong>
+              <small>Usa una plantilla aprobada por Meta.</small>
+            </button>
+            <button type="button" onClick={() => setTemplateMode('create')}>
+              <span>
+                <Plus size={22} />
+              </span>
+              <strong>Crear nueva</strong>
+              <small>Escríbela y mándala a revisión.</small>
+            </button>
+          </div>
+          {renderTemplateAlerts()}
+        </div>
+      )
+    }
+
+    if (templateMode === 'create') {
+      return (
+        <div className={styles.templatesStack} data-phone-chat-scrollable="true">
+          <div className={styles.templateSubHeader}>
+            <button type="button" onClick={() => setTemplateMode('choice')}>
+              <ChevronLeft size={19} />
+              Atrás
+            </button>
+            <strong>Nueva plantilla</strong>
+          </div>
+
+          <div className={styles.quickTemplateForm}>
+            <label>
+              <span>Nombre</span>
+              <input
+                value={newTemplateName}
+                onChange={(event) => setNewTemplateName(event.target.value)}
+                placeholder="ej. recordatorio_cita"
+              />
+            </label>
+            <div className={styles.quickTemplateSplit}>
+              <label>
+                <span>Categoría</span>
+                <select
+                  value={newTemplateCategory}
+                  onChange={(event) => setNewTemplateCategory(event.target.value as MessageTemplateCategory)}
+                >
+                  {QUICK_TEMPLATE_CATEGORIES.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span>Idioma</span>
+                <select
+                  value={newTemplateLanguage}
+                  onChange={(event) => setNewTemplateLanguage(event.target.value)}
+                >
+                  {QUICK_TEMPLATE_LANGUAGES.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <label>
+              <span>Mensaje</span>
+              <textarea
+                value={newTemplateBody}
+                onChange={(event) => setNewTemplateBody(event.target.value)}
+                placeholder="Hola, te escribo de Ristak para confirmar..."
+                rows={5}
+              />
+            </label>
+            <button
+              type="button"
+              className={styles.primarySheetButton}
+              onClick={handleCreateQuickTemplate}
+              disabled={creatingTemplate}
+            >
+              {creatingTemplate ? <Loader2 size={18} className={styles.spinIcon} /> : <Plus size={18} />}
+              Crear y enviar a revisión
+            </button>
+          </div>
+        </div>
+      )
+    }
+
+    return (
+      <div className={styles.templatesStack} data-phone-chat-scrollable="true">
+        <div className={styles.templateSubHeader}>
+          <button type="button" onClick={() => setTemplateMode('choice')}>
+            <ChevronLeft size={19} />
+            Atrás
+          </button>
+          <strong>Plantillas creadas</strong>
+          <button type="button" onClick={loadTemplates} disabled={templatesLoading}>
+            {templatesLoading ? <Loader2 size={16} className={styles.spinIcon} /> : 'Actualizar'}
+          </button>
+        </div>
+
+        {renderTemplateAlerts()}
+
+        {templatesLoading ? (
+          <div className={styles.centerState}>
+            <Loader2 size={20} className={styles.spinIcon} />
+            <span>Cargando plantillas...</span>
+          </div>
+        ) : templatesError ? (
+          <div className={styles.emptySheetState}>
+            <CircleAlert size={24} />
+            <strong>No se cargaron</strong>
+            <span>{templatesError}</span>
+            <button type="button" onClick={loadTemplates}>Intentar otra vez</button>
+          </div>
+        ) : templates.length === 0 ? (
+          <div className={styles.emptySheetState}>
+            <FileText size={24} />
+            <strong>No hay plantillas</strong>
+            <span>Crea una nueva y cuando Meta la apruebe podrás mandarla desde este chat.</span>
+          </div>
+        ) : (
+          <div className={styles.templateList}>
+            {templates.map((template) => {
+              const status = getTemplateStatus(template)
+              const approved = status === 'APPROVED'
+              const alertMessage = getTemplateAlertMessage(template)
+              const reason = getTemplateBlockedReason(template, alertMessage)
+              const statusClass = approved
+                ? styles.templateStatusApproved
+                : TEMPLATE_DISABLED_STATUSES.has(status)
+                  ? styles.templateStatusBlocked
+                  : styles.templateStatusPending
+
+              return (
+                <button
+                  key={`${template.id}-${template.language}`}
+                  type="button"
+                  className={styles.templateRow}
+                  onClick={() => handleSendTemplate(template)}
+                  disabled={!approved || Boolean(templateSendingId)}
+                >
+                  <span className={styles.templateRowIcon}>
+                    <FileText size={18} />
+                  </span>
+                  <span className={styles.templateRowMain}>
+                    <strong>{template.name}</strong>
+                    <small>{getTemplateBodyPreview(template)}</small>
+                    {!approved && <em>{reason}</em>}
+                  </span>
+                  <span className={`${styles.templateStatus} ${statusClass}`}>
+                    {templateSendingId === template.id ? <Loader2 size={13} className={styles.spinIcon} /> : getTemplateStatusLabel(status)}
+                  </span>
+                </button>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    )
+  }
+
   const renderAttachmentsSheet = () => {
     const attachmentActions = [
+      { label: 'Plantillas', Icon: FileText, className: styles.actionTemplate, onClick: handleOpenTemplatesSheet },
       { label: 'Fotos', Icon: ImageIcon, className: styles.actionBlue, onClick: () => handlePickPhoto('photos') },
       { label: 'Cámara', Icon: Camera, className: styles.actionDark, onClick: () => handlePickPhoto('camera') },
       { label: 'Ubicación', Icon: MapPin, className: styles.actionGreen, onClick: () => handleUnavailableAttachment('Ubicación') },
@@ -2309,8 +3423,8 @@ export const PhoneChat: React.FC = () => {
         <section className={styles.chatListScreen} aria-label="Lista de chats">
           <header className={styles.chatListHeader}>
             <div className={styles.topActionRow}>
-              <button type="button" className={styles.roundButton} onClick={() => setSheet('notifications')} aria-label="Más opciones">
-                <MoreHorizontal size={24} />
+              <button type="button" className={styles.roundButton} onClick={() => setSheet('settings')} aria-label="Abrir configuración del chat">
+                <Cog size={23} />
               </button>
               <div className={styles.topRightActions}>
                 <button type="button" className={styles.roundButton} onClick={() => handlePickPhoto('camera')} aria-label="Abrir cámara">
@@ -2321,7 +3435,26 @@ export const PhoneChat: React.FC = () => {
                 </button>
               </div>
             </div>
-            <h1>Chats</h1>
+            <div className={styles.chatTitleRow}>
+              <h1>Chats</h1>
+              {chatPhoneFilterEnabled && (
+                <label className={styles.chatPhoneSelector}>
+                  <span>Número</span>
+                  <select
+                    value={selectedChatPhoneId}
+                    onChange={(event) => saveConfigPreference(setSelectedChatPhoneId, event.target.value)}
+                    aria-label="Elegir número de WhatsApp para ver chats"
+                  >
+                    <option value="all">Ver todos</option>
+                    {businessPhones.map((phone, index) => (
+                      <option key={phone.id} value={phone.id}>
+                        {`Ver chats de ${getBusinessPhoneLabel(phone) || `número ${index + 1}`}`}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+            </div>
             <div className={styles.searchBox}>
               <Search size={22} />
               <input
@@ -2370,7 +3503,15 @@ export const PhoneChat: React.FC = () => {
               <ChevronLeft size={32} />
             </button>
 
-            {activeContact ? (
+            {aiAgentConversationOpen ? (
+              <div className={styles.conversationContactButton}>
+                {renderAIAgentAvatar()}
+                <span className={styles.conversationIdentity}>
+                  <strong>Agente de inteligencia artificial</strong>
+                  <span>Te ayuda dentro de Ristak</span>
+                </span>
+              </div>
+            ) : activeContact ? (
               <>
                 <button
                   type="button"
@@ -2392,21 +3533,25 @@ export const PhoneChat: React.FC = () => {
               </div>
             )}
 
-            <div className={styles.callActions}>
-              <button type="button" onClick={() => setSheet('appointment')} aria-label="Agendar cita">
-                <CalendarDays size={25} />
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setPaymentMode('single')
-                  setSheet('payment')
-                }}
-                aria-label="Cobrar"
-              >
-                <BadgeDollarSign size={25} />
-              </button>
-            </div>
+            {aiAgentConversationOpen ? (
+              <span className={styles.conversationHeaderSpacer} aria-hidden="true" />
+            ) : (
+              <div className={styles.callActions}>
+                <button type="button" onClick={() => setSheet('appointment')} aria-label="Agendar cita">
+                  <CalendarDays size={25} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPaymentMode('single')
+                    setSheet('payment')
+                  }}
+                  aria-label="Cobrar"
+                >
+                  <BadgeDollarSign size={25} />
+                </button>
+              </div>
+            )}
           </header>
 
           <div className={styles.messagesPane} data-phone-chat-scrollable="true">
@@ -2415,50 +3560,57 @@ export const PhoneChat: React.FC = () => {
           </div>
 
           <div className={styles.composerShell}>
-            {renderSenderBar()}
-            {renderDraftAttachments()}
-            {renderVoiceDraft()}
-            <div className={styles.composer}>
-              <button type="button" className={styles.composerPlus} onClick={() => setSheet('attachments')} aria-label="Abrir adjuntos">
-                <Plus size={34} />
-              </button>
-              <div className={styles.messageInputWrap}>
-                <div
-                  ref={composerInputRef}
-                  className={styles.composerInput}
-                  role="textbox"
-                  aria-multiline="true"
-                  aria-label="Mensaje"
-                  aria-disabled={!activeContact?.phone || composerStatus === 'sending' || voiceRecording || Boolean(voiceDraft)}
-                  data-placeholder={voiceRecording ? 'Grabando...' : voiceDraft ? 'Audio listo' : activeContact?.phone ? '' : 'Sin teléfono'}
-                  contentEditable={Boolean(activeContact?.phone && composerStatus !== 'sending' && !voiceRecording && !voiceDraft)}
-                  suppressContentEditableWarning
-                  spellCheck
-                  autoCorrect="on"
-                  autoCapitalize="sentences"
-                  onInput={(event) => syncComposerText(event.currentTarget)}
-                  onPaste={handleComposerPaste}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter' && !event.shiftKey) {
-                      event.preventDefault()
-                      handleSendMessage()
-                    }
-                  }}
-                />
-              </div>
-              <button type="button" className={styles.composerIconButton} onClick={() => handlePickPhoto('camera')} aria-label="Cámara">
-                <Camera size={29} />
-              </button>
-              <button
-                type="button"
-                className={`${styles.composerIconButton} ${voiceRecording ? styles.composerMicRecording : ''}`}
-                onClick={handleVoiceOrSendButtonClick}
-                disabled={composerStatus === 'sending'}
-                aria-label={voiceRecording ? 'Detener grabación' : canSendMessage ? 'Enviar mensaje' : 'Grabar mensaje de voz'}
-              >
-                {composerStatus === 'sending' ? <Loader2 size={23} className={styles.spinIcon} /> : canSendMessage ? <Send size={25} /> : <Mic size={30} />}
-              </button>
-            </div>
+            {aiAgentConversationOpen ? (
+              renderAIAgentComposer()
+            ) : (
+              <>
+                {renderSenderBar()}
+                {renderAISuggestionBar()}
+                {renderDraftAttachments()}
+                {renderVoiceDraft()}
+                <div className={styles.composer}>
+                  <button type="button" className={styles.composerPlus} onClick={() => setSheet('attachments')} aria-label="Abrir adjuntos">
+                    <Plus size={34} />
+                  </button>
+                  <div className={styles.messageInputWrap}>
+                    <div
+                      ref={composerInputRef}
+                      className={styles.composerInput}
+                      role="textbox"
+                      aria-multiline="true"
+                      aria-label="Mensaje"
+                      aria-disabled={!activeContact?.phone || composerStatus === 'sending' || voiceRecording || Boolean(voiceDraft)}
+                      data-placeholder={voiceRecording ? 'Grabando...' : voiceDraft ? 'Audio listo' : activeContact?.phone ? '' : 'Sin teléfono'}
+                      contentEditable={Boolean(activeContact?.phone && composerStatus !== 'sending' && !voiceRecording && !voiceDraft)}
+                      suppressContentEditableWarning
+                      spellCheck
+                      autoCorrect="on"
+                      autoCapitalize="sentences"
+                      onInput={(event) => syncComposerText(event.currentTarget)}
+                      onPaste={handleComposerPaste}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' && !event.shiftKey) {
+                          event.preventDefault()
+                          handleSendMessage()
+                        }
+                      }}
+                    />
+                  </div>
+                  <button type="button" className={styles.composerIconButton} onClick={() => handlePickPhoto('camera')} aria-label="Cámara">
+                    <Camera size={29} />
+                  </button>
+                  <button
+                    type="button"
+                    className={`${styles.composerIconButton} ${voiceRecording ? styles.composerMicRecording : ''}`}
+                    onClick={handleVoiceOrSendButtonClick}
+                    disabled={composerStatus === 'sending'}
+                    aria-label={voiceRecording ? 'Detener grabación' : canSendMessage ? 'Enviar mensaje' : 'Grabar mensaje de voz'}
+                  >
+                    {composerStatus === 'sending' ? <Loader2 size={23} className={styles.spinIcon} /> : canSendMessage ? <Send size={25} /> : <Mic size={30} />}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </section>
 
@@ -2484,7 +3636,7 @@ export const PhoneChat: React.FC = () => {
       {sheet && (
         <div className={styles.sheetBackdrop} onClick={() => setSheet(null)}>
           <section
-            className={`${styles.sheetPanel} ${sheet === 'payment' ? styles.paymentSheet : ''} ${sheet === 'attachments' ? styles.attachmentsSheet : ''}`}
+            className={`${styles.sheetPanel} ${sheet === 'payment' ? styles.paymentSheet : ''} ${sheet === 'attachments' ? styles.attachmentsSheet : ''} ${sheet === 'templates' ? styles.templatesSheet : ''}`}
             onClick={(event) => event.stopPropagation()}
             aria-label="Acciones del chat"
           >
@@ -2492,11 +3644,12 @@ export const PhoneChat: React.FC = () => {
             {sheet !== 'attachments' && (
               <div className={styles.sheetHeader}>
                 <div>
-                  <p>{activeContact ? getContactName(activeContact) : 'Ristak Chat'}</p>
+                  <p>{activeContact ? getContactName(activeContact) : aiAgentConversationOpen ? 'Agente de IA' : 'Ristak Chat'}</p>
                   <h2>
                     {sheet === 'payment' && 'Registrar pago'}
                     {sheet === 'appointment' && 'Agendar cita'}
-                    {sheet === 'notifications' && 'Alertas del celular'}
+                    {sheet === 'templates' && 'Plantillas'}
+                    {sheet === 'settings' && 'Ajustes del chat'}
                     {sheet === 'newChat' && 'Nuevo chat'}
                   </h2>
                 </div>
@@ -2508,6 +3661,8 @@ export const PhoneChat: React.FC = () => {
 
             {sheet === 'newChat' && renderNewChatSheet()}
             {sheet === 'attachments' && renderAttachmentsSheet()}
+            {sheet === 'templates' && renderTemplatesSheet()}
+            {sheet === 'settings' && renderChatSettingsSheet()}
 
             {sheet === 'payment' && (
               <>
@@ -2586,59 +3741,6 @@ export const PhoneChat: React.FC = () => {
               </div>
             )}
 
-            {sheet === 'notifications' && (
-              <div className={styles.notificationsStack}>
-                <section className={styles.permissionCard}>
-                  <span>
-                    <Smartphone size={18} />
-                  </span>
-                  <div>
-                    <strong>Este celular</strong>
-                    <small>{getNotificationPermissionLabel()}</small>
-                  </div>
-                  <button type="button" onClick={handleRequestPush} disabled={requestingPush}>
-                    {requestingPush ? <Loader2 size={16} className={styles.spinIcon} /> : <Bell size={16} />}
-                    Activar
-                  </button>
-                </section>
-
-                <label className={styles.toggleRow}>
-                  <span>
-                    <strong>Mensajes del chat</strong>
-                    <small>Avísame cuando llegue un WhatsApp nuevo.</small>
-                  </span>
-                  <input
-                    type="checkbox"
-                    checked={chatPushEnabled}
-                    onChange={(event) => setChatPushEnabled(event.target.checked).catch(() => showToast('error', 'No se guardó la configuración', 'Intenta otra vez.'))}
-                  />
-                </label>
-
-                <label className={styles.toggleRow}>
-                  <span>
-                    <strong>Citas</strong>
-                    <small>Avísame cuando alguien agende una cita.</small>
-                  </span>
-                  <input
-                    type="checkbox"
-                    checked={calendarPushEnabled}
-                    onChange={(event) => setCalendarPushEnabled(event.target.checked).catch(() => showToast('error', 'No se guardó la configuración', 'Intenta otra vez.'))}
-                  />
-                </label>
-
-                <label className={styles.toggleRow}>
-                  <span>
-                    <strong>Pagos</strong>
-                    <small>Avísame cuando se registre un pago.</small>
-                  </span>
-                  <input
-                    type="checkbox"
-                    checked={paymentPushEnabled}
-                    onChange={(event) => setPaymentPushEnabled(event.target.checked).catch(() => showToast('error', 'No se guardó la configuración', 'Intenta otra vez.'))}
-                  />
-                </label>
-              </div>
-            )}
           </section>
         </div>
       )}

@@ -165,7 +165,7 @@ export const PhoneAgentChat: React.FC = () => {
       <section className={styles.agentPanelHost}>
         <AIAgentPanel variant="embedded" />
       </section>
-      <PhoneEcosystemNav active="agent" />
+      <PhoneEcosystemNav active="chat" />
     </main>
   )
 }
