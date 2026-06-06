@@ -1,5 +1,5 @@
 import React from 'react'
-import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from '@/contexts/AuthContext'
 import { DateRangeProvider } from '@/contexts/DateRangeContext'
 import { ThemeProvider } from '@/contexts/ThemeContext'
@@ -165,6 +165,26 @@ function getLoginPath(pathname?: string) {
   return pathname?.startsWith('/phone') ? '/phone/login' : '/login'
 }
 
+function isStandalonePhoneShell() {
+  if (typeof window === 'undefined') return false
+
+  const standaloneMedia = window.matchMedia?.('(display-mode: standalone)').matches
+  const navigatorStandalone = (window.navigator as Navigator & { standalone?: boolean }).standalone === true
+  if (!standaloneMedia && !navigatorStandalone) return false
+
+  const portableViewport = window.matchMedia?.('(max-width: 760px), (pointer: coarse)').matches
+  const portableUserAgent = /Android|iPhone|iPad|iPod/i.test(window.navigator.userAgent)
+  return Boolean(portableViewport || portableUserAgent)
+}
+
+function getStandalonePhoneRedirect(pathname: string) {
+  if (!isStandalonePhoneShell()) return ''
+
+  if (pathname === '/' || pathname === '/dashboard') return '/phone/chat'
+  if (pathname === '/login') return '/phone/login'
+  return ''
+}
+
 // Componente para la ruta de setup (primera vez)
 const SetupRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { isAuthenticated, needsSetup, isLoading } = useAuth()
@@ -229,7 +249,14 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) =
 
 const PhoneRouteEffects: React.FC = () => {
   const location = useLocation()
+  const navigate = useNavigate()
   const isPhoneRoute = location.pathname.startsWith('/phone')
+
+  React.useEffect(() => {
+    const redirectPath = getStandalonePhoneRedirect(location.pathname)
+    if (!redirectPath || redirectPath === location.pathname) return
+    navigate(redirectPath, { replace: true })
+  }, [location.pathname, navigate])
 
   React.useEffect(() => {
     applyRouteBranding(location.pathname)

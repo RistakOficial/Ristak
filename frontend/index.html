@@ -7,11 +7,38 @@
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#ffffff" />
+    <meta name="application-name" content="Ristak" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-title" content="Ristak" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <title>Ristak</title>
+    <script>
+      (function () {
+        var pathname = window.location.pathname || '/'
+        var isPhoneRoute = pathname === '/phone' || pathname.indexOf('/phone/') === 0
+        var isPhoneChatRoute = pathname === '/phone/chat' || pathname.indexOf('/phone/chat/') === 0
+        var title = isPhoneRoute ? 'Ristak Chat' : 'Ristak'
+        var themeColor = isPhoneRoute ? '#050505' : '#ffffff'
+        var manifest = isPhoneChatRoute
+          ? '/manifest.phone-chat.webmanifest'
+          : isPhoneRoute
+            ? '/manifest.phone.webmanifest'
+            : '/manifest.webmanifest'
+        var icon = isPhoneChatRoute
+          ? '/ristak-chat-home-apple-touch-icon.png'
+          : isPhoneRoute
+            ? '/ristak-chat-apple-touch-icon.png'
+            : '/apple-touch-icon.png'
+
+        document.title = title
+        document.querySelector('link[rel="manifest"]').setAttribute('href', manifest)
+        document.querySelector('link[rel="apple-touch-icon"]').setAttribute('href', icon)
+        document.querySelector('meta[name="theme-color"]').setAttribute('content', themeColor)
+        document.querySelector('meta[name="application-name"]').setAttribute('content', title)
+        document.querySelector('meta[name="apple-mobile-web-app-title"]').setAttribute('content', title)
+      })()
+    </script>
   </head>
   <body>
     <div id="root"></div>
