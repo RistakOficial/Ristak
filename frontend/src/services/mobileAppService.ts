@@ -238,6 +238,17 @@ export const mobileAppService = {
     await applyShellTheme(theme)
   },
 
+  async getPushPermissionStatus(): Promise<'granted' | 'denied' | 'prompt' | 'unsupported'> {
+    if (!Capacitor.isNativePlatform()) return 'unsupported'
+
+    const permission = await PushNotifications.checkPermissions().catch(() => null)
+    if (permission?.receive === 'granted' || permission?.receive === 'denied' || permission?.receive === 'prompt') {
+      return permission.receive
+    }
+    if (permission?.receive === 'prompt-with-rationale') return 'prompt'
+    return 'unsupported'
+  },
+
   async subscribeToPushNotifications({ calendarIds = [] }: { calendarIds?: string[] } = {}): Promise<PushSubscriptionResult> {
     if (!Capacitor.isNativePlatform()) {
       return {

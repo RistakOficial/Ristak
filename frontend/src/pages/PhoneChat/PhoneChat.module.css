@@ -206,6 +206,12 @@
   gap: 10px;
 }
 
+.topActionSpacer {
+  flex: 0 0 38px;
+  width: 38px;
+  height: 38px;
+}
+
 .roundButton,
 .newChatButton {
   display: inline-flex;

@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import {
-  Bell,
   CalendarDays,
   Check,
   ChevronLeft,
@@ -18,7 +17,6 @@ import { useTimezone } from '@/contexts/TimezoneContext'
 import { useAppConfig, useBottomSheetDismiss } from '@/hooks'
 import { calendarsService, type Calendar, type CalendarEvent } from '@/services/calendarsService'
 import { getPhoneDailyCacheKey, readPhoneDailyCache, writePhoneDailyCache } from '@/services/phoneDailyCache'
-import { pushNotificationsService } from '@/services/pushNotificationsService'
 import { buildSearchIndex, prepareSearchQuery, searchIndexIncludes } from '@/utils/searchText'
 import { convertLocalToUTC } from '@/utils/timezone'
 import styles from './PhoneCalendar.module.css'
@@ -57,7 +55,7 @@ const STATUS_LABELS: Record<CalendarEvent['appointmentStatus'], string> = {
 }
 
 type AccessState = 'checking' | 'allowed' | 'blocked'
-type SheetView = 'calendar' | 'settings' | null
+type SheetView = 'calendar' | null
 type CalendarView = 'month' | 'week' | 'day' | 'year' | 'years'
 
 interface DayCell {
@@ -215,8 +213,6 @@ export const PhoneCalendar: React.FC = () => {
   const { timezone, formatLocalDateShort } = useTimezone()
   const [searchParams, setSearchParams] = useSearchParams()
   const [defaultCalendarId] = useAppConfig<string>('default_calendar_id', '')
-  const [pushEnabled, setPushEnabled] = useAppConfig<boolean>('calendar_push_notifications_enabled', false)
-  const [pushCalendarIds, setPushCalendarIds] = useAppConfig<string[]>('calendar_push_notification_calendar_ids', [])
 
   const [accessState, setAccessState] = useState<AccessState>(getAccessState)
   const [calendars, setCalendars] = useState<Calendar[]>([])
@@ -240,7 +236,6 @@ export const PhoneCalendar: React.FC = () => {
     timeZone: timezone,
     title: ''
   })
-  const [requestingPush, setRequestingPush] = useState(false)
   const stripRef = useRef<HTMLElement | null>(null)
   const timelineScrollRef = useRef<HTMLElement | null>(null)
   const handledOpenAppointmentRef = useRef<string | null>(null)
@@ -990,58 +985,6 @@ export const PhoneCalendar: React.FC = () => {
     handleOpenEvent(event)
   }
 
-  const togglePushCalendar = async (calendarId: string) => {
-    const next = pushCalendarIds.includes(calendarId)
-      ? pushCalendarIds.filter((id) => id !== calendarId)
-      : [...pushCalendarIds, calendarId]
-
-    try {
-      await setPushCalendarIds(next)
-    } catch {
-      showToast('error', 'No se guardó el ajuste', 'Intenta otra vez.')
-    }
-  }
-
-  const handleTogglePushEnabled = async () => {
-    try {
-      await setPushEnabled(!pushEnabled)
-    } catch {
-      showToast('error', 'No se guardó el ajuste', 'Intenta otra vez.')
-    }
-  }
-
-  const handleRequestPush = async () => {
-    setRequestingPush(true)
-    try {
-      const calendarIds = pushCalendarIds.length ? pushCalendarIds : calendars.map((calendar) => calendar.id)
-      const result = await pushNotificationsService.subscribeToCalendarNotifications(calendarIds)
-
-      if (result.status === 'subscribed') {
-        await setPushEnabled(true)
-        showToast('success', 'Notificaciones activadas', 'Este celular ya puede recibir notificaciones de citas nuevas.')
-        return
-      }
-
-      showToast(
-        result.status === 'denied' ? 'warning' : 'info',
-        result.status === 'not_configured' ? 'Falta la llave de alertas' : 'Alertas no activadas',
-        result.reason
-      )
-    } catch {
-      showToast('error', 'No se pudieron activar las alertas', 'Intenta otra vez desde este celular.')
-    } finally {
-      setRequestingPush(false)
-    }
-  }
-
-  const pushPermissionLabel = typeof window !== 'undefined' && 'Notification' in window
-    ? Notification.permission === 'granted'
-      ? 'Permiso aprobado'
-      : Notification.permission === 'denied'
-        ? 'Permiso bloqueado'
-        : 'Permiso pendiente'
-    : 'No disponible'
-
   if (accessState === 'checking') {
     return (
       <main className={styles.loadingPage}>
@@ -1171,9 +1114,6 @@ export const PhoneCalendar: React.FC = () => {
 	              </button>
 	              <button type="button" onClick={() => setSheetView('calendar')} aria-label="Calendarios">
 	                <CalendarDays size={22} />
-	              </button>
-	              <button type="button" onClick={() => setSheetView('settings')} aria-label="Alertas y ajustes">
-	                <Bell size={22} />
 	              </button>
 	              <button type="button" onClick={() => openCreateModal()} aria-label="Crear cita">
 	                <Plus size={25} />
@@ -1418,7 +1358,6 @@ export const PhoneCalendar: React.FC = () => {
               </button>
               <h2>
                 {sheetView === 'calendar' && 'Calendarios'}
-                {sheetView === 'settings' && 'Alertas'}
               </h2>
               <span className={styles.sheetHeaderSpacer} aria-hidden="true" />
             </header>
@@ -1446,69 +1385,6 @@ export const PhoneCalendar: React.FC = () => {
               </div>
             )}
 
-            {sheetView === 'settings' && (
-              <div className={styles.settingsPanel} data-phone-scrollable="true">
-                <section className={styles.settingRow}>
-                  <span>
-                    <strong>Alertas de citas nuevas</strong>
-                    <small>{pushEnabled ? 'Activas en esta app' : 'Apagadas'}</small>
-                  </span>
-                  <button
-                    type="button"
-                    className={`${styles.switchButton} ${pushEnabled ? styles.switchButtonActive : ''}`}
-                    onClick={handleTogglePushEnabled}
-                    aria-pressed={pushEnabled}
-                  >
-                    <i />
-                  </button>
-                </section>
-
-                <section className={styles.settingBlock}>
-                  <div className={styles.settingBlockHeader}>
-                    <strong>Calendarios con alertas</strong>
-                    <span>{pushCalendarIds.length ? `${pushCalendarIds.length} seleccionados` : 'Todos'}</span>
-                  </div>
-                  <button
-                    type="button"
-                    className={`${styles.allCalendarsButton} ${pushCalendarIds.length === 0 ? styles.allCalendarsButtonActive : ''}`}
-                    onClick={() => setPushCalendarIds([]).catch(() => showToast('error', 'No se guardó el ajuste', 'Intenta otra vez.'))}
-                  >
-                    Todos los calendarios
-                  </button>
-                  <div className={styles.calendarChipGrid}>
-                    {calendars.map((calendar) => {
-                      const active = pushCalendarIds.includes(calendar.id)
-                      return (
-                        <button
-                          key={calendar.id}
-                          type="button"
-                          className={`${styles.calendarChip} ${active ? styles.calendarChipActive : ''}`}
-                          onClick={() => togglePushCalendar(calendar.id)}
-                        >
-                          <span style={{ backgroundColor: calendar.eventColor || '#2563eb' }} />
-                          {calendar.name}
-                        </button>
-                      )
-                    })}
-                  </div>
-                </section>
-
-                <section className={styles.permissionBox}>
-                  <div>
-                    <strong>Este celular</strong>
-                    <span>{pushPermissionLabel}</span>
-                  </div>
-                  <button type="button" onClick={handleRequestPush} disabled={requestingPush}>
-                    {requestingPush ? <Loader2 size={16} className={styles.spinIcon} /> : <Bell size={16} />}
-                    Activar
-                  </button>
-                </section>
-
-                <Link className={styles.desktopSettingsLink} to="/settings/calendars">
-                  Abrir configuración completa
-                </Link>
-              </div>
-            )}
           </section>
         </div>
       )}

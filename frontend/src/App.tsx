@@ -24,6 +24,7 @@ import { PhoneAnalytics } from '@/pages/PhoneAnalytics'
 import { PhoneCalendar } from '@/pages/PhoneCalendar'
 import { PhoneChat } from '@/pages/PhoneChat'
 import { PhonePayments } from '@/pages/PhonePayments'
+import { PhoneSettings } from '@/pages/PhoneSettings'
 import { Login } from '@/pages/Login'
 import { Setup } from '@/pages/Login/Setup'
 import { ToastContainer } from '@/components/common/Toast'
@@ -403,6 +404,14 @@ const AppWithNotifications: React.FC = () => {
             element={
               <ProtectedRoute>
                 <PhoneAnalytics />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/phone/settings"
+            element={
+              <ProtectedRoute>
+                <PhoneSettings />
               </ProtectedRoute>
             }
           />

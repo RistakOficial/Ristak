@@ -1,0 +1,623 @@
+.phoneSettingsPage {
+  --phone-settings-font: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", Inter, sans-serif;
+  --phone-settings-bg: var(--phone-chat-bg, #fbfaf6);
+  --phone-settings-bg-rgb: var(--phone-chat-bg-rgb, 251, 250, 246);
+  --phone-settings-surface: var(--phone-chat-surface, #ffffff);
+  --phone-settings-soft: var(--phone-chat-surface-soft, #f5f3ee);
+  --phone-settings-text: var(--phone-chat-text, #0b0b0d);
+  --phone-settings-muted: var(--phone-chat-muted, #77736c);
+  --phone-settings-border: var(--phone-chat-border, rgba(20, 20, 20, 0.09));
+  --phone-settings-primary: var(--phone-chat-primary, #101010);
+  --phone-settings-primary-rgb: var(--phone-chat-primary-rgb, 16, 16, 16);
+  --phone-settings-accent: var(--phone-chat-accent, #25d366);
+  --phone-settings-accent-soft: var(--phone-chat-accent-soft, #dff8e8);
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100dvh;
+  min-height: 100dvh;
+  max-height: 100dvh;
+  overflow: hidden;
+  color: var(--phone-settings-text);
+  background:
+    radial-gradient(circle at 12% 0%, rgba(var(--phone-settings-primary-rgb), 0.06), transparent 30%),
+    linear-gradient(180deg, var(--phone-settings-bg) 0%, var(--phone-settings-bg) 100%);
+  font-family: var(--phone-settings-font);
+  color-scheme: light;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-text-size-adjust: 100%;
+}
+
+:global(body[data-phone-chat-tone="dark"]) .phoneSettingsPage {
+  color-scheme: dark;
+}
+
+.phoneSettingsPage button,
+.phoneSettingsPage a,
+.phoneSettingsPage label {
+  font: inherit;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.phoneFrame {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  padding: calc(env(safe-area-inset-top) + 12px) 14px calc(96px + env(safe-area-inset-bottom));
+  overflow: hidden;
+}
+
+.header {
+  position: relative;
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 0 2px 14px;
+}
+
+.header::after {
+  content: "";
+  position: absolute;
+  right: -14px;
+  bottom: -20px;
+  left: -14px;
+  height: 34px;
+  pointer-events: none;
+  background: linear-gradient(180deg, rgba(var(--phone-settings-bg-rgb), 0.92), rgba(var(--phone-settings-bg-rgb), 0));
+}
+
+.header p {
+  margin: 0;
+  color: var(--phone-settings-muted);
+  font-size: 12px;
+  font-weight: 850;
+  letter-spacing: 0.08em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.header h1 {
+  margin: 0;
+  overflow: hidden;
+  color: var(--phone-settings-text);
+  font-size: clamp(34px, 10vw, 48px);
+  font-weight: 900;
+  letter-spacing: 0;
+  line-height: 0.98;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.backButton {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 38px;
+  padding: 0 12px 0 8px;
+  border: 1px solid var(--phone-settings-border);
+  border-radius: 999px;
+  color: var(--phone-settings-text);
+  background: color-mix(in srgb, var(--phone-settings-surface) 92%, transparent);
+  box-shadow: 0 8px 18px rgba(var(--phone-settings-primary-rgb), 0.06);
+  font-size: 14px;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.header:has(.backButton) {
+  padding-top: 48px;
+}
+
+.content {
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 8px 0 18px;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.content::-webkit-scrollbar {
+  display: none;
+}
+
+.settingsListGroup {
+  overflow: hidden;
+  border: 1px solid var(--phone-settings-border);
+  border-radius: 26px;
+  background: color-mix(in srgb, var(--phone-settings-surface) 94%, transparent);
+  box-shadow: 0 12px 24px rgba(var(--phone-settings-primary-rgb), 0.06);
+}
+
+.settingsListItem {
+  display: grid;
+  grid-template-columns: 54px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 76px;
+  padding: 11px 12px;
+  border: 0;
+  border-bottom: 1px solid var(--phone-settings-border);
+  color: var(--phone-settings-text);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.settingsListItem:last-child {
+  border-bottom: 0;
+}
+
+.settingsListItem:active {
+  background: color-mix(in srgb, var(--phone-settings-soft) 74%, transparent);
+}
+
+.settingsListIcon,
+.templateIcon,
+.actionCard > span,
+.choiceButton > span:first-child {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 16px;
+  color: #ffffff;
+  background: var(--phone-settings-primary);
+}
+
+.settingsListText,
+.settingsListMeta,
+.sectionTitle span,
+.toggleRow span,
+.templateMain,
+.permissionCard div,
+.actionCard div,
+.choiceButton > span:nth-child(2) {
+  display: grid;
+  min-width: 0;
+}
+
+.settingsListText strong,
+.sectionTitle strong,
+.toggleRow strong,
+.templateMain strong,
+.permissionCard strong,
+.actionCard strong,
+.choiceButton strong {
+  overflow: hidden;
+  color: var(--phone-settings-text);
+  font-size: 18px;
+  font-weight: 900;
+  letter-spacing: 0;
+  line-height: 1.08;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settingsListText small,
+.settingsListMeta small,
+.sectionTitle small,
+.toggleRow small,
+.templateMain small,
+.permissionCard small,
+.actionCard small,
+.choiceButton small,
+.hint {
+  overflow: hidden;
+  color: var(--phone-settings-muted);
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: 0;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+}
+
+.settingsListMeta {
+  grid-auto-flow: column;
+  align-items: center;
+  justify-content: end;
+  gap: 4px;
+  color: var(--phone-settings-muted);
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.settingsSection,
+.actionCard,
+.permissionCard,
+.enabledCard,
+.calendarPicker,
+.alertBox,
+.emptyState,
+.loadingInline {
+  border: 1px solid var(--phone-settings-border);
+  border-radius: 24px;
+  background: color-mix(in srgb, var(--phone-settings-surface) 94%, transparent);
+  box-shadow: 0 10px 22px rgba(var(--phone-settings-primary-rgb), 0.05);
+}
+
+.settingsSection,
+.calendarPicker {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+}
+
+.sectionTitle,
+.actionCard,
+.permissionCard {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.fieldTitle {
+  color: var(--phone-settings-text);
+  font-size: 16px;
+  font-weight: 900;
+}
+
+.segmented {
+  display: grid;
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
+  gap: 5px;
+  padding: 5px;
+  border-radius: 999px;
+  background: var(--phone-settings-soft);
+}
+
+.segmented button {
+  min-height: 36px;
+  border: 0;
+  border-radius: 999px;
+  color: var(--phone-settings-muted);
+  background: transparent;
+  font-size: 13px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.segmented .segmentActive {
+  color: var(--phone-settings-text);
+  background: var(--phone-settings-surface);
+  box-shadow: 0 4px 12px rgba(var(--phone-settings-primary-rgb), 0.08);
+}
+
+.hint {
+  margin: 0;
+  white-space: normal;
+}
+
+.actionCard,
+.permissionCard,
+.enabledCard,
+.alertBox,
+.emptyState,
+.loadingInline {
+  padding: 14px;
+}
+
+.actionCard button,
+.permissionCard button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 999px;
+  color: var(--phone-chat-text-on-primary, #ffffff);
+  background: var(--phone-settings-primary);
+  font-size: 13px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.actionCard button:disabled,
+.permissionCard button:disabled {
+  opacity: 0.6;
+}
+
+.spinIcon {
+  animation: spin 0.85s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.alertBox {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  color: #c0262d;
+  background: #fff1f2;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.templateList,
+.choiceList {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.templateRow,
+.choiceButton {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--phone-settings-border);
+  border-radius: 20px;
+  color: var(--phone-settings-text);
+  background: color-mix(in srgb, var(--phone-settings-surface) 94%, transparent);
+}
+
+.templateMain em {
+  overflow: hidden;
+  margin-top: 4px;
+  color: #c0262d;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 800;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+}
+
+.templateStatus {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  padding: 0 9px;
+  border-radius: 999px;
+  color: var(--phone-settings-muted);
+  background: var(--phone-settings-soft);
+  font-size: 11px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.templateApproved {
+  color: #0f6b3e;
+  background: #dff8e8;
+}
+
+.templateBlocked {
+  color: #c0262d;
+  background: #ffe4e6;
+}
+
+.templatePending {
+  color: #8a5a00;
+  background: #fff4cc;
+}
+
+.emptyState,
+.loadingInline {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--phone-settings-muted);
+  font-size: 14px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.toggleRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  min-height: 70px;
+  margin-bottom: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--phone-settings-border);
+  border-radius: 22px;
+  background: color-mix(in srgb, var(--phone-settings-surface) 94%, transparent);
+  box-shadow: 0 10px 22px rgba(var(--phone-settings-primary-rgb), 0.04);
+}
+
+.toggleRowDisabled {
+  opacity: 0.56;
+}
+
+.toggleRow input {
+  position: relative;
+  width: 52px;
+  height: 32px;
+  margin: 0;
+  appearance: none;
+  border-radius: 999px;
+  background: #d1d5db;
+  cursor: pointer;
+  transition: background 180ms ease;
+}
+
+.toggleRow input::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
+  transition: transform 180ms ease;
+}
+
+.toggleRow input:checked {
+  background: var(--phone-settings-accent);
+}
+
+.toggleRow input:checked::after {
+  transform: translateX(20px);
+}
+
+.choiceList {
+  margin-top: 0;
+}
+
+.choiceButton {
+  width: 100%;
+  cursor: pointer;
+  text-align: left;
+}
+
+.choiceButton i {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  color: var(--phone-settings-accent);
+}
+
+.choiceActive {
+  border-color: color-mix(in srgb, var(--phone-settings-accent) 45%, var(--phone-settings-border));
+  background: color-mix(in srgb, var(--phone-settings-accent-soft) 64%, var(--phone-settings-surface));
+}
+
+.permissionCard {
+  margin-bottom: 10px;
+}
+
+.enabledCard {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  color: #0f6b3e;
+  background: #dff8e8;
+  font-size: 14px;
+  font-weight: 850;
+}
+
+.calendarPicker {
+  margin: 0 0 10px;
+}
+
+.calendarPickerHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.calendarPickerHeader strong {
+  color: var(--phone-settings-text);
+  font-size: 16px;
+  font-weight: 900;
+}
+
+.calendarPickerHeader span {
+  color: var(--phone-settings-muted);
+  font-size: 13px;
+  font-weight: 850;
+}
+
+.allCalendarsButton,
+.calendarChip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 34px;
+  border: 1px solid var(--phone-settings-border);
+  border-radius: 999px;
+  color: var(--phone-settings-muted);
+  background: var(--phone-settings-surface);
+  font-size: 13px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.allCalendarsButton {
+  width: 100%;
+}
+
+.calendarGrid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.calendarChip {
+  min-width: 0;
+  max-width: 100%;
+  padding: 0 11px;
+}
+
+.calendarChip span {
+  flex: 0 0 auto;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+}
+
+.calendarActive {
+  border-color: color-mix(in srgb, var(--phone-settings-accent) 44%, transparent);
+  color: #0f6b3e;
+  background: var(--phone-settings-accent-soft);
+}
+
+@media (max-width: 360px) {
+  .settingsListItem {
+    grid-template-columns: 46px minmax(0, 1fr) auto;
+    gap: 8px;
+    min-height: 70px;
+    padding: 10px;
+  }
+
+  .settingsListIcon,
+  .templateIcon,
+  .actionCard > span,
+  .choiceButton > span:first-child {
+    width: 42px;
+    height: 42px;
+    border-radius: 14px;
+  }
+
+  .settingsListText strong,
+  .sectionTitle strong,
+  .toggleRow strong,
+  .templateMain strong,
+  .permissionCard strong,
+  .actionCard strong,
+  .choiceButton strong {
+    font-size: 16px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinIcon,
+  .toggleRow input,
+  .toggleRow input::after {
+    animation: none;
+    transition: none;
+  }
+}

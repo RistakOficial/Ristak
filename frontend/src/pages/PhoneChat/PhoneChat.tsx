@@ -13,7 +13,6 @@ import {
   ChevronRight,
   CircleAlert,
   CircleDollarSign,
-  Cog,
   Clock,
   CreditCard,
   DollarSign,
@@ -5348,17 +5347,7 @@ export const PhoneChat: React.FC = () => {
         <section className={styles.chatListScreen} aria-label="Lista de chats">
           <header className={`${styles.chatListHeader} ${chatSearchExpanded ? styles.chatListHeaderSearchExpanded : ''}`}>
             <div className={styles.topActionRow} aria-hidden={chatSearchExpanded}>
-              <button
-                type="button"
-                className={styles.roundButton}
-                onClick={() => {
-                  setActiveSettingsSection(null)
-                  setSheet('settings')
-                }}
-                aria-label="Abrir configuración del chat"
-              >
-                <Cog size={23} />
-              </button>
+              <span className={styles.topActionSpacer} aria-hidden="true" />
               <div className={styles.topRightActions}>
                 <button type="button" className={styles.roundButton} onClick={() => handlePickPhoto('camera', 'cameraShare')} aria-label="Abrir cámara">
                   <Camera size={24} />

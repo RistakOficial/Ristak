@@ -4,6 +4,7 @@ import { useLocation } from 'react-router-dom'
 import { Button, Modal } from '@/components/common'
 import { useAuth } from '@/contexts/AuthContext'
 import { useNotification } from '@/contexts/NotificationContext'
+import { mobileAppService } from '@/services/mobileAppService'
 import { pushNotificationsService } from '@/services/pushNotificationsService'
 import styles from './MobileNotificationOnboarding.module.css'
 
@@ -98,24 +99,50 @@ export function MobileNotificationOnboarding() {
   useEffect(() => {
     if (typeof window === 'undefined') return undefined
 
+    let cancelled = false
     const isPhoneRoute = location.pathname.startsWith('/phone')
     if (isLoading || !isAuthenticated || !isPhoneRoute) {
       setVisible(false)
       return undefined
     }
 
-    const storedDecision = getStoredDecision(storageKey)
-    if (storedDecision === 'accepted' || storedDecision === 'declined') {
-      return undefined
+    const preparePrompt = async () => {
+      if (mobileAppService.isNative()) {
+        const nativePermission = await mobileAppService.getPushPermissionStatus()
+        if (cancelled) return
+        if (nativePermission === 'granted') {
+          saveStoredDecision(storageKey, 'accepted')
+          setVisible(false)
+          return
+        }
+      } else if (getBrowserNotificationPermission() === 'granted') {
+        saveStoredDecision(storageKey, 'accepted')
+        setVisible(false)
+        return
+      }
+
+      const storedDecision = getStoredDecision(storageKey)
+      if (storedDecision === 'accepted' || storedDecision === 'declined') {
+        return
+      }
+
+      const timer = window.setTimeout(() => {
+        if (cancelled) return
+        setStep('intro')
+        setDenialReason('')
+        setVisible(true)
+      }, SHOW_DELAY_MS)
+
+      cleanupTimer = () => window.clearTimeout(timer)
     }
 
-    const timer = window.setTimeout(() => {
-      setStep('intro')
-      setDenialReason('')
-      setVisible(true)
-    }, SHOW_DELAY_MS)
+    let cleanupTimer: () => void = () => undefined
+    void preparePrompt()
 
-    return () => window.clearTimeout(timer)
+    return () => {
+      cancelled = true
+      cleanupTimer()
+    }
   }, [isAuthenticated, isLoading, location.pathname, storageKey])
 
   const closeAsAccepted = () => {

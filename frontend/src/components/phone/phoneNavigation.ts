@@ -1,6 +1,6 @@
-import { BarChart3, CalendarDays, CreditCard, MessageCircle, type LucideIcon } from 'lucide-react'
+import { BarChart3, CalendarDays, CreditCard, MessageCircle, Settings, type LucideIcon } from 'lucide-react'
 
-export type PhoneSection = 'chat' | 'calendar' | 'payments' | 'analytics'
+export type PhoneSection = 'chat' | 'calendar' | 'payments' | 'analytics' | 'settings'
 export type PhoneRouteDirection = 'forward' | 'back' | 'none'
 
 export interface PhoneNavItem {
@@ -14,7 +14,8 @@ export const PHONE_NAV_ITEMS: PhoneNavItem[] = [
   { key: 'chat', label: 'Chats', to: '/phone/chat', Icon: MessageCircle },
   { key: 'calendar', label: 'Citas', to: '/phone/calendar', Icon: CalendarDays },
   { key: 'payments', label: 'Pagos', to: '/phone/payments', Icon: CreditCard },
-  { key: 'analytics', label: 'Analíticas', to: '/phone/analytics', Icon: BarChart3 }
+  { key: 'analytics', label: 'Analíticas', to: '/phone/analytics', Icon: BarChart3 },
+  { key: 'settings', label: 'Ajustes', to: '/phone/settings', Icon: Settings }
 ]
 
 export const PHONE_NAV_ACTIVE_INDEX_KEY = 'ristak_phone_nav_active_index'
