@@ -485,14 +485,17 @@
 }
 
 .mobileSheetContainer .actions {
-  position: sticky;
-  bottom: 0;
-  z-index: 4;
-  margin: 0 -18px calc(env(safe-area-inset-bottom) * -1);
-  padding: 14px 18px calc(env(safe-area-inset-bottom) + 14px);
-  background: rgba(245, 245, 247, 0.94);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
+  position: static;
+  margin: 6px 0 0;
+  padding: 18px 0 calc(env(safe-area-inset-bottom) + 10px);
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.mobileSheetContainer .actions > button {
+  width: 100%;
+  min-height: 52px;
 }
 
 .actionsRight {

@@ -1290,10 +1290,7 @@ body.dark .tooltipInfo {
   gap: 12px;
   padding: 24px 32px;
   border-top: 1px solid var(--color-border);
-  position: sticky;
-  bottom: 0;
   background: var(--color-surface);
-  z-index: 10;
 }
 
 @media (min-width: 1920px) {
@@ -1504,14 +1501,14 @@ body.dark .tooltipInfo {
 }
 
 .embeddedRoot .footer {
-  position: sticky;
-  bottom: 0;
+  position: static;
+  margin-top: 12px;
   justify-content: stretch;
   padding: 10px 14px calc(env(safe-area-inset-bottom, 0px) + 12px);
   border-top: 1px solid rgba(0, 0, 0, 0.08);
-  background: rgba(246, 242, 235, 0.96);
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
+  background: #ffffff;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 .embeddedRoot .footer > button,

@@ -43,7 +43,7 @@ export const PhonePayments: React.FC = () => {
   const [view, setView] = useState<PaymentView>(() => getInitialView(searchParams.get('mode')))
 
   useEffect(() => {
-    document.title = 'Mobile payments | Ristak'
+    document.title = 'Pagos móviles | Ristak'
   }, [])
 
   useEffect(() => {
@@ -168,14 +168,14 @@ export const PhonePayments: React.FC = () => {
             <MonitorX size={28} />
           </div>
           <div className={styles.blockedCopy}>
-            <p className={styles.eyebrow}>Phone route</p>
-            <h1 id="phone-payments-blocked-title">Mobile or tablet only</h1>
+            <p className={styles.eyebrow}>Ruta móvil</p>
+            <h1 id="phone-payments-blocked-title">Solo celular o tablet</h1>
             <p>
-              This payment screen is optimized for phones and tablets. Open it from a portable device to charge your customers.
+              Esta pantalla está hecha para cobrar desde celular o tablet. Ábrela desde un dispositivo portátil para cobrarle a tus clientes.
             </p>
           </div>
           <Link className={styles.dashboardLink} to="/transactions">
-            Go to payments
+            Ir a pagos
           </Link>
         </section>
       </main>
@@ -184,10 +184,10 @@ export const PhonePayments: React.FC = () => {
 
   const isForm = view !== 'select'
   const formMode = view === 'partial' ? 'partial' : 'single'
-  const formTitle = view === 'partial' ? 'Payment plan' : 'Record payment'
+  const formTitle = view === 'partial' ? 'Plan de pago' : 'Registrar pago'
 
   return (
-    <main className={styles.phonePage} aria-label="Ristak mobile payments">
+    <main className={styles.phonePage} aria-label="Pagos móviles de Ristak">
       <div className={styles.phoneFrame}>
         <header className={styles.header}>
           {isForm ? (
@@ -197,7 +197,7 @@ export const PhonePayments: React.FC = () => {
               onClick={() => setView('select')}
             >
               <ArrowLeft size={18} />
-              <span>Back</span>
+              <span>Atrás</span>
             </button>
           ) : (
             <div className={styles.headerMain}>
@@ -206,7 +206,7 @@ export const PhonePayments: React.FC = () => {
               </span>
               <div>
                 <p className={styles.eyebrow}>Ristak Chat</p>
-                <h1>Payments</h1>
+                <h1>Pagos</h1>
               </div>
             </div>
           )}
@@ -226,8 +226,8 @@ export const PhonePayments: React.FC = () => {
             />
           </div>
         ) : (
-          <section className={styles.selectStack} aria-label="Choose payment type">
-            <p className={styles.selectHint}>Choose how you want to charge</p>
+          <section className={styles.selectStack} aria-label="Elige el tipo de cobro">
+            <p className={styles.selectHint}>Elige cómo quieres cobrar</p>
 
             <button
               type="button"
@@ -238,8 +238,8 @@ export const PhonePayments: React.FC = () => {
                 <CreditCard size={26} />
               </span>
               <span className={styles.choiceText}>
-                <strong>Record payment</strong>
-                <small>Single charge: send a payment link or record a manual payment.</small>
+                <strong>Registrar pago</strong>
+                <small>Cobro único: envía una liga de pago o registra un pago manual.</small>
               </span>
               <ChevronRight size={20} className={styles.choiceChevron} aria-hidden="true" />
             </button>
@@ -253,8 +253,8 @@ export const PhonePayments: React.FC = () => {
                 <CalendarDays size={26} />
               </span>
               <span className={styles.choiceText}>
-                <strong>Payment plans</strong>
-                <small>Automatic installments with down payment and recurring charges.</small>
+                <strong>Planes de pago</strong>
+                <small>Parcialidades automáticas con enganche y cobros recurrentes.</small>
               </span>
               <ChevronRight size={20} className={styles.choiceChevron} aria-hidden="true" />
             </button>

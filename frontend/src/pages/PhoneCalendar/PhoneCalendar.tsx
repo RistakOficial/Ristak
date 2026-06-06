@@ -831,7 +831,13 @@ export const PhoneCalendar: React.FC = () => {
       return
     }
 
-    handleToday()
+    if (calendarView === 'years') {
+      setCalendarView('year')
+      return
+    }
+
+    setCurrentDate(selectedDate)
+    setCalendarView('month')
   }
 
   const handleSelectMonthFromYear = (monthIndex: number) => {
@@ -1051,7 +1057,16 @@ export const PhoneCalendar: React.FC = () => {
     ? String(currentDate.getFullYear())
     : calendarView === 'year'
       ? 'Años'
-      : 'Hoy'
+      : calendarView === 'years'
+        ? 'Año'
+        : capitalizeFirst(MONTH_NAMES[selectedDate.getMonth()])
+  const periodChipAriaLabel = calendarView === 'month'
+    ? 'Ver año'
+    : calendarView === 'year'
+      ? 'Ver años'
+      : calendarView === 'years'
+        ? 'Volver al año'
+        : 'Volver a vista mensual'
   const showCalendarSurface = calendarView !== 'day'
   const showAgenda = calendarView === 'month'
   const nowInCalendar = toDateInTimeZone(new Date().toISOString(), timezone) ?? new Date()
@@ -1097,7 +1112,7 @@ export const PhoneCalendar: React.FC = () => {
 	              type="button"
 	              className={styles.periodChip}
 	              onClick={handleNavigateUp}
-	              aria-label={calendarView === 'month' ? 'Ver año' : calendarView === 'year' ? 'Ver años' : 'Volver a hoy'}
+	              aria-label={periodChipAriaLabel}
 	            >
 	              {calendarView !== 'years' && <ChevronLeft size={21} />}
 	              <span>{periodChipLabel}</span>

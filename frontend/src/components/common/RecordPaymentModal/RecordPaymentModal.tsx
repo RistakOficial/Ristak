@@ -2414,8 +2414,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           {step === 'processing' && renderProcessing()}
           {step === 'form' && renderForm()}
           {step === 'options' && renderPaymentOptions()}
+          {renderFooter()}
         </div>
-        {renderFooter()}
       </div>
     )
   }
