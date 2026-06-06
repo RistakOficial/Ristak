@@ -2672,18 +2672,27 @@ export const PhoneChat: React.FC = () => {
     )))
 
     try {
-      await whatsappApiService.sendTemplate({
+      const result = await whatsappApiService.sendTemplate({
         to: activeContact.phone,
         from: selectedBusinessPhoneValue,
         templateId: template.id,
         templateName: template.name,
         language: template.language,
-        externalId: optimisticId
+        externalId: optimisticId,
+        phoneNumberId: selectedBusinessPhone?.id || undefined
       })
       setMessages((current) => current.map((message) => (
-        message.id === optimisticId ? { ...message, status: 'sent', errorReason: '' } : message
+        message.id === optimisticId
+          ? { ...message, status: 'sent', errorReason: '', transport: result.transport || message.transport }
+          : message
       )))
-      showToast('success', 'Plantilla enviada', `${template.name} se mandó por WhatsApp.`)
+      showToast(
+        'success',
+        result.transport === 'qr' ? 'Plantilla enviada por QR' : 'Plantilla enviada',
+        result.transport === 'qr'
+          ? `${template.name} se mandó como texto por el respaldo QR.`
+          : `${template.name} se mandó por WhatsApp.`
+      )
       await loadConversation(activeContact.id)
       await loadChats()
       await loadTemplates()
@@ -2868,31 +2877,41 @@ export const PhoneChat: React.FC = () => {
 
     try {
       if (voiceToSend) {
-        await whatsappApiService.sendAudio({
+        const result = await whatsappApiService.sendAudio({
           to: activeContact.phone || '',
           from: selectedBusinessPhoneValue,
           audioDataUrl: voiceToSend.dataUrl,
           durationMs: voiceToSend.durationMs,
-          externalId: `${optimisticId}-audio`
+          externalId: `${optimisticId}-audio`,
+          phoneNumberId: selectedBusinessPhone?.id || undefined
         })
         setMessages((current) => current.map((message) => (
-          message.id === `${optimisticId}-audio` ? { ...message, status: 'sent' } : message
+          message.id === `${optimisticId}-audio`
+            ? { ...message, status: 'sent', transport: result.transport || message.transport }
+            : message
         )))
       } else if (attachmentsToSend.length > 0) {
-        await Promise.all(attachmentsToSend.map((attachment, index) => (
+        const results = await Promise.all(attachmentsToSend.map((attachment, index) => (
           whatsappApiService.sendImage({
             to: activeContact.phone || '',
             from: selectedBusinessPhoneValue,
             imageDataUrl: attachment.dataUrl,
             caption: index === 0 ? text : '',
-            externalId: `${optimisticId}-image-${index}`
+            externalId: `${optimisticId}-image-${index}`,
+            phoneNumberId: selectedBusinessPhone?.id || undefined
           })
         )))
         setMessages((current) => current.map((message) => (
-          message.id.startsWith(`${optimisticId}-image-`) ? { ...message, status: 'sent' } : message
+          message.id.startsWith(`${optimisticId}-image-`)
+            ? {
+                ...message,
+                status: 'sent',
+                transport: results[Number(message.id.replace(`${optimisticId}-image-`, ''))]?.transport || message.transport
+              }
+            : message
         )))
       } else {
-        await whatsappApiService.sendText({
+        const result = await whatsappApiService.sendText({
           to: activeContact.phone,
           from: selectedBusinessPhoneValue,
           text,
@@ -2901,7 +2920,9 @@ export const PhoneChat: React.FC = () => {
           phoneNumberId: selectedBusinessPhone?.id || undefined
         })
         setMessages((current) => current.map((message) => (
-          message.id === optimisticId ? { ...message, status: 'sent' } : message
+          message.id === optimisticId
+            ? { ...message, status: 'sent', transport: result.transport || message.transport }
+            : message
         )))
       }
       await loadConversation(activeContact.id)

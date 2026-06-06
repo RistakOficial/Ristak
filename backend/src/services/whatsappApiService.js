@@ -13,6 +13,8 @@ import {
   disconnectWhatsAppQrConnection,
   getWhatsAppQrSession,
   getWhatsAppQrSessions,
+  sendWhatsAppQrAudioMessage,
+  sendWhatsAppQrImageMessage,
   sendWhatsAppQrTextMessage,
   startWhatsAppQrConnection
 } from './whatsappQrService.js'
@@ -57,6 +59,16 @@ const WHATSAPP_DIRECT_AUDIO_MIME_TYPES = new Set([
   'audio/mpeg',
   'audio/ogg'
 ])
+const API_FALLBACK_PHONE_STATUSES = new Set([
+  'BANNED',
+  'BLOCKED',
+  'RESTRICTED',
+  'RATE_LIMITED',
+  'DISCONNECTED',
+  'MIGRATED'
+])
+const API_FALLBACK_ERROR_PATTERN = /\b(WABA|BUSINESS ACCOUNT|PHONE NUMBER|SENDER|FROM|ACCOUNT|QUALITY|MESSAGING LIMIT|RATE.?LIMIT|RESTRICT|BANNED|BLOCKED|DISABLED|SUSPENDED|LOCKED|NOT ALLOWED|NOT_ALLOWED|CUSTOMER SERVICE WINDOW|24.?HOUR|24 HORAS|OUTSIDE.*WINDOW)\b/i
+const API_FALLBACK_RECIPIENT_ERROR_PATTERN = /\b(RECIPIENT|CUSTOMER|USER|DESTINATION|TO PHONE|UNSUBSCRIBED|OPTED.?OUT|BLOCKED BY USER|USER BLOCKED)\b/i
 
 const REQUIRED_WEBHOOK_EVENTS = [
   'whatsapp.inbound_message.received',
@@ -991,7 +1003,15 @@ async function syncBusinessAccountAlert(account = {}, { sourceEventId, eventType
     return
   }
 
-  if (rawText.includes('BANNED') || rawText.includes('BLOCKED') || rawText.includes('DISABLED')) {
+  if (
+    rawText.includes('BANNED') ||
+    rawText.includes('BLOCKED') ||
+    rawText.includes('DISABLED') ||
+    rawText.includes('RESTRICTED') ||
+    rawText.includes('SUSPENDED') ||
+    rawText.includes('LOCKED') ||
+    rawText.includes('LIMITED')
+  ) {
     await upsertAlert({
       severity: 'critical',
       alertType: 'business_account',
@@ -1219,6 +1239,142 @@ async function findBusinessPhoneNumberId(phone = '') {
   })
 
   return match?.id || null
+}
+
+async function findBusinessPhoneRowForSender({ phoneNumberId, fromPhone } = {}) {
+  const cleanPhoneNumberId = cleanString(phoneNumberId)
+  if (cleanPhoneNumberId) {
+    return db.get(`
+      SELECT id, waba_id, phone_number, display_phone_number, status,
+        quality_rating, api_send_enabled, qr_send_enabled, qr_status, qr_last_error
+      FROM whatsapp_api_phone_numbers
+      WHERE id = ?
+    `, [cleanPhoneNumberId]).catch(() => null)
+  }
+
+  const normalized = normalizePhoneForStorage(fromPhone) || cleanString(fromPhone)
+  if (!normalized) return null
+
+  const rows = await db.all(`
+    SELECT id, waba_id, phone_number, display_phone_number, status,
+      quality_rating, api_send_enabled, qr_send_enabled, qr_status, qr_last_error
+    FROM whatsapp_api_phone_numbers
+    ORDER BY is_default_sender DESC, updated_at DESC
+  `).catch(() => [])
+  const candidates = buildPhoneMatchCandidates(normalized)
+
+  return rows.find(row => {
+    const rowCandidates = buildPhoneMatchCandidates(row.phone_number || row.display_phone_number)
+    return rowCandidates.some(candidate => candidates.includes(candidate))
+  }) || null
+}
+
+function isQrFallbackReady(phoneRow = {}) {
+  return Boolean(
+    phoneRow?.id &&
+    Number(phoneRow.qr_send_enabled || 0) === 1 &&
+    cleanString(phoneRow.qr_status).toLowerCase() === 'connected'
+  )
+}
+
+function getPhoneRowRestrictionReason(phoneRow = {}) {
+  if (!phoneRow?.id) return ''
+  const status = cleanString(phoneRow.status).toUpperCase()
+  const apiSendEnabled = phoneRow.api_send_enabled === undefined || phoneRow.api_send_enabled === null
+    ? 1
+    : Number(phoneRow.api_send_enabled)
+  if (apiSendEnabled === 0) {
+    return 'El envio por WhatsApp API esta desactivado para este numero.'
+  }
+  if (API_FALLBACK_PHONE_STATUSES.has(status)) {
+    return `WhatsApp API marco este numero como ${status}.`
+  }
+  return ''
+}
+
+function isBlockingOfficialApiAlert(alert = {}) {
+  const alertType = cleanString(alert.alert_type).toLowerCase()
+  const severity = cleanString(alert.severity).toLowerCase()
+  const text = `${alert.title || ''} ${alert.message || ''}`.toUpperCase()
+
+  if (alertType === 'phone_status') return severity === 'critical'
+  if (alertType !== 'business_account') return false
+  if (severity === 'critical') return true
+  return API_FALLBACK_ERROR_PATTERN.test(text) && !API_FALLBACK_RECIPIENT_ERROR_PATTERN.test(text)
+}
+
+async function getOfficialApiRestrictionReason({ phoneRow, config } = {}) {
+  const directReason = getPhoneRowRestrictionReason(phoneRow)
+  if (directReason) return directReason
+
+  const phoneEntityId = cleanString(phoneRow?.id)
+  const wabaIds = [...new Set([
+    phoneRow?.waba_id,
+    config?.wabaId,
+    'business_account'
+  ].map(cleanString).filter(Boolean))]
+  const params = []
+  const alertScopes = []
+
+  if (phoneEntityId) {
+    alertScopes.push("(alert_type = 'phone_status' AND entity_type = 'phone_number' AND entity_id = ?)")
+    params.push(phoneEntityId)
+  }
+
+  if (wabaIds.length) {
+    alertScopes.push(`(alert_type = 'business_account' AND entity_type = 'business_account' AND entity_id IN (${wabaIds.map(() => '?').join(', ')}))`)
+    params.push(...wabaIds)
+  }
+
+  if (!alertScopes.length) return ''
+
+  const alerts = await db.all(`
+    SELECT alert_type, severity, title, message, entity_type, entity_id
+    FROM whatsapp_api_alerts
+    WHERE status = 'active'
+      AND (${alertScopes.join(' OR ')})
+    ORDER BY updated_at DESC
+  `, params).catch(() => [])
+  const blockingAlert = alerts.find(isBlockingOfficialApiAlert)
+  if (!blockingAlert) return ''
+
+  return cleanString(blockingAlert.message || blockingAlert.title) ||
+    'WhatsApp API reporto una restriccion activa.'
+}
+
+function getOfficialApiErrorText(error) {
+  return [
+    error?.message,
+    error?.statusCode,
+    safeJson(error?.ycloud || null)
+  ].map(cleanString).filter(Boolean).join(' ')
+}
+
+function getOfficialApiRestrictionErrorReason(error) {
+  const statusCode = Number(error?.statusCode || 0)
+  const text = getOfficialApiErrorText(error)
+  if (!text) return ''
+
+  const hasBusinessScope = /\b(WABA|BUSINESS ACCOUNT|PHONE NUMBER|SENDER|FROM|ACCOUNT|QUALITY|MESSAGING LIMIT)\b/i.test(text)
+  if (API_FALLBACK_RECIPIENT_ERROR_PATTERN.test(text) && !hasBusinessScope) return ''
+  if (statusCode === 429) return 'WhatsApp API rechazo el envio por limite de volumen.'
+  if (API_FALLBACK_ERROR_PATTERN.test(text)) {
+    return 'WhatsApp API rechazo el envio por restriccion o limite.'
+  }
+  return ''
+}
+
+async function getOfficialApiFallbackDecision({ config, fromPhone, phoneNumberId, error } = {}) {
+  const phoneRow = await findBusinessPhoneRowForSender({ phoneNumberId, fromPhone })
+  const signalReason = await getOfficialApiRestrictionReason({ phoneRow, config })
+  const errorReason = error ? getOfficialApiRestrictionErrorReason(error) : ''
+  const reason = errorReason || signalReason
+
+  return {
+    phoneRow,
+    reason,
+    shouldFallback: Boolean(reason && isQrFallbackReady(phoneRow))
+  }
 }
 
 function normalizeYCloudContactRecord(record = {}) {
@@ -2839,7 +2995,7 @@ function buildTemplateComponents({ components, variables } = {}) {
 async function findTemplateForSend({ templateId, templateName, language }) {
   if (templateId) {
     return db.get(`
-      SELECT id, waba_id, name, language, status, quality_rating
+      SELECT id, waba_id, name, language, status, quality_rating, components_json
       FROM whatsapp_api_templates
       WHERE id = ?
     `, [templateId])
@@ -2847,12 +3003,49 @@ async function findTemplateForSend({ templateId, templateName, language }) {
 
   if (!templateName || !language) return null
   return db.get(`
-    SELECT id, waba_id, name, language, status, quality_rating
+    SELECT id, waba_id, name, language, status, quality_rating, components_json
     FROM whatsapp_api_templates
     WHERE name = ? AND language = ?
     ORDER BY updated_at DESC
     LIMIT 1
   `, [templateName, language])
+}
+
+function getComponentParameters(components = [], type = '') {
+  const target = cleanString(type).toLowerCase()
+  const component = (Array.isArray(components) ? components : []).find(item =>
+    cleanString(item?.type).toLowerCase() === target
+  )
+  return (Array.isArray(component?.parameters) ? component.parameters : [])
+    .map((parameter) => cleanString(parameter?.text || parameter?.payload || parameter?.value || parameter))
+}
+
+function renderTemplateText(text = '', values = []) {
+  return cleanString(text).replace(/\{\{\s*(\d+)\s*\}\}/g, (match, index) => {
+    const value = values[Number(index) - 1]
+    return value === undefined || value === null || value === '' ? match : cleanString(value)
+  })
+}
+
+function buildTemplateTextForQrFallback({ template, components, variables } = {}) {
+  const sourceComponents = parseJsonValue(template?.components_json, [])
+  const requestComponents = Array.isArray(components) ? components : []
+  const normalizedVariables = normalizeTemplateVariables(variables).map(cleanString)
+  const textParts = []
+
+  for (const type of ['header', 'body', 'footer']) {
+    const source = (Array.isArray(sourceComponents) ? sourceComponents : []).find(component =>
+      cleanString(component?.type).toLowerCase() === type
+    )
+    const sourceText = cleanString(source?.text)
+    if (!sourceText) continue
+
+    const params = getComponentParameters(requestComponents, type)
+    const values = params.length ? params : type === 'body' ? normalizedVariables : []
+    textParts.push(renderTemplateText(sourceText, values))
+  }
+
+  return textParts.map(cleanString).filter(Boolean).join('\n\n')
 }
 
 async function saveTemplateSend({ template, requestBody, response, variables }) {
@@ -2895,7 +3088,8 @@ export async function sendWhatsAppApiTemplateMessage({
   language,
   components,
   variables,
-  externalId
+  externalId,
+  phoneNumberId
 } = {}) {
   const config = await loadConfig({ includeSecrets: true })
   if (!config.enabled || !config.apiKey) {
@@ -2949,11 +3143,81 @@ export async function sendWhatsAppApiTemplateMessage({
     ...(externalId ? { externalId } : {})
   }
 
-  const response = await ycloudRequest('/whatsapp/messages', {
-    apiKey: config.apiKey,
-    method: 'POST',
-    body: requestBody
+  const sendTemplateViaQr = async ({ fallbackReason, originalError, fallbackPhoneNumberId } = {}) => {
+    const text = buildTemplateTextForQrFallback({
+      template: finalTemplate,
+      components: templateComponents,
+      variables: normalizedVariables
+    })
+    if (!text) {
+      if (originalError) throw originalError
+      throw new Error('La plantilla no tiene texto guardado para mandarla por QR')
+    }
+
+    const qrResponse = await sendTextViaQrFallback({
+      phoneNumberId: fallbackPhoneNumberId || phoneNumberId,
+      fromPhone,
+      toPhone,
+      body: text,
+      externalId,
+      fallbackReason,
+      originalError
+    })
+
+    await saveTemplateSend({
+      template: finalTemplate,
+      requestBody: {
+        ...requestBody,
+        fallbackTransport: 'qr',
+        renderedText: text
+      },
+      response: qrResponse,
+      variables: normalizedVariables
+    })
+
+    return {
+      ...qrResponse,
+      type: 'template',
+      template: requestBody.template
+    }
+  }
+
+  const fallbackDecision = await getOfficialApiFallbackDecision({
+    config,
+    fromPhone,
+    phoneNumberId
   })
+  if (fallbackDecision.shouldFallback) {
+    return sendTemplateViaQr({
+      fallbackReason: fallbackDecision.reason,
+      fallbackPhoneNumberId: fallbackDecision.phoneRow?.id
+    })
+  }
+
+  let response
+  try {
+    response = await ycloudRequest('/whatsapp/messages', {
+      apiKey: config.apiKey,
+      method: 'POST',
+      body: requestBody
+    })
+  } catch (error) {
+    const retryDecision = await getOfficialApiFallbackDecision({
+      config,
+      fromPhone,
+      phoneNumberId,
+      error
+    })
+    if (retryDecision.shouldFallback) {
+      logger.warn(`[WhatsApp API] Envio de plantilla API fallo; usando QR para ${fromPhone}: ${retryDecision.reason}`)
+      return sendTemplateViaQr({
+        fallbackReason: retryDecision.reason,
+        originalError: error,
+        fallbackPhoneNumberId: retryDecision.phoneRow?.id
+      })
+    }
+    throw error
+  }
 
   await saveTemplateSend({
     template: finalTemplate,
@@ -2985,22 +3249,29 @@ export async function sendWhatsAppApiTemplateMessage({
   return response
 }
 
-export async function sendWhatsAppApiTextMessage({ to, text, from, externalId, transport = 'api', phoneNumberId } = {}) {
-  const config = await loadConfig({ includeSecrets: true })
-  const fromPhone = normalizePhoneForStorage(from || config.senderPhone) || cleanString(from || config.senderPhone)
-  const toPhone = normalizePhoneForStorage(to) || cleanString(to)
-  const body = cleanString(text)
-  const cleanTransport = cleanString(transport).toLowerCase() === 'qr' ? 'qr' : 'api'
+function buildQrFallbackError(originalError, fallbackError) {
+  const message = `${originalError?.message || 'WhatsApp API no pudo enviar el mensaje'}. El respaldo por QR tambien fallo: ${fallbackError.message}`
+  const error = new Error(message)
+  error.statusCode = originalError?.statusCode || 400
+  error.originalError = originalError
+  error.fallbackError = fallbackError
+  return error
+}
 
-  if (cleanTransport !== 'qr' && (!config.enabled || !config.apiKey)) {
-    throw new Error('WhatsApp_API no está conectado')
+function decorateQrFallbackResponse(response = {}, fallbackReason = '') {
+  return {
+    ...response,
+    transport: 'qr',
+    ...(fallbackReason ? {
+      fallback: true,
+      fallbackFrom: 'api',
+      fallbackReason
+    } : {})
   }
+}
 
-  if (!fromPhone) throw new Error('Falta el número emisor de WhatsApp_API')
-  if (!toPhone) throw new Error('Falta el número destino')
-  if (!body) throw new Error('Falta el texto del mensaje')
-
-  if (cleanTransport === 'qr') {
+async function sendTextViaQrFallback({ fromPhone, toPhone, body, externalId, phoneNumberId, fallbackReason, originalError } = {}) {
+  try {
     const response = await sendWhatsAppQrTextMessage({
       phoneNumberId,
       from: fromPhone,
@@ -3012,8 +3283,9 @@ export async function sendWhatsAppApiTextMessage({ to, text, from, externalId, t
     await upsertMessage({
       payload: {
         id: response.id || externalId || hashId('waqr_send_event', `${fromPhone}|${toPhone}|${body}`),
-        type: 'whatsapp.qr.message.sent',
+        type: fallbackReason ? 'whatsapp.qr.message.fallback_sent' : 'whatsapp.qr.message.sent',
         transport: 'qr',
+        fallbackReason: fallbackReason || null,
         createTime: response.createTime || nowIso(),
         whatsappMessage: response
       },
@@ -3030,20 +3302,184 @@ export async function sendWhatsAppApiTextMessage({ to, text, from, externalId, t
       transport: 'qr'
     })
 
-    return response
+    return decorateQrFallbackResponse(response, fallbackReason)
+  } catch (fallbackError) {
+    if (originalError) throw buildQrFallbackError(originalError, fallbackError)
+    throw fallbackError
   }
+}
 
-  const response = await ycloudRequest('/whatsapp/messages', {
-    apiKey: config.apiKey,
-    method: 'POST',
-    body: {
+async function sendImageViaQrFallback({ fromPhone, toPhone, requestImage, imageDataUrl, externalId, phoneNumberId, localMedia, fallbackReason, originalError } = {}) {
+  try {
+    const response = await sendWhatsAppQrImageMessage({
+      phoneNumberId,
       from: fromPhone,
       to: toPhone,
-      type: 'text',
-      text: { body },
-      ...(externalId ? { externalId } : {})
+      imageDataUrl,
+      imageUrl: requestImage?.link,
+      caption: requestImage?.caption,
+      externalId
+    })
+    const finalImage = response.image || requestImage
+
+    await upsertMessage({
+      payload: {
+        id: response.id || externalId || hashId('waqr_img_event', `${fromPhone}|${toPhone}|${requestImage?.link || ''}`),
+        type: fallbackReason ? 'whatsapp.qr.message.fallback_sent' : 'whatsapp.qr.message.sent',
+        transport: 'qr',
+        fallbackReason: fallbackReason || null,
+        createTime: response.createTime || nowIso(),
+        whatsappMessage: response
+      },
+      message: {
+        ...response,
+        from: response.from || fromPhone,
+        to: response.to || toPhone,
+        type: response.type || 'image',
+        image: finalImage,
+        transport: 'qr',
+        createTime: response.createTime || nowIso()
+      },
+      direction: 'outbound',
+      transport: 'qr'
+    })
+
+    return {
+      ...decorateQrFallbackResponse(response, fallbackReason),
+      image: finalImage,
+      localMedia
     }
+  } catch (fallbackError) {
+    if (originalError) throw buildQrFallbackError(originalError, fallbackError)
+    throw fallbackError
+  }
+}
+
+async function sendAudioViaQrFallback({ fromPhone, toPhone, requestAudio, audioDataUrl, externalId, phoneNumberId, localMedia, durationMs, fallbackReason, originalError } = {}) {
+  try {
+    const response = await sendWhatsAppQrAudioMessage({
+      phoneNumberId,
+      from: fromPhone,
+      to: toPhone,
+      audioDataUrl,
+      audioUrl: requestAudio?.link,
+      externalId,
+      durationMs
+    })
+    const finalAudio = {
+      ...(requestAudio || {}),
+      ...(response.audio || {}),
+      ...(durationMs ? { durationMs } : {})
+    }
+
+    await upsertMessage({
+      payload: {
+        id: response.id || externalId || hashId('waqr_audio_event', `${fromPhone}|${toPhone}|${requestAudio?.link || ''}`),
+        type: fallbackReason ? 'whatsapp.qr.message.fallback_sent' : 'whatsapp.qr.message.sent',
+        transport: 'qr',
+        fallbackReason: fallbackReason || null,
+        createTime: response.createTime || nowIso(),
+        whatsappMessage: response
+      },
+      message: {
+        ...response,
+        from: response.from || fromPhone,
+        to: response.to || toPhone,
+        type: response.type || 'audio',
+        audio: finalAudio,
+        transport: 'qr',
+        createTime: response.createTime || nowIso()
+      },
+      direction: 'outbound',
+      transport: 'qr'
+    })
+
+    return {
+      ...decorateQrFallbackResponse(response, fallbackReason),
+      audio: finalAudio,
+      localMedia
+    }
+  } catch (fallbackError) {
+    if (originalError) throw buildQrFallbackError(originalError, fallbackError)
+    throw fallbackError
+  }
+}
+
+export async function sendWhatsAppApiTextMessage({ to, text, from, externalId, transport = 'api', phoneNumberId } = {}) {
+  const config = await loadConfig({ includeSecrets: true })
+  const fromPhone = normalizePhoneForStorage(from || config.senderPhone) || cleanString(from || config.senderPhone)
+  const toPhone = normalizePhoneForStorage(to) || cleanString(to)
+  const body = cleanString(text)
+  const cleanTransport = cleanString(transport).toLowerCase() === 'qr' ? 'qr' : 'api'
+
+  if (cleanTransport !== 'qr' && (!config.enabled || !config.apiKey)) {
+    throw new Error('WhatsApp_API no está conectado')
+  }
+
+  if (!fromPhone) throw new Error('Falta el número emisor de WhatsApp_API')
+  if (!toPhone) throw new Error('Falta el número destino')
+  if (!body) throw new Error('Falta el texto del mensaje')
+
+  if (cleanTransport === 'qr') {
+    return sendTextViaQrFallback({
+      phoneNumberId,
+      fromPhone,
+      toPhone,
+      body,
+      externalId
+    })
+  }
+
+  const fallbackDecision = await getOfficialApiFallbackDecision({
+    config,
+    fromPhone,
+    phoneNumberId
   })
+  if (fallbackDecision.shouldFallback) {
+    return sendTextViaQrFallback({
+      phoneNumberId: fallbackDecision.phoneRow?.id || phoneNumberId,
+      fromPhone,
+      toPhone,
+      body,
+      externalId,
+      fallbackReason: fallbackDecision.reason
+    })
+  }
+
+  let response
+  try {
+    response = await ycloudRequest('/whatsapp/messages', {
+      apiKey: config.apiKey,
+      method: 'POST',
+      body: {
+        from: fromPhone,
+        to: toPhone,
+        type: 'text',
+        text: { body },
+        ...(externalId ? { externalId } : {})
+      }
+    })
+  } catch (error) {
+    const retryDecision = await getOfficialApiFallbackDecision({
+      config,
+      fromPhone,
+      phoneNumberId,
+      error
+    })
+    if (retryDecision.shouldFallback) {
+      logger.warn(`[WhatsApp API] Envio API fallo; usando QR para ${fromPhone}: ${retryDecision.reason}`)
+      return sendTextViaQrFallback({
+        phoneNumberId: retryDecision.phoneRow?.id || phoneNumberId,
+        fromPhone,
+        toPhone,
+        body,
+        externalId,
+        fallbackReason: retryDecision.reason,
+        originalError: error
+      })
+    }
+    throw error
+  }
 
   await upsertMessage({
     payload: {
@@ -3075,7 +3511,8 @@ export async function sendWhatsAppApiImageMessage({
   imageUrl,
   caption,
   externalId,
-  publicBaseUrl
+  publicBaseUrl,
+  phoneNumberId
 } = {}) {
   const config = await loadConfig({ includeSecrets: true })
   if (!config.enabled || !config.apiKey) {
@@ -3116,11 +3553,54 @@ export async function sendWhatsAppApiImageMessage({
     ...(externalId ? { externalId } : {})
   }
 
-  const response = await ycloudRequest('/whatsapp/messages', {
-    apiKey: config.apiKey,
-    method: 'POST',
-    body: requestBody
+  const fallbackDecision = await getOfficialApiFallbackDecision({
+    config,
+    fromPhone,
+    phoneNumberId
   })
+  if (fallbackDecision.shouldFallback) {
+    return sendImageViaQrFallback({
+      phoneNumberId: fallbackDecision.phoneRow?.id || phoneNumberId,
+      fromPhone,
+      toPhone,
+      requestImage: requestBody.image,
+      imageDataUrl,
+      externalId,
+      localMedia: savedImage,
+      fallbackReason: fallbackDecision.reason
+    })
+  }
+
+  let response
+  try {
+    response = await ycloudRequest('/whatsapp/messages', {
+      apiKey: config.apiKey,
+      method: 'POST',
+      body: requestBody
+    })
+  } catch (error) {
+    const retryDecision = await getOfficialApiFallbackDecision({
+      config,
+      fromPhone,
+      phoneNumberId,
+      error
+    })
+    if (retryDecision.shouldFallback) {
+      logger.warn(`[WhatsApp API] Envio de foto API fallo; usando QR para ${fromPhone}: ${retryDecision.reason}`)
+      return sendImageViaQrFallback({
+        phoneNumberId: retryDecision.phoneRow?.id || phoneNumberId,
+        fromPhone,
+        toPhone,
+        requestImage: requestBody.image,
+        imageDataUrl,
+        externalId,
+        localMedia: savedImage,
+        fallbackReason: retryDecision.reason,
+        originalError: error
+      })
+    }
+    throw error
+  }
 
   await upsertMessage({
     payload: {
@@ -3156,7 +3636,8 @@ export async function sendWhatsAppApiAudioMessage({
   audioUrl,
   externalId,
   publicBaseUrl,
-  durationMs
+  durationMs,
+  phoneNumberId
 } = {}) {
   const config = await loadConfig({ includeSecrets: true })
   if (!config.enabled || !config.apiKey) {
@@ -3195,11 +3676,56 @@ export async function sendWhatsAppApiAudioMessage({
     ...(externalId ? { externalId } : {})
   }
 
-  const response = await ycloudRequest('/whatsapp/messages', {
-    apiKey: config.apiKey,
-    method: 'POST',
-    body: requestBody
+  const fallbackDecision = await getOfficialApiFallbackDecision({
+    config,
+    fromPhone,
+    phoneNumberId
   })
+  if (fallbackDecision.shouldFallback) {
+    return sendAudioViaQrFallback({
+      phoneNumberId: fallbackDecision.phoneRow?.id || phoneNumberId,
+      fromPhone,
+      toPhone,
+      requestAudio: requestBody.audio,
+      audioDataUrl,
+      externalId,
+      localMedia: savedAudio,
+      durationMs,
+      fallbackReason: fallbackDecision.reason
+    })
+  }
+
+  let response
+  try {
+    response = await ycloudRequest('/whatsapp/messages', {
+      apiKey: config.apiKey,
+      method: 'POST',
+      body: requestBody
+    })
+  } catch (error) {
+    const retryDecision = await getOfficialApiFallbackDecision({
+      config,
+      fromPhone,
+      phoneNumberId,
+      error
+    })
+    if (retryDecision.shouldFallback) {
+      logger.warn(`[WhatsApp API] Envio de audio API fallo; usando QR para ${fromPhone}: ${retryDecision.reason}`)
+      return sendAudioViaQrFallback({
+        phoneNumberId: retryDecision.phoneRow?.id || phoneNumberId,
+        fromPhone,
+        toPhone,
+        requestAudio: requestBody.audio,
+        audioDataUrl,
+        externalId,
+        localMedia: savedAudio,
+        durationMs,
+        fallbackReason: retryDecision.reason,
+        originalError: error
+      })
+    }
+    throw error
+  }
 
   await upsertMessage({
     payload: {

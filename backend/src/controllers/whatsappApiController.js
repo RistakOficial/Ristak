@@ -219,6 +219,7 @@ export async function sendWhatsAppApiImageMessageView(req, res) {
       imageUrl: req.body?.imageUrl,
       caption: req.body?.caption,
       externalId: req.body?.externalId,
+      phoneNumberId: req.body?.phoneNumberId,
       publicBaseUrl: getPublicBaseUrl(req)
     })
     res.json({ success: true, data })
@@ -240,6 +241,7 @@ export async function sendWhatsAppApiAudioMessageView(req, res) {
       audioUrl: req.body?.audioUrl,
       externalId: req.body?.externalId,
       durationMs: req.body?.durationMs,
+      phoneNumberId: req.body?.phoneNumberId,
       publicBaseUrl: getPublicBaseUrl(req)
     })
     res.json({ success: true, data })
@@ -278,7 +280,8 @@ export async function sendWhatsAppApiTemplateMessageView(req, res) {
       language: req.body?.language,
       components: req.body?.components,
       variables: req.body?.variables,
-      externalId: req.body?.externalId
+      externalId: req.body?.externalId,
+      phoneNumberId: req.body?.phoneNumberId
     })
     res.json({ success: true, data })
   } catch (error) {

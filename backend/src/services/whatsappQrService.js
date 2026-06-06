@@ -12,6 +12,17 @@ const QR_CONSENT_TEXT = 'Acepto que esta conexion usa WhatsApp Web por QR y no l
 const CONNECT_TIMEOUT_MS = 20000
 const RECONNECT_DELAY_MS = 800
 const MAX_RECONNECT_ATTEMPTS = 8
+const AUDIO_MIME_BY_EXTENSION = {
+  aac: 'audio/aac',
+  amr: 'audio/amr',
+  m4a: 'audio/mp4',
+  mp3: 'audio/mpeg',
+  oga: 'audio/ogg',
+  ogg: 'audio/ogg',
+  opus: 'audio/ogg',
+  wav: 'audio/wav',
+  webm: 'audio/webm'
+}
 
 const liveSessions = new Map()
 
@@ -40,6 +51,53 @@ function safeJson(value) {
     return JSON.stringify(value ?? null)
   } catch {
     return JSON.stringify({ unserializable: true })
+  }
+}
+
+function parseMediaDataUrl(dataUrl = '') {
+  const text = cleanString(dataUrl)
+  if (!text) return null
+
+  const match = text.match(/^data:([^;,]+)?(?:;[^,]*)?;base64,(.+)$/i)
+  if (!match) {
+    throw new Error('El archivo no tiene un formato valido para enviar por QR')
+  }
+
+  return {
+    buffer: Buffer.from(match[2], 'base64'),
+    mimeType: cleanString(match[1]).toLowerCase()
+  }
+}
+
+function getFileExtensionFromUrl(url = '') {
+  const cleanUrl = cleanString(url).split('?')[0].split('#')[0]
+  const extension = cleanUrl.split('.').pop()
+  return cleanString(extension).toLowerCase()
+}
+
+function inferAudioMimeType({ mimeType, url } = {}) {
+  const cleanMimeType = cleanString(mimeType).toLowerCase()
+  if (cleanMimeType) return cleanMimeType
+  return AUDIO_MIME_BY_EXTENSION[getFileExtensionFromUrl(url)] || 'audio/mpeg'
+}
+
+function buildQrMediaPayload({ dataUrl, url, label }) {
+  const parsedDataUrl = parseMediaDataUrl(dataUrl)
+  if (parsedDataUrl?.buffer?.length) {
+    return {
+      content: parsedDataUrl.buffer,
+      mimeType: parsedDataUrl.mimeType,
+      sourceUrl: ''
+    }
+  }
+
+  const cleanUrl = cleanString(url)
+  if (!cleanUrl) throw new Error(`Falta el archivo para mandar ${label} por QR`)
+
+  return {
+    content: { url: cleanUrl },
+    mimeType: '',
+    sourceUrl: cleanUrl
   }
 }
 
@@ -638,6 +696,88 @@ export async function sendWhatsAppQrTextMessage({ phoneNumberId, from, to, text,
     to: toPhone,
     type: 'text',
     text: { body },
+    status: 'sent',
+    transport: 'qr',
+    createTime: nowIso(),
+    raw: response ? safeJson(response) : null
+  }
+}
+
+export async function sendWhatsAppQrImageMessage({ phoneNumberId, from, to, imageDataUrl, imageUrl, caption, externalId } = {}) {
+  const phone = await resolveQrPhone({ phoneNumberId, from })
+  const toPhone = normalizePhoneForStorage(to) || cleanString(to)
+  const cleanCaption = cleanString(caption).slice(0, 1024)
+
+  if (Number(phone.qr_send_enabled || 0) !== 1) {
+    throw new Error('Ese numero no tiene el envio por QR activado')
+  }
+  if (!toPhone) throw new Error('Falta el numero destino')
+
+  const media = buildQrMediaPayload({
+    dataUrl: imageDataUrl,
+    url: imageUrl,
+    label: 'la foto'
+  })
+  const sock = await ensureOpenSocket(phone)
+  const jid = `${toPhone.replace(/\D/g, '')}@s.whatsapp.net`
+  const response = await sock.sendMessage(jid, {
+    image: media.content,
+    ...(media.mimeType ? { mimetype: media.mimeType } : {}),
+    ...(cleanCaption ? { caption: cleanCaption } : {})
+  })
+
+  return {
+    id: response?.key?.id || externalId || '',
+    wamid: response?.key?.id || '',
+    from: phone.expectedPhone,
+    to: toPhone,
+    type: 'image',
+    image: {
+      link: media.sourceUrl,
+      mimeType: media.mimeType,
+      ...(cleanCaption ? { caption: cleanCaption } : {})
+    },
+    status: 'sent',
+    transport: 'qr',
+    createTime: nowIso(),
+    raw: response ? safeJson(response) : null
+  }
+}
+
+export async function sendWhatsAppQrAudioMessage({ phoneNumberId, from, to, audioDataUrl, audioUrl, externalId, durationMs } = {}) {
+  const phone = await resolveQrPhone({ phoneNumberId, from })
+  const toPhone = normalizePhoneForStorage(to) || cleanString(to)
+
+  if (Number(phone.qr_send_enabled || 0) !== 1) {
+    throw new Error('Ese numero no tiene el envio por QR activado')
+  }
+  if (!toPhone) throw new Error('Falta el numero destino')
+
+  const media = buildQrMediaPayload({
+    dataUrl: audioDataUrl,
+    url: audioUrl,
+    label: 'el audio'
+  })
+  const mimeType = inferAudioMimeType({ mimeType: media.mimeType, url: media.sourceUrl })
+  const sock = await ensureOpenSocket(phone)
+  const jid = `${toPhone.replace(/\D/g, '')}@s.whatsapp.net`
+  const response = await sock.sendMessage(jid, {
+    audio: media.content,
+    mimetype: mimeType,
+    ptt: false
+  })
+
+  return {
+    id: response?.key?.id || externalId || '',
+    wamid: response?.key?.id || '',
+    from: phone.expectedPhone,
+    to: toPhone,
+    type: 'audio',
+    audio: {
+      link: media.sourceUrl,
+      mimeType,
+      ...(durationMs ? { durationMs } : {})
+    },
     status: 'sent',
     transport: 'qr',
     createTime: nowIso(),

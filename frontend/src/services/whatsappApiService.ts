@@ -158,6 +158,7 @@ export interface WhatsAppApiTemplateSendPayload {
   variables?: unknown
   components?: Array<Record<string, any>>
   externalId?: string
+  phoneNumberId?: string
 }
 
 export interface WhatsAppApiTextSendPayload {
@@ -176,6 +177,7 @@ export interface WhatsAppApiImageSendPayload {
   imageUrl?: string
   caption?: string
   externalId?: string
+  phoneNumberId?: string
 }
 
 export interface WhatsAppApiAudioSendPayload {
@@ -185,6 +187,17 @@ export interface WhatsAppApiAudioSendPayload {
   audioUrl?: string
   durationMs?: number
   externalId?: string
+  phoneNumberId?: string
+}
+
+export interface WhatsAppApiSendResponse {
+  id?: string
+  wamid?: string
+  status?: string
+  transport?: 'api' | 'qr' | string
+  fallback?: boolean
+  fallbackFrom?: string
+  fallbackReason?: string
 }
 
 export interface WhatsAppQrSession {
@@ -226,8 +239,8 @@ export const whatsappApiService = {
   getTemplates: (status?: string) => apiClient.get<WhatsAppApiTemplatesResponse>('/whatsapp-api/templates', {
     params: status ? { status } : undefined
   }),
-  sendText: (payload: WhatsAppApiTextSendPayload) => apiClient.post('/whatsapp-api/messages/text', payload),
-  sendImage: (payload: WhatsAppApiImageSendPayload) => apiClient.post('/whatsapp-api/messages/image', payload),
-  sendAudio: (payload: WhatsAppApiAudioSendPayload) => apiClient.post('/whatsapp-api/messages/audio', payload),
-  sendTemplate: (payload: WhatsAppApiTemplateSendPayload) => apiClient.post('/whatsapp-api/templates/send', payload)
+  sendText: (payload: WhatsAppApiTextSendPayload) => apiClient.post<WhatsAppApiSendResponse>('/whatsapp-api/messages/text', payload),
+  sendImage: (payload: WhatsAppApiImageSendPayload) => apiClient.post<WhatsAppApiSendResponse>('/whatsapp-api/messages/image', payload),
+  sendAudio: (payload: WhatsAppApiAudioSendPayload) => apiClient.post<WhatsAppApiSendResponse>('/whatsapp-api/messages/audio', payload),
+  sendTemplate: (payload: WhatsAppApiTemplateSendPayload) => apiClient.post<WhatsAppApiSendResponse>('/whatsapp-api/templates/send', payload)
 }
