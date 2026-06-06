@@ -2045,6 +2045,12 @@ function parseSitesAIJson(text) {
   }
 }
 
+function getSitesAITargetType(siteKind) {
+  if (siteKind === 'landing') return 'landing_page'
+  if (siteKind === 'interactive_form') return 'interactive_form'
+  return 'standard_form'
+}
+
 function buildSitesAIInstructions({ siteKind, agentConfig = {} }) {
   const businessContext = [
     agentConfig.business_context,
@@ -2067,7 +2073,7 @@ Reglas duras:
 - El site creado siempre debe quedar como borrador editable en el builder.
 - La respuesta completa debe ser JSON valido sin markdown.
 
-Tipo solicitado por el usuario: ${siteKind === 'landing' ? 'landing_page' : 'formulario'}.
+Tipo solicitado por el usuario: ${getSitesAITargetType(siteKind)}.
 
 Bloques permitidos para landing_page:
 header_panel, hero, title, subtitle, text, image, video, button, benefits, testimonials, services, embed, calendar_embed, form_embed, faq, cta, footer_panel.
@@ -2123,6 +2129,8 @@ JSON esperado cuando esta listo:
 
 Para landings, si el usuario quiere formulario dentro de la landing, usa un bloque form_embed con settings.embeddedBlocks usando campos permitidos.
 Para formularios, propone reglas de calificacion/descalificacion cuando haya dropdown, radio o checkboxes.
+Si el tipo solicitado es standard_form, no lo conviertas a interactive_form.
+Si el tipo solicitado es interactive_form, mantenlo como formulario interactivo y organiza las preguntas en pasos claros.
 Usa copy claro y estrategico, pero mantenlo editable y estructurado.
 
 Contexto del negocio configurado en Ristak:
@@ -2286,12 +2294,7 @@ function resolveAIJumpTargets(blocks = []) {
 }
 
 function normalizeAISiteBlueprint(siteKind, aiSite = {}) {
-  const siteTypeInput = cleanString(aiSite.siteType || aiSite.site_type || aiSite.type || aiSite.tipo)
-  const siteType = siteKind === 'landing'
-    ? 'landing_page'
-    : siteTypeInput === 'interactive_form' || /interactivo|typeform|una_pregunta/i.test(siteTypeInput)
-      ? 'interactive_form'
-      : 'standard_form'
+  const siteType = getSitesAITargetType(siteKind)
 
   const id = crypto.randomUUID()
   const allowedTypes = siteType === 'landing_page'
@@ -2337,6 +2340,7 @@ function normalizeAISiteBlueprint(siteKind, aiSite = {}) {
     theme: {
       ...theme,
       ...(siteType === 'landing_page' ? { pageMaxWidth: 1440 } : {}),
+      ...(siteType === 'interactive_form' ? { pages: normalizeSitePages({ theme }) } : {}),
       ...(aiTemplate ? { template: aiTemplate } : {}),
       ...(successMessage || disqualifiedMessage
         ? {
@@ -2532,6 +2536,8 @@ export async function createSite(input = {}) {
     if (!Array.isArray(theme.pages) || theme.pages.length === 0) {
       theme.pages = getDefaultFunnelPages(theme.template)
     }
+  } else if (siteType === 'interactive_form' && (!Array.isArray(theme.pages) || theme.pages.length === 0)) {
+    theme.pages = normalizeSitePages({ theme: {} })
   }
   const status = validateSiteStatus(input.status || 'draft')
 
@@ -2579,7 +2585,7 @@ export async function createSite(input = {}) {
 
 export async function createSiteWithAI(input = {}) {
   const siteKind = cleanString(input.siteKind || input.site_kind)
-  if (!['landing', 'form'].includes(siteKind)) {
+  if (!['landing', 'form', 'interactive_form'].includes(siteKind)) {
     const error = new Error('Tipo de creacion con IA invalido')
     error.status = 400
     throw error
@@ -2591,7 +2597,9 @@ export async function createSiteWithAI(input = {}) {
       status: 'needs_more_info',
       reply: siteKind === 'landing'
         ? 'Cuentame el nicho, oferta, objetivo, cliente ideal, tono, estilo visual, CTA y si quieres formulario dentro de la landing.'
-        : 'Cuentame que prospecto quieres atraer, que datos necesitas, preguntas clave, respuestas que califican o descalifican y si lo quieres de una sola pagina o interactivo.'
+        : siteKind === 'interactive_form'
+          ? 'Cuentame que prospecto quieres atraer, que datos necesitas, preguntas clave y respuestas que califican o descalifican. Lo creare como formulario interactivo.'
+          : 'Cuentame que prospecto quieres atraer, que datos necesitas, preguntas clave y respuestas que califican o descalifican. Lo creare como formulario de una sola pagina.'
     }
   }
 
@@ -3428,6 +3436,23 @@ function getPageBlocks(site, pageId) {
   return blocks.filter(block => getBlockPageId(block, pages) === activePage.id)
 }
 
+function getInteractiveFormBlocks(site) {
+  const blocks = Array.isArray(site?.blocks) ? site.blocks : []
+  if (site?.siteType !== 'interactive_form') return blocks
+
+  const pages = normalizeSitePages(site)
+  const pageIndexes = new Map(pages.map((page, index) => [page.id, index]))
+  return [...blocks].sort((a, b) => {
+    const pageDelta = (pageIndexes.get(getBlockPageId(a, pages)) || 0) - (pageIndexes.get(getBlockPageId(b, pages)) || 0)
+    if (pageDelta !== 0) return pageDelta
+
+    const orderDelta = Number(a.sortOrder || 0) - Number(b.sortOrder || 0)
+    if (orderDelta !== 0) return orderDelta
+
+    return String(a.createdAt || '').localeCompare(String(b.createdAt || ''))
+  })
+}
+
 function isSectionBlock(block) {
   return block && block.blockType === 'section'
 }
@@ -4097,10 +4122,18 @@ function wrapRenderedBlock(block, html) {
 }
 
 function renderPublicBlock(block, context = {}) {
+  const pages = Array.isArray(context.pages) ? context.pages : normalizeSitePages(context.site)
+  const blockPageId = context.isInteractive ? getBlockPageId(block, pages) : ''
   const html = FIELD_BLOCK_TYPES.has(block.blockType)
-    ? renderFieldBlock(block, context.isInteractive)
+    ? renderFieldBlock(block, context.isInteractive, blockPageId)
     : renderContentBlock(block, context)
-  return wrapRenderedBlock(block, html)
+  const rendered = wrapRenderedBlock(block, html)
+
+  if (context.isInteractive && !FIELD_BLOCK_TYPES.has(block.blockType)) {
+    return `<div class="rstk-interactive-page-content" data-interactive-page-content="${escapeHtml(blockPageId)}">${rendered}</div>`
+  }
+
+  return rendered
 }
 
 function renderLandingSectionLane(lane, context = {}) {
@@ -4421,12 +4454,12 @@ function renderFieldInput(block) {
   return `<input id="${id}" name="${id}" type="text" placeholder="${placeholder}" ${required}>`
 }
 
-function renderFieldBlock(block, interactive = false) {
+function renderFieldBlock(block, interactive = false, pageId = '') {
   const label = escapeHtml(block.label || 'Pregunta')
   const required = block.required ? '<span class="rstk-required">*</span>' : ''
 
   return `
-    <section class="rstk-field ${interactive ? 'rstk-step' : ''}" data-block-id="${escapeHtml(block.id)}" data-required="${block.required ? 'true' : 'false'}" data-field-type="${escapeHtml(block.blockType)}">
+    <section class="rstk-field ${interactive ? 'rstk-step' : ''}" data-block-id="${escapeHtml(block.id)}" data-page-id="${escapeHtml(pageId)}" data-required="${block.required ? 'true' : 'false'}" data-field-type="${escapeHtml(block.blockType)}">
       <label for="${escapeHtml(block.id)}">${label}${required}</label>
       ${block.content ? `<p class="rstk-help">${escapeHtml(block.content)}</p>` : ''}
       ${renderFieldInput(block)}
@@ -5547,14 +5580,14 @@ export async function renderPublicSiteHtml(site, { pageId, trackingEnabled = tru
   const theme = { ...DEFAULT_THEME, ...(site.theme || {}) }
   const template = resolveTemplate(site)
   const brand = getBrand(site, template)
+  const isInteractive = site.siteType === 'interactive_form'
+  const isLandingType = site.siteType === 'landing_page'
   const pages = normalizeSitePages(site)
   const requestedPageId = cleanString(pageId)
   const activePage = pages.find(page => page.id === requestedPageId) || pages[0]
-  const blocks = getPageBlocks(site, activePage?.id)
+  const blocks = isInteractive ? getInteractiveFormBlocks(site) : getPageBlocks(site, activePage?.id)
   const fieldBlocks = collectFieldBlocks(blocks)
   const nativeFormContext = getNativeFormContext(site, blocks)
-  const isInteractive = site.siteType === 'interactive_form'
-  const isLandingType = site.siteType === 'landing_page'
   const hasForm = fieldBlocks.length > 0
   const completionAction = isLandingType ? getFormCompletionAction(blocks) : 'form_default'
   const nextPage = isLandingType ? getNextPage(site, activePage?.id) : null
@@ -5600,7 +5633,7 @@ export async function renderPublicSiteHtml(site, { pageId, trackingEnabled = tru
     isInteractive ? 'rstk-interactive' : ''
   ].filter(Boolean).join(' ')
 
-  const renderContext = { site, pageId: activePage?.id, isInteractive, isLandingType, submitText }
+  const renderContext = { site, pageId: activePage?.id, pages, isInteractive, isLandingType, submitText }
   const bodyBlocks = isLandingType
     ? renderLandingBlocks(blocks, renderContext)
     : blocks.map(block => renderPublicBlock(block, renderContext)).join('\n')
@@ -5663,6 +5696,7 @@ export async function renderPublicSiteHtml(site, { pageId, trackingEnabled = tru
       const siteId = form.getAttribute('data-site-id');
       const pageId = form.getAttribute('data-page-id') || '';
       const steps = Array.from(form.querySelectorAll('.rstk-step'));
+      const pageContents = Array.from(form.querySelectorAll('[data-interactive-page-content]'));
       const nextButton = form.querySelector('[data-next]');
       const backButton = form.querySelector('[data-back]');
       const submitButton = form.querySelector('[data-submit]');
@@ -5718,6 +5752,11 @@ export async function renderPublicSiteHtml(site, { pageId, trackingEnabled = tru
       const renderStep = () => {
         if (!isInteractive || steps.length === 0) return;
         steps.forEach((step, stepIndex) => { step.hidden = stepIndex !== index; });
+        const currentPageId = steps[index] ? steps[index].getAttribute('data-page-id') || '' : '';
+        pageContents.forEach((content) => {
+          const contentPageId = content.getAttribute('data-interactive-page-content') || '';
+          content.hidden = Boolean(currentPageId) && contentPageId !== currentPageId;
+        });
         if (backButton) backButton.hidden = index === 0;
         if (nextButton) nextButton.hidden = index >= steps.length - 1;
         if (submitButton) submitButton.hidden = index < steps.length - 1;
@@ -6524,9 +6563,12 @@ export async function createSubmissionFromRequest(req, body = {}) {
     ? site.blocks
     : await hydrateEmbeddedForms(await listSiteBlocks(site.id))
   const submittedPageId = cleanString(body.pageId || body.page_id || body.meta?.pageId || body.meta?.page_id)
+  const orderedSubmissionBlocks = site.siteType === 'interactive_form'
+    ? getInteractiveFormBlocks({ ...site, blocks })
+    : blocks
   const submissionBlocks = site.siteType === 'landing_page' && submittedPageId
     ? getPageBlocks({ ...site, blocks }, submittedPageId)
-    : blocks
+    : orderedSubmissionBlocks
   const { responses, errors } = normalizeSubmissionResponses(submissionBlocks, body.responses || {})
   if (errors.length) {
     const error = new Error(errors.join(', '))

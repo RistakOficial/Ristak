@@ -236,7 +236,7 @@ export interface SitesDomainConfig {
   }
 }
 
-export type SitesAICreationKind = 'landing' | 'form'
+export type SitesAICreationKind = 'landing' | 'form' | 'interactive_form'
 
 export interface SitesAICreationMessage {
   role: 'user' | 'assistant'

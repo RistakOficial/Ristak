@@ -104,7 +104,15 @@ import { buildCanvasTheme } from './sitesCanvasTheme'
 
 type SitesSection = 'landings' | 'forms' | 'leads' | 'domains'
 type DeviceMode = 'desktop' | 'mobile'
-type CreateFlow = 'closed' | 'landing-start' | 'landing-template' | 'form-kind' | 'form-template' | 'interactive-template'
+type CreateFlow =
+  | 'closed'
+  | 'landing-start'
+  | 'landing-template'
+  | 'form-kind'
+  | 'form-start'
+  | 'form-template'
+  | 'interactive-start'
+  | 'interactive-template'
 
 interface LeadRow extends SiteSubmission {
   siteName: string
@@ -341,7 +349,9 @@ const isChoiceBlock = (blockType: SiteBlockType) =>
 const nativeBorderBlockTypes = new Set<SiteBlockType>(['hero', 'section', 'cta', 'benefits', 'testimonials', 'services', 'faq', 'form_embed', 'image', 'video', 'embed', 'calendar_embed'])
 
 const isLanding = (site?: PublicSite | null) => site?.siteType === 'landing_page'
+const isInteractiveForm = (site?: PublicSite | null) => site?.siteType === 'interactive_form'
 const isFormSite = (site?: PublicSite | null) => site?.siteType === 'standard_form' || site?.siteType === 'interactive_form'
+const hasEditablePages = (site?: PublicSite | null) => isLanding(site) || isInteractiveForm(site)
 
 const formatDate = (value?: string | null) => {
   if (!value) return 'Sin fecha'
@@ -720,14 +730,28 @@ const getCreateFlowHeaderCopy = (step: CreateFlow) => {
   if (step === 'form-kind') {
     return {
       title: 'Nuevo formulario',
-      subtitle: 'Como quieres iniciar tu formulario?'
+      subtitle: 'Elige como quieres que la persona responda tu formulario.'
+    }
+  }
+
+  if (step === 'form-start') {
+    return {
+      title: 'Formulario de una sola pagina',
+      subtitle: 'Ahora elige si quieres empezar en blanco, con plantilla o con IA.'
     }
   }
 
   if (step === 'form-template') {
     return {
-      title: 'Nuevo formulario',
+      title: 'Formulario de una sola pagina',
       subtitle: 'Elige el estilo de tu formulario'
+    }
+  }
+
+  if (step === 'interactive-start') {
+    return {
+      title: 'Formulario interactivo multipagina',
+      subtitle: 'Ahora elige si quieres empezar en blanco, con plantilla o con IA.'
     }
   }
 
@@ -746,7 +770,9 @@ const getCreateFlowHeaderCopy = (step: CreateFlow) => {
 
 const getPreviousCreateFlowStep = (step: CreateFlow): CreateFlow => {
   if (step === 'landing-template') return 'landing-start'
-  if (step === 'form-template' || step === 'interactive-template') return 'form-kind'
+  if (step === 'form-start' || step === 'interactive-start') return 'form-kind'
+  if (step === 'form-template') return 'form-start'
+  if (step === 'interactive-template') return 'interactive-start'
   return 'closed'
 }
 
@@ -758,7 +784,7 @@ const getEmptyEditorMessage = (section: SitesSection) => {
 
 const getLibraryPreviewBlocks = (site: PublicSite) => {
   const blocks = [...(site.blocks || [])].sort((a, b) => a.sortOrder - b.sortOrder)
-  if (!isLanding(site)) return blocks.slice(0, 4)
+  if (!hasEditablePages(site)) return blocks.slice(0, 4)
 
   const pages = normalizeFunnelPages(site)
   const firstPageId = pages[0]?.id || DEFAULT_FUNNEL_PAGE_ID
@@ -1721,12 +1747,12 @@ export const Sites: React.FC = () => {
     [selectedSite?.blocks]
   )
   const pages = useMemo(
-    () => isLanding(selectedSite) ? normalizeFunnelPages(selectedSite) : [],
+    () => hasEditablePages(selectedSite) ? normalizeFunnelPages(selectedSite) : [],
     [selectedSite]
   )
   const activePage = pages.find(page => page.id === activePageId) || pages[0] || null
   const canvasBlocks = useMemo(
-    () => isLanding(selectedSite) && activePage
+    () => hasEditablePages(selectedSite) && activePage
       ? blocks.filter(block => getBlockPageId(block, pages) === activePage.id)
       : blocks,
     [activePage, blocks, pages, selectedSite]
@@ -1752,7 +1778,7 @@ export const Sites: React.FC = () => {
     ? makePreviewBlock(
       paletteDragPayload.blockType,
       editorSite,
-      isLanding(editorSite) ? activePage?.id : undefined,
+      hasEditablePages(editorSite) ? activePage?.id : undefined,
       paletteDragPayload.initialSettings
     )
     : null
@@ -1846,7 +1872,7 @@ export const Sites: React.FC = () => {
   }, [])
 
   useEffect(() => {
-    if (!isLanding(selectedSite)) return
+    if (!hasEditablePages(selectedSite)) return
     const firstPage = pages[0]
     if (!firstPage) return
     if (!pages.some(page => page.id === activePageId)) {
@@ -2150,7 +2176,7 @@ export const Sites: React.FC = () => {
   }
 
   const persistFunnelPages = async (nextPages: SitePage[], nextActivePageId?: string) => {
-    if (!selectedSite || !isLanding(selectedSite)) return
+    if (!selectedSite || !hasEditablePages(selectedSite)) return
 
     setSaving(true)
     try {
@@ -2170,7 +2196,7 @@ export const Sites: React.FC = () => {
   }
 
   const handleAddPage = () => {
-    if (!selectedSite || !isLanding(selectedSite)) return
+    if (!selectedSite || !hasEditablePages(selectedSite)) return
     const nextPage = makeFunnelPage(pages.length)
     void persistFunnelPages([...pages, nextPage], nextPage.id)
   }
@@ -2189,7 +2215,7 @@ export const Sites: React.FC = () => {
   })
 
   const handleDuplicatePage = async (pageId: string) => {
-    if (!selectedSite || !isLanding(selectedSite)) return
+    if (!selectedSite || !hasEditablePages(selectedSite)) return
 
     const sourceIndex = pages.findIndex(page => page.id === pageId)
     if (sourceIndex < 0) return
@@ -2224,9 +2250,9 @@ export const Sites: React.FC = () => {
   }
 
   const handleDeletePage = async (pageId: string) => {
-    if (!selectedSite || !isLanding(selectedSite)) return
+    if (!selectedSite || !hasEditablePages(selectedSite)) return
     if (pages.length <= 1) {
-      showToast('warning', 'No se puede eliminar', 'El embudo debe tener al menos una pagina.')
+      showToast('warning', 'No se puede eliminar', `${getSiteTypeLabel(selectedSite)} debe tener al menos una pagina.`)
       return
     }
 
@@ -2257,7 +2283,7 @@ export const Sites: React.FC = () => {
             syncSelectedSite(site)
             setActivePageId(nextActive || DEFAULT_FUNNEL_PAGE_ID)
             setHasUnsavedChanges(false)
-            showToast('success', 'Pagina eliminada', 'El embudo se actualizo.')
+            showToast('success', 'Pagina eliminada', `${getSiteTypeLabel(selectedSite)} se actualizo.`)
           } catch (error) {
             showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo eliminar la pagina')
           } finally {
@@ -2314,6 +2340,10 @@ export const Sites: React.FC = () => {
                     : getTemplateFunnelPages(template)
                 )
               }
+            : siteType === 'interactive_form'
+              ? {
+                  pages: normalizePagesForSave([makeTemplateFunnelPage(DEFAULT_FUNNEL_PAGE_ID, 'Pagina 1', 0)])
+                }
             : {})
         },
         metaEventName: 'none'
@@ -2401,7 +2431,7 @@ export const Sites: React.FC = () => {
 
     previewWindow.document.write('<!doctype html><title>Previsualizando...</title><body style="font-family: system-ui; padding: 24px;">Cargando previsualizacion...</body>')
     try {
-      const html = await sitesService.getPreviewHtml(editorSite.id, isLanding(editorSite) ? activePage?.id : undefined, { test: true })
+      const html = await sitesService.getPreviewHtml(editorSite.id, hasEditablePages(editorSite) ? activePage?.id : undefined, { test: true })
       previewWindow.document.open()
       previewWindow.document.write(html)
       previewWindow.document.close()
@@ -2430,7 +2460,7 @@ export const Sites: React.FC = () => {
 
     previewWindow.document.write('<!doctype html><title>Previsualizando...</title><body style="font-family: system-ui; padding: 24px;">Cargando previsualizacion...</body>')
     try {
-      const pageId = isLanding(site) ? normalizeFunnelPages(site)[0]?.id : undefined
+      const pageId = hasEditablePages(site) ? normalizeFunnelPages(site)[0]?.id : undefined
       const html = await sitesService.getPreviewHtml(site.id, pageId, { test: true })
       previewWindow.document.open()
       previewWindow.document.write(html)
@@ -2580,6 +2610,12 @@ export const Sites: React.FC = () => {
           ...(payload.settings || {}),
           pageId: activePage.id
         }
+      } else if (isInteractiveForm(selectedSite) && activePage) {
+        payload.settings = {
+          ...(payload.settings || {}),
+          ...initialSettings,
+          pageId: activePage.id
+        }
       } else if (Object.keys(initialSettings).length > 0) {
         payload.settings = {
           ...(payload.settings || {}),
@@ -2592,10 +2628,10 @@ export const Sites: React.FC = () => {
       syncSelectedSite(site)
       const added = [...(site.blocks || [])]
         .filter(block => !previousBlockIds.has(block.id))
-        .find(block => !isLanding(site) || getBlockPageId(block, sitePages) === activePageForAdd)
+        .find(block => !hasEditablePages(site) || getBlockPageId(block, sitePages) === activePageForAdd)
       if (added && Number.isFinite(options.insertIndex)) {
         const pageBlocks = [...(site.blocks || [])]
-          .filter(block => !isLanding(site) || getBlockPageId(block, sitePages) === activePageForAdd)
+          .filter(block => !hasEditablePages(site) || getBlockPageId(block, sitePages) === activePageForAdd)
           .sort((a, b) => a.sortOrder - b.sortOrder)
         const withoutAdded = pageBlocks.filter(block => block.id !== added.id)
         const boundedIndex = Math.max(0, Math.min(Number(options.insertIndex), withoutAdded.length))
@@ -2607,7 +2643,7 @@ export const Sites: React.FC = () => {
         site = await sitesService.reorderBlocks(
           selectedSite.id,
           orderedBlocks.map(block => block.id),
-          isLanding(site) ? activePage?.id : undefined
+          hasEditablePages(site) ? activePage?.id : undefined
         )
         syncSelectedSite(site)
       }
@@ -2755,7 +2791,7 @@ export const Sites: React.FC = () => {
       const site = await sitesService.reorderBlocks(
         selectedSite.id,
         nextPageBlocks.map(block => block.id),
-        isLanding(selectedSite) ? activePage?.id : undefined
+        hasEditablePages(selectedSite) ? activePage?.id : undefined
       )
       syncSelectedSite(site)
       if (!wasAlreadyDirty) {
@@ -3162,7 +3198,7 @@ export const Sites: React.FC = () => {
                   </div>
                 </div>
               </div>
-              {isLanding(editorSite) && (
+              {hasEditablePages(editorSite) && (
                 <div className={styles.editorHeaderPages}>
                   <FunnelPagesPanel
                     pages={pages}
@@ -3502,7 +3538,7 @@ const LibrarySitePreview: React.FC<{
   forms: PublicSite[]
   calendars: CalendarType[]
 }> = ({ site, forms, calendars }) => {
-  const pages = isLanding(site) ? normalizeFunnelPages(site) : []
+  const pages = hasEditablePages(site) ? normalizeFunnelPages(site) : []
   const activePageId = pages[0]?.id || DEFAULT_FUNNEL_PAGE_ID
   const blocks = getLibraryPreviewBlocks(site)
   const canvasTheme = buildCanvasTheme(site, 'desktop')
@@ -3988,7 +4024,24 @@ const CreateFlowPanel: React.FC<CreateFlowPanelProps> = ({ step, creating, onCre
 
       {step === 'form-kind' && (
         <div className={styles.choiceGrid}>
-          <button type="button" disabled={creating} onClick={() => onCreate('standard_form', 'blank', 'ristak')}>
+          <button type="button" disabled={creating} onClick={() => onAdvance('form-start')}>
+            <FileText size={22} />
+            <strong>Una sola pagina</strong>
+            <p>Todas las preguntas quedan juntas en una misma pagina. Sirve para capturas rapidas y formularios cortos.</p>
+            <ChevronRight size={18} />
+          </button>
+          <button type="button" disabled={creating} onClick={() => onAdvance('interactive-start')}>
+            <FormInput size={22} />
+            <strong>Interactivo o multipagina</strong>
+            <p>Divide las preguntas en pasos o paginas para guiar mejor a la persona que responde.</p>
+            <ChevronRight size={18} />
+          </button>
+        </div>
+      )}
+
+      {step === 'form-start' && (
+        <div className={styles.choiceGrid}>
+          <button type="button" disabled={creating} onClick={() => onCreate('standard_form', 'blank', 'compact')}>
             <FileText size={22} />
             <strong>En blanco</strong>
             <p>Formulario limpio para agregar solo los campos que necesitas.</p>
@@ -3997,13 +4050,36 @@ const CreateFlowPanel: React.FC<CreateFlowPanelProps> = ({ step, creating, onCre
           <button type="button" disabled={creating} onClick={() => onAdvance('form-template')}>
             <FormInput size={22} />
             <strong>Desde plantilla</strong>
-            <p>Elige formularios normales, registros, redes sociales o quiz guiados.</p>
+            <p>Elige formularios de captura, registros o redes sociales.</p>
             <ChevronRight size={18} />
           </button>
           <button type="button" disabled={creating} onClick={() => onCreateWithAI('form')}>
             <Sparkles size={22} />
             <strong>Usando IA</strong>
-            <p>El asistente arma preguntas, campos y reglas de calificacion como borrador.</p>
+            <p>El asistente arma un formulario de una sola pagina con preguntas, campos y reglas editables.</p>
+            <ChevronRight size={18} />
+          </button>
+        </div>
+      )}
+
+      {step === 'interactive-start' && (
+        <div className={styles.choiceGrid}>
+          <button type="button" disabled={creating} onClick={() => onCreate('interactive_form', 'blank', 'interactive')}>
+            <FileText size={22} />
+            <strong>En blanco</strong>
+            <p>Formulario interactivo limpio para crear pasos y agregar preguntas por pantalla.</p>
+            <ChevronRight size={18} />
+          </button>
+          <button type="button" disabled={creating} onClick={() => onAdvance('interactive-template')}>
+            <FormInput size={22} />
+            <strong>Desde plantilla</strong>
+            <p>Elige quiz guiados, registros paso a paso o formatos de redes sociales.</p>
+            <ChevronRight size={18} />
+          </button>
+          <button type="button" disabled={creating} onClick={() => onCreateWithAI('interactive_form')}>
+            <Sparkles size={22} />
+            <strong>Usando IA</strong>
+            <p>El asistente arma un borrador interactivo con preguntas por pasos y reglas de calificacion.</p>
             <ChevronRight size={18} />
           </button>
         </div>
@@ -4025,10 +4101,10 @@ const CreateFlowPanel: React.FC<CreateFlowPanelProps> = ({ step, creating, onCre
         <>
           <p className={styles.galleryHint}>Elige un formulario de captura, registro o redes sociales.</p>
           <TemplateCategoryGallery
-            categories={[...FORM_TEMPLATE_CATEGORIES, ...INTERACTIVE_TEMPLATE_CATEGORIES]}
+            categories={FORM_TEMPLATE_CATEGORIES}
             disabled={creating}
             defaultSiteType="standard_form"
-            onPick={(id, category) => onCreate(category.siteType === 'interactive_form' ? 'interactive_form' : 'standard_form', 'template', id)}
+            onPick={(id) => onCreate('standard_form', 'template', id)}
           />
         </>
       )}

@@ -125,8 +125,23 @@ function getSitesAIIntro(siteKind: AIAgentSitesCreationKind) {
     ].join('\n')
   }
 
+  if (siteKind === 'interactive_form') {
+    return [
+      'Vamos a crear un formulario interactivo usando IA, con preguntas por pasos y reglas editables dentro de Sites.',
+      '',
+      'Cuéntame esto en un solo mensaje si puedes:',
+      '- Qué tipo de prospecto quieres atraer.',
+      '- Qué datos necesitas capturar.',
+      '- Qué preguntas son importantes.',
+      '- Qué respuestas indican buen candidato.',
+      '- Qué respuestas deben descalificar o detener el formulario.',
+      '- Qué mensaje mostrar si alguien queda descalificado.',
+      '- Si quieres una pregunta por pantalla o dividirlo por secciones.'
+    ].join('\n')
+  }
+
   return [
-    'Vamos a crear un formulario usando IA con campos y reglas editables dentro de Sites.',
+    'Vamos a crear un formulario de una sola pagina usando IA con campos y reglas editables dentro de Sites.',
     '',
     'Cuéntame esto en un solo mensaje si puedes:',
     '- Qué tipo de prospecto quieres atraer.',
@@ -134,8 +149,7 @@ function getSitesAIIntro(siteKind: AIAgentSitesCreationKind) {
     '- Qué preguntas son importantes.',
     '- Qué respuestas indican buen candidato.',
     '- Qué respuestas deben descalificar o detener el formulario.',
-    '- Qué mensaje mostrar si alguien queda descalificado.',
-    '- Si debe ser de una sola página o interactivo, una pregunta por pantalla.'
+    '- Qué mensaje mostrar si alguien queda descalificado.'
   ].join('\n')
 }
 
