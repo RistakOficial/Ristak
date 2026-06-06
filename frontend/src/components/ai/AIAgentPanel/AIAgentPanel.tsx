@@ -143,7 +143,7 @@ function getSitesAIIntro(siteKind: AIAgentSitesCreationKind) {
   }
 
   return [
-    'Vamos a crear un formulario de una sola pagina usando IA con campos y reglas editables dentro de Sites.',
+    'Vamos a crear un formulario con pagina de agradecimiento usando IA, con campos y reglas editables dentro de Sites.',
     '',
     'Cuéntame esto en un solo mensaje si puedes:',
     '- Qué tipo de prospecto quieres atraer.',

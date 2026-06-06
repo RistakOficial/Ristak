@@ -176,6 +176,7 @@ const ruleActions: Array<{ value: SiteOptionAction; label: string }> = [
 const SITES_AI_DRAFT_CREATED_EVENT = 'ristak-sites-ai-draft-created'
 const SITES_EDITOR_ACTIVE_EVENT = 'ristak-sites-editor-active'
 const DEFAULT_FUNNEL_PAGE_ID = 'page-1'
+const FORM_THANK_YOU_PAGE_ID = 'page-2'
 const SOCIAL_PROFILE_SELECTED_ID = '__social_profile__'
 const PAGE_SELECTED_ID = '__page__'
 const isEditorSurfaceSelection = (id: string) => id === SOCIAL_PROFILE_SELECTED_ID || id === PAGE_SELECTED_ID
@@ -395,9 +396,11 @@ const isChoiceBlock = (blockType: SiteBlockType) =>
 const nativeBorderBlockTypes = new Set<SiteBlockType>(['hero', 'section', 'cta', 'benefits', 'testimonials', 'services', 'faq', 'form_embed', 'image', 'video', 'embed', 'calendar_embed'])
 
 const isLanding = (site?: PublicSite | null) => site?.siteType === 'landing_page'
+const isStandardForm = (site?: PublicSite | null) => site?.siteType === 'standard_form'
 const isInteractiveForm = (site?: PublicSite | null) => site?.siteType === 'interactive_form'
 const isFormSite = (site?: PublicSite | null) => site?.siteType === 'standard_form' || site?.siteType === 'interactive_form'
-const hasEditablePages = (site?: PublicSite | null) => isLanding(site) || isInteractiveForm(site)
+const hasEditablePages = (site?: PublicSite | null) => isLanding(site) || isInteractiveForm(site) || isStandardForm(site)
+const canManagePages = (site?: PublicSite | null) => !isStandardForm(site)
 
 const formatDate = (value?: string | null) => {
   if (!value) return 'Sin fecha'
@@ -598,6 +601,11 @@ const getTemplateFunnelPages = (id: SiteTemplateId): SitePage[] => {
     makeTemplateFunnelPage('page-3', 'Gracias', 2)
   ]
 }
+
+const getDefaultFormPages = (): SitePage[] => [
+  makeTemplateFunnelPage(DEFAULT_FUNNEL_PAGE_ID, 'Formulario', 0),
+  makeTemplateFunnelPage(FORM_THANK_YOU_PAGE_ID, 'Agradecimiento', 1)
+]
 
 const resolveTemplateId = (site?: PublicSite | null): SiteTemplateId => {
   const explicit = site?.theme?.template
@@ -817,14 +825,14 @@ const getCreateFlowHeaderCopy = (step: CreateFlow) => {
 
   if (step === 'form-start') {
     return {
-      title: 'Formulario de una sola pagina',
+      title: 'Formulario con agradecimiento',
       subtitle: 'Ahora elige si quieres empezar en blanco, con plantilla o con IA.'
     }
   }
 
   if (step === 'form-template') {
     return {
-      title: 'Formulario de una sola pagina',
+      title: 'Formulario con agradecimiento',
       subtitle: 'Elige el estilo de tu formulario'
     }
   }
@@ -1346,10 +1354,9 @@ const cloneJson = <T,>(value: T): T => {
   }
 }
 
-const normalizeFunnelPages = (site?: PublicSite | null): SitePage[] => {
-  const pages = Array.isArray(site?.theme?.pages) ? site.theme.pages : []
+const normalizePageList = (rawPages: SitePage[] = []): SitePage[] => {
   const seen = new Set<string>()
-  const normalized = pages
+  const normalized = rawPages
     .map((page, index) => ({
       id: page?.id || `${DEFAULT_FUNNEL_PAGE_ID}-${index + 1}`,
       title: page?.title || `Pagina ${index + 1}`,
@@ -1366,6 +1373,28 @@ const normalizeFunnelPages = (site?: PublicSite | null): SitePage[] => {
     .sort((a, b) => a.sortOrder - b.sortOrder)
     .map((page, index) => ({ ...page, sortOrder: index }))
 
+  return normalized
+}
+
+const normalizeFormPages = (site?: PublicSite | null): SitePage[] => {
+  const normalized = normalizePageList(Array.isArray(site?.theme?.pages) ? site.theme.pages : [])
+  const byId = new Map(normalized.map(page => [page.id, page]))
+
+  return getDefaultFormPages().map((page, index) => {
+    const existing = byId.get(page.id) || normalized[index]
+    return {
+      ...page,
+      metaCapiEnabled: Boolean(existing?.metaCapiEnabled),
+      metaEventName: normalizeMetaEventName(existing?.metaEventName, 'none'),
+      metaTrigger: normalizeMetaTrigger(existing?.metaTrigger)
+    }
+  })
+}
+
+const normalizeFunnelPages = (site?: PublicSite | null): SitePage[] => {
+  if (isStandardForm(site)) return normalizeFormPages(site)
+
+  const normalized = normalizePageList(Array.isArray(site?.theme?.pages) ? site.theme.pages : [])
   return normalized.length ? normalized : [{ id: DEFAULT_FUNNEL_PAGE_ID, title: 'Pagina 1', sortOrder: 0 }]
 }
 
@@ -1532,6 +1561,11 @@ const getButtonAction = (settings: Record<string, unknown>): ButtonAction => {
 const getFormCompletionAction = (settings: Record<string, unknown>): FormCompletionAction => {
   const action = getSettingString(settings, 'completionAction') as FormCompletionAction
   return ['form_default', 'next_page', 'next_page_if_qualified'].includes(action) ? action : 'form_default'
+}
+
+const getThemeFormCompletionAction = (theme?: SiteTheme): FormCompletionAction => {
+  const action = theme?.formCompletionAction
+  return action === 'form_default' || action === 'next_page' || action === 'next_page_if_qualified' ? action : 'next_page'
 }
 
 const normalizeOption = (option: string | SiteBlockOption, index: number): SiteBlockOption => {
@@ -2583,7 +2617,7 @@ export const Sites: React.FC = () => {
   }
 
   const handleAddPage = () => {
-    if (!selectedSite || !hasEditablePages(selectedSite)) return
+    if (!selectedSite || !hasEditablePages(selectedSite) || !canManagePages(selectedSite)) return
     const nextPage = makeFunnelPage(pages.length)
     void persistFunnelPages([...pages, nextPage], nextPage.id)
   }
@@ -2602,7 +2636,7 @@ export const Sites: React.FC = () => {
   })
 
   const handleDuplicatePage = async (pageId: string) => {
-    if (!selectedSite || !hasEditablePages(selectedSite)) return
+    if (!selectedSite || !hasEditablePages(selectedSite) || !canManagePages(selectedSite)) return
 
     const sourceIndex = pages.findIndex(page => page.id === pageId)
     if (sourceIndex < 0) return
@@ -2637,7 +2671,7 @@ export const Sites: React.FC = () => {
   }
 
   const handleDeletePage = async (pageId: string) => {
-    if (!selectedSite || !hasEditablePages(selectedSite)) return
+    if (!selectedSite || !hasEditablePages(selectedSite) || !canManagePages(selectedSite)) return
     if (pages.length <= 1) {
       showToast('warning', 'No se puede eliminar', `${getSiteTypeLabel(selectedSite)} debe tener al menos una pagina.`)
       return
@@ -2686,6 +2720,7 @@ export const Sites: React.FC = () => {
   }
 
   const handleReorderPages = (sourcePageId: string, targetPageId: string) => {
+    if (!selectedSite || !canManagePages(selectedSite)) return
     if (!sourcePageId || sourcePageId === targetPageId) return
     const oldIndex = pages.findIndex(page => page.id === sourcePageId)
     const newIndex = pages.findIndex(page => page.id === targetPageId)
@@ -2694,6 +2729,7 @@ export const Sites: React.FC = () => {
   }
 
   const handleRenamePage = (pageId: string, title: string) => {
+    if (!selectedSite || !canManagePages(selectedSite)) return
     const cleanTitle = title.trim()
     if (!cleanTitle) return
     const nextPages = pages.map((page, index) => page.id === pageId
@@ -2738,6 +2774,11 @@ export const Sites: React.FC = () => {
             : siteType === 'interactive_form'
               ? {
                   pages: normalizePagesForSave([makeTemplateFunnelPage(DEFAULT_FUNNEL_PAGE_ID, 'Pagina 1', 0)])
+                }
+            : siteType === 'standard_form'
+              ? {
+                  pages: normalizePagesForSave(getDefaultFormPages()),
+                  formCompletionAction: 'next_page'
                 }
             : {})
         },
@@ -2999,7 +3040,7 @@ export const Sites: React.FC = () => {
           ...(payload.settings || {}),
           pageId: activePage.id
         }
-      } else if (isInteractiveForm(selectedSite) && activePage) {
+      } else if (hasEditablePages(selectedSite) && activePage) {
         payload.settings = {
           ...(payload.settings || {}),
           ...initialSettings,
@@ -3591,6 +3632,7 @@ export const Sites: React.FC = () => {
                       <FunnelPagesPanel
                         pages={pages}
                         activePageId={activePage?.id || DEFAULT_FUNNEL_PAGE_ID}
+                        locked={!canManagePages(editorSite)}
                         draggingPageId={draggingPageId}
                         onSelectPage={setActivePageId}
                         onAddPage={handleAddPage}
@@ -4455,8 +4497,8 @@ const CreateFlowPanel: React.FC<CreateFlowPanelProps> = ({ step, creating, onCre
         <div className={styles.choiceGrid}>
           <button type="button" disabled={creating} onClick={() => onAdvance('form-start')}>
             <FileText size={22} />
-            <strong>Una sola pagina</strong>
-            <p>Todas las preguntas quedan juntas en una misma pagina. Sirve para capturas rapidas y formularios cortos.</p>
+            <strong>Formulario + agradecimiento</strong>
+            <p>La persona responde el formulario y despues puede ver una pagina final de agradecimiento.</p>
             <ChevronRight size={18} />
           </button>
           <button type="button" disabled={creating} onClick={() => onAdvance('interactive-start')}>
@@ -4473,7 +4515,7 @@ const CreateFlowPanel: React.FC<CreateFlowPanelProps> = ({ step, creating, onCre
           <button type="button" disabled={creating} onClick={() => onCreate('standard_form', 'blank', 'compact')}>
             <FileText size={22} />
             <strong>En blanco</strong>
-            <p>Formulario limpio para agregar solo los campos que necesitas.</p>
+            <p>Formulario limpio con pagina final lista para personalizar.</p>
             <ChevronRight size={18} />
           </button>
           <button type="button" disabled={creating} onClick={() => onAdvance('form-template')}>
@@ -4485,7 +4527,7 @@ const CreateFlowPanel: React.FC<CreateFlowPanelProps> = ({ step, creating, onCre
           <button type="button" disabled={creating} onClick={() => onCreateWithAI('form')}>
             <Sparkles size={22} />
             <strong>Usando IA</strong>
-            <p>El asistente arma un formulario de una sola pagina con preguntas, campos y reglas editables.</p>
+            <p>El asistente arma el formulario y una pagina final editable.</p>
             <ChevronRight size={18} />
           </button>
         </div>
@@ -5527,6 +5569,7 @@ const SeoOptimizationModal: React.FC<{
 interface FunnelPagesPanelProps {
   pages: SitePage[]
   activePageId: string
+  locked?: boolean
   draggingPageId: string | null
   onSelectPage: (pageId: string) => void
   onAddPage: () => void
@@ -5540,6 +5583,7 @@ interface FunnelPagesPanelProps {
 const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
   pages,
   activePageId,
+  locked = false,
   draggingPageId,
   onSelectPage,
   onAddPage,
@@ -5562,8 +5606,12 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
           <React.Fragment key={page.id}>
             <div
               className={`${styles.pageItemWrap} ${draggingPageId === page.id ? styles.pageItemDragging : ''}`}
-              draggable
+              draggable={!locked}
               onDragStart={(event) => {
+                if (locked) {
+                  event.preventDefault()
+                  return
+                }
                 if ((event.target as HTMLElement).closest('input,button')) {
                   event.preventDefault()
                   return
@@ -5572,11 +5620,13 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
                 onDragPage(page.id)
               }}
               onDragOver={(event) => {
+                if (locked) return
                 if (event.dataTransfer.types.includes('application/ristak-page')) {
                   event.preventDefault()
                 }
               }}
               onDrop={(event) => {
+                if (locked) return
                 event.preventDefault()
                 const sourcePageId = event.dataTransfer.getData('application/ristak-page')
                 onDragPage(null)
@@ -5594,7 +5644,7 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
                 }}
               >
                 <GripVertical size={14} />
-                {renamingPageId === page.id ? (
+                {renamingPageId === page.id && !locked ? (
                   <EditablePageTitle
                     pageId={page.id}
                     title={page.title || `Pagina ${index + 1}`}
@@ -5605,43 +5655,45 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
                 ) : (
                   <span className={styles.pageTitleText}>{page.title || `Pagina ${index + 1}`}</span>
                 )}
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <button
-                      type="button"
-                      className={styles.pageMenuButton}
-                      aria-label="Opciones de pagina"
-                      onClick={(event) => event.stopPropagation()}
-                      onPointerDown={(event) => event.stopPropagation()}
-                      onKeyDown={(event) => event.stopPropagation()}
-                    >
-                      <MoreVertical size={15} />
-                    </button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" sideOffset={6} className={styles.pageMenu}>
-                    <DropdownMenuItem
-                      onSelect={() => {
-                        onSelectPage(page.id)
-                        window.setTimeout(() => setRenamingPageId(page.id), 80)
-                      }}
-                    >
-                      <Pencil size={14} />
-                      Cambiar nombre
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onSelect={() => onDuplicatePage(page.id)}>
-                      <Copy size={14} />
-                      Duplicar pagina
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      disabled={pages.length <= 1}
-                      className={styles.pageMenuDanger}
-                      onSelect={() => onDeletePage(page.id)}
-                    >
-                      <Trash2 size={14} />
-                      Eliminar pagina
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
+                {!locked && (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <button
+                        type="button"
+                        className={styles.pageMenuButton}
+                        aria-label="Opciones de pagina"
+                        onClick={(event) => event.stopPropagation()}
+                        onPointerDown={(event) => event.stopPropagation()}
+                        onKeyDown={(event) => event.stopPropagation()}
+                      >
+                        <MoreVertical size={15} />
+                      </button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" sideOffset={6} className={styles.pageMenu}>
+                      <DropdownMenuItem
+                        onSelect={() => {
+                          onSelectPage(page.id)
+                          window.setTimeout(() => setRenamingPageId(page.id), 80)
+                        }}
+                      >
+                        <Pencil size={14} />
+                        Cambiar nombre
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onSelect={() => onDuplicatePage(page.id)}>
+                        <Copy size={14} />
+                        Duplicar pagina
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        disabled={pages.length <= 1}
+                        className={styles.pageMenuDanger}
+                        onSelect={() => onDeletePage(page.id)}
+                      >
+                        <Trash2 size={14} />
+                        Eliminar pagina
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                )}
               </div>
             </div>
             {index < pages.length - 1 && (
@@ -5651,10 +5703,12 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
             )}
           </React.Fragment>
         ))}
-        <button type="button" className={styles.addPageButton} onClick={onAddPage}>
-          <Plus size={15} />
-          Agregar pagina
-        </button>
+        {!locked && (
+          <button type="button" className={styles.addPageButton} onClick={onAddPage}>
+            <Plus size={15} />
+            Agregar pagina
+          </button>
+        )}
       </div>
     </aside>
   )
@@ -7487,6 +7541,32 @@ const PageInspector: React.FC<{
                 <span>Texto del boton de envio</span>
                 <input value={theme.submitText || ''} placeholder="Enviar" onChange={(event) => onPatchTheme({ submitText: event.target.value })} onBlur={onSaveSite} />
               </label>
+              {isStandardForm(site) && (
+                <>
+                  <label className={styles.field}>
+                    <span>Al enviar formulario</span>
+                    <select
+                      value={getThemeFormCompletionAction(theme)}
+                      onChange={(event) => onPatchTheme({ formCompletionAction: event.target.value as FormCompletionAction })}
+                      onBlur={onSaveSite}
+                    >
+                      <option value="next_page">Mostrar pagina Agradecimiento</option>
+                      <option value="next_page_if_qualified">Mostrar Agradecimiento solo si califica</option>
+                      <option value="form_default">Mostrar mensaje en este formulario</option>
+                    </select>
+                  </label>
+                  <label className={styles.field}>
+                    <span>Mensaje en el formulario</span>
+                    <textarea
+                      rows={2}
+                      value={theme.finalMessages?.success || ''}
+                      placeholder="Listo. Recibimos tu informacion."
+                      onChange={(event) => onPatchTheme({ finalMessages: { ...(theme.finalMessages || {}), success: event.target.value } })}
+                      onBlur={onSaveSite}
+                    />
+                  </label>
+                </>
+              )}
             </>
           )}
         </div>

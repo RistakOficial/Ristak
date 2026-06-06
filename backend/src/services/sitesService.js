@@ -78,6 +78,7 @@ const PUBLIC_DOMAIN_CACHE_TTL_MS = 15 * 60 * 1000
 const PUBLIC_DOMAIN_FAILED_CACHE_TTL_MS = 90 * 1000
 const PUBLIC_DOMAIN_VERIFY_TIMEOUT_MS = 6000
 const DEFAULT_FUNNEL_PAGE_ID = 'page-1'
+const FORM_THANK_YOU_PAGE_ID = 'page-2'
 const SITE_META_NO_EVENT = 'none'
 const SITE_META_EVENTS = new Set(['Lead', 'Schedule', 'Purchase', 'FormSubmitted', 'ViewContent', 'CompleteRegistration', 'Contact'])
 const META_STANDARD_PIXEL_EVENTS = new Set(['Lead', 'Schedule', 'Purchase', 'ViewContent', 'CompleteRegistration', 'Contact'])
@@ -102,6 +103,11 @@ function normalizeSiteMetaEventName(value, { allowNone = false, fallback = 'Lead
 function normalizeSiteMetaTrigger(value) {
   const trigger = cleanString(value)
   return SITE_META_TRIGGERS.has(trigger) ? trigger : 'page_view'
+}
+
+function normalizeFormCompletionAction(value, fallback = 'form_default') {
+  const action = cleanString(value)
+  return ['form_default', 'next_page', 'next_page_if_qualified'].includes(action) ? action : fallback
 }
 
 function parseJson(value, fallback) {
@@ -467,6 +473,13 @@ function getDefaultFunnelPages(template) {
   ]
 }
 
+function getDefaultFormPages() {
+  return [
+    makeDefaultFunnelPage(DEFAULT_FUNNEL_PAGE_ID, 'Formulario', 0),
+    makeDefaultFunnelPage(FORM_THANK_YOU_PAGE_ID, 'Agradecimiento', 1)
+  ]
+}
+
 async function ensureUniqueSlug(baseSlug, ignoreSiteId = null) {
   let slug = baseSlug
   let suffix = 2
@@ -754,6 +767,14 @@ function buildDefaultBlocks(siteId, siteType, template) {
       })
     }
   })
+  const makeFormThankYouBlocks = () => [
+    makeBlock('title', 'Titulo', 'Gracias, recibimos tu informacion', { sortOrder: 0 }),
+    makeBlock('subtitle', 'Subtitulo', 'Te contactaremos pronto con el siguiente paso.', { sortOrder: 1 })
+  ]
+  const withStandardFormPages = (blocks) => [
+    ...assignBlocksToPage(blocks, DEFAULT_FUNNEL_PAGE_ID),
+    ...assignBlocksToPage(makeFormThankYouBlocks(), FORM_THANK_YOU_PAGE_ID)
+  ]
   const prepareFunnelEntryBlocks = (blocks, pageId = DEFAULT_FUNNEL_PAGE_ID) => {
     const nextBlocks = blocks.map(block => {
       const settings = parseJson(block.settings_json, {})
@@ -1807,16 +1828,16 @@ function buildDefaultBlocks(siteId, siteType, template) {
   }
 
   if (tpl === 'compact') {
-    return [
+    return withStandardFormPages([
       makeBlock('title', 'Titulo', 'Deja tus datos y te contactamos', { sortOrder: 0 }),
       makeBlock('subtitle', 'Subtitulo', 'Completa este formulario rapido para que podamos darte seguimiento.', { sortOrder: 1 }),
       makeBlock('description', 'Nota', 'Tardas menos de un minuto. Usa este formato cuando solo necesitas datos basicos.', { sortOrder: 2 }),
       ...contactFields(3)
-    ]
+    ])
   }
 
   if (tpl === 'event') {
-    return [
+    return withStandardFormPages([
       formImageBlock('Imagen de registro', TEMPLATE_IMAGE_URLS.planning, 0, { mediaRadius: 22 }),
       makeBlock('title', 'Titulo', 'Registro rapido', { sortOrder: 1 }),
       makeBlock('subtitle', 'Subtitulo', 'Deja tus datos para confirmar informacion y recibir los siguientes pasos.', { sortOrder: 2 }),
@@ -1832,11 +1853,11 @@ function buildDefaultBlocks(siteId, siteType, template) {
         sortOrder: 4
       }),
       ...contactFields(5)
-    ]
+    ])
   }
 
   if (tpl === 'quote') {
-    return [
+    return withStandardFormPages([
       formImageBlock('Imagen de cotizacion', TEMPLATE_IMAGE_URLS.quote, 0, { mediaRadius: 18 }),
       makeBlock('title', 'Titulo', 'Cuentanos que necesitas cotizar', { sortOrder: 1 }),
       makeBlock('subtitle', 'Subtitulo', 'Mientras mas claro sea el contexto, mas facil sera responderte bien.', { sortOrder: 2 }),
@@ -1859,11 +1880,11 @@ function buildDefaultBlocks(siteId, siteType, template) {
         sortOrder: 5
       }),
       ...contactFields(6)
-    ]
+    ])
   }
 
   if (tpl === 'callback') {
-    return [
+    return withStandardFormPages([
       makeBlock('title', 'Titulo', 'Solicita una llamada consultiva', { sortOrder: 0 }),
       makeBlock('subtitle', 'Subtitulo', 'Este formulario ayuda a preparar la conversacion antes de contactarte.', { sortOrder: 1 }),
       makeBlock('radio', 'Nivel de urgencia', '', {
@@ -1883,11 +1904,11 @@ function buildDefaultBlocks(siteId, siteType, template) {
         sortOrder: 3
       }),
       ...contactFields(4)
-    ]
+    ])
   }
 
   if (tpl === 'waitlist') {
-    return [
+    return withStandardFormPages([
       makeBlock('title', 'Titulo', 'Entra a la lista de espera', { sortOrder: 0 }),
       formImageBlock('Imagen de lista', TEMPLATE_IMAGE_URLS.handshake, 1, { mediaRadius: 26 }),
       makeBlock('subtitle', 'Subtitulo', 'Deja tus datos y te avisamos cuando haya cupo, fecha o acceso disponible.', { sortOrder: 2 }),
@@ -1904,11 +1925,11 @@ function buildDefaultBlocks(siteId, siteType, template) {
         sortOrder: 4
       }),
       ...contactFields(5)
-    ]
+    ])
   }
 
   if (tpl === 'executive' || tpl === 'local' || tpl === 'premium' || tpl === 'ristak') {
-    return [
+    return withStandardFormPages([
       makeBlock('title', 'Titulo', 'Solicita informacion', { sortOrder: 0 }),
       makeBlock('subtitle', 'Subtitulo', 'Cuentanos que necesitas y te contactamos con el siguiente paso.', { sortOrder: 1 }),
       makeBlock('paragraph', 'Que necesitas resolver?', '', {
@@ -1918,18 +1939,18 @@ function buildDefaultBlocks(siteId, siteType, template) {
         sortOrder: 2
       }),
       ...contactFields(3)
-    ]
+    ])
   }
 
   if (tpl === 'facebook' || tpl === 'instagram' || tpl === 'tiktok') {
-    return [
+    return withStandardFormPages([
       makeBlock('title', 'Titulo', 'Deja tus datos y te contactamos', { sortOrder: 0 }),
       makeBlock('subtitle', 'Subtitulo', 'Completa el formulario y un asesor te contacta en minutos.', { sortOrder: 1 }),
       ...contactFields(2)
-    ]
+    ])
   }
 
-  return [
+  return withStandardFormPages([
     makeBlock('title', 'Titulo', siteType === 'interactive_form' ? 'Vamos paso a paso' : 'Cuentanos que necesitas', {
       sortOrder: 0
     }),
@@ -1937,7 +1958,7 @@ function buildDefaultBlocks(siteId, siteType, template) {
       sortOrder: 1
     }),
     ...contactFields(2)
-  ]
+  ])
 }
 
 function limitString(value, limit = 1200) {
@@ -2315,6 +2336,49 @@ function resolveAIJumpTargets(blocks = []) {
   }))
 }
 
+function makeAIThankYouBlocks(siteId) {
+  return [
+    {
+      id: crypto.randomUUID(),
+      site_id: siteId,
+      block_type: 'title',
+      label: 'Titulo',
+      content: 'Gracias, recibimos tu informacion',
+      placeholder: '',
+      required: 0,
+      options: [],
+      settings: { pageId: FORM_THANK_YOU_PAGE_ID },
+      sort_order: 0
+    },
+    {
+      id: crypto.randomUUID(),
+      site_id: siteId,
+      block_type: 'subtitle',
+      label: 'Subtitulo',
+      content: 'Te contactaremos pronto con el siguiente paso.',
+      placeholder: '',
+      required: 0,
+      options: [],
+      settings: { pageId: FORM_THANK_YOU_PAGE_ID },
+      sort_order: 1
+    }
+  ]
+}
+
+function withStandardFormBlueprintPages(blocks = [], siteId) {
+  return [
+    ...blocks.map((block, index) => ({
+      ...block,
+      settings: {
+        ...(block.settings || {}),
+        pageId: DEFAULT_FUNNEL_PAGE_ID
+      },
+      sort_order: Number.isFinite(Number(block.sort_order)) ? Number(block.sort_order) : index
+    })),
+    ...makeAIThankYouBlocks(siteId)
+  ]
+}
+
 function normalizeAISiteBlueprint(siteKind, aiSite = {}) {
   const siteType = getSitesAITargetType(siteKind)
 
@@ -2337,6 +2401,9 @@ function normalizeAISiteBlueprint(siteKind, aiSite = {}) {
   }
 
   blocks = resolveAIJumpTargets(blocks)
+  if (siteType === 'standard_form') {
+    blocks = withStandardFormBlueprintPages(blocks, id)
+  }
 
   const seo = aiSite.seo && typeof aiSite.seo === 'object' && !Array.isArray(aiSite.seo) ? aiSite.seo : {}
   const finalMessages = aiSite.finalMessages && typeof aiSite.finalMessages === 'object' && !Array.isArray(aiSite.finalMessages)
@@ -2362,6 +2429,12 @@ function normalizeAISiteBlueprint(siteKind, aiSite = {}) {
     theme: {
       ...theme,
       ...(siteType === 'landing_page' ? { pageMaxWidth: 1440 } : {}),
+      ...(siteType === 'standard_form'
+        ? {
+            pages: normalizeSitePages({ siteType, theme }),
+            formCompletionAction: normalizeFormCompletionAction(theme.formCompletionAction || theme.form_completion_action, 'next_page')
+          }
+        : {}),
       ...(siteType === 'interactive_form' ? { pages: normalizeSitePages({ theme }) } : {}),
       ...(aiTemplate ? { template: aiTemplate } : {}),
       ...(successMessage || disqualifiedMessage
@@ -2567,6 +2640,9 @@ export async function createSite(input = {}) {
     if (!Array.isArray(theme.pages) || theme.pages.length === 0) {
       theme.pages = getDefaultFunnelPages(theme.template)
     }
+  } else if (siteType === 'standard_form') {
+    theme.pages = normalizeSitePages({ siteType, theme })
+    theme.formCompletionAction = normalizeFormCompletionAction(theme.formCompletionAction || theme.form_completion_action, 'next_page')
   } else if (siteType === 'interactive_form' && (!Array.isArray(theme.pages) || theme.pages.length === 0)) {
     theme.pages = normalizeSitePages({ theme: {} })
   }
@@ -2632,7 +2708,7 @@ export async function createSiteWithAI(input = {}) {
         ? 'Cuentame el nicho, oferta, objetivo, cliente ideal, tono, estilo visual, CTA y si quieres formulario dentro de la landing.'
         : siteKind === 'interactive_form'
           ? 'Cuentame que prospecto quieres atraer, que datos necesitas, preguntas clave y respuestas que califican o descalifican. Lo creare como formulario interactivo.'
-          : 'Cuentame que prospecto quieres atraer, que datos necesitas, preguntas clave y respuestas que califican o descalifican. Lo creare como formulario de una sola pagina.'
+          : 'Cuentame que prospecto quieres atraer, que datos necesitas, preguntas clave y respuestas que califican o descalifican. Lo creare como formulario con pagina de agradecimiento.'
     }
   }
 
@@ -2685,6 +2761,13 @@ export async function updateSite(siteId, input = {}) {
     ? current.slug
     : await ensureUniqueSlug(slugify(input.slug), siteId)
   const domainChanged = false
+  const nextTheme = { ...DEFAULT_THEME, ...(input.theme || current.theme || {}) }
+  if (nextSiteType === 'standard_form') {
+    nextTheme.pages = normalizeSitePages({ siteType: nextSiteType, theme: nextTheme })
+    nextTheme.formCompletionAction = normalizeFormCompletionAction(nextTheme.formCompletionAction || nextTheme.form_completion_action, 'next_page')
+  } else if (nextSiteType === 'interactive_form' && (!Array.isArray(nextTheme.pages) || nextTheme.pages.length === 0)) {
+    nextTheme.pages = normalizeSitePages({ siteType: nextSiteType, theme: nextTheme })
+  }
 
   await db.run(`
     UPDATE public_sites SET
@@ -2718,7 +2801,7 @@ export async function updateSite(siteId, input = {}) {
       ? cleanString(input.title)
       : current.title,
     input.description === undefined ? current.description : cleanString(input.description) || null,
-    jsonString({ ...DEFAULT_THEME, ...(input.theme || current.theme || {}) }),
+    jsonString(nextTheme),
     input.metaCapiEnabled === undefined ? normalizeBoolean(current.metaCapiEnabled) : normalizeBoolean(input.metaCapiEnabled),
     normalizeSiteMetaEventName(input.metaEventName || current.metaEventName, { allowNone: true }),
     domainChanged ? 1 : 0,
@@ -3494,10 +3577,10 @@ function collectFieldBlocks(blocks = []) {
   return fields
 }
 
-function normalizeSitePages(site) {
-  const rawPages = Array.isArray(site?.theme?.pages) ? site.theme.pages : []
+function normalizePageList(rawPages = []) {
+  const sourcePages = Array.isArray(rawPages) ? rawPages : []
   const seen = new Set()
-  const pages = rawPages
+  const pages = sourcePages
     .map((page, index) => ({
       id: cleanString(page?.id) || `${DEFAULT_FUNNEL_PAGE_ID}-${index + 1}`,
       title: cleanString(page?.title) || `Pagina ${index + 1}`,
@@ -3514,6 +3597,28 @@ function normalizeSitePages(site) {
     .sort((a, b) => a.sortOrder - b.sortOrder)
     .map((page, index) => ({ ...page, sortOrder: index }))
 
+  return pages
+}
+
+function normalizeFormPages(site) {
+  const pages = normalizePageList(Array.isArray(site?.theme?.pages) ? site.theme.pages : [])
+  const byId = new Map(pages.map(page => [page.id, page]))
+
+  return getDefaultFormPages().map((page, index) => {
+    const existing = byId.get(page.id) || pages[index]
+    return {
+      ...page,
+      metaCapiEnabled: Boolean(existing?.metaCapiEnabled),
+      metaEventName: normalizeSiteMetaEventName(existing?.metaEventName, { allowNone: true, fallback: SITE_META_NO_EVENT }),
+      metaTrigger: normalizeSiteMetaTrigger(existing?.metaTrigger)
+    }
+  })
+}
+
+function normalizeSitePages(site) {
+  if (site?.siteType === 'standard_form') return normalizeFormPages(site)
+
+  const pages = normalizePageList(Array.isArray(site?.theme?.pages) ? site.theme.pages : [])
   return pages.length ? pages : [{ id: DEFAULT_FUNNEL_PAGE_ID, title: 'Pagina 1', sortOrder: 0 }]
 }
 
@@ -3524,11 +3629,44 @@ function getBlockPageId(block, pages) {
 
 function getPageBlocks(site, pageId) {
   const blocks = Array.isArray(site?.blocks) ? site.blocks : []
-  if (site?.siteType !== 'landing_page') return blocks
+  if (site?.siteType !== 'landing_page' && site?.siteType !== 'standard_form') return blocks
 
   const pages = normalizeSitePages(site)
   const activePage = pages.find(page => page.id === pageId) || pages[0]
   return blocks.filter(block => getBlockPageId(block, pages) === activePage.id)
+}
+
+function getDefaultFormThankYouBlocks(siteId) {
+  return [
+    {
+      id: 'default-thank-you-title',
+      siteId,
+      blockType: 'title',
+      label: 'Titulo',
+      content: 'Gracias, recibimos tu informacion',
+      placeholder: '',
+      required: false,
+      options: [],
+      settings: { pageId: FORM_THANK_YOU_PAGE_ID },
+      sortOrder: 0,
+      createdAt: '',
+      updatedAt: ''
+    },
+    {
+      id: 'default-thank-you-subtitle',
+      siteId,
+      blockType: 'subtitle',
+      label: 'Subtitulo',
+      content: 'Te contactaremos pronto con el siguiente paso.',
+      placeholder: '',
+      required: false,
+      options: [],
+      settings: { pageId: FORM_THANK_YOU_PAGE_ID },
+      sortOrder: 1,
+      createdAt: '',
+      updatedAt: ''
+    }
+  ]
 }
 
 function getInteractiveFormBlocks(site) {
@@ -3684,7 +3822,7 @@ function resolveButtonHref(settings = {}, context = {}) {
 function getFormCompletionAction(blocks = []) {
   const formBlock = blocks.find(block => block.blockType === 'form_embed')
   const action = cleanString(formBlock?.settings?.completionAction || formBlock?.settings?.completion_action)
-  return ['next_page', 'next_page_if_qualified', 'form_default'].includes(action) ? action : 'form_default'
+  return normalizeFormCompletionAction(action, 'form_default')
 }
 
 function getNativeFormContext(site, blocks = []) {
@@ -5736,10 +5874,14 @@ export async function renderPublicSiteHtml(site, { pageId, trackingEnabled = tru
   const brand = getBrand(site, template)
   const isInteractive = site.siteType === 'interactive_form'
   const isLandingType = site.siteType === 'landing_page'
+  const isStandardFormType = site.siteType === 'standard_form'
   const pages = normalizeSitePages(site)
   const requestedPageId = cleanString(pageId)
   const activePage = pages.find(page => page.id === requestedPageId) || pages[0]
-  const blocks = isInteractive ? getInteractiveFormBlocks(site) : getPageBlocks(site, activePage?.id)
+  let blocks = isInteractive ? getInteractiveFormBlocks(site) : getPageBlocks(site, activePage?.id)
+  if (isStandardFormType && activePage?.id === FORM_THANK_YOU_PAGE_ID && blocks.length === 0) {
+    blocks = getDefaultFormThankYouBlocks(site.id)
+  }
   const fieldBlocks = collectFieldBlocks(blocks)
   const interactivePageIds = isInteractive
     ? pages
@@ -5750,8 +5892,12 @@ export async function renderPublicSiteHtml(site, { pageId, trackingEnabled = tru
   const interactiveInitialIndex = Math.max(0, interactivePageIds.indexOf(activePage?.id || ''))
   const nativeFormContext = getNativeFormContext(site, blocks)
   const hasForm = fieldBlocks.length > 0
-  const completionAction = isLandingType ? getFormCompletionAction(blocks) : 'form_default'
-  const nextPage = isLandingType ? getNextPage(site, activePage?.id) : null
+  const completionAction = isLandingType
+    ? getFormCompletionAction(blocks)
+    : isStandardFormType
+      ? normalizeFormCompletionAction(theme.formCompletionAction || theme.form_completion_action, 'next_page')
+      : 'form_default'
+  const nextPage = (isLandingType || isStandardFormType) ? getNextPage(site, activePage?.id) : null
   const nextPageUrl = nextPage ? pageHref(nextPage.id) : ''
   const submitText = cleanString(theme.submitText) || 'Enviar'
   const storedPageMaxWidth = Number(theme && theme.pageMaxWidth)
@@ -6739,7 +6885,7 @@ export async function createSubmissionFromRequest(req, body = {}) {
   const orderedSubmissionBlocks = site.siteType === 'interactive_form'
     ? getInteractiveFormBlocks({ ...site, blocks })
     : blocks
-  const submissionBlocks = site.siteType === 'landing_page' && submittedPageId
+  const submissionBlocks = (site.siteType === 'landing_page' || site.siteType === 'standard_form') && submittedPageId
     ? getPageBlocks({ ...site, blocks }, submittedPageId)
     : orderedSubmissionBlocks
   const { responses, errors } = normalizeSubmissionResponses(submissionBlocks, body.responses || {})
