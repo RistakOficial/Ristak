@@ -93,6 +93,7 @@
   height: 100%;
   min-height: 0;
   overflow: hidden;
+  overflow: clip;
   background: var(--phone-chat-bg);
 }
 

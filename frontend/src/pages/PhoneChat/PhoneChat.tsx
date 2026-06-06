@@ -1358,8 +1358,6 @@ export const PhoneChat: React.FC = () => {
   const [conversationSortMode, setConversationSortMode] = useAppConfig<ConversationSortMode>('mobile_chat_sort_mode', 'recent')
   const [showLastMessagePreview, setShowLastMessagePreview] = useAppConfig<boolean>('mobile_chat_show_last_preview', true)
   const [showUnreadIndicators, setShowUnreadIndicators] = useAppConfig<boolean>('mobile_chat_show_unread_indicators', true)
-  const [openLastConversation, setOpenLastConversation] = useAppConfig<boolean>('mobile_chat_open_last_conversation', false)
-  const [lastConversationId, setLastConversationId] = useAppConfig<string>('mobile_chat_last_conversation_id', '')
   const [aiReplySuggestionsEnabled, setAiReplySuggestionsEnabled] = useAppConfig<boolean>('mobile_chat_ai_reply_suggestions_enabled', false)
   const { connected: highLevelConnected } = useHighLevelConnected()
   const {
@@ -1450,7 +1448,6 @@ export const PhoneChat: React.FC = () => {
   const voiceStartedAtRef = useRef(0)
   const voiceTimerRef = useRef<number | null>(null)
   const voiceCancelRef = useRef(false)
-  const autoOpenedLastConversationRef = useRef(false)
   const chatSwipeGestureRef = useRef<ChatSwipeGesture | null>(null)
   const closeSheetNow = useCallback(() => setSheet(null), [])
   const actionSheetDismiss = useBottomSheetDismiss({
@@ -1459,6 +1456,16 @@ export const PhoneChat: React.FC = () => {
   })
   const chatSwipeGenerationRef = useRef(0)
   const ignoreNextChatClickRef = useRef(false)
+  const resetPhoneFrameHorizontalScroll = useCallback(() => {
+    const frame = document.querySelector<HTMLElement>('[data-phone-chat-frame="true"]')
+    if (!frame || frame.scrollLeft === 0) return
+    frame.scrollLeft = 0
+  }, [])
+  const handlePhoneFrameScroll = useCallback((event: React.UIEvent<HTMLDivElement>) => {
+    if (event.currentTarget.scrollLeft !== 0) {
+      event.currentTarget.scrollLeft = 0
+    }
+  }, [])
 
   const aiAgentConversationOpen = activeContactId === AI_AGENT_CHAT_ID
   const activeContact = useMemo(
@@ -2015,6 +2022,12 @@ export const PhoneChat: React.FC = () => {
   }, [archivedViewOpen, chatFilter, chatQuery, selectedChatPhoneId])
 
   useLayoutEffect(() => {
+    resetPhoneFrameHorizontalScroll()
+    const frameId = window.requestAnimationFrame(resetPhoneFrameHorizontalScroll)
+    return () => window.cancelAnimationFrame(frameId)
+  }, [cameraSharePhoto, contactInfoOpen, conversationVisible, resetPhoneFrameHorizontalScroll])
+
+  useLayoutEffect(() => {
     chatSwipeGenerationRef.current += 1
     setChatSwipeSuppressed(true)
     setOpenSwipeChatId(null)
@@ -2068,48 +2081,6 @@ export const PhoneChat: React.FC = () => {
     if (highLevelConnected || paymentMode !== 'partial') return
     setPaymentMode('single')
   }, [highLevelConnected, paymentMode])
-
-  useEffect(() => {
-    if (
-      accessState !== 'allowed' ||
-      !openLastConversation ||
-      autoOpenedLastConversationRef.current ||
-      conversationOpen ||
-      requestedContactParam ||
-      chatsLoading ||
-      !lastConversationId
-    ) {
-      return
-    }
-
-    if (lastConversationId === AI_AGENT_CHAT_ID) {
-      if (!aiAgentChatEnabled) return
-      autoOpenedLastConversationRef.current = true
-      setActiveContactId(AI_AGENT_CHAT_ID)
-      setConversationOpen(true)
-      return
-    }
-
-    const lastContact = chats.find((contact) => contact.id === lastConversationId)
-    if (!lastContact) return
-
-    autoOpenedLastConversationRef.current = true
-    markContactReadState(lastContact)
-    setChats((current) => current.map((contact) => (
-      contact.id === lastContact.id ? { ...contact, unreadCount: 0 } : contact
-    )))
-    setActiveContactId(lastContact.id)
-    setConversationOpen(true)
-  }, [
-    accessState,
-    aiAgentChatEnabled,
-    chats,
-    chatsLoading,
-    conversationOpen,
-    lastConversationId,
-    openLastConversation,
-    requestedContactParam
-  ])
 
   useEffect(() => {
     const updateAccess = () => setAccessState(getAccessState())
@@ -2563,7 +2534,6 @@ export const PhoneChat: React.FC = () => {
     setContactQuery('')
     setDraftAttachments([])
     setVoiceDraft(null)
-    setLastConversationId(nextContact.id).catch(() => undefined)
   }
 
   const handleOpenAIAgentChat = () => {
@@ -2576,7 +2546,6 @@ export const PhoneChat: React.FC = () => {
     setContactQuery('')
     setDraftAttachments([])
     setVoiceDraft(null)
-    setLastConversationId(AI_AGENT_CHAT_ID).catch(() => undefined)
   }
 
   const handleBackToChats = () => {
@@ -4961,17 +4930,6 @@ export const PhoneChat: React.FC = () => {
               onChange={(event) => saveConfigPreference(setShowUnreadIndicators, event.target.checked)}
             />
           </label>
-          <label className={styles.toggleRow}>
-            <span>
-              <strong>Abrir el último chat</strong>
-              <small>Al entrar a Chats, abre la última conversación que usaste.</small>
-            </span>
-            <input
-              type="checkbox"
-              checked={openLastConversation}
-              onChange={(event) => saveConfigPreference(setOpenLastConversation, event.target.checked)}
-            />
-          </label>
         </>
       ))
     }
@@ -5326,7 +5284,12 @@ export const PhoneChat: React.FC = () => {
       data-phone-chat-mode={safeChatThemePreference}
       aria-label="Chat móvil de Ristak"
     >
-      <PhonePageTransition active="chat" className={styles.phoneFrame}>
+      <PhonePageTransition
+        active="chat"
+        className={styles.phoneFrame}
+        data-phone-chat-frame="true"
+        onScroll={handlePhoneFrameScroll}
+      >
         <section className={styles.chatListScreen} aria-label="Lista de chats">
           <header className={`${styles.chatListHeader} ${chatSearchExpanded ? styles.chatListHeaderSearchExpanded : ''}`}>
             <div className={styles.topActionRow} aria-hidden={chatSearchExpanded}>
