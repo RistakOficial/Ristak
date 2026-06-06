@@ -41,8 +41,7 @@
   min-height: 0;
 }
 
-.shellSitesEditorFocus [data-ristak-layout-sidebar],
-.shellSitesEditorFocus [data-ristak-header] {
+.shellSitesEditorFocus [data-ristak-layout-sidebar] {
   display: none !important;
 }
 

@@ -7134,8 +7134,8 @@
 
 .containerEditorFocus.containerFocused:has(.builder) {
   width: 100%;
-  height: 100dvh;
-  min-height: 100dvh;
+  height: calc(100dvh - var(--header-height, 84px));
+  min-height: 0;
   padding: 0;
   overflow: hidden;
 }
@@ -7171,14 +7171,14 @@
 }
 
 .containerEditorFocus :global(.canvasViewport) {
-  min-height: 100dvh !important;
-  height: 100dvh !important;
-  max-height: 100dvh !important;
+  min-height: calc(100dvh - var(--header-height, 84px)) !important;
+  height: calc(100dvh - var(--header-height, 84px)) !important;
+  max-height: calc(100dvh - var(--header-height, 84px)) !important;
   border-radius: 0;
 }
 
 .containerEditorFocus .focusModeBar {
-  top: 8px;
+  top: calc(var(--header-height, 84px) + 8px);
   right: 8px;
   z-index: 1400;
 }
@@ -7782,8 +7782,8 @@
 /* Focus mode keeps the editing rails available while the header stays out of the way. */
 .containerEditorFocus.containerFocused:has(.builder) {
   width: 100%;
-  height: 100dvh;
-  min-height: 100dvh;
+  height: calc(100dvh - var(--header-height, 84px));
+  min-height: 0;
   padding: 0;
   overflow: hidden;
 }
@@ -7812,7 +7812,7 @@
   display: block !important;
   position: relative;
   top: auto;
-  max-height: 100dvh;
+  max-height: calc(100dvh - var(--header-height, 84px));
   overflow-y: auto;
   overflow-x: hidden;
   padding-top: 14px !important;
@@ -7836,9 +7836,9 @@
 }
 
 .containerEditorFocus :global(.canvasViewport) {
-  min-height: 100dvh !important;
-  height: 100dvh !important;
-  max-height: 100dvh !important;
+  min-height: calc(100dvh - var(--header-height, 84px)) !important;
+  height: calc(100dvh - var(--header-height, 84px)) !important;
+  max-height: calc(100dvh - var(--header-height, 84px)) !important;
 }
 
 .containerEditorFocus .focusModeBar {

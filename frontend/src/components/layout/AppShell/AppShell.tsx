@@ -242,8 +242,7 @@ export const AppShell: React.FC = () => {
   }
 
   const shellStyle = {
-    '--ai-agent-width': `${aiAgentWidth}px`,
-    ...(sitesEditorActive ? { '--header-height': sitesEditorFocusMode ? '0px' : '48px' } : {})
+    '--ai-agent-width': `${aiAgentWidth}px`
   } as React.CSSProperties
 
   return (
@@ -259,7 +258,7 @@ export const AppShell: React.FC = () => {
             sidebar={<Sidebar locationName={locationName} locationLogo={locationLogo} />}
           >
             <div className="flex flex-col min-h-full">
-              <Header onLogout={handleLogout} sitesEditorActive={sitesEditorActive} sitesEditorFocusMode={sitesEditorFocusMode} />
+              <Header onLogout={handleLogout} sitesEditorActive={sitesEditorActive} />
               <div className="flex-1 overflow-auto">
                 <Outlet />
               </div>

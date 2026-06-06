@@ -11,7 +11,6 @@ import { notificationsService, type SystemNotification } from '@/services/notifi
 interface HeaderProps {
   onLogout: () => void
   sitesEditorActive?: boolean
-  sitesEditorFocusMode?: boolean
 }
 
 const getInitials = (name?: string, email?: string) => {
@@ -97,7 +96,7 @@ function getNotificationTone(severity?: string) {
   }
 }
 
-export const Header: React.FC<HeaderProps> = ({ onLogout, sitesEditorActive = false, sitesEditorFocusMode = false }) => {
+export const Header: React.FC<HeaderProps> = ({ onLogout, sitesEditorActive = false }) => {
   const { theme, toggleTheme, themeSource, resetToSystem, isSystemTheme, designPreset, setDesignPreset, designPresets } = useTheme()
   const { user } = useAuth()
   const [showUserMenu, setShowUserMenu] = useState(false)
@@ -181,30 +180,21 @@ export const Header: React.FC<HeaderProps> = ({ onLogout, sitesEditorActive = fa
   // Determinar si el header debe estar oculto
   const shouldHide = !sitesEditorActive && scrollDirection === 'down' && scrollY > 50
 
-  if (sitesEditorFocusMode) {
-    return null
-  }
-
   return (
     <header
       data-ristak-header
       className={cn(
         "glass border-b border-[rgba(148,163,184,0.12)] px-4 sm:px-6 flex items-center justify-between sticky top-0",
         "transition-transform duration-300 ease-in-out",
-        sitesEditorActive && "px-2 sm:px-3",
         shouldHide ? '-translate-y-full' : 'translate-y-0'
       )}
       style={{ height: 'var(--header-height)', zIndex: 'var(--z-index-header)' }}
     >
-      {!sitesEditorActive ? (
-        <div className="flex items-center gap-2 sm:gap-4 flex-1 max-w-xl ml-12 lg:ml-0">
-          <div className="flex items-center gap-2 flex-1 min-w-0">
-            <GlobalSearch />
-          </div>
+      <div className="flex items-center gap-2 sm:gap-4 flex-1 max-w-xl ml-12 lg:ml-0">
+        <div className="flex items-center gap-2 flex-1 min-w-0">
+          <GlobalSearch />
         </div>
-      ) : (
-        <div className="flex-1 min-w-0 ml-12 lg:ml-0" aria-hidden="true" />
-      )}
+      </div>
 
       <div className="flex items-center gap-1 sm:gap-3">
         <div className="relative" ref={notificationsRef}>
