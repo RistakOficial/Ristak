@@ -29,9 +29,20 @@ function normalizeCount(value) {
   return Number.isFinite(number) && number >= 0 ? Math.round(number) : null
 }
 
+function formatCompactDecimal(value) {
+  const rounded = Math.round(value * 10) / 10
+  if (Number.isInteger(rounded)) return String(rounded)
+  return rounded.toFixed(1).replace('.', ',')
+}
+
 function formatFollowers(value) {
   const number = normalizeCount(value)
-  return number === null ? '' : new Intl.NumberFormat('es-MX').format(number)
+  if (number === null) return ''
+  if (number < 1000) return String(number)
+  if (number < 1000000) return `${formatCompactDecimal(number / 1000)} mil`
+
+  const millions = formatCompactDecimal(number / 1000000)
+  return `${millions} ${millions === '1' ? 'millon' : 'millones'}`
 }
 
 function profileKey(platform, sourceId) {
