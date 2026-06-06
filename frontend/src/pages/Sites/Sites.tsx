@@ -2016,6 +2016,7 @@ export const Sites: React.FC = () => {
     : section === 'forms'
       ? (isFormSite(selectedSite) ? selectedSite : null)
       : null
+  const showMetaPixelControls = metaPixelConnected
   const metaPixelActive = Boolean(editorSite?.metaCapiEnabled && metaPixelConnected)
   const editorActive = Boolean(editorSite)
   const isCanvasFocusMode = editorFocusMode && Boolean(editorSite)
@@ -3397,47 +3398,47 @@ export const Sites: React.FC = () => {
                         />
                       </span>
                     </label>
-                    <div className={`${styles.metaCard} ${metaPixelActive ? styles.metaCardActive : ''}`}>
-                      <button
-                        type="button"
-                        className={styles.metaPixelButton}
-                        aria-pressed={metaPixelActive}
-                        disabled={!metaPixelConnected}
-                        onClick={() => {
-                          if (!editorSite.metaCapiEnabled && metaPixelConnected) {
-                            updateSelectedSite({ metaCapiEnabled: true })
-                            window.setTimeout(() => handleSaveSite(undefined, { silent: true }), 0)
-                          }
-                        }}
-                      >
-                        <img
-                          className={styles.metaPixelLogo}
-                          src={theme === 'dark'
-                            ? 'https://img.icons8.com/ios-filled/150/FFFFFF/meta.png'
-                            : 'https://img.icons8.com/ios-filled/150/meta.png'
-                          }
-                          alt=""
-                          aria-hidden="true"
-                        />
-                        <span>Pixel</span>
-                        <small>{metaPixelActive ? 'Encendido' : 'Activar'}</small>
-                      </button>
-                      <label className={styles.metaCardField}>
-                        <span>Evento</span>
-                        <select
-                          value={normalizeMetaEventName(editorSite.metaEventName, 'none')}
-                          onChange={(event) => {
-                            updateSelectedSite({ metaCapiEnabled: true, metaEventName: event.target.value })
+                    {showMetaPixelControls && (
+                      <div className={`${styles.metaCard} ${metaPixelActive ? styles.metaCardActive : ''}`}>
+                        <button
+                          type="button"
+                          className={styles.metaPixelButton}
+                          aria-pressed={metaPixelActive}
+                          onClick={() => {
+                            updateSelectedSite({ metaCapiEnabled: !editorSite.metaCapiEnabled })
                             window.setTimeout(() => handleSaveSite(undefined, { silent: true }), 0)
                           }}
-                          onBlur={() => handleSaveSite(undefined, { silent: true })}
                         >
-                          {metaEventOptions.map(option => (
-                            <option key={option.value} value={option.value}>{option.label}</option>
-                          ))}
-                        </select>
-                      </label>
-                    </div>
+                          <img
+                            className={styles.metaPixelLogo}
+                            src={theme === 'dark'
+                              ? 'https://img.icons8.com/ios-filled/150/FFFFFF/meta.png'
+                              : 'https://img.icons8.com/ios-filled/150/meta.png'
+                            }
+                            alt=""
+                            aria-hidden="true"
+                          />
+                          <span>Pixel</span>
+                          <small>{metaPixelActive ? 'Encendido' : 'Apagado'}</small>
+                        </button>
+                        <label className={styles.metaCardField}>
+                          <span>Evento</span>
+                          <select
+                            value={normalizeMetaEventName(editorSite.metaEventName, 'none')}
+                            disabled={!editorSite.metaCapiEnabled}
+                            onChange={(event) => {
+                              updateSelectedSite({ metaCapiEnabled: true, metaEventName: event.target.value })
+                              window.setTimeout(() => handleSaveSite(undefined, { silent: true }), 0)
+                            }}
+                            onBlur={() => handleSaveSite(undefined, { silent: true })}
+                          >
+                            {metaEventOptions.map(option => (
+                              <option key={option.value} value={option.value}>{option.label}</option>
+                            ))}
+                          </select>
+                        </label>
+                      </div>
+                    )}
                   </div>
                   <div className={styles.editorActions}>
                     <div className={styles.deviceToggle} role="group" aria-label="Vista previa del dispositivo">
@@ -3788,6 +3789,7 @@ export const Sites: React.FC = () => {
                   calendars={calendars}
                   pages={pages}
                   activePageId={activePage?.id || DEFAULT_FUNNEL_PAGE_ID}
+                  metaPixelConnected={metaPixelConnected}
                   showSocialProfile={selectedBlockId === SOCIAL_PROFILE_SELECTED_ID}
                   onPatchSite={updateSelectedSite}
                   onPatchTheme={patchSiteTheme}
@@ -6845,6 +6847,7 @@ interface PropertiesPanelProps {
   calendars: CalendarType[]
   pages: SitePage[]
   activePageId: string
+  metaPixelConnected: boolean
   showSocialProfile: boolean
   onPatchSite: (patch: Partial<PublicSite>) => void
   onPatchTheme: (patch: Partial<SiteTheme>) => void
@@ -6860,11 +6863,12 @@ const PageInspector: React.FC<{
   site: PublicSite
   pages: SitePage[]
   activePageId: string
+  metaPixelConnected: boolean
   showSocialProfile: boolean
   onPatchSite: (patch: Partial<PublicSite>) => void
   onPatchTheme: (patch: Partial<SiteTheme>) => void
   onSaveSite: () => void
-}> = ({ site, pages, activePageId, showSocialProfile, onPatchSite, onPatchTheme, onSaveSite }) => {
+}> = ({ site, pages, activePageId, metaPixelConnected, showSocialProfile, onPatchSite, onPatchTheme, onSaveSite }) => {
   const theme = site.theme || {}
   const currentId = resolveTemplateId(site)
   const platform = platformChromeFor(currentId)
@@ -7001,7 +7005,7 @@ const PageInspector: React.FC<{
               onCommit={onSaveSite}
             />
           </div>
-          {isLanding(site) && activePage && (
+          {metaPixelConnected && isLanding(site) && activePage && (
             <>
               <div className={styles.panelSubheader}>Conversion de esta pagina</div>
               <div className={`${styles.metaCard} ${activePageHasConversion && site.metaCapiEnabled ? styles.metaCardActive : ''}`}>
@@ -7047,7 +7051,7 @@ const PageInspector: React.FC<{
               </div>
             </>
           )}
-          {isFormSite(site) && (
+          {metaPixelConnected && isFormSite(site) && (
             <>
               <div className={styles.panelSubheader}>Conversion del formulario</div>
               <div className={`${styles.metaCard} ${formHasConversion && site.metaCapiEnabled ? styles.metaCardActive : ''}`}>
@@ -7122,6 +7126,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   calendars,
   pages,
   activePageId,
+  metaPixelConnected,
   showSocialProfile,
   onPatchSite,
   onPatchTheme,
@@ -7133,7 +7138,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   onSave
 }) => {
   if (!block) {
-    return <PageInspector site={site} pages={pages} activePageId={activePageId} showSocialProfile={showSocialProfile} onPatchSite={onPatchSite} onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
+    return <PageInspector site={site} pages={pages} activePageId={activePageId} metaPixelConnected={metaPixelConnected} showSocialProfile={showSocialProfile} onPatchSite={onPatchSite} onPatchTheme={onPatchTheme} onSaveSite={onSaveSite} />
   }
 
   const isField = fieldBlockTypes.has(block.blockType)
