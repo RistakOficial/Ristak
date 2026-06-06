@@ -4149,9 +4149,12 @@ export const Sites: React.FC = () => {
               {isImportedHtmlSite(editorSite) ? (
                 <ImportedHtmlEditorPanel
                   site={editorSite}
+                  domainConfig={domainConfig}
                   saving={saving}
                   onPreview={handlePreviewSite}
                   onPublish={() => handleSaveSite('published')}
+                  onUpdateRoute={handleUpdateLibraryRoute}
+                  onDelete={() => void handleDeleteSite(editorSite)}
                 />
               ) : (
               <div className={`${styles.builderGrid} ${isLanding(editorSite) ? styles.builderGridLanding : styles.builderGridForm}`}>
@@ -4366,30 +4369,114 @@ export const Sites: React.FC = () => {
 
 const ImportedHtmlEditorPanel: React.FC<{
   site: PublicSite
+  domainConfig: SitesDomainConfig
   saving: boolean
   onPreview: () => void
   onPublish: () => void
-}> = ({ site, saving, onPreview, onPublish }) => (
-  <div className={styles.importedEditorPanel}>
-    <div className={styles.importedEditorCopy}>
-      <Upload size={24} />
-      <div>
-        <strong>{site.title || site.name}</strong>
-        <p>Esta pagina usa el archivo que subiste. Puedes previsualizarla, ajustar su ruta y publicarla cuando el dominio este listo.</p>
+  onUpdateRoute: (site: PublicSite, route: string) => Promise<void>
+  onDelete: () => void
+}> = ({ site, domainConfig, saving, onPreview, onPublish, onUpdateRoute, onDelete }) => {
+  const [routeEditing, setRouteEditing] = useState(false)
+  const [routeDraft, setRouteDraft] = useState(getRouteEditorValue(site))
+  const [routeSaving, setRouteSaving] = useState(false)
+
+  useEffect(() => {
+    if (!routeEditing) setRouteDraft(getRouteEditorValue(site))
+  }, [routeEditing, site.id, site.slug])
+
+  const routeValue = getRouteEditorValue(site)
+  const saveRoute = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    const nextRoute = normalizeRouteEditorInput(routeDraft, domainConfig) || getDefaultRoutePrefix(site.siteType)
+    if (nextRoute === routeValue) {
+      setRouteDraft(routeValue)
+      setRouteEditing(false)
+      return
+    }
+
+    setRouteSaving(true)
+    try {
+      await onUpdateRoute(site, nextRoute)
+      setRouteEditing(false)
+    } finally {
+      setRouteSaving(false)
+    }
+  }
+
+  return (
+    <div className={styles.importedEditorPanel}>
+      <div className={styles.importedEditorCopy}>
+        <Upload size={24} />
+        <div>
+          <strong>{site.title || site.name}</strong>
+          <p>Esta pagina usa el archivo que subiste. Puedes previsualizarla, ajustar su ruta, eliminarla o publicarla cuando el dominio este listo.</p>
+        </div>
+      </div>
+
+      <div className={styles.importedRouteBox}>
+        <span className={styles.importedRouteLabel}>Ruta publica</span>
+        {routeEditing ? (
+          <form className={styles.importedRouteForm} onSubmit={(event) => void saveRoute(event)}>
+            <input
+              value={routeDraft}
+              onChange={(event) => setRouteDraft(normalizeRouteEditorInput(event.target.value, domainConfig))}
+              placeholder={site.siteType === 'landing_page' ? 'embudo-01' : 'formulario-01'}
+              disabled={routeSaving}
+            />
+            <Button type="submit" size="sm" loading={routeSaving}>
+              <Check size={15} />
+              Guardar
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              disabled={routeSaving}
+              onClick={() => {
+                setRouteDraft(routeValue)
+                setRouteEditing(false)
+              }}
+            >
+              <X size={15} />
+              Cancelar
+            </Button>
+          </form>
+        ) : (
+          <div className={styles.importedRouteRow}>
+            <strong>{getPublicRouteLabel(site, domainConfig)}</strong>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={() => {
+                setRouteDraft(routeValue)
+                setRouteEditing(true)
+              }}
+            >
+              <Settings2 size={15} />
+              Cambiar ruta
+            </Button>
+          </div>
+        )}
+      </div>
+
+      <div className={styles.importedEditorActions}>
+        <Button type="button" variant="secondary" onClick={onPreview}>
+          <Eye size={15} />
+          Previsualizar
+        </Button>
+        <Button type="button" onClick={onPublish} loading={saving}>
+          <Send size={15} />
+          Publicar
+        </Button>
+        <Button type="button" variant="danger" onClick={onDelete} disabled={saving || routeSaving}>
+          <Trash2 size={15} />
+          Eliminar
+        </Button>
       </div>
     </div>
-    <div className={styles.importedEditorActions}>
-      <Button variant="secondary" onClick={onPreview}>
-        <Eye size={15} />
-        Previsualizar
-      </Button>
-      <Button onClick={onPublish} loading={saving}>
-        <Send size={15} />
-        Publicar
-      </Button>
-    </div>
-  </div>
-)
+  )
+}
 
 const importedStandardFieldOptions = [
   { value: 'full_name', label: 'Nombre completo' },

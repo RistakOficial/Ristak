@@ -110,6 +110,14 @@ const SOCIAL_TEMPLATE_IDS = new Set(['facebook', 'instagram', 'tiktok'])
 const SOCIAL_PROFILE_BLOCK_READY_KEY = 'socialProfileBlockReady'
 const IMPORTED_SITE_TEMPLATE = 'imported_html'
 const IMPORTED_HTML_MAX_BYTES = 2 * 1024 * 1024
+const IMPORTED_STATIC_FALLBACK_STYLE = `<style data-rstk-import-static-fallback>
+.reveal,
+[data-aos] {
+  opacity: 1 !important;
+  visibility: visible !important;
+  transform: none !important;
+}
+</style>`
 const IMPORTED_FORM_STANDARD_FIELDS = new Set(['full_name', 'first_name', 'last_name', 'phone', 'email', 'message'])
 const IMPORTED_FORM_CUSTOM_FIELD_HINTS = new Map([
   ['tratamiento', 'treatment_interest'],
@@ -219,6 +227,26 @@ function normalizeImportedFieldKey(value, fallback = 'custom_field') {
     .replace(/^_+|_+$/g, '') || fallback
 }
 
+function shouldApplyImportedStaticFallback(html = '') {
+  return /\bclass\s*=\s*(["'])[^"']*\breveal\b[^"']*\1/i.test(html) || /\sdata-aos(?:\s|=|>)/i.test(html)
+}
+
+function injectImportedStaticFallback(html = '', report = []) {
+  if (!shouldApplyImportedStaticFallback(html) || /data-rstk-import-static-fallback/i.test(html)) return html
+
+  report.push('Se activo respaldo visual para animaciones sin scripts')
+
+  if (/<\/head>/i.test(html)) {
+    return html.replace(/<\/head>/i, `${IMPORTED_STATIC_FALLBACK_STYLE}</head>`)
+  }
+
+  if (/<body\b[^>]*>/i.test(html)) {
+    return html.replace(/<body\b[^>]*>/i, match => `${match}${IMPORTED_STATIC_FALLBACK_STYLE}`)
+  }
+
+  return `${IMPORTED_STATIC_FALLBACK_STYLE}${html}`
+}
+
 function sanitizeImportedHtml(html = '') {
   const report = []
   let sanitized = String(html || '')
@@ -260,6 +288,8 @@ function sanitizeImportedHtml(html = '') {
     sanitized = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head><body>${sanitized}</body></html>`
   }
 
+  sanitized = injectImportedStaticFallback(sanitized, report)
+
   return {
     html: sanitized,
     report: Array.from(new Set(report))
@@ -286,13 +316,31 @@ function getNearbyText(html = '', startIndex = 0) {
 
 function extractImportedFields(formHtml = '', formIndex = 0) {
   const fields = []
-  const fieldPattern = /<(input|select|textarea)\b([^>]*)>([\s\S]*?<\/select>|[\s\S]*?<\/textarea>)?/gi
+  const candidates = []
+  const inputPattern = /<input\b([^>]*)\/?\s*>/gi
+  const textareaPattern = /<textarea\b([^>]*)>([\s\S]*?)<\/textarea>/gi
+  const selectPattern = /<select\b([^>]*)>([\s\S]*?)<\/select>/gi
   let match
+
+  while ((match = inputPattern.exec(formHtml))) {
+    candidates.push({ tag: 'input', attrsText: match[1] || '', body: '', index: match.index })
+  }
+
+  while ((match = textareaPattern.exec(formHtml))) {
+    candidates.push({ tag: 'textarea', attrsText: match[1] || '', body: match[2] || '', index: match.index })
+  }
+
+  while ((match = selectPattern.exec(formHtml))) {
+    candidates.push({ tag: 'select', attrsText: match[1] || '', body: match[2] || '', index: match.index })
+  }
+
+  candidates.sort((a, b) => a.index - b.index)
+
   let index = 0
 
-  while ((match = fieldPattern.exec(formHtml))) {
-    const tag = match[1].toLowerCase()
-    const attrs = parseHtmlAttributes(match[2] || '')
+  for (const candidate of candidates) {
+    const tag = candidate.tag
+    const attrs = parseHtmlAttributes(candidate.attrsText)
     const type = tag === 'input' ? cleanString(attrs.type || 'text').toLowerCase() : tag
     if (['hidden', 'submit', 'button', 'reset', 'image'].includes(type)) continue
 
@@ -303,7 +351,7 @@ function extractImportedFields(formHtml = '', formIndex = 0) {
     const options = []
     if (tag === 'select') {
       const optionPattern = /<option\b([^>]*)>([\s\S]*?)<\/option>/gi
-      const selectHtml = match[3] || ''
+      const selectHtml = candidate.body || ''
       let optionMatch
       while ((optionMatch = optionPattern.exec(selectHtml))) {
         const optionAttrs = parseHtmlAttributes(optionMatch[1] || '')
@@ -324,7 +372,7 @@ function extractImportedFields(formHtml = '', formIndex = 0) {
       tag,
       placeholder: cleanString(attrs.placeholder),
       label,
-      nearbyText: getNearbyText(formHtml, match.index),
+      nearbyText: getNearbyText(formHtml, candidate.index),
       explicitField,
       required: attrs.required !== undefined || cleanString(attrs['aria-required']).toLowerCase() === 'true',
       options
