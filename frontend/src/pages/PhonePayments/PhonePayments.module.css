@@ -182,21 +182,25 @@
   align-items: center;
   gap: 12px;
   width: 100%;
-  padding: 15px 14px;
-  border: 1px solid rgba(17, 24, 39, 0.08);
-  border-radius: 8px;
-  background: #ffffff;
+  padding: 14px 4px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   color: #111111;
   text-align: left;
   cursor: pointer;
-  box-shadow: 0 10px 26px rgba(15, 23, 42, 0.06);
-  transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+  box-shadow: none;
+  transition: opacity 160ms ease, transform 160ms ease;
   -webkit-tap-highlight-color: transparent;
 }
 
+.choiceCard + .choiceCard {
+  border-top: 1px solid rgba(17, 24, 39, 0.08);
+}
+
 .choiceCard:active {
-  transform: scale(0.99);
-  border-color: rgba(37, 211, 102, 0.42);
+  opacity: 0.62;
+  transform: scale(0.995);
 }
 
 .choiceIcon {
@@ -204,19 +208,19 @@
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
-  width: 48px;
-  height: 48px;
-  border-radius: 999px;
+  width: 36px;
+  height: 36px;
+  border-radius: 0;
 }
 
 .choiceIconGreen {
-  color: #ffffff;
-  background: #25d366;
+  color: #25d366;
+  background: transparent;
 }
 
 .choiceIconBlue {
-  color: #ffffff;
-  background: #111111;
+  color: #111111;
+  background: transparent;
 }
 
 .choiceText {
@@ -255,8 +259,10 @@
 
 .recentPaymentsSection {
   display: grid;
-  gap: 8px;
-  margin-top: 4px;
+  gap: 10px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(17, 24, 39, 0.08);
 }
 
 .recentPaymentsToggle {
@@ -265,14 +271,14 @@
   justify-content: space-between;
   gap: 12px;
   width: 100%;
-  min-height: 58px;
-  padding: 10px 14px;
-  border: 1px solid rgba(17, 24, 39, 0.08);
-  border-radius: 8px;
+  min-height: 48px;
+  padding: 8px 4px;
+  border: 0;
+  border-radius: 0;
   color: #111111;
-  background: #f7f6f2;
+  background: transparent;
   text-align: left;
-  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.05);
+  box-shadow: none;
   -webkit-tap-highlight-color: transparent;
 }
 
@@ -313,12 +319,12 @@
 
 .recentPaymentsPanel {
   display: grid;
-  gap: 10px;
-  padding: 10px;
-  border: 1px solid rgba(17, 24, 39, 0.08);
-  border-radius: 8px;
-  background: #ffffff;
-  box-shadow: 0 14px 34px rgba(15, 23, 42, 0.07);
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .recentPeriodPicker {
@@ -351,11 +357,11 @@
   align-items: center;
   justify-content: center;
   gap: 7px;
-  min-height: 76px;
-  padding: 12px;
-  border-radius: 8px;
+  min-height: 62px;
+  padding: 10px 4px;
+  border-radius: 0;
   color: #737373;
-  background: #f7f6f2;
+  background: transparent;
   font-size: 13px;
   font-weight: 700;
   text-align: center;
@@ -363,7 +369,7 @@
 
 .recentPaymentsList {
   display: grid;
-  gap: 6px;
+  gap: 0;
 }
 
 .recentPaymentItem {
@@ -374,11 +380,12 @@
   gap: 10px;
   width: 100%;
   min-height: 62px;
-  padding: 10px 12px;
-  border: 1px solid transparent;
-  border-radius: 8px;
+  padding: 11px 4px;
+  border: 0;
+  border-top: 1px solid rgba(17, 24, 39, 0.08);
+  border-radius: 0;
   color: #111111;
-  background: #f7f6f2;
+  background: transparent;
   text-align: left;
   -webkit-tap-highlight-color: transparent;
 }
@@ -388,8 +395,8 @@
 }
 
 .recentPaymentItemSelected {
-  border-color: rgba(37, 211, 102, 0.42);
-  background: rgba(37, 211, 102, 0.1);
+  color: #0f5132;
+  background: transparent;
 }
 
 .recentPaymentMain,
