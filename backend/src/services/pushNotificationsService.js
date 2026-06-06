@@ -274,9 +274,37 @@ function getNotificationData(payload = {}) {
     Object.entries({
       url: payload.url || '/phone/chat',
       category: payload.category || 'ristak',
-      tag: payload.tag || 'ristak'
+      tag: payload.tag || 'ristak',
+      messageId: payload.messageId || ''
     }).map(([key, value]) => [key, String(value || '')])
   )
+}
+
+function cleanNotificationText(value = '') {
+  return String(value || '').replace(/\s+/g, ' ').trim()
+}
+
+function getChatMessageBody(message = {}) {
+  const bodyText = cleanNotificationText(message.text)
+  if (bodyText) return bodyText.slice(0, 220)
+
+  const type = String(message.messageType || message.type || '').trim().toLowerCase()
+  const typeLabels = {
+    image: 'Foto',
+    video: 'Video',
+    audio: 'Audio',
+    voice: 'Audio',
+    document: 'Documento',
+    sticker: 'Sticker',
+    location: 'Ubicación',
+    contacts: 'Contacto',
+    contact: 'Contacto',
+    reaction: 'Reacción',
+    button: 'Respuesta',
+    interactive: 'Respuesta'
+  }
+
+  return typeLabels[type] || 'Mensaje'
 }
 
 async function getBooleanPushConfig(key, fallback = false) {
@@ -578,7 +606,8 @@ async function sendFcmNotification(row, payload = {}) {
           priority: 'HIGH',
           notification: {
             channel_id: 'ristak_alerts',
-            click_action: 'OPEN_RISTAK'
+            click_action: 'OPEN_RISTAK',
+            icon: 'ic_stat_whatsapp'
           }
         }
       }
@@ -750,12 +779,14 @@ export async function sendChatMessageNotification(message = {}) {
   const enabled = await getBooleanPushConfig('chat_push_notifications_enabled', true)
   if (!enabled) return { sent: 0, skipped: true, reason: 'disabled' }
 
-  const senderName = String(message.profileName || message.name || message.phone || 'WhatsApp').trim()
-  const bodyText = String(message.text || '').trim()
+  const senderName = cleanNotificationText(message.profileName || message.name || message.phone || 'WhatsApp')
+  const bodyText = getChatMessageBody(message)
+  const messageKey = cleanNotificationText(message.messageId || message.timestamp || `${senderName}-${bodyText}-${Date.now()}`)
   const payload = {
     title: senderName,
-    body: bodyText ? bodyText.slice(0, 140) : 'Tienes un mensaje nuevo.',
-    tag: `chat-${message.contactId || message.phone || 'whatsapp'}`,
+    body: bodyText,
+    tag: `chat-${messageKey}`,
+    messageId: messageKey,
     url: `/phone/chat?contact=${encodeURIComponent(message.contactId || '')}`,
     category: 'chat'
   }

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'ristak-chat-v3'
+const CACHE_NAME = 'ristak-chat-v4'
 const SHELL_ASSETS = [
   '/',
   '/phone/chat',

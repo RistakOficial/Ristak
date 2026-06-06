@@ -1939,8 +1939,10 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
   const ycloudMessageId = cleanString(normalizedMessage.id)
   const wamid = cleanString(normalizedMessage.wamid || normalizedMessage.context?.id)
   const messageId = hashId('waapi_msg', ycloudMessageId || wamid || `${payload.id}|${identity.direction}|${identity.phone}`)
+  const existingMessage = await db.get('SELECT id FROM whatsapp_api_messages WHERE id = ?', [messageId]).catch(() => null)
   const status = cleanString(normalizedMessage.status)
   const error = Array.isArray(normalizedMessage.errors) ? normalizedMessage.errors[0] : normalizedMessage.error
+  const messageType = cleanString(normalizedMessage.type) || 'unknown'
 
   await db.run(`
     INSERT INTO whatsapp_api_messages (
@@ -1992,7 +1994,7 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
     identity.toPhone || null,
     identity.businessPhone || null,
     identity.direction,
-    cleanString(normalizedMessage.type) || 'unknown',
+    messageType,
     messageText || null,
     status || null,
     cleanString(error?.code || normalizedMessage.errorCode) || null,
@@ -2071,6 +2073,8 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
     phone: identity.phone,
     profileName,
     messageText,
+    messageType,
+    isNew: !existingMessage,
     messageTimestamp
   }
 }
@@ -2375,12 +2379,13 @@ export async function processYCloudWhatsAppWebhook({ payload, rawBody, signature
       : []
 
     await Promise.all(messageResults
-      .filter(result => result?.direction === 'inbound')
+      .filter(result => result?.direction === 'inbound' && result?.isNew !== false)
       .map(result => sendChatMessageNotification({
         contactId: result.contactId,
         phone: result.phone,
         profileName: result.profileName,
         text: result.messageText,
+        messageType: result.messageType,
         messageId: result.messageId,
         timestamp: result.messageTimestamp
       }).catch(error => {
