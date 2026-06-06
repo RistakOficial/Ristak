@@ -1,0 +1,94 @@
+{
+  "id": "/phone/chat",
+  "name": "Ristak Chat",
+  "short_name": "Ristak Chat",
+  "description": "Acceso movil de Ristak Chat para responder mensajes, revisar citas, cobrar y usar el agente de IA.",
+  "start_url": "/phone/chat",
+  "scope": "/phone/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#111111",
+  "theme_color": "#111111",
+  "icons": [
+    {
+      "src": "/ristak-chat-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/ristak-chat-icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/ristak-chat-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Chat",
+      "short_name": "Chat",
+      "url": "/phone/chat",
+      "icons": [
+        {
+          "src": "/ristak-chat-icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    },
+    {
+      "name": "Dashboard",
+      "short_name": "Dashboard",
+      "url": "/phone/dashboard",
+      "icons": [
+        {
+          "src": "/ristak-chat-icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    },
+    {
+      "name": "Calendario",
+      "short_name": "Calendario",
+      "url": "/phone/calendar",
+      "icons": [
+        {
+          "src": "/ristak-chat-icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    },
+    {
+      "name": "Pagos",
+      "short_name": "Pagos",
+      "url": "/phone/payments",
+      "icons": [
+        {
+          "src": "/ristak-chat-icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    },
+    {
+      "name": "Agente IA",
+      "short_name": "Agente",
+      "url": "/phone/agent-ai",
+      "icons": [
+        {
+          "src": "/ristak-chat-icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    }
+  ]
+}

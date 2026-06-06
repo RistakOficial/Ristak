@@ -1,29 +1,29 @@
 {
-  "id": "/phone/chat",
-  "name": "Ristak Chat",
-  "short_name": "Ristak Chat",
-  "description": "Premium Ristak mobile chat for conversations, appointments, payments, and the AI agent.",
-  "start_url": "/phone/chat",
+  "id": "/dashboard",
+  "name": "Ristak",
+  "short_name": "Ristak",
+  "description": "Panel de Ristak para revisar marketing, contactos, citas, ventas y pagos.",
+  "start_url": "/dashboard",
   "scope": "/",
   "display": "standalone",
-  "orientation": "portrait",
-  "background_color": "#111111",
-  "theme_color": "#111111",
+  "orientation": "any",
+  "background_color": "#ffffff",
+  "theme_color": "#ffffff",
   "icons": [
     {
-      "src": "/ristak-chat-icon.svg",
+      "src": "/logo.svg",
       "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "any maskable"
     },
     {
-      "src": "/ristak-chat-icon-192.png",
+      "src": "/ristak-icon-192.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any maskable"
     },
     {
-      "src": "/ristak-chat-icon-512.png",
+      "src": "/ristak-icon-512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any maskable"
@@ -31,60 +31,60 @@
   ],
   "shortcuts": [
     {
-      "name": "Chat",
-      "short_name": "Chat",
-      "url": "/phone/chat",
-      "icons": [
-        {
-          "src": "/ristak-chat-icon-192.png",
-          "sizes": "192x192",
-          "type": "image/png"
-        }
-      ]
-    },
-    {
       "name": "Dashboard",
       "short_name": "Dashboard",
-      "url": "/phone/dashboard",
+      "url": "/dashboard",
       "icons": [
         {
-          "src": "/ristak-chat-icon-192.png",
+          "src": "/ristak-icon-192.png",
           "sizes": "192x192",
           "type": "image/png"
         }
       ]
     },
     {
-      "name": "Calendar",
-      "short_name": "Calendar",
-      "url": "/phone/calendar",
+      "name": "Contactos",
+      "short_name": "Contactos",
+      "url": "/contacts",
       "icons": [
         {
-          "src": "/ristak-chat-icon-192.png",
+          "src": "/ristak-icon-192.png",
           "sizes": "192x192",
           "type": "image/png"
         }
       ]
     },
     {
-      "name": "Payments",
-      "short_name": "Payments",
-      "url": "/phone/payments",
+      "name": "Citas",
+      "short_name": "Citas",
+      "url": "/appointments",
       "icons": [
         {
-          "src": "/ristak-chat-icon-192.png",
+          "src": "/ristak-icon-192.png",
           "sizes": "192x192",
           "type": "image/png"
         }
       ]
     },
     {
-      "name": "AI Agent",
-      "short_name": "Agent",
-      "url": "/phone/agent-ai",
+      "name": "Reportes",
+      "short_name": "Reportes",
+      "url": "/reports",
       "icons": [
         {
-          "src": "/ristak-chat-icon-192.png",
+          "src": "/ristak-icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    },
+    {
+      "name": "Configuracion",
+      "short_name": "Ajustes",
+      "url": "/settings",
+      "icons": [
+        {
+          "src": "/ristak-icon-192.png",
           "sizes": "192x192",
           "type": "image/png"
         }

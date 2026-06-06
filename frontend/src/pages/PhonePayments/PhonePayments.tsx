@@ -344,7 +344,7 @@ export const PhonePayments: React.FC = () => {
   }
 
   useEffect(() => {
-    document.title = 'Pagos móviles | Ristak'
+    document.title = 'Pagos móviles | Ristak Chat'
   }, [])
 
   useEffect(() => {

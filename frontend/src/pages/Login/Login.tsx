@@ -38,7 +38,7 @@ export const Login: React.FC = () => {
   const navigate = useNavigate()
   const fromLocation = (location.state as LoginLocationState)?.from
   const redirectPath = getRedirectPath(fromLocation)
-  const isPhoneLogin = Boolean(fromLocation?.pathname?.startsWith('/phone/'))
+  const isPhoneLogin = location.pathname.startsWith('/phone')
 
   if (isAuthLoading) {
     return (

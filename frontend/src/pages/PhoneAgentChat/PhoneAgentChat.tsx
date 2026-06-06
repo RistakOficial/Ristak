@@ -33,7 +33,7 @@ export const PhoneAgentChat: React.FC = () => {
   const [accessState, setAccessState] = useState<AccessState>(getAccessState)
 
   useEffect(() => {
-    document.title = 'Agente AI movil y tablet | Ristak'
+    document.title = 'Agente AI movil y tablet | Ristak Chat'
 
     const updateAccess = () => setAccessState(getAccessState())
     const portableMedia = window.matchMedia(PORTABLE_WIDTH_QUERY)

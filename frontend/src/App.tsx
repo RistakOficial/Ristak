@@ -41,6 +41,86 @@ type RouteLocationState = {
   from?: RedirectLocation
 } | null
 
+type AppBranding = {
+  title: string
+  favicon: string
+  manifest: string
+  appleTouchIcon: string
+  themeColor: string
+}
+
+const ROUTE_BRANDING: Record<'ristak' | 'phone', AppBranding> = {
+  ristak: {
+    title: 'Ristak',
+    favicon: '/logo.svg',
+    manifest: '/manifest.webmanifest',
+    appleTouchIcon: '/apple-touch-icon.png',
+    themeColor: '#ffffff'
+  },
+  phone: {
+    title: 'Ristak Chat',
+    favicon: '/ristak-chat-icon.svg',
+    manifest: '/manifest.phone.webmanifest',
+    appleTouchIcon: '/ristak-chat-apple-touch-icon.png',
+    themeColor: '#050505'
+  }
+}
+
+function setHeadLink(selector: string, attributes: Record<string, string>) {
+  let link = document.head.querySelector<HTMLLinkElement>(selector)
+
+  if (!link) {
+    link = document.createElement('link')
+    document.head.appendChild(link)
+  }
+
+  Object.entries(attributes).forEach(([name, value]) => {
+    link?.setAttribute(name, value)
+  })
+}
+
+function setHeadMeta(selector: string, attributes: Record<string, string>) {
+  let meta = document.head.querySelector<HTMLMetaElement>(selector)
+
+  if (!meta) {
+    meta = document.createElement('meta')
+    document.head.appendChild(meta)
+  }
+
+  Object.entries(attributes).forEach(([name, value]) => {
+    meta?.setAttribute(name, value)
+  })
+}
+
+function applyRouteBranding(isPhoneRoute: boolean) {
+  const branding = isPhoneRoute ? ROUTE_BRANDING.phone : ROUTE_BRANDING.ristak
+
+  document.title = branding.title
+  document.documentElement.dataset.appBrand = isPhoneRoute ? 'ristak-chat' : 'ristak'
+
+  setHeadLink('link[rel="icon"]', {
+    rel: 'icon',
+    type: 'image/svg+xml',
+    href: branding.favicon
+  })
+  setHeadLink('link[rel="manifest"]', {
+    rel: 'manifest',
+    href: branding.manifest
+  })
+  setHeadLink('link[rel="apple-touch-icon"]', {
+    rel: 'apple-touch-icon',
+    href: branding.appleTouchIcon
+  })
+  setHeadMeta('meta[name="theme-color"]', {
+    name: 'theme-color',
+    content: branding.themeColor
+  })
+  setHeadMeta('meta[name="apple-mobile-web-app-title"]', {
+    name: 'apple-mobile-web-app-title',
+    content: branding.title
+  })
+}
+
 const PhoneThemeRouteEffects: React.FC = () => {
   usePhoneTheme({ active: true })
   usePhoneWakeLock({ active: true })
@@ -122,6 +202,10 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) =
 const PhoneRouteEffects: React.FC = () => {
   const location = useLocation()
   const isPhoneRoute = location.pathname.startsWith('/phone')
+
+  React.useEffect(() => {
+    applyRouteBranding(isPhoneRoute)
+  }, [isPhoneRoute])
 
   React.useEffect(() => {
     const body = document.body

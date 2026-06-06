@@ -388,7 +388,7 @@ export const PhoneCalendar: React.FC = () => {
   }, [accessToken, currentDate, locationId, selectedCalendar])
 
   useEffect(() => {
-    document.title = 'Calendario móvil | Ristak'
+    document.title = 'Calendario móvil | Ristak Chat'
   }, [])
 
   useEffect(() => {
