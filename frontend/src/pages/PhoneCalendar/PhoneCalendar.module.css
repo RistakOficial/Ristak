@@ -854,9 +854,9 @@
 }
 
 .sheetHeader {
-  display: flex;
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) 42px;
   align-items: center;
-  justify-content: space-between;
   gap: 12px;
   padding-bottom: 12px;
 }
@@ -867,6 +867,7 @@
   font-size: 24px;
   font-weight: 850;
   letter-spacing: 0;
+  text-align: center;
 }
 
 .closeSheetButton {
@@ -879,6 +880,11 @@
   border-radius: 999px;
   color: #111827;
   background: #ffffff;
+}
+
+.sheetHeaderSpacer {
+  width: 42px;
+  height: 42px;
 }
 
 .sheetList,

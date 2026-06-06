@@ -7,8 +7,7 @@ import {
   ChevronLeft,
   Loader2,
   MonitorX,
-  Plus,
-  X
+  Plus
 } from 'lucide-react'
 import { AppointmentModal } from '@/components/common'
 import { PhoneEcosystemNav } from '@/components/phone/PhoneEcosystemNav'
@@ -1353,13 +1352,14 @@ export const PhoneCalendar: React.FC = () => {
           <section className={styles.sheet} onClick={(event) => event.stopPropagation()} aria-label="Panel del calendario">
             <div className={styles.sheetHandle} />
             <header className={styles.sheetHeader}>
+              <button type="button" className={styles.closeSheetButton} onClick={() => setSheetView(null)} aria-label="Volver al calendario">
+                <ChevronLeft size={24} />
+              </button>
               <h2>
                 {sheetView === 'calendar' && 'Calendarios'}
                 {sheetView === 'settings' && 'Alertas'}
               </h2>
-              <button type="button" className={styles.closeSheetButton} onClick={() => setSheetView(null)} aria-label="Cerrar">
-                <X size={18} />
-              </button>
+              <span className={styles.sheetHeaderSpacer} aria-hidden="true" />
             </header>
 
             {sheetView === 'calendar' && (

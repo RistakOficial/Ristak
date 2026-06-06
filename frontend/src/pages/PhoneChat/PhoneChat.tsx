@@ -4538,6 +4538,9 @@ export const PhoneChat: React.FC = () => {
             <div className={styles.sheetHandle} />
             {sheet !== 'attachments' && (
               <div className={styles.sheetHeader}>
+                <button type="button" onClick={() => setSheet(null)} aria-label="Volver al chat">
+                  <ChevronLeft size={24} />
+                </button>
                 <div>
                   <p>{activeContact ? getContactName(activeContact) : aiAgentConversationOpen ? 'Agente de IA' : 'Ristak Chat'}</p>
                   <h2>
@@ -4549,9 +4552,7 @@ export const PhoneChat: React.FC = () => {
                     {sheet === 'chatMore' && 'Más acciones'}
                   </h2>
                 </div>
-                <button type="button" onClick={() => setSheet(null)} aria-label="Cerrar panel">
-                  <X size={20} />
-                </button>
+                <span className={styles.sheetHeaderSpacer} aria-hidden="true" />
               </div>
             )}
 

@@ -1732,10 +1732,15 @@
 }
 
 .sheetHeader {
-  display: flex;
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) 42px;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
+}
+
+.sheetHeader > div {
+  min-width: 0;
+  text-align: center;
 }
 
 .sheetHeader p {
@@ -1743,6 +1748,9 @@
   color: #737373;
   font-size: 12px;
   font-weight: 760;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .sheetHeader h2 {
@@ -1751,6 +1759,9 @@
   font-size: 20px;
   font-weight: 850;
   line-height: 1.08;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .sheetHeader button {
@@ -1763,6 +1774,11 @@
   border-radius: 999px;
   color: #111111;
   background: rgba(255, 255, 255, 0.72);
+}
+
+.sheetHeaderSpacer {
+  width: 42px;
+  height: 42px;
 }
 
 .attachmentGrid {

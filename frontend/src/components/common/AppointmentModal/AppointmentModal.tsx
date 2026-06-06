@@ -9,7 +9,7 @@ import { CalendarEvent, Calendar, calendarsService, FreeSlot, BlockedSlot } from
 import { useNotification } from '@/contexts/NotificationContext';
 import { useTimezone } from '@/contexts/TimezoneContext';
 import styles from './AppointmentModal.module.css';
-import { Trash2, Search, Loader2, X, UserPlus } from 'lucide-react';
+import { ChevronLeft, Trash2, Search, Loader2, X, UserPlus } from 'lucide-react';
 
 interface AppointmentModalProps {
   isOpen: boolean;
@@ -911,6 +911,8 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
         className={isMobileSheet ? styles.mobileSheetModal : undefined}
         backdropClassName={isMobileSheet ? styles.mobileSheetBackdrop : undefined}
         contentClassName={isMobileSheet ? styles.mobileSheetContent : undefined}
+        closeIcon={isMobileSheet ? <ChevronLeft size={24} /> : undefined}
+        closeAriaLabel={isMobileSheet ? 'Volver al calendario' : undefined}
       >
         <div
           className={`${styles.container} ${isMobileSheet ? styles.mobileSheetContainer : ''}`}

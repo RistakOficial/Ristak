@@ -23,6 +23,8 @@ interface ModalProps {
   className?: string
   backdropClassName?: string
   contentClassName?: string
+  closeIcon?: React.ReactNode
+  closeAriaLabel?: string
   children?: React.ReactNode
 }
 
@@ -79,6 +81,8 @@ export const Modal: React.FC<ModalProps> = ({
   className = '',
   backdropClassName = '',
   contentClassName = '',
+  closeIcon,
+  closeAriaLabel = 'Cerrar modal',
   children
 }) => {
   const normalizedConfirmText = normalizeModalText(confirmText)
@@ -141,9 +145,9 @@ export const Modal: React.FC<ModalProps> = ({
               <button
                 className={styles.closeButton}
                 onClick={handleCancel}
-                aria-label="Cerrar modal"
+                aria-label={closeAriaLabel}
               >
-                <X size={20} />
+                {closeIcon ?? <X size={20} />}
               </button>
             )}
           </div>
