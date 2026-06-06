@@ -521,10 +521,10 @@ export const PhonePayments: React.FC = () => {
   }, [accessState, view])
 
   const renderProductsView = () => (
-    <section className={styles.productsHost} data-phone-scrollable="true" aria-label="Productos disponibles">
+    <section className={styles.productsHost} data-phone-scrollable="true" aria-label="Precios Guardados disponibles">
       <div className={styles.productsToolbar}>
         <div className={styles.productsToolbarCopy}>
-          <strong>Productos</strong>
+          <strong>Precios Guardados</strong>
           <small>{products.length === 1 ? '1 disponible' : `${products.length} disponibles`}</small>
         </div>
         <div className={styles.productsToolbarActions}>
@@ -727,7 +727,7 @@ export const PhonePayments: React.FC = () => {
   const isForm = view !== 'select'
   const isPaymentForm = view === 'single' || view === 'partial'
   const formMode = view === 'partial' ? 'partial' : 'single'
-  const formTitle = view === 'products' ? 'Productos' : view === 'partial' ? 'Plan de pago' : 'Registrar pago'
+  const formTitle = view === 'products' ? 'Precios Guardados' : view === 'partial' ? 'Plan de pago' : 'Registrar pago'
   const selectedRecentPeriod = RECENT_PAYMENT_PERIODS.find((period) => period.id === recentPaymentsPeriod) || RECENT_PAYMENT_PERIODS[2]
   const selectedRecentPayment = recentPayments.find((payment) => payment.id === selectedRecentPaymentId) || null
 
@@ -799,15 +799,15 @@ export const PhonePayments: React.FC = () => {
 
             <button
               type="button"
-              className={styles.choiceCard}
+              className={`${styles.choiceCard} ${styles.choiceCardNoDivider}`}
               onClick={() => setView('products')}
             >
               <span className={`${styles.choiceIcon} ${styles.choiceIconBlue}`}>
                 <Package size={26} />
               </span>
               <span className={styles.choiceText}>
-                <strong>Productos</strong>
-                <small>Revisa, crea, modifica o elimina productos para cobrarlos desde el celular.</small>
+                <strong>Precios Guardados</strong>
+                <small>Revisa, crea, modifica o elimina precios para cobrarlos desde el celular.</small>
               </span>
               <ChevronRight size={20} className={styles.choiceChevron} aria-hidden="true" />
             </button>

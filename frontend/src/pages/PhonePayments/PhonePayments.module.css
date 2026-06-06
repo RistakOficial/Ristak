@@ -320,6 +320,10 @@
   border-top: 1px solid var(--phone-payments-border);
 }
 
+.choiceCard.choiceCardNoDivider {
+  border-top: 0;
+}
+
 .choiceCard:active {
   opacity: 0.62;
   transform: scale(0.995);
