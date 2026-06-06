@@ -679,6 +679,20 @@
   letter-spacing: 0;
 }
 
+.cacheRefreshPill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  color: #3f3f46;
+  background: #f4f4f5;
+  font-size: 12px;
+  font-weight: 780;
+  white-space: nowrap;
+}
+
 .agendaViewButton {
   display: inline-flex;
   align-items: center;

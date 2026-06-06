@@ -59,6 +59,7 @@ import {
   type MessageTemplatePayload
 } from '@/services/messageTemplatesService'
 import { mobileAppService, type MobilePhotoAttachment } from '@/services/mobileAppService'
+import { getPhoneDailyCacheKey, readPhoneDailyCache, writePhoneDailyCache } from '@/services/phoneDailyCache'
 import { pushNotificationsService } from '@/services/pushNotificationsService'
 import { whatsappApiService, type WhatsAppApiStatus, type WhatsAppApiTemplate } from '@/services/whatsappApiService'
 import type { Contact } from '@/types'
@@ -1256,6 +1257,7 @@ export const PhoneChat: React.FC = () => {
   const [accessState, setAccessState] = useState<AccessState>(getAccessState)
   const [chats, setChats] = useState<ChatContact[]>([])
   const [chatsLoading, setChatsLoading] = useState(true)
+  const [chatsRefreshing, setChatsRefreshing] = useState(false)
   const [chatsError, setChatsError] = useState('')
   const [chatQuery, setChatQuery] = useState('')
   const [chatFilter, setChatFilter] = useState<ChatFilter>('all')
@@ -1273,6 +1275,7 @@ export const PhoneChat: React.FC = () => {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [contactJourney, setContactJourney] = useState<JourneyEvent[]>([])
   const [messagesLoading, setMessagesLoading] = useState(false)
+  const [messagesRefreshing, setMessagesRefreshing] = useState(false)
   const [messageText, setMessageText] = useState('')
   const [draftAttachments, setDraftAttachments] = useState<MobilePhotoAttachment[]>([])
   const [voiceDraft, setVoiceDraft] = useState<VoiceDraftAttachment | null>(null)
@@ -1294,6 +1297,7 @@ export const PhoneChat: React.FC = () => {
   const [templateMode, setTemplateMode] = useState<TemplateMode>('choice')
   const [templates, setTemplates] = useState<WhatsAppApiTemplate[]>([])
   const [templatesLoading, setTemplatesLoading] = useState(false)
+  const [templatesRefreshing, setTemplatesRefreshing] = useState(false)
   const [templatesError, setTemplatesError] = useState('')
   const [templateSendingId, setTemplateSendingId] = useState<string | null>(null)
   const [creatingTemplate, setCreatingTemplate] = useState(false)
@@ -1542,18 +1546,70 @@ export const PhoneChat: React.FC = () => {
     return nextContact
   }, [])
 
+  const applyLoadedChats = useCallback((loadedChats: ChatContact[], requestedContact?: ChatContact | null) => {
+    const readState = ensureReadBaselines(loadedChats, readChatReadState())
+    let nextChats = loadedChats.map((contact) => applyLocalUnreadState(contact, readState))
+
+    if (activeContactId && conversationOpen) {
+      const activeLoadedContact = nextChats.find((contact) => contact.id === activeContactId)
+      if (activeLoadedContact) {
+        markContactReadState(activeLoadedContact)
+        nextChats = nextChats.map((contact) => (
+          contact.id === activeContactId ? { ...contact, unreadCount: 0 } : contact
+        ))
+      }
+    }
+    syncReadStateForVisibleReadChats(nextChats, readState)
+
+    setChats(nextChats)
+    setActiveContactId((current) => {
+      if (requestedContact) return requestedContact.id
+      if (current === AI_AGENT_CHAT_ID && aiAgentChatEnabled) return current
+      if (current && nextChats.some((contact) => contact.id === current)) return current
+      return null
+    })
+
+    if (requestedContact) {
+      setConversationOpen(true)
+    }
+
+    return nextChats
+  }, [activeContactId, aiAgentChatEnabled, conversationOpen])
+
   const loadChats = useCallback(async () => {
-    setChatsLoading(true)
     setChatsError('')
+    const trimmed = chatQuery.trim()
+    const phoneFilterParams = chatPhoneFilterEnabled && selectedChatPhoneId !== 'all' && selectedChatPhone
+      ? {
+          businessPhoneNumberId: selectedChatPhoneId,
+          businessPhone: getBusinessPhoneValue(selectedChatPhone)
+        }
+      : {}
+    const cacheEnabled = !trimmed
+    const cacheKey = getPhoneDailyCacheKey(
+      'phone-chat',
+      'chats',
+      locationId || 'default',
+      selectedChatPhoneId,
+      phoneFilterParams.businessPhone || 'all'
+    )
+    const cachedChats = cacheEnabled ? readPhoneDailyCache<ChatContact[]>(cacheKey) : null
+    const showedCachedChats = Boolean(cachedChats)
+
+    if (cachedChats) {
+      const cachedList = Array.isArray(cachedChats.data) ? cachedChats.data : []
+      const cachedRequestedContact = requestedContactParam
+        ? cachedList.find((contact) => contact.id === requestedContactParam) || null
+        : null
+      applyLoadedChats(cachedList, cachedRequestedContact)
+      setChatsLoading(false)
+      setChatsRefreshing(true)
+    } else {
+      setChatsLoading(true)
+      setChatsRefreshing(false)
+    }
 
     try {
-      const trimmed = chatQuery.trim()
-      const phoneFilterParams = chatPhoneFilterEnabled && selectedChatPhoneId !== 'all' && selectedChatPhone
-        ? {
-            businessPhoneNumberId: selectedChatPhoneId,
-            businessPhone: getBusinessPhoneValue(selectedChatPhone)
-          }
-        : {}
       const data = await apiClient.get<ChatContact[]>('/contacts/chats', {
         params: {
           limit: '60',
@@ -1575,43 +1631,24 @@ export const PhoneChat: React.FC = () => {
         }
       }
 
-      const readState = ensureReadBaselines(nextChats, readChatReadState())
-      nextChats = nextChats.map((contact) => applyLocalUnreadState(contact, readState))
-
-      if (activeContactId && conversationOpen) {
-        const activeLoadedContact = nextChats.find((contact) => contact.id === activeContactId)
-        if (activeLoadedContact) {
-          markContactReadState(activeLoadedContact)
-          nextChats = nextChats.map((contact) => (
-            contact.id === activeContactId ? { ...contact, unreadCount: 0 } : contact
-          ))
-        }
-      }
-      syncReadStateForVisibleReadChats(nextChats, readState)
-
-      setChats(nextChats)
-      setActiveContactId((current) => {
-        if (requestedContact) return requestedContact.id
-        if (current === AI_AGENT_CHAT_ID && aiAgentChatEnabled) return current
-        if (current && nextChats.some((contact) => contact.id === current)) return current
-        return null
-      })
-
-      if (requestedContact) {
-        setConversationOpen(true)
+      const displayedChats = applyLoadedChats(nextChats, requestedContact)
+      if (cacheEnabled) {
+        writePhoneDailyCache(cacheKey, displayedChats.slice(0, 80), { maxEntryChars: 360_000 })
       }
     } catch {
-      setChatsError('No se pudieron cargar los chats.')
-      setChats([])
+      if (!showedCachedChats) {
+        setChatsError('No se pudieron cargar los chats.')
+        setChats([])
+      }
     } finally {
       setChatsLoading(false)
+      setChatsRefreshing(false)
     }
   }, [
-    activeContactId,
-    aiAgentChatEnabled,
+    applyLoadedChats,
     chatPhoneFilterEnabled,
     chatQuery,
-    conversationOpen,
+    locationId,
     requestedContactParam,
     selectedChatPhone,
     selectedChatPhoneId
@@ -1642,7 +1679,20 @@ export const PhoneChat: React.FC = () => {
   }, [])
 
   const loadConversation = useCallback(async (contactId: string) => {
-    setMessagesLoading(true)
+    const cacheKey = getPhoneDailyCacheKey('phone-chat', 'conversation', locationId || 'default', contactId)
+    const cachedConversation = readPhoneDailyCache<{ journey: JourneyEvent[]; messages: ChatMessage[] }>(cacheKey)
+    const showedCachedConversation = Boolean(cachedConversation)
+
+    if (cachedConversation) {
+      setContactJourney(Array.isArray(cachedConversation.data.journey) ? cachedConversation.data.journey : [])
+      setMessages(Array.isArray(cachedConversation.data.messages) ? cachedConversation.data.messages : [])
+      setMessagesLoading(false)
+      setMessagesRefreshing(true)
+    } else {
+      setMessagesLoading(true)
+      setMessagesRefreshing(false)
+    }
+
     try {
       const journey = await contactsService.getContactJourney(contactId)
       setContactJourney(journey)
@@ -1652,32 +1702,66 @@ export const PhoneChat: React.FC = () => {
         .sort((left, right) => new Date(left.date).getTime() - new Date(right.date).getTime())
 
       setMessages(nextMessages)
+      writePhoneDailyCache(cacheKey, { journey, messages: nextMessages }, { maxEntryChars: 360_000 })
     } catch {
-      setMessages([])
-      setContactJourney([])
+      if (!showedCachedConversation) {
+        setMessages([])
+        setContactJourney([])
+      }
     } finally {
       setMessagesLoading(false)
+      setMessagesRefreshing(false)
     }
-  }, [])
+  }, [locationId])
 
   const loadSupportData = useCallback(async () => {
-    const [status] = await Promise.all([
+    const statusCacheKey = getPhoneDailyCacheKey('phone-chat', 'whatsapp-status', locationId || 'default')
+    const calendarsCacheKey = getPhoneDailyCacheKey('phone-chat', 'calendars', locationId || 'default')
+    const cachedStatus = readPhoneDailyCache<WhatsAppApiStatus>(statusCacheKey)
+    const cachedCalendars = locationId && accessToken ? readPhoneDailyCache<Calendar[]>(calendarsCacheKey) : null
+    const applyCalendars = (items: Calendar[]) => {
+      setCalendars(items)
+      const preferred = items.find((calendar) => calendar.id === defaultCalendarId)
+      setSelectedCalendarId((current) => current || preferred?.id || items[0]?.id || '')
+    }
+
+    if (cachedStatus) setWhatsappStatus(cachedStatus.data)
+    if (cachedCalendars) applyCalendars(Array.isArray(cachedCalendars.data) ? cachedCalendars.data : [])
+
+    const [status, calendarItems] = await Promise.all([
       whatsappApiService.getStatus().catch(() => null),
       locationId && accessToken
-        ? calendarsService.getCalendars(locationId, accessToken).then((items) => {
-            setCalendars(items)
-            const preferred = items.find((calendar) => calendar.id === defaultCalendarId)
-            setSelectedCalendarId((current) => current || preferred?.id || items[0]?.id || '')
-          }).catch(() => setCalendars([]))
-        : Promise.resolve()
+        ? calendarsService.getCalendars(locationId, accessToken).catch(() => [])
+        : Promise.resolve(null)
     ])
 
-    if (status) setWhatsappStatus(status)
+    if (status) {
+      setWhatsappStatus(status)
+      writePhoneDailyCache(statusCacheKey, status, { maxEntryChars: 180_000 })
+    }
+    if (Array.isArray(calendarItems)) {
+      applyCalendars(calendarItems)
+      writePhoneDailyCache(calendarsCacheKey, calendarItems, { maxEntryChars: 180_000 })
+    } else if (!cachedCalendars && locationId && accessToken) {
+      setCalendars([])
+    }
   }, [accessToken, defaultCalendarId, locationId])
 
   const loadTemplates = useCallback(async () => {
-    setTemplatesLoading(true)
     setTemplatesError('')
+    const cacheKey = getPhoneDailyCacheKey('phone-chat', 'templates', locationId || 'default')
+    const cachedTemplates = readPhoneDailyCache<{ status: WhatsAppApiStatus | null; templates: WhatsAppApiTemplate[] }>(cacheKey)
+    const showedCachedTemplates = Boolean(cachedTemplates)
+
+    if (cachedTemplates) {
+      if (cachedTemplates.data.status) setWhatsappStatus(cachedTemplates.data.status)
+      setTemplates(Array.isArray(cachedTemplates.data.templates) ? cachedTemplates.data.templates : [])
+      setTemplatesLoading(false)
+      setTemplatesRefreshing(true)
+    } else {
+      setTemplatesLoading(true)
+      setTemplatesRefreshing(false)
+    }
 
     try {
       const refreshedStatus = await whatsappApiService.refresh().catch(() => null)
@@ -1687,14 +1771,19 @@ export const PhoneChat: React.FC = () => {
       ])
 
       if (status) setWhatsappStatus(status)
-      setTemplates(Array.isArray(response.items) ? response.items : [])
+      const nextTemplates = Array.isArray(response.items) ? response.items : []
+      setTemplates(nextTemplates)
+      writePhoneDailyCache(cacheKey, { status, templates: nextTemplates }, { maxEntryChars: 280_000 })
     } catch (error) {
-      setTemplates([])
-      setTemplatesError(getErrorMessage(error, 'No se pudieron cargar las plantillas.'))
+      if (!showedCachedTemplates) {
+        setTemplates([])
+        setTemplatesError(getErrorMessage(error, 'No se pudieron cargar las plantillas.'))
+      }
     } finally {
       setTemplatesLoading(false)
+      setTemplatesRefreshing(false)
     }
-  }, [])
+  }, [locationId])
 
   const saveConfigPreference = useCallback(<T,>(setter: (value: T) => Promise<void>, value: T) => {
     setter(value).catch(() => showToast('error', 'No se guardó la configuración', 'Intenta otra vez.'))
@@ -2253,7 +2342,10 @@ export const PhoneChat: React.FC = () => {
 
     if (contactInfoContact?.id === activeContact.id) return
 
-    setContactInfoContact(activeContact)
+    const cacheKey = getPhoneDailyCacheKey('phone-chat', 'contact-info', locationId || 'default', activeContact.id)
+    const cachedContactInfo = readPhoneDailyCache<Contact>(cacheKey)
+
+    setContactInfoContact(cachedContactInfo?.data || activeContact)
     setContactInfoLoading(true)
 
     try {
@@ -2262,6 +2354,7 @@ export const PhoneChat: React.FC = () => {
       setChats((current) => current.map((contact) => (
         contact.id === details.id ? { ...contact, ...details } : contact
       )))
+      writePhoneDailyCache(cacheKey, details, { maxEntryChars: 220_000 })
     } catch {
       setContactInfoError('No se pudo cargar todo el detalle. Te muestro lo que ya está guardado en este chat.')
     } finally {
@@ -3145,6 +3238,12 @@ export const PhoneChat: React.FC = () => {
           <span className={styles.emptyChatsIcon}>
             <Icon name="whatsapp" size={34} />
           </span>
+          {chatsRefreshing && (
+            <span className={styles.cacheRefreshPill} role="status">
+              <Loader2 size={14} className={styles.spinIcon} />
+              Actualizando chats
+            </span>
+          )}
           <strong>Aún no hay chats</strong>
           <small>Toca el botón verde para buscar un contacto e iniciar una conversación.</small>
           <button type="button" onClick={() => setSheet('newChat')}>
@@ -3157,6 +3256,12 @@ export const PhoneChat: React.FC = () => {
 
     return (
       <>
+        {chatsRefreshing && (
+          <div className={styles.cacheRefreshPill} role="status">
+            <Loader2 size={14} className={styles.spinIcon} />
+            Mostrando lo guardado, actualizando chats
+          </div>
+        )}
         {showAIAgentListItem && renderAIAgentChatButton()}
         {archivedViewOpen && (
           <button
@@ -3256,45 +3361,55 @@ export const PhoneChat: React.FC = () => {
       )
     }
 
-    return messages.map((message) => {
-      const failed = message.direction === 'outbound' && isMessageFailed(message)
-
-      return (
-        <div
-          key={message.id}
-          className={`${styles.messageRow} ${styles[`messageRow_${message.direction}`]}`}
-        >
-          <div className={styles.messageBubble}>
-            {message.attachment?.type === 'image' && (message.attachment.dataUrl || message.attachment.url) && (
-              <img className={styles.messageImage} src={message.attachment.dataUrl || message.attachment.url} alt={message.attachment.name || 'Foto enviada'} />
-            )}
-            {message.attachment?.type === 'audio' && (message.attachment.dataUrl || message.attachment.url) && (
-              <div className={styles.messageAudio}>
-                <Mic size={18} />
-                <audio controls preload="metadata" src={message.attachment.dataUrl || message.attachment.url} />
-              </div>
-            )}
-            {message.text && <p>{message.text}</p>}
-            <span>
-              {message.transport === 'qr' && <em className={styles.messageTransport}>QR</em>}
-              {formatMessageTime(message.date)}
-              {message.direction === 'outbound' && (failed ? (
-                <button
-                  type="button"
-                  className={styles.messageErrorButton}
-                  onClick={() => handleShowMessageError(message)}
-                  aria-label="Ver razón del error"
-                >
-                  <CircleAlert size={15} />
-                </button>
-              ) : (
-                <Check size={15} />
-              ))}
-            </span>
+    return (
+      <>
+        {messagesRefreshing && (
+          <div className={styles.cacheRefreshPill} role="status">
+            <Loader2 size={14} className={styles.spinIcon} />
+            Mostrando lo guardado, actualizando conversación
           </div>
-        </div>
-      )
-    })
+        )}
+        {messages.map((message) => {
+          const failed = message.direction === 'outbound' && isMessageFailed(message)
+
+          return (
+            <div
+              key={message.id}
+              className={`${styles.messageRow} ${styles[`messageRow_${message.direction}`]}`}
+            >
+              <div className={styles.messageBubble}>
+                {message.attachment?.type === 'image' && (message.attachment.dataUrl || message.attachment.url) && (
+                  <img className={styles.messageImage} src={message.attachment.dataUrl || message.attachment.url} alt={message.attachment.name || 'Foto enviada'} />
+                )}
+                {message.attachment?.type === 'audio' && (message.attachment.dataUrl || message.attachment.url) && (
+                  <div className={styles.messageAudio}>
+                    <Mic size={18} />
+                    <audio controls preload="metadata" src={message.attachment.dataUrl || message.attachment.url} />
+                  </div>
+                )}
+                {message.text && <p>{message.text}</p>}
+                <span>
+                  {message.transport === 'qr' && <em className={styles.messageTransport}>QR</em>}
+                  {formatMessageTime(message.date)}
+                  {message.direction === 'outbound' && (failed ? (
+                    <button
+                      type="button"
+                      className={styles.messageErrorButton}
+                      onClick={() => handleShowMessageError(message)}
+                      aria-label="Ver razón del error"
+                    >
+                      <CircleAlert size={15} />
+                    </button>
+                  ) : (
+                    <Check size={15} />
+                  ))}
+                </span>
+              </div>
+            </div>
+          )
+        })}
+      </>
+    )
   }
 
   const renderDraftAttachments = () => {
@@ -3675,7 +3790,7 @@ export const PhoneChat: React.FC = () => {
     )
 
     const renderTemplateStatusList = () => {
-      if (templatesLoading) {
+      if (templatesLoading && templates.length === 0) {
         return (
           <div className={styles.centerState}>
             <Loader2 size={20} className={styles.spinIcon} />
@@ -3707,6 +3822,12 @@ export const PhoneChat: React.FC = () => {
 
       return (
         <div className={styles.templateList}>
+          {templatesRefreshing && (
+            <div className={styles.cacheRefreshPill} role="status">
+              <Loader2 size={14} className={styles.spinIcon} />
+              Actualizando plantillas
+            </div>
+          )}
           {templates.map((template) => {
             const status = getTemplateStatus(template)
             const alertMessage = getTemplateAlertMessage(template)
@@ -3885,8 +4006,8 @@ export const PhoneChat: React.FC = () => {
                   Crear
                 </button>
               </section>
-              <button type="button" className={styles.settingsRefreshButton} onClick={loadTemplates} disabled={templatesLoading}>
-                {templatesLoading ? <Loader2 size={16} className={styles.spinIcon} /> : <FileText size={16} />}
+              <button type="button" className={styles.settingsRefreshButton} onClick={loadTemplates} disabled={templatesLoading || templatesRefreshing}>
+                {templatesLoading || templatesRefreshing ? <Loader2 size={16} className={styles.spinIcon} /> : <FileText size={16} />}
                 Actualizar plantillas
               </button>
               {renderSettingsTemplateAlerts()}
@@ -4252,14 +4373,14 @@ export const PhoneChat: React.FC = () => {
             Atrás
           </button>
           <strong>Plantillas creadas</strong>
-          <button type="button" onClick={loadTemplates} disabled={templatesLoading}>
-            {templatesLoading ? <Loader2 size={16} className={styles.spinIcon} /> : 'Actualizar'}
+          <button type="button" onClick={loadTemplates} disabled={templatesLoading || templatesRefreshing}>
+            {templatesLoading || templatesRefreshing ? <Loader2 size={16} className={styles.spinIcon} /> : 'Actualizar'}
           </button>
         </div>
 
         {renderTemplateAlerts()}
 
-        {templatesLoading ? (
+        {templatesLoading && templates.length === 0 ? (
           <div className={styles.centerState}>
             <Loader2 size={20} className={styles.spinIcon} />
             <span>Cargando plantillas...</span>
@@ -4279,6 +4400,12 @@ export const PhoneChat: React.FC = () => {
           </div>
         ) : (
           <div className={styles.templateList}>
+            {templatesRefreshing && (
+              <div className={styles.cacheRefreshPill} role="status">
+                <Loader2 size={14} className={styles.spinIcon} />
+                Actualizando plantillas
+              </div>
+            )}
             {templates.map((template) => {
               const status = getTemplateStatus(template)
               const approved = status === 'APPROVED'

@@ -3,6 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { ArrowLeft, CalendarDays, Check, ChevronDown, ChevronRight, CreditCard, Loader2, MonitorX } from 'lucide-react'
 import { RecordPaymentModal } from '@/components/common'
 import { PhoneEcosystemNav } from '@/components/phone/PhoneEcosystemNav'
+import { getPhoneDailyCacheKey, readPhoneDailyCache, writePhoneDailyCache } from '@/services/phoneDailyCache'
 import { transactionsService, type Transaction } from '@/services/transactionsService'
 import styles from './PhonePayments.module.css'
 
@@ -123,6 +124,7 @@ export const PhonePayments: React.FC = () => {
   const [recentPaymentsPeriod, setRecentPaymentsPeriod] = useState<RecentPaymentsPeriod>('30d')
   const [recentPayments, setRecentPayments] = useState<Transaction[]>([])
   const [recentPaymentsLoading, setRecentPaymentsLoading] = useState(false)
+  const [recentPaymentsRefreshing, setRecentPaymentsRefreshing] = useState(false)
   const [selectedRecentPaymentId, setSelectedRecentPaymentId] = useState<string | null>(null)
 
   useEffect(() => {
@@ -240,21 +242,49 @@ export const PhonePayments: React.FC = () => {
 
     let cancelled = false
     const loadRecentPayments = async () => {
-      setRecentPaymentsLoading(true)
       const { startDate, endDate } = getRecentPaymentRange(recentPaymentsPeriod)
-      const transactions = await transactionsService.getTransactions(startDate, endDate)
+      const cacheKey = getPhoneDailyCacheKey('phone-payments', 'recent-payments', recentPaymentsPeriod, startDate, endDate)
+      const cachedPayments = readPhoneDailyCache<Transaction[]>(cacheKey)
+      const showedCachedPayments = Boolean(cachedPayments)
 
-      if (cancelled) return
+      if (cachedPayments) {
+        const cachedList = Array.isArray(cachedPayments.data) ? cachedPayments.data : []
+        setRecentPayments(cachedList)
+        setSelectedRecentPaymentId((current) => (
+          current && cachedList.some((payment) => payment.id === current) ? current : null
+        ))
+        setRecentPaymentsLoading(false)
+        setRecentPaymentsRefreshing(true)
+      } else {
+        setRecentPaymentsLoading(true)
+        setRecentPaymentsRefreshing(false)
+      }
 
-      const receivedPayments = transactions
-        .filter((transaction) => transaction.amount > 0 && SUCCESS_PAYMENT_STATUSES.has(String(transaction.status || '').toLowerCase()))
-        .sort((left, right) => Date.parse(right.date || right.createdAt || '') - Date.parse(left.date || left.createdAt || ''))
+      try {
+        const transactions = await transactionsService.getTransactions(startDate, endDate)
 
-      setRecentPayments(receivedPayments)
-      setSelectedRecentPaymentId((current) => (
-        current && receivedPayments.some((payment) => payment.id === current) ? current : null
-      ))
-      setRecentPaymentsLoading(false)
+        if (cancelled) return
+
+        const receivedPayments = transactions
+          .filter((transaction) => transaction.amount > 0 && SUCCESS_PAYMENT_STATUSES.has(String(transaction.status || '').toLowerCase()))
+          .sort((left, right) => Date.parse(right.date || right.createdAt || '') - Date.parse(left.date || left.createdAt || ''))
+
+        setRecentPayments(receivedPayments)
+        setSelectedRecentPaymentId((current) => (
+          current && receivedPayments.some((payment) => payment.id === current) ? current : null
+        ))
+        writePhoneDailyCache(cacheKey, receivedPayments.slice(0, 80), { maxEntryChars: 260_000 })
+      } catch {
+        if (!cancelled && !showedCachedPayments) {
+          setRecentPayments([])
+          setSelectedRecentPaymentId(null)
+        }
+      } finally {
+        if (!cancelled) {
+          setRecentPaymentsLoading(false)
+          setRecentPaymentsRefreshing(false)
+        }
+      }
     }
 
     loadRecentPayments()
@@ -395,39 +425,53 @@ export const PhonePayments: React.FC = () => {
                     ))}
                   </div>
 
-                  {recentPaymentsLoading ? (
+                  {recentPaymentsLoading && recentPayments.length === 0 ? (
                     <div className={styles.recentPaymentsState}>
                       <Loader2 size={18} className={styles.spinIcon} />
                       Cargando pagos...
                     </div>
                   ) : recentPayments.length === 0 ? (
                     <div className={styles.recentPaymentsState}>
+                      {recentPaymentsRefreshing && (
+                        <span className={styles.recentPaymentsRefresh}>
+                          <Loader2 size={16} className={styles.spinIcon} />
+                          Actualizando pagos
+                        </span>
+                      )}
                       No hay pagos recibidos en este periodo.
                     </div>
                   ) : (
-                    <div className={styles.recentPaymentsList}>
-                      {recentPayments.slice(0, 24).map((payment) => {
-                        const selected = selectedRecentPaymentId === payment.id
-                        return (
-                          <button
-                            key={payment.id}
-                            type="button"
-                            className={`${styles.recentPaymentItem} ${selected ? styles.recentPaymentItemSelected : ''}`}
-                            onClick={() => setSelectedRecentPaymentId(selected ? null : payment.id)}
-                          >
-                            <span className={styles.recentPaymentMain}>
-                              <strong>{formatCurrency(payment.amount, payment.currency || 'MXN')}</strong>
-                              <small>{getContactLabel(payment)}</small>
-                            </span>
-                            <span className={styles.recentPaymentMeta}>
-                              <span>{formatPaymentDate(payment.date || payment.createdAt)}</span>
-                              <small>{getPaymentMethodLabel(payment.method)} · {getPaymentStatusLabel(payment.status)}</small>
-                            </span>
-                            {selected && <Check size={18} className={styles.recentPaymentCheck} aria-hidden="true" />}
-                          </button>
-                        )
-                      })}
-                    </div>
+                    <>
+                      {recentPaymentsRefreshing && (
+                        <div className={styles.recentPaymentsRefresh} role="status">
+                          <Loader2 size={16} className={styles.spinIcon} />
+                          Mostrando lo guardado, actualizando pagos
+                        </div>
+                      )}
+                      <div className={styles.recentPaymentsList}>
+                        {recentPayments.slice(0, 24).map((payment) => {
+                          const selected = selectedRecentPaymentId === payment.id
+                          return (
+                            <button
+                              key={payment.id}
+                              type="button"
+                              className={`${styles.recentPaymentItem} ${selected ? styles.recentPaymentItemSelected : ''}`}
+                              onClick={() => setSelectedRecentPaymentId(selected ? null : payment.id)}
+                            >
+                              <span className={styles.recentPaymentMain}>
+                                <strong>{formatCurrency(payment.amount, payment.currency || 'MXN')}</strong>
+                                <small>{getContactLabel(payment)}</small>
+                              </span>
+                              <span className={styles.recentPaymentMeta}>
+                                <span>{formatPaymentDate(payment.date || payment.createdAt)}</span>
+                                <small>{getPaymentMethodLabel(payment.method)} · {getPaymentStatusLabel(payment.status)}</small>
+                              </span>
+                              {selected && <Check size={18} className={styles.recentPaymentCheck} aria-hidden="true" />}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </>
                   )}
                 </div>
               )}

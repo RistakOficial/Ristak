@@ -26,6 +26,7 @@ import { calendarsService, type AppointmentStats, type Calendar, type CalendarEv
 import { campaignsService, type Campaign } from '@/services/campaignsService'
 import { contactsService, type ContactStats } from '@/services/contactsService'
 import { dashboardService, type ChartData, type DashboardMetrics } from '@/services/dashboardService'
+import { getPhoneDailyCacheKey, readPhoneDailyCache, writePhoneDailyCache } from '@/services/phoneDailyCache'
 import { reportsService, type ContactListItem, type ReportMetricRow, type ReportsSummary } from '@/services/reportsService'
 import { transactionsService, type Transaction, type TransactionSummary } from '@/services/transactionsService'
 import { formatCurrency, formatDate, formatDateToISO, formatNumber, formatRoas } from '@/utils/format'
@@ -201,6 +202,17 @@ function createEmptyPhoneData(): PhoneAppData {
   }
 }
 
+function compactPhoneDataForCache(data: PhoneAppData): PhoneAppData {
+  return {
+    ...data,
+    transactions: data.transactions.slice(0, 80),
+    contacts: data.contacts.slice(0, 80),
+    campaigns: data.campaigns.slice(0, 80),
+    reportMetrics: data.reportMetrics.slice(-120),
+    appointmentEvents: data.appointmentEvents.slice(0, 160)
+  }
+}
+
 function hasPortableAccess() {
   if (typeof window === 'undefined') return false
 
@@ -352,6 +364,7 @@ export const PhoneApp: React.FC = () => {
   const [accessState, setAccessState] = useState<AccessState>(getAccessState)
   const [phoneData, setPhoneData] = useState<PhoneAppData>(() => createEmptyPhoneData())
   const [loading, setLoading] = useState(true)
+  const [cacheRefreshing, setCacheRefreshing] = useState(false)
   const [refreshKey, setRefreshKey] = useState(0)
   const [loadError, setLoadError] = useState<string | null>(null)
 
@@ -502,6 +515,7 @@ export const PhoneApp: React.FC = () => {
     if (accessState !== 'allowed' || !activeSectionId) return
     if (activeSectionId === 'settings') {
       setLoading(false)
+      setCacheRefreshing(false)
       setLoadError(null)
       return
     }
@@ -509,8 +523,22 @@ export const PhoneApp: React.FC = () => {
     let cancelled = false
 
     const loadPhoneData = async () => {
-      setLoading(true)
       setLoadError(null)
+      const cacheKey = getPhoneDailyCacheKey('phone-app', 'data', locationId || 'default', startIso, endIso)
+      const cachedPhoneData = readPhoneDailyCache<PhoneAppData>(cacheKey)
+      const showedCachedData = Boolean(cachedPhoneData)
+
+      if (cachedPhoneData) {
+        setPhoneData({
+          ...createEmptyPhoneData(),
+          ...cachedPhoneData.data
+        })
+        setLoading(false)
+        setCacheRefreshing(true)
+      } else {
+        setLoading(true)
+        setCacheRefreshing(false)
+      }
 
       const groupBy = getDaysBetween(startDate, endDate) > 95 ? 'month' : 'day'
       const inclusiveEnd = getInclusiveEnd(endDate)
@@ -570,7 +598,7 @@ export const PhoneApp: React.FC = () => {
 
         if (cancelled) return
 
-        setPhoneData({
+        const nextPhoneData = {
           dashboardMetrics,
           financialChart,
           funnelData,
@@ -589,14 +617,20 @@ export const PhoneApp: React.FC = () => {
           calendars,
           appointmentEvents,
           appointmentStats: calendarsService.calculateStats(appointmentEvents)
-        })
+        }
+
+        setPhoneData(nextPhoneData)
+        writePhoneDailyCache(cacheKey, compactPhoneDataForCache(nextPhoneData), { maxEntryChars: 520_000 })
       } catch {
         if (!cancelled) {
-          setLoadError('Mobile metrics could not be loaded.')
+          if (!showedCachedData) {
+            setLoadError('No se pudieron cargar los datos móviles.')
+          }
         }
       } finally {
         if (!cancelled) {
           setLoading(false)
+          setCacheRefreshing(false)
         }
       }
     }
@@ -769,7 +803,7 @@ export const PhoneApp: React.FC = () => {
               aria-label="Refresh metrics"
               title="Refresh metrics"
             >
-              <RefreshCw size={18} className={loading ? styles.spinIcon : undefined} />
+              <RefreshCw size={18} className={loading || cacheRefreshing ? styles.spinIcon : undefined} />
             </button>
             <Link className={styles.iconButton} to="/phone/agent-ai" aria-label="Open AI agent" title="Open AI agent">
               <Bot size={18} />
@@ -816,6 +850,12 @@ export const PhoneApp: React.FC = () => {
         </nav>
 
         <section className={styles.content} data-phone-scrollable="true">
+          {cacheRefreshing && (
+            <div className={styles.cacheBanner} role="status">
+              Mostrando lo guardado, actualizando datos
+            </div>
+          )}
+
           {loadError && (
             <div className={styles.errorBanner} role="status">
               {loadError}

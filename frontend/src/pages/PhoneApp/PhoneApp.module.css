@@ -299,6 +299,17 @@
   font-weight: 700;
 }
 
+.cacheBanner {
+  margin: 0 0 12px;
+  padding: 9px 12px;
+  border-radius: 8px;
+  color: var(--color-text-secondary);
+  background: color-mix(in srgb, var(--color-background-tertiary) 76%, transparent);
+  font-size: 12px;
+  font-weight: 780;
+  text-align: center;
+}
+
 .content {
   position: relative;
   grid-row: 4;

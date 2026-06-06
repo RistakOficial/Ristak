@@ -16,6 +16,7 @@ import { useNotification } from '@/contexts/NotificationContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
 import { useAppConfig } from '@/hooks'
 import { calendarsService, type Calendar, type CalendarEvent } from '@/services/calendarsService'
+import { getPhoneDailyCacheKey, readPhoneDailyCache, writePhoneDailyCache } from '@/services/phoneDailyCache'
 import { pushNotificationsService } from '@/services/pushNotificationsService'
 import { buildSearchIndex, prepareSearchQuery, searchIndexIncludes } from '@/utils/searchText'
 import { convertLocalToUTC } from '@/utils/timezone'
@@ -222,6 +223,7 @@ export const PhoneCalendar: React.FC = () => {
   const [events, setEvents] = useState<CalendarEvent[]>([])
   const [futureEvents, setFutureEvents] = useState<CalendarEvent[]>([])
   const [loading, setLoading] = useState(true)
+  const [cacheRefreshing, setCacheRefreshing] = useState(false)
   const [refreshKey, setRefreshKey] = useState(0)
   const [currentDate, setCurrentDate] = useState(() => new Date())
   const [selectedDate, setSelectedDate] = useState(() => new Date())
@@ -283,6 +285,19 @@ export const PhoneCalendar: React.FC = () => {
     persistLastSelectedCalendar(calendar?.id ?? null)
   }, [persistLastSelectedCalendar])
 
+  const applyCalendars = useCallback((calendarsData: Calendar[]) => {
+    setCalendars(calendarsData)
+
+    const lastSelectedId = getStoredLastCalendarId()
+    const selected =
+      calendarsData.find((calendar) => calendar.id === lastSelectedId && calendar.isActive) ||
+      calendarsData.find((calendar) => calendar.id === defaultCalendarId && calendar.isActive) ||
+      calendarsData.find((calendar) => calendar.isActive) ||
+      null
+
+    selectCalendar(selected)
+  }, [defaultCalendarId, selectCalendar])
+
   const buildCreateDefaultTimes = useCallback((baseDate: Date, hourOffset = 0) => {
     const zonedNow = toDateInTimeZone(new Date().toISOString(), timezone) ?? new Date()
     const isToday = isSameDay(baseDate, zonedNow)
@@ -313,18 +328,19 @@ export const PhoneCalendar: React.FC = () => {
   }, [buildCreateDefaultTimes, selectedCalendar, selectedDate, showToast, timezone])
 
   const loadCalendars = useCallback(async () => {
+    const cacheKey = getPhoneDailyCacheKey('phone-calendar', 'calendars', locationId || 'default')
+    const cachedCalendars = readPhoneDailyCache<Calendar[]>(cacheKey)
+
+    if (cachedCalendars) {
+      applyCalendars(Array.isArray(cachedCalendars.data) ? cachedCalendars.data : [])
+      setCacheRefreshing(true)
+    }
+
     const calendarsData = await calendarsService.getCalendars(locationId, accessToken)
-    setCalendars(calendarsData)
-
-    const lastSelectedId = getStoredLastCalendarId()
-    const selected =
-      calendarsData.find((calendar) => calendar.id === lastSelectedId && calendar.isActive) ||
-      calendarsData.find((calendar) => calendar.id === defaultCalendarId && calendar.isActive) ||
-      calendarsData.find((calendar) => calendar.isActive) ||
-      null
-
-    selectCalendar(selected)
-  }, [accessToken, defaultCalendarId, locationId, selectCalendar])
+    applyCalendars(calendarsData)
+    writePhoneDailyCache(cacheKey, calendarsData, { maxEntryChars: 180_000 })
+    setCacheRefreshing(false)
+  }, [accessToken, applyCalendars, locationId])
 
   const loadEvents = useCallback(async () => {
     if (!selectedCalendar) {
@@ -334,6 +350,22 @@ export const PhoneCalendar: React.FC = () => {
     }
 
     const { start, end } = buildMonthRange(currentDate)
+    const cacheKey = getPhoneDailyCacheKey(
+      'phone-calendar',
+      'events',
+      locationId || 'default',
+      selectedCalendar.id,
+      start.getTime(),
+      end.getTime()
+    )
+    const cachedEvents = readPhoneDailyCache<{ events: CalendarEvent[]; futureEvents: CalendarEvent[] }>(cacheKey)
+
+    if (cachedEvents) {
+      setEvents(Array.isArray(cachedEvents.data.events) ? cachedEvents.data.events : [])
+      setFutureEvents(Array.isArray(cachedEvents.data.futureEvents) ? cachedEvents.data.futureEvents : [])
+      setCacheRefreshing(true)
+    }
+
     const eventsData = await calendarsService.getEvents(
       locationId || '',
       start.getTime(),
@@ -347,8 +379,12 @@ export const PhoneCalendar: React.FC = () => {
       accessToken || undefined
     )
 
-    setEvents(eventsData.map((event, index) => normalizeCalendarEvent(event, `event-${index}`)))
-    setFutureEvents(futureData.map((event, index) => normalizeCalendarEvent(event, `future-${index}`)))
+    const nextEvents = eventsData.map((event, index) => normalizeCalendarEvent(event, `event-${index}`))
+    const nextFutureEvents = futureData.map((event, index) => normalizeCalendarEvent(event, `future-${index}`))
+    setEvents(nextEvents)
+    setFutureEvents(nextFutureEvents)
+    writePhoneDailyCache(cacheKey, { events: nextEvents, futureEvents: nextFutureEvents }, { maxEntryChars: 360_000 })
+    setCacheRefreshing(false)
   }, [accessToken, currentDate, locationId, selectedCalendar])
 
   useEffect(() => {
@@ -499,7 +535,10 @@ export const PhoneCalendar: React.FC = () => {
           showToast('error', 'No cargaron los calendarios', 'Vuelve a abrir el calendario e intenta de nuevo.')
         }
       } finally {
-        if (!cancelled) setLoading(false)
+        if (!cancelled) {
+          setLoading(false)
+          setCacheRefreshing(false)
+        }
       }
     }
 
@@ -523,7 +562,10 @@ export const PhoneCalendar: React.FC = () => {
           showToast('error', 'No cargaron las citas', 'Actualiza el calendario e intenta otra vez.')
         }
       } finally {
-        if (!cancelled) setLoading(false)
+        if (!cancelled) {
+          setLoading(false)
+          setCacheRefreshing(false)
+        }
       }
     }
 
@@ -1327,7 +1369,14 @@ export const PhoneCalendar: React.FC = () => {
 	                <p>{selectedDayLabel}</p>
 	                <h1>{selectedDayEvents.length ? `${selectedDayEvents.length} cita${selectedDayEvents.length === 1 ? '' : 's'}` : 'Sin citas'}</h1>
 	              </div>
-	              {loading && <Loader2 size={18} className={styles.spinIcon} />}
+	              {cacheRefreshing ? (
+	                <span className={styles.cacheRefreshPill} role="status">
+	                  <Loader2 size={14} className={styles.spinIcon} />
+	                  Actualizando
+	                </span>
+	              ) : (
+	                loading && <Loader2 size={18} className={styles.spinIcon} />
+	              )}
 	            </section>
 
 	            <section className={`${styles.agendaList} ${styles.agendaList_list}`} aria-label="Citas del día">

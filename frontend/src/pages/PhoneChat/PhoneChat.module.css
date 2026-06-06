@@ -1750,6 +1750,23 @@
   line-height: 1.45;
 }
 
+.cacheRefreshPill {
+  display: inline-flex;
+  align-items: center;
+  justify-self: center;
+  gap: 6px;
+  max-width: calc(100% - 24px);
+  min-height: 28px;
+  margin: 6px auto;
+  padding: 0 10px;
+  border-radius: 999px;
+  color: var(--phone-chat-muted);
+  background: color-mix(in srgb, var(--phone-chat-surface) 86%, transparent);
+  font-size: 12px;
+  font-weight: 780;
+  text-align: center;
+}
+
 .sheetBackdrop {
   position: fixed;
   inset: 0;

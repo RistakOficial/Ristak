@@ -425,6 +425,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  flex-wrap: wrap;
   gap: 7px;
   min-height: 62px;
   padding: 10px 4px;
@@ -434,6 +435,21 @@
   font-size: 13px;
   font-weight: 700;
   text-align: center;
+}
+
+.recentPaymentsRefresh {
+  display: inline-flex;
+  align-items: center;
+  justify-self: center;
+  gap: 6px;
+  min-height: 28px;
+  margin: 4px auto;
+  padding: 0 10px;
+  border-radius: 999px;
+  color: #52525b;
+  background: #f4f4f5;
+  font-size: 12px;
+  font-weight: 780;
 }
 
 .recentPaymentsList {
