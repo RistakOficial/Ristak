@@ -103,6 +103,8 @@ function getQrStatusLabel(status?: string | null) {
   if (normalized === 'restarting') return 'Reiniciando QR'
   if (normalized === 'reconnecting') return 'Reconectando QR'
   if (normalized === 'number_mismatch') return 'Numero incorrecto'
+  if (normalized === 'bad_session') return 'Reconectar QR'
+  if (normalized === 'connection_replaced') return 'Sesion reemplazada'
   if (normalized === 'disconnected_515') return 'Reiniciar QR'
   if (normalized === 'logged_out') return 'QR cerrado'
   if (normalized.startsWith('disconnected')) return 'QR desconectado'
@@ -113,7 +115,7 @@ function getQrStatusClass(status?: string | null) {
   const normalized = String(status || '').toLowerCase()
   if (normalized === 'connected') return styles.qrBadgeConnected
   if (['qr_pending', 'starting', 'restarting', 'reconnecting', 'disconnected_515'].includes(normalized)) return styles.qrBadgePending
-  if (normalized === 'number_mismatch' || normalized === 'logged_out' || normalized.includes('disconnect')) return styles.qrBadgeWarning
+  if (['number_mismatch', 'logged_out', 'bad_session', 'connection_replaced'].includes(normalized) || normalized.includes('disconnect')) return styles.qrBadgeWarning
   return styles.qrBadgeMuted
 }
 

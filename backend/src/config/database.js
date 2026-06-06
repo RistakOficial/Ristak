@@ -1476,6 +1476,17 @@ async function initTables() {
       )
     `)
 
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS whatsapp_qr_auth_state (
+        phone_number_id TEXT NOT NULL,
+        auth_key TEXT NOT NULL,
+        value_json TEXT,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (phone_number_id, auth_key),
+        FOREIGN KEY (phone_number_id) REFERENCES whatsapp_api_phone_numbers(id) ON DELETE CASCADE
+      )
+    `)
+
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_phone_numbers_phone ON whatsapp_api_phone_numbers(phone_number)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_phone_numbers_default ON whatsapp_api_phone_numbers(is_default_sender)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_contacts_phone ON whatsapp_api_contacts(phone)')
@@ -1499,6 +1510,7 @@ async function initTables() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_template_sends_status ON whatsapp_api_template_sends(status)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_qr_sessions_phone ON whatsapp_qr_sessions(phone_number_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_qr_sessions_status ON whatsapp_qr_sessions(status, updated_at)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_qr_auth_state_phone ON whatsapp_qr_auth_state(phone_number_id)')
 
     // Tabla de versiones de Meta API (para auto-actualización)
     await db.run(`
