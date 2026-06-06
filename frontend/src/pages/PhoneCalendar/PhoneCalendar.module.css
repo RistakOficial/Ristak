@@ -1,5 +1,5 @@
 .phonePage {
-  --phone-frame-bg: var(--phone-chat-bg, #ffffff);
+  --phone-frame-bg: var(--phone-chat-surface, var(--phone-chat-bg, #ffffff));
   --phone-calendar-surface: var(--phone-chat-surface, #ffffff);
   --phone-calendar-soft: var(--phone-chat-surface-soft, #f7f6f2);
   --phone-calendar-panel: var(--phone-chat-panel, #f7f6f2);
@@ -32,7 +32,7 @@
   width: 100%;
   min-height: 0;
   padding-bottom: calc(86px + env(safe-area-inset-bottom));
-  background: var(--phone-frame-bg);
+  background: var(--phone-calendar-surface);
   overflow-x: hidden;
   overflow-y: hidden;
   overscroll-behavior: none;
@@ -853,9 +853,10 @@
 }
 
 .eventCard_list {
-  min-height: 66px;
-  grid-template-columns: 6px minmax(0, 1fr) auto;
-  padding: 12px;
+  min-height: 58px;
+  grid-template-columns: 6px minmax(0, 1fr) max-content;
+  align-items: start;
+  padding: 10px 12px;
   border: 1px solid rgba(17, 24, 39, 0.08);
   border-radius: 8px;
   background: #ffffff;
@@ -899,9 +900,11 @@
 
 .eventTimeStack {
   display: grid;
+  align-self: start;
   justify-items: end;
   gap: 3px;
-  min-width: 58px;
+  min-width: max-content;
+  padding-top: 1px;
   color: #050505;
 }
 
@@ -933,7 +936,7 @@
 }
 
 .eventCard_list .eventTimeStack {
-  min-width: 72px;
+  min-width: max-content;
 }
 
 .emptyAgenda {
@@ -1474,6 +1477,16 @@
     grid-column: 2;
     justify-items: start;
     min-width: 0;
+  }
+
+  .eventCard_list {
+    grid-template-columns: 6px minmax(0, 1fr) max-content;
+  }
+
+  .eventCard_list .eventTimeStack {
+    grid-column: auto;
+    justify-items: end;
+    min-width: max-content;
   }
 
   .todayPill {
