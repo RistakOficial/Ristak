@@ -67,8 +67,8 @@ const ROUTE_BRANDING: Record<'ristak' | 'phone' | 'phoneChat', AppBranding> = {
   },
   phone: {
     title: 'Ristak Chat',
-    favicon: '/ristak-chat-icon.svg',
-    faviconType: 'image/svg+xml',
+    favicon: '/ristak-chat-icon-192.png',
+    faviconType: 'image/png',
     manifest: '/manifest.phone.webmanifest',
     appleTouchIcon: '/ristak-chat-apple-touch-icon.png',
     themeColor: '#050505'

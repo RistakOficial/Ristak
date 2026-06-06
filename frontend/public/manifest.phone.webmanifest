@@ -11,12 +11,6 @@
   "theme_color": "#111111",
   "icons": [
     {
-      "src": "/ristak-chat-icon.svg",
-      "sizes": "any",
-      "type": "image/svg+xml",
-      "purpose": "any maskable"
-    },
-    {
       "src": "/ristak-chat-icon-192.png",
       "sizes": "192x192",
       "type": "image/png",
