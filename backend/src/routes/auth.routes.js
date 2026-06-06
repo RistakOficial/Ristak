@@ -28,13 +28,13 @@ router.post('/login', login)
 router.post('/verify', verifyTokenEndpoint)
 
 // POST /api/auth/change-password - Cambiar contraseña
-router.post('/change-password', changePassword)
+router.post('/change-password', requireAuth, changePassword)
 
 // POST /api/auth/change-username - Cambiar nombre de usuario
-router.post('/change-username', changeUsername)
+router.post('/change-username', requireAuth, changeUsername)
 
 // GET /api/auth/me - Obtener información del usuario autenticado
-router.get('/me', getMe)
+router.get('/me', requireAuth, getMe)
 
 // GET /api/auth/api-token - Obtener metadatos del API token autenticado
 router.get('/api-token', requireAuth, getApiToken)

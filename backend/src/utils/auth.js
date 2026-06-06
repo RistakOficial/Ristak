@@ -2,6 +2,18 @@ import crypto from 'crypto'
 import { db } from '../config/database.js'
 import { logger } from './logger.js'
 
+function getJwtSecret() {
+  const secret = process.env.JWT_SECRET
+
+  if (secret) return secret
+
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('JWT_SECRET es requerido en producción')
+  }
+
+  return 'ristak-default-secret-change-me'
+}
+
 /**
  * Genera un hash de password usando bcrypt (simulado con PBKDF2 + salt)
  * @param {string} password - Password en texto plano
@@ -85,8 +97,7 @@ export function generateToken(payload) {
     typ: 'JWT'
   }
 
-  // Obtener secret desde env o usar uno por defecto (NO RECOMENDADO EN PRODUCCIÓN)
-  const secret = process.env.JWT_SECRET || 'ristak-default-secret-change-me'
+  const secret = getJwtSecret()
 
   // Crear token
   const encodedHeader = Buffer.from(JSON.stringify(header)).toString('base64url')
@@ -116,7 +127,7 @@ export function verifyToken(token) {
   }
 
   try {
-    const secret = process.env.JWT_SECRET || 'ristak-default-secret-change-me'
+    const secret = getJwtSecret()
 
     const [encodedHeader, encodedPayload, signature] = token.split('.')
 

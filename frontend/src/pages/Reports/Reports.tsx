@@ -1700,6 +1700,7 @@ export const Reports: React.FC = () => {
   // Limpiar y recargar datos del modal cuando cambian las fechas
   useEffect(() => {
     if (modalState.open && modalState.type) {
+      const currentModalType = modalState.type
       // Limpiar datos anteriores inmediatamente
       setModalState(prev => ({ ...prev, contacts: [], loading: true }))
 
@@ -1714,7 +1715,7 @@ export const Reports: React.FC = () => {
           const result = await reportsService.getContactsList({
             from,
             to,
-            type: modalState.type === 'customers' ? 'customers' : modalState.type,
+            type: currentModalType === 'customers' ? 'customers' : currentModalType,
             scope: currentScope
           })
           setModalState(prev => ({

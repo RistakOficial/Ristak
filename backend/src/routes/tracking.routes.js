@@ -18,6 +18,7 @@ import {
   getContactsByDate,
   getContactConversionsByDate
 } from '../controllers/trackingController.js'
+import { requireAuth } from '../middleware/authMiddleware.js'
 
 const router = express.Router()
 
@@ -32,6 +33,8 @@ router.post('/sync-visitor', syncVisitorToHighLevel)
 
 // Vincular visitor_id histórico a contacto
 router.post('/link-visitor', linkVisitorToContactHandler)
+
+router.use(requireAuth)
 
 // CRUD de sesiones
 router.get('/sessions', getSessionsHandler)

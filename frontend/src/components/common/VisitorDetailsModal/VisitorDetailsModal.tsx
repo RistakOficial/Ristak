@@ -11,46 +11,46 @@ interface VisitorDetail {
   visitorId: string
   sessionId?: string
   contact?: {
-    id?: string
-    name?: string
-    email?: string
-    phone?: string
+    id?: string | null
+    name?: string | null
+    email?: string | null
+    phone?: string | null
     ltv?: number
     purchases?: number
     appointments?: any[]
     hasAttendedAppointment?: boolean
-  }
-  firstVisit?: string
-  createdAt?: string
-  landingUrl?: string
-  referrerUrl?: string
+  } | null
+  firstVisit?: string | null
+  createdAt?: string | null
+  landingUrl?: string | null
+  referrerUrl?: string | null
   // UTM parameters
-  utmSource?: string
-  utmMedium?: string
-  utmCampaign?: string
-  utmContent?: string
-  utmTerm?: string
+  utmSource?: string | null
+  utmMedium?: string | null
+  utmCampaign?: string | null
+  utmContent?: string | null
+  utmTerm?: string | null
   // Click IDs
-  gclid?: string
-  fbclid?: string
-  msclkid?: string
-  ttclid?: string
+  gclid?: string | null
+  fbclid?: string | null
+  msclkid?: string | null
+  ttclid?: string | null
   // Device info
-  deviceType?: string
-  browser?: string
-  os?: string
-  language?: string
-  timezone?: string
-  country?: string
-  city?: string
-  region?: string
+  deviceType?: string | null
+  browser?: string | null
+  os?: string | null
+  language?: string | null
+  timezone?: string | null
+  country?: string | null
+  city?: string | null
+  region?: string | null
   // Ad info
-  adId?: string
-  adsetId?: string
-  campaignId?: string
-  adName?: string
-  campaignName?: string
-  adsetName?: string
+  adId?: string | null
+  adsetId?: string | null
+  campaignId?: string | null
+  adName?: string | null
+  campaignName?: string | null
+  adsetName?: string | null
 }
 
 interface VisitorDetailsModalProps {

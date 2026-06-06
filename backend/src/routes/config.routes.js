@@ -1,7 +1,10 @@
 import express from 'express'
 import { getConfig, saveConfig, deleteConfig } from '../controllers/configController.js'
+import { requireAuth } from '../middleware/authMiddleware.js'
 
 const router = express.Router()
+
+router.use(requireAuth)
 
 /**
  * @route GET /api/config

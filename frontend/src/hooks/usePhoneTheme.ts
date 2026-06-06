@@ -89,7 +89,7 @@ export function usePhoneTheme({ active = true }: UsePhoneThemeOptions = {}) {
     if (typeof window === 'undefined') return
 
     const systemMedia = getSystemDarkModeMedia()
-    let timeoutId: ReturnType<typeof window.setTimeout> | null = null
+    let timeoutId: number | null = null
 
     const updateTheme = () => {
       setSystemThemeAvailable(Boolean(systemMedia))

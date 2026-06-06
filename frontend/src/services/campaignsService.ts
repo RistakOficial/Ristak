@@ -137,6 +137,14 @@ export interface CampaignContact {
   customFields?: ContactCustomField[]
 }
 
+export interface CampaignVisitorListParams {
+  startDate: string
+  endDate: string
+  campaign_id?: string
+  adset_id?: string
+  ad_id?: string
+}
+
 interface CreativePreviewResponse {
   success: boolean
   creativeId: string
@@ -317,6 +325,23 @@ class CampaignsService {
         params: { start: startDate, end: endDate }
       })
       return Array.isArray(data) ? data : []
+    } catch (error) {
+      return []
+    }
+  }
+
+  async getVisitorsList(params: CampaignVisitorListParams): Promise<any[]> {
+    try {
+      const queryParams: Record<string, string> = {
+        startDate: params.startDate,
+        endDate: params.endDate,
+        ...(params.campaign_id ? { campaign_id: params.campaign_id } : {}),
+        ...(params.adset_id ? { adset_id: params.adset_id } : {}),
+        ...(params.ad_id ? { ad_id: params.ad_id } : {})
+      }
+      const data = await apiClient.get<{ data?: any[] } | any[]>('/tracking/visitors', { params: queryParams })
+      if (Array.isArray(data)) return data
+      return Array.isArray(data?.data) ? data.data : []
     } catch (error) {
       return []
     }

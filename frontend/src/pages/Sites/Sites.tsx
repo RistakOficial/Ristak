@@ -619,7 +619,7 @@ const resolveTemplateId = (site?: PublicSite | null): SiteTemplateId => {
 
 const isDarkTemplate = (id: SiteTemplateId) => id === 'tiktok' || id === 'vsl' || id === 'interactive' || id === 'premium'
 
-const isHex6 = (value?: string): value is string => !!value && /^#[0-9a-f]{6}$/i.test(value)
+const isHex6 = (value?: string): boolean => !!value && /^#[0-9a-f]{6}$/i.test(value)
 
 const isCssColor = (value?: string): value is string => {
   const raw = String(value || '').trim()
@@ -5121,7 +5121,7 @@ const ColorField: React.FC<ColorFieldProps> = ({ label, value, allowGradient = t
     patchGradient({ stops })
   }
 
-  const handleStopRailPointer = (event: React.PointerEvent<HTMLDivElement>, index: number) => {
+  const handleStopRailPointer = (event: React.PointerEvent<HTMLElement>, index: number) => {
     const rail = event.currentTarget.closest(`.${styles.gradientStopRail}`) as HTMLDivElement | null
     if (!rail) return
     const rect = rail.getBoundingClientRect()

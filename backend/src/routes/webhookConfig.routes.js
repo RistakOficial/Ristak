@@ -4,8 +4,11 @@ import {
   checkWebhooks,
   cleanupWebhooks
 } from '../controllers/webhookConfigController.js'
+import { requireAuth } from '../middleware/authMiddleware.js'
 
 const router = express.Router()
+
+router.use(requireAuth)
 
 // Verificar estado de webhooks
 router.get('/check', checkWebhooks)

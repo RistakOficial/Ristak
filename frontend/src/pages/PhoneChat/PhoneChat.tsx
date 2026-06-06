@@ -100,7 +100,7 @@ const VOICE_MIME_CANDIDATES = [
 type AccessState = 'checking' | 'allowed' | 'blocked'
 type ComposerStatus = 'idle' | 'sending'
 type PaymentMode = 'single' | 'partial'
-type ActionSheet = 'attachments' | 'templates' | 'payment' | 'settings' | 'newChat' | 'chatMore' | null
+type ActionSheet = 'attachments' | 'templates' | 'payment' | 'appointment' | 'settings' | 'newChat' | 'chatMore' | null
 type ChatFilter = 'all' | 'unread' | 'appointments' | 'customers' | 'leads'
 type TemplateMode = 'choice' | 'send' | 'create'
 type ChatSettingsSection = 'appearance' | 'templates' | 'numbers' | 'notifications' | 'agent' | 'chats' | null
@@ -1771,7 +1771,7 @@ export const PhoneChat: React.FC = () => {
     const showCacheRefresh = options.showCacheRefresh === true
     setChatsError('')
     const trimmed = chatQuery.trim()
-    const phoneFilterParams = selectedChatPhoneFilterActive && effectiveSelectedChatPhone
+    const phoneFilterParams: Record<string, string> = selectedChatPhoneFilterActive && effectiveSelectedChatPhone
       ? {
           businessPhoneNumberId: effectiveSelectedChatPhoneId,
           businessPhone: getBusinessPhoneValue(effectiveSelectedChatPhone)
@@ -1802,13 +1802,13 @@ export const PhoneChat: React.FC = () => {
     }
 
     try {
-      const data = await apiClient.get<ChatContact[]>('/contacts/chats', {
-        params: {
-          limit: '60',
-          ...(trimmed ? { q: trimmed } : {}),
-          ...phoneFilterParams
-        }
-      })
+      const params: Record<string, string> = {
+        limit: '60',
+        ...(trimmed ? { q: trimmed } : {}),
+        ...phoneFilterParams
+      }
+
+      const data = await apiClient.get<ChatContact[]>('/contacts/chats', { params })
 
       let nextChats = Array.isArray(data) ? data : []
       let requestedContact = requestedContactParam
@@ -2169,7 +2169,8 @@ export const PhoneChat: React.FC = () => {
     body.style.overscrollBehavior = 'none'
     body.style.setProperty('-webkit-text-size-adjust', '100%')
 
-    const keepViewportStable = (force = false) => {
+    const keepViewportStable = (input?: boolean | Event) => {
+      const force = input === true
       if (!force && html.getAttribute('data-phone-chat-keyboard') !== 'true') return
 
       window.setTimeout(() => {
@@ -3623,7 +3624,7 @@ export const PhoneChat: React.FC = () => {
   }
 
   const renderAvatar = (contact: Contact) => {
-    const photoUrl = getContactProfilePhoto(contact as ChatContact)
+    const photoUrl = getContactProfilePhoto(contact as Partial<Contact> & Record<string, unknown>)
     const avatarChannelClass = getAvatarChannelClass(contact as ChatContact)
 
     return (

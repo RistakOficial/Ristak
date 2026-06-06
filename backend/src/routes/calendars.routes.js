@@ -1,5 +1,6 @@
 import express from 'express';
 import * as calendarsController from '../controllers/calendarsController.js';
+import { requireAuth } from '../middleware/authMiddleware.js';
 
 const router = express.Router();
 
@@ -7,6 +8,12 @@ const router = express.Router();
  * Rutas para la gestión de Calendarios de HighLevel
  * Base: /api/calendars
  */
+
+// Slots y reservas publicas para URLs compartibles de calendario
+router.get('/public/:slug/free-slots', calendarsController.getPublicFreeSlots);
+router.post('/public/:slug/appointments', calendarsController.createPublicAppointment);
+
+router.use(requireAuth);
 
 // Obtener todos los calendarios
 router.get('/', calendarsController.getCalendars);
@@ -29,10 +36,6 @@ router.get('/events', calendarsController.getEvents);
 
 // Obtener detalles completos de una cita individual (con contactId y assignedUserId)
 router.get('/events/:eventId', calendarsController.getAppointment);
-
-// Slots y reservas publicas para URLs compartibles de calendario
-router.get('/public/:slug/free-slots', calendarsController.getPublicFreeSlots);
-router.post('/public/:slug/appointments', calendarsController.createPublicAppointment);
 
 // Crear nueva cita
 router.post('/appointments', calendarsController.createAppointment);

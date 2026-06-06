@@ -2,9 +2,11 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { App } from './App'
 import { registerPwa } from './pwa'
+import { installAuthFetch } from './services/authFetch'
 import { mobileAppService } from './services/mobileAppService'
 import './styles/index.css'
 
+installAuthFetch()
 registerPwa()
 mobileAppService.configureShell()
 

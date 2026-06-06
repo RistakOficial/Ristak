@@ -12,7 +12,7 @@ import styles from './ContactDetailsModal.module.css'
 interface ContactPaymentDetail {
   id: string
   amount: number
-  status?: string
+  status?: string | null
   date: string
   payment_mode?: 'live' | 'test'
   paymentMode?: 'live' | 'test'
@@ -26,32 +26,35 @@ interface ContactAppointmentDetail {
 }
 
 interface ContactFirstSession {
-  started_at: string
-  page_url?: string
-  landing_page?: string
-  referrer_url?: string
-  utm_source?: string
-  utm_medium?: string
-  utm_campaign?: string
-  utm_content?: string
-  utm_term?: string
-  source_platform?: string
-  site_source_name?: string
-  campaign_name?: string
-  ad_name?: string
-  ad_id?: string
-  device_type?: string
-  browser?: string
-  geo_city?: string
-  geo_region?: string
-  geo_country?: string
+  started_at?: string | null
+  page_url?: string | null
+  landing_page?: string | null
+  referrer_url?: string | null
+  utm_source?: string | null
+  utm_medium?: string | null
+  utm_campaign?: string | null
+  utm_content?: string | null
+  utm_term?: string | null
+  source_platform?: string | null
+  site_source_name?: string | null
+  campaign_name?: string | null
+  adset_name?: string | null
+  ad_name?: string | null
+  ad_id?: string | null
+  device_type?: string | null
+  browser?: string | null
+  os?: string | null
+  placement?: string | null
+  geo_city?: string | null
+  geo_region?: string | null
+  geo_country?: string | null
 }
 
 interface ContactDetail {
   id: string
-  name?: string
-  email?: string
-  phone?: string
+  name?: string | null
+  email?: string | null
+  phone?: string | null
   created_at: string | Date
   ltv?: number
   purchases?: number
@@ -59,9 +62,9 @@ interface ContactDetail {
   appointments?: ContactAppointmentDetail[]
   firstAppointmentDate?: string | null
   nextAppointmentDate?: string | null
-  source?: string
-  ad_name?: string
-  ad_id?: string
+  source?: string | null
+  ad_name?: string | null
+  ad_id?: string | null
   campaign_id?: string | null
   campaign_name?: string | null
   adset_id?: string | null
@@ -304,7 +307,7 @@ export function ContactDetailsModal({
       .map(word => word.charAt(0).toUpperCase() + word.slice(1))
       .join(' ')
 
-  const getStatusLabel = (status?: string): { text: string; variant: BadgeVariant } => {
+  const getStatusLabel = (status?: string | null): { text: string; variant: BadgeVariant } => {
     if (!status) return { text: '', variant: 'neutral' }
     const statusLower = status.toLowerCase()
 
@@ -755,7 +758,7 @@ export function ContactDetailsModal({
                         <Icon name="calendar" size={16} />
                         <div>
                           <span className={styles.detailItemLabel}>Primera visita:</span>
-                          <span> {formatLocalDateTime(selectedContact.firstSession.started_at)}</span>
+                          <span> {formatLocalDateTime(selectedContact.firstSession.started_at || selectedContact.created_at)}</span>
                         </div>
                       </div>
 

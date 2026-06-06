@@ -13,8 +13,11 @@ import {
   sendTransaction,
   getPaymentLink
 } from '../controllers/transactionsController.js'
+import { requireAuth } from '../middleware/authMiddleware.js'
 
 const router = express.Router()
+
+router.use(requireAuth)
 
 // Rutas principales
 router.get('/', getTransactions)

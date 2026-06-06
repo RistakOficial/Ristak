@@ -12,8 +12,11 @@ import {
   deleteContact,
   getContactJourney
 } from '../controllers/contactsController.js'
+import { requireAuth } from '../middleware/authMiddleware.js'
 
 const router = express.Router()
+
+router.use(requireAuth)
 
 // Rutas principales
 router.get('/', getContacts)

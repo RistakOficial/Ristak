@@ -416,7 +416,7 @@ export const Campaigns: React.FC = () => {
       const visitorsByAd = includeTrackingVisitors ? visitorsByAdRaw : {}
 
       // Transform the data to match our interface
-      const transformedData = campaignsData.map(campaign => {
+      const transformedData = campaignsData.map((campaign: CampaignData) => {
         // Calcular visitantes para esta campaña y sus ads
         let campaignVisitors = 0
 
@@ -464,7 +464,7 @@ export const Campaigns: React.FC = () => {
       })
 
       // Ordenar campañas de más reciente a más vieja (por ID descendente)
-      const sortedData = transformedData.sort((a, b) => {
+      const sortedData = transformedData.sort((a: CampaignData, b: CampaignData) => {
         // Los IDs de Meta son números grandes como strings
         const idA = parseInt(a.id) || 0
         const idB = parseInt(b.id) || 0
@@ -2005,11 +2005,13 @@ export const Campaigns: React.FC = () => {
 
   // Chart options configuration
   const chartOptions = React.useMemo(() => {
+    const visitorOptions: Array<{ value: ChartView; label: string }> = analyticsEnabled
+      ? [{ value: 'visitors', label: `Visitantes vs ${labels.leads}` }]
+      : []
+
     const options: Array<{ value: ChartView; label: string }> = [
       { value: 'revenue', label: 'Ingresos vs Gastos' },
-      ...(analyticsEnabled ? [
-        { value: 'visitors', label: `Visitantes vs ${labels.leads}` }
-      ] : []),
+      ...visitorOptions,
       { value: 'leads', label: `${labels.leads} vs Citas` },
       { value: 'appointments', label: 'Citas vs Ventas' }
     ]

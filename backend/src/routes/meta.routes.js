@@ -29,8 +29,11 @@ import {
   deleteMetaConfig,
   savePixelToken
 } from '../controllers/metaController.js'
+import { requireAuth } from '../middleware/authMiddleware.js'
 
 const router = express.Router()
+
+router.use(requireAuth)
 
 // Configuración
 router.post('/config', saveConfig)

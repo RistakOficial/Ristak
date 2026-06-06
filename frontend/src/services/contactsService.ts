@@ -34,10 +34,10 @@ const normalizeContact = <T extends Record<string, any>>(contact: T): T => {
     return contact
   }
 
-  const result = { ...contact }
+  const result = { ...contact } as T & Record<string, any>
 
-  if (typeof result.name === 'string') {
-    result.name = formatName(result.name)
+  if (typeof (result as any).name === 'string') {
+    (result as any).name = formatName((result as any).name)
   }
 
   if (typeof (result as any).full_name === 'string') {

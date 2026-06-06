@@ -10,6 +10,7 @@ type LoadingPage =
   | 'analytics'
   | 'campaigns'
   | 'transactions'
+  | 'settings'
   | 'calendar-settings'
 
 interface LoadingProps {
@@ -420,6 +421,7 @@ const renderPageSkeleton = (page: LoadingPage, kpiCount: number, kpiLayout: 'car
     analytics: renderAnalyticsSkeleton(),
     campaigns: renderCampaignsSkeleton(),
     transactions: renderTransactionsSkeleton(),
+    settings: renderSettingsCalendarSkeleton(),
     'calendar-settings': renderSettingsCalendarSkeleton()
   }[page]
 

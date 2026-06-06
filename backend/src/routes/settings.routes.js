@@ -1,6 +1,7 @@
 import express from 'express';
 import { getTimezone, setTimezone } from '../controllers/settingsController.js';
 import { getNotificationsView } from '../controllers/notificationsController.js';
+import { requireAuth } from '../middleware/authMiddleware.js';
 import {
   createMessageTemplateView,
   createTemplateCustomFieldView,
@@ -20,6 +21,8 @@ import {
 } from '../controllers/messageTemplatesController.js';
 
 const router = express.Router();
+
+router.use(requireAuth);
 
 // GET /api/settings/timezone
 router.get('/timezone', getTimezone);

@@ -285,7 +285,7 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       return
     }
 
-    let timeoutId: ReturnType<typeof window.setTimeout> | null = null
+    let timeoutId: number | null = null
 
     const runAutoThemeLoop = () => {
       setThemeState(getTimeBasedTheme())

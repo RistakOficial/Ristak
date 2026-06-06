@@ -16,8 +16,11 @@ import {
   sendWhatsAppApiTextMessageView,
   setWhatsAppApiDefaultPhoneNumberView
 } from '../controllers/whatsappApiController.js'
+import { requireAuth } from '../middleware/authMiddleware.js'
 
 const router = express.Router()
+
+router.use(requireAuth)
 
 router.get('/status', getWhatsAppApiConnectionStatus)
 router.post('/connect', connectWhatsAppApiView)

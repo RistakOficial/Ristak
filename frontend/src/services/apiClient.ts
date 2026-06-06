@@ -40,13 +40,15 @@ class ApiClient {
       url += `?${searchParams.toString()}`
     }
 
+    const headers = new Headers(fetchOptions.headers)
+    headers.set('Content-Type', 'application/json')
+    Object.entries(this.getAuthHeaders()).forEach(([key, value]) => {
+      headers.set(key, value)
+    })
+
     const response = await fetch(url, {
       ...fetchOptions,
-      headers: {
-        'Content-Type': 'application/json',
-        ...this.getAuthHeaders(),
-        ...fetchOptions.headers,
-      },
+      headers,
     })
 
     // Handle 204 No Content

@@ -230,7 +230,7 @@ const SITE_TEMPLATES: Record<SiteTemplateId, Template> = {
 const DEFAULT_BG = '#ffffff'
 const DEFAULT_ACCENT = '#111827'
 
-const isHex6 = (value?: string): value is string => !!value && /^#[0-9a-f]{6}$/i.test(value)
+const isHex6 = (value?: string): boolean => !!value && /^#[0-9a-f]{6}$/i.test(value)
 
 const rgbToHex = (r: number, g: number, b: number) =>
   `#${[r, g, b].map(channel => Math.max(0, Math.min(255, Math.round(channel))).toString(16).padStart(2, '0')).join('')}`

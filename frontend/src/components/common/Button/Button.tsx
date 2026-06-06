@@ -9,6 +9,7 @@ interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   size?: ButtonSize
   fullWidth?: boolean
   loading?: boolean
+  leftIcon?: React.ReactNode
   children: React.ReactNode
 }
 
@@ -40,6 +41,7 @@ export const Button: React.FC<ButtonProps> = ({
   fullWidth = false,
   loading = false,
   disabled = false,
+  leftIcon,
   children,
   className = '',
   ...props
@@ -62,7 +64,10 @@ export const Button: React.FC<ButtonProps> = ({
           Cargando…
         </span>
       ) : (
-        children
+        <>
+          {leftIcon}
+          {children}
+        </>
       )}
     </button>
   )

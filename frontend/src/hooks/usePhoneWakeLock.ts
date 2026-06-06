@@ -12,7 +12,7 @@ interface WakeLockControllerLike {
   request: (type: 'screen') => Promise<WakeLockSentinelLike>
 }
 
-interface NavigatorWithWakeLock extends Navigator {
+interface NavigatorWithWakeLock {
   wakeLock?: WakeLockControllerLike
 }
 
@@ -23,7 +23,7 @@ interface UsePhoneWakeLockOptions {
 function getWakeLockController() {
   if (typeof navigator === 'undefined') return null
 
-  const wakeLock = (navigator as NavigatorWithWakeLock).wakeLock
+  const wakeLock = (navigator as unknown as NavigatorWithWakeLock).wakeLock
   return wakeLock && typeof wakeLock.request === 'function' ? wakeLock : null
 }
 
@@ -31,8 +31,9 @@ export function usePhoneWakeLock({ active = true }: UsePhoneWakeLockOptions = {}
   useEffect(() => {
     if (!active || typeof window === 'undefined' || typeof document === 'undefined') return
 
-    const wakeLock = getWakeLockController()
-    if (!wakeLock) return
+    const wakeLockController = getWakeLockController()
+    if (!wakeLockController) return
+    const requestScreenWakeLock = wakeLockController.request.bind(wakeLockController)
 
     let sentinel: WakeLockSentinelLike | null = null
     let cancelled = false
@@ -92,7 +93,7 @@ export function usePhoneWakeLock({ active = true }: UsePhoneWakeLockOptions = {}
       clearRetryTimer()
 
       try {
-        sentinel = await wakeLock.request('screen')
+        sentinel = await requestScreenWakeLock('screen')
         sentinel.addEventListener('release', handleWakeLockRelease)
         scheduleIdleRelease()
       } catch {

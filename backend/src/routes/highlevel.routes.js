@@ -38,8 +38,11 @@ import {
   getLocationUsers,
   getUsersByIds
 } from '../controllers/highlevelController.js'
+import { requireAuth } from '../middleware/authMiddleware.js'
 
 const router = express.Router()
+
+router.use(requireAuth)
 
 router.post('/test-connection', testConnection)
 router.post('/test', testConnection) // Alias para compatibilidad

@@ -273,7 +273,7 @@ export const PhoneCalendar: React.FC = () => {
     return toDateInTimeZone(event.endTime, timezone) ?? new Date(event.endTime || event.startTime || fallback)
   }, [timezone])
 
-  const getEventColor = useCallback(() => {
+  const getEventColor = useCallback((_event?: CalendarEvent) => {
     return '#25d366'
   }, [])
 
@@ -950,7 +950,9 @@ export const PhoneCalendar: React.FC = () => {
     }
   }
 
-  const handleSaveAppointment = async (eventId: string, updates: Partial<CalendarEvent>) => {
+  const handleSaveAppointment = async (eventId: string, updates?: Partial<CalendarEvent>) => {
+    if (!updates) return
+
     try {
       await calendarsService.updateAppointment(eventId, updates, accessToken || undefined)
       showToast('success', 'Cita actualizada', 'Tus cambios se guardaron.')

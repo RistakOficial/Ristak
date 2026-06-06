@@ -6,6 +6,7 @@ interface DateTimePickerProps {
   value: string // ISO string: "2025-02-10T17:00:00"
   onChange: (value: string) => void
   label?: string
+  placeholder?: string
   required?: boolean
   minDate?: string
 }
@@ -17,7 +18,7 @@ const MONTHS = [
 
 const WEEKDAYS = ['D', 'L', 'M', 'M', 'J', 'V', 'S']
 
-export function DateTimePicker({ value, onChange, label, required, minDate }: DateTimePickerProps) {
+export function DateTimePicker({ value, onChange, label, placeholder, required, minDate }: DateTimePickerProps) {
   const [isOpen, setIsOpen] = useState(false)
   const [viewDate, setViewDate] = useState<Date>(value ? new Date(value) : new Date())
   const containerRef = useRef<HTMLDivElement>(null)
@@ -26,7 +27,7 @@ export function DateTimePicker({ value, onChange, label, required, minDate }: Da
   const currentDate = value ? new Date(value) : null
   const displayText = currentDate
     ? `${currentDate.getDate()} ${MONTHS[currentDate.getMonth()].slice(0, 3)} ${currentDate.getFullYear()}, ${formatTime(currentDate)}`
-    : 'Seleccionar fecha y hora'
+    : placeholder || 'Seleccionar fecha y hora'
 
   // Close on click outside
   useEffect(() => {

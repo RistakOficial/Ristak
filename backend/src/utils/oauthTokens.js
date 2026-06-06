@@ -5,7 +5,15 @@ import { authenticateApiToken } from './apiTokens.js'
 const AUTH_CODE_TTL_SECONDS = 10 * 60
 const ACCESS_TOKEN_TTL_SECONDS = 60 * 60
 const REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60
-const OAUTH_SECRET = process.env.OAUTH_TOKEN_SECRET || process.env.JWT_SECRET || 'ristak-default-secret-change-me'
+const OAUTH_SECRET = process.env.OAUTH_TOKEN_SECRET || process.env.JWT_SECRET || (
+  process.env.NODE_ENV === 'production'
+    ? ''
+    : 'ristak-default-secret-change-me'
+)
+
+if (!OAUTH_SECRET) {
+  throw new Error('OAUTH_TOKEN_SECRET o JWT_SECRET es requerido en producción')
+}
 
 function randomToken(byteLength = 32) {
   return crypto.randomBytes(byteLength).toString('base64url')

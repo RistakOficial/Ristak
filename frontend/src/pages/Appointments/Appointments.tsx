@@ -806,7 +806,9 @@ export const Appointments: React.FC = () => {
   };
 
   // Actualizar cita
-  const handleSaveAppointment = async (eventId: string, updates: Partial<CalendarEvent>) => {
+  const handleSaveAppointment = async (eventId: string, updates?: Partial<CalendarEvent>) => {
+    if (!updates) return;
+
     try {
       await calendarsService.updateAppointment(eventId, updates, accessToken || undefined);
       showToast('success', 'Cita actualizada', accessToken ? 'Los cambios se guardaron correctamente.' : 'Los cambios quedaron guardados en Ristak y pendientes de sync.');
@@ -978,6 +980,8 @@ export const Appointments: React.FC = () => {
       assignedUserId: draggedEvent.assignedUserId,
       address: draggedEvent.address,
       notes: draggedEvent.notes,
+      locationId: draggedEvent.locationId || locationId || '',
+      dateAdded: draggedEvent.dateAdded || new Date().toISOString(),
       timeZone: timezone
     };
 
@@ -2038,8 +2042,8 @@ export const Appointments: React.FC = () => {
         event={selectedEvent}
         calendar={selectedCalendar}
         mode="view"
-        accessToken={accessToken}
-        locationId={locationId}
+        accessToken={accessToken ?? undefined}
+        locationId={locationId ?? undefined}
         onSave={handleSaveAppointment}
         onDelete={handleDeleteAppointment}
       />
@@ -2055,8 +2059,8 @@ export const Appointments: React.FC = () => {
         defaultTimeZone={createDefaults.timeZone}
         defaultTitle={createDefaults.title}
         defaultScheduleMode={createScheduleMode}
-        accessToken={accessToken}
-        locationId={locationId}
+        accessToken={accessToken ?? undefined}
+        locationId={locationId ?? undefined}
         onSave={handleCreateAppointment}
       />
 
@@ -2073,8 +2077,8 @@ export const Appointments: React.FC = () => {
         defaultStart={createDefaults.start}
         defaultEnd={createDefaults.end}
         defaultTimeZone={timezone}
-        accessToken={accessToken}
-        locationId={locationId}
+        accessToken={accessToken ?? undefined}
+        locationId={locationId ?? undefined}
         onSave={handleSaveBlockedSlot}
         onDelete={handleDeleteBlockedSlot}
       />

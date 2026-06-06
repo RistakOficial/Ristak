@@ -380,7 +380,7 @@ function aggregateGroup<T extends ContactLike>(group: T[], normalizedPhone: stri
     }
   }
 
-  return applyNameFormatting(merged as ContactLike)
+  return applyNameFormatting(merged as WithMetadata<T>)
 }
 
 export function dedupeContacts<T extends ContactLike>(contacts: T[]): Array<WithMetadata<T>> {

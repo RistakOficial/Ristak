@@ -8,8 +8,11 @@ import {
   syncProducts,
   updateProduct
 } from '../controllers/highlevelController.js'
+import { requireAuth } from '../middleware/authMiddleware.js'
 
 const router = express.Router()
+
+router.use(requireAuth)
 
 router.get('/', listProducts)
 router.post('/', createProduct)

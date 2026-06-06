@@ -1,6 +1,6 @@
 import { db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
-import { hashPassword, verifyPassword, generateToken } from '../utils/auth.js'
+import { hashPassword, verifyPassword, generateToken, verifyToken } from '../utils/auth.js'
 import {
   getExternalApiAppId,
   getApiTokenMetadataForUser,
@@ -116,7 +116,6 @@ export async function verifyTokenEndpoint(req, res) {
       })
     }
 
-    const { verifyToken } = await import('../utils/auth.js')
     const payload = verifyToken(token)
 
     if (!payload) {
@@ -166,7 +165,7 @@ export async function changePassword(req, res) {
   try {
     const { token, currentPassword, newPassword } = req.body
 
-    if (!token || !currentPassword || !newPassword) {
+    if (!currentPassword || !newPassword) {
       return res.status(400).json({
         success: false,
         message: 'Todos los campos son requeridos'
@@ -180,8 +179,7 @@ export async function changePassword(req, res) {
       })
     }
 
-    const { verifyToken } = await import('../utils/auth.js')
-    const payload = verifyToken(token)
+    const payload = req.user || (token ? verifyToken(token) : null)
 
     if (!payload) {
       return res.status(401).json({
@@ -240,19 +238,7 @@ export async function changePassword(req, res) {
  */
 export async function getMe(req, res) {
   try {
-    const authHeader = req.headers.authorization
-
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({
-        success: false,
-        message: 'Token no proporcionado'
-      })
-    }
-
-    const token = authHeader.substring(7) // Remover "Bearer "
-
-    const { verifyToken } = await import('../utils/auth.js')
-    const payload = verifyToken(token)
+    const payload = req.user
 
     if (!payload) {
       return res.status(401).json({
@@ -378,10 +364,10 @@ export async function changeUsername(req, res) {
   try {
     const { token, newUsername } = req.body
 
-    if (!token || !newUsername) {
+    if (!newUsername) {
       return res.status(400).json({
         success: false,
-        message: 'Token y nuevo nombre de usuario son requeridos'
+        message: 'Nuevo nombre de usuario requerido'
       })
     }
 
@@ -392,8 +378,7 @@ export async function changeUsername(req, res) {
       })
     }
 
-    const { verifyToken } = await import('../utils/auth.js')
-    const payload = verifyToken(token)
+    const payload = req.user || (token ? verifyToken(token) : null)
 
     if (!payload) {
       return res.status(401).json({
