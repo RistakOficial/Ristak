@@ -2630,9 +2630,9 @@ export const PhoneChat: React.FC = () => {
           <strong>{getContactName(contact)}</strong>
           <small>{subtitle}</small>
         </span>
-        <span className={styles.chatMeta}>
+        <span className={`${styles.chatMeta} ${hasUnread ? styles.chatMetaUnread : ''}`}>
           {dateLabel && <small className={hasUnread ? styles.chatUnreadTime : undefined}>{dateLabel}</small>}
-          {hasUnread && <i aria-label={`${unreadCount} mensajes no leídos`}>{unreadCount > 9 ? '9+' : unreadCount}</i>}
+          {hasUnread && <i className={styles.chatUnreadBadge} aria-label={`${unreadCount} mensajes no leídos`}>{unreadCount > 9 ? '9+' : unreadCount}</i>}
         </span>
       </button>
     )

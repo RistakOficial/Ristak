@@ -382,6 +382,12 @@
   padding-top: 8px;
 }
 
+.chatMetaUnread {
+  align-self: center;
+  gap: 3px;
+  padding-top: 0;
+}
+
 .chatMeta small {
   color: #707070;
   font-size: 14px;
@@ -406,6 +412,13 @@
   font-style: normal;
   font-size: 13px;
   font-weight: 800;
+}
+
+.chatMeta .chatUnreadBadge {
+  min-width: 20px;
+  height: 20px;
+  font-size: 14px;
+  line-height: 1.25;
 }
 
 .chatMeta .aiAgentPin {
