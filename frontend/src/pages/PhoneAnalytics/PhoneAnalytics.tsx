@@ -451,22 +451,22 @@ export const PhoneAnalytics: React.FC = () => {
 
   const chartMeta = useMemo<ChartMeta>(() => {
     if (chartView === 'visitors-leads') {
-      return { label1: 'Visitantes', label2: labels.leads, color1: '#2563eb', color2: '#25d366', currency: false }
+      return { label1: 'Visitantes', label2: labels.leads, color1: 'var(--phone-analytics-blue-line)', color2: 'var(--phone-analytics-accent)', currency: false }
     }
 
     if (chartView === 'leads-appointments') {
-      return { label1: labels.leads, label2: 'Citas', color1: '#25d366', color2: '#f59e0b', currency: false }
+      return { label1: labels.leads, label2: 'Citas', color1: 'var(--phone-analytics-accent)', color2: 'var(--phone-analytics-warning-line)', currency: false }
     }
 
     if (chartView === 'appointments-attendances') {
-      return { label1: 'Citas', label2: 'Asistencias', color1: '#f59e0b', color2: '#2563eb', currency: false }
+      return { label1: 'Citas', label2: 'Asistencias', color1: 'var(--phone-analytics-warning-line)', color2: 'var(--phone-analytics-blue-line)', currency: false }
     }
 
     if (chartView === 'attendances-sales') {
-      return { label1: 'Asistencias', label2: 'Ventas', color1: '#2563eb', color2: '#25d366', currency: false }
+      return { label1: 'Asistencias', label2: 'Ventas', color1: 'var(--phone-analytics-blue-line)', color2: 'var(--phone-analytics-accent)', currency: false }
     }
 
-    return { label1: 'Ingresos', label2: 'Gastos', color1: '#25d366', color2: '#101010', currency: true }
+    return { label1: 'Ingresos', label2: 'Gastos', color1: 'var(--phone-analytics-accent)', color2: 'var(--phone-analytics-contrast-line)', currency: true }
   }, [chartView, labels.leads])
 
   const metricCards = useMemo<MetricCardConfig[]>(() => ([
@@ -739,7 +739,7 @@ export const PhoneAnalytics: React.FC = () => {
                     <em>{formatNumber(item.value)} personas</em>
                   </div>
                   <div className={styles.sourceTrack}>
-                    <i style={{ width: `${((item.value || 0) / phoneNumberMax) * 100}%`, background: '#101010' }} />
+                    <i style={{ width: `${((item.value || 0) / phoneNumberMax) * 100}%`, background: 'var(--phone-analytics-contrast-line)' }} />
                   </div>
                   <small className={styles.phoneStatus}>{item.statusLabel}</small>
                 </div>

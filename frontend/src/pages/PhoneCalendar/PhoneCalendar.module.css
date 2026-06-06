@@ -45,6 +45,9 @@
 :global(body[data-phone-chat-tone="dark"]) .header,
 :global(body[data-phone-chat-tone="dark"]) .calendarSurface,
 :global(body[data-phone-chat-tone="dark"]) .agendaScroller,
+:global(body[data-phone-chat-tone="dark"]) .agendaHeader,
+:global(body[data-phone-chat-tone="dark"]) .timelineScroller,
+:global(body[data-phone-chat-tone="dark"]) .timelineGrid,
 :global(body[data-phone-chat-tone="dark"]) .dayTimeline,
 :global(body[data-phone-chat-tone="dark"]) .timelineHeader,
 :global(body[data-phone-chat-tone="dark"]) .timelineBody,
@@ -69,26 +72,94 @@
 
 :global(body[data-phone-chat-tone="dark"]) .titleRow h1,
 :global(body[data-phone-chat-tone="dark"]) .monthDay,
+:global(body[data-phone-chat-tone="dark"]) .yearMonth,
+:global(body[data-phone-chat-tone="dark"]) .yearMonth strong,
+:global(body[data-phone-chat-tone="dark"]) .miniMonthGrid,
+:global(body[data-phone-chat-tone="dark"]) .miniDay,
+:global(body[data-phone-chat-tone="dark"]) .yearButton,
+:global(body[data-phone-chat-tone="dark"]) .weekDay,
+:global(body[data-phone-chat-tone="dark"]) .eventTimeStack,
+:global(body[data-phone-chat-tone="dark"]) .eventTimeStack strong,
+:global(body[data-phone-chat-tone="dark"]) .agendaHeader h1,
 :global(body[data-phone-chat-tone="dark"]) .agendaDateButton,
+:global(body[data-phone-chat-tone="dark"]) .eventMain strong,
 :global(body[data-phone-chat-tone="dark"]) .eventCard strong,
 :global(body[data-phone-chat-tone="dark"]) .emptyAgenda strong,
 :global(body[data-phone-chat-tone="dark"]) .sheetHeader h2,
+:global(body[data-phone-chat-tone="dark"]) .viewChoice,
+:global(body[data-phone-chat-tone="dark"]) .searchBox input,
+:global(body[data-phone-chat-tone="dark"]) .searchResult strong,
 :global(body[data-phone-chat-tone="dark"]) .calendarOption,
+:global(body[data-phone-chat-tone="dark"]) .calendarOption strong,
 :global(body[data-phone-chat-tone="dark"]) .settingsPanel strong,
+:global(body[data-phone-chat-tone="dark"]) .settingRow strong,
+:global(body[data-phone-chat-tone="dark"]) .settingBlockHeader strong,
+:global(body[data-phone-chat-tone="dark"]) .permissionBox strong,
+:global(body[data-phone-chat-tone="dark"]) .calendarChip,
+:global(body[data-phone-chat-tone="dark"]) .desktopSettingsLink,
 :global(body[data-phone-chat-tone="dark"]) .blockedCopy h1 {
   color: var(--phone-calendar-text);
 }
 
 :global(body[data-phone-chat-tone="dark"]) .weekdayRow span,
+:global(body[data-phone-chat-tone="dark"]) .monthDay:nth-child(7n + 1),
+:global(body[data-phone-chat-tone="dark"]) .monthDay:nth-child(7n),
 :global(body[data-phone-chat-tone="dark"]) .monthDayMuted,
+:global(body[data-phone-chat-tone="dark"]) .weekDay span,
+:global(body[data-phone-chat-tone="dark"]) .timelineHourColumn,
+:global(body[data-phone-chat-tone="dark"]) .agendaHeader p,
 :global(body[data-phone-chat-tone="dark"]) .agendaDateButton span,
+:global(body[data-phone-chat-tone="dark"]) .eventMain small,
+:global(body[data-phone-chat-tone="dark"]) .eventTimeStack small,
 :global(body[data-phone-chat-tone="dark"]) .eventCard small,
 :global(body[data-phone-chat-tone="dark"]) .emptyAgenda,
 :global(body[data-phone-chat-tone="dark"]) .calendarOption small,
+:global(body[data-phone-chat-tone="dark"]) .searchBox,
+:global(body[data-phone-chat-tone="dark"]) .searchBox button,
+:global(body[data-phone-chat-tone="dark"]) .searchResult span,
+:global(body[data-phone-chat-tone="dark"]) .settingRow small,
+:global(body[data-phone-chat-tone="dark"]) .settingBlockHeader span,
+:global(body[data-phone-chat-tone="dark"]) .permissionBox span,
 :global(body[data-phone-chat-tone="dark"]) .settingsPanel span,
+:global(body[data-phone-chat-tone="dark"]) .cacheRefreshPill,
+:global(body[data-phone-chat-tone="dark"]) .emptySearch,
 :global(body[data-phone-chat-tone="dark"]) .eyebrow,
 :global(body[data-phone-chat-tone="dark"]) .blockedCopy p:last-child {
   color: var(--phone-calendar-muted);
+}
+
+:global(body[data-phone-chat-tone="dark"]) .monthDayToday span,
+:global(body[data-phone-chat-tone="dark"]) .yearMonthSelected strong,
+:global(body[data-phone-chat-tone="dark"]) .miniDayToday > span,
+:global(body[data-phone-chat-tone="dark"]) .yearButtonToday,
+:global(body[data-phone-chat-tone="dark"]) .weekDayToday strong {
+  color: var(--chat-green);
+}
+
+:global(body[data-phone-chat-tone="dark"]) .monthDaySelected span,
+:global(body[data-phone-chat-tone="dark"]) .miniDaySelected > span,
+:global(body[data-phone-chat-tone="dark"]) .yearButtonSelected,
+:global(body[data-phone-chat-tone="dark"]) .weekDaySelected strong,
+:global(body[data-phone-chat-tone="dark"]) .viewChoiceActive {
+  color: var(--phone-chat-text-on-primary, #07140d);
+  background: var(--apple-red);
+}
+
+:global(body[data-phone-chat-tone="dark"]) .timelineHourColumn {
+  border-right-color: var(--phone-chat-border);
+  background: var(--phone-calendar-panel);
+}
+
+:global(body[data-phone-chat-tone="dark"]) .timelineHourColumn span,
+:global(body[data-phone-chat-tone="dark"]) .timelineGrid > span,
+:global(body[data-phone-chat-tone="dark"]) .agendaHeader,
+:global(body[data-phone-chat-tone="dark"]) .weekStrip {
+  border-color: var(--soft-line);
+}
+
+:global(body[data-phone-chat-tone="dark"]) .timelineEvent {
+  color: color-mix(in srgb, var(--event-color, #38bdf8) 62%, var(--phone-calendar-text) 38%);
+  background: color-mix(in srgb, var(--event-color, #38bdf8) 18%, var(--phone-calendar-surface) 82%);
 }
 
 :global(body[data-phone-chat-tone="dark"]) .sheet {
@@ -105,9 +176,32 @@
 :global(body[data-phone-chat-tone="dark"]) .eventCard,
 :global(body[data-phone-chat-tone="dark"]) .appointmentCard,
 :global(body[data-phone-chat-tone="dark"]) .timelineEvent,
+:global(body[data-phone-chat-tone="dark"]) .eventCard_stacked,
+:global(body[data-phone-chat-tone="dark"]) .eventCard_list,
+:global(body[data-phone-chat-tone="dark"]) .viewChoice,
+:global(body[data-phone-chat-tone="dark"]) .searchBox,
+:global(body[data-phone-chat-tone="dark"]) .searchResult,
+:global(body[data-phone-chat-tone="dark"]) .settingRow,
+:global(body[data-phone-chat-tone="dark"]) .settingBlock,
+:global(body[data-phone-chat-tone="dark"]) .permissionBox,
 :global(body[data-phone-chat-tone="dark"]) .blockedPanel {
   border-color: var(--phone-chat-border);
   background: var(--phone-calendar-surface);
+}
+
+:global(body[data-phone-chat-tone="dark"]) .cacheRefreshPill,
+:global(body[data-phone-chat-tone="dark"]) .agendaViewButton,
+:global(body[data-phone-chat-tone="dark"]) .calendarChip,
+:global(body[data-phone-chat-tone="dark"]) .desktopSettingsLink {
+  border-color: var(--phone-chat-border);
+  background: var(--phone-calendar-soft);
+}
+
+:global(body[data-phone-chat-tone="dark"]) .allCalendarsButtonActive,
+:global(body[data-phone-chat-tone="dark"]) .calendarChipActive {
+  color: var(--phone-chat-text-on-primary, #07140d);
+  border-color: rgba(var(--phone-chat-accent-rgb), 0.48);
+  background: var(--phone-chat-accent);
 }
 
 .header {

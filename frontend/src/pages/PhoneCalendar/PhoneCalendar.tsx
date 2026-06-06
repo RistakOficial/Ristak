@@ -430,7 +430,7 @@ export const PhoneCalendar: React.FC = () => {
     const previousBodyHeight = body.style.height
     const previousBodyOverscroll = body.style.overscrollBehavior
     const previousBodyBackground = body.style.background
-    const frameBackground = 'color-mix(in srgb, var(--color-background-primary) 94%, #ffffff 6%)'
+    const frameBackground = 'var(--phone-chat-bg, color-mix(in srgb, var(--color-background-primary) 94%, #ffffff 6%))'
     let startX = 0
     let startY = 0
 

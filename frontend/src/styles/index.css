@@ -2082,6 +2082,11 @@ body[data-design-preset][data-phone-chat-theme='active'] {
   --phone-chat-accent-soft: #dff8e8;
   --phone-chat-inbound: #ffffff;
   --phone-chat-outbound: #d8fdd2;
+  --phone-chat-outbound-text: #0b0b0d;
+  --phone-chat-outbound-meta: #5f6b62;
+  --phone-chat-system: rgba(255, 255, 255, 0.82);
+  --phone-chat-composer-bg: #f6f2eb;
+  --phone-chat-input-placeholder: #8e8e93;
   --phone-chat-panel: #f4f4f4;
   --phone-chat-shadow: 0 18px 38px rgba(17, 24, 39, 0.1);
   --color-background-primary: #fbfaf6;
@@ -2166,6 +2171,11 @@ body[data-design-preset][data-phone-chat-theme='active'][data-phone-chat-tone='d
   --phone-chat-accent-soft: rgba(37, 211, 102, 0.16);
   --phone-chat-inbound: #202c33;
   --phone-chat-outbound: #005c4b;
+  --phone-chat-outbound-text: #e9edef;
+  --phone-chat-outbound-meta: #b7c4ca;
+  --phone-chat-system: rgba(32, 44, 51, 0.86);
+  --phone-chat-composer-bg: #101820;
+  --phone-chat-input-placeholder: #7f8b95;
   --phone-chat-panel: #101820;
   --phone-chat-shadow: 0 18px 42px rgba(0, 0, 0, 0.34);
   --color-background-primary: #0b0f14;

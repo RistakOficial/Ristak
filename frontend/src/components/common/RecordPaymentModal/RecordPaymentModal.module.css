@@ -1479,11 +1479,28 @@ body.dark .tooltipInfo {
 
 /* Variante embebida (página móvil de pagos, sin overlay de Modal) */
 .embeddedRoot {
+  --record-payment-embedded-bg: var(--phone-chat-surface, var(--color-background-secondary, #ffffff));
+  --record-payment-embedded-panel: var(--phone-chat-panel, var(--color-background-tertiary, #f0f0f0));
+  --record-payment-embedded-soft: var(--phone-chat-surface-soft, var(--color-background-tertiary, #f5f5f5));
+  --record-payment-embedded-text: var(--phone-chat-text, var(--color-text-primary, #0f172a));
+  --record-payment-embedded-muted: var(--phone-chat-muted, var(--color-text-tertiary, #64748b));
+  --record-payment-embedded-border: var(--phone-chat-border, var(--color-border, rgba(0, 0, 0, 0.08)));
+  --color-background: var(--record-payment-embedded-bg);
+  --color-surface: var(--record-payment-embedded-panel);
+  --color-text-primary: var(--record-payment-embedded-text);
+  --color-text-secondary: color-mix(in srgb, var(--record-payment-embedded-text) 78%, var(--record-payment-embedded-muted) 22%);
+  --color-text-tertiary: var(--record-payment-embedded-muted);
+  --color-border: var(--record-payment-embedded-border);
+  --color-primary: var(--phone-chat-accent, #111111);
+  --color-primary-rgb: var(--phone-chat-accent-rgb, 17, 17, 17);
+  --color-primary-light: color-mix(in srgb, var(--color-primary) 16%, transparent);
+  --color-primary-alpha: color-mix(in srgb, var(--color-primary) 26%, transparent);
   display: flex;
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  background: #ffffff;
+  color: var(--record-payment-embedded-text);
+  background: var(--record-payment-embedded-bg);
 }
 
 .embeddedScroll {
@@ -1498,6 +1515,7 @@ body.dark .tooltipInfo {
 .embeddedRoot .optionsContent {
   padding: 12px 14px 18px;
   gap: 12px;
+  background: var(--record-payment-embedded-bg);
 }
 
 .embeddedRoot .footer {
@@ -1505,8 +1523,8 @@ body.dark .tooltipInfo {
   margin-top: 12px;
   justify-content: stretch;
   padding: 10px 14px calc(env(safe-area-inset-bottom, 0px) + 12px);
-  border-top: 1px solid rgba(0, 0, 0, 0.08);
-  background: #ffffff;
+  border-top: 1px solid var(--record-payment-embedded-border);
+  background: var(--record-payment-embedded-bg);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
@@ -1520,7 +1538,8 @@ body.dark .tooltipInfo {
 .embeddedRoot .footer > button {
   min-height: 48px;
   border-radius: 999px;
-  background: #111111;
+  color: var(--phone-chat-text-on-primary, #ffffff);
+  background: var(--phone-chat-primary, #111111);
 }
 
 .embeddedRoot .input,
@@ -1528,10 +1547,63 @@ body.dark .tooltipInfo {
 .embeddedRoot .textArea,
 .embeddedRoot .searchInput input {
   border-radius: 999px;
-  background: #f0f0f0;
-  border-color: rgba(0, 0, 0, 0.08);
+  color: var(--record-payment-embedded-text);
+  background: var(--record-payment-embedded-panel);
+  border-color: var(--record-payment-embedded-border);
+}
+
+.embeddedRoot .input::placeholder,
+.embeddedRoot .textArea::placeholder,
+.embeddedRoot .searchInput input::placeholder {
+  color: var(--record-payment-embedded-muted);
 }
 
 .embeddedRoot .textArea {
   border-radius: 16px;
+}
+
+.embeddedRoot .radioGroup,
+.embeddedRoot [data-ristak-tablist] {
+  border-color: var(--record-payment-embedded-border);
+  background: var(--record-payment-embedded-panel);
+}
+
+.embeddedRoot [data-ristak-tablist-tab][data-active="true"],
+.embeddedRoot .radioOptionActive {
+  color: var(--record-payment-embedded-text);
+  background: var(--record-payment-embedded-soft);
+}
+
+.embeddedRoot .selectedContact,
+.embeddedRoot .planTotalChip,
+.embeddedRoot .calcChip {
+  background: color-mix(in srgb, var(--phone-chat-accent, #25d366) 14%, var(--record-payment-embedded-bg) 86%);
+  border-color: color-mix(in srgb, var(--phone-chat-accent, #25d366) 34%, var(--record-payment-embedded-border) 66%);
+}
+
+.embeddedRoot .planSection,
+.embeddedRoot .summaryCard,
+.embeddedRoot .optionButton {
+  background: var(--record-payment-embedded-bg);
+  border-color: var(--record-payment-embedded-border);
+}
+
+.embeddedRoot .planStep,
+.embeddedRoot .allocation {
+  background: var(--record-payment-embedded-panel);
+  border-color: var(--record-payment-embedded-border);
+}
+
+.embeddedRoot .dropdown {
+  color: var(--record-payment-embedded-text);
+  background: var(--record-payment-embedded-panel);
+  border-color: var(--record-payment-embedded-border);
+}
+
+.embeddedRoot .dropdownItem {
+  border-bottom-color: var(--record-payment-embedded-border);
+}
+
+.embeddedRoot .dropdownItem:hover {
+  background: var(--record-payment-embedded-soft);
 }

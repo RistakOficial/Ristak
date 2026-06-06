@@ -51,6 +51,7 @@
 
 :global(body[data-phone-chat-tone="dark"]) .chatBackButton,
 :global(body[data-phone-chat-tone="dark"]) .backButton,
+:global(body[data-phone-chat-tone="dark"]) .recentPaymentsRefresh,
 :global(body[data-phone-chat-tone="dark"]) .recentPeriodPicker button {
   color: var(--phone-payments-text);
   background: var(--phone-payments-soft);
@@ -82,6 +83,7 @@
 :global(body[data-phone-chat-tone="dark"]) .recentPaymentsToggle small,
 :global(body[data-phone-chat-tone="dark"]) .recentPaymentsState,
 :global(body[data-phone-chat-tone="dark"]) .recentPaymentMain small,
+:global(body[data-phone-chat-tone="dark"]) .recentPaymentsRefresh,
 :global(body[data-phone-chat-tone="dark"]) .recentPaymentMeta,
 :global(body[data-phone-chat-tone="dark"]) .recentPaymentMeta small,
 :global(body[data-phone-chat-tone="dark"]) .blockedCopy p:last-child {

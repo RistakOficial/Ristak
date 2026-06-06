@@ -9,11 +9,17 @@
   --phone-chat-border: rgba(20, 20, 20, 0.09);
   --phone-chat-primary: #101010;
   --phone-chat-primary-rgb: 16, 16, 16;
+  --phone-chat-text-on-primary: #ffffff;
   --phone-chat-accent: #25d366;
   --phone-chat-accent-rgb: 37, 211, 102;
   --phone-chat-accent-soft: #dff8e8;
   --phone-chat-inbound: #ffffff;
   --phone-chat-outbound: #d8fdd2;
+  --phone-chat-outbound-text: #0b0b0d;
+  --phone-chat-outbound-meta: #5f6b62;
+  --phone-chat-system: rgba(255, 255, 255, 0.82);
+  --phone-chat-composer-bg: #f6f2eb;
+  --phone-chat-input-placeholder: #8e8e93;
   --phone-chat-panel: #f4f4f4;
   --phone-chat-shadow: 0 18px 38px rgba(17, 24, 39, 0.1);
   position: fixed;
@@ -50,6 +56,11 @@
   --phone-chat-accent-soft: rgba(37, 211, 102, 0.16);
   --phone-chat-inbound: #202c33;
   --phone-chat-outbound: #005c4b;
+  --phone-chat-outbound-text: #e9edef;
+  --phone-chat-outbound-meta: #b7c4ca;
+  --phone-chat-system: rgba(32, 44, 51, 0.86);
+  --phone-chat-composer-bg: #101820;
+  --phone-chat-input-placeholder: #7f8b95;
   --phone-chat-panel: #101820;
   --phone-chat-shadow: 0 18px 42px rgba(0, 0, 0, 0.34);
   color-scheme: dark;
@@ -821,7 +832,7 @@
   max-width: 100%;
   margin: 0;
   overflow: hidden;
-  color: #666666;
+  color: var(--phone-chat-muted);
   font-size: 15px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -872,7 +883,7 @@
   min-height: 60px;
   border: 1px solid var(--phone-chat-border);
   border-radius: 8px;
-  color: #0f5132;
+  color: var(--phone-chat-accent);
   background: var(--phone-chat-surface);
   box-shadow: 0 8px 20px rgba(var(--phone-chat-primary-rgb), 0.08);
 }
@@ -899,7 +910,7 @@
 
 .contactInfoSection h3 {
   margin: 0;
-  color: #555555;
+  color: var(--phone-chat-muted);
   font-size: 13px;
   font-weight: 850;
   letter-spacing: 0.04em;
@@ -995,7 +1006,7 @@
 .contactInfoRowText em {
   min-width: 0;
   overflow-wrap: anywhere;
-  color: #656565;
+  color: var(--phone-chat-muted);
   font-size: 13px;
   font-style: normal;
   line-height: 1.35;
@@ -1015,7 +1026,7 @@
 }
 
 .contactInfoTimelineItem + .contactInfoTimelineItem {
-  border-top: 1px solid #f0f0f0;
+  border-top: 1px solid var(--phone-chat-border);
 }
 
 .contactInfoTimelineIcon {
@@ -1133,7 +1144,7 @@
 
 .contactInfoTimelineItem small {
   overflow-wrap: anywhere;
-  color: #656565;
+  color: var(--phone-chat-muted);
   font-size: 13px;
   line-height: 1.35;
 }
@@ -1187,13 +1198,14 @@
 }
 
 .messageRow_outbound .messageBubble {
-  background: #d9fdd3;
+  color: var(--phone-chat-outbound-text);
+  background: var(--phone-chat-outbound);
 }
 
 .messageRow_system .messageBubble {
   max-width: 88%;
-  color: #606060;
-  background: rgba(255, 255, 255, 0.75);
+  color: var(--phone-chat-muted);
+  background: var(--phone-chat-system);
   box-shadow: none;
 }
 
@@ -1246,9 +1258,13 @@
   gap: 4px;
   float: right;
   margin: 4px 0 0 9px;
-  color: #606060;
+  color: var(--phone-chat-muted);
   font-size: 11px;
   font-weight: 560;
+}
+
+.messageRow_outbound .messageBubble span {
+  color: var(--phone-chat-outbound-meta);
 }
 
 .messageTransport {
@@ -1288,7 +1304,7 @@
 .composerShell {
   display: grid;
   min-width: 0;
-  background: #f6f2eb;
+  background: var(--phone-chat-composer-bg);
   -webkit-text-size-adjust: 100%;
 }
 
@@ -1298,7 +1314,7 @@
   justify-content: flex-start;
   min-width: 0;
   padding: 7px 8px 0 46px;
-  border-top: 1px solid rgba(0, 0, 0, 0.04);
+  border-top: 1px solid var(--phone-chat-border);
 }
 
 .replyWindowNotice {
@@ -1423,12 +1439,12 @@
 
 .composerInput:empty::before {
   content: attr(data-placeholder);
-  color: #8e8e93;
+  color: var(--phone-chat-input-placeholder);
   pointer-events: none;
 }
 
 .composerInput[contenteditable="false"] {
-  color: #8e8e93;
+  color: var(--phone-chat-input-placeholder);
   cursor: default;
   user-select: none;
   -webkit-user-select: none;
@@ -1658,7 +1674,7 @@
 
 .voiceDraftBody span,
 .voiceDraftTime {
-  color: #606060;
+  color: var(--phone-chat-muted);
   font-size: 12px;
   font-weight: 760;
 }
@@ -1797,7 +1813,10 @@
 }
 
 .paymentSheet {
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+  align-content: stretch;
   height: min(86dvh, 820px);
+  min-height: 0;
 }
 
 .templatesSheet {
@@ -1957,7 +1976,7 @@
 }
 
 .chatMoreList small {
-  color: #737373;
+  color: var(--phone-chat-muted);
   font-size: 13px;
   font-weight: 560;
 }
@@ -2280,8 +2299,12 @@
 
 .embeddedPayment {
   min-height: 0;
-  overflow-y: auto;
-  -webkit-overflow-scrolling: touch;
+  overflow: hidden;
+}
+
+.embeddedPayment > * {
+  min-height: 0;
+  height: 100%;
 }
 
 .appointmentSetup,

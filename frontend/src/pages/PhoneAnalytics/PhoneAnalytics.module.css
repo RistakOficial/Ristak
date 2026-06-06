@@ -9,6 +9,9 @@
   --phone-analytics-primary: var(--phone-chat-primary, #101010);
   --phone-analytics-accent: var(--phone-chat-accent, #25d366);
   --phone-analytics-accent-soft: var(--phone-chat-accent-soft, #dff8e8);
+  --phone-analytics-contrast-line: #101010;
+  --phone-analytics-blue-line: #2563eb;
+  --phone-analytics-warning-line: #f59e0b;
   position: fixed;
   inset: 0;
   isolation: isolate;
@@ -29,6 +32,9 @@
 }
 
 :global(body[data-phone-chat-tone="dark"]) .phoneAnalyticsPage {
+  --phone-analytics-contrast-line: #d9e3ea;
+  --phone-analytics-blue-line: #7db3ff;
+  --phone-analytics-warning-line: #ffd166;
   color-scheme: dark;
 }
 
@@ -196,6 +202,27 @@
 .tonered {
   color: #7f1d1d;
   background: #fee2e2;
+}
+
+:global(body[data-phone-chat-tone="dark"]) .tonegreen,
+:global(body[data-phone-chat-tone="dark"]) .toneblack {
+  color: var(--phone-chat-text-on-primary, #07140d);
+  background: var(--phone-analytics-accent);
+}
+
+:global(body[data-phone-chat-tone="dark"]) .toneblue {
+  color: #dbeafe;
+  background: rgba(96, 165, 250, 0.2);
+}
+
+:global(body[data-phone-chat-tone="dark"]) .tonegold {
+  color: #fff4c2;
+  background: rgba(245, 158, 11, 0.2);
+}
+
+:global(body[data-phone-chat-tone="dark"]) .tonered {
+  color: #fecaca;
+  background: rgba(239, 68, 68, 0.2);
 }
 
 .metricTitle {
@@ -383,6 +410,11 @@
   white-space: nowrap;
 }
 
+:global(body[data-phone-chat-tone="dark"]) .conversionPill {
+  color: var(--phone-chat-text-on-primary, #07140d);
+  background: var(--phone-analytics-accent);
+}
+
 .funnelList,
 .sourceList {
   display: grid;
@@ -459,7 +491,7 @@
   min-width: 6px;
   height: 100%;
   border-radius: 999px;
-  background: #25d366;
+  background: var(--phone-analytics-accent);
 }
 
 .funnelContent small,
