@@ -315,6 +315,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   const [guestContacts, setGuestContacts] = useState<Contact[]>([]);
   const [searchingGuest, setSearchingGuest] = useState(false);
   const [showGuestDropdown, setShowGuestDropdown] = useState(false);
+  const [guestsEnabled, setGuestsEnabled] = useState(false);
   const [guestName, setGuestName] = useState('');
   const [guestContact, setGuestContact] = useState('');
 
@@ -524,6 +525,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
         }
       ];
     });
+    setGuestsEnabled(true);
   };
 
   const handleSelectGuestContact = (contact: Contact) => {
@@ -558,6 +560,19 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
 
   const handleRemoveGuest = (guestId: string) => {
     setAppointmentGuests((current) => current.filter((guest) => guest.id !== guestId));
+  };
+
+  const handleToggleGuestsEnabled = (enabled: boolean) => {
+    setGuestsEnabled(enabled);
+    if (enabled) return;
+
+    setAppointmentGuests([]);
+    setGuestSearchQuery('');
+    setGuestContacts([]);
+    setShowGuestDropdown(false);
+    setSearchingGuest(false);
+    setGuestName('');
+    setGuestContact('');
   };
 
   // VALIDACIÓN DE SLOTS ELIMINADA
@@ -863,6 +878,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
       setSelectedContact(resolvedInitialContact);
       setSearchQuery('');
       setAppointmentGuests([]);
+      setGuestsEnabled(false);
       setGuestSearchQuery('');
       setGuestContacts([]);
       setShowGuestDropdown(false);
@@ -873,6 +889,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
       setSelectedContact(null);
       setSearchQuery('');
       setAppointmentGuests([]);
+      setGuestsEnabled(false);
       setGuestSearchQuery('');
       setGuestContacts([]);
       setShowGuestDropdown(false);
@@ -1341,102 +1358,132 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
 	            )}
 
 	            {showGuestsSection && (
-	              <div className={styles.sectionBlock}>
-	                <label className={styles.label}>Agregar invitados</label>
-	                <p className={styles.helpText}>Busca un contacto guardado o captura un invitado nuevo para esta cita.</p>
-
-	                <div className={styles.searchWrapper}>
-	                  <div className={styles.searchInput}>
-	                    <Search size={16} className={styles.searchIcon} />
-	                    <input
-	                      type="text"
-	                      placeholder="Buscar en contactos..."
-	                      value={guestSearchQuery}
-	                      onChange={(e) => setGuestSearchQuery(e.target.value)}
-	                      className={styles.input}
-	                    />
-	                    {searchingGuest && <Loader2 size={16} className={styles.loadingIcon} />}
+	              <div className={`${styles.sectionBlock} ${styles.guestsSectionCompact}`}>
+	                <div className={styles.guestToggleHeader}>
+	                  <div>
+	                    <label className={styles.label}>¿Agregar invitados?</label>
+	                    {appointmentGuests.length > 0 && (
+	                      <p className={styles.helpText}>{appointmentGuests.length} agregado{appointmentGuests.length === 1 ? '' : 's'}</p>
+	                    )}
 	                  </div>
+	                  <div className={styles.guestToggleChips} role="group" aria-label="Agregar invitados">
+	                    <button
+	                      type="button"
+	                      className={guestsEnabled ? styles.guestToggleChipActive : ''}
+	                      onClick={() => handleToggleGuestsEnabled(true)}
+	                      aria-pressed={guestsEnabled}
+	                    >
+	                      Sí
+	                    </button>
+	                    <button
+	                      type="button"
+	                      className={!guestsEnabled ? styles.guestToggleChipActive : ''}
+	                      onClick={() => handleToggleGuestsEnabled(false)}
+	                      aria-pressed={!guestsEnabled}
+	                    >
+	                      No
+	                    </button>
+	                  </div>
+	                </div>
 
-	                  {showGuestDropdown && (
-	                    <div className={styles.dropdown}>
-	                      {searchingGuest && guestContacts.length === 0 ? (
-	                        <div className={styles.dropdownEmpty}>
-	                          Buscando invitados...
-	                        </div>
-	                      ) : guestContacts.length > 0 ? (
-	                        guestContacts.map((contact) => (
-	                          <button
-	                            key={contact.id}
-	                            type="button"
-	                            className={styles.dropdownItem}
-	                            onClick={() => handleSelectGuestContact(contact)}
-	                          >
-	                            <p className={styles.dropdownName}>{getContactDisplayName(contact)}</p>
-	                            <p className={styles.dropdownDetail}>
-	                              {getContactDelivery(contact) || 'Sin WhatsApp ni correo'}
-	                            </p>
-	                          </button>
-	                        ))
-	                      ) : (
-	                        <div className={styles.dropdownEmpty}>
-	                          No se encontraron contactos
+	                {guestsEnabled && (
+	                  <>
+	                    <p className={styles.helpText}>Busca un contacto guardado o agrega uno nuevo para esta cita.</p>
+
+	                    <div className={styles.searchWrapper}>
+	                      <div className={styles.searchInput}>
+	                        <Search size={16} className={styles.searchIcon} />
+	                        <input
+	                          type="text"
+	                          placeholder="Buscar en contactos..."
+	                          value={guestSearchQuery}
+	                          onChange={(e) => setGuestSearchQuery(e.target.value)}
+	                          className={styles.input}
+	                        />
+	                        {searchingGuest && <Loader2 size={16} className={styles.loadingIcon} />}
+	                      </div>
+
+	                      {showGuestDropdown && (
+	                        <div className={styles.dropdown}>
+	                          {searchingGuest && guestContacts.length === 0 ? (
+	                            <div className={styles.dropdownEmpty}>
+	                              Buscando invitados...
+	                            </div>
+	                          ) : guestContacts.length > 0 ? (
+	                            guestContacts.map((contact) => (
+	                              <button
+	                                key={contact.id}
+	                                type="button"
+	                                className={styles.dropdownItem}
+	                                onClick={() => handleSelectGuestContact(contact)}
+	                              >
+	                                <p className={styles.dropdownName}>{getContactDisplayName(contact)}</p>
+	                                <p className={styles.dropdownDetail}>
+	                                  {getContactDelivery(contact) || 'Sin WhatsApp ni correo'}
+	                                </p>
+	                              </button>
+	                            ))
+	                          ) : (
+	                            <div className={styles.dropdownEmpty}>
+	                              No se encontraron contactos
+	                            </div>
+	                          )}
 	                        </div>
 	                      )}
 	                    </div>
-	                  )}
-	                </div>
 
-	                <div className={styles.guestBuilder}>
-	                  <div className={styles.field}>
-	                    <label className={styles.label} htmlFor="guestName">
-	                      Nombre completo <span className={styles.required}>*</span>
-	                    </label>
-	                    <input
-	                      id="guestName"
-	                      type="text"
-	                      className={styles.input}
-	                      value={guestName}
-	                      placeholder="Ej. Ana López"
-	                      onChange={(event) => setGuestName(event.target.value)}
-	                    />
-	                  </div>
-
-	                  <div className={styles.field}>
-	                    <label className={styles.label} htmlFor="guestContact">
-	                      Num Whats o correo <span className={styles.required}>*</span>
-	                    </label>
-	                    <input
-	                      id="guestContact"
-	                      type="text"
-	                      className={styles.input}
-	                      value={guestContact}
-	                      placeholder="Ej. +52 656 000 0000 o correo@dominio.com"
-	                      onChange={(event) => setGuestContact(event.target.value)}
-	                    />
-	                  </div>
-
-	                  <button type="button" className={styles.guestAddButton} onClick={handleAddManualGuest}>
-	                    Agregar invitado
-	                  </button>
-	                </div>
-
-	                {appointmentGuests.length > 0 ? (
-	                  <div className={styles.guestList} aria-label="Invitados agregados">
-	                    {appointmentGuests.map((guest) => (
-	                      <div key={guest.id} className={styles.guestItem}>
-	                        <span>
-	                          <strong>{guest.name}</strong>
-	                          <small>{guest.contact}</small>
-	                        </span>
-	                        <button type="button" onClick={() => handleRemoveGuest(guest.id)} aria-label={`Quitar ${guest.name}`}>
-	                          <X size={15} />
-	                        </button>
+	                    <div className={styles.guestBuilder}>
+	                      <div className={styles.field}>
+	                        <label className={styles.label} htmlFor="guestName">
+	                          Nombre completo <span className={styles.required}>*</span>
+	                        </label>
+	                        <input
+	                          id="guestName"
+	                          type="text"
+	                          className={styles.input}
+	                          value={guestName}
+	                          placeholder="Ej. Ana López"
+	                          onChange={(event) => setGuestName(event.target.value)}
+	                        />
 	                      </div>
-	                    ))}
-	                  </div>
-	                ) : (
-	                  <p className={styles.helpText}>Todavía no agregas invitados.</p>
+
+	                      <div className={styles.field}>
+	                        <label className={styles.label} htmlFor="guestContact">
+	                          Num Whats o correo <span className={styles.required}>*</span>
+	                        </label>
+	                        <input
+	                          id="guestContact"
+	                          type="text"
+	                          className={styles.input}
+	                          value={guestContact}
+	                          placeholder="Ej. +52 656 000 0000 o correo@dominio.com"
+	                          onChange={(event) => setGuestContact(event.target.value)}
+	                        />
+	                      </div>
+
+	                      <button type="button" className={styles.guestAddButton} onClick={handleAddManualGuest}>
+	                        Agregar invitado
+	                      </button>
+	                    </div>
+
+	                    {appointmentGuests.length > 0 ? (
+	                      <div className={styles.guestList} aria-label="Invitados agregados">
+	                        {appointmentGuests.map((guest) => (
+	                          <div key={guest.id} className={styles.guestItem}>
+	                            <span>
+	                              <strong>{guest.name}</strong>
+	                              <small>{guest.contact}</small>
+	                            </span>
+	                            <button type="button" onClick={() => handleRemoveGuest(guest.id)} aria-label={`Quitar ${guest.name}`}>
+	                              <X size={15} />
+	                            </button>
+	                          </div>
+	                        ))}
+	                      </div>
+	                    ) : (
+	                      <p className={styles.helpText}>Todavía no agregas invitados.</p>
+	                    )}
+	                  </>
 	                )}
 	              </div>
 	            )}
