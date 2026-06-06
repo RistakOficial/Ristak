@@ -68,6 +68,15 @@ export interface SourceDatum {
   color?: string;
 }
 
+export interface WhatsAppNumberOriginDatum extends SourceDatum {
+  phoneNumberId?: string | null;
+  phoneNumber?: string | null;
+  displayPhoneNumber?: string | null;
+  status?: string | null;
+  apiSendEnabled?: boolean;
+  qrSendEnabled?: boolean;
+}
+
 export interface OriginDistributionData {
   traffic: {
     sources: SourceDatum[];
@@ -80,13 +89,15 @@ export interface OriginDistributionData {
   leads: SourceDatum[];
   appointments: SourceDatum[];
   conversions: SourceDatum[];
+  whatsappNumbers?: WhatsAppNumberOriginDatum[];
 }
 
 const EMPTY_ORIGIN_DISTRIBUTION: OriginDistributionData = {
   traffic: { sources: [], platforms: [], devices: [], placements: [], browsers: [], os: [] },
   leads: [],
   appointments: [],
-  conversions: []
+  conversions: [],
+  whatsappNumbers: []
 };
 
 class DashboardService {

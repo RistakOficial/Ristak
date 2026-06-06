@@ -189,6 +189,107 @@ export async function getWhatsAppApiSourceBreakdown(range, { limit = 10 } = {}) 
   return toRanked(sources, limit)
 }
 
+export async function getWhatsAppApiNumberBreakdown(range, { limit = 10 } = {}) {
+  const hiddenFilters = await getHiddenContactFilters()
+  const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false)
+
+  const conditions = [
+    "LOWER(COALESCE(msg.direction, 'inbound')) = 'inbound'",
+    'COALESCE(msg.message_timestamp, msg.created_at) >= ?',
+    'COALESCE(msg.message_timestamp, msg.created_at) <= ?',
+    `(
+      COALESCE(msg.business_phone_number_id, '') != ''
+      OR COALESCE(msg.business_phone, '') != ''
+      OR COALESCE(phone.phone_number, '') != ''
+      OR COALESCE(phone.display_phone_number, '') != ''
+    )`
+  ]
+
+  if (hiddenCondition) {
+    conditions.push(`(msg.contact_id IS NULL OR ${hiddenCondition})`)
+  }
+
+  const rows = await db.all(`
+    SELECT
+      msg.id,
+      msg.whatsapp_api_contact_id,
+      msg.contact_id,
+      msg.phone,
+      msg.business_phone_number_id,
+      msg.business_phone,
+      phone.phone_number,
+      phone.display_phone_number,
+      phone.verified_name,
+      phone.label,
+      phone.status,
+      phone.api_send_enabled,
+      phone.qr_send_enabled,
+      phone.qr_status
+    FROM whatsapp_api_messages msg
+    LEFT JOIN whatsapp_api_phone_numbers phone ON phone.id = msg.business_phone_number_id
+    LEFT JOIN contacts c ON c.id = msg.contact_id
+    WHERE ${conditions.join(' AND ')}
+    ORDER BY COALESCE(msg.message_timestamp, msg.created_at) ASC, msg.id ASC
+  `, [range.startUtc, range.endUtc])
+
+  const buckets = new Map()
+
+  rows.forEach(row => {
+    const phoneKey = cleanBusinessPhoneKey(row)
+    if (!phoneKey) return
+
+    const label = (
+      hasText(row.label) ? String(row.label).trim() :
+      hasText(row.verified_name) ? String(row.verified_name).trim() :
+      hasText(row.display_phone_number) ? String(row.display_phone_number).trim() :
+      hasText(row.business_phone) ? String(row.business_phone).trim() :
+      hasText(row.phone_number) ? String(row.phone_number).trim() :
+      'Número sin nombre'
+    )
+
+    if (!buckets.has(phoneKey)) {
+      buckets.set(phoneKey, {
+        name: label,
+        phoneNumberId: row.business_phone_number_id || null,
+        phoneNumber: row.phone_number || row.business_phone || null,
+        displayPhoneNumber: row.display_phone_number || row.business_phone || row.phone_number || null,
+        status: row.status || row.qr_status || null,
+        apiSendEnabled: Boolean(Number(row.api_send_enabled || 0)),
+        qrSendEnabled: Boolean(Number(row.qr_send_enabled || 0)),
+        identities: new Set()
+      })
+    }
+
+    buckets.get(phoneKey).identities.add(getWhatsAppApiIdentity(row))
+  })
+
+  return Array.from(buckets.values())
+    .map(bucket => ({
+      name: bucket.name,
+      value: bucket.identities.size,
+      phoneNumberId: bucket.phoneNumberId,
+      phoneNumber: bucket.phoneNumber,
+      displayPhoneNumber: bucket.displayPhoneNumber,
+      status: bucket.status,
+      apiSendEnabled: bucket.apiSendEnabled,
+      qrSendEnabled: bucket.qrSendEnabled
+    }))
+    .sort((a, b) => b.value - a.value)
+    .slice(0, limit)
+}
+
+function cleanBusinessPhoneKey(row = {}) {
+  const candidates = [
+    row.business_phone_number_id,
+    row.business_phone,
+    row.phone_number,
+    row.display_phone_number
+  ]
+
+  const candidate = candidates.find(hasText)
+  return candidate ? String(candidate).trim() : ''
+}
+
 /**
  * IDs de contactos creados dentro del rango (leads/prospectos), excluyendo ocultos.
  * @param {{ startUtc: string, endUtc: string }} range

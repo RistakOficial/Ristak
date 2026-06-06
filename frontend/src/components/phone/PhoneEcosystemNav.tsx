@@ -1,9 +1,9 @@
 import React from 'react'
 import { Link } from 'react-router-dom'
-import { CalendarDays, CreditCard, MessageCircle } from 'lucide-react'
+import { BarChart3, CalendarDays, CreditCard, MessageCircle } from 'lucide-react'
 import styles from './PhoneEcosystemNav.module.css'
 
-type PhoneSection = 'chat' | 'calendar' | 'payments'
+type PhoneSection = 'chat' | 'calendar' | 'payments' | 'analytics'
 
 interface PhoneEcosystemNavProps {
   active: PhoneSection
@@ -13,7 +13,8 @@ interface PhoneEcosystemNavProps {
 const navItems = [
   { key: 'chat', label: 'Chats', to: '/phone/chat', Icon: MessageCircle },
   { key: 'calendar', label: 'Citas', to: '/phone/calendar', Icon: CalendarDays },
-  { key: 'payments', label: 'Pagos', to: '/phone/payments', Icon: CreditCard }
+  { key: 'payments', label: 'Pagos', to: '/phone/payments', Icon: CreditCard },
+  { key: 'analytics', label: 'Analíticas', to: '/phone/analytics', Icon: BarChart3 }
 ] as const
 
 export const PhoneEcosystemNav: React.FC<PhoneEcosystemNavProps> = ({ active, badges = {} }) => (

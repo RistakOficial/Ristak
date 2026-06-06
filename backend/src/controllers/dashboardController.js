@@ -4,7 +4,7 @@ import { resolveDateRange, resolveDateRangeWithGHLTimezone } from '../utils/date
 import { getGroupExpression } from '../services/analyticsService.js';
 import { getManualBusinessExpensesTotalForRange } from '../services/manualBusinessExpensesService.js';
 import { getContactSourceBreakdown } from '../services/contactSourceService.js';
-import { getTrafficDistributions, getWhatsAppApiSourceBreakdown, getLeadsContactIds } from '../services/originDistributionService.js';
+import { getTrafficDistributions, getWhatsAppApiSourceBreakdown, getWhatsAppApiNumberBreakdown, getLeadsContactIds } from '../services/originDistributionService.js';
 import { normalizeTrafficSource } from '../utils/trafficSourceNormalizer.js';
 import { DateTime } from 'luxon';
 import { getContactsWithAppointmentsHybrid, getContactsWithShowedAppointmentsHybrid } from '../services/appointmentsMerge.js';
@@ -1090,18 +1090,19 @@ export const getOriginDistribution = async (req, res) => {
 
     const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate })
 
-    const [traffic, leadIds, appointments, conversions] = await Promise.all([
+    const [traffic, leadIds, appointments, conversions, whatsappNumbers] = await Promise.all([
       getTrafficDistributions(range),
       getLeadsContactIds(range),
       getSourceBreakdownByMetric('appointments', range),
-      getSourceBreakdownByMetric('conversions', range)
+      getSourceBreakdownByMetric('conversions', range),
+      getWhatsAppApiNumberBreakdown(range)
     ])
 
     const leads = await getContactSourceBreakdown(leadIds, { limit: 10 })
 
     res.json({
       success: true,
-      data: { traffic, leads, appointments, conversions }
+      data: { traffic, leads, appointments, conversions, whatsappNumbers }
     })
   } catch (error) {
     logger.error(`Error en getOriginDistribution: ${error.message}`)

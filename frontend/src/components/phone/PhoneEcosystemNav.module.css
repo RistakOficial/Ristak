@@ -5,8 +5,8 @@
   left: max(10px, env(safe-area-inset-left));
   z-index: 70;
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 2px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
   min-height: 66px;
   padding: 6px 8px;
   border: 1px solid var(--phone-chat-border, rgba(17, 24, 39, 0.08));
@@ -32,7 +32,7 @@
 .dock span {
   max-width: 100%;
   overflow: hidden;
-  font-size: 11px;
+  font-size: 10.5px;
   font-weight: 700;
   letter-spacing: 0;
   text-overflow: ellipsis;
@@ -46,7 +46,7 @@
   justify-content: center;
   overflow: visible;
   min-width: 28px;
-  min-height: 26px;
+  min-height: 25px;
 }
 
 .dock a .iconWrap {
@@ -83,10 +83,10 @@
     right: max(6px, env(safe-area-inset-right));
     left: max(6px, env(safe-area-inset-left));
     min-height: 62px;
-    padding-inline: 6px;
+    padding-inline: 5px;
   }
 
   .dock span {
-    font-size: 10px;
+    font-size: 9.5px;
   }
 }

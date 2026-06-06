@@ -1,0 +1,521 @@
+.phoneAnalyticsPage {
+  --phone-chat-font: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", Inter, sans-serif;
+  --phone-chat-bg: #fbfaf6;
+  --phone-chat-surface: #ffffff;
+  --phone-chat-surface-soft: #f5f3ee;
+  --phone-chat-text: #0b0b0d;
+  --phone-chat-muted: #77736c;
+  --phone-chat-border: rgba(20, 20, 20, 0.09);
+  --phone-chat-primary: #101010;
+  --phone-chat-primary-rgb: 16, 16, 16;
+  --phone-chat-accent: #25d366;
+  --phone-chat-accent-rgb: 37, 211, 102;
+  --phone-chat-accent-soft: #dff8e8;
+  position: fixed;
+  inset: 0;
+  isolation: isolate;
+  width: 100vw;
+  height: 100dvh;
+  min-height: 100dvh;
+  max-height: 100dvh;
+  overflow: hidden;
+  overscroll-behavior: none;
+  color: var(--phone-chat-text);
+  background: var(--phone-chat-bg);
+  font-family: var(--phone-chat-font);
+  color-scheme: light;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-text-size-adjust: 100%;
+}
+
+.phoneAnalyticsPage button,
+.phoneAnalyticsPage a {
+  font: inherit;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.phoneFrame {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  height: 100%;
+  padding: calc(env(safe-area-inset-top) + 10px) 14px calc(98px + env(safe-area-inset-bottom));
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.phoneFrame::-webkit-scrollbar,
+.periodScroller::-webkit-scrollbar,
+.optionScroller::-webkit-scrollbar {
+  display: none;
+}
+
+.header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  padding: 2px 0 0;
+}
+
+.header h1 {
+  margin: 3px 0 0;
+  overflow: hidden;
+  color: #000000;
+  font-size: clamp(36px, 10vw, 52px);
+  font-weight: 880;
+  letter-spacing: 0;
+  line-height: 0.98;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.eyebrow,
+.sectionLabel {
+  margin: 0;
+  color: #737373;
+  font-size: 11px;
+  font-weight: 850;
+  letter-spacing: 0.08em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.headerIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 46px;
+  height: 46px;
+  border-radius: 999px;
+  color: #ffffff;
+  background: #101010;
+  box-shadow: 0 10px 22px rgba(17, 24, 39, 0.1);
+}
+
+.periodScroller,
+.optionScroller {
+  display: flex;
+  gap: 7px;
+  margin-inline: -14px;
+  padding: 0 14px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.periodScroller button,
+.optionScroller button,
+.segmentedControl button {
+  flex: 0 0 auto;
+  min-height: 34px;
+  padding: 0 13px;
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  border-radius: 999px;
+  color: #62615d;
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: none;
+  font-size: 13px;
+  font-weight: 780;
+  white-space: nowrap;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.periodScroller button:active,
+.optionScroller button:active,
+.segmentedControl button:active {
+  transform: scale(0.98);
+}
+
+.periodScroller .chipActive,
+.optionScroller .chipActive {
+  border-color: transparent;
+  color: #ffffff;
+  background: #101010;
+}
+
+.metricsGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.metricCard {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid rgba(17, 24, 39, 0.07);
+  border-radius: 18px;
+  background: #ffffff;
+  box-shadow: 0 10px 22px rgba(17, 24, 39, 0.04);
+}
+
+.metricIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+}
+
+.tonegreen {
+  color: #073f23;
+  background: #dff8e8;
+}
+
+.toneblack {
+  color: #ffffff;
+  background: #101010;
+}
+
+.toneblue {
+  color: #0f3579;
+  background: #e5efff;
+}
+
+.tonegold {
+  color: #5a3b00;
+  background: #fff1c2;
+}
+
+.tonered {
+  color: #7f1d1d;
+  background: #fee2e2;
+}
+
+.metricTitle {
+  overflow: hidden;
+  color: #737373;
+  font-size: 11px;
+  font-weight: 760;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.metricCard strong {
+  overflow: hidden;
+  color: #080808;
+  font-size: 19px;
+  font-weight: 880;
+  letter-spacing: 0;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.metricCard small {
+  overflow: hidden;
+  font-size: 11px;
+  font-weight: 760;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.deltaPositive {
+  color: #128a43;
+}
+
+.deltaNegative {
+  color: #dc2626;
+}
+
+.panel {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid rgba(17, 24, 39, 0.07);
+  border-radius: 24px;
+  background: #ffffff;
+  box-shadow: 0 12px 28px rgba(17, 24, 39, 0.05);
+}
+
+.panelHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.panelHeader h2 {
+  margin: 4px 0 0;
+  overflow: hidden;
+  color: #050505;
+  font-size: 22px;
+  font-weight: 870;
+  letter-spacing: 0;
+  line-height: 1.02;
+  text-overflow: ellipsis;
+}
+
+.segmentedControl {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
+  padding: 4px;
+  border-radius: 999px;
+  background: #f5f3ee;
+}
+
+.segmentedControl button {
+  width: 100%;
+  min-width: 0;
+  min-height: 31px;
+  padding-inline: 8px;
+  border: 0;
+  color: #6b6b68;
+  background: transparent;
+  box-shadow: none;
+  font-size: 11px;
+}
+
+.segmentedControl .segmentActive {
+  color: #101010;
+  background: #ffffff;
+  box-shadow: 0 6px 14px rgba(17, 24, 39, 0.08);
+}
+
+.legendRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  color: #737373;
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.legendRow span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.legendRow i {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+}
+
+.loadingState,
+.emptyState {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 128px;
+  border-radius: 18px;
+  color: #737373;
+  background: #f7f6f2;
+  font-size: 13px;
+  font-weight: 750;
+  text-align: center;
+}
+
+.spinIcon {
+  animation: spin 0.82s linear infinite;
+}
+
+.chartCanvas {
+  position: relative;
+  overflow: hidden;
+  min-height: 190px;
+  border-radius: 20px;
+  background: linear-gradient(180deg, #fbfaf6 0%, #ffffff 100%);
+}
+
+.chartCanvas svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.chartTopScale {
+  position: absolute;
+  top: 10px;
+  left: 12px;
+  z-index: 1;
+  color: #737373;
+  font-size: 11px;
+  font-weight: 780;
+}
+
+.gridLine {
+  stroke: rgba(17, 24, 39, 0.08);
+  stroke-width: 1;
+}
+
+.axisLabel {
+  fill: #77736c;
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.conversionPill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  min-height: 32px;
+  padding: 0 10px;
+  border-radius: 999px;
+  color: #0f5132;
+  background: #dff8e8;
+  font-size: 13px;
+  font-weight: 870;
+  white-space: nowrap;
+}
+
+.funnelList,
+.sourceList {
+  display: grid;
+  gap: 10px;
+}
+
+.funnelItem {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 9px;
+  min-width: 0;
+}
+
+.funnelIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  color: #101010;
+  background: #f5f3ee;
+}
+
+.funnelContent {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+
+.funnelTop,
+.sourceTop,
+.phoneSourceTop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.funnelTop strong,
+.sourceTop strong,
+.phoneSourceTop strong {
+  overflow: hidden;
+  color: #101010;
+  font-size: 15px;
+  font-weight: 850;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.funnelTop span,
+.sourceTop span,
+.phoneSourceTop em {
+  flex: 0 0 auto;
+  color: #101010;
+  font-size: 13px;
+  font-style: normal;
+  font-weight: 820;
+}
+
+.progressTrack,
+.sourceTrack {
+  overflow: hidden;
+  height: 8px;
+  border-radius: 999px;
+  background: #f0eee9;
+}
+
+.progressTrack i,
+.sourceTrack i {
+  display: block;
+  width: 0;
+  min-width: 6px;
+  height: 100%;
+  border-radius: 999px;
+  background: #25d366;
+}
+
+.funnelContent small,
+.phoneStatus,
+.phoneSourceTop small {
+  overflow: hidden;
+  color: #737373;
+  font-size: 11px;
+  font-weight: 720;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sourceItem {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+  padding: 4px 0;
+}
+
+.sourceItem + .sourceItem {
+  border-top: 1px solid rgba(17, 24, 39, 0.07);
+  padding-top: 10px;
+}
+
+.phoneSourceTop > span {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 360px) {
+  .phoneFrame {
+    padding-inline: 10px;
+  }
+
+  .periodScroller,
+  .optionScroller {
+    margin-inline: -10px;
+    padding-inline: 10px;
+  }
+
+  .metricCard {
+    padding: 10px;
+  }
+
+  .metricCard strong {
+    font-size: 17px;
+  }
+
+  .panel {
+    padding: 12px;
+  }
+}

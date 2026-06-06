@@ -19,6 +19,7 @@ import { Analytics } from '@/pages/Analytics'
 import { Sites } from '@/pages/Sites'
 import { PhoneAgentChat } from '@/pages/PhoneAgentChat'
 import { PhoneApp } from '@/pages/PhoneApp'
+import { PhoneAnalytics } from '@/pages/PhoneAnalytics'
 import { PhoneCalendar } from '@/pages/PhoneCalendar'
 import { PhoneChat } from '@/pages/PhoneChat'
 import { PhonePayments } from '@/pages/PhonePayments'
@@ -210,6 +211,14 @@ const AppWithNotifications: React.FC = () => {
             element={
               <ProtectedRoute>
                 <PhonePayments />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/phone/analytics"
+            element={
+              <ProtectedRoute>
+                <PhoneAnalytics />
               </ProtectedRoute>
             }
           />
