@@ -27,6 +27,7 @@ import { Setup } from '@/pages/Login/Setup'
 import { ToastContainer } from '@/components/common/Toast'
 import { Modal } from '@/components/common/Modal'
 import { StorageAlert } from '@/components/common/StorageAlert'
+import { MobileNotificationOnboarding } from '@/components/phone/MobileNotificationOnboarding'
 
 type RedirectLocation = {
   pathname?: string
@@ -227,6 +228,7 @@ const AppWithNotifications: React.FC = () => {
             <Route path="settings/*" element={<Settings />} />
           </Route>
         </Routes>
+        <MobileNotificationOnboarding />
       </BrowserRouter>
       <StorageAlert />
       <ToastContainer toasts={toasts} onClose={removeToast} />
