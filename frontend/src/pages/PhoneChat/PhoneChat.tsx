@@ -5550,12 +5550,12 @@ export const PhoneChat: React.FC = () => {
 
       {sheet && (
         <div
-          className={`${styles.sheetBackdrop} ${sheet === 'settings' ? styles.settingsSheetBackdrop : ''} ${sheet === 'payment' || sheet === 'settings' ? styles.darkSheetBackdrop : ''}`}
+          className={`${styles.sheetBackdrop} ${sheet === 'settings' ? styles.settingsSheetBackdrop : ''} ${sheet === 'payment' || sheet === 'settings' || sheet === 'chatMore' ? styles.darkSheetBackdrop : ''} ${sheet === 'chatMore' ? styles.chatMoreSheetBackdrop : ''} ${actionSheetDismiss.closing ? styles.sheetBackdropClosing : ''}`}
           style={actionSheetDismiss.backdropStyle}
           onClick={actionSheetDismiss.requestClose}
         >
           <section
-            className={`${styles.sheetPanel} ${sheet === 'payment' ? styles.paymentSheet : ''} ${sheet === 'attachments' ? styles.attachmentsSheet : ''} ${sheet === 'templates' ? styles.templatesSheet : ''} ${sheet === 'settings' ? styles.settingsSheet : ''} ${sheet === 'newChat' ? styles.newChatSheet : ''} ${sheet === 'chatMore' ? styles.chatMoreSheet : ''}`}
+            className={`${styles.sheetPanel} ${sheet === 'payment' ? styles.paymentSheet : ''} ${sheet === 'attachments' ? styles.attachmentsSheet : ''} ${sheet === 'templates' ? styles.templatesSheet : ''} ${sheet === 'settings' ? styles.settingsSheet : ''} ${sheet === 'newChat' ? styles.newChatSheet : ''} ${sheet === 'chatMore' ? styles.chatMoreSheet : ''} ${actionSheetDismiss.closing ? styles.sheetPanelClosing : ''}`}
             style={actionSheetDismiss.sheetStyle}
             onClick={(event) => event.stopPropagation()}
             aria-label="Acciones del chat"

@@ -2422,6 +2422,16 @@
     rgba(15, 23, 42, 0.58);
 }
 
+.chatMoreSheetBackdrop {
+  background:
+    linear-gradient(180deg, rgba(3, 7, 18, 0.36), rgba(3, 7, 18, 0.82)),
+    rgba(3, 7, 18, 0.68);
+}
+
+.sheetBackdropClosing {
+  pointer-events: none;
+}
+
 .sheetPanel {
   display: grid;
   gap: 12px;
@@ -2436,6 +2446,11 @@
   touch-action: pan-y;
   animation: phoneChatSheetRise 280ms cubic-bezier(0.22, 1, 0.36, 1) both;
   will-change: transform;
+}
+
+.sheetPanelClosing {
+  pointer-events: none;
+  animation: none;
 }
 
 .attachmentsSheet {
@@ -2481,6 +2496,8 @@
 .chatMoreSheet {
   min-height: 292px;
   background: var(--phone-chat-panel);
+  box-shadow: 0 -24px 82px rgba(3, 7, 18, 0.34);
+  transform-origin: bottom center;
 }
 
 .sheetHandle {
