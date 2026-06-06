@@ -1,4 +1,4 @@
-const CACHE_NAME = 'ristak-chat-v10'
+const CACHE_NAME = 'ristak-chat-v11'
 const DEFAULT_NOTIFICATION_TITLE = 'Notificación nueva'
 const DEFAULT_NOTIFICATION_BODY = 'Tienes una notificación nueva.'
 const SHELL_ASSETS = [

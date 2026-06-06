@@ -105,6 +105,7 @@ type ConversationSortMode = 'recent' | 'unread'
 
 interface ChatSwipeGesture {
   contactId: string
+  generation: number
   startX: number
   startY: number
   startOffset: number
@@ -1328,6 +1329,7 @@ export const PhoneChat: React.FC = () => {
   const voiceCancelRef = useRef(false)
   const autoOpenedLastConversationRef = useRef(false)
   const chatSwipeGestureRef = useRef<ChatSwipeGesture | null>(null)
+  const chatSwipeGenerationRef = useRef(0)
   const ignoreNextChatClickRef = useRef(false)
 
   const aiAgentConversationOpen = activeContactId === AI_AGENT_CHAT_ID
@@ -1821,11 +1823,13 @@ export const PhoneChat: React.FC = () => {
   }, [mutedChatIds])
 
   useEffect(() => {
+    chatSwipeGenerationRef.current += 1
     setOpenSwipeChatId(null)
     setDraggingSwipe(null)
   }, [archivedViewOpen, chatFilter, chatQuery, selectedChatPhoneId])
 
   useLayoutEffect(() => {
+    chatSwipeGenerationRef.current += 1
     setChatSwipeSuppressed(true)
     setOpenSwipeChatId(null)
     setDraggingSwipe(null)
@@ -1834,6 +1838,7 @@ export const PhoneChat: React.FC = () => {
     if (conversationOpen) return
 
     const releaseSwipe = window.setTimeout(() => {
+      chatSwipeGenerationRef.current += 1
       setOpenSwipeChatId(null)
       setDraggingSwipe(null)
       chatSwipeGestureRef.current = null
@@ -1845,6 +1850,7 @@ export const PhoneChat: React.FC = () => {
 
   useLayoutEffect(() => {
     if (!activeContactId) return
+    chatSwipeGenerationRef.current += 1
     setOpenSwipeChatId(null)
     setDraggingSwipe(null)
     chatSwipeGestureRef.current = null
@@ -2418,6 +2424,7 @@ export const PhoneChat: React.FC = () => {
   }
 
   const closeSwipeActions = () => {
+    chatSwipeGenerationRef.current += 1
     setOpenSwipeChatId(null)
     setDraggingSwipe(null)
     chatSwipeGestureRef.current = null
@@ -2507,6 +2514,7 @@ export const PhoneChat: React.FC = () => {
 
     chatSwipeGestureRef.current = {
       contactId,
+      generation: chatSwipeGenerationRef.current,
       startX: touch.clientX,
       startY: touch.clientY,
       startOffset: currentOffset,
@@ -2520,6 +2528,11 @@ export const PhoneChat: React.FC = () => {
     const gesture = chatSwipeGestureRef.current
     const touch = event.touches[0]
     if (!gesture || !touch) return
+    if (gesture.generation !== chatSwipeGenerationRef.current || conversationOpen || chatSwipeSuppressed) {
+      chatSwipeGestureRef.current = null
+      setDraggingSwipe(null)
+      return
+    }
 
     const deltaX = touch.clientX - gesture.startX
     const deltaY = touch.clientY - gesture.startY
@@ -2545,6 +2558,11 @@ export const PhoneChat: React.FC = () => {
   const handleChatTouchEnd = () => {
     const gesture = chatSwipeGestureRef.current
     if (!gesture) return
+    if (gesture.generation !== chatSwipeGenerationRef.current || conversationOpen || chatSwipeSuppressed) {
+      setDraggingSwipe(null)
+      chatSwipeGestureRef.current = null
+      return
+    }
 
     if (gesture.active) {
       const openThreshold = gesture.startOffset > 0 ? CHAT_SWIPE_CLOSE_THRESHOLD : CHAT_SWIPE_OPEN_THRESHOLD
@@ -3222,6 +3240,7 @@ export const PhoneChat: React.FC = () => {
       : isDraggingSwipe
         ? draggingSwipe.offset
         : openSwipeChatId === contact.id ? CHAT_SWIPE_ACTION_WIDTH : 0
+    const showSwipeActions = swipeOffset > 0
 
     return (
       <div
@@ -3232,32 +3251,32 @@ export const PhoneChat: React.FC = () => {
         onTouchEnd={swipeLocked ? undefined : handleChatTouchEnd}
         onTouchCancel={swipeLocked ? undefined : handleChatTouchEnd}
       >
-        <div className={styles.chatSwipeActions} aria-hidden={swipeOffset === 0}>
-          <button
-            type="button"
-            className={`${styles.chatSwipeAction} ${styles.chatSwipeMore}`}
-            disabled={swipeOffset === 0}
-            onClick={(event) => {
-              event.stopPropagation()
-              handleOpenChatMore(contact)
-            }}
-          >
-            <MoreHorizontal size={30} />
-            <span>Más</span>
-          </button>
-          <button
-            type="button"
-            className={`${styles.chatSwipeAction} ${styles.chatSwipeArchive}`}
-            disabled={swipeOffset === 0}
-            onClick={(event) => {
-              event.stopPropagation()
-              handleArchiveChat(contact)
-            }}
-          >
-            <MdArchive size={32} />
-            <span>{isArchived ? 'Restaurar' : 'Archivar'}</span>
-          </button>
-        </div>
+        {showSwipeActions && (
+          <div className={styles.chatSwipeActions} aria-hidden={!showSwipeActions}>
+            <button
+              type="button"
+              className={`${styles.chatSwipeAction} ${styles.chatSwipeMore}`}
+              onClick={(event) => {
+                event.stopPropagation()
+                handleOpenChatMore(contact)
+              }}
+            >
+              <MoreHorizontal size={30} />
+              <span>Más</span>
+            </button>
+            <button
+              type="button"
+              className={`${styles.chatSwipeAction} ${styles.chatSwipeArchive}`}
+              onClick={(event) => {
+                event.stopPropagation()
+                handleArchiveChat(contact)
+              }}
+            >
+              <MdArchive size={32} />
+              <span>{isArchived ? 'Restaurar' : 'Archivar'}</span>
+            </button>
+          </div>
+        )}
         <div
           role="button"
           tabIndex={0}
