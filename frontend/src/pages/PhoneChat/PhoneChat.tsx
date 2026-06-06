@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import {
-  BadgeDollarSign,
   Bell,
   BellOff,
   Bot,
@@ -11,6 +10,7 @@ import {
   ChevronLeft,
   ChevronRight,
   CircleAlert,
+  CircleDollarSign,
   Cog,
   Clock,
   CreditCard,
@@ -1285,6 +1285,7 @@ export const PhoneChat: React.FC = () => {
   const [composerStatus, setComposerStatus] = useState<ComposerStatus>('idle')
   const [whatsappStatus, setWhatsappStatus] = useState<WhatsAppApiStatus | null>(null)
   const [calendars, setCalendars] = useState<Calendar[]>([])
+  const [calendarsLoading, setCalendarsLoading] = useState(false)
   const [selectedCalendarId, setSelectedCalendarId] = useState('')
   const [sheet, setSheet] = useState<ActionSheet>(null)
   const [activeSettingsSection, setActiveSettingsSection] = useState<ChatSettingsSection>(null)
@@ -1719,21 +1720,28 @@ export const PhoneChat: React.FC = () => {
     const statusCacheKey = getPhoneDailyCacheKey('phone-chat', 'whatsapp-status', locationId || 'default')
     const calendarsCacheKey = getPhoneDailyCacheKey('phone-chat', 'calendars', locationId || 'default')
     const cachedStatus = readPhoneDailyCache<WhatsAppApiStatus>(statusCacheKey)
-    const cachedCalendars = locationId && accessToken ? readPhoneDailyCache<Calendar[]>(calendarsCacheKey) : null
+    const cachedCalendars = readPhoneDailyCache<Calendar[]>(calendarsCacheKey)
     const applyCalendars = (items: Calendar[]) => {
-      setCalendars(items)
-      const preferred = items.find((calendar) => calendar.id === defaultCalendarId)
-      setSelectedCalendarId((current) => current || preferred?.id || items[0]?.id || '')
+      const availableItems = items.filter((calendar) => calendar.isActive !== false)
+      setCalendars(availableItems)
+      const preferred = availableItems.find((calendar) => calendar.id === defaultCalendarId)
+      setSelectedCalendarId((current) => (
+        availableItems.some((calendar) => calendar.id === current)
+          ? current
+          : preferred?.id || availableItems[0]?.id || ''
+      ))
+      return availableItems
     }
 
     if (cachedStatus) setWhatsappStatus(cachedStatus.data)
-    if (cachedCalendars) applyCalendars(Array.isArray(cachedCalendars.data) ? cachedCalendars.data : [])
+    const cachedAvailableCalendars = cachedCalendars
+      ? applyCalendars(Array.isArray(cachedCalendars.data) ? cachedCalendars.data : [])
+      : []
+    setCalendarsLoading(cachedAvailableCalendars.length === 0)
 
     const [status, calendarItems] = await Promise.all([
       whatsappApiService.getStatus().catch(() => null),
-      locationId && accessToken
-        ? calendarsService.getCalendars(locationId, accessToken).catch(() => [])
-        : Promise.resolve(null)
+      calendarsService.getCalendars(locationId, accessToken).catch(() => [])
     ])
 
     if (status) {
@@ -1743,9 +1751,10 @@ export const PhoneChat: React.FC = () => {
     if (Array.isArray(calendarItems)) {
       applyCalendars(calendarItems)
       writePhoneDailyCache(calendarsCacheKey, calendarItems, { maxEntryChars: 180_000 })
-    } else if (!cachedCalendars && locationId && accessToken) {
+    } else if (!cachedCalendars) {
       setCalendars([])
     }
+    setCalendarsLoading(false)
   }, [accessToken, defaultCalendarId, locationId])
 
   const loadTemplates = useCallback(async () => {
@@ -4503,7 +4512,7 @@ export const PhoneChat: React.FC = () => {
       {
         label: 'Registrar pagos',
         description: 'Guardar un pago o plan de pagos.',
-        Icon: BadgeDollarSign,
+        Icon: CircleDollarSign,
         className: styles.chatMorePayment,
         onClick: () => handleChatMoreAction(chatActionContact, 'payment')
       },
@@ -4705,7 +4714,7 @@ export const PhoneChat: React.FC = () => {
                   }}
                   aria-label="Cobrar"
                 >
-                  <BadgeDollarSign size={25} />
+                  <CircleDollarSign size={25} />
                 </button>
               </div>
             )}
@@ -4857,7 +4866,7 @@ export const PhoneChat: React.FC = () => {
                     Plan de pagos
                   </button>
                 </div>
-                <div className={styles.embeddedPayment} data-phone-chat-scrollable="true">
+                <div className={styles.embeddedPayment}>
                   <RecordPaymentModal
                     key={`${paymentMode}-${initialContact?.id || 'empty'}`}
                     variant="embedded"
@@ -4895,9 +4904,11 @@ export const PhoneChat: React.FC = () => {
                 <select
                   value={selectedCalendar?.id || ''}
                   onChange={(event) => setSelectedCalendarId(event.target.value)}
-                  disabled={calendars.length === 0}
+                  disabled={calendarsLoading || calendars.length === 0}
                 >
-                  {calendars.length === 0 ? (
+                  {calendarsLoading ? (
+                    <option value="">Cargando calendarios...</option>
+                  ) : calendars.length === 0 ? (
                     <option value="">No hay calendarios disponibles</option>
                   ) : calendars.map((calendar) => (
                     <option key={calendar.id} value={calendar.id}>{calendar.name}</option>

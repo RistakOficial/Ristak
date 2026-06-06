@@ -2410,12 +2410,12 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
     return (
       <div className={styles.embeddedRoot}>
-        <div className={styles.embeddedScroll} data-phone-scrollable="true">
+        <div className={styles.embeddedScroll} data-phone-chat-scrollable="true">
           {step === 'processing' && renderProcessing()}
           {step === 'form' && renderForm()}
           {step === 'options' && renderPaymentOptions()}
-          {renderFooter()}
         </div>
+        {renderFooter()}
       </div>
     )
   }
