@@ -5,7 +5,7 @@ import { useNotification } from '@/contexts/NotificationContext'
 import { useHighLevelConnected } from '@/hooks/useHighLevelConnected'
 import styles from './HighLevelIntegration.module.css'
 
-type PaymentGatewayId = 'highlevel' | 'stripe' | 'mercado-libre' | 'clip' | 'conekta' | 'other'
+type PaymentGatewayId = 'highlevel' | 'stripe' | 'openpay' | 'mercado-libre' | 'clip' | 'conekta' | 'other'
 
 interface PaymentGatewayOption {
   id: PaymentGatewayId
@@ -19,6 +19,12 @@ const UPCOMING_PAYMENT_GATEWAYS: PaymentGatewayOption[] = [
     id: 'stripe',
     name: 'Stripe',
     description: 'Para cobrar con tarjeta y links de pago cuando esta conexión esté lista.',
+    status: 'soon'
+  },
+  {
+    id: 'openpay',
+    name: 'OpenPay',
+    description: 'Para preparar cobros con tarjeta, tiendas y pagos en línea cuando esta conexión esté lista.',
     status: 'soon'
   },
   {
