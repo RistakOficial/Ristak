@@ -399,7 +399,6 @@
     opacity .16s ease,
     box-shadow .16s ease;
 }
-.rstkCanvas .rstkSel:hover,
 .rstkCanvas .rstkSelActive {
   z-index: 40;
 }
@@ -535,7 +534,6 @@
   transform: translateY(-50%) scale(calc(1 / var(--rstk-scale, 1)));
   transform-origin: top right;
 }
-.rstkCanvas .rstkSel:hover > .rstkBlockTools,
 .rstkCanvas .rstkSelActive > .rstkBlockTools { opacity: 1; pointer-events: auto; }
 .rstkCanvas .rstkBlockTool {
   width: 30px; height: 30px; display: grid; place-items: center;
