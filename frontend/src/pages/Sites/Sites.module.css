@@ -34,22 +34,23 @@
 }
 
 .backButton {
-  min-height: 34px;
+  min-height: auto;
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  border: 1px solid rgba(148, 163, 184, 0.22);
-  border-radius: 8px;
-  background: rgba(148, 163, 184, 0.08);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   color: var(--color-text-secondary);
-  padding: 0 10px;
+  padding: 0;
   font: inherit;
   font-size: 0.84rem;
   font-weight: 850;
+  cursor: pointer;
 }
 
 .backButton:hover {
-  background: rgba(148, 163, 184, 0.14);
+  background: transparent;
   color: var(--color-text-primary);
 }
 
@@ -6898,14 +6899,14 @@
 }
 
 .editorCompactToolbar .backButton {
-  height: var(--editor-control-h);
-  min-height: var(--editor-control-h);
+  height: auto;
+  min-height: auto;
   flex: 0 0 auto;
   gap: 5px;
-  border: 1px solid rgba(148, 163, 184, 0.18);
-  border-radius: 8px;
-  background: rgba(148, 163, 184, 0.08);
-  padding: 0 8px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
   font-size: 0.76rem;
   line-height: 1;
 }
@@ -7245,14 +7246,14 @@
 }
 
 .editorToolbarTop .backButton {
-  height: var(--editor-control-h);
-  min-height: var(--editor-control-h);
+  height: auto;
+  min-height: auto;
   flex: 0 0 auto;
   gap: 6px;
-  border: 1px solid rgba(148, 163, 184, 0.18);
-  border-radius: 7px;
-  background: rgba(148, 163, 184, 0.07);
-  padding: 0 10px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
   font-size: 0.78rem;
   line-height: 1;
 }
