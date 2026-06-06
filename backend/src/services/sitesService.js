@@ -6021,6 +6021,48 @@ function renderSocialProfileBlock(block, context = {}) {
   `
 }
 
+function normalizeSocialPlatform(value) {
+  const platform = cleanString(value)
+  return ['facebook', 'instagram', 'tiktok'].includes(platform) ? platform : 'facebook'
+}
+
+function renderSocialProfileBlock(block, context = {}) {
+  const settings = block.settings || {}
+  const platform = normalizeSocialPlatform(settings.platform)
+  const template = SITE_TEMPLATES[platform] || resolveTemplate(context.site)
+  const siteBrand = getBrand(context.site || {}, template)
+  const name = cleanString(settings.brandName) || siteBrand.name
+  const subtitleDefault = platform === 'instagram' ? 'Publicacion pagada' : 'Patrocinado'
+  const subtitle = cleanString(settings.brandSubtitle) || siteBrand.subtitle || subtitleDefault
+  const followers = cleanString(settings.followers || settings.followersCount || settings.followerCount) || siteBrand.followers
+  const avatarUrl = safeUrl(settings.brandAvatar) || siteBrand.avatarUrl
+  const verified = settings.brandVerified === undefined ? siteBrand.verified : normalizeBoolean(settings.brandVerified) === 1
+  const initial = (name.trim()[0] || 'R').toUpperCase()
+  const brand = {
+    name,
+    subtitle,
+    followers,
+    avatarUrl,
+    verified,
+    initial
+  }
+  const secondary = followers ? `${escapeHtml(followers)} seguidores` : escapeHtml(subtitle)
+  const platformLabel = platform === 'facebook' ? 'Facebook' : platform === 'instagram' ? 'Instagram' : 'TikTok'
+
+  return `
+    <section class="rstk-chrome rstk-social-profile rstk-social-profile-block rstk-social-profile-${platform}" aria-label="Perfil de ${platformLabel}">
+      <div class="rstk-social-image">
+        ${renderAvatar(brand)}
+        <span class="rstk-social-platform rstk-social-platform-${platform}" aria-hidden="true">${getSocialPlatformIcon(platform)}</span>
+      </div>
+      <div class="rstk-social-details">
+        <div class="rstk-social-name">${escapeHtml(name)}${verified ? RSTK_ICONS.verified : ''}</div>
+        <div class="rstk-social-followers">${secondary}</div>
+      </div>
+    </section>
+  `
+}
+
 function renderLegalFooter(brand) {
   return `
     <p class="rstk-footer">
