@@ -158,13 +158,23 @@
 
 /* Vista de selección: encabezado arriba y debajo las dos opciones de cobro */
 .selectStack {
-  grid-row: 2;
+  grid-row: 1 / -1;
   min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding: 8px 16px calc(env(safe-area-inset-bottom, 0px) + 96px);
+  padding: calc(env(safe-area-inset-top, 0px) + 24px) 16px calc(env(safe-area-inset-bottom, 0px) + 96px);
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.selectTitle {
+  margin: 0 4px 12px;
+  color: #000000;
+  font-size: clamp(31px, 9vw, 42px);
+  font-weight: 860;
+  line-height: 0.98;
+  letter-spacing: 0;
 }
 
 .choiceCard {
@@ -241,6 +251,207 @@
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
+}
+
+.recentPaymentsSection {
+  display: grid;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.recentPaymentsToggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-height: 58px;
+  padding: 10px 14px;
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  border-radius: 8px;
+  color: #111111;
+  background: #f7f6f2;
+  text-align: left;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.05);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.recentPaymentsToggle span {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.recentPaymentsToggle strong {
+  overflow: hidden;
+  font-size: 16px;
+  font-weight: 820;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recentPaymentsToggle small {
+  overflow: hidden;
+  color: #737373;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recentPaymentsToggle svg {
+  flex: 0 0 auto;
+  color: #111111;
+  transition: transform 160ms ease;
+}
+
+.recentPaymentsChevronOpen {
+  transform: rotate(180deg);
+}
+
+.recentPaymentsPanel {
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 14px 34px rgba(15, 23, 42, 0.07);
+}
+
+.recentPeriodPicker {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.recentPeriodPicker button {
+  min-width: 0;
+  min-height: 36px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 999px;
+  color: #737373;
+  background: #f7f6f2;
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.recentPeriodPicker .recentPeriodActive {
+  color: #ffffff;
+  background: #111111;
+}
+
+.recentPaymentsState {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 76px;
+  padding: 12px;
+  border-radius: 8px;
+  color: #737373;
+  background: #f7f6f2;
+  font-size: 13px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.recentPaymentsList {
+  display: grid;
+  gap: 6px;
+}
+
+.recentPaymentItem {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 62px;
+  padding: 10px 12px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: #111111;
+  background: #f7f6f2;
+  text-align: left;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.recentPaymentItem:active {
+  transform: scale(0.995);
+}
+
+.recentPaymentItemSelected {
+  border-color: rgba(37, 211, 102, 0.42);
+  background: rgba(37, 211, 102, 0.1);
+}
+
+.recentPaymentMain,
+.recentPaymentMeta {
+  display: grid;
+  min-width: 0;
+}
+
+.recentPaymentMain {
+  gap: 4px;
+}
+
+.recentPaymentMain strong {
+  color: #111111;
+  font-size: 17px;
+  font-weight: 850;
+  line-height: 1.1;
+}
+
+.recentPaymentMain small,
+.recentPaymentMeta small,
+.recentPaymentMeta span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recentPaymentMain small {
+  color: #737373;
+  font-size: 12px;
+  font-weight: 680;
+}
+
+.recentPaymentMeta {
+  justify-items: end;
+  gap: 4px;
+  max-width: 132px;
+  padding-right: 2px;
+  color: #737373;
+}
+
+.recentPaymentMeta span {
+  color: #111111;
+  font-size: 12px;
+  font-weight: 780;
+}
+
+.recentPaymentMeta small {
+  color: #737373;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.recentPaymentCheck {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  color: #16a34a;
+}
+
+.spinIcon {
+  animation: spin 0.8s linear infinite;
 }
 
 /* Estados de carga / bloqueo */

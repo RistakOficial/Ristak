@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { ArrowLeft, CalendarDays, ChevronRight, CreditCard, MonitorX } from 'lucide-react'
+import { ArrowLeft, CalendarDays, Check, ChevronDown, ChevronRight, CreditCard, Loader2, MonitorX } from 'lucide-react'
 import { RecordPaymentModal } from '@/components/common'
 import { PhoneEcosystemNav } from '@/components/phone/PhoneEcosystemNav'
+import { transactionsService, type Transaction } from '@/services/transactionsService'
 import styles from './PhonePayments.module.css'
 
 const PORTABLE_WIDTH_QUERY = '(max-width: 1366px)'
@@ -13,6 +14,16 @@ const SCROLLABLE_PHONE_SELECTOR = '[data-phone-scrollable="true"], textarea'
 
 type AccessState = 'checking' | 'allowed' | 'blocked'
 type PaymentView = 'select' | 'single' | 'partial'
+type RecentPaymentsPeriod = 'today' | '7d' | '30d' | '90d'
+
+const SUCCESS_PAYMENT_STATUSES = new Set(['paid', 'partial'])
+
+const RECENT_PAYMENT_PERIODS: Array<{ id: RecentPaymentsPeriod; label: string; days: number }> = [
+  { id: 'today', label: 'Hoy', days: 0 },
+  { id: '7d', label: '7 días', days: 7 },
+  { id: '30d', label: '30 días', days: 30 },
+  { id: '90d', label: '90 días', days: 90 }
+]
 
 function hasPortableAccess() {
   if (typeof window === 'undefined') return false
@@ -37,10 +48,82 @@ function getInitialView(mode: string | null): PaymentView {
   return 'select'
 }
 
+function formatISODate(date: Date) {
+  return date.toISOString().slice(0, 10)
+}
+
+function getRecentPaymentRange(period: RecentPaymentsPeriod) {
+  const end = new Date()
+  const start = new Date()
+  const selectedPeriod = RECENT_PAYMENT_PERIODS.find((option) => option.id === period) || RECENT_PAYMENT_PERIODS[2]
+
+  start.setHours(0, 0, 0, 0)
+  end.setHours(23, 59, 59, 999)
+
+  if (selectedPeriod.days > 0) {
+    start.setDate(start.getDate() - (selectedPeriod.days - 1))
+  }
+
+  return {
+    startDate: formatISODate(start),
+    endDate: formatISODate(end)
+  }
+}
+
+function formatCurrency(value: number, currency = 'MXN') {
+  return new Intl.NumberFormat('es-MX', {
+    style: 'currency',
+    currency,
+    maximumFractionDigits: 2
+  }).format(value || 0)
+}
+
+function formatPaymentDate(value?: string | null) {
+  if (!value) return 'Sin fecha'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return 'Sin fecha'
+
+  return new Intl.DateTimeFormat('es-MX', {
+    day: 'numeric',
+    month: 'short',
+    hour: 'numeric',
+    minute: '2-digit'
+  }).format(date)
+}
+
+function getPaymentMethodLabel(method?: string | null) {
+  const normalizedMethod = String(method || '').toLowerCase()
+  if (normalizedMethod === 'card') return 'Tarjeta'
+  if (normalizedMethod === 'transfer' || normalizedMethod === 'bank_transfer') return 'Transferencia'
+  if (normalizedMethod === 'cash') return 'Efectivo'
+  if (normalizedMethod === 'check') return 'Cheque'
+  if (normalizedMethod === 'paypal') return 'PayPal'
+  return 'Otro'
+}
+
+function getPaymentStatusLabel(status?: string | null) {
+  const normalizedStatus = String(status || '').toLowerCase()
+  if (normalizedStatus === 'paid') return 'Pagado'
+  if (normalizedStatus === 'partial') return 'Parcial'
+  if (normalizedStatus === 'refunded') return 'Reembolsado'
+  if (normalizedStatus === 'failed') return 'Fallido'
+  if (normalizedStatus === 'pending') return 'Pendiente'
+  return status || 'Sin estado'
+}
+
+function getContactLabel(transaction: Transaction) {
+  return transaction.contactName || transaction.email || transaction.phone || 'Cliente sin nombre'
+}
+
 export const PhonePayments: React.FC = () => {
   const [searchParams] = useSearchParams()
   const [accessState, setAccessState] = useState<AccessState>(getAccessState)
   const [view, setView] = useState<PaymentView>(() => getInitialView(searchParams.get('mode')))
+  const [recentPaymentsOpen, setRecentPaymentsOpen] = useState(false)
+  const [recentPaymentsPeriod, setRecentPaymentsPeriod] = useState<RecentPaymentsPeriod>('30d')
+  const [recentPayments, setRecentPayments] = useState<Transaction[]>([])
+  const [recentPaymentsLoading, setRecentPaymentsLoading] = useState(false)
+  const [selectedRecentPaymentId, setSelectedRecentPaymentId] = useState<string | null>(null)
 
   useEffect(() => {
     document.title = 'Pagos móviles | Ristak'
@@ -152,6 +235,35 @@ export const PhonePayments: React.FC = () => {
     }
   }, [accessState])
 
+  useEffect(() => {
+    if (accessState !== 'allowed' || !recentPaymentsOpen) return
+
+    let cancelled = false
+    const loadRecentPayments = async () => {
+      setRecentPaymentsLoading(true)
+      const { startDate, endDate } = getRecentPaymentRange(recentPaymentsPeriod)
+      const transactions = await transactionsService.getTransactions(startDate, endDate)
+
+      if (cancelled) return
+
+      const receivedPayments = transactions
+        .filter((transaction) => transaction.amount > 0 && SUCCESS_PAYMENT_STATUSES.has(String(transaction.status || '').toLowerCase()))
+        .sort((left, right) => Date.parse(right.date || right.createdAt || '') - Date.parse(left.date || left.createdAt || ''))
+
+      setRecentPayments(receivedPayments)
+      setSelectedRecentPaymentId((current) => (
+        current && receivedPayments.some((payment) => payment.id === current) ? current : null
+      ))
+      setRecentPaymentsLoading(false)
+    }
+
+    loadRecentPayments()
+
+    return () => {
+      cancelled = true
+    }
+  }, [accessState, recentPaymentsOpen, recentPaymentsPeriod])
+
   if (accessState === 'checking') {
     return (
       <main className={styles.loadingPage}>
@@ -185,12 +297,14 @@ export const PhonePayments: React.FC = () => {
   const isForm = view !== 'select'
   const formMode = view === 'partial' ? 'partial' : 'single'
   const formTitle = view === 'partial' ? 'Plan de pago' : 'Registrar pago'
+  const selectedRecentPeriod = RECENT_PAYMENT_PERIODS.find((period) => period.id === recentPaymentsPeriod) || RECENT_PAYMENT_PERIODS[2]
+  const selectedRecentPayment = recentPayments.find((payment) => payment.id === selectedRecentPaymentId) || null
 
   return (
     <main className={styles.phonePage} aria-label="Pagos móviles de Ristak">
       <div className={styles.phoneFrame}>
-        <header className={styles.header}>
-          {isForm ? (
+        {isForm && (
+          <header className={styles.header}>
             <button
               type="button"
               className={styles.backButton}
@@ -199,23 +313,12 @@ export const PhonePayments: React.FC = () => {
               <ArrowLeft size={18} />
               <span>Atrás</span>
             </button>
-          ) : (
-            <div className={styles.headerMain}>
-              <span className={styles.brandMark}>
-                <CreditCard size={22} />
-              </span>
-              <div>
-                <p className={styles.eyebrow}>Ristak Chat</p>
-                <h1>Pagos</h1>
-              </div>
-            </div>
-          )}
-
-          {isForm && <h2 className={styles.headerFormTitle}>{formTitle}</h2>}
-        </header>
+            <h2 className={styles.headerFormTitle}>{formTitle}</h2>
+          </header>
+        )}
 
         {isForm ? (
-          <div className={styles.formHost}>
+          <div className={styles.formHost} data-phone-scrollable="true">
             <RecordPaymentModal
               key={formMode}
               variant="embedded"
@@ -226,8 +329,8 @@ export const PhonePayments: React.FC = () => {
             />
           </div>
         ) : (
-          <section className={styles.selectStack} aria-label="Elige el tipo de cobro">
-            <p className={styles.selectHint}>Elige cómo quieres cobrar</p>
+          <section className={styles.selectStack} aria-label="Elige el tipo de pago" data-phone-scrollable="true">
+            <h1 className={styles.selectTitle}>Elige cómo quieres pagar</h1>
 
             <button
               type="button"
@@ -258,6 +361,77 @@ export const PhonePayments: React.FC = () => {
               </span>
               <ChevronRight size={20} className={styles.choiceChevron} aria-hidden="true" />
             </button>
+
+            <section className={styles.recentPaymentsSection} aria-label="Últimos pagos recibidos">
+              <button
+                type="button"
+                className={styles.recentPaymentsToggle}
+                onClick={() => setRecentPaymentsOpen((open) => !open)}
+                aria-expanded={recentPaymentsOpen}
+              >
+                <span>
+                  <strong>{recentPaymentsOpen ? 'Ocultar últimos pagos' : 'Mostrar últimos pagos'}</strong>
+                  <small>
+                    {selectedRecentPayment
+                      ? `${formatCurrency(selectedRecentPayment.amount, selectedRecentPayment.currency || 'MXN')} seleccionado`
+                      : `${selectedRecentPeriod.label} recientes`}
+                  </small>
+                </span>
+                <ChevronDown className={recentPaymentsOpen ? styles.recentPaymentsChevronOpen : ''} size={22} />
+              </button>
+
+              {recentPaymentsOpen && (
+                <div className={styles.recentPaymentsPanel}>
+                  <div className={styles.recentPeriodPicker} role="group" aria-label="Periodo de últimos pagos">
+                    {RECENT_PAYMENT_PERIODS.map((period) => (
+                      <button
+                        key={period.id}
+                        type="button"
+                        className={period.id === recentPaymentsPeriod ? styles.recentPeriodActive : ''}
+                        onClick={() => setRecentPaymentsPeriod(period.id)}
+                      >
+                        {period.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {recentPaymentsLoading ? (
+                    <div className={styles.recentPaymentsState}>
+                      <Loader2 size={18} className={styles.spinIcon} />
+                      Cargando pagos...
+                    </div>
+                  ) : recentPayments.length === 0 ? (
+                    <div className={styles.recentPaymentsState}>
+                      No hay pagos recibidos en este periodo.
+                    </div>
+                  ) : (
+                    <div className={styles.recentPaymentsList}>
+                      {recentPayments.slice(0, 24).map((payment) => {
+                        const selected = selectedRecentPaymentId === payment.id
+                        return (
+                          <button
+                            key={payment.id}
+                            type="button"
+                            className={`${styles.recentPaymentItem} ${selected ? styles.recentPaymentItemSelected : ''}`}
+                            onClick={() => setSelectedRecentPaymentId(selected ? null : payment.id)}
+                          >
+                            <span className={styles.recentPaymentMain}>
+                              <strong>{formatCurrency(payment.amount, payment.currency || 'MXN')}</strong>
+                              <small>{getContactLabel(payment)}</small>
+                            </span>
+                            <span className={styles.recentPaymentMeta}>
+                              <span>{formatPaymentDate(payment.date || payment.createdAt)}</span>
+                              <small>{getPaymentMethodLabel(payment.method)} · {getPaymentStatusLabel(payment.status)}</small>
+                            </span>
+                            {selected && <Check size={18} className={styles.recentPaymentCheck} aria-hidden="true" />}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+            </section>
           </section>
         )}
       </div>
