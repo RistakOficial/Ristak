@@ -502,6 +502,14 @@ function buildDefaultImportedFormMappings(forms = []) {
   }))
 }
 
+function countImportedDetectedFields(forms = []) {
+  return forms.reduce((total, form) => total + (Array.isArray(form?.fields) ? form.fields.length : 0), 0)
+}
+
+function countImportedMappedFields(mappings = []) {
+  return mappings.reduce((total, mapping) => total + (Array.isArray(mapping?.fields) ? mapping.fields.length : 0), 0)
+}
+
 function isSocialTemplate(value) {
   return SOCIAL_TEMPLATE_IDS.has(cleanString(value))
 }
@@ -3328,17 +3336,47 @@ function getImportedHtmlTitle(html = '', fallback = 'Pagina importada') {
 async function getImportedSiteBySiteId(siteId) {
   const row = await db.get('SELECT * FROM public_site_imports WHERE site_id = ? LIMIT 1', [siteId])
   if (!row) return null
+  let detectedForms = parseJson(row.detected_forms_json, [])
+  let formMappings = parseJson(row.form_mappings_json, [])
+  const htmlSanitized = row.html_sanitized || ''
+  const status = row.status || 'mapping_pending'
+
+  if (status === 'mapping_pending' && htmlSanitized) {
+    const redetectedForms = detectImportedForms(htmlSanitized)
+    const storedFieldCount = Math.max(
+      countImportedDetectedFields(detectedForms),
+      countImportedMappedFields(formMappings)
+    )
+    const redetectedFieldCount = countImportedDetectedFields(redetectedForms)
+
+    if (redetectedFieldCount > storedFieldCount) {
+      detectedForms = redetectedForms
+      formMappings = buildDefaultImportedFormMappings(redetectedForms)
+      await db.run(`
+        UPDATE public_site_imports SET
+          detected_forms_json = ?,
+          form_mappings_json = ?,
+          updated_at = CURRENT_TIMESTAMP
+        WHERE site_id = ?
+      `, [
+        jsonString(detectedForms),
+        jsonString(formMappings),
+        siteId
+      ])
+    }
+  }
+
   return {
     id: row.id,
     siteId: row.site_id,
     originalFilename: row.original_filename || '',
     importType: row.import_type || 'html',
     htmlOriginal: row.html_original || '',
-    htmlSanitized: row.html_sanitized || '',
-    detectedForms: parseJson(row.detected_forms_json, []),
-    formMappings: parseJson(row.form_mappings_json, []),
+    htmlSanitized,
+    detectedForms,
+    formMappings,
     securityReport: parseJson(row.security_report_json, []),
-    status: row.status || 'mapping_pending',
+    status,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   }
@@ -7042,7 +7080,8 @@ async function renderImportedPublicSiteHtml(site, { trackingEnabled = true } = {
     : ''
   const captureScript = buildImportedFormCaptureScript(site, imported)
   const injection = `${metaPixelSnippet}${nativeTrackingScript}${captureScript}`
-  const html = imported.htmlSanitized || imported.htmlOriginal || '<!doctype html><html><body></body></html>'
+  let html = imported.htmlSanitized || imported.htmlOriginal || '<!doctype html><html><body></body></html>'
+  html = injectImportedStaticFallback(html)
 
   if (/<\/body>/i.test(html)) {
     return html.replace(/<\/body>/i, `${injection}</body>`)
@@ -8271,12 +8310,26 @@ function buildImportedSubmissionLayers({ site, imported, formId, rawFields }) {
   for (const [rawKey, value] of Object.entries(rawFields)) {
     if (consumedRawKeys.has(rawKey) || isEmptyImportedValue(value)) continue
     const key = normalizeImportedFieldKey(rawKey, 'custom_field')
-    mappedFields.custom[key] = value
-    addImportedCustomField(customFields, {
+    const fallbackField = {
       destinationKey: key,
       sourceName: rawKey,
+      name: rawKey,
       label: rawKey,
       type: Array.isArray(value) ? 'checkboxes' : 'text'
+    }
+    const inferred = inferImportedFieldDestination(fallbackField)
+
+    if (inferred.destinationType === 'standard' && IMPORTED_FORM_STANDARD_FIELDS.has(inferred.destinationKey)) {
+      mappedFields.standard[inferred.destinationKey] = value
+      continue
+    }
+
+    const destinationKey = inferred.destinationType === 'custom' ? inferred.destinationKey : key
+    mappedFields.custom[destinationKey] = value
+    addImportedCustomField(customFields, {
+      ...fallbackField,
+      destinationKey,
+      confidence: inferred.confidence
     }, value, context)
   }
 
