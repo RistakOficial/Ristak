@@ -9,6 +9,43 @@ interface HighLevelConfig {
   ghlInvoiceLiveMode?: boolean
 }
 
+export type HighLevelChatChannel = 'whatsapp_api' | 'sms_qr' | 'messenger' | 'instagram'
+
+export interface HighLevelConversationMessagePayload {
+  contactId: string
+  channel: HighLevelChatChannel
+  message: string
+  attachments?: string[]
+  fromNumber?: string
+  toNumber?: string
+  conversationProviderId?: string
+  externalId?: string
+}
+
+export interface HighLevelConversationMessageResponse {
+  success?: boolean
+  data?: {
+    messageId?: string
+    conversationId?: string
+    channel?: HighLevelChatChannel
+    channelLabel?: string
+    type?: string
+    transport?: string
+    contactId?: string
+    highLevelContactId?: string
+    localMessageId?: string
+  }
+  messageId?: string
+  conversationId?: string
+  channel?: HighLevelChatChannel
+  channelLabel?: string
+  type?: string
+  transport?: string
+  contactId?: string
+  highLevelContactId?: string
+  localMessageId?: string
+}
+
 class HighLevelService {
   // Obtener configuración actual
   async getConfig(): Promise<HighLevelConfig> {
@@ -254,6 +291,23 @@ class HighLevelService {
     } catch (error) {
       throw error
     }
+  }
+
+  async sendConversationMessage(payload: HighLevelConversationMessagePayload): Promise<HighLevelConversationMessageResponse> {
+    const response = await fetch('/api/highlevel/conversations/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(payload)
+    })
+
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok) {
+      throw new Error(data.error || 'No se pudo enviar el mensaje por HighLevel')
+    }
+
+    return data
   }
 
 }

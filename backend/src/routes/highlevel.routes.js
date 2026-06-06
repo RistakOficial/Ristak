@@ -33,6 +33,7 @@ import {
   text2Pay,
   searchContacts,
   getContactById,
+  sendConversationMessage,
   saveInvoiceConfig,
   getLocationUsers,
   getUsersByIds
@@ -58,6 +59,9 @@ router.post('/custom-labels', updateCustomLabels)
 // Contacts
 router.post('/contacts/search', searchContacts)
 router.get('/contacts/:id', getContactById)
+
+// Conversations
+router.post('/conversations/messages', sendConversationMessage)
 
 // Users
 router.get('/users', getLocationUsers)

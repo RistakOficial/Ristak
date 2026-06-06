@@ -16,6 +16,7 @@ import { normalizePhoneForStorage } from '../utils/phoneUtils.js'
 const GHL_BASE_URL = 'https://services.leadconnectorhq.com'
 const GHL_API_VERSION = '2021-07-28'
 const GHL_PRODUCTS_API_VERSION = '2023-02-21'
+const GHL_CONVERSATIONS_API_VERSION = '2023-02-21'
 const GHL_INVOICE_SCHEDULE_API_VERSION = '2023-02-21'
 const GHL_INVOICE_SCHEDULE_AUTOPAY_API_VERSION = '2021-07-28'
 const MAX_RETRIES = 3
@@ -204,6 +205,21 @@ class GHLClient {
     }
 
     throw lastError
+  }
+
+  async sendConversationMessage(data = {}) {
+    const body = { ...data }
+    if (Array.isArray(body.attachments) && body.attachments.length === 0) {
+      delete body.attachments
+    }
+
+    logger.info(`Enviando mensaje por HighLevel Conversations: ${body.type || 'sin tipo'}`)
+
+    return this.request('/conversations/messages', {
+      method: 'POST',
+      version: GHL_CONVERSATIONS_API_VERSION,
+      body
+    })
   }
 
   // ============================================

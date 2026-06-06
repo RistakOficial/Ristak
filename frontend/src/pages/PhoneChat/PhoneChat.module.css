@@ -1702,9 +1702,56 @@
   display: flex;
   align-items: center;
   justify-content: flex-start;
+  gap: 8px;
   min-width: 0;
   padding: 7px 8px 0 46px;
   border-top: 1px solid var(--phone-chat-border);
+  overflow: hidden;
+}
+
+.senderChannelSelect {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 7px;
+  max-width: 58%;
+  min-height: 30px;
+  padding: 0 9px;
+  border: 1px solid var(--phone-chat-border);
+  border-radius: 999px;
+  color: var(--phone-chat-text);
+  background: var(--phone-chat-surface);
+}
+
+.senderChannelSelect span {
+  color: var(--phone-chat-muted);
+  font-size: 11px;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.senderChannelSelect select {
+  min-width: 0;
+  max-width: 122px;
+  border: 0;
+  outline: 0;
+  color: var(--phone-chat-text);
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 850;
+  letter-spacing: 0;
+}
+
+.senderChannelHint {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--phone-chat-muted);
+  font-size: 11px;
+  font-weight: 720;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .replyWindowNotice {
