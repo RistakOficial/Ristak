@@ -177,6 +177,7 @@ const SITES_AI_DRAFT_CREATED_EVENT = 'ristak-sites-ai-draft-created'
 const SITES_EDITOR_ACTIVE_EVENT = 'ristak-sites-editor-active'
 const DEFAULT_FUNNEL_PAGE_ID = 'page-1'
 const FORM_THANK_YOU_PAGE_ID = 'page-2'
+const FORM_DISQUALIFIED_PAGE_ID = 'page-3'
 const SOCIAL_PROFILE_SELECTED_ID = '__social_profile__'
 const PAGE_SELECTED_ID = '__page__'
 const isEditorSurfaceSelection = (id: string) => id === SOCIAL_PROFILE_SELECTED_ID || id === PAGE_SELECTED_ID
@@ -604,7 +605,8 @@ const getTemplateFunnelPages = (id: SiteTemplateId): SitePage[] => {
 
 const getDefaultFormPages = (): SitePage[] => [
   makeTemplateFunnelPage(DEFAULT_FUNNEL_PAGE_ID, 'Formulario', 0),
-  makeTemplateFunnelPage(FORM_THANK_YOU_PAGE_ID, 'Agradecimiento', 1)
+  makeTemplateFunnelPage(FORM_THANK_YOU_PAGE_ID, 'Agradecimiento', 1),
+  makeTemplateFunnelPage(FORM_DISQUALIFIED_PAGE_ID, 'Descalificacion', 2)
 ]
 
 const resolveTemplateId = (site?: PublicSite | null): SiteTemplateId => {
@@ -825,14 +827,14 @@ const getCreateFlowHeaderCopy = (step: CreateFlow) => {
 
   if (step === 'form-start') {
     return {
-      title: 'Formulario con agradecimiento',
+      title: 'Formulario con paginas finales',
       subtitle: 'Ahora elige si quieres empezar en blanco, con plantilla o con IA.'
     }
   }
 
   if (step === 'form-template') {
     return {
-      title: 'Formulario con agradecimiento',
+      title: 'Formulario con paginas finales',
       subtitle: 'Elige el estilo de tu formulario'
     }
   }
@@ -1565,7 +1567,7 @@ const getFormCompletionAction = (settings: Record<string, unknown>): FormComplet
 
 const getThemeFormCompletionAction = (theme?: SiteTheme): FormCompletionAction => {
   const action = theme?.formCompletionAction
-  return action === 'form_default' || action === 'next_page' || action === 'next_page_if_qualified' ? action : 'next_page'
+  return action === 'form_default' || action === 'next_page' || action === 'next_page_if_qualified' ? action : 'next_page_if_qualified'
 }
 
 const normalizeOption = (option: string | SiteBlockOption, index: number): SiteBlockOption => {
@@ -2778,7 +2780,7 @@ export const Sites: React.FC = () => {
             : siteType === 'standard_form'
               ? {
                   pages: normalizePagesForSave(getDefaultFormPages()),
-                  formCompletionAction: 'next_page'
+                  formCompletionAction: 'next_page_if_qualified'
                 }
             : {})
         },
@@ -4497,8 +4499,8 @@ const CreateFlowPanel: React.FC<CreateFlowPanelProps> = ({ step, creating, onCre
         <div className={styles.choiceGrid}>
           <button type="button" disabled={creating} onClick={() => onAdvance('form-start')}>
             <FileText size={22} />
-            <strong>Formulario + agradecimiento</strong>
-            <p>La persona responde el formulario y despues puede ver una pagina final de agradecimiento.</p>
+            <strong>Formulario + paginas finales</strong>
+            <p>La persona responde y despues ve agradecimiento o descalificacion segun sus respuestas.</p>
             <ChevronRight size={18} />
           </button>
           <button type="button" disabled={creating} onClick={() => onAdvance('interactive-start')}>
@@ -4515,7 +4517,7 @@ const CreateFlowPanel: React.FC<CreateFlowPanelProps> = ({ step, creating, onCre
           <button type="button" disabled={creating} onClick={() => onCreate('standard_form', 'blank', 'compact')}>
             <FileText size={22} />
             <strong>En blanco</strong>
-            <p>Formulario limpio con pagina final lista para personalizar.</p>
+            <p>Formulario limpio con paginas finales listas para personalizar.</p>
             <ChevronRight size={18} />
           </button>
           <button type="button" disabled={creating} onClick={() => onAdvance('form-template')}>
@@ -4527,7 +4529,7 @@ const CreateFlowPanel: React.FC<CreateFlowPanelProps> = ({ step, creating, onCre
           <button type="button" disabled={creating} onClick={() => onCreateWithAI('form')}>
             <Sparkles size={22} />
             <strong>Usando IA</strong>
-            <p>El asistente arma el formulario y una pagina final editable.</p>
+            <p>El asistente arma el formulario y sus paginas finales editables.</p>
             <ChevronRight size={18} />
           </button>
         </div>
@@ -7550,18 +7552,28 @@ const PageInspector: React.FC<{
                       onChange={(event) => onPatchTheme({ formCompletionAction: event.target.value as FormCompletionAction })}
                       onBlur={onSaveSite}
                     >
-                      <option value="next_page">Mostrar pagina Agradecimiento</option>
-                      <option value="next_page_if_qualified">Mostrar Agradecimiento solo si califica</option>
+                      <option value="next_page_if_qualified">Mostrar Agradecimiento o Descalificacion segun resultado</option>
+                      <option value="next_page">Siempre mostrar pagina Agradecimiento</option>
                       <option value="form_default">Mostrar mensaje en este formulario</option>
                     </select>
                   </label>
                   <label className={styles.field}>
-                    <span>Mensaje en el formulario</span>
+                    <span>Mensaje si califica</span>
                     <textarea
                       rows={2}
                       value={theme.finalMessages?.success || ''}
                       placeholder="Listo. Recibimos tu informacion."
                       onChange={(event) => onPatchTheme({ finalMessages: { ...(theme.finalMessages || {}), success: event.target.value } })}
+                      onBlur={onSaveSite}
+                    />
+                  </label>
+                  <label className={styles.field}>
+                    <span>Mensaje si no califica</span>
+                    <textarea
+                      rows={2}
+                      value={theme.finalMessages?.disqualified || ''}
+                      placeholder="Gracias por responder. Por ahora no parece ser el siguiente paso ideal."
+                      onChange={(event) => onPatchTheme({ finalMessages: { ...(theme.finalMessages || {}), disqualified: event.target.value } })}
                       onBlur={onSaveSite}
                     />
                   </label>

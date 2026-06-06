@@ -79,6 +79,7 @@ const PUBLIC_DOMAIN_FAILED_CACHE_TTL_MS = 90 * 1000
 const PUBLIC_DOMAIN_VERIFY_TIMEOUT_MS = 6000
 const DEFAULT_FUNNEL_PAGE_ID = 'page-1'
 const FORM_THANK_YOU_PAGE_ID = 'page-2'
+const FORM_DISQUALIFIED_PAGE_ID = 'page-3'
 const SITE_META_NO_EVENT = 'none'
 const SITE_META_EVENTS = new Set(['Lead', 'Schedule', 'Purchase', 'FormSubmitted', 'ViewContent', 'CompleteRegistration', 'Contact'])
 const META_STANDARD_PIXEL_EVENTS = new Set(['Lead', 'Schedule', 'Purchase', 'ViewContent', 'CompleteRegistration', 'Contact'])
@@ -476,7 +477,8 @@ function getDefaultFunnelPages(template) {
 function getDefaultFormPages() {
   return [
     makeDefaultFunnelPage(DEFAULT_FUNNEL_PAGE_ID, 'Formulario', 0),
-    makeDefaultFunnelPage(FORM_THANK_YOU_PAGE_ID, 'Agradecimiento', 1)
+    makeDefaultFunnelPage(FORM_THANK_YOU_PAGE_ID, 'Agradecimiento', 1),
+    makeDefaultFunnelPage(FORM_DISQUALIFIED_PAGE_ID, 'Descalificacion', 2)
   ]
 }
 
@@ -771,9 +773,14 @@ function buildDefaultBlocks(siteId, siteType, template) {
     makeBlock('title', 'Titulo', 'Gracias, recibimos tu informacion', { sortOrder: 0 }),
     makeBlock('subtitle', 'Subtitulo', 'Te contactaremos pronto con el siguiente paso.', { sortOrder: 1 })
   ]
+  const makeFormDisqualifiedBlocks = () => [
+    makeBlock('title', 'Titulo', 'Gracias por responder', { sortOrder: 0 }),
+    makeBlock('subtitle', 'Subtitulo', 'Por ahora no parece ser el siguiente paso ideal. Si algo cambia, puedes volver a intentarlo despues.', { sortOrder: 1 })
+  ]
   const withStandardFormPages = (blocks) => [
     ...assignBlocksToPage(blocks, DEFAULT_FUNNEL_PAGE_ID),
-    ...assignBlocksToPage(makeFormThankYouBlocks(), FORM_THANK_YOU_PAGE_ID)
+    ...assignBlocksToPage(makeFormThankYouBlocks(), FORM_THANK_YOU_PAGE_ID),
+    ...assignBlocksToPage(makeFormDisqualifiedBlocks(), FORM_DISQUALIFIED_PAGE_ID)
   ]
   const prepareFunnelEntryBlocks = (blocks, pageId = DEFAULT_FUNNEL_PAGE_ID) => {
     const nextBlocks = blocks.map(block => {
@@ -2365,6 +2372,35 @@ function makeAIThankYouBlocks(siteId) {
   ]
 }
 
+function makeAIDisqualifiedBlocks(siteId) {
+  return [
+    {
+      id: crypto.randomUUID(),
+      site_id: siteId,
+      block_type: 'title',
+      label: 'Titulo',
+      content: 'Gracias por responder',
+      placeholder: '',
+      required: 0,
+      options: [],
+      settings: { pageId: FORM_DISQUALIFIED_PAGE_ID },
+      sort_order: 0
+    },
+    {
+      id: crypto.randomUUID(),
+      site_id: siteId,
+      block_type: 'subtitle',
+      label: 'Subtitulo',
+      content: 'Por ahora no parece ser el siguiente paso ideal. Si algo cambia, puedes volver a intentarlo despues.',
+      placeholder: '',
+      required: 0,
+      options: [],
+      settings: { pageId: FORM_DISQUALIFIED_PAGE_ID },
+      sort_order: 1
+    }
+  ]
+}
+
 function withStandardFormBlueprintPages(blocks = [], siteId) {
   return [
     ...blocks.map((block, index) => ({
@@ -2375,7 +2411,8 @@ function withStandardFormBlueprintPages(blocks = [], siteId) {
       },
       sort_order: Number.isFinite(Number(block.sort_order)) ? Number(block.sort_order) : index
     })),
-    ...makeAIThankYouBlocks(siteId)
+    ...makeAIThankYouBlocks(siteId),
+    ...makeAIDisqualifiedBlocks(siteId)
   ]
 }
 
@@ -2432,7 +2469,7 @@ function normalizeAISiteBlueprint(siteKind, aiSite = {}) {
       ...(siteType === 'standard_form'
         ? {
             pages: normalizeSitePages({ siteType, theme }),
-            formCompletionAction: normalizeFormCompletionAction(theme.formCompletionAction || theme.form_completion_action, 'next_page')
+            formCompletionAction: normalizeFormCompletionAction(theme.formCompletionAction || theme.form_completion_action, 'next_page_if_qualified')
           }
         : {}),
       ...(siteType === 'interactive_form' ? { pages: normalizeSitePages({ theme }) } : {}),
@@ -2642,7 +2679,7 @@ export async function createSite(input = {}) {
     }
   } else if (siteType === 'standard_form') {
     theme.pages = normalizeSitePages({ siteType, theme })
-    theme.formCompletionAction = normalizeFormCompletionAction(theme.formCompletionAction || theme.form_completion_action, 'next_page')
+    theme.formCompletionAction = normalizeFormCompletionAction(theme.formCompletionAction || theme.form_completion_action, 'next_page_if_qualified')
   } else if (siteType === 'interactive_form' && (!Array.isArray(theme.pages) || theme.pages.length === 0)) {
     theme.pages = normalizeSitePages({ theme: {} })
   }
@@ -2708,7 +2745,7 @@ export async function createSiteWithAI(input = {}) {
         ? 'Cuentame el nicho, oferta, objetivo, cliente ideal, tono, estilo visual, CTA y si quieres formulario dentro de la landing.'
         : siteKind === 'interactive_form'
           ? 'Cuentame que prospecto quieres atraer, que datos necesitas, preguntas clave y respuestas que califican o descalifican. Lo creare como formulario interactivo.'
-          : 'Cuentame que prospecto quieres atraer, que datos necesitas, preguntas clave y respuestas que califican o descalifican. Lo creare como formulario con pagina de agradecimiento.'
+          : 'Cuentame que prospecto quieres atraer, que datos necesitas, preguntas clave y respuestas que califican o descalifican. Lo creare como formulario con paginas finales de agradecimiento y descalificacion.'
     }
   }
 
@@ -2764,7 +2801,7 @@ export async function updateSite(siteId, input = {}) {
   const nextTheme = { ...DEFAULT_THEME, ...(input.theme || current.theme || {}) }
   if (nextSiteType === 'standard_form') {
     nextTheme.pages = normalizeSitePages({ siteType: nextSiteType, theme: nextTheme })
-    nextTheme.formCompletionAction = normalizeFormCompletionAction(nextTheme.formCompletionAction || nextTheme.form_completion_action, 'next_page')
+    nextTheme.formCompletionAction = normalizeFormCompletionAction(nextTheme.formCompletionAction || nextTheme.form_completion_action, 'next_page_if_qualified')
   } else if (nextSiteType === 'interactive_form' && (!Array.isArray(nextTheme.pages) || nextTheme.pages.length === 0)) {
     nextTheme.pages = normalizeSitePages({ siteType: nextSiteType, theme: nextTheme })
   }
@@ -3662,6 +3699,39 @@ function getDefaultFormThankYouBlocks(siteId) {
       required: false,
       options: [],
       settings: { pageId: FORM_THANK_YOU_PAGE_ID },
+      sortOrder: 1,
+      createdAt: '',
+      updatedAt: ''
+    }
+  ]
+}
+
+function getDefaultFormDisqualifiedBlocks(siteId) {
+  return [
+    {
+      id: 'default-disqualified-title',
+      siteId,
+      blockType: 'title',
+      label: 'Titulo',
+      content: 'Gracias por responder',
+      placeholder: '',
+      required: false,
+      options: [],
+      settings: { pageId: FORM_DISQUALIFIED_PAGE_ID },
+      sortOrder: 0,
+      createdAt: '',
+      updatedAt: ''
+    },
+    {
+      id: 'default-disqualified-subtitle',
+      siteId,
+      blockType: 'subtitle',
+      label: 'Subtitulo',
+      content: 'Por ahora no parece ser el siguiente paso ideal. Si algo cambia, puedes volver a intentarlo despues.',
+      placeholder: '',
+      required: false,
+      options: [],
+      settings: { pageId: FORM_DISQUALIFIED_PAGE_ID },
       sortOrder: 1,
       createdAt: '',
       updatedAt: ''
@@ -5882,6 +5952,9 @@ export async function renderPublicSiteHtml(site, { pageId, trackingEnabled = tru
   if (isStandardFormType && activePage?.id === FORM_THANK_YOU_PAGE_ID && blocks.length === 0) {
     blocks = getDefaultFormThankYouBlocks(site.id)
   }
+  if (isStandardFormType && activePage?.id === FORM_DISQUALIFIED_PAGE_ID && blocks.length === 0) {
+    blocks = getDefaultFormDisqualifiedBlocks(site.id)
+  }
   const fieldBlocks = collectFieldBlocks(blocks)
   const interactivePageIds = isInteractive
     ? pages
@@ -5899,6 +5972,8 @@ export async function renderPublicSiteHtml(site, { pageId, trackingEnabled = tru
       : 'form_default'
   const nextPage = (isLandingType || isStandardFormType) ? getNextPage(site, activePage?.id) : null
   const nextPageUrl = nextPage ? pageHref(nextPage.id) : ''
+  const disqualifiedPage = isStandardFormType ? pages.find(page => page.id === FORM_DISQUALIFIED_PAGE_ID) : null
+  const disqualifiedPageUrl = disqualifiedPage ? pageHref(disqualifiedPage.id) : ''
   const submitText = cleanString(theme.submitText) || 'Enviar'
   const storedPageMaxWidth = Number(theme && theme.pageMaxWidth)
   const pageMaxWidth = isLandingType && storedPageMaxWidth === 1160
@@ -6019,6 +6094,7 @@ export async function renderPublicSiteHtml(site, { pageId, trackingEnabled = tru
       const stepPages = ${JSON.stringify(interactivePageIds)};
       const completionAction = ${JSON.stringify(completionAction)};
       const nextPageUrl = ${JSON.stringify(nextPageUrl)};
+      const disqualifiedPageUrl = ${JSON.stringify(disqualifiedPageUrl)};
       let index = Math.max(0, stepPages.indexOf(pageId));
 
       const parseRule = (value) => {
@@ -6175,6 +6251,10 @@ export async function renderPublicSiteHtml(site, { pageId, trackingEnabled = tru
           index = 0;
           renderStep();
           const qualifies = submission.status !== 'disqualified';
+          if (!qualifies && disqualifiedPageUrl && completionAction === 'next_page_if_qualified') {
+            window.location.href = disqualifiedPageUrl;
+            return;
+          }
           if (nextPageUrl && (completionAction === 'next_page' || (completionAction === 'next_page_if_qualified' && qualifies))) {
             window.location.href = nextPageUrl;
             return;
