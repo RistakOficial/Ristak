@@ -56,6 +56,24 @@
 }
 
 .mobileSheetModal {
+  --appointment-mobile-bg: var(--phone-chat-bg, #f5f5f7);
+  --appointment-mobile-surface: var(--phone-chat-surface, #ffffff);
+  --appointment-mobile-soft: var(--phone-chat-surface-soft, #f5f5f7);
+  --appointment-mobile-panel: var(--phone-chat-panel, #ffffff);
+  --appointment-mobile-text: var(--phone-chat-text, #050505);
+  --appointment-mobile-muted: var(--phone-chat-muted, #737373);
+  --appointment-mobile-border: var(--phone-chat-border, rgba(17, 24, 39, 0.08));
+  --color-background: var(--appointment-mobile-surface);
+  --color-background-secondary: var(--appointment-mobile-surface);
+  --color-background-tertiary: var(--appointment-mobile-soft);
+  --color-surface: var(--appointment-mobile-surface);
+  --color-text-primary: var(--appointment-mobile-text);
+  --color-text-secondary: var(--appointment-mobile-muted);
+  --color-text-tertiary: var(--appointment-mobile-muted);
+  --color-text-muted: color-mix(in srgb, var(--appointment-mobile-muted) 72%, transparent);
+  --color-border: var(--appointment-mobile-border);
+  --color-primary: var(--phone-chat-accent, #111111);
+  --color-primary-rgb: var(--phone-chat-accent-rgb, 17, 17, 17);
   display: flex;
   flex-direction: column;
   width: 100vw !important;
@@ -67,7 +85,8 @@
   border-bottom: 0;
   border-left: 0;
   border-radius: 24px 24px 0 0;
-  background: #f5f5f7;
+  color: var(--appointment-mobile-text);
+  background: var(--appointment-mobile-bg);
   animation: mobileSheetRise 220ms ease-out;
 }
 
@@ -78,7 +97,7 @@
   gap: 10px;
   padding: calc(env(safe-area-inset-top) + 12px) 18px 10px;
   border-bottom: 0;
-  background: #f5f5f7;
+  background: var(--appointment-mobile-bg);
 }
 
 .mobileSheetModal > :first-child > :first-child {
@@ -90,7 +109,7 @@
 .mobileSheetModal > :first-child h2 {
   width: auto;
   overflow: hidden;
-  color: #050505;
+  color: var(--appointment-mobile-text);
   font-size: 20px;
   font-weight: 820;
   text-align: center;
@@ -104,9 +123,10 @@
   grid-row: 1;
   width: 46px;
   height: 46px;
+  border: 1px solid var(--appointment-mobile-border);
   border-radius: 999px;
-  color: #111827;
-  background: rgba(255, 255, 255, 0.92);
+  color: var(--appointment-mobile-text);
+  background: color-mix(in srgb, var(--appointment-mobile-surface) 86%, transparent);
   opacity: 1;
 }
 
@@ -116,7 +136,7 @@
   height: auto;
   max-height: none !important;
   overflow: hidden !important;
-  background: #f5f5f7;
+  background: var(--appointment-mobile-bg);
 }
 
 .mobileSheetContainer {
@@ -133,6 +153,11 @@
   overscroll-behavior-y: contain;
   -webkit-overflow-scrolling: touch;
   touch-action: pan-y;
+}
+
+.mobileSheetContainer {
+  color: var(--appointment-mobile-text);
+  background: var(--appointment-mobile-bg);
 }
 
 @keyframes mobileSheetRise {
@@ -370,8 +395,9 @@
   order: 2;
   gap: 1rem;
   padding: 14px;
+  border-color: var(--appointment-mobile-border);
   border-radius: 14px;
-  background: #ffffff;
+  background: var(--appointment-mobile-surface);
 }
 
 .mobileSheetContainer .rightColumn {
@@ -400,8 +426,10 @@
 .mobileSheetContainer .select,
 .mobileSheetContainer .textarea {
   min-height: 44px;
+  border-color: var(--appointment-mobile-border);
   border-radius: 12px;
-  background: #ffffff;
+  color: var(--appointment-mobile-text);
+  background: var(--appointment-mobile-panel);
   font-size: 16px;
 }
 
@@ -834,6 +862,7 @@
 .mobileSheetContainer .dateTimeSection {
   gap: 0.75rem;
   padding: 0.8rem 0 0;
+  border-top-color: var(--appointment-mobile-border);
 }
 
 /* Wrapper del TabList centrado */
@@ -847,7 +876,18 @@
 .mobileSheetContainer .tabListWrapper {
   justify-content: flex-start;
   overflow-x: auto;
+  border-bottom-color: var(--appointment-mobile-border);
   padding-bottom: 0.55rem;
+}
+
+.mobileSheetContainer :global([data-ristak-tablist]) {
+  border-color: var(--appointment-mobile-border);
+  background: var(--appointment-mobile-panel);
+}
+
+.mobileSheetContainer :global([data-ristak-tablist-tab][data-active="true"]) {
+  color: var(--appointment-mobile-text);
+  background: var(--appointment-mobile-surface);
 }
 
 /* Contenido de slots (tanto para modo default como custom) */
