@@ -4297,6 +4297,7 @@ function renderContentBlock(block, context = {}) {
   if (block.blockType === 'form_embed') {
     const embeddedBlocks = Array.isArray(settings.embeddedBlocks) ? settings.embeddedBlocks : []
     const fields = collectFieldBlocks(embeddedBlocks)
+    const submitText = escapeHtml(cleanString(context.submitText) || 'Enviar')
     return `
       <section class="rstk-embedded-form" id="form">
         <h2>${content || escapeHtml(block.label || 'Formulario')}</h2>
@@ -4304,6 +4305,12 @@ function renderContentBlock(block, context = {}) {
         ${fields.length
           ? fields.map(field => renderFieldBlock(field, false)).join('\n')
           : '<p class="rstk-help">Selecciona o crea un formulario embebido para capturar respuestas.</p>'}
+        ${fields.length ? `
+          <div class="rstk-actions rstk-embed-actions">
+            <button type="submit" data-submit>${submitText}</button>
+          </div>
+          <p class="rstk-submit-message" data-message role="status"></p>
+        ` : ''}
       </section>
     `
   }
@@ -5593,12 +5600,12 @@ export async function renderPublicSiteHtml(site, { pageId, trackingEnabled = tru
     isInteractive ? 'rstk-interactive' : ''
   ].filter(Boolean).join(' ')
 
-  const renderContext = { site, pageId: activePage?.id, isInteractive }
+  const renderContext = { site, pageId: activePage?.id, isInteractive, isLandingType, submitText }
   const bodyBlocks = isLandingType
     ? renderLandingBlocks(blocks, renderContext)
     : blocks.map(block => renderPublicBlock(block, renderContext)).join('\n')
 
-  const submitArea = hasForm
+  const submitArea = hasForm && !isLandingType
     ? `
       <div class="rstk-actions">
         ${isInteractive ? '<button type="button" class="rstk-secondary" data-back hidden>Anterior</button>' : ''}

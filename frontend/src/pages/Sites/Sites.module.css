@@ -2283,7 +2283,8 @@
 
 .templateGallery {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(220px, 100%), 240px));
+  justify-content: start;
   gap: 14px;
 }
 
@@ -2363,6 +2364,25 @@
   height: 28px;
   border-radius: 8px;
   margin-top: 2px;
+}
+
+.templatePreviewFlow {
+  display: grid;
+  grid-template-columns: 1fr 0.72fr 0.54fr;
+  gap: 6px;
+  align-items: center;
+  margin-top: 2px;
+}
+
+.templatePreviewFlow span {
+  height: 10px;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.28;
+}
+
+.templatePreviewFlow span:first-child {
+  opacity: 1;
 }
 
 .templateCardBody {
@@ -5734,7 +5754,18 @@
   max-width: none;
 }
 
-.pageFrame .containerFocused:has(.createPanel):not(:has(.builder)) .templateGallery,
+.pageFrame .containerFocused:has(.createPanel):not(:has(.builder)) .templateGallery {
+  grid-template-columns: repeat(auto-fill, minmax(min(220px, 100%), 240px));
+  justify-content: start;
+}
+
 .pageFrame .containerFocused:has(.createPanel):not(:has(.builder)) .choiceGrid {
   grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr));
+}
+
+.pageFrame .containerFocused:has(.createPanel):not(:has(.builder)) .titleRow {
+  display: grid;
+  align-items: start;
+  justify-items: start;
+  gap: 8px;
 }

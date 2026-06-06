@@ -3892,7 +3892,7 @@ const getTemplatePreviewStyle = (meta: SiteTemplateMeta): React.CSSProperties =>
   }
 }
 
-const TemplateCard: React.FC<{ id: SiteTemplateId; disabled: boolean; onPick: () => void }> = ({ id, disabled, onPick }) => {
+const TemplateCard: React.FC<{ id: SiteTemplateId; disabled: boolean; siteType?: SiteType; onPick: () => void }> = ({ id, disabled, siteType, onPick }) => {
   const meta = templateMetaById(id)
   if (!meta) return null
   return (
@@ -3904,7 +3904,15 @@ const TemplateCard: React.FC<{ id: SiteTemplateId; disabled: boolean; onPick: ()
           <span className={styles.templateBadge}>{meta.badge}</span>
         </span>
         <span className={styles.templatePreviewLines}><span /><span /></span>
-        <span className={styles.templatePreviewBtn} style={{ background: meta.accent }} />
+        {siteType === 'landing_page' ? (
+          <span className={styles.templatePreviewFlow}>
+            <span style={{ background: meta.accent }} />
+            <span />
+            <span />
+          </span>
+        ) : (
+          <span className={styles.templatePreviewBtn} style={{ background: meta.accent }} />
+        )}
       </span>
       <span className={styles.templateCardBody}>
         <strong>{meta.label}</strong>
@@ -3917,8 +3925,9 @@ const TemplateCard: React.FC<{ id: SiteTemplateId; disabled: boolean; onPick: ()
 const TemplateCategoryGallery: React.FC<{
   categories: TemplateGalleryCategory[]
   disabled: boolean
+  defaultSiteType?: SiteType
   onPick: (id: SiteTemplateId, category: TemplateGalleryCategory) => void
-}> = ({ categories, disabled, onPick }) => (
+}> = ({ categories, disabled, defaultSiteType, onPick }) => (
   <div className={styles.templateCategoryStack}>
     {categories.map(category => (
       <section key={category.id} className={styles.templateCategory}>
@@ -3928,7 +3937,13 @@ const TemplateCategoryGallery: React.FC<{
         </div>
         <div className={styles.templateGallery}>
           {category.ids.map(id => (
-            <TemplateCard key={`${category.id}-${id}`} id={id} disabled={disabled} onPick={() => onPick(id, category)} />
+            <TemplateCard
+              key={`${category.id}-${id}`}
+              id={id}
+              disabled={disabled}
+              siteType={category.siteType || defaultSiteType}
+              onPick={() => onPick(id, category)}
+            />
           ))}
         </div>
       </section>
@@ -3966,6 +3981,7 @@ const CreateFlowPanel: React.FC<CreateFlowPanelProps> = ({ step, creating, onCre
         <TemplateCategoryGallery
           categories={LANDING_TEMPLATE_CATEGORIES}
           disabled={creating}
+          defaultSiteType="landing_page"
           onPick={(id) => onCreate('landing_page', 'template', id)}
         />
       )}
@@ -3999,6 +4015,7 @@ const CreateFlowPanel: React.FC<CreateFlowPanelProps> = ({ step, creating, onCre
           <TemplateCategoryGallery
             categories={INTERACTIVE_TEMPLATE_CATEGORIES}
             disabled={creating}
+            defaultSiteType="interactive_form"
             onPick={(id) => onCreate('interactive_form', 'template', id)}
           />
         </>
@@ -4010,6 +4027,7 @@ const CreateFlowPanel: React.FC<CreateFlowPanelProps> = ({ step, creating, onCre
           <TemplateCategoryGallery
             categories={[...FORM_TEMPLATE_CATEGORIES, ...INTERACTIVE_TEMPLATE_CATEGORIES]}
             disabled={creating}
+            defaultSiteType="standard_form"
             onPick={(id, category) => onCreate(category.siteType === 'interactive_form' ? 'interactive_form' : 'standard_form', 'template', id)}
           />
         </>
@@ -6012,6 +6030,9 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
         <InlineEditable as="h2" value={block.content} placeholder="Formulario" disabled={!editable} onChange={(value) => patchBlock({ content: value })} onCommit={save} />
         {description && <p className="rstk-help">{description}</p>}
         {fields.map(field => <FieldStaticPreview key={field.id} block={field} />)}
+        <div className="rstk-actions rstk-embed-actions">
+          <button type="button" data-submit>Enviar</button>
+        </div>
       </section>
     )
   }
