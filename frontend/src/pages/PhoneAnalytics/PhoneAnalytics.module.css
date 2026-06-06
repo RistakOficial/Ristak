@@ -1,16 +1,14 @@
 .phoneAnalyticsPage {
-  --phone-chat-font: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", Inter, sans-serif;
-  --phone-chat-bg: #fbfaf6;
-  --phone-chat-surface: #ffffff;
-  --phone-chat-surface-soft: #f5f3ee;
-  --phone-chat-text: #0b0b0d;
-  --phone-chat-muted: #77736c;
-  --phone-chat-border: rgba(20, 20, 20, 0.09);
-  --phone-chat-primary: #101010;
-  --phone-chat-primary-rgb: 16, 16, 16;
-  --phone-chat-accent: #25d366;
-  --phone-chat-accent-rgb: 37, 211, 102;
-  --phone-chat-accent-soft: #dff8e8;
+  --phone-analytics-font: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", Inter, sans-serif;
+  --phone-analytics-bg: var(--phone-chat-bg, #fbfaf6);
+  --phone-analytics-surface: var(--phone-chat-surface, #ffffff);
+  --phone-analytics-soft: var(--phone-chat-surface-soft, #f5f3ee);
+  --phone-analytics-text: var(--phone-chat-text, #0b0b0d);
+  --phone-analytics-muted: var(--phone-chat-muted, #77736c);
+  --phone-analytics-border: var(--phone-chat-border, rgba(20, 20, 20, 0.09));
+  --phone-analytics-primary: var(--phone-chat-primary, #101010);
+  --phone-analytics-accent: var(--phone-chat-accent, #25d366);
+  --phone-analytics-accent-soft: var(--phone-chat-accent-soft, #dff8e8);
   position: fixed;
   inset: 0;
   isolation: isolate;
@@ -20,14 +18,18 @@
   max-height: 100dvh;
   overflow: hidden;
   overscroll-behavior: none;
-  color: var(--phone-chat-text);
-  background: var(--phone-chat-bg);
-  font-family: var(--phone-chat-font);
+  color: var(--phone-analytics-text);
+  background: var(--phone-analytics-bg);
+  font-family: var(--phone-analytics-font);
   color-scheme: light;
   user-select: none;
   -webkit-user-select: none;
   -webkit-touch-callout: none;
   -webkit-text-size-adjust: 100%;
+}
+
+:global(body[data-phone-chat-tone="dark"]) .phoneAnalyticsPage {
+  color-scheme: dark;
 }
 
 .phoneAnalyticsPage button,
@@ -71,7 +73,7 @@
 .header h1 {
   margin: 3px 0 0;
   overflow: hidden;
-  color: #000000;
+  color: var(--phone-analytics-text);
   font-size: clamp(36px, 10vw, 52px);
   font-weight: 880;
   letter-spacing: 0;
@@ -83,7 +85,7 @@
 .eyebrow,
 .sectionLabel {
   margin: 0;
-  color: #737373;
+  color: var(--phone-analytics-muted);
   font-size: 11px;
   font-weight: 850;
   letter-spacing: 0.08em;
@@ -99,8 +101,8 @@
   width: 46px;
   height: 46px;
   border-radius: 999px;
-  color: #ffffff;
-  background: #101010;
+  color: var(--phone-chat-text-on-primary, #ffffff);
+  background: var(--phone-analytics-primary);
   box-shadow: 0 10px 22px rgba(17, 24, 39, 0.1);
 }
 
@@ -120,10 +122,10 @@
   flex: 0 0 auto;
   min-height: 34px;
   padding: 0 13px;
-  border: 1px solid rgba(17, 24, 39, 0.08);
+  border: 1px solid var(--phone-analytics-border);
   border-radius: 999px;
-  color: #62615d;
-  background: rgba(255, 255, 255, 0.72);
+  color: var(--phone-analytics-muted);
+  background: var(--phone-analytics-surface);
   box-shadow: none;
   font-size: 13px;
   font-weight: 780;
@@ -141,8 +143,8 @@
 .periodScroller .chipActive,
 .optionScroller .chipActive {
   border-color: transparent;
-  color: #ffffff;
-  background: #101010;
+  color: var(--phone-chat-text-on-primary, #ffffff);
+  background: var(--phone-analytics-primary);
 }
 
 .metricsGrid {
@@ -156,9 +158,9 @@
   min-width: 0;
   gap: 6px;
   padding: 12px;
-  border: 1px solid rgba(17, 24, 39, 0.07);
+  border: 1px solid var(--phone-analytics-border);
   border-radius: 18px;
-  background: #ffffff;
+  background: var(--phone-analytics-surface);
   box-shadow: 0 10px 22px rgba(17, 24, 39, 0.04);
 }
 
@@ -173,12 +175,12 @@
 
 .tonegreen {
   color: #073f23;
-  background: #dff8e8;
+  background: var(--phone-analytics-accent-soft);
 }
 
 .toneblack {
-  color: #ffffff;
-  background: #101010;
+  color: var(--phone-chat-text-on-primary, #ffffff);
+  background: var(--phone-analytics-primary);
 }
 
 .toneblue {
@@ -198,7 +200,7 @@
 
 .metricTitle {
   overflow: hidden;
-  color: #737373;
+  color: var(--phone-analytics-muted);
   font-size: 11px;
   font-weight: 760;
   line-height: 1.15;
@@ -208,7 +210,7 @@
 
 .metricCard strong {
   overflow: hidden;
-  color: #080808;
+  color: var(--phone-analytics-text);
   font-size: 19px;
   font-weight: 880;
   letter-spacing: 0;
@@ -239,9 +241,9 @@
   gap: 12px;
   min-width: 0;
   padding: 14px;
-  border: 1px solid rgba(17, 24, 39, 0.07);
+  border: 1px solid var(--phone-analytics-border);
   border-radius: 24px;
-  background: #ffffff;
+  background: var(--phone-analytics-surface);
   box-shadow: 0 12px 28px rgba(17, 24, 39, 0.05);
 }
 
@@ -256,7 +258,7 @@
 .panelHeader h2 {
   margin: 4px 0 0;
   overflow: hidden;
-  color: #050505;
+  color: var(--phone-analytics-text);
   font-size: 22px;
   font-weight: 870;
   letter-spacing: 0;
@@ -270,7 +272,7 @@
   gap: 5px;
   padding: 4px;
   border-radius: 999px;
-  background: #f5f3ee;
+  background: var(--phone-analytics-soft);
 }
 
 .segmentedControl button {
@@ -279,15 +281,15 @@
   min-height: 31px;
   padding-inline: 8px;
   border: 0;
-  color: #6b6b68;
+  color: var(--phone-analytics-muted);
   background: transparent;
   box-shadow: none;
   font-size: 11px;
 }
 
 .segmentedControl .segmentActive {
-  color: #101010;
-  background: #ffffff;
+  color: var(--phone-analytics-text);
+  background: var(--phone-analytics-surface);
   box-shadow: 0 6px 14px rgba(17, 24, 39, 0.08);
 }
 
@@ -295,7 +297,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
-  color: #737373;
+  color: var(--phone-analytics-muted);
   font-size: 12px;
   font-weight: 760;
 }
@@ -320,8 +322,8 @@
   gap: 7px;
   min-height: 128px;
   border-radius: 18px;
-  color: #737373;
-  background: #f7f6f2;
+  color: var(--phone-analytics-muted);
+  background: var(--phone-analytics-soft);
   font-size: 13px;
   font-weight: 750;
   text-align: center;
@@ -336,7 +338,7 @@
   overflow: hidden;
   min-height: 190px;
   border-radius: 20px;
-  background: linear-gradient(180deg, #fbfaf6 0%, #ffffff 100%);
+  background: linear-gradient(180deg, var(--phone-analytics-soft) 0%, var(--phone-analytics-surface) 100%);
 }
 
 .chartCanvas svg {
@@ -350,18 +352,18 @@
   top: 10px;
   left: 12px;
   z-index: 1;
-  color: #737373;
+  color: var(--phone-analytics-muted);
   font-size: 11px;
   font-weight: 780;
 }
 
 .gridLine {
-  stroke: rgba(17, 24, 39, 0.08);
+  stroke: var(--phone-analytics-border);
   stroke-width: 1;
 }
 
 .axisLabel {
-  fill: #77736c;
+  fill: var(--phone-analytics-muted);
   font-size: 10px;
   font-weight: 750;
 }
@@ -375,7 +377,7 @@
   padding: 0 10px;
   border-radius: 999px;
   color: #0f5132;
-  background: #dff8e8;
+  background: var(--phone-analytics-accent-soft);
   font-size: 13px;
   font-weight: 870;
   white-space: nowrap;
@@ -401,8 +403,8 @@
   width: 34px;
   height: 34px;
   border-radius: 999px;
-  color: #101010;
-  background: #f5f3ee;
+  color: var(--phone-analytics-text);
+  background: var(--phone-analytics-soft);
 }
 
 .funnelContent {
@@ -425,7 +427,7 @@
 .sourceTop strong,
 .phoneSourceTop strong {
   overflow: hidden;
-  color: #101010;
+  color: var(--phone-analytics-text);
   font-size: 15px;
   font-weight: 850;
   text-overflow: ellipsis;
@@ -436,7 +438,7 @@
 .sourceTop span,
 .phoneSourceTop em {
   flex: 0 0 auto;
-  color: #101010;
+  color: var(--phone-analytics-text);
   font-size: 13px;
   font-style: normal;
   font-weight: 820;
@@ -447,7 +449,7 @@
   overflow: hidden;
   height: 8px;
   border-radius: 999px;
-  background: #f0eee9;
+  background: var(--phone-analytics-soft);
 }
 
 .progressTrack i,
@@ -464,7 +466,7 @@
 .phoneStatus,
 .phoneSourceTop small {
   overflow: hidden;
-  color: #737373;
+  color: var(--phone-analytics-muted);
   font-size: 11px;
   font-weight: 720;
   line-height: 1.2;
@@ -480,7 +482,7 @@
 }
 
 .sourceItem + .sourceItem {
-  border-top: 1px solid rgba(17, 24, 39, 0.07);
+  border-top: 1px solid var(--phone-analytics-border);
   padding-top: 10px;
 }
 
