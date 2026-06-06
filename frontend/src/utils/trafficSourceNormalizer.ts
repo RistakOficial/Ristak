@@ -241,9 +241,17 @@ const SOURCE_CODE_MAP: Record<string, string> = {
   // WhatsApp - TODAS las variaciones
   'whatsapp': 'WhatsApp',
   'wa': 'WhatsApp',
+  'waapi': 'WhatsApp',
+  'ycloud': 'WhatsApp',
+  'whatsapp_api': 'WhatsApp',
+  'whatsapp_business': 'WhatsApp',
+  'whatsapp_business_api': 'WhatsApp',
+  'whatsapp business': 'WhatsApp',
+  'whatsapp api': 'WhatsApp',
   'click_to_whatsapp': 'WhatsApp',
   'ctwa': 'WhatsApp',
   'whatsapp_ad': 'WhatsApp',
+  'whatsapp_ads': 'WhatsApp',
   'whatsapp.com': 'WhatsApp',
 
   // Telegram - TODAS las variaciones
@@ -331,6 +339,7 @@ const PLATFORM_PATTERNS: Array<{ platform: string; patterns: string[] }> = [
   { platform: 'Pinterest', patterns: ['pinterest', 'pin.it', 'pin_'] },
   { platform: 'Reddit', patterns: ['reddit', 'redd.it'] },
   { platform: 'Twitter', patterns: ['twitter', 'x.com', 'twclid'] },
+  { platform: 'WhatsApp', patterns: ['whatsapp', 'wa.me', 'waapi', 'ycloud', 'click_to_whatsapp'] },
   { platform: 'Telegram', patterns: ['telegram', 't.me'] },
   { platform: 'Email', patterns: ['email', 'newsletter'] }
 ]

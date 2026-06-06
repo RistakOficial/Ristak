@@ -1,11 +1,11 @@
 import { db } from '../config/database.js';
 import { logger } from '../utils/logger.js';
 import { resolveDateRange, resolveDateRangeWithGHLTimezone } from '../utils/dateUtils.js';
-import { normalizeTrafficSource } from '../utils/trafficSourceNormalizer.js';
 import { getGroupExpression } from '../services/analyticsService.js';
 import { getManualBusinessExpensesTotalForRange } from '../services/manualBusinessExpensesService.js';
 import { getContactSourceBreakdown } from '../services/contactSourceService.js';
-import { getTrafficDistributions, getLeadsContactIds } from '../services/originDistributionService.js';
+import { getTrafficDistributions, getWhatsAppApiSourceBreakdown, getLeadsContactIds } from '../services/originDistributionService.js';
+import { normalizeTrafficSource } from '../utils/trafficSourceNormalizer.js';
 import { DateTime } from 'luxon';
 import { getContactsWithAppointmentsHybrid, getContactsWithShowedAppointmentsHybrid } from '../services/appointmentsMerge.js';
 import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js';
@@ -909,7 +909,7 @@ export const getStorageStatus = async (req, res) => {
  */
 export const getTrafficSources = async (req, res) => {
   try {
-    const { startDate, endDate, includeWeb = '1' } = req.query
+    const { startDate, endDate, includeWeb = '1', includeWhatsapp = '1' } = req.query
 
     if (!startDate || !endDate) {
       return res.status(400).json({ success: false, error: 'Se requieren startDate y endDate' })
@@ -917,9 +917,10 @@ export const getTrafficSources = async (req, res) => {
 
     const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate })
     const shouldIncludeWeb = String(includeWeb) !== '0'
+    const shouldIncludeWhatsapp = String(includeWhatsapp) !== '0'
 
-    // Cada visitante debe contar una sola vez. Tomamos su primera sesión del rango y
-    // normalizamos en JS con la misma lógica robusta que usa Analytics.
+    // Cada visitante web cuenta una sola vez. Tomamos su primera sesión del rango,
+    // igual que hacía este endpoint antes, y después sumamos conversaciones de WhatsApp.
     const query = `
       SELECT
         visitor_id,
@@ -961,6 +962,13 @@ export const getTrafficSources = async (req, res) => {
       sourcesMap.set(sourceName, (sourcesMap.get(sourceName) || 0) + 1)
     })
 
+    if (shouldIncludeWhatsapp) {
+      const whatsappSources = await getWhatsAppApiSourceBreakdown(range, { limit: 100 })
+      whatsappSources.forEach(({ name, value }) => {
+        sourcesMap.set(name, (sourcesMap.get(name) || 0) + value)
+      })
+    }
+
     // Mapear colores por plataforma
     const colorMap = {
       'Facebook': '#1877f2',
@@ -990,7 +998,6 @@ export const getTrafficSources = async (req, res) => {
       'Desconocido': '#64748b'
     }
 
-    // Convertir Map a array y ordenar por valor
     const data = Array.from(sourcesMap.entries())
       .map(([name, value]) => ({
         name,
@@ -998,7 +1005,7 @@ export const getTrafficSources = async (req, res) => {
         color: colorMap[name] || '#6b7280'
       }))
       .sort((a, b) => b.value - a.value)
-      .slice(0, 10) // Top 10 fuentes
+      .slice(0, 10)
 
     res.json({ success: true, data })
   } catch (error) {

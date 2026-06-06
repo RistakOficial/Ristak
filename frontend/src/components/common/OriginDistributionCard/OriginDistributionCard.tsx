@@ -32,9 +32,11 @@ const DIMENSION_INSIGHTS: Record<TrafficDimension, { primary: string; suffix: st
   os: { primary: 'Mayor sistema', suffix: 'sistemas activos' }
 }
 
+const PEOPLE_DIMENSIONS = new Set<TrafficDimension>(['sources', 'platforms'])
+
 /**
  * Dona unificada de origen usada igual en Dashboard y Analíticas.
- * Este card queda dedicado al rastreo web del sitio.
+ * Muestra origen web y conversaciones de WhatsApp.
  */
 export const OriginDistributionCard: React.FC = () => {
   const { dateRange } = useDateRange()
@@ -77,30 +79,19 @@ export const OriginDistributionCard: React.FC = () => {
   }, [])
 
   const meta = useMemo(() => {
-    if (!webTrackingConfigured) {
-      return {
-        data: [],
-        totalLabel: 'eventos',
-        itemLabel: 'Eventos',
-        emptyText: 'Sin datos',
-        emptySubtext: '',
-        insightPrimaryLabel: 'Mayor origen',
-        insightCountSuffix: 'orígenes activos',
-        title: 'Origen'
-      }
-    }
+    const isPeopleDimension = PEOPLE_DIMENSIONS.has(dimension)
 
     return {
       data: data.traffic[dimension],
-      totalLabel: 'visitantes únicos',
-      itemLabel: 'Visitantes',
-      emptyText: 'Sin datos de tráfico',
-      emptySubtext: 'Los datos aparecerán cuando haya visitas',
+      totalLabel: isPeopleDimension ? 'personas únicas' : 'visitantes únicos',
+      itemLabel: isPeopleDimension ? 'Personas' : 'Visitantes',
+      emptyText: 'Sin datos de origen',
+      emptySubtext: 'Los datos aparecerán cuando haya visitas o mensajes de WhatsApp',
       insightPrimaryLabel: DIMENSION_INSIGHTS[dimension].primary,
       insightCountSuffix: DIMENSION_INSIGHTS[dimension].suffix,
-      title: 'Tráfico'
+      title: 'Origen'
     }
-  }, [data.traffic, dimension, webTrackingConfigured])
+  }, [data.traffic, dimension])
 
   return (
     <TrafficSourcesChart
