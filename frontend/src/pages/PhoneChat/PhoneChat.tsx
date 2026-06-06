@@ -29,7 +29,6 @@ import {
   ReceiptText,
   Search,
   Send,
-  Smile,
   Smartphone,
   Tag,
   User,
@@ -60,6 +59,15 @@ const COARSE_POINTER_QUERY = '(pointer: coarse)'
 const MOBILE_OR_TABLET_USER_AGENT_PATTERN = /Android|iPad|iPhone|iPod|IEMobile|Opera Mini|Mobile|Tablet/i
 const SCROLLABLE_CHAT_SELECTOR = '[data-phone-chat-scrollable="true"], [contenteditable="true"], textarea, input, select'
 const CHAT_READ_STATE_KEY = 'ristak_phone_chat_read_state_v1'
+const MAX_VOICE_MESSAGE_BYTES = 16 * 1024 * 1024
+const MIN_VOICE_RECORDING_MS = 600
+const MAX_VOICE_RECORDING_MS = 3 * 60 * 1000
+const VOICE_MIME_CANDIDATES = [
+  'audio/ogg;codecs=opus',
+  'audio/mp4',
+  'audio/webm;codecs=opus',
+  'audio/webm'
+]
 
 type AccessState = 'checking' | 'allowed' | 'blocked'
 type ComposerStatus = 'idle' | 'sending'
@@ -80,10 +88,22 @@ interface ChatMessage {
   businessPhoneNumberId?: string
   transport?: 'api' | 'qr' | string
   attachment?: {
-    type: 'image'
-    dataUrl: string
+    type: 'image' | 'audio'
+    dataUrl?: string
+    url?: string
     name?: string
+    mimeType?: string
+    durationMs?: number
   }
+}
+
+interface VoiceDraftAttachment {
+  id: string
+  name: string
+  type: string
+  dataUrl: string
+  size: number
+  durationMs: number
 }
 
 interface ChatContact extends Contact {
@@ -288,6 +308,65 @@ function formatMessageDate(value?: string | null) {
   }).format(date).replace('.', '')
 }
 
+function getSupportedVoiceMimeType() {
+  if (typeof window === 'undefined' || typeof MediaRecorder === 'undefined') return ''
+  return VOICE_MIME_CANDIDATES.find((mimeType) => MediaRecorder.isTypeSupported(mimeType)) || ''
+}
+
+function getVoiceFileExtension(mimeType = '') {
+  const normalized = mimeType.split(';')[0].toLowerCase()
+  if (normalized === 'audio/ogg') return 'ogg'
+  if (normalized === 'audio/mp4') return 'm4a'
+  if (normalized === 'audio/webm') return 'webm'
+  return 'webm'
+}
+
+function readBlobAsDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '')
+    reader.onerror = () => reject(reader.error || new Error('No se pudo leer el audio.'))
+    reader.readAsDataURL(blob)
+  })
+}
+
+function formatVoiceDuration(durationMs = 0) {
+  const totalSeconds = Math.max(0, Math.round(durationMs / 1000))
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  return `${minutes}:${String(seconds).padStart(2, '0')}`
+}
+
+function getJourneyMediaAttachment(event: JourneyEvent): ChatMessage['attachment'] | undefined {
+  const messageType = String(event.data?.message_type || '').toLowerCase()
+  const mediaUrl = String(event.data?.media_url || event.data?.mediaUrl || '').trim()
+  const mediaId = String(event.data?.media_id || event.data?.mediaId || '').trim()
+  const mimeType = String(event.data?.media_mime_type || event.data?.mediaMimeType || '').trim()
+  const name = String(event.data?.media_filename || event.data?.mediaFilename || '').trim()
+  const durationMs = Number(event.data?.media_duration_ms || event.data?.mediaDurationMs || 0) || undefined
+
+  if (messageType.includes('audio') || messageType.includes('voice')) {
+    return {
+      type: 'audio',
+      url: mediaUrl,
+      name: name || mediaId || 'Mensaje de voz',
+      mimeType,
+      durationMs
+    }
+  }
+
+  if (messageType.includes('image') && mediaUrl) {
+    return {
+      type: 'image',
+      url: mediaUrl,
+      name: name || mediaId || 'Foto enviada',
+      mimeType
+    }
+  }
+
+  return undefined
+}
+
 function getJourneyMessage(event: JourneyEvent, index: number): ChatMessage | null {
   if (event.type !== 'whatsapp_message') return null
 
@@ -297,20 +376,23 @@ function getJourneyMessage(event: JourneyEvent, index: number): ChatMessage | nu
     event.data?.body ||
     ''
   ).trim()
+  const messageType = String(event.data?.message_type || '')
+  const attachment = getJourneyMediaAttachment(event)
 
-  if (!text && !event.data?.message_type) return null
+  if (!text && !messageType && !attachment) return null
 
   const direction = String(event.data?.direction || '').toLowerCase() === 'outbound' ? 'outbound' : 'inbound'
 
   return {
     id: String(event.data?.whatsapp_api_message_id || event.data?.whatsapp_message_id || event.data?.attribution_record_id || `message-${index}`),
-    text: text || getMessageTypeLabel(String(event.data?.message_type || '')),
+    text: text || (attachment ? '' : getMessageTypeLabel(messageType)),
     date: event.date,
     direction,
     status: String(event.data?.status || ''),
     businessPhone: String(event.data?.business_phone || ''),
     businessPhoneNumberId: String(event.data?.business_phone_number_id || ''),
-    transport: String(event.data?.transport || 'api')
+    transport: String(event.data?.transport || 'api'),
+    attachment
   }
 }
 
@@ -672,6 +754,9 @@ export const PhoneChat: React.FC = () => {
   const [messagesLoading, setMessagesLoading] = useState(false)
   const [messageText, setMessageText] = useState('')
   const [draftAttachments, setDraftAttachments] = useState<MobilePhotoAttachment[]>([])
+  const [voiceDraft, setVoiceDraft] = useState<VoiceDraftAttachment | null>(null)
+  const [voiceRecording, setVoiceRecording] = useState(false)
+  const [voiceElapsedMs, setVoiceElapsedMs] = useState(0)
   const [composerStatus, setComposerStatus] = useState<ComposerStatus>('idle')
   const [whatsappStatus, setWhatsappStatus] = useState<WhatsAppApiStatus | null>(null)
   const [selectedBusinessPhoneId, setSelectedBusinessPhoneId] = useState('')
@@ -689,6 +774,12 @@ export const PhoneChat: React.FC = () => {
   const composerInputRef = useRef<HTMLDivElement | null>(null)
   const cameraInputRef = useRef<HTMLInputElement | null>(null)
   const photosInputRef = useRef<HTMLInputElement | null>(null)
+  const voiceRecorderRef = useRef<MediaRecorder | null>(null)
+  const voiceStreamRef = useRef<MediaStream | null>(null)
+  const voiceChunksRef = useRef<Blob[]>([])
+  const voiceStartedAtRef = useRef(0)
+  const voiceTimerRef = useRef<number | null>(null)
+  const voiceCancelRef = useRef(false)
 
   const activeContact = useMemo(
     () => chats.find((contact) => contact.id === activeContactId) || null,
@@ -758,7 +849,8 @@ export const PhoneChat: React.FC = () => {
   }, [messages, selectedBusinessPhoneValue])
   const apiReplyWindowOpen = isInsideReplyWindow(lastInboundForSelectedPhone?.date)
   const selectedQrReady = Boolean(selectedBusinessPhone?.qr_send_enabled && String(selectedBusinessPhone?.qr_status || '').toLowerCase() === 'connected')
-  const canSendMessage = Boolean(activeContact?.phone && (messageText.trim() || draftAttachments.length > 0) && composerStatus !== 'sending')
+  const hasComposerContent = Boolean(messageText.trim() || draftAttachments.length > 0 || voiceDraft)
+  const canSendMessage = Boolean(activeContact?.phone && hasComposerContent && composerStatus !== 'sending' && !voiceRecording)
   const hasChats = chats.length > 0
   const customerLabel = labels.customer?.trim() || 'Cliente'
   const leadLabel = labels.lead?.trim() || 'Interesado'
@@ -1113,9 +1205,165 @@ export const PhoneChat: React.FC = () => {
     messagesEndRef.current?.scrollIntoView({ block: 'end' })
   }, [messages, messagesLoading, conversationOpen])
 
+  useEffect(() => {
+    return () => {
+      if (voiceTimerRef.current) {
+        window.clearInterval(voiceTimerRef.current)
+        voiceTimerRef.current = null
+      }
+      voiceRecorderRef.current = null
+      voiceStreamRef.current?.getTracks().forEach((track) => track.stop())
+      voiceStreamRef.current = null
+    }
+  }, [])
+
+  const clearVoiceTimer = () => {
+    if (!voiceTimerRef.current) return
+    window.clearInterval(voiceTimerRef.current)
+    voiceTimerRef.current = null
+  }
+
+  const stopVoiceStream = () => {
+    voiceStreamRef.current?.getTracks().forEach((track) => track.stop())
+    voiceStreamRef.current = null
+  }
+
+  const handleStopVoiceRecording = () => {
+    const recorder = voiceRecorderRef.current
+    if (recorder && recorder.state === 'recording') {
+      recorder.stop()
+    }
+  }
+
+  const handleCancelVoiceDraft = () => {
+    voiceCancelRef.current = true
+    setVoiceDraft(null)
+    setVoiceElapsedMs(0)
+
+    const recorder = voiceRecorderRef.current
+    if (recorder && recorder.state === 'recording') {
+      recorder.stop()
+      return
+    }
+
+    clearVoiceTimer()
+    stopVoiceStream()
+    setVoiceRecording(false)
+    voiceCancelRef.current = false
+  }
+
+  const handleStartVoiceRecording = async () => {
+    if (!activeContact?.phone) {
+      showToast('error', 'Falta el teléfono', 'Guarda el número del contacto antes de mandar audio por WhatsApp.')
+      return
+    }
+
+    if (messageText.trim() || draftAttachments.length > 0) {
+      showToast('info', 'Manda primero lo que ya tienes', 'Para evitar confusiones, envía o borra el texto/foto antes de grabar audio.')
+      return
+    }
+
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+      showToast('error', 'Este celular no puede grabar aquí', 'Abre Ristak desde la app o desde un navegador con permiso de micrófono.')
+      return
+    }
+
+    try {
+      const mimeType = getSupportedVoiceMimeType()
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined)
+
+      voiceCancelRef.current = false
+      voiceChunksRef.current = []
+      voiceStreamRef.current = stream
+      voiceRecorderRef.current = recorder
+      voiceStartedAtRef.current = Date.now()
+      setVoiceDraft(null)
+      setVoiceElapsedMs(0)
+
+      recorder.ondataavailable = (event) => {
+        if (event.data?.size) {
+          voiceChunksRef.current.push(event.data)
+        }
+      }
+
+      recorder.onerror = () => {
+        showToast('error', 'No se pudo grabar', 'Revisa el permiso del micrófono e intenta otra vez.')
+        handleCancelVoiceDraft()
+      }
+
+      recorder.onstop = async () => {
+        const canceled = voiceCancelRef.current
+        const chunks = [...voiceChunksRef.current]
+        const durationMs = Date.now() - voiceStartedAtRef.current
+        const recordedType = recorder.mimeType || mimeType || chunks[0]?.type || 'audio/webm'
+
+        clearVoiceTimer()
+        stopVoiceStream()
+        setVoiceRecording(false)
+        voiceRecorderRef.current = null
+        voiceChunksRef.current = []
+        voiceCancelRef.current = false
+
+        if (canceled) return
+
+        try {
+          const blob = new Blob(chunks, { type: recordedType })
+          if (durationMs < MIN_VOICE_RECORDING_MS || blob.size === 0) {
+            showToast('info', 'Audio muy corto', 'Graba un poquito más para poder enviarlo.')
+            setVoiceElapsedMs(0)
+            return
+          }
+
+          if (blob.size > MAX_VOICE_MESSAGE_BYTES) {
+            showToast('error', 'Audio muy pesado', 'Graba un audio más corto para enviarlo por WhatsApp.')
+            setVoiceElapsedMs(0)
+            return
+          }
+
+          const dataUrl = await readBlobAsDataUrl(blob)
+          if (!dataUrl) {
+            throw new Error('No se pudo leer el audio.')
+          }
+
+          const timestamp = Date.now()
+          setVoiceDraft({
+            id: `voice-${timestamp}`,
+            name: `nota-voz-${timestamp}.${getVoiceFileExtension(blob.type || recordedType)}`,
+            type: blob.type || recordedType,
+            dataUrl,
+            size: blob.size,
+            durationMs
+          })
+          setVoiceElapsedMs(durationMs)
+        } catch (error: any) {
+          showToast('error', 'No se pudo preparar el audio', error?.message || 'Intenta grabarlo otra vez.')
+          setVoiceElapsedMs(0)
+        }
+      }
+
+      recorder.start(250)
+      setVoiceRecording(true)
+      voiceTimerRef.current = window.setInterval(() => {
+        const elapsed = Date.now() - voiceStartedAtRef.current
+        setVoiceElapsedMs(elapsed)
+        if (elapsed >= MAX_VOICE_RECORDING_MS && voiceRecorderRef.current?.state === 'recording') {
+          voiceRecorderRef.current.stop()
+        }
+      }, 250)
+    } catch (error: any) {
+      clearVoiceTimer()
+      stopVoiceStream()
+      setVoiceRecording(false)
+      voiceRecorderRef.current = null
+      showToast('error', 'No se abrió el micrófono', error?.message || 'Revisa permisos del celular e intenta otra vez.')
+    }
+  }
+
   const handleSelectContact = (contact: Contact) => {
     const chatContact = (chats.find((item) => item.id === contact.id) || contact) as ChatContact
     const nextContact = ensureChatContact(contact)
+    handleCancelVoiceDraft()
     markContactReadState(chatContact)
     setActiveContactId(nextContact.id)
     setChats((current) => current.map((item) => (
@@ -1126,13 +1374,16 @@ export const PhoneChat: React.FC = () => {
     setContactInfoOpen(false)
     setContactQuery('')
     setDraftAttachments([])
+    setVoiceDraft(null)
   }
 
   const handleBackToChats = () => {
+    handleCancelVoiceDraft()
     setConversationOpen(false)
     setSheet(null)
     setContactInfoOpen(false)
     setDraftAttachments([])
+    setVoiceDraft(null)
   }
 
   const handleOpenContactInfo = async () => {
@@ -1256,7 +1507,8 @@ export const PhoneChat: React.FC = () => {
   const handleSendMessage = async (transport: 'api' | 'qr' = 'api') => {
     const text = messageText.trim()
     const attachmentsToSend = draftAttachments
-    if (!activeContact || (!text && attachmentsToSend.length === 0)) return
+    const voiceToSend = voiceDraft
+    if (!activeContact || (!text && attachmentsToSend.length === 0 && !voiceToSend)) return
 
     if (!activeContact.phone) {
       showToast('error', 'Falta el teléfono', 'Guarda el número del contacto antes de escribir por WhatsApp.')
@@ -1273,8 +1525,8 @@ export const PhoneChat: React.FC = () => {
       return
     }
 
-    if (transport === 'qr' && attachmentsToSend.length > 0) {
-      showToast('warning', 'QR solo manda texto', 'Quita la foto o envía con la conexión oficial si todavía está disponible.')
+    if (transport === 'qr' && (attachmentsToSend.length > 0 || voiceToSend)) {
+      showToast('warning', 'QR solo manda texto', 'Quita el archivo o envía con la conexión oficial si todavía está disponible.')
       return
     }
 
@@ -1298,7 +1550,26 @@ export const PhoneChat: React.FC = () => {
       composerInputRef.current.textContent = ''
     }
     setDraftAttachments([])
-    const optimisticMessages: ChatMessage[] = attachmentsToSend.length > 0
+    setVoiceDraft(null)
+    const optimisticMessages: ChatMessage[] = voiceToSend
+      ? [{
+          id: `${optimisticId}-audio`,
+          text: '',
+          date: sentAt,
+          direction: 'outbound',
+          status: 'enviando',
+          businessPhone: selectedBusinessPhoneValue,
+          businessPhoneNumberId: selectedBusinessPhone?.id || '',
+          transport,
+          attachment: {
+            type: 'audio',
+            dataUrl: voiceToSend.dataUrl,
+            name: voiceToSend.name,
+            mimeType: voiceToSend.type,
+            durationMs: voiceToSend.durationMs
+          }
+        }]
+      : attachmentsToSend.length > 0
       ? attachmentsToSend.map((attachment, index) => ({
           id: `${optimisticId}-image-${index}`,
           text: index === 0 ? text : '',
@@ -1330,16 +1601,27 @@ export const PhoneChat: React.FC = () => {
       contact.id === activeContact.id
         ? {
             ...contact,
-            lastMessageText: attachmentsToSend.length > 0 ? (text || 'Foto') : text,
+            lastMessageText: voiceToSend ? 'Mensaje de voz' : attachmentsToSend.length > 0 ? (text || 'Foto') : text,
             lastMessageDate: sentAt,
             lastMessageDirection: 'outbound',
-            messageCount: Number(contact.messageCount || 0) + Math.max(1, attachmentsToSend.length)
+            messageCount: Number(contact.messageCount || 0) + Math.max(1, voiceToSend ? 1 : attachmentsToSend.length)
           }
         : contact
     )))
 
     try {
-      if (attachmentsToSend.length > 0) {
+      if (voiceToSend) {
+        await whatsappApiService.sendAudio({
+          to: activeContact.phone || '',
+          from: selectedBusinessPhoneValue,
+          audioDataUrl: voiceToSend.dataUrl,
+          durationMs: voiceToSend.durationMs,
+          externalId: `${optimisticId}-audio`
+        })
+        setMessages((current) => current.map((message) => (
+          message.id === `${optimisticId}-audio` ? { ...message, status: 'sent' } : message
+        )))
+      } else if (attachmentsToSend.length > 0) {
         await Promise.all(attachmentsToSend.map((attachment, index) => (
           whatsappApiService.sendImage({
             to: activeContact.phone || '',
@@ -1369,13 +1651,28 @@ export const PhoneChat: React.FC = () => {
       await loadChats()
     } catch (error: any) {
       setMessages((current) => current.map((message) => (
-        message.id === optimisticId || message.id.startsWith(`${optimisticId}-image-`) ? { ...message, status: 'error' } : message
+        message.id === optimisticId || message.id === `${optimisticId}-audio` || message.id.startsWith(`${optimisticId}-image-`) ? { ...message, status: 'error' } : message
       )))
       setDraftAttachments(attachmentsToSend)
+      setVoiceDraft(voiceToSend)
       showToast('error', 'No se envió el mensaje', error?.message || 'Intenta enviar el mensaje otra vez.')
     } finally {
       setComposerStatus('idle')
     }
+  }
+
+  const handleVoiceOrSendButtonClick = () => {
+    if (voiceRecording) {
+      handleStopVoiceRecording()
+      return
+    }
+
+    if (canSendMessage) {
+      handleSendMessage()
+      return
+    }
+
+    handleStartVoiceRecording()
   }
 
   const handleCreateAppointment = async (payload: {
@@ -1586,8 +1883,14 @@ export const PhoneChat: React.FC = () => {
         className={`${styles.messageRow} ${styles[`messageRow_${message.direction}`]}`}
       >
         <div className={styles.messageBubble}>
-          {message.attachment?.type === 'image' && (
-            <img className={styles.messageImage} src={message.attachment.dataUrl} alt={message.attachment.name || 'Foto enviada'} />
+          {message.attachment?.type === 'image' && (message.attachment.dataUrl || message.attachment.url) && (
+            <img className={styles.messageImage} src={message.attachment.dataUrl || message.attachment.url} alt={message.attachment.name || 'Foto enviada'} />
+          )}
+          {message.attachment?.type === 'audio' && (message.attachment.dataUrl || message.attachment.url) && (
+            <div className={styles.messageAudio}>
+              <Mic size={18} />
+              <audio controls preload="metadata" src={message.attachment.dataUrl || message.attachment.url} />
+            </div>
           )}
           {message.text && <p>{message.text}</p>}
           <span>
@@ -1615,6 +1918,32 @@ export const PhoneChat: React.FC = () => {
             </button>
           </figure>
         ))}
+      </div>
+    )
+  }
+
+  const renderVoiceDraft = () => {
+    if (!voiceRecording && !voiceDraft) return null
+
+    return (
+      <div className={`${styles.voiceDraft} ${voiceRecording ? styles.voiceDraftRecording : ''}`}>
+        <span className={styles.voiceDraftIcon}>
+          <Mic size={18} />
+        </span>
+        <div className={styles.voiceDraftBody}>
+          <strong>{voiceRecording ? 'Grabando audio' : 'Audio listo'}</strong>
+          {voiceDraft ? (
+            <audio controls preload="metadata" src={voiceDraft.dataUrl} />
+          ) : (
+            <span>{formatVoiceDuration(voiceElapsedMs)}</span>
+          )}
+        </div>
+        <span className={styles.voiceDraftTime}>
+          {formatVoiceDuration(voiceDraft?.durationMs || voiceElapsedMs)}
+        </span>
+        <button type="button" onClick={handleCancelVoiceDraft} aria-label={voiceRecording ? 'Cancelar grabación' : 'Borrar audio'}>
+          <X size={17} />
+        </button>
       </div>
     )
   }
@@ -1733,9 +2062,7 @@ export const PhoneChat: React.FC = () => {
             <ChevronLeft size={32} />
           </button>
           <strong>Info del contacto</strong>
-          <button type="button" className={styles.contactInfoTopbarAction} onClick={() => setContactInfoOpen(false)} aria-label="Cerrar información del contacto">
-            <X size={20} />
-          </button>
+          <span className={styles.contactInfoTopbarSpacer} aria-hidden="true" />
         </header>
 
         <div className={styles.contactInfoContent} data-phone-chat-scrollable="true">
@@ -2090,6 +2417,7 @@ export const PhoneChat: React.FC = () => {
           <div className={styles.composerShell}>
             {renderSenderBar()}
             {renderDraftAttachments()}
+            {renderVoiceDraft()}
             <div className={styles.composer}>
               <button type="button" className={styles.composerPlus} onClick={() => setSheet('attachments')} aria-label="Abrir adjuntos">
                 <Plus size={34} />
@@ -2101,9 +2429,9 @@ export const PhoneChat: React.FC = () => {
                   role="textbox"
                   aria-multiline="true"
                   aria-label="Mensaje"
-                  aria-disabled={!activeContact?.phone || composerStatus === 'sending'}
-                  data-placeholder={activeContact?.phone ? '' : 'Sin teléfono'}
-                  contentEditable={Boolean(activeContact?.phone && composerStatus !== 'sending')}
+                  aria-disabled={!activeContact?.phone || composerStatus === 'sending' || voiceRecording || Boolean(voiceDraft)}
+                  data-placeholder={voiceRecording ? 'Grabando...' : voiceDraft ? 'Audio listo' : activeContact?.phone ? '' : 'Sin teléfono'}
+                  contentEditable={Boolean(activeContact?.phone && composerStatus !== 'sending' && !voiceRecording && !voiceDraft)}
                   suppressContentEditableWarning
                   spellCheck
                   autoCorrect="on"
@@ -2117,19 +2445,16 @@ export const PhoneChat: React.FC = () => {
                     }
                   }}
                 />
-                <button type="button" onClick={() => handleUnavailableAttachment('Stickers')} aria-label="Stickers">
-                  <Smile size={26} />
-                </button>
               </div>
               <button type="button" className={styles.composerIconButton} onClick={() => handlePickPhoto('camera')} aria-label="Cámara">
                 <Camera size={29} />
               </button>
               <button
                 type="button"
-                className={styles.composerIconButton}
-                onClick={canSendMessage ? handleSendMessage : () => handleUnavailableAttachment('Mensaje de voz')}
+                className={`${styles.composerIconButton} ${voiceRecording ? styles.composerMicRecording : ''}`}
+                onClick={handleVoiceOrSendButtonClick}
                 disabled={composerStatus === 'sending'}
-                aria-label={canSendMessage ? 'Enviar mensaje' : 'Mensaje de voz'}
+                aria-label={voiceRecording ? 'Detener grabación' : canSendMessage ? 'Enviar mensaje' : 'Grabar mensaje de voz'}
               >
                 {composerStatus === 'sending' ? <Loader2 size={23} className={styles.spinIcon} /> : canSendMessage ? <Send size={25} /> : <Mic size={30} />}
               </button>

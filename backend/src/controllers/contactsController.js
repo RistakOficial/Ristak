@@ -57,6 +57,46 @@ const ATTENDED_APPOINTMENT_CONDITION = `LOWER(COALESCE(appointment_status, statu
 
 const cleanString = (value) => String(value || '').trim()
 
+const parseJsonObject = (value) => {
+  if (!value) return null
+  if (typeof value === 'object') return value
+  try {
+    const parsed = JSON.parse(value)
+    return parsed && typeof parsed === 'object' ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+const getWhatsAppMediaFromPayload = (rawPayload, messageType = '') => {
+  const payload = parseJsonObject(rawPayload)
+  if (!payload) return {}
+
+  const normalizedType = cleanString(messageType).toLowerCase()
+  const mediaObjects = [
+    payload[normalizedType],
+    payload.audio,
+    payload.image,
+    payload.video,
+    payload.document,
+    payload.sticker,
+    payload.whatsappMessage?.[normalizedType],
+    payload.whatsappInboundMessage?.[normalizedType],
+    payload.message?.[normalizedType]
+  ].filter(item => item && typeof item === 'object')
+
+  const media = mediaObjects[0] || null
+  if (!media) return {}
+
+  return {
+    media_url: cleanString(media.link || media.url || media.href),
+    media_id: cleanString(media.id || media.mediaId || media.media_id),
+    media_mime_type: cleanString(media.mimeType || media.mime_type),
+    media_filename: cleanString(media.filename || media.fileName || media.name),
+    media_duration_ms: Number(media.durationMs || media.duration_ms || 0) || null
+  }
+}
+
 const splitName = (name = '') => {
   const parts = cleanString(name).split(/\s+/).filter(Boolean)
   return {
@@ -1864,6 +1904,7 @@ export const getContactJourney = async (req, res) => {
           msg.business_phone_number_id,
           msg.transport,
           msg.direction,
+          msg.raw_payload_json,
           COALESCE(attr.id, '') as attribution_id,
           COALESCE(attr.detected_ctwa_clid, msg.detected_ctwa_clid) as detected_ctwa_clid,
           COALESCE(attr.detected_source_id, msg.detected_source_id) as detected_source_id,
@@ -1890,6 +1931,7 @@ export const getContactJourney = async (req, res) => {
         msg.detected_source_url ||
         msg.detected_headline
       )
+      const media = getWhatsAppMediaFromPayload(msg.raw_payload_json, msg.message_type)
       const data = {
         source: 'WhatsApp',
         phone: msg.phone,
@@ -1900,6 +1942,7 @@ export const getContactJourney = async (req, res) => {
         transport: msg.transport || 'api',
         message_text: msg.message_text,
         message_type: msg.message_type,
+        ...media,
         referral_source_url: msg.detected_source_url,
         referral_source_type: msg.detected_source_type,
         referral_ctwa_clid: msg.detected_ctwa_clid,

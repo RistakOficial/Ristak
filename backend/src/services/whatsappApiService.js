@@ -3161,8 +3161,9 @@ export async function sendWhatsAppApiAudioMessage({
       from: response.from || fromPhone,
       to: response.to || toPhone,
       type: response.type || 'audio',
-      audio: response.audio || {
+      audio: {
         ...requestBody.audio,
+        ...(response.audio || {}),
         ...(durationMs ? { durationMs } : {})
       },
       transport: 'api',
@@ -3174,7 +3175,10 @@ export async function sendWhatsAppApiAudioMessage({
 
   return {
     ...response,
-    audio: response.audio || requestBody.audio,
+    audio: {
+      ...requestBody.audio,
+      ...(response.audio || {})
+    },
     localMedia: savedAudio
   }
 }

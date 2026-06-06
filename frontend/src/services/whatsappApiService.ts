@@ -178,6 +178,15 @@ export interface WhatsAppApiImageSendPayload {
   externalId?: string
 }
 
+export interface WhatsAppApiAudioSendPayload {
+  to: string
+  from?: string
+  audioDataUrl?: string
+  audioUrl?: string
+  durationMs?: number
+  externalId?: string
+}
+
 export interface WhatsAppQrSession {
   id: string
   phoneNumberId: string
@@ -218,5 +227,6 @@ export const whatsappApiService = {
   }),
   sendText: (payload: WhatsAppApiTextSendPayload) => apiClient.post('/whatsapp-api/messages/text', payload),
   sendImage: (payload: WhatsAppApiImageSendPayload) => apiClient.post('/whatsapp-api/messages/image', payload),
+  sendAudio: (payload: WhatsAppApiAudioSendPayload) => apiClient.post('/whatsapp-api/messages/audio', payload),
   sendTemplate: (payload: WhatsAppApiTemplateSendPayload) => apiClient.post('/whatsapp-api/templates/send', payload)
 }
