@@ -191,6 +191,7 @@ export function MobileNotificationOnboarding() {
       title=""
       type="custom"
       className={styles.panel}
+      backdropClassName={styles.backdrop}
       contentClassName={styles.content}
       showCloseButton={false}
     >

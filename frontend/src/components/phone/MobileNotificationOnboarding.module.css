@@ -1,22 +1,35 @@
+.backdrop {
+  align-items: center !important;
+  justify-content: center !important;
+  padding: max(18px, env(safe-area-inset-top)) 16px max(18px, env(safe-area-inset-bottom)) !important;
+}
+
 .panel {
-  width: min(92vw, 420px);
+  align-self: center;
+  width: min(calc(100vw - 32px), 390px);
+  max-height: min(86dvh, 560px);
+  margin: auto;
   border-radius: 8px;
   background: #ffffff;
+  overflow: hidden;
   box-shadow: 0 24px 72px rgba(15, 23, 42, 0.28);
 }
 
 .content {
+  flex: 0 0 auto !important;
   display: grid;
-  gap: 18px;
-  padding: 24px;
+  gap: 14px;
+  max-height: min(82dvh, 520px) !important;
+  padding: 20px !important;
+  overflow-y: auto;
 }
 
 .iconShell {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 54px;
-  height: 54px;
+  width: 48px;
+  height: 48px;
   border-radius: 8px;
   color: #050505;
   background: #f3f4f6;
@@ -29,7 +42,7 @@
 
 .copy {
   display: grid;
-  gap: 8px;
+  gap: 7px;
 }
 
 .eyebrow {
@@ -44,17 +57,17 @@
 .title {
   margin: 0;
   color: #0a0a0a;
-  font-size: 24px;
+  font-size: 22px;
   font-weight: 880;
-  line-height: 1.08;
+  line-height: 1.12;
   letter-spacing: 0;
 }
 
 .message {
   margin: 0;
   color: #525252;
-  font-size: 15px;
-  line-height: 1.48;
+  font-size: 14.5px;
+  line-height: 1.45;
 }
 
 .reason {
@@ -71,11 +84,11 @@
 .actions {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 10px;
+  gap: 8px;
 }
 
 .actions button {
-  min-height: 46px;
+  min-height: 44px;
   border-radius: 8px;
   white-space: normal;
 }
@@ -88,14 +101,26 @@
 
 @media (max-width: 480px) {
   .panel {
-    width: calc(100vw - 28px);
+    width: calc(100vw - 44px);
+    max-height: calc(100dvh - max(132px, calc(env(safe-area-inset-top) + env(safe-area-inset-bottom) + 52px)));
   }
 
   .content {
-    padding: 22px;
+    gap: 13px;
+    max-height: inherit !important;
+    padding: 18px !important;
+  }
+
+  .iconShell {
+    width: 46px;
+    height: 46px;
   }
 
   .title {
-    font-size: 22px;
+    font-size: 21px;
+  }
+
+  .message {
+    font-size: 14px;
   }
 }
