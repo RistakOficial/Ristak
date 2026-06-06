@@ -288,7 +288,7 @@
 
 .chatList {
   min-height: 0;
-  padding: 6px 14px 92px;
+  padding: 6px 0 92px;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
 }
@@ -301,10 +301,23 @@
   gap: 8px;
   width: 100%;
   min-height: 60px;
+  padding: 0 14px;
   border: 0;
   color: var(--phone-chat-text);
   background: transparent;
   text-align: left;
+  box-sizing: border-box;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.chatList :is(.archiveRow, .chatItem, .chatSwipeAction) {
+  appearance: none !important;
+  -webkit-appearance: none !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  outline: 0 !important;
 }
 
 .archiveRow {
@@ -335,14 +348,15 @@
 
 .chatItem {
   position: relative;
-  border-radius: 6px;
+  border-radius: 0;
 }
 
 .chatSwipeRow {
   position: relative;
   min-height: 60px;
   overflow: hidden;
-  border-radius: 6px;
+  border-radius: 0 !important;
+  isolation: isolate;
   touch-action: pan-y;
 }
 
@@ -354,6 +368,8 @@
   grid-template-columns: 84px 100px;
   width: 184px;
   min-height: 60px;
+  border-radius: 0 !important;
+  overflow: hidden;
 }
 
 .chatSwipeAction {
@@ -394,21 +410,28 @@
 .chatSwipeContent {
   position: relative;
   z-index: 1;
+  border-radius: 0 !important;
   background: var(--phone-chat-bg);
   transition: transform 180ms ease;
   will-change: transform;
+  backface-visibility: hidden;
+  transform: translate3d(0, 0, 0);
 }
 
 .chatSwipeRowOpen .chatSwipeContent {
   transition-duration: 140ms;
 }
 
+.chatSwipeRowDragging .chatSwipeContent {
+  transition: none !important;
+}
+
 .chatItem::after {
   content: "";
   position: absolute;
-  right: 0;
+  right: 14px;
   bottom: 0;
-  left: 58px;
+  left: 72px;
   height: 1px;
   background: var(--phone-chat-border);
 }
@@ -2839,7 +2862,7 @@
   }
 
   .chatList {
-    padding-inline: 14px;
+    padding-inline: 0;
   }
 
   .chatListHeader h1 {

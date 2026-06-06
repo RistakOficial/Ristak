@@ -80,6 +80,7 @@ const AI_AGENT_MESSAGES_KEY = 'ristak_phone_chat_ai_agent_messages_v1'
 const CHAT_SWIPE_ACTION_WIDTH = 184
 const CHAT_SWIPE_OPEN_THRESHOLD = 78
 const CHAT_SWIPE_ACTIVATE_THRESHOLD = 12
+const CHAT_SWIPE_RENDER_STEP = 2
 const MAX_VOICE_MESSAGE_BYTES = 16 * 1024 * 1024
 const MIN_VOICE_RECORDING_MS = 600
 const MAX_VOICE_RECORDING_MS = 3 * 60 * 1000
@@ -106,6 +107,7 @@ interface ChatSwipeGesture {
   startY: number
   startOffset: number
   offset: number
+  lastRenderedOffset: number
   active: boolean
 }
 
@@ -2358,6 +2360,7 @@ export const PhoneChat: React.FC = () => {
       startY: touch.clientY,
       startOffset: currentOffset,
       offset: currentOffset,
+      lastRenderedOffset: currentOffset,
       active: false
     }
   }
@@ -2377,12 +2380,14 @@ export const PhoneChat: React.FC = () => {
     }
 
     event.preventDefault()
-    const nextOffset = Math.min(
+    const nextOffset = Math.round(Math.min(
       CHAT_SWIPE_ACTION_WIDTH,
       Math.max(0, gesture.startOffset - deltaX)
-    )
+    ))
 
     gesture.offset = nextOffset
+    if (Math.abs(nextOffset - gesture.lastRenderedOffset) < CHAT_SWIPE_RENDER_STEP) return
+    gesture.lastRenderedOffset = nextOffset
     setDraggingSwipe({ contactId: gesture.contactId, offset: nextOffset })
   }
 
@@ -2411,6 +2416,12 @@ export const PhoneChat: React.FC = () => {
     }
 
     handleSelectContact(contact)
+  }
+
+  const handleChatRowKeyDown = (event: React.KeyboardEvent<HTMLElement>, action: () => void) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return
+    event.preventDefault()
+    action()
   }
 
   const handleUnavailableAttachment = (label: string) => {
@@ -2965,11 +2976,13 @@ export const PhoneChat: React.FC = () => {
       : 'Agente de Ristak'
 
     return (
-      <button
+      <div
         key={AI_AGENT_CHAT_ID}
-        type="button"
+        role="button"
+        tabIndex={0}
         className={`${styles.chatItem} ${styles.aiAgentChatItem} ${aiAgentConversationOpen ? styles.chatItemActive : ''}`}
         onClick={handleOpenAIAgentChat}
+        onKeyDown={(event) => handleChatRowKeyDown(event, handleOpenAIAgentChat)}
       >
         {renderAIAgentAvatar()}
         <span className={styles.chatMain}>
@@ -2980,7 +2993,7 @@ export const PhoneChat: React.FC = () => {
           {dateLabel && <small>{dateLabel}</small>}
           <i className={styles.aiAgentPin}>Fijo</i>
         </span>
-      </button>
+      </div>
     )
   }
 
@@ -3014,25 +3027,28 @@ export const PhoneChat: React.FC = () => {
 
     if (source !== 'chat') {
       return (
-        <button
+        <div
           key={contact.id}
-          type="button"
+          role="button"
+          tabIndex={0}
           className={`${styles.chatItem} ${activeContact?.id === contact.id ? styles.chatItemActive : ''}`}
           onClick={() => handleSelectContact(contact)}
+          onKeyDown={(event) => handleChatRowKeyDown(event, () => handleSelectContact(contact))}
         >
           {content}
-        </button>
+        </div>
       )
     }
 
-    const swipeOffset = draggingSwipe?.contactId === contact.id
+    const isDraggingSwipe = draggingSwipe?.contactId === contact.id
+    const swipeOffset = isDraggingSwipe
       ? draggingSwipe.offset
       : openSwipeChatId === contact.id ? CHAT_SWIPE_ACTION_WIDTH : 0
 
     return (
       <div
         key={contact.id}
-        className={`${styles.chatSwipeRow} ${swipeOffset > 0 ? styles.chatSwipeRowOpen : ''}`}
+        className={`${styles.chatSwipeRow} ${swipeOffset > 0 ? styles.chatSwipeRowOpen : ''} ${isDraggingSwipe ? styles.chatSwipeRowDragging : ''}`}
         onTouchStart={(event) => handleChatTouchStart(contact.id, event)}
         onTouchMove={handleChatTouchMove}
         onTouchEnd={handleChatTouchEnd}
@@ -3064,14 +3080,16 @@ export const PhoneChat: React.FC = () => {
             <span>{isArchived ? 'Restaurar' : 'Archivar'}</span>
           </button>
         </div>
-        <button
-          type="button"
+        <div
+          role="button"
+          tabIndex={0}
           className={`${styles.chatItem} ${styles.chatSwipeContent} ${activeContact?.id === contact.id ? styles.chatItemActive : ''} ${hasUnread ? styles.chatItemUnread : ''}`}
-          style={{ transform: `translateX(-${swipeOffset}px)` }}
+          style={{ transform: `translate3d(-${swipeOffset}px, 0, 0)` }}
           onClick={() => handleChatItemPress(contact)}
+          onKeyDown={(event) => handleChatRowKeyDown(event, () => handleChatItemPress(contact))}
         >
           {content}
-        </button>
+        </div>
       </div>
     )
   }

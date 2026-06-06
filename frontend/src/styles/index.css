@@ -2222,3 +2222,21 @@ body[data-phone-chat-theme='active'][data-phone-chat-tone='dark'] select option:
   color: #07140d;
   background-color: #25d366;
 }
+
+body[data-phone-chat-theme='active'] :is(
+  [class*='archiveRow'],
+  [class*='chatItem'],
+  [class*='chatSwipeRow'],
+  [class*='chatSwipeContent'],
+  [class*='chatSwipeAction'],
+  [class*='chatSwipeActions']
+) {
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  outline: 0 !important;
+}
+
+body[data-phone-chat-theme='active'] [class*='chatSwipeContent'] {
+  clip-path: inset(0 round 0) !important;
+  -webkit-clip-path: inset(0 round 0) !important;
+}
