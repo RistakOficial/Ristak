@@ -178,32 +178,34 @@
 .monthGridPanel {
   display: grid;
   gap: 0;
-  padding: 0 0 5px;
+  padding: 0 16px 7px;
 }
 
 .weekdayRow,
 .monthGrid {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
+  column-gap: 5px;
 }
 
 .weekdayRow {
   height: 24px;
   align-items: end;
-  padding: 0 6px 4px;
+  padding: 0 0 4px;
   border-bottom: 0;
 }
 
 .weekdayRow span {
   color: #8e8e93;
-  font-size: 13px;
+  font-size: 11px;
   font-weight: 780;
   line-height: 1;
   text-align: center;
 }
 
 .monthGrid {
-  padding: 0 0 1px;
+  row-gap: 2px;
+  padding: 0;
 }
 
 .monthDay {
@@ -211,16 +213,16 @@
   appearance: none;
   -webkit-appearance: none;
   display: grid;
-  grid-template-rows: minmax(18px, auto) 7px;
+  grid-template-rows: minmax(15px, auto) 6px;
   place-items: center;
   min-width: 0;
-  min-height: clamp(27px, 4dvh, 36px);
+  min-height: clamp(22px, 3.2dvh, 29px);
   border: 0;
   border-radius: 0;
   background: transparent;
   box-shadow: none;
   color: #050505;
-  font-size: clamp(15px, 4.1vw, 21px);
+  font-size: clamp(11px, 3vw, 15px);
   font-weight: 780;
   line-height: 1;
 }
@@ -243,8 +245,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: clamp(23px, 6vw, 30px);
-  height: clamp(23px, 6vw, 30px);
+  width: clamp(19px, 5vw, 24px);
+  height: clamp(19px, 5vw, 24px);
   border-radius: 999px;
   color: #ffffff;
   background: var(--apple-red);
@@ -256,20 +258,20 @@
   justify-content: center;
   gap: 3px;
   min-width: 6px;
-  height: 7px;
+  height: 6px;
   font-style: normal;
 }
 
 .monthMarkers b {
   display: block;
-  width: 5px;
-  height: 5px;
+  width: 4px;
+  height: 4px;
   border-radius: 999px;
   opacity: 0.85;
 }
 
 .monthMarkers b:nth-child(2) {
-  width: 12px;
+  width: 10px;
 }
 
 .yearPanel,
@@ -615,7 +617,7 @@
   flex-direction: column;
   flex: 0 0 auto;
   min-height: 0;
-  padding: 0 16px 16px;
+  padding: 8px 16px 18px;
   overflow: visible;
 }
 
@@ -628,7 +630,7 @@
 }
 
 .agendaList_list {
-  gap: 6px;
+  gap: 9px;
 }
 
 .eventCard {
@@ -661,11 +663,13 @@
 }
 
 .eventCard_list {
-  min-height: 46px;
-  padding: 7px 0;
-  border: 0;
-  border-bottom: 1px solid var(--soft-line);
-  background: transparent;
+  min-height: 66px;
+  grid-template-columns: 6px minmax(0, 1fr) auto;
+  padding: 12px;
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.05);
 }
 
 .eventAccent {
@@ -729,13 +733,17 @@
 }
 
 .eventCard_list .eventMain strong {
-  font-size: 16px;
+  font-size: 17px;
 }
 
 .eventCard_list .eventMain small,
 .eventCard_list .eventTimeStack strong,
 .eventCard_list .eventTimeStack small {
   font-size: 13px;
+}
+
+.eventCard_list .eventTimeStack {
+  min-width: 72px;
 }
 
 .emptyAgenda {
