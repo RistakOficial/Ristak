@@ -754,7 +754,7 @@
 
 .contactInfoTimelineItem {
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr);
+  grid-template-columns: 30px minmax(0, 1fr);
   gap: 10px;
   min-width: 0;
   padding: 9px 0;
@@ -764,13 +764,44 @@
   border-top: 1px solid #f0f0f0;
 }
 
-.contactInfoTimelineItem > span {
-  width: 9px;
-  height: 9px;
-  margin-top: 5px;
+.contactInfoTimelineIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  margin-top: 1px;
   border-radius: 999px;
-  background: #25d366;
-  box-shadow: 0 0 0 4px #e9f9ef;
+}
+
+.contactInfoTimelineIconWhatsapp {
+  color: #128c3a;
+  background: #e9f9ef;
+}
+
+.contactInfoTimelineIconVisit {
+  color: #1d4ed8;
+  background: #eff6ff;
+}
+
+.contactInfoTimelineIconContact {
+  color: #7c3aed;
+  background: #f3e8ff;
+}
+
+.contactInfoTimelineIconAppointment {
+  color: #c2410c;
+  background: #fff7ed;
+}
+
+.contactInfoTimelineIconPayment {
+  color: #047857;
+  background: #ecfdf5;
+}
+
+.contactInfoTimelineIconDefault {
+  color: #525252;
+  background: #f5f5f5;
 }
 
 .contactInfoTimelineItem div {

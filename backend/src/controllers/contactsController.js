@@ -172,6 +172,99 @@ const mapChatContactRowForResponse = (contact = {}) => ({
   unreadCount: Number(contact.unread_count || 0)
 })
 
+const mapMetaAttributionRow = (row, matchType) => {
+  if (!row) return null
+
+  return {
+    source: 'meta_ads',
+    matchType,
+    campaignId: row.campaign_id || null,
+    campaignName: row.campaign_name || null,
+    adsetId: row.adset_id || null,
+    adsetName: row.adset_name || null,
+    adId: row.ad_id || null,
+    adName: row.ad_name || null,
+    creativeThumbnailUrl: row.creative_thumbnail_url || null,
+    creativeImageUrl: row.creative_image_url || null,
+    creativeVideoUrl: row.creative_video_url || null,
+    creativePreviewUrl: row.creative_preview_url || null,
+    date: row.date || null
+  }
+}
+
+const getMetaAttributionForContact = async (contact = {}, firstSession = null, whatsappAttribution = null) => {
+  const uniqueValues = (values = [], normalize = value => cleanString(value)) => {
+    const seen = new Set()
+    const result = []
+
+    values.forEach(value => {
+      const normalized = normalize(value)
+      if (!normalized || seen.has(normalized)) return
+      seen.add(normalized)
+      result.push(normalized)
+    })
+
+    return result
+  }
+
+  const selectMetaFields = `
+    SELECT
+      date,
+      campaign_id,
+      campaign_name,
+      adset_id,
+      adset_name,
+      ad_id,
+      ad_name,
+      creative_thumbnail_url,
+      creative_image_url,
+      creative_video_url,
+      creative_preview_url
+    FROM meta_ads
+  `
+
+  const adIdCandidates = uniqueValues([
+    contact.attribution_ad_id,
+    firstSession?.ad_id,
+    whatsappAttribution?.referral_source_id
+  ])
+
+  if (adIdCandidates.length > 0) {
+    const rows = await db.all(
+      `${selectMetaFields}
+       WHERE ad_id IN (${adIdCandidates.map(() => '?').join(', ')})
+       ORDER BY date DESC`,
+      adIdCandidates
+    )
+
+    for (const candidate of adIdCandidates) {
+      const match = rows.find(row => cleanString(row.ad_id) === candidate)
+      if (match) return mapMetaAttributionRow(match, 'ad_id')
+    }
+  }
+
+  const adNameCandidates = uniqueValues([
+    firstSession?.ad_name,
+    contact.attribution_ad_name
+  ], value => cleanString(value).toLowerCase())
+
+  if (adNameCandidates.length > 0) {
+    const rows = await db.all(
+      `${selectMetaFields}
+       WHERE LOWER(ad_name) IN (${adNameCandidates.map(() => '?').join(', ')})
+       ORDER BY date DESC`,
+      adNameCandidates
+    )
+
+    for (const candidate of adNameCandidates) {
+      const match = rows.find(row => cleanString(row.ad_name).toLowerCase() === candidate)
+      if (match) return mapMetaAttributionRow(match, 'ad_name_exact')
+    }
+  }
+
+  return null
+}
+
 /**
  * Obtiene conversaciones con actividad de WhatsApp.
  */
@@ -962,7 +1055,9 @@ export const getContactById = async (req, res) => {
     }
 
     const whatsappAttributionsByContact = await loadFirstWhatsAppAttributions([id])
-    const attributionFields = buildContactAttributionFields(contact, whatsappAttributionsByContact.get(id))
+    const whatsappAttribution = whatsappAttributionsByContact.get(id)
+    const attributionFields = buildContactAttributionFields(contact, whatsappAttribution)
+    const metaAttribution = await getMetaAttributionForContact(contact, firstSession, whatsappAttribution)
 
     // Mapear campos de base de datos a nombres esperados por frontend
     const mappedContact = {
@@ -992,6 +1087,7 @@ export const getContactById = async (req, res) => {
       attribution_medium: attributionFields.attribution_medium,
       attribution_ctwa_clid: attributionFields.attribution_ctwa_clid,
       whatsappAttributionPlatform: attributionFields.whatsappAttributionPlatform,
+      metaAttribution,
       firstSession: firstSession ? {
         started_at: firstSession.started_at,
         page_url: firstSession.page_url,
@@ -1602,6 +1698,7 @@ export const getContactJourney = async (req, res) => {
       FROM contacts
       LEFT JOIN meta_ads ON meta_ads.ad_id = contacts.attribution_ad_id
       WHERE contacts.id = ?
+      ORDER BY meta_ads.date DESC
       LIMIT 1
     `, [id])
     if (!contact) {
@@ -1832,7 +1929,7 @@ export const getContactJourney = async (req, res) => {
         email: contact.email,
         phone: contact.phone,
         source: contact.source,
-        attribution_ad_name: contact.attribution_ad_name || contact.meta_ad_name,
+        attribution_ad_name: contact.meta_ad_name || contact.attribution_ad_name,
         attribution_ad_id: contact.attribution_ad_id,
         campaign_name: contact.campaign_name,
         adset_name: contact.adset_name

@@ -14,6 +14,7 @@ import {
   FileText,
   Globe2,
   Image as ImageIcon,
+  Layers,
   Loader2,
   Mail,
   MapPin,
@@ -433,7 +434,7 @@ function getTrackingData(contact?: Contact | null, journey: JourneyEvent[] = [])
     source_platform: firstSession?.source_platform || pageData.source_platform || attributionSource,
     site_source_name: firstSession?.site_source_name || pageData.site_source_name || attributionSource,
     campaign_name: firstSession?.campaign_name || pageData.campaign_name || null,
-    ad_name: firstSession?.ad_name || pageData.ad_name || contact?.ad_name || null,
+    ad_name: firstSession?.ad_name || pageData.ad_name || null,
     ad_id: firstSession?.ad_id || pageData.ad_id || contact?.ad_id || null,
     device_type: firstSession?.device_type || pageData.device_type || null,
     browser: firstSession?.browser || pageData.browser || null,
@@ -477,6 +478,36 @@ function getJourneyEventLabel(event: JourneyEvent, leadLabel: string) {
   return 'Actividad'
 }
 
+function isWhatsAppJourneyEvent(event?: JourneyEvent | null) {
+  if (!event) return false
+  const data = event.data || {}
+  const source = String(data.source || data.referral_source_app || data.referral_entry_point || '').toLowerCase()
+
+  return event.type === 'whatsapp_message' || source.includes('whatsapp')
+}
+
+function getJourneyEventIcon(event: JourneyEvent) {
+  if (isWhatsAppJourneyEvent(event)) return <Icon name="whatsapp" size={15} />
+
+  if (event.type === 'page_visit') return <MousePointerClick size={15} />
+  if (event.type === 'contact_created') return <User size={15} />
+  if (event.type === 'appointment') return <CalendarDays size={15} />
+  if (event.type === 'payment') return <DollarSign size={15} />
+
+  return <MousePointerClick size={15} />
+}
+
+function getJourneyEventIconClass(event: JourneyEvent) {
+  if (isWhatsAppJourneyEvent(event)) return styles.contactInfoTimelineIconWhatsapp
+
+  if (event.type === 'page_visit') return styles.contactInfoTimelineIconVisit
+  if (event.type === 'contact_created') return styles.contactInfoTimelineIconContact
+  if (event.type === 'appointment') return styles.contactInfoTimelineIconAppointment
+  if (event.type === 'payment') return styles.contactInfoTimelineIconPayment
+
+  return styles.contactInfoTimelineIconDefault
+}
+
 function getJourneyEventDescription(event: JourneyEvent) {
   const data = event.data || {}
 
@@ -485,7 +516,11 @@ function getJourneyEventDescription(event: JourneyEvent) {
   }
 
   if (event.type === 'contact_created') {
-    return getReadableValue(data.source) || 'Contacto guardado en Ristak'
+    const source = getReadableValue(data.source) || 'Contacto guardado en Ristak'
+    const campaign = getReadableValue(data.campaign_name)
+    const adName = getReadableValue(data.attribution_ad_name || data.meta_ad_name)
+
+    return [source, campaign || adName].filter(Boolean).join(' · ')
   }
 
   if (event.type === 'appointment') {
@@ -501,6 +536,32 @@ function getJourneyEventDescription(event: JourneyEvent) {
   }
 
   return ''
+}
+
+function getResolvedMetaAttribution(contact?: Contact | null, journey: JourneyEvent[] = []): Contact['metaAttribution'] | null {
+  const direct = contact?.metaAttribution
+  if (direct && (direct.campaignName || direct.adsetName || direct.adName || direct.adId)) {
+    return direct
+  }
+
+  const contactCreatedEvent = journey.find((event) => {
+    if (event.type !== 'contact_created') return false
+    const data = event.data || {}
+    return Boolean((data.campaign_name || data.adset_name) && (data.attribution_ad_id || data.attribution_ad_name))
+  })
+
+  if (!contactCreatedEvent) return null
+
+  const data = contactCreatedEvent.data || {}
+
+  return {
+    source: 'meta_ads',
+    matchType: 'journey',
+    campaignName: data.campaign_name || null,
+    adsetName: data.adset_name || null,
+    adId: data.attribution_ad_id || null,
+    adName: data.attribution_ad_name || data.meta_ad_name || null
+  }
 }
 
 function getChatPreview(contact: ChatContact) {
@@ -1481,8 +1542,18 @@ export const PhoneChat: React.FC = () => {
     const leadEvent = contactJourney.find((event) => event.type === 'contact_created')
     const leadDate = leadEvent?.date || contactInfoData.createdAt
     const leadSource = getReadableValue(leadEvent?.data?.source) || contactInfoSource
-    const campaignName = getReadableValue(contactInfoTracking.campaign_name || contactInfoTracking.utm_campaign)
-    const adName = getReadableValue(contactInfoTracking.ad_name || contactInfoTracking.utm_content)
+    const resolvedMetaAttribution = getResolvedMetaAttribution(contactInfoData, contactJourney)
+    const campaignName = getReadableValue(resolvedMetaAttribution?.campaignName || contactInfoTracking.campaign_name || contactInfoTracking.utm_campaign)
+    const campaignDetail = resolvedMetaAttribution
+      ? ['Datos reales de Meta', getReadableValue(resolvedMetaAttribution.campaignId)].filter(Boolean).join(' · ')
+      : ''
+    const adsetName = getReadableValue(resolvedMetaAttribution?.adsetName)
+    const adsetDetail = getReadableValue(resolvedMetaAttribution?.adsetId)
+    const adName = getReadableValue(resolvedMetaAttribution?.adName || contactInfoTracking.ad_name || contactInfoTracking.utm_content)
+    const adDetail = [
+      resolvedMetaAttribution ? 'Anuncio real de Meta' : '',
+      getReadableValue(resolvedMetaAttribution?.adId || contactInfoTracking.ad_id)
+    ].filter(Boolean).join(' · ')
     const pageName = getReadableValue(getPageName(contactInfoTracking.page_url))
     const deviceName = [getReadableValue(contactInfoTracking.device_type), getReadableValue(contactInfoTracking.browser)].filter(Boolean).join(' · ')
     const locationName = [contactInfoTracking.geo_city, contactInfoTracking.geo_region, contactInfoTracking.geo_country]
@@ -1580,8 +1651,9 @@ export const PhoneChat: React.FC = () => {
               {renderContactInfoRow('source', <Globe2 size={17} />, 'Llegó desde', contactInfoSource || 'Sin origen guardado')}
               {renderContactInfoRow('first-visit', <MousePointerClick size={17} />, 'Primera visita', contactInfoTracking.started_at ? formatLocalDateTime(contactInfoTracking.started_at) : '')}
               {renderContactInfoRow('page', <FileText size={17} />, 'Página', pageName)}
-              {renderContactInfoRow('campaign', <Megaphone size={17} />, 'Campaña', campaignName)}
-              {renderContactInfoRow('ad', <ReceiptText size={17} />, 'Anuncio', adName, getReadableValue(contactInfoTracking.ad_id))}
+              {renderContactInfoRow('campaign', <Megaphone size={17} />, 'Campaña', campaignName, campaignDetail)}
+              {renderContactInfoRow('adset', <Layers size={17} />, 'Conjunto', adsetName, adsetDetail)}
+              {renderContactInfoRow('ad', <ReceiptText size={17} />, 'Anuncio', adName, adDetail)}
               {renderContactInfoRow('device', <Smartphone size={17} />, 'Dispositivo', deviceName)}
               {renderContactInfoRow('location', <MapPin size={17} />, 'Ubicación', locationName)}
               {firstSuccessfulPayment
@@ -1642,11 +1714,13 @@ export const PhoneChat: React.FC = () => {
 
           {contactInfoRecentEvents.length > 0 && (
             <section className={styles.contactInfoSection}>
-              <h3>Actividad reciente</h3>
+              <h3>Viaje del cliente</h3>
               <div className={styles.contactInfoTimeline}>
                 {contactInfoRecentEvents.map((event, index) => (
                   <div key={`${event.type}-${event.date}-${index}`} className={styles.contactInfoTimelineItem}>
-                    <span />
+                    <span className={`${styles.contactInfoTimelineIcon} ${getJourneyEventIconClass(event)}`}>
+                      {getJourneyEventIcon(event)}
+                    </span>
                     <div>
                       <strong>{getJourneyEventLabel(event, leadLabel)}</strong>
                       <small>{getJourneyEventDescription(event)}</small>

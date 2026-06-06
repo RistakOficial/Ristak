@@ -42,6 +42,22 @@ export interface ContactFirstSession {
   geo_country?: string | null
 }
 
+export interface ContactMetaAttribution {
+  source?: 'meta_ads' | string | null
+  matchType?: 'ad_id' | 'ad_name_exact' | string | null
+  campaignId?: string | null
+  campaignName?: string | null
+  adsetId?: string | null
+  adsetName?: string | null
+  adId?: string | null
+  adName?: string | null
+  creativeThumbnailUrl?: string | null
+  creativeImageUrl?: string | null
+  creativeVideoUrl?: string | null
+  creativePreviewUrl?: string | null
+  date?: string | null
+}
+
 export type ContactCustomFieldValue =
   | string
   | number
@@ -97,5 +113,6 @@ export interface Contact {
   payments?: ContactPayment[]
   appointments?: ContactAppointment[]
   firstSession?: ContactFirstSession | null
+  metaAttribution?: ContactMetaAttribution | null
   customFields?: ContactCustomField[]
 }
