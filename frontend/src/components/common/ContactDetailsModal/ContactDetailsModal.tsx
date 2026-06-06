@@ -75,6 +75,17 @@ interface ContactDetail {
   is_sale?: boolean
   firstSession?: ContactFirstSession | null
   customFields?: ContactCustomField[]
+  preferredWhatsAppPhoneNumberId?: string | null
+  preferred_whatsapp_phone_number_id?: string | null
+}
+
+interface WhatsAppPhoneOption {
+  id: string
+  phone_number?: string | null
+  display_phone_number?: string | null
+  verified_name?: string | null
+  label?: string | null
+  is_default_sender?: boolean
 }
 
 interface ContactDetailsModalProps {
@@ -86,6 +97,8 @@ interface ContactDetailsModalProps {
   loading: boolean
   type?: 'interesados' | 'sales' | 'appointments' | 'attendances' | null
   onUpdateCustomFields?: (contactId: string, customFields: ContactCustomField[]) => Promise<ContactCustomField[]>
+  whatsappPhoneNumbers?: WhatsAppPhoneOption[]
+  onUpdatePreferredWhatsAppPhoneNumber?: (contactId: string, phoneNumberId: string) => Promise<Partial<ContactDetail> | void>
 }
 
 const getCustomFieldIdentity = (field: ContactCustomField, index: number) =>
@@ -93,6 +106,15 @@ const getCustomFieldIdentity = (field: ContactCustomField, index: number) =>
 
 const getCustomFieldLabel = (field: ContactCustomField, index: number) =>
   field.label || field.name || field.key || field.fieldKey || field.id || `Campo personalizado ${index + 1}`
+
+const getWhatsAppPhoneLabel = (phone: WhatsAppPhoneOption) => {
+  const number = phone.display_phone_number || phone.phone_number || phone.id
+  const name = phone.label || phone.verified_name || ''
+  return name && name !== number ? `${name} · ${number}` : number
+}
+
+const getPreferredWhatsAppPhoneNumberId = (contact?: ContactDetail | null) =>
+  String(contact?.preferredWhatsAppPhoneNumberId || contact?.preferred_whatsapp_phone_number_id || '')
 
 const WHATSAPP_RESERVED_CUSTOM_FIELD_KEYS = new Set([
   'whatsapp_api_provider',
@@ -192,7 +214,9 @@ export function ContactDetailsModal({
   data,
   loading,
   type,
-  onUpdateCustomFields
+  onUpdateCustomFields,
+  whatsappPhoneNumbers = [],
+  onUpdatePreferredWhatsAppPhoneNumber
 }: ContactDetailsModalProps) {
   const [selectedContact, setSelectedContact] = useState<ContactDetail | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
@@ -203,6 +227,8 @@ export function ContactDetailsModal({
   const [customFieldDrafts, setCustomFieldDrafts] = useState<Record<string, string>>({})
   const [savingCustomField, setSavingCustomField] = useState<string | null>(null)
   const [customFieldError, setCustomFieldError] = useState<string | null>(null)
+  const [savingWhatsAppPreference, setSavingWhatsAppPreference] = useState(false)
+  const [whatsappPreferenceError, setWhatsappPreferenceError] = useState<string | null>(null)
   const { labels } = useLabels()
   const { formatLocalDateShort, formatLocalDateTime, timezone } = useTimezone()
   const visibleCustomFields = useMemo(
@@ -224,6 +250,8 @@ export function ContactDetailsModal({
       setCustomFieldDrafts({})
       setSavingCustomField(null)
       setCustomFieldError(null)
+      setSavingWhatsAppPreference(false)
+      setWhatsappPreferenceError(null)
     }
   }, [isOpen, data])
 
@@ -235,6 +263,8 @@ export function ContactDetailsModal({
     setCustomFieldDrafts({})
     setSavingCustomField(null)
     setCustomFieldError(null)
+    setSavingWhatsAppPreference(false)
+    setWhatsappPreferenceError(null)
   }, [selectedContact?.id])
 
   useEffect(() => {
@@ -351,6 +381,30 @@ export function ContactDetailsModal({
       setCustomFieldError(message)
     } finally {
       setSavingCustomField(null)
+    }
+  }
+
+  const updatePreferredWhatsAppPhoneNumber = async (phoneNumberId: string) => {
+    if (!selectedContact || !onUpdatePreferredWhatsAppPhoneNumber) return
+
+    setSavingWhatsAppPreference(true)
+    setWhatsappPreferenceError(null)
+
+    try {
+      const updatedContact = await onUpdatePreferredWhatsAppPhoneNumber(selectedContact.id, phoneNumberId)
+      setSelectedContact(prev => prev?.id === selectedContact.id
+        ? {
+            ...prev,
+            ...(updatedContact || {}),
+            preferredWhatsAppPhoneNumberId: phoneNumberId,
+            preferred_whatsapp_phone_number_id: phoneNumberId
+          }
+        : prev
+      )
+    } catch (error) {
+      setWhatsappPreferenceError(error instanceof Error ? error.message : 'No se pudo guardar el número para responder.')
+    } finally {
+      setSavingWhatsAppPreference(false)
     }
   }
 
@@ -565,6 +619,48 @@ export function ContactDetailsModal({
                     </div>
                   </div>
                 </div>
+
+                {whatsappPhoneNumbers.length > 0 && (
+                  <div className={styles.detailSection}>
+                    <h5 className={styles.detailSectionTitle}>WhatsApp para responder</h5>
+                    <div className={styles.whatsappPreference}>
+                      <div className={styles.whatsappPreferenceHeader}>
+                        <Icon name="whatsapp" size={16} />
+                        <div>
+                          <strong>
+                            {getPreferredWhatsAppPhoneNumberId(selectedContact)
+                              ? 'Número fijo para este contacto'
+                              : 'Automático por conversación'}
+                          </strong>
+                          <span>
+                            {getPreferredWhatsAppPhoneNumberId(selectedContact)
+                              ? 'Ristak siempre responderá a este contacto desde el número elegido.'
+                              : 'Ristak responderá desde el número por donde llegó el mensaje. Si no hay historial, usa el principal.'}
+                          </span>
+                        </div>
+                      </div>
+                      <select
+                        className={styles.whatsappPreferenceSelect}
+                        value={getPreferredWhatsAppPhoneNumberId(selectedContact)}
+                        onChange={(event) => updatePreferredWhatsAppPhoneNumber(event.target.value)}
+                        disabled={savingWhatsAppPreference || !onUpdatePreferredWhatsAppPhoneNumber}
+                      >
+                        <option value="">Automático: usar el número por donde llegó</option>
+                        {whatsappPhoneNumbers.map((phone) => (
+                          <option key={phone.id} value={phone.id}>
+                            {getWhatsAppPhoneLabel(phone)}{phone.is_default_sender ? ' · Principal' : ''}
+                          </option>
+                        ))}
+                      </select>
+                      {savingWhatsAppPreference && (
+                        <p className={styles.whatsappPreferenceHint}>Guardando cambio...</p>
+                      )}
+                      {whatsappPreferenceError && (
+                        <p className={styles.customFieldError}>{whatsappPreferenceError}</p>
+                      )}
+                    </div>
+                  </div>
+                )}
 
                 <div className={styles.detailSection}>
                   <button

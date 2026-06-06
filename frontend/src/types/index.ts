@@ -101,6 +101,8 @@ export interface Contact {
   whatsappAttributionPlatform?: string | null
   ad_name?: string
   ad_id?: string
+  preferredWhatsAppPhoneNumberId?: string | null
+  preferred_whatsapp_phone_number_id?: string | null
   notes?: string
   normalizedPhone?: string | null
   duplicateCount?: number

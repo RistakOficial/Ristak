@@ -13,7 +13,8 @@ import {
   sendWhatsAppApiAudioMessageView,
   sendWhatsAppApiImageMessageView,
   sendWhatsAppApiTemplateMessageView,
-  sendWhatsAppApiTextMessageView
+  sendWhatsAppApiTextMessageView,
+  setWhatsAppApiDefaultPhoneNumberView
 } from '../controllers/whatsappApiController.js'
 
 const router = express.Router()
@@ -21,6 +22,7 @@ const router = express.Router()
 router.get('/status', getWhatsAppApiConnectionStatus)
 router.post('/connect', connectWhatsAppApiView)
 router.post('/phone-numbers/preview', previewWhatsAppApiPhoneNumbersView)
+router.post('/phone-numbers/default', setWhatsAppApiDefaultPhoneNumberView)
 router.post('/refresh', refreshWhatsAppApiView)
 router.post('/disconnect', disconnectWhatsAppApiView)
 router.post('/reset', resetWhatsAppApiCredentialsView)

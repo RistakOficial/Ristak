@@ -1176,6 +1176,33 @@ async function setDefaultSenderPhoneNumber(phoneNumberId) {
   `, [cleanPhoneNumberId])
 }
 
+export async function setWhatsAppApiDefaultPhoneNumber({ phoneNumberId } = {}) {
+  const cleanPhoneNumberId = cleanString(phoneNumberId)
+  if (!cleanPhoneNumberId) {
+    throw new Error('Elige el número que quieres dejar como principal')
+  }
+
+  const phoneNumber = await db.get(`
+    SELECT id, waba_id, phone_number, display_phone_number
+    FROM whatsapp_api_phone_numbers
+    WHERE id = ?
+  `, [cleanPhoneNumberId])
+
+  if (!phoneNumber) {
+    throw new Error('Ese número de WhatsApp no está conectado')
+  }
+
+  const senderPhone = phoneNumber.phone_number || phoneNumber.display_phone_number || ''
+  await setDefaultSenderPhoneNumber(cleanPhoneNumberId)
+  await setAppConfig(CONFIG_KEYS.senderPhone, senderPhone)
+  await setAppConfig(CONFIG_KEYS.phoneNumberId, phoneNumber.id || '')
+  await setAppConfig(CONFIG_KEYS.wabaId, phoneNumber.waba_id || '')
+  await setAppConfig(CONFIG_KEYS.lastSyncedAt, nowIso())
+  await setAppConfig(CONFIG_KEYS.lastError, '')
+
+  return getWhatsAppApiStatus()
+}
+
 async function findBusinessPhoneNumberId(phone = '') {
   const normalized = normalizePhoneForStorage(phone) || cleanString(phone)
   if (!normalized) return null

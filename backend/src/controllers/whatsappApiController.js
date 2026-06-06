@@ -14,7 +14,8 @@ import {
   sendWhatsAppApiAudioMessage,
   sendWhatsAppApiImageMessage,
   sendWhatsAppApiTemplateMessage,
-  sendWhatsAppApiTextMessage
+  sendWhatsAppApiTextMessage,
+  setWhatsAppApiDefaultPhoneNumber
 } from '../services/whatsappApiService.js'
 import { logger } from '../utils/logger.js'
 
@@ -97,6 +98,21 @@ export async function previewWhatsAppApiPhoneNumbersView(req, res) {
     res.status(400).json({
       success: false,
       error: error.message || 'No se pudieron leer los numeros de WhatsApp Business'
+    })
+  }
+}
+
+export async function setWhatsAppApiDefaultPhoneNumberView(req, res) {
+  try {
+    const data = await setWhatsAppApiDefaultPhoneNumber({
+      phoneNumberId: req.body?.phoneNumberId
+    })
+    res.json({ success: true, data })
+  } catch (error) {
+    logger.error(`Error marcando numero principal WhatsApp_API: ${error.message}`)
+    res.status(400).json({
+      success: false,
+      error: error.message || 'No se pudo marcar el numero principal'
     })
   }
 }

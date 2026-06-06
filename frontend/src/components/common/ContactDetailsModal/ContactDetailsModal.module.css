@@ -542,6 +542,76 @@
   color: var(--color-text-primary);
 }
 
+.whatsappPreference {
+  display: grid;
+  gap: 0.625rem;
+  min-width: 0;
+}
+
+.whatsappPreferenceHeader {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.5rem;
+  align-items: start;
+  color: var(--color-text-secondary);
+}
+
+.whatsappPreferenceHeader svg {
+  color: #16a34a;
+  margin-top: 0.125rem;
+}
+
+.whatsappPreferenceHeader strong,
+.whatsappPreferenceHeader span {
+  display: block;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.whatsappPreferenceHeader strong {
+  color: var(--color-text-primary);
+  font-size: 0.8125rem;
+  font-weight: 700;
+}
+
+.whatsappPreferenceHeader span {
+  margin-top: 0.125rem;
+  color: var(--color-text-tertiary);
+  font-size: 0.75rem;
+  line-height: 1.35;
+}
+
+.whatsappPreferenceSelect {
+  width: 100%;
+  min-height: 38px;
+  box-sizing: border-box;
+  border: 1px solid var(--color-border, rgba(148, 163, 184, 0.22));
+  border-radius: 6px;
+  background: var(--color-background, rgba(148, 163, 184, 0.06));
+  color: var(--color-text-primary);
+  font-family: inherit;
+  font-size: 0.875rem;
+  font-weight: 600;
+  padding: 0 0.75rem;
+}
+
+.whatsappPreferenceSelect:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px rgba(var(--color-primary-rgb), 0.12);
+}
+
+.whatsappPreferenceSelect:disabled {
+  opacity: 0.68;
+  cursor: wait;
+}
+
+.whatsappPreferenceHint {
+  margin: -0.25rem 0 0 0;
+  color: var(--color-text-tertiary);
+  font-size: 0.75rem;
+}
+
 .customFieldsToggle {
   width: 100%;
   display: flex;

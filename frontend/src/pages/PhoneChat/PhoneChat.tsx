@@ -164,6 +164,8 @@ interface ChatContact extends Contact {
   lastMessageDirection?: string
   lastBusinessPhone?: string
   lastBusinessPhoneNumberId?: string
+  lastInboundBusinessPhone?: string
+  lastInboundBusinessPhoneNumberId?: string
   messageCount?: number
   unreadCount?: number
   profilePhotoUrl?: string | null
@@ -1339,15 +1341,37 @@ export const PhoneChat: React.FC = () => {
     businessPhones.find((phone) => phone.id === selectedChatPhoneId) || null
   ), [businessPhones, selectedChatPhoneId])
   const selectedBusinessPhone = useMemo(() => {
+    const preferredBusinessPhoneId = activeContact?.preferredWhatsAppPhoneNumberId ||
+      activeContact?.preferred_whatsapp_phone_number_id ||
+      ''
+    const fromContactPreference = preferredBusinessPhoneId
+      ? businessPhones.find((phone) => phone.id === preferredBusinessPhoneId)
+      : null
+
+    const newestInboundMessageWithBusinessPhone = [...messages]
+      .filter((message) => message.direction === 'inbound' && (message.businessPhoneNumberId || message.businessPhone))
+      .sort((left, right) => Date.parse(right.date) - Date.parse(left.date))[0] || null
     const newestMessageWithBusinessPhone = [...messages]
       .filter((message) => message.businessPhoneNumberId || message.businessPhone)
       .sort((left, right) => Date.parse(right.date) - Date.parse(left.date))[0] || null
 
+    const fromInboundMessageId = newestInboundMessageWithBusinessPhone?.businessPhoneNumberId
+      ? businessPhones.find((phone) => phone.id === newestInboundMessageWithBusinessPhone.businessPhoneNumberId)
+      : null
+    const fromInboundMessagePhone = newestInboundMessageWithBusinessPhone?.businessPhone
+      ? businessPhones.find((phone) => phoneLooksSame(getBusinessPhoneValue(phone), newestInboundMessageWithBusinessPhone.businessPhone))
+      : null
     const fromMessageId = newestMessageWithBusinessPhone?.businessPhoneNumberId
       ? businessPhones.find((phone) => phone.id === newestMessageWithBusinessPhone.businessPhoneNumberId)
       : null
     const fromMessagePhone = newestMessageWithBusinessPhone?.businessPhone
       ? businessPhones.find((phone) => phoneLooksSame(getBusinessPhoneValue(phone), newestMessageWithBusinessPhone.businessPhone))
+      : null
+    const fromChatInboundId = activeContact?.lastInboundBusinessPhoneNumberId
+      ? businessPhones.find((phone) => phone.id === activeContact.lastInboundBusinessPhoneNumberId)
+      : null
+    const fromChatInboundPhone = activeContact?.lastInboundBusinessPhone
+      ? businessPhones.find((phone) => phoneLooksSame(getBusinessPhoneValue(phone), activeContact.lastInboundBusinessPhone))
       : null
     const fromChatId = activeContact?.lastBusinessPhoneNumberId
       ? businessPhones.find((phone) => phone.id === activeContact.lastBusinessPhoneNumberId)
@@ -1356,7 +1380,12 @@ export const PhoneChat: React.FC = () => {
       ? businessPhones.find((phone) => phoneLooksSame(getBusinessPhoneValue(phone), activeContact.lastBusinessPhone))
       : null
 
-    return fromMessageId ||
+    return fromContactPreference ||
+      fromInboundMessageId ||
+      fromInboundMessagePhone ||
+      fromChatInboundId ||
+      fromChatInboundPhone ||
+      fromMessageId ||
       fromMessagePhone ||
       fromChatId ||
       fromChatPhone ||
@@ -1365,8 +1394,12 @@ export const PhoneChat: React.FC = () => {
       businessPhones[0] ||
       null
   }, [
+    activeContact?.lastInboundBusinessPhone,
+    activeContact?.lastInboundBusinessPhoneNumberId,
     activeContact?.lastBusinessPhone,
     activeContact?.lastBusinessPhoneNumberId,
+    activeContact?.preferredWhatsAppPhoneNumberId,
+    activeContact?.preferred_whatsapp_phone_number_id,
     businessPhones,
     messages,
     whatsappStatus?.selectedPhone

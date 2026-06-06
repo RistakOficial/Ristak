@@ -690,16 +690,24 @@ async function initTables() {
         meta_purchase_event_sent INTEGER DEFAULT 0,
         meta_purchase_event_sent_at DATETIME,
         meta_purchase_event_id TEXT,
+        preferred_whatsapp_phone_number_id TEXT,
         custom_fields ${usePostgres ? "JSONB DEFAULT '[]'::jsonb" : "TEXT DEFAULT '[]'"},
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
     `)
 
+    try {
+      await db.run('ALTER TABLE contacts ADD COLUMN preferred_whatsapp_phone_number_id TEXT')
+    } catch (err) {
+      // Columna ya existe, ignorar.
+    }
+
     // Índices para contacts
     await db.run('CREATE INDEX IF NOT EXISTS idx_contacts_phone ON contacts(phone)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_contacts_email ON contacts(email)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_contacts_ad_id ON contacts(attribution_ad_id)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_contacts_preferred_whatsapp_phone ON contacts(preferred_whatsapp_phone_number_id)')
     try {
       await db.run('CREATE INDEX IF NOT EXISTS idx_contacts_meta_schedule_sent ON contacts(meta_schedule_event_sent)')
       await db.run('CREATE INDEX IF NOT EXISTS idx_contacts_meta_purchase_sent ON contacts(meta_purchase_event_sent)')

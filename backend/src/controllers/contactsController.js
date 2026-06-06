@@ -56,6 +56,7 @@ const ACTIVE_APPOINTMENT_CONDITION = `LOWER(COALESCE(appointment_status, status,
 const ATTENDED_APPOINTMENT_CONDITION = `LOWER(COALESCE(appointment_status, status, '')) IN (${sqlList(APPOINTMENT_ATTENDED_STATUSES)})`
 
 const cleanString = (value) => String(value || '').trim()
+const hasOwn = (object, key) => Object.prototype.hasOwnProperty.call(object || {}, key)
 
 const parseJsonObject = (value) => {
   if (!value) return null
@@ -197,6 +198,8 @@ const mapContactRowForResponse = (contact = {}) => {
     profilePhotoUrl: getContactProfilePhotoUrl(contact) || null,
     ad_name: contact.attribution_ad_name,
     ad_id: contact.attribution_ad_id,
+    preferredWhatsAppPhoneNumberId: contact.preferred_whatsapp_phone_number_id || '',
+    preferred_whatsapp_phone_number_id: contact.preferred_whatsapp_phone_number_id || '',
     customFields: parseContactCustomFields(contact.custom_fields),
     notes: ''
   }
@@ -210,6 +213,8 @@ const mapChatContactRowForResponse = (contact = {}) => ({
   lastMessageDirection: contact.last_message_direction || '',
   lastBusinessPhone: contact.last_business_phone || '',
   lastBusinessPhoneNumberId: contact.last_business_phone_number_id || '',
+  lastInboundBusinessPhone: contact.last_inbound_business_phone || '',
+  lastInboundBusinessPhoneNumberId: contact.last_inbound_business_phone_number_id || '',
   messageCount: Number(contact.message_count || 0),
   unreadCount: Number(contact.unread_count || 0)
 })
@@ -387,6 +392,7 @@ export const getChatContacts = async (req, res) => {
         c.source,
         c.attribution_ad_name,
         c.attribution_ad_id,
+        c.preferred_whatsapp_phone_number_id,
         c.custom_fields,
         (
           SELECT raw_profile_json
@@ -427,6 +433,8 @@ export const getChatContacts = async (req, res) => {
         lm.direction AS last_message_direction,
         lm.business_phone AS last_business_phone,
         lm.business_phone_number_id AS last_business_phone_number_id,
+        lim.business_phone AS last_inbound_business_phone,
+        lim.business_phone_number_id AS last_inbound_business_phone_number_id,
         0 AS unread_count
       FROM chat_stats
       JOIN contacts c ON c.id = chat_stats.contact_id
@@ -435,6 +443,15 @@ export const getChatContacts = async (req, res) => {
         SELECT id
         FROM whatsapp_api_messages
         WHERE contact_id = c.id
+        ORDER BY COALESCE(message_timestamp, created_at) DESC, created_at DESC
+        LIMIT 1
+      )
+      LEFT JOIN whatsapp_api_messages lim ON lim.id = (
+        SELECT id
+        FROM whatsapp_api_messages
+        WHERE contact_id = c.id
+          AND direction = 'inbound'
+          AND (business_phone_number_id IS NOT NULL OR business_phone IS NOT NULL)
         ORDER BY COALESCE(message_timestamp, created_at) DESC, created_at DESC
         LIMIT 1
       )
@@ -592,6 +609,7 @@ export const getContacts = async (req, res) => {
         c.attribution_ctwa_clid,
         c.attribution_ad_name,
         c.attribution_ad_id,
+        c.preferred_whatsapp_phone_number_id,
         c.custom_fields,
         COALESCE(ps.total_paid, 0) AS total_paid,
         COALESCE(ps.purchases_count, 0) AS purchases_count,
@@ -745,6 +763,8 @@ export const getContacts = async (req, res) => {
         whatsappAttributionPlatform: attributionFields.whatsappAttributionPlatform,
         ad_name: c.attribution_ad_name,
         ad_id: c.attribution_ad_id,
+        preferredWhatsAppPhoneNumberId: c.preferred_whatsapp_phone_number_id || '',
+        preferred_whatsapp_phone_number_id: c.preferred_whatsapp_phone_number_id || '',
         customFields: parseContactCustomFields(c.custom_fields),
         firstSession: firstSession ? {
           started_at: firstSession.started_at,
@@ -845,6 +865,8 @@ export const getContactById = async (req, res) => {
         c.attribution_ctwa_clid,
         c.attribution_ad_name,
         c.attribution_ad_id,
+        c.preferred_whatsapp_phone_number_id,
+        c.custom_fields,
         COALESCE(ps.total_paid, 0) AS total_paid,
         COALESCE(ps.purchases_count, 0) AS purchases_count,
         ps.last_purchase_date AS last_purchase_date,
@@ -1134,6 +1156,8 @@ export const getContactById = async (req, res) => {
       source: contact.source,
       ad_name: contact.attribution_ad_name,
       ad_id: contact.attribution_ad_id,
+      preferredWhatsAppPhoneNumberId: contact.preferred_whatsapp_phone_number_id || '',
+      preferred_whatsapp_phone_number_id: contact.preferred_whatsapp_phone_number_id || '',
       customFields: parseContactCustomFields(contact.custom_fields),
       notes: '',
       payments,
@@ -1482,6 +1506,11 @@ export const updateContact = async (req, res) => {
       dnd,
       dndSettings
     } = req.body
+    const hasPreferredWhatsAppPhoneNumberUpdate = hasOwn(req.body, 'preferredWhatsAppPhoneNumberId') ||
+      hasOwn(req.body, 'preferred_whatsapp_phone_number_id')
+    const preferredWhatsAppPhoneNumberInput = hasOwn(req.body, 'preferredWhatsAppPhoneNumberId')
+      ? req.body.preferredWhatsAppPhoneNumberId
+      : req.body.preferred_whatsapp_phone_number_id
 
     // Verificar que el contacto existe
     const existing = await db.get('SELECT id, custom_fields FROM contacts WHERE id = ?', [id])
@@ -1538,8 +1567,27 @@ export const updateContact = async (req, res) => {
       updates.push('attribution_ad_id = ?')
       params.push(attribution_ad_id)
     }
+    if (hasPreferredWhatsAppPhoneNumberUpdate) {
+      const preferredWhatsAppPhoneNumberId = cleanString(preferredWhatsAppPhoneNumberInput)
+      if (preferredWhatsAppPhoneNumberId) {
+        const phoneNumber = await db.get(
+          'SELECT id FROM whatsapp_api_phone_numbers WHERE id = ?',
+          [preferredWhatsAppPhoneNumberId]
+        )
 
-    if (updates.length === 0 && tags === undefined && !hasCustomFieldsUpdate && dnd === undefined) {
+        if (!phoneNumber) {
+          return res.status(400).json({
+            success: false,
+            error: 'Ese número de WhatsApp no está conectado'
+          })
+        }
+      }
+
+      updates.push('preferred_whatsapp_phone_number_id = ?')
+      params.push(preferredWhatsAppPhoneNumberId || null)
+    }
+
+    if (updates.length === 0 && tags === undefined && !hasCustomFieldsUpdate && dnd === undefined && !hasPreferredWhatsAppPhoneNumberUpdate) {
       return res.status(400).json({
         success: false,
         error: 'No hay campos para actualizar'
@@ -1606,6 +1654,7 @@ export const updateContact = async (req, res) => {
     )
     const updatedData = {
       ...updated,
+      preferredWhatsAppPhoneNumberId: updated.preferred_whatsapp_phone_number_id || '',
       customFields: parseContactCustomFields(updated.custom_fields)
     }
 

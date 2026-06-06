@@ -9,6 +9,7 @@ import {
   QrCode,
   RefreshCw,
   ShieldCheck,
+  Star,
   Unplug,
   Wallet
 } from 'lucide-react'
@@ -111,6 +112,7 @@ export const WhatsAppSettings: React.FC = () => {
   const [selectedPhoneId, setSelectedPhoneId] = useState('')
   const [qrConnectingPhoneId, setQrConnectingPhoneId] = useState('')
   const [qrDisconnectingPhoneId, setQrDisconnectingPhoneId] = useState('')
+  const [defaultingPhoneId, setDefaultingPhoneId] = useState('')
 
   const apiConnected = Boolean(apiStatus?.connected)
 
@@ -136,6 +138,7 @@ export const WhatsAppSettings: React.FC = () => {
     }
 
     const preferredPhoneId = nextStatus.sender.phoneNumberId ||
+      nextStatus.phoneNumbers.find(phone => phone.is_default_sender)?.id ||
       nextStatus.phoneNumbers.find(phone => phone.phone_number === nextStatus.sender.phone)?.id ||
       nextStatus.phoneNumbers[0]?.id ||
       ''
@@ -212,6 +215,22 @@ export const WhatsAppSettings: React.FC = () => {
       showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo actualizar WhatsApp')
     } finally {
       setApiRefreshing(false)
+    }
+  }
+
+  const makePhoneDefault = async (phone: WhatsAppApiPhoneNumber) => {
+    if (!phone.id || defaultingPhoneId) return
+
+    setDefaultingPhoneId(phone.id)
+    try {
+      const nextStatus = await whatsappApiService.setDefaultPhoneNumber(phone.id)
+      setApiStatus(nextStatus)
+      setSelectedPhoneId(phone.id)
+      showToast('success', 'Número principal guardado', `${getPhoneLabel(phone)} quedó como respaldo para chats nuevos.`)
+    } catch (error) {
+      showToast('error', 'No se pudo guardar', error instanceof Error ? error.message : 'Intenta marcarlo otra vez.')
+    } finally {
+      setDefaultingPhoneId('')
     }
   }
 
@@ -481,7 +500,8 @@ export const WhatsAppSettings: React.FC = () => {
                     const qrSession = qrSessionsByPhoneId.get(phone.id)
                     const qrStatus = qrSession?.status || phone.qr_status || ''
                     const qrError = isQrWorkingStatus(qrStatus) ? '' : (qrSession?.lastError || phone.qr_last_error || '')
-                    const isSender = phone.id === selectedPhoneId ||
+                    const isSender = Boolean(phone.is_default_sender) ||
+                      phone.id === selectedPhoneId ||
                       phone.phone_number === apiStatus.sender.phone ||
                       phone.display_phone_number === apiStatus.sender.phone
                     const qrPending = ['starting', 'qr_pending', 'restarting', 'reconnecting'].includes(String(qrStatus).toLowerCase())
@@ -509,27 +529,40 @@ export const WhatsAppSettings: React.FC = () => {
                           <td>{phone.quality_rating || 'Sin dato'}</td>
                           <td>{phone.messaging_limit || 'Sin dato'}</td>
                           <td>
-                            {qrConnected ? (
-                              <button
-                                type="button"
-                                className={styles.phoneActionDanger}
-                                onClick={() => disconnectQrForPhone(phone)}
-                                disabled={qrDisconnectingPhoneId === phone.id}
-                              >
-                                <Unplug size={14} />
-                                {qrDisconnectingPhoneId === phone.id ? 'Apagando' : 'Apagar QR'}
-                              </button>
-                            ) : (
-                              <button
-                                type="button"
-                                className={styles.phoneActionButton}
-                                onClick={() => connectQrForPhone(phone)}
-                                disabled={qrConnectingPhoneId === phone.id}
-                              >
-                                <QrCode size={14} />
-                                {qrConnectingPhoneId === phone.id ? 'Abriendo' : qrPending ? 'Nuevo QR' : 'Conectar QR'}
-                              </button>
-                            )}
+                            <div className={styles.phoneActions}>
+                              {!isSender && (
+                                <button
+                                  type="button"
+                                  className={styles.phoneActionButton}
+                                  onClick={() => makePhoneDefault(phone)}
+                                  disabled={defaultingPhoneId === phone.id}
+                                >
+                                  <Star size={14} />
+                                  {defaultingPhoneId === phone.id ? 'Guardando' : 'Hacer principal'}
+                                </button>
+                              )}
+                              {qrConnected ? (
+                                <button
+                                  type="button"
+                                  className={styles.phoneActionDanger}
+                                  onClick={() => disconnectQrForPhone(phone)}
+                                  disabled={qrDisconnectingPhoneId === phone.id}
+                                >
+                                  <Unplug size={14} />
+                                  {qrDisconnectingPhoneId === phone.id ? 'Apagando' : 'Apagar QR'}
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  className={styles.phoneActionButton}
+                                  onClick={() => connectQrForPhone(phone)}
+                                  disabled={qrConnectingPhoneId === phone.id}
+                                >
+                                  <QrCode size={14} />
+                                  {qrConnectingPhoneId === phone.id ? 'Abriendo' : qrPending ? 'Nuevo QR' : 'Conectar QR'}
+                                </button>
+                              )}
+                            </div>
                           </td>
                         </tr>
                         {(qrSession?.qrCodeDataUrl && qrPending) || qrError ? (

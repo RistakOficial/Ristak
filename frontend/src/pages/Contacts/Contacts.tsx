@@ -21,6 +21,7 @@ import { useTimezone } from '@/contexts/TimezoneContext'
 import { useLabels } from '@/contexts/LabelsContext'
 import { formatCurrency, formatDateToISO, formatEndDateToISO, formatNumber, formatUrlParameter, parseLocalDateString } from '@/utils/format'
 import { contactsService, type Contact, type ContactStats } from '@/services/contactsService'
+import { whatsappApiService, type WhatsAppApiPhoneNumber } from '@/services/whatsappApiService'
 import { calendarsService, type CalendarEvent } from '@/services/calendarsService'
 import type { ContactAppointment, ContactCustomField, ContactPayment } from '@/types'
 import { useNotification } from '@/contexts/NotificationContext'
@@ -370,6 +371,7 @@ export const Contacts: React.FC = () => {
   const [editingContact, setEditingContact] = useState<Contact | null>(null)
   const [selectedContactIds, setSelectedContactIds] = useState<string[]>([])
   const [contactsPendingDeletion, setContactsPendingDeletion] = useState<Contact[]>([])
+  const [whatsappPhoneNumbers, setWhatsappPhoneNumbers] = useState<WhatsAppApiPhoneNumber[]>([])
   const [contactDeleteConfirmation, setContactDeleteConfirmation] = useState('')
   const [deletingContacts, setDeletingContacts] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -448,6 +450,24 @@ export const Contacts: React.FC = () => {
   useEffect(() => {
     fetchData()
   }, [dateRange, viewMode])
+
+  useEffect(() => {
+    let cancelled = false
+
+    whatsappApiService.getStatus()
+      .then((status) => {
+        if (!cancelled) {
+          setWhatsappPhoneNumbers(status.connected ? status.phoneNumbers || [] : [])
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setWhatsappPhoneNumbers([])
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   useEffect(() => {
     setIsClient(true)
@@ -641,6 +661,8 @@ export const Contacts: React.FC = () => {
       source: contactData.source,
       ad_name: contactData.ad_name,
       ad_id: contactData.ad_id,
+      preferredWhatsAppPhoneNumberId: contactData.preferredWhatsAppPhoneNumberId || contactData.preferred_whatsapp_phone_number_id || '',
+      preferred_whatsapp_phone_number_id: contactData.preferred_whatsapp_phone_number_id || contactData.preferredWhatsAppPhoneNumberId || '',
       customFields: contactData.customFields || []
     }]
   }, [contactAppointments, contactData, contactPayments])
@@ -669,6 +691,39 @@ export const Contacts: React.FC = () => {
       return nextCustomFields
     } catch (error) {
       showToast('error', 'No se pudo actualizar', 'GoHighLevel no aceptó el cambio. Revisa el valor e intenta de nuevo.')
+      throw error
+    }
+  }
+
+  const handleUpdatePreferredWhatsAppPhoneNumber = async (contactId: string, phoneNumberId: string) => {
+    try {
+      const updatedContact = await contactsService.updateContact(contactId, {
+        preferredWhatsAppPhoneNumberId: phoneNumberId
+      } as Partial<Contact>)
+      const nextPhoneNumberId = updatedContact.preferredWhatsAppPhoneNumberId ||
+        updatedContact.preferred_whatsapp_phone_number_id ||
+        phoneNumberId ||
+        ''
+      const nextContactPatch = {
+        preferredWhatsAppPhoneNumberId: nextPhoneNumberId,
+        preferred_whatsapp_phone_number_id: nextPhoneNumberId
+      }
+
+      setSelectedContactDetails(prev => prev?.id === contactId ? { ...prev, ...nextContactPatch } : prev)
+      setSelectedContact(prev => prev?.id === contactId ? { ...prev, ...nextContactPatch } : prev)
+      setContacts(prev => prev.map(contact => contact.id === contactId ? { ...contact, ...nextContactPatch } : contact))
+
+      showToast(
+        'success',
+        nextPhoneNumberId ? 'Número guardado' : 'Respuesta automática activada',
+        nextPhoneNumberId
+          ? 'Este contacto se responderá desde el número elegido.'
+          : 'Ristak usará el número por donde llegó el contacto.'
+      )
+
+      return { ...updatedContact, ...nextContactPatch }
+    } catch (error) {
+      showToast('error', 'No se pudo guardar', error instanceof Error ? error.message : 'Intenta cambiar el número otra vez.')
       throw error
     }
   }
@@ -1443,6 +1498,8 @@ export const Contacts: React.FC = () => {
           loading={contactDetailsLoading}
           type={null}
           onUpdateCustomFields={handleUpdateContactCustomFields}
+          whatsappPhoneNumbers={whatsappPhoneNumbers}
+          onUpdatePreferredWhatsAppPhoneNumber={handleUpdatePreferredWhatsAppPhoneNumber}
         />
       )}
 

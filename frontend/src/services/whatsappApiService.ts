@@ -214,6 +214,7 @@ export const whatsappApiService = {
   getStatus: () => apiClient.get<WhatsAppApiStatus>('/whatsapp-api/status'),
   connect: (payload: WhatsAppApiConnectPayload) => apiClient.post<WhatsAppApiStatus>('/whatsapp-api/connect', payload),
   previewPhoneNumbers: (apiKey?: string) => apiClient.post<WhatsAppApiPhoneNumbersPreviewResponse>('/whatsapp-api/phone-numbers/preview', { apiKey }),
+  setDefaultPhoneNumber: (phoneNumberId: string) => apiClient.post<WhatsAppApiStatus>('/whatsapp-api/phone-numbers/default', { phoneNumberId }),
   refresh: () => apiClient.post<WhatsAppApiStatus>('/whatsapp-api/refresh'),
   disconnect: () => apiClient.post<WhatsAppApiStatus>('/whatsapp-api/disconnect'),
   reset: () => apiClient.post<WhatsAppApiStatus>('/whatsapp-api/reset'),
