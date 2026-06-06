@@ -2627,6 +2627,7 @@
   align-content: stretch;
   height: min(86dvh, 820px);
   min-height: 0;
+  padding-bottom: 0;
 }
 
 .templatesSheet {
@@ -3132,6 +3133,8 @@
 .embeddedPayment {
   min-height: 0;
   overflow: hidden;
+  margin-right: -2px;
+  margin-left: -2px;
 }
 
 .embeddedPayment > * {
