@@ -2418,32 +2418,30 @@
 .messageAudioMicBadge {
   position: absolute;
   z-index: 2;
-  right: -5px;
+  right: -6px;
   bottom: -5px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 24px;
-  border-radius: 999px;
+  width: 23px;
+  height: 25px;
   color: #45524c;
-  filter:
-    drop-shadow(0 0 0 var(--message-audio-avatar-cutout))
-    drop-shadow(0 0 4px var(--message-audio-avatar-cutout));
-  isolation: isolate;
-}
-
-.messageAudioMicBadge::before {
-  content: "";
-  position: absolute;
-  z-index: -1;
-  inset: -3px -4px -4px;
-  border-radius: 999px;
-  background: var(--message-audio-avatar-cutout);
+  line-height: 1;
+  overflow: visible;
+  pointer-events: none;
 }
 
 .messageAudioMicBadge svg {
   display: block;
+  overflow: visible;
+}
+
+.messageAudioMicBadge svg path {
+  stroke: var(--message-audio-avatar-cutout);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 72px;
+  paint-order: stroke fill;
 }
 
 .messageAudioSpeedButton {
