@@ -194,6 +194,7 @@ export function useBottomSheetDismiss({
     sheetDragProps: dragHandleProps,
     requestClose,
     dragging,
-    closing
+    closing,
+    dragOffset
   }
 }

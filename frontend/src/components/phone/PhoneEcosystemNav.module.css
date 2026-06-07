@@ -24,6 +24,10 @@
   touch-action: manipulation;
   isolation: isolate;
   overflow: visible;
+  transition:
+    opacity 220ms ease,
+    transform 280ms cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform, opacity;
 }
 
 .dock a {
@@ -167,6 +171,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .dock a,
+  .dock,
   .activeIndicator,
   .active .iconWrap {
     transition: none;

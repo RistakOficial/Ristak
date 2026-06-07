@@ -299,6 +299,22 @@ export const PhoneCalendar: React.FC = () => {
     isOpen: Boolean(sheetView),
     onClose: closeSheetViewNow
   })
+  const isCalendarSheetMoving = calendarSheetDismiss.dragging || calendarSheetDismiss.closing || calendarSheetDismiss.dragOffset > 0
+  const calendarNavStyle = useMemo<React.CSSProperties | undefined>(() => {
+    if (!sheetView) return undefined
+
+    const revealProgress = calendarSheetDismiss.closing
+      ? 1
+      : Math.min(1, Math.max(0, calendarSheetDismiss.dragOffset / 140))
+    const hiddenProgress = 1 - revealProgress
+
+    return {
+      opacity: revealProgress,
+      pointerEvents: revealProgress > 0.96 ? 'auto' : 'none',
+      transform: `translate3d(0, calc(${Math.round(hiddenProgress * 116)}% + ${Math.round(hiddenProgress * 18)}px), 0)`,
+      transition: calendarSheetDismiss.dragging ? 'none' : undefined
+    }
+  }, [calendarSheetDismiss.closing, calendarSheetDismiss.dragOffset, calendarSheetDismiss.dragging, sheetView])
 
   const formatEventTime = useCallback((value?: string | null) => {
     const date = toDateInTimeZone(value, timezone)
@@ -1511,12 +1527,16 @@ export const PhoneCalendar: React.FC = () => {
 	        )}
       </PhonePageTransition>
 
-      <PhoneEcosystemNav active="calendar" />
+      <PhoneEcosystemNav active="calendar" style={calendarNavStyle} />
 
       {sheetView && (
-        <div className={styles.sheetBackdrop} style={calendarSheetDismiss.backdropStyle} onClick={calendarSheetDismiss.requestClose}>
+        <div
+          className={`${styles.sheetBackdrop} ${isCalendarSheetMoving ? styles.sheetBackdropInteractive : ''}`}
+          style={calendarSheetDismiss.backdropStyle}
+          onClick={calendarSheetDismiss.requestClose}
+        >
           <section
-            className={styles.sheet}
+            className={`${styles.sheet} ${isCalendarSheetMoving ? styles.sheetInteractive : ''}`}
             style={calendarSheetDismiss.sheetStyle}
             onClick={(event) => event.stopPropagation()}
             aria-label="Panel del calendario"
