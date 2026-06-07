@@ -97,6 +97,7 @@ const CONTACT_INFO_CUSTOM_FIELDS_CONFIG_KEY = 'mobile_chat_contact_info_custom_f
 const AI_AGENT_CHAT_ID = 'ristak-ai-agent-mobile-chat'
 const AI_AGENT_MESSAGES_KEY = 'ristak_phone_chat_ai_agent_messages_v1'
 const CHAT_SWIPE_ACTION_WIDTH = 184
+const CHAT_SWIPE_TRANSITION_MS = 260
 const CHAT_SWIPE_OPEN_THRESHOLD = 44
 const CHAT_SWIPE_CLOSE_THRESHOLD = 132
 const CHAT_SWIPE_ACTIVATE_THRESHOLD = 7
@@ -2032,6 +2033,7 @@ export const PhoneChat: React.FC = () => {
   const [mutedChatIds, setMutedChatIds] = useState<string[]>(() => readStoredChatIds(CHAT_MUTED_STATE_KEY))
   const [openSwipeChatId, setOpenSwipeChatId] = useState<string | null>(null)
   const [draggingSwipe, setDraggingSwipe] = useState<{ contactId: string; offset: number } | null>(null)
+  const [closingSwipeChatId, setClosingSwipeChatId] = useState<string | null>(null)
   const [chatSwipeSuppressed, setChatSwipeSuppressed] = useState(false)
   const [chatActionContactId, setChatActionContactId] = useState<string | null>(null)
   const [contactQuery, setContactQuery] = useState('')
@@ -2181,7 +2183,28 @@ export const PhoneChat: React.FC = () => {
   const actionSheetMoving = actionSheetDismiss.dragging || actionSheetDismiss.closing || actionSheetDismiss.dragOffset > 0
   const actionSheetDragging = actionSheetDismiss.dragging || actionSheetDismiss.dragOffset > 0
   const chatSwipeGenerationRef = useRef(0)
+  const chatSwipeCloseTimerRef = useRef<number | null>(null)
   const ignoreNextChatClickRef = useRef(false)
+  const clearChatSwipeCloseTimer = useCallback(() => {
+    if (chatSwipeCloseTimerRef.current === null) return
+    window.clearTimeout(chatSwipeCloseTimerRef.current)
+    chatSwipeCloseTimerRef.current = null
+  }, [])
+  const clearClosingSwipeActions = useCallback((contactId?: string | null) => {
+    clearChatSwipeCloseTimer()
+    setClosingSwipeChatId((current) => {
+      if (!contactId || current === contactId) return null
+      return current
+    })
+  }, [clearChatSwipeCloseTimer])
+  const keepSwipeActionsBehindClosingRow = useCallback((contactId: string) => {
+    clearChatSwipeCloseTimer()
+    setClosingSwipeChatId(contactId)
+    chatSwipeCloseTimerRef.current = window.setTimeout(() => {
+      chatSwipeCloseTimerRef.current = null
+      setClosingSwipeChatId((current) => current === contactId ? null : current)
+    }, CHAT_SWIPE_TRANSITION_MS + 80)
+  }, [clearChatSwipeCloseTimer])
   const resetPhoneFrameHorizontalScroll = useCallback(() => {
     const frame = document.querySelector<HTMLElement>('[data-phone-chat-frame="true"]')
     if (!frame || frame.scrollLeft === 0) return
@@ -2972,7 +2995,8 @@ export const PhoneChat: React.FC = () => {
     chatSwipeGenerationRef.current += 1
     setOpenSwipeChatId(null)
     setDraggingSwipe(null)
-  }, [archivedViewOpen, chatFilter, chatQuery, selectedChatPhoneId])
+    clearClosingSwipeActions()
+  }, [archivedViewOpen, chatFilter, chatQuery, selectedChatPhoneId, clearClosingSwipeActions])
 
   useEffect(() => {
     if (!contactInfoOpen) {
@@ -2998,6 +3022,7 @@ export const PhoneChat: React.FC = () => {
     setChatSwipeSuppressed(true)
     setOpenSwipeChatId(null)
     setDraggingSwipe(null)
+    clearClosingSwipeActions()
     chatSwipeGestureRef.current = null
 
     if (conversationVisible) return
@@ -3006,20 +3031,26 @@ export const PhoneChat: React.FC = () => {
       chatSwipeGenerationRef.current += 1
       setOpenSwipeChatId(null)
       setDraggingSwipe(null)
+      clearClosingSwipeActions()
       chatSwipeGestureRef.current = null
       setChatSwipeSuppressed(false)
     }, 320)
 
     return () => window.clearTimeout(releaseSwipe)
-  }, [conversationVisible])
+  }, [clearClosingSwipeActions, conversationVisible])
 
   useLayoutEffect(() => {
     if (!activeContactId) return
     chatSwipeGenerationRef.current += 1
     setOpenSwipeChatId(null)
     setDraggingSwipe(null)
+    clearClosingSwipeActions()
     chatSwipeGestureRef.current = null
-  }, [activeContactId])
+  }, [activeContactId, clearClosingSwipeActions])
+
+  useEffect(() => () => {
+    clearChatSwipeCloseTimer()
+  }, [clearChatSwipeCloseTimer])
 
   useEffect(() => {
     if (showArchivedChats) return
@@ -3886,6 +3917,7 @@ export const PhoneChat: React.FC = () => {
     chatSwipeGenerationRef.current += 1
     setOpenSwipeChatId(null)
     setDraggingSwipe(null)
+    clearClosingSwipeActions()
     chatSwipeGestureRef.current = null
   }
 
@@ -4049,6 +4081,9 @@ export const PhoneChat: React.FC = () => {
     ))
 
     gesture.offset = nextOffset
+    if (nextOffset > 0 && closingSwipeChatId === gesture.contactId) {
+      clearClosingSwipeActions(gesture.contactId)
+    }
     if (Math.abs(nextOffset - gesture.lastRenderedOffset) < CHAT_SWIPE_RENDER_STEP) return
     gesture.lastRenderedOffset = nextOffset
     setDraggingSwipe({ contactId: gesture.contactId, offset: nextOffset })
@@ -4065,7 +4100,16 @@ export const PhoneChat: React.FC = () => {
 
     if (gesture.active) {
       const openThreshold = gesture.startOffset > 0 ? CHAT_SWIPE_CLOSE_THRESHOLD : CHAT_SWIPE_OPEN_THRESHOLD
-      setOpenSwipeChatId(gesture.offset >= openThreshold ? gesture.contactId : null)
+      const shouldOpenSwipe = gesture.offset >= openThreshold
+      if (shouldOpenSwipe) {
+        clearClosingSwipeActions(gesture.contactId)
+        setOpenSwipeChatId(gesture.contactId)
+      } else {
+        if (gesture.startOffset > 0 || gesture.offset > 0) {
+          keepSwipeActionsBehindClosingRow(gesture.contactId)
+        }
+        setOpenSwipeChatId(null)
+      }
       setDraggingSwipe(null)
       ignoreNextChatClickRef.current = true
       window.setTimeout(() => {
@@ -5191,6 +5235,12 @@ export const PhoneChat: React.FC = () => {
     )
   }
 
+  const handleChatSwipeContentTransitionEnd = (contactId: string, event: React.TransitionEvent<HTMLDivElement>) => {
+    if (event.currentTarget !== event.target || event.propertyName !== 'transform') return
+    if (openSwipeChatId === contactId || draggingSwipe?.contactId === contactId) return
+    clearClosingSwipeActions(contactId)
+  }
+
   const renderContactButton = (contact: Contact, source: 'chat' | 'contact') => {
     const chatContact = contact as ChatContact
     const subtitle = source === 'chat' && showLastMessagePreview ? getChatPreview(chatContact) : getContactDetail(contact)
@@ -5241,7 +5291,13 @@ export const PhoneChat: React.FC = () => {
       : isDraggingSwipe
         ? draggingSwipe.offset
         : openSwipeChatId === contact.id ? CHAT_SWIPE_ACTION_WIDTH : 0
-    const showSwipeActions = swipeOffset > 0
+    const showSwipeActions = !swipeLocked && (
+      isDraggingSwipe ||
+      openSwipeChatId === contact.id ||
+      closingSwipeChatId === contact.id ||
+      swipeOffset > 0
+    )
+    const swipeActionsInteractive = !swipeLocked && openSwipeChatId === contact.id && !isDraggingSwipe && closingSwipeChatId !== contact.id
 
     return (
       <div
@@ -5253,10 +5309,12 @@ export const PhoneChat: React.FC = () => {
         onTouchCancel={swipeLocked ? undefined : handleChatTouchEnd}
       >
         {showSwipeActions && (
-          <div className={styles.chatSwipeActions} aria-hidden={!showSwipeActions}>
+          <div className={styles.chatSwipeActions} aria-hidden={!swipeActionsInteractive}>
             <button
               type="button"
               className={`${styles.chatSwipeAction} ${styles.chatSwipeMore}`}
+              disabled={!swipeActionsInteractive}
+              tabIndex={swipeActionsInteractive ? 0 : -1}
               onClick={(event) => {
                 event.stopPropagation()
                 handleOpenChatMore(contact)
@@ -5268,6 +5326,8 @@ export const PhoneChat: React.FC = () => {
             <button
               type="button"
               className={`${styles.chatSwipeAction} ${styles.chatSwipeArchive}`}
+              disabled={!swipeActionsInteractive}
+              tabIndex={swipeActionsInteractive ? 0 : -1}
               onClick={(event) => {
                 event.stopPropagation()
                 handleArchiveChat(contact)
@@ -5283,6 +5343,7 @@ export const PhoneChat: React.FC = () => {
           tabIndex={0}
           className={`${styles.chatItem} ${styles.chatSwipeContent} ${hasUnread ? styles.chatItemUnread : ''}`}
           style={{ transform: `translate3d(-${swipeOffset}px, 0, 0)` }}
+          onTransitionEnd={(event) => handleChatSwipeContentTransitionEnd(contact.id, event)}
           onClick={() => handleChatItemPress(contact)}
           onKeyDown={(event) => handleChatRowKeyDown(event, () => handleChatItemPress(contact))}
         >
