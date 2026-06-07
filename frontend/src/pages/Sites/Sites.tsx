@@ -2650,6 +2650,11 @@ export const Sites: React.FC = () => {
   const historyBusyRef = useRef(false)
   const guardHistoryArmedRef = useRef(false)
   const allowNavigationRef = useRef(false)
+  const suppressEditorRouteRestoreRef = useRef(false)
+
+  const markEditorExitInProgress = () => {
+    suppressEditorRouteRestoreRef.current = true
+  }
 
   useEffect(() => {
     selectedSiteRef.current = selectedSite
@@ -3143,6 +3148,8 @@ export const Sites: React.FC = () => {
     setCreateFlow(current => current === routeState.createFlow ? current : routeState.createFlow)
 
     if (routeState.siteId) {
+      if (suppressEditorRouteRestoreRef.current) return
+
       if (selectedSite?.id !== routeState.siteId) {
         void openSite(routeState.siteId, routeState.pageId || undefined, { replaceRoute: true })
         return
@@ -3156,6 +3163,8 @@ export const Sites: React.FC = () => {
       }
       return
     }
+
+    suppressEditorRouteRestoreRef.current = false
 
     if (selectedSite || selectedBlockId || activePageId !== DEFAULT_FUNNEL_PAGE_ID) {
       setSelectedSite(null)
@@ -3177,6 +3186,7 @@ export const Sites: React.FC = () => {
   ])
 
   const changeSection = async (nextSection: SitesSection) => {
+    markEditorExitInProgress()
     setSection(nextSection)
     setCreateFlow('closed')
     setHasUnsavedChanges(false)
@@ -3199,6 +3209,7 @@ export const Sites: React.FC = () => {
     if (nextSection === section) {
       if ((section === 'landings' || section === 'forms') && (editorSite || createFlow !== 'closed')) {
         requestLeaveEditor(() => {
+          markEditorExitInProgress()
           setSelectedSite(null)
           setSelectedBlockId('')
           setCreateFlow('closed')
@@ -3216,6 +3227,7 @@ export const Sites: React.FC = () => {
 
   const handleStartCreateFlow = () => {
     requestLeaveEditor(() => {
+      markEditorExitInProgress()
       selectedSiteRef.current = null
       setSelectedSite(null)
       setSelectedBlockId('')
@@ -3243,6 +3255,7 @@ export const Sites: React.FC = () => {
 
   const handleBackToLibrary = () => {
     requestLeaveEditor(() => {
+      markEditorExitInProgress()
       selectedSiteRef.current = null
       setSelectedSite(null)
       setSelectedBlockId('')
@@ -4060,6 +4073,7 @@ export const Sites: React.FC = () => {
             const nextSites = sites.filter(site => site.id !== siteToDelete.id)
             setSites(nextSites)
             if (selectedSite?.id === siteToDelete.id) {
+              markEditorExitInProgress()
               setSelectedSite(null)
               setSelectedBlockId('')
               navigateSitesSection(getSiteSection(siteToDelete))
