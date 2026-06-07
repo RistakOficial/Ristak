@@ -1613,7 +1613,7 @@ export const Dashboard: React.FC = () => {
             icon={<Target className="w-5 h-5" />}
           />
           <KpiCard
-            title="Costos Totales"
+            title="Gastos negocio"
             value={formatCurrency(metrics.totalCostos.value)}
             delta={metrics.totalCostos.variation}
             deltaLabel="vs periodo anterior"

@@ -477,7 +477,7 @@ export const PhoneAnalytics: React.FC = () => {
     { key: 'gastosPublicidad', title: 'Gastos publicidad', Icon: CreditCard, tone: 'black', formatter: formatCurrency },
     { key: 'gananciaBruta', title: 'Ganancia bruta', Icon: TrendingUp, tone: 'blue', formatter: formatCurrency },
     { key: 'roas', title: 'ROAS', Icon: Activity, tone: 'gold', formatter: formatRoas },
-    { key: 'totalCostos', title: 'Costos', Icon: WalletCards, tone: 'black', formatter: formatCurrency },
+    { key: 'totalCostos', title: 'Gastos negocio', Icon: WalletCards, tone: 'black', formatter: formatCurrency },
     { key: 'gananciaNeta', title: 'Ganancia neta', Icon: Banknote, tone: 'green', formatter: formatCurrency },
     { key: 'reembolsos', title: 'Reembolsos', Icon: TrendingDown, tone: 'red', formatter: formatCurrency },
     { key: 'ltvPromedio', title: 'Pago promedio', Icon: Users, tone: 'blue', formatter: formatCurrency }
