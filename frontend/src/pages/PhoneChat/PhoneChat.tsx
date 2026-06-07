@@ -1682,6 +1682,7 @@ export const PhoneChat: React.FC = () => {
   const [aiSuggestionLoading, setAiSuggestionLoading] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement | null>(null)
   const messagesPaneRef = useRef<HTMLDivElement | null>(null)
+  const messageTextRef = useRef('')
   const messagesPaneNearBottomRef = useRef(true)
   const activeContactIdRef = useRef<string | null>(null)
   const conversationOpenRef = useRef(false)
@@ -1720,6 +1721,10 @@ export const PhoneChat: React.FC = () => {
     activeContactIdRef.current = activeContactId
     conversationOpenRef.current = conversationOpen
   }, [activeContactId, conversationOpen])
+  const setComposerMessageText = useCallback((nextText: string) => {
+    messageTextRef.current = nextText
+    setMessageText(nextText)
+  }, [])
   const voiceSendAfterStopRef = useRef(false)
   const messageAudioRefs = useRef<Record<string, HTMLAudioElement | null>>({})
   const chatSwipeGestureRef = useRef<ChatSwipeGesture | null>(null)
@@ -1972,8 +1977,8 @@ export const PhoneChat: React.FC = () => {
   const composerBlockedByReplyWindow = Boolean(outsideReplyWindow && !selectedQrReady && !sendingThroughHighLevel)
   const hasComposerContent = Boolean(messageText.trim() || draftAttachments.length > 0 || voiceDraft)
   const voicePanelActive = Boolean(voiceRecording || voiceProcessing || voiceDraft)
-  const canSendMessage = Boolean(selectedChannelCanSend && hasComposerContent && composerStatus !== 'sending' && !voiceRecording && !voiceProcessing && !composerBlockedByReplyWindow)
-  const composerInputDisabled = Boolean(!selectedChannelCanSend || composerStatus === 'sending' || voiceRecording || voiceProcessing || voiceDraft)
+  const canSendMessage = Boolean(selectedChannelCanSend && hasComposerContent && !voiceRecording && !voiceProcessing && !composerBlockedByReplyWindow)
+  const composerInputDisabled = Boolean(!selectedChannelCanSend || voiceRecording || voiceProcessing || voiceDraft)
   const composerPlaceholder = voiceRecording
     ? 'Grabando...'
     : voiceProcessing
@@ -2906,7 +2911,7 @@ export const PhoneChat: React.FC = () => {
   }
 
   const handleStartVoiceRecording = async () => {
-    if (voiceRecording || voiceProcessing || voiceDraft || composerStatus === 'sending') return
+    if (voiceRecording || voiceProcessing || voiceDraft) return
 
     if (!activeContact?.phone) {
       showToast('error', 'Falta el teléfono', 'Guarda el número del contacto antes de mandar audio por WhatsApp.')
@@ -3713,10 +3718,10 @@ export const PhoneChat: React.FC = () => {
     const normalizedText = nextText.replace(/\n{3,}/g, '\n\n')
     if (!normalizedText.trim()) {
       element.textContent = ''
-      setMessageText('')
+      setComposerMessageText('')
       return
     }
-    setMessageText(normalizedText)
+    setComposerMessageText(normalizedText)
   }
 
   const handleComposerPaste = (event: React.ClipboardEvent<HTMLDivElement>) => {
@@ -3732,7 +3737,7 @@ export const PhoneChat: React.FC = () => {
   }
 
   const handleSendMessage = async (transport: 'api' | 'qr' = 'api') => {
-    const text = messageText.trim()
+    const text = messageTextRef.current.trim()
     const attachmentsToSend = draftAttachments
     const voiceToSend = voiceDraft
     if (!activeContact || (!text && attachmentsToSend.length === 0 && !voiceToSend)) return
@@ -3767,7 +3772,7 @@ export const PhoneChat: React.FC = () => {
             : 'ghl_instagram'
 
       setComposerStatus('sending')
-      setMessageText('')
+      setComposerMessageText('')
       if (composerInputRef.current) {
         composerInputRef.current.textContent = ''
       }
@@ -3833,8 +3838,8 @@ export const PhoneChat: React.FC = () => {
             ? { ...message, status: 'error', errorReason: errorMessage }
             : message
         )))
-        setMessageText(text)
-        if (composerInputRef.current) {
+        if (!messageTextRef.current.trim() && composerInputRef.current) {
+          setComposerMessageText(text)
           composerInputRef.current.textContent = text
         }
         showToast('error', 'No se envió el mensaje', errorMessage)
@@ -3881,7 +3886,7 @@ export const PhoneChat: React.FC = () => {
     const optimisticId = `local-${Date.now()}`
     const sentAt = new Date().toISOString()
     setComposerStatus('sending')
-    setMessageText('')
+    setComposerMessageText('')
     if (composerInputRef.current) {
       composerInputRef.current.textContent = ''
     }
@@ -4009,6 +4014,10 @@ export const PhoneChat: React.FC = () => {
       )))
       setDraftAttachments(attachmentsToSend)
       setVoiceDraft(voiceToSend)
+      if (text && !messageTextRef.current.trim() && composerInputRef.current) {
+        setComposerMessageText(text)
+        composerInputRef.current.textContent = text
+      }
       showToast('error', 'No se envió el mensaje', errorMessage)
     } finally {
       setComposerStatus('idle')
@@ -4054,7 +4063,7 @@ export const PhoneChat: React.FC = () => {
   }
 
   const handleSendVoiceFromPanel = () => {
-    if (voiceProcessing || composerStatus === 'sending') return
+    if (voiceProcessing) return
 
     if (voiceRecording) {
       voiceSendAfterStopRef.current = true
@@ -4068,7 +4077,7 @@ export const PhoneChat: React.FC = () => {
   }
 
   const handleVoiceButtonPointerDown = (event: React.PointerEvent<HTMLButtonElement>) => {
-    if (canSendMessage || voiceRecording || voiceProcessing || voiceDraft || composerStatus === 'sending') return
+    if (canSendMessage || voiceRecording || voiceProcessing || voiceDraft) return
 
     voiceSuppressNextClickRef.current = true
     voicePressStartedAtRef.current = Date.now()
@@ -4230,7 +4239,7 @@ export const PhoneChat: React.FC = () => {
   }
 
   const applyComposerSuggestion = (text: string) => {
-    setMessageText(text)
+    setComposerMessageText(text)
     window.requestAnimationFrame(() => {
       if (composerInputRef.current) {
         composerInputRef.current.textContent = text
@@ -5101,10 +5110,10 @@ export const PhoneChat: React.FC = () => {
             type="button"
             className={`${styles.voiceComposerButton} ${styles.voiceSendAudioButton}`}
             onClick={handleSendVoiceFromPanel}
-            disabled={voiceProcessing || composerStatus === 'sending'}
+            disabled={voiceProcessing}
             aria-label="Enviar audio"
           >
-            {composerStatus === 'sending' ? <Loader2 size={28} className={styles.spinIcon} /> : <Send size={36} />}
+            <Send size={36} />
           </button>
         </div>
       </div>
@@ -6581,10 +6590,9 @@ export const PhoneChat: React.FC = () => {
                               onPointerUp={finishVoiceButtonPress}
                               onPointerCancel={handleVoiceButtonPointerCancel}
                               onClick={handleVoiceOrSendButtonClick}
-                              disabled={composerStatus === 'sending'}
                               aria-label={voiceRecording ? 'Detener grabación' : canSendMessage ? 'Enviar mensaje' : 'Grabar mensaje de voz'}
                             >
-                              {composerStatus === 'sending' ? <Loader2 size={23} className={styles.spinIcon} /> : canSendMessage ? <ArrowRight size={23} /> : <Mic size={30} />}
+                              {canSendMessage ? <ArrowRight size={23} /> : <Mic size={30} />}
                             </button>
                           </div>
                         </>
