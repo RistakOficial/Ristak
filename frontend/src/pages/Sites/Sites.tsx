@@ -7895,30 +7895,30 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
             <span>Paginas</span>
             <strong>{pages.length}</strong>
           </div>
-          <div className={`${styles.pageList} ${styles.pagesDropdownList}`}>
+          <div className={styles.pagesDropdownList}>
             {pages.map((page, index) => {
               const fixedPage = isFixedPage(page)
               const pageCanDelete = !locked && canDeletePage(page)
               const pageCanDuplicate = !locked && canDuplicatePage(page)
               const pageToneClass = colorFinalPages && page.id === FORM_THANK_YOU_PAGE_ID
-                ? styles.pageItemThankYou
+                ? styles.pagesDropdownItemThankYou
                 : colorFinalPages && page.id === FORM_DISQUALIFIED_PAGE_ID
-                  ? styles.pageItemDisqualified
+                  ? styles.pagesDropdownItemDisqualified
                   : ''
 
               return (
                 <div
                   key={page.id}
-                  className={`${styles.pageItemWrap} ${styles.pagesDropdownItemWrap} ${draggingPageId === page.id ? styles.pageItemDragging : ''}`}
+                  className={`${styles.pagesDropdownItemWrap} ${draggingPageId === page.id ? styles.pagesDropdownItemDragging : ''}`}
                   onDragOver={(event) => handlePageDragOver(event, fixedPage)}
                   onDrop={(event) => handlePageDrop(event, page, fixedPage)}
                   onDragEnd={() => onDragPage(null)}
                 >
                   <div
-                    className={`${styles.pageItem} ${styles.pagesDropdownItem} ${pageToneClass} ${fixedPage ? styles.pageItemFixed : ''} ${locked ? styles.pageItemLocked : ''} ${activePageId === page.id ? styles.pageItemActive : ''}`}
+                    className={`${styles.pagesDropdownItem} ${pageToneClass} ${fixedPage ? styles.pagesDropdownItemFixed : ''} ${locked ? styles.pagesDropdownItemLocked : ''} ${activePageId === page.id ? styles.pagesDropdownItemActive : ''}`}
                   >
                     <span
-                      className={`${styles.pageDragHandle} ${styles.pagesDropdownDragHandle} ${locked || fixedPage ? styles.pageDragHandleDisabled : ''}`}
+                      className={`${styles.pagesDropdownDragHandle} ${locked || fixedPage ? styles.pagesDropdownDragHandleDisabled : ''}`}
                       draggable={!locked && !fixedPage}
                       role={!locked && !fixedPage ? 'button' : undefined}
                       tabIndex={!locked && !fixedPage ? 0 : -1}
@@ -7932,18 +7932,19 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
                       <GripVertical size={18} />
                     </span>
                     {renamingPageId === page.id && !locked ? (
-                      <div className={styles.pageTitleCell}>
+                      <div className={styles.pagesDropdownTitleCell}>
                         <EditablePageTitle
                           pageId={page.id}
                           title={page.title || `Pagina ${index + 1}`}
+                          inputClassName={styles.pagesDropdownTitleInput}
                           onFocus={() => onSelectPage(page.id)}
                           onRename={onRenamePage}
                           onDone={() => setRenamingPageId(null)}
                         />
                       </div>
                     ) : (
-                      <button type="button" className={`${styles.pageSelectButton} ${styles.pagesDropdownSelectButton}`} onClick={() => handleSelectPage(page.id)}>
-                        <span className={styles.pageTitleText}>{page.title || `Pagina ${index + 1}`}</span>
+                      <button type="button" className={styles.pagesDropdownSelectButton} onClick={() => handleSelectPage(page.id)}>
+                        <span className={styles.pagesDropdownTitleText}>{page.title || `Pagina ${index + 1}`}</span>
                       </button>
                     )}
                     {!locked && (
@@ -7951,7 +7952,7 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
                         <DropdownMenuTrigger asChild>
                           <button
                             type="button"
-                            className={`${styles.pageMenuButton} ${styles.pagesDropdownMenuButton}`}
+                            className={styles.pagesDropdownMenuButton}
                             aria-label="Opciones de pagina"
                             onDragStart={(event) => event.preventDefault()}
                             onClick={(event) => event.stopPropagation()}
@@ -7999,7 +8000,7 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
               )
             })}
             {!locked && (
-              <button type="button" className={`${styles.addPageButton} ${styles.pagesDropdownAddButton}`} onClick={onAddPage}>
+              <button type="button" className={styles.pagesDropdownAddButton} onClick={onAddPage}>
                 <Plus size={15} />
                 Agregar pagina
               </button>
@@ -8014,10 +8015,11 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
 const EditablePageTitle: React.FC<{
   pageId: string
   title: string
+  inputClassName?: string
   onFocus: () => void
   onRename: (pageId: string, title: string) => void
   onDone: () => void
-}> = ({ pageId, title, onFocus, onRename, onDone }) => {
+}> = ({ pageId, title, inputClassName, onFocus, onRename, onDone }) => {
   const [draft, setDraft] = useState(title)
   const inputRef = useRef<HTMLInputElement>(null)
   const cancelRenameRef = useRef(false)
@@ -8047,7 +8049,7 @@ const EditablePageTitle: React.FC<{
   return (
     <input
       ref={inputRef}
-      className={styles.pageTitleInput}
+      className={inputClassName || styles.pageTitleInput}
       value={draft}
       draggable={false}
       aria-label="Nombre de pagina"

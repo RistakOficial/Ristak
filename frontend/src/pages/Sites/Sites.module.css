@@ -9274,8 +9274,7 @@
   font-weight: var(--font-weight-semibold, 600);
 }
 
-.pagesDropdownPanel .pageList,
-.pagesDropdownPanel .pagesDropdownList {
+.pagesDropdownList {
   width: 100%;
   display: grid;
   justify-items: stretch;
@@ -9283,45 +9282,54 @@
   padding-top: 14px;
 }
 
-.pagesDropdownPanel .pageItemWrap,
-.pagesDropdownPanel .pagesDropdownItemWrap {
+.pagesDropdownItemWrap {
   width: 100%;
-  justify-self: stretch;
-  grid-template-columns: minmax(0, 1fr);
-}
-
-.pagesDropdownPanel .pagesDropdownItemWrap {
   display: block;
+  justify-self: stretch;
 }
 
-.pagesDropdownPanel .pageItem,
-.pagesDropdownPanel .pagesDropdownItem {
+.pagesDropdownItemDragging {
+  opacity: 0.58;
+}
+
+.pagesDropdownItem {
   width: 100%;
   min-height: 72px;
   display: grid;
   grid-template-columns: 44px minmax(0, 1fr) 50px;
   align-items: center;
   gap: 14px;
-  border-color: color-mix(in srgb, var(--color-border-subtle, rgba(148, 163, 184, 0.2)) 82%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-border-subtle, rgba(148, 163, 184, 0.2)) 82%, transparent);
+  border-radius: 8px;
   background: color-mix(in srgb, var(--color-background-primary) 78%, var(--color-background-tertiary) 22%);
+  color: var(--color-text-primary);
   padding: 0 16px;
   cursor: default;
   font-size: 1rem;
   font-weight: var(--font-weight-semibold, 600);
 }
 
-.pagesDropdownPanel .pagesDropdownItem:hover,
-.pagesDropdownPanel .pagesDropdownItem.pageItemActive {
+.pagesDropdownItem:hover,
+.pagesDropdownItemActive {
   border-color: color-mix(in srgb, var(--color-primary) 42%, var(--color-border-subtle, rgba(148, 163, 184, 0.28)) 58%);
   background: color-mix(in srgb, var(--color-background-tertiary) 82%, var(--color-primary) 18%);
 }
 
-.pagesDropdownPanel .pageItemLocked {
+.pagesDropdownItemLocked {
   grid-template-columns: 44px minmax(0, 1fr);
 }
 
-.pagesDropdownPanel .pageDragHandle,
-.pagesDropdownPanel .pagesDropdownDragHandle {
+.pagesDropdownItemThankYou {
+  border-color: color-mix(in srgb, #60a5fa 34%, var(--color-border-subtle, rgba(148, 163, 184, 0.22)) 66%);
+  background: color-mix(in srgb, #60a5fa 16%, var(--color-background-primary) 84%);
+}
+
+.pagesDropdownItemDisqualified {
+  border-color: color-mix(in srgb, #f87171 34%, var(--color-border-subtle, rgba(148, 163, 184, 0.22)) 66%);
+  background: color-mix(in srgb, #f87171 16%, var(--color-background-primary) 84%);
+}
+
+.pagesDropdownDragHandle {
   width: 44px;
   height: 54px;
   display: inline-grid;
@@ -9331,29 +9339,28 @@
   cursor: grab;
 }
 
-.pagesDropdownPanel .pagesDropdownDragHandle:hover {
+.pagesDropdownDragHandle:hover {
   background: color-mix(in srgb, var(--color-background-tertiary) 82%, var(--color-primary) 18%);
   color: var(--color-text-secondary);
 }
 
-.pagesDropdownPanel .pageDragHandle:active {
+.pagesDropdownDragHandle:active {
   cursor: grabbing;
 }
 
-.pagesDropdownPanel .pageDragHandleDisabled,
-.pagesDropdownPanel .pageItemFixed .pageDragHandle {
+.pagesDropdownDragHandleDisabled,
+.pagesDropdownItemFixed .pagesDropdownDragHandle {
   opacity: 0.42;
   cursor: default;
 }
 
-.pagesDropdownPanel .pageTitleCell {
+.pagesDropdownTitleCell {
   min-width: 0;
   display: flex;
   align-items: center;
 }
 
-.pagesDropdownPanel .pageSelectButton,
-.pagesDropdownPanel .pagesDropdownSelectButton {
+.pagesDropdownSelectButton {
   width: 100%;
   min-width: 0;
   min-height: 54px;
@@ -9369,13 +9376,13 @@
   font-weight: var(--font-weight-semibold, 600);
 }
 
-.pagesDropdownPanel .pagesDropdownSelectButton:hover,
-.pagesDropdownPanel .pagesDropdownSelectButton:focus-visible {
+.pagesDropdownSelectButton:hover,
+.pagesDropdownSelectButton:focus-visible {
   background: color-mix(in srgb, var(--color-background-tertiary) 82%, var(--color-primary) 18%);
   outline: none;
 }
 
-.pagesDropdownPanel .pageTitleText {
+.pagesDropdownTitleText {
   min-width: 0;
   overflow: hidden;
   color: var(--color-text-primary);
@@ -9384,37 +9391,57 @@
   line-height: 1.2;
 }
 
-.pagesDropdownPanel .pageTitleInput {
+.pagesDropdownTitleInput {
   width: 100%;
   height: 50px;
   min-height: 0;
+  border: 1px solid color-mix(in srgb, var(--color-border-subtle, rgba(148, 163, 184, 0.22)) 84%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--color-background-secondary) 82%, var(--color-primary) 18%);
+  color: var(--color-text-primary);
   padding: 0 12px;
   font-size: 1rem;
   font-weight: var(--font-weight-semibold, 600);
+  outline: none;
 }
 
-.pagesDropdownPanel .pageMenuButton,
-.pagesDropdownPanel .pagesDropdownMenuButton {
+.pagesDropdownMenuButton {
   width: 50px;
   height: 50px;
   min-height: 50px;
+  display: grid;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--color-border-subtle, rgba(148, 163, 184, 0.22)) 82%, transparent);
   border-radius: 8px;
+  background: color-mix(in srgb, var(--color-background-primary) 84%, var(--color-background-tertiary) 16%);
+  color: var(--color-text-secondary);
 }
 
-.pagesDropdownPanel .addPageButton,
-.pagesDropdownPanel .pagesDropdownAddButton {
+.pagesDropdownMenuButton:hover,
+.pagesDropdownMenuButton[data-state="open"] {
+  border-color: color-mix(in srgb, var(--color-primary) 38%, var(--color-border-subtle, rgba(148, 163, 184, 0.28)) 62%);
+  background: color-mix(in srgb, var(--color-background-tertiary) 78%, var(--color-primary) 22%);
+  color: var(--color-text-primary);
+}
+
+.pagesDropdownAddButton {
   width: 100%;
   min-height: 66px;
+  display: flex;
+  align-items: center;
   justify-content: flex-start;
+  gap: 10px;
   margin-top: 2px;
+  border: 1px dashed color-mix(in srgb, var(--color-border-subtle, rgba(148, 163, 184, 0.32)) 78%, var(--color-primary) 22%);
   border-radius: 8px;
   background: color-mix(in srgb, var(--color-background-primary) 78%, var(--color-primary) 22%);
+  color: var(--color-text-primary);
   padding: 0 18px;
   font-size: 1rem;
   font-weight: var(--font-weight-semibold, 600);
 }
 
-.pagesDropdownPanel .pagesDropdownAddButton:hover {
+.pagesDropdownAddButton:hover {
   background: color-mix(in srgb, var(--color-background-tertiary) 72%, var(--color-primary) 28%);
 }
 
