@@ -8078,6 +8078,7 @@ function normalizeFormPages(site) {
     return {
       ...page,
       title: existing?.title || page.title,
+      ...(existing?.headerTrackingCode !== undefined ? { headerTrackingCode: existing.headerTrackingCode } : {}),
       metaCapiEnabled: Boolean(existing?.metaCapiEnabled),
       metaEventName: normalizeSiteMetaEventName(existing?.metaEventName, { allowNone: true, fallback: SITE_META_NO_EVENT }),
       metaTrigger: normalizeSiteMetaTrigger(existing?.metaTrigger)

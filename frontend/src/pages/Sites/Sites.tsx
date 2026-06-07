@@ -1850,6 +1850,7 @@ const normalizePageList = (rawPages: SitePage[] = []): SitePage[] => {
       sortOrder: Number.isFinite(Number(page?.sortOrder)) ? Number(page.sortOrder) : index,
       ...(page?.importedAssetPath ? { importedAssetPath: page.importedAssetPath } : {}),
       ...(page?.importedOriginalTitle ? { importedOriginalTitle: page.importedOriginalTitle } : {}),
+      ...(page?.headerTrackingCode !== undefined ? { headerTrackingCode: page.headerTrackingCode } : {}),
       metaCapiEnabled: Boolean(page?.metaCapiEnabled),
       metaEventName: normalizeMetaEventName(page?.metaEventName, 'none'),
       metaTrigger: normalizeMetaTrigger(page?.metaTrigger)
@@ -1876,6 +1877,7 @@ const normalizeFormPages = (site?: PublicSite | null): SitePage[] => {
     return {
       ...page,
       title: existing?.title || page.title,
+      ...(existing?.headerTrackingCode !== undefined ? { headerTrackingCode: existing.headerTrackingCode } : {}),
       metaCapiEnabled: Boolean(existing?.metaCapiEnabled),
       metaEventName: normalizeMetaEventName(existing?.metaEventName, 'none'),
       metaTrigger: normalizeMetaTrigger(existing?.metaTrigger)
@@ -4971,7 +4973,7 @@ export const Sites: React.FC = () => {
                         </span>
                       )}
                     </button>
-                    {isLanding(editorSite) && (
+                    {hasEditablePages(editorSite) && (
                       <button
                         type="button"
                         className={`${styles.seoToolbarButton} ${styles.headerToolbarButton}`}
@@ -5089,7 +5091,7 @@ export const Sites: React.FC = () => {
           />
         )}
 
-        {editorSite && isLanding(editorSite) && headerModalOpen && (
+        {editorSite && hasEditablePages(editorSite) && headerModalOpen && (
           <HeaderToolbarModal
             site={editorSite}
             pages={pages}
@@ -11457,6 +11459,7 @@ const HeaderToolbarModal: React.FC<{
 }) => {
   const [savingModal, setSavingModal] = useState(false)
   const activePageTitle = activePage?.title || 'esta pagina'
+  const siteKindLabel = isFormSite(site) ? 'formulario' : 'embudo'
   const theme = site.theme || {}
   const globalHeaderCode = getThemeString(theme, 'headerTrackingCode')
   const pageHeaderCode = typeof activePage?.headerTrackingCode === 'string' ? activePage.headerTrackingCode : ''
@@ -11512,7 +11515,7 @@ const HeaderToolbarModal: React.FC<{
           <section className={styles.seoSection}>
             <div className={styles.headerModalIntro}>
               <SeoSectionTitle icon={<PanelTop size={17} />} title="Header global" />
-              <p>Pega aqui el codigo que debe cargarse en todas las paginas del embudo.</p>
+              <p>Pega aqui el codigo que debe cargarse en todas las paginas del {siteKindLabel}.</p>
             </div>
             {metaPixelConnected && (
               <div className={`${styles.metaCard} ${styles.headerModalMetaCard} ${site.metaCapiEnabled ? styles.metaCardActive : ''}`}>
