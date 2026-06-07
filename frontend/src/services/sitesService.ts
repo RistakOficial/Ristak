@@ -350,6 +350,7 @@ export type ImportedEditableContentType =
   | 'button'
   | 'form_label'
   | 'placeholder'
+  | 'form_field'
   | 'image'
   | 'background_image'
   | 'video'
@@ -394,6 +395,14 @@ export interface ImportedEditableContentUpdate {
   choiceValue?: string
   choiceInputType?: 'radio' | 'checkbox'
   choiceIndex?: number
+  fieldLabel?: string
+  fieldPlaceholder?: string
+  fieldRequired?: boolean
+  fieldOptions?: Array<{ label: string; value: string }>
+  fieldName?: string
+  fieldHtmlId?: string
+  fieldTag?: string
+  fieldInputType?: string
 }
 
 export type SitesAICreationKind = 'landing' | 'form' | 'interactive_form'

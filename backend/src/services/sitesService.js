@@ -173,6 +173,7 @@ const IMPORTED_EDITABLE_CONTENT_TYPES = new Set([
   'button',
   'form_label',
   'placeholder',
+  'form_field',
   'image',
   'background_image',
   'video',
@@ -869,6 +870,41 @@ function getNearbyText(html = '', startIndex = 0) {
   return stripHtmlTags(lastHeading || before.slice(-180))
 }
 
+function getImportedFieldRequiredFromAttrs(attrs = {}) {
+  const explicit = cleanString(
+    attrs['data-rstk-field-required'] ||
+    attrs['data-ristak-field-required'] ||
+    attrs['data-ristack-field-required']
+  ).toLowerCase()
+
+  if (['0', 'false', 'no', 'off', 'optional'].includes(explicit)) return false
+  if (['1', 'true', 'yes', 'on', 'required'].includes(explicit)) return true
+
+  if (attrs.required !== undefined) return true
+  if (cleanString(attrs['aria-required']).toLowerCase() === 'true') return true
+
+  return true
+}
+
+function normalizeImportedFieldOptionValue(option = {}, index = 0) {
+  const source = option && typeof option === 'object' ? option : { label: option, value: option }
+  const label = limitString(stripHtmlTags(source.label || source.text || source.value || `Opcion ${index + 1}`), 140)
+  const value = limitString(cleanString(source.value || source.label || source.text || label), 140)
+  if (!label && !value) return null
+  return {
+    label: label || value,
+    value: value || label
+  }
+}
+
+function normalizeImportedFieldOptions(options = []) {
+  if (!Array.isArray(options)) return []
+  return options
+    .map((option, index) => normalizeImportedFieldOptionValue(option, index))
+    .filter(Boolean)
+    .slice(0, 30)
+}
+
 function extractImportedFields(formHtml = '', formIndex = 0) {
   const fields = []
   const candidates = []
@@ -917,6 +953,21 @@ function extractImportedFields(formHtml = '', formIndex = 0) {
           options.push({ label: optionLabel || value, value })
         }
       }
+    } else if (tag === 'input' && ['radio', 'checkbox'].includes(type)) {
+      const choiceName = cleanString(attrs.name || attrs.id)
+      if (choiceName) {
+        const choicePattern = /<input\b([^>]*?)\s*(\/?)>/gi
+        let choiceMatch
+        while ((choiceMatch = choicePattern.exec(formHtml))) {
+          const choiceAttrs = parseHtmlAttributes(choiceMatch[1] || '')
+          const choiceType = cleanString(choiceAttrs.type || 'text').toLowerCase()
+          const sameGroup = choiceType === type && cleanString(choiceAttrs.name || choiceAttrs.id) === choiceName
+          if (!sameGroup) continue
+          const choiceLabel = getLabelForField(formHtml, choiceAttrs) || cleanString(choiceAttrs['aria-label']) || cleanString(choiceAttrs.value)
+          const value = cleanString(choiceAttrs.value || choiceLabel)
+          if (value || choiceLabel) options.push({ label: choiceLabel || value, value })
+        }
+      }
     }
 
     fields.push({
@@ -931,7 +982,7 @@ function extractImportedFields(formHtml = '', formIndex = 0) {
       nearbyText: getNearbyText(formHtml, candidate.index),
       explicitField,
       explicitCustomField,
-      required: attrs.required !== undefined || cleanString(attrs['aria-required']).toLowerCase() === 'true',
+      required: getImportedFieldRequiredFromAttrs(attrs),
       options
     })
     index += 1
@@ -1162,11 +1213,12 @@ function annotateImportedInputs(html = '', usedIds = new Set()) {
     const attrs = parseHtmlAttributes(attrsText)
     const type = cleanString(attrs.type || 'text').toLowerCase()
     if (['radio', 'checkbox'].includes(type)) {
-      return addImportedEditableAttributesToTag('input', attrsText, selfClose, {
-        type: 'choice_option',
+      const editableTag = addImportedEditableAttributesToTag('input', attrsText, selfClose, {
+        type: 'form_field',
         label: getImportedElementLabel('input', attrs, attrs.value || attrs.name || 'Opcion'),
         usedIds
       })
+      return setImportedDefaultFieldRequired(editableTag, attrsText)
     }
     if (['hidden', 'reset', 'file'].includes(type)) return match
     if (['submit', 'button'].includes(type)) {
@@ -1176,23 +1228,32 @@ function annotateImportedInputs(html = '', usedIds = new Set()) {
         usedIds
       })
     }
-    if (!cleanString(attrs.placeholder)) return match
-    return addImportedEditableAttributesToTag('input', attrsText, selfClose, {
-      type: 'placeholder',
-      label: getImportedElementLabel('input', attrs, attrs.placeholder),
+    const editableTag = addImportedEditableAttributesToTag('input', attrsText, selfClose, {
+      type: 'form_field',
+      label: getImportedElementLabel('input', attrs, attrs.placeholder || attrs.name || attrs.id || 'Campo'),
       usedIds
     })
+    return setImportedDefaultFieldRequired(editableTag, attrsText)
   })
 
   nextHtml = nextHtml.replace(/<textarea\b([^>]*)>([\s\S]*?)<\/textarea>/gi, (match, attrsText = '', innerHtml = '') => {
     const attrs = parseHtmlAttributes(attrsText)
-    if (!cleanString(attrs.placeholder)) return match
     const openTag = addImportedEditableAttributesToTag('textarea', attrsText, '', {
-      type: 'placeholder',
-      label: getImportedElementLabel('textarea', attrs, attrs.placeholder),
+      type: 'form_field',
+      label: getImportedElementLabel('textarea', attrs, attrs.placeholder || attrs.name || attrs.id || 'Campo'),
       usedIds
     })
-    return `${openTag}${innerHtml}</textarea>`
+    return `${setImportedDefaultFieldRequired(openTag, attrsText)}${innerHtml}</textarea>`
+  })
+
+  nextHtml = nextHtml.replace(/<select\b([^>]*)>([\s\S]*?)<\/select>/gi, (match, attrsText = '', innerHtml = '') => {
+    const attrs = parseHtmlAttributes(attrsText)
+    const openTag = addImportedEditableAttributesToTag('select', attrsText, '', {
+      type: 'form_field',
+      label: getImportedElementLabel('select', attrs, attrs.name || attrs.id || 'Campo'),
+      usedIds
+    })
+    return `${setImportedDefaultFieldRequired(openTag, attrsText)}${innerHtml}</select>`
   })
 
   return nextHtml
@@ -1321,6 +1382,24 @@ function setHtmlAttribute(openingTag = '', _attrsText = '', attrName = '', value
   const insertAt = openingTag.endsWith('/>') ? openingTag.length - 2 : openingTag.length - 1
   const spacer = openingTag[insertAt - 1] === ' ' ? '' : ' '
   return `${openingTag.slice(0, insertAt)}${spacer}${attrName}="${escapedValue}"${openingTag.slice(insertAt)}`
+}
+
+function removeHtmlAttribute(openingTag = '', attrName = '') {
+  if (!attrName) return openingTag
+  const attrPattern = new RegExp(`\\s${escapeRegExp(attrName)}(?:\\s*=\\s*(?:"[^"]*"|'[^']*'|[^\\s>]+))?`, 'i')
+  return String(openingTag || '').replace(attrPattern, '')
+}
+
+function setImportedFieldRequiredAttributes(openingTag = '', attrsText = '', required = true) {
+  let nextTag = setHtmlAttribute(openingTag, attrsText, 'data-rstk-field-required', required ? 'true' : 'false')
+  nextTag = setHtmlAttribute(nextTag, attrsText, 'aria-required', required ? 'true' : 'false')
+  return required
+    ? setHtmlAttribute(removeHtmlAttribute(nextTag, 'required'), attrsText, 'required', 'required')
+    : removeHtmlAttribute(nextTag, 'required')
+}
+
+function setImportedDefaultFieldRequired(openingTag = '', attrsText = '') {
+  return setImportedFieldRequiredAttributes(openingTag, attrsText, getImportedFieldRequiredFromAttrs(parseHtmlAttributes(attrsText)))
 }
 
 function normalizeImportedEditableImageUrl(value = '') {
@@ -1552,9 +1631,15 @@ function normalizeImportedActionSteps(input = {}) {
       : null
 
   if (rawActions) {
+    const usedActions = new Set()
     return rawActions
       .map((item, index) => normalizeImportedActionStep(item, index))
       .filter(Boolean)
+      .filter(step => {
+        if (usedActions.has(step.action)) return false
+        usedActions.add(step.action)
+        return true
+      })
       .slice(0, 8)
   }
 
@@ -1618,10 +1703,17 @@ function getImportedChoiceActionPatch(input = {}) {
       ? input.choice_actions
       : []
 
+  const usedActions = new Set()
+
   return {
     actions: rawActions
       .map((item, index) => normalizeImportedActionStep(item, index))
       .filter(Boolean)
+      .filter(step => {
+        if (usedActions.has(step.action)) return false
+        usedActions.add(step.action)
+        return true
+      })
       .slice(0, 8),
     choiceName: cleanString(input.choiceName || input.choice_name),
     choiceValue: cleanString(input.choiceValue || input.choice_value),
@@ -1651,12 +1743,155 @@ function setImportedChoiceActionAttributes(openingTag = '', attrsText = '', patc
   return nextTag
 }
 
+function getImportedFormFieldPatch(input = {}, value = '') {
+  return {
+    label: limitString(stripHtmlTags(input.fieldLabel || input.field_label || value), 160),
+    placeholder: limitString(cleanString(input.fieldPlaceholder || input.field_placeholder), 200),
+    required: Boolean(normalizeBoolean(input.fieldRequired ?? input.field_required ?? true)),
+    options: normalizeImportedFieldOptions(input.fieldOptions || input.field_options || []),
+    fieldName: cleanString(input.fieldName || input.field_name),
+    fieldHtmlId: cleanString(input.fieldHtmlId || input.field_html_id),
+    fieldTag: cleanString(input.fieldTag || input.field_tag).toLowerCase(),
+    fieldInputType: cleanString(input.fieldInputType || input.field_input_type).toLowerCase()
+  }
+}
+
+function importedFormFieldMatches(attrsText = '', editId = '', patch = {}) {
+  const attrs = parseHtmlAttributes(attrsText)
+  if (hasImportedEditId(attrsText, editId)) return true
+
+  const attrName = cleanString(attrs.name)
+  const attrId = cleanString(attrs.id)
+  if (patch.fieldHtmlId && attrId === patch.fieldHtmlId) return true
+  if (patch.fieldName && [attrName, attrId].includes(patch.fieldName)) return true
+
+  return false
+}
+
+function setImportedFormFieldTagAttributes(openingTag = '', attrsText = '', patch = null) {
+  if (!patch) return openingTag
+  let nextTag = openingTag
+  if (patch.placeholder) nextTag = setHtmlAttribute(nextTag, attrsText, 'placeholder', patch.placeholder)
+  nextTag = setHtmlAttribute(nextTag, attrsText, 'data-rstk-label', patch.label || patch.placeholder || patch.fieldName || 'Campo')
+  nextTag = setImportedFieldRequiredAttributes(nextTag, attrsText, patch.required)
+  return nextTag
+}
+
+function buildImportedSelectOptions(options = [], existingBody = '') {
+  const normalizedOptions = normalizeImportedFieldOptions(options)
+  if (!normalizedOptions.length) return existingBody
+
+  const firstOptionMatch = String(existingBody || '').match(/<option\b([^>]*)>([\s\S]*?)<\/option>/i)
+  const firstOptionAttrs = firstOptionMatch ? parseHtmlAttributes(firstOptionMatch[1] || '') : {}
+  const firstOptionValue = cleanString(firstOptionAttrs.value || stripHtmlTags(firstOptionMatch?.[2] || ''))
+  const keepsEmptyOption = firstOptionMatch && !firstOptionValue
+  const emptyOption = keepsEmptyOption
+    ? firstOptionMatch[0]
+    : '<option value="">Selecciona una opcion</option>'
+
+  return [
+    emptyOption,
+    ...normalizedOptions.map(option => `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`)
+  ].join('\n')
+}
+
+function buildImportedChoiceGroupHtml({ type = 'radio', name = '', options = [], required = true, editId = '', labelAttrs = '' } = {}) {
+  const normalizedOptions = normalizeImportedFieldOptions(options)
+  if (!normalizedOptions.length || !name) return ''
+  const cleanType = ['radio', 'checkbox'].includes(type) ? type : 'radio'
+  const cleanName = cleanString(name)
+  const baseAttrs = cleanString(labelAttrs)
+
+  return normalizedOptions.map((option, index) => {
+    const optionId = `${normalizeImportedFieldKey(cleanName, 'field')}_${index + 1}`
+    const inputRequired = required && index === 0 ? ' required="required" aria-required="true" data-rstk-field-required="true"' : ` aria-required="${required ? 'true' : 'false'}" data-rstk-field-required="${required ? 'true' : 'false'}"`
+    const optionEditId = `${editId || cleanName}_${index + 1}`
+    return `<label${baseAttrs ? ` ${baseAttrs}` : ''}><input type="${cleanType}" name="${escapeHtml(cleanName)}" id="${escapeHtml(optionId)}" value="${escapeHtml(option.value)}"${inputRequired} data-rstk-editable="true" data-rstk-edit-type="form_field" data-rstk-edit-id="${escapeHtml(optionEditId)}" data-rstk-label="${escapeHtml(option.label)}"> ${escapeHtml(option.label)}</label>`
+  }).join('\n')
+}
+
+function replaceImportedChoiceFieldGroup(html = '', editId = '', patch = null) {
+  if (!patch || !['radio', 'checkbox'].includes(patch.fieldInputType) || !patch.options.length) {
+    return { html, updated: false }
+  }
+
+  const matches = []
+  const inputPattern = /<input\b([^>]*?)\s*(\/?)>/gi
+  let match
+  while ((match = inputPattern.exec(String(html || '')))) {
+    const attrsText = match[1] || ''
+    const attrs = parseHtmlAttributes(attrsText)
+    const type = cleanString(attrs.type || 'text').toLowerCase()
+    if (type !== patch.fieldInputType) continue
+    if (!importedFormFieldMatches(attrsText, editId, patch)) continue
+    matches.push({ index: match.index, end: inputPattern.lastIndex, attrs, attrsText })
+  }
+
+  if (!matches.length) return { html, updated: false }
+
+  const groupName = patch.fieldName || cleanString(matches[0].attrs.name || matches[0].attrs.id)
+  const groupMatches = []
+  inputPattern.lastIndex = 0
+  while ((match = inputPattern.exec(String(html || '')))) {
+    const attrsText = match[1] || ''
+    const attrs = parseHtmlAttributes(attrsText)
+    const type = cleanString(attrs.type || 'text').toLowerCase()
+    const sameGroup = type === patch.fieldInputType && cleanString(attrs.name || attrs.id) === groupName
+    if (sameGroup) groupMatches.push({ index: match.index, end: inputPattern.lastIndex, attrs, attrsText })
+  }
+
+  const targetMatches = groupMatches.length ? groupMatches : matches
+  const ranges = targetMatches.map(item => {
+    const before = String(html || '').slice(0, item.index)
+    const labelStart = before.lastIndexOf('<label')
+    const previousLabelEnd = before.lastIndexOf('</label>')
+    const labelEnd = String(html || '').indexOf('</label>', item.end)
+    if (labelStart !== -1 && labelStart > previousLabelEnd && labelEnd !== -1) {
+      return {
+        start: labelStart,
+        end: labelEnd + '</label>'.length,
+        labelAttrs: (String(html || '').slice(labelStart).match(/^<label\b([^>]*)>/i) || [])[1] || ''
+      }
+    }
+    return { start: item.index, end: item.end, labelAttrs: '' }
+  })
+
+  const start = Math.min(...ranges.map(range => range.start))
+  const end = Math.max(...ranges.map(range => range.end))
+  const labelAttrs = ranges.find(range => cleanString(range.labelAttrs))?.labelAttrs || ''
+  const replacement = buildImportedChoiceGroupHtml({
+    type: patch.fieldInputType,
+    name: groupName,
+    options: patch.options,
+    required: patch.required,
+    editId,
+    labelAttrs
+  })
+
+  if (!replacement) return { html, updated: false }
+
+  return {
+    html: `${String(html || '').slice(0, start)}${replacement}${String(html || '').slice(end)}`,
+    updated: true
+  }
+}
+
+function replaceImportedLabelForField(html = '', fieldId = '', label = '') {
+  const cleanFieldId = cleanString(fieldId)
+  const cleanLabel = limitString(stripHtmlTags(label), 160)
+  if (!cleanFieldId || !cleanLabel) return html
+  const escapedId = escapeRegExp(cleanFieldId)
+  const labelPattern = new RegExp(`(<label\\b[^>]*\\bfor\\s*=\\s*(?:"${escapedId}"|'${escapedId}'|${escapedId})[^>]*>)([\\s\\S]*?)(<\\/label>)`, 'i')
+  return String(html || '').replace(labelPattern, (_match, openTag, _inner, closeTag) => `${openTag}${escapeHtml(cleanLabel)}${closeTag}`)
+}
+
 function applyImportedEditableContentUpdate(html = '', input = {}) {
   const editId = cleanString(input.editId || input.edit_id)
   const editType = normalizeImportedEditableContentType(input.editType || input.edit_type)
   const value = getImportedEditableTextValue(input)
   const buttonActionPatch = editType === 'button' ? getImportedButtonActionPatch(input) : null
   const choiceActionPatch = editType === 'choice_option' ? getImportedChoiceActionPatch(input) : null
+  const formFieldPatch = editType === 'form_field' ? getImportedFormFieldPatch(input, value) : null
 
   if (!editId || !editType) {
     const error = new Error('Seleccion invalida para editar contenido')
@@ -1710,6 +1945,41 @@ function applyImportedEditableContentUpdate(html = '', input = {}) {
       updated = true
       return setHtmlAttribute(match, attrsText, 'placeholder', value)
     })
+  } else if (editType === 'form_field') {
+    let fieldHtmlId = formFieldPatch?.fieldHtmlId || ''
+    const choiceGroupUpdate = replaceImportedChoiceFieldGroup(nextHtml, editId, formFieldPatch)
+    if (choiceGroupUpdate.updated) {
+      updated = true
+      nextHtml = choiceGroupUpdate.html
+    }
+    nextHtml = nextHtml.replace(/<select\b([^>]*)>([\s\S]*?)<\/select>/gi, (match, attrsText = '', innerHtml = '') => {
+      if (updated || !importedFormFieldMatches(attrsText, editId, formFieldPatch)) return match
+      updated = true
+      const attrs = parseHtmlAttributes(attrsText)
+      fieldHtmlId = fieldHtmlId || cleanString(attrs.id)
+      const openingTag = setImportedFormFieldTagAttributes(`<select${attrsText}>`, attrsText, formFieldPatch)
+      return `${openingTag}${buildImportedSelectOptions(formFieldPatch?.options || [], innerHtml)}</select>`
+    })
+    nextHtml = nextHtml.replace(/<textarea\b([^>]*)>([\s\S]*?)<\/textarea>/gi, (match, attrsText = '', innerHtml = '') => {
+      if (updated || !importedFormFieldMatches(attrsText, editId, formFieldPatch)) return match
+      updated = true
+      const attrs = parseHtmlAttributes(attrsText)
+      fieldHtmlId = fieldHtmlId || cleanString(attrs.id)
+      const openingTag = setImportedFormFieldTagAttributes(`<textarea${attrsText}>`, attrsText, formFieldPatch)
+      return `${openingTag}${innerHtml}</textarea>`
+    })
+    nextHtml = nextHtml.replace(/<input\b([^>]*?)\s*(\/?)>/gi, (match, attrsText = '') => {
+      if (updated || !importedFormFieldMatches(attrsText, editId, formFieldPatch)) return match
+      const attrs = parseHtmlAttributes(attrsText)
+      const type = cleanString(attrs.type || 'text').toLowerCase()
+      if (['hidden', 'submit', 'button', 'reset', 'image'].includes(type)) return match
+      updated = true
+      fieldHtmlId = fieldHtmlId || cleanString(attrs.id)
+      return setImportedFormFieldTagAttributes(match, attrsText, formFieldPatch)
+    })
+    if (updated) {
+      nextHtml = replaceImportedLabelForField(nextHtml, fieldHtmlId, formFieldPatch?.label || value)
+    }
   } else if (editType === 'button') {
     nextHtml = nextHtml.replace(/<input\b([^>]*?)\s*(\/?)>/gi, (match, attrsText = '') => {
       if (updated || !hasImportedEditId(attrsText, editId) || getImportedEditTypeFromAttrs(attrsText) !== 'button') return match

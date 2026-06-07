@@ -5818,6 +5818,28 @@ type ImportedChoiceEditorState = {
   actions: ImportedButtonActionStep[]
 }
 
+type ImportedFormFieldOption = { label: string; value: string }
+
+type ImportedFormFieldSelection = {
+  editId: string
+  label: string
+  placeholder: string
+  required: boolean
+  tagName: 'input' | 'textarea' | 'select'
+  inputType: string
+  fieldName: string
+  fieldHtmlId: string
+  options: ImportedFormFieldOption[]
+}
+
+type ImportedFormFieldEditorState = {
+  selection: ImportedFormFieldSelection
+  label: string
+  placeholder: string
+  required: boolean
+  options: ImportedFormFieldOption[]
+}
+
 const importedEditableSelector = [
   '[data-rstk-edit-id]',
   '[data-ristak-edit-id]',
@@ -5839,6 +5861,7 @@ const editableTypeLabels: Record<ImportedEditableSelection['editType'], string> 
   button: 'Boton',
   form_label: 'Texto de campo',
   placeholder: 'Texto dentro del campo',
+  form_field: 'Campo de formulario',
   image: 'Imagen',
   background_image: 'Imagen de fondo',
   video: 'Video',
@@ -5878,7 +5901,7 @@ const inferImportedEditableType = (element: HTMLElement): ImportedEditableConten
 
 const normalizeImportedEditableType = (value: string, element: HTMLElement): ImportedEditableContentType => {
   const type = value.trim().toLowerCase().replace(/[-\s]+/g, '_')
-  if (['heading', 'text', 'button', 'form_label', 'placeholder', 'image', 'background_image', 'video', 'choice_option'].includes(type)) {
+  if (['heading', 'text', 'button', 'form_label', 'placeholder', 'form_field', 'image', 'background_image', 'video', 'choice_option'].includes(type)) {
     return type as ImportedEditableContentType
   }
   return inferImportedEditableType(element)
@@ -5907,11 +5930,17 @@ const getEditableElementValue = (element: HTMLElement, editType: ImportedEditabl
       ''
   }
   if (editType === 'placeholder') return element.getAttribute('placeholder') || ''
+  if (editType === 'form_field') return getImportedEditableAttribute(element, 'label') || element.getAttribute('placeholder') || element.getAttribute('name') || ''
   if (editType === 'button' && tagName === 'input') return element.getAttribute('value') || ''
   return (element.textContent || '').replace(/\s+/g, ' ').trim()
 }
 
 const importedChoiceSelector = 'input[type="radio"], input[type="checkbox"]'
+const importedFormFieldSelector = [
+  '[data-rstk-edit-type="form_field"]',
+  '[data-ristak-edit-type="form_field"]',
+  '[data-ristack-edit-type="form_field"]'
+].join(', ')
 
 const importedButtonActionOptions: Array<{ value: ImportedButtonAction; label: string; demo?: boolean }> = [
   { value: 'submit', label: 'Enviar formulario' },
@@ -6068,6 +6097,108 @@ const readImportedChoiceSelection = (input: HTMLInputElement, doc: Document): Im
       'data-ristak-choice-actions',
       'data-ristack-choice-actions'
     ]))
+  }
+}
+
+const getImportedFormFieldRequired = (element: HTMLElement) => {
+  const explicit = (
+    element.getAttribute('data-rstk-field-required') ||
+    element.getAttribute('data-ristak-field-required') ||
+    element.getAttribute('data-ristack-field-required') ||
+    ''
+  ).trim().toLowerCase()
+
+  if (['0', 'false', 'no', 'off', 'optional'].includes(explicit)) return false
+  if (['1', 'true', 'yes', 'on', 'required'].includes(explicit)) return true
+  if (element.hasAttribute('required')) return true
+  if ((element.getAttribute('aria-required') || '').trim().toLowerCase() === 'true') return true
+  return true
+}
+
+const getImportedFormFieldElementFromTarget = (target: Element) => {
+  const fieldElement = target.closest(importedFormFieldSelector) as HTMLElement | null
+  if (!fieldElement) return null
+  const tagName = fieldElement.tagName.toLowerCase()
+  if (!['input', 'textarea', 'select'].includes(tagName)) return null
+  const inputType = tagName === 'input' ? (fieldElement.getAttribute('type') || 'text').toLowerCase() : tagName
+  if (['hidden', 'submit', 'button', 'reset', 'image'].includes(inputType)) return null
+  return fieldElement as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
+}
+
+const getImportedFormFieldLabel = (element: HTMLElement, doc: Document) => {
+  const explicitLabel = getImportedEditableAttribute(element, 'label') || element.getAttribute('aria-label') || ''
+  if (explicitLabel.trim()) return explicitLabel.trim()
+  const id = element.getAttribute('id') || ''
+  if (id) {
+    const label = doc.querySelector(`label[for="${id.replace(/"/g, '\\"')}"]`)
+    if (label?.textContent?.trim()) return label.textContent.replace(/\s+/g, ' ').trim()
+  }
+  const wrappingLabel = element.closest('label')
+  if (wrappingLabel?.textContent?.trim()) return wrappingLabel.textContent.replace(/\s+/g, ' ').trim()
+  return element.getAttribute('placeholder') || element.getAttribute('name') || element.getAttribute('id') || 'Campo'
+}
+
+const readImportedFormFieldOptions = (
+  element: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement,
+  doc: Document
+): ImportedFormFieldOption[] => {
+  const tagName = element.tagName.toLowerCase()
+  if (tagName === 'select') {
+    return Array.from((element as HTMLSelectElement).options || [])
+      .map(option => ({
+        label: (option.textContent || option.value || '').trim(),
+        value: (option.value || option.textContent || '').trim()
+      }))
+      .filter(option => option.label || option.value)
+      .filter(option => option.value || option.label.toLowerCase() !== 'selecciona una opcion')
+  }
+
+  const input = element as HTMLInputElement
+  const inputType = (input.getAttribute('type') || '').toLowerCase()
+  if (!['radio', 'checkbox'].includes(inputType)) return []
+
+  const choiceName = input.getAttribute('name') || input.getAttribute('id') || ''
+  if (!choiceName) return [{
+    label: getImportedChoiceLabel(input, doc),
+    value: input.getAttribute('value') || getImportedChoiceLabel(input, doc)
+  }]
+
+  const form = input.closest('form')
+  return Array.from((form || doc).querySelectorAll<HTMLInputElement>(`input[type="${inputType}"][name="${choiceName.replace(/"/g, '\\"')}"]`))
+    .map(optionInput => {
+      const label = getImportedChoiceLabel(optionInput, doc)
+      return {
+        label,
+        value: optionInput.getAttribute('value') || label
+      }
+    })
+    .filter(option => option.label || option.value)
+}
+
+const readImportedFormFieldSelection = (
+  element: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement,
+  doc: Document
+): ImportedFormFieldSelection => {
+  const tagName = element.tagName.toLowerCase() as ImportedFormFieldSelection['tagName']
+  const inputType = tagName === 'input' ? (element.getAttribute('type') || 'text').toLowerCase() : tagName
+  const fieldName = element.getAttribute('name') || element.getAttribute('id') || ''
+  const label = getImportedFormFieldLabel(element, doc)
+  const options = readImportedFormFieldOptions(element, doc)
+  const groupRequired = ['radio', 'checkbox'].includes(inputType) && fieldName
+    ? Array.from((element.closest('form') || doc).querySelectorAll<HTMLInputElement>(`input[type="${inputType}"][name="${fieldName.replace(/"/g, '\\"')}"]`))
+      .some(input => getImportedFormFieldRequired(input))
+    : getImportedFormFieldRequired(element)
+
+  return {
+    editId: getImportedEditableAttribute(element, 'id') || `field:${fieldName || label}`,
+    label,
+    placeholder: element.getAttribute('placeholder') || '',
+    required: groupRequired,
+    tagName,
+    inputType,
+    fieldName,
+    fieldHtmlId: element.getAttribute('id') || '',
+    options
   }
 }
 
@@ -6461,6 +6592,7 @@ const ImportedHtmlEditorPanel: React.FC<{
   const [aiRegionPrompt, setAiRegionPrompt] = useState('')
   const [aiRegionSaving, setAiRegionSaving] = useState(false)
   const [aiRegionError, setAiRegionError] = useState('')
+  const [fieldEditor, setFieldEditor] = useState<ImportedFormFieldEditorState | null>(null)
   const [contentSaving, setContentSaving] = useState(false)
   const [contentError, setContentError] = useState('')
   const importedPages = pages.length ? pages : [{ id: DEFAULT_FUNNEL_PAGE_ID, title: 'Pagina 1', sortOrder: 0 }]
@@ -6511,6 +6643,7 @@ const ImportedHtmlEditorPanel: React.FC<{
     setAiRegionSelection(null)
     setAiRegionPrompt('')
     setAiRegionError('')
+    setFieldEditor(null)
     setContentError('')
   }, [activeImportedPage?.id, site.id, previewVersion])
 
@@ -6528,6 +6661,7 @@ const ImportedHtmlEditorPanel: React.FC<{
 
   const openInlineEditorForElement = useCallback((element: HTMLElement, selection: ImportedEditableSelection, mode: 'text' | 'image' | 'video') => {
     const position = getInlineEditorPosition(element)
+    setFieldEditor(null)
     setInlineEditor({
       selection,
       mode,
@@ -6540,6 +6674,7 @@ const ImportedHtmlEditorPanel: React.FC<{
   const openButtonEditorForSelection = useCallback((selection: ImportedEditableSelection) => {
     setInlineEditor(null)
     setChoiceEditor(null)
+    setFieldEditor(null)
     setButtonEditor({
       selection,
       value: selection.value,
@@ -6560,9 +6695,24 @@ const ImportedHtmlEditorPanel: React.FC<{
   const openChoiceEditorForSelection = useCallback((selection: ImportedChoiceSelection) => {
     setInlineEditor(null)
     setButtonEditor(null)
+    setFieldEditor(null)
     setChoiceEditor({
       selection,
       actions: selection.actions
+    })
+    setContentError('')
+  }, [])
+
+  const openFieldEditorForSelection = useCallback((selection: ImportedFormFieldSelection) => {
+    setInlineEditor(null)
+    setButtonEditor(null)
+    setChoiceEditor(null)
+    setFieldEditor({
+      selection,
+      label: selection.label,
+      placeholder: selection.placeholder,
+      required: selection.required,
+      options: selection.options.length ? selection.options : []
     })
     setContentError('')
   }, [])
@@ -6573,6 +6723,7 @@ const ImportedHtmlEditorPanel: React.FC<{
     setInlineEditor(null)
     setButtonEditor(null)
     setChoiceEditor(null)
+    setFieldEditor(null)
   }, [])
 
   const saveEditableContent = useCallback(async (
@@ -6590,6 +6741,14 @@ const ImportedHtmlEditorPanel: React.FC<{
       choiceValue?: string
       choiceInputType?: 'radio' | 'checkbox'
       choiceIndex?: number
+      fieldLabel?: string
+      fieldPlaceholder?: string
+      fieldRequired?: boolean
+      fieldOptions?: ImportedFormFieldOption[]
+      fieldName?: string
+      fieldHtmlId?: string
+      fieldTag?: string
+      fieldInputType?: string
     }
   ) => {
     if (selection.editType === 'section') return false
@@ -6710,10 +6869,12 @@ const ImportedHtmlEditorPanel: React.FC<{
           box-shadow: 0 0 0 3px rgba(148, 163, 184, 0.12) !important;
         }
         ${importedChoiceSelector},
+        ${importedFormFieldSelector},
         label:has(${importedChoiceSelector}) {
           cursor: pointer !important;
         }
         ${importedChoiceSelector}:hover,
+        ${importedFormFieldSelector}:hover,
         label:has(${importedChoiceSelector}):hover {
           outline: 1px solid rgba(71, 85, 105, 0.58) !important;
           outline-offset: 4px !important;
@@ -6889,6 +7050,27 @@ const ImportedHtmlEditorPanel: React.FC<{
         }
         const target = event.target as Element | null
         if (!target || typeof target.closest !== 'function') return
+
+        const labelTarget = target.closest('label') as HTMLLabelElement | null
+        const nestedFieldElement = labelTarget?.querySelector(importedFormFieldSelector) as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | null
+        const labelledFieldElement = !nestedFieldElement && labelTarget?.htmlFor
+          ? doc.getElementById(labelTarget.htmlFor) as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | null
+          : null
+        const formFieldElement = getImportedFormFieldElementFromTarget(target) ||
+          (nestedFieldElement ? getImportedFormFieldElementFromTarget(nestedFieldElement) : null) ||
+          (labelledFieldElement ? getImportedFormFieldElementFromTarget(labelledFieldElement) : null)
+        if (formFieldElement) {
+          event.preventDefault()
+          event.stopPropagation()
+          const fieldSelection = readImportedFormFieldSelection(formFieldElement, doc)
+          const visualElement = (formFieldElement.closest('label') ||
+            (fieldSelection.fieldHtmlId ? doc.querySelector(`label[for="${fieldSelection.fieldHtmlId.replace(/"/g, '\\"')}"]`) : null) ||
+            formFieldElement) as HTMLElement
+          selectElement(visualElement)
+          removeMediaActionButton()
+          openFieldEditorForSelection(fieldSelection)
+          return
+        }
 
         const choiceInput = getImportedChoiceInputFromTarget(target, doc)
         if (choiceInput) {
@@ -7077,7 +7259,7 @@ const ImportedHtmlEditorPanel: React.FC<{
       iframe.removeEventListener('load', installEditorHooks)
       cleanupDocument()
     }
-  }, [activeImportedPage?.id, activeImportedPage?.title, aiRegionMode, aiRegionSelection, clearInlineSelection, openButtonEditorForSelection, openChoiceEditorForSelection, openInlineEditorForElement, previewHtml, previewLoading, previewVersion, saveEditableContent])
+  }, [activeImportedPage?.id, activeImportedPage?.title, aiRegionMode, aiRegionSelection, clearInlineSelection, openButtonEditorForSelection, openChoiceEditorForSelection, openFieldEditorForSelection, openInlineEditorForElement, previewHtml, previewLoading, previewVersion, saveEditableContent])
 
   const routeValue = getRouteEditorValue(site)
   const saveRoute = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -7136,6 +7318,53 @@ const ImportedHtmlEditorPanel: React.FC<{
     !contentSaving &&
     areImportedActionsValid(choiceEditor.actions)
   )
+  const fieldEditorHasOptions = Boolean(
+    fieldEditor &&
+    (fieldEditor.selection.tagName === 'select' || ['radio', 'checkbox'].includes(fieldEditor.selection.inputType))
+  )
+  const cleanFieldOptions = (fieldEditor?.options || [])
+    .map(option => ({
+      label: option.label.trim(),
+      value: (option.value || option.label).trim()
+    }))
+    .filter(option => option.label || option.value)
+  const canSaveFieldEditor = Boolean(
+    fieldEditor &&
+    fieldEditor.label.trim() &&
+    !contentSaving &&
+    (!fieldEditorHasOptions || cleanFieldOptions.length > 0)
+  )
+
+  const patchFieldOption = (index: number, patch: Partial<ImportedFormFieldOption>) => {
+    setFieldEditor(current => {
+      if (!current) return current
+      return {
+        ...current,
+        options: current.options.map((option, optionIndex) => optionIndex === index ? { ...option, ...patch } : option)
+      }
+    })
+  }
+
+  const addFieldOption = () => {
+    setFieldEditor(current => {
+      if (!current) return current
+      const label = `Opción ${current.options.length + 1}`
+      return {
+        ...current,
+        options: [...current.options, { label, value: label }]
+      }
+    })
+  }
+
+  const removeFieldOption = (index: number) => {
+    setFieldEditor(current => {
+      if (!current) return current
+      return {
+        ...current,
+        options: current.options.filter((_, optionIndex) => optionIndex !== index)
+      }
+    })
+  }
 
   const saveButtonEditor = async () => {
     if (!buttonEditor || buttonEditor.selection.editType !== 'button') return
@@ -7163,6 +7392,26 @@ const ImportedHtmlEditorPanel: React.FC<{
       choiceValue: choiceEditor.selection.choiceValue,
       choiceInputType: choiceEditor.selection.choiceInputType,
       choiceIndex: choiceEditor.selection.choiceIndex
+    })
+  }
+
+  const saveFieldEditor = async () => {
+    if (!fieldEditor) return
+    await saveEditableContent({
+      editId: fieldEditor.selection.editId,
+      editType: 'form_field' as ImportedEditableContentType,
+      label: fieldEditor.label,
+      value: fieldEditor.label,
+      tagName: fieldEditor.selection.tagName
+    }, fieldEditor.label, undefined, {
+      fieldLabel: fieldEditor.label.trim(),
+      fieldPlaceholder: fieldEditor.placeholder.trim(),
+      fieldRequired: fieldEditor.required,
+      fieldOptions: cleanFieldOptions,
+      fieldName: fieldEditor.selection.fieldName,
+      fieldHtmlId: fieldEditor.selection.fieldHtmlId,
+      fieldTag: fieldEditor.selection.tagName,
+      fieldInputType: fieldEditor.selection.inputType
     })
   }
 
@@ -7382,6 +7631,93 @@ const ImportedHtmlEditorPanel: React.FC<{
               <Button type="button" size="sm" onClick={() => void saveChoiceEditor()} disabled={!canSaveChoiceEditor} loading={contentSaving}>
                 <Save size={14} />
                 Guardar opcion
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {fieldEditor && (
+          <div className={styles.importedButtonActionBox}>
+            <div className={styles.importedButtonActionHeader}>
+              <FormInput size={17} />
+              <div>
+                <span>Campo seleccionado</span>
+                <strong>{fieldEditor.selection.label || 'Campo'}</strong>
+              </div>
+            </div>
+
+            <label className={styles.importedActionField}>
+              <span>Etiqueta del campo</span>
+              <input
+                value={fieldEditor.label}
+                disabled={contentSaving}
+                onChange={(event) => setFieldEditor(current => current ? { ...current, label: event.target.value } : current)}
+              />
+            </label>
+
+            {!['radio', 'checkbox'].includes(fieldEditor.selection.inputType) && (
+              <label className={styles.importedActionField}>
+                <span>Texto dentro del campo</span>
+                <input
+                  value={fieldEditor.placeholder}
+                  disabled={contentSaving}
+                  placeholder="Ej. Nombre completo"
+                  onChange={(event) => setFieldEditor(current => current ? { ...current, placeholder: event.target.value } : current)}
+                />
+              </label>
+            )}
+
+            <label className={styles.importedRequiredToggle}>
+              <input
+                type="checkbox"
+                checked={fieldEditor.required}
+                disabled={contentSaving}
+                onChange={(event) => setFieldEditor(current => current ? { ...current, required: event.target.checked } : current)}
+              />
+              <span>Campo obligatorio</span>
+            </label>
+
+            {fieldEditorHasOptions && (
+              <div className={styles.importedFieldOptionsEditor}>
+                <div className={styles.importedFieldOptionsHeader}>
+                  <span>Opciones del campo</span>
+                  <button type="button" onClick={addFieldOption} disabled={contentSaving || fieldEditor.options.length >= 30}>
+                    <Plus size={13} />
+                    Agregar
+                  </button>
+                </div>
+                {fieldEditor.options.map((option, index) => (
+                  <div key={`${index}-${option.value}`} className={styles.importedFieldOptionRow}>
+                    <input
+                      value={option.label}
+                      disabled={contentSaving}
+                      placeholder={`Opción ${index + 1}`}
+                      onChange={(event) => patchFieldOption(index, {
+                        label: event.target.value,
+                        value: option.value === option.label ? event.target.value : option.value
+                      })}
+                    />
+                    <input
+                      value={option.value}
+                      disabled={contentSaving}
+                      placeholder="valor"
+                      onChange={(event) => patchFieldOption(index, { value: event.target.value })}
+                    />
+                    <button type="button" onClick={() => removeFieldOption(index)} disabled={contentSaving || fieldEditor.options.length <= 1} aria-label={`Quitar opción ${index + 1}`}>
+                      <X size={13} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className={styles.importedButtonActionFooter}>
+              <Button type="button" variant="secondary" size="sm" onClick={clearInlineSelection} disabled={contentSaving}>
+                Cancelar
+              </Button>
+              <Button type="button" size="sm" onClick={() => void saveFieldEditor()} disabled={!canSaveFieldEditor} loading={contentSaving}>
+                <Save size={14} />
+                Guardar campo
               </Button>
             </div>
           </div>
