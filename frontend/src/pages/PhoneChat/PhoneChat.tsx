@@ -881,6 +881,56 @@ function getJourneySignature(journey: JourneyEvent[]) {
   }
 }
 
+function getMediaAttachmentType(messageType = '', mimeType = '', name = ''): ChatAttachmentType | null {
+  const normalizedType = messageType.toLowerCase()
+  const normalizedMime = mimeType.toLowerCase()
+  const normalizedName = name.toLowerCase()
+
+  if (normalizedType.includes('audio') || normalizedType.includes('voice') || normalizedMime.startsWith('audio/')) {
+    return 'audio'
+  }
+
+  if (normalizedType.includes('image') || normalizedType.includes('sticker') || normalizedMime.startsWith('image/')) {
+    return 'image'
+  }
+
+  if (normalizedType.includes('video') || normalizedType.includes('gif') || normalizedMime.startsWith('video/')) {
+    return 'video'
+  }
+
+  if (
+    normalizedType.includes('document') ||
+    normalizedMime === 'application/pdf' ||
+    normalizedMime.includes('officedocument') ||
+    normalizedMime.includes('msword') ||
+    normalizedMime.includes('spreadsheet') ||
+    normalizedMime.includes('presentation')
+  ) {
+    return 'document'
+  }
+
+  if (
+    normalizedType.includes('file') ||
+    normalizedMime.startsWith('application/') ||
+    normalizedMime.startsWith('text/') ||
+    /\.(pdf|docx?|xlsx?|pptx?|csv|txt|zip|rar|7z)$/i.test(normalizedName)
+  ) {
+    return 'file'
+  }
+
+  return null
+}
+
+function getAttachmentFallbackName(type: ChatAttachmentType, name = '', mediaId = '') {
+  if (name) return name
+  if (mediaId) return mediaId
+  if (type === 'image') return 'Foto enviada'
+  if (type === 'video') return 'Video enviado'
+  if (type === 'document') return 'Documento enviado'
+  if (type === 'file') return 'Archivo enviado'
+  return 'Mensaje de voz'
+}
+
 function getJourneyMediaAttachment(event: JourneyEvent): ChatMessage['attachment'] | undefined {
   const messageType = String(event.data?.message_type || '').toLowerCase()
   const mediaUrl = String(event.data?.media_url || event.data?.mediaUrl || '').trim()
@@ -888,27 +938,106 @@ function getJourneyMediaAttachment(event: JourneyEvent): ChatMessage['attachment
   const mimeType = String(event.data?.media_mime_type || event.data?.mediaMimeType || '').trim()
   const name = String(event.data?.media_filename || event.data?.mediaFilename || '').trim()
   const durationMs = Number(event.data?.media_duration_ms || event.data?.mediaDurationMs || 0) || undefined
+  const attachmentType = getMediaAttachmentType(messageType, mimeType, name)
 
-  if (messageType.includes('audio') || messageType.includes('voice')) {
+  if (attachmentType === 'audio') {
     return {
       type: 'audio',
       url: mediaUrl,
-      name: name || mediaId || 'Mensaje de voz',
+      name: getAttachmentFallbackName('audio', name, mediaId),
       mimeType,
       durationMs
     }
   }
 
-  if (messageType.includes('image') && mediaUrl) {
+  if (attachmentType) {
     return {
-      type: 'image',
+      type: attachmentType,
       url: mediaUrl,
-      name: name || mediaId || 'Foto enviada',
+      name: getAttachmentFallbackName(attachmentType, name, mediaId),
       mimeType
     }
   }
 
   return undefined
+}
+
+function normalizeArchiveUrl(value = '') {
+  const trimmed = String(value || '').trim().replace(/[)\],.;!?]+$/g, '')
+  if (!trimmed) return ''
+  return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`
+}
+
+function extractLinksFromText(text = '') {
+  const matches = text.match(/\bhttps?:\/\/[^\s<>"']+|\bwww\.[^\s<>"']+/gi) || []
+  return Array.from(new Set(matches.map(normalizeArchiveUrl).filter(Boolean)))
+}
+
+function getArchiveLinkTitle(url = '') {
+  try {
+    const parsed = new URL(url)
+    return parsed.hostname.replace(/^www\./, '')
+  } catch {
+    return url
+  }
+}
+
+function getContactInfoArchiveItems(journey: JourneyEvent[] = []): ContactInfoArchiveItem[] {
+  const items: ContactInfoArchiveItem[] = []
+
+  journey.forEach((event, eventIndex) => {
+    if (event.type !== 'whatsapp_message' && event.type !== 'meta_message') return
+
+    const text = String(event.data?.message_text || event.data?.message || event.data?.body || '').trim()
+    const direction = String(event.data?.direction || '').toLowerCase() === 'outbound' ? 'outbound' : 'inbound'
+    const messageId = String(
+      event.data?.whatsapp_api_message_id ||
+      event.data?.whatsapp_message_id ||
+      event.data?.meta_social_message_id ||
+      event.data?.meta_message_id ||
+      `message-${eventIndex}`
+    )
+    const messageType = String(event.data?.message_type || '')
+    const mediaUrl = String(event.data?.media_url || event.data?.mediaUrl || '').trim()
+    const mediaId = String(event.data?.media_id || event.data?.mediaId || '').trim()
+    const mimeType = String(event.data?.media_mime_type || event.data?.mediaMimeType || '').trim()
+    const name = String(event.data?.media_filename || event.data?.mediaFilename || '').trim()
+    const attachmentType = getMediaAttachmentType(messageType, mimeType, name)
+
+    if (attachmentType && attachmentType !== 'audio' && (mediaUrl || mediaId)) {
+      const tab: ContactInfoArchiveTab = attachmentType === 'image' || attachmentType === 'video'
+        ? 'media'
+        : 'documents'
+      const fallbackName = getAttachmentFallbackName(attachmentType, name, mediaId)
+
+      items.push({
+        id: `${messageId}-${tab}-${items.length}`,
+        tab,
+        type: attachmentType,
+        url: mediaUrl,
+        title: fallbackName,
+        caption: text,
+        date: event.date,
+        direction,
+        mimeType
+      })
+    }
+
+    extractLinksFromText(text).forEach((url, linkIndex) => {
+      items.push({
+        id: `${messageId}-link-${linkIndex}`,
+        tab: 'links',
+        type: 'link',
+        url,
+        title: getArchiveLinkTitle(url),
+        caption: url,
+        date: event.date,
+        direction
+      })
+    })
+  })
+
+  return items.sort((left, right) => Date.parse(right.date) - Date.parse(left.date))
 }
 
 function getJourneyMessage(event: JourneyEvent, index: number): ChatMessage | null {
@@ -1680,6 +1809,7 @@ export const PhoneChat: React.FC = () => {
   const [contactInfoLoading, setContactInfoLoading] = useState(false)
   const [contactInfoError, setContactInfoError] = useState('')
   const [contactInfoDetailPanel, setContactInfoDetailPanel] = useState<ContactInfoDetailPanel>(null)
+  const [contactInfoArchiveTab, setContactInfoArchiveTab] = useState<ContactInfoArchiveTab>('media')
   const [paymentMode, setPaymentMode] = useState<PaymentMode>('single')
   const [appointmentOpen, setAppointmentOpen] = useState(false)
   const [requestingPush, setRequestingPush] = useState(false)
@@ -1854,10 +1984,32 @@ export const PhoneChat: React.FC = () => {
     () => contactInfoAppointments.filter(isActiveAppointment),
     [contactInfoAppointments]
   )
+  const contactInfoArchiveItems = useMemo(
+    () => getContactInfoArchiveItems(contactJourney),
+    [contactJourney]
+  )
+  const contactInfoArchiveCounts = useMemo(() => ({
+    media: contactInfoArchiveItems.filter((item) => item.tab === 'media').length,
+    links: contactInfoArchiveItems.filter((item) => item.tab === 'links').length,
+    documents: contactInfoArchiveItems.filter((item) => item.tab === 'documents').length
+  }), [contactInfoArchiveItems])
+  const contactInfoVisibleArchiveItems = useMemo(
+    () => contactInfoArchiveItems.filter((item) => item.tab === contactInfoArchiveTab),
+    [contactInfoArchiveItems, contactInfoArchiveTab]
+  )
   const contactInfoJourneyEvents = useMemo(
     () => buildContactInfoJourney(contactJourney, timezone, contactInfoResolvedMetaAttribution),
     [contactInfoResolvedMetaAttribution, contactJourney, timezone]
   )
+
+  useEffect(() => {
+    const currentCount = contactInfoArchiveCounts[contactInfoArchiveTab]
+    if (currentCount > 0 || contactInfoArchiveItems.length === 0) return
+
+    const firstAvailableTab = (['media', 'links', 'documents'] as ContactInfoArchiveTab[])
+      .find((tab) => contactInfoArchiveCounts[tab] > 0)
+    if (firstAvailableTab) setContactInfoArchiveTab(firstAvailableTab)
+  }, [contactInfoArchiveCounts, contactInfoArchiveItems.length, contactInfoArchiveTab])
 
   const selectedCalendar = useMemo(
     () => calendars.find((calendar) => calendar.id === selectedCalendarId) || calendars[0] || null,
@@ -4898,6 +5050,102 @@ export const PhoneChat: React.FC = () => {
     )
   }
 
+  const renderMessageFile = (message: ChatMessage) => {
+    const attachment = message.attachment
+    if (!attachment || !['document', 'file'].includes(attachment.type)) return null
+
+    const fileLabel = attachment.name || getMessageTypeLabel(attachment.type)
+    const detail = attachment.mimeType ? getReadableValue(attachment.mimeType) : 'Archivo'
+    const content = (
+      <>
+        <span className={styles.messageFileIcon}>
+          <FileText size={20} />
+        </span>
+        <span className={styles.messageFileText}>
+          <strong>{fileLabel}</strong>
+          <small>{detail}</small>
+        </span>
+      </>
+    )
+
+    if (attachment.url) {
+      return (
+        <a className={styles.messageFile} href={attachment.url} target="_blank" rel="noreferrer">
+          {content}
+        </a>
+      )
+    }
+
+    return <span className={`${styles.messageFile} ${styles.messageFileUnavailable}`}>{content}</span>
+  }
+
+  const renderContactInfoArchiveItem = (item: ContactInfoArchiveItem) => {
+    const directionLabel = item.direction === 'outbound' ? 'Enviado por ti' : 'Enviado por el contacto'
+    const dateLabel = formatLocalDateShort(item.date)
+
+    if (item.tab === 'media') {
+      const media = item.type === 'video'
+        ? <video src={item.url || undefined} preload="metadata" muted playsInline />
+        : <img src={item.url || undefined} alt={item.title} loading="lazy" />
+      const mediaContent = (
+        <>
+          {item.url ? media : <ImageIcon size={24} />}
+          {item.type === 'video' && (
+            <span className={styles.contactInfoMediaType}>
+              <Play size={12} />
+            </span>
+          )}
+        </>
+      )
+
+      return item.url ? (
+        <a
+          key={item.id}
+          className={styles.contactInfoMediaTile}
+          href={item.url}
+          target="_blank"
+          rel="noreferrer"
+          aria-label={`Abrir ${item.title}`}
+        >
+          {mediaContent}
+        </a>
+      ) : (
+        <span key={item.id} className={`${styles.contactInfoMediaTile} ${styles.contactInfoMediaTileUnavailable}`}>
+          {mediaContent}
+        </span>
+      )
+    }
+
+    const IconComponent = item.tab === 'links' ? Link2 : FileText
+    const rowContent = (
+      <>
+        <span className={styles.contactInfoArchiveIcon}>
+          <IconComponent size={18} />
+        </span>
+        <span className={styles.contactInfoArchiveText}>
+          <strong>{item.title}</strong>
+          <small>{[directionLabel, dateLabel].filter(Boolean).join(' · ')}</small>
+          {item.caption && <em>{item.caption}</em>}
+        </span>
+        <ChevronRight size={17} className={styles.contactInfoArchiveChevron} />
+      </>
+    )
+
+    if (item.url) {
+      return (
+        <a key={item.id} className={styles.contactInfoArchiveRow} href={item.url} target="_blank" rel="noreferrer">
+          {rowContent}
+        </a>
+      )
+    }
+
+    return (
+      <span key={item.id} className={`${styles.contactInfoArchiveRow} ${styles.contactInfoArchiveRowUnavailable}`}>
+        {rowContent}
+      </span>
+    )
+  }
+
   const renderChats = () => {
     const normalizedChatQuery = chatQuery.trim().toLowerCase()
     const showAIAgentListItem = aiAgentChatEnabled &&
@@ -5093,18 +5341,32 @@ export const PhoneChat: React.FC = () => {
             )}
             {group.messages.map((message) => {
               const isAudioMessage = message.attachment?.type === 'audio' && Boolean(message.attachment.dataUrl || message.attachment.url)
+              const isVideoMessage = message.attachment?.type === 'video' && Boolean(message.attachment.dataUrl || message.attachment.url)
+              const isFileMessage = Boolean(message.attachment && ['document', 'file'].includes(message.attachment.type))
+              const hasRichAttachment = isAudioMessage || isVideoMessage || isFileMessage
 
               return (
                 <div
                   key={message.id}
                   className={`${styles.messageRow} ${styles[`messageRow_${message.direction}`]}`}
                 >
-                  <div className={`${styles.messageBubble} ${isAudioMessage ? styles.messageAudioBubble : ''}`}>
+                  <div className={`${styles.messageBubble} ${isAudioMessage ? styles.messageAudioBubble : ''} ${isFileMessage ? styles.messageFileBubble : ''}`}>
                     {message.attachment?.type === 'image' && (message.attachment.dataUrl || message.attachment.url) && (
                       <img className={styles.messageImage} src={message.attachment.dataUrl || message.attachment.url} alt={message.attachment.name || 'Foto enviada'} />
                     )}
+                    {isVideoMessage && (
+                      <video
+                        className={styles.messageVideo}
+                        src={message.attachment?.dataUrl || message.attachment?.url}
+                        controls
+                        playsInline
+                        preload="metadata"
+                      />
+                    )}
+                    {isFileMessage && renderMessageFile(message)}
                     {isAudioMessage && renderAudioMessage(message)}
-                    {!isAudioMessage && message.text && <p>{message.text}</p>}
+                    {!hasRichAttachment && message.text && <p>{message.text}</p>}
+                    {hasRichAttachment && !isAudioMessage && message.text && <p>{message.text}</p>}
                     {!isAudioMessage && renderMessageMeta(message)}
                   </div>
                 </div>

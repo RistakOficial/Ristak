@@ -1602,6 +1602,175 @@
   line-height: 1.35;
 }
 
+.contactInfoArchiveTabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid var(--phone-chat-border);
+  border-radius: 8px;
+  background: var(--phone-chat-surface-soft);
+}
+
+.contactInfoArchiveTabs button {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+  padding: 9px 6px;
+  border: 0;
+  border-right: 1px solid var(--phone-chat-border);
+  color: var(--phone-chat-muted);
+  background: transparent;
+  text-align: center;
+}
+
+.contactInfoArchiveTabs button:last-child {
+  border-right: 0;
+}
+
+.contactInfoArchiveTabs button span,
+.contactInfoArchiveTabs button small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.contactInfoArchiveTabs button span {
+  font-size: 12px;
+  font-weight: 820;
+}
+
+.contactInfoArchiveTabs button small {
+  font-size: 11px;
+  font-weight: 760;
+}
+
+.contactInfoArchiveTabs .contactInfoArchiveTabActive {
+  color: var(--phone-chat-text);
+  background: color-mix(in srgb, var(--phone-chat-accent-soft) 70%, var(--phone-chat-surface) 30%);
+}
+
+.contactInfoMediaGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 3px;
+  overflow: hidden;
+  border-radius: 8px;
+}
+
+.contactInfoMediaTile {
+  position: relative;
+  display: grid;
+  place-items: center;
+  aspect-ratio: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--phone-chat-muted);
+  background: var(--phone-chat-surface-soft);
+  text-decoration: none;
+}
+
+.contactInfoMediaTile img,
+.contactInfoMediaTile video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.contactInfoMediaTileUnavailable {
+  opacity: 0.74;
+}
+
+.contactInfoMediaType {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  color: #ffffff;
+  background: rgba(15, 23, 42, 0.72);
+}
+
+.contactInfoArchiveList {
+  display: grid;
+  gap: 0;
+}
+
+.contactInfoArchiveRow {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) 18px;
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+  padding: 10px 0;
+  color: var(--phone-chat-text);
+  text-decoration: none;
+}
+
+.contactInfoArchiveRow + .contactInfoArchiveRow {
+  border-top: 1px solid var(--phone-chat-border);
+}
+
+.contactInfoArchiveRowUnavailable {
+  opacity: 0.76;
+}
+
+.contactInfoArchiveIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  color: #1d4ed8;
+  background: #eff6ff;
+}
+
+.contactInfoArchiveText {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.contactInfoArchiveText strong,
+.contactInfoArchiveText small,
+.contactInfoArchiveText em {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.contactInfoArchiveText strong {
+  color: var(--phone-chat-text);
+  font-size: 14px;
+  font-weight: 820;
+}
+
+.contactInfoArchiveText small,
+.contactInfoArchiveText em {
+  color: var(--phone-chat-muted);
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 700;
+}
+
+.contactInfoArchiveChevron {
+  color: var(--phone-chat-muted);
+}
+
+:global(body[data-phone-chat-tone="dark"]) .contactInfoArchiveIcon {
+  color: var(--phone-chat-text-on-primary, #07140d);
+  background: var(--phone-chat-accent);
+}
+
+:global(body[data-phone-chat-tone="dark"]) .contactInfoMediaType {
+  background: rgba(0, 0, 0, 0.68);
+}
+
 .contactInfoRows {
   display: grid;
   gap: 2px;
@@ -1995,6 +2164,89 @@
   user-select: none;
   -webkit-user-select: none;
   -webkit-touch-callout: none;
+}
+
+.messageVideo {
+  display: block;
+  width: min(268px, 68vw);
+  max-height: 330px;
+  margin: 0 0 6px;
+  border-radius: 8px;
+  background: #111827;
+}
+
+.messageFileBubble {
+  width: min(292px, calc(100vw - 88px));
+}
+
+.messageFile {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  gap: 9px;
+  align-items: center;
+  min-width: 0;
+  padding: 8px 9px;
+  margin: 0 0 6px;
+  border-radius: 8px;
+  color: var(--phone-chat-text);
+  background: rgba(255, 255, 255, 0.52);
+  text-decoration: none;
+}
+
+.messageRow_inbound .messageFile {
+  background: color-mix(in srgb, var(--phone-chat-surface-soft) 78%, transparent);
+}
+
+.messageRow_outbound .messageFile {
+  background: rgba(255, 255, 255, 0.34);
+}
+
+.messageFileUnavailable {
+  opacity: 0.78;
+}
+
+.messageFileIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 8px;
+  color: #0f766e;
+  background: #ecfdf5;
+}
+
+.messageFileText {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.messageFileText strong,
+.messageFileText small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.messageFileText strong {
+  font-size: 14px;
+  font-weight: 820;
+}
+
+.messageFileText small {
+  color: var(--phone-chat-muted);
+  font-size: 11px;
+  font-weight: 720;
+}
+
+:global(body[data-phone-chat-tone="dark"]) .messageFile {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+:global(body[data-phone-chat-tone="dark"]) .messageFileIcon {
+  color: var(--phone-chat-text-on-primary, #07140d);
+  background: var(--phone-chat-accent);
 }
 
 .messageAudioBubble {
