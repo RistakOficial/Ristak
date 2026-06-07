@@ -1918,6 +1918,7 @@ export const PhoneChat: React.FC = () => {
   const [contactInfoLoading, setContactInfoLoading] = useState(false)
   const [contactInfoError, setContactInfoError] = useState('')
   const [contactInfoDetailPanel, setContactInfoDetailPanel] = useState<ContactInfoDetailPanel>(null)
+  const [contactInfoArchiveOpen, setContactInfoArchiveOpen] = useState(false)
   const [contactInfoArchiveTab, setContactInfoArchiveTab] = useState<ContactInfoArchiveTab>('media')
   const [paymentMode, setPaymentMode] = useState<PaymentMode>('single')
   const [appointmentOpen, setAppointmentOpen] = useState(false)
@@ -2672,11 +2673,19 @@ export const PhoneChat: React.FC = () => {
     setDraggingSwipe(null)
   }, [archivedViewOpen, chatFilter, chatQuery, selectedChatPhoneId])
 
+  useEffect(() => {
+    if (!contactInfoOpen) setContactInfoArchiveOpen(false)
+  }, [contactInfoOpen])
+
+  useEffect(() => {
+    setContactInfoArchiveOpen(false)
+  }, [activeContactId])
+
   useLayoutEffect(() => {
     resetPhoneFrameHorizontalScroll()
     const frameId = window.requestAnimationFrame(resetPhoneFrameHorizontalScroll)
     return () => window.cancelAnimationFrame(frameId)
-  }, [cameraSharePhoto, contactInfoOpen, conversationVisible, resetPhoneFrameHorizontalScroll])
+  }, [cameraSharePhoto, contactInfoArchiveOpen, contactInfoOpen, conversationVisible, resetPhoneFrameHorizontalScroll])
 
   useLayoutEffect(() => {
     chatSwipeGenerationRef.current += 1
@@ -5817,14 +5826,71 @@ export const PhoneChat: React.FC = () => {
       .filter((field) => field.value.trim().length > 0)
     const archiveTabs: Array<{ id: ContactInfoArchiveTab; label: string; count: number }> = [
       { id: 'media', label: 'Fotos y videos', count: contactInfoArchiveCounts.media },
-      { id: 'links', label: 'Enlaces', count: contactInfoArchiveCounts.links },
-      { id: 'documents', label: 'Documentos', count: contactInfoArchiveCounts.documents }
+      { id: 'documents', label: 'Documentos', count: contactInfoArchiveCounts.documents },
+      { id: 'links', label: 'Enlaces', count: contactInfoArchiveCounts.links }
     ]
     const archiveEmptyText = contactInfoArchiveTab === 'media'
       ? 'Aún no hay fotos ni videos guardados en este chat.'
       : contactInfoArchiveTab === 'links'
         ? 'Aún no hay enlaces guardados en este chat.'
         : 'Aún no hay documentos guardados en este chat.'
+    const archiveSummaryParts = [
+      contactInfoArchiveCounts.media > 0 ? `${contactInfoArchiveCounts.media} fotos/videos` : '',
+      contactInfoArchiveCounts.documents > 0 ? `${contactInfoArchiveCounts.documents} documentos` : '',
+      contactInfoArchiveCounts.links > 0 ? `${contactInfoArchiveCounts.links} enlaces` : ''
+    ].filter(Boolean)
+    const archiveSummary = archiveSummaryParts.join(' · ') || 'Aún no hay archivos guardados'
+
+    if (contactInfoArchiveOpen) {
+      return (
+        <section
+          className={`${styles.contactInfoScreen} ${contactInfoOpen ? styles.contactInfoScreenOpen : ''}`}
+          aria-label="Archivos del chat"
+          aria-hidden={!contactInfoOpen}
+        >
+          <header className={styles.contactInfoTopbar}>
+            <button type="button" className={styles.backButton} onClick={() => setContactInfoArchiveOpen(false)} aria-label="Volver a info del contacto">
+              <ChevronLeft size={32} />
+            </button>
+            <strong>Archivos del chat</strong>
+            <span className={styles.contactInfoTopbarSpacer} aria-hidden="true" />
+          </header>
+
+          <div className={`${styles.contactInfoContent} ${styles.contactInfoArchiveDetailContent}`} data-phone-chat-scrollable="true">
+            <section className={styles.contactInfoArchiveDetailSection}>
+              <div className={styles.contactInfoArchiveTabs} role="tablist" aria-label="Archivos enviados en el chat">
+                {archiveTabs.map((tab) => (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={contactInfoArchiveTab === tab.id}
+                    className={contactInfoArchiveTab === tab.id ? styles.contactInfoArchiveTabActive : ''}
+                    onClick={() => setContactInfoArchiveTab(tab.id)}
+                  >
+                    <span>{tab.label}</span>
+                    <small>{tab.count}</small>
+                  </button>
+                ))}
+              </div>
+              {contactInfoVisibleArchiveItems.length > 0 ? (
+                contactInfoArchiveTab === 'media' ? (
+                  <div className={styles.contactInfoMediaGrid}>
+                    {contactInfoVisibleArchiveItems.map(renderContactInfoArchiveItem)}
+                  </div>
+                ) : (
+                  <div className={styles.contactInfoArchiveList}>
+                    {contactInfoVisibleArchiveItems.map(renderContactInfoArchiveItem)}
+                  </div>
+                )
+              ) : (
+                <p className={styles.contactInfoDetailEmpty}>{archiveEmptyText}</p>
+              )}
+            </section>
+          </div>
+        </section>
+      )
+    }
 
     return (
       <section
@@ -5860,38 +5926,6 @@ export const PhoneChat: React.FC = () => {
           </section>
 
           <section className={styles.contactInfoSection}>
-            <h3>Archivos del chat</h3>
-            <div className={styles.contactInfoArchiveTabs} role="tablist" aria-label="Archivos enviados en el chat">
-              {archiveTabs.map((tab) => (
-                <button
-                  key={tab.id}
-                  type="button"
-                  role="tab"
-                  aria-selected={contactInfoArchiveTab === tab.id}
-                  className={contactInfoArchiveTab === tab.id ? styles.contactInfoArchiveTabActive : ''}
-                  onClick={() => setContactInfoArchiveTab(tab.id)}
-                >
-                  <span>{tab.label}</span>
-                  <small>{tab.count}</small>
-                </button>
-              ))}
-            </div>
-            {contactInfoVisibleArchiveItems.length > 0 ? (
-              contactInfoArchiveTab === 'media' ? (
-                <div className={styles.contactInfoMediaGrid}>
-                  {contactInfoVisibleArchiveItems.map(renderContactInfoArchiveItem)}
-                </div>
-              ) : (
-                <div className={styles.contactInfoArchiveList}>
-                  {contactInfoVisibleArchiveItems.map(renderContactInfoArchiveItem)}
-                </div>
-              )
-            ) : (
-              <p className={styles.contactInfoDetailEmpty}>{archiveEmptyText}</p>
-            )}
-          </section>
-
-          <section className={styles.contactInfoSection}>
             <div className={styles.contactInfoMetrics} role="group" aria-label="Resumen del contacto">
               <button
                 type="button"
@@ -5923,6 +5957,24 @@ export const PhoneChat: React.FC = () => {
                 </span>
               </button>
             </div>
+
+            <button
+              type="button"
+              className={styles.contactInfoArchiveSummaryButton}
+              onClick={() => setContactInfoArchiveOpen(true)}
+            >
+              <span className={styles.contactInfoArchiveSummaryIcon}>
+                <ImageIcon size={18} />
+              </span>
+              <span className={styles.contactInfoArchiveSummaryText}>
+                <strong>Archivos del chat</strong>
+                <small>{archiveSummary}</small>
+              </span>
+              <span className={styles.contactInfoArchiveSummaryAction}>
+                Ver más
+                <ChevronRight size={16} />
+              </span>
+            </button>
 
             {contactInfoDetailPanel === 'payments' && (
               <div className={styles.contactInfoDetailPanel}>

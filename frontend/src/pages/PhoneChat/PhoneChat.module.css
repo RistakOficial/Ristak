@@ -1602,6 +1602,76 @@
   line-height: 1.35;
 }
 
+.contactInfoArchiveSummaryButton {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+  padding: 10px 0 8px;
+  border: 0;
+  border-top: 1px solid var(--phone-chat-border);
+  color: var(--phone-chat-text);
+  background: transparent;
+  text-align: left;
+}
+
+.contactInfoArchiveSummaryIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  color: var(--phone-chat-accent);
+  background: var(--phone-chat-accent-soft);
+}
+
+.contactInfoArchiveSummaryText {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.contactInfoArchiveSummaryText strong,
+.contactInfoArchiveSummaryText small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.contactInfoArchiveSummaryText strong {
+  color: var(--phone-chat-text);
+  font-size: 14px;
+  font-weight: 820;
+}
+
+.contactInfoArchiveSummaryText small {
+  color: var(--phone-chat-muted);
+  font-size: 12px;
+  font-weight: 720;
+}
+
+.contactInfoArchiveSummaryAction {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--phone-chat-accent);
+  font-size: 12px;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.contactInfoArchiveDetailContent {
+  padding-top: 10px;
+}
+
+.contactInfoArchiveDetailSection {
+  display: grid;
+  gap: 12px;
+  padding: 0 14px 18px;
+}
+
 .contactInfoArchiveTabs {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
