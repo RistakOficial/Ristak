@@ -8,6 +8,7 @@ import {
   deleteBlock,
   deleteSite,
   getRequestHost,
+  getImportedSiteAssetResponse,
   getSite,
   getSitePreview,
   getSitesPublicDomain,
@@ -83,6 +84,26 @@ export async function importSiteHtmlHandler(req, res) {
     logger.error(`Error importando HTML de site: ${error.message}`)
     error.status = error.status || 400
     sendError(res, error, 'Error importando HTML')
+  }
+}
+
+export async function importedSiteAssetHandler(req, res) {
+  try {
+    const assetPath = req.params[0] || ''
+    const result = await getImportedSiteAssetResponse(req.params.siteId, assetPath, {
+      trackingEnabled: !isTrackingBypassRequest(req)
+    })
+
+    if (!result) {
+      return res.status(404).type('text/plain').send('Archivo no encontrado')
+    }
+
+    res.set('Cache-Control', result.cacheControl)
+    res.set('Content-Type', result.contentType)
+    return res.status(200).send(result.body)
+  } catch (error) {
+    logger.error(`Error sirviendo asset importado de site: ${error.message}`)
+    return res.status(error.status || 500).type('text/plain').send(error.message || 'No se pudo abrir el archivo')
   }
 }
 
@@ -340,6 +361,7 @@ export async function publicSiteHostMiddleware(req, res, next) {
       req.path === '/api/sites/public/submit' ||
       req.path === '/api/sites/public/meta-event' ||
       req.path.startsWith('/api/sites/public/calendar-preview/') ||
+      req.path.startsWith('/api/sites/public/imported-assets/') ||
       req.path === '/snip.js' ||
       req.path === '/collect' ||
       req.path === '/sync-visitor' ||

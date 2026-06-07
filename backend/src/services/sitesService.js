@@ -1,5 +1,7 @@
 import crypto from 'crypto'
 import dns from 'node:dns/promises'
+import path from 'node:path'
+import JSZip from 'jszip'
 import fetch from 'node-fetch'
 import { db, getAppConfig, setAppConfig } from '../config/database.js'
 import { API_URLS } from '../config/constants.js'
@@ -110,6 +112,44 @@ const SOCIAL_TEMPLATE_IDS = new Set(['facebook', 'instagram', 'tiktok'])
 const SOCIAL_PROFILE_BLOCK_READY_KEY = 'socialProfileBlockReady'
 const IMPORTED_SITE_TEMPLATE = 'imported_html'
 const IMPORTED_HTML_MAX_BYTES = 2 * 1024 * 1024
+const IMPORTED_ZIP_MAX_BYTES = 15 * 1024 * 1024
+const IMPORTED_ASSET_MAX_BYTES = 8 * 1024 * 1024
+const IMPORTED_ASSET_TOTAL_MAX_BYTES = 25 * 1024 * 1024
+const IMPORTED_ZIP_MAX_FILES = 250
+const IMPORTED_HTML_EXTENSIONS = new Set(['html', 'htm'])
+const IMPORTED_ASSET_CONTENT_TYPES = new Map([
+  ['html', 'text/html; charset=utf-8'],
+  ['htm', 'text/html; charset=utf-8'],
+  ['css', 'text/css; charset=utf-8'],
+  ['js', 'text/javascript; charset=utf-8'],
+  ['mjs', 'text/javascript; charset=utf-8'],
+  ['json', 'application/json; charset=utf-8'],
+  ['txt', 'text/plain; charset=utf-8'],
+  ['svg', 'image/svg+xml; charset=utf-8'],
+  ['xml', 'application/xml; charset=utf-8'],
+  ['webmanifest', 'application/manifest+json; charset=utf-8'],
+  ['map', 'application/json; charset=utf-8'],
+  ['png', 'image/png'],
+  ['jpg', 'image/jpeg'],
+  ['jpeg', 'image/jpeg'],
+  ['gif', 'image/gif'],
+  ['webp', 'image/webp'],
+  ['avif', 'image/avif'],
+  ['ico', 'image/x-icon'],
+  ['pdf', 'application/pdf'],
+  ['woff', 'font/woff'],
+  ['woff2', 'font/woff2'],
+  ['ttf', 'font/ttf'],
+  ['otf', 'font/otf'],
+  ['eot', 'application/vnd.ms-fontobject'],
+  ['mp4', 'video/mp4'],
+  ['webm', 'video/webm'],
+  ['mov', 'video/quicktime'],
+  ['mp3', 'audio/mpeg'],
+  ['wav', 'audio/wav'],
+  ['ogg', 'audio/ogg']
+])
+const IMPORTED_ASSET_ALLOWED_EXTENSIONS = new Set(IMPORTED_ASSET_CONTENT_TYPES.keys())
 const IMPORTED_STATIC_FALLBACK_STYLE = `<style data-rstk-import-static-fallback>
 .reveal,
 [data-aos] {
@@ -405,6 +445,13 @@ function decodeBase64Text(value) {
   return Buffer.from(base64, 'base64').toString('utf8')
 }
 
+function decodeBase64Buffer(value) {
+  const raw = cleanString(value)
+  if (!raw) return Buffer.alloc(0)
+  const base64 = raw.includes(',') ? raw.split(',').pop() : raw
+  return Buffer.from(base64, 'base64')
+}
+
 function decodeHtmlEntities(value = '') {
   return cleanString(value)
     .replace(/&nbsp;/gi, ' ')
@@ -445,6 +492,138 @@ function normalizeImportedFieldKey(value, fallback = 'custom_field') {
 
 function escapeRegExp(value = '') {
   return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function normalizeImportedAssetPath(value = '') {
+  const withoutNulls = String(value || '').replace(/\0/g, '').replace(/\\/g, '/').trim()
+  if (!withoutNulls || withoutNulls.startsWith('/')) return ''
+
+  const normalized = path.posix.normalize(withoutNulls).replace(/^\.\/+/, '')
+  if (!normalized || normalized === '.' || normalized === '..' || normalized.startsWith('../')) return ''
+  return normalized
+}
+
+function getImportedAssetExtension(assetPath = '') {
+  const basename = normalizeImportedAssetPath(assetPath).split('/').pop() || ''
+  const extension = basename.includes('.') ? basename.split('.').pop()?.toLowerCase() : ''
+  return extension || ''
+}
+
+function getImportedAssetContentType(assetPath = '') {
+  return IMPORTED_ASSET_CONTENT_TYPES.get(getImportedAssetExtension(assetPath)) || 'application/octet-stream'
+}
+
+function isSkippedImportedZipPath(assetPath = '') {
+  const parts = normalizeImportedAssetPath(assetPath).split('/').map(part => part.toLowerCase())
+  return parts.some(part => part === '__macosx' || part === '.ds_store' || part === 'thumbs.db')
+}
+
+function splitImportedUrlReference(value = '') {
+  const raw = String(value || '').trim()
+  const hashIndex = raw.indexOf('#')
+  const beforeHash = hashIndex >= 0 ? raw.slice(0, hashIndex) : raw
+  const hash = hashIndex >= 0 ? raw.slice(hashIndex) : ''
+  const queryIndex = beforeHash.indexOf('?')
+  const pathname = queryIndex >= 0 ? beforeHash.slice(0, queryIndex) : beforeHash
+  const search = queryIndex >= 0 ? beforeHash.slice(queryIndex) : ''
+  return { pathname, search, hash }
+}
+
+function isImportedExternalReference(value = '') {
+  const reference = String(value || '').trim()
+  return !reference || /^(?:[a-z][a-z0-9+.-]*:|\/\/|#)/i.test(reference)
+}
+
+function resolveImportedRelativeReference(referencePath = '', currentAssetPath = '') {
+  const normalizedReference = String(referencePath || '').replace(/\\/g, '/').trim()
+  if (!normalizedReference) return ''
+
+  const currentPath = normalizeImportedAssetPath(currentAssetPath)
+  const baseDir = currentPath.includes('/') ? currentPath.split('/').slice(0, -1).join('/') : ''
+  const combined = normalizedReference.startsWith('/')
+    ? normalizedReference.slice(1)
+    : [baseDir, normalizedReference].filter(Boolean).join('/')
+  return normalizeImportedAssetPath(combined)
+}
+
+function getImportedAssetPublicUrl(siteId, assetPath) {
+  const encodedPath = normalizeImportedAssetPath(assetPath)
+    .split('/')
+    .map(segment => encodeURIComponent(segment))
+    .join('/')
+  return `/api/sites/public/imported-assets/${encodeURIComponent(siteId)}/${encodedPath}`
+}
+
+function rewriteImportedReferenceValue(value, currentAssetPath, siteId, availablePaths) {
+  const raw = String(value || '')
+  if (isImportedExternalReference(raw)) return raw
+
+  const { pathname, search, hash } = splitImportedUrlReference(raw)
+  const resolvedPath = resolveImportedRelativeReference(pathname, currentAssetPath)
+  if (!resolvedPath) return raw
+
+  let assetPath = resolvedPath
+  if (!availablePaths.has(assetPath) && String(pathname || '').startsWith('/')) {
+    const currentPath = normalizeImportedAssetPath(currentAssetPath)
+    const rootFolder = currentPath.includes('/') ? currentPath.split('/')[0] : ''
+    const prefixedPath = rootFolder ? normalizeImportedAssetPath(`${rootFolder}/${assetPath}`) : ''
+    if (prefixedPath && availablePaths.has(prefixedPath)) {
+      assetPath = prefixedPath
+    }
+  }
+
+  if (!availablePaths.has(assetPath)) return raw
+
+  return `${getImportedAssetPublicUrl(siteId, assetPath)}${search}${hash}`
+}
+
+function rewriteImportedSrcsetValue(value, currentAssetPath, siteId, availablePaths) {
+  return String(value || '')
+    .split(',')
+    .map(candidate => {
+      const trimmed = candidate.trim()
+      if (!trimmed) return ''
+      const [url, ...descriptor] = trimmed.split(/\s+/)
+      return [rewriteImportedReferenceValue(url, currentAssetPath, siteId, availablePaths), ...descriptor].join(' ')
+    })
+    .filter(Boolean)
+    .join(', ')
+}
+
+function rewriteImportedCssReferences(css = '', currentAssetPath = '', siteId = '', availablePaths = new Set()) {
+  let rewritten = String(css || '').replace(/url\(\s*(["']?)([^"')]+)\1\s*\)/gi, (_match, quote, value) => {
+    const nextValue = rewriteImportedReferenceValue(value, currentAssetPath, siteId, availablePaths)
+    return `url(${quote || ''}${nextValue}${quote || ''})`
+  })
+
+  rewritten = rewritten.replace(/@import\s+(["'])([^"']+)\1/gi, (_match, quote, value) => {
+    const nextValue = rewriteImportedReferenceValue(value, currentAssetPath, siteId, availablePaths)
+    return `@import ${quote}${nextValue}${quote}`
+  })
+
+  return rewritten
+}
+
+function rewriteImportedHtmlReferences(html = '', currentAssetPath = '', siteId = '', availablePaths = new Set()) {
+  let rewritten = String(html || '').replace(/\s(src|href|poster|action|srcset)\s*=\s*(["'])([^"']*)\2/gi, (_match, attr, quote, value) => {
+    const nextValue = attr.toLowerCase() === 'srcset'
+      ? rewriteImportedSrcsetValue(value, currentAssetPath, siteId, availablePaths)
+      : rewriteImportedReferenceValue(value, currentAssetPath, siteId, availablePaths)
+    return ` ${attr}=${quote}${nextValue}${quote}`
+  })
+
+  rewritten = rewritten.replace(/\s(src|href|poster|action|srcset)\s*=\s*([^\s"'=<>`]+)/gi, (_match, attr, value) => {
+    const nextValue = attr.toLowerCase() === 'srcset'
+      ? rewriteImportedSrcsetValue(value, currentAssetPath, siteId, availablePaths)
+      : rewriteImportedReferenceValue(value, currentAssetPath, siteId, availablePaths)
+    return ` ${attr}="${nextValue}"`
+  })
+
+  rewritten = rewritten.replace(/(<style\b[^>]*>)([\s\S]*?)(<\/style>)/gi, (_match, open, css, close) => (
+    `${open}${rewriteImportedCssReferences(css, currentAssetPath, siteId, availablePaths)}${close}`
+  ))
+
+  return rewritten
 }
 
 function hasImportedAlias(haystack = '', aliases = []) {
@@ -647,6 +826,7 @@ function detectImportedForms(html = '') {
     const attrs = parseHtmlAttributes(formMatch[1] || '')
     const formHtml = formMatch[2] || ''
     const explicitForm = cleanString(attrs['data-ristack-form'] || attrs['data-ristak-form'])
+    const importedFormId = cleanString(attrs['data-rstk-form-id'])
     const fields = extractImportedFields(formHtml, formIndex)
     const buttonMatch = formHtml.match(/<button\b([^>]*)>([\s\S]*?)<\/button>|<input\b([^>]*type=["']?submit["']?[^>]*)>/i)
     const submitText = buttonMatch
@@ -656,7 +836,7 @@ function detectImportedForms(html = '') {
 
     if (fields.length) {
       forms.push({
-        id: normalizeImportedFieldKey(explicitForm || attrs.id || attrs.name || `form_${formIndex + 1}`, `form_${formIndex + 1}`),
+        id: normalizeImportedFieldKey(explicitForm || importedFormId || attrs.id || attrs.name || `form_${formIndex + 1}`, `form_${formIndex + 1}`),
         explicitForm,
         title,
         purpose: 'lead_capture',
@@ -682,6 +862,53 @@ function detectImportedForms(html = '') {
   }
 
   return forms
+}
+
+function ensureUniqueImportedFormId(baseId = 'form', usedIds = new Set()) {
+  const normalized = normalizeImportedFieldKey(baseId, 'form')
+  let candidate = normalized
+  let index = 2
+  while (usedIds.has(candidate)) {
+    candidate = `${normalized}_${index}`
+    index += 1
+  }
+  usedIds.add(candidate)
+  return candidate
+}
+
+function namespaceImportedPageForms(forms = [], pagePath = '', usedIds = new Set()) {
+  const pageKey = normalizeImportedFieldKey(pagePath.replace(/\.[^.]+$/, ''), 'page')
+  return forms.map((form, index) => {
+    const explicitId = cleanString(form.explicitForm)
+    const baseId = explicitId
+      ? form.id
+      : normalizeImportedFieldKey(`${pageKey}_${form.id || `form_${index + 1}`}`, `form_${index + 1}`)
+    const id = ensureUniqueImportedFormId(baseId, usedIds)
+
+    return {
+      ...form,
+      id,
+      pagePath,
+      title: cleanString(form.title) || `Formulario ${index + 1}`
+    }
+  })
+}
+
+function assignImportedFormIds(html = '', forms = []) {
+  let formIndex = 0
+  return String(html || '').replace(/<form\b([^>]*)>/gi, (match, attrsText = '') => {
+    const attrs = parseHtmlAttributes(attrsText)
+    if (cleanString(attrs['data-rstk-form-id'])) {
+      formIndex += 1
+      return match
+    }
+
+    const formId = cleanString(forms[formIndex]?.id)
+    formIndex += 1
+    if (!formId) return match
+
+    return `<form${attrsText} data-rstk-form-id="${escapeHtml(formId)}">`
+  })
 }
 
 function inferImportedFieldDestination(field = {}) {
@@ -3600,6 +3827,229 @@ function getImportedHtmlTitle(html = '', fallback = 'Pagina importada') {
   return limitString(stripHtmlTags(titleMatch?.[1] || fallback), 120)
 }
 
+function pickImportedZipMainHtmlPath(paths = [], filename = '') {
+  const sorted = [...paths].sort((left, right) => {
+    const leftDepth = left.split('/').length
+    const rightDepth = right.split('/').length
+    if (leftDepth !== rightDepth) return leftDepth - rightDepth
+    if (left.length !== right.length) return left.length - right.length
+    return left.localeCompare(right)
+  })
+  const rootIndex = sorted.find(assetPath => /^index\.html?$/i.test(assetPath))
+  if (rootIndex) return rootIndex
+
+  const nestedIndex = sorted.find(assetPath => /(^|\/)index\.html?$/i.test(assetPath))
+  if (nestedIndex) return nestedIndex
+
+  const filenameBase = normalizeImportedFieldKey(filename.replace(/\.[^.]+$/, ''), '')
+  const namedHtml = filenameBase
+    ? sorted.find(assetPath => normalizeImportedFieldKey((assetPath.split('/').pop() || '').replace(/\.[^.]+$/, ''), '') === filenameBase)
+    : ''
+  return namedHtml || sorted[0] || ''
+}
+
+async function extractImportedZipArchive(filename = '', buffer = Buffer.alloc(0)) {
+  if (!buffer.length) {
+    const error = new Error('El ZIP esta vacio')
+    error.status = 400
+    throw error
+  }
+
+  if (buffer.byteLength > IMPORTED_ZIP_MAX_BYTES) {
+    const error = new Error('El ZIP es demasiado grande. Sube un archivo de maximo 15 MB.')
+    error.status = 400
+    throw error
+  }
+
+  let zip
+  try {
+    zip = await JSZip.loadAsync(buffer)
+  } catch {
+    const error = new Error('No pudimos leer el ZIP. Comprimelo de nuevo e intenta otra vez.')
+    error.status = 400
+    throw error
+  }
+
+  const filesByPath = new Map()
+  const report = []
+  let totalBytes = 0
+  const entries = Object.values(zip.files || {}).sort((left, right) => left.name.localeCompare(right.name))
+
+  for (const entry of entries) {
+    if (!entry || entry.dir) continue
+
+    const assetPath = normalizeImportedAssetPath(entry.name)
+    if (!assetPath || isSkippedImportedZipPath(assetPath)) continue
+
+    const extension = getImportedAssetExtension(assetPath)
+    if (!IMPORTED_ASSET_ALLOWED_EXTENSIONS.has(extension)) {
+      if (report.length < 20) report.push(`Se omitio ${assetPath} porque no es un archivo web permitido`)
+      continue
+    }
+
+    if (filesByPath.has(assetPath)) {
+      if (report.length < 20) report.push(`Se omitio duplicado ${assetPath}`)
+      continue
+    }
+
+    if (filesByPath.size >= IMPORTED_ZIP_MAX_FILES) {
+      const error = new Error(`El ZIP trae demasiados archivos. Sube maximo ${IMPORTED_ZIP_MAX_FILES} archivos web.`)
+      error.status = 400
+      throw error
+    }
+
+    const content = await entry.async('nodebuffer')
+    if (content.byteLength > IMPORTED_ASSET_MAX_BYTES) {
+      const error = new Error(`El archivo ${assetPath} es demasiado grande. Cada archivo interno debe pesar maximo 8 MB.`)
+      error.status = 400
+      throw error
+    }
+
+    totalBytes += content.byteLength
+    if (totalBytes > IMPORTED_ASSET_TOTAL_MAX_BYTES) {
+      const error = new Error('El ZIP trae demasiados assets. Reduce imagenes o videos e intenta otra vez.')
+      error.status = 400
+      throw error
+    }
+
+    filesByPath.set(assetPath, {
+      assetPath,
+      extension,
+      contentType: getImportedAssetContentType(assetPath),
+      content,
+      sizeBytes: content.byteLength
+    })
+  }
+
+  const htmlPaths = [...filesByPath.values()]
+    .filter(file => IMPORTED_HTML_EXTENSIONS.has(file.extension))
+    .map(file => file.assetPath)
+  const mainPath = pickImportedZipMainHtmlPath(htmlPaths, filename)
+  if (!mainPath) {
+    const error = new Error('El ZIP no trae ningun archivo .html para abrir.')
+    error.status = 400
+    throw error
+  }
+
+  return {
+    files: [...filesByPath.values()],
+    mainPath,
+    report: [
+      `Se importo ZIP con ${filesByPath.size} archivos web`,
+      `Pagina principal detectada: ${mainPath}`,
+      ...report
+    ]
+  }
+}
+
+function buildImportedAssetRow({ importId, siteId, assetPath, contentType, content }) {
+  const contentBuffer = Buffer.isBuffer(content) ? content : Buffer.from(String(content || ''), 'utf8')
+  return {
+    id: `site_import_asset_${crypto.randomUUID()}`,
+    importId,
+    siteId,
+    assetPath,
+    contentType,
+    contentBase64: contentBuffer.toString('base64'),
+    sizeBytes: contentBuffer.byteLength
+  }
+}
+
+async function prepareImportedZipContent({ filename, fileBase64, siteId, importId }) {
+  const archive = await extractImportedZipArchive(filename, decodeBase64Buffer(fileBase64))
+  const availablePaths = new Set(archive.files.map(file => file.assetPath))
+  const usedFormIds = new Set()
+  const detectedForms = []
+  const assets = []
+  const securityReport = [...archive.report]
+  let rawHtml = ''
+  let sanitizedHtml = ''
+
+  for (const file of archive.files) {
+    if (IMPORTED_HTML_EXTENSIONS.has(file.extension)) {
+      const pageRawHtml = file.content.toString('utf8')
+      const sanitized = sanitizeImportedHtml(pageRawHtml)
+      const pageForms = namespaceImportedPageForms(detectImportedForms(sanitized.html), file.assetPath, usedFormIds)
+      detectedForms.push(...pageForms.map(form => ({
+        ...form,
+        title: file.assetPath === archive.mainPath ? form.title : `${form.title} - ${file.assetPath}`
+      })))
+      let pageHtml = assignImportedFormIds(sanitized.html, pageForms)
+      pageHtml = rewriteImportedHtmlReferences(pageHtml, file.assetPath, siteId, availablePaths)
+
+      for (const item of sanitized.report) {
+        securityReport.push(`${file.assetPath}: ${item}`)
+      }
+
+      if (file.assetPath === archive.mainPath) {
+        rawHtml = pageRawHtml
+        sanitizedHtml = pageHtml
+      }
+
+      assets.push(buildImportedAssetRow({
+        importId,
+        siteId,
+        assetPath: file.assetPath,
+        contentType: file.contentType,
+        content: pageHtml
+      }))
+      continue
+    }
+
+    if (file.extension === 'css') {
+      const css = file.content.toString('utf8')
+      assets.push(buildImportedAssetRow({
+        importId,
+        siteId,
+        assetPath: file.assetPath,
+        contentType: file.contentType,
+        content: rewriteImportedCssReferences(css, file.assetPath, siteId, availablePaths)
+      }))
+      continue
+    }
+
+    assets.push(buildImportedAssetRow({
+      importId,
+      siteId,
+      assetPath: file.assetPath,
+      contentType: file.contentType,
+      content: file.content
+    }))
+  }
+
+  return {
+    importType: 'zip',
+    rawHtml,
+    sanitized: {
+      html: sanitizedHtml,
+      report: Array.from(new Set(securityReport))
+    },
+    detectedForms,
+    assets
+  }
+}
+
+async function replaceImportedSiteAssets(siteId, assets = []) {
+  await db.run('DELETE FROM public_site_import_assets WHERE site_id = ?', [siteId])
+
+  for (const asset of assets) {
+    await db.run(`
+      INSERT INTO public_site_import_assets (
+        id, import_id, site_id, asset_path, content_type, content_base64, size_bytes,
+        created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `, [
+      asset.id,
+      asset.importId,
+      asset.siteId,
+      asset.assetPath,
+      asset.contentType,
+      asset.contentBase64,
+      asset.sizeBytes
+    ])
+  }
+}
+
 async function getImportedSiteBySiteId(siteId) {
   const row = await db.get('SELECT * FROM public_site_imports WHERE site_id = ? LIMIT 1', [siteId])
   if (!row) return null
@@ -3649,34 +4099,83 @@ async function getImportedSiteBySiteId(siteId) {
   }
 }
 
+async function getImportedSiteAssetByPath(siteId, assetPath) {
+  const normalizedPath = normalizeImportedAssetPath(assetPath)
+  if (!normalizedPath) return null
+
+  const row = await db.get(`
+    SELECT * FROM public_site_import_assets
+    WHERE site_id = ? AND asset_path = ?
+    LIMIT 1
+  `, [siteId, normalizedPath])
+  if (!row) return null
+
+  return {
+    id: row.id,
+    importId: row.import_id,
+    siteId: row.site_id,
+    assetPath: row.asset_path,
+    contentType: row.content_type || getImportedAssetContentType(row.asset_path),
+    content: Buffer.from(row.content_base64 || '', 'base64'),
+    sizeBytes: Number(row.size_bytes || 0),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  }
+}
+
+async function getImportedSiteForAsset(siteId) {
+  const row = await db.get('SELECT * FROM public_sites WHERE id = ? LIMIT 1', [siteId])
+  return mapSite(row)
+}
+
 export async function createImportedSiteFromHtml(input = {}) {
   const filename = cleanString(input.filename || input.name || 'pagina.html')
   const extension = filename.split('.').pop()?.toLowerCase() || ''
-  if (extension === 'zip') {
-    const error = new Error('Por ahora sube un archivo HTML. El ZIP se habilita cuando conectemos storage persistente para assets.')
-    error.status = 400
-    throw error
-  }
-  if (!['html', 'htm'].includes(extension)) {
-    const error = new Error('Sube un archivo .html')
+  if (![...IMPORTED_HTML_EXTENSIONS, 'zip'].includes(extension)) {
+    const error = new Error('Sube un archivo .html o .zip')
     error.status = 400
     throw error
   }
 
-  const rawHtml = input.html || decodeBase64Text(input.fileBase64 || input.contentBase64 || input.content)
-  const sanitized = sanitizeImportedHtml(rawHtml)
-  const detectedForms = detectImportedForms(sanitized.html)
-  const mappings = buildDefaultImportedFormMappings(detectedForms)
   const siteType = validateSiteType(input.siteType || input.site_type || 'landing_page')
-  const publicTitle = getImportedHtmlTitle(sanitized.html, filename.replace(/\.[^.]+$/, '') || 'Pagina importada')
-  const slug = await ensureUniqueSlug(slugify(input.slug || publicTitle || 'pagina-importada'))
   const siteId = crypto.randomUUID()
   const importId = `site_import_${crypto.randomUUID()}`
+
+  let prepared
+  if (extension === 'zip') {
+    prepared = await prepareImportedZipContent({
+      filename,
+      fileBase64: input.fileBase64 || input.contentBase64 || input.content,
+      siteId,
+      importId
+    })
+  } else {
+    const rawHtml = input.html || decodeBase64Text(input.fileBase64 || input.contentBase64 || input.content)
+    const sanitized = sanitizeImportedHtml(rawHtml)
+    const detectedForms = detectImportedForms(sanitized.html)
+    prepared = {
+      importType: 'html',
+      rawHtml,
+      sanitized: {
+        html: assignImportedFormIds(sanitized.html, detectedForms),
+        report: sanitized.report
+      },
+      detectedForms,
+      assets: []
+    }
+  }
+
+  const detectedForms = prepared.detectedForms
+  const mappings = buildDefaultImportedFormMappings(detectedForms)
+  const publicTitle = getImportedHtmlTitle(prepared.sanitized.html, filename.replace(/\.[^.]+$/, '') || 'Pagina importada')
+  const slug = await ensureUniqueSlug(slugify(input.slug || publicTitle || 'pagina-importada'))
   const theme = {
     ...DEFAULT_THEME,
     template: IMPORTED_SITE_TEMPLATE,
     importedHtml: true,
     importId,
+    importType: prepared.importType,
+    importAssetCount: prepared.assets.length,
     pages: [{ id: DEFAULT_FUNNEL_PAGE_ID, title: 'Pagina importada', sortOrder: 0 }]
   }
 
@@ -3702,17 +4201,22 @@ export async function createImportedSiteFromHtml(input = {}) {
       id, site_id, original_filename, import_type, html_original, html_sanitized,
       detected_forms_json, form_mappings_json, security_report_json, status,
       created_at, updated_at
-    ) VALUES (?, ?, ?, 'html', ?, ?, ?, ?, ?, 'mapping_pending', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'mapping_pending', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
   `, [
     importId,
     siteId,
     filename,
-    rawHtml,
-    sanitized.html,
+    prepared.importType,
+    prepared.rawHtml,
+    prepared.sanitized.html,
     jsonString(detectedForms),
     jsonString(mappings),
-    jsonString(sanitized.report)
+    jsonString(prepared.sanitized.report)
   ])
+
+  if (prepared.assets.length) {
+    await replaceImportedSiteAssets(siteId, prepared.assets)
+  }
 
   return {
     site: await getSite(siteId, { includeBlocks: true, includeSubmissions: true }),
@@ -7322,6 +7826,36 @@ function buildImportedFormCaptureScript(site, imported) {
   </script>`
 }
 
+async function buildImportedHtmlRuntimeInjection(site, imported, { trackingEnabled = true, pageTitle = '' } = {}) {
+  const metaPixelSnippet = await buildMetaPixelSnippet(site, trackingEnabled, { id: DEFAULT_FUNNEL_PAGE_ID, title: pageTitle || site.title || site.name })
+  const nativeTrackingScript = trackingEnabled
+    ? buildNativeSiteTrackingScript({
+      siteId: site.id,
+      siteSlug: site.slug,
+      siteName: site.name,
+      siteType: site.siteType,
+      pageId: DEFAULT_FUNNEL_PAGE_ID,
+      pageTitle: pageTitle || site.title || site.name,
+      formSiteId: site.id,
+      formSiteName: site.name,
+      endpoint: '/collect'
+    })
+    : ''
+  const captureScript = buildImportedFormCaptureScript(site, imported)
+  return `${metaPixelSnippet}${nativeTrackingScript}${captureScript}`
+}
+
+function injectImportedHtmlRuntime(html = '', injection = '') {
+  html = html || '<!doctype html><html><body></body></html>'
+  html = injectImportedStaticFallback(html)
+
+  if (/<\/body>/i.test(html)) {
+    return html.replace(/<\/body>/i, `${injection}</body>`)
+  }
+
+  return `${html}${injection}`
+}
+
 async function renderImportedPublicSiteHtml(site, { trackingEnabled = true } = {}) {
   const imported = await getImportedSiteBySiteId(site.id)
   if (!imported) {
@@ -7331,30 +7865,46 @@ async function renderImportedPublicSiteHtml(site, { trackingEnabled = true } = {
     })
   }
 
-  const metaPixelSnippet = await buildMetaPixelSnippet(site, trackingEnabled, { id: DEFAULT_FUNNEL_PAGE_ID, title: site.title || site.name })
-  const nativeTrackingScript = trackingEnabled
-    ? buildNativeSiteTrackingScript({
-      siteId: site.id,
-      siteSlug: site.slug,
-      siteName: site.name,
-      siteType: site.siteType,
-      pageId: DEFAULT_FUNNEL_PAGE_ID,
-      pageTitle: site.title || site.name,
-      formSiteId: site.id,
-      formSiteName: site.name,
-      endpoint: '/collect'
-    })
-    : ''
-  const captureScript = buildImportedFormCaptureScript(site, imported)
-  const injection = `${metaPixelSnippet}${nativeTrackingScript}${captureScript}`
-  let html = imported.htmlSanitized || imported.htmlOriginal || '<!doctype html><html><body></body></html>'
-  html = injectImportedStaticFallback(html)
+  const injection = await buildImportedHtmlRuntimeInjection(site, imported, {
+    trackingEnabled,
+    pageTitle: site.title || site.name
+  })
+  const html = imported.htmlSanitized || imported.htmlOriginal || '<!doctype html><html><body></body></html>'
+  return injectImportedHtmlRuntime(html, injection)
+}
 
-  if (/<\/body>/i.test(html)) {
-    return html.replace(/<\/body>/i, `${injection}</body>`)
+export async function getImportedSiteAssetResponse(siteId, assetPath, { trackingEnabled = true } = {}) {
+  const site = await getImportedSiteForAsset(siteId)
+  if (!site || !isImportedHtmlSite(site)) return null
+
+  const asset = await getImportedSiteAssetByPath(site.id, assetPath)
+  if (!asset) return null
+
+  if (/^text\/html\b/i.test(asset.contentType)) {
+    const imported = await getImportedSiteBySiteId(site.id)
+    if (!imported) return null
+
+    const injection = await buildImportedHtmlRuntimeInjection(site, imported, {
+      trackingEnabled,
+      pageTitle: asset.assetPath
+    })
+
+    return {
+      site,
+      assetPath: asset.assetPath,
+      contentType: 'text/html; charset=utf-8',
+      body: Buffer.from(injectImportedHtmlRuntime(asset.content.toString('utf8'), injection), 'utf8'),
+      cacheControl: trackingEnabled ? 'public, max-age=300' : 'no-store'
+    }
   }
 
-  return `${html}${injection}`
+  return {
+    site,
+    assetPath: asset.assetPath,
+    contentType: asset.contentType,
+    body: asset.content,
+    cacheControl: trackingEnabled ? 'public, max-age=3600' : 'no-store'
+  }
 }
 
 export async function renderPublicSiteHtml(site, { pageId, trackingEnabled = true } = {}) {

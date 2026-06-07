@@ -494,6 +494,22 @@ async function initTables() {
       )
     `)
 
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS public_site_import_assets (
+        id TEXT PRIMARY KEY,
+        import_id TEXT NOT NULL,
+        site_id TEXT NOT NULL,
+        asset_path TEXT NOT NULL,
+        content_type TEXT NOT NULL,
+        content_base64 TEXT NOT NULL,
+        size_bytes INTEGER DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (import_id) REFERENCES public_site_imports(id) ON DELETE CASCADE,
+        FOREIGN KEY (site_id) REFERENCES public_sites(id) ON DELETE CASCADE
+      )
+    `)
+
     for (const [columnName, columnType] of [
       ['domain', 'TEXT UNIQUE'],
       ['title', 'TEXT'],
@@ -535,6 +551,8 @@ async function initTables() {
       await db.run('CREATE INDEX IF NOT EXISTS idx_public_site_submissions_site ON public_site_submissions(site_id, created_at)')
       await db.run('CREATE INDEX IF NOT EXISTS idx_public_site_submissions_contact ON public_site_submissions(contact_id)')
       await db.run('CREATE INDEX IF NOT EXISTS idx_public_site_imports_site ON public_site_imports(site_id)')
+      await db.run('CREATE INDEX IF NOT EXISTS idx_public_site_import_assets_import ON public_site_import_assets(import_id)')
+      await db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_public_site_import_assets_site_path ON public_site_import_assets(site_id, asset_path)')
       await db.run("CREATE UNIQUE INDEX IF NOT EXISTS idx_public_sites_domain_lower ON public_sites(LOWER(domain)) WHERE domain IS NOT NULL AND domain != ''")
     } catch (err) {
       logger.warn('Advertencia al crear índices de public sites:', err.message)

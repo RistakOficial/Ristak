@@ -3125,13 +3125,8 @@ export const Sites: React.FC = () => {
     event.target.value = ''
     if (!file) return
 
-    if (/\.zip$/i.test(file.name)) {
-      showToast('warning', 'ZIP pendiente', 'Por ahora sube un archivo HTML. El ZIP lo conectamos cuando haya storage para imagenes y assets.')
-      return
-    }
-
-    if (!/\.html?$/i.test(file.name)) {
-      showToast('error', 'Archivo no valido', 'Sube un archivo .html')
+    if (!/\.(html?|zip)$/i.test(file.name)) {
+      showToast('error', 'Archivo no valido', 'Sube un archivo .html o un .zip con tu sitio.')
       return
     }
 
@@ -3922,7 +3917,7 @@ export const Sites: React.FC = () => {
       <input
         ref={importFileInputRef}
         type="file"
-        accept=".html,.htm,text/html"
+        accept=".html,.htm,.zip,text/html,application/zip,application/x-zip-compressed"
         className={styles.hiddenFileInput}
         onChange={handleImportHtmlFile}
       />
@@ -5371,8 +5366,8 @@ const CreateFlowPanel: React.FC<CreateFlowPanelProps> = ({ step, creating, onCre
           </button>
           <button type="button" disabled={creating} onClick={() => onImportHtml('landing_page')}>
             <Upload size={22} />
-            <strong>Subir HTML propio</strong>
-            <p>Usa tu pagina actual y Ristak detecta sus formularios para guardar contactos.</p>
+            <strong>Subir HTML o ZIP</strong>
+            <p>Usa tu pagina actual o un sitio comprimido; Ristak detecta sus formularios para guardar contactos.</p>
             <ChevronRight size={18} />
           </button>
         </div>
@@ -5426,8 +5421,8 @@ const CreateFlowPanel: React.FC<CreateFlowPanelProps> = ({ step, creating, onCre
           </button>
           <button type="button" disabled={creating} onClick={() => onImportHtml('standard_form')}>
             <Upload size={22} />
-            <strong>Subir HTML propio</strong>
-            <p>Conserva tu formulario actual y decide como guardar cada campo detectado.</p>
+            <strong>Subir HTML o ZIP</strong>
+            <p>Conserva tu formulario actual, aunque venga con varias paginas, y decide como guardar cada campo.</p>
             <ChevronRight size={18} />
           </button>
         </div>
@@ -5455,8 +5450,8 @@ const CreateFlowPanel: React.FC<CreateFlowPanelProps> = ({ step, creating, onCre
           </button>
           <button type="button" disabled={creating} onClick={() => onImportHtml('interactive_form')}>
             <Upload size={22} />
-            <strong>Subir HTML propio</strong>
-            <p>Importa el diseno y revisa que datos se guardan en el contacto.</p>
+            <strong>Subir HTML o ZIP</strong>
+            <p>Importa formularios multipagina y revisa que datos se guardan en el contacto.</p>
             <ChevronRight size={18} />
           </button>
         </div>

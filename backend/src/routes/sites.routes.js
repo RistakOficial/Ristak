@@ -10,6 +10,7 @@ import {
   getSitesDomainHandler,
   getSiteHandler,
   getSitesHandler,
+  importedSiteAssetHandler,
   metaPageEventPublicHandler,
   previewCalendarHandler,
   previewSiteHandler,
@@ -28,6 +29,7 @@ const router = express.Router()
 router.post('/public/submit', submitPublicSiteHandler)
 router.post('/public/meta-event', metaPageEventPublicHandler)
 router.get('/public/calendar-preview/:slug', previewCalendarHandler)
+router.get('/public/imported-assets/:siteId/*', importedSiteAssetHandler)
 
 router.use(requireAuth)
 
