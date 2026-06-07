@@ -34,6 +34,14 @@ import {
   startAgentRun,
   updateAgentRun
 } from './agentExecutionLedgerService.js'
+import {
+  createMetaCampaignDraft,
+  executeMetaCampaignDraft,
+  getMetaCampaignBuilderCapabilities,
+  getMetaCampaignDraft,
+  listMetaCampaignTemplates,
+  rebuildMetaCampaignDraftPreview
+} from './metaCampaignBuilderService.js'
 
 const OPENAI_API_URL = 'https://api.openai.com/v1'
 const HIGHLEVEL_API_BASE_URL = process.env.GHL_API_BASE_URL || 'https://services.leadconnectorhq.com'
@@ -1252,12 +1260,21 @@ function shouldSkipDbResearchForMetaAds(question) {
     !needsRistakCohortForMetaAdsOperation(question)
 }
 
+function isMetaCampaignBuilderRequest(question) {
+  const normalized = normalizeText(question)
+  const mentionsMetaAds = /\b(meta|facebook|instagram|ads|anuncio|anuncios|campana|campanas|publicidad|ads manager)\b/.test(normalized)
+  const mentionsCampaignBuild = /\b(crea|crear|arma|armar|configura|configurar|prepara|preparar|lanza|lanzar|publica|publicar|borrador|preview|plantilla|presupuesto|audiencia|adset|conjunto|creativo|campaign|campana|campanas)\b/.test(normalized)
+  const asksBuilder = /\b(mcp|campaign builder|builder|plantilla de campana|configurar campana|crear campana|armar campana|campana de meta|anuncio de meta|meta ads)\b/.test(normalized)
+
+  return mentionsMetaAds && (mentionsCampaignBuild || asksBuilder)
+}
+
 function buildMetaAdsOperationsUnavailableReply() {
   return {
     reply: [
       'Las operaciones directas de Meta Ads Manager no están disponibles dentro de esta app.',
       '',
-      'Puedes revisar resultados históricos sincronizados de campañas desde Ristak, pero públicos, campañas activas, presupuestos, estados y cambios operativos deben hacerse directamente en Meta Ads Manager.',
+      'Puedes revisar resultados históricos sincronizados desde Ristak. Para crear campañas nuevas, usa el builder interno: arma borrador, valida, muestra preview y sólo ejecuta cuando el MCP de Meta Ads esté conectado y confirmes.',
       '',
       'No voy a inventar públicos personalizados usando GHL, fuentes, sesiones o cohortes de la DB, porque eso no son públicos reales de Meta.'
     ].join('\n'),
@@ -1472,7 +1489,7 @@ function buildHighLevelEndpointIntentHint({ latestUserMessage = '', messages = [
 }
 
 function buildMetaAdsOperationsContext() {
-  return 'Operaciones directas de Meta Ads Manager deshabilitadas en esta app. Usa sólo la DB de Ristak para métricas históricas sincronizadas; no intentes consultar ni modificar públicos, campañas activas, presupuestos, estados o configuración operativa desde el agente.'
+  return 'Meta Ads en Ristak tiene dos rutas: 1) resultados históricos y ROAS salen de la DB sincronizada; 2) creación/configuración de campañas nuevas debe usar el Meta Campaign Builder interno con borrador, validación, preview, trazabilidad y ejecución por MCP sólo si está conectado y confirmado. No modifiques campañas reales por atajos ni inventes públicos reales desde datos internos.'
 }
 
 const PAYMENT_MUTATION_TOOL_NAMES = new Set([
@@ -11193,6 +11210,189 @@ async function executeRecordInvoicePayment(args = {}, highLevelConnection, conte
   }
 }
 
+function buildMetaCampaignBuilderTools({ enabled = false } = {}) {
+  if (!enabled) return []
+
+  return [
+    {
+      type: 'function',
+      name: 'list_meta_campaign_templates',
+      description: 'Lista las plantillas internas disponibles para armar campañas de Meta Ads con políticas manuales, automatizadas, bloqueadas o editables.',
+      parameters: {
+        type: 'object',
+        properties: {},
+        additionalProperties: false
+      },
+      strict: false
+    },
+    {
+      type: 'function',
+      name: 'create_meta_campaign_draft',
+      description: 'Crea un borrador interno de campaña Meta Ads. Usa esta herramienta cuando el usuario entregue contenido base, presupuesto, objetivo, audiencia, creativo o pida configurar una campaña. No publica nada; sólo valida, arma payload, preview y rastro.',
+      parameters: {
+        type: 'object',
+        properties: {
+          templateId: {
+            type: ['string', 'null'],
+            enum: ['manual_leads_whatsapp', 'manual_sales_conversion', 'automated_advantage_leads', null],
+            description: 'Plantilla a usar. Si el usuario prefiere control manual y WhatsApp, usa manual_leads_whatsapp.'
+          },
+          content: {
+            type: ['object', 'null'],
+            description: 'Contenido base del anuncio: oferta, ángulo, texto principal, titular, descripción, CTA, URL, WhatsApp, notas y assets.'
+          },
+          account: {
+            type: ['object', 'null'],
+            description: 'Cuenta publicitaria si el usuario la especifica. Si no, Ristak usa meta_config.'
+          },
+          campaign: {
+            type: ['object', 'null'],
+            description: 'Configuración de campaña: nombre, objetivo, estado, categorías especiales.'
+          },
+          adSet: {
+            type: ['object', 'null'],
+            description: 'Conjunto de anuncios: presupuesto, fechas, audiencia, placements, optimización, estrategia de puja.'
+          },
+          creative: {
+            type: ['object', 'null'],
+            description: 'Creativo: texto, titular, CTA, URL, página, Instagram, WhatsApp, media.'
+          },
+          tracking: {
+            type: ['object', 'null'],
+            description: 'Tracking: pixel/dataset, evento de conversión y UTMs.'
+          },
+          automation: {
+            type: ['object', 'null'],
+            description: 'Opciones Advantage/automatizaciones si el usuario pide permitirlas.'
+          },
+          optionOverrides: {
+            type: ['object', 'null'],
+            description: 'Overrides explícitos de opciones bloqueadas/manuales/editables si se requiere trazarlas.'
+          }
+        },
+        additionalProperties: true
+      },
+      strict: false
+    },
+    {
+      type: 'function',
+      name: 'preview_meta_campaign_draft',
+      description: 'Refresca y devuelve el preview/validación de un borrador de campaña Meta Ads existente.',
+      parameters: {
+        type: 'object',
+        properties: {
+          draftId: { type: 'string', description: 'ID del borrador.' }
+        },
+        required: ['draftId'],
+        additionalProperties: false
+      },
+      strict: false
+    },
+    {
+      type: 'function',
+      name: 'execute_meta_campaign_draft',
+      description: 'Intenta ejecutar un borrador validado por el MCP de Meta Ads. Debe usarse sólo después de preview y confirmación humana explícita; si falta MCP o confirmación, devuelve bloqueo seguro.',
+      parameters: {
+        type: 'object',
+        properties: {
+          draftId: { type: 'string', description: 'ID del borrador.' },
+          dryRun: { type: ['boolean', 'null'], description: 'true para sólo verificar que está listo sin ejecutar.' },
+          confirmation: { type: ['boolean', 'null'], description: 'true sólo si el usuario ya confirmó publicar/crear en Meta.' }
+        },
+        required: ['draftId'],
+        additionalProperties: false
+      },
+      strict: false
+    }
+  ]
+}
+
+async function executeListMetaCampaignTemplatesTool() {
+  const [templates, capabilities] = await Promise.all([
+    listMetaCampaignTemplates(),
+    getMetaCampaignBuilderCapabilities()
+  ])
+
+  return {
+    ok: true,
+    action: 'list_meta_campaign_templates',
+    templates: templates.map(template => ({
+      id: template.id,
+      name: template.name,
+      description: template.description,
+      category: template.category,
+      mode: template.mode,
+      version: template.version
+    })),
+    mcp: capabilities.mcp,
+    guardrails: capabilities.guardrails
+  }
+}
+
+async function executeCreateMetaCampaignDraftTool(args = {}, context = {}) {
+  const draft = await createMetaCampaignDraft(args || {}, {
+    userId: context?.userId || null
+  })
+
+  return {
+    ok: true,
+    action: 'create_meta_campaign_draft',
+    draftId: draft.id,
+    traceId: draft.traceId,
+    status: draft.status,
+    executionStatus: draft.executionStatus,
+    validation: draft.validation,
+    preview: draft.preview,
+    message: draft.validation?.readyForExecution
+      ? 'Borrador de campaña listo para revisar antes de enviar a Meta.'
+      : 'Borrador creado, pero faltan datos antes de poder enviarlo a Meta.'
+  }
+}
+
+async function executePreviewMetaCampaignDraftTool(args = {}) {
+  const draftId = cleanText(args.draftId || args.draft_id || '', 160)
+  if (!draftId) {
+    return { ok: false, error: 'Falta el ID del borrador de campaña.' }
+  }
+
+  const draft = await rebuildMetaCampaignDraftPreview(draftId)
+
+  return {
+    ok: true,
+    action: 'preview_meta_campaign_draft',
+    draftId: draft.id,
+    traceId: draft.traceId,
+    status: draft.status,
+    validation: draft.validation,
+    preview: draft.preview
+  }
+}
+
+async function executeMetaCampaignDraftTool(args = {}) {
+  const draftId = cleanText(args.draftId || args.draft_id || '', 160)
+  if (!draftId) {
+    return { ok: false, error: 'Falta el ID del borrador de campaña.' }
+  }
+
+  const result = await executeMetaCampaignDraft(draftId, {
+    dryRun: Boolean(args.dryRun),
+    confirmation: Boolean(args.confirmation)
+  })
+  const latestDraft = await getMetaCampaignDraft(draftId).catch(() => null)
+
+  return {
+    ok: Boolean(result.ok),
+    action: 'execute_meta_campaign_draft',
+    draftId,
+    traceId: latestDraft?.traceId || result.draft?.traceId || null,
+    status: result.status,
+    message: result.message,
+    requiresConfirmation: Boolean(result.requiresConfirmation),
+    validation: result.validation || result.draft?.validation || latestDraft?.validation || null,
+    mcp: result.mcp || null
+  }
+}
+
 function buildHighLevelTools(highLevelConnection, options = {}) {
   if (!highLevelConnection?.configured) return []
 
@@ -12597,6 +12797,16 @@ async function callOpenAIResponseWithActionTools(apiKey, {
             operationalMemory,
             resolvedPaymentContact: operationalMemory.paymentContact
           })
+        } else if (call.name === 'list_meta_campaign_templates') {
+          output = await executeListMetaCampaignTemplatesTool()
+        } else if (call.name === 'create_meta_campaign_draft') {
+          output = await executeCreateMetaCampaignDraftTool(call.arguments, {
+            userId: runtimeContext?.userId || viewContext?.userId || viewContext?.user?.id || null
+          })
+        } else if (call.name === 'preview_meta_campaign_draft') {
+          output = await executePreviewMetaCampaignDraftTool(call.arguments)
+        } else if (call.name === 'execute_meta_campaign_draft') {
+          output = await executeMetaCampaignDraftTool(call.arguments)
         } else {
           output = {
             ok: false,
@@ -13211,9 +13421,9 @@ const SOURCE_ROUTING_PROMPT = [
   'Fuentes de verdad:',
   '- DB de Ristak: análisis de negocio, históricos, pagos registrados, citas, contactos, tracking, campañas sincronizadas, ROAS/utilidad e ingresos atribuidos.',
   '- HighLevel/GHL: acciones reales de CRM como contactos, mensajes, workflows, citas, oportunidades, productos, invoices y pagos cuando corresponda.',
-  '- Meta Ads operativo: deshabilitado dentro de esta app. No consultes ni modifiques públicos, campañas activas, presupuestos, estados ni configuración real de Ads Manager desde el agente.',
+  '- Meta Ads operativo: para campañas nuevas usa sólo el Meta Campaign Builder interno. Ese flujo crea borrador, valida, muestra preview, guarda rastro y sólo ejecuta por MCP con confirmación. No modifiques campañas reales por otra ruta.',
   '- Web search: sólo cuando el usuario pida contexto externo, mercado, tendencias, competidores, cultura, geografía, política, noticias o benchmarks.',
-  'No mezcles fuentes: rentabilidad publicitaria sale de DB con atribución interna; inventario y configuración real de Ads Manager no se reemplazan con datos internos.'
+  'No mezcles fuentes: rentabilidad publicitaria sale de DB con atribución interna; configuración nueva de campañas pasa por el builder; inventario real de Ads Manager no se reemplaza con datos internos.'
 ].join('\n')
 
 const UNIFIED_CAPABILITY_PROMPT = [
@@ -13221,6 +13431,7 @@ const UNIFIED_CAPABILITY_PROMPT = [
   '- No asumas que todo es contacto, pago o Meta. Lee la intención real del último mensaje usando la conversación completa.',
   '- Para conversación normal, ideas, redacción, chistes o preguntas generales que no requieren datos privados ni acciones externas, responde sin llamar herramientas.',
   '- Para analítica interna del negocio usa la DB de Ristak y los resultados SQL disponibles. Esto incluye campañas/anuncios sincronizados, ROAS, utilidad, pagos, citas, contactos, ventas, fuentes, cohortes e históricos.',
+  '- Para crear o configurar campañas nuevas de Meta Ads usa create_meta_campaign_draft. No prometas publicación real si el draft no está validado, sin preview confirmado o sin MCP de Meta conectado.',
   '- Para GoHighLevel usa HighLevel MCP o highlevel_rest_request cuando el usuario pida recursos/acciones de CRM: media storage, imágenes, archivos, workflows, calendarios, citas, conversaciones, oportunidades, productos, tags, custom fields, usuarios o ubicaciones.',
   `- Catálogo HighLevel cubierto por rutas/MCP/REST: ${HIGHLEVEL_API_RESOURCE_CATALOG_TEXT}.`,
   `- Catálogo REST oficial de Sub-Account cargado: ${HIGHLEVEL_ENDPOINT_CATALOG_SUMMARY}.`,
@@ -14476,7 +14687,7 @@ function prepareQueryResultsForReply(queryResults) {
   return successfulResults
 }
 
-async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, runtimeContext, plan, queryResults, agentConfig, highLevelConnection, agentRoute, metaAdsOperationalIntent = false, metaAdsDbResearchSkipped = false, agentRun = null }) {
+async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, runtimeContext, plan, queryResults, agentConfig, highLevelConnection, agentRoute, metaAdsOperationalIntent = false, metaAdsDbResearchSkipped = false, metaCampaignBuilderIntent = false, agentRun = null }) {
   const model = normalizeAIAgentModel(agentConfig?.model)
   const modelQueryResults = metaAdsDbResearchSkipped ? [] : prepareQueryResultsForReply(queryResults)
   const latestUserMessageObject = getLatestUserMessageObject(messages)
@@ -14491,9 +14702,12 @@ async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, ru
   const highLevelToolIntent = Boolean(agentRoute?.highLevelToolIntent)
   const internalDatabaseAnswer = Boolean(agentRoute?.requiresDbResearch || modelQueryResults.length)
   const paymentFinalConfirmationRequest = paymentOperationRequest && hasExplicitPaymentExecutionConfirmation(messages)
-  const webSearchTools = metaAdsOperationalIntent || internalDatabaseAnswer || paymentOperationRequest || contactActionRequest || highLevelToolIntent
+  const webSearchTools = metaAdsOperationalIntent || metaCampaignBuilderIntent || internalDatabaseAnswer || paymentOperationRequest || contactActionRequest || highLevelToolIntent
     ? []
     : buildWebSearchTools(agentConfig, runtimeContext)
+  const metaCampaignBuilderTools = buildMetaCampaignBuilderTools({
+    enabled: Boolean(metaCampaignBuilderIntent)
+  })
   const rawHighLevelTools = metaAdsOperationalIntent
     ? []
     : buildHighLevelTools(highLevelConnection, {
@@ -14509,8 +14723,8 @@ async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, ru
   const highLevelTools = paymentOperationRequest
     ? rawHighLevelTools.filter(tool => tool?.type === 'function' && paymentToolNames.has(tool.name))
     : rawHighLevelTools
-  const agentTools = [...webSearchTools, ...highLevelTools]
-  const toolsRequireActionLoop = highLevelTools.length > 0
+  const agentTools = [...webSearchTools, ...highLevelTools, ...metaCampaignBuilderTools]
+  const toolsRequireActionLoop = highLevelTools.length > 0 || metaCampaignBuilderTools.length > 0
   const operationalReferenceContext = agentRoute?.requiresHighLevelTools || agentRoute?.requiresPaymentTools
     ? await buildOperationalReferenceContext({
         runtimeContext,
@@ -14541,7 +14755,7 @@ async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, ru
 
   const instructions = buildSpecialistAgentInstructions(agentConfig, latestUserMessage)
   const responseTuning = buildAgentResponseTuning({
-    usesActionTools: highLevelTools.length > 0,
+    usesActionTools: highLevelTools.length > 0 || metaCampaignBuilderTools.length > 0,
     latestMessageFromButton
   })
 
@@ -14583,6 +14797,11 @@ async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, ru
     'Estado de Meta Ads operativo en la app:',
     buildMetaAdsOperationsContext(),
     '',
+    'Estado del Campaign Builder de Meta:',
+    metaCampaignBuilderIntent
+      ? 'Activo para este mensaje. Usa las herramientas create_meta_campaign_draft, preview_meta_campaign_draft o execute_meta_campaign_draft segun corresponda. Primero crea/actualiza borrador y muestra preview; no prometas ejecucion real si el MCP no esta conectado.'
+      : 'No aplica para este mensaje.',
+    '',
     'Definiciones de negocio usadas:',
     BUSINESS_DEFINITIONS,
     '',
@@ -14590,9 +14809,12 @@ async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, ru
     JSON.stringify({
       metaAdsOperationalIntent,
       dbResearchSkipped: metaAdsDbResearchSkipped,
+      campaignBuilderIntent: metaCampaignBuilderIntent,
       rule: metaAdsOperationalIntent
         ? 'Operación directa de Ads Manager deshabilitada en esta app.'
-        : 'Usar DB para resultados históricos de negocio; no usar herramientas externas para inventario/configuración de Ads Manager.'
+        : metaCampaignBuilderIntent
+          ? 'Usar Campaign Builder para crear borrador/preview; ejecucion real solo con MCP conectado y confirmacion.'
+          : 'Usar DB para resultados históricos de negocio; no usar herramientas externas para inventario/configuración de Ads Manager.'
     }, null, 2),
     '',
     'Plan de investigación de la IA:',
@@ -16527,16 +16749,19 @@ export async function createAgentReply({ apiKey, messages, viewContext, userId =
       }
     }
 
+    const metaCampaignBuilderIntent = agentRoute?.customActionIntent || mentionsHighLevel(latestUserMessage)
+      ? false
+      : isMetaCampaignBuilderRequest(latestUserMessage)
     const metaAdsOperationalIntent = agentRoute?.customActionIntent || mentionsHighLevel(latestUserMessage)
       ? false
-      : shouldSkipDbResearchForMetaAds(latestUserMessage)
+      : !metaCampaignBuilderIntent && shouldSkipDbResearchForMetaAds(latestUserMessage)
     const metaAdsDbResearchSkipped = metaAdsOperationalIntent
 
     if (metaAdsOperationalIntent) {
       return await finishAgentRun(buildMetaAdsOperationsUnavailableReply(), 'completed')
     }
 
-    const runDatabaseResearch = !metaAdsDbResearchSkipped && shouldRunDatabaseResearchForRoute(agentRoute)
+    const runDatabaseResearch = !metaAdsDbResearchSkipped && !metaCampaignBuilderIntent && shouldRunDatabaseResearchForRoute(agentRoute)
     const coreQueries = runDatabaseResearch
       ? await buildCoreResearchQueries(runtimeContext)
       : []
@@ -16544,9 +16769,11 @@ export async function createAgentReply({ apiKey, messages, viewContext, userId =
       assumptions: [
         metaAdsDbResearchSkipped
           ? 'Solicitud operativa/inventario de Meta Ads: operación directa deshabilitada dentro de esta app.'
-          : runDatabaseResearch
-            ? 'Se consultó un mapa base de la DB antes de planear la respuesta.'
-            : 'La intención no requiere SQL general de entrada; el agente puede responder directo o usar herramientas si hace falta.'
+          : metaCampaignBuilderIntent
+            ? 'Solicitud de creacion/configuracion de campana Meta Ads: se usara Campaign Builder interno con preview.'
+            : runDatabaseResearch
+              ? 'Se consultó un mapa base de la DB antes de planear la respuesta.'
+              : 'La intención no requiere SQL general de entrada; el agente puede responder directo o usar herramientas si hace falta.'
       ].filter(Boolean),
       queries: coreQueries
     }
@@ -16574,7 +16801,9 @@ export async function createAgentReply({ apiKey, messages, viewContext, userId =
           assumptions: [
             metaAdsDbResearchSkipped
               ? 'La pregunta es operativa de Meta Ads y la operación directa está deshabilitada dentro de esta app.'
-              : 'La pregunta no requiere plan SQL general; el agente decidirá si responde directo o usa herramientas de HighLevel/Ristak.'
+              : metaCampaignBuilderIntent
+                ? 'La pregunta pide crear/configurar campana Meta Ads; el agente debe usar Campaign Builder interno.'
+                : 'La pregunta no requiere plan SQL general; el agente decidirá si responde directo o usa herramientas de HighLevel/Ristak.'
           ],
           queries: []
         }
@@ -16693,6 +16922,7 @@ export async function createAgentReply({ apiKey, messages, viewContext, userId =
       agentRoute,
       metaAdsOperationalIntent,
       metaAdsDbResearchSkipped,
+      metaCampaignBuilderIntent,
       agentRun
     })
 

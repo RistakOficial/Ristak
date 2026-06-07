@@ -1415,6 +1415,71 @@ async function initTables() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_meta_ads_campaign ON meta_ads(campaign_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_meta_ads_ad ON meta_ads(ad_id)')
 
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS meta_campaign_templates (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT,
+        category TEXT,
+        mode TEXT,
+        template_version INTEGER DEFAULT 1,
+        template_json TEXT NOT NULL,
+        is_system INTEGER DEFAULT 0,
+        is_active INTEGER DEFAULT 1,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+
+    await db.run('CREATE INDEX IF NOT EXISTS idx_meta_campaign_templates_category ON meta_campaign_templates(category)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_meta_campaign_templates_active ON meta_campaign_templates(is_active)')
+
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS meta_campaign_drafts (
+        id TEXT PRIMARY KEY,
+        template_id TEXT,
+        status TEXT DEFAULT 'draft',
+        trace_id TEXT UNIQUE,
+        name TEXT,
+        user_id INTEGER,
+        source_content_json TEXT,
+        config_snapshot_json TEXT,
+        template_snapshot_json TEXT,
+        payload_json TEXT,
+        validation_json TEXT,
+        preview_json TEXT,
+        execution_status TEXT DEFAULT 'not_executed',
+        last_error TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        executed_at DATETIME
+      )
+    `)
+
+    await db.run('CREATE INDEX IF NOT EXISTS idx_meta_campaign_drafts_template ON meta_campaign_drafts(template_id)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_meta_campaign_drafts_status ON meta_campaign_drafts(status)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_meta_campaign_drafts_trace ON meta_campaign_drafts(trace_id)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_meta_campaign_drafts_created ON meta_campaign_drafts(created_at)')
+
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS meta_campaign_execution_logs (
+        id TEXT PRIMARY KEY,
+        draft_id TEXT,
+        trace_id TEXT,
+        step TEXT NOT NULL,
+        status TEXT,
+        mcp_server_url TEXT,
+        request_payload_json TEXT,
+        response_payload_json TEXT,
+        error_message TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+
+    await db.run('CREATE INDEX IF NOT EXISTS idx_meta_campaign_logs_draft ON meta_campaign_execution_logs(draft_id)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_meta_campaign_logs_trace ON meta_campaign_execution_logs(trace_id)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_meta_campaign_logs_created ON meta_campaign_execution_logs(created_at)')
+
     // Tabla de atribución de WhatsApp
     await db.run(`
       CREATE TABLE IF NOT EXISTS whatsapp_attribution (

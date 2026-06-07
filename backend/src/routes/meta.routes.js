@@ -29,6 +29,16 @@ import {
   deleteMetaConfig,
   savePixelToken
 } from '../controllers/metaController.js'
+import {
+  createCampaignBuilderDraft,
+  executeCampaignBuilderDraft,
+  getCampaignBuilderCapabilities,
+  getCampaignBuilderDraft,
+  getCampaignBuilderDraftLogs,
+  getCampaignBuilderTemplate,
+  getCampaignBuilderTemplates,
+  previewCampaignBuilderDraft
+} from '../controllers/metaCampaignBuilderController.js'
 import { requireAuth } from '../middleware/authMiddleware.js'
 
 const router = express.Router()
@@ -72,5 +82,15 @@ router.get('/leads-over-time', getLeadsOverTime)
 router.get('/appointments-over-time', getAppointmentsOverTime)
 router.get('/visitors-over-time', getVisitorsOverTime)
 router.get('/funnel-metrics', getFunnelMetrics)
+
+// Campaign Builder con Meta Ads MCP
+router.get('/campaign-builder/capabilities', getCampaignBuilderCapabilities)
+router.get('/campaign-builder/templates', getCampaignBuilderTemplates)
+router.get('/campaign-builder/templates/:templateId', getCampaignBuilderTemplate)
+router.post('/campaign-builder/drafts', createCampaignBuilderDraft)
+router.get('/campaign-builder/drafts/:draftId', getCampaignBuilderDraft)
+router.post('/campaign-builder/drafts/:draftId/preview', previewCampaignBuilderDraft)
+router.post('/campaign-builder/drafts/:draftId/execute', executeCampaignBuilderDraft)
+router.get('/campaign-builder/drafts/:draftId/logs', getCampaignBuilderDraftLogs)
 
 export default router
