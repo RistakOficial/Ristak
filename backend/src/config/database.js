@@ -2363,7 +2363,11 @@ async function initTables() {
 
     await db.run('CREATE INDEX IF NOT EXISTS idx_ai_agent_user_preferences_user_id ON ai_agent_user_preferences(user_id)')
 
-    const userApiTokenColumns = [
+    const userOptionalColumns = [
+      ['first_name', 'TEXT'],
+      ['last_name', 'TEXT'],
+      ['phone', 'TEXT'],
+      ['business_name', 'TEXT'],
       ['api_token_hash', 'TEXT'],
       ['api_token_prefix', 'TEXT'],
       ['api_token_last_four', 'TEXT'],
@@ -2372,7 +2376,7 @@ async function initTables() {
       ['api_token_revoked_at', 'DATETIME']
     ]
 
-    for (const [columnName, columnType] of userApiTokenColumns) {
+    for (const [columnName, columnType] of userOptionalColumns) {
       try {
         if (usePostgres) {
           await db.run(`ALTER TABLE users ADD COLUMN IF NOT EXISTS ${columnName} ${columnType}`)

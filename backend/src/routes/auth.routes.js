@@ -4,6 +4,7 @@ import {
   verifyTokenEndpoint,
   changePassword,
   changeUsername,
+  updateProfile,
   getMe,
   checkSetup,
   setup,
@@ -32,6 +33,9 @@ router.post('/change-password', requireAuth, changePassword)
 
 // POST /api/auth/change-username - Cambiar nombre de usuario
 router.post('/change-username', requireAuth, changeUsername)
+
+// PATCH /api/auth/profile - Actualizar datos visibles de la cuenta
+router.patch('/profile', requireAuth, updateProfile)
 
 // GET /api/auth/me - Obtener información del usuario autenticado
 router.get('/me', requireAuth, getMe)

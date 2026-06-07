@@ -134,8 +134,17 @@ const getNotificationPermissionLabel = () => {
   return 'Toca Activar para permitir notificaciones en este celular.'
 }
 
+const splitFallbackName = (value = '') => {
+  const parts = value.trim().split(/\s+/).filter(Boolean)
+  if (!parts.length) return { firstName: '', lastName: '' }
+  return {
+    firstName: parts[0],
+    lastName: parts.slice(1).join(' ')
+  }
+}
+
 export const AccountSettings: React.FC = () => {
-  const { user, logout } = useAuth()
+  const { user, logout, updateProfile } = useAuth()
   const { labels, updateLabels } = useLabels()
   const { showToast } = useNotification()
   const { timezone, updateTimezone } = useTimezone()
@@ -152,6 +161,13 @@ export const AccountSettings: React.FC = () => {
   const [pushCalendarIds] = useAppConfig<string[]>('calendar_push_notification_calendar_ids', [])
   const [profilePhotoDraft, setProfilePhotoDraft] = useState('')
   const [isEditingPhoto, setIsEditingPhoto] = useState(false)
+  const [profileDraft, setProfileDraft] = useState({
+    firstName: '',
+    lastName: '',
+    phone: '',
+    businessName: ''
+  })
+  const [savingProfileDetails, setSavingProfileDetails] = useState(false)
 
   const [newUsername, setNewUsername] = useState('')
   const [isEditingUsername, setIsEditingUsername] = useState(false)
@@ -188,6 +204,19 @@ export const AccountSettings: React.FC = () => {
 
   const currentUsername = user?.username || 'admin'
   const visibleProfilePhoto = isEditingPhoto ? profilePhotoDraft : profilePhoto
+  const profileNameFallback = user?.name && user.name !== user.username ? user.name : ''
+  const fallbackNameParts = useMemo(() => splitFallbackName(profileNameFallback), [profileNameFallback])
+  const normalizedUserProfile = useMemo(() => ({
+    firstName: user?.firstName || fallbackNameParts.firstName,
+    lastName: user?.lastName || fallbackNameParts.lastName,
+    phone: user?.phone || '',
+    businessName: user?.businessName || ''
+  }), [fallbackNameParts, user?.businessName, user?.firstName, user?.lastName, user?.phone])
+  const profileDetailsChanged =
+    profileDraft.firstName !== normalizedUserProfile.firstName ||
+    profileDraft.lastName !== normalizedUserProfile.lastName ||
+    profileDraft.phone !== normalizedUserProfile.phone ||
+    profileDraft.businessName !== normalizedUserProfile.businessName
   const usernameChanged = newUsername.trim() && newUsername.trim() !== currentUsername
   const storagePercent = Math.max(0, Math.min(100, storageStatus?.percentUsed ?? 0))
   const timezoneOptions = useMemo(
@@ -210,6 +239,10 @@ export const AccountSettings: React.FC = () => {
       lead: labels.lead
     })
   }, [labels])
+
+  useEffect(() => {
+    setProfileDraft(normalizedUserProfile)
+  }, [normalizedUserProfile])
 
   useEffect(() => {
     setTimezoneDraft(timezone)
@@ -429,6 +462,26 @@ export const AccountSettings: React.FC = () => {
       )
     } catch (error: any) {
       showToast('error', 'Error', error?.message || 'No se pudo guardar la foto')
+    }
+  }
+
+  const handleSaveProfileDetails = async () => {
+    if (!profileDetailsChanged) return
+
+    setSavingProfileDetails(true)
+    try {
+      await updateProfile({
+        firstName: profileDraft.firstName.trim(),
+        lastName: profileDraft.lastName.trim(),
+        phone: profileDraft.phone.trim(),
+        businessName: profileDraft.businessName.trim()
+      })
+      showToast('success', 'Datos guardados', 'Tu nombre, teléfono y negocio quedaron actualizados.')
+    } catch (error: any) {
+      setProfileDraft(normalizedUserProfile)
+      showToast('error', 'No se guardó', error?.message || 'Intenta guardar tus datos otra vez.')
+    } finally {
+      setSavingProfileDetails(false)
     }
   }
 
@@ -712,6 +765,85 @@ export const AccountSettings: React.FC = () => {
                     </Button>
                   </>
                 )}
+              </div>
+            </section>
+
+            <section className={`${styles.accountSection} ${styles.accountSectionWide}`}>
+              <div className={styles.accountSectionHeader}>
+                <div>
+                  <h3 className={styles.accountSectionTitle}>Datos de cuenta</h3>
+                  <p className={styles.accountSectionDescription}>
+                    Estos datos identifican al administrador y el negocio que aparece en el menú lateral.
+                  </p>
+                </div>
+              </div>
+
+              <div className={styles.profileDetailsGrid}>
+                <div className={styles.field}>
+                  <label className={styles.label} htmlFor="account-first-name">Nombre</label>
+                  <input
+                    id="account-first-name"
+                    className={styles.input}
+                    type="text"
+                    value={profileDraft.firstName}
+                    onChange={(event) => setProfileDraft((current) => ({ ...current, firstName: event.target.value }))}
+                    disabled={savingProfileDetails}
+                    autoComplete="given-name"
+                  />
+                </div>
+
+                <div className={styles.field}>
+                  <label className={styles.label} htmlFor="account-last-name">Apellido</label>
+                  <input
+                    id="account-last-name"
+                    className={styles.input}
+                    type="text"
+                    value={profileDraft.lastName}
+                    onChange={(event) => setProfileDraft((current) => ({ ...current, lastName: event.target.value }))}
+                    disabled={savingProfileDetails}
+                    autoComplete="family-name"
+                  />
+                </div>
+
+                <div className={styles.field}>
+                  <label className={styles.label} htmlFor="account-phone">Teléfono</label>
+                  <input
+                    id="account-phone"
+                    className={styles.input}
+                    type="tel"
+                    value={profileDraft.phone}
+                    onChange={(event) => setProfileDraft((current) => ({ ...current, phone: event.target.value }))}
+                    disabled={savingProfileDetails}
+                    autoComplete="tel"
+                    placeholder="+52 656 000 0000"
+                  />
+                </div>
+
+                <div className={styles.field}>
+                  <label className={styles.label} htmlFor="account-business-name">Nombre del negocio</label>
+                  <input
+                    id="account-business-name"
+                    className={styles.input}
+                    type="text"
+                    value={profileDraft.businessName}
+                    onChange={(event) => setProfileDraft((current) => ({ ...current, businessName: event.target.value }))}
+                    disabled={savingProfileDetails}
+                    autoComplete="organization"
+                    placeholder="Tu negocio"
+                  />
+                </div>
+              </div>
+
+              <div className={styles.sectionActions}>
+                <Button
+                  variant="primary"
+                  onClick={handleSaveProfileDetails}
+                  loading={savingProfileDetails}
+                  disabled={savingProfileDetails || !profileDetailsChanged}
+                >
+                  <Save size={16} />
+                  Guardar
+                </Button>
               </div>
             </section>
 

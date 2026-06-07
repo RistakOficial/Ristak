@@ -58,8 +58,6 @@ export const AppShell: React.FC = () => {
     getInitialAIAgentWidth()
   )
   const [syncProgressVisible, setSyncProgressVisible] = useState(false)
-  const [locationName, setLocationName] = useState<string>('Mi Negocio')
-  const [locationLogo, setLocationLogo] = useState<string | null>(null)
   const [aiAgentOpen, setAIAgentOpen] = useState(getInitialAIAgentOpenState)
   const [aiAgentWidth, setAIAgentWidth] = useState(getInitialAIAgentWidth)
   const [aiAgentResizing, setAIAgentResizing] = useState(false)
@@ -71,29 +69,6 @@ export const AppShell: React.FC = () => {
 
   // Asegurar que las configuraciones sensibles al dominio estén sincronizadas
   useDomainFeatureSync()
-
-  // Obtener nombre y logo del location de HighLevel
-  useEffect(() => {
-    const fetchLocationData = async () => {
-      try {
-        const response = await fetch('/api/integrations/status')
-        const data = await response.json()
-        if (data.highlevel?.locationData) {
-          const locationData = data.highlevel.locationData
-          if (locationData.name) {
-            setLocationName(locationData.name)
-          }
-          if (locationData.logoUrl) {
-            setLocationLogo(locationData.logoUrl)
-          }
-        }
-      } catch (error) {
-        // Silently handle error - keep default name
-      }
-    }
-
-    fetchLocationData()
-  }, [])
 
   // Detectar cuando el panel de progreso está activo
   useEffect(() => {
@@ -255,7 +230,7 @@ export const AppShell: React.FC = () => {
       >
         <div className={styles.mainPane}>
           <Layout
-            sidebar={<Sidebar onLogout={handleLogout} locationName={locationName} locationLogo={locationLogo} />}
+            sidebar={<Sidebar onLogout={handleLogout} />}
           >
             <div className="flex flex-col min-h-full">
               {!sitesEditorActive && <Header />}

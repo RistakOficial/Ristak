@@ -882,6 +882,12 @@ body.dark .select:focus {
   gap: 12px;
 }
 
+.profileDetailsGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
 .labelsGrid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1418,6 +1424,7 @@ body.dark .select:focus {
 
   .accountGrid,
   .passwordGrid,
+  .profileDetailsGrid,
   .labelsGrid,
   .accountLocaleGrid,
   .notificationSettingsGrid,

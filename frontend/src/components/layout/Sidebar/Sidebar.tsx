@@ -19,7 +19,7 @@ import {
   Sun
 } from 'lucide-react'
 import { cn } from '@/utils/cn'
-import { useAppConfig, useLogoContrast, useIsRenderDomain } from '@/hooks'
+import { useAppConfig, useIsRenderDomain } from '@/hooks'
 import { useTheme } from '@/contexts/ThemeContext'
 import { useAuth } from '@/contexts/AuthContext'
 import {
@@ -45,8 +45,6 @@ import { CSS } from '@dnd-kit/utilities'
 interface SidebarProps {
   onNavigate?: () => void
   onLogout?: () => void
-  locationName?: string
-  locationLogo?: string | null
 }
 
 type IconType = React.ComponentType<React.SVGProps<SVGSVGElement>>
@@ -206,7 +204,7 @@ const SortableItem: React.FC<SortableItemProps> = ({ item, isActive, isDragging,
   )
 }
 
-export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onLogout, locationName, locationLogo }) => {
+export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onLogout }) => {
   const location = useLocation()
   const {
     theme,
@@ -219,7 +217,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onLogout, location
     designPresets
   } = useTheme()
   const { user } = useAuth()
-  const [mounted, setMounted] = useState(false)
   const [analyticsEnabled] = useAppConfig<boolean>('show_analytics', false)
   const [sidebarOrder, setSidebarOrder] = useAppConfig<string[]>('sidebar_navigation_order', [])
   const isRenderDomain = useIsRenderDomain() // Detectar si es dominio .onrender.com
@@ -231,10 +228,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onLogout, location
   const longPressStartPos = React.useRef<{ x: number; y: number } | null>(null)
   const userMenuRef = React.useRef<HTMLDivElement>(null)
 
-  // Detectar si el logo necesita contraste en modo oscuro
-  const isDarkMode = theme === 'dark'
-  const { needsContrast } = useLogoContrast(locationLogo, isDarkMode)
   const initials = getInitials(user?.name, user?.email)
+  const accountMenuName = user?.name || user?.username || 'Usuario'
+  const accountMenuDetail = user?.businessName || user?.email || 'Sin correo guardado'
+  const accountMenuEmail = user?.businessName && user?.email ? user.email : ''
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -327,10 +324,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onLogout, location
 
     return placeSitesAfterCampaigns(orderedItems)
   }
-
-  useEffect(() => {
-    setMounted(true)
-  }, [])
 
   useEffect(() => {
     if (!showUserMenu) return
@@ -434,26 +427,11 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onLogout, location
             </span>
             <span className="min-w-0 flex-1">
               <span className="block truncate text-sm font-medium text-[var(--color-text-primary)]">
-                {user?.name || user?.username || 'Usuario'}
+                {accountMenuName}
               </span>
-              {mounted && locationLogo ? (
-                <span className="mt-0.5 flex items-center gap-1.5 truncate text-[11px] font-medium text-[var(--color-text-tertiary)]">
-                  <img
-                    src={locationLogo}
-                    alt={locationName || 'Negocio'}
-                    className="h-3.5 w-3.5 flex-shrink-0 rounded-sm object-contain"
-                    style={{
-                      filter: needsContrast ? 'invert(1) brightness(1.2)' : undefined,
-                      transition: 'filter 0.2s ease'
-                    }}
-                  />
-                  <span className="truncate">{locationName || 'Mi Negocio'}</span>
-                </span>
-              ) : mounted && locationName && locationName !== 'Mi Negocio' ? (
-                <span className="mt-0.5 block truncate text-[11px] font-medium text-[var(--color-text-tertiary)]">
-                  {locationName}
-                </span>
-              ) : null}
+              <span className="mt-0.5 block truncate text-[11px] font-medium text-[var(--color-text-tertiary)]">
+                {accountMenuDetail}
+              </span>
             </span>
             <ChevronDown
               className={cn(
@@ -475,8 +453,11 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onLogout, location
                     {initials}
                   </div>
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-semibold text-[var(--color-text-primary)]">{user?.name || user?.username || 'Usuario'}</p>
-                    <p className="truncate text-xs text-[var(--color-text-tertiary)]">{user?.email || 'Sin correo guardado'}</p>
+                    <p className="truncate text-sm font-semibold text-[var(--color-text-primary)]">{accountMenuName}</p>
+                    <p className="truncate text-xs text-[var(--color-text-tertiary)]">{accountMenuDetail}</p>
+                    {accountMenuEmail && (
+                      <p className="mt-0.5 truncate text-xs text-[var(--color-text-tertiary)]">{accountMenuEmail}</p>
+                    )}
                   </div>
                 </div>
               </div>

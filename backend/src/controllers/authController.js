@@ -8,6 +8,33 @@ import {
   rotateApiTokenForUser
 } from '../utils/apiTokens.js'
 
+function cleanProfileText(value, maxLength = 160) {
+  if (value === undefined || value === null) return ''
+  return String(value).trim().slice(0, maxLength)
+}
+
+function buildFullName(firstName, lastName, fallback = '') {
+  return [firstName, lastName].filter(Boolean).join(' ').trim() || cleanProfileText(fallback)
+}
+
+function serializeAuthUser(user) {
+  const firstName = cleanProfileText(user.first_name)
+  const lastName = cleanProfileText(user.last_name)
+  const fullName = buildFullName(firstName, lastName, user.full_name || user.username)
+
+  return {
+    id: user.id,
+    username: user.username,
+    email: user.email || '',
+    firstName,
+    lastName,
+    fullName,
+    phone: cleanProfileText(user.phone, 40),
+    businessName: cleanProfileText(user.business_name),
+    role: user.role
+  }
+}
+
 /**
  * POST /api/auth/login
  * Autentica un usuario y devuelve un token JWT
@@ -84,13 +111,7 @@ export async function login(req, res) {
       token,
       appId,
       apiTokenMetadata,
-      user: {
-        id: user.id,
-        username: user.username,
-        email: user.email,
-        fullName: user.full_name,
-        role: user.role
-      }
+      user: serializeAuthUser(user)
     })
   } catch (error) {
     logger.error('❌ Error en login:', error)
@@ -127,7 +148,9 @@ export async function verifyTokenEndpoint(req, res) {
 
     // Verificar que el usuario todavía exista y esté activo
     const user = await db.get(
-      'SELECT id, username, email, full_name, role, is_active FROM users WHERE id = ?',
+      `SELECT id, username, email, first_name, last_name, full_name, phone, business_name, role, is_active
+       FROM users
+       WHERE id = ?`,
       [payload.userId]
     )
 
@@ -140,13 +163,7 @@ export async function verifyTokenEndpoint(req, res) {
 
     res.json({
       success: true,
-      user: {
-        id: user.id,
-        username: user.username,
-        email: user.email,
-        fullName: user.full_name,
-        role: user.role
-      }
+      user: serializeAuthUser(user)
     })
   } catch (error) {
     logger.error('❌ Error verificando token:', error)
@@ -248,7 +265,9 @@ export async function getMe(req, res) {
     }
 
     const user = await db.get(
-      'SELECT id, username, email, full_name, role FROM users WHERE id = ? AND is_active = 1',
+      `SELECT id, username, email, first_name, last_name, full_name, phone, business_name, role
+       FROM users
+       WHERE id = ? AND is_active = 1`,
       [payload.userId]
     )
 
@@ -261,13 +280,7 @@ export async function getMe(req, res) {
 
     res.json({
       success: true,
-      user: {
-        id: user.id,
-        username: user.username,
-        email: user.email,
-        fullName: user.full_name,
-        role: user.role
-      }
+      user: serializeAuthUser(user)
     })
   } catch (error) {
     logger.error('❌ Error obteniendo usuario:', error)
@@ -352,6 +365,67 @@ export async function revokeApiToken(req, res) {
     res.status(500).json({
       success: false,
       message: 'Error en el servidor'
+    })
+  }
+}
+
+/**
+ * PATCH /api/auth/profile
+ * Actualiza los datos visibles de la cuenta.
+ */
+export async function updateProfile(req, res) {
+  try {
+    const payload = req.user
+
+    if (!payload) {
+      return res.status(401).json({
+        success: false,
+        error: 'Token inválido o expirado'
+      })
+    }
+
+    const firstName = cleanProfileText(req.body.firstName, 80)
+    const lastName = cleanProfileText(req.body.lastName, 80)
+    const phone = cleanProfileText(req.body.phone, 40)
+    const businessName = cleanProfileText(req.body.businessName, 160)
+    const fullName = buildFullName(firstName, lastName, req.body.fullName)
+
+    await db.run(
+      `UPDATE users
+       SET first_name = ?,
+           last_name = ?,
+           full_name = ?,
+           phone = ?,
+           business_name = ?,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [firstName || null, lastName || null, fullName || null, phone || null, businessName || null, payload.userId]
+    )
+
+    const user = await db.get(
+      `SELECT id, username, email, first_name, last_name, full_name, phone, business_name, role
+       FROM users
+       WHERE id = ? AND is_active = 1`,
+      [payload.userId]
+    )
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        error: 'Usuario no encontrado'
+      })
+    }
+
+    res.json({
+      success: true,
+      message: 'Perfil actualizado',
+      user: serializeAuthUser(user)
+    })
+  } catch (error) {
+    logger.error('❌ Error actualizando perfil:', error)
+    res.status(500).json({
+      success: false,
+      error: 'Error en el servidor'
     })
   }
 }
@@ -534,13 +608,13 @@ export async function setup(req, res) {
       appId,
       apiToken,
       apiTokenMetadata,
-      user: {
+      user: serializeAuthUser({
         id: userId,
         username,
         email: '',
-        fullName: username,
+        full_name: username,
         role: 'admin'
-      }
+      })
     })
   } catch (error) {
     logger.error('❌ Error en setup:', error)
