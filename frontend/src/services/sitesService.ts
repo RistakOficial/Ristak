@@ -557,7 +557,7 @@ export const sitesService = {
     return apiClient.post<SitesAICreationResult>('/sites/ai-create-html', payload)
   },
 
-  editImportedHtmlWithAI(siteId: string, payload: { siteKind: SitesAICreationKind; messages: SitesAICreationMessage[]; model?: string; visualContext?: SitesAIPreviewVisualContext | null }) {
+  editImportedHtmlWithAI(siteId: string, payload: { siteKind: SitesAICreationKind; messages: SitesAICreationMessage[]; model?: string; visualContext?: SitesAIPreviewVisualContext | null; pageId?: string }) {
     return apiClient.post<SitesAICreationResult>(`/sites/${siteId}/ai-edit-html`, payload)
   },
 

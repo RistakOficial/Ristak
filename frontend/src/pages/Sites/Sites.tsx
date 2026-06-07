@@ -7688,6 +7688,7 @@ const ImportedHtmlEditorPanel: React.FC<{
         sitesService.editImportedHtmlWithAI(site.id, {
           siteKind: getAIAgentSiteKindForSite(site),
           model: DEFAULT_SITE_CHATGPT_EDIT_MODEL,
+          pageId: aiRegionSelection.pageId || activeImportedPage?.id || DEFAULT_FUNNEL_PAGE_ID,
           visualContext: regionVisualContext,
           messages: [{
             role: 'user',
