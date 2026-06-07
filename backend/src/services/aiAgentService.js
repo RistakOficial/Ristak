@@ -260,6 +260,46 @@ function normalizeText(value) {
     .replace(/[\u0300-\u036f]/g, '')
 }
 
+function inferAgentLedgerDomain({ agentRoute = null, preflightDecision = null, latestUserMessage = '' } = {}) {
+  const normalized = normalizeText([
+    latestUserMessage,
+    preflightDecision?.resource,
+    preflightDecision?.intentSummary,
+    preflightDecision?.nextAction,
+    preflightDecision?.sourceOfTruth
+  ].filter(Boolean).join(' '))
+
+  if (agentRoute?.requiresPaymentTools || /\b(pago|pagos|payment|cobro|cobrar|invoice|factura|tarjeta|domicili)\b/.test(normalized)) {
+    return 'payments'
+  }
+
+  if (/\b(cita|citas|agenda|agendar|calendario|appointment|calendar)\b/.test(normalized)) {
+    return 'appointments'
+  }
+
+  if (/\b(anuncio|anuncios|ads|meta|facebook|instagram|campana|campanas|roas|publicidad)\b/.test(normalized)) {
+    return 'ads_analytics'
+  }
+
+  if (/\b(workflow|flujo|automatizacion|automatización)\b/.test(normalized)) {
+    return 'workflows'
+  }
+
+  if (/\b(contacto|contactos|cliente|clientes|lead|leads|campo personalizado|custom field)\b/.test(normalized)) {
+    return 'contacts'
+  }
+
+  if (agentRoute?.requiresHighLevelTools || preflightDecision?.sourceOfTruth === 'highlevel') {
+    return 'crm'
+  }
+
+  if (agentRoute?.requiresDbResearch || preflightDecision?.sourceOfTruth === 'ristak_db') {
+    return 'analytics'
+  }
+
+  return agentRoute?.domain || 'general'
+}
+
 function stripMarkdown(value) {
   return normalizeLightweightMarkdownBlocks(stripCitationArtifacts(value))
     .replace(/^#{1,6}\s+/gm, '')
@@ -14429,7 +14469,7 @@ function prepareQueryResultsForReply(queryResults) {
   return successfulResults
 }
 
-async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, runtimeContext, plan, queryResults, agentConfig, highLevelConnection, agentRoute, metaAdsOperationalIntent = false, metaAdsDbResearchSkipped = false }) {
+async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, runtimeContext, plan, queryResults, agentConfig, highLevelConnection, agentRoute, metaAdsOperationalIntent = false, metaAdsDbResearchSkipped = false, agentRun = null }) {
   const model = normalizeAIAgentModel(agentConfig?.model)
   const modelQueryResults = metaAdsDbResearchSkipped ? [] : prepareQueryResultsForReply(queryResults)
   const latestUserMessageObject = getLatestUserMessageObject(messages)
@@ -14594,6 +14634,7 @@ async function createAutonomousDatabaseReply(apiKey, { messages, viewContext, ru
           viewContext,
           messages,
           agentRoute,
+          agentRun,
           ...responseTuning,
           initialOperationalMemory: {
             paymentContact: paymentOperationalMemory?.resolvedContact || crmOperationalMemory?.resolvedContact || null,
@@ -16242,251 +16283,429 @@ function buildModelInput(messages, viewContext, databaseContext, directFacts) {
 export async function createAgentReply({ apiKey, messages, viewContext, userId = null }) {
   const runtimeContext = await getAgentRuntimeContext()
   const latestUserMessage = getLatestUserMessage(messages)
-  const agentConfig = await getAIAgentConfig({ userId })
-  const preflightDecision = await createAgentPreflightDecision(apiKey, {
-    model: normalizeAIAgentModel(agentConfig?.model),
-    messages,
-    latestUserMessage,
-    viewContext,
-    runtimeContext,
-    agentConfig
-  })
-  const agentRoute = buildUnifiedAgentRoute({
-    messages,
-    latestUserMessage,
-    agentConfig,
-    preflightDecision
-  })
-  const highLevelConnection = await getHighLevelAgentConnection()
-  let customActionVerifiedContact = null
-  const readOnlyContactFieldsReply = await createPreflightContactFieldsReplyIfApplicable({
-    latestUserMessage,
-    messages,
-    viewContext,
-    runtimeContext,
-    agentConfig,
-    highLevelConnection,
-    agentRoute,
-    preflightDecision
-  })
+  let agentRun = null
+  let agentRoute = null
+  let ledgerRoute = null
 
-  if (readOnlyContactFieldsReply) {
-    return readOnlyContactFieldsReply
+  try {
+    agentRun = await startAgentRun({
+      userId,
+      latestUserMessage,
+      viewContext: viewContext || {}
+    })
+  } catch (error) {
+    logger.warn(`No se pudo iniciar rastro del agente: ${error.message}`)
   }
 
-  if (agentRoute?.customActionIntent) {
-    const latestUserIndex = findLatestUserMessageIndex(messages)
-    const latestUserMessageObject = latestUserIndex >= 0 ? messages[latestUserIndex] : null
-    const selectedContactId = extractContactIdFromText([
-      getSelectedClarificationOption(latestUserMessageObject)?.value,
-      getSelectedClarificationOption(latestUserMessageObject)?.description,
-      getSelectedClarificationOption(latestUserMessageObject)?.label,
-      getMessageText(latestUserMessageObject)
-    ].filter(Boolean).join(' '))
-    if (selectedContactId) {
-      customActionVerifiedContact = normalizeOperationalContact(await getPaymentContactById(selectedContactId))
+  const finishAgentRun = async (result, status = 'completed') => {
+    await recordAgentStep(agentRun, {
+      stepType: 'final_response',
+      status,
+      output: {
+        reply: result?.reply || '',
+        model: result?.model || null,
+        sourcesCount: Array.isArray(result?.sources) ? result.sources.length : 0,
+        clarificationOptionsCount: Array.isArray(result?.clarificationOptions) ? result.clarificationOptions.length : 0,
+        debug: result?.debug || null
+      }
+    })
+
+    await completeAgentRun(agentRun, {
+      status,
+      reply: result?.reply || '',
+      model: result?.model || null,
+      usage: result?.usage || null,
+      route: ledgerRoute || agentRoute
+    })
+
+    return {
+      ...result,
+      trace: buildAgentTracePayload(agentRun, status)
+    }
+  }
+
+  try {
+    const agentConfig = await getAIAgentConfig({ userId })
+    const preflightDecision = await createAgentPreflightDecision(apiKey, {
+      model: normalizeAIAgentModel(agentConfig?.model),
+      messages,
+      latestUserMessage,
+      viewContext,
+      runtimeContext,
+      agentConfig
+    })
+
+    await recordAgentStep(agentRun, {
+      stepType: 'preflight',
+      status: 'completed',
+      input: {
+        latestUserMessage,
+        viewContext: viewContext || {}
+      },
+      output: preflightDecision
+    })
+
+    agentRoute = buildUnifiedAgentRoute({
+      messages,
+      latestUserMessage,
+      agentConfig,
+      preflightDecision
+    })
+    const ledgerDomain = inferAgentLedgerDomain({
+      agentRoute,
+      preflightDecision,
+      latestUserMessage
+    })
+    ledgerRoute = {
+      ...agentRoute,
+      ledgerDomain
     }
 
-    if (shouldLookupContactBeforeCustomActionReadiness(messages, latestUserMessage)) {
-      const lookupHint = getCustomActionContactLookupHint(messages, latestUserMessage)
-      const resolvedContact = await resolveHighLevelContactForAgent(
-        { contactHint: lookupHint },
-        { messages, viewContext },
-        {
-          actionText: 'hacer esa acción',
-          includeUpdateLanguage: true,
-          ambiguousContactError: 'Encontré varios contactos parecidos. Elige cuál es antes de seguir.',
-          requireContactVerification: true
-        }
-      )
+    await updateAgentRun(agentRun, {
+      domain: ledgerDomain,
+      action: agentRoute?.action || null,
+      sourceOfTruth: preflightDecision?.sourceOfTruth || null,
+      route: ledgerRoute
+    })
+    await recordAgentStep(agentRun, {
+      stepType: 'route',
+      status: 'completed',
+      output: ledgerRoute
+    })
 
-      if (!resolvedContact.contact) {
-        return {
-          reply: buildContactLookupFirstReply(resolvedContact, lookupHint),
+    const highLevelConnection = await getHighLevelAgentConnection()
+    let customActionVerifiedContact = null
+    const readOnlyContactFieldsReply = await createPreflightContactFieldsReplyIfApplicable({
+      latestUserMessage,
+      messages,
+      viewContext,
+      runtimeContext,
+      agentConfig,
+      highLevelConnection,
+      agentRoute,
+      preflightDecision
+    })
+
+    if (readOnlyContactFieldsReply) {
+      return await finishAgentRun(readOnlyContactFieldsReply, 'waiting_user')
+    }
+
+    if (agentRoute?.customActionIntent) {
+      const latestUserIndex = findLatestUserMessageIndex(messages)
+      const latestUserMessageObject = latestUserIndex >= 0 ? messages[latestUserIndex] : null
+      const selectedContactId = extractContactIdFromText([
+        getSelectedClarificationOption(latestUserMessageObject)?.value,
+        getSelectedClarificationOption(latestUserMessageObject)?.description,
+        getSelectedClarificationOption(latestUserMessageObject)?.label,
+        getMessageText(latestUserMessageObject)
+      ].filter(Boolean).join(' '))
+      if (selectedContactId) {
+        customActionVerifiedContact = normalizeOperationalContact(await getPaymentContactById(selectedContactId))
+      }
+
+      if (shouldLookupContactBeforeCustomActionReadiness(messages, latestUserMessage)) {
+        const lookupHint = getCustomActionContactLookupHint(messages, latestUserMessage)
+        const resolvedContact = await resolveHighLevelContactForAgent(
+          { contactHint: lookupHint },
+          { messages, viewContext },
+          {
+            actionText: 'hacer esa acción',
+            includeUpdateLanguage: true,
+            ambiguousContactError: 'Encontré varios contactos parecidos. Elige cuál es antes de seguir.',
+            requireContactVerification: true
+          }
+        )
+
+        await recordAgentStep(agentRun, {
+          stepType: 'custom_action_contact_lookup',
+          status: resolvedContact.contact ? 'completed' : 'waiting_user',
+          input: { lookupHint },
+          output: {
+            contactFound: Boolean(resolvedContact.contact),
+            contactVerificationRequired: Boolean(resolvedContact.contactVerificationRequired),
+            optionCount: Array.isArray(resolvedContact.clarificationOptions) ? resolvedContact.clarificationOptions.length : 0
+          }
+        })
+
+        if (!resolvedContact.contact) {
+          return await finishAgentRun({
+            reply: buildContactLookupFirstReply(resolvedContact, lookupHint),
+            model: normalizeAIAgentModel(agentConfig?.model),
+            sources: [],
+            clarificationOptions: Array.isArray(resolvedContact.clarificationOptions)
+              ? resolvedContact.clarificationOptions
+              : [],
+            usage: null,
+            debug: {
+              queryCount: 0,
+              highLevelToolsEnabled: Boolean(highLevelConnection?.configured),
+              metaAdsOperationsEnabled: false,
+              agentRoute,
+              customActionContactLookupFirst: {
+                lookupHint,
+                contactVerificationRequired: Boolean(resolvedContact.contactVerificationRequired),
+                contactLookupAttempted: Boolean(resolvedContact.contactLookupAttempted)
+              }
+            }
+          }, 'waiting_user')
+        }
+
+        customActionVerifiedContact = normalizeOperationalContact(resolvedContact.contact) || customActionVerifiedContact
+      }
+
+      if (shouldAskContactBeforeCustomActionReadiness({
+        messages,
+        latestUserMessage,
+        verifiedContact: customActionVerifiedContact
+      })) {
+        return await finishAgentRun({
+          reply: '¿A qué persona o contacto se lo hago?',
           model: normalizeAIAgentModel(agentConfig?.model),
           sources: [],
-          clarificationOptions: Array.isArray(resolvedContact.clarificationOptions)
-            ? resolvedContact.clarificationOptions
-            : [],
+          clarificationOptions: [],
           usage: null,
           debug: {
             queryCount: 0,
             highLevelToolsEnabled: Boolean(highLevelConnection?.configured),
             metaAdsOperationsEnabled: false,
             agentRoute,
-            customActionContactLookupFirst: {
-              lookupHint,
-              contactVerificationRequired: Boolean(resolvedContact.contactVerificationRequired),
-              contactLookupAttempted: Boolean(resolvedContact.contactLookupAttempted)
-            }
+            customActionMissingContactFirst: true
           }
-        }
+        }, 'waiting_user')
       }
 
-      customActionVerifiedContact = normalizeOperationalContact(resolvedContact.contact) || customActionVerifiedContact
-    }
+      const skipPreflightForDiscovery = userRequestsOperationalDiscovery(latestUserMessage) &&
+        hasRecentHighLevelOperationalContext(messages)
 
-    if (shouldAskContactBeforeCustomActionReadiness({
-      messages,
-      latestUserMessage,
-      verifiedContact: customActionVerifiedContact
-    })) {
-      return {
-        reply: '¿A qué persona o contacto se lo hago?',
-        model: normalizeAIAgentModel(agentConfig?.model),
-        sources: [],
-        clarificationOptions: [],
-        usage: null,
-        debug: {
-          queryCount: 0,
-          highLevelToolsEnabled: Boolean(highLevelConnection?.configured),
-          metaAdsOperationsEnabled: false,
-          agentRoute,
-          customActionMissingContactFirst: true
-        }
-      }
-    }
-
-    const skipPreflightForDiscovery = userRequestsOperationalDiscovery(latestUserMessage) &&
-      hasRecentHighLevelOperationalContext(messages)
-
-    if (!skipPreflightForDiscovery) {
-      const preflight = await evaluateCustomActionReadiness(apiKey, {
-        model: normalizeAIAgentModel(agentConfig?.model),
-        agentConfig,
-        messages,
-        latestUserMessage,
-        runtimeContext
-      })
-
-      if (preflight.applies && !preflight.ready) {
-        return {
-          reply: preflight.question || 'Me falta un dato indispensable antes de hacer esa acción. ¿Qué dato uso?',
+      if (!skipPreflightForDiscovery) {
+        const preflight = await evaluateCustomActionReadiness(apiKey, {
           model: normalizeAIAgentModel(agentConfig?.model),
-          sources: [],
-          clarificationOptions: [],
-          usage: null,
-          agentMemory: customActionVerifiedContact
-            ? {
-                version: 1,
-                generatedAt: runtimeContext.nowIso || DateTime.now().toISO(),
-                activeContact: customActionVerifiedContact,
-                contacts: [customActionVerifiedContact]
-              }
-            : null,
-          debug: {
-            queryCount: 0,
-            highLevelToolsEnabled: false,
-            metaAdsOperationsEnabled: false,
-            agentRoute,
-            customActionPreflight: preflight
-          }
+          agentConfig,
+          messages,
+          latestUserMessage,
+          runtimeContext
+        })
+
+        await recordAgentStep(agentRun, {
+          stepType: 'custom_action_readiness',
+          status: preflight.applies && !preflight.ready ? 'waiting_user' : 'completed',
+          input: { latestUserMessage },
+          output: preflight
+        })
+
+        if (preflight.applies && !preflight.ready) {
+          return await finishAgentRun({
+            reply: preflight.question || 'Me falta un dato indispensable antes de hacer esa acción. ¿Qué dato uso?',
+            model: normalizeAIAgentModel(agentConfig?.model),
+            sources: [],
+            clarificationOptions: [],
+            usage: null,
+            agentMemory: customActionVerifiedContact
+              ? {
+                  version: 1,
+                  generatedAt: runtimeContext.nowIso || DateTime.now().toISO(),
+                  activeContact: customActionVerifiedContact,
+                  contacts: [customActionVerifiedContact]
+                }
+              : null,
+            debug: {
+              queryCount: 0,
+              highLevelToolsEnabled: false,
+              metaAdsOperationsEnabled: false,
+              agentRoute,
+              customActionPreflight: preflight
+            }
+          }, 'waiting_user')
         }
       }
     }
-  }
 
-  const metaAdsOperationalIntent = agentRoute?.customActionIntent || mentionsHighLevel(latestUserMessage)
-    ? false
-    : shouldSkipDbResearchForMetaAds(latestUserMessage)
-  const metaAdsDbResearchSkipped = metaAdsOperationalIntent
+    const metaAdsOperationalIntent = agentRoute?.customActionIntent || mentionsHighLevel(latestUserMessage)
+      ? false
+      : shouldSkipDbResearchForMetaAds(latestUserMessage)
+    const metaAdsDbResearchSkipped = metaAdsOperationalIntent
 
-  if (metaAdsOperationalIntent) {
-    return buildMetaAdsOperationsUnavailableReply()
-  }
+    if (metaAdsOperationalIntent) {
+      return await finishAgentRun(buildMetaAdsOperationsUnavailableReply(), 'completed')
+    }
 
-  const runDatabaseResearch = !metaAdsDbResearchSkipped && shouldRunDatabaseResearchForRoute(agentRoute)
-  const coreQueries = runDatabaseResearch
-    ? await buildCoreResearchQueries(runtimeContext)
-    : []
-  const corePlan = {
-    assumptions: [
-      metaAdsDbResearchSkipped
-        ? 'Solicitud operativa/inventario de Meta Ads: operación directa deshabilitada dentro de esta app.'
-        : runDatabaseResearch
-          ? 'Se consultó un mapa base de la DB antes de planear la respuesta.'
-          : 'La intención no requiere SQL general de entrada; el agente puede responder directo o usar herramientas si hace falta.'
-    ].filter(Boolean),
-    queries: coreQueries
-  }
-  const coreResults = await executeQueryPlan(corePlan)
-  const databaseContextResults = coreResults
-  const modelPlan = metaAdsDbResearchSkipped || !runDatabaseResearch
-    ? {
-        assumptions: [
-          metaAdsDbResearchSkipped
-            ? 'La pregunta es operativa de Meta Ads y la operación directa está deshabilitada dentro de esta app.'
-            : 'La pregunta no requiere plan SQL general; el agente decidirá si responde directo o usa herramientas de HighLevel/Ristak.'
-        ],
-        queries: []
+    const runDatabaseResearch = !metaAdsDbResearchSkipped && shouldRunDatabaseResearchForRoute(agentRoute)
+    const coreQueries = runDatabaseResearch
+      ? await buildCoreResearchQueries(runtimeContext)
+      : []
+    const corePlan = {
+      assumptions: [
+        metaAdsDbResearchSkipped
+          ? 'Solicitud operativa/inventario de Meta Ads: operación directa deshabilitada dentro de esta app.'
+          : runDatabaseResearch
+            ? 'Se consultó un mapa base de la DB antes de planear la respuesta.'
+            : 'La intención no requiere SQL general de entrada; el agente puede responder directo o usar herramientas si hace falta.'
+      ].filter(Boolean),
+      queries: coreQueries
+    }
+    const coreResults = await executeQueryPlan(corePlan)
+    const databaseContextResults = coreResults
+
+    await recordAgentStep(agentRun, {
+      stepType: 'database_core_research',
+      status: coreResults.some(result => result?.error) ? 'completed_with_errors' : 'completed',
+      input: {
+        runDatabaseResearch,
+        queryCount: coreQueries.length
+      },
+      output: {
+        results: coreResults.map(result => ({
+          name: result.name,
+          rowCount: result.rowCount,
+          error: result.error || null
+        }))
       }
-    : await createQueryPlan(apiKey, {
+    })
+
+    const modelPlan = metaAdsDbResearchSkipped || !runDatabaseResearch
+      ? {
+          assumptions: [
+            metaAdsDbResearchSkipped
+              ? 'La pregunta es operativa de Meta Ads y la operación directa está deshabilitada dentro de esta app.'
+              : 'La pregunta no requiere plan SQL general; el agente decidirá si responde directo o usa herramientas de HighLevel/Ristak.'
+          ],
+          queries: []
+        }
+      : await createQueryPlan(apiKey, {
+          messages,
+          viewContext: viewContext || {},
+          runtimeContext,
+          databaseContextResults,
+          agentConfig,
+          agentRoute
+        })
+    const plan = metaAdsDbResearchSkipped || !runDatabaseResearch
+      ? modelPlan
+      : await augmentQueryPlanWithAutomaticResearch(modelPlan, {
+          runtimeContext,
+          coreQueries
+        })
+
+    await recordAgentStep(agentRun, {
+      stepType: 'database_query_plan',
+      status: 'completed',
+      output: {
+        assumptions: modelPlan.assumptions || [],
+        queryCount: Array.isArray(modelPlan.queries) ? modelPlan.queries.length : 0,
+        queries: (Array.isArray(modelPlan.queries) ? modelPlan.queries : []).map(query => ({
+          name: getQueryName(query),
+          purpose: query.purpose || ''
+        }))
+      }
+    })
+
+    const coreQueryNames = new Set(coreQueries.map(getQueryName))
+    const modelQueries = plan.queries.filter(query => !coreQueryNames.has(getQueryName(query)))
+    const modelResults = await executeQueryPlan({
+      assumptions: modelPlan.assumptions || [],
+      queries: modelQueries
+    })
+
+    let finalPlan = plan
+    let queryResults = [...databaseContextResults, ...modelResults]
+
+    await recordAgentStep(agentRun, {
+      stepType: 'database_query_execution',
+      status: queryResults.some(result => result?.error) ? 'completed_with_errors' : 'completed',
+      input: {
+        modelQueryCount: modelQueries.length
+      },
+      output: {
+        results: queryResults.map(result => ({
+          name: result.name,
+          rowCount: result.rowCount,
+          error: result.error || null
+        }))
+      }
+    })
+
+    if (queryResults.some(result => result?.error)) {
+      const repairPlan = await createRepairQueryPlan(apiKey, {
         messages,
         viewContext: viewContext || {},
         runtimeContext,
-        databaseContextResults,
-        agentConfig,
-        agentRoute
-      })
-  const plan = metaAdsDbResearchSkipped || !runDatabaseResearch
-    ? modelPlan
-    : await augmentQueryPlanWithAutomaticResearch(modelPlan, {
-        runtimeContext,
-        coreQueries
+        plan: finalPlan,
+        queryResults,
+        agentConfig
       })
 
-  const coreQueryNames = new Set(coreQueries.map(getQueryName))
-  const modelQueries = plan.queries.filter(query => !coreQueryNames.has(getQueryName(query)))
-  const modelResults = await executeQueryPlan({
-    assumptions: modelPlan.assumptions || [],
-    queries: modelQueries
-  })
+      await recordAgentStep(agentRun, {
+        stepType: 'database_query_repair_plan',
+        status: repairPlan.queries.length ? 'completed' : 'skipped',
+        output: {
+          assumptions: repairPlan.assumptions || [],
+          queryCount: repairPlan.queries.length,
+          queries: repairPlan.queries.map(query => ({
+            name: getQueryName(query),
+            purpose: query.purpose || ''
+          }))
+        }
+      })
 
-  let finalPlan = plan
-  let queryResults = [...databaseContextResults, ...modelResults]
+      if (repairPlan.queries.length) {
+        const repairResults = await executeQueryPlan(repairPlan)
+        finalPlan = {
+          assumptions: [
+            ...(Array.isArray(finalPlan.assumptions) ? finalPlan.assumptions : []),
+            ...(Array.isArray(repairPlan.assumptions) ? repairPlan.assumptions : [])
+          ],
+          queries: [
+            ...(Array.isArray(finalPlan.queries) ? finalPlan.queries : []),
+            ...repairPlan.queries
+          ]
+        }
+        queryResults = [...queryResults, ...repairResults]
 
-  if (queryResults.some(result => result?.error)) {
-    const repairPlan = await createRepairQueryPlan(apiKey, {
+        await recordAgentStep(agentRun, {
+          stepType: 'database_query_repair_execution',
+          status: repairResults.some(result => result?.error) ? 'completed_with_errors' : 'completed',
+          output: {
+            results: repairResults.map(result => ({
+              name: result.name,
+              rowCount: result.rowCount,
+              error: result.error || null
+            }))
+          }
+        })
+      }
+    }
+
+    const result = await createAutonomousDatabaseReply(apiKey, {
       messages,
       viewContext: viewContext || {},
       runtimeContext,
       plan: finalPlan,
       queryResults,
-      agentConfig
+      agentConfig,
+      highLevelConnection,
+      agentRoute,
+      metaAdsOperationalIntent,
+      metaAdsDbResearchSkipped,
+      agentRun
     })
 
-    if (repairPlan.queries.length) {
-      const repairResults = await executeQueryPlan(repairPlan)
-      finalPlan = {
-        assumptions: [
-          ...(Array.isArray(finalPlan.assumptions) ? finalPlan.assumptions : []),
-          ...(Array.isArray(repairPlan.assumptions) ? repairPlan.assumptions : [])
-        ],
-        queries: [
-          ...(Array.isArray(finalPlan.queries) ? finalPlan.queries : []),
-          ...repairPlan.queries
-        ]
-      }
-      queryResults = [...queryResults, ...repairResults]
+    if (!result.reply) {
+      throw new Error('OpenAI respondió sin texto utilizable')
     }
+
+    return await finishAgentRun(result, 'completed')
+  } catch (error) {
+    await recordAgentStep(agentRun, {
+      stepType: 'agent_error',
+      status: 'failed',
+      error: error.message || 'Error desconocido del agente'
+    })
+    await completeAgentRun(agentRun, {
+      status: 'failed',
+      error: error.message || 'Error desconocido del agente',
+      route: ledgerRoute || agentRoute
+    })
+    error.agentTrace = buildAgentTracePayload(agentRun, 'failed')
+    throw error
   }
-
-  const result = await createAutonomousDatabaseReply(apiKey, {
-    messages,
-    viewContext: viewContext || {},
-    runtimeContext,
-    plan: finalPlan,
-    queryResults,
-    agentConfig,
-    highLevelConnection,
-    agentRoute,
-    metaAdsOperationalIntent,
-    metaAdsDbResearchSkipped
-  })
-
-  if (!result.reply) {
-    throw new Error('OpenAI respondió sin texto utilizable')
-  }
-
-  return result
 }

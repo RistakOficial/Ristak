@@ -2465,6 +2465,83 @@ async function initTables() {
 
     await db.run('CREATE INDEX IF NOT EXISTS idx_ai_agent_user_preferences_user_id ON ai_agent_user_preferences(user_id)')
 
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS agent_runs (
+        id TEXT PRIMARY KEY,
+        trace_id TEXT NOT NULL UNIQUE,
+        user_id INTEGER,
+        status TEXT NOT NULL DEFAULT 'running',
+        domain TEXT,
+        action TEXT,
+        source_of_truth TEXT,
+        input_summary TEXT,
+        output_summary TEXT,
+        view_context_json TEXT,
+        route_json TEXT,
+        model TEXT,
+        usage_json TEXT,
+        error_message TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        completed_at DATETIME,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+      )
+    `)
+
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS agent_steps (
+        id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL,
+        step_index INTEGER NOT NULL,
+        step_type TEXT NOT NULL,
+        tool_name TEXT,
+        status TEXT NOT NULL DEFAULT 'completed',
+        input_json TEXT,
+        output_json TEXT,
+        error_message TEXT,
+        started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        completed_at DATETIME,
+        FOREIGN KEY (run_id) REFERENCES agent_runs(id) ON DELETE CASCADE
+      )
+    `)
+
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS agent_pending_actions (
+        id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL,
+        domain TEXT,
+        action_type TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        payload_json TEXT,
+        confirmation_token TEXT,
+        expires_at DATETIME,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (run_id) REFERENCES agent_runs(id) ON DELETE CASCADE
+      )
+    `)
+
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS agent_tool_idempotency (
+        id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL,
+        tool_name TEXT NOT NULL,
+        idempotency_key TEXT NOT NULL UNIQUE,
+        provider_ref TEXT,
+        status TEXT NOT NULL DEFAULT 'created',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (run_id) REFERENCES agent_runs(id) ON DELETE CASCADE
+      )
+    `)
+
+    await db.run('CREATE INDEX IF NOT EXISTS idx_agent_runs_trace ON agent_runs(trace_id)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_agent_runs_user_created ON agent_runs(user_id, created_at)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_agent_steps_run_index ON agent_steps(run_id, step_index)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_agent_steps_type ON agent_steps(step_type, tool_name)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_agent_pending_actions_run ON agent_pending_actions(run_id, status)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_agent_tool_idempotency_run ON agent_tool_idempotency(run_id, tool_name)')
+
     const userOptionalColumns = [
       ['first_name', 'TEXT'],
       ['last_name', 'TEXT'],

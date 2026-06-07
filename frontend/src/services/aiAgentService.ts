@@ -55,6 +55,12 @@ export interface AIAgentMessageMemory {
   products?: AIAgentProductMemory[]
 }
 
+export interface AIAgentTraceSummary {
+  traceId: string
+  status: 'running' | 'completed' | 'waiting_user' | 'failed' | string
+  detailUrl?: string
+}
+
 export interface AIAgentMessage {
   id?: string
   role: AIAgentRole
@@ -67,6 +73,7 @@ export interface AIAgentMessage {
     url: string
   }>
   clarificationOptions?: AIAgentClarificationOption[]
+  trace?: AIAgentTraceSummary | null
   createdAt?: string
 }
 
@@ -138,11 +145,39 @@ interface AIAgentChatResult {
   clarificationOptions?: AIAgentClarificationOption[]
   usage?: unknown
   agentMemory?: AIAgentMessageMemory | null
+  trace?: AIAgentTraceSummary | null
 }
 
 interface AIAgentTranscriptionResult {
   text: string
   model: string
+}
+
+export interface AIAgentRunTrace {
+  id: string
+  traceId: string
+  status: string
+  domain?: string | null
+  action?: string | null
+  sourceOfTruth?: string | null
+  inputSummary?: string | null
+  outputSummary?: string | null
+  errorMessage?: string | null
+  createdAt?: string | null
+  updatedAt?: string | null
+  completedAt?: string | null
+  steps: Array<{
+    id: string
+    index: number
+    type: string
+    toolName?: string | null
+    status: string
+    input?: unknown
+    output?: unknown
+    errorMessage?: string | null
+    startedAt?: string | null
+    completedAt?: string | null
+  }>
 }
 
 interface AIAgentBusinessContextAnswerResult {
@@ -232,6 +267,10 @@ export const aiAgentService = {
     })
   },
 
+  getRunTrace(traceId: string): Promise<AIAgentRunTrace> {
+    return request<AIAgentRunTrace>(`/runs/${encodeURIComponent(traceId)}`)
+  },
+
   async transcribeVoice(audioBlob: Blob): Promise<AIAgentTranscriptionResult> {
     const response = await fetch(`${API_BASE_URL}/api/ai-agent/transcribe`, {
       method: 'POST',
@@ -263,11 +302,13 @@ function createAIAgentRequestError(payload: any, status: number, fallback: strin
     status?: number
     code?: string
     needsReconnect?: boolean
+    trace?: AIAgentTraceSummary | null
   }
 
   error.status = status
   error.code = payload?.code
   error.needsReconnect = Boolean(payload?.needsReconnect || payload?.code === AI_AGENT_RECONNECT_REQUIRED_CODE)
+  error.trace = payload?.trace || null
 
   return error
 }

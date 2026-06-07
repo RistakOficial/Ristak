@@ -479,6 +479,38 @@
   box-shadow: none;
 }
 
+.tracePill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  align-self: flex-start;
+  width: fit-content;
+  max-width: 100%;
+  padding: 4px 8px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 999px;
+  color: var(--color-text-tertiary);
+  background: rgba(148, 163, 184, 0.06);
+  font-size: 11px;
+  line-height: 1.2;
+}
+
+.tracePill code {
+  color: var(--color-text-secondary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 10px;
+}
+
+.tracePillError {
+  border-color: rgba(239, 68, 68, 0.28);
+  color: var(--color-status-danger, #ef4444);
+  background: rgba(239, 68, 68, 0.08);
+}
+
+.tracePillError code {
+  color: var(--color-status-danger, #ef4444);
+}
+
 .optionButtons {
   display: grid;
   gap: 8px;

@@ -10,6 +10,7 @@ import {
   transcribeVoiceAudio,
   verifyOpenAIApiKey
 } from '../services/aiAgentService.js'
+import { getAgentRunTrace } from '../services/agentExecutionLedgerService.js'
 
 function sendAIAgentError(res, error, fallback, statusCode = 500) {
   if (isAIAgentCredentialError(error)) {
@@ -17,13 +18,15 @@ function sendAIAgentError(res, error, fallback, statusCode = 500) {
       success: false,
       error: error.message,
       code: error.code,
-      needsReconnect: true
+      needsReconnect: true,
+      ...(error.agentTrace ? { trace: error.agentTrace } : {})
     })
   }
 
   return res.status(statusCode).json({
     success: false,
-    error: error.message || fallback
+    error: error.message || fallback,
+    ...(error.agentTrace ? { trace: error.agentTrace } : {})
   })
 }
 
@@ -176,6 +179,29 @@ export async function chat(req, res) {
   } catch (error) {
     logger.error('Error en chat del agente AI:', error)
     sendAIAgentError(res, error, 'Error al generar respuesta del agente AI')
+  }
+}
+
+export async function getRunTrace(req, res) {
+  try {
+    const trace = await getAgentRunTrace(req.params?.traceId, {
+      userId: req.user?.userId
+    })
+
+    if (!trace) {
+      return res.status(404).json({
+        success: false,
+        error: 'No encontré ese rastro del agente'
+      })
+    }
+
+    res.json({
+      success: true,
+      data: trace
+    })
+  } catch (error) {
+    logger.error('Error obteniendo rastro del agente AI:', error)
+    sendAIAgentError(res, error, 'Error al obtener el rastro del agente AI')
   }
 }
 

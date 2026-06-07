@@ -409,7 +409,8 @@ function createMessage(
   clarificationOptions?: AIAgentClarificationOption[],
   attachments?: AIAgentAttachment[],
   selectedClarificationOption?: AIAgentMessage['selectedClarificationOption'],
-  agentMemory?: AIAgentMessage['agentMemory']
+  agentMemory?: AIAgentMessage['agentMemory'],
+  trace?: AIAgentMessage['trace']
 ): AIAgentMessage {
   const cleanContent = role === 'assistant'
     ? stripClarificationOptionLists(content, clarificationOptions)
@@ -421,11 +422,19 @@ function createMessage(
     content: cleanContent,
     ...(attachments?.length ? { attachments } : {}),
     ...(agentMemory ? { agentMemory } : {}),
+    ...(trace ? { trace } : {}),
     ...(selectedClarificationOption ? { selectedClarificationOption } : {}),
     sources,
     clarificationOptions,
     createdAt: new Date().toISOString()
   }
+}
+
+function formatTraceStatus(status?: string) {
+  if (status === 'completed') return 'Completado'
+  if (status === 'waiting_user') return 'Esperando respuesta'
+  if (status === 'failed') return 'Falló'
+  return 'En proceso'
 }
 
 function getRouteLabel(pathname: string) {
@@ -2077,14 +2086,23 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
 
       setMessages((current) => [
         ...current,
-        createMessage('assistant', result.reply, result.sources, result.clarificationOptions, undefined, undefined, result.agentMemory)
+        createMessage('assistant', result.reply, result.sources, result.clarificationOptions, undefined, undefined, result.agentMemory, result.trace)
       ])
     } catch (error: any) {
       if (error?.name === 'AbortError' || activeChatRequestRef.current?.id !== requestId) return
 
       setMessages((current) => [
         ...current,
-        createMessage('assistant', `No pude responder ahorita. ${error?.message || 'Revisa la configuración del Agente AI.'}`)
+        createMessage(
+          'assistant',
+          `No pude responder ahorita. ${error?.message || 'Revisa la configuración del Agente AI.'}`,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          error?.trace
+        )
       ])
     } finally {
       if (activeChatRequestRef.current?.id === requestId) {
@@ -2563,6 +2581,15 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
                     </span>
                     {Boolean(message.attachments?.length) && renderAttachmentList(message.attachments || [])}
                     <div className={styles.bubble}>{renderMessageContent(getDisplayMessageContent(message))}</div>
+                    {message.role === 'assistant' && message.trace?.traceId && (
+                      <div
+                        className={`${styles.tracePill} ${message.trace.status === 'failed' ? styles.tracePillError : ''}`}
+                        title={`Rastro completo: ${message.trace.traceId}`}
+                      >
+                        <span>{formatTraceStatus(message.trace.status)}</span>
+                        <code>{message.trace.traceId.slice(-8)}</code>
+                      </div>
+                    )}
                     {message.role === 'assistant' && Boolean(message.clarificationOptions?.length) && (
                       <div className={styles.optionButtons} aria-label="Opciones para aclarar la pregunta">
                         {message.clarificationOptions?.map((option, optionIndex) => (
