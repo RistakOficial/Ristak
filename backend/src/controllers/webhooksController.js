@@ -27,9 +27,22 @@ import {
   getMetaWebhookVerifyToken,
   processMetaSocialWebhook
 } from '../services/metaSocialMessagingService.js';
+import {
+  enqueueOutgoingWebhookEvent,
+  eventForAppointmentStatus,
+  eventForPaymentStatus
+} from '../services/outgoingWebhooksService.js';
 
 function firstValue(...values) {
   return values.find(value => value !== undefined && value !== null && value !== '');
+}
+
+async function dispatchOutgoingEventSafely(args) {
+  try {
+    await enqueueOutgoingWebhookEvent(args);
+  } catch (error) {
+    logger.warn(`No se pudo encolar webhook saliente ${args?.event || ''}: ${error.message}`);
+  }
 }
 
 export const verifyMetaSocialWebhook = async (req, res) => {
@@ -498,6 +511,13 @@ export const handleContactWebhook = async (req, res) => {
     }
 
     logger.info(`✅ Contacto ${contactId} procesado exitosamente${visitorId ? ` (visitor_id: ${visitorId})` : ''}`);
+    await dispatchOutgoingEventSafely({
+      category: 'contacts',
+      event: 'contact.updated',
+      entityId: contactId,
+      locationId: config?.location_id || data.locationId || data.location_id,
+      source: 'highlevel_webhook'
+    });
     res.status(200).json({ success: true, message: 'Contacto procesado' });
 
   } catch (error) {
@@ -727,6 +747,8 @@ export const handlePaymentWebhook = async (req, res) => {
       ]);
     }
 
+    const storedPaymentId = existingInvoicePayment?.id || effectiveInvoiceId || paymentId;
+
     // Actualizar estadísticas del contacto
     await updateSingleContactStats(contactId);
 
@@ -749,6 +771,24 @@ export const handlePaymentWebhook = async (req, res) => {
         amount,
         currency,
         paymentMode
+      });
+    }
+
+    await dispatchOutgoingEventSafely({
+      category: 'payments',
+      event: eventForPaymentStatus(status),
+      entityId: storedPaymentId,
+      locationId: data.location?.id || data.locationId || data.location_id || payment.locationId || payment.location_id,
+      source: 'highlevel_webhook'
+    });
+
+    if (String(status || '').toLowerCase().includes('refund')) {
+      await dispatchOutgoingEventSafely({
+        category: 'refunds',
+        event: 'refund.processed',
+        entityId: storedPaymentId,
+        locationId: data.location?.id || data.locationId || data.location_id || payment.locationId || payment.location_id,
+        source: 'highlevel_webhook'
       });
     }
 
@@ -880,6 +920,14 @@ export const handleAppointmentWebhook = async (req, res) => {
     if (contactId && !isCancelledAppointment) {
       await triggerWhatsappAppointmentBookedEvent(contactId, { calendarId: appointmentCalendarId });
     }
+
+    await dispatchOutgoingEventSafely({
+      category: 'appointments',
+      event: eventForAppointmentStatus(appointmentStatus),
+      entityId: appointmentId,
+      locationId: data.location?.id || data.locationId || data.location_id,
+      source: 'highlevel_webhook'
+    });
 
     logger.info(`✅ Cita ${appointmentId} procesada exitosamente para contacto ${contactId}`);
     res.status(200).json({ success: true, message: 'Cita procesada' });
@@ -1055,6 +1103,16 @@ export const handleAppointmentShowedWebhook = async (req, res) => {
       });
     }
 
+    if (updatedAppointmentId) {
+      await dispatchOutgoingEventSafely({
+        category: 'appointments',
+        event: 'appointment.showed',
+        entityId: updatedAppointmentId,
+        locationId: data.location?.id || data.locationId || data.location_id,
+        source: 'highlevel_webhook'
+      });
+    }
+
     logger.info(`✅ Cita marcada como asistida: ${updatedAppointmentId || 'sin ID'}${contactId ? ` para contacto ${contactId}` : ''}`);
     res.status(200).json({
       success: true,
@@ -1108,6 +1166,21 @@ export const handleRefundWebhook = async (req, res) => {
     } else {
       logger.info(`✅ Reembolso ${refundId} procesado exitosamente`);
     }
+
+    await dispatchOutgoingEventSafely({
+      category: 'refunds',
+      event: 'refund.processed',
+      entityId: refundId,
+      locationId: data.location?.id || data.locationId || data.location_id,
+      source: 'highlevel_webhook'
+    });
+    await dispatchOutgoingEventSafely({
+      category: 'payments',
+      event: 'payment.refunded',
+      entityId: refundId,
+      locationId: data.location?.id || data.locationId || data.location_id,
+      source: 'highlevel_webhook'
+    });
 
     res.status(200).json({ success: true, message: 'Reembolso procesado' });
 
@@ -1275,6 +1348,31 @@ export const handleInvoiceWebhook = async (req, res) => {
         if (payment && payment.contact_id) {
           await updateSingleContactStats(payment.contact_id);
           logger.success(`Estadísticas recalculadas tras ${newStatus === 'void' ? 'anulación' : 'reembolso'} para contacto: ${payment.contact_id}`);
+        }
+      }
+
+      const paymentForOutgoing = await db.get(
+        'SELECT id FROM payments WHERE ghl_invoice_id = ? OR id = ? LIMIT 1',
+        [invoiceId, invoiceId]
+      );
+
+      if (paymentForOutgoing?.id) {
+        await dispatchOutgoingEventSafely({
+          category: 'payments',
+          event: eventForPaymentStatus(newStatus),
+          entityId: paymentForOutgoing.id,
+          locationId: data.location?.id || data.locationId || data.location_id || invoicePayload.locationId || invoicePayload.location_id,
+          source: 'highlevel_webhook'
+        });
+
+        if (newStatus === 'refunded') {
+          await dispatchOutgoingEventSafely({
+            category: 'refunds',
+            event: 'refund.processed',
+            entityId: paymentForOutgoing.id,
+            locationId: data.location?.id || data.locationId || data.location_id || invoicePayload.locationId || invoicePayload.location_id,
+            source: 'highlevel_webhook'
+          });
         }
       }
     }

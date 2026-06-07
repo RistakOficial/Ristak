@@ -2387,6 +2387,67 @@ async function initTables() {
     await db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_api_token_hash ON users(api_token_hash)')
 
     await db.run(`
+      CREATE TABLE IF NOT EXISTS outgoing_webhook_destinations (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        url TEXT NOT NULL,
+        is_active INTEGER DEFAULT 1,
+        scope_type TEXT DEFAULT 'clinic',
+        scope_id TEXT,
+        events_json TEXT DEFAULT '[]',
+        secret TEXT,
+        max_retries INTEGER DEFAULT 3,
+        timeout_ms INTEGER DEFAULT 10000,
+        created_by_user_id INTEGER,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS outgoing_webhook_deliveries (
+        id TEXT PRIMARY KEY,
+        destination_id TEXT,
+        destination_name TEXT,
+        event_type TEXT NOT NULL,
+        event_category TEXT NOT NULL,
+        entity_id TEXT,
+        entity_table TEXT,
+        status TEXT DEFAULT 'pending',
+        attempt_count INTEGER DEFAULT 0,
+        max_retries INTEGER DEFAULT 3,
+        next_retry_at DATETIME,
+        last_attempt_at DATETIME,
+        http_status INTEGER,
+        response_body TEXT,
+        error_message TEXT,
+        request_body TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS outgoing_webhook_attempts (
+        id TEXT PRIMARY KEY,
+        delivery_id TEXT NOT NULL,
+        attempt_number INTEGER NOT NULL,
+        status TEXT NOT NULL,
+        http_status INTEGER,
+        response_body TEXT,
+        error_message TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+
+    await db.run('CREATE INDEX IF NOT EXISTS idx_outgoing_webhooks_active ON outgoing_webhook_destinations(is_active)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_outgoing_webhooks_scope ON outgoing_webhook_destinations(scope_type, scope_id)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_outgoing_deliveries_status ON outgoing_webhook_deliveries(status)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_outgoing_deliveries_created ON outgoing_webhook_deliveries(created_at)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_outgoing_deliveries_retry ON outgoing_webhook_deliveries(status, next_retry_at)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_outgoing_attempts_delivery ON outgoing_webhook_attempts(delivery_id)')
+
+    await db.run(`
       CREATE TABLE IF NOT EXISTS oauth_clients (
         client_id TEXT PRIMARY KEY,
         client_name TEXT,

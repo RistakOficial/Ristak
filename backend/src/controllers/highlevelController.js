@@ -23,6 +23,10 @@ import {
   syncProductsWithSavedConfig,
   updateLocalProduct
 } from '../services/localProductService.js';
+import {
+  enqueueOutgoingWebhookEvent,
+  eventForPaymentPlanStatus
+} from '../services/outgoingWebhooksService.js';
 
 const normalizeGhlInvoiceMode = (mode) => mode === 'test' ? 'test' : 'live';
 const INACTIVE_INVOICE_SCHEDULE_STATUSES = new Set([
@@ -70,6 +74,14 @@ const GHL_CHAT_CHANNELS = {
     platform: 'instagram'
   }
 };
+
+async function dispatchOutgoingPaymentPlanEvent(args) {
+  try {
+    await enqueueOutgoingWebhookEvent(args);
+  } catch (error) {
+    logger.warn(`No se pudo encolar webhook saliente de plan de pago ${args?.entityId || ''}: ${error.message}`);
+  }
+}
 const GHL_CHAT_CHANNEL_ALIASES = {
   whatsapp: 'whatsapp_api',
   whatsappapi: 'whatsapp_api',
@@ -2682,6 +2694,13 @@ export const createInvoiceSchedule = async (req, res) => {
       id: scheduleId
     });
     await persistLocalInvoiceSchedule(normalizedSchedule);
+    await dispatchOutgoingPaymentPlanEvent({
+      category: 'payment_plans',
+      event: eventForPaymentPlanStatus(normalizedSchedule.status || 'created'),
+      entityId: normalizedSchedule.id || scheduleId,
+      userId: req.user?.userId,
+      source: 'ristak_payment_plans'
+    });
 
     res.json({
       success: true,
@@ -2855,6 +2874,13 @@ export const updateInvoiceSchedule = async (req, res) => {
 
     const normalizedSchedule = normalizeInvoiceSchedule(schedule || payload);
     await persistLocalInvoiceSchedule(normalizedSchedule);
+    await dispatchOutgoingPaymentPlanEvent({
+      category: 'payment_plans',
+      event: eventForPaymentPlanStatus(normalizedSchedule.status),
+      entityId: normalizedSchedule.id || scheduleId,
+      userId: req.user?.userId,
+      source: 'ristak_payment_plans'
+    });
 
     res.json({
       success: true,
@@ -2950,6 +2976,14 @@ export const actionInvoiceSchedule = async (req, res) => {
       response = await ghlClient.manageInvoiceScheduleAutoPayment(scheduleId, payload);
       data = await normalizePersistedInvoiceScheduleAction(ghlClient, scheduleId, response, null, payload);
     }
+
+    await dispatchOutgoingPaymentPlanEvent({
+      category: 'payment_plans',
+      event: eventForPaymentPlanStatus(data?.status || action),
+      entityId: data?.id || scheduleId,
+      userId: req.user?.userId,
+      source: 'ristak_payment_plans'
+    });
 
     res.json({
       success: true,

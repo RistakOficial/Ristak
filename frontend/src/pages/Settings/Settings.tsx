@@ -1,6 +1,6 @@
 import React from 'react'
 import { Routes, Route, Navigate, NavLink, useLocation } from 'react-router-dom'
-import { Send, CreditCard, Activity, Calendar, UserCircle, TrendingDown, Bot, KeyRound, Globe2, Smartphone, Hash } from 'lucide-react'
+import { Send, CreditCard, Activity, Calendar, UserCircle, TrendingDown, Bot, KeyRound, Globe2, Smartphone, Hash, Webhook } from 'lucide-react'
 import { SiWhatsapp } from 'react-icons/si'
 import { HighLevelIntegration } from './HighLevelIntegration'
 import { Costs } from './Costs'
@@ -15,6 +15,7 @@ import { APIAccessSettings } from './APIAccessSettings'
 import { Domains } from './Domains'
 import { MobileAppSettings } from './MobileAppSettings'
 import { CustomFields } from './CustomFields'
+import { OutgoingWebhooksSettings } from './OutgoingWebhooksSettings'
 import { useTheme } from '@/contexts/ThemeContext'
 import styles from './Settings.module.css'
 
@@ -97,6 +98,11 @@ export const Settings: React.FC = () => {
       to: '/settings/api-access',
       label: 'Acceso API',
       icon: <KeyRound size={18} />
+    },
+    {
+      to: '/settings/outgoing-webhooks',
+      label: 'Webhooks salientes',
+      icon: <Webhook size={18} />
     }
   ]
 
@@ -145,6 +151,7 @@ export const Settings: React.FC = () => {
               <Route path="custom-fields/*" element={<CustomFields />} />
               <Route path="ai-agent" element={<AIAgentSettings />} />
               <Route path="api-access" element={<APIAccessSettings />} />
+              <Route path="outgoing-webhooks" element={<OutgoingWebhooksSettings />} />
               <Route path="mobile-app" element={<MobileAppSettings />} />
               <Route path="account" element={<AccountSettings />} />
             </Routes>
