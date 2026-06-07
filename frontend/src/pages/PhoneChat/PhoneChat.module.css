@@ -308,6 +308,17 @@
   min-width: 0;
 }
 
+.chatTitleMain {
+  display: inline-flex;
+  align-items: end;
+  gap: 8px;
+  min-width: 0;
+}
+
+.chatTitleMain h1 {
+  min-width: 0;
+}
+
 .chatTitleRight {
   display: inline-flex;
   align-items: center;
@@ -321,6 +332,20 @@
   align-items: center;
   flex: 0 0 auto;
   gap: 10px;
+}
+
+.tabletNewChatButton {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  color: var(--phone-chat-primary);
+  background: transparent;
 }
 
 .chatPhoneSelector {
@@ -4231,16 +4256,29 @@
 
 .phoneChatPage[data-phone-chat-device="tablet"] .chatTitleRow {
   align-items: center;
+  justify-content: space-between;
   min-height: 44px;
   max-height: none;
+}
+
+.phoneChatPage[data-phone-chat-device="tablet"] .chatTitleMain {
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 6px;
 }
 
 .phoneChatPage[data-phone-chat-device="tablet"] .chatTitleRight {
   flex: 1 1 auto;
 }
 
-.phoneChatPage[data-phone-chat-device="tablet"] .chatTitleActions {
+.phoneChatPage[data-phone-chat-device="tablet"] .tabletNewChatButton {
   display: inline-flex;
+}
+
+.phoneChatPage[data-phone-chat-device="tablet"] .tabletNewChatButton svg {
+  width: 24px;
+  height: 24px;
+  stroke-width: 2.7;
 }
 
 .phoneChatPage[data-phone-chat-device="tablet"] .roundButton,
@@ -4255,7 +4293,45 @@
 }
 
 .phoneChatPage[data-phone-chat-device="tablet"] .chatList {
-  padding-bottom: 0;
+  padding-bottom: 108px;
+}
+
+.tabletChatDock {
+  display: none;
+}
+
+.phoneChatPage[data-phone-chat-device="tablet"] .tabletChatDock {
+  position: absolute;
+  right: 14px;
+  bottom: max(10px, env(safe-area-inset-bottom));
+  left: 14px;
+  z-index: 5;
+  display: block;
+  padding-top: 34px;
+  pointer-events: none;
+}
+
+.phoneChatPage[data-phone-chat-device="tablet"] .tabletChatDock::before {
+  content: "";
+  position: absolute;
+  right: -14px;
+  bottom: -18px;
+  left: -14px;
+  top: 0;
+  z-index: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    180deg,
+    rgba(var(--phone-chat-bg-rgb), 0) 0%,
+    rgba(var(--phone-chat-bg-rgb), 0.9) 48%,
+    rgba(var(--phone-chat-bg-rgb), 1) 100%
+  );
+}
+
+.phoneChatPage[data-phone-chat-device="tablet"] .tabletChatDock > * {
+  position: relative;
+  z-index: 1;
+  pointer-events: auto;
 }
 
 .phoneChatPage[data-phone-chat-device="tablet"] .conversationHeader {
