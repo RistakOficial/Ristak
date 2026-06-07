@@ -3280,8 +3280,9 @@
   align-items: end;
   min-height: 40px;
   border: 1px solid var(--phone-chat-border);
-  border-radius: 999px;
+  border-radius: 22px;
   background: var(--phone-chat-surface);
+  box-sizing: border-box;
   overflow: hidden;
   transition:
     border-color 220ms ease,
@@ -3290,7 +3291,7 @@
 }
 
 .messageInputWrapWithSchedule {
-  grid-template-columns: minmax(0, 1fr) 38px;
+  grid-template-columns: minmax(0, 1fr) 42px;
 }
 
 .composerHasContent .messageInputWrap {
@@ -3302,7 +3303,7 @@
   width: 100%;
   min-height: 39px;
   max-height: 116px;
-  padding: 8px 7px 7px 13px;
+  padding: 8px 8px 8px 13px;
   border: 0;
   outline: none;
   color: var(--phone-chat-text);
@@ -3344,8 +3345,11 @@
 
 .composerScheduleButton {
   align-self: end;
-  color: #7c838d;
-  border-radius: 999px;
+  justify-self: end;
+  width: 40px;
+  height: 40px;
+  color: var(--phone-chat-text);
+  border-radius: 20px;
 }
 
 .composerScheduleButton:active {
