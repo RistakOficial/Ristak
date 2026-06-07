@@ -7155,7 +7155,7 @@ export const PhoneChat: React.FC = () => {
 
   return (
     <main
-      className={`${styles.phoneChatPage} ${conversationVisible ? styles.conversationOpen : ''}`}
+      className={`${styles.phoneChatPage} ${conversationVisible ? styles.conversationOpen : ''} ${sheet || appointmentOpen ? styles.sheetOpen : ''}`}
       data-phone-chat-tone={resolvedPhoneChatTheme}
       data-phone-chat-mode={safeChatThemePreference}
       data-phone-chat-device={deviceMode}

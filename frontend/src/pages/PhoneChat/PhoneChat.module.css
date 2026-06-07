@@ -23,6 +23,7 @@
   --phone-chat-input-placeholder: #8e8e93;
   --phone-chat-panel: #f4f4f4;
   --phone-chat-shadow: 0 18px 38px rgba(17, 24, 39, 0.1);
+  --phone-chat-sheet-shadow: 0 -22px 70px rgba(15, 23, 42, 0.18);
   position: fixed;
   top: var(--phone-visual-viewport-top, 0);
   right: 0;
@@ -69,6 +70,7 @@
   --phone-chat-input-placeholder: #7f8b95;
   --phone-chat-panel: #101820;
   --phone-chat-shadow: 0 18px 42px rgba(0, 0, 0, 0.34);
+  --phone-chat-sheet-shadow: 0 -24px 82px rgba(0, 0, 0, 0.56);
   color-scheme: dark;
 }
 
@@ -88,6 +90,11 @@
     inset 0 0 30px rgba(var(--phone-chat-accent-rgb), 0.08);
   opacity: 0.5;
   mix-blend-mode: screen;
+  transition: opacity 220ms ease;
+}
+
+.phoneChatPage.sheetOpen[data-phone-chat-tone="dark"]::before {
+  opacity: 0;
 }
 
 .phoneChatPage button,
@@ -3547,7 +3554,7 @@
   border-radius: 24px 24px 0 0;
   color: var(--phone-chat-text);
   background: var(--phone-chat-surface);
-  box-shadow: 0 -22px 70px rgba(var(--phone-chat-primary-rgb), 0.28);
+  box-shadow: var(--phone-chat-sheet-shadow);
   overflow: hidden;
   touch-action: pan-y;
   animation: phoneChatSheetRise 280ms cubic-bezier(0.22, 1, 0.36, 1) both;
@@ -3611,7 +3618,7 @@
 .chatMoreSheet {
   min-height: 292px;
   background: var(--phone-chat-panel);
-  box-shadow: 0 -24px 82px rgba(3, 7, 18, 0.34);
+  box-shadow: var(--phone-chat-sheet-shadow);
   transform-origin: bottom center;
 }
 
