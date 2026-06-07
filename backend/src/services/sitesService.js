@@ -4442,6 +4442,7 @@ JSON cuando esta listo con varias paginas:
 ${editMode ? `
 Modo edicion:
 - Recibiras el HTML actual y la peticion del usuario.
+- Si recibes visualContext, úsalo como referencia visual de la página actual: ubica logos, imágenes, botones, formularios, colores, textos visibles y la página activa antes de editar.
 - Devuelve el HTML completo actualizado, no solo un fragmento.
 - Si recibes importedPages con varias paginas, conserva el embudo multipagina y responde con page.pages incluyendo todas las paginas completas. Mantén ids, title y filename de cada pagina salvo que el usuario pida renombrar, agregar, quitar o reordenar paginas.
 - Conserva formularios, ids, name, data-rstk-form, data-rstk-form-id, data-rstk-field, data-ristak-field, data-rstk-custom-field, data-rstk-edit-id, data-rstk-editable, data-rstk-edit-type, data-rstk-label, data-rstk-section, data-rstk-button-actions, data-rstk-button-action, data-rstk-button-url, data-rstk-button-page-id, data-rstk-button-message, data-rstk-choice-actions y sus aliases data-ristak-* / data-ristack-* cuando el usuario no pida cambiarlos.
@@ -4465,6 +4466,68 @@ ${businessContext || 'Sin contexto adicional configurado.'}
 `.trim()
 }
 
+const SITES_AI_VISUAL_IMAGE_MAX_CHARS = 1_600_000
+
+function normalizeSitesAIVisualContext(value = null) {
+  if (!value || typeof value !== 'object') return null
+  const elements = Array.isArray(value.elements)
+    ? value.elements.slice(0, 48).map((element = {}) => ({
+      type: limitString(element.type, 80),
+      label: limitString(element.label, 140),
+      text: limitString(element.text, 240),
+      x: Number.isFinite(Number(element.x)) ? Number(element.x) : 0,
+      y: Number.isFinite(Number(element.y)) ? Number(element.y) : 0,
+      width: Number.isFinite(Number(element.width)) ? Number(element.width) : 0,
+      height: Number.isFinite(Number(element.height)) ? Number(element.height) : 0
+    })).filter(element => element.text || element.label || element.type)
+    : []
+  const screenshotDataUrl = cleanString(value.screenshotDataUrl)
+  const safeScreenshot = /^data:image\/(?:png|jpe?g|webp);base64,/i.test(screenshotDataUrl) &&
+    screenshotDataUrl.length <= SITES_AI_VISUAL_IMAGE_MAX_CHARS
+    ? screenshotDataUrl
+    : ''
+
+  return {
+    siteId: limitString(value.siteId, 120),
+    pageId: limitString(value.pageId, 120),
+    pageTitle: limitString(value.pageTitle, 220),
+    summary: limitString(value.summary, 9000),
+    screenshotDataUrl: safeScreenshot,
+    screenshotFormat: safeScreenshot ? 'internal-preview-png' : '',
+    capturedAt: limitString(value.capturedAt, 80),
+    elements
+  }
+}
+
+function buildSitesAIResponsesInput(input = {}) {
+  const visualContext = normalizeSitesAIVisualContext(input?.visualContext)
+  const screenshotDataUrl = visualContext?.screenshotDataUrl || ''
+  const safeInput = {
+    ...input,
+    ...(visualContext
+      ? {
+        visualContext: {
+          ...visualContext,
+          screenshotDataUrl: screenshotDataUrl ? '[attached as input_image]' : ''
+        }
+      }
+      : {})
+  }
+  const inputText = JSON.stringify(safeInput)
+
+  if (!screenshotDataUrl) return inputText
+
+  return [
+    {
+      role: 'user',
+      content: [
+        { type: 'input_text', text: inputText },
+        { type: 'input_image', image_url: screenshotDataUrl }
+      ]
+    }
+  ]
+}
+
 async function callSitesAIJson({ apiKey, model, instructions, input, maxOutputTokens = 7200, fallbackError = 'OpenAI no pudo generar el site' }) {
   const response = await fetch(OPENAI_RESPONSES_URL, {
     method: 'POST',
@@ -4475,7 +4538,7 @@ async function callSitesAIJson({ apiKey, model, instructions, input, maxOutputTo
     body: JSON.stringify({
       model: cleanString(model) || 'gpt-5.5',
       instructions,
-      input: JSON.stringify(input),
+      input: buildSitesAIResponsesInput(input),
       max_output_tokens: maxOutputTokens
     })
   })
@@ -4512,7 +4575,7 @@ async function callSitesAIHtmlGenerator({ apiKey, model, siteKind, messages, age
   })
 }
 
-async function callSitesAIHtmlEditor({ apiKey, model, siteKind, messages, agentConfig, site, importedSite, importedPages = [] }) {
+async function callSitesAIHtmlEditor({ apiKey, model, siteKind, messages, agentConfig, site, importedSite, importedPages = [], visualContext = null }) {
   return callSitesAIJson({
     apiKey,
     model,
@@ -4534,6 +4597,7 @@ async function callSitesAIHtmlEditor({ apiKey, model, siteKind, messages, agentC
         formMappings: importedSite?.formMappings || []
       },
       importedPages,
+      visualContext: normalizeSitesAIVisualContext(visualContext),
       currentHtml: limitString(importedSite?.htmlSanitized || importedSite?.htmlOriginal || '', 90000),
       conversation: messages
     },
@@ -5705,12 +5769,6 @@ async function replaceImportedSiteHtml(siteId, input = {}) {
     throw error
   }
 
-  if (currentImport.importType !== 'html') {
-    const error = new Error('La edicion con IA funciona con paginas HTML de un solo archivo. Para ZIP, sube una nueva version del archivo.')
-    error.status = 400
-    throw error
-  }
-
   if (Array.isArray(input.pages) && input.pages.length > 0) {
     const prepared = await prepareGeneratedImportedPagesContent({
       pages: input.pages,
@@ -5773,6 +5831,12 @@ async function replaceImportedSiteHtml(siteId, input = {}) {
       site: await getSite(siteId, { includeBlocks: true, includeSubmissions: true }),
       import: await getImportedSiteBySiteId(siteId)
     }
+  }
+
+  if (currentImport.importType !== 'html') {
+    const error = new Error('La IA no devolvió las páginas completas del ZIP. Intenta otra vez indicando que conserve todas las páginas del embudo.')
+    error.status = 502
+    throw error
   }
 
   const rawHtml = String(input.html || '').trim()
@@ -6045,6 +6109,7 @@ export async function updateImportedSiteHtmlWithAI(siteId, input = {}) {
   const agentConfig = await getAIAgentConfig({ userId: input.userId })
   const model = normalizeSitesAIModel(input.model || input.chatgptModel || input.chatgpt_model, agentConfig?.model)
   const importedPages = await getImportedSitePagesForAIContext(currentSite, currentImport)
+  const visualContext = normalizeSitesAIVisualContext(input.visualContext || input.visual_context)
   const aiPayload = await callSitesAIHtmlEditor({
     apiKey,
     model,
@@ -6053,7 +6118,8 @@ export async function updateImportedSiteHtmlWithAI(siteId, input = {}) {
     agentConfig,
     site: currentSite,
     importedSite: currentImport,
-    importedPages
+    importedPages,
+    visualContext
   })
 
   const status = cleanString(aiPayload?.status)

@@ -412,6 +412,27 @@ export interface SitesAICreationMessage {
   content: string
 }
 
+export interface SitesAIPreviewVisualElement {
+  type: string
+  label: string
+  text: string
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+export interface SitesAIPreviewVisualContext {
+  siteId: string
+  pageId: string
+  pageTitle: string
+  summary: string
+  screenshotDataUrl?: string
+  screenshotFormat?: 'internal-preview-png'
+  capturedAt: string
+  elements: SitesAIPreviewVisualElement[]
+}
+
 export interface SitesAICreationResult {
   status: 'needs_more_info' | 'created' | 'updated'
   reply: string
@@ -536,7 +557,7 @@ export const sitesService = {
     return apiClient.post<SitesAICreationResult>('/sites/ai-create-html', payload)
   },
 
-  editImportedHtmlWithAI(siteId: string, payload: { siteKind: SitesAICreationKind; messages: SitesAICreationMessage[]; model?: string }) {
+  editImportedHtmlWithAI(siteId: string, payload: { siteKind: SitesAICreationKind; messages: SitesAICreationMessage[]; model?: string; visualContext?: SitesAIPreviewVisualContext | null }) {
     return apiClient.post<SitesAICreationResult>(`/sites/${siteId}/ai-edit-html`, payload)
   },
 

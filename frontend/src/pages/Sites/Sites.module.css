@@ -1468,6 +1468,25 @@
   line-height: 1.4;
 }
 
+.aiCreationVisualContext {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  border: 1px solid rgba(34, 197, 94, 0.24);
+  border-radius: 8px;
+  background: rgba(240, 253, 244, 0.92);
+  color: #166534;
+  padding: 10px 12px;
+  font-size: 0.88rem;
+  font-weight: 750;
+  line-height: 1.45;
+}
+
+.aiCreationVisualContext svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
 .aiCreationFooter {
   display: flex;
   align-items: center;
@@ -1873,6 +1892,13 @@
   border-color: rgba(245, 158, 11, 0.28);
   background: rgba(245, 158, 11, 0.1);
   color: #fbbf24;
+}
+
+:global(body.dark) .aiCreationVisualContext,
+:global([data-theme="dark"]) .aiCreationVisualContext {
+  border-color: rgba(34, 197, 94, 0.24);
+  background: rgba(20, 83, 45, 0.22);
+  color: #86efac;
 }
 
 :global(body.dark) .aiCreationToolRow .aiCreationMicActive,

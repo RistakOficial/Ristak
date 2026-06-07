@@ -96,6 +96,8 @@ import {
   type ImportedSiteFieldMapping,
   type ImportedSiteFormMapping,
   type ImportedSiteImport,
+  type SitesAIPreviewVisualElement,
+  type SitesAIPreviewVisualContext,
   landingBlockTypes,
   siteTemplates,
   sitesService,
@@ -164,6 +166,7 @@ type SitesAICreationModalSubmit = {
   primaryAction?: FunnelPrimaryActionId
   chatgptModel?: string
   editSite?: PublicSite | null
+  visualContext?: SitesAIPreviewVisualContext | null
 }
 
 type FunnelStyleId = 'vsl' | 'lead_gen' | 'opt_in'
@@ -2542,6 +2545,7 @@ export const Sites: React.FC = () => {
   const [selectedImportData, setSelectedImportData] = useState<ImportedSiteImport | null>(null)
   const [aiCreationModal, setAiCreationModal] = useState<SitesAICreationModalState>(null)
   const [aiEditorGeneration, setAiEditorGeneration] = useState<AIEditorGenerationState>(null)
+  const [importedPreviewContexts, setImportedPreviewContexts] = useState<Record<string, SitesAIPreviewVisualContext>>({})
   const [loadingImportData, setLoadingImportData] = useState(false)
   const [savingImportMapping, setSavingImportMapping] = useState(false)
   const selectedSiteRef = useRef<PublicSite | null>(null)
@@ -2589,6 +2593,20 @@ export const Sites: React.FC = () => {
     undoStackRef.current = []
     redoStackRef.current = []
   }, [selectedSite?.id])
+
+  const handleImportedPreviewContextChange = useCallback((siteId: string, context: SitesAIPreviewVisualContext) => {
+    setImportedPreviewContexts(current => {
+      const previous = current[siteId]
+      if (
+        previous?.pageId === context.pageId &&
+        previous?.summary === context.summary &&
+        previous?.screenshotDataUrl === context.screenshotDataUrl
+      ) {
+        return current
+      }
+      return { ...current, [siteId]: context }
+    })
+  }, [])
 
   const landings = useMemo(
     () => sites.filter(site => site.siteType === 'landing_page'),
@@ -3573,24 +3591,27 @@ export const Sites: React.FC = () => {
     funnelStyle,
     primaryAction,
     chatgptModel,
-    editSite
+    editSite,
+    visualContext
   }: SitesAICreationModalSubmit): Promise<string | null> => {
     const selectedFunnelStyle = getFunnelStyleOption(funnelStyle)
     const selectedPrimaryAction = getFunnelPrimaryAction(primaryAction)
-    const selectedChatGPTModel = getChatGPTSiteModelOption(chatgptModel)
+    const selectedChatGPTModel = getChatGPTSiteModelOption(chatgptModel, Boolean(editSite))
+    const editVisualContext = editSite ? visualContext || importedPreviewContexts[editSite.id] || null : null
     const promptParts = [
       editSite
-        ? `Modifica esta pagina importada con IA segun la peticion del usuario. Manten formularios, campos, tracking y acciones de botones funcionando.`
-        : `Crea una pagina completa con IA libre en HTML/CSS para importarla en Ristak.`,
+        ? `Modifica esta página importada con IA según la petición del usuario. Mantén formularios, campos, tracking y acciones de botones funcionando.`
+        : `Crea una página completa con IA libre en HTML/CSS para importarla en Ristak.`,
       selectedFunnelStyle ? selectedFunnelStyle.prompt : '',
       selectedPrimaryAction ? selectedPrimaryAction.prompt : '',
       selectedChatGPTModel ? `ChatGPT seleccionado por el usuario: ${selectedChatGPTModel.label}.` : '',
-      `Peticion del usuario:\n${prompt.trim()}`,
+      editVisualContext ? formatSitesAIPreviewVisualContextForPrompt(editVisualContext) : '',
+      `Petición del usuario:\n${prompt.trim()}`,
       attachmentNotes.length ? `Archivos de referencia:\n${attachmentNotes.join('\n\n')}` : '',
       [
         'Reglas de experiencia:',
-        '- Usa textos cortos, titulares compactos y parrafos faciles de escanear.',
-        '- Si algun texto necesita ser largo, ajusta font-size, line-height y ancho para que no rompa el diseno.',
+        '- Usa textos cortos, titulares compactos y párrafos fáciles de escanear.',
+        '- Si algún texto necesita ser largo, ajusta font-size, line-height y ancho para que no rompa el diseño.',
         '- Usa fotos HTTPS visibles cuando ayuden al objetivo.',
         '- Marca textos e imagenes editables con los atributos internos de Ristak.',
         '- Prepara formularios con campos claros para que Ristak detecte y mapee datos automaticamente.'
@@ -3646,7 +3667,7 @@ export const Sites: React.FC = () => {
 
     try {
       const result = editSite
-        ? await sitesService.editImportedHtmlWithAI(editSite.id, { siteKind, messages, model: chatgptModel })
+        ? await sitesService.editImportedHtmlWithAI(editSite.id, { siteKind, messages, model: chatgptModel, visualContext: editVisualContext })
         : await sitesService.createWithAIHtml({ siteKind, messages, metaCapiEnabled: metaPixelConnected, model: chatgptModel })
 
       if (result.status === 'needs_more_info' || !result.site || !result.import) {
@@ -4838,6 +4859,7 @@ export const Sites: React.FC = () => {
                   onPublish={() => handleSaveSite('published')}
                   onEditWithAI={() => handleEditImportedHtmlWithAI(editorSite)}
                   onEditFields={() => void handleOpenImportMappingEditor(editorSite)}
+                  onPreviewContextChange={handleImportedPreviewContextChange}
                   onContentUpdated={handleImportedContentUpdated}
                   onUpdateRoute={handleUpdateLibraryRoute}
                   onDelete={() => void handleDeleteSite(editorSite)}
@@ -5137,17 +5159,36 @@ const funnelPrimaryActions: Array<{ id: FunnelPrimaryActionId; label: string; pr
 ]
 
 const chatgptSiteModelOptions = [
-  { value: 'gpt-5.5', label: 'ChatGPT 5.5', description: 'Recomendado para páginas premium y buen balance de velocidad.' },
-  { value: 'gpt-5.5-pro', label: 'ChatGPT 5.5 Pro', description: 'Máxima calidad para copy, estructura y diseño; puede tardar más.' },
-  { value: 'gpt-5.4-pro', label: 'ChatGPT 5.4 Pro', description: 'Muy fuerte para embudos complejos y ofertas con detalle.' },
-  { value: 'gpt-5.4', label: 'ChatGPT 5.4', description: 'Buen modelo para páginas completas con buena velocidad.' },
-  { value: 'gpt-5.3-chat-latest', label: 'ChatGPT 5.3', description: 'Versión ChatGPT sólida para páginas rápidas.' }
+  { value: 'gpt-5.4-nano', label: 'ChatGPT 5.4 nano · $', description: 'El más barato para cambios pequeños. $0.20 entrada / $1.25 salida por 1M tokens.' },
+  { value: 'gpt-5.4-mini', label: 'ChatGPT 5.4 mini · $$', description: 'Rápido y económico para ajustes simples. $0.75 entrada / $4.50 salida por 1M tokens.' },
+  { value: 'gpt-5.4', label: 'ChatGPT 5.4 · $$$', description: 'Buen balance para páginas completas. $2.50 entrada / $15.00 salida por 1M tokens.' },
+  { value: 'gpt-5.5', label: 'ChatGPT 5.5 · $$$$ · recomendado', description: 'Recomendado para crear páginas completas con mejor criterio visual. $5.00 entrada / $30.00 salida por 1M tokens.' },
+  { value: 'gpt-5.4-pro', label: 'ChatGPT 5.4 Pro · $$$$$', description: 'Más cómputo para rediseños grandes. $30.00 entrada / $180.00 salida por 1M tokens.' },
+  { value: 'gpt-5.5-pro', label: 'ChatGPT 5.5 Pro · $$$$$', description: 'El más caro para máxima calidad. $30.00 entrada / $180.00 salida por 1M tokens.' }
 ]
 
 const DEFAULT_SITE_CHATGPT_MODEL = 'gpt-5.5'
+const DEFAULT_SITE_CHATGPT_EDIT_MODEL = 'gpt-5.4-nano'
 const getFunnelStyleOption = (id?: FunnelStyleId) => funnelStyleOptions.find(option => option.id === id) || null
 const getFunnelPrimaryAction = (id?: FunnelPrimaryActionId) => funnelPrimaryActions.find(option => option.id === id) || null
-const getChatGPTSiteModelOption = (model?: string) => chatgptSiteModelOptions.find(option => option.value === model) || chatgptSiteModelOptions[0]
+const getDefaultSiteChatGPTModel = (editMode: boolean) => editMode ? DEFAULT_SITE_CHATGPT_EDIT_MODEL : DEFAULT_SITE_CHATGPT_MODEL
+const getChatGPTSiteModelOption = (model?: string, editMode = false) =>
+  chatgptSiteModelOptions.find(option => option.value === model) ||
+  chatgptSiteModelOptions.find(option => option.value === getDefaultSiteChatGPTModel(editMode)) ||
+  chatgptSiteModelOptions[0]
+
+const limitSitesAIContextText = (value: string, maxLength = 5200) => {
+  const text = String(value || '').replace(/\s+/g, ' ').trim()
+  return text.length > maxLength ? `${text.slice(0, maxLength - 1).trim()}…` : text
+}
+
+const formatSitesAIPreviewVisualContextForPrompt = (context: SitesAIPreviewVisualContext) => [
+  'Vista previa actual detectada por Ristak:',
+  `- Página activa: ${context.pageTitle || context.pageId || 'Sin nombre'}`,
+  `- Captura interna: ${context.screenshotDataUrl ? 'adjunta como imagen de referencia' : 'no disponible; usa el resumen visual y el HTML'}`,
+  `- Elementos visibles detectados: ${context.elements.length}`,
+  `Resumen visual:\n${limitSitesAIContextText(context.summary)}`
+].join('\n')
 
 const getSitesAICreationKindLabel = (siteKind: SitesAICreationKind) => {
   if (siteKind === 'interactive_form') return 'formulario interactivo'
@@ -5280,7 +5321,7 @@ const SitesAICreationModal: React.FC<{
   const [attachments, setAttachments] = useState<SitesAICreationAttachment[]>([])
   const [funnelStyle, setFunnelStyle] = useState<FunnelStyleId | ''>('')
   const [primaryAction, setPrimaryAction] = useState<FunnelPrimaryActionId | ''>('')
-  const [chatgptModel, setChatgptModel] = useState(DEFAULT_SITE_CHATGPT_MODEL)
+  const [chatgptModel, setChatgptModel] = useState(() => getDefaultSiteChatGPTModel(editMode))
   const [attachmentError, setAttachmentError] = useState('')
   const [voiceState, setVoiceState] = useState<'idle' | 'recording' | 'transcribing'>('idle')
   const [voiceBars, setVoiceBars] = useState<number[]>(createAICreationVoiceBars)
@@ -5290,7 +5331,7 @@ const SitesAICreationModal: React.FC<{
   const [submitError, setSubmitError] = useState('')
   const shouldPickFunnelStyle = state.siteKind === 'landing' && !editMode
   const selectedFunnelStyle = getFunnelStyleOption(funnelStyle || undefined)
-  const selectedChatGPTModel = getChatGPTSiteModelOption(chatgptModel)
+  const selectedChatGPTModel = getChatGPTSiteModelOption(chatgptModel, editMode)
   const canWritePrompt = !shouldPickFunnelStyle || Boolean(selectedFunnelStyle)
   const voiceIsActive = voiceState !== 'idle'
   const formattedVoiceElapsed = formatAICreationVoiceDuration(voiceElapsed)
@@ -5340,13 +5381,13 @@ const SitesAICreationModal: React.FC<{
 
   const modelPicker = (
     <label className={styles.aiCreationModelPicker}>
-      <span>ChatGPT para crear el sitio</span>
+      <span>{editMode ? 'ChatGPT para este cambio' : 'ChatGPT para crear el sitio'}</span>
       <select value={chatgptModel} onChange={(event) => setChatgptModel(event.target.value)}>
         {chatgptSiteModelOptions.map(option => (
           <option key={option.value} value={option.value}>{option.label}</option>
         ))}
       </select>
-      <small>{selectedChatGPTModel.description}</small>
+      <small>{selectedChatGPTModel.description} Ordenado de $ a $$$$$.</small>
     </label>
   )
 
@@ -5627,6 +5668,13 @@ const SitesAICreationModal: React.FC<{
 
                   {modelPicker}
 
+                  {editMode && (
+                    <div className={styles.aiCreationVisualContext}>
+                      <Eye size={16} />
+                      <span>Ristak usará la vista previa actual como imagen de referencia para que la IA ubique textos, imágenes, botones y formularios. No necesitas compartir pantalla.</span>
+                    </div>
+                  )}
+
                   {shouldPickFunnelStyle && selectedFunnelStyle && (
                     <div className={styles.aiCreationActionPicker}>
                       <span>Acción principal</span>
@@ -5860,6 +5908,230 @@ const importedSectionSelector = [
   '[data-ristak-section]',
   '[data-ristack-section]'
 ].join(', ')
+
+const IMPORTED_AI_VISUAL_MAX_ELEMENTS = 42
+const IMPORTED_AI_VISUAL_SCREENSHOT_WIDTH = 900
+const IMPORTED_AI_VISUAL_SCREENSHOT_HEIGHT = 1150
+
+const escapeSvgText = (value: string) => String(value || '').replace(/[&<>"']/g, (char) => ({
+  '&': '&amp;',
+  '<': '&lt;',
+  '>': '&gt;',
+  '"': '&quot;',
+  "'": '&apos;'
+}[char] || char))
+
+const getImportedVisualElementType = (element: Element) => {
+  const tagName = element.tagName.toLowerCase()
+  if (/^h[1-6]$/.test(tagName)) return 'titular'
+  if (tagName === 'img') return 'imagen'
+  if (tagName === 'button' || tagName === 'a') return 'botón/enlace'
+  if (tagName === 'form') return 'formulario'
+  if (['input', 'select', 'textarea', 'label'].includes(tagName)) return 'campo'
+  if (element.matches(importedSectionSelector)) return 'sección'
+  return 'texto'
+}
+
+const getImportedVisualElementText = (element: Element) => {
+  const tagName = element.tagName.toLowerCase()
+  if (tagName === 'img') {
+    const image = element as HTMLImageElement
+    return limitSitesAIContextText(image.alt || image.getAttribute('aria-label') || image.src || 'Imagen', 160)
+  }
+  if (tagName === 'input' || tagName === 'textarea') {
+    const input = element as HTMLInputElement | HTMLTextAreaElement
+    return limitSitesAIContextText(input.placeholder || input.name || input.id || input.getAttribute('aria-label') || 'Campo', 160)
+  }
+  if (tagName === 'select') {
+    const select = element as HTMLSelectElement
+    return limitSitesAIContextText(select.name || select.id || select.getAttribute('aria-label') || 'Selector', 160)
+  }
+  return limitSitesAIContextText(element.textContent || element.getAttribute('aria-label') || element.getAttribute('title') || '', 180)
+}
+
+const createImportedVisualSummary = (
+  doc: Document,
+  elements: SitesAIPreviewVisualElement[],
+  pageTitle: string
+) => {
+  const headings = Array.from(doc.querySelectorAll('h1, h2, h3'))
+    .map(element => limitSitesAIContextText(element.textContent || '', 140))
+    .filter(Boolean)
+    .slice(0, 8)
+  const images = Array.from(doc.querySelectorAll('img'))
+    .map((image, index) => {
+      const label = limitSitesAIContextText(image.alt || image.getAttribute('aria-label') || image.src || `Imagen ${index + 1}`, 140)
+      return `${index + 1}. ${label}`
+    })
+    .slice(0, 8)
+  const buttons = Array.from(doc.querySelectorAll('button, a'))
+    .map(element => limitSitesAIContextText(element.textContent || element.getAttribute('aria-label') || element.getAttribute('href') || '', 120))
+    .filter(Boolean)
+    .slice(0, 10)
+  const fields = Array.from(doc.querySelectorAll('input, textarea, select'))
+    .map(element => {
+      const input = element as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
+      return limitSitesAIContextText(input.getAttribute('data-rstk-field') || input.getAttribute('data-ristak-field') || input.name || input.id || input.getAttribute('placeholder') || input.getAttribute('aria-label') || input.tagName.toLowerCase(), 120)
+    })
+    .filter(Boolean)
+    .slice(0, 14)
+
+  return [
+    `Página: ${pageTitle || doc.title || 'Sin título'}`,
+    headings.length ? `Titulares visibles: ${headings.join(' | ')}` : '',
+    images.length ? `Imágenes visibles: ${images.join(' | ')}` : '',
+    buttons.length ? `Botones/enlaces visibles: ${buttons.join(' | ')}` : '',
+    fields.length ? `Campos detectados: ${fields.join(' | ')}` : '',
+    elements.length ? `Mapa visual: ${elements.map(element => `${element.type}: ${element.text}`).filter(Boolean).slice(0, 24).join(' | ')}` : ''
+  ].filter(Boolean).join('\n')
+}
+
+const renderImportedVisualContextSvg = (
+  context: Omit<SitesAIPreviewVisualContext, 'screenshotDataUrl' | 'screenshotFormat' | 'capturedAt'>
+) => {
+  const width = IMPORTED_AI_VISUAL_SCREENSHOT_WIDTH
+  const height = IMPORTED_AI_VISUAL_SCREENSHOT_HEIGHT
+  const title = escapeSvgText(context.pageTitle || 'Vista previa')
+  const elementsMarkup = context.elements.map((element, index) => {
+    const x = Math.max(22, Math.min(width - 180, element.x))
+    const y = Math.max(86, Math.min(height - 74, element.y))
+    const rectWidth = Math.max(90, Math.min(width - x - 22, element.width))
+    const rectHeight = Math.max(28, Math.min(86, element.height))
+    const fill = element.type === 'imagen'
+      ? '#dbeafe'
+      : element.type === 'formulario' || element.type === 'campo'
+        ? '#dcfce7'
+        : element.type === 'botón/enlace'
+          ? '#fef3c7'
+          : '#f8fafc'
+    const stroke = element.type === 'imagen'
+      ? '#2563eb'
+      : element.type === 'formulario' || element.type === 'campo'
+        ? '#16a34a'
+        : element.type === 'botón/enlace'
+          ? '#d97706'
+          : '#64748b'
+    return `
+      <g>
+        <rect x="${x}" y="${y}" width="${rectWidth}" height="${rectHeight}" rx="10" fill="${fill}" stroke="${stroke}" stroke-width="2" opacity="0.96" />
+        <text x="${x + 12}" y="${y + 21}" fill="#0f172a" font-size="13" font-weight="800">${escapeSvgText(element.type)}</text>
+        <text x="${x + 12}" y="${y + 43}" fill="#334155" font-size="15">${escapeSvgText(limitSitesAIContextText(element.text || element.label || `Elemento ${index + 1}`, 78))}</text>
+      </g>
+    `
+  }).join('')
+
+  return `
+    <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+      <rect width="${width}" height="${height}" fill="#eef2f7"/>
+      <rect x="18" y="18" width="${width - 36}" height="48" rx="14" fill="#0f172a"/>
+      <text x="38" y="49" fill="#f8fafc" font-family="Inter, Arial, sans-serif" font-size="22" font-weight="800">${title}</text>
+      <rect x="18" y="82" width="${width - 36}" height="${height - 100}" rx="18" fill="#ffffff" stroke="#cbd5e1" stroke-width="2"/>
+      ${elementsMarkup}
+    </svg>
+  `.trim()
+}
+
+const svgToPngDataUrl = (svg: string) => new Promise<string>((resolve) => {
+  if (typeof window === 'undefined' || typeof document === 'undefined') {
+    resolve('')
+    return
+  }
+
+  const image = new window.Image()
+  const svgBlob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' })
+  const objectUrl = URL.createObjectURL(svgBlob)
+
+  image.onload = () => {
+    try {
+      const canvas = document.createElement('canvas')
+      canvas.width = IMPORTED_AI_VISUAL_SCREENSHOT_WIDTH
+      canvas.height = IMPORTED_AI_VISUAL_SCREENSHOT_HEIGHT
+      const context = canvas.getContext('2d')
+      if (!context) {
+        resolve('')
+        return
+      }
+      context.drawImage(image, 0, 0)
+      resolve(canvas.toDataURL('image/png'))
+    } catch {
+      resolve('')
+    } finally {
+      URL.revokeObjectURL(objectUrl)
+    }
+  }
+  image.onerror = () => {
+    URL.revokeObjectURL(objectUrl)
+    resolve('')
+  }
+  image.src = objectUrl
+})
+
+const buildImportedPreviewVisualContext = async (
+  iframe: HTMLIFrameElement,
+  site: PublicSite,
+  page: SitePage
+): Promise<SitesAIPreviewVisualContext | null> => {
+  const doc = iframe.contentDocument
+  const frameWindow = iframe.contentWindow
+  if (!doc || !frameWindow) return null
+
+  const viewportWidth = Math.max(1, doc.documentElement.clientWidth || iframe.clientWidth || 900)
+  const viewportHeight = Math.max(1, doc.documentElement.clientHeight || iframe.clientHeight || 900)
+  const candidates = Array.from(doc.querySelectorAll([
+    importedSectionSelector,
+    importedEditableSelector,
+    'h1',
+    'h2',
+    'h3',
+    'p',
+    'button',
+    'a',
+    'img',
+    'form',
+    'label',
+    'input',
+    'select',
+    'textarea'
+  ].join(', ')))
+
+  const elements = candidates
+    .map((element): SitesAIPreviewVisualElement | null => {
+      const rect = element.getBoundingClientRect()
+      const styles = frameWindow.getComputedStyle(element)
+      if (rect.width < 10 || rect.height < 8 || styles.display === 'none' || styles.visibility === 'hidden' || Number(styles.opacity) === 0) return null
+      const text = getImportedVisualElementText(element)
+      if (!text && element.tagName.toLowerCase() !== 'form') return null
+      return {
+        type: getImportedVisualElementType(element),
+        label: element.getAttribute('data-rstk-label') || element.getAttribute('aria-label') || element.tagName.toLowerCase(),
+        text: text || 'Formulario',
+        x: Math.round((Math.max(0, rect.left) / viewportWidth) * IMPORTED_AI_VISUAL_SCREENSHOT_WIDTH),
+        y: Math.round((Math.max(0, rect.top) / viewportHeight) * (IMPORTED_AI_VISUAL_SCREENSHOT_HEIGHT - 120) + 92),
+        width: Math.round((Math.min(rect.width, viewportWidth) / viewportWidth) * IMPORTED_AI_VISUAL_SCREENSHOT_WIDTH),
+        height: Math.round(Math.min(rect.height, 92))
+      }
+    })
+    .filter(Boolean)
+    .slice(0, IMPORTED_AI_VISUAL_MAX_ELEMENTS) as SitesAIPreviewVisualElement[]
+
+  const baseContext = {
+    siteId: site.id,
+    pageId: page.id || DEFAULT_FUNNEL_PAGE_ID,
+    pageTitle: page.title || site.title || site.name,
+    summary: '',
+    elements
+  }
+  const summary = createImportedVisualSummary(doc, elements, baseContext.pageTitle)
+  const screenshotDataUrl = await svgToPngDataUrl(renderImportedVisualContextSvg({ ...baseContext, summary }))
+
+  return {
+    ...baseContext,
+    summary,
+    screenshotDataUrl,
+    screenshotFormat: screenshotDataUrl ? 'internal-preview-png' : undefined,
+    capturedAt: new Date().toISOString()
+  }
+}
 
 const editableTypeLabels: Record<ImportedEditableSelection['editType'], string> = {
   heading: 'Titulo',
@@ -6725,6 +6997,7 @@ const ImportedHtmlEditorPanel: React.FC<{
   onPublish: () => void
   onEditWithAI: () => void
   onEditFields: () => void
+  onPreviewContextChange: (siteId: string, context: SitesAIPreviewVisualContext) => void
   onContentUpdated: (result: ImportedSiteCreateResult) => void
   onUpdateRoute: (site: PublicSite, route: string) => Promise<void>
   onDelete: () => void
@@ -6743,6 +7016,7 @@ const ImportedHtmlEditorPanel: React.FC<{
   onPublish,
   onEditWithAI,
   onEditFields,
+  onPreviewContextChange,
   onContentUpdated,
   onUpdateRoute,
   onDelete
@@ -6750,6 +7024,7 @@ const ImportedHtmlEditorPanel: React.FC<{
   const { showToast } = useNotification()
   const iframeRef = useRef<HTMLIFrameElement | null>(null)
   const selectedIframeElementRef = useRef<HTMLElement | null>(null)
+  const previewVisualContextRef = useRef<SitesAIPreviewVisualContext | null>(null)
   const inlineImageFileInputRef = useRef<HTMLInputElement | null>(null)
   const [routeEditing, setRouteEditing] = useState(false)
   const [routeDraft, setRouteDraft] = useState(getRouteEditorValue(site))
@@ -6769,7 +7044,7 @@ const ImportedHtmlEditorPanel: React.FC<{
   const [fieldEditor, setFieldEditor] = useState<ImportedFormFieldEditorState | null>(null)
   const [contentSaving, setContentSaving] = useState(false)
   const [contentError, setContentError] = useState('')
-  const importedPages = pages.length ? pages : [{ id: DEFAULT_FUNNEL_PAGE_ID, title: 'Pagina 1', sortOrder: 0 }]
+  const importedPages = pages.length ? pages : [{ id: DEFAULT_FUNNEL_PAGE_ID, title: 'Página 1', sortOrder: 0 }]
   const activeImportedPage = importedPages.find(page => page.id === activePageId) || importedPages[0]
   const mappingStats = useMemo(() => {
     const formMappings = Array.isArray(importData?.formMappings) ? importData.formMappings : []
@@ -6946,7 +7221,7 @@ const ImportedHtmlEditorPanel: React.FC<{
       onContentUpdated(result)
       clearInlineSelection()
       await loadInlinePreview()
-      showToast('success', 'Cambio guardado', 'La pagina conserva formularios, campos y tracking.')
+      showToast('success', 'Cambio guardado', 'La página conserva formularios, campos y tracking.')
       return true
     } catch (error) {
       setContentError(error instanceof Error ? error.message : 'No se pudo guardar el cambio')
@@ -6990,6 +7265,8 @@ const ImportedHtmlEditorPanel: React.FC<{
       const runRegionEdit = (options: { forceApply?: boolean; previousReply?: string } = {}) => (
         sitesService.editImportedHtmlWithAI(site.id, {
           siteKind: getAIAgentSiteKindForSite(site),
+          model: DEFAULT_SITE_CHATGPT_EDIT_MODEL,
+          visualContext: previewVisualContextRef.current?.siteId === site.id ? previewVisualContextRef.current : null,
           messages: [{
             role: 'user',
             content: buildImportedAIRegionPrompt(prompt, aiRegionSelection, site, options)
@@ -7001,12 +7278,12 @@ const ImportedHtmlEditorPanel: React.FC<{
       if (result.status === 'needs_more_info' || !result.site || !result.import) {
         result = await runRegionEdit({
           forceApply: true,
-          previousReply: result.reply || 'La IA pidio mas informacion.'
+          previousReply: result.reply || 'La IA pidió más información.'
         })
       }
 
       if (result.status === 'needs_more_info' || !result.site || !result.import) {
-        setAiRegionError('La IA no pudo aplicar ese cambio. Intenta decirlo como accion directa: "centra el titulo, pon el video debajo y el boton debajo del video".')
+        setAiRegionError('La IA no pudo aplicar ese cambio. Intenta decirlo como acción directa: "centra el título, pon el video debajo y el botón debajo del video".')
         return
       }
 
@@ -7015,7 +7292,7 @@ const ImportedHtmlEditorPanel: React.FC<{
       setAiRegionSelection(null)
       setAiRegionPrompt('')
       await loadInlinePreview()
-      showToast('success', 'Zona actualizada', 'La IA aplico el cambio solo en la parte que seleccionaste.')
+      showToast('success', 'Zona actualizada', 'La IA aplicó el cambio solo en la parte que seleccionaste.')
     } catch (error) {
       setAiRegionError(error instanceof Error ? error.message : 'No se pudo editar esa zona con IA.')
     } finally {
@@ -7035,6 +7312,15 @@ const ImportedHtmlEditorPanel: React.FC<{
       cleanupDocument()
       const doc = iframe.contentDocument
       if (!doc) return
+
+      const contextPage = activeImportedPage || importedPages[0] || { id: DEFAULT_FUNNEL_PAGE_ID, title: 'Página 1', sortOrder: 0 }
+      void buildImportedPreviewVisualContext(iframe, site, contextPage)
+        .then(context => {
+          if (!cancelled && context) {
+            previewVisualContextRef.current = context
+            onPreviewContextChange(site.id, context)
+          }
+        })
 
       const style = doc.createElement('style')
       style.setAttribute('data-rstk-imported-editor-overlay', 'true')
@@ -7400,7 +7686,7 @@ const ImportedHtmlEditorPanel: React.FC<{
           const height = Math.abs(upEvent.clientY - startY)
           if (width < 16 || height < 16) {
             removeRegionBox()
-            setAiRegionError('Dibuja un rectangulo mas grande sobre la zona que quieres editar.')
+            setAiRegionError('Dibuja un rectángulo más grande sobre la zona que quieres editar.')
             return
           }
 
@@ -7416,7 +7702,7 @@ const ImportedHtmlEditorPanel: React.FC<{
           })
           const nextRegionSelection: ImportedAIRegionSelection = {
             pageId: activeImportedPage?.id || DEFAULT_FUNNEL_PAGE_ID,
-            pageTitle: activeImportedPage?.title || 'Pagina',
+            pageTitle: activeImportedPage?.title || 'Página',
             bounds: {
               x: left,
               y: top,
@@ -7480,7 +7766,7 @@ const ImportedHtmlEditorPanel: React.FC<{
       iframe.removeEventListener('load', installEditorHooks)
       cleanupDocument()
     }
-  }, [activeImportedPage?.id, activeImportedPage?.title, aiRegionMode, aiRegionSelection, clearInlineSelection, openButtonEditorForSelection, openChoiceEditorForSelection, openFieldEditorForSelection, openInlineEditorForElement, previewHtml, previewLoading, previewVersion, saveEditableContent])
+  }, [activeImportedPage?.id, activeImportedPage?.title, aiRegionMode, aiRegionSelection, clearInlineSelection, importedPages, onPreviewContextChange, openButtonEditorForSelection, openChoiceEditorForSelection, openFieldEditorForSelection, openInlineEditorForElement, previewHtml, previewLoading, previewVersion, saveEditableContent, site.id, site.name, site.title])
 
   const routeValue = getRouteEditorValue(site)
   const saveRoute = async (event: React.FormEvent<HTMLFormElement>) => {
