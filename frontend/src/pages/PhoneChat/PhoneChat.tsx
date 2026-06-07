@@ -2125,15 +2125,6 @@ export const PhoneChat: React.FC = () => {
     [contactInfoResolvedMetaAttribution, contactJourney, timezone]
   )
 
-  useEffect(() => {
-    const currentCount = contactInfoArchiveCounts[contactInfoArchiveTab]
-    if (currentCount > 0 || contactInfoArchiveItems.length === 0) return
-
-    const firstAvailableTab = (['media', 'links', 'documents'] as ContactInfoArchiveTab[])
-      .find((tab) => contactInfoArchiveCounts[tab] > 0)
-    if (firstAvailableTab) setContactInfoArchiveTab(firstAvailableTab)
-  }, [contactInfoArchiveCounts, contactInfoArchiveItems.length, contactInfoArchiveTab])
-
   const selectedCalendar = useMemo(
     () => calendars.find((calendar) => calendar.id === selectedCalendarId) || calendars[0] || null,
     [calendars, selectedCalendarId]
@@ -5885,8 +5876,8 @@ export const PhoneChat: React.FC = () => {
     const archiveEmptyText = contactInfoArchiveTab === 'media'
       ? 'Aún no hay fotos ni videos guardados en este chat.'
       : contactInfoArchiveTab === 'links'
-        ? 'Aún no hay enlaces guardados en este chat.'
-        : 'Aún no hay documentos guardados en este chat.'
+        ? 'Aún no hay enlaces compartidos en este chat.'
+        : 'Aún no hay documentos compartidos en este chat.'
     const archiveSummaryParts = [
       contactInfoArchiveCounts.media > 0 ? `${contactInfoArchiveCounts.media} fotos/videos` : '',
       contactInfoArchiveCounts.documents > 0 ? `${contactInfoArchiveCounts.documents} documentos` : '',
@@ -6014,7 +6005,10 @@ export const PhoneChat: React.FC = () => {
             <button
               type="button"
               className={styles.contactInfoArchiveSummaryButton}
-              onClick={() => setContactInfoArchiveOpen(true)}
+              onClick={() => {
+                setContactInfoArchiveTab('media')
+                setContactInfoArchiveOpen(true)
+              }}
             >
               <span className={styles.contactInfoArchiveSummaryIcon}>
                 <ImageIcon size={18} />
