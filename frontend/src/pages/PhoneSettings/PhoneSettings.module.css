@@ -223,9 +223,9 @@
 .settingsListItem {
   position: relative;
   display: grid;
-  grid-template-columns: 54px minmax(0, 1fr) auto;
+  grid-template-columns: 38px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   width: 100%;
   min-height: 76px;
   padding: 11px 12px;
@@ -245,7 +245,7 @@
   position: absolute;
   right: 12px;
   bottom: 0;
-  left: 78px;
+  left: 62px;
   height: 1px;
   background: var(--phone-settings-border);
 }
@@ -258,7 +258,40 @@
   background: color-mix(in srgb, var(--phone-settings-soft) 74%, transparent);
 }
 
-.settingsListIcon,
+.settingsListIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+}
+
+.settingsListIcon_green {
+  color: #073f23;
+  background: var(--phone-settings-accent-soft);
+}
+
+.settingsListIcon_black {
+  color: var(--phone-chat-text-on-primary, #ffffff);
+  background: var(--phone-settings-primary);
+}
+
+.settingsListIcon_blue {
+  color: #0f3579;
+  background: #e5efff;
+}
+
+.settingsListIcon_gold {
+  color: #5a3b00;
+  background: #fff1c2;
+}
+
+.settingsListIcon_red {
+  color: #7f1d1d;
+  background: #fee2e2;
+}
+
 .templateIcon,
 .actionCard > span,
 .choiceButton > span:first-child {
@@ -270,6 +303,27 @@
   border-radius: 16px;
   color: #ffffff;
   background: var(--phone-settings-primary);
+}
+
+:global(body[data-phone-chat-tone="dark"]) .settingsListIcon_green,
+:global(body[data-phone-chat-tone="dark"]) .settingsListIcon_black {
+  color: var(--phone-chat-text-on-primary, #07140d);
+  background: var(--phone-settings-accent);
+}
+
+:global(body[data-phone-chat-tone="dark"]) .settingsListIcon_blue {
+  color: #dbeafe;
+  background: rgba(96, 165, 250, 0.2);
+}
+
+:global(body[data-phone-chat-tone="dark"]) .settingsListIcon_gold {
+  color: #fff4c2;
+  background: rgba(245, 158, 11, 0.2);
+}
+
+:global(body[data-phone-chat-tone="dark"]) .settingsListIcon_red {
+  color: #fecaca;
+  background: rgba(239, 68, 68, 0.2);
 }
 
 .settingsListText,
@@ -736,13 +790,16 @@
 
 @media (max-width: 360px) {
   .settingsListItem {
-    grid-template-columns: 46px minmax(0, 1fr) auto;
+    grid-template-columns: 36px minmax(0, 1fr) auto;
     gap: 8px;
     min-height: 70px;
     padding: 10px;
   }
 
-  .settingsListIcon,
+  .settingsListItem::after {
+    left: 54px;
+  }
+
   .templateIcon,
   .actionCard > span,
   .choiceButton > span:first-child {
