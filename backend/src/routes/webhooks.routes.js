@@ -8,6 +8,7 @@ import {
   handleRefundWebhook,
   handleAppointmentWebhook,
   handleAppointmentShowedWebhook,
+  handlePaymentPlanWebhook,
   handleWhatsAppAttributionWebhook,
   handleInvoiceWebhook,
   handleMetaSocialWebhook,
@@ -18,6 +19,8 @@ const router = express.Router()
 
 router.post('/contact', handleContactWebhook)
 router.post('/payment', handlePaymentWebhook)
+router.post('/payment-plan', handlePaymentPlanWebhook)
+router.post('/payment-plans', handlePaymentPlanWebhook)
 router.post('/refund', handleRefundWebhook)
 router.post('/appointment', handleAppointmentWebhook)
 router.post('/appointment/showed', handleAppointmentShowedWebhook)

@@ -12,10 +12,6 @@ import { sendPaymentNotification } from '../services/pushNotificationsService.js
 import { formatInvoiceMultilineText, formatInvoiceSingleLineText } from '../utils/invoiceTextFormatter.js'
 import { findContactByPhoneCandidates } from '../services/contactIdentityService.js'
 import { getAccountCurrency, normalizePhoneForAccount } from '../utils/accountLocale.js'
-import {
-  enqueueOutgoingWebhookEvent,
-  eventForPaymentStatus
-} from '../services/outgoingWebhooksService.js'
 
 const SUCCESS_PAYMENT_STATUSES = new Set(['succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success'])
 const VALID_TRANSACTION_STATUSES = new Set([
@@ -80,14 +76,6 @@ const splitName = (name = '') => {
 }
 
 const normalizePaymentMode = (mode) => mode === 'test' ? 'test' : 'live'
-
-async function dispatchOutgoingPaymentEvent(args) {
-  try {
-    await enqueueOutgoingWebhookEvent(args)
-  } catch (error) {
-    logger.warn(`No se pudo encolar webhook saliente de pago ${args?.entityId || ''}: ${error.message}`)
-  }
-}
 
 async function findExistingContactForPayment({ contactId, email, phone }) {
   if (contactId) {
@@ -445,14 +433,6 @@ export const createTransaction = async (req, res) => {
         logger.warn(`No se pudo enviar aviso de pago ${transactionId}: ${pushError.message}`)
       })
     }
-
-    await dispatchOutgoingPaymentEvent({
-      category: 'payments',
-      event: eventForPaymentStatus(finalStatus),
-      entityId: transactionId,
-      userId: req.user?.userId,
-      source: 'ristak_transactions'
-    })
 
     logger.success(`Transacción creada: ${transactionId}`)
 
@@ -934,14 +914,6 @@ export const updateTransaction = async (req, res) => {
 
     const updatedTransaction = await getTransactionByIdForResponse(id)
 
-    await dispatchOutgoingPaymentEvent({
-      category: 'payments',
-      event: eventForPaymentStatus(finalStatus),
-      entityId: id,
-      userId: req.user?.userId,
-      source: 'ristak_transactions'
-    })
-
     logger.success(`Transacción actualizada: ${id}`)
 
     res.json({
@@ -983,15 +955,6 @@ export const deleteTransaction = async (req, res) => {
     if (transaction.contact_id) {
       await updateSingleContactStats(transaction.contact_id)
     }
-
-    await dispatchOutgoingPaymentEvent({
-      category: 'payments',
-      event: 'payment.deleted',
-      entityId: id,
-      data: transaction,
-      userId: req.user?.userId,
-      source: 'ristak_transactions'
-    })
 
     logger.success(`Transacción eliminada: ${id}`)
 
@@ -1060,21 +1023,6 @@ export const refundTransaction = async (req, res) => {
       await updateSingleContactStats(transaction.contact_id)
     }
 
-    await dispatchOutgoingPaymentEvent({
-      category: 'refunds',
-      event: 'refund.processed',
-      entityId: id,
-      userId: req.user?.userId,
-      source: 'ristak_transactions'
-    })
-    await dispatchOutgoingPaymentEvent({
-      category: 'payments',
-      event: 'payment.refunded',
-      entityId: id,
-      userId: req.user?.userId,
-      source: 'ristak_transactions'
-    })
-
     logger.success(`Transacción reembolsada: ${id}`)
 
     res.json({
@@ -1120,14 +1068,6 @@ export const voidTransaction = async (req, res) => {
     if (transaction.contact_id) {
       await updateSingleContactStats(transaction.contact_id)
     }
-
-    await dispatchOutgoingPaymentEvent({
-      category: 'payments',
-      event: 'payment.void',
-      entityId: id,
-      userId: req.user?.userId,
-      source: 'ristak_transactions'
-    })
 
     logger.success(`Transacción anulada: ${id}`)
 

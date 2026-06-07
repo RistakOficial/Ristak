@@ -10,7 +10,6 @@ import { initializeDefaultUser } from './utils/auth.js'
 import { startMetaSyncCron } from './jobs/metaSync.cron.js'
 import { startHighLevelSyncCron } from './jobs/highlevelSync.cron.js'
 import { startMetaVersionCron, updateMetaVersion } from './jobs/metaVersionCron.js'
-import { startOutgoingWebhooksRetryCron } from './jobs/outgoingWebhooksRetry.cron.js'
 import { initializeVersion } from './services/metaVersionService.js'
 import { verifyAndUpdateWebhooks } from './startup/webhookVerification.js'
 import { repairPendingPaymentFlows } from './services/paymentFlowService.js'
@@ -46,7 +45,6 @@ import whatsappApiRoutes from './routes/whatsappApi.routes.js'
 import productsRoutes from './routes/products.routes.js'
 import sitesRoutes from './routes/sites.routes.js'
 import pushRoutes from './routes/push.routes.js'
-import outgoingWebhooksRoutes from './routes/outgoingWebhooks.routes.js'
 import { publicSiteHostMiddleware } from './controllers/sitesController.js'
 
 const __filename = fileURLToPath(import.meta.url)
@@ -111,7 +109,6 @@ app.use('/api/search', searchRoutes)
 app.use('/api/external', externalRoutes)
 app.use('/api/mcp', mcpRoutes)
 app.use('/api/whatsapp-api', whatsappApiRoutes)
-app.use('/api/outgoing-webhooks', outgoingWebhooksRoutes)
 app.use('/webhook', webhooksRoutes)
 app.use('/webhooks', webhooksRoutes) // Alias para webhooks con 's'
 
@@ -172,7 +169,6 @@ app.listen(PORT, async () => {
   startMetaSyncCron()              // Sincroniza anuncios de Meta Ads cada hora
   startHighLevelSyncCron()         // Sincroniza contactos, citas y pagos de HighLevel cada hora (silencioso)
   startMetaVersionCron()           // Revisa versión Meta API una vez al mes
-  startOutgoingWebhooksRetryCron() // Reintenta POST salientes fallidos
 })
 
 // Manejo de errores de proceso

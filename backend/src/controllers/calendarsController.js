@@ -15,10 +15,6 @@ import {
   findContactByPhoneCandidates,
   prepareContactPhoneUpsert
 } from '../services/contactIdentityService.js';
-import {
-  enqueueOutgoingWebhookEvent,
-  eventForAppointmentStatus
-} from '../services/outgoingWebhooksService.js';
 
 /**
  * Controlador para endpoints de Calendarios de HighLevel
@@ -56,14 +52,6 @@ async function getCalendarSourcePreference(override = '') {
 
 function cleanString(value) {
   return String(value ?? '').trim();
-}
-
-async function dispatchOutgoingAppointmentEvent(args) {
-  try {
-    await enqueueOutgoingWebhookEvent(args);
-  } catch (error) {
-    logger.warn(`No se pudo encolar webhook saliente de cita ${args?.entityId || ''}: ${error.message}`);
-  }
 }
 
 function normalizeEmail(value) {
@@ -856,14 +844,6 @@ export async function createPublicAppointment(req, res) {
       logger.warn(`[Calendars Controller] No se pudo enviar push de cita publica: ${error.message}`);
     });
 
-    await dispatchOutgoingAppointmentEvent({
-      category: 'appointments',
-      event: eventForAppointmentStatus(appointment?.appointmentStatus || appointment?.status || (calendar.autoConfirm ? 'confirmed' : 'pending')),
-      entityId: appointment?.id,
-      locationId: context.locationId || calendar.locationId,
-      source: 'public_calendar'
-    });
-
     res.status(201).json({
       success: true,
       data: {
@@ -1134,15 +1114,6 @@ export async function createAppointment(req, res) {
       logger.warn(`[Calendars Controller] No se pudo enviar push de cita: ${error.message}`);
     });
 
-    await dispatchOutgoingAppointmentEvent({
-      category: 'appointments',
-      event: eventForAppointmentStatus(appointment?.appointmentStatus || appointment?.status || appointmentData.appointmentStatus || appointmentData.status),
-      entityId: appointment?.id,
-      userId: req.user?.userId,
-      locationId: context.locationId || appointment?.locationId,
-      source: 'admin_calendar'
-    });
-
     res.status(201).json({
       success: true,
       data: appointment
@@ -1196,15 +1167,6 @@ export async function updateAppointment(req, res) {
     } catch (error) {
       logger.warn(`[Calendars Controller] Update local guardado, sync Google pendiente/error: ${error.message}`);
     }
-
-    await dispatchOutgoingAppointmentEvent({
-      category: 'appointments',
-      event: eventForAppointmentStatus(appointment?.appointmentStatus || appointment?.status || updateData.appointmentStatus || updateData.status),
-      entityId: appointment?.id || id,
-      userId: req.user?.userId,
-      locationId: context.locationId || appointment?.locationId || existing?.locationId,
-      source: 'admin_calendar'
-    });
 
     res.json({
       success: true,
@@ -1336,18 +1298,6 @@ export async function deleteEvent(req, res) {
       }
     } else {
       await localCalendarService.deleteLocalAppointment(id);
-    }
-
-    if (existing) {
-      await dispatchOutgoingAppointmentEvent({
-        category: 'appointments',
-        event: 'appointment.deleted',
-        entityId: existing.id || id,
-        data: existing,
-        userId: req.user?.userId,
-        locationId: existing.locationId,
-        source: 'admin_calendar'
-      });
     }
 
     res.json({
