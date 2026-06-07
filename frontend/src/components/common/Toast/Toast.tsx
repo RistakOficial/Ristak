@@ -46,6 +46,7 @@ export const Toast: React.FC<ToastProps> = ({
   const [isDragging, setIsDragging] = useState(false)
   const [isResetting, setIsResetting] = useState(false)
   const [dragOffset, setDragOffset] = useState(0)
+  const [hasSwipeInteraction, setHasSwipeInteraction] = useState(false)
   const resetTimerRef = useRef<number | null>(null)
   const swipeRef = useRef<ToastSwipeState>({
     active: false,
@@ -111,8 +112,13 @@ export const Toast: React.FC<ToastProps> = ({
     }
     setIsDragging(true)
     setIsResetting(false)
+    setHasSwipeInteraction(true)
     setDragOffset(0)
-    event.currentTarget.setPointerCapture?.(event.pointerId)
+    try {
+      event.currentTarget.setPointerCapture?.(event.pointerId)
+    } catch {
+      // El gesto sigue funcionando aunque el navegador no permita capturar el puntero.
+    }
   }
 
   const handlePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -153,7 +159,11 @@ export const Toast: React.FC<ToastProps> = ({
     swipeRef.current.active = false
     swipeRef.current.pointerId = null
     setIsDragging(false)
-    event.currentTarget.releasePointerCapture?.(event.pointerId)
+    try {
+      event.currentTarget.releasePointerCapture?.(event.pointerId)
+    } catch {
+      // Algunos WebViews liberan la captura antes de avisar que el gesto terminó.
+    }
 
     if (offset <= -SWIPE_DISMISS_THRESHOLD || (offset < -22 && velocity < -0.42)) {
       clearResetTimer()
@@ -165,12 +175,16 @@ export const Toast: React.FC<ToastProps> = ({
     resetSwipe()
   }
 
-  const toastStyle: CSSProperties | undefined = !isClosing && (isDragging || isSwipeClosing || isResetting || dragOffset !== 0)
+  const shouldControlSwipe = !isClosing && (isDragging || isSwipeClosing || isResetting || dragOffset !== 0)
+  const toastStyle: CSSProperties | undefined = shouldControlSwipe
     ? {
+        animation: 'none',
         opacity: isSwipeClosing ? 0 : Math.max(0.18, Math.min(1, 1 + dragOffset / 90)),
         transform: `translate3d(0, ${isSwipeClosing ? SWIPE_CLOSE_OFFSET : dragOffset}px, 0)`,
         transition: isDragging ? 'none' : `transform ${isSwipeClosing ? EXIT_ANIMATION_MS : SWIPE_RESET_MS}ms cubic-bezier(0.22, 1, 0.36, 1), opacity ${isSwipeClosing ? EXIT_ANIMATION_MS : SWIPE_RESET_MS}ms ease`
       }
+    : hasSwipeInteraction && !isClosing
+      ? { animation: 'none' }
     : undefined
 
   return (
