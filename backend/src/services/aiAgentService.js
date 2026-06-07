@@ -27,6 +27,13 @@ import {
   replaceHighLevelPathDefaults,
   searchHighLevelEndpoints
 } from './highlevelApiCatalog.js'
+import {
+  buildAgentTracePayload,
+  completeAgentRun,
+  recordAgentStep,
+  startAgentRun,
+  updateAgentRun
+} from './agentExecutionLedgerService.js'
 
 const OPENAI_API_URL = 'https://api.openai.com/v1'
 const HIGHLEVEL_API_BASE_URL = process.env.GHL_API_BASE_URL || 'https://services.leadconnectorhq.com'
