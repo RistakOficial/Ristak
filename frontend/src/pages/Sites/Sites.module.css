@@ -9634,4 +9634,52 @@
     height: 100%;
     min-height: 0;
   }
+
+  .pageFrame .containerFocused:has(.builder) .builder:has(.importedEditorPanel) {
+    display: grid;
+    grid-template-rows: minmax(0, 1fr);
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+    padding: 0;
+  }
+
+  .pageFrame .containerFocused:has(.builder) .importedEditorPanel {
+    height: 100%;
+    min-height: 0;
+    align-items: stretch;
+    box-sizing: border-box;
+  }
+
+  .pageFrame .containerFocused:has(.builder) .importedPreviewPane {
+    height: 100%;
+    min-height: 0;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    box-sizing: border-box;
+  }
+
+  .pageFrame .containerFocused:has(.builder) .importedPreviewStage {
+    height: 100%;
+    min-height: 0;
+    align-items: flex-start;
+    box-sizing: border-box;
+  }
+
+  .pageFrame .containerFocused:has(.builder) .importedPreviewFrame,
+  .pageFrame .containerFocused:has(.builder) .importedPreviewStageMobile .importedPreviewFrame {
+    height: 100%;
+    min-height: 0;
+  }
+
+  .pageFrame .containerFocused:has(.builder) .importedSidePanel {
+    position: relative;
+    top: auto;
+    align-self: stretch;
+    height: 100%;
+    max-height: 100%;
+    box-sizing: border-box;
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
 }
