@@ -4926,30 +4926,36 @@ const SitesAICreationModal: React.FC<{
             </div>
 
             <footer className={styles.aiCreationFooter}>
-              <div className={styles.aiCreationToolRow}>
-                <button type="button" onClick={() => fileInputRef.current?.click()} title="Subir archivo">
-                  <Paperclip size={16} />
-                  <span>Archivo</span>
-                </button>
-                <button
-                  type="button"
-                  className={voiceState === 'recording' ? styles.aiCreationMicActive : ''}
-                  onClick={() => voiceState === 'recording' ? stopVoice() : void startVoice()}
-                  disabled={voiceState === 'transcribing'}
-                  title={voiceState === 'recording' ? 'Detener audio' : 'Dictar con microfono'}
-                >
-                  <Mic size={16} />
-                  <span>{voiceState === 'recording' ? 'Grabando' : voiceState === 'transcribing' ? 'Transcribiendo' : 'Microfono'}</span>
-                </button>
-              </div>
+              {canWritePrompt ? (
+                <div className={styles.aiCreationToolRow}>
+                  <button type="button" onClick={() => fileInputRef.current?.click()} title="Subir archivo">
+                    <Paperclip size={16} />
+                    <span>Archivo</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={voiceState === 'recording' ? styles.aiCreationMicActive : ''}
+                    onClick={() => voiceState === 'recording' ? stopVoice() : void startVoice()}
+                    disabled={voiceState === 'transcribing'}
+                    title={voiceState === 'recording' ? 'Detener audio' : 'Dictar con microfono'}
+                  >
+                    <Mic size={16} />
+                    <span>{voiceState === 'recording' ? 'Grabando' : voiceState === 'transcribing' ? 'Transcribiendo' : 'Microfono'}</span>
+                  </button>
+                </div>
+              ) : (
+                <span className={styles.aiCreationFooterHint}>Primero elige una estructura.</span>
+              )}
               <div className={styles.aiCreationActions}>
                 <Button type="button" variant="secondary" onClick={onClose}>
                   Cancelar
                 </Button>
-                <Button type="submit">
-                  <Sparkles size={15} />
-                  {editMode ? 'Actualizar pagina' : 'Crear pagina'}
-                </Button>
+                {canWritePrompt && (
+                  <Button type="submit">
+                    <Sparkles size={15} />
+                    {editMode ? 'Actualizar pagina' : 'Crear pagina'}
+                  </Button>
+                )}
               </div>
             </footer>
           </form>
