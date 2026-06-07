@@ -348,12 +348,24 @@ export type ImportedEditableContentType =
   | 'image'
   | 'background_image'
 
+export type ImportedButtonAction =
+  | 'none'
+  | 'url'
+  | 'next_page'
+  | 'specific_page'
+  | 'submit'
+  | 'disqualify'
+
 export interface ImportedEditableContentUpdate {
   editId: string
   editType: ImportedEditableContentType
   value: string
   fileBase64?: string
   filename?: string
+  buttonAction?: ImportedButtonAction
+  buttonUrl?: string
+  buttonPageId?: string
+  buttonMessage?: string
 }
 
 export type SitesAICreationKind = 'landing' | 'form' | 'interactive_form'

@@ -1269,10 +1269,94 @@ function getImportedEditableTextValue(input = {}) {
   return value
 }
 
+const IMPORTED_BUTTON_ACTIONS = new Set(['none', 'url', 'next_page', 'specific_page', 'submit', 'disqualify'])
+
+function normalizeImportedButtonAction(value = '') {
+  const action = cleanString(value).toLowerCase().replace(/[-\s]+/g, '_')
+  return IMPORTED_BUTTON_ACTIONS.has(action) ? action : ''
+}
+
+function hasImportedButtonActionPatch(input = {}) {
+  return [
+    input.buttonAction,
+    input.button_action,
+    input.buttonUrl,
+    input.button_url,
+    input.buttonPageId,
+    input.button_page_id,
+    input.buttonMessage,
+    input.button_message
+  ].some(value => value !== undefined)
+}
+
+function getImportedButtonActionPatch(input = {}) {
+  if (!hasImportedButtonActionPatch(input)) return null
+
+  const action = normalizeImportedButtonAction(input.buttonAction || input.button_action || 'none')
+  if (!action) {
+    const error = new Error('Accion de boton importado invalida')
+    error.status = 400
+    throw error
+  }
+
+  const buttonUrl = cleanString(input.buttonUrl || input.button_url)
+  const buttonPageId = cleanString(input.buttonPageId || input.button_page_id)
+  const buttonMessage = limitString(cleanString(input.buttonMessage || input.button_message), 500)
+
+  if (action === 'url' && !safeHref(buttonUrl, '')) {
+    const error = new Error('Usa una URL valida para el boton')
+    error.status = 400
+    throw error
+  }
+
+  if (action === 'specific_page' && !buttonPageId) {
+    const error = new Error('Selecciona la pagina destino del boton')
+    error.status = 400
+    throw error
+  }
+
+  return {
+    action,
+    buttonUrl,
+    buttonPageId,
+    buttonMessage
+  }
+}
+
+function getImportedPageHref(pageId = '') {
+  const cleanPageId = cleanString(pageId)
+  return cleanPageId ? `?page=${encodeURIComponent(cleanPageId)}` : '#'
+}
+
+function setImportedButtonActionAttributes(openingTag = '', attrsText = '', patch = null) {
+  if (!patch) return openingTag
+
+  let nextTag = openingTag
+  nextTag = setHtmlAttribute(nextTag, attrsText, 'data-rstk-button-action', patch.action)
+  nextTag = setHtmlAttribute(nextTag, attrsText, 'data-rstk-button-url', patch.action === 'url' ? safeHref(patch.buttonUrl, '') : '')
+  nextTag = setHtmlAttribute(nextTag, attrsText, 'data-rstk-button-page-id', ['specific_page', 'disqualify'].includes(patch.action) ? patch.buttonPageId : '')
+  nextTag = setHtmlAttribute(nextTag, attrsText, 'data-rstk-button-message', patch.action === 'disqualify' ? patch.buttonMessage : '')
+
+  const tagName = cleanString((nextTag.match(/^<\s*([a-z][\w:-]*)/i) || [])[1]).toLowerCase()
+  if (tagName === 'a') {
+    if (patch.action === 'url') return setHtmlAttribute(nextTag, attrsText, 'href', safeHref(patch.buttonUrl, '#'))
+    if (patch.action === 'specific_page') return setHtmlAttribute(nextTag, attrsText, 'href', getImportedPageHref(patch.buttonPageId))
+    return setHtmlAttribute(nextTag, attrsText, 'href', '#')
+  }
+
+  if (tagName === 'button' || tagName === 'input') {
+    const buttonType = patch.action === 'submit' ? 'submit' : 'button'
+    nextTag = setHtmlAttribute(nextTag, attrsText, 'type', buttonType)
+  }
+
+  return nextTag
+}
+
 function applyImportedEditableContentUpdate(html = '', input = {}) {
   const editId = cleanString(input.editId || input.edit_id)
   const editType = normalizeImportedEditableContentType(input.editType || input.edit_type)
   const value = getImportedEditableTextValue(input)
+  const buttonActionPatch = editType === 'button' ? getImportedButtonActionPatch(input) : null
 
   if (!editId || !editType) {
     const error = new Error('Seleccion invalida para editar contenido')
@@ -1312,12 +1396,14 @@ function applyImportedEditableContentUpdate(html = '', input = {}) {
     nextHtml = nextHtml.replace(/<input\b([^>]*?)\s*(\/?)>/gi, (match, attrsText = '') => {
       if (updated || !hasImportedEditId(attrsText, editId) || getImportedEditTypeFromAttrs(attrsText) !== 'button') return match
       updated = true
-      return setHtmlAttribute(match, attrsText, 'value', value)
+      const withValue = setHtmlAttribute(match, attrsText, 'value', value)
+      return setImportedButtonActionAttributes(withValue, attrsText, buttonActionPatch)
     })
     nextHtml = nextHtml.replace(/<(button|a)\b([^>]*)>([\s\S]*?)<\/\1>/gi, (match, tagName, attrsText = '') => {
       if (updated || !hasImportedEditId(attrsText, editId) || getImportedEditTypeFromAttrs(attrsText) !== 'button') return match
       updated = true
-      return `<${tagName}${attrsText}>${escapeHtml(value)}</${tagName}>`
+      const openingTag = setImportedButtonActionAttributes(`<${tagName}${attrsText}>`, attrsText, buttonActionPatch)
+      return `${openingTag}${escapeHtml(value)}</${tagName}>`
     })
   } else {
     nextHtml = nextHtml.replace(/<(h[1-6]|p|label|a|span|strong|em|small|li)\b([^>]*)>([\s\S]*?)<\/\1>/gi, (match, tagName, attrsText = '') => {
@@ -3666,6 +3752,8 @@ Marcado para edicion rapida:
 - Cuando puedas, agrega tambien aliases data-ristak-* o data-ristack-* para compatibilidad.
 - Tipos permitidos: heading, text, button, form_label, placeholder, image, background_image.
 - Marca titulares, subtitulares, parrafos breves, botones, labels de formularios, placeholders, imagenes, logos y elementos con fondo de imagen.
+- En botones editables, cuando sepas la accion, agrega data-rstk-button-action con uno de estos valores: submit, next_page, specific_page, url, disqualify, none.
+- Si el boton abre enlace, agrega data-rstk-button-url. Si va a una pagina interna, agrega data-rstk-button-page-id cuando exista un id claro.
 - Marca secciones principales con data-rstk-section y un nombre claro.
 - No envuelvas textos editables en demasiadas etiquetas. Deja un elemento claro para cada texto importante.
 
@@ -3705,7 +3793,7 @@ ${editMode ? `
 Modo edicion:
 - Recibiras el HTML actual y la peticion del usuario.
 - Devuelve el HTML completo actualizado, no solo un fragmento.
-- Conserva formularios, ids, name, data-rstk-form, data-rstk-form-id, data-rstk-field, data-ristak-field, data-rstk-custom-field, data-rstk-edit-id, data-rstk-editable, data-rstk-edit-type, data-rstk-label, data-rstk-section y sus aliases data-ristak-* / data-ristack-* cuando el usuario no pida cambiarlos.
+- Conserva formularios, ids, name, data-rstk-form, data-rstk-form-id, data-rstk-field, data-ristak-field, data-rstk-custom-field, data-rstk-edit-id, data-rstk-editable, data-rstk-edit-type, data-rstk-label, data-rstk-section, data-rstk-button-action, data-rstk-button-url, data-rstk-button-page-id, data-rstk-button-message y sus aliases data-ristak-* / data-ristack-* cuando el usuario no pida cambiarlos.
 - Si cambias campos, deja convenciones claras para que Ristak pueda redetectar y mapear.
 - Puedes cambiar titulo, imagenes, orden de secciones, colores, layout, copy y campos segun lo que pida el usuario.
 ` : `
@@ -8593,6 +8681,103 @@ function buildImportedFormCaptureScript(site, imported, { pageId = DEFAULT_FUNNE
   </script>`
 }
 
+function buildImportedButtonActionScript(site, { pageId = DEFAULT_FUNNEL_PAGE_ID } = {}) {
+  const pages = normalizeSitePages(site).map(page => ({
+    id: page.id,
+    title: page.title || page.id
+  }))
+
+  return `
+  <script>
+    (() => {
+      const PAGES = ${scriptJson(pages)};
+      const CURRENT_PAGE_ID = ${scriptJson(pageId || DEFAULT_FUNNEL_PAGE_ID)};
+      const getPageHref = (targetPageId) => {
+        if (!targetPageId) return '#';
+        const nextUrl = new URL(window.location.href);
+        nextUrl.searchParams.set('page', targetPageId);
+        return nextUrl.toString();
+      };
+      const getNextPageId = () => {
+        const index = PAGES.findIndex(page => page.id === CURRENT_PAGE_ID);
+        const next = index >= 0 ? PAGES[index + 1] : PAGES[1];
+        return next ? next.id : '';
+      };
+      const showActionMessage = (button, text, state = 'success') => {
+        const host = button.closest('form') || button.parentElement || document.body;
+        let message = host.querySelector('[data-rstk-button-action-message]');
+        if (!message) {
+          message = document.createElement('div');
+          message.setAttribute('data-rstk-button-action-message', 'true');
+          message.style.marginTop = '12px';
+          message.style.font = '600 14px/1.45 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+          host.appendChild(message);
+        }
+        message.textContent = text;
+        message.style.color = state === 'error' ? '#b91c1c' : '#166534';
+      };
+
+      document.addEventListener('click', (event) => {
+        const button = event.target && event.target.closest
+          ? event.target.closest('[data-rstk-button-action]')
+          : null;
+        if (!button) return;
+
+        const action = String(button.getAttribute('data-rstk-button-action') || '').trim();
+        if (!action) return;
+
+        if (action === 'none') {
+          event.preventDefault();
+          return;
+        }
+
+        if (action === 'submit') {
+          const form = button.closest('form');
+          if (!form) return;
+          event.preventDefault();
+          if (typeof form.requestSubmit === 'function') {
+            form.requestSubmit(button);
+          } else {
+            form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+          }
+          return;
+        }
+
+        event.preventDefault();
+
+        if (action === 'url') {
+          const targetUrl = button.getAttribute('data-rstk-button-url') || button.getAttribute('href') || '';
+          if (targetUrl) window.location.href = targetUrl;
+          return;
+        }
+
+        if (action === 'next_page') {
+          const nextPageId = getNextPageId();
+          if (nextPageId) window.location.href = getPageHref(nextPageId);
+          return;
+        }
+
+        if (action === 'specific_page') {
+          const targetPageId = button.getAttribute('data-rstk-button-page-id') || '';
+          if (targetPageId) window.location.href = getPageHref(targetPageId);
+          return;
+        }
+
+        if (action === 'disqualify') {
+          const targetPageId = button.getAttribute('data-rstk-button-page-id') || '';
+          const message = button.getAttribute('data-rstk-button-message') || 'Gracias. Por ahora esta solicitud no califica.';
+          window.dispatchEvent(new CustomEvent('ristak:disqualified', { detail: { message, pageId: CURRENT_PAGE_ID } }));
+          if (targetPageId) {
+            window.location.href = getPageHref(targetPageId);
+          } else {
+            showActionMessage(button, message, 'error');
+          }
+        }
+      }, true);
+    })();
+  </script>`
+}
+
 async function buildImportedHtmlRuntimeInjection(site, imported, { trackingEnabled = true, pageId = DEFAULT_FUNNEL_PAGE_ID, pageTitle = '' } = {}) {
   const activePageId = cleanString(pageId) || DEFAULT_FUNNEL_PAGE_ID
   const metaPixelSnippet = await buildMetaPixelSnippet(site, trackingEnabled, { id: activePageId, title: pageTitle || site.title || site.name })
@@ -8609,8 +8794,9 @@ async function buildImportedHtmlRuntimeInjection(site, imported, { trackingEnabl
       endpoint: '/collect'
     })
     : ''
+  const buttonActionScript = buildImportedButtonActionScript(site, { pageId: activePageId })
   const captureScript = buildImportedFormCaptureScript(site, imported, { pageId: activePageId })
-  return `${metaPixelSnippet}${nativeTrackingScript}${captureScript}`
+  return `${metaPixelSnippet}${nativeTrackingScript}${buttonActionScript}${captureScript}`
 }
 
 function injectImportedHtmlRuntime(html = '', injection = '') {

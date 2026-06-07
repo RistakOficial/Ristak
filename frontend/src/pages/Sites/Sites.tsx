@@ -89,6 +89,7 @@ import {
   blockLabels,
   fieldBlockTypes,
   formBlockTypes,
+  type ImportedButtonAction,
   type ImportedEditableContentType,
   type ImportedSiteCreateResult,
   type ImportedSiteFieldMapping,
@@ -4990,6 +4991,10 @@ type ImportedEditableSelection = {
   label: string
   value: string
   tagName: string
+  buttonAction?: ImportedButtonAction
+  buttonUrl?: string
+  buttonPageId?: string
+  buttonMessage?: string
 }
 
 type ImportedInlineEditorState = {
@@ -4998,6 +5003,15 @@ type ImportedInlineEditorState = {
   value: string
   top: number
   left: number
+}
+
+type ImportedButtonEditorState = {
+  selection: ImportedEditableSelection
+  value: string
+  buttonAction: ImportedButtonAction
+  buttonUrl: string
+  buttonPageId: string
+  buttonMessage: string
 }
 
 const importedEditableSelector = [
@@ -5077,6 +5091,51 @@ const getEditableElementValue = (element: HTMLElement, editType: ImportedEditabl
   return (element.textContent || '').replace(/\s+/g, ' ').trim()
 }
 
+const importedButtonActions = new Set<ImportedButtonAction>(['none', 'url', 'next_page', 'specific_page', 'submit', 'disqualify'])
+
+const normalizeImportedButtonAction = (value: string): ImportedButtonAction => {
+  const action = value.trim().toLowerCase().replace(/[-\s]+/g, '_') as ImportedButtonAction
+  return importedButtonActions.has(action) ? action : 'none'
+}
+
+const getImportedButtonAttribute = (element: HTMLElement, names: string[]) => {
+  for (const name of names) {
+    const value = element.getAttribute(name)
+    if (value) return value.trim()
+  }
+  return ''
+}
+
+const readImportedButtonSettings = (element: HTMLElement, editType: ImportedEditableSelection['editType']) => {
+  if (editType !== 'button') return {}
+
+  const tagName = element.tagName.toLowerCase()
+  const explicitAction = getImportedButtonAttribute(element, [
+    'data-rstk-button-action',
+    'data-ristak-button-action',
+    'data-ristack-button-action',
+    'data-rstk-action',
+    'data-ristak-action',
+    'data-ristack-action'
+  ])
+  const href = tagName === 'a' ? (element.getAttribute('href') || '').trim() : ''
+  const type = (element.getAttribute('type') || '').trim().toLowerCase()
+  const inferredAction = explicitAction
+    ? normalizeImportedButtonAction(explicitAction)
+    : tagName === 'a' && href && !href.startsWith('#')
+      ? 'url'
+      : ['submit', 'image'].includes(type)
+        ? 'submit'
+        : 'none'
+
+  return {
+    buttonAction: inferredAction,
+    buttonUrl: getImportedButtonAttribute(element, ['data-rstk-button-url', 'data-ristak-button-url', 'data-ristack-button-url']) || (inferredAction === 'url' ? href : ''),
+    buttonPageId: getImportedButtonAttribute(element, ['data-rstk-button-page-id', 'data-ristak-button-page-id', 'data-ristack-button-page-id']),
+    buttonMessage: getImportedButtonAttribute(element, ['data-rstk-button-message', 'data-ristak-button-message', 'data-ristack-button-message'])
+  }
+}
+
 const readImportedEditableSelection = (element: HTMLElement): ImportedEditableSelection | null => {
   const editId = getImportedEditableAttribute(element, 'id')
   if (!editId) return null
@@ -5087,7 +5146,8 @@ const readImportedEditableSelection = (element: HTMLElement): ImportedEditableSe
     editType,
     label,
     value: getEditableElementValue(element, editType),
-    tagName: element.tagName.toLowerCase()
+    tagName: element.tagName.toLowerCase(),
+    ...readImportedButtonSettings(element, editType)
   }
 }
 
@@ -5140,6 +5200,7 @@ const ImportedHtmlEditorPanel: React.FC<{
   const [previewError, setPreviewError] = useState('')
   const [previewVersion, setPreviewVersion] = useState(0)
   const [inlineEditor, setInlineEditor] = useState<ImportedInlineEditorState | null>(null)
+  const [buttonEditor, setButtonEditor] = useState<ImportedButtonEditorState | null>(null)
   const [contentSaving, setContentSaving] = useState(false)
   const [contentError, setContentError] = useState('')
   const importedPages = pages.length ? pages : [{ id: DEFAULT_FUNNEL_PAGE_ID, title: 'Pagina 1', sortOrder: 0 }]
@@ -5184,6 +5245,7 @@ const ImportedHtmlEditorPanel: React.FC<{
     selectedIframeElementRef.current?.classList.remove('rstk-imported-selected')
     selectedIframeElementRef.current = null
     setInlineEditor(null)
+    setButtonEditor(null)
     setContentError('')
   }, [activeImportedPage?.id, site.id, previewVersion])
 
@@ -5210,16 +5272,36 @@ const ImportedHtmlEditorPanel: React.FC<{
     setContentError('')
   }, [getInlineEditorPosition])
 
+  const openButtonEditorForSelection = useCallback((selection: ImportedEditableSelection) => {
+    setInlineEditor(null)
+    setButtonEditor({
+      selection,
+      value: selection.value,
+      buttonAction: selection.buttonAction || 'none',
+      buttonUrl: selection.buttonUrl || '',
+      buttonPageId: selection.buttonPageId || '',
+      buttonMessage: selection.buttonMessage || ''
+    })
+    setContentError('')
+  }, [])
+
   const clearInlineSelection = useCallback(() => {
     selectedIframeElementRef.current?.classList.remove('rstk-imported-selected')
     selectedIframeElementRef.current = null
     setInlineEditor(null)
+    setButtonEditor(null)
   }, [])
 
   const saveEditableContent = useCallback(async (
     selection: ImportedEditableSelection,
     value: string,
-    fileUpload?: { fileBase64: string; filename: string }
+    fileUpload?: { fileBase64: string; filename: string },
+    buttonPatch?: {
+      buttonAction?: ImportedButtonAction
+      buttonUrl?: string
+      buttonPageId?: string
+      buttonMessage?: string
+    }
   ) => {
     if (selection.editType === 'section') return false
     const cleanValue = value.trim()
@@ -5235,7 +5317,8 @@ const ImportedHtmlEditorPanel: React.FC<{
         editId: selection.editId,
         editType: selection.editType,
         value: cleanValue || selection.value,
-        ...(fileUpload || {})
+        ...(fileUpload || {}),
+        ...(buttonPatch || {})
       })
       onContentUpdated(result)
       clearInlineSelection()
@@ -5268,27 +5351,31 @@ const ImportedHtmlEditorPanel: React.FC<{
       style.textContent = `
         ${importedEditableSelector} {
           cursor: pointer !important;
+          outline: 1px dashed rgba(100, 116, 139, 0.34) !important;
           outline-offset: 4px !important;
+          border-radius: 4px !important;
+          box-shadow: none !important;
+          transition: outline-color 140ms ease, box-shadow 140ms ease !important;
         }
         ${importedEditableSelector}:hover {
-          outline: 2px dashed rgba(34, 197, 94, 0.86) !important;
-          border-radius: 8px !important;
-          box-shadow: 0 0 0 6px rgba(34, 197, 94, 0.13) !important;
+          outline: 1px solid rgba(71, 85, 105, 0.72) !important;
+          border-radius: 4px !important;
+          box-shadow: 0 0 0 3px rgba(148, 163, 184, 0.12) !important;
         }
         ${importedSectionSelector} {
           scroll-margin: 40px !important;
         }
         .rstk-imported-selected {
-          outline: 3px solid #22c55e !important;
-          border-radius: 8px !important;
-          box-shadow: 0 0 0 6px rgba(34, 197, 94, 0.2) !important;
+          outline: 2px solid #16a34a !important;
+          border-radius: 6px !important;
+          box-shadow: 0 0 0 5px rgba(22, 163, 74, 0.16) !important;
         }
         .rstk-imported-editing {
           cursor: text !important;
-          outline: 3px solid #22c55e !important;
-          border-radius: 8px !important;
+          outline: 2px solid #16a34a !important;
+          border-radius: 6px !important;
           background: rgba(34, 197, 94, 0.08) !important;
-          box-shadow: 0 0 0 7px rgba(34, 197, 94, 0.18) !important;
+          box-shadow: 0 0 0 5px rgba(34, 197, 94, 0.16) !important;
         }
         .rstk-imported-image-action {
           position: fixed !important;
@@ -5418,10 +5505,15 @@ const ImportedHtmlEditorPanel: React.FC<{
           selectElement(editableElement)
           removeImageActionButton()
           if (selection.editType === 'image' || selection.editType === 'background_image') {
+            setButtonEditor(null)
             openInlineEditorForElement(editableElement, selection, 'image')
-          } else if (selection.editType === 'placeholder' || (selection.editType === 'button' && selection.tagName === 'input')) {
+          } else if (selection.editType === 'button') {
+            openButtonEditorForSelection(selection)
+          } else if (selection.editType === 'placeholder') {
+            setButtonEditor(null)
             openInlineEditorForElement(editableElement, selection, 'text')
           } else {
+            setButtonEditor(null)
             beginTextEdit(editableElement, selection)
           }
           return
@@ -5433,6 +5525,7 @@ const ImportedHtmlEditorPanel: React.FC<{
           event.stopPropagation()
           selectElement(sectionElement)
           setInlineEditor(null)
+          setButtonEditor(null)
           setContentError('')
           removeImageActionButton()
           return
@@ -5461,7 +5554,7 @@ const ImportedHtmlEditorPanel: React.FC<{
       iframe.removeEventListener('load', installEditorHooks)
       cleanupDocument()
     }
-  }, [clearInlineSelection, openInlineEditorForElement, previewHtml, previewLoading, previewVersion, saveEditableContent])
+  }, [clearInlineSelection, openButtonEditorForSelection, openInlineEditorForElement, previewHtml, previewLoading, previewVersion, saveEditableContent])
 
   const routeValue = getRouteEditorValue(site)
   const saveRoute = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -5506,6 +5599,27 @@ const ImportedHtmlEditorPanel: React.FC<{
     } catch (error) {
       setContentError(error instanceof Error ? error.message : 'No se pudo leer la imagen.')
     }
+  }
+
+  const targetImportedPages = importedPages.filter(page => page.id !== activeImportedPage?.id)
+  const buttonEditorNeedsUrl = buttonEditor?.buttonAction === 'url'
+  const buttonEditorNeedsPage = buttonEditor?.buttonAction === 'specific_page'
+  const canSaveButtonEditor = Boolean(
+    buttonEditor &&
+    buttonEditor.value.trim() &&
+    !contentSaving &&
+    (!buttonEditorNeedsUrl || buttonEditor.buttonUrl.trim()) &&
+    (!buttonEditorNeedsPage || buttonEditor.buttonPageId.trim())
+  )
+
+  const saveButtonEditor = async () => {
+    if (!buttonEditor || buttonEditor.selection.editType !== 'button') return
+    await saveEditableContent(buttonEditor.selection, buttonEditor.value, undefined, {
+      buttonAction: buttonEditor.buttonAction,
+      buttonUrl: buttonEditor.buttonUrl.trim(),
+      buttonPageId: buttonEditor.buttonPageId.trim(),
+      buttonMessage: buttonEditor.buttonMessage.trim()
+    })
   }
 
   const canSaveInlineEditor = Boolean(
@@ -5579,45 +5693,12 @@ const ImportedHtmlEditorPanel: React.FC<{
       </section>
 
       <aside className={styles.importedSidePanel}>
-        <div className={styles.importedEditorCopy}>
-          <Upload size={24} />
-          <div>
-            <strong>{site.title || site.name}</strong>
-            <p>Pasa el cursor por textos e imagenes para editarlos directo sobre la pagina.</p>
-          </div>
-        </div>
-
-        <div className={styles.importedDataRouteBox}>
-          <div className={styles.importedDataRouteHeader}>
-            <div>
-              <FormInput size={17} />
-              <span>Ruta de datos</span>
-            </div>
-            <strong>{loadingImportData ? 'Leyendo' : 'Automatico'}</strong>
-          </div>
-          <p>
-            Ristak guarda los datos aunque no edites nada. Si quieres cambiar a donde va cada campo, abre esta ruta y ajustala.
-          </p>
-          <div className={styles.importedDataRouteStats}>
-            <span>
-              <strong>{loadingImportData ? '-' : mappingStats.forms}</strong>
-              Formularios
-            </span>
-            <span>
-              <strong>{loadingImportData ? '-' : mappingStats.routed}</strong>
-              Campos guardados
-            </span>
-            <span>
-              <strong>{loadingImportData ? '-' : mappingStats.standard}</strong>
-              Al contacto
-            </span>
-            <span>
-              <strong>{loadingImportData ? '-' : mappingStats.custom}</strong>
-              Personalizados
-            </span>
-          </div>
-          {mappingStats.ignored > 0 && !loadingImportData && (
-            <small>{mappingStats.ignored} campos marcados para no guardarse.</small>
+        <div className={styles.importedSidePanelActions}>
+          {aiAgentAvailable && (
+            <Button type="button" variant="secondary" onClick={onEditWithAI} disabled={saving}>
+              <Sparkles size={15} />
+              Modificar con IA
+            </Button>
           )}
           <Button type="button" variant="secondary" onClick={onEditFields} disabled={loadingImportData}>
             {loadingImportData ? <RefreshCw size={15} /> : <Settings2 size={15} />}
@@ -5625,97 +5706,96 @@ const ImportedHtmlEditorPanel: React.FC<{
           </Button>
         </div>
 
-        <div className={styles.importedPagesBox}>
-          <div className={styles.importedPagesHeader}>
-            <span>Paginas detectadas</span>
-            <strong>{importedPages.length}</strong>
-          </div>
-          <div className={styles.importedPagesList}>
-            {importedPages.map((page, index) => {
-              const sourcePath = page.importedAssetPath || page.importedOriginalTitle || ''
-              const active = activeImportedPage?.id === page.id
-              return (
-                <button
-                  key={page.id}
-                  type="button"
-                  className={`${styles.importedPageButton} ${active ? styles.importedPageButtonActive : ''}`}
-                  onClick={() => onSelectPage(page.id)}
-                >
-                  <span>{page.title || `Pagina ${index + 1}`}</span>
-                  {sourcePath && <small>{sourcePath}</small>}
-                </button>
-              )
-            })}
-          </div>
-        </div>
+        {buttonEditor && (
+          <div className={styles.importedButtonActionBox}>
+            <div className={styles.importedButtonActionHeader}>
+              <MousePointerClick size={17} />
+              <div>
+                <span>Boton seleccionado</span>
+                <strong>{buttonEditor.selection.label || 'Boton'}</strong>
+              </div>
+            </div>
 
-        <div className={styles.importedRouteBox}>
-          <span className={styles.importedRouteLabel}>Ruta publica</span>
-          {routeEditing ? (
-            <form className={styles.importedRouteForm} onSubmit={(event) => void saveRoute(event)}>
+            <label className={styles.importedActionField}>
+              <span>Texto del boton</span>
               <input
-                value={routeDraft}
-                onChange={(event) => setRouteDraft(normalizeRouteEditorInput(event.target.value, domainConfig))}
-                placeholder={site.siteType === 'landing_page' ? 'embudo-01' : 'formulario-01'}
-                disabled={routeSaving}
+                value={buttonEditor.value}
+                disabled={contentSaving}
+                onChange={(event) => setButtonEditor(current => current ? { ...current, value: event.target.value } : current)}
               />
-              <Button type="submit" size="sm" loading={routeSaving}>
-                <Check size={15} />
-                Guardar
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                disabled={routeSaving}
-                onClick={() => {
-                  setRouteDraft(routeValue)
-                  setRouteEditing(false)
-                }}
+            </label>
+
+            <label className={styles.importedActionField}>
+              <span>Accion</span>
+              <select
+                value={buttonEditor.buttonAction}
+                disabled={contentSaving}
+                onChange={(event) => setButtonEditor(current => current ? {
+                  ...current,
+                  buttonAction: event.target.value as ImportedButtonAction
+                } : current)}
               >
-                <X size={15} />
+                <option value="none">Solo dejarlo como texto</option>
+                <option value="submit">Enviar formulario</option>
+                <option value="next_page">Ir a la siguiente pagina</option>
+                <option value="specific_page">Ir a una pagina especifica</option>
+                <option value="url">Abrir enlace</option>
+                <option value="disqualify">Descalificar / detener</option>
+              </select>
+            </label>
+
+            {buttonEditor.buttonAction === 'url' && (
+              <label className={styles.importedActionField}>
+                <span>Enlace</span>
+                <input
+                  value={buttonEditor.buttonUrl}
+                  placeholder="https://..."
+                  disabled={contentSaving}
+                  onChange={(event) => setButtonEditor(current => current ? { ...current, buttonUrl: event.target.value } : current)}
+                />
+              </label>
+            )}
+
+            {buttonEditor.buttonAction === 'specific_page' && (
+              <label className={styles.importedActionField}>
+                <span>Pagina destino</span>
+                <select
+                  value={buttonEditor.buttonPageId}
+                  disabled={contentSaving}
+                  onChange={(event) => setButtonEditor(current => current ? { ...current, buttonPageId: event.target.value } : current)}
+                >
+                  <option value="">Selecciona una pagina</option>
+                  {targetImportedPages.map(page => (
+                    <option key={page.id} value={page.id}>{page.title || page.id}</option>
+                  ))}
+                </select>
+              </label>
+            )}
+
+            {buttonEditor.buttonAction === 'disqualify' && (
+              <label className={styles.importedActionField}>
+                <span>Mensaje</span>
+                <textarea
+                  rows={3}
+                  value={buttonEditor.buttonMessage}
+                  placeholder="Gracias. Por ahora esta solicitud no califica."
+                  disabled={contentSaving}
+                  onChange={(event) => setButtonEditor(current => current ? { ...current, buttonMessage: event.target.value } : current)}
+                />
+              </label>
+            )}
+
+            <div className={styles.importedButtonActionFooter}>
+              <Button type="button" variant="secondary" size="sm" onClick={clearInlineSelection} disabled={contentSaving}>
                 Cancelar
               </Button>
-            </form>
-          ) : (
-            <div className={styles.importedRouteRow}>
-              <strong>{getPublicRouteLabel(site, domainConfig)}</strong>
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                onClick={() => {
-                  setRouteDraft(routeValue)
-                  setRouteEditing(true)
-                }}
-              >
-                <Settings2 size={15} />
-                Cambiar ruta
+              <Button type="button" size="sm" onClick={() => void saveButtonEditor()} disabled={!canSaveButtonEditor} loading={contentSaving}>
+                <Save size={14} />
+                Guardar boton
               </Button>
             </div>
-          )}
-        </div>
-
-        <div className={styles.importedEditorActions}>
-          {aiAgentAvailable && (
-            <Button type="button" variant="secondary" onClick={onEditWithAI} disabled={saving || routeSaving}>
-              <Sparkles size={15} />
-              Editar con IA
-            </Button>
-          )}
-          <Button type="button" variant="secondary" onClick={onPreview}>
-            <Eye size={15} />
-            Abrir completa
-          </Button>
-          <Button type="button" onClick={onPublish} loading={saving}>
-            <Send size={15} />
-            Publicar
-          </Button>
-          <Button type="button" variant="danger" onClick={onDelete} disabled={saving || routeSaving}>
-            <Trash2 size={15} />
-            Eliminar
-          </Button>
-        </div>
+          </div>
+        )}
       </aside>
 
       <input
