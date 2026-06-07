@@ -5829,10 +5829,7 @@ export const PhoneChat: React.FC = () => {
                 onClick={() => setContactInfoDetailPanel((current) => current === 'payments' ? null : 'payments')}
                 aria-expanded={contactInfoDetailPanel === 'payments'}
               >
-                <span className={styles.contactInfoMetricTitle}>
-                  <span>Ingresos y</span>
-                  <span>pagos</span>
-                </span>
+                <span className={styles.contactInfoMetricTitle}>Total</span>
                 <strong>{formatCurrency(Number(contactInfoData.ltv || 0) || revenueTotal)}</strong>
                 <em>{paymentsCount} pago{paymentsCount === 1 ? '' : 's'}</em>
                 <span className={styles.contactInfoMetricAction}>
