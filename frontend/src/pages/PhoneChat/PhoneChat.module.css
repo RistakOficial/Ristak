@@ -2239,13 +2239,13 @@
 .messagesPane {
   position: relative;
   min-height: 0;
-  padding: 8px 8px calc(22px + env(safe-area-inset-bottom));
+  padding: 8px;
   overflow-y: auto;
   overscroll-behavior-y: contain;
   overscroll-behavior-x: none;
   overflow-anchor: none;
   scroll-behavior: auto;
-  scroll-padding-bottom: calc(44px + env(safe-area-inset-bottom));
+  scroll-padding-bottom: 12px;
   -webkit-overflow-scrolling: touch;
   background:
     radial-gradient(circle at 8px 8px, rgba(160, 137, 106, 0.12) 0 2px, transparent 2.5px) 0 0 / 58px 58px,
@@ -2254,7 +2254,8 @@
 }
 
 .messagesContent {
-  display: flow-root;
+  display: flex;
+  flex-direction: column;
   min-height: 100%;
   overflow-anchor: none;
 }
@@ -2262,9 +2263,14 @@
 .messageDayGroup {
   position: relative;
   display: flex;
+  flex: 0 0 auto;
   flex-direction: column;
   min-height: 0;
   padding: 1px 0 12px;
+}
+
+.messageDayGroup:first-child {
+  margin-top: auto;
 }
 
 .messageDayGroup + .messageDayGroup {
