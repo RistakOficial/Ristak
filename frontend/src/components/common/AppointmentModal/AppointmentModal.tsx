@@ -1388,7 +1388,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                   </div>
 
                   {showContactDropdown && (
-                    <div className={styles.dropdown}>
+                    <div className={styles.dropdown} data-ristak-dropdown-panel>
                       {searchingContact && contacts.length === 0 ? (
                         <div className={styles.dropdownEmpty}>
                           Buscando contactos...
@@ -1399,6 +1399,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                             key={contact.id}
                             type="button"
                             className={styles.dropdownItem}
+                            data-ristak-dropdown-item
                             onClick={() => handleSelectContact(contact)}
                           >
                             <p className={styles.dropdownName}>{contact.name || 'Sin nombre'}</p>
@@ -1468,7 +1469,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
 	                      </div>
 
 	                      {showGuestDropdown && (
-	                        <div className={styles.dropdown}>
+		                        <div className={styles.dropdown} data-ristak-dropdown-panel>
 	                          {searchingGuest && guestContacts.length === 0 ? (
 	                            <div className={styles.dropdownEmpty}>
 	                              Buscando invitados...
@@ -1477,9 +1478,10 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
 	                            guestContacts.map((contact) => (
 	                              <button
 	                                key={contact.id}
-	                                type="button"
-	                                className={styles.dropdownItem}
-	                                onClick={() => handleSelectGuestContact(contact)}
+		                                type="button"
+		                                className={styles.dropdownItem}
+		                                data-ristak-dropdown-item
+		                                onClick={() => handleSelectGuestContact(contact)}
 	                              >
 	                                <p className={styles.dropdownName}>{getContactDisplayName(contact)}</p>
 	                                <p className={styles.dropdownDetail}>

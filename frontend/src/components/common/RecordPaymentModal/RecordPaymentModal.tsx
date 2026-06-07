@@ -1533,7 +1533,11 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                 </div>
 
                 {showContactDropdown && (
-                  <div className={isEmbedded ? styles.contactList : styles.dropdown} data-phone-scrollable="true">
+                  <div
+                    className={isEmbedded ? styles.contactList : styles.dropdown}
+                    data-phone-scrollable="true"
+                    data-ristak-dropdown-panel={!isEmbedded ? 'true' : undefined}
+                  >
                     {searchingContact && contacts.length === 0 ? (
                       <div className={isEmbedded ? styles.contactListState : styles.dropdownEmpty}>
                         Buscando contactos...
@@ -1542,9 +1546,10 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                       contacts.map((contact) => (
                         <button
                           key={contact.id}
-                          type="button"
-                          className={isEmbedded ? styles.contactOption : styles.dropdownItem}
-                          onClick={() => handleSelectContact(contact)}
+	                          type="button"
+	                          className={isEmbedded ? styles.contactOption : styles.dropdownItem}
+                            data-ristak-dropdown-item={!isEmbedded ? 'true' : undefined}
+	                          onClick={() => handleSelectContact(contact)}
                         >
                           {isEmbedded ? (
                             <>

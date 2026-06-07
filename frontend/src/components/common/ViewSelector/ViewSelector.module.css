@@ -10,26 +10,31 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--spacing-sm);
-  padding: var(--spacing-sm) var(--spacing-md);
-  background-color: var(--color-background);
-  border: 1px solid var(--color-border-subtle);
-  border-radius: var(--radius-md);
+  min-height: var(--ristak-dropdown-trigger-height);
+  padding: 0 12px;
+  background-color: var(--ristak-dropdown-bg);
+  border: 1px solid var(--ristak-dropdown-border);
+  border-radius: var(--ristak-dropdown-radius);
   color: var(--color-text-primary);
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
   cursor: pointer;
-  transition: all var(--transition-fast);
+  transition: border-color var(--transition-fast), background-color var(--transition-fast), box-shadow var(--transition-fast);
   width: 100%;
+  outline: none;
 }
 
 .trigger:hover {
-  border-color: var(--color-primary);
-  background-color: var(--color-surface);
+  border-color: var(--ristak-dropdown-border-hover);
+  background-color: var(--ristak-dropdown-bg-hover);
 }
 
-.trigger:focus {
+.trigger:focus,
+.trigger:focus-visible,
+.triggerOpen {
   outline: none;
-  border-color: var(--color-primary);
+  border-color: var(--ristak-dropdown-border-focus);
+  box-shadow: var(--ristak-dropdown-ring);
 }
 
 /* Variante "title": el selector se ve como un título grande (1.125rem / 600) con chevron,
@@ -41,6 +46,7 @@
 }
 
 .triggerTitle {
+  min-height: 0;
   width: max-content;
   max-width: 100%;
   padding: 0.125rem 0.375rem;
@@ -60,6 +66,7 @@
 
 .triggerTitle:focus {
   border-color: transparent;
+  box-shadow: none;
 }
 
 .dropdownTitle {
@@ -88,11 +95,12 @@
   min-width: 220px;
   width: max-content;
   max-width: min(320px, calc(100vw - 2rem));
-  background-color: var(--color-background);
-  border: 1px solid var(--color-border-subtle);
-  border-radius: var(--radius-md);
+  background-color: var(--ristak-dropdown-bg);
+  border: 1px solid var(--ristak-dropdown-border);
+  border-radius: var(--ristak-dropdown-radius);
   z-index: var(--z-index-dropdown);
   overflow: hidden;
+  box-shadow: var(--ristak-dropdown-panel-shadow);
   animation: slideDown 0.15s ease-out;
 }
 
@@ -112,6 +120,7 @@
   -webkit-appearance: none;
   display: block;
   width: 100%;
+  min-height: 36px;
   padding: var(--spacing-sm) var(--spacing-md);
   background: none;
   border: none;

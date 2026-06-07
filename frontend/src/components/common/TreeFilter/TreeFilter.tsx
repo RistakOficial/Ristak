@@ -520,12 +520,15 @@ export function TreeFilter({
       {/* Botón principal */}
       <HelpTooltip content={filterTooltip}>
         <button
+          type="button"
           onClick={handleToggleOpen}
+          aria-expanded={isOpen}
+          data-ristak-dropdown-trigger
           className={`
             flex items-center gap-2 px-3 py-2
             rounded-lg transition-all duration-200
             bg-[var(--color-background-secondary)]
-            ${isOpen ? 'ring-2 ring-[var(--color-accent)]/50' : 'hover:bg-[var(--color-background-tertiary)]'}
+            ${isOpen ? '' : 'hover:bg-[var(--color-background-tertiary)]'}
           `}
           style={{ border: '1px solid var(--color-border-subtle)' }}
         >
@@ -548,6 +551,7 @@ export function TreeFilter({
           className="absolute top-full left-0 mt-2 z-50 bg-[var(--color-background-primary)] rounded-lg shadow-xl animate-fadeIn flex"
           style={{ border: '1px solid var(--color-border-subtle)' }}
           onMouseLeave={handleCategoryLeave}
+          data-ristak-dropdown-panel
         >
           {/* Panel izquierdo: Categorías principales */}
           <div className="w-48" style={{ borderRight: '1px solid var(--color-border-subtle)' }}>
@@ -605,6 +609,9 @@ export function TreeFilter({
                     <div
                       key={category.id}
                       onMouseEnter={() => handleCategoryHover(category.id)}
+                      data-ristak-dropdown-item
+                      data-active={isHovered ? 'true' : undefined}
+                      data-selected={selectedCount > 0 ? 'true' : undefined}
                       className={`
                         flex items-center justify-between px-3 py-2 cursor-pointer
                         transition-all duration-150
@@ -683,6 +690,8 @@ export function TreeFilter({
                             return (
                               <div
                                 key={item.id}
+                                data-ristak-dropdown-item
+                                data-selected={isSelected ? 'true' : undefined}
                                 onClick={() => {
                                   if (item.field && item.value) {
                                     handleFilterToggle(item.field, String(item.value))
@@ -751,6 +760,8 @@ export function TreeFilter({
                           return (
                             <div
                               key={item.id}
+                              data-ristak-dropdown-item
+                              data-selected={isSelected ? 'true' : undefined}
                               onClick={() => {
                                 if (item.field && item.value) {
                                   handleFilterToggle(item.field, String(item.value))

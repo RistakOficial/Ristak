@@ -256,7 +256,7 @@ export const ContactSearchInput: React.FC<ContactSearchInputProps> = ({
           </div>
 
           {isOpen && (
-            <div ref={dropdownRef} className={styles.dropdown}>
+            <div ref={dropdownRef} className={styles.dropdown} data-ristak-dropdown-panel>
               {showNewContactForm ? (
                 // New contact form
                 <div className={styles.newContactForm}>
@@ -358,6 +358,8 @@ export const ContactSearchInput: React.FC<ContactSearchInputProps> = ({
                           className={`${styles.suggestionItem} ${
                             index === selectedIndex ? styles.selected : ''
                           }`}
+                          data-ristak-dropdown-item
+                          data-active={index === selectedIndex ? 'true' : undefined}
                           onClick={() => handleSelectContact(contact)}
                           onMouseEnter={() => setSelectedIndex(index)}
                         >
@@ -388,6 +390,8 @@ export const ContactSearchInput: React.FC<ContactSearchInputProps> = ({
                     className={`${styles.addNewButton} ${
                       selectedIndex === suggestions.length ? styles.selected : ''
                     }`}
+                    data-ristak-dropdown-item
+                    data-active={selectedIndex === suggestions.length ? 'true' : undefined}
                     onClick={() => setShowNewContactForm(true)}
                     onMouseEnter={() => setSelectedIndex(suggestions.length)}
                   >

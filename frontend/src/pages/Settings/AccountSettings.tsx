@@ -1018,6 +1018,8 @@ export const AccountSettings: React.FC = () => {
                       className={styles.dropdownTrigger}
                       onClick={() => handleOpenDropdown('customer')}
                       disabled={savingLabels}
+                      aria-expanded={openDropdown === 'customer'}
+                      data-ristak-dropdown-trigger
                     >
                       <span>{customLabels.customer || 'Seleccionar...'}</span>
                       <ChevronDown size={18} className={openDropdown === 'customer' ? styles.iconRotated : ''} />
@@ -1034,6 +1036,8 @@ export const AccountSettings: React.FC = () => {
                       className={styles.dropdownTrigger}
                       onClick={() => handleOpenDropdown('lead')}
                       disabled={savingLabels}
+                      aria-expanded={openDropdown === 'lead'}
+                      data-ristak-dropdown-trigger
                     >
                       <span>{customLabels.lead || 'Seleccionar...'}</span>
                       <ChevronDown size={18} className={openDropdown === 'lead' ? styles.iconRotated : ''} />
@@ -1052,13 +1056,15 @@ export const AccountSettings: React.FC = () => {
                       zIndex: 9999
                     }}
                   >
-                    <div className={styles.dropdownMenu}>
+                    <div className={styles.dropdownMenu} data-ristak-dropdown-panel>
                       {openDropdown === 'customer'
                         ? CUSTOMER_LABEL_OPTIONS.map((option) => (
                             <button
                               key={option}
                               type="button"
                               className={`${styles.dropdownItem} ${customLabels.customer === option ? styles.dropdownItemActive : ''}`}
+                              data-ristak-dropdown-item
+                              data-selected={customLabels.customer === option ? 'true' : undefined}
                               onClick={() => {
                                 setOpenDropdown(null)
                                 handleSaveLabels(option, customLabels.lead)
@@ -1073,6 +1079,8 @@ export const AccountSettings: React.FC = () => {
                               key={option}
                               type="button"
                               className={`${styles.dropdownItem} ${customLabels.lead === option ? styles.dropdownItemActive : ''}`}
+                              data-ristak-dropdown-item
+                              data-selected={customLabels.lead === option ? 'true' : undefined}
                               onClick={() => {
                                 setOpenDropdown(null)
                                 handleSaveLabels(customLabels.customer, option)

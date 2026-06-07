@@ -538,13 +538,15 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
                 <ChevronDown size={11} />
               </button>
               {openDropdown === `${isLeftCalendar ? 'left' : 'right'}-month` && (
-                <div className={styles.pickerDropdown}>
+                <div className={styles.pickerDropdown} data-ristak-dropdown-panel>
                   {MONTHS.map((m, idx) => (
                     <button
                       key={m}
                       className={`${styles.pickerItem} ${idx === currentMonth.getMonth() ? styles.pickerItemActive : ''}`}
                       onClick={() => selectMonth(isLeftCalendar, idx)}
                       type="button"
+                      data-ristak-dropdown-item
+                      data-selected={idx === currentMonth.getMonth() ? 'true' : undefined}
                     >
                       {m}
                     </button>
@@ -563,7 +565,7 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
                 <ChevronDown size={11} />
               </button>
               {openDropdown === `${isLeftCalendar ? 'left' : 'right'}-year` && (
-                <div className={styles.pickerDropdown}>
+                <div className={styles.pickerDropdown} data-ristak-dropdown-panel>
                   {YEARS.map(year => (
                     <button
                       key={year}
@@ -575,6 +577,8 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
                       className={`${styles.pickerItem} ${year === currentMonth.getFullYear() ? styles.pickerItemActive : ''}`}
                       onClick={() => selectYear(isLeftCalendar, year)}
                       type="button"
+                      data-ristak-dropdown-item
+                      data-selected={year === currentMonth.getFullYear() ? 'true' : undefined}
                     >
                       {year}
                     </button>
@@ -615,6 +619,7 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
             onClick={() => handleDualOpen('start')}
             type="button"
             data-date-range-trigger
+            data-ristak-dropdown-trigger
           >
             <Calendar size={14} className={styles.icon} />
             <span className={styles.dualBoxValue}>{formatSingleDate(startDate)}</span>
@@ -625,6 +630,7 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
             onClick={() => handleDualOpen('end')}
             type="button"
             data-date-range-trigger
+            data-ristak-dropdown-trigger
           >
             <span className={styles.dualBoxValue}>{formatSingleDate(endDate)}</span>
           </button>
@@ -635,6 +641,7 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
           onClick={handleSingleOpen}
           type="button"
           data-date-range-trigger
+          data-ristak-dropdown-trigger
         >
           <Calendar size={16} className={styles.icon} />
           <span className={startDate ? styles.value : styles.placeholder}>

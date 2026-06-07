@@ -251,6 +251,9 @@ export function AdHierarchyMenu({ adsHierarchy, selectedFilters, onFilterToggle,
                 key={platform.platform_id}
                 onMouseEnter={() => setHoveredPlatform(platform.platform_id)}
                 onClick={() => handleHierarchicalToggle('platform', platform.platform_id)}
+                data-ristak-dropdown-item
+                data-active={isHovered ? 'true' : undefined}
+                data-selected={isSelected ? 'true' : undefined}
                 className={`
                   flex items-center gap-2 px-3 py-2 cursor-pointer transition-all duration-150
                   ${isSelected
@@ -302,6 +305,9 @@ export function AdHierarchyMenu({ adsHierarchy, selectedFilters, onFilterToggle,
                   key={campaign.id}
                   onMouseEnter={() => setHoveredCampaign(campaign.id)}
                   onClick={() => handleHierarchicalToggle('campaign', campaign.id, { platform: hoveredPlatform || undefined })}
+                  data-ristak-dropdown-item
+                  data-active={isHovered ? 'true' : undefined}
+                  data-selected={isSelected ? 'true' : undefined}
                   className={`
                     flex items-center gap-2 px-3 py-2 cursor-pointer transition-all duration-150
                     ${isSelected
@@ -347,6 +353,9 @@ export function AdHierarchyMenu({ adsHierarchy, selectedFilters, onFilterToggle,
                   key={adset.id}
                   onMouseEnter={() => setHoveredAdset(adset.id)}
                   onClick={() => handleHierarchicalToggle('adset', adset.id, { platform: hoveredPlatform || undefined, campaign: hoveredCampaign || undefined })}
+                  data-ristak-dropdown-item
+                  data-active={isHovered ? 'true' : undefined}
+                  data-selected={isSelected ? 'true' : undefined}
                   className={`
                     flex items-center gap-2 px-3 py-2 cursor-pointer transition-all duration-150
                     ${isSelected
@@ -390,6 +399,8 @@ export function AdHierarchyMenu({ adsHierarchy, selectedFilters, onFilterToggle,
                 <div
                   key={ad.id}
                   onClick={() => handleHierarchicalToggle('ad', ad.id, { platform: hoveredPlatform || undefined, campaign: hoveredCampaign || undefined, adset: hoveredAdset || undefined })}
+                  data-ristak-dropdown-item
+                  data-selected={isSelected ? 'true' : undefined}
                   className={`
                     flex items-center gap-2 px-3 py-2 cursor-pointer transition-all duration-150
                     ${isSelected

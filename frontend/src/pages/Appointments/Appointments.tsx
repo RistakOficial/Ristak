@@ -1320,9 +1320,12 @@ export const Appointments: React.FC = () => {
           {/* Selector de calendarios */}
           <div className={styles.calendarSelector}>
             <button
+              type="button"
               className={styles.calendarDropdownButton}
               onClick={() => setIsCalendarDropdownOpen(!isCalendarDropdownOpen)}
               disabled={loading || calendars.length === 0}
+              aria-expanded={isCalendarDropdownOpen}
+              data-ristak-dropdown-trigger
             >
               <span className={styles.dropdownButtonText}>
                 {selectedCalendar?.name || 'Selecciona un calendario'}
@@ -1339,7 +1342,7 @@ export const Appointments: React.FC = () => {
                 className={styles.dropdownOverlay}
                 onClick={() => setIsCalendarDropdownOpen(false)}
               />
-              <div className={styles.dropdownMenu}>
+              <div className={styles.dropdownMenu} data-ristak-dropdown-panel>
                 {calendars.length === 0 ? (
                   <div className={styles.dropdownEmpty}>
                     No hay calendarios disponibles
@@ -1349,6 +1352,8 @@ export const Appointments: React.FC = () => {
                     <button
                       key={calendar.id}
                       className={`${styles.dropdownItem} ${selectedCalendar?.id === calendar.id ? styles.dropdownItemActive : ''}`}
+                      data-ristak-dropdown-item
+                      data-selected={selectedCalendar?.id === calendar.id ? 'true' : undefined}
 	                      onClick={() => {
 	                        selectCalendar(calendar);
                           navigateCalendarView({ calendarId: calendar.id });
@@ -1408,14 +1413,16 @@ export const Appointments: React.FC = () => {
                   className={styles.searchOverlay}
                   onClick={() => setIsSearchDropdownOpen(false)}
                 />
-                <div className={styles.searchDropdown}>
+                <div className={styles.searchDropdown} data-ristak-dropdown-panel>
                   {searchResults.map((event) => {
                     const eventDate = new Date(event.startTime);
                     return (
-                      <button
-                        key={event.id}
-                        className={styles.searchResultItem}
-                        onClick={() => handleSelectSearchResult(event)}
+	                      <button
+	                        key={event.id}
+                          type="button"
+	                        className={styles.searchResultItem}
+                          data-ristak-dropdown-item
+	                        onClick={() => handleSelectSearchResult(event)}
                       >
                         <div className={styles.searchResultInfo}>
                           <div className={styles.searchResultTitle}>
@@ -1439,7 +1446,7 @@ export const Appointments: React.FC = () => {
                   className={styles.searchOverlay}
                   onClick={() => setIsSearchDropdownOpen(false)}
                 />
-                <div className={styles.searchDropdown}>
+                <div className={styles.searchDropdown} data-ristak-dropdown-panel>
                   <div className={styles.searchEmpty}>
                     No se encontraron citas
                   </div>

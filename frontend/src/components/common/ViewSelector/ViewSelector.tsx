@@ -49,9 +49,11 @@ export const ViewSelector: React.FC<ViewSelectorProps> = ({
   return (
     <div className={`${styles.wrapper} ${isTitle ? styles.wrapperTitle : ''} ${className || ''}`} ref={dropdownRef}>
       <button
-        className={`${styles.trigger} ${isTitle ? styles.triggerTitle : ''}`}
+        className={`${styles.trigger} ${isOpen ? styles.triggerOpen : ''} ${isTitle ? styles.triggerTitle : ''}`}
         onClick={() => setIsOpen(!isOpen)}
         type="button"
+        aria-expanded={isOpen}
+        data-ristak-dropdown-trigger={isTitle ? undefined : 'true'}
       >
         <span className={styles.value}>{selectedOption?.label}</span>
         <ChevronDown
@@ -61,13 +63,15 @@ export const ViewSelector: React.FC<ViewSelectorProps> = ({
       </button>
 
       {isOpen && (
-        <div className={`${styles.dropdown} ${isTitle ? styles.dropdownTitle : ''}`}>
+        <div className={`${styles.dropdown} ${isTitle ? styles.dropdownTitle : ''}`} data-ristak-dropdown-panel={isTitle ? undefined : 'true'}>
           {options.map(option => (
             <button
               key={option.value}
               className={`${styles.option} ${option.value === value ? styles.optionActive : ''}`}
               onClick={() => handleSelect(option.value)}
               type="button"
+              data-ristak-dropdown-item={isTitle ? undefined : 'true'}
+              data-selected={option.value === value ? 'true' : undefined}
             >
               {option.label}
             </button>

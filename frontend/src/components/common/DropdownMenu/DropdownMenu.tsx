@@ -15,6 +15,7 @@ const DropdownMenuContent = React.forwardRef<
       ref={ref}
       sideOffset={sideOffset}
       className={`${styles.content} ${className || ''}`}
+      data-ristak-dropdown-panel
       {...props}
     />
   </DropdownMenuPrimitive.Portal>
@@ -30,6 +31,7 @@ const DropdownMenuItem = React.forwardRef<
   <DropdownMenuPrimitive.Item
     ref={ref}
     className={`${styles.item} ${inset ? styles.inset : ''} ${className || ''}`}
+    data-ristak-dropdown-item
     {...props}
   />
 ))

@@ -102,6 +102,7 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
       ref={dropdownRef}
       className={`${styles.dropdown} ${portal ? styles.portalDropdown : ''}`}
       style={portal ? portalStyle : undefined}
+      data-ristak-dropdown-panel
     >
       <div className={styles.options}>
         {options.map((option) => {
@@ -112,6 +113,8 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
               type="button"
               className={`${styles.option} ${isSelected ? styles.optionSelected : ''}`}
               onClick={() => handleSelect(option.value)}
+              data-ristak-dropdown-item
+              data-selected={isSelected ? 'true' : undefined}
             >
               <span>{option.label}</span>
               {isSelected && <Check size={16} className={styles.checkIcon} />}
@@ -132,6 +135,8 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
         className={`${styles.trigger} ${isOpen ? styles.open : ''}`}
         onClick={() => !disabled && setIsOpen(!isOpen)}
         disabled={disabled}
+        aria-expanded={isOpen}
+        data-ristak-dropdown-trigger
       >
         <span className={selectedOption ? styles.selected : styles.placeholder}>
           {selectedOption?.label || placeholder}

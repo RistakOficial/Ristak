@@ -8,28 +8,32 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px; /* Espacio entre texto e icono */
-  padding: 10px 14px; /* Más padding a la derecha para el icono */
-  border: 1px solid rgba(148, 163, 184, 0.18);
-  border-radius: 10px;
+  min-height: var(--ristak-dropdown-trigger-height);
+  gap: 12px;
+  padding: 0 12px;
+  border: 1px solid var(--ristak-dropdown-border);
+  border-radius: var(--ristak-dropdown-radius);
   font-size: 14px;
   font-weight: 500;
-  background: rgba(148, 163, 184, 0.04);
-  backdrop-filter: blur(8px);
+  background: var(--ristak-dropdown-bg);
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: border-color var(--transition-fast), background-color var(--transition-fast), box-shadow var(--transition-fast);
   text-align: left;
+  outline: none;
 }
 
 .trigger:hover {
-  border-color: rgba(148, 163, 184, 0.28);
-  background-color: rgba(148, 163, 184, 0.08);
+  border-color: var(--ristak-dropdown-border-hover);
+  background-color: var(--ristak-dropdown-bg-hover);
 }
 
-.trigger.open {
-  border-color: var(--color-primary);
-  background-color: var(--color-background);
-  box-shadow: 0 0 0 3px rgba(var(--color-primary-rgb), 0.1);
+.trigger.open,
+.trigger:focus,
+.trigger:focus-visible {
+  border-color: var(--ristak-dropdown-border-focus);
+  background-color: var(--ristak-dropdown-bg);
+  box-shadow: var(--ristak-dropdown-ring);
+  outline: none;
 }
 
 .selected {
@@ -48,7 +52,7 @@
   color: var(--color-text-tertiary);
   transition: transform 0.2s ease;
   flex-shrink: 0;
-  margin-left: auto; /* Empuja el icono al extremo derecho */
+  margin-left: auto;
 }
 
 .chevronOpen {
@@ -61,11 +65,10 @@
   left: 0;
   right: 0;
   z-index: 1000;
-  background: var(--color-background);
-  border: 1px solid rgba(148, 163, 184, 0.18);
-  border-radius: 10px;
-  box-shadow: 0 10px 40px -10px rgba(15, 23, 42, 0.15);
-  backdrop-filter: blur(12px);
+  background: var(--ristak-dropdown-bg);
+  border: 1px solid var(--ristak-dropdown-border);
+  border-radius: var(--ristak-dropdown-radius);
+  box-shadow: var(--ristak-dropdown-panel-shadow);
   overflow: hidden;
   animation: slideDown 0.2s ease;
 }

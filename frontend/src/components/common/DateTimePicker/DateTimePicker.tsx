@@ -168,6 +168,8 @@ export function DateTimePicker({ value, onChange, label, placeholder, required, 
         type="button"
         className={styles.trigger}
         onClick={() => setIsOpen(!isOpen)}
+        aria-expanded={isOpen}
+        data-ristak-dropdown-trigger
       >
         <Calendar size={16} />
         <span>{displayText}</span>
@@ -186,7 +188,7 @@ export function DateTimePicker({ value, onChange, label, placeholder, required, 
       </button>
 
       {isOpen && (
-        <div className={styles.dropdown}>
+        <div className={styles.dropdown} data-ristak-dropdown-panel>
           <div className={styles.dropdownContent}>
             {/* Calendar */}
             <div className={styles.calendar}>
