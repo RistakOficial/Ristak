@@ -113,6 +113,10 @@
   white-space: nowrap;
 }
 
+.mobileTitle {
+  display: none;
+}
+
 .backButton {
   position: absolute;
   top: 0;
@@ -259,6 +263,57 @@
   color: var(--phone-settings-muted);
   font-weight: 800;
   white-space: nowrap;
+}
+
+@media (max-width: 767px) {
+  .phoneFrame {
+    gap: 16px;
+  }
+
+  .header {
+    gap: 0;
+  }
+
+  .header p {
+    display: none;
+  }
+
+  .header h1 {
+    font-size: clamp(31px, 9.4vw, 45px);
+    line-height: 0.98;
+    white-space: normal;
+  }
+
+  .desktopTitle {
+    display: none;
+  }
+
+  .mobileTitle {
+    display: inline;
+  }
+
+  .settingsListItem {
+    grid-template-columns: 54px minmax(0, 1fr) 24px;
+    min-height: 68px;
+    padding-top: 10px;
+    padding-bottom: 10px;
+  }
+
+  .settingsListText small,
+  .settingsListMeta small {
+    display: none;
+  }
+
+  .settingsListText strong {
+    font-size: 19px;
+    line-height: 1.08;
+    text-overflow: clip;
+    white-space: normal;
+  }
+
+  .settingsListMeta {
+    justify-content: center;
+  }
 }
 
 .settingsSection,

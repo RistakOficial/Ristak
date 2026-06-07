@@ -267,25 +267,29 @@ export const PhoneSettings: React.FC = () => {
     const items: Array<{
       id: Exclude<SettingsSection, null>
       title: string
+      mobileTitle?: string
       description: string
       meta?: string
       Icon: LucideIcon
     }> = [
       { id: 'numbers', title: 'Números de WhatsApp', description: 'Cómo se muestran tus líneas.', meta: whatsappNumberMode === 'merged' ? 'Juntos' : 'Separados', Icon: Smartphone },
       { id: 'templates', title: 'Plantillas', description: 'Crear y revisar estados de Meta.', meta: templates.length ? `${templates.length} guardadas` : 'Revisar', Icon: FileText },
-      { id: 'agent', title: 'Agente IA', description: 'Chat fijo y sugerencias.', meta: aiAgentChatEnabled ? 'Activo' : 'Apagado', Icon: Bot },
-      { id: 'chats', title: 'Lista de chats', description: 'Orden, archivados y vista previa.', meta: conversationSortMode === 'recent' ? 'Recientes' : 'No leídas', Icon: MessageCircle },
+      { id: 'agent', title: 'Agente IA', mobileTitle: 'Agente de inteligencia artificial', description: 'Chat fijo y sugerencias.', meta: aiAgentChatEnabled ? 'Activo' : 'Apagado', Icon: Bot },
+      { id: 'chats', title: 'Lista de chats', mobileTitle: 'Lista de chat', description: 'Orden, archivados y vista previa.', meta: conversationSortMode === 'recent' ? 'Recientes' : 'No leídas', Icon: MessageCircle },
       { id: 'appearance', title: 'Apariencia', description: 'Claro, noche, sistema u horario.', meta: themeMeta, Icon: Sun },
       { id: 'notifications', title: 'Notificaciones', description: 'Mensajes, citas y pagos.', meta: permissionLabel, Icon: Bell }
     ]
 
     return (
       <div className={styles.settingsListGroup}>
-        {items.map(({ id, title, description, meta, Icon }) => (
+        {items.map(({ id, title, mobileTitle, description, meta, Icon }) => (
           <button key={id} type="button" className={styles.settingsListItem} onClick={() => setActiveSection(id)}>
             <span className={styles.settingsListIcon}><Icon size={18} /></span>
             <span className={styles.settingsListText}>
-              <strong>{title}</strong>
+              <strong>
+                <span className={styles.desktopTitle}>{title}</span>
+                <span className={styles.mobileTitle}>{mobileTitle || title}</span>
+              </strong>
               <small>{description}</small>
             </span>
             <span className={styles.settingsListMeta}>
@@ -492,6 +496,12 @@ export const PhoneSettings: React.FC = () => {
     return 'Ajustes'
   }, [activeSection])
 
+  const mobileSectionTitle = useMemo(() => {
+    if (activeSection === 'agent') return 'Agente de inteligencia artificial'
+    if (activeSection === 'chats') return 'Lista de chat'
+    return sectionTitle
+  }, [activeSection, sectionTitle])
+
   const renderSection = () => {
     if (activeSection === 'numbers') return renderNumbers()
     if (activeSection === 'templates') return renderTemplates()
@@ -507,7 +517,10 @@ export const PhoneSettings: React.FC = () => {
       <PhonePageTransition active="settings" className={styles.phoneFrame}>
         <header className={styles.header}>
           <p>Ristak Chat</p>
-          <h1>{activeSection ? sectionTitle : 'Ajustes'}</h1>
+          <h1>
+            <span className={styles.desktopTitle}>{activeSection ? sectionTitle : 'Ajustes'}</span>
+            <span className={styles.mobileTitle}>{activeSection ? mobileSectionTitle : 'Ajustes'}</span>
+          </h1>
           {activeSection && (
             <button type="button" className={styles.backButton} onClick={() => setActiveSection(null)} aria-label="Volver a ajustes">
               <ChevronLeft size={22} />
