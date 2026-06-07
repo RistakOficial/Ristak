@@ -5055,7 +5055,7 @@ async function replaceImportedSiteAssets(siteId, assets = []) {
   }
 }
 
-async function getImportedSiteBySiteId(siteId) {
+export async function getImportedSiteBySiteId(siteId) {
   const row = await db.get('SELECT * FROM public_site_imports WHERE site_id = ? LIMIT 1', [siteId])
   if (!row) return null
   let detectedForms = parseJson(row.detected_forms_json, [])

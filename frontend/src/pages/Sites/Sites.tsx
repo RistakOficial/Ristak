@@ -2321,6 +2321,8 @@ export const Sites: React.FC = () => {
   const [seoModalOpen, setSeoModalOpen] = useState(false)
   const [pendingImportSiteType, setPendingImportSiteType] = useState<SiteType>('landing_page')
   const [importReview, setImportReview] = useState<ImportReviewState | null>(null)
+  const [selectedImportData, setSelectedImportData] = useState<ImportedSiteImport | null>(null)
+  const [loadingImportData, setLoadingImportData] = useState(false)
   const [savingImportMapping, setSavingImportMapping] = useState(false)
   const selectedSiteRef = useRef<PublicSite | null>(null)
   const importFileInputRef = useRef<HTMLInputElement | null>(null)
@@ -2335,6 +2337,33 @@ export const Sites: React.FC = () => {
   useEffect(() => {
     selectedSiteRef.current = selectedSite
   }, [selectedSite])
+
+  useEffect(() => {
+    let cancelled = false
+    const site = selectedSite
+
+    if (!site || !isImportedHtmlSite(site)) {
+      setSelectedImportData(null)
+      setLoadingImportData(false)
+      return
+    }
+
+    setLoadingImportData(true)
+    sitesService.getImportMapping(site.id)
+      .then((importData) => {
+        if (!cancelled) setSelectedImportData(importData)
+      })
+      .catch(() => {
+        if (!cancelled) setSelectedImportData(null)
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingImportData(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [selectedSite?.id])
 
   useEffect(() => {
     undoStackRef.current = []
@@ -3206,6 +3235,7 @@ export const Sites: React.FC = () => {
       setSection(siteType === 'landing_page' ? 'landings' : 'forms')
       setCreateFlow('closed')
       setHasUnsavedChanges(false)
+      setSelectedImportData(result.import)
       setImportReview({ site, importData: result.import })
       showToast('success', 'HTML importado', 'Revisa los campos detectados antes de publicar.')
     } catch (error) {
@@ -3219,13 +3249,31 @@ export const Sites: React.FC = () => {
     if (!importReview) return
     setSavingImportMapping(true)
     try {
-      await sitesService.updateImportMapping(importReview.site.id, formMappings)
+      const importData = await sitesService.updateImportMapping(importReview.site.id, formMappings)
+      setSelectedImportData(importData)
       setImportReview(null)
-      showToast('success', 'Campos guardados', 'Ristak ya sabe como guardar los datos de este HTML.')
+      showToast('success', 'Ruta de datos guardada', 'Ristak ya sabe donde guardar cada dato de este HTML.')
     } catch (error) {
       showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo guardar el mapeo')
     } finally {
       setSavingImportMapping(false)
+    }
+  }
+
+  const handleOpenImportMappingEditor = async (site: PublicSite) => {
+    if (!isImportedHtmlSite(site)) return
+
+    setLoadingImportData(true)
+    try {
+      const importData = selectedImportData?.siteId === site.id
+        ? selectedImportData
+        : await sitesService.getImportMapping(site.id)
+      setSelectedImportData(importData)
+      setImportReview({ site, importData })
+    } catch (error) {
+      showToast('error', 'No se pudo abrir la ruta de datos', error instanceof Error ? error.message : 'Intentalo otra vez.')
+    } finally {
+      setLoadingImportData(false)
     }
   }
 
@@ -4230,9 +4278,12 @@ export const Sites: React.FC = () => {
                   domainConfig={domainConfig}
                   device={device}
                   saving={saving}
+                  importData={selectedImportData}
+                  loadingImportData={loadingImportData}
                   onSelectPage={setActivePageId}
                   onPreview={handlePreviewSite}
                   onPublish={() => handleSaveSite('published')}
+                  onEditFields={() => void handleOpenImportMappingEditor(editorSite)}
                   onUpdateRoute={handleUpdateLibraryRoute}
                   onDelete={() => void handleDeleteSite(editorSite)}
                 />
@@ -4455,12 +4506,30 @@ const ImportedHtmlEditorPanel: React.FC<{
   domainConfig: SitesDomainConfig
   device: DeviceMode
   saving: boolean
+  importData: ImportedSiteImport | null
+  loadingImportData: boolean
   onSelectPage: (pageId: string) => void
   onPreview: () => void
   onPublish: () => void
+  onEditFields: () => void
   onUpdateRoute: (site: PublicSite, route: string) => Promise<void>
   onDelete: () => void
-}> = ({ site, pages, activePageId, domainConfig, device, saving, onSelectPage, onPreview, onPublish, onUpdateRoute, onDelete }) => {
+}> = ({
+  site,
+  pages,
+  activePageId,
+  domainConfig,
+  device,
+  saving,
+  importData,
+  loadingImportData,
+  onSelectPage,
+  onPreview,
+  onPublish,
+  onEditFields,
+  onUpdateRoute,
+  onDelete
+}) => {
   const [routeEditing, setRouteEditing] = useState(false)
   const [routeDraft, setRouteDraft] = useState(getRouteEditorValue(site))
   const [routeSaving, setRouteSaving] = useState(false)
@@ -4470,6 +4539,18 @@ const ImportedHtmlEditorPanel: React.FC<{
   const [previewVersion, setPreviewVersion] = useState(0)
   const importedPages = pages.length ? pages : [{ id: DEFAULT_FUNNEL_PAGE_ID, title: 'Pagina 1', sortOrder: 0 }]
   const activeImportedPage = importedPages.find(page => page.id === activePageId) || importedPages[0]
+  const mappingStats = useMemo(() => {
+    const formMappings = Array.isArray(importData?.formMappings) ? importData.formMappings : []
+    const fields = formMappings.flatMap(form => Array.isArray(form.fields) ? form.fields : [])
+    return {
+      forms: formMappings.length,
+      fields: fields.length,
+      routed: fields.filter(field => !field.ignored && field.destinationType !== 'ignored').length,
+      standard: fields.filter(field => !field.ignored && field.destinationType === 'standard').length,
+      custom: fields.filter(field => !field.ignored && field.destinationType === 'custom').length,
+      ignored: fields.filter(field => field.ignored || field.destinationType === 'ignored').length
+    }
+  }, [importData])
 
   useEffect(() => {
     if (!routeEditing) setRouteDraft(getRouteEditorValue(site))
@@ -4575,6 +4656,44 @@ const ImportedHtmlEditorPanel: React.FC<{
             <strong>{site.title || site.name}</strong>
             <p>Esta pagina usa el archivo que subiste. Revisa la vista previa antes de publicarla.</p>
           </div>
+        </div>
+
+        <div className={styles.importedDataRouteBox}>
+          <div className={styles.importedDataRouteHeader}>
+            <div>
+              <FormInput size={17} />
+              <span>Ruta de datos</span>
+            </div>
+            <strong>{loadingImportData ? 'Leyendo' : 'Automatico'}</strong>
+          </div>
+          <p>
+            Ristak guarda los datos aunque no edites nada. Si quieres cambiar a donde va cada campo, abre esta ruta y ajustala.
+          </p>
+          <div className={styles.importedDataRouteStats}>
+            <span>
+              <strong>{loadingImportData ? '-' : mappingStats.forms}</strong>
+              Formularios
+            </span>
+            <span>
+              <strong>{loadingImportData ? '-' : mappingStats.routed}</strong>
+              Campos guardados
+            </span>
+            <span>
+              <strong>{loadingImportData ? '-' : mappingStats.standard}</strong>
+              Al contacto
+            </span>
+            <span>
+              <strong>{loadingImportData ? '-' : mappingStats.custom}</strong>
+              Personalizados
+            </span>
+          </div>
+          {mappingStats.ignored > 0 && !loadingImportData && (
+            <small>{mappingStats.ignored} campos marcados para no guardarse.</small>
+          )}
+          <Button type="button" variant="secondary" onClick={onEditFields} disabled={loadingImportData}>
+            {loadingImportData ? <RefreshCw size={15} /> : <Settings2 size={15} />}
+            Editar ruta de datos
+          </Button>
         </div>
 
         <div className={styles.importedPagesBox}>
@@ -4891,9 +5010,9 @@ const ImportedHtmlReviewModal: React.FC<{
       <div className={styles.importReviewDialog}>
         <header className={styles.importReviewHeader}>
           <div>
-            <span>HTML importado</span>
-            <h2 id="import-review-title">Revisa donde se guarda cada campo</h2>
-            <p>{review.importData.originalFilename || review.site.name}</p>
+            <span>Ruta de datos</span>
+            <h2 id="import-review-title">Enruta los campos del formulario</h2>
+            <p>Ristak ya lo hace automatico; aqui puedes ajustar donde se guarda cada dato de {review.importData.originalFilename || review.site.name}.</p>
           </div>
           <button type="button" className={styles.importReviewClose} onClick={onClose} aria-label="Cerrar">
             <X size={18} />
@@ -4982,11 +5101,11 @@ const ImportedHtmlReviewModal: React.FC<{
 
         <footer className={styles.importReviewFooter}>
           <Button variant="secondary" onClick={onClose} disabled={saving}>
-            Revisar despues
+            Cerrar
           </Button>
           <Button onClick={() => onConfirm(draft)} loading={saving}>
             <Check size={15} />
-            Guardar campos
+            Guardar ruta de datos
           </Button>
         </footer>
       </div>

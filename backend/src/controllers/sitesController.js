@@ -8,6 +8,7 @@ import {
   deleteBlock,
   deleteSite,
   getRequestHost,
+  getImportedSiteBySiteId,
   getImportedSiteAssetResponse,
   getSite,
   getSitePreview,
@@ -104,6 +105,19 @@ export async function importedSiteAssetHandler(req, res) {
   } catch (error) {
     logger.error(`Error sirviendo asset importado de site: ${error.message}`)
     return res.status(error.status || 500).type('text/plain').send(error.message || 'No se pudo abrir el archivo')
+  }
+}
+
+export async function getImportedSiteMappingHandler(req, res) {
+  try {
+    const result = await getImportedSiteBySiteId(req.params.siteId)
+    if (!result) {
+      return res.status(404).json({ success: false, error: 'Importacion no encontrada' })
+    }
+    res.json({ success: true, data: result })
+  } catch (error) {
+    logger.error(`Error obteniendo mapeo de HTML importado: ${error.message}`)
+    sendError(res, error, 'Error obteniendo mapeo')
   }
 }
 

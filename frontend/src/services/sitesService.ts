@@ -480,6 +480,10 @@ export const sitesService = {
     return apiClient.put<ImportedSiteImport>(`/sites/${siteId}/import-mapping`, { formMappings })
   },
 
+  getImportMapping(siteId: string) {
+    return apiClient.get<ImportedSiteImport>(`/sites/${siteId}/import-mapping`)
+  },
+
   getSite(siteId: string) {
     return apiClient.get<PublicSite>(`/sites/${siteId}`)
   },
