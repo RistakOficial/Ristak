@@ -4602,6 +4602,26 @@ export const Sites: React.FC = () => {
     }
   }
 
+  const requestDeleteBlock = (blockId: string) => {
+    const block = canvasBlocks.find(item => item.id === blockId) || blocks.find(item => item.id === blockId)
+    const deletesContainer = Boolean(block && isLanding(selectedSite) && isSectionBlock(block))
+    const deletedCount = getDeletedBlockIds(blockId).length
+    const targetLabel = deletesContainer ? 'contenedor' : 'elemento'
+    const detail = deletesContainer && deletedCount > 1
+      ? 'Tambien se quitaran los elementos que esten dentro.'
+      : 'Se quitara del editor.'
+
+    showConfirm(
+      `Eliminar ${targetLabel}`,
+      `¿Seguro que quieres eliminar este ${targetLabel}? ${detail}`,
+      () => {
+        void handleDeleteBlock(blockId)
+      },
+      'Eliminar',
+      'Cancelar'
+    )
+  }
+
   const persistCanvasBlockOrder = async (orderedBlocks: SiteBlock[]) => {
     if (!selectedSite) return false
 
@@ -5314,7 +5334,7 @@ export const Sites: React.FC = () => {
                                         paletteSectionTarget={paletteSectionTarget}
                                         paletteDragging={paletteDragging}
                                         onSelectBlock={selectEditorBlock}
-                                        onDeleteBlock={handleDeleteBlock}
+                                        onDeleteBlock={requestDeleteBlock}
                                         onMoveBlock={handleMoveBlock}
                                         getBlockMoveState={getBlockMoveState}
                                         onPatchBlock={patchBlockLocal}
@@ -5354,7 +5374,7 @@ export const Sites: React.FC = () => {
                                           canMoveUp={moveState.canMoveUp}
                                           canMoveDown={moveState.canMoveDown}
                                           onSelect={() => selectEditorBlock(block.id)}
-                                          onDelete={() => handleDeleteBlock(block.id)}
+                                          onDelete={() => requestDeleteBlock(block.id)}
                                           onMoveUp={() => handleMoveBlock(block.id, 'up')}
                                           onMoveDown={() => handleMoveBlock(block.id, 'down')}
                                           onPatchBlock={(patch) => patchBlockLocal(block.id, patch)}
@@ -12379,28 +12399,16 @@ const SortableCanvasBlock: React.FC<SortableCanvasBlockProps> = ({
         >
           <ArrowDown size={14} />
         </button>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button
-              type="button"
-              className="rstkBlockTool rstkBlockToolMenu"
-              onClick={(event) => event.stopPropagation()}
-              onPointerDown={(event) => event.stopPropagation()}
-              aria-label="Opciones del bloque"
-            >
-              <MoreVertical size={15} />
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" sideOffset={6} className={styles.pageMenu}>
-            <DropdownMenuItem
-              className={styles.pageMenuDanger}
-              onSelect={() => onDelete()}
-            >
-              <Trash2 size={14} />
-              Eliminar
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <button
+          type="button"
+          className="rstkBlockTool rstkBlockToolDelete"
+          onClick={(event) => { event.stopPropagation(); onDelete() }}
+          onPointerDown={(event) => event.stopPropagation()}
+          aria-label="Eliminar bloque"
+          title="Eliminar"
+        >
+          <Trash2 size={14} />
+        </button>
       </div>
       <CanvasPreviewBlock
         block={block}
@@ -12799,28 +12807,16 @@ const SortableLandingSection: React.FC<LandingSectionRenderProps> = ({
         >
           <ArrowDown size={14} />
         </button>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button
-              type="button"
-              className="rstkBlockTool rstkBlockToolMenu"
-              onClick={(event) => event.stopPropagation()}
-              onPointerDown={(event) => event.stopPropagation()}
-              aria-label="Opciones de la franja"
-            >
-              <MoreVertical size={15} />
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" sideOffset={6} className={styles.pageMenu}>
-            <DropdownMenuItem
-              className={styles.pageMenuDanger}
-              onSelect={() => onDeleteBlock(section.id)}
-            >
-              <Trash2 size={14} />
-              Eliminar
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <button
+          type="button"
+          className="rstkBlockTool rstkBlockToolDelete"
+          onClick={(event) => { event.stopPropagation(); onDeleteBlock(section.id) }}
+          onPointerDown={(event) => event.stopPropagation()}
+          aria-label="Eliminar contenedor"
+          title="Eliminar"
+        >
+          <Trash2 size={14} />
+        </button>
       </div>
       <div className="rstk-section-inner">
         {hasHeading && (

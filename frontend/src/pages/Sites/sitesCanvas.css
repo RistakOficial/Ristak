@@ -831,7 +831,7 @@ html body .rstkCanvas.rstk-kind-form.rstk-choice-pills .rstk-option input[type='
 .rstkCanvas .rstk-section-lane.rstkSectionToolsBottom > .rstkBlockTools {
   top: auto;
   bottom: 0;
-  transform: translate(-50%, 50%) scale(calc(1 / var(--rstk-scale, 1)));
+  transform: translate(-50%, calc(-50% - 2px)) scale(calc(1 / var(--rstk-scale, 1)));
   transform-origin: bottom center;
 }
 .rstkCanvas.rstk-kind-landing .rstk-section-column > .rstkSel > .rstkBlockTools {
