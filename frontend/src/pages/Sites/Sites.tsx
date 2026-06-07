@@ -1717,24 +1717,6 @@ const getBlockSectionColumn = (block: SiteBlock) => {
 const getSectionColumnLabel = (columns: number) =>
   columns === 1 ? 'Franja 1 columna' : `Franja ${columns} columnas`
 
-const getTextForPaint = (paint: string, fallback = '#111827') => {
-  if (!isCssColor(paint)) return fallback
-  return relLum(paint) > 0.58 ? '#111827' : '#ffffff'
-}
-
-const getNextSectionContrast = (site: PublicSite, pageBlocks: SiteBlock[]) => {
-  const sectionCount = pageBlocks.filter(isSectionBlock).length
-  const darkPage = isSiteDark(site)
-  const blockBg = sectionCount % 2 === 0
-    ? (darkPage ? '#ffffff' : '#111827')
-    : (darkPage ? '#111827' : '#ffffff')
-
-  return {
-    blockBg,
-    blockText: getTextForPaint(blockBg, darkPage ? '#111827' : '#ffffff')
-  }
-}
-
 const makeLandingLane = (section: SiteBlock | null, sortOrder: number): LandingSectionLane => {
   const columns = section ? getSectionColumns(section) : 1
   return {
@@ -3413,6 +3395,8 @@ export const Sites: React.FC = () => {
       const previousBlockIds = new Set((selectedSite.blocks || []).map(block => block.id))
       const payload = defaultBlockPayload(blockType, selectedSite)
       const initialSettings = options.initialSettings || {}
+      let blockIdsBeforeContent = previousBlockIds
+      let autoCreatedSection: SiteBlock | null = null
       if (isLanding(selectedSite) && activePage) {
         const pageSectionIds = new Set(canvasBlocks.filter(isSectionBlock).map(block => block.id))
         const isSection = blockType === SECTION_BLOCK_TYPE
@@ -3427,31 +3411,51 @@ export const Sites: React.FC = () => {
         const singleSectionTarget = pageSectionIds.size === 1
           ? { sectionId: [...pageSectionIds][0], sectionColumn: 0 }
           : null
-        const targetSectionId = options.sectionId && pageSectionIds.has(options.sectionId)
+        let targetSectionId = options.sectionId && pageSectionIds.has(options.sectionId)
           ? options.sectionId
           : selectedTarget?.sectionId || singleSectionTarget?.sectionId || ''
-        const targetColumn = Number.isFinite(Number(options.sectionColumn))
+        let targetColumn = Number.isFinite(Number(options.sectionColumn))
           ? Math.min(2, Math.max(0, Math.round(Number(options.sectionColumn))))
           : selectedTarget?.sectionColumn || singleSectionTarget?.sectionColumn || 0
-
-        if (!isSection && !isPanel && !targetSectionId) {
-          showToast('warning', 'Primero agrega una franja', 'Arrastra una franja de 1, 2 o 3 columnas y luego mete el contenido dentro.')
-          return
-        }
-
         if (isSection) {
           const columns = getSettingNumber(initialSettings, 'sectionColumns', 1, 1, 3)
-          const contrast = getNextSectionContrast(selectedSite, canvasBlocks)
           payload.label = getSectionColumnLabel(columns)
           payload.content = ''
           payload.settings = {
             ...(payload.settings || {}),
-            ...contrast,
             ...initialSettings,
             sectionColumns: columns,
             sectionGap: getSettingNumber(initialSettings, 'sectionGap', DEFAULT_SECTION_GAP, 0, 80)
           }
         } else if (!isPanel) {
+          if (!targetSectionId) {
+            const sectionPayload = defaultBlockPayload(SECTION_BLOCK_TYPE, selectedSite)
+            const columns = 1
+            sectionPayload.label = getSectionColumnLabel(columns)
+            sectionPayload.content = ''
+            sectionPayload.settings = {
+              ...(sectionPayload.settings || {}),
+              sectionColumns: columns,
+              sectionGap: DEFAULT_SECTION_GAP,
+              pageId: activePage.id
+            }
+
+            const siteWithSection = await sitesService.createBlock(selectedSite.id, sectionPayload)
+            const sectionPages = normalizeFunnelPages(siteWithSection)
+            autoCreatedSection = [...(siteWithSection.blocks || [])]
+              .filter(block => !previousBlockIds.has(block.id))
+              .find(block => isSectionBlock(block) && getBlockPageId(block, sectionPages) === activePage.id) || null
+
+            if (!autoCreatedSection) {
+              throw new Error('No se pudo crear la franja para este contenido')
+            }
+
+            targetSectionId = autoCreatedSection.id
+            targetColumn = 0
+            blockIdsBeforeContent = new Set((siteWithSection.blocks || []).map(block => block.id))
+            syncSelectedSite(siteWithSection)
+          }
+
           payload.settings = {
             ...(payload.settings || {}),
             ...initialSettings,
@@ -3486,18 +3490,20 @@ export const Sites: React.FC = () => {
       const activePageForAdd = activePage?.id || DEFAULT_FUNNEL_PAGE_ID
       syncSelectedSite(site)
       const added = [...(site.blocks || [])]
-        .filter(block => !previousBlockIds.has(block.id))
+        .filter(block => !blockIdsBeforeContent.has(block.id))
         .find(block => !hasEditablePages(site) || getBlockPageId(block, sitePages) === activePageForAdd)
       if (added && Number.isFinite(options.insertIndex)) {
         const pageBlocks = [...(site.blocks || [])]
           .filter(block => !hasEditablePages(site) || getBlockPageId(block, sitePages) === activePageForAdd)
           .sort((a, b) => a.sortOrder - b.sortOrder)
-        const withoutAdded = pageBlocks.filter(block => block.id !== added.id)
-        const boundedIndex = Math.max(0, Math.min(Number(options.insertIndex), withoutAdded.length))
+        const insertedBlocks = autoCreatedSection ? [autoCreatedSection, added] : [added]
+        const insertedIds = new Set(insertedBlocks.map(block => block.id))
+        const withoutInserted = pageBlocks.filter(block => !insertedIds.has(block.id))
+        const boundedIndex = Math.max(0, Math.min(Number(options.insertIndex), withoutInserted.length))
         const orderedBlocks = [
-          ...withoutAdded.slice(0, boundedIndex),
-          added,
-          ...withoutAdded.slice(boundedIndex)
+          ...withoutInserted.slice(0, boundedIndex),
+          ...insertedBlocks,
+          ...withoutInserted.slice(boundedIndex)
         ]
         site = await sitesService.reorderBlocks(
           selectedSite.id,
@@ -3932,10 +3938,6 @@ export const Sites: React.FC = () => {
     const target = placement?.target || paletteSectionTarget
     resetPaletteDrag()
     if (!payload) return
-    if (editorSite && isLanding(editorSite) && !isTopLevelLandingBlockType(payload.blockType) && !target) {
-      showToast('warning', 'Suelta dentro de una franja', 'El contenido necesita una franja para poder vivir ahi.')
-      return
-    }
     await handleAddBlock(payload.blockType, {
       insertIndex,
       initialSettings: payload.initialSettings,
