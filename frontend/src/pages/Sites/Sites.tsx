@@ -1595,6 +1595,8 @@ const normalizePageList = (rawPages: SitePage[] = []): SitePage[] => {
       id: page?.id || `${DEFAULT_FUNNEL_PAGE_ID}-${index + 1}`,
       title: page?.title || `Pagina ${index + 1}`,
       sortOrder: Number.isFinite(Number(page?.sortOrder)) ? Number(page.sortOrder) : index,
+      ...(page?.importedAssetPath ? { importedAssetPath: page.importedAssetPath } : {}),
+      ...(page?.importedOriginalTitle ? { importedOriginalTitle: page.importedOriginalTitle } : {}),
       metaCapiEnabled: Boolean(page?.metaCapiEnabled),
       metaEventName: normalizeMetaEventName(page?.metaEventName, 'none'),
       metaTrigger: normalizeMetaTrigger(page?.metaTrigger)
@@ -1635,6 +1637,11 @@ const normalizeFormPages = (site?: PublicSite | null): SitePage[] => {
 }
 
 const normalizeFunnelPages = (site?: PublicSite | null): SitePage[] => {
+  if (isImportedHtmlSite(site)) {
+    const normalized = normalizePageList(Array.isArray(site?.theme?.pages) ? site.theme.pages : [])
+    return normalized.length ? normalized : [{ id: DEFAULT_FUNNEL_PAGE_ID, title: 'Pagina 1', sortOrder: 0 }]
+  }
+
   if (isStandardForm(site)) return normalizeFormPages(site)
 
   const normalized = normalizePageList(Array.isArray(site?.theme?.pages) ? site.theme.pages : [])
@@ -1677,6 +1684,8 @@ const normalizePagesForSave = (pages: SitePage[]) =>
     id: page.id,
     title: page.title || `Pagina ${index + 1}`,
     sortOrder: index,
+    ...(page.importedAssetPath ? { importedAssetPath: page.importedAssetPath } : {}),
+    ...(page.importedOriginalTitle ? { importedOriginalTitle: page.importedOriginalTitle } : {}),
     metaCapiEnabled: Boolean(page.metaCapiEnabled),
     metaEventName: normalizeMetaEventName(page.metaEventName, 'none'),
     metaTrigger: normalizeMetaTrigger(page.metaTrigger)
@@ -4214,9 +4223,12 @@ export const Sites: React.FC = () => {
               {isImportedHtmlSite(editorSite) ? (
                 <ImportedHtmlEditorPanel
                   site={editorSite}
+                  pages={pages}
+                  activePageId={activePage?.id || DEFAULT_FUNNEL_PAGE_ID}
                   domainConfig={domainConfig}
                   device={device}
                   saving={saving}
+                  onSelectPage={setActivePageId}
                   onPreview={handlePreviewSite}
                   onPublish={() => handleSaveSite('published')}
                   onUpdateRoute={handleUpdateLibraryRoute}
@@ -4436,14 +4448,17 @@ export const Sites: React.FC = () => {
 
 const ImportedHtmlEditorPanel: React.FC<{
   site: PublicSite
+  pages: SitePage[]
+  activePageId: string
   domainConfig: SitesDomainConfig
   device: DeviceMode
   saving: boolean
+  onSelectPage: (pageId: string) => void
   onPreview: () => void
   onPublish: () => void
   onUpdateRoute: (site: PublicSite, route: string) => Promise<void>
   onDelete: () => void
-}> = ({ site, domainConfig, device, saving, onPreview, onPublish, onUpdateRoute, onDelete }) => {
+}> = ({ site, pages, activePageId, domainConfig, device, saving, onSelectPage, onPreview, onPublish, onUpdateRoute, onDelete }) => {
   const [routeEditing, setRouteEditing] = useState(false)
   const [routeDraft, setRouteDraft] = useState(getRouteEditorValue(site))
   const [routeSaving, setRouteSaving] = useState(false)
@@ -4451,6 +4466,8 @@ const ImportedHtmlEditorPanel: React.FC<{
   const [previewLoading, setPreviewLoading] = useState(true)
   const [previewError, setPreviewError] = useState('')
   const [previewVersion, setPreviewVersion] = useState(0)
+  const importedPages = pages.length ? pages : [{ id: DEFAULT_FUNNEL_PAGE_ID, title: 'Pagina 1', sortOrder: 0 }]
+  const activeImportedPage = importedPages.find(page => page.id === activePageId) || importedPages[0]
 
   useEffect(() => {
     if (!routeEditing) setRouteDraft(getRouteEditorValue(site))
@@ -4460,7 +4477,7 @@ const ImportedHtmlEditorPanel: React.FC<{
     setPreviewLoading(true)
     setPreviewError('')
     try {
-      const html = await sitesService.getPreviewHtml(site.id, undefined, { test: true })
+      const html = await sitesService.getPreviewHtml(site.id, activeImportedPage?.id, { test: true })
       setPreviewHtml(html)
       setPreviewVersion(current => current + 1)
     } catch (error) {
@@ -4469,7 +4486,7 @@ const ImportedHtmlEditorPanel: React.FC<{
     } finally {
       setPreviewLoading(false)
     }
-  }, [site.id])
+  }, [activeImportedPage?.id, site.id])
 
   useEffect(() => {
     void loadInlinePreview()
@@ -4532,9 +4549,9 @@ const ImportedHtmlEditorPanel: React.FC<{
           )}
           {!previewLoading && !previewError && previewHtml && (
             <iframe
-              key={`${site.id}-${previewVersion}-${device}`}
+              key={`${site.id}-${activeImportedPage?.id || DEFAULT_FUNNEL_PAGE_ID}-${previewVersion}-${device}`}
               className={styles.importedPreviewFrame}
-              title={`Vista previa de ${site.name}`}
+              title={`Vista previa de ${activeImportedPage?.title || site.name}`}
               srcDoc={previewHtml}
               sandbox=""
               referrerPolicy="no-referrer-when-downgrade"
@@ -4555,6 +4572,30 @@ const ImportedHtmlEditorPanel: React.FC<{
           <div>
             <strong>{site.title || site.name}</strong>
             <p>Esta pagina usa el archivo que subiste. Revisa la vista previa antes de publicarla.</p>
+          </div>
+        </div>
+
+        <div className={styles.importedPagesBox}>
+          <div className={styles.importedPagesHeader}>
+            <span>Paginas detectadas</span>
+            <strong>{importedPages.length}</strong>
+          </div>
+          <div className={styles.importedPagesList}>
+            {importedPages.map((page, index) => {
+              const sourcePath = page.importedAssetPath || page.importedOriginalTitle || ''
+              const active = activeImportedPage?.id === page.id
+              return (
+                <button
+                  key={page.id}
+                  type="button"
+                  className={`${styles.importedPageButton} ${active ? styles.importedPageButtonActive : ''}`}
+                  onClick={() => onSelectPage(page.id)}
+                >
+                  <span>{page.title || `Pagina ${index + 1}`}</span>
+                  {sourcePath && <small>{sourcePath}</small>}
+                </button>
+              )
+            })}
           </div>
         </div>
 

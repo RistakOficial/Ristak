@@ -3849,6 +3849,33 @@ function pickImportedZipMainHtmlPath(paths = [], filename = '') {
   return namedHtml || sorted[0] || ''
 }
 
+function sortImportedZipHtmlPaths(paths = [], mainPath = '') {
+  const sorted = [...paths].sort((left, right) => {
+    const leftDepth = left.split('/').length
+    const rightDepth = right.split('/').length
+    if (leftDepth !== rightDepth) return leftDepth - rightDepth
+    return left.localeCompare(right, undefined, { numeric: true, sensitivity: 'base' })
+  })
+
+  return [
+    mainPath,
+    ...sorted.filter(assetPath => assetPath !== mainPath)
+  ].filter(Boolean)
+}
+
+function makeImportedZipPage(assetPath, index = 0, originalTitle = '') {
+  return {
+    id: index === 0 ? DEFAULT_FUNNEL_PAGE_ID : `page-${index + 1}`,
+    title: `Pagina ${index + 1}`,
+    sortOrder: index,
+    importedAssetPath: normalizeImportedAssetPath(assetPath),
+    ...(cleanString(originalTitle) ? { importedOriginalTitle: cleanString(originalTitle) } : {}),
+    metaCapiEnabled: false,
+    metaEventName: SITE_META_NO_EVENT,
+    metaTrigger: 'page_view'
+  }
+}
+
 async function extractImportedZipArchive(filename = '', buffer = Buffer.alloc(0)) {
   if (!buffer.length) {
     const error = new Error('El ZIP esta vacio')
@@ -3935,6 +3962,7 @@ async function extractImportedZipArchive(filename = '', buffer = Buffer.alloc(0)
   return {
     files: [...filesByPath.values()],
     mainPath,
+    htmlPaths: sortImportedZipHtmlPaths(htmlPaths, mainPath),
     report: [
       `Se importo ZIP con ${filesByPath.size} archivos web`,
       `Pagina principal detectada: ${mainPath}`,
@@ -3963,6 +3991,8 @@ async function prepareImportedZipContent({ filename, fileBase64, siteId, importI
   const detectedForms = []
   const assets = []
   const securityReport = [...archive.report]
+  const pageIndexByPath = new Map(archive.htmlPaths.map((assetPath, index) => [assetPath, index]))
+  const pagesByPath = new Map()
   let rawHtml = ''
   let sanitizedHtml = ''
 
@@ -3986,6 +4016,13 @@ async function prepareImportedZipContent({ filename, fileBase64, siteId, importI
         rawHtml = pageRawHtml
         sanitizedHtml = pageHtml
       }
+
+      const pageIndex = pageIndexByPath.get(file.assetPath) ?? pagesByPath.size
+      pagesByPath.set(file.assetPath, makeImportedZipPage(
+        file.assetPath,
+        pageIndex,
+        getImportedHtmlTitle(sanitized.html, `Pagina ${pageIndex + 1}`)
+      ))
 
       assets.push(buildImportedAssetRow({
         importId,
@@ -4026,6 +4063,7 @@ async function prepareImportedZipContent({ filename, fileBase64, siteId, importI
       report: Array.from(new Set(securityReport))
     },
     detectedForms,
+    pages: archive.htmlPaths.map(assetPath => pagesByPath.get(assetPath)).filter(Boolean),
     assets
   }
 }
@@ -4162,6 +4200,7 @@ export async function createImportedSiteFromHtml(input = {}) {
         report: sanitized.report
       },
       detectedForms,
+      pages: [makeImportedZipPage('', 0, getImportedHtmlTitle(sanitized.html, 'Pagina 1'))],
       assets: []
     }
   }
@@ -4177,7 +4216,9 @@ export async function createImportedSiteFromHtml(input = {}) {
     importId,
     importType: prepared.importType,
     importAssetCount: prepared.assets.length,
-    pages: [{ id: DEFAULT_FUNNEL_PAGE_ID, title: 'Pagina importada', sortOrder: 0 }]
+    pages: Array.isArray(prepared.pages) && prepared.pages.length
+      ? prepared.pages
+      : [{ id: DEFAULT_FUNNEL_PAGE_ID, title: 'Pagina 1', sortOrder: 0 }]
   }
 
   await db.run(`
@@ -5206,14 +5247,21 @@ function normalizePageList(rawPages = []) {
   const sourcePages = Array.isArray(rawPages) ? rawPages : []
   const seen = new Set()
   const pages = sourcePages
-    .map((page, index) => ({
-      id: cleanString(page?.id) || `${DEFAULT_FUNNEL_PAGE_ID}-${index + 1}`,
-      title: cleanString(page?.title) || `Pagina ${index + 1}`,
-      sortOrder: Number.isFinite(Number(page?.sortOrder)) ? Number(page.sortOrder) : index,
-      metaCapiEnabled: Boolean(normalizeBoolean(page?.metaCapiEnabled ?? page?.meta_capi_enabled)),
-      metaEventName: normalizeSiteMetaEventName(page?.metaEventName || page?.meta_event_name, { allowNone: true, fallback: SITE_META_NO_EVENT }),
-      metaTrigger: normalizeSiteMetaTrigger(page?.metaTrigger || page?.meta_trigger)
-    }))
+    .map((page, index) => {
+      const importedAssetPath = normalizeImportedAssetPath(page?.importedAssetPath || page?.imported_asset_path)
+      const importedOriginalTitle = cleanString(page?.importedOriginalTitle || page?.imported_original_title)
+
+      return {
+        id: cleanString(page?.id) || `${DEFAULT_FUNNEL_PAGE_ID}-${index + 1}`,
+        title: cleanString(page?.title) || `Pagina ${index + 1}`,
+        sortOrder: Number.isFinite(Number(page?.sortOrder)) ? Number(page.sortOrder) : index,
+        metaCapiEnabled: Boolean(normalizeBoolean(page?.metaCapiEnabled ?? page?.meta_capi_enabled)),
+        metaEventName: normalizeSiteMetaEventName(page?.metaEventName || page?.meta_event_name, { allowNone: true, fallback: SITE_META_NO_EVENT }),
+        metaTrigger: normalizeSiteMetaTrigger(page?.metaTrigger || page?.meta_trigger),
+        ...(importedAssetPath ? { importedAssetPath } : {}),
+        ...(importedOriginalTitle ? { importedOriginalTitle } : {})
+      }
+    })
     .filter(page => {
       if (!page.id || seen.has(page.id)) return false
       seen.add(page.id)
@@ -5250,6 +5298,11 @@ function normalizeFormPages(site) {
 }
 
 function normalizeSitePages(site) {
+  if (isImportedHtmlSite(site)) {
+    const pages = normalizePageList(Array.isArray(site?.theme?.pages) ? site.theme.pages : [])
+    return pages.length ? pages : [{ id: DEFAULT_FUNNEL_PAGE_ID, title: 'Pagina 1', sortOrder: 0 }]
+  }
+
   if (site?.siteType === 'standard_form') return normalizeFormPages(site)
 
   const pages = normalizePageList(Array.isArray(site?.theme?.pages) ? site.theme.pages : [])
@@ -7707,7 +7760,7 @@ function isImportedHtmlSite(site = {}) {
   return site?.theme?.importedHtml === true || cleanString(site?.theme?.template) === IMPORTED_SITE_TEMPLATE
 }
 
-function buildImportedFormCaptureScript(site, imported) {
+function buildImportedFormCaptureScript(site, imported, { pageId = DEFAULT_FUNNEL_PAGE_ID } = {}) {
   const mappings = Array.isArray(imported?.formMappings) ? imported.formMappings : []
 
   return `
@@ -7810,7 +7863,7 @@ function buildImportedFormCaptureScript(site, imported) {
                 importedFormId: resolveFormId(form, index),
                 rawFields,
                 meta: {
-                  pageId: ${scriptJson(DEFAULT_FUNNEL_PAGE_ID)},
+                  pageId: ${scriptJson(pageId || DEFAULT_FUNNEL_PAGE_ID)},
                   pageUrl: window.location.href,
                   referrer: document.referrer,
                   params: getParams(),
@@ -7858,22 +7911,23 @@ function buildImportedFormCaptureScript(site, imported) {
   </script>`
 }
 
-async function buildImportedHtmlRuntimeInjection(site, imported, { trackingEnabled = true, pageTitle = '' } = {}) {
-  const metaPixelSnippet = await buildMetaPixelSnippet(site, trackingEnabled, { id: DEFAULT_FUNNEL_PAGE_ID, title: pageTitle || site.title || site.name })
+async function buildImportedHtmlRuntimeInjection(site, imported, { trackingEnabled = true, pageId = DEFAULT_FUNNEL_PAGE_ID, pageTitle = '' } = {}) {
+  const activePageId = cleanString(pageId) || DEFAULT_FUNNEL_PAGE_ID
+  const metaPixelSnippet = await buildMetaPixelSnippet(site, trackingEnabled, { id: activePageId, title: pageTitle || site.title || site.name })
   const nativeTrackingScript = trackingEnabled
     ? buildNativeSiteTrackingScript({
       siteId: site.id,
       siteSlug: site.slug,
       siteName: site.name,
       siteType: site.siteType,
-      pageId: DEFAULT_FUNNEL_PAGE_ID,
+      pageId: activePageId,
       pageTitle: pageTitle || site.title || site.name,
       formSiteId: site.id,
       formSiteName: site.name,
       endpoint: '/collect'
     })
     : ''
-  const captureScript = buildImportedFormCaptureScript(site, imported)
+  const captureScript = buildImportedFormCaptureScript(site, imported, { pageId: activePageId })
   return `${metaPixelSnippet}${nativeTrackingScript}${captureScript}`
 }
 
@@ -7888,7 +7942,22 @@ function injectImportedHtmlRuntime(html = '', injection = '') {
   return `${html}${injection}`
 }
 
-async function renderImportedPublicSiteHtml(site, { trackingEnabled = true } = {}) {
+function getImportedRenderPage(site, pageId = '') {
+  const pages = normalizeSitePages(site)
+  const requestedPageId = cleanString(pageId)
+  return pages.find(page => page.id === requestedPageId) || pages[0] || null
+}
+
+function getImportedRenderPageByAssetPath(site, assetPath = '') {
+  const normalizedAssetPath = normalizeImportedAssetPath(assetPath)
+  if (!normalizedAssetPath) return null
+
+  return normalizeSitePages(site).find(page => (
+    normalizeImportedAssetPath(page.importedAssetPath || page.imported_asset_path) === normalizedAssetPath
+  )) || null
+}
+
+async function renderImportedPublicSiteHtml(site, { pageId = '', trackingEnabled = true } = {}) {
   const imported = await getImportedSiteBySiteId(site.id)
   if (!imported) {
     return renderDomainErrorHtml({
@@ -7897,11 +7966,22 @@ async function renderImportedPublicSiteHtml(site, { trackingEnabled = true } = {
     })
   }
 
+  const activePage = getImportedRenderPage(site, pageId)
+  const importedAssetPath = normalizeImportedAssetPath(activePage?.importedAssetPath || activePage?.imported_asset_path)
+  let html = imported.htmlSanitized || imported.htmlOriginal || '<!doctype html><html><body></body></html>'
+
+  if (importedAssetPath) {
+    const asset = await getImportedSiteAssetByPath(site.id, importedAssetPath)
+    if (asset && /^text\/html\b/i.test(asset.contentType)) {
+      html = asset.content.toString('utf8')
+    }
+  }
+
   const injection = await buildImportedHtmlRuntimeInjection(site, imported, {
     trackingEnabled,
-    pageTitle: site.title || site.name
+    pageId: activePage?.id || DEFAULT_FUNNEL_PAGE_ID,
+    pageTitle: activePage?.title || site.title || site.name
   })
-  const html = imported.htmlSanitized || imported.htmlOriginal || '<!doctype html><html><body></body></html>'
   return injectImportedHtmlRuntime(html, injection)
 }
 
@@ -7916,9 +7996,11 @@ export async function getImportedSiteAssetResponse(siteId, assetPath, { tracking
     const imported = await getImportedSiteBySiteId(site.id)
     if (!imported) return null
 
+    const page = getImportedRenderPageByAssetPath(site, asset.assetPath)
     const injection = await buildImportedHtmlRuntimeInjection(site, imported, {
       trackingEnabled,
-      pageTitle: asset.assetPath
+      pageId: page?.id || DEFAULT_FUNNEL_PAGE_ID,
+      pageTitle: page?.title || asset.assetPath
     })
 
     return {
@@ -7941,7 +8023,7 @@ export async function getImportedSiteAssetResponse(siteId, assetPath, { tracking
 
 export async function renderPublicSiteHtml(site, { pageId, trackingEnabled = true } = {}) {
   if (isImportedHtmlSite(site)) {
-    return renderImportedPublicSiteHtml(site, { trackingEnabled })
+    return renderImportedPublicSiteHtml(site, { pageId, trackingEnabled })
   }
 
   const theme = { ...DEFAULT_THEME, ...(site.theme || {}) }

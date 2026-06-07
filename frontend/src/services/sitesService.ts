@@ -95,6 +95,8 @@ export interface SitePage {
   id: string
   title: string
   sortOrder: number
+  importedAssetPath?: string
+  importedOriginalTitle?: string
   metaCapiEnabled?: boolean
   metaEventName?: string
   metaTrigger?: SiteMetaTrigger
