@@ -1,15 +1,14 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import {
   AlertTriangle,
-  Bell,
-  CheckCircle,
-  ChevronDown,
   Cloud,
   ExternalLink,
   FileText,
+  Hash,
   KeyRound,
   QrCode,
   RefreshCw,
+  Search,
   ShieldCheck,
   Star,
   Unplug,
@@ -30,7 +29,9 @@ type BusinessProfile = {
   category?: string
 }
 
-type WhatsAppSection = 'connection' | 'templates'
+type ConnectedSection = 'numbers' | 'templates' | 'alerts'
+type PhoneFilter = 'all' | 'main' | 'qr' | 'attention'
+type AlertFilter = 'all' | 'critical' | 'warning' | 'info'
 
 const YCLOUD_REGISTER_URL = 'https://www.ycloud.com/console/#/entry/register?'
 const YCLOUD_CONSOLE_URL = 'https://www.ycloud.com/console/#/app/dashboard/analytics'
@@ -87,14 +88,6 @@ function getAlertWeight(severity?: string | null) {
   return 1
 }
 
-function getAlertSummaryCopy(count: number, severity?: string | null) {
-  const normalized = String(severity || '').toLowerCase()
-  const suffix = count === 1 ? '' : 's'
-  if (normalized === 'critical') return `${count} alerta${suffix} importante${suffix}`
-  if (normalized === 'warning') return `${count} advertencia${suffix}`
-  return `${count} aviso${suffix}`
-}
-
 function getQrStatusLabel(status?: string | null) {
   const normalized = String(status || '').toLowerCase()
   if (!normalized) return 'QR opcional'
@@ -126,7 +119,11 @@ function isQrWorkingStatus(status?: string | null) {
 
 export const WhatsAppSettings: React.FC = () => {
   const { showToast, showConfirm } = useNotification()
-  const [activeSection, setActiveSection] = useState<WhatsAppSection>('connection')
+  const [activeSection, setActiveSection] = useState<ConnectedSection>('numbers')
+  const [phoneFilter, setPhoneFilter] = useState<PhoneFilter>('all')
+  const [alertFilter, setAlertFilter] = useState<AlertFilter>('all')
+  const [phoneSearch, setPhoneSearch] = useState('')
+  const [alertSearch, setAlertSearch] = useState('')
   const [apiStatus, setApiStatus] = useState<WhatsAppApiStatus | null>(null)
   const [apiLoading, setApiLoading] = useState(true)
   const [apiConnecting, setApiConnecting] = useState(false)
@@ -138,7 +135,6 @@ export const WhatsAppSettings: React.FC = () => {
   const [qrDisconnectingPhoneId, setQrDisconnectingPhoneId] = useState('')
   const [qrConsentPhone, setQrConsentPhone] = useState<WhatsAppApiPhoneNumber | null>(null)
   const [defaultingPhoneId, setDefaultingPhoneId] = useState('')
-  const [alertsExpanded, setAlertsExpanded] = useState(false)
 
   const apiConnected = Boolean(apiStatus?.connected)
 
@@ -221,6 +217,7 @@ export const WhatsAppSettings: React.FC = () => {
       })
       setApiStatus(nextStatus)
       setApiKey('')
+      setActiveSection('numbers')
 
       showToast('success', 'WhatsApp conectado', 'Ristak sincronizo los numeros disponibles de WhatsApp API')
     } catch (error) {
@@ -380,19 +377,6 @@ export const WhatsAppSettings: React.FC = () => {
     })
   }, [connectionAlerts])
 
-  const templateSummary = useMemo(() => {
-    const templates = apiStatus?.templates?.items || []
-    const pending = templates.filter(template => ['PENDING', 'IN_APPEAL'].includes(String(template.status || '').toUpperCase())).length
-    const rejected = templates.filter(template => ['REJECTED', 'DISABLED', 'PAUSED'].includes(String(template.status || '').toUpperCase())).length
-
-    return {
-      total: apiStatus?.templates?.total || templates.length,
-      approved: apiStatus?.templates?.approved || templates.filter(template => String(template.status || '').toUpperCase() === 'APPROVED').length,
-      pending,
-      rejected
-    }
-  }, [apiStatus?.templates])
-
   const renderApiForm = () => (
     <form className={styles.apiConnectForm} onSubmit={connectApi}>
       <label className={styles.fieldLabel}>
@@ -456,271 +440,292 @@ export const WhatsAppSettings: React.FC = () => {
     </div>
   )
 
-  const renderConnectionStage = () => {
+  const renderConnectStage = () => {
     if (apiLoading) {
       return <div className={`${styles.skeletonBlock} ${styles.skeletonStage}`} />
     }
 
-    if (!apiConnected || !apiStatus) {
-      return (
-        <section className={styles.apiConnectPanel}>
-          <span className={styles.apiLogoMark}><Cloud size={38} /></span>
-          <div className={styles.apiConnectCopy}>
-            <h3>Conecta WhatsApp Business</h3>
-            <p>Usa WhatsApp API para enviar mensajes oficiales, revisar saldo y mandar plantillas a Meta.</p>
-          </div>
-          {apiStatus?.lastError && <p className={styles.errorText}>{apiStatus.lastError}</p>}
-          <div className={styles.connectContent}>
-            {renderApiForm()}
-            {renderYCloudGuide()}
-          </div>
-        </section>
-      )
-    }
+    return (
+      <section className={styles.connectPanel}>
+        <div className={styles.connectCopy}>
+          <p className={styles.eyebrow}>Conexión</p>
+          <h3>Conecta WhatsApp Business</h3>
+          <span>Usa WhatsApp API para enviar mensajes oficiales, revisar saldo y mandar plantillas a Meta.</span>
+        </div>
+        {apiStatus?.lastError && <p className={styles.errorText}>{apiStatus.lastError}</p>}
+        <div className={styles.connectContent}>
+          {renderApiForm()}
+          {renderYCloudGuide()}
+        </div>
+      </section>
+    )
+  }
+
+  const renderNumbersStage = () => {
+    if (!apiStatus) return null
 
     const selectedApiPhone = selectedPhone || apiStatus.selectedPhone || apiStatus.phoneNumbers[0] || null
-    const profile = getPhoneProfile(selectedApiPhone)
-    const apiProfileImage = selectedApiPhone?.profile_picture_url || profile?.profilePictureUrl || ''
-    const apiDisplayNumber = 'WhatsApp API conectado'
-    const apiDisplayName = apiStatus.phoneNumbers.length
-      ? `${formatMetric(apiStatus.phoneNumbers.length)} numero${apiStatus.phoneNumbers.length === 1 ? '' : 's'} sincronizado${apiStatus.phoneNumbers.length === 1 ? '' : 's'}`
-      : 'Sin numeros sincronizados todavia'
     const balance = apiStatus.balance
     const phoneRows = apiStatus.phoneNumbers.length ? apiStatus.phoneNumbers : selectedApiPhone ? [selectedApiPhone] : []
-    const alertCount = connectionAlerts.length
-    const topAlertGroup = connectionAlertGroups[0]
-    const alertSummaryText = topAlertGroup
-      ? getAlertSummaryCopy(alertCount, topAlertGroup.severity)
-      : ''
-    const alertPreview = topAlertGroup?.message || topAlertGroup?.title || 'Revisa los avisos de WhatsApp'
+    const enrichedPhones = phoneRows.map((phone) => {
+      const phoneProfile = getPhoneProfile(phone)
+      const qrSession = qrSessionsByPhoneId.get(phone.id)
+      const qrStatus = qrSession?.status || phone.qr_status || ''
+      const qrError = isQrWorkingStatus(qrStatus) ? '' : (qrSession?.lastError || phone.qr_last_error || '')
+      const isSender = Boolean(phone.is_default_sender) ||
+        phone.id === selectedPhoneId ||
+        phone.phone_number === apiStatus.sender.phone ||
+        phone.display_phone_number === apiStatus.sender.phone
+      const qrPending = ['starting', 'qr_pending', 'restarting', 'reconnecting'].includes(String(qrStatus).toLowerCase())
+      const qrConnected = String(qrStatus).toLowerCase() === 'connected'
+      const displayName = phone.verified_name || phoneProfile?.verifiedName || phoneProfile?.businessName || phoneProfile?.name || 'Sin nombre'
+      const needsAttention = Boolean(qrError) || ['RED', 'FLAGGED', 'RESTRICTED'].includes(String(phone.quality_rating || '').toUpperCase())
+
+      return { phone, displayName, isSender, qrSession, qrStatus, qrError, qrPending, qrConnected, needsAttention }
+    })
+    const query = phoneSearch.trim().toLowerCase()
+    const filteredPhones = enrichedPhones.filter((row) => {
+      if (phoneFilter === 'main' && !row.isSender) return false
+      if (phoneFilter === 'qr' && !row.qrConnected) return false
+      if (phoneFilter === 'attention' && !row.needsAttention) return false
+      if (!query) return true
+
+      return [
+        row.phone.display_phone_number,
+        row.phone.phone_number,
+        row.phone.id,
+        row.displayName,
+        row.phone.quality_rating,
+        row.phone.messaging_limit,
+        getQrStatusLabel(row.qrStatus)
+      ].some((value) => String(value || '').toLowerCase().includes(query))
+    })
 
     return (
-      <div className={styles.connectionGrid}>
-        <section className={`${styles.templateSummaryCard} ${styles.balanceSummaryCard}`}>
-          <div className={styles.summaryHeader}>
-            <span className={styles.summaryIcon}><Wallet size={20} /></span>
-            <div>
-              <span className={styles.sectionEyebrow}>Saldo</span>
-              <h3>{balance ? formatCurrency(balance.amount, balance.currency) : 'Pendiente'}</h3>
+      <div className={styles.layout}>
+        <aside className={styles.sideNav} aria-label="Filtros de numeros de WhatsApp">
+          <div className={styles.sideHeader}>
+            <strong>Numeros</strong>
+            <span>{formatMetric(phoneRows.length)} activos</span>
+          </div>
+          <button type="button" className={`${styles.sideItem} ${phoneFilter === 'all' ? styles.sideItemActive : ''}`} onClick={() => setPhoneFilter('all')}>
+            <Hash size={16} />
+            <span>Todos los numeros</span>
+            <b>{phoneRows.length}</b>
+          </button>
+          <button type="button" className={`${styles.sideItem} ${phoneFilter === 'main' ? styles.sideItemActive : ''}`} onClick={() => setPhoneFilter('main')}>
+            <Star size={16} />
+            <span>Principal</span>
+            <b>{enrichedPhones.filter((row) => row.isSender).length}</b>
+          </button>
+          <button type="button" className={`${styles.sideItem} ${phoneFilter === 'qr' ? styles.sideItemActive : ''}`} onClick={() => setPhoneFilter('qr')}>
+            <QrCode size={16} />
+            <span>QR conectado</span>
+            <b>{enrichedPhones.filter((row) => row.qrConnected).length}</b>
+          </button>
+          <button type="button" className={`${styles.sideItem} ${phoneFilter === 'attention' ? styles.sideItemActive : ''}`} onClick={() => setPhoneFilter('attention')}>
+            <AlertTriangle size={16} />
+            <span>Revisar</span>
+            <b>{enrichedPhones.filter((row) => row.needsAttention).length}</b>
+          </button>
+        </aside>
+
+        <main className={styles.tablePanel}>
+          <div className={styles.toolbar}>
+            <label className={styles.search}>
+              <Search size={16} />
+              <input value={phoneSearch} placeholder="Buscar por numero, nombre o estado" onChange={(event) => setPhoneSearch(event.target.value)} />
+            </label>
+            <div className={styles.toolbarActions}>
+              <span>{filteredPhones.length} numeros</span>
+              <span className={styles.balancePill}><Wallet size={15} />{balance ? formatCurrency(balance.amount, balance.currency) : 'Saldo pendiente'}</span>
+              <Button variant="outline" onClick={refreshApi} loading={apiRefreshing}>
+                <RefreshCw size={16} />
+                Sincronizar
+              </Button>
+              <a className={styles.externalButton} href={YCLOUD_CONSOLE_URL} target="_blank" rel="noopener noreferrer">
+                <ExternalLink size={15} />
+                Abrir API
+              </a>
+              <Button variant="danger" onClick={confirmApiDisconnect} loading={apiDisconnecting}>
+                <Unplug size={16} />
+                Desconectar
+              </Button>
             </div>
           </div>
-          <p className={styles.emptyText}>Si el saldo baja demasiado, WhatsApp API puede detener los envios.</p>
-        </section>
 
-        <section className={styles.connectionCard}>
-          <div className={styles.connectionHeader}>
-            <div className={styles.connectionIdentity}>
-              <span className={styles.connectionAvatar}>
-                {apiProfileImage ? <img src={apiProfileImage} alt="" /> : <SiWhatsapp size={24} />}
-              </span>
-              <div>
-                <span className={styles.sectionEyebrow}>Conexión</span>
-                <h3>{apiDisplayNumber}</h3>
-                <p>{apiDisplayName}</p>
-              </div>
-            </div>
-            <div className={styles.connectionHeaderRight}>
-              <span className={styles.connectedLabel}>
-                <ShieldCheck size={16} />
-                Conectado
-              </span>
-              <div className={styles.connectionActions}>
-                <Button variant="outline" onClick={refreshApi} loading={apiRefreshing}>
-                  <RefreshCw size={17} />
-                  Sincronizar
-                </Button>
-                <Button variant="danger" onClick={confirmApiDisconnect} loading={apiDisconnecting}>
-                  <Unplug size={17} />
-                  Desconectar
-                </Button>
-                <a className={styles.externalButton} href={YCLOUD_CONSOLE_URL} target="_blank" rel="noopener noreferrer">
-                  <ExternalLink size={16} />
-                  Abrir WhatsApp API
-                </a>
-              </div>
-            </div>
-          </div>
-
-          {connectionAlertGroups.length ? (
-            <div className={styles.apiAlertDropdown}>
-              <button
-                type="button"
-                className={`${styles.apiAlertSummary} ${getAlertClass(topAlertGroup?.severity)}`}
-                onClick={() => setAlertsExpanded((current) => !current)}
-                aria-expanded={alertsExpanded}
-              >
-                <span className={styles.apiAlertSummaryIcon}>
-                  <Bell size={17} />
-                </span>
-                <span className={styles.apiAlertSummaryCopy}>
-                  <strong>{alertSummaryText}</strong>
-                  <small>{alertPreview}</small>
-                </span>
-                <span className={styles.apiAlertSummaryMeta}>
-                  {connectionAlertGroups.length === 1 ? 'Ver detalle' : `${connectionAlertGroups.length} temas`}
-                </span>
-                <ChevronDown
-                  size={18}
-                  className={`${styles.apiAlertChevron} ${alertsExpanded ? styles.apiAlertChevronOpen : ''}`}
-                />
-              </button>
-
-              {alertsExpanded && (
-                <div className={styles.apiAlertDetails}>
-                  {connectionAlertGroups.map((group) => {
-                    const extraTitles = group.titles.filter((title) => title !== group.title)
+          {filteredPhones.length > 0 ? (
+            <div className={styles.tableWrap}>
+              <table className={styles.table}>
+                <thead>
+                  <tr>
+                    <th>Numero</th>
+                    <th>Nombre</th>
+                    <th>API</th>
+                    <th>QR opcional</th>
+                    <th>Calidad</th>
+                    <th>Limite</th>
+                    <th aria-label="Acciones" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredPhones.map((row) => {
+                    const { phone, qrSession, qrPending, qrConnected, qrError, qrStatus, displayName, isSender } = row
 
                     return (
-                      <article key={group.key} className={`${styles.apiAlert} ${getAlertClass(group.severity)}`}>
-                        <AlertTriangle size={18} />
-                        <div>
-                          <div className={styles.apiAlertHeader}>
-                            <strong>{group.title}</strong>
-                            {group.count > 1 && <span>{group.count} avisos</span>}
-                          </div>
-                          {group.message && <p>{group.message}</p>}
-                          {extraTitles.length > 0 && (
-                            <small className={styles.apiAlertRelated}>
-                              Tambien incluye: {extraTitles.join(', ')}
-                            </small>
-                          )}
-                        </div>
-                      </article>
-                    )
-                  })}
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className={styles.apiHealthyBanner}>
-              <CheckCircle size={18} />
-              <span>Listo para enviar mensajes</span>
-            </div>
-          )}
-
-          {phoneRows.length > 0 && (
-            <>
-              <div className={styles.phoneTableToolbar}>
-                <p className={styles.phoneTableIntro}>
-                  Cada numero usa WhatsApp API como conexion oficial. El QR es opcional por numero: ayuda a obtener detalles extra y sirve como respaldo fuera de 24 horas o si la API queda restringida.
-                </p>
-                <button
-                  type="button"
-                  className={styles.viewToggleButton}
-                  onClick={() => setActiveSection('templates')}
-                >
-                  <FileText size={15} />
-                  Plantillas
-                </button>
-              </div>
-              <div className={styles.phoneTableWrap}>
-                <table className={styles.phoneTable}>
-                  <thead>
-                    <tr>
-                      <th>Numero</th>
-                      <th>Nombre</th>
-                      <th>API</th>
-                      <th>QR opcional</th>
-                      <th>Calidad</th>
-                      <th>Limite</th>
-                      <th className={styles.actionColumn}>Accion</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {phoneRows.map((phone) => {
-                      const phoneProfile = getPhoneProfile(phone)
-                      const qrSession = qrSessionsByPhoneId.get(phone.id)
-                      const qrStatus = qrSession?.status || phone.qr_status || ''
-                      const qrError = isQrWorkingStatus(qrStatus) ? '' : (qrSession?.lastError || phone.qr_last_error || '')
-                      const isSender = Boolean(phone.is_default_sender) ||
-                        phone.id === selectedPhoneId ||
-                        phone.phone_number === apiStatus.sender.phone ||
-                        phone.display_phone_number === apiStatus.sender.phone
-                      const qrPending = ['starting', 'qr_pending', 'restarting', 'reconnecting'].includes(String(qrStatus).toLowerCase())
-                      const qrConnected = String(qrStatus).toLowerCase() === 'connected'
-                      const displayName = phone.verified_name || phoneProfile?.verifiedName || phoneProfile?.businessName || phoneProfile?.name || 'Sin nombre'
-
-                      return (
-                        <React.Fragment key={phone.id}>
-                          <tr>
-                            <td>
-                              <strong>{phone.display_phone_number || phone.phone_number || 'Numero'}</strong>
-                              <small>{phone.id}</small>
-                            </td>
-                            <td>{displayName}</td>
-                            <td>
-                              <span className={styles.phoneBadges}>
-                                <mark>{isSender ? 'Principal' : 'Oficial'}</mark>
-                              </span>
-                            </td>
-                            <td>
-                              <span className={styles.phoneBadges}>
-                                <mark className={getQrStatusClass(qrStatus)}>{getQrStatusLabel(qrStatus)}</mark>
-                              </span>
-                            </td>
-                            <td>{phone.quality_rating || 'Sin dato'}</td>
-                            <td>{phone.messaging_limit || 'Sin dato'}</td>
-                            <td className={styles.actionCell}>
-                              <div className={styles.phoneActions}>
-                                {!isSender && (
-                                  <button
-                                    type="button"
-                                    className={styles.phoneActionButton}
-                                    onClick={() => makePhoneDefault(phone)}
-                                    disabled={defaultingPhoneId === phone.id}
-                                  >
-                                    <Star size={14} />
-                                    {defaultingPhoneId === phone.id ? 'Guardando' : 'Hacer principal'}
-                                  </button>
-                                )}
-                                {qrConnected ? (
-                                  <button
-                                    type="button"
-                                    className={styles.phoneActionDanger}
-                                    onClick={() => disconnectQrForPhone(phone)}
-                                    disabled={qrDisconnectingPhoneId === phone.id}
-                                  >
-                                    <Unplug size={14} />
-                                    {qrDisconnectingPhoneId === phone.id ? 'Apagando' : 'Apagar QR'}
-                                  </button>
-                                ) : (
-                                  <button
-                                    type="button"
-                                    className={styles.phoneActionButton}
-                                    onClick={() => openQrConsentForPhone(phone)}
-                                    disabled={qrConnectingPhoneId === phone.id}
-                                  >
-                                    <QrCode size={14} />
-                                    {qrConnectingPhoneId === phone.id ? 'Abriendo' : qrPending ? 'Nuevo QR' : 'Conectar QR'}
-                                  </button>
-                                )}
-                              </div>
+                      <React.Fragment key={phone.id}>
+                        <tr>
+                          <td>
+                            <strong>{phone.display_phone_number || phone.phone_number || 'Numero'}</strong>
+                            <span>{phone.id}</span>
+                          </td>
+                          <td>{displayName}</td>
+                          <td><span className={styles.statusPill}>{isSender ? 'Principal' : 'Oficial'}</span></td>
+                          <td><span className={`${styles.statusPill} ${getQrStatusClass(qrStatus)}`}>{getQrStatusLabel(qrStatus)}</span></td>
+                          <td>{phone.quality_rating || 'Sin dato'}</td>
+                          <td>{phone.messaging_limit || 'Sin dato'}</td>
+                          <td>
+                            <div className={styles.rowActions}>
+                              {!isSender && (
+                                <button type="button" onClick={() => makePhoneDefault(phone)} disabled={defaultingPhoneId === phone.id} title="Hacer principal" aria-label={`Hacer principal ${getPhoneLabel(phone)}`}>
+                                  <Star size={15} />
+                                </button>
+                              )}
+                              {qrConnected ? (
+                                <button type="button" onClick={() => disconnectQrForPhone(phone)} disabled={qrDisconnectingPhoneId === phone.id} title="Apagar QR" aria-label={`Apagar QR ${getPhoneLabel(phone)}`}>
+                                  <Unplug size={15} />
+                                </button>
+                              ) : (
+                                <button type="button" onClick={() => openQrConsentForPhone(phone)} disabled={qrConnectingPhoneId === phone.id} title={qrPending ? 'Nuevo QR' : 'Conectar QR'} aria-label={`Conectar QR ${getPhoneLabel(phone)}`}>
+                                  <QrCode size={15} />
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                        {(qrSession?.qrCodeDataUrl && qrPending) || qrError ? (
+                          <tr className={styles.detailRow}>
+                            <td colSpan={7}>
+                              {qrSession?.qrCodeDataUrl && qrPending && (
+                                <div className={styles.qrPreview}>
+                                  <img src={qrSession.qrCodeDataUrl} alt={`QR para ${phone.display_phone_number || phone.phone_number || 'WhatsApp'}`} />
+                                  <span>Escanea este codigo desde WhatsApp en el mismo numero.</span>
+                                </div>
+                              )}
+                              {qrError && <p className={styles.errorText}>{qrError}</p>}
                             </td>
                           </tr>
-                          {(qrSession?.qrCodeDataUrl && qrPending) || qrError ? (
-                            <tr className={styles.phoneDetailRow}>
-                              <td colSpan={7}>
-                                {qrSession?.qrCodeDataUrl && qrPending && (
-                                  <div className={styles.qrPreview}>
-                                    <img src={qrSession.qrCodeDataUrl} alt={`QR para ${phone.display_phone_number || phone.phone_number || 'WhatsApp'}`} />
-                                    <span>Escanea este codigo desde WhatsApp en el mismo numero.</span>
-                                  </div>
-                                )}
-                                {qrError && <p className={styles.phoneError}>{qrError}</p>}
-                              </td>
-                            </tr>
-                          ) : null}
-                        </React.Fragment>
-                      )
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </>
+                        ) : null}
+                      </React.Fragment>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className={styles.emptyState}>
+              <Hash size={26} />
+              <strong>No hay numeros en esta vista</strong>
+              <span>Cambia el filtro o sincroniza WhatsApp API.</span>
+            </div>
           )}
 
           {apiStatus.lastError && <p className={styles.errorText}>{apiStatus.lastError}</p>}
-        </section>
+        </main>
+      </div>
+    )
+  }
+
+  const renderAlertsStage = () => {
+    const query = alertSearch.trim().toLowerCase()
+    const filteredAlerts = connectionAlertGroups.filter((group) => {
+      if (alertFilter !== 'all' && group.severity !== alertFilter) return false
+      if (!query) return true
+
+      return [
+        group.title,
+        group.message,
+        group.severity,
+        ...group.titles
+      ].some((value) => String(value || '').toLowerCase().includes(query))
+    })
+
+    const countBySeverity = (severity: AlertFilter) => (
+      connectionAlertGroups.filter((group) => severity === 'all' || group.severity === severity).length
+    )
+
+    return (
+      <div className={styles.layout}>
+        <aside className={styles.sideNav} aria-label="Filtros de alertas de WhatsApp">
+          <div className={styles.sideHeader}>
+            <strong>Alertas</strong>
+            <span>{connectionAlertGroups.length} temas</span>
+          </div>
+          <button type="button" className={`${styles.sideItem} ${alertFilter === 'all' ? styles.sideItemActive : ''}`} onClick={() => setAlertFilter('all')}>
+            <Hash size={16} />
+            <span>Todas las alertas</span>
+            <b>{countBySeverity('all')}</b>
+          </button>
+          <button type="button" className={`${styles.sideItem} ${alertFilter === 'critical' ? styles.sideItemActive : ''}`} onClick={() => setAlertFilter('critical')}>
+            <AlertTriangle size={16} />
+            <span>Importantes</span>
+            <b>{countBySeverity('critical')}</b>
+          </button>
+          <button type="button" className={`${styles.sideItem} ${alertFilter === 'warning' ? styles.sideItemActive : ''}`} onClick={() => setAlertFilter('warning')}>
+            <AlertTriangle size={16} />
+            <span>Advertencias</span>
+            <b>{countBySeverity('warning')}</b>
+          </button>
+          <button type="button" className={`${styles.sideItem} ${alertFilter === 'info' ? styles.sideItemActive : ''}`} onClick={() => setAlertFilter('info')}>
+            <ShieldCheck size={16} />
+            <span>Avisos</span>
+            <b>{countBySeverity('info')}</b>
+          </button>
+        </aside>
+
+        <main className={styles.tablePanel}>
+          <div className={styles.toolbar}>
+            <label className={styles.search}>
+              <Search size={16} />
+              <input value={alertSearch} placeholder="Buscar por alerta o detalle" onChange={(event) => setAlertSearch(event.target.value)} />
+            </label>
+            <span>{filteredAlerts.length} alertas</span>
+          </div>
+
+          {filteredAlerts.length > 0 ? (
+            <div className={styles.tableWrap}>
+              <table className={styles.table}>
+                <thead>
+                  <tr>
+                    <th>Alerta</th>
+                    <th>Tipo</th>
+                    <th>Avisos</th>
+                    <th>Detalle</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredAlerts.map((group) => (
+                    <tr key={group.key}>
+                      <td>
+                        <strong>{group.title}</strong>
+                        {group.titles.length > 1 && <span>{group.titles.slice(1).join(', ')}</span>}
+                      </td>
+                      <td><span className={`${styles.statusPill} ${getAlertClass(group.severity)}`}>{group.severity === 'critical' ? 'Importante' : group.severity === 'warning' ? 'Advertencia' : 'Aviso'}</span></td>
+                      <td>{group.count}</td>
+                      <td>{group.message || 'Sin detalle adicional'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className={styles.emptyState}>
+              <ShieldCheck size={26} />
+              <strong>No hay alertas en esta vista</strong>
+              <span>WhatsApp no tiene avisos para este filtro.</span>
+            </div>
+          )}
+        </main>
       </div>
     )
   }
@@ -728,45 +733,19 @@ export const WhatsAppSettings: React.FC = () => {
   const renderTemplatesStage = () => {
     if (!apiConnected) {
       return (
-        <section className={styles.templatesLocked}>
+        <section className={styles.lockedState}>
           <FileText size={36} />
           <h3>Conecta WhatsApp para enviar plantillas a Meta</h3>
           <p>Cuando la conexión esté lista, aquí podrás crear plantillas, enviarlas a revisión y ver si Meta las aprobó o rechazó.</p>
-          <Button onClick={() => setActiveSection('connection')}>
+          <Button onClick={() => setActiveSection('numbers')}>
             <Cloud size={17} />
-            Ir a conexión
+            Ir a numeros
           </Button>
         </section>
       )
     }
 
-    return (
-      <section className={styles.templatesWorkspace}>
-        <div className={styles.templatesHeader}>
-          <div>
-            <span className={styles.sectionEyebrow}>Plantillas</span>
-            <h3>Mensajes aprobados por Meta</h3>
-            <p>Crea, manda a revisión y sincroniza el estado real desde WhatsApp API.</p>
-          </div>
-          <div className={styles.templatesHeaderActions}>
-            <button
-              type="button"
-              className={styles.viewToggleButton}
-              onClick={() => setActiveSection('connection')}
-            >
-              <SiWhatsapp size={15} />
-              Numeros de WhatsApp
-            </button>
-            <div className={styles.templatesSummaryBar}>
-              <span>{formatMetric(templateSummary.approved)} aprobadas</span>
-              <span>{formatMetric(templateSummary.pending)} en revisión</span>
-              <span>{formatMetric(templateSummary.rejected)} rechazadas</span>
-            </div>
-          </div>
-        </div>
-        <MessageTemplates embedded />
-      </section>
-    )
+    return <MessageTemplates embedded />
   }
 
   if (apiLoading) {
@@ -786,17 +765,50 @@ export const WhatsAppSettings: React.FC = () => {
 
   return (
     <div className={styles.shell}>
-      <div className={styles.header}>
-        <span className={styles.logoMark}><SiWhatsapp size={30} /></span>
-        <div className={styles.headerCopy}>
-          <p className={styles.eyebrow}>Configuracion</p>
+      <header className={styles.header}>
+        <div>
+          <p className={styles.eyebrow}>Sistema</p>
           <h2 className={styles.title}>WhatsApp</h2>
-          <span>Conexión oficial por API para mensajes, saldo y plantillas.</span>
+          <span>Conexion oficial por API para numeros, alertas y plantillas.</span>
         </div>
-      </div>
+        {apiConnected ? (
+          <div className={styles.headerActions} role="group" aria-label="Secciones de WhatsApp">
+            <button
+              type="button"
+              className={`${styles.headerActionButton} ${activeSection === 'numbers' ? styles.headerActionActive : ''}`}
+              onClick={() => setActiveSection('numbers')}
+            >
+              <SiWhatsapp size={15} />
+              Numeros
+            </button>
+            <button
+              type="button"
+              className={`${styles.headerActionButton} ${activeSection === 'templates' ? styles.headerActionActive : ''}`}
+              onClick={() => setActiveSection('templates')}
+            >
+              <FileText size={15} />
+              Plantillas
+            </button>
+            <button
+              type="button"
+              className={`${styles.headerActionButton} ${activeSection === 'alerts' ? styles.headerActionActive : ''}`}
+              onClick={() => setActiveSection('alerts')}
+            >
+              <AlertTriangle size={15} />
+              Alertas
+              {connectionAlertGroups.length > 0 && <b>{connectionAlertGroups.length}</b>}
+            </button>
+          </div>
+        ) : (
+          <a className={styles.headerActionButton} href={YCLOUD_REGISTER_URL} target="_blank" rel="noopener noreferrer">
+            <ExternalLink size={15} />
+            Abrir WhatsApp API
+          </a>
+        )}
+      </header>
 
       <div className={styles.stage}>
-        {activeSection === 'connection' ? renderConnectionStage() : renderTemplatesStage()}
+        {!apiConnected ? renderConnectStage() : activeSection === 'templates' ? renderTemplatesStage() : activeSection === 'alerts' ? renderAlertsStage() : renderNumbersStage()}
       </div>
 
       <Modal
