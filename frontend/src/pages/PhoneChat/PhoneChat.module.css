@@ -2116,6 +2116,12 @@
     var(--phone-chat-conversation-bg);
 }
 
+.messagesContent {
+  display: flow-root;
+  min-height: 100%;
+  overflow-anchor: none;
+}
+
 .messageDayGroup {
   position: relative;
   display: flex;
