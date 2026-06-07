@@ -85,7 +85,7 @@
 }
 
 .dock[data-swipe-dragging='true'] .activeIndicator {
-  transition-duration: 140ms;
+  transition: none;
 }
 
 .dock a *,
