@@ -7911,6 +7911,9 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
   const [menuPageId, setMenuPageId] = useState<string | null>(null)
   const dropdownRef = useRef<HTMLDivElement | null>(null)
   const activePage = pages.find(page => page.id === activePageId) || pages[0] || null
+  const hasFixedPageSection = colorFinalPages
+  const movablePages = hasFixedPageSection ? pages.filter(page => !isFixedPage(page)) : pages
+  const fixedPages = hasFixedPageSection ? pages.filter(isFixedPage) : []
 
   useEffect(() => {
     if (!open) return
@@ -7953,7 +7956,7 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
 
   const handlePageDragStart = (event: DragStartEvent) => {
     const pageId = String(event.active.id)
-    const page = pages.find(item => item.id === pageId)
+    const page = movablePages.find(item => item.id === pageId)
     if (!page || locked || isFixedPage(page)) return
     setMenuPageId(null)
     onDragPage(pageId)
@@ -7964,6 +7967,7 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
     const targetPageId = event.over?.id ? String(event.over.id) : ''
     onDragPage(null)
     if (!targetPageId || sourcePageId === targetPageId) return
+    if (hasFixedPageSection && fixedPages.some(page => page.id === targetPageId)) return
     onReorderPages(sourcePageId, targetPageId)
   }
 
@@ -7996,9 +8000,9 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
             onDragEnd={handlePageDragEnd}
             onDragCancel={() => onDragPage(null)}
           >
-            <SortableContext items={pages.map(page => page.id)} strategy={verticalListSortingStrategy}>
+            <SortableContext items={movablePages.map(page => page.id)} strategy={verticalListSortingStrategy}>
               <div className={styles.pagesDropdownList}>
-                {pages.map((page, index) => {
+                {movablePages.map((page, index) => {
                   const fixedPage = isFixedPage(page)
                   const pageCanDelete = !locked && canDeletePage(page)
                   const pageCanDuplicate = !locked && canDuplicatePage(page)
@@ -8051,6 +8055,36 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
               </div>
             </SortableContext>
           </DndContext>
+
+          {fixedPages.length > 0 && (
+            <div className={styles.pagesDropdownFixedSection} aria-label="Paginas de resultado del formulario">
+              <div className={styles.pagesDropdownFixedHeader}>
+                <span>Resultado del formulario</span>
+                <strong>Orden fijo</strong>
+              </div>
+              <div className={styles.pagesDropdownList}>
+                {fixedPages.map((page, index) => {
+                  const pageToneClass = page.id === FORM_THANK_YOU_PAGE_ID
+                    ? styles.pagesDropdownItemThankYou
+                    : page.id === FORM_DISQUALIFIED_PAGE_ID
+                      ? styles.pagesDropdownItemDisqualified
+                      : ''
+
+                  return (
+                    <FunnelFixedPageDropdownItem
+                      key={page.id}
+                      page={page}
+                      index={movablePages.length + index}
+                      active={activePageId === page.id}
+                      locked={locked}
+                      pageToneClass={pageToneClass}
+                      onSelect={() => handleSelectPage(page.id)}
+                    />
+                  )
+                })}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -8199,6 +8233,38 @@ const FunnelPageDropdownItem: React.FC<FunnelPageDropdownItemProps> = ({
             )}
           </div>
         )}
+      </div>
+    </div>
+  )
+}
+
+interface FunnelFixedPageDropdownItemProps {
+  page: SitePage
+  index: number
+  active: boolean
+  locked: boolean
+  pageToneClass: string
+  onSelect: () => void
+}
+
+const FunnelFixedPageDropdownItem: React.FC<FunnelFixedPageDropdownItemProps> = ({
+  page,
+  index,
+  active,
+  locked,
+  pageToneClass,
+  onSelect
+}) => {
+  const title = page.title || `Pagina ${index + 1}`
+
+  return (
+    <div className={styles.pagesDropdownItemWrap}>
+      <div
+        className={`${styles.pagesDropdownItem} ${styles.pagesDropdownItemFixed} ${styles.pagesDropdownItemFixedResult} ${pageToneClass} ${locked ? styles.pagesDropdownItemLocked : ''} ${active ? styles.pagesDropdownItemActive : ''}`}
+      >
+        <button type="button" className={styles.pagesDropdownSelectButton} onClick={onSelect}>
+          <span className={styles.pagesDropdownTitleText}>{title}</span>
+        </button>
       </div>
     </div>
   )

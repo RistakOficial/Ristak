@@ -9702,6 +9702,52 @@
   grid-template-columns: 44px minmax(0, 1fr);
 }
 
+.pagesDropdownFixedSection {
+  width: 100%;
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid color-mix(in srgb, var(--color-border-subtle, rgba(148, 163, 184, 0.24)) 88%, transparent);
+}
+
+.pagesDropdownFixedHeader {
+  min-height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 2px;
+}
+
+.pagesDropdownFixedHeader span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  font-size: 0.82rem;
+  font-weight: var(--font-weight-semibold, 600);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pagesDropdownFixedHeader strong {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-background-tertiary) 86%, var(--color-primary) 14%);
+  color: var(--color-text-secondary);
+  padding: 5px 9px;
+  font-size: 0.72rem;
+  font-weight: var(--font-weight-semibold, 600);
+}
+
+.pagesDropdownItemFixedResult {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.pagesDropdownItemFixedResult .pagesDropdownSelectButton {
+  padding: 0 8px;
+}
+
 .pagesDropdownItemThankYou {
   border-color: color-mix(in srgb, #60a5fa 34%, var(--color-border-subtle, rgba(148, 163, 184, 0.22)) 66%);
   background: color-mix(in srgb, #60a5fa 16%, var(--color-background-primary) 84%);
