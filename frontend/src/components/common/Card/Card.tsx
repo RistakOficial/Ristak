@@ -18,8 +18,8 @@ const paddingClasses: Record<CardPadding, string> = {
 }
 
 const variantClasses: Record<CardVariant, string> = {
-  default: 'bg-[color-mix(in_srgb,var(--color-background-secondary) 92%, rgba(15,23,42,0.04))] border border-[rgba(148,163,184,0.18)] dark:shadow-[0_18px_45px_-28px_rgba(15,23,42,0.65)]',
-  glass: 'glass border border-[rgba(148,163,184,0.18)] dark:shadow-[0_18px_45px_-28px_rgba(15,23,42,0.65)] backdrop-blur-xl'
+  default: 'bg-[var(--design-panel-bg)] border border-[var(--design-panel-border)] shadow-none',
+  glass: 'bg-[var(--design-panel-bg)] border border-[var(--design-panel-border)] shadow-none backdrop-blur-xl'
 }
 
 export const Card: React.FC<CardProps> = ({

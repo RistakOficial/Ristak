@@ -12096,3 +12096,250 @@
   overflow-y: scroll;
   scrollbar-gutter: stable;
 }
+
+/* Desktop editor design congruence: flat sections, consistent controls. */
+.pageFrame .containerFocused {
+  --sites-editor-card-bg: transparent;
+  --sites-editor-control-bg: var(--design-control-bg, var(--color-background-primary));
+  --sites-editor-hover-bg: var(--design-control-bg-hover, rgba(148, 163, 184, 0.1));
+  --sites-editor-border: var(--design-control-border, rgba(203, 213, 225, 0.86));
+  --sites-editor-border-strong: var(--design-control-border-hover, rgba(148, 163, 184, 0.58));
+  --sites-editor-section-border: var(--design-section-border, rgba(203, 213, 225, 0.68));
+  --sites-editor-focus-shadow: var(--design-control-focus-shadow, 0 0 0 3px rgba(var(--color-primary-rgb), 0.12));
+}
+
+.pageFrame .containerFocused .sitesShellFocused .propertiesPanel {
+  background: var(--design-panel-bg, var(--color-background-secondary));
+}
+
+.pageFrame .containerFocused .sitesShellFocused .propertiesBody {
+  gap: 0;
+  padding: 14px 12px 24px;
+}
+
+.pageFrame .containerFocused .sitesShellFocused .propertiesBody > :is(
+  .settingsGroup,
+  .blockStyleControls,
+  .formGlobalControls,
+  .customFieldBinding,
+  .optionRules,
+  .propertiesActions
+) {
+  margin-top: 16px;
+  border-top: 1px solid var(--sites-editor-section-border);
+  padding-top: 16px;
+}
+
+.pageFrame .containerFocused .sitesShellFocused .propertiesBody > :first-child:is(
+  .settingsGroup,
+  .blockStyleControls,
+  .formGlobalControls,
+  .customFieldBinding,
+  .optionRules,
+  .propertiesActions
+) {
+  margin-top: 0;
+  border-top: 0;
+  padding-top: 0;
+}
+
+.pageFrame .containerFocused .sitesShellFocused .propertiesBody > .field + .field,
+.pageFrame .containerFocused .sitesShellFocused .propertiesBody > .field + .twoColumn,
+.pageFrame .containerFocused .sitesShellFocused .propertiesBody > .twoColumn + .field {
+  margin-top: 12px;
+}
+
+.pageFrame .containerFocused .sitesShellFocused :is(
+  .settingsGroup,
+  .blockStyleControls,
+  .formGlobalControls,
+  .textFormatPanel,
+  .customFieldBinding,
+  .optionRules,
+  .spacingControl,
+  .spacingBox,
+  .popupDetectedCard
+) {
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+}
+
+.pageFrame .containerFocused .sitesShellFocused :is(
+  .settingsGroup,
+  .blockStyleControls,
+  .formGlobalControls,
+  .textFormatPanel,
+  .customFieldBinding,
+  .optionRules,
+  .spacingControl
+) {
+  display: grid;
+  gap: 12px;
+}
+
+.pageFrame .containerFocused .sitesShellFocused .optionRuleCard {
+  border: 1px solid var(--sites-editor-section-border);
+  border-radius: var(--design-control-radius, 8px);
+  background: color-mix(in srgb, var(--design-panel-bg, #ffffff) 82%, var(--color-background-tertiary) 18%);
+  box-shadow: none;
+  padding: 12px;
+}
+
+.pageFrame .containerFocused .sitesShellFocused .propertiesBody .panelSubheader {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 18px;
+  margin: 0;
+  border-bottom: 0;
+  color: var(--design-section-title, var(--color-text-tertiary));
+  padding: 0;
+  font-size: 0.68rem;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.pageFrame .containerFocused .sitesShellFocused .propertiesBody .panelSubheader::after {
+  content: "";
+  min-width: 18px;
+  height: 1px;
+  flex: 1 1 auto;
+  background: var(--sites-editor-section-border);
+}
+
+.pageFrame .containerFocused .sitesShellFocused :is(
+  .settingsGroup,
+  .blockStyleControls,
+  .formGlobalControls,
+  .customFieldBinding
+) > .panelSubheader:not(:first-child) {
+  margin-top: 8px;
+}
+
+.pageFrame .containerFocused .sitesShellFocused :is(
+  .field span,
+  .inlineField span,
+  .compactField span,
+  .dimensionField > span,
+  .colorField > span,
+  .colorFieldHeader > span,
+  .alignmentControl > span,
+  .textFontSelect span,
+  .spacingHeader > span,
+  .spacingBox > span,
+  .metaCardField > span
+) {
+  color: var(--color-text-secondary);
+  font-size: 0.74rem;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.pageFrame .containerFocused .sitesShellFocused :is(.field, .inlineField, .compactField, .dimensionField, .colorField, .alignmentControl, .spacingControl) {
+  gap: 7px;
+}
+
+.pageFrame .containerFocused .sitesShellFocused :is(.twoColumn, .spacingGrid) {
+  gap: 10px;
+}
+
+.pageFrame .containerFocused .sitesShellFocused :is(
+  .field input,
+  .field textarea,
+  .inlineField input,
+  .compactField input,
+  .dimensionBox,
+  .colorRow,
+  .spacingBox > div,
+  .alignmentControl > div,
+  .textFormatButtons,
+  [data-ristak-dropdown-trigger]
+) {
+  border: 1px solid var(--sites-editor-border) !important;
+  border-radius: var(--design-control-radius, 8px) !important;
+  background: var(--sites-editor-control-bg) !important;
+  box-shadow: none !important;
+}
+
+.pageFrame .containerFocused .sitesShellFocused :is(
+  .field input,
+  .inlineField input,
+  .compactField input,
+  .dimensionBox,
+  .colorRow,
+  .spacingBox > div,
+  [data-ristak-dropdown-trigger]
+) {
+  min-height: var(--design-control-height, 40px);
+}
+
+.pageFrame .containerFocused .sitesShellFocused .field textarea {
+  min-height: 92px;
+  padding: 10px 12px;
+}
+
+.pageFrame .containerFocused .sitesShellFocused :is(
+  .field input,
+  .field textarea,
+  .inlineField input,
+  .compactField input
+) {
+  padding-inline: 12px;
+}
+
+.pageFrame .containerFocused .sitesShellFocused :is(.dimensionBox, .colorRow, .spacingBox > div) {
+  padding-inline: 10px;
+}
+
+.pageFrame .containerFocused .sitesShellFocused :is(
+  .field input,
+  .field textarea,
+  .inlineField input,
+  .compactField input,
+  .dimensionBox,
+  .colorRow,
+  .spacingBox > div,
+  .alignmentControl > div,
+  .textFormatButtons,
+  [data-ristak-dropdown-trigger]
+):hover {
+  border-color: var(--sites-editor-border-strong) !important;
+  background: var(--sites-editor-control-bg) !important;
+}
+
+.pageFrame .containerFocused .sitesShellFocused :is(
+  .field input,
+  .field textarea,
+  .inlineField input,
+  .compactField input,
+  [data-ristak-dropdown-trigger]
+):focus,
+.pageFrame .containerFocused .sitesShellFocused :is(
+  .dimensionBox,
+  .colorRow,
+  .spacingBox > div,
+  .alignmentControl > div,
+  .textFormatButtons
+):focus-within {
+  border-color: var(--design-control-border-focus, rgba(var(--color-primary-rgb), 0.42)) !important;
+  box-shadow: var(--sites-editor-focus-shadow) !important;
+}
+
+.pageFrame .containerFocused .sitesShellFocused :is(.alignmentControl button, .textFormatButtons button) {
+  border-radius: calc(var(--design-control-radius, 8px) - 2px);
+}
+
+.pageFrame .containerFocused .sitesShellFocused :is(.alignmentActive, .textFormatActive, .spacingLinkButtonActive) {
+  background: rgba(var(--color-primary-rgb), 0.12) !important;
+  color: var(--color-primary) !important;
+}
+
+.pageFrame .containerFocused .sitesShellFocused .spacingHeader {
+  align-items: center;
+}

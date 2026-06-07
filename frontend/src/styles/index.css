@@ -304,19 +304,57 @@ body.dark {
     --color-info-light: rgba(var(--color-primary-rgb), 0.22);
     --color-info-dark: #2563eb;
 
-    --ristak-dropdown-trigger-height: 38px;
-    --ristak-dropdown-radius: 0.5rem;
-    --ristak-dropdown-bg: var(--color-background-secondary);
-    --ristak-dropdown-bg-hover: var(--color-background-tertiary);
-    --ristak-dropdown-border: var(--color-border-subtle);
-    --ristak-dropdown-border-hover: rgba(148, 163, 184, 0.28);
-    --ristak-dropdown-border-focus: rgba(148, 163, 184, 0.34);
-    --ristak-dropdown-ring: none;
+    --design-control-height: 40px;
+    --design-control-radius: var(--radius-md);
+    --design-control-bg: color-mix(in srgb, var(--color-background-secondary) 88%, var(--color-background-primary) 12%);
+    --design-control-bg-hover: color-mix(in srgb, var(--design-control-bg) 92%, var(--color-primary) 8%);
+    --design-control-border: var(--color-border-subtle);
+    --design-control-border-hover: rgba(148, 163, 184, 0.34);
+    --design-control-border-focus: rgba(var(--color-primary-rgb), 0.42);
+    --design-control-text: var(--color-text-primary);
+    --design-control-muted: var(--color-text-tertiary);
+    --design-control-padding-x: 12px;
+    --design-control-shadow: none;
+    --design-control-focus-shadow: 0 0 0 3px rgba(var(--color-primary-rgb), 0.12);
+    --design-panel-bg: var(--color-background-secondary);
+    --design-panel-border: var(--color-border-subtle);
+    --design-section-border: rgba(148, 163, 184, 0.16);
+    --design-section-bg: transparent;
+    --design-section-title: var(--color-text-tertiary);
+    --design-section-radius: 0;
+
+    --ristak-dropdown-trigger-height: var(--design-control-height);
+    --ristak-dropdown-radius: var(--design-control-radius);
+    --ristak-dropdown-bg: var(--design-control-bg);
+    --ristak-dropdown-bg-hover: var(--design-control-bg-hover);
+    --ristak-dropdown-border: var(--design-control-border);
+    --ristak-dropdown-border-hover: var(--design-control-border-hover);
+    --ristak-dropdown-border-focus: var(--design-control-border-focus);
+    --ristak-dropdown-ring: var(--design-control-focus-shadow);
     --ristak-dropdown-panel-shadow: 0 18px 46px -30px rgba(15, 23, 42, 0.46);
-    --ristak-focus-border: rgba(148, 163, 184, 0.38);
-    --ristak-focus-ring: 0 0 0 3px rgba(148, 163, 184, 0.12);
+    --ristak-focus-border: var(--design-control-border-focus);
+    --ristak-focus-ring: var(--design-control-focus-shadow);
     --ristak-focus-ring-strong: 0 0 0 3px rgba(var(--color-primary-rgb), 0.16);
   }
+}
+
+body.light {
+  --design-control-bg: #ffffff;
+  --design-control-bg-hover: #ffffff;
+  --design-control-border: rgba(203, 213, 225, 0.86);
+  --design-control-border-hover: rgba(148, 163, 184, 0.58);
+  --design-control-border-focus: rgba(var(--color-primary-rgb), 0.42);
+  --design-panel-bg: #ffffff;
+  --design-section-border: rgba(203, 213, 225, 0.68);
+}
+
+body.dark {
+  --design-control-bg: color-mix(in srgb, var(--color-background-secondary) 90%, #ffffff 3%);
+  --design-control-bg-hover: color-mix(in srgb, var(--color-background-secondary) 82%, #ffffff 7%);
+  --design-control-border: rgba(148, 163, 184, 0.22);
+  --design-control-border-hover: rgba(148, 163, 184, 0.34);
+  --design-panel-bg: var(--color-background-secondary);
+  --design-section-border: rgba(148, 163, 184, 0.16);
 }
 
 body:not([data-phone-app='active']) :where(select):not(:where(.rstkCanvas select, .rstk-block-style select, .rstk-phone-input select)) {
@@ -356,6 +394,101 @@ body:not([data-phone-app='active']) :where(select):not(:where(.rstkCanvas select
 body:not([data-phone-app='active']) :where(select):not(:where(.rstkCanvas select, .rstk-block-style select, .rstk-phone-input select)):disabled {
   cursor: not-allowed !important;
   opacity: 0.55 !important;
+}
+
+body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) :where(
+  input:not([type]),
+  input[type='text'],
+  input[type='email'],
+  input[type='password'],
+  input[type='number'],
+  input[type='tel'],
+  input[type='url'],
+  input[type='search'],
+  input[type='date'],
+  input[type='time'],
+  input[type='datetime-local'],
+  input[type='month'],
+  input[type='week'],
+  textarea
+):not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *, [data-ristak-unstyled], [data-ristak-unstyled] *)) {
+  width: 100%;
+  min-height: var(--design-control-height);
+  border: 1px solid var(--design-control-border);
+  border-radius: var(--design-control-radius);
+  background-color: var(--design-control-bg);
+  color: var(--design-control-text);
+  box-shadow: var(--design-control-shadow);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.25rem;
+  outline: none;
+  transition: border-color var(--transition-fast), background-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) :where(
+  input:not([type]),
+  input[type='text'],
+  input[type='email'],
+  input[type='password'],
+  input[type='number'],
+  input[type='tel'],
+  input[type='url'],
+  input[type='search'],
+  input[type='date'],
+  input[type='time'],
+  input[type='datetime-local'],
+  input[type='month'],
+  input[type='week']
+):not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *, [data-ristak-unstyled], [data-ristak-unstyled] *)) {
+  padding: 0 var(--design-control-padding-x);
+}
+
+body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) :where(textarea):not(:where(.rstkCanvas *, .rstk-block-style *, [data-ristak-unstyled], [data-ristak-unstyled] *)) {
+  min-height: 92px;
+  padding: 10px var(--design-control-padding-x);
+  resize: vertical;
+}
+
+body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) :where(
+  input:not([type]),
+  input[type='text'],
+  input[type='email'],
+  input[type='password'],
+  input[type='number'],
+  input[type='tel'],
+  input[type='url'],
+  input[type='search'],
+  input[type='date'],
+  input[type='time'],
+  input[type='datetime-local'],
+  input[type='month'],
+  input[type='week'],
+  textarea
+):not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *, [data-ristak-unstyled], [data-ristak-unstyled] *)):hover:not(:disabled):not([readonly]) {
+  border-color: var(--design-control-border-hover);
+  background-color: var(--design-control-bg-hover);
+}
+
+body:not([data-phone-app='active']):not([data-phone-chat-theme='active']) :where(
+  input:not([type]),
+  input[type='text'],
+  input[type='email'],
+  input[type='password'],
+  input[type='number'],
+  input[type='tel'],
+  input[type='url'],
+  input[type='search'],
+  input[type='date'],
+  input[type='time'],
+  input[type='datetime-local'],
+  input[type='month'],
+  input[type='week'],
+  textarea
+):not(:where(.rstkCanvas *, .rstk-block-style *, .rstk-phone-input *, [data-ristak-unstyled], [data-ristak-unstyled] *)):focus {
+  border-color: var(--design-control-border-focus);
+  background-color: var(--design-control-bg);
+  box-shadow: var(--design-control-focus-shadow);
 }
 
 body:not([data-phone-app='active']) [data-ristak-dropdown-trigger] {
