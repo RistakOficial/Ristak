@@ -31,13 +31,20 @@ export interface HighLevelConversationMessageResponse {
     messageId?: string
     conversationId?: string
     channel?: HighLevelChatChannel
+    requestedChannel?: HighLevelChatChannel
     channelLabel?: string
+    requestedChannelLabel?: string
     type?: string
     transport?: string
     status?: string
     contactId?: string
     highLevelContactId?: string
     localMessageId?: string
+    fallbackApplied?: boolean
+    fallbackReason?: string | null
+    replyWindowOpen?: boolean | null
+    replyWindowSource?: string | null
+    lastInboundAt?: string | null
     audio?: {
       link?: string
       url?: string
@@ -55,13 +62,20 @@ export interface HighLevelConversationMessageResponse {
   messageId?: string
   conversationId?: string
   channel?: HighLevelChatChannel
+  requestedChannel?: HighLevelChatChannel
   channelLabel?: string
+  requestedChannelLabel?: string
   type?: string
   transport?: string
   status?: string
   contactId?: string
   highLevelContactId?: string
   localMessageId?: string
+  fallbackApplied?: boolean
+  fallbackReason?: string | null
+  replyWindowOpen?: boolean | null
+  replyWindowSource?: string | null
+  lastInboundAt?: string | null
   audio?: {
     link?: string
     url?: string

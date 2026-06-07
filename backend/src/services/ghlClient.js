@@ -222,6 +222,35 @@ class GHLClient {
     })
   }
 
+  async exportConversationMessages(options = {}) {
+    const {
+      contactId,
+      conversationId,
+      channel,
+      startDate,
+      endDate,
+      limit = 100,
+      sortBy = 'createdAt',
+      sortOrder = 'desc'
+    } = options
+
+    return this.request('/conversations/messages/export', {
+      method: 'GET',
+      version: GHL_CONVERSATIONS_API_VERSION,
+      params: {
+        locationId: this.locationId,
+        limit,
+        sortBy,
+        sortOrder,
+        ...(contactId && { contactId }),
+        ...(conversationId && { conversationId }),
+        ...(channel && { channel }),
+        ...(startDate && { startDate }),
+        ...(endDate && { endDate })
+      }
+    })
+  }
+
   async getConversationMessage(messageId) {
     const cleanMessageId = cleanString(messageId)
     if (!cleanMessageId) {

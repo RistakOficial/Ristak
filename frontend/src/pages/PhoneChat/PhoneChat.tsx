@@ -241,13 +241,13 @@ const GHL_CHAT_CHANNEL_OPTIONS: Array<{
   hint: string
 }> = [
   { id: 'whatsapp_api', label: 'WhatsApp API', hint: 'Sale por WhatsApp oficial de HighLevel.' },
-  { id: 'sms_qr', label: 'SMS/QR', hint: 'Usa el canal SMS conectado como respaldo QR.' },
+  { id: 'sms_qr', label: 'SMS', hint: 'Usa el SMS conectado en GoHighLevel.' },
   { id: 'messenger', label: 'Messenger', hint: 'Responde al chat de Facebook.' },
   { id: 'instagram', label: 'Instagram', hint: 'Responde al DM de Instagram.' }
 ]
 const GHL_CHAT_CHANNEL_LABELS: Record<HighLevelChatChannel, string> = {
   whatsapp_api: 'WhatsApp API',
-  sms_qr: 'SMS/QR',
+  sms_qr: 'SMS',
   messenger: 'Messenger',
   instagram: 'Instagram'
 }
@@ -1970,6 +1970,26 @@ function isInsideReplyWindow(date?: string | null) {
   return Date.now() - timestamp < 24 * 60 * 60 * 1000
 }
 
+function getNewestMessageByDate(messagesToSearch: ChatMessage[]) {
+  return [...messagesToSearch]
+    .sort((left, right) => {
+      const rightDate = Date.parse(right.date)
+      const leftDate = Date.parse(left.date)
+      return (Number.isFinite(rightDate) ? rightDate : 0) - (Number.isFinite(leftDate) ? leftDate : 0)
+    })[0] || null
+}
+
+function messageCanOpenWhatsAppReplyWindow(message: ChatMessage) {
+  if (message.direction !== 'inbound') return false
+
+  const normalizedChannel = normalizeGhlChatChannelValue(message.transport || '')
+  if (normalizedChannel === 'whatsapp_api') return true
+  if (normalizedChannel === 'sms_qr' || normalizedChannel === 'messenger' || normalizedChannel === 'instagram') return false
+
+  const transport = String(message.transport || '').trim().toLowerCase()
+  return !transport || ['api', 'qr', 'whatsapp', 'whatsapp_qr', 'baileys', 'bailey'].includes(transport)
+}
+
 function toPaymentContact(contact: Contact | null) {
   if (!contact) return null
   return {
@@ -2610,7 +2630,11 @@ export const PhoneChat: React.FC = () => {
       })
       .sort((left, right) => Date.parse(right.date) - Date.parse(left.date))[0] || null
   }, [messages, selectedBusinessPhoneValue])
+  const lastInboundWhatsAppReplyWindowMessage = useMemo(() => (
+    getNewestMessageByDate(messages.filter(messageCanOpenWhatsAppReplyWindow))
+  ), [messages])
   const apiReplyWindowOpen = isInsideReplyWindow(lastInboundForSelectedPhone?.date)
+  const highLevelWhatsAppReplyWindowOpen = isInsideReplyWindow(lastInboundWhatsAppReplyWindowMessage?.date)
   const selectedQrReady = isBusinessPhoneQrReady(selectedBusinessPhone)
   const outsideReplyWindow = Boolean(activeContact?.phone && !apiReplyWindowOpen)
   const inferredHighLevelChatChannel = useMemo(() => inferHighLevelChatChannel(activeContact, messages), [activeContact, messages])
@@ -2619,8 +2643,10 @@ export const PhoneChat: React.FC = () => {
     ? inferredHighLevelChatChannel
     : ''
   const activeHighLevelChatChannel = activeContactHighLevelChannelOverride || inferredSocialHighLevelChannel || selectedHighLevelChatChannel
-  const activeHighLevelChannelNeedsPhone = activeHighLevelChatChannel === 'whatsapp_api' || activeHighLevelChatChannel === 'sms_qr'
   const sendingThroughHighLevel = Boolean(highLevelConnected && activeContact)
+  const highLevelWhatsAppFallsBackToSms = Boolean(sendingThroughHighLevel && activeHighLevelChatChannel === 'whatsapp_api' && activeContact?.phone && !highLevelWhatsAppReplyWindowOpen)
+  const effectiveHighLevelChatChannel: HighLevelChatChannel = highLevelWhatsAppFallsBackToSms ? 'sms_qr' : activeHighLevelChatChannel
+  const activeHighLevelChannelNeedsPhone = effectiveHighLevelChatChannel === 'whatsapp_api' || effectiveHighLevelChatChannel === 'sms_qr'
   const selectedChannelCanSend = sendingThroughHighLevel
     ? Boolean(activeContact?.id && (!activeHighLevelChannelNeedsPhone || activeContact.phone))
     : Boolean(activeContact?.phone)
@@ -4778,8 +4804,10 @@ export const PhoneChat: React.FC = () => {
     if (!activeContact || (!text && attachmentsToSend.length === 0 && !voiceToSend)) return
 
     if (sendingThroughHighLevel) {
-      const channel = activeHighLevelChatChannel
-      const channelLabel = GHL_CHAT_CHANNEL_LABELS[channel]
+      const requestedChannel = activeHighLevelChatChannel
+      const optimisticChannel = effectiveHighLevelChatChannel
+      const channelLabel = GHL_CHAT_CHANNEL_LABELS[optimisticChannel]
+      const autoSmsFallback = requestedChannel === 'whatsapp_api' && optimisticChannel === 'sms_qr'
 
       if (!text && !voiceToSend) {
         showToast('warning', 'Escribe o graba algo', 'Manda texto o una nota de voz desde este chat.')
@@ -4791,18 +4819,18 @@ export const PhoneChat: React.FC = () => {
         return
       }
 
-      if ((channel === 'whatsapp_api' || channel === 'sms_qr') && !activeContact.phone) {
+      if ((optimisticChannel === 'whatsapp_api' || optimisticChannel === 'sms_qr') && !activeContact.phone) {
         showToast('error', 'Falta el teléfono', 'Guarda el número del contacto antes de escribir por este canal.')
         return
       }
 
       const optimisticId = `local-ghl-${Date.now()}`
       const sentAt = new Date().toISOString()
-      const transportLabel = channel === 'whatsapp_api'
+      const transportLabel = optimisticChannel === 'whatsapp_api'
         ? 'ghl_whatsapp'
-        : channel === 'sms_qr'
+        : optimisticChannel === 'sms_qr'
           ? 'ghl_sms'
-          : channel === 'messenger'
+          : optimisticChannel === 'messenger'
             ? 'ghl_messenger'
             : 'ghl_instagram'
 
@@ -4848,7 +4876,7 @@ export const PhoneChat: React.FC = () => {
               lastMessageText: voiceToSend ? 'Mensaje de voz' : text,
               lastMessageDate: sentAt,
               lastMessageDirection: 'outbound',
-              lastMessageChannel: channel,
+              lastMessageChannel: optimisticChannel,
               messageCount: Number(contact.messageCount || 0) + 1
             }
           : contact
@@ -4857,7 +4885,7 @@ export const PhoneChat: React.FC = () => {
       try {
         const result = await highLevelService.sendConversationMessage({
           contactId: activeContact.id,
-          channel,
+          channel: requestedChannel,
           message: text,
           audioDataUrl: voiceToSend?.dataUrl,
           durationMs: voiceToSend?.durationMs,
@@ -4868,6 +4896,9 @@ export const PhoneChat: React.FC = () => {
         const resultData = result.data || result
         const resultStatus = String(resultData.status || '').trim() || 'pending'
         const resultDelivered = ['sent', 'delivered', 'read'].includes(resultStatus.toLowerCase())
+        const resultFallbackApplied = typeof resultData.fallbackApplied === 'boolean'
+          ? resultData.fallbackApplied
+          : Boolean(autoSmsFallback || (resultData.requestedChannel === 'whatsapp_api' && resultData.channel === 'sms_qr'))
         const responseAudioUrl = resultData.audio?.link || resultData.audio?.url || resultData.localMedia?.publicUrl || ''
         const responseAudioMimeType = resultData.audio?.mimeType || resultData.localMedia?.mimeType || ''
         const responseAudioDurationMs = Number(resultData.audio?.durationMs || 0) || voiceToSend?.durationMs
@@ -4891,8 +4922,10 @@ export const PhoneChat: React.FC = () => {
         )))
         showToast(
           'success',
-          resultDelivered ? 'Mensaje enviado' : 'Mensaje en cola',
-          `${resultDelivered ? 'Se envió' : 'HighLevel lo recibió'} por ${resultData.channelLabel || channelLabel}.`
+          resultFallbackApplied ? 'Se mandó por SMS' : resultDelivered ? 'Mensaje enviado' : 'Mensaje en cola',
+          resultFallbackApplied
+            ? 'WhatsApp ya estaba fuera de 24 horas, así que Ristak usó el SMS de GoHighLevel.'
+            : `${resultDelivered ? 'Se envió' : 'HighLevel lo recibió'} por ${resultData.channelLabel || channelLabel}.`
         )
         await loadConversation(activeContact.id, { silent: true, useCache: false })
         await loadChats({ silent: true, useCache: false })
@@ -6581,6 +6614,7 @@ export const PhoneChat: React.FC = () => {
 
     if (sendingThroughHighLevel) {
       const activeOption = GHL_CHAT_CHANNEL_OPTIONS.find((option) => option.id === activeHighLevelChatChannel)
+      const effectiveOption = GHL_CHAT_CHANNEL_OPTIONS.find((option) => option.id === effectiveHighLevelChatChannel)
 
       return (
         <div className={styles.senderBar}>
@@ -6605,7 +6639,9 @@ export const PhoneChat: React.FC = () => {
             </select>
           </label>
           <span className={styles.senderChannelHint}>
-            {activeOption?.hint || 'Sale por la cuenta conectada.'}
+            {highLevelWhatsAppFallsBackToSms
+              ? 'Fuera de 24 h: se mandará por SMS de GoHighLevel.'
+              : effectiveOption?.hint || activeOption?.hint || 'Sale por la cuenta conectada.'}
           </span>
         </div>
       )
