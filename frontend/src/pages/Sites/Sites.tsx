@@ -5948,6 +5948,16 @@ const importedFormFieldSelector = [
   '[data-ristack-edit-type="form_field"]'
 ].join(', ')
 
+const importedEditorNoAutocompleteAttrs = {
+  autoComplete: 'off',
+  autoCorrect: 'off',
+  autoCapitalize: 'off',
+  spellCheck: false,
+  'data-lpignore': 'true',
+  'data-1p-ignore': 'true',
+  'data-form-type': 'other'
+} as const
+
 const importedButtonActionOptions: Array<{ value: ImportedButtonAction; label: string; demo?: boolean }> = [
   { value: 'submit', label: 'Enviar formulario' },
   { value: 'next_page', label: 'Ir a la siguiente página' },
@@ -6623,6 +6633,8 @@ const ImportedActionChainEditor: React.FC<{
                 value={step.buttonUrl || ''}
                 placeholder="https://..."
                 disabled={disabled}
+                name={`rstk-imported-action-url-${index}`}
+                {...importedEditorNoAutocompleteAttrs}
                 onChange={(event) => setAction(index, { buttonUrl: event.target.value })}
               />
             </label>
@@ -6653,6 +6665,8 @@ const ImportedActionChainEditor: React.FC<{
                   value={step.buttonMessage || ''}
                   placeholder="Gracias. Por ahora esta solicitud no califica."
                   disabled={disabled}
+                  name={`rstk-imported-action-message-${index}`}
+                  {...importedEditorNoAutocompleteAttrs}
                   onChange={(event) => setAction(index, { buttonMessage: event.target.value })}
                 />
               </label>
@@ -6679,6 +6693,8 @@ const ImportedActionChainEditor: React.FC<{
                 value={step.automationName || ''}
                 placeholder="Nombre de automatización"
                 disabled={disabled}
+                name={`rstk-imported-action-automation-${index}`}
+                {...importedEditorNoAutocompleteAttrs}
                 onChange={(event) => setAction(index, { automationName: event.target.value })}
               />
             </label>
@@ -7071,14 +7087,20 @@ const ImportedHtmlEditorPanel: React.FC<{
           align-items: center !important;
           gap: 7px !important;
           min-height: 34px !important;
-          border: 1px solid rgba(21, 128, 61, 0.22) !important;
+          border: 1px solid rgba(148, 163, 184, 0.24) !important;
           border-radius: 8px !important;
-          background: #ffffff !important;
-          color: #166534 !important;
+          background: rgba(15, 17, 23, 0.96) !important;
+          color: #f8fafc !important;
           padding: 0 11px !important;
           font: 800 13px/1 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
-          box-shadow: 0 14px 36px rgba(15, 23, 42, 0.22) !important;
+          box-shadow: 0 18px 46px rgba(0, 0, 0, 0.44) !important;
           cursor: pointer !important;
+          color-scheme: dark !important;
+        }
+        .rstk-imported-image-action:hover {
+          border-color: rgba(34, 197, 94, 0.48) !important;
+          background: rgba(22, 24, 31, 0.98) !important;
+          color: #bbf7d0 !important;
         }
         body.rstk-imported-region-selecting,
         body.rstk-imported-region-selecting * {
@@ -7109,6 +7131,16 @@ const ImportedHtmlEditorPanel: React.FC<{
       let mediaActionButton: HTMLButtonElement | null = null
       let regionBox: HTMLDivElement | null = null
       let removeRegionDragHandlers = () => {}
+
+      Array.from(doc.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>('input, textarea, select')).forEach(control => {
+        control.setAttribute('autocomplete', 'off')
+        control.setAttribute('autocorrect', 'off')
+        control.setAttribute('autocapitalize', 'off')
+        control.setAttribute('spellcheck', 'false')
+        control.setAttribute('data-lpignore', 'true')
+        control.setAttribute('data-1p-ignore', 'true')
+        control.setAttribute('data-form-type', 'other')
+      })
 
       const removeMediaActionButton = () => {
         mediaActionButton?.remove()
@@ -7197,6 +7229,17 @@ const ImportedHtmlEditorPanel: React.FC<{
         doc.body.appendChild(mediaActionButton)
       }
 
+      const getFormFieldFromFrameTarget = (target: Element) => {
+        const labelTarget = target.closest('label') as HTMLLabelElement | null
+        const nestedFieldElement = labelTarget?.querySelector(importedFormFieldSelector) as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | null
+        const labelledFieldElement = !nestedFieldElement && labelTarget?.htmlFor
+          ? doc.getElementById(labelTarget.htmlFor) as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | null
+          : null
+        return getImportedFormFieldElementFromTarget(target) ||
+          (nestedFieldElement ? getImportedFormFieldElementFromTarget(nestedFieldElement) : null) ||
+          (labelledFieldElement ? getImportedFormFieldElementFromTarget(labelledFieldElement) : null)
+      }
+
       const handleFrameMouseOver = (event: MouseEvent) => {
         if (aiRegionMode) return
         const target = event.target as Element | null
@@ -7219,17 +7262,11 @@ const ImportedHtmlEditorPanel: React.FC<{
         const target = event.target as Element | null
         if (!target || typeof target.closest !== 'function') return
 
-        const labelTarget = target.closest('label') as HTMLLabelElement | null
-        const nestedFieldElement = labelTarget?.querySelector(importedFormFieldSelector) as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | null
-        const labelledFieldElement = !nestedFieldElement && labelTarget?.htmlFor
-          ? doc.getElementById(labelTarget.htmlFor) as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | null
-          : null
-        const formFieldElement = getImportedFormFieldElementFromTarget(target) ||
-          (nestedFieldElement ? getImportedFormFieldElementFromTarget(nestedFieldElement) : null) ||
-          (labelledFieldElement ? getImportedFormFieldElementFromTarget(labelledFieldElement) : null)
+        const formFieldElement = getFormFieldFromFrameTarget(target)
         if (formFieldElement) {
           event.preventDefault()
           event.stopPropagation()
+          formFieldElement.blur()
           const fieldSelection = readImportedFormFieldSelection(formFieldElement, doc)
           const visualElement = (formFieldElement.closest('label') ||
             (fieldSelection.fieldHtmlId ? doc.querySelector(`label[for="${fieldSelection.fieldHtmlId.replace(/"/g, '\\"')}"]`) : null) ||
@@ -7302,7 +7339,18 @@ const ImportedHtmlEditorPanel: React.FC<{
       }
 
       const handleRegionMouseDown = (event: MouseEvent) => {
-        if (!aiRegionMode) return
+        const target = event.target as Element | null
+        if (!aiRegionMode) {
+          if (target && typeof target.closest === 'function') {
+            const formFieldElement = getFormFieldFromFrameTarget(target)
+            if (formFieldElement) {
+              event.preventDefault()
+              event.stopPropagation()
+              formFieldElement.blur()
+            }
+          }
+          return
+        }
         event.preventDefault()
         event.stopPropagation()
         removeMediaActionButton()
@@ -7713,6 +7761,8 @@ const ImportedHtmlEditorPanel: React.FC<{
                 onChange={(event) => setAiRegionPrompt(event.target.value)}
                 placeholder="Ejemplo: Inserta este video de Wistia aqui y conserva el diseño..."
                 disabled={aiRegionSaving}
+                name="rstk-imported-ai-region-prompt"
+                {...importedEditorNoAutocompleteAttrs}
               />
             </label>
             {aiRegionError && (
@@ -7754,6 +7804,8 @@ const ImportedHtmlEditorPanel: React.FC<{
               <input
                 value={buttonEditor.value}
                 disabled={contentSaving}
+                name="rstk-imported-button-text"
+                {...importedEditorNoAutocompleteAttrs}
                 onChange={(event) => setButtonEditor(current => current ? { ...current, value: event.target.value } : current)}
               />
             </label>
@@ -7824,6 +7876,8 @@ const ImportedHtmlEditorPanel: React.FC<{
               <input
                 value={fieldEditor.label}
                 disabled={contentSaving}
+                name="rstk-imported-field-label"
+                {...importedEditorNoAutocompleteAttrs}
                 onChange={(event) => setFieldEditor(current => current ? { ...current, label: event.target.value } : current)}
               />
             </label>
@@ -7835,6 +7889,8 @@ const ImportedHtmlEditorPanel: React.FC<{
                   value={fieldEditor.placeholder}
                   disabled={contentSaving}
                   placeholder="Ej. Nombre completo"
+                  name="rstk-imported-field-placeholder"
+                  {...importedEditorNoAutocompleteAttrs}
                   onChange={(event) => setFieldEditor(current => current ? { ...current, placeholder: event.target.value } : current)}
                 />
               </label>
@@ -7865,6 +7921,8 @@ const ImportedHtmlEditorPanel: React.FC<{
                       value={option.label}
                       disabled={contentSaving}
                       placeholder={`Opción ${index + 1}`}
+                      name={`rstk-imported-field-option-label-${index}`}
+                      {...importedEditorNoAutocompleteAttrs}
                       onChange={(event) => patchFieldOption(index, {
                         label: event.target.value,
                         value: option.value === option.label ? event.target.value : option.value
@@ -7874,6 +7932,8 @@ const ImportedHtmlEditorPanel: React.FC<{
                       value={option.value}
                       disabled={contentSaving}
                       placeholder="valor"
+                      name={`rstk-imported-field-option-value-${index}`}
+                      {...importedEditorNoAutocompleteAttrs}
                       onChange={(event) => patchFieldOption(index, { value: event.target.value })}
                     />
                     <button type="button" onClick={() => removeFieldOption(index)} disabled={contentSaving || fieldEditor.options.length <= 1} aria-label={`Quitar opción ${index + 1}`}>
@@ -7930,6 +7990,8 @@ const ImportedHtmlEditorPanel: React.FC<{
                 onChange={(event) => setInlineEditor(current => current ? { ...current, value: event.target.value } : current)}
                 placeholder="https://..."
                 disabled={contentSaving}
+                name="rstk-imported-inline-image-url"
+                {...importedEditorNoAutocompleteAttrs}
               />
               <div className={styles.importedInlineEditorActions}>
                 <Button type="button" variant="secondary" size="sm" onClick={() => inlineImageFileInputRef.current?.click()} disabled={contentSaving}>
@@ -7950,6 +8012,8 @@ const ImportedHtmlEditorPanel: React.FC<{
                 onChange={(event) => setInlineEditor(current => current ? { ...current, value: event.target.value } : current)}
                 placeholder="Pega URL o codigo embed: YouTube, Vimeo, Wistia..."
                 disabled={contentSaving}
+                name="rstk-imported-inline-video"
+                {...importedEditorNoAutocompleteAttrs}
               />
               <div className={styles.importedInlineEditorActions}>
                 <Button type="button" variant="secondary" size="sm" onClick={clearInlineSelection} disabled={contentSaving}>
@@ -7968,6 +8032,8 @@ const ImportedHtmlEditorPanel: React.FC<{
                 value={inlineEditor.value}
                 onChange={(event) => setInlineEditor(current => current ? { ...current, value: event.target.value } : current)}
                 disabled={contentSaving}
+                name="rstk-imported-inline-text"
+                {...importedEditorNoAutocompleteAttrs}
               />
               <div className={styles.importedInlineEditorActions}>
                 <Button type="button" variant="secondary" size="sm" onClick={clearInlineSelection} disabled={contentSaving}>
