@@ -421,23 +421,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onLogout, location
         className="relative flex items-stretch border-b border-[rgba(148,163,184,0.12)]"
         style={{ height: 'var(--header-height)' }}
       >
-        <div className="flex w-14 flex-shrink-0 items-center justify-center border-r border-[rgba(148,163,184,0.12)]">
-          <picture className="block h-7 w-7">
-            <source srcSet="/ristak-r-mark.webp" type="image/webp" />
-            <img
-              src="/ristak-r-mark.png"
-              alt="Ristak"
-              className="h-full w-full object-contain"
-              decoding="async"
-              style={theme === 'light' ? undefined : { filter: 'invert(1) brightness(1.15)' }}
-            />
-          </picture>
-        </div>
-
         <div ref={userMenuRef} className="relative flex min-w-0 flex-1 items-center">
           <button
             type="button"
-            className="flex h-full min-w-0 flex-1 items-center gap-2 px-3 text-left transition-colors hover:bg-[rgba(148,163,184,0.08)] focus:outline-none"
+            className="flex h-full min-w-0 flex-1 items-center gap-3 px-4 text-left transition-colors hover:bg-[rgba(148,163,184,0.08)] focus:outline-none"
             onClick={() => setShowUserMenu((current) => !current)}
             aria-expanded={showUserMenu}
             aria-haspopup="menu"
