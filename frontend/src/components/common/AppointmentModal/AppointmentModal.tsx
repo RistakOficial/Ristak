@@ -1141,6 +1141,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
     .formatToParts(startDate ?? new Date())
     .find((part) => part.type === 'timeZoneName')?.value ?? selectedTimeZone;
   const isMobileSheet = presentation === 'mobileSheet';
+  const showAppointmentSummary = !(isMobileSheet && isCreateMode);
   const modalTitle = isMobileSheet
     ? isCreateMode
       ? 'Nueva cita'
@@ -1266,42 +1267,44 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
           </div>
         )}
 
-        <div className={styles.summary}>
-          <div className={styles.summaryBody}>
-            <h3 className={styles.summaryTitle}>{formData.title.trim() || '(Sin título)'}</h3>
-            <div className={styles.summaryMeta}>
-              <span>{dateLabel}</span>
-              <span className={styles.summaryDivider} aria-hidden="true" />
-              <span>{timeLabel}</span>
-              <span className={styles.summaryDivider} aria-hidden="true" />
-              <span className={styles.timezoneBadge}>Zona horaria · {timeZoneShort}</span>
+        {showAppointmentSummary && (
+          <div className={styles.summary}>
+            <div className={styles.summaryBody}>
+              <h3 className={styles.summaryTitle}>{formData.title.trim() || '(Sin título)'}</h3>
+              <div className={styles.summaryMeta}>
+                <span>{dateLabel}</span>
+                <span className={styles.summaryDivider} aria-hidden="true" />
+                <span>{timeLabel}</span>
+                <span className={styles.summaryDivider} aria-hidden="true" />
+                <span className={styles.timezoneBadge}>Zona horaria · {timeZoneShort}</span>
+              </div>
+            </div>
+            <div className={styles.summaryActions}>
+              {currentStatus && (
+                <span
+                  className={styles.statusChip}
+                  style={{
+                    color: currentStatus.color,
+                    borderColor: currentStatus.color,
+                    backgroundColor: `${currentStatus.color}1a`
+                  }}
+                >
+                  {currentStatus.label}
+                </span>
+              )}
+              {!isCreateMode && onDelete && (
+                <button
+                  className={styles.deleteButton}
+                  onClick={handleDeleteClick}
+                  disabled={isSaving}
+                  aria-label="Eliminar cita"
+                >
+                  <Trash2 size={18} />
+                </button>
+              )}
             </div>
           </div>
-          <div className={styles.summaryActions}>
-            {currentStatus && (
-              <span
-                className={styles.statusChip}
-                style={{
-                  color: currentStatus.color,
-                  borderColor: currentStatus.color,
-                  backgroundColor: `${currentStatus.color}1a`
-                }}
-              >
-                {currentStatus.label}
-              </span>
-            )}
-            {!isCreateMode && onDelete && (
-              <button
-                className={styles.deleteButton}
-                onClick={handleDeleteClick}
-                disabled={isSaving}
-                aria-label="Eliminar cita"
-              >
-                <Trash2 size={18} />
-              </button>
-            )}
-          </div>
-        </div>
+        )}
 
         {isReadOnlyMode ? (
           <section className={styles.detailSummary} aria-label="Resumen de la cita">
