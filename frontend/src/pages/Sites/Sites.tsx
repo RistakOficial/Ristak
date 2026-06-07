@@ -4193,7 +4193,9 @@ export const Sites: React.FC = () => {
                       <ArrowLeft size={15} />
                       <span>Volver</span>
                     </button>
-                    <span className={`${styles.statusPill} ${getStatusClass(editorSite, domainConfig)}`}>{getStatusLabel(editorSite, domainConfig)}</span>
+                    {editorSite.status !== 'draft' && (
+                      <span className={`${styles.statusPill} ${getStatusClass(editorSite, domainConfig)}`}>{getStatusLabel(editorSite, domainConfig)}</span>
+                    )}
                     <label className={`${styles.editorNameField} ${styles.editorToolbarNameField}`}>
                       <input
                         value={editorSite.name}
@@ -4201,7 +4203,6 @@ export const Sites: React.FC = () => {
                         onChange={(event) => updateSelectedSite({ name: event.target.value })}
                         onBlur={() => handleSaveSite(undefined, { silent: true })}
                       />
-                      <Pencil size={13} />
                     </label>
                     <button
                       type="button"
@@ -8092,7 +8093,6 @@ const FunnelPageDropdownItem: React.FC<FunnelPageDropdownItemProps> = ({
                 onPointerDown={(event) => event.stopPropagation()}
               >
                 <button type="button" role="menuitem" className={styles.pagesDropdownActionItem} onClick={onStartRename}>
-                  <Pencil size={14} />
                   Cambiar nombre
                 </button>
                 <button
