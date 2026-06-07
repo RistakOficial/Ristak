@@ -5419,15 +5419,16 @@ export const PhoneChat: React.FC = () => {
                 onClick={() => setContactInfoDetailPanel((current) => current === 'payments' ? null : 'payments')}
                 aria-expanded={contactInfoDetailPanel === 'payments'}
               >
-                <span className={styles.contactInfoMetricHeader}>
-                  <small>Ingresos y pagos</small>
-                  <span>
-                    {contactInfoDetailPanel === 'payments' ? 'Cerrar' : 'Ver'}
-                    <ChevronRight size={15} />
-                  </span>
+                <span className={styles.contactInfoMetricTitle}>
+                  <span>Ingresos y</span>
+                  <span>pagos</span>
                 </span>
                 <strong>{formatCurrency(Number(contactInfoData.ltv || 0) || revenueTotal)}</strong>
                 <em>{paymentsCount} pago{paymentsCount === 1 ? '' : 's'}</em>
+                <span className={styles.contactInfoMetricAction}>
+                  {contactInfoDetailPanel === 'payments' ? 'Ocultar' : 'Ver'}
+                  <ChevronRight size={15} />
+                </span>
               </button>
 
               <button
@@ -5436,15 +5437,13 @@ export const PhoneChat: React.FC = () => {
                 onClick={() => setContactInfoDetailPanel((current) => current === 'appointments' ? null : 'appointments')}
                 aria-expanded={contactInfoDetailPanel === 'appointments'}
               >
-                <span className={styles.contactInfoMetricHeader}>
-                  <small>Citas</small>
-                  <span>
-                    {contactInfoDetailPanel === 'appointments' ? 'Cerrar' : 'Ver'}
-                    <ChevronRight size={15} />
-                  </span>
-                </span>
+                <span className={styles.contactInfoMetricTitle}>Citas</span>
                 <strong>{contactInfoAppointments.length}</strong>
                 <em>{contactInfoActiveAppointments.length} activa{contactInfoActiveAppointments.length === 1 ? '' : 's'}</em>
+                <span className={styles.contactInfoMetricAction}>
+                  {contactInfoDetailPanel === 'appointments' ? 'Ocultar' : 'Ver'}
+                  <ChevronRight size={15} />
+                </span>
               </button>
             </div>
 

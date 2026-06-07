@@ -1496,73 +1496,94 @@
 .contactInfoMetrics {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  gap: 0;
+  padding: 2px 0 4px;
 }
 
 .contactInfoMetricCard {
   display: grid;
   place-items: center;
-  gap: 4px;
+  align-content: start;
+  gap: 5px;
   min-width: 0;
-  min-height: 102px;
-  padding: 12px;
-  border: 1px solid var(--phone-chat-border);
-  border-radius: 8px;
+  min-height: 116px;
+  padding: 2px 10px 0;
+  border: 0;
+  border-radius: 0;
   color: var(--phone-chat-text);
-  background: var(--phone-chat-surface-soft);
-  text-align: left;
+  background: transparent;
+  text-align: center;
   appearance: none;
   -webkit-appearance: none;
-  transition: border-color 160ms ease, background 160ms ease;
+  transition: color 160ms ease, transform 160ms ease;
+}
+
+.contactInfoMetricCard + .contactInfoMetricCard {
+  border-left: 1px solid var(--phone-chat-border);
+}
+
+.contactInfoMetricCard:active {
+  transform: scale(0.98);
 }
 
 .contactInfoMetricCardActive {
-  border-color: rgba(var(--phone-chat-accent-rgb), 0.45);
-  background: color-mix(in srgb, var(--phone-chat-accent-soft) 58%, var(--phone-chat-surface) 42%);
+  color: var(--phone-chat-accent-strong);
 }
 
-.contactInfoMetricHeader {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+.contactInfoMetricTitle {
+  display: grid;
+  justify-items: center;
+  gap: 0;
   min-width: 0;
+  color: var(--phone-chat-muted);
+  font-size: 13px;
+  font-weight: 820;
+  line-height: 1.05;
+  text-align: center;
 }
 
-.contactInfoMetricHeader small,
 .contactInfoMetricCard em {
   overflow: hidden;
+  max-width: 100%;
   color: var(--phone-chat-muted);
-  font-size: 12px;
-  font-weight: 760;
+  font-size: 13px;
+  font-weight: 780;
+  line-height: 1.05;
   text-align: center;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.contactInfoMetricHeader > span {
+.contactInfoMetricAction {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 2px;
-  flex: 0 0 auto;
+  min-height: 27px;
+  margin-top: 4px;
+  padding: 0 10px;
+  border-radius: 999px;
   color: var(--phone-chat-accent);
-  font-size: 11px;
+  background: color-mix(in srgb, var(--phone-chat-accent-soft) 68%, transparent);
+  font-size: 12px;
   font-weight: 850;
 }
 
-.contactInfoMetricHeader svg {
+.contactInfoMetricAction svg {
   transition: transform 160ms ease;
 }
 
-.contactInfoMetricCardActive .contactInfoMetricHeader svg {
+.contactInfoMetricCardActive .contactInfoMetricAction svg {
   transform: rotate(90deg);
 }
 
 .contactInfoMetricCard strong {
   overflow: hidden;
+  max-width: 100%;
   color: var(--phone-chat-text);
-  font-size: 19px;
+  font-size: 27px;
   font-weight: 860;
+  line-height: 1.08;
   text-align: center;
   text-overflow: ellipsis;
   white-space: nowrap;
