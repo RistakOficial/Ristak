@@ -3700,6 +3700,15 @@ function validateSitesAICreationKind(value) {
   return siteKind
 }
 
+const SITES_AI_MODEL_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,99}$/
+
+function normalizeSitesAIModel(value, fallback = '') {
+  const model = cleanString(value)
+  if (model && SITES_AI_MODEL_ID_PATTERN.test(model)) return model
+  const fallbackModel = cleanString(fallback)
+  return SITES_AI_MODEL_ID_PATTERN.test(fallbackModel) ? fallbackModel : ''
+}
+
 function getSitesAIKindFromSiteType(siteType = 'landing_page') {
   if (siteType === 'interactive_form') return 'interactive_form'
   if (siteType === 'standard_form') return 'form'
@@ -5014,9 +5023,10 @@ export async function createSiteWithAIHtml(input = {}) {
   }
 
   const agentConfig = await getAIAgentConfig({ userId: input.userId })
+  const model = normalizeSitesAIModel(input.model || input.chatgptModel || input.chatgpt_model, agentConfig?.model)
   const aiPayload = await callSitesAIHtmlGenerator({
     apiKey,
-    model: agentConfig?.model,
+    model,
     siteKind,
     messages,
     agentConfig
@@ -5083,9 +5093,10 @@ export async function updateImportedSiteHtmlWithAI(siteId, input = {}) {
   }
 
   const agentConfig = await getAIAgentConfig({ userId: input.userId })
+  const model = normalizeSitesAIModel(input.model || input.chatgptModel || input.chatgpt_model, agentConfig?.model)
   const aiPayload = await callSitesAIHtmlEditor({
     apiKey,
-    model: agentConfig?.model,
+    model,
     siteKind,
     messages,
     agentConfig,

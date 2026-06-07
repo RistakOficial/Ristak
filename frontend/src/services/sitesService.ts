@@ -495,11 +495,11 @@ export const sitesService = {
     return apiClient.post<PublicSite>('/sites', payload)
   },
 
-  createWithAIHtml(payload: { siteKind: SitesAICreationKind; messages: SitesAICreationMessage[]; metaCapiEnabled?: boolean }) {
+  createWithAIHtml(payload: { siteKind: SitesAICreationKind; messages: SitesAICreationMessage[]; metaCapiEnabled?: boolean; model?: string }) {
     return apiClient.post<SitesAICreationResult>('/sites/ai-create-html', payload)
   },
 
-  editImportedHtmlWithAI(siteId: string, payload: { siteKind: SitesAICreationKind; messages: SitesAICreationMessage[] }) {
+  editImportedHtmlWithAI(siteId: string, payload: { siteKind: SitesAICreationKind; messages: SitesAICreationMessage[]; model?: string }) {
     return apiClient.post<SitesAICreationResult>(`/sites/${siteId}/ai-edit-html`, payload)
   },
 

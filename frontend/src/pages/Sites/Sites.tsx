@@ -153,8 +153,14 @@ type SitesAICreationModalSubmit = {
   siteKind: SitesAICreationKind
   prompt: string
   attachmentNotes: string[]
+  funnelStyle?: FunnelStyleId
+  primaryAction?: FunnelPrimaryActionId
+  chatgptModel?: string
   editSite?: PublicSite | null
 }
+
+type FunnelStyleId = 'vsl' | 'lead_gen' | 'opt_in'
+type FunnelPrimaryActionId = 'buy' | 'schedule' | 'form' | 'whatsapp' | 'download'
 
 const sectionItems: Array<{ id: SitesSection; label: string; icon: React.ReactNode }> = [
   { id: 'landings', label: 'Sitios embudo', icon: <LayoutTemplate size={17} /> },
@@ -3263,12 +3269,21 @@ export const Sites: React.FC = () => {
     siteKind,
     prompt,
     attachmentNotes,
+    funnelStyle,
+    primaryAction,
+    chatgptModel,
     editSite
   }: SitesAICreationModalSubmit): Promise<string | null> => {
+    const selectedFunnelStyle = getFunnelStyleOption(funnelStyle)
+    const selectedPrimaryAction = getFunnelPrimaryAction(primaryAction)
+    const selectedChatGPTModel = getChatGPTSiteModelOption(chatgptModel)
     const promptParts = [
       editSite
         ? `Modifica esta pagina importada con IA segun la peticion del usuario. Manten formularios, campos, tracking y acciones de botones funcionando.`
         : `Crea una pagina completa con IA libre en HTML/CSS para importarla en Ristak.`,
+      selectedFunnelStyle ? selectedFunnelStyle.prompt : '',
+      selectedPrimaryAction ? selectedPrimaryAction.prompt : '',
+      selectedChatGPTModel ? `ChatGPT seleccionado por el usuario: ${selectedChatGPTModel.label}.` : '',
       `Peticion del usuario:\n${prompt.trim()}`,
       attachmentNotes.length ? `Archivos de referencia:\n${attachmentNotes.join('\n\n')}` : '',
       [
@@ -3285,8 +3300,8 @@ export const Sites: React.FC = () => {
     setCreating(true)
     try {
       const result = editSite
-        ? await sitesService.editImportedHtmlWithAI(editSite.id, { siteKind, messages })
-        : await sitesService.createWithAIHtml({ siteKind, messages, metaCapiEnabled: metaPixelConnected })
+        ? await sitesService.editImportedHtmlWithAI(editSite.id, { siteKind, messages, model: chatgptModel })
+        : await sitesService.createWithAIHtml({ siteKind, messages, metaCapiEnabled: metaPixelConnected, model: chatgptModel })
 
       if (result.status === 'needs_more_info' || !result.site || !result.import) {
         return result.reply || 'Dame un poco mas de contexto para crear una pagina bien armada.'
@@ -4670,6 +4685,77 @@ const aiCreationAudioMimeTypes = [
   'audio/wav'
 ]
 
+const funnelStyleOptions: Array<{
+  id: FunnelStyleId
+  title: string
+  subtitle: string
+  badge: string
+  bestFor: string
+  prompt: string
+  sections: string[]
+}> = [
+  {
+    id: 'vsl',
+    title: 'Video de venta',
+    subtitle: 'Para explicar, generar confianza y vender con mas profundidad.',
+    badge: 'VSL',
+    bestFor: 'Comprar, agendar o aplicar despues de ver una oferta.',
+    prompt: [
+      'Tipo de embudo elegido: Landing tipo VSL / pagina de venta con video.',
+      'Estructura esperada: hero con promesa clara, subtitulo para audiencia/resultado, video destacado, CTA, prueba social, problema/dolor, mecanismo o solucion, autoridad, oferta, CTA repetido, preguntas frecuentes y CTA final.',
+      'El diseno debe dejar el video como pieza central y usar secciones largas pero escaneables.'
+    ].join('\n'),
+    sections: ['Hero + video', 'Problema', 'Metodo', 'Oferta', 'FAQ']
+  },
+  {
+    id: 'lead_gen',
+    title: 'Formulario visible',
+    subtitle: 'Para conseguir prospectos rapido y pedir datos de contacto.',
+    badge: 'Lead gen',
+    bestFor: 'Clinicas, servicios, consultorios, inmobiliarias o agencias.',
+    prompt: [
+      'Tipo de embudo elegido: Landing tipo Lead Gen con formulario visible a la derecha.',
+      'Estructura esperada: hero dividido en dos columnas, texto/bullets/prueba rapida a la izquierda, formulario con nombre, telefono, correo y selector de servicio a la derecha, barra de confianza, beneficios, como funciona, testimonios, objeciones frecuentes y CTA final.',
+      'El formulario debe estar visible desde el primer pantallazo en desktop y facil de usar en movil.'
+    ].join('\n'),
+    sections: ['Hero dividido', 'Formulario', 'Confianza', 'Beneficios', 'Pasos']
+  },
+  {
+    id: 'opt_in',
+    title: 'Recurso gratis',
+    subtitle: 'Para regalar una guia, clase, checklist, webinar o PDF.',
+    badge: 'Opt-in',
+    bestFor: 'Capturar correos o WhatsApp antes de vender directo.',
+    prompt: [
+      'Tipo de embudo elegido: Landing tipo Opt-in / Lead magnet.',
+      'Estructura esperada: hero dividido con promesa del recurso, bullets de contenido, formulario o boton de registro, mockup visual del recurso, que recibira, por que importa, para quien es, quien lo creo, CTA repetido y preguntas frecuentes.',
+      'El diseno debe incluir un mockup visual convincente del recurso gratuito.'
+    ].join('\n'),
+    sections: ['Hero + recurso', 'Contenido', 'Importancia', 'Autoridad', 'FAQ']
+  }
+]
+
+const funnelPrimaryActions: Array<{ id: FunnelPrimaryActionId; label: string; prompt: string }> = [
+  { id: 'buy', label: 'Comprar', prompt: 'La accion principal sera comprar.' },
+  { id: 'schedule', label: 'Agendar', prompt: 'La accion principal sera agendar una llamada, cita o valoracion.' },
+  { id: 'form', label: 'Formulario', prompt: 'La accion principal sera llenar un formulario de solicitud o contacto.' },
+  { id: 'whatsapp', label: 'WhatsApp', prompt: 'La accion principal sera mandar mensaje por WhatsApp.' },
+  { id: 'download', label: 'Descargar', prompt: 'La accion principal sera descargar u obtener acceso a un recurso gratuito.' }
+]
+
+const chatgptSiteModelOptions = [
+  { value: 'gpt-5.5', label: 'ChatGPT 5.5', description: 'Recomendado para paginas premium y buen balance de velocidad.' },
+  { value: 'gpt-5.5-pro', label: 'ChatGPT 5.5 Pro', description: 'Maxima calidad para copy, estructura y diseno; puede tardar mas.' },
+  { value: 'gpt-5.4-pro', label: 'ChatGPT 5.4 Pro', description: 'Muy fuerte para embudos complejos y ofertas con detalle.' },
+  { value: 'gpt-5.4', label: 'ChatGPT 5.4', description: 'Buen modelo para paginas completas con buena velocidad.' },
+  { value: 'gpt-5.3-chat-latest', label: 'ChatGPT 5.3', description: 'Version ChatGPT solida para paginas rapidas.' }
+]
+
+const DEFAULT_SITE_CHATGPT_MODEL = 'gpt-5.5'
+const getFunnelStyleOption = (id?: FunnelStyleId) => funnelStyleOptions.find(option => option.id === id) || null
+const getFunnelPrimaryAction = (id?: FunnelPrimaryActionId) => funnelPrimaryActions.find(option => option.id === id) || null
+const getChatGPTSiteModelOption = (model?: string) => chatgptSiteModelOptions.find(option => option.value === model) || chatgptSiteModelOptions[0]
+
 const getSitesAICreationKindLabel = (siteKind: SitesAICreationKind) => {
   if (siteKind === 'interactive_form') return 'formulario interactivo'
   if (siteKind === 'form') return 'formulario'
@@ -4721,17 +4807,24 @@ const SitesAICreationModal: React.FC<{
 }> = ({ state, creating, onClose, onSubmit }) => {
   const editMode = Boolean(state.editSite)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const promptInputRef = useRef<HTMLTextAreaElement | null>(null)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const mediaStreamRef = useRef<MediaStream | null>(null)
   const voiceChunksRef = useRef<Blob[]>([])
   const [prompt, setPrompt] = useState('')
   const [attachments, setAttachments] = useState<SitesAICreationAttachment[]>([])
+  const [funnelStyle, setFunnelStyle] = useState<FunnelStyleId | ''>('')
+  const [primaryAction, setPrimaryAction] = useState<FunnelPrimaryActionId | ''>('')
+  const [chatgptModel, setChatgptModel] = useState(DEFAULT_SITE_CHATGPT_MODEL)
   const [attachmentError, setAttachmentError] = useState('')
   const [voiceState, setVoiceState] = useState<'idle' | 'recording' | 'transcribing'>('idle')
   const [voiceError, setVoiceError] = useState('')
   const [assistantReply, setAssistantReply] = useState('')
   const [submitError, setSubmitError] = useState('')
-  const canWritePrompt = true
+  const shouldPickFunnelStyle = state.siteKind === 'landing' && !editMode
+  const selectedFunnelStyle = getFunnelStyleOption(funnelStyle || undefined)
+  const selectedChatGPTModel = getChatGPTSiteModelOption(chatgptModel)
+  const canWritePrompt = !shouldPickFunnelStyle || Boolean(selectedFunnelStyle)
 
   useEffect(() => {
     return () => {
@@ -4746,6 +4839,36 @@ const SitesAICreationModal: React.FC<{
       mediaStreamRef.current?.getTracks().forEach(track => track.stop())
     }
   }, [])
+
+  useEffect(() => {
+    if (!canWritePrompt) return
+    const focusTimeout = window.setTimeout(() => promptInputRef.current?.focus(), 0)
+    return () => window.clearTimeout(focusTimeout)
+  }, [canWritePrompt])
+
+  const selectFunnelStyle = (nextStyle: FunnelStyleId) => {
+    setFunnelStyle(nextStyle)
+    setPrimaryAction(current => {
+      if (current) return current
+      if (nextStyle === 'opt_in') return 'download'
+      if (nextStyle === 'lead_gen') return 'form'
+      return 'schedule'
+    })
+    setSubmitError('')
+    setAssistantReply('')
+  }
+
+  const modelPicker = (
+    <label className={styles.aiCreationModelPicker}>
+      <span>ChatGPT para crear el sitio</span>
+      <select value={chatgptModel} onChange={(event) => setChatgptModel(event.target.value)}>
+        {chatgptSiteModelOptions.map(option => (
+          <option key={option.value} value={option.value}>{option.label}</option>
+        ))}
+      </select>
+      <small>{selectedChatGPTModel.description}</small>
+    </label>
+  )
 
   const stopVoiceStream = () => {
     mediaStreamRef.current?.getTracks().forEach(track => track.stop())
@@ -4839,9 +4962,13 @@ const SitesAICreationModal: React.FC<{
 
   const submit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+    if (shouldPickFunnelStyle && !selectedFunnelStyle) {
+      setSubmitError('Primero elige que tipo de embudo quieres crear.')
+      return
+    }
     const cleanPrompt = prompt.trim()
     if (!cleanPrompt) {
-      setSubmitError('Escribe que quieres construir primero.')
+      setSubmitError(shouldPickFunnelStyle ? 'Ahora cuentame de que trata el embudo.' : 'Escribe que quieres construir primero.')
       return
     }
     setSubmitError('')
@@ -4850,6 +4977,9 @@ const SitesAICreationModal: React.FC<{
       siteKind: state.siteKind,
       prompt: cleanPrompt,
       attachmentNotes: buildAttachmentNotes(),
+      funnelStyle: funnelStyle || undefined,
+      primaryAction: primaryAction || undefined,
+      chatgptModel,
       editSite: state.editSite || null
     })
     if (reply) {
@@ -4885,11 +5015,19 @@ const SitesAICreationModal: React.FC<{
             <header className={styles.aiCreationHeader}>
               <div>
                 <span>{editMode ? 'Editar con IA' : 'Generar con inteligencia artificial'}</span>
-                <h2 id="ai-creation-title">{editMode ? 'Dime que cambio quieres' : `Crear ${getSitesAICreationKindLabel(state.siteKind)}`}</h2>
+                <h2 id="ai-creation-title">
+                  {editMode
+                    ? 'Dime que cambio quieres'
+                    : shouldPickFunnelStyle && !selectedFunnelStyle
+                      ? 'Elige el tipo de embudo'
+                      : `Crear ${getSitesAICreationKindLabel(state.siteKind)}`}
+                </h2>
                 <p>
                   {editMode
                     ? 'Ristak modifica esta pagina y vuelve a revisar sus formularios.'
-                    : 'Describe la pagina y Ristak la crea como codigo propio listo para revisar.'}
+                    : shouldPickFunnelStyle && !selectedFunnelStyle
+                      ? 'Escoge la estructura y el ChatGPT que lo va a construir. Despues nos dices el negocio y objetivo.'
+                      : 'Describe la pagina y Ristak la crea como codigo propio listo para revisar.'}
                 </p>
               </div>
               <button type="button" className={styles.aiCreationClose} onClick={onClose} aria-label="Cerrar">
@@ -4898,20 +5036,90 @@ const SitesAICreationModal: React.FC<{
             </header>
 
             <div className={styles.aiCreationBody}>
-              <label className={styles.aiCreationPrompt}>
-                <span>{editMode ? 'Cambio que quieres hacer' : 'Que quieres construir'}</span>
-                <textarea
-                  value={prompt}
-                  onChange={(event) => {
-                    setPrompt(event.target.value)
-                    setAssistantReply('')
-                    setSubmitError('')
-                  }}
-                  placeholder={getSitesAICreationPlaceholder(state.siteKind, editMode)}
-                  rows={7}
-                  autoFocus
-                />
-              </label>
+              {shouldPickFunnelStyle && !selectedFunnelStyle ? (
+                <div className={styles.aiCreationFunnelPicker}>
+                  <div className={styles.aiCreationFunnelIntro}>
+                    <strong>Que tipo de landing quieres crear?</strong>
+                    <p>Elige una base visual y el ChatGPT que va a crear el embudo.</p>
+                  </div>
+                  {modelPicker}
+                  <div className={styles.aiCreationFunnelGrid}>
+                    {funnelStyleOptions.map(option => (
+                      <button
+                        key={option.id}
+                        type="button"
+                        className={styles.aiCreationFunnelCard}
+                        onClick={() => selectFunnelStyle(option.id)}
+                      >
+                        <span className={`${styles.aiCreationFunnelMockup} ${styles[`aiCreationFunnelMockup${option.id === 'lead_gen' ? 'LeadGen' : option.id === 'opt_in' ? 'OptIn' : 'Vsl'}`]}`}>
+                          <span className={styles.aiCreationFunnelMockupTop} />
+                          <span className={styles.aiCreationFunnelMockupMain}>
+                            <span />
+                            <span />
+                          </span>
+                          <span className={styles.aiCreationFunnelMockupFooter} />
+                        </span>
+                        <span className={styles.aiCreationFunnelCardBody}>
+                          <span>{option.badge}</span>
+                          <strong>{option.title}</strong>
+                          <p>{option.subtitle}</p>
+                          <small>{option.bestFor}</small>
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <>
+                  {shouldPickFunnelStyle && selectedFunnelStyle && (
+                    <div className={styles.aiCreationSelectedFunnel}>
+                      <div>
+                        <span>{selectedFunnelStyle.badge}</span>
+                        <strong>{selectedFunnelStyle.title}</strong>
+                        <p>{selectedFunnelStyle.sections.join(' / ')}</p>
+                      </div>
+                      <button type="button" onClick={() => setFunnelStyle('')}>
+                        Cambiar tipo
+                      </button>
+                    </div>
+                  )}
+
+                  {modelPicker}
+
+                  {shouldPickFunnelStyle && selectedFunnelStyle && (
+                    <div className={styles.aiCreationActionPicker}>
+                      <span>Accion principal</span>
+                      <div>
+                        {funnelPrimaryActions.map(action => (
+                          <button
+                            key={action.id}
+                            type="button"
+                            className={primaryAction === action.id ? styles.aiCreationActionActive : ''}
+                            onClick={() => setPrimaryAction(action.id)}
+                          >
+                            {action.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  <label className={styles.aiCreationPrompt}>
+                    <span>{editMode ? 'Cambio que quieres hacer' : shouldPickFunnelStyle ? 'De que trata este embudo' : 'Que quieres construir'}</span>
+                    <textarea
+                      ref={promptInputRef}
+                      value={prompt}
+                      onChange={(event) => {
+                        setPrompt(event.target.value)
+                        setAssistantReply('')
+                        setSubmitError('')
+                      }}
+                      placeholder={getSitesAICreationPlaceholder(state.siteKind, editMode)}
+                      rows={7}
+                    />
+                  </label>
+                </>
+              )}
 
               {attachments.length > 0 && (
                 <div className={styles.aiCreationAttachments}>
