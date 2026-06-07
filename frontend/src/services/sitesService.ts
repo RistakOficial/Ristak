@@ -375,6 +375,7 @@ export interface ImportedEditableContentUpdate {
   editId: string
   editType: ImportedEditableContentType
   value: string
+  pageId?: string
   fileBase64?: string
   filename?: string
   buttonActions?: ImportedButtonActionStep[]

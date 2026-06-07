@@ -5862,6 +5862,7 @@ const ImportedHtmlEditorPanel: React.FC<{
         editId: selection.editId,
         editType: selection.editType,
         value: cleanValue || selection.value,
+        pageId: activeImportedPage?.id || DEFAULT_FUNNEL_PAGE_ID,
         ...(fileUpload || {}),
         ...(buttonPatch || {})
       })
@@ -5876,7 +5877,7 @@ const ImportedHtmlEditorPanel: React.FC<{
     } finally {
       setContentSaving(false)
     }
-  }, [clearInlineSelection, loadInlinePreview, onContentUpdated, showToast, site.id])
+  }, [activeImportedPage?.id, clearInlineSelection, loadInlinePreview, onContentUpdated, showToast, site.id])
 
   useEffect(() => {
     if (previewLoading || !previewHtml) return

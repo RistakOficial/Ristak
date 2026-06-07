@@ -3863,6 +3863,9 @@ Reglas duras:
 - Responde SOLO JSON valido, sin markdown.
 - No uses React, JSX, Tailwind, dependencias externas ni JavaScript obligatorio. El importador de Ristak puede quitar scripts por seguridad.
 - Entrega un documento HTML completo con <!doctype html>, <html lang="es">, <head>, <meta charset>, <meta viewport>, <title>, meta description y CSS dentro de <style>.
+- Si el embudo necesita varias paginas, devuelve cada pagina por separado en page.pages. No juntes todo en una sola pagina cuando el flujo naturalmente tiene pasos separados.
+- Cada pagina de page.pages debe traer id, title, filename, description y html completo. Usa nombres claros de negocio: Inicio, Video de venta, Agenda, Aplicacion, Gracias, Diagnostico, Oferta, Checkout, etc. No uses "Pagina 1" si puedes nombrarla mejor.
+- Cuando un boton mande a otra pagina del mismo embudo, usa data-rstk-button-action="specific_page" y data-rstk-button-page-id con el id exacto de la pagina destino. Si solo avanza, usa data-rstk-button-action="next_page".
 - La pagina debe ser responsiva, profesional y lista para publicarse.
 - Copy corto: titulares de 4 a 10 palabras cuando sea posible, parrafos breves de 1 a 2 lineas, listas cortas para explicar detalles.
 - Si un texto largo es necesario, ajusta el CSS con font-size menor, max-width razonable, line-height claro y espacios suficientes. No dejes titulares enormes que rompan el layout.
@@ -3918,10 +3921,39 @@ JSON cuando esta listo:
   }
 }
 
+JSON cuando esta listo con varias paginas:
+{
+  "status": "ready",
+  "reply": "Embudo HTML listo para importar.",
+  "page": {
+    "siteType": "${targetSiteType}",
+    "name": "Nombre interno",
+    "title": "Titulo publico",
+    "description": "Descripcion corta",
+    "pages": [
+      {
+        "id": "inicio",
+        "title": "Inicio",
+        "filename": "inicio.html",
+        "description": "Primera pagina del embudo",
+        "html": "<!doctype html>..."
+      },
+      {
+        "id": "gracias",
+        "title": "Gracias",
+        "filename": "gracias.html",
+        "description": "Confirmacion despues del formulario",
+        "html": "<!doctype html>..."
+      }
+    ]
+  }
+}
+
 ${editMode ? `
 Modo edicion:
 - Recibiras el HTML actual y la peticion del usuario.
 - Devuelve el HTML completo actualizado, no solo un fragmento.
+- Si recibes importedPages con varias paginas, conserva el embudo multipagina y responde con page.pages incluyendo todas las paginas completas. Mantén ids, title y filename de cada pagina salvo que el usuario pida renombrar, agregar, quitar o reordenar paginas.
 - Conserva formularios, ids, name, data-rstk-form, data-rstk-form-id, data-rstk-field, data-ristak-field, data-rstk-custom-field, data-rstk-edit-id, data-rstk-editable, data-rstk-edit-type, data-rstk-label, data-rstk-section, data-rstk-button-actions, data-rstk-button-action, data-rstk-button-url, data-rstk-button-page-id, data-rstk-button-message, data-rstk-choice-actions y sus aliases data-ristak-* / data-ristack-* cuando el usuario no pida cambiarlos.
 - Si cambias campos, deja convenciones claras para que Ristak pueda redetectar y mapear.
 - Puedes cambiar titulo, imagenes, orden de secciones, colores, layout, copy y campos segun lo que pida el usuario.
@@ -3982,12 +4014,12 @@ async function callSitesAIHtmlGenerator({ apiKey, model, siteKind, messages, age
       targetSiteType: getSitesAITargetType(siteKind),
       conversation: messages
     },
-    maxOutputTokens: 18000,
+    maxOutputTokens: 30000,
     fallbackError: 'OpenAI no pudo generar el HTML'
   })
 }
 
-async function callSitesAIHtmlEditor({ apiKey, model, siteKind, messages, agentConfig, site, importedSite }) {
+async function callSitesAIHtmlEditor({ apiKey, model, siteKind, messages, agentConfig, site, importedSite, importedPages = [] }) {
   return callSitesAIJson({
     apiKey,
     model,
@@ -4008,10 +4040,11 @@ async function callSitesAIHtmlEditor({ apiKey, model, siteKind, messages, agentC
         detectedForms: importedSite?.detectedForms || [],
         formMappings: importedSite?.formMappings || []
       },
+      importedPages,
       currentHtml: limitString(importedSite?.htmlSanitized || importedSite?.htmlOriginal || '', 90000),
       conversation: messages
     },
-    maxOutputTokens: 18000,
+    maxOutputTokens: 30000,
     fallbackError: 'OpenAI no pudo editar el HTML'
   })
 }
@@ -4019,8 +4052,20 @@ async function callSitesAIHtmlEditor({ apiKey, model, siteKind, messages, agentC
 function normalizeAIHtmlPagePayload(aiPayload = {}, siteKind = 'landing') {
   const page = aiPayload.page || aiPayload.site || aiPayload
   const targetSiteType = getSitesAITargetType(siteKind)
-  const html = String(page?.html || aiPayload.html || '').trim()
-  if (!html) {
+  const rawPages = Array.isArray(page?.pages)
+    ? page.pages
+    : Array.isArray(aiPayload.pages)
+      ? aiPayload.pages
+      : Array.isArray(page?.htmlPages)
+        ? page.htmlPages
+        : Array.isArray(aiPayload.htmlPages)
+          ? aiPayload.htmlPages
+          : []
+  const pages = normalizeGeneratedImportedPages(rawPages, {
+    title: page?.title || page?.name || aiPayload.title || aiPayload.name
+  })
+  const html = String(page?.html || aiPayload.html || pages[0]?.html || '').trim()
+  if (!html && !pages.length) {
     const error = new Error('La IA no devolvio HTML para importar')
     error.status = 502
     throw error
@@ -4036,8 +4081,19 @@ function normalizeAIHtmlPagePayload(aiPayload = {}, siteKind = 'landing') {
     name: limitString(page?.name || page?.title || filename.replace(/\.[^.]+$/, ''), 100),
     title: limitString(page?.title || page?.name || filename.replace(/\.[^.]+$/, ''), 120),
     description: limitString(page?.description || page?.seoDescription || page?.seo?.description, 220),
-    html
+    html,
+    pages: pages.length ? pages : []
   }
+}
+
+function hasSitesAIHtmlPayload(aiPayload = {}) {
+  return Boolean(
+    aiPayload?.page ||
+    aiPayload?.html ||
+    aiPayload?.site ||
+    (Array.isArray(aiPayload?.pages) && aiPayload.pages.length > 0) ||
+    (Array.isArray(aiPayload?.htmlPages) && aiPayload.htmlPages.length > 0)
+  )
 }
 
 export async function listSites() {
@@ -4448,10 +4504,82 @@ function sortImportedZipHtmlPaths(paths = [], mainPath = '') {
   ].filter(Boolean)
 }
 
-function makeImportedZipPage(assetPath, index = 0, originalTitle = '') {
+function getImportedPageDisplayTitle(value = '', index = 0) {
+  return limitString(cleanString(value), 80) || `Pagina ${index + 1}`
+}
+
+function normalizeImportedPageId(value = '', index = 0, usedIds = new Set()) {
+  const fallback = index === 0 ? DEFAULT_FUNNEL_PAGE_ID : `page-${index + 1}`
+  const normalized = normalizeImportedFieldKey(value, fallback).replace(/_/g, '-')
+  const base = normalized || fallback
+  let candidate = base
+  let suffix = 2
+  while (usedIds.has(candidate)) {
+    candidate = `${base}-${suffix}`
+    suffix += 1
+  }
+  usedIds.add(candidate)
+  return candidate
+}
+
+function normalizeGeneratedImportedPageAssetPath(page = {}, index = 0, usedPaths = new Set()) {
+  const rawBase = cleanString(
+    page.filename ||
+    page.fileName ||
+    page.assetPath ||
+    page.path ||
+    page.slug ||
+    page.id ||
+    page.title ||
+    page.name ||
+    `pagina-${index + 1}`
+  )
+  const withoutExtension = rawBase.replace(/\.[^.]+$/, '')
+  const safeBase = slugify(withoutExtension) || `pagina-${index + 1}`
+  let candidate = normalizeImportedAssetPath(`${safeBase}.html`) || `pagina-${index + 1}.html`
+  let suffix = 2
+  while (usedPaths.has(candidate)) {
+    candidate = `${safeBase}-${suffix}.html`
+    suffix += 1
+  }
+  usedPaths.add(candidate)
+  return candidate
+}
+
+function normalizeGeneratedImportedPages(rawPages = [], fallback = {}) {
+  const sourcePages = Array.isArray(rawPages) ? rawPages : []
+  const usedIds = new Set()
+  const usedPaths = new Set()
+
+  return sourcePages
+    .map((page, index) => {
+      const html = String(page?.html || page?.content || page?.document || '').trim()
+      if (!html) return null
+
+      const htmlTitle = getImportedHtmlTitle(html, '')
+      const title = getImportedPageDisplayTitle(
+        page?.title || page?.name || page?.label || htmlTitle || fallback.title,
+        index
+      )
+      const id = normalizeImportedPageId(page?.id || page?.pageId || page?.slug || title, index, usedIds)
+      const assetPath = normalizeGeneratedImportedPageAssetPath({ ...page, id, title }, index, usedPaths)
+
+      return {
+        id,
+        title,
+        filename: assetPath,
+        description: limitString(page?.description || page?.seoDescription || page?.seo?.description || '', 220),
+        html
+      }
+    })
+    .filter(Boolean)
+}
+
+function makeImportedZipPage(assetPath, index = 0, originalTitle = '', pageId = '') {
+  const title = getImportedPageDisplayTitle(originalTitle, index)
   return {
-    id: index === 0 ? DEFAULT_FUNNEL_PAGE_ID : `page-${index + 1}`,
-    title: `Pagina ${index + 1}`,
+    id: cleanString(pageId) || (index === 0 ? DEFAULT_FUNNEL_PAGE_ID : `page-${index + 1}`),
+    title,
     sortOrder: index,
     importedAssetPath: normalizeImportedAssetPath(assetPath),
     ...(cleanString(originalTitle) ? { importedOriginalTitle: cleanString(originalTitle) } : {}),
@@ -4730,6 +4858,65 @@ async function prepareImportedZipContent({ filename, fileBase64, siteId, importI
   }
 }
 
+async function prepareGeneratedImportedPagesContent({ pages = [], siteId, importId }) {
+  const normalizedPages = normalizeGeneratedImportedPages(pages)
+  if (!normalizedPages.length) {
+    const error = new Error('La IA no devolvio paginas HTML validas para importar')
+    error.status = 502
+    throw error
+  }
+
+  const availablePaths = new Set(normalizedPages.map(page => page.filename))
+  const usedFormIds = new Set()
+  const detectedForms = []
+  const assets = []
+  const securityReport = []
+  let rawHtml = ''
+  let sanitizedHtml = ''
+
+  normalizedPages.forEach((page, index) => {
+    const sanitized = sanitizeImportedHtml(page.html)
+    const pageForms = namespaceImportedPageForms(detectImportedForms(sanitized.html), page.filename, usedFormIds)
+    detectedForms.push(...pageForms.map(form => ({
+      ...form,
+      title: `${page.title}: ${form.title}`
+    })))
+
+    let pageHtml = assignImportedFormIds(sanitized.html, pageForms)
+    pageHtml = rewriteImportedHtmlReferences(pageHtml, page.filename, siteId, availablePaths)
+    pageHtml = annotateImportedEditableHtml(pageHtml)
+
+    for (const item of sanitized.report) {
+      securityReport.push(`${page.title}: ${item}`)
+    }
+
+    if (index === 0) {
+      rawHtml = page.html
+      sanitizedHtml = pageHtml
+    }
+
+    assets.push(buildImportedAssetRow({
+      importId,
+      siteId,
+      assetPath: page.filename,
+      contentType: 'text/html; charset=utf-8',
+      content: pageHtml
+    }))
+  })
+
+  return {
+    importType: 'html',
+    rawHtml,
+    sanitized: {
+      html: sanitizedHtml,
+      report: Array.from(new Set(securityReport))
+    },
+    detectedForms,
+    pages: normalizedPages.map((page, index) => makeImportedZipPage(page.filename, index, page.title, page.id)),
+    assets
+  }
+}
+
 async function replaceImportedSiteAssets(siteId, assets = []) {
   await db.run('DELETE FROM public_site_import_assets WHERE site_id = ?', [siteId])
 
@@ -4849,6 +5036,33 @@ async function getImportedSiteForAsset(siteId) {
   return mapSite(row)
 }
 
+async function getImportedSitePagesForAIContext(site, importedSite) {
+  const pages = normalizeSitePages(site)
+  if (!pages.length) return []
+
+  const contexts = []
+  for (const page of pages) {
+    const importedAssetPath = normalizeImportedAssetPath(page.importedAssetPath || page.imported_asset_path)
+    let html = importedSite?.htmlSanitized || importedSite?.htmlOriginal || ''
+
+    if (importedAssetPath) {
+      const asset = await getImportedSiteAssetByPath(site.id, importedAssetPath)
+      if (asset && /^text\/html\b/i.test(asset.contentType)) {
+        html = asset.content.toString('utf8')
+      }
+    }
+
+    contexts.push({
+      id: page.id,
+      title: page.title || page.id,
+      filename: importedAssetPath || importedSite?.originalFilename || '',
+      html: limitString(html, 45000)
+    })
+  }
+
+  return contexts
+}
+
 export async function createImportedSiteFromHtml(input = {}) {
   const filename = cleanString(input.filename || input.name || 'pagina.html')
   const extension = filename.split('.').pop()?.toLowerCase() || ''
@@ -4867,6 +5081,12 @@ export async function createImportedSiteFromHtml(input = {}) {
     prepared = await prepareImportedZipContent({
       filename,
       fileBase64: input.fileBase64 || input.contentBase64 || input.content,
+      siteId,
+      importId
+    })
+  } else if (Array.isArray(input.pages) && input.pages.length > 0) {
+    prepared = await prepareGeneratedImportedPagesContent({
+      pages: input.pages,
       siteId,
       importId
     })
@@ -4985,10 +5205,81 @@ async function replaceImportedSiteHtml(siteId, input = {}) {
     throw error
   }
 
+  const currentSite = await getSite(siteId, { includeBlocks: false })
+  if (!currentSite) {
+    const error = new Error('Site no encontrado')
+    error.status = 404
+    throw error
+  }
+
   if (currentImport.importType !== 'html') {
     const error = new Error('La edicion con IA funciona con paginas HTML de un solo archivo. Para ZIP, sube una nueva version del archivo.')
     error.status = 400
     throw error
+  }
+
+  if (Array.isArray(input.pages) && input.pages.length > 0) {
+    const prepared = await prepareGeneratedImportedPagesContent({
+      pages: input.pages,
+      siteId,
+      importId: currentImport.id
+    })
+    const nextMappings = mergeImportedFormMappings(
+      currentImport.formMappings,
+      buildDefaultImportedFormMappings(prepared.detectedForms)
+    )
+    const publicTitle = getImportedHtmlTitle(prepared.sanitized.html, input.title || currentSite.title || 'Pagina importada')
+    const publicDescription = getImportedHtmlDescription(prepared.sanitized.html, input.description || currentSite.description || '')
+    const nextTheme = {
+      ...DEFAULT_THEME,
+      ...(currentSite.theme || {}),
+      template: IMPORTED_SITE_TEMPLATE,
+      importedHtml: true,
+      importId: currentImport.id,
+      importType: prepared.importType,
+      importAssetCount: prepared.assets.length,
+      pages: prepared.pages
+    }
+
+    await db.run(`
+      UPDATE public_site_imports SET
+        html_original = ?,
+        html_sanitized = ?,
+        detected_forms_json = ?,
+        form_mappings_json = ?,
+        security_report_json = ?,
+        status = 'mapping_pending',
+        updated_at = CURRENT_TIMESTAMP
+      WHERE site_id = ?
+    `, [
+      prepared.rawHtml,
+      prepared.sanitized.html,
+      jsonString(prepared.detectedForms),
+      jsonString(nextMappings),
+      jsonString(prepared.sanitized.report),
+      siteId
+    ])
+
+    await replaceImportedSiteAssets(siteId, prepared.assets)
+
+    await db.run(`
+      UPDATE public_sites SET
+        title = ?,
+        description = ?,
+        theme_json = ?,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `, [
+      publicTitle,
+      publicDescription || null,
+      jsonString(nextTheme),
+      siteId
+    ])
+
+    return {
+      site: await getSite(siteId, { includeBlocks: true, includeSubmissions: true }),
+      import: await getImportedSiteBySiteId(siteId)
+    }
   }
 
   const rawHtml = String(input.html || '').trim()
@@ -5059,6 +5350,13 @@ export async function updateImportedSiteEditableContent(siteId, input = {}) {
     throw error
   }
 
+  const currentSite = await getSite(siteId, { includeBlocks: false })
+  if (!currentSite) {
+    const error = new Error('Site no encontrado')
+    error.status = 404
+    throw error
+  }
+
   let updateInput = { ...input }
   if (cleanString(updateInput.fileBase64 || updateInput.file_base64)) {
     const editType = normalizeImportedEditableContentType(updateInput.editType || updateInput.edit_type)
@@ -5074,17 +5372,52 @@ export async function updateImportedSiteEditableContent(siteId, input = {}) {
     }
   }
 
-  const currentHtml = currentImport.htmlSanitized || currentImport.htmlOriginal || ''
+  const targetPageId = cleanString(updateInput.pageId || updateInput.page_id)
+  const activePage = getImportedRenderPage(currentSite, targetPageId)
+  const importedAssetPath = normalizeImportedAssetPath(activePage?.importedAssetPath || activePage?.imported_asset_path)
+  const activeAsset = importedAssetPath ? await getImportedSiteAssetByPath(siteId, importedAssetPath) : null
+  const editsAssetPage = Boolean(activeAsset && /^text\/html\b/i.test(activeAsset.contentType))
+  const currentHtml = editsAssetPage
+    ? activeAsset.content.toString('utf8')
+    : currentImport.htmlSanitized || currentImport.htmlOriginal || ''
   const editedHtml = applyImportedEditableContentUpdate(currentHtml, updateInput)
   const sanitized = sanitizeImportedHtml(editedHtml)
-  const detectedForms = namespaceImportedPageForms(detectImportedForms(sanitized.html), '', new Set())
+  const existingOtherForms = editsAssetPage
+    ? (Array.isArray(currentImport.detectedForms) ? currentImport.detectedForms : []).filter(form => (
+        normalizeImportedAssetPath(form?.pagePath || form?.page_path || '') !== importedAssetPath
+      ))
+    : []
+  const usedFormIds = new Set(existingOtherForms.map(form => cleanString(form?.id)).filter(Boolean))
+  const detectedForms = namespaceImportedPageForms(
+    detectImportedForms(sanitized.html),
+    editsAssetPage ? importedAssetPath : '',
+    usedFormIds
+  )
+  const nextDetectedForms = editsAssetPage ? [...existingOtherForms, ...detectedForms] : detectedForms
   const htmlSanitized = annotateImportedEditableHtml(assignImportedFormIds(sanitized.html, detectedForms))
   const nextMappings = mergeImportedFormMappings(
     currentImport.formMappings,
-    buildDefaultImportedFormMappings(detectedForms)
+    buildDefaultImportedFormMappings(nextDetectedForms)
   )
   const publicTitle = getImportedHtmlTitle(htmlSanitized, 'Pagina importada')
   const publicDescription = getImportedHtmlDescription(htmlSanitized, '')
+
+  if (editsAssetPage && activeAsset) {
+    const htmlBuffer = Buffer.from(htmlSanitized, 'utf8')
+    await db.run(`
+      UPDATE public_site_import_assets SET
+        content_base64 = ?,
+        size_bytes = ?,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `, [
+      htmlBuffer.toString('base64'),
+      htmlBuffer.byteLength,
+      activeAsset.id
+    ])
+  }
+
+  const shouldRefreshStoredMainHtml = !editsAssetPage || Number(activePage?.sortOrder || 0) === 0
 
   await db.run(`
     UPDATE public_site_imports SET
@@ -5097,11 +5430,14 @@ export async function updateImportedSiteEditableContent(siteId, input = {}) {
       updated_at = CURRENT_TIMESTAMP
     WHERE site_id = ?
   `, [
-    htmlSanitized,
-    htmlSanitized,
-    jsonString(detectedForms),
+    shouldRefreshStoredMainHtml ? htmlSanitized : currentImport.htmlOriginal,
+    shouldRefreshStoredMainHtml ? htmlSanitized : currentImport.htmlSanitized,
+    jsonString(nextDetectedForms),
     jsonString(nextMappings),
-    jsonString(sanitized.report),
+    jsonString(Array.from(new Set([
+      ...(Array.isArray(currentImport.securityReport) ? currentImport.securityReport : []),
+      ...sanitized.report.map(item => editsAssetPage ? `${activePage?.title || importedAssetPath}: ${item}` : item)
+    ]))),
     siteId
   ])
 
@@ -5112,8 +5448,8 @@ export async function updateImportedSiteEditableContent(siteId, input = {}) {
       updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
   `, [
-    publicTitle,
-    publicDescription || null,
+    shouldRefreshStoredMainHtml ? publicTitle : currentSite.title,
+    shouldRefreshStoredMainHtml ? publicDescription || null : currentSite.description,
     siteId
   ])
 
@@ -5153,7 +5489,7 @@ export async function createSiteWithAIHtml(input = {}) {
   })
 
   const status = cleanString(aiPayload?.status)
-  if (status === 'needs_more_info' || !(aiPayload?.page || aiPayload?.html || aiPayload?.site)) {
+  if (status === 'needs_more_info' || !hasSitesAIHtmlPayload(aiPayload)) {
     return {
       status: 'needs_more_info',
       reply: limitString(aiPayload?.reply, 1000) || 'Me falta un dato clave para armar la pagina HTML. Cuentame un poco mas del negocio, objetivo y campos.'
@@ -5165,6 +5501,7 @@ export async function createSiteWithAIHtml(input = {}) {
     siteType: page.siteType,
     filename: page.filename,
     html: page.html,
+    pages: page.pages,
     name: page.name,
     title: page.title,
     description: page.description || 'Pagina generada con IA desde HTML.',
@@ -5214,6 +5551,7 @@ export async function updateImportedSiteHtmlWithAI(siteId, input = {}) {
 
   const agentConfig = await getAIAgentConfig({ userId: input.userId })
   const model = normalizeSitesAIModel(input.model || input.chatgptModel || input.chatgpt_model, agentConfig?.model)
+  const importedPages = await getImportedSitePagesForAIContext(currentSite, currentImport)
   const aiPayload = await callSitesAIHtmlEditor({
     apiKey,
     model,
@@ -5221,11 +5559,12 @@ export async function updateImportedSiteHtmlWithAI(siteId, input = {}) {
     messages,
     agentConfig,
     site: currentSite,
-    importedSite: currentImport
+    importedSite: currentImport,
+    importedPages
   })
 
   const status = cleanString(aiPayload?.status)
-  if (status === 'needs_more_info' || !(aiPayload?.page || aiPayload?.html || aiPayload?.site)) {
+  if (status === 'needs_more_info' || !hasSitesAIHtmlPayload(aiPayload)) {
     return {
       status: 'needs_more_info',
       reply: limitString(aiPayload?.reply, 1000) || 'Me falta saber que cambio quieres hacer en esta pagina HTML.'
@@ -5235,6 +5574,7 @@ export async function updateImportedSiteHtmlWithAI(siteId, input = {}) {
   const page = normalizeAIHtmlPagePayload(aiPayload, siteKind)
   const result = await replaceImportedSiteHtml(siteId, {
     html: page.html,
+    pages: page.pages,
     title: page.title || currentSite.title,
     description: page.description || currentSite.description
   })
