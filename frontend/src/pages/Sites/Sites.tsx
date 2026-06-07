@@ -6506,17 +6506,43 @@ const importedEditorNoAutocompleteAttrs = {
   'data-form-type': 'other'
 } as const
 
-const importedButtonActionOptions: Array<{ value: ImportedButtonAction; label: string; demo?: boolean }> = [
+type ImportedButtonActionOption = { value: ImportedButtonAction; label: string; demo?: boolean }
+
+const importedButtonActionOptions: ImportedButtonActionOption[] = [
   { value: 'submit', label: 'Enviar formulario' },
   { value: 'next_page', label: 'Ir a la siguiente página' },
   { value: 'specific_page', label: 'Ir a una página específica' },
   { value: 'url', label: 'Abrir enlace' },
-  { value: 'disqualify', label: 'Descalificar / detener' },
   { value: 'automation', label: 'Enviar automatización', demo: true }
 ]
 
 const importedSelectableButtonActions = new Set<ImportedButtonAction>(importedButtonActionOptions.map(option => option.value))
 const importedButtonActions = new Set<ImportedButtonAction>(['none', ...importedSelectableButtonActions])
+
+const importedSubmittableFieldSelector = [
+  'form input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="reset"]):not([type="image"])',
+  'form textarea',
+  'form select',
+  importedFormFieldSelector
+].join(', ')
+
+const hasImportedSubmittableFormFields = (html = '') => {
+  if (!html.trim() || typeof DOMParser === 'undefined') return false
+  try {
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+    return Boolean(doc.querySelector(importedSubmittableFieldSelector))
+  } catch {
+    return false
+  }
+}
+
+const getImportedButtonActionOptionsForPage = (canSubmitForm: boolean) => (
+  importedButtonActionOptions.filter(option => option.value !== 'submit' || canSubmitForm)
+)
+
+const getImportedActionOptionSet = (actionOptions: ImportedButtonActionOption[]) => (
+  new Set<ImportedButtonAction>(actionOptions.map(option => option.value))
+)
 
 const normalizeImportedButtonAction = (value: string): ImportedButtonAction => {
   const action = value.trim().toLowerCase().replace(/[-\s]+/g, '_') as ImportedButtonAction
@@ -7217,60 +7243,88 @@ const normalizeImportedAIRegionPreviewHtml = (html = '') => (
     .trim()
 )
 
-const getDefaultImportedAdditionalAction = (actions: ImportedButtonActionStep[]): ImportedButtonAction => {
+const getDefaultImportedAdditionalAction = (
+  actions: ImportedButtonActionStep[],
+  actionOptions = importedButtonActionOptions
+): ImportedButtonAction => {
   const used = new Set(actions.map(action => action.action))
-  return importedButtonActionOptions.find(option => !used.has(option.value))?.value || 'none'
+  return actionOptions.find(option => !used.has(option.value))?.value || 'none'
 }
 
-const getUniqueImportedActionSteps = (actions: ImportedButtonActionStep[]) => {
+const getUniqueImportedActionSteps = (
+  actions: ImportedButtonActionStep[],
+  actionOptions = importedButtonActionOptions
+) => {
+  const selectableActions = getImportedActionOptionSet(actionOptions)
   const used = new Set<ImportedButtonAction>()
   return actions.filter(step => {
-    if (!step || !importedSelectableButtonActions.has(step.action) || used.has(step.action)) return false
+    if (!step || !selectableActions.has(step.action) || used.has(step.action)) return false
     used.add(step.action)
     return true
   })
 }
 
-const areImportedActionsUnique = (actions: ImportedButtonActionStep[]) => (
-  actions.length === getUniqueImportedActionSteps(actions).length
+const areImportedActionsUnique = (
+  actions: ImportedButtonActionStep[],
+  actionOptions = importedButtonActionOptions
+) => (
+  actions.length === getUniqueImportedActionSteps(actions, actionOptions).length
 )
 
-const getImportedActionOptionsForStep = (actions: ImportedButtonActionStep[], index: number) => {
+const getImportedActionOptionsForStep = (
+  actions: ImportedButtonActionStep[],
+  index: number,
+  actionOptions = importedButtonActionOptions
+) => {
   const usedByOtherSteps = new Set(actions.filter((_, currentIndex) => currentIndex !== index).map(step => step.action))
-  return importedButtonActionOptions.filter(option => option.value === actions[index]?.action || !usedByOtherSteps.has(option.value))
+  return actionOptions.filter(option => option.value === actions[index]?.action || !usedByOtherSteps.has(option.value))
 }
 
-const isImportedActionStepValid = (step: ImportedButtonActionStep) => {
-  if (!step || step.action === 'none' || !importedSelectableButtonActions.has(step.action)) return false
+const isImportedActionStepValid = (
+  step: ImportedButtonActionStep,
+  actionOptions = importedButtonActionOptions
+) => {
+  const selectableActions = getImportedActionOptionSet(actionOptions)
+  if (!step || step.action === 'none' || !selectableActions.has(step.action)) return false
   if (step.action === 'url') return Boolean(step.buttonUrl?.trim())
   if (step.action === 'specific_page') return Boolean(step.buttonPageId?.trim())
   return true
 }
 
-const areImportedActionsValid = (actions: ImportedButtonActionStep[]) =>
-  actions.length === 0 || (areImportedActionsUnique(actions) && actions.every(isImportedActionStepValid))
+const areImportedActionsValid = (
+  actions: ImportedButtonActionStep[],
+  actionOptions = importedButtonActionOptions
+) => (
+  actions.length === 0 || (
+    areImportedActionsUnique(actions, actionOptions) &&
+    actions.every(step => isImportedActionStepValid(step, actionOptions))
+  )
+)
 
 const ImportedActionChainEditor: React.FC<{
   actions: ImportedButtonActionStep[]
   targetPages: SitePage[]
+  actionOptions?: ImportedButtonActionOption[]
   disabled?: boolean
   emptyLabel?: string
   onChange: (actions: ImportedButtonActionStep[]) => void
-}> = ({ actions, targetPages, disabled = false, emptyLabel = 'Solo dejarlo como texto', onChange }) => {
+}> = ({ actions, targetPages, actionOptions = importedButtonActionOptions, disabled = false, emptyLabel = 'Solo dejarlo como texto', onChange }) => {
+  const visibleActions = getUniqueImportedActionSteps(actions, actionOptions)
+  const selectableActions = getImportedActionOptionSet(actionOptions)
   const setAction = (index: number, patch: Partial<ImportedButtonActionStep>) => {
-    onChange(getUniqueImportedActionSteps(actions.map((step, currentIndex) => currentIndex === index ? { ...step, ...patch } : step)))
+    onChange(getUniqueImportedActionSteps(visibleActions.map((step, currentIndex) => currentIndex === index ? { ...step, ...patch } : step), actionOptions))
   }
   const removeAction = (index: number) => {
-    onChange(actions.filter((_, currentIndex) => currentIndex !== index))
+    onChange(visibleActions.filter((_, currentIndex) => currentIndex !== index))
   }
   const addAction = () => {
-    const action = getDefaultImportedAdditionalAction(actions)
+    const action = getDefaultImportedAdditionalAction(visibleActions, actionOptions)
     if (action === 'none') return
-    onChange([...actions, makeImportedActionStep(action)])
+    onChange([...visibleActions, makeImportedActionStep(action)])
   }
-  const canAddAction = !disabled && importedButtonActionOptions.some(option => !actions.some(step => step.action === option.value))
+  const canAddAction = !disabled && actionOptions.some(option => !visibleActions.some(step => step.action === option.value))
 
-  if (actions.length === 0) {
+  if (visibleActions.length === 0) {
     return (
       <label className={styles.importedActionField}>
         <span>Acción</span>
@@ -7279,11 +7333,11 @@ const ImportedActionChainEditor: React.FC<{
           disabled={disabled}
           onChange={(event) => {
             const action = normalizeImportedButtonAction(event.target.value)
-            onChange(action === 'none' ? [] : [makeImportedActionStep(action)])
+            onChange(action === 'none' || !selectableActions.has(action) ? [] : [makeImportedActionStep(action)])
           }}
         >
           <option value="none">{emptyLabel}</option>
-          {importedButtonActionOptions.map(option => (
+          {actionOptions.map(option => (
             <option key={option.value} value={option.value}>{option.label}{option.demo ? ' (demo)' : ''}</option>
           ))}
         </select>
@@ -7293,7 +7347,7 @@ const ImportedActionChainEditor: React.FC<{
 
   return (
     <div className={styles.importedActionChain}>
-      {actions.map((step, index) => (
+      {visibleActions.map((step, index) => (
         <div key={step.id || `${step.action}-${index}`} className={styles.importedActionStep}>
           <div className={styles.importedActionStepHeader}>
             <label className={styles.importedActionField}>
@@ -7303,7 +7357,7 @@ const ImportedActionChainEditor: React.FC<{
                 disabled={disabled}
                 onChange={(event) => {
                   const nextAction = normalizeImportedButtonAction(event.target.value)
-                  if (nextAction === 'none') {
+                  if (nextAction === 'none' || !selectableActions.has(nextAction)) {
                     onChange([])
                     return
                   }
@@ -7317,12 +7371,12 @@ const ImportedActionChainEditor: React.FC<{
                 }}
               >
                 {index === 0 && <option value="none">{emptyLabel}</option>}
-                {getImportedActionOptionsForStep(actions, index).map(option => (
+                {getImportedActionOptionsForStep(visibleActions, index, actionOptions).map(option => (
                   <option key={option.value} value={option.value}>{option.label}{option.demo ? ' (demo)' : ''}</option>
                 ))}
               </select>
             </label>
-            {actions.length > 1 && (
+            {visibleActions.length > 1 && (
               <button type="button" onClick={() => removeAction(index)} disabled={disabled} aria-label={`Quitar acción ${index + 1}`}>
                 <X size={14} />
               </button>
@@ -7357,36 +7411,6 @@ const ImportedActionChainEditor: React.FC<{
                 ))}
               </select>
             </label>
-          )}
-
-          {step.action === 'disqualify' && (
-            <>
-              <label className={styles.importedActionField}>
-                <span>Mensaje</span>
-                <textarea
-                  rows={3}
-                  value={step.buttonMessage || ''}
-                  placeholder="Gracias. Por ahora esta solicitud no califica."
-                  disabled={disabled}
-                  name={`rstk-imported-action-message-${index}`}
-                  {...importedEditorNoAutocompleteAttrs}
-                  onChange={(event) => setAction(index, { buttonMessage: event.target.value })}
-                />
-              </label>
-              <label className={styles.importedActionField}>
-                <span>Página destino opcional</span>
-                <select
-                  value={step.buttonPageId || ''}
-                  disabled={disabled}
-                  onChange={(event) => setAction(index, { buttonPageId: event.target.value })}
-                >
-                  <option value="">Mostrar mensaje en esta página</option>
-                  {targetPages.map(page => (
-                    <option key={page.id} value={page.id}>{page.title || page.id}</option>
-                  ))}
-                </select>
-              </label>
-            </>
           )}
 
           {step.action === 'automation' && (
@@ -7522,6 +7546,13 @@ const ImportedHtmlEditorPanel: React.FC<{
     void loadInlinePreview()
   }, [loadInlinePreview])
 
+  const currentPageCanSubmitForm = useMemo(() => (
+    hasImportedSubmittableFormFields(previewHtml)
+  ), [previewHtml])
+  const currentPageActionOptions = useMemo(() => (
+    getImportedButtonActionOptionsForPage(currentPageCanSubmitForm)
+  ), [currentPageCanSubmitForm])
+
   useEffect(() => {
     selectedIframeElementRef.current?.classList.remove('rstk-imported-selected')
     selectedIframeElementRef.current = null
@@ -7579,19 +7610,22 @@ const ImportedHtmlEditorPanel: React.FC<{
     setButtonEditor({
       selection,
       value: selection.value,
-      buttonActions: selection.buttonActions?.length
-        ? selection.buttonActions
-        : selection.buttonAction && selection.buttonAction !== 'none'
-          ? [makeImportedActionStep(selection.buttonAction, {
-            id: 'action-1',
-            buttonUrl: selection.buttonUrl,
-            buttonPageId: selection.buttonPageId,
-            buttonMessage: selection.buttonMessage
-          })]
-          : []
+      buttonActions: getUniqueImportedActionSteps(
+        selection.buttonActions?.length
+          ? selection.buttonActions
+          : selection.buttonAction && selection.buttonAction !== 'none'
+            ? [makeImportedActionStep(selection.buttonAction, {
+              id: 'action-1',
+              buttonUrl: selection.buttonUrl,
+              buttonPageId: selection.buttonPageId,
+              buttonMessage: selection.buttonMessage
+            })]
+            : [],
+        currentPageActionOptions
+      )
     })
     setContentError('')
-  }, [])
+  }, [currentPageActionOptions])
 
   const openChoiceEditorForSelection = useCallback((selection: ImportedChoiceSelection) => {
     setInlineEditor(null)
@@ -7599,10 +7633,10 @@ const ImportedHtmlEditorPanel: React.FC<{
     setFieldEditor(null)
     setChoiceEditor({
       selection,
-      actions: selection.actions
+      actions: getUniqueImportedActionSteps(selection.actions, currentPageActionOptions)
     })
     setContentError('')
-  }, [])
+  }, [currentPageActionOptions])
 
   const openFieldEditorForSelection = useCallback((selection: ImportedFormFieldSelection) => {
     setInlineEditor(null)
@@ -8370,12 +8404,12 @@ const ImportedHtmlEditorPanel: React.FC<{
     buttonEditor &&
     buttonEditor.value.trim() &&
     !contentSaving &&
-    areImportedActionsValid(buttonEditor.buttonActions)
+    areImportedActionsValid(buttonEditor.buttonActions, currentPageActionOptions)
   )
   const canSaveChoiceEditor = Boolean(
     choiceEditor &&
     !contentSaving &&
-    areImportedActionsValid(choiceEditor.actions)
+    areImportedActionsValid(choiceEditor.actions, currentPageActionOptions)
   )
   const fieldEditorHasOptions = Boolean(
     fieldEditor &&
@@ -8427,9 +8461,10 @@ const ImportedHtmlEditorPanel: React.FC<{
 
   const saveButtonEditor = async () => {
     if (!buttonEditor || buttonEditor.selection.editType !== 'button') return
-    const firstAction = buttonEditor.buttonActions[0]
+    const buttonActions = getUniqueImportedActionSteps(buttonEditor.buttonActions, currentPageActionOptions)
+    const firstAction = buttonActions[0]
     await saveEditableContent(buttonEditor.selection, buttonEditor.value, undefined, {
-      buttonActions: buttonEditor.buttonActions,
+      buttonActions,
       buttonAction: firstAction?.action || 'none',
       buttonUrl: firstAction?.buttonUrl?.trim() || '',
       buttonPageId: firstAction?.buttonPageId?.trim() || '',
@@ -8439,6 +8474,7 @@ const ImportedHtmlEditorPanel: React.FC<{
 
   const saveChoiceEditor = async () => {
     if (!choiceEditor) return
+    const choiceActions = getUniqueImportedActionSteps(choiceEditor.actions, currentPageActionOptions)
     await saveEditableContent({
       editId: choiceEditor.selection.editId,
       editType: 'choice_option' as ImportedEditableContentType,
@@ -8446,7 +8482,7 @@ const ImportedHtmlEditorPanel: React.FC<{
       value: choiceEditor.selection.label,
       tagName: 'input'
     }, choiceEditor.selection.label, undefined, {
-      choiceActions: choiceEditor.actions,
+      choiceActions,
       choiceName: choiceEditor.selection.choiceName,
       choiceValue: choiceEditor.selection.choiceValue,
       choiceInputType: choiceEditor.selection.choiceInputType,
@@ -8674,6 +8710,7 @@ const ImportedHtmlEditorPanel: React.FC<{
             <ImportedActionChainEditor
               actions={buttonEditor.buttonActions}
               targetPages={targetImportedPages}
+              actionOptions={currentPageActionOptions}
               disabled={contentSaving}
               onChange={(buttonActions) => setButtonEditor(current => current ? { ...current, buttonActions } : current)}
             />
@@ -8706,6 +8743,7 @@ const ImportedHtmlEditorPanel: React.FC<{
             <ImportedActionChainEditor
               actions={choiceEditor.actions}
               targetPages={targetImportedPages}
+              actionOptions={currentPageActionOptions}
               disabled={contentSaving}
               emptyLabel="No hacer nada especial"
               onChange={(actions) => setChoiceEditor(current => current ? { ...current, actions } : current)}

@@ -4558,9 +4558,9 @@ Marcado para edicion rapida:
 - Marca titulares, subtitulares, parrafos breves, botones, labels de formularios, placeholders, imagenes, logos, elementos con fondo de imagen y espacios de video/iframe/embed.
 - Si incluyes un video, usa URL o iframe seguro y marca el contenedor con data-rstk-edit-type="video" para que el usuario pueda reemplazarlo despues.
 - En botones editables, cuando sepas la accion, agrega data-rstk-button-actions como JSON de acciones. Ejemplo: data-rstk-button-actions='[{"action":"submit"},{"action":"next_page"}]'.
-- Acciones permitidas: submit, next_page, specific_page, url, disqualify, automation, notify_team, add_tag, send_whatsapp, create_payment, none. Las de automation/notificaciones/pagos pueden quedar como demo.
+- Acciones permitidas: submit, next_page, specific_page, url, automation, none. La accion automation puede quedar como demo.
 - Mantén tambien data-rstk-button-action con la primera accion para compatibilidad. Si el boton abre enlace, agrega data-rstk-button-url. Si va a una pagina interna, agrega data-rstk-button-page-id cuando exista un id claro.
-- En radio buttons y checkboxes que puedan calificar/descalificar, agrega data-rstk-choice-actions con JSON. Ejemplo: data-rstk-choice-actions='[{"action":"disqualify","buttonMessage":"Esta opcion no califica"}]'.
+- En radio buttons y checkboxes, no agregues acciones para descalificar o detener el flujo. Si una opcion debe avanzar, agrega data-rstk-choice-actions con acciones permitidas como submit, next_page, specific_page o url.
 - Marca secciones principales con data-rstk-section y un nombre claro.
 - No envuelvas textos editables en demasiadas etiquetas. Deja un elemento claro para cada texto importante.
 
