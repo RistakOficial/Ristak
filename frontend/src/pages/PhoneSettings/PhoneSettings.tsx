@@ -250,13 +250,6 @@ export const PhoneSettings: React.FC = () => {
     saveConfigPreference(setEnabledContactInfoCustomFieldIds, next)
   }
 
-  const enableAllContactInfoCustomFields = () => {
-    const allFieldIds = customFieldDefinitions
-      .map((definition) => getContactCustomFieldIdentity(definition))
-      .filter(Boolean)
-    saveConfigPreference(setEnabledContactInfoCustomFieldIds, allFieldIds)
-  }
-
   const handleRequestPush = async () => {
     setRequestingPush(true)
     try {
@@ -441,29 +434,6 @@ export const PhoneSettings: React.FC = () => {
 
   const renderCustomFields = () => (
     <>
-      <section className={styles.settingsSection}>
-        <div className={styles.sectionTitle}>
-          <ListChecks size={18} />
-          <span>
-            <strong>Info visible del contacto</strong>
-            <small>Activa los datos que quieres ver y editar dentro del chat.</small>
-          </span>
-        </div>
-        <div className={styles.customFieldsActions}>
-          <button type="button" onClick={enableAllContactInfoCustomFields} disabled={customFieldsLoading || customFieldDefinitions.length === 0}>
-            Activar todos
-          </button>
-          <button type="button" onClick={() => saveConfigPreference(setEnabledContactInfoCustomFieldIds, [])} disabled={customFieldsLoading || enabledContactInfoCustomFieldIds.length === 0}>
-            Limpiar
-          </button>
-          <button type="button" onClick={loadCustomFieldDefinitions} disabled={customFieldsLoading}>
-            {customFieldsLoading ? <Loader2 size={15} className={styles.spinIcon} /> : <RefreshCw size={15} />}
-            Actualizar
-          </button>
-        </div>
-        <p className={styles.hint}>Los campos activos aparecen en Info del contacto. Si un contacto no tiene dato, podrás escribirlo ahí mismo.</p>
-      </section>
-
       {customFieldsError && (
         <div className={styles.alertBox}>
           <CircleAlert size={18} />
@@ -631,6 +601,9 @@ export const PhoneSettings: React.FC = () => {
               <ChevronLeft size={22} />
               Ajustes
             </button>
+          )}
+          {activeSection === 'custom-fields' && (
+            <span className={styles.headerSubtitle}>Activa los checkboxes de aquellos que queremos seleccionar.</span>
           )}
         </header>
         <div className={styles.content} data-phone-scrollable="true">
