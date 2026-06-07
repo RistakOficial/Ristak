@@ -6382,14 +6382,16 @@ export const PhoneChat: React.FC = () => {
           }}
         >
           <span className={styles.contactInfoRowIcon}><FileText size={17} /></span>
-          <label className={styles.contactInfoCustomFieldEditor}>
+          <div className={styles.contactInfoCustomFieldEditor}>
             <small>{customField.label}</small>
-            {renderCustomFieldInput(customField)}
-          </label>
+            <span className={styles.contactInfoCustomFieldControl}>
+              {renderCustomFieldInput(customField)}
+              <button type="submit" className={styles.contactInfoCustomFieldSaveButton} disabled={isSaving} aria-label={`Guardar ${customField.label}`}>
+                {isSaving ? <Loader2 size={16} className={styles.spinIcon} /> : <Check size={16} />}
+              </button>
+            </span>
+          </div>
           <span className={styles.contactInfoCustomFieldActions}>
-            <button type="submit" disabled={isSaving} aria-label={`Guardar ${customField.label}`}>
-              {isSaving ? <Loader2 size={16} className={styles.spinIcon} /> : <Check size={16} />}
-            </button>
             <button type="button" disabled={isSaving} onClick={() => handleCancelCustomFieldEdit(customField.id)} aria-label={`Cancelar ${customField.label}`}>
               <X size={16} />
             </button>

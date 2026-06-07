@@ -1914,7 +1914,8 @@
 }
 
 .contactInfoEditButton,
-.contactInfoCustomFieldActions button {
+.contactInfoCustomFieldActions button,
+.contactInfoCustomFieldSaveButton {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1936,6 +1937,12 @@
   gap: 5px;
 }
 
+.contactInfoCustomFieldControl {
+  position: relative;
+  display: block;
+  min-width: 0;
+}
+
 .contactInfoCustomFieldEditor input,
 .contactInfoCustomFieldEditor select,
 .contactInfoCustomFieldEditor textarea {
@@ -1954,12 +1961,12 @@
 .contactInfoCustomFieldEditor input,
 .contactInfoCustomFieldEditor select {
   height: 38px;
-  padding: 0 10px;
+  padding: 0 46px 0 10px;
 }
 
 .contactInfoCustomFieldEditor textarea {
   min-height: 74px;
-  padding: 9px 10px;
+  padding: 9px 46px 9px 10px;
   resize: vertical;
 }
 
@@ -1973,14 +1980,24 @@
 .contactInfoCustomFieldActions {
   display: grid;
   gap: 6px;
+  align-self: end;
+  padding-bottom: 3px;
 }
 
-.contactInfoCustomFieldActions button:first-child {
+.contactInfoCustomFieldSaveButton {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  width: 30px;
+  height: 30px;
+  border-color: transparent;
   color: var(--phone-chat-text-on-primary, #ffffff);
   background: var(--phone-chat-primary);
+  transform: translateY(-50%);
 }
 
-.contactInfoCustomFieldActions button:disabled {
+.contactInfoCustomFieldActions button:disabled,
+.contactInfoCustomFieldSaveButton:disabled {
   opacity: 0.56;
 }
 
