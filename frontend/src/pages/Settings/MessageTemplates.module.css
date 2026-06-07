@@ -460,7 +460,7 @@
   cursor: grab;
 }
 
-.collectionTable tbody tr:hover td {
+.collectionTable tbody tr:hover {
   background: rgba(148, 163, 184, 0.045);
 }
 
@@ -468,13 +468,14 @@
   margin-top: 0;
 }
 
-.collectionRowSelected td {
+.collectionRowSelected {
   background: rgba(20, 184, 166, 0.07);
 }
 
 .selectionHead,
 .selectionCell {
   width: 62px;
+  white-space: nowrap;
 }
 
 .selectionHead input,
@@ -485,15 +486,15 @@
   cursor: pointer;
 }
 
-.selectionCell {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
 .dragHandle {
   display: inline-flex;
+  margin-right: 8px;
   color: var(--color-text-tertiary);
+  vertical-align: middle;
+}
+
+.selectionCell input {
+  vertical-align: middle;
 }
 
 .collectionTypeBadge {
