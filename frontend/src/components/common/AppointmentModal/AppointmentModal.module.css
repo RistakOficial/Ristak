@@ -146,12 +146,17 @@
   overflow-y: auto;
   overscroll-behavior-y: contain;
   -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
   touch-action: pan-y;
 }
 
 .mobileSheetContainer {
   color: var(--appointment-mobile-text);
   background: var(--appointment-mobile-bg);
+}
+
+.mobileSheetContainer::-webkit-scrollbar {
+  display: none;
 }
 
 @keyframes mobileSheetRise {
@@ -460,7 +465,7 @@
 
 .mobileSheetContainer .twoColumnLayout {
   grid-template-columns: 1fr;
-  gap: 1rem;
+  gap: 15px;
 }
 
 .mobileSheetContainer .leftColumn,
@@ -470,33 +475,59 @@
 
 .mobileSheetContainer .leftColumn {
   order: 2;
-  gap: 1rem;
-  padding: 14px;
-  border-color: var(--appointment-mobile-border);
-  border-radius: 14px;
-  background: var(--appointment-mobile-surface);
+  gap: 15px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 .mobileSheetContainer .rightColumn {
   order: 1;
-  gap: 0.9rem;
+  gap: 15px;
 }
 
 .mobileSheetContainer .columnTitle {
-  margin-bottom: 0.15rem;
-  font-size: 0.82rem;
+  margin: 2px 0 0;
+  color: var(--appointment-mobile-text);
+  font-size: 17px;
+  font-weight: 850;
+  line-height: 1.15;
   letter-spacing: 0;
   text-transform: none;
 }
 
+.mobileSheetContainer .columnTitle svg {
+  display: none;
+}
+
 .mobileSheetContainer .fieldRow {
   grid-template-columns: 1fr;
-  gap: 0.75rem;
+  gap: 12px;
 }
 
 .mobileSheetContainer .field {
   min-width: 0;
-  margin-bottom: 0.15rem;
+  gap: 8px;
+  margin-bottom: 0;
+}
+
+.mobileSheetContainer .sectionBlock {
+  gap: 8px;
+}
+
+.mobileSheetContainer .label {
+  color: var(--appointment-mobile-muted);
+  font-size: 12px;
+  font-weight: 760;
+  letter-spacing: 0;
+}
+
+.mobileSheetContainer .helpText {
+  margin: 0;
+  color: var(--appointment-mobile-muted);
+  font-size: 12px;
+  font-weight: 620;
 }
 
 .mobileSheetContainer .input,
@@ -508,11 +539,24 @@
   color: var(--appointment-mobile-text);
   background: var(--appointment-mobile-panel);
   font-size: 16px;
+  font-weight: 650;
+  box-shadow: none;
+}
+
+.mobileSheetContainer :global([data-ristak-dropdown-trigger]) {
+  min-height: 44px;
+  border-color: var(--appointment-mobile-border) !important;
+  border-radius: 12px !important;
+  color: var(--appointment-mobile-text) !important;
+  background: var(--appointment-mobile-panel) !important;
+  box-shadow: none !important;
+  font-size: 16px !important;
+  font-weight: 650 !important;
 }
 
 .mobileSheetContainer .textarea {
   min-height: 86px;
-  border-radius: 8px;
+  border-radius: 12px;
 }
 
 .field {
@@ -773,7 +817,8 @@
 
 .mobileSheetContainer .guestBuilder {
   border-color: var(--appointment-mobile-border);
-  background: var(--appointment-mobile-soft);
+  border-radius: 12px;
+  background: var(--appointment-mobile-panel);
 }
 
 .guestsSectionCompact {
@@ -872,6 +917,12 @@
 .mobileSheetContainer .guestItem {
   border-color: var(--appointment-mobile-border);
   background: var(--appointment-mobile-panel);
+}
+
+.mobileSheetContainer .selectedContact {
+  border-color: var(--appointment-mobile-border);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--phone-chat-accent, #25d366) 14%, var(--appointment-mobile-bg) 86%);
 }
 
 .guestItem span {
@@ -1115,8 +1166,8 @@
 
 .mobileSheetContainer .dateTimeSection {
   gap: 0.75rem;
-  padding: 0.8rem 0 0;
-  border-top-color: var(--appointment-mobile-border);
+  padding: 0;
+  border-top: 0;
 }
 
 /* Wrapper del TabList centrado */
@@ -1130,8 +1181,13 @@
 .mobileSheetContainer .tabListWrapper {
   justify-content: flex-start;
   overflow-x: auto;
-  border-bottom-color: var(--appointment-mobile-border);
-  padding-bottom: 0.55rem;
+  border-bottom: 0;
+  padding-bottom: 0;
+  scrollbar-width: none;
+}
+
+.mobileSheetContainer .tabListWrapper::-webkit-scrollbar {
+  display: none;
 }
 
 .mobileSheetContainer :global([data-ristak-tablist]) {
@@ -1154,6 +1210,13 @@
 
 .mobileSheetContainer .slotsContent {
   gap: 0.75rem;
+}
+
+.mobileSheetContainer .loadingSlots,
+.mobileSheetContainer .noSlots {
+  border: 1px solid var(--appointment-mobile-border);
+  border-radius: 12px;
+  background: var(--appointment-mobile-panel);
 }
 
 /* Estilos para modo de slots disponibles (DEPRECADO - ya no se usa) */

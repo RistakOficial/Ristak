@@ -1645,6 +1645,11 @@ body.dark .tooltipInfo {
   touch-action: pan-y;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+
+.embeddedScroll::-webkit-scrollbar {
+  display: none;
 }
 
 .embeddedRoot .content,
@@ -1657,7 +1662,15 @@ body.dark .tooltipInfo {
   background: var(--record-payment-embedded-bg);
 }
 
+.embeddedRoot .content::-webkit-scrollbar,
+.embeddedRoot .optionsContent::-webkit-scrollbar {
+  display: none;
+}
+
 .embeddedRoot .footer {
+  position: sticky;
+  bottom: var(--record-payment-footer-bottom-offset, 0px);
+  z-index: 3;
   box-sizing: border-box;
   width: min(100%, 430px);
   margin: 6px auto 0;

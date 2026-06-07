@@ -163,8 +163,8 @@
   justify-content: space-between;
   gap: 12px;
   min-width: 0;
-  min-height: calc(94px + env(safe-area-inset-top));
-  padding: calc(env(safe-area-inset-top) + 12px) 16px 12px;
+  min-height: calc(62px + env(safe-area-inset-top));
+  padding: calc(env(safe-area-inset-top) + 8px) 16px 8px;
   background: var(--phone-payments-surface);
   backdrop-filter: none;
 }
@@ -269,13 +269,26 @@
 
 /* Host del formulario embebido */
 .formHost {
+  --record-payment-footer-bottom-offset: calc(76px + env(safe-area-inset-bottom, 0px));
   grid-row: 2;
   min-height: 0;
   display: flex;
   flex-direction: column;
   box-sizing: border-box;
-  padding-bottom: calc(86px + env(safe-area-inset-bottom));
+  background: var(--phone-payments-surface);
   overflow: hidden;
+}
+
+.formHost,
+.formHost :global([data-phone-scrollable="true"]),
+.formHost :global([data-phone-chat-scrollable="true"]) {
+  scrollbar-width: none;
+}
+
+.formHost::-webkit-scrollbar,
+.formHost :global([data-phone-scrollable="true"])::-webkit-scrollbar,
+.formHost :global([data-phone-chat-scrollable="true"])::-webkit-scrollbar {
+  display: none;
 }
 
 /* Vista de selección: encabezado arriba y debajo las dos opciones de cobro */
