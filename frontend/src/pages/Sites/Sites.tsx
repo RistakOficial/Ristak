@@ -6877,6 +6877,7 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
 }) => {
   const [renamingPageId, setRenamingPageId] = useState<string | null>(null)
   const [open, setOpen] = useState(false)
+  const [menuPageId, setMenuPageId] = useState<string | null>(null)
   const dropdownRef = useRef<HTMLDivElement | null>(null)
   const activePage = pages.find(page => page.id === activePageId) || pages[0] || null
 
@@ -6905,12 +6906,44 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
   }, [open])
 
   useEffect(() => {
-    if (!open) setRenamingPageId(null)
+    if (!open) {
+      setMenuPageId(null)
+      setRenamingPageId(null)
+    }
   }, [open])
 
   const handleSelectPage = (pageId: string) => {
+    setMenuPageId(null)
     onSelectPage(pageId)
     setOpen(false)
+  }
+
+  const canReadPageDrag = (types: DOMStringList | readonly string[]) =>
+    Array.from(types).some(type => type === 'application/ristak-page' || type === 'text/plain')
+
+  const startPageDrag = (event: React.DragEvent<HTMLElement>, page: SitePage, fixedPage: boolean) => {
+    if (locked || fixedPage) {
+      event.preventDefault()
+      return
+    }
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData('application/ristak-page', page.id)
+    event.dataTransfer.setData('text/plain', page.id)
+    onDragPage(page.id)
+  }
+
+  const handlePageDragOver = (event: React.DragEvent<HTMLDivElement>, fixedPage: boolean) => {
+    if (locked || fixedPage || !canReadPageDrag(event.dataTransfer.types)) return
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'move'
+  }
+
+  const handlePageDrop = (event: React.DragEvent<HTMLDivElement>, page: SitePage, fixedPage: boolean) => {
+    if (locked || fixedPage || !canReadPageDrag(event.dataTransfer.types)) return
+    event.preventDefault()
+    const sourcePageId = event.dataTransfer.getData('application/ristak-page') || event.dataTransfer.getData('text/plain')
+    onDragPage(null)
+    onReorderPages(sourcePageId, page.id)
   }
 
   return (
@@ -6951,65 +6984,50 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
                 <div
                   key={page.id}
                   className={`${styles.pageItemWrap} ${draggingPageId === page.id ? styles.pageItemDragging : ''}`}
-                  draggable={!locked && !fixedPage}
-                  onDragStart={(event) => {
-                    if (locked || fixedPage) {
-                      event.preventDefault()
-                      return
-                    }
-                    if ((event.target as HTMLElement).closest('input,button')) {
-                      event.preventDefault()
-                      return
-                    }
-                    event.dataTransfer.setData('application/ristak-page', page.id)
-                    onDragPage(page.id)
-                  }}
-                  onDragOver={(event) => {
-                    if (locked || fixedPage) return
-                    if (event.dataTransfer.types.includes('application/ristak-page')) {
-                      event.preventDefault()
-                    }
-                  }}
-                  onDrop={(event) => {
-                    if (locked || fixedPage) return
-                    event.preventDefault()
-                    const sourcePageId = event.dataTransfer.getData('application/ristak-page')
-                    onDragPage(null)
-                    onReorderPages(sourcePageId, page.id)
-                  }}
+                  onDragOver={(event) => handlePageDragOver(event, fixedPage)}
+                  onDrop={(event) => handlePageDrop(event, page, fixedPage)}
                   onDragEnd={() => onDragPage(null)}
                 >
                   <div
-                    role="button"
-                    tabIndex={0}
                     className={`${styles.pageItem} ${pageToneClass} ${fixedPage ? styles.pageItemFixed : ''} ${locked ? styles.pageItemLocked : ''} ${activePageId === page.id ? styles.pageItemActive : ''}`}
-                    onClick={() => handleSelectPage(page.id)}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter' || event.key === ' ') {
-                        event.preventDefault()
-                        handleSelectPage(page.id)
-                      }
-                    }}
                   >
-                    <GripVertical size={14} />
+                    <span
+                      className={`${styles.pageDragHandle} ${locked || fixedPage ? styles.pageDragHandleDisabled : ''}`}
+                      draggable={!locked && !fixedPage}
+                      role={!locked && !fixedPage ? 'button' : undefined}
+                      tabIndex={!locked && !fixedPage ? 0 : -1}
+                      aria-label={!locked && !fixedPage ? `Arrastrar ${page.title || `Pagina ${index + 1}`}` : undefined}
+                      title={!locked && !fixedPage ? 'Arrastra para ordenar' : 'Esta pagina no se puede mover'}
+                      onClick={(event) => event.stopPropagation()}
+                      onPointerDown={(event) => event.stopPropagation()}
+                      onDragStart={(event) => startPageDrag(event, page, fixedPage)}
+                      onDragEnd={() => onDragPage(null)}
+                    >
+                      <GripVertical size={18} />
+                    </span>
                     {renamingPageId === page.id && !locked ? (
-                      <EditablePageTitle
-                        pageId={page.id}
-                        title={page.title || `Pagina ${index + 1}`}
-                        onFocus={() => onSelectPage(page.id)}
-                        onRename={onRenamePage}
-                        onDone={() => setRenamingPageId(null)}
-                      />
+                      <div className={styles.pageTitleCell}>
+                        <EditablePageTitle
+                          pageId={page.id}
+                          title={page.title || `Pagina ${index + 1}`}
+                          onFocus={() => onSelectPage(page.id)}
+                          onRename={onRenamePage}
+                          onDone={() => setRenamingPageId(null)}
+                        />
+                      </div>
                     ) : (
-                      <span className={styles.pageTitleText}>{page.title || `Pagina ${index + 1}`}</span>
+                      <button type="button" className={styles.pageSelectButton} onClick={() => handleSelectPage(page.id)}>
+                        <span className={styles.pageTitleText}>{page.title || `Pagina ${index + 1}`}</span>
+                      </button>
                     )}
                     {!locked && (
-                      <DropdownMenu>
+                      <DropdownMenu open={menuPageId === page.id} onOpenChange={(nextOpen) => setMenuPageId(nextOpen ? page.id : null)}>
                         <DropdownMenuTrigger asChild>
                           <button
                             type="button"
                             className={styles.pageMenuButton}
                             aria-label="Opciones de pagina"
+                            onDragStart={(event) => event.preventDefault()}
                             onClick={(event) => event.stopPropagation()}
                             onPointerDown={(event) => event.stopPropagation()}
                             onKeyDown={(event) => event.stopPropagation()}
@@ -7017,9 +7035,17 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
                             <MoreVertical size={15} />
                           </button>
                         </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" sideOffset={6} className={styles.pageMenu} data-page-menu-portal="true">
+                        <DropdownMenuContent
+                          align="end"
+                          sideOffset={6}
+                          className={styles.pageMenu}
+                          data-page-menu-portal="true"
+                          onClick={(event) => event.stopPropagation()}
+                          onPointerDown={(event) => event.stopPropagation()}
+                        >
                           <DropdownMenuItem
-                            onSelect={() => {
+                            onSelect={(event) => {
+                              event.stopPropagation()
                               onSelectPage(page.id)
                               window.setTimeout(() => setRenamingPageId(page.id), 80)
                             }}
@@ -7027,14 +7053,14 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
                             <Pencil size={14} />
                             Cambiar nombre
                           </DropdownMenuItem>
-                          <DropdownMenuItem disabled={!pageCanDuplicate} onSelect={() => onDuplicatePage(page.id)}>
+                          <DropdownMenuItem disabled={!pageCanDuplicate} onSelect={(event) => { event.stopPropagation(); onDuplicatePage(page.id) }}>
                             <Copy size={14} />
                             Duplicar pagina
                           </DropdownMenuItem>
                           <DropdownMenuItem
                             disabled={!pageCanDelete}
                             className={styles.pageMenuDanger}
-                            onSelect={() => onDeletePage(page.id)}
+                            onSelect={(event) => { event.stopPropagation(); onDeletePage(page.id) }}
                           >
                             <Trash2 size={14} />
                             Eliminar pagina

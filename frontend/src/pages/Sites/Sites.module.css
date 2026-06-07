@@ -4092,7 +4092,7 @@
 
 /* --- Pages context menu (Radix portal content) --- */
 .pageMenu {
-  z-index: 3200;
+  z-index: 4200;
   min-width: 196px;
   padding: 6px;
   border-radius: 12px;
@@ -7946,9 +7946,9 @@
   min-width: 0;
   min-height: 38px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, max-content) minmax(0, 1fr);
   align-items: center;
-  gap: 18px;
+  gap: 10px;
 }
 
 .editorToolbarLeft {
@@ -8088,8 +8088,8 @@
 
 .editorToolbarTop .editorActions {
   align-self: center;
-  justify-self: end;
-  min-width: max-content;
+  justify-self: stretch;
+  min-width: 0;
   display: flex;
   align-items: center;
   justify-content: flex-end;
@@ -8663,13 +8663,15 @@
 
 .editorRouteControls {
   min-width: 0;
+  flex: 1 1 auto;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
 }
 
 .editorToolbarTop .editorRouteControls .routeField {
-  width: clamp(320px, 25vw, 520px);
+  width: clamp(320px, 24vw, 520px);
+  flex: 0 0 clamp(320px, 24vw, 520px);
   min-width: min(320px, 28vw);
   max-width: 520px;
   margin-right: 0;
@@ -8678,9 +8680,14 @@
 .pagesDropdown {
   position: relative;
   z-index: 60;
-  flex: 1 1 clamp(360px, 28vw, 560px);
-  min-width: 340px;
-  max-width: 560px;
+  flex: 1 1 620px;
+  min-width: min(520px, 46vw);
+  max-width: none;
+  font-family: var(--font-app, inherit);
+  letter-spacing: 0;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
 
 .pagesDropdownOpen {
@@ -8733,18 +8740,18 @@
 
 .pagesDropdownTriggerText small {
   color: var(--color-text-tertiary);
-  font-size: 0.66rem;
-  font-weight: 850;
+  font-size: 0.67rem;
+  font-weight: var(--font-weight-semibold, 600);
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0;
 }
 
 .pagesDropdownTriggerText strong {
   min-width: 0;
   overflow: hidden;
   color: var(--color-text-primary);
-  font-size: 0.92rem;
-  font-weight: 900;
+  font-size: 0.9rem;
+  font-weight: var(--font-weight-bold, 700);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -8763,7 +8770,8 @@
   left: 0;
   right: auto;
   width: 100%;
-  max-height: min(680px, calc(100dvh - 96px));
+  min-width: 100%;
+  max-height: min(720px, calc(100dvh - 96px));
   overflow: auto;
   border: 1px solid rgba(148, 163, 184, 0.24);
   border-radius: 8px;
@@ -8787,8 +8795,8 @@
 
 .pagesDropdownHeader span {
   color: var(--color-text-primary);
-  font-size: 0.94rem;
-  font-weight: 900;
+  font-size: 0.96rem;
+  font-weight: var(--font-weight-bold, 700);
 }
 
 .pagesDropdownHeader strong {
@@ -8802,61 +8810,123 @@
   color: color-mix(in srgb, var(--color-primary) 78%, var(--color-text-primary) 22%);
   padding: 0 7px;
   font-size: 0.82rem;
-  font-weight: 900;
+  font-weight: var(--font-weight-semibold, 600);
 }
 
 .pagesDropdownPanel .pageList {
+  width: 100%;
   display: grid;
   gap: 10px;
   padding-top: 12px;
 }
 
 .pagesDropdownPanel .pageItemWrap {
+  width: 100%;
+  justify-self: stretch;
   grid-template-columns: minmax(0, 1fr);
 }
 
 .pagesDropdownPanel .pageItem {
-  min-height: 52px;
+  width: 100%;
+  min-height: 64px;
   display: grid;
-  grid-template-columns: 22px minmax(0, 1fr) 36px;
-  gap: 10px;
-  padding: 0 12px;
-  cursor: pointer;
-  font-size: 0.98rem;
+  grid-template-columns: 34px minmax(0, 1fr) 42px;
+  align-items: center;
+  gap: 12px;
+  padding: 0 14px;
+  cursor: default;
+  font-size: 0.96rem;
+  font-weight: var(--font-weight-semibold, 600);
 }
 
 .pagesDropdownPanel .pageItemLocked {
-  grid-template-columns: 22px minmax(0, 1fr);
+  grid-template-columns: 34px minmax(0, 1fr);
 }
 
-.pagesDropdownPanel .pageItem > svg:first-child {
+.pagesDropdownPanel .pageDragHandle {
+  width: 34px;
+  height: 44px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 8px;
   color: var(--color-text-tertiary);
   cursor: grab;
 }
 
-.pagesDropdownPanel .pageItemFixed > svg:first-child {
+.pagesDropdownPanel .pageDragHandle:hover {
+  background: rgba(148, 163, 184, 0.12);
+  color: var(--color-text-secondary);
+}
+
+.pagesDropdownPanel .pageDragHandle:active {
+  cursor: grabbing;
+}
+
+.pagesDropdownPanel .pageDragHandleDisabled,
+.pagesDropdownPanel .pageItemFixed .pageDragHandle {
+  opacity: 0.42;
   cursor: default;
 }
 
+.pagesDropdownPanel .pageTitleCell {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+
+.pagesDropdownPanel .pageSelectButton {
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  padding: 0 4px;
+  text-align: left;
+  font: inherit;
+  font-weight: var(--font-weight-semibold, 600);
+}
+
+.pagesDropdownPanel .pageSelectButton:hover,
+.pagesDropdownPanel .pageSelectButton:focus-visible {
+  background: rgba(148, 163, 184, 0.1);
+  outline: none;
+}
+
+.pagesDropdownPanel .pageTitleText {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-primary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.2;
+}
+
 .pagesDropdownPanel .pageTitleInput {
-  height: 36px;
+  width: 100%;
+  height: 42px;
   min-height: 0;
-  padding: 0 7px;
+  padding: 0 10px;
   font-size: 0.96rem;
+  font-weight: var(--font-weight-semibold, 600);
 }
 
 .pagesDropdownPanel .pageMenuButton {
-  width: 36px;
-  height: 36px;
-  min-height: 36px;
-  border-radius: 7px;
+  width: 42px;
+  height: 42px;
+  min-height: 42px;
+  border-radius: 8px;
 }
 
 .pagesDropdownPanel .addPageButton {
-  min-height: 50px;
-  margin-top: 4px;
+  min-height: 58px;
+  margin-top: 6px;
   border-radius: 8px;
   font-size: 0.96rem;
+  font-weight: var(--font-weight-semibold, 600);
 }
 
 @media (max-width: 1500px) {
@@ -8877,8 +8947,9 @@
   }
 
   .pagesDropdown {
-    flex: 1 1 360px;
-    max-width: 560px;
+    flex: 1 1 420px;
+    min-width: min(420px, 54vw);
+    max-width: none;
   }
 }
 
@@ -8892,7 +8963,7 @@
   }
 
   .pagesDropdown {
-    min-width: min(340px, 46vw);
+    min-width: min(340px, 52vw);
   }
 }
 
