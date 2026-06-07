@@ -4,7 +4,6 @@ import {
   createBlockHandler,
   importSiteHtmlHandler,
   createSiteHandler,
-  createSiteWithAIHandler,
   createSiteWithAIHtmlHandler,
   deleteBlockHandler,
   deleteSiteHandler,
@@ -38,7 +37,6 @@ router.use(requireAuth)
 
 router.get('/', getSitesHandler)
 router.post('/', createSiteHandler)
-router.post('/ai-create', createSiteWithAIHandler)
 router.post('/ai-create-html', createSiteWithAIHtmlHandler)
 router.post('/import-html', importSiteHtmlHandler)
 router.get('/domain', getSitesDomainHandler)

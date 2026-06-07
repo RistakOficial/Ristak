@@ -4,7 +4,7 @@ import { ArrowUp, Bot, CalendarPlus, Check, Copy, CreditCard, Eraser, File as Fi
 import { aiAgentService, type AIAgentAttachment, type AIAgentAttachmentKind, type AIAgentBusinessContextField, type AIAgentClarificationOption, type AIAgentConfigInput, type AIAgentConfigStatus, type AIAgentMessage, type AIAgentViewContext } from '@/services/aiAgentService'
 import { sitesService, type SitesAICreationMessage } from '@/services/sitesService'
 import { useNotification } from '@/contexts/NotificationContext'
-import { AI_AGENT_CLOSE_REQUEST_EVENT, AI_AGENT_OPEN_REQUEST_EVENT, type AIAgentOpenRequestDetail, type AIAgentSitesCreationKind, type AIAgentSitesCreationMode } from '@/utils/aiAgentEvents'
+import { AI_AGENT_CLOSE_REQUEST_EVENT, AI_AGENT_OPEN_REQUEST_EVENT, type AIAgentOpenRequestDetail, type AIAgentSitesCreationKind } from '@/utils/aiAgentEvents'
 import styles from './AIAgentPanel.module.css'
 
 const AI_AGENT_FLOATING_OPEN_KEY = 'ristak.aiAgentFloating.open'
@@ -58,7 +58,6 @@ type AIAgentAttachmentDraft = AIAgentAttachment & {
 }
 type SitesCreationMode = {
   siteKind: AIAgentSitesCreationKind
-  creationMode: AIAgentSitesCreationMode
   editSiteId?: string
   metaCapiEnabled?: boolean
   siteTitle?: string
@@ -114,8 +113,8 @@ const routeLabels: Record<string, string> = {
   '/sites': 'Sitios'
 }
 
-function getSitesAIIntro(siteKind: AIAgentSitesCreationKind, creationMode: AIAgentSitesCreationMode = 'builder', siteTitle = '') {
-  if (creationMode === 'html' && siteTitle) {
+function getSitesAIIntro(siteKind: AIAgentSitesCreationKind, siteTitle = '') {
+  if (siteTitle) {
     return [
       `Vamos a editar con IA el HTML de "${siteTitle}".`,
       '',
@@ -130,70 +129,26 @@ function getSitesAIIntro(siteKind: AIAgentSitesCreationKind, creationMode: AIAge
     ].join('\n')
   }
 
-  if (creationMode === 'html') {
-    return [
-      'Vamos a crear una pagina completa desde cero en HTML con IA.',
-      '',
-      'Esta opcion no usa los bloques del editor visual. La IA genera el HTML/CSS completo y Ristak lo importa como codigo propio para revisar formularios y publicar.',
-      '',
-      'Cuéntame esto en un solo mensaje si puedes:',
-      '- Nicho o tipo de negocio.',
-      '- Servicio, producto u oferta principal.',
-      '- Objetivo de la pagina.',
-      '- Cliente o prospecto ideal.',
-      '- Estilo visual deseado.',
-      '- Si quieres formulario y que campos debe pedir.',
-      '- CTA principal.',
-      '- Si quieres fotos de internet o alguna imagen por URL.',
-      '- Si prefieres una pagina corta o una pagina mas completa.'
-    ].join('\n')
-  }
-
-  if (siteKind === 'landing') {
-    return [
-      'Vamos a crear una landing page ("sitio web") usando IA, pero con los bloques controlados de Sites.',
-      '',
-      'Cuéntame esto en un solo mensaje si puedes:',
-      '- Nicho o tipo de negocio.',
-      '- Servicio, producto u oferta principal.',
-      '- Objetivo de la landing.',
-      '- Cliente o prospecto ideal.',
-      '- Tono de comunicación.',
-      '- Estilo visual deseado.',
-      '- Si quieres que use fotos de internet o alguna imagen especifica por URL.',
-      '- CTA principal.',
-      '- Si quieres incluir formulario dentro de la landing.',
-      '- Si prefieres textos muy cortos o una explicacion un poco mas completa.'
-    ].join('\n')
-  }
-
-  if (siteKind === 'interactive_form') {
-    return [
-      'Vamos a crear un formulario interactivo usando IA, con preguntas por pasos y reglas editables dentro de Sites.',
-      '',
-      'Cuéntame esto en un solo mensaje si puedes:',
-      '- Qué tipo de prospecto quieres atraer.',
-      '- Qué datos necesitas capturar.',
-      '- Qué preguntas son importantes.',
-      '- Qué respuestas indican buen candidato.',
-      '- Qué respuestas deben descalificar o detener el formulario.',
-      '- Qué mensaje mostrar si alguien queda descalificado.',
-      '- Si quieres una pregunta por pantalla o dividirlo por secciones.',
-      '- Si quieres que agregue una imagen de apoyo de internet.'
-    ].join('\n')
-  }
-
+  const pageLabel = siteKind === 'landing'
+    ? 'pagina embudo'
+    : siteKind === 'interactive_form'
+      ? 'formulario interactivo'
+      : 'formulario'
   return [
-    'Vamos a crear un formulario con paginas finales usando IA, con campos y reglas editables dentro de Sites.',
+    `Vamos a crear un ${pageLabel} completo desde cero en HTML con IA.`,
+    '',
+    'La IA generara el HTML/CSS completo y Ristak lo importara como codigo propio para revisar formularios, campos y publicacion.',
     '',
     'Cuéntame esto en un solo mensaje si puedes:',
-    '- Qué tipo de prospecto quieres atraer.',
-    '- Qué datos necesitas capturar.',
-    '- Qué preguntas son importantes.',
-    '- Qué respuestas indican buen candidato.',
-    '- Qué respuestas deben descalificar o detener el formulario.',
-    '- Qué mensaje mostrar si alguien queda descalificado.',
-    '- Si quieres que agregue una imagen de apoyo de internet.'
+    '- Nicho o tipo de negocio.',
+    '- Servicio, producto u oferta principal.',
+    '- Objetivo de la pagina.',
+    '- Cliente o prospecto ideal.',
+    '- Estilo visual deseado.',
+    '- Si quieres formulario y que campos debe pedir.',
+    '- CTA principal.',
+    '- Si quieres fotos de internet o alguna imagen por URL.',
+    '- Si prefieres una pagina corta o una pagina mas completa.'
   ].join('\n')
 }
 
@@ -1709,17 +1664,15 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
       activeChatRequestRef.current = null
       chatRequestSeqRef.current += 1
 
-      const creationMode = detail.sitesCreation.creationMode || 'builder'
       const nextMessage = createMessage(
         'assistant',
-        getSitesAIIntro(detail.sitesCreation.siteKind, creationMode, detail.sitesCreation.siteTitle || '')
+        getSitesAIIntro(detail.sitesCreation.siteKind, detail.sitesCreation.siteTitle || '')
       )
       messagesRef.current = [nextMessage]
       attachmentsRef.current.forEach(revokeAttachmentPreview)
       attachmentsRef.current = []
       setSitesCreationMode({
         siteKind: detail.sitesCreation.siteKind,
-        creationMode,
         editSiteId: detail.sitesCreation.editSiteId,
         metaCapiEnabled: detail.sitesCreation.metaCapiEnabled,
         siteTitle: detail.sitesCreation.siteTitle
@@ -1980,21 +1933,16 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
 
     try {
       const requestMessages = prepareSitesCreationMessages(nextMessages)
-      const result = sitesCreationMode.creationMode === 'html' && sitesCreationMode.editSiteId
+      const result = sitesCreationMode.editSiteId
         ? await sitesService.editImportedHtmlWithAI(sitesCreationMode.editSiteId, {
             siteKind: sitesCreationMode.siteKind,
             messages: requestMessages
           })
-        : sitesCreationMode.creationMode === 'html'
-          ? await sitesService.createWithAIHtml({
-              siteKind: sitesCreationMode.siteKind,
-              messages: requestMessages,
-              metaCapiEnabled: sitesCreationMode.metaCapiEnabled
-            })
-          : await sitesService.createWithAI({
-              siteKind: sitesCreationMode.siteKind,
-              messages: requestMessages
-            })
+        : await sitesService.createWithAIHtml({
+            siteKind: sitesCreationMode.siteKind,
+            messages: requestMessages,
+            metaCapiEnabled: sitesCreationMode.metaCapiEnabled
+          })
 
       if (activeChatRequestRef.current?.id !== requestId) return true
 
@@ -2013,9 +1961,7 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
         showToast(
           'success',
           result.status === 'updated' ? 'HTML actualizado' : 'Borrador creado',
-          result.creationMode === 'html'
-            ? 'Ya lo abrí con vista previa y revisión de campos.'
-            : 'Ya lo abrí en el editor visual de Sites para que lo ajustes.'
+          'Ya lo abrí con vista previa y revisión de campos.'
         )
       }
     } catch (error: any) {
@@ -2053,7 +1999,7 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
     }
 
     if (sitesCreationMode && messageAttachments.length) {
-      setAttachmentError('Para crear Sites con IA responde en texto. Después puedes editar el borrador en el builder.')
+      setAttachmentError('Para crear Sites con IA responde en texto. Después puedes editar la pagina generada desde la vista previa.')
       return
     }
 
@@ -2461,14 +2407,12 @@ export const AIAgentPanel: React.FC<AIAgentPanelProps> = ({ variant = 'floating'
   const textComposerClassName = attachments.length
     ? `${styles.textComposer} ${styles.textComposerWithAttachments}`
     : styles.textComposer
-  const panelTitle = sitesCreationMode?.creationMode === 'html'
-    ? 'Creador HTML con IA'
-    : sitesCreationMode ? 'Creador de Sites con IA' : embedded ? 'Ristak AI' : 'Agente AI'
+  const panelTitle = sitesCreationMode ? 'Creador HTML con IA' : embedded ? 'Ristak AI' : 'Agente AI'
   const needsReconnect = Boolean(status.needsReconnect)
   const statusLabel = status.configured
-    ? sitesCreationMode?.creationMode === 'html'
+    ? sitesCreationMode
       ? sitesCreationMode.editSiteId ? 'Editando HTML importado' : 'Creando HTML importable'
-      : sitesCreationMode ? 'Creando borrador editable' : embedded ? 'Listo para ayudarte' : 'Conectado a OpenAI'
+      : embedded ? 'Listo para ayudarte' : 'Conectado a OpenAI'
     : needsReconnect ? 'Reconecta OpenAI' : 'Configúralo aquí mismo'
 
   return (

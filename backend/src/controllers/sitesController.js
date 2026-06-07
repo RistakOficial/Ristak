@@ -3,7 +3,6 @@ import {
   createImportedSiteFromHtml,
   createMetaPageEventFromRequest,
   createSite,
-  createSiteWithAI,
   createSiteWithAIHtml,
   createSubmissionFromRequest,
   deleteBlock,
@@ -59,20 +58,6 @@ export async function createSiteHandler(req, res) {
     logger.error(`Error creando site: ${error.message}`)
     error.status = error.status || 400
     sendError(res, error, 'Error creando site')
-  }
-}
-
-export async function createSiteWithAIHandler(req, res) {
-  try {
-    const result = await createSiteWithAI({
-      ...(req.body || {}),
-      userId: req.user?.userId || req.user?.id
-    })
-    res.status(result.status === 'created' ? 201 : 200).json({ success: true, data: result })
-  } catch (error) {
-    logger.error(`Error creando site con IA: ${error.message}`)
-    error.status = error.status || 400
-    sendError(res, error, 'Error creando site con IA')
   }
 }
 

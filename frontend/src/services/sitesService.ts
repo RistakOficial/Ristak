@@ -340,7 +340,6 @@ export interface ImportedSiteCreateResult {
 }
 
 export type SitesAICreationKind = 'landing' | 'form' | 'interactive_form'
-export type SitesAICreationMode = 'builder' | 'html'
 
 export interface SitesAICreationMessage {
   role: 'user' | 'assistant'
@@ -350,7 +349,6 @@ export interface SitesAICreationMessage {
 export interface SitesAICreationResult {
   status: 'needs_more_info' | 'created' | 'updated'
   reply: string
-  creationMode?: SitesAICreationMode
   site?: PublicSite
   import?: ImportedSiteImport
 }
@@ -466,10 +464,6 @@ export const sitesService = {
 
   createSite(payload: Partial<PublicSite> & { siteType?: SiteType }) {
     return apiClient.post<PublicSite>('/sites', payload)
-  },
-
-  createWithAI(payload: { siteKind: SitesAICreationKind; messages: SitesAICreationMessage[] }) {
-    return apiClient.post<SitesAICreationResult>('/sites/ai-create', payload)
   },
 
   createWithAIHtml(payload: { siteKind: SitesAICreationKind; messages: SitesAICreationMessage[]; metaCapiEnabled?: boolean }) {
