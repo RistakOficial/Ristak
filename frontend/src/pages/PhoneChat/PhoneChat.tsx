@@ -780,6 +780,88 @@ function shouldTrackOutboundReceipt(message: ChatMessage) {
   return Date.now() - sentAt < 30 * 60 * 1000
 }
 
+function compactCompareValue(value: unknown) {
+  if (value === null || value === undefined) return ''
+  return String(value)
+}
+
+function getChatContactSignature(contact: ChatContact) {
+  return [
+    contact.id,
+    contact.name,
+    contact.email,
+    contact.phone,
+    contact.status,
+    contact.ltv,
+    contact.purchases,
+    contact.lastPurchase,
+    contact.createdAt,
+    contact.lastMessageText,
+    contact.lastMessageType,
+    contact.lastMessageChannel,
+    contact.lastMessageDate,
+    contact.lastMessageDirection,
+    contact.lastBusinessPhone,
+    contact.lastBusinessPhoneNumberId,
+    contact.lastInboundBusinessPhone,
+    contact.lastInboundBusinessPhoneNumberId,
+    contact.messageCount,
+    contact.unreadCount,
+    contact.profilePhotoUrl,
+    contact.avatarUrl,
+    contact.photoUrl,
+    contact.pictureUrl,
+    contact.profile_picture_url,
+    contact.hasAppointments,
+    contact.nextAppointmentDate
+  ].map(compactCompareValue).join('\u001f')
+}
+
+function areChatListsEquivalent(left: ChatContact[], right: ChatContact[]) {
+  if (left === right) return true
+  if (left.length !== right.length) return false
+  return left.every((contact, index) => getChatContactSignature(contact) === getChatContactSignature(right[index]))
+}
+
+function getMessageSignature(message: ChatMessage) {
+  const attachment = message.attachment
+  return [
+    message.id,
+    message.text,
+    message.date,
+    message.direction,
+    message.status,
+    message.errorReason,
+    message.businessPhone,
+    message.businessPhoneNumberId,
+    message.transport,
+    attachment?.type,
+    attachment?.dataUrl,
+    attachment?.url,
+    attachment?.name,
+    attachment?.mimeType,
+    attachment?.durationMs
+  ].map(compactCompareValue).join('\u001f')
+}
+
+function getMessagesSignature(messages: ChatMessage[]) {
+  return messages.map(getMessageSignature).join('\u001e')
+}
+
+function areMessagesEquivalent(left: ChatMessage[], right: ChatMessage[]) {
+  if (left === right) return true
+  if (left.length !== right.length) return false
+  return left.every((message, index) => getMessageSignature(message) === getMessageSignature(right[index]))
+}
+
+function getJourneySignature(journey: JourneyEvent[]) {
+  try {
+    return JSON.stringify(journey)
+  } catch {
+    return String(journey.length)
+  }
+}
+
 function getJourneyMediaAttachment(event: JourneyEvent): ChatMessage['attachment'] | undefined {
   const messageType = String(event.data?.message_type || '').toLowerCase()
   const mediaUrl = String(event.data?.media_url || event.data?.mediaUrl || '').trim()
@@ -1600,6 +1682,16 @@ export const PhoneChat: React.FC = () => {
   const [aiSuggestionLoading, setAiSuggestionLoading] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement | null>(null)
   const messagesPaneRef = useRef<HTMLDivElement | null>(null)
+  const messagesPaneNearBottomRef = useRef(true)
+  const activeContactIdRef = useRef<string | null>(null)
+  const conversationOpenRef = useRef(false)
+  const previousMessagesScrollRef = useRef({
+    activeContactId: null as string | null,
+    conversationOpen: false,
+    messagesLoading: false,
+    signature: '',
+    count: 0
+  })
   const composerInputRef = useRef<HTMLDivElement | null>(null)
   const cameraShareCaptionRef = useRef<HTMLDivElement | null>(null)
   const cameraInputRef = useRef<HTMLInputElement | null>(null)
@@ -1623,6 +1715,11 @@ export const PhoneChat: React.FC = () => {
   const voiceSuppressNextClickRef = useRef(false)
   const voiceStartPendingRef = useRef(false)
   const voiceStopAfterStartRef = useRef(false)
+
+  useEffect(() => {
+    activeContactIdRef.current = activeContactId
+    conversationOpenRef.current = conversationOpen
+  }, [activeContactId, conversationOpen])
   const voiceSendAfterStopRef = useRef(false)
   const messageAudioRefs = useRef<Record<string, HTMLAudioElement | null>>({})
   const chatSwipeGestureRef = useRef<ChatSwipeGesture | null>(null)
@@ -1654,6 +1751,8 @@ export const PhoneChat: React.FC = () => {
   const aiAgentConversationOpen = activeContactId === AI_AGENT_CHAT_ID
 
   const handleMessagesPaneScroll = useCallback((event: React.UIEvent<HTMLDivElement>) => {
+    const bottomGap = event.currentTarget.scrollHeight - event.currentTarget.scrollTop - event.currentTarget.clientHeight
+    messagesPaneNearBottomRef.current = bottomGap < 96
     if (event.currentTarget.scrollLeft !== 0) {
       event.currentTarget.scrollLeft = 0
     }
@@ -1690,6 +1789,7 @@ export const PhoneChat: React.FC = () => {
 
     return items
   }, [messages, timezone])
+  const messagesSignature = useMemo(() => getMessagesSignature(messages), [messages])
   const contactInfoData = contactInfoContact || activeContact
   const chatActionContact = useMemo(
     () => chats.find((contact) => contact.id === chatActionContactId) || activeContact || null,
@@ -1989,19 +2089,23 @@ export const PhoneChat: React.FC = () => {
   const applyLoadedChats = useCallback((loadedChats: ChatContact[], requestedContact?: ChatContact | null) => {
     const readState = ensureReadBaselines(loadedChats, readChatReadState())
     let nextChats = loadedChats.map((contact) => applyLocalUnreadState(contact, readState))
+    const currentActiveContactId = activeContactIdRef.current
+    const currentConversationOpen = conversationOpenRef.current
 
-    if (activeContactId && conversationOpen) {
-      const activeLoadedContact = nextChats.find((contact) => contact.id === activeContactId)
+    if (currentActiveContactId && currentConversationOpen) {
+      const activeLoadedContact = nextChats.find((contact) => contact.id === currentActiveContactId)
       if (activeLoadedContact) {
         markContactReadState(activeLoadedContact)
         nextChats = nextChats.map((contact) => (
-          contact.id === activeContactId ? { ...contact, unreadCount: 0 } : contact
+          contact.id === currentActiveContactId ? { ...contact, unreadCount: 0 } : contact
         ))
       }
     }
     syncReadStateForVisibleReadChats(nextChats, readState)
 
-    setChats(nextChats)
+    setChats((currentChats) => (
+      areChatListsEquivalent(currentChats, nextChats) ? currentChats : nextChats
+    ))
     setActiveContactId((current) => {
       if (requestedContact) return requestedContact.id
       if (current === AI_AGENT_CHAT_ID && aiAgentChatEnabled) return current
@@ -2014,11 +2118,13 @@ export const PhoneChat: React.FC = () => {
     }
 
     return nextChats
-  }, [activeContactId, aiAgentChatEnabled, conversationOpen])
+  }, [aiAgentChatEnabled])
 
-  const loadChats = useCallback(async (options: { showCacheRefresh?: boolean } = {}) => {
-    const showCacheRefresh = options.showCacheRefresh === true
-    setChatsError('')
+  const loadChats = useCallback(async (options: { showCacheRefresh?: boolean; useCache?: boolean; silent?: boolean } = {}) => {
+    const silentRefresh = options.silent === true
+    const showCacheRefresh = options.showCacheRefresh === true && !silentRefresh
+    const useCache = options.useCache !== false && !silentRefresh
+    if (!silentRefresh) setChatsError('')
     const trimmed = chatQuery.trim()
     const phoneFilterParams: Record<string, string> = selectedChatPhoneFilterActive && effectiveSelectedChatPhone
       ? {
@@ -2034,7 +2140,7 @@ export const PhoneChat: React.FC = () => {
       effectiveSelectedChatPhoneId,
       phoneFilterParams.businessPhone || 'all'
     )
-    const cachedChats = cacheEnabled ? readPhoneDailyCache<ChatContact[]>(cacheKey) : null
+    const cachedChats = cacheEnabled && useCache ? readPhoneDailyCache<ChatContact[]>(cacheKey) : null
     const showedCachedChats = Boolean(cachedChats)
 
     if (cachedChats) {
@@ -2045,7 +2151,7 @@ export const PhoneChat: React.FC = () => {
       applyLoadedChats(cachedList, cachedRequestedContact)
       setChatsLoading(false)
       setChatsRefreshing(showCacheRefresh)
-    } else {
+    } else if (!silentRefresh) {
       setChatsLoading(true)
       setChatsRefreshing(false)
     }
@@ -2077,7 +2183,7 @@ export const PhoneChat: React.FC = () => {
         writePhoneDailyCache(cacheKey, displayedChats.slice(0, 80), { maxEntryChars: 360_000 })
       }
     } catch {
-      if (!showedCachedChats) {
+      if (!showedCachedChats && !silentRefresh) {
         setChatsError('No se pudieron cargar los chats.')
         setChats([])
       }
@@ -2119,34 +2225,46 @@ export const PhoneChat: React.FC = () => {
     }
   }, [])
 
-  const loadConversation = useCallback(async (contactId: string, options: { showCacheRefresh?: boolean } = {}) => {
-    const showCacheRefresh = options.showCacheRefresh === true
+  const loadConversation = useCallback(async (contactId: string, options: { showCacheRefresh?: boolean; useCache?: boolean; silent?: boolean } = {}) => {
+    const silentRefresh = options.silent === true
+    const showCacheRefresh = options.showCacheRefresh === true && !silentRefresh
+    const useCache = options.useCache !== false && !silentRefresh
     const cacheKey = getPhoneDailyCacheKey('phone-chat', 'conversation', locationId || 'default', contactId)
-    const cachedConversation = readPhoneDailyCache<{ journey: JourneyEvent[]; messages: ChatMessage[] }>(cacheKey)
+    const cachedConversation = useCache ? readPhoneDailyCache<{ journey: JourneyEvent[]; messages: ChatMessage[] }>(cacheKey) : null
     const showedCachedConversation = Boolean(cachedConversation)
 
     if (cachedConversation) {
-      setContactJourney(Array.isArray(cachedConversation.data.journey) ? cachedConversation.data.journey : [])
-      setMessages(Array.isArray(cachedConversation.data.messages) ? cachedConversation.data.messages : [])
+      const cachedJourney = Array.isArray(cachedConversation.data.journey) ? cachedConversation.data.journey : []
+      const cachedMessages = Array.isArray(cachedConversation.data.messages) ? cachedConversation.data.messages : []
+      setContactJourney((currentJourney) => (
+        getJourneySignature(currentJourney) === getJourneySignature(cachedJourney) ? currentJourney : cachedJourney
+      ))
+      setMessages((currentMessages) => (
+        areMessagesEquivalent(currentMessages, cachedMessages) ? currentMessages : cachedMessages
+      ))
       setMessagesLoading(false)
       setMessagesRefreshing(showCacheRefresh)
-    } else {
+    } else if (!silentRefresh) {
       setMessagesLoading(true)
       setMessagesRefreshing(false)
     }
 
     try {
       const journey = await contactsService.getContactJourney(contactId)
-      setContactJourney(journey)
+      setContactJourney((currentJourney) => (
+        getJourneySignature(currentJourney) === getJourneySignature(journey) ? currentJourney : journey
+      ))
       const nextMessages = journey
         .map(getJourneyMessage)
         .filter((message): message is ChatMessage => Boolean(message))
         .sort((left, right) => new Date(left.date).getTime() - new Date(right.date).getTime())
 
-      setMessages(nextMessages)
+      setMessages((currentMessages) => (
+        areMessagesEquivalent(currentMessages, nextMessages) ? currentMessages : nextMessages
+      ))
       writePhoneDailyCache(cacheKey, { journey, messages: nextMessages }, { maxEntryChars: 360_000 })
     } catch {
-      if (!showedCachedConversation) {
+      if (!showedCachedConversation && !silentRefresh) {
         setMessages([])
         setContactJourney([])
       }
@@ -2504,12 +2622,12 @@ export const PhoneChat: React.FC = () => {
 
     const refreshVisibleChats = () => {
       if (document.visibilityState === 'visible') {
-        loadChats()
+        loadChats({ silent: true, useCache: false })
       }
     }
     const refreshInterval = window.setInterval(() => {
       if (document.visibilityState === 'visible' && !chatQuery.trim()) {
-        loadChats()
+        loadChats({ silent: true, useCache: false })
       }
     }, 20000)
 
@@ -2547,7 +2665,7 @@ export const PhoneChat: React.FC = () => {
 
     const interval = window.setInterval(() => {
       if (document.visibilityState === 'visible') {
-        loadConversation(activeContact.id, { showCacheRefresh: true })
+        loadConversation(activeContact.id, { silent: true, useCache: false })
       }
     }, 12000)
 
@@ -2618,8 +2736,39 @@ export const PhoneChat: React.FC = () => {
   }, [accessState, activeSettingsSection, loadTemplates, sheet])
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ block: 'end' })
-  }, [messages, messagesLoading, conversationOpen])
+    const previous = previousMessagesScrollRef.current
+    const lastMessage = messages[messages.length - 1]
+    const openedConversation = conversationOpen && (
+      !previous.conversationOpen ||
+      previous.activeContactId !== activeContactId
+    )
+    const finishedInitialLoad = previous.messagesLoading && !messagesLoading
+    const messageWasAdded = messages.length > previous.count
+    const userWasAlreadyAtBottom = messagesPaneNearBottomRef.current
+    const shouldScrollToEnd = conversationOpen && (
+      openedConversation ||
+      finishedInitialLoad ||
+      userWasAlreadyAtBottom ||
+      (messageWasAdded && lastMessage?.direction === 'outbound')
+    )
+
+    previousMessagesScrollRef.current = {
+      activeContactId,
+      conversationOpen,
+      messagesLoading,
+      signature: messagesSignature,
+      count: messages.length
+    }
+
+    if (!shouldScrollToEnd) return
+
+    const frame = window.requestAnimationFrame(() => {
+      messagesEndRef.current?.scrollIntoView({ block: 'end' })
+      messagesPaneNearBottomRef.current = true
+    })
+
+    return () => window.cancelAnimationFrame(frame)
+  }, [activeContactId, conversationOpen, messages.length, messagesLoading, messagesSignature])
 
   useEffect(() => {
     if (!playingAudioMessageId) return
@@ -3385,7 +3534,7 @@ export const PhoneChat: React.FC = () => {
     }
 
     try {
-      await loadChats({ showCacheRefresh: true })
+      await loadChats({ silent: true, useCache: false })
     } catch {
       // La foto ya se intentó enviar; la lista se refrescará sola en la siguiente carga.
     }
@@ -3507,8 +3656,8 @@ export const PhoneChat: React.FC = () => {
           ? `${template.name} se mandó como texto por el respaldo QR.`
           : `${template.name} se mandó por WhatsApp.`
       )
-      await loadConversation(activeContact.id)
-      await loadChats()
+      await loadConversation(activeContact.id, { silent: true, useCache: false })
+      await loadChats({ silent: true, useCache: false })
       await loadTemplates()
     } catch (error) {
       const errorMessage = getErrorMessage(error, 'Intenta enviar la plantilla otra vez.')
@@ -3675,8 +3824,8 @@ export const PhoneChat: React.FC = () => {
           resultDelivered ? 'Mensaje enviado' : 'Mensaje en cola',
           `${resultDelivered ? 'Se envió' : 'HighLevel lo recibió'} por ${resultData.channelLabel || channelLabel}.`
         )
-        await loadConversation(activeContact.id)
-        await loadChats()
+        await loadConversation(activeContact.id, { silent: true, useCache: false })
+        await loadChats({ silent: true, useCache: false })
       } catch (error: any) {
         const errorMessage = getErrorMessage(error, 'Intenta enviar el mensaje otra vez.')
         setMessages((current) => current.map((message) => (
@@ -3849,8 +3998,8 @@ export const PhoneChat: React.FC = () => {
             : message
         )))
       }
-      await loadConversation(activeContact.id)
-      await loadChats()
+      await loadConversation(activeContact.id, { silent: true, useCache: false })
+      await loadChats({ silent: true, useCache: false })
     } catch (error: any) {
       const errorMessage = getErrorMessage(error, 'Intenta enviar el mensaje otra vez.')
       setMessages((current) => current.map((message) => (
@@ -6155,6 +6304,12 @@ export const PhoneChat: React.FC = () => {
     </div>
   )
 
+  const renderTabletNewChatAction = () => (
+    <button type="button" className={styles.tabletNewChatButton} onClick={() => setSheet('newChat')} aria-label="Nuevo chat">
+      <Plus size={24} />
+    </button>
+  )
+
   if (accessState === 'checking') {
     return (
       <main className={styles.loadingPage}>
@@ -6205,9 +6360,6 @@ export const PhoneChat: React.FC = () => {
       >
         <section className={styles.chatListScreen} aria-label="Lista de chats">
           <header className={`${styles.chatListHeader} ${chatSearchExpanded ? styles.chatListHeaderSearchExpanded : ''}`}>
-            {deviceMode === 'tablet' && !chatSearchExpanded && (
-              <PhoneEcosystemNav active="chat" badges={{ chat: unreadTotal }} placement="top" />
-            )}
             {deviceMode !== 'tablet' && (
               <div className={styles.topActionRow} aria-hidden={chatSearchExpanded}>
                 <span className={styles.topActionSpacer} aria-hidden="true" />
@@ -6215,7 +6367,10 @@ export const PhoneChat: React.FC = () => {
               </div>
             )}
             <div className={styles.chatTitleRow} aria-hidden={chatSearchExpanded}>
-              <h1>Chats</h1>
+              <div className={styles.chatTitleMain}>
+                <h1>Chats</h1>
+                {deviceMode === 'tablet' && renderTabletNewChatAction()}
+              </div>
               <div className={styles.chatTitleRight}>
                 {chatPhoneFilterEnabled && (
                   <label className={styles.chatPhoneSelector}>
@@ -6237,7 +6392,6 @@ export const PhoneChat: React.FC = () => {
                     />
                   </label>
                 )}
-                {deviceMode === 'tablet' && renderChatHeaderActions(styles.chatTitleActions)}
               </div>
             </div>
             <div className={styles.searchBox}>
@@ -6278,6 +6432,11 @@ export const PhoneChat: React.FC = () => {
           <div className={styles.chatList} data-phone-chat-scrollable="true">
             {renderChats()}
           </div>
+          {deviceMode === 'tablet' && !chatSearchExpanded && (
+            <div className={styles.tabletChatDock}>
+              <PhoneEcosystemNav active="chat" badges={{ chat: unreadTotal }} placement="top" />
+            </div>
+          )}
 
         </section>
 
