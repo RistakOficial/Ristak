@@ -107,6 +107,7 @@ export const Modal: React.FC<ModalProps> = ({
   })
   const closeWithSheetAnimation = bottomSheetDismiss.requestClose
   const bottomSheetMoving = bottomSheetDismiss.dragging || bottomSheetDismiss.closing || bottomSheetDismiss.dragOffset > 0
+  const bottomSheetDragging = bottomSheetDismiss.dragging || bottomSheetDismiss.dragOffset > 0
 
   useEffect(() => {
     if (!isOpen) return
@@ -140,7 +141,7 @@ export const Modal: React.FC<ModalProps> = ({
 
   const modalContent = (
     <div
-      className={`${styles.backdrop} ${isSystemModal ? styles.systemBackdrop : ''} ${draggableSheet ? styles.bottomSheetBackdrop : ''} ${draggableSheet && bottomSheetMoving ? styles.bottomSheetBackdropInteractive : ''} ${backdropClassName}`.trim()}
+      className={`${styles.backdrop} ${isSystemModal ? styles.systemBackdrop : ''} ${draggableSheet ? styles.bottomSheetBackdrop : ''} ${draggableSheet && bottomSheetDragging ? styles.bottomSheetBackdropInteractive : ''} ${backdropClassName}`.trim()}
       style={draggableSheet ? bottomSheetDismiss.backdropStyle : undefined}
       onClick={handleBackdropClick}
       data-phone-modal-root="true"

@@ -17,6 +17,8 @@ interface BottomSheetDragState {
   startTime: number
 }
 
+type BottomSheetAfterClose = () => void
+
 const INTERACTIVE_SELECTOR = 'button, a, input, textarea, select, [contenteditable="true"], [data-bottom-sheet-no-drag="true"]'
 const SCROLLABLE_SELECTOR = '[data-phone-scrollable="true"], [data-phone-chat-scrollable="true"], [data-bottom-sheet-scrollable="true"]'
 const DEFAULT_BACKDROP_TRAVEL_PX = 360
@@ -47,6 +49,7 @@ export function useBottomSheetDismiss({
   const [dragging, setDragging] = useState(false)
   const [closing, setClosing] = useState(false)
   const timerRef = useRef<number | null>(null)
+  const afterCloseRef = useRef<BottomSheetAfterClose | null>(null)
   const dragRef = useRef<BottomSheetDragState>({
     active: false,
     captured: false,
@@ -62,10 +65,18 @@ export function useBottomSheetDismiss({
     timerRef.current = null
   }, [])
 
-  const requestClose = useCallback(() => {
+  const runAfterClose = useCallback(() => {
+    const afterClose = afterCloseRef.current
+    afterCloseRef.current = null
+    afterClose?.()
+  }, [])
+
+  const requestClose = useCallback((afterClose?: BottomSheetAfterClose | unknown) => {
     if (closing) return
+    afterCloseRef.current = typeof afterClose === 'function' ? afterClose as BottomSheetAfterClose : null
     if (!isOpen) {
       onClose()
+      runAfterClose()
       return
     }
 
@@ -81,8 +92,9 @@ export function useBottomSheetDismiss({
       onClose()
       setClosing(false)
       setDragOffset(0)
+      runAfterClose()
     }, closeDurationMs)
-  }, [clearCloseTimer, closeDurationMs, closing, isOpen, onClose])
+  }, [clearCloseTimer, closeDurationMs, closing, isOpen, onClose, runAfterClose])
 
   const resetDrag = useCallback(() => {
     dragRef.current.active = false
@@ -171,11 +183,15 @@ export function useBottomSheetDismiss({
     }
 
     clearCloseTimer()
+    afterCloseRef.current = null
     resetDrag()
     setClosing(false)
   }, [clearCloseTimer, isOpen, resetDrag])
 
-  useEffect(() => () => clearCloseTimer(), [clearCloseTimer])
+  useEffect(() => () => {
+    afterCloseRef.current = null
+    clearCloseTimer()
+  }, [clearCloseTimer])
 
   const backdropProgress = closing
     ? 0

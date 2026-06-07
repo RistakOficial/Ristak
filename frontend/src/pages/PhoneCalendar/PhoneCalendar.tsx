@@ -300,6 +300,7 @@ export const PhoneCalendar: React.FC = () => {
     onClose: closeSheetViewNow
   })
   const isCalendarSheetMoving = calendarSheetDismiss.dragging || calendarSheetDismiss.closing || calendarSheetDismiss.dragOffset > 0
+  const isCalendarSheetDragging = calendarSheetDismiss.dragging || calendarSheetDismiss.dragOffset > 0
   const calendarNavStyle = useMemo<React.CSSProperties | undefined>(() => {
     if (!sheetView) return undefined
 
@@ -1531,7 +1532,7 @@ export const PhoneCalendar: React.FC = () => {
 
       {sheetView && (
         <div
-          className={`${styles.sheetBackdrop} ${isCalendarSheetMoving ? styles.sheetBackdropInteractive : ''}`}
+          className={`${styles.sheetBackdrop} ${isCalendarSheetDragging ? styles.sheetBackdropInteractive : ''}`}
           style={calendarSheetDismiss.backdropStyle}
           onClick={calendarSheetDismiss.requestClose}
         >

@@ -2016,6 +2016,7 @@ export const PhoneChat: React.FC = () => {
     onClose: closeSheetNow
   })
   const actionSheetMoving = actionSheetDismiss.dragging || actionSheetDismiss.closing || actionSheetDismiss.dragOffset > 0
+  const actionSheetDragging = actionSheetDismiss.dragging || actionSheetDismiss.dragOffset > 0
   const chatSwipeGenerationRef = useRef(0)
   const ignoreNextChatClickRef = useRef(false)
   const resetPhoneFrameHorizontalScroll = useCallback(() => {
@@ -3800,15 +3801,16 @@ export const PhoneChat: React.FC = () => {
   }
 
   const openCameraShare = (attachment: MobilePhotoAttachment) => {
-    setSheet(null)
-    setCameraSharePhoto(attachment)
-    setCameraShareQuery('')
-    setCameraShareCaption('')
-    setCameraShareSelectedContacts([])
-    setCameraShareSending(false)
-    if (cameraShareCaptionRef.current) {
-      cameraShareCaptionRef.current.textContent = ''
-    }
+    actionSheetDismiss.requestClose(() => {
+      setCameraSharePhoto(attachment)
+      setCameraShareQuery('')
+      setCameraShareCaption('')
+      setCameraShareSelectedContacts([])
+      setCameraShareSending(false)
+      if (cameraShareCaptionRef.current) {
+        cameraShareCaptionRef.current.textContent = ''
+      }
+    })
   }
 
   const closeCameraShare = () => {
@@ -7594,7 +7596,7 @@ export const PhoneChat: React.FC = () => {
 
       {sheet && (
         <div
-          className={`${styles.sheetBackdrop} ${actionSheetMoving ? styles.sheetBackdropInteractive : ''} ${sheet === 'settings' ? styles.settingsSheetBackdrop : ''} ${sheet === 'payment' || sheet === 'settings' || sheet === 'chatMore' || sheet === 'clabe' ? styles.darkSheetBackdrop : ''} ${sheet === 'chatMore' ? styles.chatMoreSheetBackdrop : ''} ${actionSheetDismiss.closing ? styles.sheetBackdropClosing : ''}`}
+          className={`${styles.sheetBackdrop} ${actionSheetDragging ? styles.sheetBackdropInteractive : ''} ${sheet === 'settings' ? styles.settingsSheetBackdrop : ''} ${sheet === 'payment' || sheet === 'settings' || sheet === 'chatMore' || sheet === 'clabe' ? styles.darkSheetBackdrop : ''} ${sheet === 'chatMore' ? styles.chatMoreSheetBackdrop : ''} ${actionSheetDismiss.closing ? styles.sheetBackdropClosing : ''}`}
           style={actionSheetDismiss.backdropStyle}
           onClick={actionSheetDismiss.requestClose}
         >
