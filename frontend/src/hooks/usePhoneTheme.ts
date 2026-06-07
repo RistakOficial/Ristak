@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useTheme } from '@/contexts/ThemeContext'
 import { mobileAppService } from '@/services/mobileAppService'
 import { useAppConfig } from './useAppConfig'
 
@@ -8,6 +9,7 @@ const NIGHT_START_HOUR = 19
 const PHONE_THEME_CONFIG_KEY = 'mobile_chat_theme_preference'
 const PHONE_THEME_LIGHT_COLOR = '#fbfaf6'
 const PHONE_THEME_DARK_COLOR = '#0b0f14'
+const PHONE_THEME_ISOLATED_DESIGN_PRESET = 'classic'
 
 export type PhoneThemePreference = 'system' | 'light' | 'dark' | 'auto'
 export type PhoneThemeTone = 'light' | 'dark'
@@ -74,6 +76,7 @@ function getPhoneThemeDeviceLabel() {
 }
 
 export function usePhoneTheme({ active = true }: UsePhoneThemeOptions = {}) {
+  const { theme: webTheme, designPreset: webDesignPreset } = useTheme()
   const [preference, setPreference] = useAppConfig<PhoneThemePreference>(PHONE_THEME_CONFIG_KEY, 'system')
   const safePreference = isPhoneThemePreference(preference) ? preference : 'system'
   const [resolvedTheme, setResolvedTheme] = useState<PhoneThemeTone>(() => resolvePhoneTheme(safePreference))
@@ -132,6 +135,66 @@ export function usePhoneTheme({ active = true }: UsePhoneThemeOptions = {}) {
     const previousBodyTone = body.dataset.phoneChatTone
     const previousRootMode = root.dataset.phoneChatMode
     const previousBodyMode = body.dataset.phoneChatMode
+    let restoring = false
+
+    const applyPhoneThemeClass = () => {
+      body.classList.toggle('light', resolvedTheme === 'light')
+      body.classList.toggle('dark', resolvedTheme === 'dark')
+    }
+
+    const isolateTheme = (target: HTMLElement) => {
+      const currentTheme = target.dataset.theme
+      if (currentTheme !== resolvedTheme) {
+        target.dataset.theme = resolvedTheme
+      }
+    }
+
+    const isolateDesignPreset = (target: HTMLElement) => {
+      const currentPreset = target.dataset.designPreset
+      if (currentPreset !== PHONE_THEME_ISOLATED_DESIGN_PRESET) {
+        target.dataset.designPreset = PHONE_THEME_ISOLATED_DESIGN_PRESET
+      }
+    }
+
+    const applyWebThemeIsolation = () => {
+      root.dataset.phoneThemeIsolated = 'true'
+      body.dataset.phoneThemeIsolated = 'true'
+      isolateTheme(root)
+      isolateTheme(body)
+      isolateDesignPreset(root)
+      isolateDesignPreset(body)
+      applyPhoneThemeClass()
+    }
+
+    const mutationObserver = typeof MutationObserver === 'undefined'
+      ? null
+      : new MutationObserver((mutations) => {
+        if (restoring) return
+
+        let shouldReapplyPhoneClass = false
+        mutations.forEach((mutation) => {
+          if (mutation.attributeName === 'data-theme') {
+            if (mutation.target === root) isolateTheme(root)
+            if (mutation.target === body) isolateTheme(body)
+          }
+
+          if (mutation.attributeName === 'data-design-preset') {
+            if (mutation.target === root) isolateDesignPreset(root)
+            if (mutation.target === body) isolateDesignPreset(body)
+          }
+
+          if (mutation.attributeName === 'class' && mutation.target === body) {
+            shouldReapplyPhoneClass = true
+          }
+        })
+
+        if (shouldReapplyPhoneClass) applyPhoneThemeClass()
+      })
+
+    applyWebThemeIsolation()
+
+    mutationObserver?.observe(root, { attributes: true, attributeFilter: ['data-theme', 'data-design-preset'] })
+    mutationObserver?.observe(body, { attributes: true, attributeFilter: ['data-theme', 'data-design-preset', 'class'] })
 
     root.dataset.phoneChatTheme = 'active'
     body.dataset.phoneChatTheme = 'active'
@@ -141,6 +204,9 @@ export function usePhoneTheme({ active = true }: UsePhoneThemeOptions = {}) {
     body.dataset.phoneChatMode = safePreference
 
     return () => {
+      restoring = true
+      mutationObserver?.disconnect()
+
       if (previousRootTheme !== undefined) root.dataset.phoneChatTheme = previousRootTheme
       else delete root.dataset.phoneChatTheme
 
@@ -158,8 +224,19 @@ export function usePhoneTheme({ active = true }: UsePhoneThemeOptions = {}) {
 
       if (previousBodyMode !== undefined) body.dataset.phoneChatMode = previousBodyMode
       else delete body.dataset.phoneChatMode
+
+      root.dataset.theme = webTheme
+      body.dataset.theme = webTheme
+      root.dataset.designPreset = webDesignPreset
+      body.dataset.designPreset = webDesignPreset
+
+      delete root.dataset.phoneThemeIsolated
+      delete body.dataset.phoneThemeIsolated
+
+      body.classList.toggle('light', webTheme === 'light')
+      body.classList.toggle('dark', webTheme === 'dark')
     }
-  }, [active, resolvedTheme, safePreference])
+  }, [active, resolvedTheme, safePreference, webDesignPreset, webTheme])
 
   useEffect(() => {
     if (!active) return
