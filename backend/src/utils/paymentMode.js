@@ -1,5 +1,13 @@
 export const PAYMENT_MODE_LIVE = 'live'
 export const PAYMENT_MODE_TEST = 'test'
+export const SUCCESS_PAYMENT_STATUSES = [
+  'succeeded',
+  'paid',
+  'completed',
+  'complete',
+  'fulfilled',
+  'success'
+]
 
 const TEST_MODE_VALUES = new Set(['test', 'testing', 'sandbox', 'demo'])
 const LIVE_MODE_VALUES = new Set(['live', 'production', 'prod'])
@@ -145,4 +153,14 @@ export function getWebhookPaymentMode(data = {}, payment = {}, fallback = PAYMEN
 export function nonTestPaymentCondition(alias = '') {
   const prefix = alias ? `${alias}.` : ''
   return `COALESCE(${prefix}payment_mode, '${PAYMENT_MODE_LIVE}') != '${PAYMENT_MODE_TEST}'`
+}
+
+export function successfulPaymentStatusCondition(alias = '') {
+  const prefix = alias ? `${alias}.` : ''
+  const placeholders = SUCCESS_PAYMENT_STATUSES.map(() => '?').join(', ')
+
+  return {
+    sql: `LOWER(${prefix}status) IN (${placeholders})`,
+    params: [...SUCCESS_PAYMENT_STATUSES]
+  }
 }

@@ -10,10 +10,10 @@ import {
   mergeAppointments
 } from './appointmentsMerge.js'
 import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js'
-import { nonTestPaymentCondition } from '../utils/paymentMode.js'
+import { nonTestPaymentCondition, SUCCESS_PAYMENT_STATUSES } from '../utils/paymentMode.js'
 
 const isPostgres = Boolean(process.env.DATABASE_URL)
-const ACTIVE_PAYMENT_STATUSES = new Set(['succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success'])
+const ACTIVE_PAYMENT_STATUSES = new Set(SUCCESS_PAYMENT_STATUSES)
 const INACTIVE_APPOINTMENT_STATUSES = new Set([
   'cancelled',
   'canceled',
@@ -89,15 +89,6 @@ const DEFAULT_NUMBER = {
   ltv_total: 0,
   avg_ltv: 0
 }
-
-const SUCCESS_PAYMENT_STATUSES = [
-  'succeeded',
-  'paid',
-  'completed',
-  'complete',
-  'fulfilled',
-  'success'
-]
 
 export function normalizePhoneValue(phone) {
   if (!phone) {
@@ -385,8 +376,9 @@ export async function buildTransactionStats ({ startDate, endDate, scope = 'all'
   const hiddenFilters = await getHiddenContactFilters()
   const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', true)
 
-  const baseFilters = ['status = ?', nonTestPaymentCondition()]
-  const baseParams = ['succeeded']
+  const statusPlaceholders = SUCCESS_PAYMENT_STATUSES.map(() => '?').join(', ')
+  const baseFilters = [`LOWER(status) IN (${statusPlaceholders})`, nonTestPaymentCondition()]
+  const baseParams = [...SUCCESS_PAYMENT_STATUSES]
 
   if (range.startUtc) {
     baseFilters.push('date >= ?')
@@ -496,7 +488,7 @@ export async function buildTransactionSummary ({ startDate, endDate, scope = 'al
 
   // Usar TODOS los status válidos de pago (no solo 'succeeded')
   const statusPlaceholders = SUCCESS_PAYMENT_STATUSES.map(() => '?').join(', ')
-  const successFilters = [`status IN (${statusPlaceholders})`, nonTestPaymentCondition()]
+  const successFilters = [`LOWER(status) IN (${statusPlaceholders})`, nonTestPaymentCondition()]
   const successParams = [...SUCCESS_PAYMENT_STATUSES]
 
   if (range.startUtc) {
@@ -555,7 +547,7 @@ export async function buildTransactionSummary ({ startDate, endDate, scope = 'al
 
   if (previousRange) {
     const prevStatusPlaceholders = SUCCESS_PAYMENT_STATUSES.map(() => '?').join(', ')
-    const prevSuccessFilters = [`status IN (${prevStatusPlaceholders})`, nonTestPaymentCondition(), 'date BETWEEN ? AND ?']
+    const prevSuccessFilters = [`LOWER(status) IN (${prevStatusPlaceholders})`, nonTestPaymentCondition(), 'date BETWEEN ? AND ?']
     const prevSuccessParams = [...SUCCESS_PAYMENT_STATUSES, previousRange.startUtc, previousRange.endUtc]
     if (contactConditions.length > 0) {
       prevSuccessFilters.push(`contact_id IN (

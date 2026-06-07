@@ -9,7 +9,7 @@ import { normalizeTrafficSource } from '../utils/trafficSourceNormalizer.js';
 import { DateTime } from 'luxon';
 import { getContactsWithAppointmentsHybrid, getContactsWithShowedAppointmentsHybrid } from '../services/appointmentsMerge.js';
 import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js';
-import { nonTestPaymentCondition } from '../utils/paymentMode.js';
+import { nonTestPaymentCondition, SUCCESS_PAYMENT_STATUSES, successfulPaymentStatusCondition } from '../utils/paymentMode.js';
 
 const isPostgres = Boolean(process.env.DATABASE_URL);
 
@@ -131,8 +131,9 @@ const computeFinancialSnapshot = async (range) => {
   const hiddenFilters = await getHiddenContactFilters();
   const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false);
 
-  const paymentsFilters = ['status = ?', nonTestPaymentCondition()];
-  const paymentsParams = ['succeeded'];
+  const successfulPayments = successfulPaymentStatusCondition();
+  const paymentsFilters = [successfulPayments.sql, nonTestPaymentCondition()];
+  const paymentsParams = [...successfulPayments.params];
   const { filters: dateFilters, params: dateParams } = buildDateFilters(range);
   paymentsFilters.push(...dateFilters);
   paymentsParams.push(...dateParams);
@@ -176,7 +177,6 @@ const computeFinancialSnapshot = async (range) => {
 
   // Calcular promedio de pagos INDIVIDUALES (no total_paid de contactos)
   // IMPORTANTE: Solo pagos exitosos según Mandamiento #11
-  const SUCCESS_PAYMENT_STATUSES = ['succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success'];
   const statusPlaceholders = SUCCESS_PAYMENT_STATUSES.map(() => '?').join(',');
 
   const paymentsAvgFilters = [`LOWER(status) IN (${statusPlaceholders})`, nonTestPaymentCondition()];
@@ -385,23 +385,24 @@ export const getChartData = async (req, res) => {
     // Usar getGroupExpression() con timezone dinámico
     const dateExpression = getGroupExpression('date', groupBy, timezone);
 
+    const successfulPayments = successfulPaymentStatusCondition();
     const ingresosQuery = `SELECT
        ${dateExpression} as periodo,
        SUM(amount) as total_ingresos
      FROM payments
-     WHERE status = 'succeeded'
+     WHERE ${successfulPayments.sql}
      AND ${nonTestPaymentCondition()}
-     AND date >= $1 AND date <= $2
+     AND date >= ? AND date <= ?
      ${hiddenCondition ? `AND contact_id IN (SELECT c.id FROM contacts c WHERE ${hiddenCondition})` : ''}
      GROUP BY periodo
      ORDER BY periodo`;
-    const ingresosParams = [range.startUtc, range.endUtc];
+    const ingresosParams = [...successfulPayments.params, range.startUtc, range.endUtc];
 
     const gastosQuery = `SELECT
        ${dateExpression} as periodo,
        SUM(spend) as total_gastos
      FROM meta_ads
-     WHERE date >= $1 AND date <= $2
+     WHERE date >= ? AND date <= ?
      GROUP BY periodo
      ORDER BY periodo`;
     // IMPORTANTE: meta_ads.date es TEXT "YYYY-MM-DD", usar startZoned.toISODate()
@@ -480,25 +481,27 @@ export const getRoasData = async (req, res) => {
     const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false);
 
     // Agrupar por mes con timezone dinámico
-    const monthExpression = getGroupExpression('date', 'month', timezone);
+    const monthExpression = getGroupExpression('i.date', 'month', timezone);
 
+    const successfulPayments = successfulPaymentStatusCondition();
     const query = `
       SELECT
         ${monthExpression} as periodo,
         COALESCE(SUM(i.amount), 0) as ingresos,
         COALESCE(SUM(g.spend), 0) as gastos
       FROM (
-        SELECT date, amount FROM payments WHERE status = 'succeeded' AND ${nonTestPaymentCondition()} AND date >= $1 AND date <= $2
+        SELECT date, amount FROM payments WHERE ${successfulPayments.sql} AND ${nonTestPaymentCondition()} AND date >= ? AND date <= ?
         ${hiddenCondition ? `AND contact_id IN (SELECT c.id FROM contacts c WHERE ${hiddenCondition})` : ''}
       ) i
       LEFT JOIN (
-        SELECT date, spend FROM meta_ads WHERE date >= $3 AND date <= $4
+        SELECT date, spend FROM meta_ads WHERE date >= ? AND date <= ?
       ) g ON ${getGroupExpression('i.date', 'month', timezone)} = ${getGroupExpression('g.date', 'month', timezone)}
       GROUP BY periodo
       ORDER BY periodo
     `;
     // IMPORTANTE: meta_ads.date es TEXT "YYYY-MM-DD", payments.date es DATETIME
     const params = [
+      ...successfulPayments.params,
       range.startUtc,
       range.endUtc,
       range.startZoned.toISODate(),
@@ -835,19 +838,20 @@ export const getSalesData = async (req, res) => {
     // Usar getGroupExpression() con timezone dinámico
     const dateExpression = getGroupExpression('date', groupBy, timezone);
 
+    const successfulPayments = successfulPaymentStatusCondition();
     const query = `
       SELECT
         ${dateExpression} as periodo,
         COUNT(*) as total
       FROM payments
-      WHERE status = 'succeeded'
+      WHERE ${successfulPayments.sql}
       AND ${nonTestPaymentCondition()}
-      AND date >= $1 AND date <= $2
+      AND date >= ? AND date <= ?
       ${hiddenCondition ? `AND contact_id IN (SELECT c.id FROM contacts c WHERE ${hiddenCondition})` : ''}
       GROUP BY periodo
       ORDER BY periodo
     `;
-    const params = [range.startUtc, range.endUtc];
+    const params = [...successfulPayments.params, range.startUtc, range.endUtc];
 
     const data = await db.all(query, params);
 
@@ -1051,7 +1055,6 @@ async function getSourceBreakdownByMetric(metric, range) {
     contactIds = rows.map(row => row.id)
   } else {
     // conversions: clientes nuevos = contactos cuyo primer pago exitoso cae en el rango
-    const SUCCESS_PAYMENT_STATUSES = ['succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success']
     const statusPlaceholders = SUCCESS_PAYMENT_STATUSES.map(() => '?').join(', ')
     const conditions = ['first_p.first_payment_date >= ?', 'first_p.first_payment_date <= ?']
     if (hiddenConditionC) conditions.push(hiddenConditionC)
@@ -1143,6 +1146,7 @@ export const getFinancialOverview = async (req, res) => {
 
     let revenueQuery = '';
     let revenueParams = [];
+    const successfulPayments = successfulPaymentStatusCondition('p');
 
     if (!useContactAttribution) {
       // Vista "Todos": ingresos por fecha real de pago
@@ -1152,14 +1156,14 @@ export const getFinancialOverview = async (req, res) => {
           COALESCE(SUM(p.amount), 0) as revenue
         FROM payments p
         LEFT JOIN contacts c ON c.id = p.contact_id
-        WHERE p.status = 'succeeded'
+        WHERE ${successfulPayments.sql}
           AND ${nonTestPaymentCondition('p')}
-          AND p.date >= $1 AND p.date <= $2
+          AND p.date >= ? AND p.date <= ?
           ${hiddenCondition ? `AND ${hiddenCondition}` : ''}
         GROUP BY day
         ORDER BY day ASC
       `;
-      revenueParams = [range.startUtc, range.endUtc];
+      revenueParams = [...successfulPayments.params, range.startUtc, range.endUtc];
     } else {
       // Vista "Al registro" / "Identificados de anuncios": ingresos por fecha de creación del contacto
       revenueQuery = `
@@ -1169,9 +1173,9 @@ export const getFinancialOverview = async (req, res) => {
         FROM contacts c
         LEFT JOIN payments p
           ON p.contact_id = c.id
-          AND p.status = 'succeeded'
+          AND ${successfulPayments.sql}
           AND ${nonTestPaymentCondition('p')}
-        WHERE c.created_at >= $1 AND c.created_at <= $2
+        WHERE c.created_at >= ? AND c.created_at <= ?
           ${isAttributed ? `AND c.attribution_ad_id IS NOT NULL AND EXISTS (
             SELECT 1 FROM meta_ads ma
             WHERE ma.ad_id = c.attribution_ad_id
@@ -1181,7 +1185,7 @@ export const getFinancialOverview = async (req, res) => {
         GROUP BY day
         ORDER BY day ASC
       `;
-      revenueParams = [range.startUtc, range.endUtc];
+      revenueParams = [...successfulPayments.params, range.startUtc, range.endUtc];
     }
 
     // Query para TODOS los gastos de publicidad
@@ -1190,7 +1194,7 @@ export const getFinancialOverview = async (req, res) => {
         ${spendDayExpression} as day,
         SUM(spend) as spend
       FROM meta_ads
-      WHERE date >= $1 AND date <= $2
+      WHERE date >= ? AND date <= ?
       GROUP BY day
       ORDER BY day ASC
     `;
@@ -1481,7 +1485,6 @@ export const getFunnelData = async (req, res) => {
       customersCount = parseInt(customersData?.count || 0);
     } else {
       // Vista "Todos": Contactos cuyo PRIMER pago está en el rango
-      const SUCCESS_PAYMENT_STATUSES = ['succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success']
       const statusPlaceholders = SUCCESS_PAYMENT_STATUSES.map(() => '?').join(',')
 
       const conditions = ['first_p.first_payment_date >= $' + (SUCCESS_PAYMENT_STATUSES.length + 1),
