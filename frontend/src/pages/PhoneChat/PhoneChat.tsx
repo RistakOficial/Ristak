@@ -662,6 +662,20 @@ function formatDateInputValue(date: Date) {
   return `${date.getFullYear()}-${padTwoDigits(date.getMonth() + 1)}-${padTwoDigits(date.getDate())}`
 }
 
+function formatScheduleDateDisplay(value: string) {
+  const [year, month, day] = value.split('-').map(Number)
+  if (!year || !month || !day) return 'Elige fecha'
+
+  const date = new Date(year, month - 1, day)
+  if (Number.isNaN(date.getTime())) return 'Elige fecha'
+
+  return new Intl.DateTimeFormat('es-MX', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric'
+  }).format(date).replace('.', '')
+}
+
 function createDefaultScheduleDraft(): ScheduleDraft {
   const date = new Date(Date.now() + 15 * 60 * 1000)
   const minutes = date.getMinutes()
@@ -8432,12 +8446,19 @@ export const PhoneChat: React.FC = () => {
         <div className={styles.scheduleFields}>
           <label className={styles.scheduleField}>
             <span>Fecha</span>
-            <input
-              type="date"
-              value={scheduleDraft.date}
-              min={formatDateInputValue(new Date())}
-              onChange={(event) => handleScheduleDraftChange({ date: event.target.value })}
-            />
+            <span className={styles.scheduleDateControl}>
+              <span className={styles.scheduleDateText} aria-hidden="true">
+                {formatScheduleDateDisplay(scheduleDraft.date)}
+              </span>
+              <input
+                className={styles.scheduleDateNativeInput}
+                type="date"
+                value={scheduleDraft.date}
+                min={formatDateInputValue(new Date())}
+                aria-label="Fecha"
+                onChange={(event) => handleScheduleDraftChange({ date: event.target.value })}
+              />
+            </span>
           </label>
           <div className={styles.scheduleTimeRow}>
             <label className={styles.scheduleField}>

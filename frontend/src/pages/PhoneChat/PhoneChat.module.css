@@ -4287,6 +4287,60 @@
   box-shadow: 0 0 0 3px rgba(var(--phone-chat-accent-rgb), 0.12);
 }
 
+.scheduleField .scheduleDateControl {
+  position: relative;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-width: 0;
+  height: 48px;
+  padding: 0 14px;
+  border: 1px solid var(--phone-chat-border);
+  border-radius: 999px;
+  color: var(--phone-chat-text);
+  background: var(--phone-chat-surface);
+  overflow: hidden;
+}
+
+.scheduleField .scheduleDateText {
+  min-width: 0;
+  color: var(--phone-chat-text);
+  font-size: 16px;
+  font-weight: 720;
+  line-height: 1;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scheduleField .scheduleDateNativeInput {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  max-width: none;
+  height: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: inherit;
+  color: transparent;
+  background: transparent;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.scheduleField .scheduleDateNativeInput:focus {
+  box-shadow: none;
+}
+
+.scheduleField .scheduleDateControl:focus-within {
+  border-color: color-mix(in srgb, var(--phone-chat-accent) 44%, var(--phone-chat-border));
+  box-shadow: 0 0 0 3px rgba(var(--phone-chat-accent-rgb), 0.12);
+}
+
 .schedulePeriodToggle {
   box-sizing: border-box;
   display: grid;
