@@ -1866,6 +1866,119 @@
   border-top: 1px solid var(--phone-chat-border);
 }
 
+.contactInfoEditableRow {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) 34px;
+  gap: 10px;
+  align-items: start;
+  min-width: 0;
+  padding: 9px 0;
+}
+
+.contactInfoEditableRow + .contactInfoEditableRow,
+.contactInfoRow + .contactInfoEditableRow,
+.contactInfoEditableRow + .contactInfoRow {
+  border-top: 1px solid var(--phone-chat-border);
+}
+
+.contactInfoEditableText {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  text-align: left;
+}
+
+.contactInfoEditableText small,
+.contactInfoCustomFieldEditor small {
+  color: var(--phone-chat-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.contactInfoEditableText strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--phone-chat-text);
+  font-size: 15px;
+  font-weight: 790;
+  line-height: 1.3;
+}
+
+.contactInfoEditButton,
+.contactInfoCustomFieldActions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--phone-chat-border);
+  border-radius: 999px;
+  color: var(--phone-chat-text);
+  background: var(--phone-chat-surface);
+}
+
+.contactInfoCustomFieldEditing {
+  align-items: center;
+}
+
+.contactInfoCustomFieldEditor {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+
+.contactInfoCustomFieldEditor input,
+.contactInfoCustomFieldEditor select,
+.contactInfoCustomFieldEditor textarea {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--phone-chat-border);
+  border-radius: 10px;
+  color: var(--phone-chat-text);
+  background: var(--phone-chat-surface-soft);
+  font: inherit;
+  font-size: 15px;
+  font-weight: 760;
+  outline: none;
+}
+
+.contactInfoCustomFieldEditor input,
+.contactInfoCustomFieldEditor select {
+  height: 38px;
+  padding: 0 10px;
+}
+
+.contactInfoCustomFieldEditor textarea {
+  min-height: 74px;
+  padding: 9px 10px;
+  resize: vertical;
+}
+
+.contactInfoCustomFieldEditor input:focus,
+.contactInfoCustomFieldEditor select:focus,
+.contactInfoCustomFieldEditor textarea:focus {
+  border-color: color-mix(in srgb, var(--phone-chat-accent) 58%, var(--phone-chat-border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--phone-chat-accent-soft) 72%, transparent);
+}
+
+.contactInfoCustomFieldActions {
+  display: grid;
+  gap: 6px;
+}
+
+.contactInfoCustomFieldActions button:first-child {
+  color: var(--phone-chat-text-on-primary, #ffffff);
+  background: var(--phone-chat-primary);
+}
+
+.contactInfoCustomFieldActions button:disabled {
+  opacity: 0.56;
+}
+
 .contactInfoRowIcon {
   display: inline-flex;
   align-items: center;

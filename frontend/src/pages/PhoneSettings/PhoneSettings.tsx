@@ -9,6 +9,7 @@ import {
   CircleAlert,
   Clock,
   FileText,
+  ListChecks,
   Loader2,
   MessageCircle,
   Moon,
@@ -23,12 +24,15 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useAppConfig, usePhoneTheme, type PhoneThemePreference } from '@/hooks'
 import { calendarsService, type Calendar } from '@/services/calendarsService'
+import { contactsService } from '@/services/contactsService'
 import { mobileAppService } from '@/services/mobileAppService'
 import { pushNotificationsService } from '@/services/pushNotificationsService'
 import { whatsappApiService, type WhatsAppApiTemplate } from '@/services/whatsappApiService'
+import type { ContactCustomFieldDefinition } from '@/types'
+import { getContactCustomFieldIdentity } from '@/utils/contactCustomFields'
 import styles from './PhoneSettings.module.css'
 
-type SettingsSection = 'numbers' | 'templates' | 'agent' | 'chats' | 'appearance' | 'notifications' | null
+type SettingsSection = 'numbers' | 'templates' | 'agent' | 'chats' | 'custom-fields' | 'appearance' | 'notifications' | null
 type WhatsAppNumberMode = 'merged' | 'separated'
 type ConversationSortMode = 'recent' | 'unread'
 type PhoneNotificationPermission = NotificationPermission | 'native_granted' | 'native_denied' | 'native_prompt' | 'unsupported' | 'checking'
@@ -104,6 +108,7 @@ export const PhoneSettings: React.FC = () => {
   const [conversationSortMode, setConversationSortMode] = useAppConfig<ConversationSortMode>('mobile_chat_sort_mode', 'recent')
   const [showLastMessagePreview, setShowLastMessagePreview] = useAppConfig<boolean>('mobile_chat_show_last_preview', true)
   const [showUnreadIndicators, setShowUnreadIndicators] = useAppConfig<boolean>('mobile_chat_show_unread_indicators', true)
+  const [enabledContactInfoCustomFieldIds, setEnabledContactInfoCustomFieldIds] = useAppConfig<string[]>('mobile_chat_contact_info_custom_field_ids', [])
   const [calendarPushEnabled, setCalendarPushEnabled] = useAppConfig<boolean>('calendar_push_notifications_enabled', false)
   const [chatPushEnabled, setChatPushEnabled] = useAppConfig<boolean>('chat_push_notifications_enabled', true)
   const [paymentPushEnabled, setPaymentPushEnabled] = useAppConfig<boolean>('payment_push_notifications_enabled', true)
@@ -123,6 +128,9 @@ export const PhoneSettings: React.FC = () => {
   const [templates, setTemplates] = useState<WhatsAppApiTemplate[]>([])
   const [templatesLoading, setTemplatesLoading] = useState(false)
   const [templatesError, setTemplatesError] = useState('')
+  const [customFieldDefinitions, setCustomFieldDefinitions] = useState<ContactCustomFieldDefinition[]>([])
+  const [customFieldsLoading, setCustomFieldsLoading] = useState(false)
+  const [customFieldsError, setCustomFieldsError] = useState('')
   const [requestingPush, setRequestingPush] = useState(false)
   const [permission, setPermission] = useState(getNotificationPermission)
 
@@ -189,6 +197,20 @@ export const PhoneSettings: React.FC = () => {
     }
   }, [])
 
+  const loadCustomFieldDefinitions = useCallback(async () => {
+    setCustomFieldsError('')
+    setCustomFieldsLoading(true)
+    try {
+      const definitions = await contactsService.getCustomFieldDefinitions()
+      setCustomFieldDefinitions(Array.isArray(definitions) ? definitions.filter((definition) => !definition.archived) : [])
+    } catch (error: any) {
+      setCustomFieldDefinitions([])
+      setCustomFieldsError(error?.message || 'No se pudieron cargar los campos personalizados.')
+    } finally {
+      setCustomFieldsLoading(false)
+    }
+  }, [])
+
   useEffect(() => {
     loadCalendars()
   }, [loadCalendars])
@@ -197,10 +219,15 @@ export const PhoneSettings: React.FC = () => {
     if (activeSection === 'templates') loadTemplates()
   }, [activeSection, loadTemplates])
 
+  useEffect(() => {
+    if (activeSection === 'custom-fields') loadCustomFieldDefinitions()
+  }, [activeSection, loadCustomFieldDefinitions])
+
   const selectedCalendarCount = pushCalendarIds.length || calendars.length
   const permissionLabel = getNotificationPermissionLabel(permission)
   const showPhoneActivation = shouldShowPhoneActivation(permission)
   const blockedTemplates = templates.filter((template) => TEMPLATE_BLOCKED_STATUSES.has(getTemplateStatus(template))).length
+  const enabledCustomFieldCount = enabledContactInfoCustomFieldIds.length
 
   const togglePushCalendar = (calendarId: string) => {
     const next = pushCalendarIds.includes(calendarId)
@@ -214,6 +241,20 @@ export const PhoneSettings: React.FC = () => {
     if (enabled && calendars.length === 1 && pushCalendarIds.length === 0) {
       saveConfigPreference(setPushCalendarIds, [calendars[0].id])
     }
+  }
+
+  const toggleContactInfoCustomField = (fieldId: string) => {
+    const next = enabledContactInfoCustomFieldIds.includes(fieldId)
+      ? enabledContactInfoCustomFieldIds.filter((id) => id !== fieldId)
+      : [...enabledContactInfoCustomFieldIds, fieldId]
+    saveConfigPreference(setEnabledContactInfoCustomFieldIds, next)
+  }
+
+  const enableAllContactInfoCustomFields = () => {
+    const allFieldIds = customFieldDefinitions
+      .map((definition) => getContactCustomFieldIdentity(definition))
+      .filter(Boolean)
+    saveConfigPreference(setEnabledContactInfoCustomFieldIds, allFieldIds)
   }
 
   const handleRequestPush = async () => {
@@ -276,6 +317,7 @@ export const PhoneSettings: React.FC = () => {
       { id: 'templates', title: 'Plantillas', description: 'Crear y revisar estados de Meta.', meta: templates.length ? `${templates.length} guardadas` : 'Revisar', Icon: FileText },
       { id: 'agent', title: 'Agente IA', mobileTitle: 'Agente de inteligencia artificial', description: 'Chat fijo y sugerencias.', meta: aiAgentChatEnabled ? 'Activo' : 'Apagado', Icon: Bot },
       { id: 'chats', title: 'Lista de chats', mobileTitle: 'Lista de chat', description: 'Orden, archivados y vista previa.', meta: conversationSortMode === 'recent' ? 'Recientes' : 'No leídas', Icon: MessageCircle },
+      { id: 'custom-fields', title: 'Campos personalizados', description: 'Datos visibles en cada contacto.', meta: enabledCustomFieldCount ? `${enabledCustomFieldCount} activo${enabledCustomFieldCount === 1 ? '' : 's'}` : 'Elegir', Icon: ListChecks },
       { id: 'appearance', title: 'Apariencia', description: 'Claro, noche, sistema u horario.', meta: themeMeta, Icon: Sun },
       { id: 'notifications', title: 'Notificaciones', description: 'Mensajes, citas y pagos.', meta: permissionLabel, Icon: Bell }
     ]
@@ -397,6 +439,67 @@ export const PhoneSettings: React.FC = () => {
     </>
   )
 
+  const renderCustomFields = () => (
+    <>
+      <section className={styles.settingsSection}>
+        <div className={styles.sectionTitle}>
+          <ListChecks size={18} />
+          <span>
+            <strong>Info visible del contacto</strong>
+            <small>Activa los datos que quieres ver y editar dentro del chat.</small>
+          </span>
+        </div>
+        <div className={styles.customFieldsActions}>
+          <button type="button" onClick={enableAllContactInfoCustomFields} disabled={customFieldsLoading || customFieldDefinitions.length === 0}>
+            Activar todos
+          </button>
+          <button type="button" onClick={() => saveConfigPreference(setEnabledContactInfoCustomFieldIds, [])} disabled={customFieldsLoading || enabledContactInfoCustomFieldIds.length === 0}>
+            Limpiar
+          </button>
+          <button type="button" onClick={loadCustomFieldDefinitions} disabled={customFieldsLoading}>
+            {customFieldsLoading ? <Loader2 size={15} className={styles.spinIcon} /> : <RefreshCw size={15} />}
+            Actualizar
+          </button>
+        </div>
+        <p className={styles.hint}>Los campos activos aparecen en Info del contacto. Si un contacto no tiene dato, podrás escribirlo ahí mismo.</p>
+      </section>
+
+      {customFieldsError && (
+        <div className={styles.alertBox}>
+          <CircleAlert size={18} />
+          <span>{customFieldsError}</span>
+        </div>
+      )}
+
+      {customFieldsLoading ? (
+        <div className={styles.loadingInline}>
+          <Loader2 size={17} className={styles.spinIcon} />
+          Cargando campos...
+        </div>
+      ) : customFieldDefinitions.length ? (
+        <div className={styles.customFieldsList}>
+          {customFieldDefinitions.map((definition, index) => {
+            const fieldId = getContactCustomFieldIdentity(definition)
+            if (!fieldId) return null
+            const checked = enabledContactInfoCustomFieldIds.includes(fieldId)
+            return (
+              <React.Fragment key={fieldId}>
+                {renderToggle(
+                  definition.label || definition.name || `Campo ${index + 1}`,
+                  definition.description || (definition.folderName ? `Carpeta: ${definition.folderName}` : 'Disponible para la info del contacto.'),
+                  checked,
+                  () => toggleContactInfoCustomField(fieldId)
+                )}
+              </React.Fragment>
+            )
+          })}
+        </div>
+      ) : (
+        <div className={styles.emptyState}>Todavía no hay campos personalizados guardados.</div>
+      )}
+    </>
+  )
+
   const renderAppearance = () => (
     <section className={styles.settingsSection}>
       <div className={styles.sectionTitle}>
@@ -491,6 +594,7 @@ export const PhoneSettings: React.FC = () => {
     if (activeSection === 'templates') return 'Plantillas'
     if (activeSection === 'agent') return 'Agente IA'
     if (activeSection === 'chats') return 'Lista de chats'
+    if (activeSection === 'custom-fields') return 'Campos personalizados'
     if (activeSection === 'appearance') return 'Apariencia'
     if (activeSection === 'notifications') return 'Notificaciones'
     return 'Ajustes'
@@ -507,6 +611,7 @@ export const PhoneSettings: React.FC = () => {
     if (activeSection === 'templates') return renderTemplates()
     if (activeSection === 'agent') return renderAgent()
     if (activeSection === 'chats') return renderChats()
+    if (activeSection === 'custom-fields') return renderCustomFields()
     if (activeSection === 'appearance') return renderAppearance()
     if (activeSection === 'notifications') return renderNotifications()
     return renderMainList()

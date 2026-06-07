@@ -410,6 +410,39 @@
   cursor: pointer;
 }
 
+.customFieldsActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.customFieldsActions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--phone-settings-border);
+  border-radius: 999px;
+  color: var(--phone-settings-text);
+  background: var(--phone-settings-surface);
+  font-size: 13px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.customFieldsActions button:first-child {
+  border-color: color-mix(in srgb, var(--phone-settings-accent) 44%, transparent);
+  color: #0f6b3e;
+  background: var(--phone-settings-accent-soft);
+}
+
+.customFieldsActions button:disabled {
+  cursor: default;
+  opacity: 0.48;
+}
+
 .actionCard button:disabled,
 .permissionCard button:disabled {
   opacity: 0.6;
@@ -435,7 +468,8 @@
 }
 
 .templateList,
-.choiceList {
+.choiceList,
+.customFieldsList {
   display: grid;
   gap: 10px;
   margin-top: 12px;

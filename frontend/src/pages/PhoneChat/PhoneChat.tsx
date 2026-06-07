@@ -33,6 +33,7 @@ import {
   MoreHorizontal,
   MousePointerClick,
   Pause,
+  Pencil,
   Phone,
   Play,
   Plus,
@@ -73,8 +74,14 @@ import { mobileAppService, type MobilePhotoAttachment } from '@/services/mobileA
 import { getPhoneDailyCacheKey, readPhoneDailyCache, writePhoneDailyCache } from '@/services/phoneDailyCache'
 import { pushNotificationsService } from '@/services/pushNotificationsService'
 import { whatsappApiService, type WhatsAppApiStatus, type WhatsAppApiTemplate } from '@/services/whatsappApiService'
-import type { Contact } from '@/types'
+import type { Contact, ContactCustomField, ContactCustomFieldDefinition } from '@/types'
 import { getContactStageBadge } from '@/utils/contactStageBadge'
+import {
+  formatContactCustomFieldDisplayValue,
+  getContactCustomFieldDisplayLabel,
+  getContactCustomFieldIdentity,
+  getContactCustomFieldKeys
+} from '@/utils/contactCustomFields'
 import { formatCurrency, formatUrlParameter } from '@/utils/format'
 import { getPortableDeviceMode, writeTabletViewPreference, type PortableDeviceMode } from '@/utils/phoneAccess'
 import { normalizeTrafficSource } from '@/utils/trafficSourceNormalizer'
@@ -86,6 +93,7 @@ const CHAT_READ_STATE_KEY = 'ristak_phone_chat_read_state_v1'
 const CHAT_ARCHIVED_STATE_KEY = 'ristak_phone_chat_archived_state_v1'
 const CHAT_MUTED_STATE_KEY = 'ristak_phone_chat_muted_state_v1'
 const PAYMENT_BANK_CLABES_CONFIG_KEY = 'payment_bank_clabes'
+const CONTACT_INFO_CUSTOM_FIELDS_CONFIG_KEY = 'mobile_chat_contact_info_custom_field_ids'
 const AI_AGENT_CHAT_ID = 'ristak-ai-agent-mobile-chat'
 const AI_AGENT_MESSAGES_KEY = 'ristak_phone_chat_ai_agent_messages_v1'
 const CHAT_SWIPE_ACTION_WIDTH = 184
@@ -314,6 +322,18 @@ interface ContactInfoArchiveItem {
   date: string
   direction: 'inbound' | 'outbound'
   mimeType?: string
+}
+
+interface ContactInfoCustomFieldView {
+  id: string
+  keys: string[]
+  label: string
+  value: string
+  editValue: string
+  dataType?: string | null
+  options?: unknown[]
+  field?: ContactCustomField | null
+  definition?: ContactCustomFieldDefinition | null
 }
 
 function getPhoneChatDeviceMode(): PhoneChatDeviceMode {
@@ -1294,15 +1314,147 @@ function getPageName(pageUrl?: string | null) {
   }
 }
 
-function getCustomFieldLabel(field: NonNullable<Contact['customFields']>[number], index: number) {
-  return field.label || field.name || field.key || field.fieldKey || field.id || `Dato ${index + 1}`
+function uniqueCustomFieldKeys(...groups: string[][]) {
+  const seen = new Set<string>()
+  const result: string[] = []
+
+  groups.flat().forEach((key) => {
+    const normalized = String(key || '').trim()
+    if (!normalized || seen.has(normalized)) return
+    seen.add(normalized)
+    result.push(normalized)
+  })
+
+  return result
 }
 
-function formatCustomFieldValue(value: NonNullable<Contact['customFields']>[number]['value']) {
+function getCustomFieldOptionItems(options: unknown[] = []) {
+  return options
+    .map((option) => {
+      if (option && typeof option === 'object') {
+        const item = option as Record<string, unknown>
+        const value = String(item.value || item.label || item.name || '').trim()
+        const label = String(item.label || item.name || item.value || '').trim()
+        return value || label ? { value: value || label, label: label || value } : null
+      }
+
+      const value = String(option || '').trim()
+      return value ? { value, label: value } : null
+    })
+    .filter((option): option is { value: string; label: string } => Boolean(option))
+}
+
+function findContactCustomFieldByKeys(fields: ContactCustomField[] = [], keys: string[]) {
+  return fields.find((field) => getContactCustomFieldKeys(field).some((key) => keys.includes(key))) || null
+}
+
+function formatContactCustomFieldEditValue(value: ContactCustomField['value'] | undefined) {
   if (value === null || value === undefined) return ''
-  if (Array.isArray(value)) return value.map((item) => getReadableValue(String(item))).filter(Boolean).join(', ')
+  if (typeof value === 'boolean') return value ? 'true' : 'false'
+  if (Array.isArray(value)) return formatContactCustomFieldDisplayValue(value)
   if (typeof value === 'object') return JSON.stringify(value)
   return String(value)
+}
+
+function buildContactInfoCustomFieldViews(
+  enabledFieldIds: string[] = [],
+  definitions: ContactCustomFieldDefinition[] = [],
+  fields: ContactCustomField[] = []
+): ContactInfoCustomFieldView[] {
+  const enabledIds = enabledFieldIds.map((id) => String(id || '').trim()).filter(Boolean)
+  if (!enabledIds.length) return []
+
+  return enabledIds
+    .map((enabledId, index): ContactInfoCustomFieldView | null => {
+      const definition = definitions.find((item) => getContactCustomFieldKeys(item).includes(enabledId)) || null
+      const definitionKeys = getContactCustomFieldKeys(definition)
+      const lookupKeys = uniqueCustomFieldKeys([enabledId], definitionKeys)
+      const field = findContactCustomFieldByKeys(fields, lookupKeys) || null
+      const fieldKeys = getContactCustomFieldKeys(field)
+      const keys = uniqueCustomFieldKeys([enabledId], definitionKeys, fieldKeys)
+
+      if (!definition && !field) return null
+
+      const labelSource = definition || field
+      const value = field ? formatContactCustomFieldDisplayValue(field.value) : ''
+      const editValue = field ? formatContactCustomFieldEditValue(field.value) : ''
+
+      return {
+        id: getContactCustomFieldIdentity(labelSource) || enabledId || `custom-field-${index}`,
+        keys,
+        label: getContactCustomFieldDisplayLabel(labelSource, index),
+        value,
+        editValue,
+        dataType: definition?.dataType || field?.dataType || 'text',
+        options: definition?.options?.length ? definition.options : field?.options || [],
+        field,
+        definition
+      }
+    })
+    .filter((field): field is ContactInfoCustomFieldView => Boolean(field))
+}
+
+function getContactInfoCustomFieldInputType(dataType?: string | null) {
+  const normalized = String(dataType || '').toLowerCase()
+  if (['number', 'currency'].includes(normalized)) return 'number'
+  if (normalized === 'email') return 'email'
+  if (normalized === 'phone') return 'tel'
+  if (normalized === 'url') return 'url'
+  return 'text'
+}
+
+function normalizeContactInfoCustomFieldValueForSave(value: string, dataType?: string | null) {
+  const normalizedType = String(dataType || '').toLowerCase()
+  const draft = value.trim()
+
+  if (['boolean', 'checkbox'].includes(normalizedType)) return draft === 'true'
+  if (['number', 'currency'].includes(normalizedType)) {
+    if (!draft) return ''
+    const numericValue = Number(draft)
+    return Number.isFinite(numericValue) ? numericValue : draft
+  }
+
+  return draft
+}
+
+function buildContactCustomFieldsForSave(contact: Contact, customField: ContactInfoCustomFieldView, draftValue: string) {
+  const currentFields = Array.isArray(contact.customFields) ? contact.customFields : []
+  const nextValue = normalizeContactInfoCustomFieldValueForSave(draftValue, customField.dataType)
+  let updatedExistingField = false
+
+  const nextFields = currentFields.map((field) => {
+    const matches = getContactCustomFieldKeys(field).some((key) => customField.keys.includes(key))
+    if (!matches) return field
+
+    updatedExistingField = true
+    return {
+      ...field,
+      label: field.label || customField.label,
+      name: field.name || customField.label,
+      dataType: field.dataType || customField.dataType || 'text',
+      options: field.options?.length ? field.options : customField.options || [],
+      value: nextValue
+    }
+  })
+
+  if (updatedExistingField) return nextFields
+
+  const definition = customField.definition
+  return [
+    ...nextFields,
+    {
+      id: definition?.definitionId || definition?.key || customField.id,
+      definitionId: definition?.definitionId || '',
+      key: definition?.key || definition?.fieldKey || customField.id,
+      fieldKey: definition?.fieldKey || definition?.key || customField.id,
+      label: customField.label,
+      name: definition?.name || customField.label,
+      dataType: customField.dataType || 'text',
+      options: customField.options || [],
+      value: nextValue,
+      syncTarget: definition?.syncTarget || 'local'
+    }
+  ]
 }
 
 function getJourneyEventLabel(event: JourneyEvent, leadLabel: string) {
@@ -1855,6 +2007,7 @@ export const PhoneChat: React.FC = () => {
   const [showUnreadIndicators, setShowUnreadIndicators] = useAppConfig<boolean>('mobile_chat_show_unread_indicators', true)
   const [aiReplySuggestionsEnabled, setAiReplySuggestionsEnabled] = useAppConfig<boolean>('mobile_chat_ai_reply_suggestions_enabled', false)
   const [bankClabes, setBankClabes, savingBankClabes] = useAppConfig<BankClabeAccount[]>(PAYMENT_BANK_CLABES_CONFIG_KEY, [])
+  const [enabledContactInfoCustomFieldIds] = useAppConfig<string[]>(CONTACT_INFO_CUSTOM_FIELDS_CONFIG_KEY, [])
   const { connected: highLevelConnected } = useHighLevelConnected()
   const {
     safePreference: safeChatThemePreference,
@@ -1922,6 +2075,12 @@ export const PhoneChat: React.FC = () => {
   const [contactInfoDetailPanel, setContactInfoDetailPanel] = useState<ContactInfoDetailPanel>(null)
   const [contactInfoArchiveOpen, setContactInfoArchiveOpen] = useState(false)
   const [contactInfoArchiveTab, setContactInfoArchiveTab] = useState<ContactInfoArchiveTab>('media')
+  const [contactCustomFieldDefinitions, setContactCustomFieldDefinitions] = useState<ContactCustomFieldDefinition[]>([])
+  const [contactCustomFieldDefinitionsLoaded, setContactCustomFieldDefinitionsLoaded] = useState(false)
+  const [contactCustomFieldDefinitionsLoading, setContactCustomFieldDefinitionsLoading] = useState(false)
+  const [editingCustomFieldId, setEditingCustomFieldId] = useState<string | null>(null)
+  const [customFieldDrafts, setCustomFieldDrafts] = useState<Record<string, string>>({})
+  const [savingCustomFieldId, setSavingCustomFieldId] = useState<string | null>(null)
   const [paymentMode, setPaymentMode] = useState<PaymentMode>('single')
   const [appointmentOpen, setAppointmentOpen] = useState(false)
   const [requestingPush, setRequestingPush] = useState(false)
@@ -2184,6 +2343,14 @@ export const PhoneChat: React.FC = () => {
   const contactInfoVisibleArchiveItems = useMemo(
     () => contactInfoArchiveItems.filter((item) => item.tab === contactInfoArchiveTab),
     [contactInfoArchiveItems, contactInfoArchiveTab]
+  )
+  const contactInfoCustomFields = useMemo(
+    () => buildContactInfoCustomFieldViews(
+      enabledContactInfoCustomFieldIds,
+      contactCustomFieldDefinitions,
+      contactInfoData?.customFields || []
+    ),
+    [contactCustomFieldDefinitions, contactInfoData?.customFields, enabledContactInfoCustomFieldIds]
   )
   const contactInfoJourneyEvents = useMemo(
     () => buildContactInfoJourney(contactJourney, timezone, contactInfoResolvedMetaAttribution),
@@ -2584,6 +2751,36 @@ export const PhoneChat: React.FC = () => {
     }
   }, [])
 
+  const loadContactCustomFieldDefinitions = useCallback(async () => {
+    if (contactCustomFieldDefinitionsLoading) return
+
+    const cacheKey = getPhoneDailyCacheKey('phone-chat', 'contact-custom-fields', locationId || 'default')
+    const cachedDefinitions = readPhoneDailyCache<ContactCustomFieldDefinition[]>(cacheKey)
+
+    if (cachedDefinitions) {
+      setContactCustomFieldDefinitions(Array.isArray(cachedDefinitions.data) ? cachedDefinitions.data.filter((definition) => !definition.archived) : [])
+      setContactCustomFieldDefinitionsLoaded(true)
+      setContactCustomFieldDefinitionsLoading(false)
+    } else {
+      setContactCustomFieldDefinitionsLoading(true)
+    }
+
+    try {
+      const definitions = await contactsService.getCustomFieldDefinitions()
+      const activeDefinitions = Array.isArray(definitions) ? definitions.filter((definition) => !definition.archived) : []
+      setContactCustomFieldDefinitions(activeDefinitions)
+      setContactCustomFieldDefinitionsLoaded(true)
+      writePhoneDailyCache(cacheKey, activeDefinitions, { maxEntryChars: 180_000 })
+    } catch {
+      if (!cachedDefinitions) {
+        setContactCustomFieldDefinitions([])
+        setContactCustomFieldDefinitionsLoaded(false)
+      }
+    } finally {
+      setContactCustomFieldDefinitionsLoading(false)
+    }
+  }, [contactCustomFieldDefinitionsLoading, locationId])
+
   const loadConversation = useCallback(async (contactId: string, options: { showCacheRefresh?: boolean; useCache?: boolean; silent?: boolean } = {}) => {
     const loadGeneration = conversationLoadGenerationRef.current + 1
     conversationLoadGenerationRef.current = loadGeneration
@@ -2752,7 +2949,12 @@ export const PhoneChat: React.FC = () => {
   }, [archivedViewOpen, chatFilter, chatQuery, selectedChatPhoneId])
 
   useEffect(() => {
-    if (!contactInfoOpen) setContactInfoArchiveOpen(false)
+    if (!contactInfoOpen) {
+      setContactInfoArchiveOpen(false)
+      setEditingCustomFieldId(null)
+      setCustomFieldDrafts({})
+      setSavingCustomFieldId(null)
+    }
   }, [contactInfoOpen])
 
   useEffect(() => {
@@ -3024,6 +3226,16 @@ export const PhoneChat: React.FC = () => {
     loadSupportData()
   }, [accessState, loadSupportData])
 
+  useEffect(() => {
+    if (!contactInfoOpen || enabledContactInfoCustomFieldIds.length === 0 || contactCustomFieldDefinitionsLoaded) return
+    loadContactCustomFieldDefinitions()
+  }, [
+    contactCustomFieldDefinitionsLoaded,
+    contactInfoOpen,
+    enabledContactInfoCustomFieldIds.length,
+    loadContactCustomFieldDefinitions
+  ])
+
   useEffect(() => () => {
     clearQueuedBottomScrolls()
   }, [clearQueuedBottomScrolls])
@@ -3081,6 +3293,9 @@ export const PhoneChat: React.FC = () => {
     setContactInfoError('')
     setContactInfoLoading(false)
     setContactInfoDetailPanel(null)
+    setEditingCustomFieldId(null)
+    setCustomFieldDrafts({})
+    setSavingCustomFieldId(null)
   }, [activeContactId])
 
   useEffect(() => {
@@ -3578,6 +3793,58 @@ export const PhoneChat: React.FC = () => {
       setContactInfoError('No se pudo cargar todo el detalle. Te muestro lo que ya está guardado en este chat.')
     } finally {
       setContactInfoLoading(false)
+    }
+  }
+
+  const handleStartCustomFieldEdit = (customField: ContactInfoCustomFieldView) => {
+    setEditingCustomFieldId(customField.id)
+    setCustomFieldDrafts((current) => ({
+      ...current,
+      [customField.id]: customField.editValue
+    }))
+  }
+
+  const handleCancelCustomFieldEdit = (fieldId: string) => {
+    setEditingCustomFieldId((current) => (current === fieldId ? null : current))
+    setCustomFieldDrafts((current) => {
+      const next = { ...current }
+      delete next[fieldId]
+      return next
+    })
+  }
+
+  const handleSaveCustomField = async (customField: ContactInfoCustomFieldView) => {
+    if (!contactInfoData) return
+
+    const draftValue = customFieldDrafts[customField.id] ?? customField.editValue
+    const customFields = buildContactCustomFieldsForSave(contactInfoData, customField, draftValue)
+    setSavingCustomFieldId(customField.id)
+
+    try {
+      const updatedContact = await contactsService.updateContact(contactInfoData.id, { customFields })
+      const savedCustomFields = Array.isArray(updatedContact.customFields) ? updatedContact.customFields : customFields
+      const nextContact = {
+        ...contactInfoData,
+        customFields: savedCustomFields
+      }
+      const cacheKey = getPhoneDailyCacheKey('phone-chat', 'contact-info', locationId || 'default', contactInfoData.id)
+
+      setContactInfoContact(nextContact)
+      setChats((current) => current.map((contact) => (
+        contact.id === contactInfoData.id ? { ...contact, customFields: savedCustomFields } : contact
+      )))
+      writePhoneDailyCache(cacheKey, nextContact, { maxEntryChars: 220_000 })
+      setEditingCustomFieldId(null)
+      setCustomFieldDrafts((current) => {
+        const next = { ...current }
+        delete next[customField.id]
+        return next
+      })
+      showToast('success', 'Dato guardado', `${customField.label} quedó actualizado.`)
+    } catch (error: any) {
+      showToast('error', 'No se guardó el dato', error?.message || 'Intenta otra vez.')
+    } finally {
+      setSavingCustomFieldId(null)
     }
   }
 
@@ -6016,6 +6283,101 @@ export const PhoneChat: React.FC = () => {
     )
   }
 
+  const renderCustomFieldInput = (customField: ContactInfoCustomFieldView) => {
+    const draftValue = customFieldDrafts[customField.id] ?? customField.editValue
+    const options = getCustomFieldOptionItems(customField.options || [])
+    const dataType = String(customField.dataType || '').toLowerCase()
+    const commonProps = {
+      value: draftValue,
+      disabled: savingCustomFieldId === customField.id,
+      onChange: (event: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
+        setCustomFieldDrafts((current) => ({
+          ...current,
+          [customField.id]: event.target.value
+        }))
+      }
+    }
+
+    if (options.length > 0) {
+      return (
+        <select {...commonProps} aria-label={customField.label}>
+          <option value="">Sin dato</option>
+          {options.map((option) => (
+            <option key={option.value} value={option.value}>{option.label}</option>
+          ))}
+        </select>
+      )
+    }
+
+    if (['boolean', 'checkbox'].includes(dataType)) {
+      return (
+        <select {...commonProps} aria-label={customField.label}>
+          <option value="">Sin dato</option>
+          <option value="true">Sí</option>
+          <option value="false">No</option>
+        </select>
+      )
+    }
+
+    if (dataType === 'textarea') {
+      return <textarea {...commonProps} rows={3} aria-label={customField.label} />
+    }
+
+    return (
+      <input
+        {...commonProps}
+        type={getContactInfoCustomFieldInputType(customField.dataType)}
+        inputMode={['number', 'currency'].includes(dataType) ? 'decimal' : undefined}
+        aria-label={customField.label}
+      />
+    )
+  }
+
+  const renderContactInfoCustomFieldRow = (customField: ContactInfoCustomFieldView) => {
+    const isEditing = editingCustomFieldId === customField.id
+    const isSaving = savingCustomFieldId === customField.id
+
+    if (isEditing) {
+      return (
+        <form
+          key={customField.id}
+          className={`${styles.contactInfoEditableRow} ${styles.contactInfoCustomFieldEditing}`}
+          onSubmit={(event) => {
+            event.preventDefault()
+            void handleSaveCustomField(customField)
+          }}
+        >
+          <span className={styles.contactInfoRowIcon}><FileText size={17} /></span>
+          <label className={styles.contactInfoCustomFieldEditor}>
+            <small>{customField.label}</small>
+            {renderCustomFieldInput(customField)}
+          </label>
+          <span className={styles.contactInfoCustomFieldActions}>
+            <button type="submit" disabled={isSaving} aria-label={`Guardar ${customField.label}`}>
+              {isSaving ? <Loader2 size={16} className={styles.spinIcon} /> : <Check size={16} />}
+            </button>
+            <button type="button" disabled={isSaving} onClick={() => handleCancelCustomFieldEdit(customField.id)} aria-label={`Cancelar ${customField.label}`}>
+              <X size={16} />
+            </button>
+          </span>
+        </form>
+      )
+    }
+
+    return (
+      <div key={customField.id} className={styles.contactInfoEditableRow}>
+        <span className={styles.contactInfoRowIcon}><FileText size={17} /></span>
+        <button type="button" className={styles.contactInfoEditableText} onClick={() => handleStartCustomFieldEdit(customField)}>
+          <small>{customField.label}</small>
+          <strong>{customField.value || 'Sin dato'}</strong>
+        </button>
+        <button type="button" className={styles.contactInfoEditButton} onClick={() => handleStartCustomFieldEdit(customField)} aria-label={`Editar ${customField.label}`}>
+          <Pencil size={15} />
+        </button>
+      </div>
+    )
+  }
+
   const renderContactInfoScreen = () => {
     if (!contactInfoData) return null
 
@@ -6053,13 +6415,6 @@ export const PhoneChat: React.FC = () => {
       .map((value) => getReadableValue(value))
       .filter(Boolean)
       .join(', ')
-    const visibleCustomFields = (contactInfoData.customFields || [])
-      .map((field, index) => ({
-        id: field.id || field.key || field.fieldKey || field.label || field.name || `field-${index}`,
-        label: getCustomFieldLabel(field, index),
-        value: formatCustomFieldValue(field.value)
-      }))
-      .filter((field) => field.value.trim().length > 0)
     const archiveTabs: Array<{ id: ContactInfoArchiveTab; label: string; count: number }> = [
       { id: 'media', label: 'Fotos y videos', count: contactInfoArchiveCounts.media },
       { id: 'documents', label: 'Documentos', count: contactInfoArchiveCounts.documents },
@@ -6321,16 +6676,11 @@ export const PhoneChat: React.FC = () => {
             </section>
           )}
 
-          {visibleCustomFields.length > 0 && (
+          {contactInfoCustomFields.length > 0 && (
             <section className={styles.contactInfoSection}>
-              <h3>Datos extra</h3>
+              <h3>Campos personalizados</h3>
               <div className={styles.contactInfoRows}>
-                {visibleCustomFields.map((field) => renderContactInfoRow(
-                  `custom-${field.id}`,
-                  <FileText size={17} />,
-                  field.label,
-                  field.value
-                ))}
+                {contactInfoCustomFields.map(renderContactInfoCustomFieldRow)}
               </div>
             </section>
           )}

@@ -99,6 +99,8 @@ export interface ContactCustomFieldDefinition {
   description?: string
   dataType: string
   options?: unknown[]
+  folderId?: string
+  folderName?: string
   fieldGroup?: string
   syncTarget?: string
   sourceType?: string
