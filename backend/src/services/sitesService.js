@@ -4891,8 +4891,14 @@ function getSitesAIConversationText(messages = []) {
     .join('\n\n')
 }
 
+function getImportedAIRegionUserRequestText(text = '') {
+  const raw = String(text || '')
+  const match = raw.match(/Solicitud del usuario:\s*([\s\S]*?)(?:\n\nReglas para esta edicion:|$)/i)
+  return match ? match[1] : raw
+}
+
 function shouldApplyImportedAIRegionCenteredLayoutFallback(text = '') {
-  const normalized = decodeHtmlEntities(String(text || '')).toLowerCase()
+  const normalized = decodeHtmlEntities(getImportedAIRegionUserRequestText(text)).toLowerCase()
   const asksForLayout = /\b(centrad|centrar|center|alinear|alineado|dise[nñ]o|orden|primero|luego|debajo|abajo|arriba|apilad|vertical)\b/i.test(normalized)
   const mentionsTitle = /\b(titular|titulo|t[ií]tulo|headline|encabezado)\b/i.test(normalized)
   const mentionsVideo = /\b(video|player|wistia|vsl|presentacion|presentaci[oó]n)\b/i.test(normalized)
@@ -6680,6 +6686,33 @@ export async function updateImportedSiteHtmlWithAI(siteId, input = {}) {
     mergeImportedPages,
     activePageId
   )
+  if (shouldApplyImportedAIRegionCenteredLayoutFallback(promptText)) {
+    const layoutFallbackPages = await getImportedSitePagesForAIContext(currentSite, currentImport, { htmlLimit: 0 })
+    const layoutFallbackPage = buildImportedAIRegionFallbackPage({
+      currentImport,
+      importedPages: layoutFallbackPages.length ? layoutFallbackPages : mergeImportedPages,
+      activePageId,
+      promptText,
+      siteKind
+    })
+
+    if (layoutFallbackPage && didAIChangeImportedHtml(layoutFallbackPage, currentImport, layoutFallbackPages.length ? layoutFallbackPages : mergeImportedPages)) {
+      const layoutResult = await replaceImportedSiteHtml(siteId, {
+        html: layoutFallbackPage.html,
+        pages: layoutFallbackPage.pages,
+        title: layoutFallbackPage.title || currentSite.title,
+        description: layoutFallbackPage.description || currentSite.description
+      })
+
+      return {
+        status: 'updated',
+        reply: 'Ristak aplico el reordenamiento de la zona seleccionada: titular, subtitulo, video y boton.',
+        site: layoutResult.site,
+        import: layoutResult.import
+      }
+    }
+  }
+
   if (!didAIChangeImportedHtml(page, currentImport, mergeImportedPages)) {
     const fallbackImportedPages = mergeImportedPages.length > 1
       ? mergeImportedPages
