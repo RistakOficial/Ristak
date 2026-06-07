@@ -4792,7 +4792,7 @@ async function callSitesAIHtmlGenerator({ apiKey, model, siteKind, messages, age
   })
 }
 
-async function callSitesAIHtmlEditor({ apiKey, model, siteKind, messages, agentConfig, site, importedSite, importedPages = [], visualContext = null, activePageId = '' }) {
+async function callSitesAIHtmlEditor({ apiKey, model, siteKind, messages, agentConfig, site, importedSite, importedPages = [], visualContext = null, activePageId = '', aiRegionRequest = '' }) {
   const activePage = findImportedAIActivePageContext(importedPages, activePageId)
   return callSitesAIJson({
     apiKey,
@@ -4825,6 +4825,7 @@ async function callSitesAIHtmlEditor({ apiKey, model, siteKind, messages, agentC
         : null,
       importedPages,
       visualContext: normalizeSitesAIVisualContext(visualContext),
+      aiRegionRequest: limitString(cleanString(aiRegionRequest), 5000),
       currentHtml: limitString(importedSite?.htmlSanitized || importedSite?.htmlOriginal || '', 90000),
       conversation: messages
     },
@@ -4921,6 +4922,31 @@ function getSitesAIConversationText(messages = []) {
     .map(getSitesAIMessageText)
     .filter(Boolean)
     .join('\n\n')
+}
+
+function getImportedAIRegionRequestFromInput(input = {}, messages = []) {
+  const explicit = cleanString(
+    input.aiRegionRequest ||
+    input.ai_region_request ||
+    input.userRequest ||
+    input.user_request ||
+    input.request
+  )
+  if (explicit) return limitString(explicit, 5000)
+  return limitString(getImportedAIRegionUserRequestText(getSitesAIConversationText(messages)), 5000)
+}
+
+function buildImportedAIRegionOperationalPromptText(promptText = '', requestText = '') {
+  const rawPrompt = String(promptText || '')
+  const cleanRequest = cleanString(requestText)
+  if (!cleanRequest) return rawPrompt
+  if (/Solicitud del usuario:/i.test(rawPrompt)) {
+    return rawPrompt.replace(
+      /(Solicitud del usuario:\s*)[\s\S]*?(\n\nReglas para esta edicion:|$)/i,
+      (_match, prefix, suffix = '') => `${prefix}${cleanRequest}${suffix}`
+    )
+  }
+  return `${rawPrompt}\n\nSolicitud del usuario:\n${cleanRequest}`.trim()
 }
 
 function getImportedAIRegionUserRequestText(text = '') {
@@ -5092,8 +5118,12 @@ function getImportedAIRegionEditableRanges(html = '', hints = []) {
 
 function getImportedAIRegionVideoHint(hints = []) {
   const editableHints = hints.filter(hint => cleanString(hint.editId))
-  return editableHints.find(hint => hint.role === 'video/player' || hint.editType === 'video') ||
-    editableHints.find(hint => getImportedAIRegionHintScore(hint, ['video', 'player', 'wistia', 'youtube', 'iframe', 'embed']) > 0)
+  const mediaTags = new Set(['iframe', 'video', 'embed', 'object', 'wistia-player'])
+  return editableHints.find(hint => hint.role === 'video/player' || hint.editType === 'video' || mediaTags.has(cleanString(hint.tagName).toLowerCase())) ||
+    editableHints.find(hint => {
+      if (['heading', 'text', 'button', 'form_label', 'placeholder', 'form_field', 'choice_option', 'image', 'background_image'].includes(hint.editType)) return false
+      return getImportedAIRegionHintScore(hint, ['video', 'player', 'wistia', 'youtube', 'iframe', 'embed']) > 0
+    })
 }
 
 function buildImportedAIRegionVideoOnlyMarkup(videoHtml = '') {
@@ -5316,6 +5346,411 @@ function buildImportedAIRegionFallbackPageResult({ currentImport = {}, importedP
   }
 }
 
+function extractImportedAIRegionReplacementText(requestText = '') {
+  const raw = decodeHtmlEntities(cleanString(requestText))
+  if (!raw) return ''
+
+  const quoted = raw.match(/["'`]([^"'`]{1,320})["'`]/)
+  if (quoted?.[1]) return limitString(stripHtmlTags(quoted[1]), 280)
+
+  const patterns = [
+    /\b(?:cambia|cambiar|cambiale|reemplaza|reemplazar|pon|poner|actualiza|actualizar|edita|editar|modifica|modificar)\b[\s\S]{0,90}?\b(?:a|por|como|que diga|para que diga|que sea)\s+([\s\S]{1,320})$/i,
+    /\b(?:titular|titulo|t[ií]tulo|headline|encabezado|subtitulo|subt[ií]tulo|bot[oó]n|cta)\b[\s\S]{0,50}?\b(?:a|por|como|que diga|para que diga|que sea)\s+([\s\S]{1,320})$/i
+  ]
+
+  for (const pattern of patterns) {
+    const match = raw.match(pattern)
+    if (!match?.[1]) continue
+    const cleaned = match[1]
+      .replace(/\s+y\s+(?:pon|poner|centra|centrar|mueve|mover|cambia|cambiar|debajo|abajo|arriba)\b[\s\S]*$/i, '')
+      .replace(/\s+(?:por favor|gracias)\.?$/i, '')
+      .trim()
+    if (cleaned) return limitString(stripHtmlTags(cleaned), 280)
+  }
+
+  return ''
+}
+
+function getImportedAIRegionTextTargetKind(requestText = '', hints = []) {
+  const normalized = getImportedAIRegionNormalizedUserRequestText(requestText)
+  const hasReplacement = Boolean(extractImportedAIRegionReplacementText(requestText))
+  if (!hasReplacement) return ''
+  const asksToChange = /\b(cambia|cambiar|cambiale|reemplaza|reemplazar|pon|poner|actualiza|actualizar|edita|editar|modifica|modificar)\b/i.test(normalized)
+  if (!asksToChange) return ''
+  if (/\b(titular|titulo|t[ií]tulo|headline|encabezado|hero title)\b/i.test(normalized)) return 'heading'
+  if (/\b(subtitulo|subt[ií]tulo|descripcion|descripci[oó]n|bajada)\b/i.test(normalized)) return 'subtitle'
+  if (/\b(bot[oó]n|cta|call to action)\b/i.test(normalized)) return 'button'
+  if (/\b(texto|copy|parrafo|p[aá]rrafo)\b/i.test(normalized)) return 'text'
+
+  const editableHints = hints.filter(hint => cleanString(hint.editId))
+  const headingHints = editableHints.filter(hint => hint.role === 'titular' || hint.editType === 'heading' || /^h[1-6]$/i.test(hint.tagName || ''))
+  if (headingHints.length === 1) return 'heading'
+  const buttonHints = editableHints.filter(hint => hint.role === 'boton/cta' || hint.editType === 'button')
+  if (buttonHints.length === 1) return 'button'
+  return ''
+}
+
+function pickImportedAIRegionTextHint(hints = [], targetKind = '') {
+  const editableHints = hints
+    .filter(hint => cleanString(hint.editId))
+    .sort((a, b) => a.y - b.y)
+  if (!editableHints.length) return null
+
+  if (targetKind === 'heading') {
+    return editableHints.find(hint => hint.role === 'titular') ||
+      editableHints.find(hint => hint.editType === 'heading') ||
+      editableHints.find(hint => /^h[1-6]$/i.test(hint.tagName || '')) ||
+      null
+  }
+
+  if (targetKind === 'button') {
+    return editableHints.find(hint => hint.role === 'boton/cta') ||
+      editableHints.find(hint => hint.editType === 'button') ||
+      null
+  }
+
+  if (targetKind === 'subtitle') {
+    const title = pickImportedAIRegionTextHint(hints, 'heading')
+    return editableHints.find(hint => {
+      if (title && hint.editId === title.editId) return false
+      if (['button', 'image', 'background_image', 'video', 'form_field', 'placeholder', 'choice_option'].includes(hint.editType)) return false
+      if (hint.role === 'boton/cta' || hint.role === 'video/player' || hint.role === 'imagen/fondo') return false
+      if (title && hint.y < title.y) return false
+      return ['text', 'form_label'].includes(hint.editType) || hint.role === 'texto/contenido' || ['p', 'span', 'small'].includes(hint.tagName)
+    }) || null
+  }
+
+  return editableHints.find(hint => {
+    if (['button', 'image', 'background_image', 'video', 'form_field', 'placeholder', 'choice_option'].includes(hint.editType)) return false
+    if (hint.role === 'boton/cta' || hint.role === 'video/player' || hint.role === 'imagen/fondo') return false
+    return ['heading', 'text', 'form_label'].includes(hint.editType) || ['h1', 'h2', 'h3', 'h4', 'p', 'span', 'small', 'label'].includes(hint.tagName)
+  }) || null
+}
+
+function getImportedAIRegionEditTypeForTextHint(hint = {}, targetKind = '') {
+  const currentType = normalizeImportedEditableContentType(hint.editType)
+  if (currentType && currentType !== 'section') return currentType
+  if (targetKind === 'heading' || /^h[1-6]$/i.test(hint.tagName || '')) return 'heading'
+  if (targetKind === 'button') return 'button'
+  if (cleanString(hint.tagName).toLowerCase() === 'label') return 'form_label'
+  return 'text'
+}
+
+function applyImportedAIRegionTextReplacementOperation(html = '', { promptText = '', requestText = '' } = {}) {
+  const source = String(html || '')
+  const operationalPrompt = buildImportedAIRegionOperationalPromptText(promptText, requestText)
+  const hints = parseImportedAIRegionElementHints(operationalPrompt)
+  const replacementText = extractImportedAIRegionReplacementText(requestText || operationalPrompt)
+  const targetKind = getImportedAIRegionTextTargetKind(requestText || operationalPrompt, hints)
+  if (!replacementText || !targetKind) {
+    return { html: source, attempted: false, applied: false, operation: 'replace_text', reason: 'La solicitud no pidio reemplazar un texto concreto.' }
+  }
+
+  const hint = pickImportedAIRegionTextHint(hints, targetKind)
+  if (!hint) {
+    const label = targetKind === 'heading'
+      ? 'titular'
+      : targetKind === 'button'
+        ? 'boton'
+        : 'texto'
+    return {
+      html: source,
+      attempted: true,
+      applied: false,
+      missingTarget: true,
+      operation: `replace_${targetKind}_text`,
+      reason: `La zona seleccionada no incluye un ${label} editable para cambiar.`
+    }
+  }
+
+  try {
+    const nextHtml = applyImportedEditableContentUpdate(source, {
+      editId: hint.editId,
+      editType: getImportedAIRegionEditTypeForTextHint(hint, targetKind),
+      value: replacementText
+    })
+    const applied = normalizeImportedHtmlForChangeDetection(nextHtml) !== normalizeImportedHtmlForChangeDetection(source)
+    return {
+      html: nextHtml,
+      attempted: true,
+      applied,
+      operation: `replace_${targetKind}_text`,
+      reason: applied
+        ? `Se cambio ${hint.label || hint.role || targetKind} a "${replacementText}".`
+        : 'La operacion de texto no produjo diferencias visibles.'
+    }
+  } catch (error) {
+    return {
+      html: source,
+      attempted: true,
+      applied: false,
+      missingTarget: /no encontramos|no encontrado/i.test(error.message),
+      operation: `replace_${targetKind}_text`,
+      reason: error.message || 'No se pudo cambiar el texto seleccionado.'
+    }
+  }
+}
+
+function extractImportedAIRegionVideoValue(requestText = '') {
+  const raw = decodeHtmlEntities(String(requestText || '')).trim()
+  if (!raw) return ''
+  if (getWistiaMediaIdFromValue(raw) || /<(iframe|video|wistia-player|embed|object)\b/i.test(raw)) return raw
+
+  const urls = raw.match(/https?:\/\/[^\s"'<>]+/gi) || []
+  const providerUrl = urls.find(url => /(?:youtube\.com|youtu\.be|vimeo\.com|wistia\.(?:com|net)|loom\.com|vidyard\.com)/i.test(url))
+  if (providerUrl) return providerUrl
+  const directVideoUrl = urls.find(url => IMPORTED_DIRECT_VIDEO_PATTERN.test(url))
+  if (directVideoUrl) return directVideoUrl
+  return /\b(video|player|wistia|youtube|vimeo|loom|embed|iframe|vsl)\b/i.test(raw) ? (urls[0] || '') : ''
+}
+
+function shouldApplyImportedAIRegionVideoReplacement(requestText = '') {
+  const normalized = getImportedAIRegionNormalizedUserRequestText(requestText)
+  return Boolean(extractImportedAIRegionVideoValue(requestText)) &&
+    /\b(video|player|wistia|youtube|vimeo|loom|embed|iframe|vsl|reproductor)\b/i.test(normalized)
+}
+
+function applyImportedAIRegionVideoReplacementOperation(html = '', { promptText = '', requestText = '' } = {}) {
+  const source = String(html || '')
+  const videoValue = extractImportedAIRegionVideoValue(requestText)
+  if (!shouldApplyImportedAIRegionVideoReplacement(requestText) || !videoValue) {
+    return { html: source, attempted: false, applied: false, operation: 'replace_video', reason: 'La solicitud no incluyo un video valido para reemplazar.' }
+  }
+
+  const operationalPrompt = buildImportedAIRegionOperationalPromptText(promptText, requestText)
+  const hints = parseImportedAIRegionElementHints(operationalPrompt)
+  const videoHint = getImportedAIRegionVideoHint(hints)
+  if (!videoHint) {
+    return {
+      html: source,
+      attempted: true,
+      applied: false,
+      missingTarget: true,
+      operation: 'replace_video',
+      reason: 'La zona seleccionada no incluye un video editable para reemplazar.'
+    }
+  }
+
+  try {
+    const nextHtml = applyImportedEditableContentUpdate(source, {
+      editId: videoHint.editId,
+      editType: 'video',
+      value: videoValue
+    })
+    const applied = normalizeImportedHtmlForChangeDetection(nextHtml) !== normalizeImportedHtmlForChangeDetection(source)
+    return {
+      html: nextHtml,
+      attempted: true,
+      applied,
+      operation: 'replace_video',
+      reason: applied
+        ? 'Se reemplazo el video seleccionado con un embed seguro.'
+        : 'El reemplazo de video no produjo diferencias visibles.'
+    }
+  } catch (error) {
+    return {
+      html: source,
+      attempted: true,
+      applied: false,
+      missingTarget: /no encontramos|no encontrado/i.test(error.message),
+      operation: 'replace_video',
+      reason: error.message || 'No se pudo reemplazar el video seleccionado.'
+    }
+  }
+}
+
+function shouldApplyImportedAIRegionContrastFallback(text = '') {
+  const normalized = getImportedAIRegionNormalizedUserRequestText(text)
+  return /\b(transparent|transparente|transparencia|se transparenta|no se lee|no leo|poco contraste|contraste|muy claro|se pierde|legible|leer mejor)\b/i.test(normalized)
+}
+
+function applyImportedAIRegionContrastFallbackToHtml(html = '', promptText = '') {
+  const source = String(html || '')
+  if (!shouldApplyImportedAIRegionContrastFallback(promptText)) {
+    return { html: source, applied: false, reason: 'La solicitud no pidio mejorar contraste o transparencia.' }
+  }
+
+  const hints = parseImportedAIRegionElementHints(promptText)
+  const selectedRanges = getImportedAIRegionEditableRanges(source, hints)
+  if (!selectedRanges.length) {
+    return { html: source, applied: false, missingTarget: true, reason: 'No se detectaron elementos editables dentro de la zona seleccionada.' }
+  }
+
+  const container = findImportedHtmlContainerEnclosingRanges(source, selectedRanges)
+  if (!container) {
+    return { html: source, applied: false, missingTarget: true, reason: 'No se encontro un contenedor comun para mejorar el contraste.' }
+  }
+
+  const attrs = parseHtmlAttributes(container.attrsText)
+  let openingTag = mergeImportedHtmlClass(container.openingTag, container.attrsText, 'rstk-ai-region-solid-contrast')
+  openingTag = setHtmlAttribute(
+    openingTag,
+    container.attrsText,
+    'style',
+    mergeImportedInlineStyleValue(
+      attrs.style || '',
+      'background-color:rgba(15,23,42,0.92) !important;color:#f8fafc !important;opacity:1 !important;backdrop-filter:none !important;-webkit-backdrop-filter:none !important;'
+    )
+  )
+  const replacement = `${openingTag}${source.slice(container.openEnd, container.end - `</${container.tagName}>`.length)}</${container.tagName}>`
+  return {
+    html: `${source.slice(0, container.start)}${replacement}${source.slice(container.end)}`,
+    applied: true,
+    reason: 'Se hizo mas solida y legible la zona seleccionada.'
+  }
+}
+
+function applyImportedAIRegionAgentOperationsToHtml(html = '', { promptText = '', requestText = '' } = {}) {
+  const source = String(html || '')
+  const operationalPrompt = buildImportedAIRegionOperationalPromptText(promptText, requestText)
+  const operations = []
+
+  if (shouldApplyImportedAIRegionVideoOnlyFallback(requestText)) {
+    const videoOnly = applyImportedAIRegionVideoOnlyFallbackToHtml(source, operationalPrompt)
+    return {
+      html: videoOnly.html,
+      attempted: true,
+      applied: Boolean(videoOnly.applied),
+      missingTarget: !videoOnly.applied && /no se detecto un video|ya no coincide/i.test(videoOnly.reason || ''),
+      operation: 'video_only',
+      reason: videoOnly.reason || 'No se pudo dejar solo el video.',
+      operations: [`video_only: ${videoOnly.reason || 'sin detalle'}`]
+    }
+  }
+
+  let nextHtml = source
+  const runOperation = result => {
+    if (!result?.attempted) return null
+    operations.push(`${result.operation || 'operation'}: ${result.reason || 'sin detalle'}`)
+    if (result.applied) {
+      nextHtml = result.html
+      return null
+    }
+    if (result.missingTarget) return result
+    return null
+  }
+
+  const textResult = applyImportedAIRegionTextReplacementOperation(nextHtml, { promptText: operationalPrompt, requestText })
+  const textBlocker = runOperation(textResult)
+  if (textBlocker) return { ...textBlocker, operations }
+
+  const videoReplaceResult = applyImportedAIRegionVideoReplacementOperation(nextHtml, { promptText: operationalPrompt, requestText })
+  const videoBlocker = runOperation(videoReplaceResult)
+  if (videoBlocker) return { ...videoBlocker, operations }
+
+  if (shouldApplyImportedAIRegionCenteredLayoutFallback(requestText)) {
+    const centered = applyImportedAIRegionCenteredLayoutFallbackToHtml(nextHtml, operationalPrompt)
+    operations.push(`centered_title_video_button: ${centered.reason || 'sin detalle'}`)
+    if (centered.applied) {
+      nextHtml = centered.html
+    } else if (/faltan titular, video o boton|ya no coinciden/i.test(centered.reason || '')) {
+      return {
+        html: nextHtml,
+        attempted: true,
+        applied: false,
+        missingTarget: true,
+        operation: 'centered_title_video_button',
+        reason: centered.reason,
+        operations
+      }
+    }
+  }
+
+  if (shouldApplyImportedAIRegionContrastFallback(requestText)) {
+    const contrast = applyImportedAIRegionContrastFallbackToHtml(nextHtml, operationalPrompt)
+    operations.push(`solid_contrast: ${contrast.reason || 'sin detalle'}`)
+    if (contrast.applied) {
+      nextHtml = contrast.html
+    } else if (contrast.missingTarget) {
+      return {
+        html: nextHtml,
+        attempted: true,
+        applied: false,
+        missingTarget: true,
+        operation: 'solid_contrast',
+        reason: contrast.reason,
+        operations
+      }
+    }
+  }
+
+  const applied = normalizeImportedHtmlForChangeDetection(nextHtml) !== normalizeImportedHtmlForChangeDetection(source)
+  return {
+    html: nextHtml,
+    attempted: operations.length > 0,
+    applied,
+    operation: operations.length > 1 ? 'site_agent_operations' : (operations[0]?.split(':')[0] || ''),
+    reason: applied ? 'El agente interno aplico operaciones deterministas y verifico diferencias en el HTML.' : 'No habia una operacion determinista suficiente para esta solicitud.',
+    operations
+  }
+}
+
+function buildImportedAIRegionPagePayloadFromHtml({ html = '', currentImport = {}, importedPages = [], activePageId = '', siteKind = 'landing' } = {}) {
+  const sourcePage = findImportedAIActivePageContext(importedPages, activePageId)
+  const nextHtml = String(html || '')
+  const title = sourcePage?.title || getImportedHtmlTitle(nextHtml, currentImport.originalFilename || 'Pagina importada')
+  const basePage = {
+    siteType: getSitesAITargetType(siteKind),
+    filename: sourcePage?.filename || currentImport.originalFilename || 'pagina-generada.html',
+    name: title,
+    title,
+    description: getImportedHtmlDescription(nextHtml, ''),
+    html: nextHtml,
+    pages: []
+  }
+
+  if (Array.isArray(importedPages) && importedPages.length > 1 && sourcePage) {
+    return {
+      ...basePage,
+      html: '',
+      pages: importedPages.map(existingPage => (
+        cleanString(existingPage.id) === cleanString(sourcePage.id)
+          ? {
+            ...existingPage,
+            title,
+            description: basePage.description,
+            filename: existingPage.filename || basePage.filename,
+            html: nextHtml
+          }
+          : existingPage
+      ))
+    }
+  }
+
+  return basePage
+}
+
+function buildImportedAIRegionAgentPageResult({ currentImport = {}, importedPages = [], activePageId = '', promptText = '', requestText = '', siteKind = 'landing' } = {}) {
+  const sourcePage = findImportedAIActivePageContext(importedPages, activePageId)
+  const sourceHtml = sourcePage?.html || currentImport.htmlSanitized || currentImport.htmlOriginal || ''
+  const agentResult = applyImportedAIRegionAgentOperationsToHtml(sourceHtml, { promptText, requestText })
+  if (!agentResult.applied || normalizeImportedHtmlForChangeDetection(agentResult.html) === normalizeImportedHtmlForChangeDetection(sourceHtml)) {
+    return {
+      page: null,
+      attempted: Boolean(agentResult.attempted),
+      missingTarget: Boolean(agentResult.missingTarget),
+      operation: agentResult.operation || '',
+      reason: agentResult.reason || 'No hubo cambios visibles en el HTML.',
+      operations: agentResult.operations || []
+    }
+  }
+
+  return {
+    page: buildImportedAIRegionPagePayloadFromHtml({
+      html: agentResult.html,
+      currentImport,
+      importedPages,
+      activePageId,
+      siteKind
+    }),
+    attempted: true,
+    missingTarget: false,
+    operation: agentResult.operation || 'site_agent_operations',
+    reason: agentResult.reason || 'Operacion aplicada por agente interno.',
+    operations: agentResult.operations || []
+  }
+}
+
 function getImportedAIRegionMissingTargetMessage(fallbackResult = {}) {
   if (!fallbackResult || fallbackResult.page) return ''
   const fallbackType = cleanString(fallbackResult.type)
@@ -5339,13 +5774,21 @@ function getImportedAIRegionMissingTargetMessage(fallbackResult = {}) {
   return ''
 }
 
-function buildImportedAIRegionMissingTargetResponse(message = '') {
-  const reply = cleanString(message) || 'La zona seleccionada no incluye el elemento que pediste cambiar. Selecciona la parte correcta de la pagina y vuelve a intentar.'
-  return {
+function buildImportedAIRegionMissingTargetResponse(debugOrMessage = '', message = '') {
+  const debug = debugOrMessage && typeof debugOrMessage === 'object' ? debugOrMessage : null
+  const reply = cleanString(debug ? message : debugOrMessage) || 'La zona seleccionada no incluye el elemento que pediste cambiar. Selecciona la parte correcta de la pagina y vuelve a intentar.'
+  if (debug) {
+    debug.finalStatus = 'selection_target_missing'
+    addSitesAIEditDebugStep(debug, `No se guardo el HTML porque falta el objetivo en la seleccion: ${reply}`)
+    logSitesAIEditDebug(debug, 'selection_target_missing')
+  }
+  const response = {
     status: 'needs_more_info',
     reply,
     reason: 'selection_target_missing'
   }
+  if (debug) response.debug = getSitesAIEditDebugPayload(debug)
+  return response
 }
 
 export async function listSites() {
@@ -6785,7 +7228,77 @@ export async function createSiteWithAIHtml(input = {}) {
   }
 }
 
+function createSitesAIEditDebug({ traceId, siteId, activePageId, model, importedPages = [], visualContext = null, messages = [], aiRegionRequest = '' } = {}) {
+  const promptText = getSitesAIConversationText(messages)
+  return {
+    traceId,
+    siteId: cleanString(siteId),
+    activePageId: cleanString(activePageId),
+    model: cleanString(model),
+    pageCount: Array.isArray(importedPages) ? importedPages.length : 0,
+    visualContext: Boolean(visualContext?.summary || visualContext?.screenshotDataUrl),
+    selectedElements: Array.isArray(visualContext?.elements) ? visualContext.elements.length : 0,
+    requestPreview: limitString(aiRegionRequest || getImportedAIRegionUserRequestText(promptText), 420),
+    agentAttempted: false,
+    agentApplied: false,
+    agentOperation: '',
+    agentReason: '',
+    agentOperations: [],
+    aiStatus: '',
+    aiReply: '',
+    changedByAI: false,
+    fallbackAttempted: false,
+    fallbackApplied: false,
+    fallbackType: '',
+    fallbackReason: '',
+    finalStatus: '',
+    steps: []
+  }
+}
+
+function addSitesAIEditDebugStep(debug, message = '') {
+  const cleanMessage = limitString(message, 420)
+  if (!debug || !cleanMessage) return
+  debug.steps.push(cleanMessage)
+}
+
+function getSitesAIEditDebugPayload(debug = {}) {
+  return {
+    traceId: debug.traceId,
+    siteId: debug.siteId,
+    activePageId: debug.activePageId,
+    model: debug.model,
+    pageCount: debug.pageCount,
+    visualContext: debug.visualContext,
+    selectedElements: debug.selectedElements,
+    requestPreview: debug.requestPreview,
+    agentAttempted: Boolean(debug.agentAttempted),
+    agentApplied: Boolean(debug.agentApplied),
+    agentOperation: debug.agentOperation,
+    agentReason: limitString(debug.agentReason, 500),
+    agentOperations: Array.isArray(debug.agentOperations) ? debug.agentOperations.slice(-8) : [],
+    aiStatus: debug.aiStatus,
+    aiReply: limitString(debug.aiReply, 900),
+    changedByAI: Boolean(debug.changedByAI),
+    fallbackAttempted: Boolean(debug.fallbackAttempted),
+    fallbackApplied: Boolean(debug.fallbackApplied),
+    fallbackType: debug.fallbackType,
+    fallbackReason: debug.fallbackReason,
+    finalStatus: debug.finalStatus,
+    steps: Array.isArray(debug.steps) ? debug.steps.slice(-12) : []
+  }
+}
+
+function logSitesAIEditDebug(debug = {}, event = 'step', extra = {}) {
+  logger.info('[Sites AI HTML edit]', {
+    event,
+    ...getSitesAIEditDebugPayload(debug),
+    ...extra
+  })
+}
+
 export async function updateImportedSiteHtmlWithAI(siteId, input = {}) {
+  const traceId = crypto.randomUUID()
   const currentSite = await getSite(siteId, { includeBlocks: true, includeSubmissions: true })
   if (!currentSite) {
     const error = new Error('Site no encontrado')
@@ -6802,11 +7315,80 @@ export async function updateImportedSiteHtmlWithAI(siteId, input = {}) {
 
   const siteKind = validateSitesAICreationKind(input.siteKind || input.site_kind || getSitesAIKindFromSiteType(currentSite.siteType))
   const messages = normalizeSitesAIMessages(input.messages)
-  if (messages.length === 0) {
+  const aiRegionRequest = getImportedAIRegionRequestFromInput(input, messages)
+  if (messages.length === 0 && !aiRegionRequest) {
     return {
       status: 'needs_more_info',
       reply: 'Dime que quieres cambiar del HTML: titulo, imagen, orden de secciones, colores, textos o campos del formulario.'
     }
+  }
+
+  const agentConfig = await getAIAgentConfig({ userId: input.userId })
+  const model = normalizeSitesAIModel(input.model || input.chatgptModel || input.chatgpt_model, agentConfig?.model)
+  const importedPages = await getImportedSitePagesForAIContext(currentSite, currentImport)
+  const visualContext = normalizeSitesAIVisualContext(input.visualContext || input.visual_context)
+  const activePageId = getImportedAIActivePageId(input, visualContext)
+  const promptText = getSitesAIConversationText(messages)
+  const operationalPromptText = buildImportedAIRegionOperationalPromptText(promptText, aiRegionRequest)
+  const debug = createSitesAIEditDebug({
+    traceId,
+    siteId,
+    activePageId,
+    model,
+    importedPages,
+    visualContext,
+    messages,
+    aiRegionRequest
+  })
+  addSitesAIEditDebugStep(debug, `Inicio de edicion IA para pagina ${activePageId || 'activa'} con ${debug.selectedElements} elementos visuales.`)
+  logSitesAIEditDebug(debug, 'request_started')
+
+  const agentImportedPages = await getImportedSitePagesForAIContext(currentSite, currentImport, { htmlLimit: 0 })
+  const agentResult = buildImportedAIRegionAgentPageResult({
+    currentImport,
+    importedPages: agentImportedPages.length ? agentImportedPages : importedPages,
+    activePageId,
+    promptText: operationalPromptText,
+    requestText: aiRegionRequest,
+    siteKind
+  })
+  debug.agentAttempted = Boolean(agentResult.attempted)
+  debug.agentApplied = Boolean(agentResult.page)
+  debug.agentOperation = agentResult.operation || ''
+  debug.agentReason = agentResult.reason || ''
+  debug.agentOperations = agentResult.operations || []
+  if (agentResult.attempted) {
+    addSitesAIEditDebugStep(debug, `Agente interno ${agentResult.operation || 'operacion'}: ${agentResult.reason || 'sin detalle'}`)
+    logSitesAIEditDebug(debug, agentResult.page ? 'site_agent_updated' : 'site_agent_no_change', {
+      agentOperations: debug.agentOperations
+    })
+  }
+
+  if (agentResult.page) {
+    const result = await replaceImportedSiteHtml(siteId, {
+      html: agentResult.page.html,
+      pages: agentResult.page.pages,
+      title: agentResult.page.title || currentSite.title,
+      description: agentResult.page.description || currentSite.description
+    })
+    debug.finalStatus = 'updated_with_site_agent'
+    addSitesAIEditDebugStep(debug, 'Se guardo el HTML aplicado por el agente interno.')
+    logSitesAIEditDebug(debug, 'updated_with_site_agent')
+
+    return {
+      status: 'updated',
+      reply: agentResult.reason || 'Ristak aplico el cambio con el agente interno del editor.',
+      site: result.site,
+      import: result.import,
+      debug: getSitesAIEditDebugPayload(debug)
+    }
+  }
+
+  if (agentResult.missingTarget) {
+    return buildImportedAIRegionMissingTargetResponse(
+      debug,
+      agentResult.reason || 'La zona seleccionada no incluye el elemento que pediste cambiar.'
+    )
   }
 
   const apiKey = await getOpenAIApiKey()
@@ -6815,12 +7397,6 @@ export async function updateImportedSiteHtmlWithAI(siteId, input = {}) {
     error.status = 409
     throw error
   }
-
-  const agentConfig = await getAIAgentConfig({ userId: input.userId })
-  const model = normalizeSitesAIModel(input.model || input.chatgptModel || input.chatgpt_model, agentConfig?.model)
-  const importedPages = await getImportedSitePagesForAIContext(currentSite, currentImport)
-  const visualContext = normalizeSitesAIVisualContext(input.visualContext || input.visual_context)
-  const activePageId = getImportedAIActivePageId(input, visualContext)
 
   let aiPayload = null
   try {
@@ -6834,7 +7410,8 @@ export async function updateImportedSiteHtmlWithAI(siteId, input = {}) {
       importedSite: currentImport,
       importedPages,
       visualContext,
-      activePageId
+      activePageId,
+      aiRegionRequest
     })
   } catch (error) {
     throw error
@@ -6849,7 +7426,6 @@ export async function updateImportedSiteHtmlWithAI(siteId, input = {}) {
     }
   }
 
-  const promptText = getSitesAIConversationText(messages)
   const aiPage = normalizeAIHtmlPagePayload(aiPayload, siteKind)
   const aiPageHasPages = Array.isArray(aiPage.pages) && aiPage.pages.length > 0
   const shouldMergeSingleActivePage = !aiPageHasPages && importedPages.length > 1 && Boolean(cleanString(aiPage.html))
@@ -6865,13 +7441,14 @@ export async function updateImportedSiteHtmlWithAI(siteId, input = {}) {
   )
   const changedByAI = didAIChangeImportedHtml(page, currentImport, mergeImportedPages)
 
-  if (shouldApplyImportedAIRegionCenteredLayoutFallback(promptText) || shouldApplyImportedAIRegionVideoOnlyFallback(promptText)) {
+  if (shouldApplyImportedAIRegionCenteredLayoutFallback(operationalPromptText) || shouldApplyImportedAIRegionVideoOnlyFallback(operationalPromptText)) {
+    debug.fallbackAttempted = true
     const layoutFallbackPages = await getImportedSitePagesForAIContext(currentSite, currentImport, { htmlLimit: 0 })
     const layoutFallbackResult = buildImportedAIRegionFallbackPageResult({
       currentImport,
       importedPages: layoutFallbackPages.length ? layoutFallbackPages : mergeImportedPages,
       activePageId,
-      promptText,
+      promptText: operationalPromptText,
       siteKind
     })
     const layoutFallbackPage = layoutFallbackResult.page
@@ -6907,7 +7484,7 @@ export async function updateImportedSiteHtmlWithAI(siteId, input = {}) {
       currentImport,
       importedPages: fallbackImportedPages,
       activePageId,
-      promptText,
+      promptText: operationalPromptText,
       siteKind
     })
     const fallbackPage = fallbackResultPage.page

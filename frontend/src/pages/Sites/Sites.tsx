@@ -104,6 +104,7 @@ import {
   type PublicSite,
   type SitesAICreationKind,
   type SitesAICreationMessage,
+  type SitesAIEditDebug,
   type SitesDomainConfig,
   type SiteBlock,
   type SiteBlockOption,
@@ -6547,6 +6548,7 @@ type ImportedAIRegionAttempt = {
   pageTitle: string
   elementCount: number
   prompt: string
+  debug?: SitesAIEditDebug
 }
 
 type ImportedButtonEditorState = {
@@ -8177,7 +8179,7 @@ const ImportedHtmlEditorPanel: React.FC<{
 
   const setAIRegionAttemptStatus = (
     selection: ImportedAIRegionSelection,
-    nextAttempt: Pick<ImportedAIRegionAttempt, 'status' | 'message' | 'prompt'>
+    nextAttempt: Pick<ImportedAIRegionAttempt, 'status' | 'message' | 'prompt'> & { debug?: SitesAIEditDebug }
   ) => {
     setAiRegionLastAttempt({
       ...nextAttempt,
@@ -8212,6 +8214,7 @@ const ImportedHtmlEditorPanel: React.FC<{
           model: DEFAULT_SITE_CHATGPT_EDIT_MODEL,
           pageId: aiRegionSelection.pageId || activeImportedPage?.id || DEFAULT_FUNNEL_PAGE_ID,
           visualContext: regionVisualContext,
+          aiRegionRequest: prompt,
           messages: [{
             role: 'user',
             content: buildImportedAIRegionPrompt(prompt, aiRegionSelection, site, options)
@@ -8239,7 +8242,8 @@ const ImportedHtmlEditorPanel: React.FC<{
         setAIRegionAttemptStatus(aiRegionSelection, {
           status: 'error',
           message,
-          prompt
+          prompt,
+          debug: result.debug
         })
         return
       }
@@ -8255,7 +8259,8 @@ const ImportedHtmlEditorPanel: React.FC<{
         setAIRegionAttemptStatus(aiRegionSelection, {
           status: 'unchanged',
           message,
-          prompt
+          prompt,
+          debug: result.debug
         })
         return
       }
@@ -8266,7 +8271,8 @@ const ImportedHtmlEditorPanel: React.FC<{
       setAIRegionAttemptStatus(aiRegionSelection, {
         status: 'success',
         message: result.reply || 'La IA aplicó cambios en el HTML visible.',
-        prompt
+        prompt,
+        debug: result.debug
       })
       setPreviewHtml(refreshedHtml)
       setPreviewVersion(current => current + 1)
@@ -9098,6 +9104,49 @@ const ImportedHtmlEditorPanel: React.FC<{
                 <small>
                   {aiRegionLastAttempt.at} · {aiRegionLastAttempt.pageTitle} · {aiRegionLastAttempt.elementCount} elementos detectados
                 </small>
+                {aiRegionLastAttempt.debug && (
+                  <div className={styles.importedAIRegionDebug}>
+                    <span>Respuesta y diagnostico</span>
+                    {aiRegionLastAttempt.debug.traceId && (
+                      <small>Rastro para logs: {aiRegionLastAttempt.debug.traceId}</small>
+                    )}
+                    {aiRegionLastAttempt.debug.aiReply && (
+                      <p><b>Respuesta de IA:</b> {aiRegionLastAttempt.debug.aiReply}</p>
+                    )}
+                    <p>
+                      <b>Que hizo Ristak:</b>{' '}
+                      {aiRegionLastAttempt.debug.agentApplied
+                        ? `Ejecuto ${aiRegionLastAttempt.debug.agentOperation || 'una operacion interna'} y guardo el HTML verificado.`
+                        : aiRegionLastAttempt.debug.finalStatus === 'selection_target_missing'
+                        ? 'Detuvo el guardado porque la zona seleccionada no incluye el elemento que pediste cambiar.'
+                        : aiRegionLastAttempt.debug.fallbackApplied
+                        ? `Aplico ${aiRegionLastAttempt.debug.fallbackType || 'un ajuste automatico'} porque era mas confiable para esta zona.`
+                        : aiRegionLastAttempt.debug.changedByAI
+                          ? 'Guardo el HTML que devolvio la IA.'
+                          : 'No detecto cambios visibles en el HTML.'}
+                    </p>
+                    {aiRegionLastAttempt.debug.agentReason && (
+                      <p><b>Operacion:</b> {aiRegionLastAttempt.debug.agentReason}</p>
+                    )}
+                    {aiRegionLastAttempt.debug.agentOperations?.length ? (
+                      <ul>
+                        {aiRegionLastAttempt.debug.agentOperations.map((operation, index) => (
+                          <li key={`${aiRegionLastAttempt.debug?.traceId || 'agent'}-${index}`}>{operation}</li>
+                        ))}
+                      </ul>
+                    ) : null}
+                    {aiRegionLastAttempt.debug.fallbackReason && (
+                      <p><b>Detalle:</b> {aiRegionLastAttempt.debug.fallbackReason}</p>
+                    )}
+                    {aiRegionLastAttempt.debug.steps?.length ? (
+                      <ul>
+                        {aiRegionLastAttempt.debug.steps.map((step, index) => (
+                          <li key={`${aiRegionLastAttempt.debug?.traceId || 'trace'}-${index}`}>{step}</li>
+                        ))}
+                      </ul>
+                    ) : null}
+                  </div>
+                )}
               </div>
             )}
             <div className={`${styles.importedButtonActionFooter} ${styles.importedAIRegionFooter}`}>

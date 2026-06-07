@@ -455,12 +455,38 @@ export interface SitesAIPreviewVisualContext {
   elements: SitesAIPreviewVisualElement[]
 }
 
+export interface SitesAIEditDebug {
+  traceId?: string
+  siteId?: string
+  activePageId?: string
+  model?: string
+  pageCount?: number
+  visualContext?: boolean
+  selectedElements?: number
+  requestPreview?: string
+  agentAttempted?: boolean
+  agentApplied?: boolean
+  agentOperation?: string
+  agentReason?: string
+  agentOperations?: string[]
+  aiStatus?: string
+  aiReply?: string
+  changedByAI?: boolean
+  fallbackAttempted?: boolean
+  fallbackApplied?: boolean
+  fallbackType?: string
+  fallbackReason?: string
+  finalStatus?: string
+  steps?: string[]
+}
+
 export interface SitesAICreationResult {
   status: 'needs_more_info' | 'created' | 'updated'
   reply: string
   site?: PublicSite
   import?: ImportedSiteImport
   reason?: 'selection_target_missing'
+  debug?: SitesAIEditDebug
 }
 
 export const blockLabels: Record<SiteBlockType, string> = {
@@ -580,7 +606,7 @@ export const sitesService = {
     return apiClient.post<SitesAICreationResult>('/sites/ai-create-html', payload)
   },
 
-  editImportedHtmlWithAI(siteId: string, payload: { siteKind: SitesAICreationKind; messages: SitesAICreationMessage[]; model?: string; visualContext?: SitesAIPreviewVisualContext | null; pageId?: string }) {
+  editImportedHtmlWithAI(siteId: string, payload: { siteKind: SitesAICreationKind; messages: SitesAICreationMessage[]; model?: string; visualContext?: SitesAIPreviewVisualContext | null; pageId?: string; aiRegionRequest?: string }) {
     return apiClient.post<SitesAICreationResult>(`/sites/${siteId}/ai-edit-html`, payload)
   },
 
