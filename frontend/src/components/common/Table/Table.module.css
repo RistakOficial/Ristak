@@ -78,6 +78,13 @@
   width: clamp(260px, 32vw, 420px);
 }
 
+.selectionActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--spacing-sm);
+}
+
 .actionGroup {
   display: flex;
   gap: var(--spacing-xs);
@@ -443,6 +450,10 @@ body.light input.selectionCheckbox:checked:hover::after {
     min-width: 0;
     width: auto;
     flex: 1;
+  }
+
+  .selectionActions {
+    margin-left: auto;
   }
 }
 

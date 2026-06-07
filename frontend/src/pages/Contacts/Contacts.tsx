@@ -1696,7 +1696,7 @@ export const Contacts: React.FC = () => {
             navigate(buildContactsPath(viewMode, value))
           }}
           tableId="contacts_v2"
-          toolbarStart={contactSelectionToolbar}
+          selectionActions={contactSelectionToolbar}
           rowSelection={{
             selectedKeys: selectedContactIds,
             onChange: setSelectedContactIds,

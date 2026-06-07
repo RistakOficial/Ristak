@@ -1906,7 +1906,7 @@ export const Transactions: React.FC = () => {
             tableId="transactions"
             initialSortBy="date"
             initialSortOrder="desc"
-            toolbarStart={transactionSelectionToolbar}
+            selectionActions={transactionSelectionToolbar}
             rowSelection={{
               selectedKeys: selectedTransactionIds,
               onChange: setSelectedTransactionIds,

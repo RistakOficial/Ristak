@@ -164,6 +164,7 @@ interface TableProps<T> {
   focusedRowKey?: string | null
   rowClassName?: (item: T) => string | undefined
   toolbarStart?: React.ReactNode
+  selectionActions?: React.ReactNode
   searchPosition?: 'left' | 'right'
   rowSelection?: RowSelection<T>
 }
@@ -190,6 +191,7 @@ export function Table<T extends Record<string, any>>({
   focusedRowKey,
   rowClassName,
   toolbarStart,
+  selectionActions,
   searchPosition = 'left',
   rowSelection
 }: TableProps<T>) {
@@ -422,6 +424,8 @@ export function Table<T extends Record<string, any>>({
     visibleSelectableKeys.every(key => selectedKeySet.has(key))
   const someVisibleRowsSelected =
     visibleSelectableKeys.some(key => selectedKeySet.has(key))
+  const hasSelectionActions = Boolean(selectionActions)
+  const columnEditMode = editMode && !hasSelectionActions
 
   const handleToggleVisibleRows = () => {
     if (!rowSelection) return
@@ -474,6 +478,12 @@ export function Table<T extends Record<string, any>>({
       setSortOrder('asc')
     }
   }
+
+  useEffect(() => {
+    if (hasSelectionActions && editMode) {
+      setEditMode(false)
+    }
+  }, [editMode, hasSelectionActions])
 
   const searchControl = searchable ? (
     <div className={styles.searchContainer}>
@@ -560,23 +570,29 @@ export function Table<T extends Record<string, any>>({
         <div className={styles.tableActions}>
           {searchPosition === 'right' && searchControl}
 
-          <button
-            className={`${styles.actionButton} ${editMode ? styles.active : ''}`}
-            onClick={() => setEditMode(!editMode)}
-            title={editMode ? "Finalizar edición" : "Editar columnas"}
-          >
-            {editMode ? (
-              <>
-                <Check size={18} />
-                <span className={styles.buttonText}>Listo</span>
-              </>
-            ) : (
-              <>
-                <Settings size={18} />
-                <span className={styles.buttonText}>Editar</span>
-              </>
-            )}
-          </button>
+          {hasSelectionActions ? (
+            <div className={styles.selectionActions}>
+              {selectionActions}
+            </div>
+          ) : (
+            <button
+              className={`${styles.actionButton} ${columnEditMode ? styles.active : ''}`}
+              onClick={() => setEditMode(!editMode)}
+              title={columnEditMode ? "Finalizar edición" : "Editar columnas"}
+            >
+              {columnEditMode ? (
+                <>
+                  <Check size={18} />
+                  <span className={styles.buttonText}>Listo</span>
+                </>
+              ) : (
+                <>
+                  <Settings size={18} />
+                  <span className={styles.buttonText}>Editar</span>
+                </>
+              )}
+            </button>
+          )}
 
         </div>
       </div>
@@ -585,7 +601,7 @@ export function Table<T extends Record<string, any>>({
         <table className={styles.table} data-ristak-table-element>
           <thead>
             {/* Fila de columnas ocultas en modo edición */}
-            {editMode && (
+            {columnEditMode && (
               <tr className={styles.hiddenColumnsRow}>
                 <td
                   colSpan={totalVisibleColumns || 1}
@@ -641,26 +657,26 @@ export function Table<T extends Record<string, any>>({
                 {visibleColumns.map((column) => (
                   <th
                     key={column.key}
-                    draggable={!column.fixed && editMode}
+                    draggable={!column.fixed && columnEditMode}
                     onDragStart={(e) => !column.fixed && handleDragStart(e, column.key)}
                     onDragEnd={handleDragEnd}
                     onDragOver={!column.fixed ? handleDragOver : undefined}
                     onDragEnter={(e) => !column.fixed && handleDragEnter(e, column.key)}
                     onDrop={(e) => !column.fixed && handleDrop(e, column.key)}
-                    className={`${column.sortable && !editMode ? styles.sortable : ''} ${editMode && !column.fixed ? styles.draggable : ''} ${draggedColumn === column.key ? styles.dragging : ''} ${dragOverColumn === column.key && draggedColumn && draggedColumn !== column.key ? styles.dragOver : ''}`}
+                    className={`${column.sortable && !columnEditMode ? styles.sortable : ''} ${columnEditMode && !column.fixed ? styles.draggable : ''} ${draggedColumn === column.key ? styles.dragging : ''} ${dragOverColumn === column.key && draggedColumn && draggedColumn !== column.key ? styles.dragOver : ''}`}
                     style={{ width: column.width }}
                   >
                     <div className={styles.headerCell}>
-                      {editMode && !column.fixed && (
+                      {columnEditMode && !column.fixed && (
                         <GripVertical size={14} className={styles.gripIcon} />
                       )}
                       <span
-                        onClick={() => !editMode && column.sortable && handleSort(column.key)}
+                        onClick={() => !columnEditMode && column.sortable && handleSort(column.key)}
                         className={styles.headerText}
                       >
                         {column.header}
                       </span>
-                      {editMode && !column.fixed && (
+                      {columnEditMode && !column.fixed && (
                         <button
                           onClick={(e) => { e.stopPropagation(); toggleColumnVisibility(column.key) }}
                           className={styles.hideButton}
@@ -669,7 +685,7 @@ export function Table<T extends Record<string, any>>({
                           <XIcon size={14} />
                         </button>
                       )}
-                      {!editMode && column.sortable && sortBy === column.key && (
+                      {!columnEditMode && column.sortable && sortBy === column.key && (
                         <span className={styles.sortIcon}>
                           {sortOrder === 'asc' ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                         </span>
