@@ -5,6 +5,7 @@ import {
   Edit3,
   Folder,
   FolderPlus,
+  GripVertical,
   Hash,
   Loader2,
   Plus,
@@ -34,6 +35,11 @@ type FieldDraft = {
   dataType: CustomFieldDataType
   folderId: string
   optionsText: string
+}
+
+type FolderDraft = {
+  name: string
+  description: string
 }
 
 const fieldTypes: Array<{ value: CustomFieldDataType; label: string; detail: string }> = [
@@ -100,6 +106,10 @@ const getSourceLabel = (sourceType: string) => {
   return sourceType || 'Sistema'
 }
 
+const getFolderTargetId = (folderId: FolderFilter) => (
+  folderId === 'unfiled' || folderId === 'all' ? '' : folderId
+)
+
 export const CustomFields: React.FC = () => {
   const { showToast, showConfirm } = useNotification()
   const [folders, setFolders] = useState<CustomFieldFolder[]>([])
@@ -108,12 +118,18 @@ export const CustomFields: React.FC = () => {
   const [search, setSearch] = useState('')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-  const [folderName, setFolderName] = useState('')
   const [creatingFolder, setCreatingFolder] = useState(false)
+  const [folderModalOpen, setFolderModalOpen] = useState(false)
+  const [folderDraft, setFolderDraft] = useState<FolderDraft>({ name: '', description: '' })
+  const [moveSelectionAfterFolderCreate, setMoveSelectionAfterFolderCreate] = useState(false)
   const [editorOpen, setEditorOpen] = useState(false)
   const [editingField, setEditingField] = useState<CustomFieldDefinition | null>(null)
   const [draft, setDraft] = useState<FieldDraft>(emptyDraft())
   const [keyTouched, setKeyTouched] = useState(false)
+  const [selectedFieldIds, setSelectedFieldIds] = useState<Set<string>>(() => new Set())
+  const [movingFields, setMovingFields] = useState(false)
+  const [draggingFieldIds, setDraggingFieldIds] = useState<string[]>([])
+  const [dropTarget, setDropTarget] = useState<FolderFilter | null>(null)
 
   const loadCatalog = async () => {
     setLoading(true)
@@ -131,6 +147,14 @@ export const CustomFields: React.FC = () => {
   useEffect(() => {
     void loadCatalog()
   }, [])
+
+  useEffect(() => {
+    setSelectedFieldIds(current => {
+      const activeIds = new Set(fields.map(field => field.definitionId))
+      const next = new Set([...current].filter(id => activeIds.has(id)))
+      return next.size === current.size ? current : next
+    })
+  }, [fields])
 
   const folderCounts = useMemo(() => {
     const counts = new Map<string, number>()
@@ -160,6 +184,16 @@ export const CustomFields: React.FC = () => {
     })
   }, [activeFolder, fields, search])
 
+  const selectedFields = useMemo(
+    () => fields.filter(field => selectedFieldIds.has(field.definitionId)),
+    [fields, selectedFieldIds]
+  )
+
+  const selectedCount = selectedFields.length
+  const visibleSelectedCount = visibleFields.filter(field => selectedFieldIds.has(field.definitionId)).length
+  const allVisibleSelected = visibleFields.length > 0 && visibleSelectedCount === visibleFields.length
+  const isDraggingFields = draggingFieldIds.length > 0
+
   const openCreateEditor = () => {
     const folderId = activeFolder !== 'all' && activeFolder !== 'unfiled' ? activeFolder : ''
     setEditingField(null)
@@ -187,6 +221,19 @@ export const CustomFields: React.FC = () => {
     setEditingField(null)
     setDraft(emptyDraft())
     setKeyTouched(false)
+  }
+
+  const openFolderCreator = (options: { moveSelected?: boolean } = {}) => {
+    setFolderDraft({ name: '', description: '' })
+    setMoveSelectionAfterFolderCreate(Boolean(options.moveSelected && selectedCount > 0))
+    setFolderModalOpen(true)
+  }
+
+  const closeFolderCreator = () => {
+    if (creatingFolder) return
+    setFolderModalOpen(false)
+    setFolderDraft({ name: '', description: '' })
+    setMoveSelectionAfterFolderCreate(false)
   }
 
   const patchDraft = (patch: Partial<FieldDraft>) => {
@@ -256,21 +303,137 @@ export const CustomFields: React.FC = () => {
   }
 
   const handleCreateFolder = async () => {
-    const name = folderName.trim()
+    const name = folderDraft.name.trim()
     if (!name) return
+
+    const selectedIds = Array.from(selectedFieldIds)
+    const shouldMoveSelection = moveSelectionAfterFolderCreate && selectedIds.length > 0
 
     setCreatingFolder(true)
     try {
-      const folder = await customFieldsService.createFolder({ name })
+      const folder = await customFieldsService.createFolder({
+        name,
+        description: folderDraft.description.trim() || undefined
+      })
       setFolders(current => [...current, folder])
-      setFolderName('')
       setActiveFolder(folder.id)
-      showToast('success', 'Carpeta creada', 'Ya puedes guardar campos ahi.')
+      setFolderModalOpen(false)
+      setFolderDraft({ name: '', description: '' })
+      setMoveSelectionAfterFolderCreate(false)
+      if (shouldMoveSelection) {
+        await moveFieldsToFolder(selectedIds, folder.id, folder.name)
+      } else {
+        showToast('success', 'Carpeta creada', 'Ya puedes guardar campos ahi.')
+      }
     } catch (error) {
       showToast('error', 'No se pudo crear la carpeta', error instanceof Error ? error.message : 'Intenta otra vez')
     } finally {
       setCreatingFolder(false)
     }
+  }
+
+  const toggleFieldSelection = (definitionId: string) => {
+    setSelectedFieldIds(current => {
+      const next = new Set(current)
+      if (next.has(definitionId)) next.delete(definitionId)
+      else next.add(definitionId)
+      return next
+    })
+  }
+
+  const toggleVisibleSelection = () => {
+    setSelectedFieldIds(current => {
+      const next = new Set(current)
+      if (allVisibleSelected) {
+        visibleFields.forEach(field => next.delete(field.definitionId))
+      } else {
+        visibleFields.forEach(field => next.add(field.definitionId))
+      }
+      return next
+    })
+  }
+
+  const clearSelection = () => {
+    setSelectedFieldIds(new Set())
+  }
+
+  const moveFieldsToFolder = async (fieldIds: string[], folderId: string, targetLabel?: string) => {
+    const uniqueIds = Array.from(new Set(fieldIds)).filter(Boolean)
+    if (!uniqueIds.length || movingFields) return
+
+    const targetFolderId = folderId || ''
+    const fieldsToMove = fields.filter(field => uniqueIds.includes(field.definitionId) && (field.folderId || '') !== targetFolderId)
+    if (!fieldsToMove.length) {
+      setDraggingFieldIds([])
+      setDropTarget(null)
+      return
+    }
+
+    setMovingFields(true)
+    try {
+      await Promise.all(fieldsToMove.map(field => (
+        customFieldsService.updateField(field.definitionId, { folderId: targetFolderId })
+      )))
+      setSelectedFieldIds(current => {
+        const next = new Set(current)
+        fieldsToMove.forEach(field => next.delete(field.definitionId))
+        return next
+      })
+      await loadCatalog()
+      const targetName = targetLabel || (targetFolderId ? getFolderName(folders, targetFolderId) : 'Sin carpeta')
+      showToast('success', 'Campos movidos', `${fieldsToMove.length} campo${fieldsToMove.length === 1 ? '' : 's'} ahora estan en ${targetName}.`)
+    } catch (error) {
+      showToast('error', 'No se pudieron mover', error instanceof Error ? error.message : 'Intenta otra vez')
+    } finally {
+      setMovingFields(false)
+      setDraggingFieldIds([])
+      setDropTarget(null)
+    }
+  }
+
+  const handleMoveSelectedChange = (value: string) => {
+    if (value === '__new_folder') {
+      openFolderCreator({ moveSelected: true })
+      return
+    }
+
+    if (!value) return
+    void moveFieldsToFolder(Array.from(selectedFieldIds), value === 'unfiled' ? '' : value)
+  }
+
+  const handleFieldDragStart = (field: CustomFieldDefinition, event: React.DragEvent<HTMLTableRowElement>) => {
+    const ids = selectedFieldIds.has(field.definitionId) ? Array.from(selectedFieldIds) : [field.definitionId]
+    setDraggingFieldIds(ids)
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData('text/plain', ids.join(','))
+  }
+
+  const handleDragEnd = () => {
+    setDraggingFieldIds([])
+    setDropTarget(null)
+  }
+
+  const getDraggedIds = (event: React.DragEvent<HTMLElement>) => {
+    const rawIds = event.dataTransfer.getData('text/plain')
+    return rawIds ? rawIds.split(',').filter(Boolean) : draggingFieldIds
+  }
+
+  const handleFolderDragOver = (folderId: FolderFilter, event: React.DragEvent<HTMLElement>) => {
+    if (!isDraggingFields) return
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'move'
+    setDropTarget(folderId)
+  }
+
+  const handleFolderDrop = (folderId: FolderFilter, event: React.DragEvent<HTMLElement>) => {
+    if (!isDraggingFields) return
+    event.preventDefault()
+    void moveFieldsToFolder(getDraggedIds(event), getFolderTargetId(folderId))
+  }
+
+  const handleFolderDragLeave = (folderId: FolderFilter, event: React.DragEvent<HTMLElement>) => {
+    if (event.currentTarget.contains(event.relatedTarget as Node | null)) return
+    setDropTarget(current => (current === folderId ? null : current))
   }
 
   const handleArchiveFolder = (folder: CustomFieldFolder) => {
@@ -324,9 +487,14 @@ export const CustomFields: React.FC = () => {
           <h2>Campos personalizados</h2>
           <span>Define donde se guardan datos extra de formularios, embudos y contactos.</span>
         </div>
-        <Button onClick={openCreateEditor} leftIcon={<Plus size={16} />}>
-          Nuevo campo
-        </Button>
+        <div className={styles.headerActions}>
+          <Button variant="secondary" onClick={() => openFolderCreator()} leftIcon={<FolderPlus size={16} />}>
+            Crear carpeta
+          </Button>
+          <Button onClick={openCreateEditor} leftIcon={<Plus size={16} />}>
+            Nuevo campo
+          </Button>
+        </div>
       </header>
 
       <div className={styles.layout}>
@@ -341,15 +509,18 @@ export const CustomFields: React.FC = () => {
             className={`${styles.folderItem} ${activeFolder === 'all' ? styles.folderItemActive : ''}`}
             onClick={() => setActiveFolder('all')}
           >
-            <Folder size={16} />
+            <Hash size={16} />
             <span>Todos los campos</span>
             <b>{fields.length}</b>
           </button>
 
           <button
             type="button"
-            className={`${styles.folderItem} ${activeFolder === 'unfiled' ? styles.folderItemActive : ''}`}
+            className={`${styles.folderItem} ${activeFolder === 'unfiled' ? styles.folderItemActive : ''} ${dropTarget === 'unfiled' ? styles.folderDropActive : ''}`}
             onClick={() => setActiveFolder('unfiled')}
+            onDragOver={(event) => handleFolderDragOver('unfiled', event)}
+            onDragLeave={(event) => handleFolderDragLeave('unfiled', event)}
+            onDrop={(event) => handleFolderDrop('unfiled', event)}
           >
             <Hash size={16} />
             <span>Sin carpeta</span>
@@ -358,7 +529,13 @@ export const CustomFields: React.FC = () => {
 
           <div className={styles.folderList}>
             {folders.map(folder => (
-              <div key={folder.id} className={`${styles.folderRow} ${activeFolder === folder.id ? styles.folderRowActive : ''}`}>
+              <div
+                key={folder.id}
+                className={`${styles.folderRow} ${activeFolder === folder.id ? styles.folderRowActive : ''} ${dropTarget === folder.id ? styles.folderDropActive : ''}`}
+                onDragOver={(event) => handleFolderDragOver(folder.id, event)}
+                onDragLeave={(event) => handleFolderDragLeave(folder.id, event)}
+                onDrop={(event) => handleFolderDrop(folder.id, event)}
+              >
                 <button type="button" onClick={() => setActiveFolder(folder.id)}>
                   <Folder size={16} />
                   <span>{folder.name}</span>
@@ -376,26 +553,6 @@ export const CustomFields: React.FC = () => {
               </div>
             ))}
           </div>
-
-          <div className={styles.newFolder}>
-            <input
-              value={folderName}
-              placeholder="Nueva carpeta"
-              onChange={(event) => setFolderName(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') void handleCreateFolder()
-              }}
-            />
-            <button
-              type="button"
-              disabled={!folderName.trim() || creatingFolder}
-              onClick={() => void handleCreateFolder()}
-              aria-label="Crear carpeta"
-              title="Crear carpeta"
-            >
-              {creatingFolder ? <Loader2 size={15} className={styles.spin} /> : <FolderPlus size={15} />}
-            </button>
-          </div>
         </aside>
 
         <main className={styles.tablePanel}>
@@ -406,6 +563,30 @@ export const CustomFields: React.FC = () => {
             </label>
             <span>{visibleFields.length} campos</span>
           </div>
+
+          {selectedCount > 0 && (
+            <div className={styles.selectionBar}>
+              <strong>{selectedCount} seleccionado{selectedCount === 1 ? '' : 's'}</strong>
+              <select
+                defaultValue=""
+                disabled={movingFields}
+                onChange={(event) => {
+                  handleMoveSelectedChange(event.target.value)
+                  event.currentTarget.value = ''
+                }}
+              >
+                <option value="" disabled>Mover a carpeta</option>
+                <option value="unfiled">Sin carpeta</option>
+                {folders.map(folder => (
+                  <option key={folder.id} value={folder.id}>{folder.name}</option>
+                ))}
+                <option value="__new_folder">Crear carpeta...</option>
+              </select>
+              <button type="button" onClick={clearSelection} disabled={movingFields}>
+                Limpiar
+              </button>
+            </div>
+          )}
 
           {loading ? (
             <div className={styles.loadingState}>
@@ -423,6 +604,14 @@ export const CustomFields: React.FC = () => {
               <table className={styles.table}>
                 <thead>
                   <tr>
+                    <th className={styles.selectionHead}>
+                      <input
+                        type="checkbox"
+                        aria-label="Seleccionar campos visibles"
+                        checked={allVisibleSelected}
+                        onChange={toggleVisibleSelection}
+                      />
+                    </th>
                     <th>Campo</th>
                     <th>ID</th>
                     <th>Tipo</th>
@@ -433,8 +622,29 @@ export const CustomFields: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {visibleFields.map(field => (
-                    <tr key={field.definitionId}>
+                  {visibleFields.map(field => {
+                    const selected = selectedFieldIds.has(field.definitionId)
+                    const dragging = draggingFieldIds.includes(field.definitionId)
+                    return (
+                    <tr
+                      key={field.definitionId}
+                      className={`${selected ? styles.rowSelected : ''} ${dragging ? styles.rowDragging : ''}`}
+                      draggable={!movingFields}
+                      onDragStart={(event) => handleFieldDragStart(field, event)}
+                      onDragEnd={handleDragEnd}
+                    >
+                      <td className={styles.selectionCell}>
+                        <span className={styles.dragHandle} aria-hidden="true">
+                          <GripVertical size={15} />
+                        </span>
+                        <input
+                          type="checkbox"
+                          aria-label={`Seleccionar ${field.label}`}
+                          checked={selected}
+                          onChange={() => toggleFieldSelection(field.definitionId)}
+                          onClick={(event) => event.stopPropagation()}
+                        />
+                      </td>
                       <td>
                         <strong>{field.label}</strong>
                         {field.description && <span>{field.description}</span>}
@@ -455,7 +665,8 @@ export const CustomFields: React.FC = () => {
                         </div>
                       </td>
                     </tr>
-                  ))}
+                    )
+                  })}
                 </tbody>
               </table>
             </div>
@@ -549,6 +760,61 @@ export const CustomFields: React.FC = () => {
               </Button>
               <Button type="button" onClick={() => void handleSaveField()} loading={saving} leftIcon={<Save size={16} />}>
                 Guardar campo
+              </Button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {folderModalOpen && (
+        <div className={styles.editorOverlay} role="dialog" aria-modal="true" aria-labelledby="custom-field-folder-title">
+          <section className={`${styles.editorPanel} ${styles.folderEditorPanel}`}>
+            <div className={styles.editorHeader}>
+              <div>
+                <p className={styles.eyebrow}>Nueva carpeta</p>
+                <h3 id="custom-field-folder-title">Crear carpeta</h3>
+              </div>
+              <button type="button" className={styles.iconButton} onClick={closeFolderCreator} aria-label="Cerrar carpeta">
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className={styles.editorBody}>
+              <label className={styles.field}>
+                <span>Nombre</span>
+                <input
+                  value={folderDraft.name}
+                  placeholder="Ej. Datos financieros"
+                  onChange={(event) => setFolderDraft(current => ({ ...current, name: event.target.value }))}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') void handleCreateFolder()
+                  }}
+                />
+              </label>
+
+              <label className={styles.field}>
+                <span>Descripcion opcional</span>
+                <textarea
+                  rows={3}
+                  value={folderDraft.description}
+                  placeholder="Para que el equipo sepa que guardar aqui."
+                  onChange={(event) => setFolderDraft(current => ({ ...current, description: event.target.value }))}
+                />
+              </label>
+            </div>
+
+            <div className={styles.editorActions}>
+              <Button type="button" variant="ghost" onClick={closeFolderCreator} disabled={creatingFolder}>
+                Cancelar
+              </Button>
+              <Button
+                type="button"
+                onClick={() => void handleCreateFolder()}
+                loading={creatingFolder}
+                disabled={!folderDraft.name.trim()}
+                leftIcon={<FolderPlus size={16} />}
+              >
+                Crear carpeta
               </Button>
             </div>
           </section>

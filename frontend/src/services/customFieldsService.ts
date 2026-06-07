@@ -74,7 +74,7 @@ export const customFieldsService = {
     return apiClient.post<CustomFieldDefinition>('/settings/custom-fields', input)
   },
 
-  updateField(definitionId: string, input: SaveCustomFieldInput & { archived?: boolean }) {
+  updateField(definitionId: string, input: Partial<SaveCustomFieldInput> & { archived?: boolean }) {
     return apiClient.put<CustomFieldDefinition>(`/settings/custom-fields/${definitionId}`, input)
   },
 
