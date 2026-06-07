@@ -1,21 +1,50 @@
 import cron from 'node-cron'
+import fetch from 'node-fetch'
 import { db } from '../config/database.js'
+import { API_URLS } from '../config/constants.js'
 import { logger } from '../utils/logger.js'
 import { syncHighLevelData, setSyncTriggerSource } from '../services/highlevelSyncService.js'
+
+async function isHighLevelConnected(config) {
+  const locationId = String(config?.location_id || '').trim()
+  const apiToken = String(config?.api_token || '').trim().replace(/[\r\n\t]/g, '')
+
+  if (!locationId || !apiToken) return false
+
+  try {
+    const response = await fetch(API_URLS.HIGHLEVEL_LOCATIONS(locationId), {
+      headers: {
+        'Authorization': `Bearer ${apiToken}`,
+        'Version': '2021-07-28'
+      }
+    })
+
+    if (!response.ok) {
+      logger.warn(`HighLevel no está conectado (${response.status}), saltando sincronización automática`)
+      return false
+    }
+
+    return true
+  } catch (error) {
+    logger.warn(`No se pudo verificar conexión con HighLevel, saltando sincronización automática: ${error.message}`)
+    return false
+  }
+}
 
 /**
  * Cron job para sincronizar TODOS los datos de HighLevel cada hora
  * Sincroniza: Contactos, Citas (Appointments), Pagos (Invoices/Transacciones)
  *
  * Este proceso es SILENCIOSO - no muestra la barra lateral de progreso en el frontend
- * Mantiene la DB actualizada automáticamente en caso de cambios externos
+ * Mantiene la DB actualizada automáticamente en caso de cambios externos,
+ * solo cuando HighLevel sigue conectado.
  */
 export function startHighLevelSyncCron() {
-  logger.info('🔄 Iniciando cron job de sincronización completa de HighLevel (cada hora)')
+  logger.info('🔄 Iniciando cron job de sincronización completa de HighLevel (cada hora, solo si está conectado)')
 
   // Ejecutar cada hora (minuto 17) para no competir con el cron de Meta Ads
   cron.schedule('17 * * * *', async () => {
-    logger.info('⏰ Ejecutando sincronización automática de HighLevel (contactos, citas, pagos)...')
+    logger.info('⏰ Revisando conexión de HighLevel antes de sincronizar...')
 
     try {
       // Obtener configuración de HighLevel
@@ -27,6 +56,13 @@ export function startHighLevelSyncCron() {
         logger.warn('⚠️  No hay configuración de HighLevel, saltando sincronización')
         return
       }
+
+      const connected = await isHighLevelConnected(config)
+      if (!connected) {
+        return
+      }
+
+      logger.info('⏰ Ejecutando sincronización automática de HighLevel (contactos, citas, pagos)...')
 
       // IMPORTANTE: Establecer triggerSource como 'cron' para que NO aparezca la barra lateral
       setSyncTriggerSource('cron')
