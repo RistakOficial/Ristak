@@ -6,6 +6,15 @@ import {
   invalidateTimezoneCache,
   ACCOUNT_TIMEZONE_CONFIG_KEY
 } from '../utils/dateUtils.js';
+import {
+  archiveContactCustomFieldFolder,
+  createContactCustomFieldFolder,
+  listContactCustomFieldDefinitions,
+  listContactCustomFieldFolders,
+  updateContactCustomFieldDefinition,
+  updateContactCustomFieldFolder,
+  upsertContactCustomFieldDefinition
+} from '../services/contactCustomFieldDefinitionsService.js';
 
 /**
  * Obtiene la zona horaria efectiva de la cuenta.
@@ -84,5 +93,127 @@ export const setTimezone = async (req, res) => {
       success: false,
       error: 'Error al guardar la zona horaria'
     });
+  }
+};
+
+const getRequestUserId = (req) => req.user?.userId || req.user?.id || null;
+
+const sendSettingsError = (res, error, fallback = 'Error al guardar la configuracion') => {
+  res.status(error.status || 500).json({
+    success: false,
+    error: error.message || fallback
+  });
+};
+
+export const listCustomFields = async (req, res) => {
+  try {
+    const includeArchived = String(req.query?.includeArchived || '').toLowerCase() === 'true';
+    const [folders, fields] = await Promise.all([
+      listContactCustomFieldFolders({ includeArchived }),
+      listContactCustomFieldDefinitions({
+        includeArchived,
+        userId: getRequestUserId(req)
+      })
+    ]);
+
+    res.json({
+      success: true,
+      data: {
+        folders,
+        fields
+      }
+    });
+  } catch (error) {
+    logger.error(`Error en listCustomFields: ${error.message}`);
+    sendSettingsError(res, error, 'Error al obtener campos personalizados');
+  }
+};
+
+export const createCustomField = async (req, res) => {
+  try {
+    const field = await upsertContactCustomFieldDefinition({
+      ...(req.body || {}),
+      sourceType: 'manual',
+      syncTarget: req.body?.syncTarget || 'local',
+      ownerUserId: getRequestUserId(req)
+    });
+
+    if (!field) {
+      return res.status(400).json({
+        success: false,
+        error: 'Usa un ID de campo valido y que no sea reservado'
+      });
+    }
+
+    res.status(201).json({ success: true, data: field });
+  } catch (error) {
+    logger.error(`Error en createCustomField: ${error.message}`);
+    sendSettingsError(res, error, 'Error al crear campo personalizado');
+  }
+};
+
+export const updateCustomField = async (req, res) => {
+  try {
+    const field = await updateContactCustomFieldDefinition(req.params.definitionId, req.body || {});
+    if (!field) {
+      return res.status(404).json({ success: false, error: 'Campo personalizado no encontrado' });
+    }
+
+    res.json({ success: true, data: field });
+  } catch (error) {
+    logger.error(`Error en updateCustomField: ${error.message}`);
+    sendSettingsError(res, error, 'Error al actualizar campo personalizado');
+  }
+};
+
+export const archiveCustomField = async (req, res) => {
+  try {
+    const field = await updateContactCustomFieldDefinition(req.params.definitionId, { archived: true });
+    if (!field) {
+      return res.status(404).json({ success: false, error: 'Campo personalizado no encontrado' });
+    }
+
+    res.json({ success: true, data: field });
+  } catch (error) {
+    logger.error(`Error en archiveCustomField: ${error.message}`);
+    sendSettingsError(res, error, 'Error al archivar campo personalizado');
+  }
+};
+
+export const createCustomFieldFolder = async (req, res) => {
+  try {
+    const folder = await createContactCustomFieldFolder(req.body || {});
+    res.status(201).json({ success: true, data: folder });
+  } catch (error) {
+    logger.error(`Error en createCustomFieldFolder: ${error.message}`);
+    sendSettingsError(res, error, 'Error al crear carpeta');
+  }
+};
+
+export const updateCustomFieldFolder = async (req, res) => {
+  try {
+    const folder = await updateContactCustomFieldFolder(req.params.folderId, req.body || {});
+    if (!folder) {
+      return res.status(404).json({ success: false, error: 'Carpeta no encontrada' });
+    }
+
+    res.json({ success: true, data: folder });
+  } catch (error) {
+    logger.error(`Error en updateCustomFieldFolder: ${error.message}`);
+    sendSettingsError(res, error, 'Error al actualizar carpeta');
+  }
+};
+
+export const archiveCustomFieldFolder = async (req, res) => {
+  try {
+    const folder = await archiveContactCustomFieldFolder(req.params.folderId);
+    if (!folder) {
+      return res.status(404).json({ success: false, error: 'Carpeta no encontrada' });
+    }
+
+    res.json({ success: true, data: folder });
+  } catch (error) {
+    logger.error(`Error en archiveCustomFieldFolder: ${error.message}`);
+    sendSettingsError(res, error, 'Error al archivar carpeta');
   }
 };

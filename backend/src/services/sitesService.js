@@ -9354,6 +9354,129 @@ function inferContactFromResponses(blocks, responseEntries) {
   return contact
 }
 
+function getBlockCustomFieldTarget(block) {
+  const settings = block?.settings || {}
+  const definitionId = cleanString(
+    settings.customFieldDefinitionId ||
+    settings.custom_field_definition_id ||
+    settings.customFieldId ||
+    settings.custom_field_id
+  )
+  const fieldKey = normalizeImportedFieldKey(
+    settings.customFieldKey ||
+    settings.custom_field_key ||
+    settings.customFieldName ||
+    settings.custom_field_name ||
+    settings.internalName ||
+    settings.internal_name ||
+    block?.label,
+    ''
+  )
+
+  if (!definitionId && !fieldKey) return null
+
+  return {
+    definitionId,
+    fieldKey,
+    label: cleanString(settings.customFieldLabel || settings.custom_field_label || block?.label || fieldKey),
+    dataType: cleanString(settings.customFieldDataType || settings.custom_field_data_type || block?.blockType || 'text')
+  }
+}
+
+function getNativeCustomFieldOptions(block) {
+  if (!['dropdown', 'radio', 'checkboxes'].includes(block?.blockType)) return []
+  return getBlockOptions(block).map(option => ({
+    label: option.label,
+    value: option.value
+  }))
+}
+
+function buildNativeCustomFieldsFromResponses({ site, blocks = [], responses = {} }) {
+  const pages = normalizeSitePages(site)
+  const customFields = []
+
+  for (const block of collectFieldBlocks(blocks)) {
+    const target = getBlockCustomFieldTarget(block)
+    if (!target) continue
+
+    const value = responses[block.id]
+    const isEmpty = Array.isArray(value) ? value.length === 0 : !cleanString(value)
+    if (isEmpty) continue
+
+    const pageId = getBlockPageId(block, pages)
+    const fieldKey = target.fieldKey || normalizeImportedFieldKey(block.label || block.id, 'custom_field')
+
+    customFields.push({
+      id: target.definitionId || fieldKey,
+      definitionId: target.definitionId || '',
+      key: fieldKey,
+      fieldKey,
+      label: target.label || fieldKey,
+      name: target.label || fieldKey,
+      dataType: target.dataType,
+      options: getNativeCustomFieldOptions(block),
+      value,
+      syncTarget: 'local',
+      sourceType: 'native_site',
+      sourceId: site.id,
+      sourceSiteId: site.id,
+      sourcePageId: pageId,
+      sourceFormId: getNativeFormContext(site, blocks).formSiteId || site.id,
+      sourceFormName: getNativeFormContext(site, blocks).formSiteName || site.name,
+      sourceFieldId: block.id,
+      sourceFieldName: cleanString(block.settings?.internalName || block.settings?.internal_name || block.id),
+      sourceLabel: block.label || '',
+      sourceContext: {
+        siteType: site.siteType,
+        blockType: block.blockType,
+        native: true
+      }
+    })
+  }
+
+  return customFields
+}
+
+function buildNativeMappedCustomFields(customFields = []) {
+  return customFields.reduce((acc, field) => {
+    const key = cleanString(field.fieldKey || field.key || field.label)
+    if (!key) return acc
+    acc[key] = field.value
+    return acc
+  }, {})
+}
+
+async function upsertNativeContactCustomFields({ site, contactId, blocks, responses }) {
+  if (!contactId) return []
+
+  const customFields = buildNativeCustomFieldsFromResponses({ site, blocks, responses })
+  if (!customFields.length) return []
+
+  const preparedFields = await prepareContactCustomFieldsForStorage(customFields, {
+    sourceType: 'native_site',
+    sourceId: site.id,
+    sourceSiteId: site.id,
+    syncTarget: 'local'
+  })
+  const existing = await db.get('SELECT custom_fields FROM contacts WHERE id = ?', [contactId])
+  const merged = mergeContactCustomFields(
+    parseContactCustomFields(existing?.custom_fields),
+    preparedFields
+  )
+
+  await db.run(`
+    UPDATE contacts SET
+      custom_fields = ${process.env.DATABASE_URL ? '?::jsonb' : '?'},
+      updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `, [
+    serializeContactCustomFieldsForDb(merged),
+    contactId
+  ])
+
+  return preparedFields
+}
+
 async function findExistingContact({ email, phone }) {
   if (email) {
     const byEmail = await db.get(
@@ -10312,18 +10435,28 @@ export async function createSubmissionFromRequest(req, body = {}) {
   }
   const inferredContact = inferContactFromResponses(collectFieldBlocks(submissionBlocks), responses)
   const contactId = await upsertContactFromSubmission({ site, contact: inferredContact, meta })
+  const preparedCustomFields = await upsertNativeContactCustomFields({
+    site,
+    contactId,
+    blocks: submissionBlocks,
+    responses
+  })
+  const mappedFields = preparedCustomFields.length
+    ? { custom: buildNativeMappedCustomFields(preparedCustomFields) }
+    : {}
   const submissionId = crypto.randomUUID()
 
   await db.run(`
     INSERT INTO public_site_submissions (
-      id, site_id, contact_id, domain, response_json, meta_json, status, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      id, site_id, contact_id, domain, response_json, mapped_fields_json, meta_json, status, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
   `, [
     submissionId,
     site.id,
     contactId,
     host,
     jsonString(responses),
+    jsonString(mappedFields),
     jsonString(meta),
     ruleEvaluation.status
   ])

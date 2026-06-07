@@ -718,6 +718,18 @@ async function initTables() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_template_custom_fields_key ON whatsapp_template_custom_fields(field_key)')
 
     await db.run(`
+      CREATE TABLE IF NOT EXISTS contact_custom_field_folders (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT,
+        sort_order INTEGER DEFAULT 0,
+        archived INTEGER DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+
+    await db.run(`
       CREATE TABLE IF NOT EXISTS contact_custom_field_definitions (
         id TEXT PRIMARY KEY,
         owner_user_id INTEGER,
@@ -725,6 +737,7 @@ async function initTables() {
         label TEXT NOT NULL,
         description TEXT,
         data_type TEXT DEFAULT 'text',
+        folder_id TEXT,
         field_group TEXT DEFAULT 'general',
         options_json TEXT,
         sync_target TEXT DEFAULT 'local',
@@ -740,11 +753,21 @@ async function initTables() {
         source_context_json TEXT,
         archived INTEGER DEFAULT 0,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (folder_id) REFERENCES contact_custom_field_folders(id) ON DELETE SET NULL
       )
     `)
 
+    try {
+      await db.run('ALTER TABLE contact_custom_field_definitions ADD COLUMN folder_id TEXT')
+    } catch (err) {
+      // Columna ya existe, ignorar.
+    }
+
+    await db.run('CREATE INDEX IF NOT EXISTS idx_contact_custom_field_folders_archived ON contact_custom_field_folders(archived)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_contact_custom_field_folders_sort ON contact_custom_field_folders(sort_order, name)')
     await db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_contact_custom_field_definitions_owner_key ON contact_custom_field_definitions(COALESCE(owner_user_id, 0), LOWER(field_key))')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_contact_custom_field_definitions_folder ON contact_custom_field_definitions(folder_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_contact_custom_field_definitions_source_site ON contact_custom_field_definitions(source_site_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_contact_custom_field_definitions_archived ON contact_custom_field_definitions(archived)')
 

@@ -19,6 +19,9 @@ const DATA_TYPES = new Set([
   'textarea',
   'number',
   'currency',
+  'dropdown',
+  'radio',
+  'checkboxes',
   'date',
   'datetime',
   'time',
@@ -67,11 +70,11 @@ function normalizeDataType(value) {
   const aliases = {
     string: 'text',
     short_text: 'text',
+    plain_text: 'text',
     long_text: 'textarea',
     paragraph: 'textarea',
-    dropdown: 'select',
-    radio: 'select',
-    checkboxes: 'multiselect',
+    select: 'dropdown',
+    multiselect: 'checkboxes',
     multiple: 'multiselect'
   }
   const dataType = aliases[raw] || raw
@@ -105,6 +108,25 @@ function normalizeOptions(value) {
     .filter(option => option.label || option.value)
 }
 
+function normalizeFolderId(value) {
+  const folderId = limitString(value, 180)
+  return folderId || null
+}
+
+function mapFolder(row) {
+  if (!row) return null
+
+  return {
+    id: row.id,
+    name: row.name || 'Carpeta',
+    description: row.description || '',
+    sortOrder: Number(row.sort_order || 0),
+    archived: Boolean(Number(row.archived || 0)),
+    createdAt: row.created_at || null,
+    updatedAt: row.updated_at || null
+  }
+}
+
 function mapDefinition(row) {
   if (!row) return null
 
@@ -117,6 +139,8 @@ function mapDefinition(row) {
     description: row.description || '',
     dataType: row.data_type || 'text',
     options: parseJsonSafe(row.options_json, []),
+    folderId: row.folder_id || '',
+    folderName: row.folder_name || '',
     fieldGroup: row.field_group || 'general',
     syncTarget: row.sync_target || 'local',
     sourceType: row.source_type || 'manual',
@@ -182,7 +206,12 @@ async function getDefinitionSources(definitionIds = []) {
 }
 
 async function getDefinitionById(definitionId) {
-  const row = await db.get('SELECT * FROM contact_custom_field_definitions WHERE id = ?', [definitionId])
+  const row = await db.get(`
+    SELECT d.*, f.name AS folder_name
+    FROM contact_custom_field_definitions d
+    LEFT JOIN contact_custom_field_folders f ON f.id = d.folder_id
+    WHERE d.id = ?
+  `, [definitionId])
   const definition = mapDefinition(row)
   if (!definition) return null
 
@@ -216,10 +245,12 @@ function getFieldDefinitionInput(rawField = {}, context = {}) {
     null
 
   return {
+    definitionId: limitString(rawField.definitionId || rawField.definition_id || rawField.id, 180),
     fieldKey,
     label: limitString(rawField.label || rawField.name || rawField.title || rawField.placeholder || fieldKey, 180),
     description: limitString(rawField.description || context.description, 600),
     dataType: normalizeDataType(rawField.dataType || rawField.type || rawField.inputType || rawField.input_type),
+    folderId: normalizeFolderId(rawField.folderId || rawField.folder_id || context.folderId || context.folder_id),
     fieldGroup: limitString(rawField.fieldGroup || rawField.field_group || context.fieldGroup || context.field_group || 'general', 120),
     options: normalizeOptions(rawField.options || rawField.picklistOptions),
     syncTarget,
@@ -235,6 +266,27 @@ function getFieldDefinitionInput(rawField = {}, context = {}) {
     sourceContext,
     ownerUserId: normalizeOwnerUserId(rawField.ownerUserId || rawField.owner_user_id || context.ownerUserId || context.owner_user_id || context.userId || context.user_id)
   }
+}
+
+async function getFolderById(folderId) {
+  const id = normalizeFolderId(folderId)
+  if (!id) return null
+
+  return mapFolder(await db.get('SELECT * FROM contact_custom_field_folders WHERE id = ?', [id]))
+}
+
+async function assertFolderExists(folderId) {
+  const id = normalizeFolderId(folderId)
+  if (!id) return null
+
+  const folder = await getFolderById(id)
+  if (!folder || folder.archived) {
+    const error = new Error('La carpeta seleccionada no existe o esta archivada')
+    error.status = 400
+    throw error
+  }
+
+  return folder
 }
 
 async function recordDefinitionSource(definitionId, input = {}) {
@@ -320,27 +372,38 @@ async function findDefinitionByKey(fieldKey, ownerUserId = null) {
   return mapDefinition(row)
 }
 
+async function findDefinitionByInput(input = {}) {
+  const definitionId = limitString(input.definitionId, 180)
+  if (definitionId) {
+    const byId = mapDefinition(await db.get('SELECT * FROM contact_custom_field_definitions WHERE id = ?', [definitionId]))
+    if (byId) return byId
+  }
+
+  return findDefinitionByKey(input.fieldKey, input.ownerUserId)
+}
+
 export async function listContactCustomFieldDefinitions({ includeArchived = false, userId = null } = {}) {
   const ownerUserId = normalizeOwnerUserId(userId)
   const params = []
   const conditions = []
 
   if (!includeArchived) {
-    conditions.push('archived = 0')
+    conditions.push('d.archived = 0')
   }
 
   if (ownerUserId) {
-    conditions.push('(owner_user_id IS NULL OR owner_user_id = ?)')
+    conditions.push('(d.owner_user_id IS NULL OR d.owner_user_id = ?)')
     params.push(ownerUserId)
   } else {
-    conditions.push('owner_user_id IS NULL')
+    conditions.push('d.owner_user_id IS NULL')
   }
 
   const rows = await db.all(`
-    SELECT *
-    FROM contact_custom_field_definitions
+    SELECT d.*, f.name AS folder_name
+    FROM contact_custom_field_definitions d
+    LEFT JOIN contact_custom_field_folders f ON f.id = d.folder_id
     ${conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''}
-    ORDER BY field_group ASC, label ASC, field_key ASC
+    ORDER BY COALESCE(f.sort_order, 999999) ASC, COALESCE(f.name, d.field_group, 'general') ASC, d.label ASC, d.field_key ASC
   `, params)
 
   const definitions = rows.map(mapDefinition)
@@ -352,6 +415,96 @@ export async function listContactCustomFieldDefinitions({ includeArchived = fals
   }))
 }
 
+export async function listContactCustomFieldFolders({ includeArchived = false } = {}) {
+  const rows = await db.all(`
+    SELECT *
+    FROM contact_custom_field_folders
+    ${includeArchived ? '' : 'WHERE archived = 0'}
+    ORDER BY sort_order ASC, name ASC
+  `)
+
+  return rows.map(mapFolder).filter(Boolean)
+}
+
+export async function createContactCustomFieldFolder(input = {}) {
+  const name = limitString(input.name, 120)
+  if (!name) {
+    const error = new Error('Ponle nombre a la carpeta')
+    error.status = 400
+    throw error
+  }
+
+  const maxSort = await db.get(`
+    SELECT COALESCE(MAX(sort_order), 0) AS max_sort
+    FROM contact_custom_field_folders
+    WHERE archived = 0
+  `)
+  const id = `contact_field_folder_${crypto.randomUUID()}`
+
+  await db.run(`
+    INSERT INTO contact_custom_field_folders (
+      id, name, description, sort_order, archived, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+  `, [
+    id,
+    name,
+    limitString(input.description, 400) || null,
+    Number(maxSort?.max_sort || 0) + 1
+  ])
+
+  return getFolderById(id)
+}
+
+export async function updateContactCustomFieldFolder(folderId, input = {}) {
+  const id = normalizeFolderId(folderId)
+  if (!id) return null
+
+  const existing = await getFolderById(id)
+  if (!existing) return null
+
+  const name = limitString(input.name || existing.name, 120)
+  if (!name) {
+    const error = new Error('Ponle nombre a la carpeta')
+    error.status = 400
+    throw error
+  }
+
+  await db.run(`
+    UPDATE contact_custom_field_folders SET
+      name = ?,
+      description = ?,
+      sort_order = ?,
+      archived = ?,
+      updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `, [
+    name,
+    input.description === undefined ? existing.description || null : limitString(input.description, 400) || null,
+    Number.isFinite(Number(input.sortOrder ?? input.sort_order)) ? Number(input.sortOrder ?? input.sort_order) : existing.sortOrder,
+    input.archived === undefined ? (existing.archived ? 1 : 0) : (input.archived ? 1 : 0),
+    id
+  ])
+
+  return getFolderById(id)
+}
+
+export async function archiveContactCustomFieldFolder(folderId) {
+  const id = normalizeFolderId(folderId)
+  if (!id) return null
+
+  const folder = await updateContactCustomFieldFolder(id, { archived: true })
+  if (!folder) return null
+
+  await db.run(`
+    UPDATE contact_custom_field_definitions SET
+      folder_id = NULL,
+      updated_at = CURRENT_TIMESTAMP
+    WHERE folder_id = ?
+  `, [id])
+
+  return folder
+}
+
 export async function upsertContactCustomFieldDefinition(rawField = {}, context = {}) {
   const input = getFieldDefinitionInput(rawField, context)
 
@@ -359,9 +512,12 @@ export async function upsertContactCustomFieldDefinition(rawField = {}, context 
     return null
   }
 
-  const existing = await findDefinitionByKey(input.fieldKey, input.ownerUserId)
+  const folder = await assertFolderExists(input.folderId)
+  const existing = await findDefinitionByInput(input)
   const optionsJson = jsonString(input.options)
   const sourceContextJson = input.sourceContext ? jsonString(input.sourceContext) : null
+  const fieldGroup = folder?.name || input.fieldGroup
+  const updateFieldGroup = input.folderId ? fieldGroup : ''
 
   if (existing) {
     await db.run(`
@@ -369,6 +525,7 @@ export async function upsertContactCustomFieldDefinition(rawField = {}, context 
         label = COALESCE(NULLIF(?, ''), label),
         description = COALESCE(NULLIF(?, ''), description),
         data_type = COALESCE(NULLIF(?, ''), data_type),
+        folder_id = COALESCE(?, folder_id),
         field_group = COALESCE(NULLIF(?, ''), field_group),
         options_json = CASE WHEN ? != '[]' THEN ? ELSE options_json END,
         sync_target = COALESCE(NULLIF(?, ''), sync_target),
@@ -389,7 +546,8 @@ export async function upsertContactCustomFieldDefinition(rawField = {}, context 
       input.label,
       input.description,
       input.dataType,
-      input.fieldGroup,
+      input.folderId,
+      updateFieldGroup,
       optionsJson,
       optionsJson,
       input.syncTarget,
@@ -413,11 +571,11 @@ export async function upsertContactCustomFieldDefinition(rawField = {}, context 
   const id = `contact_field_${crypto.randomUUID()}`
   await db.run(`
     INSERT INTO contact_custom_field_definitions (
-      id, owner_user_id, field_key, label, description, data_type, field_group,
+      id, owner_user_id, field_key, label, description, data_type, folder_id, field_group,
       options_json, sync_target, source_type, source_id, source_site_id, source_page_id,
       source_form_id, source_form_name, source_field_id, source_field_name, source_label,
       source_context_json, archived, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
   `, [
     id,
     input.ownerUserId,
@@ -425,7 +583,8 @@ export async function upsertContactCustomFieldDefinition(rawField = {}, context 
     input.label,
     input.description || null,
     input.dataType,
-    input.fieldGroup,
+    input.folderId,
+    fieldGroup,
     optionsJson,
     input.syncTarget,
     input.sourceType,
@@ -474,6 +633,9 @@ export async function prepareContactCustomFieldsForStorage(fields = [], context 
       name: field.name || definition.name || definition.label,
       dataType: field.dataType || field.type || definition.dataType,
       options: Array.isArray(field.options) && field.options.length ? field.options : definition.options,
+      folderId: field.folderId || field.folder_id || definition.folderId,
+      folderName: field.folderName || field.folder_name || definition.folderName,
+      fieldGroup: field.fieldGroup || field.field_group || definition.fieldGroup,
       syncTarget: field.syncTarget || field.sync_target || definition.syncTarget,
       sourceType: field.sourceType || field.source_type || definition.sourceType,
       sourceId: field.sourceId || field.source_id || definition.sourceId,
@@ -509,12 +671,19 @@ export async function updateContactCustomFieldDefinition(definitionId, input = {
     throw error
   }
 
+  const nextFolderId = input.folderId !== undefined || input.folder_id !== undefined
+    ? normalizeFolderId(input.folderId || input.folder_id)
+    : current.folderId || null
+  const folder = await assertFolderExists(nextFolderId)
+  const nextFieldGroup = folder?.name || limitString(input.fieldGroup || input.field_group || current.fieldGroup || 'general', 120)
+
   await db.run(`
     UPDATE contact_custom_field_definitions SET
       field_key = ?,
       label = ?,
       description = ?,
       data_type = ?,
+      folder_id = ?,
       field_group = ?,
       options_json = ?,
       sync_target = ?,
@@ -526,13 +695,19 @@ export async function updateContactCustomFieldDefinition(definitionId, input = {
     limitString(input.label || input.name || current.label, 180),
     input.description === undefined ? current.description || null : limitString(input.description, 600) || null,
     normalizeDataType(input.dataType || input.type || current.dataType),
-    limitString(input.fieldGroup || input.field_group || current.fieldGroup || 'general', 120),
+    nextFolderId,
+    nextFieldGroup,
     jsonString(normalizeOptions(input.options !== undefined ? input.options : current.options)),
     normalizeSyncTarget(input.syncTarget || input.sync_target || current.syncTarget, 'local'),
     input.archived === undefined ? (current.archived ? 1 : 0) : (input.archived ? 1 : 0),
     id
   ])
 
-  const row = await db.get('SELECT * FROM contact_custom_field_definitions WHERE id = ?', [id])
+  const row = await db.get(`
+    SELECT d.*, f.name AS folder_name
+    FROM contact_custom_field_definitions d
+    LEFT JOIN contact_custom_field_folders f ON f.id = d.folder_id
+    WHERE d.id = ?
+  `, [id])
   return mapDefinition(row)
 }

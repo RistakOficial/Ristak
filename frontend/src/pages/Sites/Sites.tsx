@@ -116,6 +116,7 @@ import {
 import { aiAgentService } from '@/services/aiAgentService'
 import { campaignsService, type ConnectedSocialProfile } from '@/services/campaignsService'
 import { calendarsService, type Calendar as CalendarType } from '@/services/calendarsService'
+import { customFieldsService, type CustomFieldDefinition } from '@/services/customFieldsService'
 import { COUNTRY_OPTIONS, getCountryDefaults, getCountryFlagEmoji, getDetectedAccountLocaleDefaults } from '@/utils/accountLocale'
 import styles from './Sites.module.css'
 import './sitesCanvas.css'
@@ -2320,6 +2321,7 @@ export const Sites: React.FC = () => {
   const [domainConfig, setDomainConfig] = useState<SitesDomainConfig>(emptySitesDomainConfig)
   const [domainInput, setDomainInput] = useState('')
   const [calendars, setCalendars] = useState<CalendarType[]>([])
+  const [customFields, setCustomFields] = useState<CustomFieldDefinition[]>([])
   const [metaPixelConnected, setMetaPixelConnected] = useState(false)
   const [connectedSocialProfiles, setConnectedSocialProfiles] = useState<ConnectedSocialProfile[]>([])
   const [loadingSocialProfiles, setLoadingSocialProfiles] = useState(false)
@@ -2526,6 +2528,7 @@ export const Sites: React.FC = () => {
     const initialEditorId = new URLSearchParams(window.location.search).get('siteEditor') || undefined
     loadSites(initialEditorId)
     loadCalendarsForBuilder()
+    loadCustomFieldsForBuilder()
   }, [])
 
   useEffect(() => {
@@ -2707,6 +2710,15 @@ export const Sites: React.FC = () => {
       setCalendars(await calendarsService.getCalendars())
     } catch {
       setCalendars([])
+    }
+  }
+
+  const loadCustomFieldsForBuilder = async () => {
+    try {
+      const catalog = await customFieldsService.listCatalog()
+      setCustomFields(catalog.fields || [])
+    } catch {
+      setCustomFields([])
     }
   }
 
@@ -4568,6 +4580,7 @@ export const Sites: React.FC = () => {
                   allBlocks={blocks}
                   forms={forms}
                   calendars={calendars}
+                  customFields={customFields}
                   pages={pages}
                   activePageId={activePage?.id || DEFAULT_FUNNEL_PAGE_ID}
                   metaPixelConnected={metaPixelConnected}
@@ -9618,6 +9631,7 @@ interface PropertiesPanelProps {
   allBlocks?: SiteBlock[]
   forms: PublicSite[]
   calendars: CalendarType[]
+  customFields: CustomFieldDefinition[]
   pages: SitePage[]
   activePageId: string
   metaPixelConnected: boolean
@@ -10044,6 +10058,128 @@ const PageInspector: React.FC<{
   )
 }
 
+const customFieldTypeCompatibility: Partial<Record<SiteBlockType, string[]>> = {
+  short_text: ['text'],
+  paragraph: ['textarea', 'text'],
+  number: ['number'],
+  currency: ['currency', 'number'],
+  dropdown: ['dropdown', 'select', 'radio'],
+  radio: ['radio', 'dropdown', 'select'],
+  checkboxes: ['checkboxes', 'multiselect'],
+  phone: ['phone'],
+  email: ['email'],
+  date: ['date']
+}
+
+const normalizeCustomFieldDataType = (value = '') => {
+  if (value === 'select') return 'dropdown'
+  if (value === 'multiselect') return 'checkboxes'
+  return value
+}
+
+const customFieldTypeLabel = (value = '') => {
+  const type = normalizeCustomFieldDataType(value)
+  if (type === 'text') return 'Texto corto'
+  if (type === 'textarea') return 'Parrafo'
+  if (type === 'radio') return 'Radio buttons'
+  if (type === 'dropdown') return 'Dropdown'
+  if (type === 'checkboxes') return 'Checkboxes'
+  if (type === 'number') return 'Numero'
+  if (type === 'currency') return 'Moneda'
+  if (type === 'date') return 'Fecha'
+  if (type === 'email') return 'Email'
+  if (type === 'phone') return 'Telefono'
+  return value || 'Campo'
+}
+
+const isCustomFieldCompatibleWithBlock = (blockType: SiteBlockType, field: CustomFieldDefinition) => {
+  const allowed = customFieldTypeCompatibility[blockType]
+  if (!allowed) return false
+  const dataType = normalizeCustomFieldDataType(field.dataType)
+  return allowed.includes(dataType)
+}
+
+const CustomFieldBindingControl: React.FC<{
+  block: SiteBlock
+  customFields: CustomFieldDefinition[]
+  onPatchSettings: (patch: Record<string, unknown>) => void
+  onSave: () => void
+}> = ({ block, customFields, onPatchSettings, onSave }) => {
+  const settings = block.settings || {}
+  const currentDefinitionId = getSettingString(settings, 'customFieldDefinitionId')
+  const compatibleFields = customFields
+    .filter(field => !field.archived && isCustomFieldCompatibleWithBlock(block.blockType, field))
+    .sort((a, b) => (
+      String(a.folderName || '').localeCompare(String(b.folderName || '')) ||
+      String(a.label || '').localeCompare(String(b.label || ''))
+    ))
+  const selectedField = compatibleFields.find(field => field.definitionId === currentDefinitionId) ||
+    customFields.find(field => field.definitionId === currentDefinitionId)
+  const groups = compatibleFields.reduce((acc, field) => {
+    const folderName = field.folderName || 'Sin carpeta'
+    const current = acc.get(folderName) || []
+    current.push(field)
+    acc.set(folderName, current)
+    return acc
+  }, new Map<string, CustomFieldDefinition[]>())
+
+  return (
+    <div className={styles.customFieldBinding}>
+      <div className={styles.panelSubheader}>Guardado de respuesta</div>
+      <label className={styles.field}>
+        <span>Guardar respuesta en</span>
+        <select
+          value={currentDefinitionId}
+          onChange={(event) => {
+            const definitionId = event.target.value
+            const field = compatibleFields.find(item => item.definitionId === definitionId)
+
+            if (!field) {
+              onPatchSettings({
+                customFieldDefinitionId: '',
+                customFieldKey: '',
+                customFieldLabel: '',
+                customFieldDataType: ''
+              })
+              window.setTimeout(onSave, 0)
+              return
+            }
+
+            onPatchSettings({
+              customFieldDefinitionId: field.definitionId,
+              customFieldKey: field.fieldKey || field.key,
+              customFieldLabel: field.label,
+              customFieldDataType: field.dataType
+            })
+            window.setTimeout(onSave, 0)
+          }}
+          onBlur={onSave}
+        >
+          <option value="">No guardar en campo personalizado</option>
+          {[...groups.entries()].map(([folderName, groupFields]) => (
+            <optgroup key={folderName} label={folderName}>
+              {groupFields.map(field => (
+                <option key={field.definitionId} value={field.definitionId}>
+                  {field.label} - {field.fieldKey || field.key}
+                </option>
+              ))}
+            </optgroup>
+          ))}
+        </select>
+      </label>
+      {selectedField ? (
+        <p className={styles.customFieldHint}>
+          Se guardara como <code>{selectedField.fieldKey || selectedField.key}</code> ({customFieldTypeLabel(selectedField.dataType)}).
+        </p>
+      ) : (
+        <p className={styles.customFieldHint}>
+          Crea campos compatibles en Configuracion para guardar este dato dentro del contacto.
+        </p>
+      )}
+    </div>
+  )
+}
+
 const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   site,
   block,
@@ -10051,6 +10187,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   allBlocks,
   forms,
   calendars,
+  customFields,
   pages,
   activePageId,
   metaPixelConnected,
@@ -10179,6 +10316,13 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                 <span>Mostrar pais y lada</span>
               </label>
             )}
+
+            <CustomFieldBindingControl
+              block={block}
+              customFields={customFields}
+              onPatchSettings={onPatchSettings}
+              onSave={onSave}
+            />
           </>
         )}
 

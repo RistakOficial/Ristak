@@ -1,6 +1,6 @@
 import React from 'react'
 import { Routes, Route, Navigate, NavLink, useLocation } from 'react-router-dom'
-import { Send, CreditCard, Activity, Calendar, UserCircle, TrendingDown, Bot, KeyRound, Globe2, Smartphone } from 'lucide-react'
+import { Send, CreditCard, Activity, Calendar, UserCircle, TrendingDown, Bot, KeyRound, Globe2, Smartphone, Hash } from 'lucide-react'
 import { SiWhatsapp } from 'react-icons/si'
 import { HighLevelIntegration } from './HighLevelIntegration'
 import { Costs } from './Costs'
@@ -14,6 +14,7 @@ import { AIAgentSettings } from './AIAgentSettings'
 import { APIAccessSettings } from './APIAccessSettings'
 import { Domains } from './Domains'
 import { MobileAppSettings } from './MobileAppSettings'
+import { CustomFields } from './CustomFields'
 import { useTheme } from '@/contexts/ThemeContext'
 import styles from './Settings.module.css'
 
@@ -83,6 +84,11 @@ export const Settings: React.FC = () => {
       icon: <TrendingDown size={18} />
     },
     {
+      to: '/settings/custom-fields',
+      label: 'Campos personalizados',
+      icon: <Hash size={18} />
+    },
+    {
       to: '/settings/ai-agent',
       label: 'Agente AI',
       icon: <Bot size={18} />
@@ -136,6 +142,7 @@ export const Settings: React.FC = () => {
               <Route path="tracking" element={<WebTracking />} />
               <Route path="domains" element={<Domains />} />
               <Route path="payments" element={<PaymentsConfiguration />} />
+              <Route path="custom-fields" element={<CustomFields />} />
               <Route path="ai-agent" element={<AIAgentSettings />} />
               <Route path="api-access" element={<APIAccessSettings />} />
               <Route path="mobile-app" element={<MobileAppSettings />} />

@@ -1171,6 +1171,33 @@
   flex-wrap: wrap;
 }
 
+.customFieldBinding {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.customFieldHint {
+  margin: 0;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.customFieldHint code {
+  display: inline-flex;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 2px 5px;
+  border-radius: 5px;
+  background: rgba(148, 163, 184, 0.12);
+  color: var(--color-text-primary);
+  font-size: 11px;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
 .sitesShell {
   min-height: calc(100vh - 220px);
   display: grid;

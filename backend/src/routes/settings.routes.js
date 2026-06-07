@@ -1,5 +1,15 @@
 import express from 'express';
-import { getTimezone, setTimezone } from '../controllers/settingsController.js';
+import {
+  archiveCustomField,
+  archiveCustomFieldFolder,
+  createCustomField,
+  createCustomFieldFolder,
+  getTimezone,
+  listCustomFields,
+  setTimezone,
+  updateCustomField,
+  updateCustomFieldFolder
+} from '../controllers/settingsController.js';
 import { getNotificationsView } from '../controllers/notificationsController.js';
 import { requireAuth } from '../middleware/authMiddleware.js';
 import {
@@ -29,6 +39,16 @@ router.get('/timezone', getTimezone);
 
 // POST /api/settings/timezone
 router.post('/timezone', setTimezone);
+
+// Custom fields
+router.get('/custom-fields', listCustomFields);
+router.post('/custom-fields', createCustomField);
+router.put('/custom-fields/:definitionId', updateCustomField);
+router.delete('/custom-fields/:definitionId', archiveCustomField);
+
+router.post('/custom-field-folders', createCustomFieldFolder);
+router.put('/custom-field-folders/:folderId', updateCustomFieldFolder);
+router.delete('/custom-field-folders/:folderId', archiveCustomFieldFolder);
 
 // GET /api/settings/notifications
 router.get('/notifications', getNotificationsView);
