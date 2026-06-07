@@ -9478,24 +9478,16 @@
 
 .pagesDropdownTriggerText {
   min-width: 0;
-  display: grid;
-  gap: 2px;
+  display: flex;
+  align-items: center;
   line-height: 1;
-}
-
-.pagesDropdownTriggerText small {
-  color: var(--color-text-tertiary);
-  font-size: 0.67rem;
-  font-weight: var(--font-weight-semibold, 600);
-  text-transform: uppercase;
-  letter-spacing: 0;
 }
 
 .pagesDropdownTriggerText strong {
   min-width: 0;
   overflow: hidden;
   color: var(--color-text-primary);
-  font-size: 0.9rem;
+  font-size: 0.92rem;
   font-weight: var(--font-weight-bold, 700);
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -9566,6 +9558,7 @@
 }
 
 .pagesDropdownItemWrap {
+  position: relative;
   width: 100%;
   display: block;
   justify-self: stretch;
@@ -9688,6 +9681,14 @@
   outline: none;
 }
 
+.pagesDropdownActionWrap {
+  position: relative;
+  width: 50px;
+  height: 50px;
+  display: grid;
+  place-items: center;
+}
+
 .pagesDropdownMenuButton {
   width: 50px;
   height: 50px;
@@ -9701,10 +9702,59 @@
 }
 
 .pagesDropdownMenuButton:hover,
-.pagesDropdownMenuButton[data-state="open"] {
+.pagesDropdownMenuButton[data-state="open"],
+.pagesDropdownMenuButton[aria-expanded="true"] {
   border-color: color-mix(in srgb, var(--color-primary) 38%, var(--color-border-subtle, rgba(148, 163, 184, 0.28)) 62%);
   background: color-mix(in srgb, var(--color-background-tertiary) 78%, var(--color-primary) 22%);
   color: var(--color-text-primary);
+}
+
+.pagesDropdownActionMenu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 12;
+  min-width: 206px;
+  display: grid;
+  gap: 4px;
+  border: 1px solid color-mix(in srgb, var(--color-border-subtle, rgba(148, 163, 184, 0.24)) 82%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--color-background-secondary) 94%, var(--color-background-primary) 6%);
+  color: var(--color-text-primary);
+  padding: 6px;
+  box-shadow: 0 18px 48px -30px rgba(0, 0, 0, 0.86);
+}
+
+.pagesDropdownActionItem {
+  width: 100%;
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--color-text-primary);
+  padding: 0 10px;
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: var(--font-weight-semibold, 600);
+  text-align: left;
+}
+
+.pagesDropdownActionItem:hover:not(:disabled),
+.pagesDropdownActionItem:focus-visible {
+  background: color-mix(in srgb, var(--color-background-tertiary) 78%, var(--color-primary) 22%);
+  outline: none;
+}
+
+.pagesDropdownActionItem:disabled {
+  cursor: not-allowed;
+  opacity: 0.46;
+}
+
+.pagesDropdownActionDanger {
+  color: var(--color-error, #ef4444);
 }
 
 .pagesDropdownAddButton {
