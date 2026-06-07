@@ -1328,6 +1328,117 @@ const TEMPLATE_IMAGE_URLS = {
   handshake: 'https://images.unsplash.com/photo-1521791136064-7986c2920216?auto=format&fit=crop&w=1800&q=80'
 }
 
+const SITES_AI_STOCK_IMAGE_LIBRARY = [
+  {
+    id: 'business_workspace',
+    label: 'Equipo, oficina, consultoria y servicios profesionales',
+    keywords: ['consultoria', 'consulting', 'office', 'workspace', 'equipo', 'business', 'marketing', 'agencia', 'servicio', 'profesional'],
+    backgroundImage: TEMPLATE_IMAGE_URLS.workspace,
+    images: [
+      TEMPLATE_IMAGE_URLS.team,
+      TEMPLATE_IMAGE_URLS.consult,
+      'https://images.unsplash.com/photo-1556761175-5973dc0f32e7?auto=format&fit=crop&w=1600&q=80'
+    ]
+  },
+  {
+    id: 'local_business',
+    label: 'Negocio local, tienda, mostrador y atencion al cliente',
+    keywords: ['local', 'tienda', 'restaurante', 'boutique', 'negocio local', 'cliente', 'mostrador', 'retail', 'servicio local'],
+    backgroundImage: TEMPLATE_IMAGE_URLS.local,
+    images: [
+      'https://images.unsplash.com/photo-1556745753-b2904692b3cd?auto=format&fit=crop&w=1600&q=80',
+      'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?auto=format&fit=crop&w=1600&q=80',
+      'https://images.unsplash.com/photo-1604719312566-8912e9227c6a?auto=format&fit=crop&w=1600&q=80'
+    ]
+  },
+  {
+    id: 'health_beauty',
+    label: 'Salud, belleza, clinica, spa y bienestar',
+    keywords: ['salud', 'clinica', 'medico', 'dental', 'dentista', 'spa', 'belleza', 'wellness', 'estetica', 'fitness', 'terapia'],
+    backgroundImage: 'https://images.unsplash.com/photo-1519494026892-80bbd2d6fd0d?auto=format&fit=crop&w=1800&q=80',
+    images: [
+      'https://images.unsplash.com/photo-1570172619644-dfd03ed5d881?auto=format&fit=crop&w=1600&q=80',
+      'https://images.unsplash.com/photo-1550831107-1553da8c8464?auto=format&fit=crop&w=1600&q=80',
+      'https://images.unsplash.com/photo-1512290923902-8a9f81dc236c?auto=format&fit=crop&w=1600&q=80'
+    ]
+  },
+  {
+    id: 'education_event',
+    label: 'Curso, evento, clase, webinar y comunidad',
+    keywords: ['curso', 'clase', 'evento', 'webinar', 'educacion', 'capacitacion', 'coaching', 'mentoria', 'comunidad', 'registro'],
+    backgroundImage: TEMPLATE_IMAGE_URLS.planning,
+    images: [
+      'https://images.unsplash.com/photo-1523580846011-d3a5bc25702b?auto=format&fit=crop&w=1600&q=80',
+      'https://images.unsplash.com/photo-1522202176988-66273c2fd55f?auto=format&fit=crop&w=1600&q=80',
+      'https://images.unsplash.com/photo-1515187029135-18ee286d815b?auto=format&fit=crop&w=1600&q=80'
+    ]
+  },
+  {
+    id: 'premium_offer',
+    label: 'Oferta premium, lujo, asesoria privada y alto valor',
+    keywords: ['premium', 'lujo', 'privado', 'alto valor', 'vip', 'exclusivo', 'inversion', 'finanzas', 'inmobiliaria'],
+    backgroundImage: TEMPLATE_IMAGE_URLS.premium,
+    images: [
+      'https://images.unsplash.com/photo-1507679799987-c73779587ccf?auto=format&fit=crop&w=1600&q=80',
+      'https://images.unsplash.com/photo-1542744173-8e7e53415bb0?auto=format&fit=crop&w=1600&q=80',
+      'https://images.unsplash.com/photo-1519671482749-fd09be7ccebf?auto=format&fit=crop&w=1600&q=80'
+    ]
+  },
+  {
+    id: 'sales_quote',
+    label: 'Cotizacion, venta, reunion y acuerdo comercial',
+    keywords: ['cotizacion', 'quote', 'venta', 'sales', 'presupuesto', 'deal', 'propuesta', 'agenda', 'llamada'],
+    backgroundImage: TEMPLATE_IMAGE_URLS.quote,
+    images: [
+      TEMPLATE_IMAGE_URLS.handshake,
+      'https://images.unsplash.com/photo-1551836022-4c4c79ecde51?auto=format&fit=crop&w=1600&q=80',
+      'https://images.unsplash.com/photo-1552664730-d307ca884978?auto=format&fit=crop&w=1600&q=80'
+    ]
+  }
+]
+
+const SITES_AI_BLOCK_LIBRARY = [
+  'header_panel: panel superior con nombre de marca y links sencillos.',
+  'section: franja/contenedor visual. Usa settings.sectionColumns 1-3, sectionGap, blockBg, blockText, blockPadding*. Los bloques hijos apuntan a esta franja con settings.sectionId y settings.sectionColumn.',
+  'hero: titular principal, kicker, subtitulo y boton. Ideal para primer impacto.',
+  'title/subtitle/text: texto editable. Usalos para copy corto y escaneable.',
+  'image/video: media por URL con settings.mediaUrl, mediaWidth, mediaAlign y mediaRadius.',
+  'button: boton independiente con settings.buttonText y buttonAction.',
+  'benefits/services/testimonials/faq: listas editables usando settings.items con title, text y author.',
+  'form_embed: formulario inline dentro del embudo con settings.embeddedBlocks.',
+  'calendar_embed: bloque de agenda si el usuario pidio calendario y dio referencia clara.',
+  'social_profile: bloque visual de Facebook, Instagram, TikTok o Threads.',
+  'cta: cierre con subtitulo y boton.',
+  'footer_panel: pie de pagina simple.'
+]
+
+const SITES_AI_FORM_BLOCK_LIBRARY = [
+  'title/subtitle/description: textos cortos de contexto.',
+  'image/video: media por URL para que el formulario no quede plano.',
+  'short_text/paragraph/email/phone/number/currency/date: campos editables.',
+  'dropdown/radio/checkboxes: campos con opciones y reglas de calificacion.',
+  'calendar_embed/social_profile/embed: embeds controlados cuando el usuario lo pide.'
+]
+
+const SITES_AI_STYLE_SETTINGS = [
+  'Texto: fontFamily, fontSize 12-96, contentMaxWidth 10-120, textAlign left|center|right, fontWeight normal|bold, fontStyle normal|italic, textDecoration none|underline, blockText.',
+  'Espaciado: blockPadding o blockPaddingTop/Right/Bottom/Left, blockMargin o blockMarginTop/Right/Bottom/Left.',
+  'Contenedor: blockBg, blockRadius 0-48, blockBorderWidth 0-12, blockBorderColor.',
+  'Boton: buttonText, buttonAlign left|center|right|full, buttonBg, buttonTextColor, buttonRadius, buttonHeight, buttonPaddingX, buttonFontSize.',
+  'Media: mediaUrl, mediaWidth 30-100, mediaAlign left|center|right, mediaRadius.',
+  'Tarjetas/listas: items, listColumns 1-4, cardBg, cardBorderColor, cardRadius, cardBorderWidth, cardAlign.',
+  'Formulario: helpText, internalName, validation, fieldBg, fieldBorder, fieldRadius, phoneCountrySelectorEnabled.',
+  'Franjas: sectionColumns 1-3, sectionGap, sectionId y sectionColumn para meter hijos en contenedores.'
+]
+
+const SITES_AI_COPY_LIMITS = [
+  'Titulares: maximo 6-10 palabras. Si no cabe, reduce fontSize y contentMaxWidth; no conviertas el titular en parrafo.',
+  'Subtitulos: 1-2 frases cortas, maximo 180 caracteres.',
+  'Parrafos/textos: maximo 2-3 frases por bloque. Divide en benefits/services/faq si hay mucha informacion.',
+  'Botones: 2-5 palabras accionables.',
+  'Preguntas de formulario: una pregunta clara por campo; ayuda corta en settings.helpText.'
+]
+
 const makeDefaultFunnelPage = (id, title, sortOrder) => ({
   id,
   title,
@@ -2909,6 +3020,235 @@ function limitString(value, limit = 1200) {
   return text.length > limit ? text.slice(0, limit).trim() : text
 }
 
+function limitAIText(value, limit = 240) {
+  const text = cleanString(value).replace(/\s+/g, ' ')
+  if (text.length <= limit) return text
+
+  const slice = text.slice(0, limit)
+  const sentenceEnd = Math.max(slice.lastIndexOf('.'), slice.lastIndexOf('!'), slice.lastIndexOf('?'))
+  const trimmed = sentenceEnd > Math.floor(limit * 0.55)
+    ? slice.slice(0, sentenceEnd + 1)
+    : slice.replace(/\s+\S*$/, '')
+
+  return `${trimmed.trim()}...`
+}
+
+function clampAINumber(value, min, max, fallback = null) {
+  const numberValue = Number(value)
+  if (!Number.isFinite(numberValue)) return fallback
+  return Math.min(max, Math.max(min, Math.round(numberValue)))
+}
+
+function assignAINumber(target, key, value, min, max) {
+  const normalized = clampAINumber(value, min, max)
+  if (normalized !== null) target[key] = normalized
+}
+
+function normalizeAIEnum(value, allowedValues, fallback = '') {
+  const raw = cleanString(value)
+  return allowedValues.includes(raw) ? raw : fallback
+}
+
+function assignAIPaint(target, key, value, fallback = '') {
+  const normalized = normalizeCssPaint(value, fallback)
+  if (normalized) target[key] = normalized
+}
+
+function assignAIString(target, key, value, limit = 240) {
+  const normalized = limitAIText(value, limit)
+  if (normalized) target[key] = normalized
+}
+
+function assignAIUrl(target, key, value) {
+  const normalized = safeUrl(value)
+  if (normalized) target[key] = normalized
+}
+
+function getAIBlockCopyLimit(blockType) {
+  const limits = {
+    header_panel: 80,
+    footer_panel: 160,
+    section: 90,
+    hero: 120,
+    headline: 95,
+    title: 95,
+    subheading: 190,
+    subtitle: 190,
+    description: 220,
+    text: 520,
+    button: 64,
+    benefits: 110,
+    testimonials: 110,
+    services: 110,
+    faq: 110,
+    form_embed: 120,
+    cta: 120,
+    social_profile: 110
+  }
+
+  return limits[blockType] || (FIELD_BLOCK_TYPES.has(blockType) ? 160 : 260)
+}
+
+function normalizeAIItems(items = []) {
+  return (Array.isArray(items) ? items : [])
+    .slice(0, 8)
+    .map(item => {
+      if (item && typeof item === 'object' && !Array.isArray(item)) {
+        return {
+          title: limitAIText(item.title || item.label || item.name, 74),
+          text: limitAIText(item.text || item.content || item.description, 150),
+          author: limitAIText(item.author || item.role || item.source, 72)
+        }
+      }
+      return {
+        title: limitAIText(item, 74),
+        text: '',
+        author: ''
+      }
+    })
+    .filter(item => item.title || item.text)
+}
+
+function normalizeAIPanelLinks(links = []) {
+  return (Array.isArray(links) ? links : [])
+    .slice(0, 5)
+    .map(item => {
+      if (item && typeof item === 'object' && !Array.isArray(item)) {
+        return {
+          label: limitAIText(item.label || item.title || item.name, 48),
+          url: safeHref(item.url || item.href, '#')
+        }
+      }
+      const [label, url] = cleanString(item).split('|').map(part => part.trim())
+      return { label: limitAIText(label, 48), url: safeHref(url, '#') }
+    })
+    .filter(item => item.label)
+}
+
+function normalizeAIBlockSettings(blockType, settings = {}, block = {}) {
+  const source = settings && typeof settings === 'object' && !Array.isArray(settings) ? settings : {}
+  const normalized = {}
+
+  assignAIString(normalized, 'fontFamily', source.fontFamily || source.font_family, 120)
+
+  const fontWeight = normalizeAIEnum(source.fontWeight || source.font_weight, ['normal', 'bold'])
+  if (fontWeight) normalized.fontWeight = fontWeight
+
+  const fontStyle = normalizeAIEnum(source.fontStyle || source.font_style, ['normal', 'italic'])
+  if (fontStyle && fontStyle !== 'normal') normalized.fontStyle = fontStyle
+
+  const textDecoration = normalizeAIEnum(source.textDecoration || source.text_decoration, ['none', 'underline'])
+  if (textDecoration && textDecoration !== 'none') normalized.textDecoration = textDecoration
+
+  for (const key of ['textAlign', 'mediaAlign', 'cardAlign']) {
+    const normalizedAlign = normalizeAIEnum(source[key], ['left', 'center', 'right'])
+    if (normalizedAlign) normalized[key] = normalizedAlign
+  }
+
+  const buttonAlign = normalizeAIEnum(source.buttonAlign || source.button_align, ['left', 'center', 'right', 'full'])
+  if (buttonAlign) normalized.buttonAlign = buttonAlign
+
+  assignAINumber(normalized, 'fontSize', source.fontSize || source.font_size, 12, 96)
+  assignAINumber(normalized, 'contentMaxWidth', source.contentMaxWidth || source.content_max_width, 10, 120)
+  assignAINumber(normalized, 'textStrokeWidth', source.textStrokeWidth || source.text_stroke_width, 0, 12)
+  assignAINumber(normalized, 'blockRadius', source.blockRadius || source.block_radius, 0, 48)
+  assignAINumber(normalized, 'blockBorderWidth', source.blockBorderWidth || source.block_border_width, 0, 12)
+  assignAINumber(normalized, 'mediaWidth', source.mediaWidth || source.media_width, 30, 100)
+  assignAINumber(normalized, 'mediaRadius', source.mediaRadius || source.media_radius, 0, 48)
+  assignAINumber(normalized, 'embedHeight', source.embedHeight || source.embed_height, 180, 760)
+  assignAINumber(normalized, 'cardRadius', source.cardRadius || source.card_radius, 0, 48)
+  assignAINumber(normalized, 'cardBorderWidth', source.cardBorderWidth || source.card_border_width, 0, 8)
+  assignAINumber(normalized, 'listColumns', source.listColumns || source.list_columns, 1, 4)
+  assignAINumber(normalized, 'fieldRadius', source.fieldRadius || source.field_radius, 0, 32)
+  assignAINumber(normalized, 'buttonRadius', source.buttonRadius || source.button_radius, 0, 80)
+  assignAINumber(normalized, 'buttonHeight', source.buttonHeight || source.button_height, 34, 88)
+  assignAINumber(normalized, 'buttonPaddingX', source.buttonPaddingX || source.button_padding_x, 8, 72)
+  assignAINumber(normalized, 'buttonFontSize', source.buttonFontSize || source.button_font_size, 11, 32)
+  assignAINumber(normalized, 'buttonBorderWidth', source.buttonBorderWidth || source.button_border_width, 0, 8)
+  assignAINumber(normalized, 'sectionColumns', source.sectionColumns || source.columns || source.section_columns, 1, 3)
+  assignAINumber(normalized, 'sectionGap', source.sectionGap || source.section_gap, 0, 80)
+  assignAINumber(normalized, 'sectionColumn', source.sectionColumn || source.column || source.section_column, 0, 2)
+
+  for (const base of ['blockPadding', 'blockMargin']) {
+    assignAINumber(normalized, base, source[base] || source[base.replace(/[A-Z]/g, char => `_${char.toLowerCase()}`)], -80, base === 'blockPadding' ? 160 : 200)
+    for (const side of ['Top', 'Right', 'Bottom', 'Left']) {
+      const key = `${base}${side}`
+      const snakeKey = `${base.replace(/[A-Z]/g, char => `_${char.toLowerCase()}`)}_${side.toLowerCase()}`
+      assignAINumber(normalized, key, source[key] || source[snakeKey], -80, base === 'blockPadding' ? 160 : 200)
+    }
+  }
+
+  for (const key of [
+    'blockBg',
+    'blockText',
+    'blockBorderColor',
+    'buttonBg',
+    'buttonTextColor',
+    'buttonBorderColor',
+    'cardBg',
+    'cardBorderColor',
+    'fieldBg',
+    'fieldBorder',
+    'textStrokeColor'
+  ]) {
+    assignAIPaint(normalized, key, source[key] || source[key.replace(/[A-Z]/g, char => `_${char.toLowerCase()}`)])
+  }
+
+  assignAIString(normalized, 'kicker', source.kicker || source.eyebrow, 42)
+  assignAIString(normalized, 'subtitle', source.subtitle || source.subtitulo, 190)
+  assignAIString(normalized, 'buttonText', source.buttonText || source.button_text || block.buttonText || block.cta, 54)
+  assignAIString(normalized, 'description', source.description || source.descripcion, 220)
+  assignAIString(normalized, 'helpText', source.helpText || source.help_text || source.ayuda || block.helpText || block.help_text, 180)
+  assignAIString(normalized, 'validation', source.validation || source.validacion || block.validation || block.validacion, 80)
+
+  const internalName = normalizeInternalName(source.internalName || source.internal_name || block.internalName || block.internal_name || block.label || block.question || block.pregunta, '')
+  if (internalName) normalized.internalName = internalName
+
+  const pageId = cleanString(source.pageId || source.page_id || block.pageId || block.page_id)
+  if (pageId) normalized.pageId = limitString(pageId, 80)
+
+  const sectionRef = cleanString(source.sectionId || source.section_id || source.sectionKey || source.section_key || block.sectionId || block.section_id || block.sectionKey || block.section_key)
+  if (sectionRef) normalized.sectionId = limitString(sectionRef, 140)
+
+  const completionAction = normalizeFormCompletionAction(source.completionAction || source.completion_action, '')
+  if (completionAction) normalized.completionAction = completionAction
+
+  const buttonAction = normalizeAIEnum(source.buttonAction || source.button_action, ['url', 'next_page', 'specific_page'])
+  if (buttonAction) normalized.buttonAction = buttonAction
+  if (source.buttonPageId || source.button_page_id) normalized.buttonPageId = limitString(source.buttonPageId || source.button_page_id, 80)
+  if (source.buttonUrl || source.button_url || block.buttonUrl || block.url) normalized.buttonUrl = safeHref(source.buttonUrl || source.button_url || block.buttonUrl || block.url, '#form')
+
+  if (blockType === 'image' || blockType === 'video') {
+    assignAIUrl(normalized, 'mediaUrl', source.mediaUrl || source.media_url || block.mediaUrl || block.media_url || block.imageUrl || block.image_url || block.content)
+  }
+
+  if (blockType === 'social_profile') {
+    const platform = normalizeAIEnum(source.platform || source.red || source.socialPlatform, ['facebook', 'instagram', 'tiktok', 'threads'], 'instagram')
+    normalized.platform = platform
+    assignAIString(normalized, 'brandName', source.brandName || source.brand_name || block.brandName, 80)
+    assignAIString(normalized, 'brandSubtitle', source.brandSubtitle || source.brand_subtitle, 80)
+    assignAIString(normalized, 'followers', source.followers || source.seguidores, 48)
+    assignAIUrl(normalized, 'brandAvatar', source.brandAvatar || source.brand_avatar || source.avatar)
+    if (source.brandVerified !== undefined || source.brand_verified !== undefined) normalized.brandVerified = normalizeBoolean(source.brandVerified ?? source.brand_verified)
+  }
+
+  const items = normalizeAIItems(source.items || source.cards || source.faq || block.items || block.cards)
+  if (items.length > 0) normalized.items = items
+
+  const panelLinks = normalizeAIPanelLinks(source.panelLinks || source.panel_links || block.panelLinks || block.links)
+  if (panelLinks.length > 0) normalized.panelLinks = panelLinks
+
+  if (source.phoneCountrySelectorEnabled !== undefined || source.phone_country_selector_enabled !== undefined) {
+    normalized.phoneCountrySelectorEnabled = normalizeBoolean(source.phoneCountrySelectorEnabled ?? source.phone_country_selector_enabled)
+  }
+
+  if (Array.isArray(source.embeddedBlocks)) {
+    normalized.embeddedBlocks = source.embeddedBlocks
+  }
+
+  return normalized
+}
+
 function normalizeInternalName(value, fallback = 'field') {
   return slugify(value || fallback).replace(/-/g, '_')
 }
@@ -2969,13 +3309,95 @@ function paintFallbackColor(paint, fallback = '#111827') {
   return isCssGradient(paint) ? extractCssColor(paint, fallback) : normalizeCssColor(paint, fallback)
 }
 
-function normalizeAITheme(theme = {}) {
+function normalizeAITheme(theme = {}, stockImageGroup = null) {
   const input = theme && typeof theme === 'object' && !Array.isArray(theme) ? theme : {}
-  return {
+  const normalized = {
     accentColor: normalizeCssPaint(input.accentColor || input.accent_color, DEFAULT_THEME.accentColor),
     backgroundColor: normalizeCssPaint(input.backgroundColor || input.background_color, DEFAULT_THEME.backgroundColor),
     textColor: normalizeCssPaint(input.textColor || input.text_color, DEFAULT_THEME.textColor)
   }
+
+  const backgroundImage = safeUrl(input.backgroundImage || input.background_image || input.image || input.imagen) || stockImageGroup?.backgroundImage || ''
+  if (backgroundImage) normalized.backgroundImage = backgroundImage
+
+  const backgroundMediaType = normalizeAIEnum(input.backgroundMediaType || input.background_media_type, ['image', 'video'])
+  if (backgroundMediaType) normalized.backgroundMediaType = backgroundMediaType
+
+  const backgroundFit = normalizeAIEnum(input.backgroundFit || input.background_fit, ['cover', 'contain', 'full_width', 'auto'], backgroundImage ? 'cover' : '')
+  if (backgroundFit) normalized.backgroundFit = backgroundFit
+
+  const backgroundRepeat = normalizeAIEnum(input.backgroundRepeat || input.background_repeat, ['no-repeat', 'repeat', 'repeat-x', 'repeat-y'], backgroundImage ? 'no-repeat' : '')
+  if (backgroundRepeat) normalized.backgroundRepeat = backgroundRepeat
+
+  const backgroundPosition = cleanString(input.backgroundPosition || input.background_position)
+  if (backgroundPosition) normalized.backgroundPosition = limitString(backgroundPosition, 80)
+
+  const backgroundAttachment = normalizeAIEnum(input.backgroundAttachment || input.background_attachment, ['scroll', 'fixed'])
+  if (backgroundAttachment) normalized.backgroundAttachment = backgroundAttachment
+
+  assignAINumber(normalized, 'pagePadding', input.pagePadding || input.page_padding, 0, 96)
+  assignAINumber(normalized, 'pageRadius', input.pageRadius || input.page_radius, 0, 48)
+  assignAINumber(normalized, 'pageBorderWidth', input.pageBorderWidth || input.page_border_width, 0, 12)
+  assignAINumber(normalized, 'pageMaxWidth', input.pageMaxWidth || input.page_max_width, 320, 1600)
+  assignAIPaint(normalized, 'pageBorderColor', input.pageBorderColor || input.page_border_color)
+
+  assignAIString(normalized, 'brandName', input.brandName || input.brand_name, 80)
+  assignAIString(normalized, 'brandSubtitle', input.brandSubtitle || input.brand_subtitle, 120)
+  assignAIUrl(normalized, 'brandAvatar', input.brandAvatar || input.brand_avatar)
+  assignAIString(normalized, 'followers', input.followers || input.seguidores, 48)
+  if (input.brandVerified !== undefined || input.brand_verified !== undefined) {
+    normalized.brandVerified = normalizeBoolean(input.brandVerified ?? input.brand_verified)
+  }
+
+  assignAIString(normalized, 'submitText', input.submitText || input.submit_text, 54)
+  assignAIString(normalized, 'submitSubtitle', input.submitSubtitle || input.submit_subtitle, 80)
+  assignAIPaint(normalized, 'submitBg', input.submitBg || input.submit_bg)
+  assignAIPaint(normalized, 'submitTextColor', input.submitTextColor || input.submit_text_color)
+  assignAIPaint(normalized, 'submitBorderColor', input.submitBorderColor || input.submit_border_color)
+  assignAINumber(normalized, 'submitRadius', input.submitRadius || input.submit_radius, 0, 80)
+  assignAINumber(normalized, 'submitHeight', input.submitHeight || input.submit_height, 34, 96)
+  assignAINumber(normalized, 'submitPaddingX', input.submitPaddingX || input.submit_padding_x, 8, 72)
+  assignAINumber(normalized, 'submitFontSize', input.submitFontSize || input.submit_font_size, 11, 32)
+  assignAINumber(normalized, 'submitBorderWidth', input.submitBorderWidth || input.submit_border_width, 0, 8)
+
+  assignAIString(normalized, 'formFontFamily', input.formFontFamily || input.form_font_family, 120)
+  assignAINumber(normalized, 'formLabelSize', input.formLabelSize || input.form_label_size, 11, 32)
+  assignAINumber(normalized, 'formInputSize', input.formInputSize || input.form_input_size, 11, 32)
+  assignAINumber(normalized, 'formHelpSize', input.formHelpSize || input.form_help_size, 10, 24)
+  const formFontWeight = normalizeAIEnum(input.formFontWeight || input.form_font_weight, ['normal', 'bold'])
+  if (formFontWeight) normalized.formFontWeight = formFontWeight
+  const formFontStyle = normalizeAIEnum(input.formFontStyle || input.form_font_style, ['normal', 'italic'])
+  if (formFontStyle) normalized.formFontStyle = formFontStyle
+  const formTextDecoration = normalizeAIEnum(input.formTextDecoration || input.form_text_decoration, ['none', 'underline'])
+  if (formTextDecoration) normalized.formTextDecoration = formTextDecoration
+  assignAIPaint(normalized, 'formLabelColor', input.formLabelColor || input.form_label_color)
+  assignAIPaint(normalized, 'formHelpColor', input.formHelpColor || input.form_help_color)
+  assignAIPaint(normalized, 'formFieldBg', input.formFieldBg || input.form_field_bg)
+  assignAIPaint(normalized, 'formFieldText', input.formFieldText || input.form_field_text)
+  assignAIPaint(normalized, 'formFieldBorder', input.formFieldBorder || input.form_field_border)
+  assignAIPaint(normalized, 'formPlaceholderColor', input.formPlaceholderColor || input.form_placeholder_color)
+  assignAINumber(normalized, 'formFieldRadius', input.formFieldRadius || input.form_field_radius, 0, 32)
+  assignAINumber(normalized, 'formFieldBorderWidth', input.formFieldBorderWidth || input.form_field_border_width, 0, 8)
+  assignAINumber(normalized, 'formFieldHeight', input.formFieldHeight || input.form_field_height, 34, 96)
+  assignAINumber(normalized, 'formFieldPaddingX', input.formFieldPaddingX || input.form_field_padding_x, 6, 32)
+  assignAINumber(normalized, 'formFieldPaddingY', input.formFieldPaddingY || input.form_field_padding_y, 6, 28)
+
+  const formChoiceStyle = normalizeAIEnum(input.formChoiceStyle || input.form_choice_style, ['native', 'cards', 'pills', 'minimal'])
+  if (formChoiceStyle) normalized.formChoiceStyle = formChoiceStyle
+  assignAIPaint(normalized, 'formChoiceSelectedBg', input.formChoiceSelectedBg || input.form_choice_selected_bg)
+  assignAIPaint(normalized, 'formChoiceSelectedBorder', input.formChoiceSelectedBorder || input.form_choice_selected_border)
+  const formSelectStyle = normalizeAIEnum(input.formSelectStyle || input.form_select_style, ['classic', 'filled', 'underline'])
+  if (formSelectStyle) normalized.formSelectStyle = formSelectStyle
+
+  const formCompletionAction = normalizeFormCompletionAction(input.formCompletionAction || input.form_completion_action, '')
+  if (formCompletionAction) normalized.formCompletionAction = formCompletionAction
+
+  assignAIString(normalized, 'seoKeywords', input.seoKeywords || input.seo_keywords, 240)
+  assignAIString(normalized, 'seoAuthor', input.seoAuthor || input.seo_author, 80)
+  assignAIUrl(normalized, 'seoImage', input.seoImage || input.seo_image || backgroundImage)
+  assignAIString(normalized, 'seoLanguage', input.seoLanguage || input.seo_language || 'es - Spanish', 40)
+
+  return normalized
 }
 
 function normalizeSitesAIMessages(messages = []) {
@@ -3047,6 +3469,9 @@ function buildSitesAIInstructions({ siteKind, agentConfig = {} }) {
     agentConfig.brand_voice,
     agentConfig.action_customizations
   ].map(value => limitString(value, 1200)).filter(Boolean).join('\n\n')
+  const imageCatalog = SITES_AI_STOCK_IMAGE_LIBRARY
+    .map(group => `- ${group.id}: ${group.label}. Fondo: ${group.backgroundImage}. Imagenes: ${group.images.join(' | ')}`)
+    .join('\n')
 
   return `
 Eres el asistente de creacion de Sites de Ristak. Tu trabajo es hacer preguntas y, cuando haya informacion suficiente, devolver SOLO JSON valido compatible con el builder actual.
@@ -3058,17 +3483,49 @@ Reglas duras:
 - Si ya hay informacion suficiente, responde JSON con status "ready", "reply" y un objeto "site".
 - El site creado siempre debe quedar como borrador editable en el builder.
 - La respuesta completa debe ser JSON valido sin markdown.
+- Disena para que el usuario tenga un borrador usable en segundos: estructura completa, copy corto, fotos reales por URL y CTA claro.
+- No inventes URLs imposibles ni uses imagenes con marca de agua. Si no tienes una URL directa segura, usa una URL exacta del catalogo de imagenes incluido.
 
 Tipo solicitado por el usuario: ${getSitesAITargetType(siteKind)}.
 
 Bloques permitidos para landing_page:
-header_panel, hero, title, subtitle, text, image, video, button, benefits, testimonials, services, embed, calendar_embed, form_embed, social_profile, faq, cta, footer_panel.
+header_panel, section, hero, title, subtitle, text, image, video, button, benefits, testimonials, services, embed, calendar_embed, form_embed, social_profile, faq, cta, footer_panel.
 
 Bloques permitidos para formularios:
-short_text, paragraph, number, currency, dropdown, radio, checkboxes, phone, email, date, title, subtitle, description, video, embed, calendar_embed, social_profile.
+short_text, paragraph, number, currency, dropdown, radio, checkboxes, phone, email, date, title, subtitle, description, image, video, embed, calendar_embed, social_profile.
 
 Acciones permitidas por opcion:
 continue, jump, disqualify, disqualify_after_submit, redirect.
+
+Capacidades actuales del builder de landing_page:
+${SITES_AI_BLOCK_LIBRARY.map(item => `- ${item}`).join('\n')}
+
+Capacidades actuales del builder de formularios:
+${SITES_AI_FORM_BLOCK_LIBRARY.map(item => `- ${item}`).join('\n')}
+
+Controles visuales que puedes usar dentro de settings:
+${SITES_AI_STYLE_SETTINGS.map(item => `- ${item}`).join('\n')}
+
+Reglas de copy y ajuste visual:
+${SITES_AI_COPY_LIMITS.map(item => `- ${item}`).join('\n')}
+- Si un titular o subtitulo queda largo por necesidad, baja settings.fontSize y sube ligeramente settings.contentMaxWidth. No dejes textos gigantes sin ajuste.
+- Evita parrafos pesados. Para explicar varios puntos, usa benefits, services o faq con items cortos.
+- La primera pantalla debe mostrar marca/oferta, imagen o fondo visual, beneficio principal y CTA sin que el texto tape la lectura.
+
+Imagenes:
+- Usa imagenes HTTPS directas en theme.backgroundImage o en bloques image con settings.mediaUrl.
+- Preferencia sin API: usa el catalogo exacto de Unsplash incluido abajo.
+- Si en el futuro el negocio configura una API externa, puedes seguir usando URLs directas de Pexels, Pixabay, Freepik API o Shutterstock API solo cuando sean URLs permitidas/licenciadas. No uses previews con watermark.
+- Para formularios, agrega al menos una imagen o fondo cuando ayude a que se vea profesional.
+
+Catalogo de imagenes permitido:
+${imageCatalog}
+
+Uso de contenedores section:
+- Para landings modernas, usa section como contenedor principal. Cada section puede tener settings.sectionColumns 1, 2 o 3.
+- Los bloques hijos de una section deben traer settings.sectionId con el "key" de la section y settings.sectionColumn 0, 1 o 2.
+- Ejemplo: crea una section con key "hero_section"; luego hero e image usan settings.sectionId "hero_section". El backend resolvera ese key al id real.
+- No metas cards dentro de cards. Usa section para franjas amplias y usa listas solo cuando sean informacion repetida.
 
 JSON esperado cuando falta informacion:
 {
@@ -3096,7 +3553,17 @@ JSON esperado cuando esta listo:
         "content": "Texto principal cuando aplique",
         "placeholder": "Placeholder cuando aplique",
         "required": true,
-        "settings": { "internalName": "nombre_interno", "helpText": "Texto de ayuda", "validation": "email" },
+        "settings": {
+          "internalName": "nombre_interno",
+          "helpText": "Texto de ayuda",
+          "validation": "email",
+          "sectionId": "key_de_section_si_es_hijo",
+          "sectionColumn": 0,
+          "fontSize": 44,
+          "contentMaxWidth": 20,
+          "mediaUrl": "https://images.unsplash.com/...",
+          "buttonText": "Quiero empezar"
+        },
         "options": [
           {
             "label": "Opcion visible",
@@ -3134,9 +3601,29 @@ async function callSitesAIGenerator({ apiKey, model, siteKind, messages, agentCo
       instructions: buildSitesAIInstructions({ siteKind, agentConfig }),
       input: JSON.stringify({
         siteKind,
+        builderContext: {
+          targetSiteType: getSitesAITargetType(siteKind),
+          landingBlocks: ['header_panel', 'section', 'hero', 'title', 'subtitle', 'text', 'image', 'video', 'button', 'benefits', 'testimonials', 'services', 'embed', 'calendar_embed', 'form_embed', 'social_profile', 'faq', 'cta', 'footer_panel'],
+          formBlocks: ['title', 'subtitle', 'description', 'image', 'video', 'short_text', 'paragraph', 'number', 'currency', 'dropdown', 'radio', 'checkboxes', 'phone', 'email', 'date', 'embed', 'calendar_embed', 'social_profile'],
+          styleSettings: SITES_AI_STYLE_SETTINGS,
+          copyLimits: SITES_AI_COPY_LIMITS,
+          imageCatalog: SITES_AI_STOCK_IMAGE_LIBRARY.map(group => ({
+            id: group.id,
+            label: group.label,
+            backgroundImage: group.backgroundImage,
+            images: group.images
+          })),
+          previewModel: {
+            desktopWidth: 1440,
+            formMaxWidth: '480-620px',
+            sectionColumns: '1-3',
+            textSizing: 'fontSize and contentMaxWidth are saved into each block settings',
+            mediaSizing: 'mediaWidth, mediaAlign and mediaRadius are saved into image/video settings'
+          }
+        },
         conversation: messages
       }),
-      max_output_tokens: 5200
+      max_output_tokens: 7200
     })
   })
 
@@ -3195,7 +3682,7 @@ function normalizeAIBlockOptions(blockType, options = []) {
 }
 
 function normalizeAIEmbeddedBlocks(siteId, embeddedBlocks = []) {
-  const allowedTypes = new Set([...FIELD_BLOCK_TYPES, 'title', 'subtitle', 'description', 'video', 'embed', 'calendar_embed', 'social_profile'])
+  const allowedTypes = new Set([...FIELD_BLOCK_TYPES, 'title', 'subtitle', 'description', 'image', 'video', 'embed', 'calendar_embed', 'social_profile'])
   return (Array.isArray(embeddedBlocks) ? embeddedBlocks : [])
     .map((block, index) => normalizeAIBlock({
       block,
@@ -3214,16 +3701,16 @@ function normalizeAIBlock({ block = {}, siteId, sortOrder = 0, allowedTypes = BL
   const isField = FIELD_BLOCK_TYPES.has(blockType)
   const id = crypto.randomUUID()
   const label = limitString(block.label || block.question || block.pregunta || block.title || block.titulo || (isField ? 'Nueva pregunta' : 'Nuevo bloque'), 180)
-  const settings = block.settings && typeof block.settings === 'object' && !Array.isArray(block.settings)
+  let settings = block.settings && typeof block.settings === 'object' && !Array.isArray(block.settings)
     ? { ...block.settings }
     : {}
 
   if (block.helpText || block.help_text || block.ayuda) {
-    settings.helpText = limitString(block.helpText || block.help_text || block.ayuda, 400)
+    settings.helpText = block.helpText || block.help_text || block.ayuda
   }
 
   if (block.validation || block.validacion) {
-    settings.validation = limitString(block.validation || block.validacion, 80)
+    settings.validation = block.validation || block.validacion
   }
 
   if (isField && !settings.internalName) {
@@ -3239,13 +3726,15 @@ function normalizeAIBlock({ block = {}, siteId, sortOrder = 0, allowedTypes = BL
     settings.embeddedBlocks = normalizeAIEmbeddedBlocks(siteId, embeddedBlocks)
   }
 
+  settings = normalizeAIBlockSettings(blockType, settings, block)
+
   return {
     sourceKey: cleanString(block.key || block.id || settings.internalName || label),
     id,
     site_id: siteId,
     block_type: blockType,
     label,
-    content: limitString(block.content || block.text || block.copy || block.title || block.titulo, 1800),
+    content: limitAIText(block.content || block.text || block.copy || block.title || block.titulo, getAIBlockCopyLimit(blockType)),
     placeholder: limitString(block.placeholder, 180),
     required: normalizeBoolean(block.required || block.requerido),
     options: normalizeAIBlockOptions(blockType, block.options || block.opciones),
@@ -3280,6 +3769,366 @@ function resolveAIJumpTargets(blocks = []) {
       }
     })
   }))
+}
+
+function resolveAISectionTargets(blocks = []) {
+  const sectionTargets = new Map()
+
+  for (const block of blocks) {
+    if (block.block_type !== 'section') continue
+    for (const key of [
+      block.sourceKey,
+      block.id,
+      block.label,
+      block.content
+    ]) {
+      const normalized = normalizeInternalName(key, '')
+      if (normalized) sectionTargets.set(normalized, block.id)
+    }
+  }
+
+  if (sectionTargets.size === 0) return blocks
+
+  let currentSectionId = ''
+  const sectionById = new Map(blocks.filter(block => block.block_type === 'section').map(block => [block.id, block]))
+
+  return blocks.map(block => {
+    if (block.block_type === 'section') {
+      currentSectionId = block.id
+      return block
+    }
+
+    if (block.block_type === 'header_panel' || block.block_type === 'footer_panel') {
+      return block
+    }
+
+    const settings = { ...(block.settings || {}) }
+    const sectionRef = cleanString(settings.sectionId)
+    if (sectionRef) {
+      const normalizedRef = normalizeInternalName(sectionRef, '')
+      settings.sectionId = sectionTargets.get(normalizedRef) || sectionRef
+    } else if (currentSectionId) {
+      settings.sectionId = currentSectionId
+    }
+
+    const section = sectionById.get(settings.sectionId)
+    if (section) {
+      const columnCount = clampAINumber(section.settings?.sectionColumns || section.settings?.columns, 1, 3, 1)
+      settings.sectionColumn = clampAINumber(settings.sectionColumn, 0, Math.max(0, columnCount - 1), 0)
+    }
+
+    return { ...block, settings }
+  })
+}
+
+function makeAILandingPanelBlock(siteId, blockType, content, sortOrder = 0) {
+  const isHeader = blockType === 'header_panel'
+  return {
+    sourceKey: isHeader ? 'ai_header' : 'ai_footer',
+    id: crypto.randomUUID(),
+    site_id: siteId,
+    block_type: blockType,
+    label: isHeader ? 'Panel superior' : 'Panel inferior',
+    content,
+    placeholder: '',
+    required: 0,
+    options: [],
+    settings: {
+      blockPaddingTop: isHeader ? 16 : 24,
+      blockPaddingRight: 42,
+      blockPaddingBottom: isHeader ? 16 : 28,
+      blockPaddingLeft: 42,
+      blockMarginTop: 0,
+      blockMarginRight: 0,
+      blockMarginBottom: 0,
+      blockMarginLeft: 0,
+      blockBg: 'transparent',
+      textAlign: isHeader ? 'left' : 'center',
+      blockRadius: 0,
+      blockBorderWidth: 0,
+      ...(isHeader
+        ? { panelLinks: [{ label: 'Inicio', url: '#' }, { label: 'Contacto', url: '#form' }] }
+        : { panelLinks: [{ label: 'Privacidad', url: '#' }] })
+    },
+    sort_order: sortOrder
+  }
+}
+
+function makeAISectionBlock(siteId, label, sortOrder = 0, settings = {}) {
+  return {
+    sourceKey: normalizeInternalName(label || `section_${sortOrder}`, 'section'),
+    id: crypto.randomUUID(),
+    site_id: siteId,
+    block_type: 'section',
+    label: label || 'Franja',
+    content: '',
+    placeholder: '',
+    required: 0,
+    options: [],
+    settings: {
+      sectionColumns: 1,
+      sectionGap: 24,
+      blockBg: '#ffffff',
+      blockText: '#111827',
+      blockPaddingTop: 56,
+      blockPaddingRight: 42,
+      blockPaddingBottom: 56,
+      blockPaddingLeft: 42,
+      blockMarginTop: 0,
+      blockMarginRight: 0,
+      blockMarginBottom: 0,
+      blockMarginLeft: 0,
+      textAlign: 'center',
+      blockRadius: 0,
+      blockBorderWidth: 0,
+      ...settings
+    },
+    sort_order: sortOrder
+  }
+}
+
+function ensureAILandingScaffold(blocks = [], siteId, siteTitle = '') {
+  const hasHeader = blocks.some(block => block.block_type === 'header_panel')
+  const hasFooter = blocks.some(block => block.block_type === 'footer_panel')
+  const hasSection = blocks.some(block => block.block_type === 'section')
+  const headerBlocks = blocks.filter(block => block.block_type === 'header_panel')
+  const footerBlocks = blocks.filter(block => block.block_type === 'footer_panel')
+  const output = []
+
+  if (!hasHeader) {
+    output.push(makeAILandingPanelBlock(siteId, 'header_panel', siteTitle || 'Tu marca'))
+  } else if (!hasSection) {
+    output.push(...headerBlocks)
+  }
+
+  if (hasSection) {
+    output.push(...blocks)
+  } else {
+    const bodyBlocks = blocks.filter(block => block.block_type !== 'header_panel' && block.block_type !== 'footer_panel')
+    const hasMedia = bodyBlocks.some(block => block.block_type === 'image' || block.block_type === 'video')
+    const hasCopy = bodyBlocks.some(block => !['image', 'video'].includes(block.block_type))
+    const columns = hasMedia && hasCopy ? 2 : 1
+    const section = makeAISectionBlock(siteId, 'Franja principal', output.length, {
+      sectionColumns: columns,
+      blockBg: 'rgba(255,255,255,.9)',
+      blockText: '#111827'
+    })
+
+    if (bodyBlocks.length > 0) {
+      output.push(section)
+      for (const block of bodyBlocks) {
+        output.push({
+          ...block,
+          settings: {
+            ...(block.settings || {}),
+            sectionId: section.id,
+            sectionColumn: columns > 1 && ['image', 'video'].includes(block.block_type) ? 1 : 0
+          }
+        })
+      }
+    }
+
+    output.push(...footerBlocks)
+  }
+
+  if (!hasFooter) {
+    output.push(makeAILandingPanelBlock(siteId, 'footer_panel', 'Tu informacion esta protegida.'))
+  }
+
+  return output.map((block, index) => ({ ...block, sort_order: index }))
+}
+
+function getAIStockSearchText(aiSite = {}, blocksInput = []) {
+  const blockText = (Array.isArray(blocksInput) ? blocksInput : [])
+    .map(block => [
+      block?.label,
+      block?.content,
+      block?.text,
+      block?.copy,
+      block?.title,
+      block?.settings?.subtitle,
+      block?.settings?.description
+    ].filter(Boolean).join(' '))
+    .join(' ')
+
+  return cleanString([
+    aiSite.name,
+    aiSite.title,
+    aiSite.description,
+    aiSite.seo?.title,
+    aiSite.seo?.description,
+    blockText
+  ].filter(Boolean).join(' ')).toLowerCase()
+}
+
+function selectAIStockImageGroup(aiSite = {}, blocksInput = []) {
+  const searchText = getAIStockSearchText(aiSite, blocksInput)
+  let bestGroup = SITES_AI_STOCK_IMAGE_LIBRARY[0]
+  let bestScore = 0
+
+  for (const group of SITES_AI_STOCK_IMAGE_LIBRARY) {
+    const score = group.keywords.reduce((acc, keyword) => (
+      searchText.includes(keyword.toLowerCase()) ? acc + 1 : acc
+    ), 0)
+    if (score > bestScore) {
+      bestGroup = group
+      bestScore = score
+    }
+  }
+
+  return bestGroup
+}
+
+function getAIStockImage(stockImageGroup, index = 0) {
+  const images = stockImageGroup?.images?.length ? stockImageGroup.images : [stockImageGroup?.backgroundImage || TEMPLATE_IMAGE_URLS.workspace]
+  return images[Math.abs(index) % images.length]
+}
+
+function getAIAdaptiveTypography(block, siteType) {
+  const blockType = block.block_type
+  const textLength = cleanString(block.content).length
+
+  if (siteType === 'landing_page') {
+    if (blockType === 'hero') {
+      if (textLength > 125) return { fontSize: 38, contentMaxWidth: 24 }
+      if (textLength > 95) return { fontSize: 44, contentMaxWidth: 22 }
+      if (textLength > 70) return { fontSize: 50, contentMaxWidth: 20 }
+      return { fontSize: 58, contentMaxWidth: 16 }
+    }
+
+    if (blockType === 'headline' || blockType === 'title') {
+      if (textLength > 110) return { fontSize: 34, contentMaxWidth: 28 }
+      if (textLength > 80) return { fontSize: 40, contentMaxWidth: 24 }
+      return { fontSize: 52, contentMaxWidth: 20 }
+    }
+
+    if (blockType === 'cta') {
+      return textLength > 90 ? { fontSize: 34, contentMaxWidth: 56 } : { fontSize: 42, contentMaxWidth: 52 }
+    }
+
+    if (['benefits', 'services', 'testimonials', 'faq', 'form_embed', 'section'].includes(blockType)) {
+      return textLength > 80 ? { fontSize: 28, contentMaxWidth: 28 } : { fontSize: 32, contentMaxWidth: 22 }
+    }
+
+    if (['subheading', 'subtitle', 'description'].includes(blockType)) {
+      return { fontSize: textLength > 170 ? 17 : 20, contentMaxWidth: 62 }
+    }
+
+    if (blockType === 'text') {
+      return { fontSize: textLength > 360 ? 16 : 17, contentMaxWidth: 68 }
+    }
+  }
+
+  if (blockType === 'headline' || blockType === 'title') {
+    return textLength > 85 ? { fontSize: 30, contentMaxWidth: 28 } : { fontSize: 38, contentMaxWidth: 22 }
+  }
+
+  if (['subheading', 'subtitle', 'description'].includes(blockType)) {
+    return { fontSize: textLength > 170 ? 16 : 18, contentMaxWidth: 60 }
+  }
+
+  return {}
+}
+
+function applyAIDesignGuards(blocks = [], siteType, stockImageGroup) {
+  let stockImageIndex = 0
+
+  return blocks.map(block => {
+    const settings = { ...(block.settings || {}) }
+    const typography = getAIAdaptiveTypography(block, siteType)
+
+    if (settings.fontSize === undefined && typography.fontSize !== undefined) settings.fontSize = typography.fontSize
+    if (settings.contentMaxWidth === undefined && typography.contentMaxWidth !== undefined) settings.contentMaxWidth = typography.contentMaxWidth
+
+    if (block.block_type === 'section') {
+      if (settings.sectionColumns === undefined) settings.sectionColumns = 1
+      if (settings.sectionGap === undefined) settings.sectionGap = 24
+      if (settings.blockPaddingTop === undefined) settings.blockPaddingTop = 56
+      if (settings.blockPaddingRight === undefined) settings.blockPaddingRight = 42
+      if (settings.blockPaddingBottom === undefined) settings.blockPaddingBottom = 56
+      if (settings.blockPaddingLeft === undefined) settings.blockPaddingLeft = 42
+      if (settings.blockBorderWidth === undefined) settings.blockBorderWidth = 0
+      if (settings.blockRadius === undefined) settings.blockRadius = 0
+    }
+
+    if (block.block_type === 'image') {
+      if (!safeUrl(settings.mediaUrl || block.content)) {
+        settings.mediaUrl = getAIStockImage(stockImageGroup, stockImageIndex++)
+      }
+      if (settings.mediaWidth === undefined) settings.mediaWidth = 100
+      if (settings.mediaRadius === undefined) settings.mediaRadius = siteType === 'landing_page' ? 24 : 18
+      if (settings.blockBorderWidth === undefined) settings.blockBorderWidth = 0
+    }
+
+    if (block.block_type === 'video') {
+      if (settings.mediaWidth === undefined) settings.mediaWidth = 100
+      if (settings.mediaRadius === undefined) settings.mediaRadius = 18
+    }
+
+    if (['hero', 'cta', 'button'].includes(block.block_type)) {
+      if (!settings.buttonText) settings.buttonText = block.block_type === 'cta' ? 'Quiero avanzar' : 'Quiero empezar'
+      if (settings.buttonAlign === undefined) settings.buttonAlign = 'center'
+      if (settings.buttonRadius === undefined) settings.buttonRadius = 28
+      if (settings.buttonHeight === undefined) settings.buttonHeight = 54
+      if (settings.buttonPaddingX === undefined) settings.buttonPaddingX = 28
+      if (settings.buttonFontSize === undefined) settings.buttonFontSize = 16
+      if (settings.buttonUrl === undefined && settings.buttonAction === undefined) settings.buttonUrl = '#form'
+    }
+
+    if (['benefits', 'services', 'testimonials', 'faq'].includes(block.block_type)) {
+      if (settings.listColumns === undefined) {
+        const itemCount = Array.isArray(settings.items) ? settings.items.length : 3
+        settings.listColumns = itemCount <= 2 ? 2 : 3
+      }
+      if (settings.cardRadius === undefined) settings.cardRadius = siteType === 'landing_page' ? 0 : 8
+      if (settings.cardBorderWidth === undefined) settings.cardBorderWidth = siteType === 'landing_page' ? 0 : 1
+    }
+
+    if (block.block_type === 'form_embed') {
+      if (settings.blockPaddingTop === undefined) settings.blockPaddingTop = 30
+      if (settings.blockPaddingRight === undefined) settings.blockPaddingRight = 30
+      if (settings.blockPaddingBottom === undefined) settings.blockPaddingBottom = 30
+      if (settings.blockPaddingLeft === undefined) settings.blockPaddingLeft = 30
+      if (settings.blockRadius === undefined) settings.blockRadius = 20
+      if (settings.blockBorderWidth === undefined) settings.blockBorderWidth = 1
+      if (!settings.buttonText) settings.buttonText = 'Enviar datos'
+      if (!settings.description) settings.description = 'Deja tus datos y te contactamos con el siguiente paso.'
+    }
+
+    if (FIELD_BLOCK_TYPES.has(block.block_type)) {
+      if (settings.fieldRadius === undefined) settings.fieldRadius = 12
+    }
+
+    return { ...block, settings }
+  })
+}
+
+function ensureAIFormVisualBlock(blocks = [], siteType, siteId, stockImageGroup) {
+  if (siteType === 'landing_page') return blocks
+  if (blocks.some(block => block.block_type === 'image' || block.block_type === 'video')) return blocks
+
+  const imageBlock = normalizeAIBlock({
+    block: {
+      key: 'ai_form_visual',
+      blockType: 'image',
+      label: 'Imagen de apoyo',
+      settings: {
+        mediaUrl: getAIStockImage(stockImageGroup, 0),
+        mediaRadius: 18,
+        mediaWidth: 100,
+        blockBorderWidth: 0
+      }
+    },
+    siteId,
+    sortOrder: 0,
+    allowedTypes: BLOCK_TYPES,
+    fallbackType: 'image'
+  })
+
+  return [
+    imageBlock,
+    ...blocks.map((block, index) => ({ ...block, sort_order: index + 1 }))
+  ]
 }
 
 function makeAIThankYouBlocks(siteId) {
@@ -3361,13 +4210,26 @@ function normalizeAISiteBlueprint(siteKind, aiSite = {}) {
   const id = crypto.randomUUID()
   const allowedTypes = siteType === 'landing_page'
     ? new Set(['header_panel', 'hero', 'section', 'title', 'subtitle', 'text', 'image', 'video', 'button', 'benefits', 'testimonials', 'services', 'embed', 'calendar_embed', 'form_embed', 'social_profile', 'faq', 'cta', 'footer_panel'])
-    : new Set([...FIELD_BLOCK_TYPES, 'title', 'subtitle', 'description', 'video', 'embed', 'calendar_embed', 'social_profile'])
+    : new Set([...FIELD_BLOCK_TYPES, 'title', 'subtitle', 'description', 'image', 'video', 'embed', 'calendar_embed', 'social_profile'])
   const fallbackType = siteType === 'landing_page' ? 'text' : 'short_text'
   const blocksInput = Array.isArray(aiSite.blocks)
     ? aiSite.blocks
     : Array.isArray(aiSite.bloques)
       ? aiSite.bloques
       : []
+  const seo = aiSite.seo && typeof aiSite.seo === 'object' && !Array.isArray(aiSite.seo) ? aiSite.seo : {}
+  const finalMessages = aiSite.finalMessages && typeof aiSite.finalMessages === 'object' && !Array.isArray(aiSite.finalMessages)
+    ? aiSite.finalMessages
+    : aiSite.final_messages && typeof aiSite.final_messages === 'object' && !Array.isArray(aiSite.final_messages)
+      ? aiSite.final_messages
+      : {}
+  const requestedTemplate = cleanString(aiSite.template || aiSite.plantilla)
+  const aiTemplate = SITE_TEMPLATES[requestedTemplate] ? requestedTemplate : ''
+  const successMessage = limitAIText(finalMessages.success || finalMessages.exito, 420)
+  const disqualifiedMessage = limitAIText(finalMessages.disqualified || finalMessages.descalificado, 420)
+  const title = limitAIText(aiSite.title || seo.title || aiSite.name || (siteType === 'landing_page' ? 'Nueva landing con IA' : 'Nuevo formulario con IA'), 140)
+  const name = limitAIText(aiSite.name || title, 100)
+  const stockImageGroup = selectAIStockImageGroup(aiSite, blocksInput)
   let blocks = blocksInput
     .map((block, index) => normalizeAIBlock({ block, siteId: id, sortOrder: index, allowedTypes, fallbackType }))
     .filter(Boolean)
@@ -3376,24 +4238,21 @@ function normalizeAISiteBlueprint(siteKind, aiSite = {}) {
     throw new Error('La IA no genero bloques validos para Sites')
   }
 
+  blocks = ensureAIFormVisualBlock(blocks, siteType, id, stockImageGroup)
+
+  if (siteType === 'landing_page') {
+    blocks = ensureAILandingScaffold(blocks, id, title)
+  }
+
+  blocks = resolveAISectionTargets(blocks)
   blocks = resolveAIJumpTargets(blocks)
+  blocks = applyAIDesignGuards(blocks, siteType, stockImageGroup)
+
   if (siteType === 'standard_form') {
     blocks = withStandardFormBlueprintPages(blocks, id)
   }
 
-  const seo = aiSite.seo && typeof aiSite.seo === 'object' && !Array.isArray(aiSite.seo) ? aiSite.seo : {}
-  const finalMessages = aiSite.finalMessages && typeof aiSite.finalMessages === 'object' && !Array.isArray(aiSite.finalMessages)
-    ? aiSite.finalMessages
-    : aiSite.final_messages && typeof aiSite.final_messages === 'object' && !Array.isArray(aiSite.final_messages)
-      ? aiSite.final_messages
-      : {}
-  const theme = normalizeAITheme(aiSite.theme || aiSite.style || aiSite.estilo)
-  const requestedTemplate = cleanString(aiSite.template || aiSite.plantilla)
-  const aiTemplate = SITE_TEMPLATES[requestedTemplate] ? requestedTemplate : ''
-  const successMessage = limitString(finalMessages.success || finalMessages.exito, 600)
-  const disqualifiedMessage = limitString(finalMessages.disqualified || finalMessages.descalificado, 600)
-  const title = limitString(aiSite.title || seo.title || aiSite.name || (siteType === 'landing_page' ? 'Nueva landing con IA' : 'Nuevo formulario con IA'), 180)
-  const name = limitString(aiSite.name || title, 100)
+  const theme = normalizeAITheme(aiSite.theme || aiSite.style || aiSite.estilo, stockImageGroup)
 
   return {
     id,
@@ -3401,7 +4260,7 @@ function normalizeAISiteBlueprint(siteKind, aiSite = {}) {
     siteType,
     slug: slugify(aiSite.slug || name),
     title,
-    description: limitString(aiSite.description || seo.description, 600),
+    description: limitAIText(aiSite.description || seo.description, 220),
     theme: {
       ...theme,
       ...(siteType === 'landing_page' ? { pageMaxWidth: 1440 } : {}),

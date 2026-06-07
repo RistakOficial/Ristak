@@ -122,8 +122,10 @@ function getSitesAIIntro(siteKind: AIAgentSitesCreationKind) {
       '- Cliente o prospecto ideal.',
       '- Tono de comunicación.',
       '- Estilo visual deseado.',
+      '- Si quieres que use fotos de internet o alguna imagen especifica por URL.',
       '- CTA principal.',
-      '- Si quieres incluir formulario dentro de la landing.'
+      '- Si quieres incluir formulario dentro de la landing.',
+      '- Si prefieres textos muy cortos o una explicacion un poco mas completa.'
     ].join('\n')
   }
 
@@ -138,7 +140,8 @@ function getSitesAIIntro(siteKind: AIAgentSitesCreationKind) {
       '- Qué respuestas indican buen candidato.',
       '- Qué respuestas deben descalificar o detener el formulario.',
       '- Qué mensaje mostrar si alguien queda descalificado.',
-      '- Si quieres una pregunta por pantalla o dividirlo por secciones.'
+      '- Si quieres una pregunta por pantalla o dividirlo por secciones.',
+      '- Si quieres que agregue una imagen de apoyo de internet.'
     ].join('\n')
   }
 
@@ -151,7 +154,8 @@ function getSitesAIIntro(siteKind: AIAgentSitesCreationKind) {
     '- Qué preguntas son importantes.',
     '- Qué respuestas indican buen candidato.',
     '- Qué respuestas deben descalificar o detener el formulario.',
-    '- Qué mensaje mostrar si alguien queda descalificado.'
+    '- Qué mensaje mostrar si alguien queda descalificado.',
+    '- Si quieres que agregue una imagen de apoyo de internet.'
   ].join('\n')
 }
 

@@ -420,6 +420,7 @@ export const formBlockTypes: SiteBlockType[] = [
   'title',
   'subtitle',
   'description',
+  'image',
   'video',
   'embed',
   'calendar_embed',
