@@ -96,6 +96,8 @@ const PUBLIC_DOMAIN_CACHE_TTL_MS = 15 * 60 * 1000
 const PUBLIC_DOMAIN_FAILED_CACHE_TTL_MS = 90 * 1000
 const PUBLIC_DOMAIN_VERIFY_TIMEOUT_MS = 6000
 const DEFAULT_FUNNEL_PAGE_ID = 'page-1'
+const POPUP_SELECTED_ID = '__popup__'
+const POPUP_SURFACE_ID = 'site-popup'
 const FORM_THANK_YOU_PAGE_ID = 'page-2'
 const FORM_DISQUALIFIED_PAGE_ID = 'page-3'
 const FORM_FINAL_PAGE_IDS = new Set([FORM_THANK_YOU_PAGE_ID, FORM_DISQUALIFIED_PAGE_ID])
@@ -1746,6 +1748,8 @@ const IMPORTED_BUTTON_ACTIONS = new Set([
   'url',
   'next_page',
   'specific_page',
+  'open_popup',
+  'close_popup',
   'submit',
   'disqualify',
   'automation',
@@ -7192,12 +7196,15 @@ export async function reorderBlocks(siteId, blockIds = [], { pageId } = {}) {
   const normalizedIds = Array.isArray(blockIds) ? blockIds.map(cleanString).filter(Boolean) : []
   const existing = await listSiteBlocks(siteId)
   const normalizedPageId = cleanString(pageId)
-  const pageBlocks = normalizedPageId
+  const pageBlocks = normalizedPageId === POPUP_SELECTED_ID
+    ? existing.filter(isPopupBlock)
+    : normalizedPageId
     ? existing.filter(block => {
+        if (isPopupBlock(block)) return false
         const blockPageId = cleanString(block.settings?.pageId || block.settings?.page_id)
         return isGlobalHeaderBlock(block) || blockPageId === normalizedPageId || (!blockPageId && normalizedPageId === DEFAULT_FUNNEL_PAGE_ID)
       })
-    : existing
+    : existing.filter(block => !isPopupBlock(block))
   const existingIds = new Set(pageBlocks.map(block => block.id))
   const orderedIds = [
     ...normalizedIds.filter(id => existingIds.has(id)),
@@ -7580,66 +7587,156 @@ function safeUrl(value) {
   }
 }
 
-function renderSitePopup(site) {
-  const theme = site?.theme || {}
-  if (!normalizeBoolean(theme.popupEnabled ?? theme.popup_enabled)) return ''
+function normalizePopupTrigger(theme = {}) {
+  const trigger = cleanString(theme.popupTrigger ?? theme.popup_trigger)
+  if (trigger === 'never' || trigger === 'delay' || trigger === 'exit_intent') return trigger
+  return normalizeBoolean(theme.popupEnabled ?? theme.popup_enabled) ? 'delay' : 'never'
+}
 
-  const title = cleanString(theme.popupTitle ?? theme.popup_title) || 'Antes de irte'
-  const body = cleanString(theme.popupBody ?? theme.popup_body) || 'Dejanos tus datos y te contactamos para ayudarte.'
-  const buttonText = cleanString(theme.popupButtonText ?? theme.popup_button_text) || 'Quiero informacion'
+function normalizePopupCloseDisplay(value = '') {
+  const display = cleanString(value)
+  return display === 'text' || display === 'both' || display === 'icon' ? display : 'icon'
+}
+
+function normalizePopupCloseIcon(value = '') {
+  const icon = cleanString(value)
+  return icon === 'arrow' || icon === 'chevron' || icon === 'none' || icon === 'x' ? icon : 'x'
+}
+
+function popupCloseIconText(value = '') {
+  const icon = normalizePopupCloseIcon(value)
+  if (icon === 'arrow') return '←'
+  if (icon === 'chevron') return '‹'
+  if (icon === 'none') return ''
+  return '×'
+}
+
+function siteHasPopupOpenAction(site) {
+  return (Array.isArray(site?.blocks) ? site.blocks : []).some(block => {
+    const settings = block?.settings || {}
+    return ['hero', 'button', 'cta'].includes(block.blockType) &&
+      cleanString(settings.buttonAction || settings.button_action) === 'open_popup'
+  })
+}
+
+function renderSitePopup(site, context = {}) {
+  const theme = site?.theme || {}
+  const popupBlocks = Array.isArray(context.popupBlocks) ? context.popupBlocks : getPopupBlocks(site)
+  const trigger = normalizePopupTrigger(theme)
+  const hasOpenAction = siteHasPopupOpenAction(site)
+  const title = cleanString(theme.popupTitle ?? theme.popup_title)
+  const body = cleanString(theme.popupBody ?? theme.popup_body)
+  const buttonText = cleanString(theme.popupButtonText ?? theme.popup_button_text)
   const buttonUrl = safeUrl(theme.popupButtonUrl ?? theme.popup_button_url)
-  const trigger = cleanString(theme.popupTrigger ?? theme.popup_trigger) === 'exit_intent' ? 'exit_intent' : 'delay'
   const delaySeconds = themeNumber(theme, 'popupDelaySeconds', 8, 0, 120)
-  const bodyHtml = escapeHtml(body).replace(/\n/g, '<br>')
+  const hasLegacyContent = Boolean(title || body || buttonText || buttonUrl)
+  if (!popupBlocks.length && !hasLegacyContent && trigger === 'never' && !hasOpenAction) return ''
+
+  const backdrop = normalizeCssPaint(theme.popupBackdropColor ?? theme.popup_backdrop_color, 'rgba(2, 6, 23, 0.62)')
+  const boxBg = normalizeCssPaint(theme.popupBackgroundColor ?? theme.popup_background_color, '#0f172a')
+  const boxText = normalizeCssPaint(theme.popupTextColor ?? theme.popup_text_color, '#f8fafc')
+  const borderColor = normalizeCssPaint(theme.popupBorderColor ?? theme.popup_border_color, 'rgba(148, 163, 184, 0.32)')
+  const borderWidth = themeNumber(theme, 'popupBorderWidth', 1, 0, 12)
+  const maxWidth = themeNumber(theme, 'popupMaxWidth', 560, 320, 960)
+  const radius = themeNumber(theme, 'popupRadius', 18, 0, 60)
+  const padding = themeNumber(theme, 'popupPadding', 24, 0, 96)
+  const closeDisplay = normalizePopupCloseDisplay(theme.popupCloseDisplay ?? theme.popup_close_display)
+  const closeIcon = popupCloseIconText(theme.popupCloseIcon ?? theme.popup_close_icon)
+  const closeText = cleanString(theme.popupCloseText ?? theme.popup_close_text) || 'Cerrar'
+  const closeContent = [
+    closeDisplay !== 'text' && closeIcon ? `<span aria-hidden="true">${escapeHtml(closeIcon)}</span>` : '',
+    closeDisplay !== 'icon' ? `<strong>${escapeHtml(closeText)}</strong>` : ''
+  ].filter(Boolean).join('')
+  const popupRenderContext = {
+    ...(context.renderContext || {}),
+    insidePopup: true
+  }
+  const popupBlocksHtml = popupBlocks.length
+    ? site?.siteType === 'landing_page'
+      ? renderLandingBlocks(popupBlocks, popupRenderContext)
+      : popupBlocks.map(block => renderPublicBlock(block, popupRenderContext)).join('\n')
+    : ''
+  const legacyHtml = !popupBlocks.length
+    ? `
+      ${title ? `<h2 id="rstk-site-popup-title">${escapeHtml(title)}</h2>` : ''}
+      ${body ? `<p>${escapeHtml(body).replace(/\n/g, '<br>')}</p>` : ''}
+      ${buttonText || buttonUrl
+        ? buttonUrl
+          ? `<a class="rstk-site-popup__action" href="${escapeHtml(buttonUrl)}">${escapeHtml(buttonText || 'Abrir')}</a>`
+          : `<button type="button" class="rstk-site-popup__action" data-rstk-popup-close>${escapeHtml(buttonText || 'Cerrar')}</button>`
+        : ''}
+    `
+    : ''
 
   return `
   <style>
     .rstk-site-popup[hidden]{display:none!important}
-    .rstk-site-popup{position:fixed;inset:0;z-index:2147483000;display:grid;place-items:center;padding:22px;background:rgba(2,6,23,.62);backdrop-filter:blur(8px)}
-    .rstk-site-popup__box{width:min(460px,100%);border:1px solid rgba(148,163,184,.28);border-radius:14px;background:#0f172a;color:#f8fafc;box-shadow:0 28px 80px -34px rgba(2,6,23,.9);padding:24px}
-    .rstk-site-popup__top{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
+    .rstk-site-popup{position:fixed;inset:0;z-index:2147483000;display:grid;place-items:center;padding:22px;background:${escapeHtml(backdrop)};backdrop-filter:blur(8px)}
+    .rstk-site-popup__box{position:relative;width:min(${maxWidth}px,100%);border:${borderWidth}px solid ${escapeHtml(borderColor)};border-radius:${radius}px;background:${escapeHtml(boxBg)};color:${escapeHtml(boxText)};box-shadow:0 28px 80px -34px rgba(2,6,23,.9);padding:${padding}px}
+    .rstk-site-popup__content{display:grid;gap:14px}
+    .rstk-site-popup__content:empty{min-height:96px}
     .rstk-site-popup h2{margin:0;color:inherit;font:800 1.35rem/1.15 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;letter-spacing:0}
-    .rstk-site-popup p{margin:12px 0 0;color:rgba(248,250,252,.78);font:500 .96rem/1.55 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
-    .rstk-site-popup__close{width:34px;height:34px;flex:0 0 auto;border:1px solid rgba(148,163,184,.24);border-radius:10px;background:rgba(255,255,255,.08);color:#f8fafc;font-size:22px;line-height:1;cursor:pointer}
+    .rstk-site-popup p{margin:12px 0 0;color:inherit;opacity:.78;font:500 .96rem/1.55 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+    .rstk-site-popup__close{position:absolute;top:12px;right:12px;min-width:34px;height:34px;display:inline-flex;align-items:center;justify-content:center;gap:6px;border:1px solid rgba(148,163,184,.24);border-radius:10px;background:rgba(255,255,255,.08);color:inherit;padding:0 10px;font:800 14px/1 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;cursor:pointer}
+    .rstk-site-popup__close span{font-size:22px;line-height:1}
+    .rstk-site-popup__close strong{font-size:12px;line-height:1}
     .rstk-site-popup__action{display:inline-flex;align-items:center;justify-content:center;min-height:44px;margin-top:18px;border:0;border-radius:10px;background:#3b82f6;color:#fff;padding:0 18px;font:800 .92rem/1 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;text-decoration:none;cursor:pointer}
   </style>
   <div class="rstk-site-popup" data-rstk-site-popup data-trigger="${escapeHtml(trigger)}" data-delay="${escapeHtml(delaySeconds)}" hidden>
-    <div class="rstk-site-popup__box" role="dialog" aria-modal="true" aria-labelledby="rstk-site-popup-title">
-      <div class="rstk-site-popup__top">
-        <h2 id="rstk-site-popup-title">${escapeHtml(title)}</h2>
-        <button type="button" class="rstk-site-popup__close" data-rstk-popup-close aria-label="Cerrar">x</button>
+    <div class="rstk-site-popup__box" role="dialog" aria-modal="true" ${title ? 'aria-labelledby="rstk-site-popup-title"' : 'aria-label="Pop up"'}>
+      <button type="button" class="rstk-site-popup__close" data-rstk-popup-close aria-label="Cerrar">${closeContent}</button>
+      <div class="rstk-site-popup__content">
+        ${popupBlocksHtml || legacyHtml}
       </div>
-      <p>${bodyHtml}</p>
-      ${buttonUrl
-        ? `<a class="rstk-site-popup__action" href="${escapeHtml(buttonUrl)}">${escapeHtml(buttonText)}</a>`
-        : `<button type="button" class="rstk-site-popup__action" data-rstk-popup-close>${escapeHtml(buttonText)}</button>`}
     </div>
   </div>
   <script>
     (() => {
       const popup = document.querySelector('[data-rstk-site-popup]');
-      if (!popup) return;
-      const closeButtons = popup.querySelectorAll('[data-rstk-popup-close]');
-      let shown = false;
-      const show = () => {
-        if (shown) return;
-        shown = true;
+      if (!popup) {
+        window.ristakOpenSitePopup = () => {};
+        window.ristakCloseSitePopup = () => {};
+        return;
+      }
+      const show = (options = {}) => {
+        if (options.auto && popup.dataset.autoShown === 'true') return;
+        if (options.auto) popup.dataset.autoShown = 'true';
         popup.hidden = false;
+        popup.removeAttribute('hidden');
       };
-      const hide = () => { popup.hidden = true; };
-      closeButtons.forEach(button => button.addEventListener('click', hide));
+      const hide = () => { popup.hidden = true; popup.setAttribute('hidden', ''); };
+      window.ristakOpenSitePopup = () => show({ manual: true });
+      window.ristakCloseSitePopup = hide;
+      popup.querySelectorAll('[data-rstk-popup-close]').forEach(button => button.addEventListener('click', event => {
+        event.preventDefault();
+        hide();
+      }));
       popup.addEventListener('click', event => {
         if (event.target === popup) hide();
       });
       document.addEventListener('keydown', event => {
         if (event.key === 'Escape') hide();
       });
+      document.addEventListener('click', event => {
+        const target = event.target && event.target.closest ? event.target : null;
+        const openButton = target ? target.closest('[data-rstk-popup-open]') : null;
+        const closeButton = target ? target.closest('[data-rstk-popup-close]') : null;
+        if (openButton) {
+          event.preventDefault();
+          show({ manual: true });
+          return;
+        }
+        if (closeButton) {
+          event.preventDefault();
+          hide();
+        }
+      }, true);
       if (popup.dataset.trigger === 'exit_intent') {
         document.addEventListener('mouseout', event => {
-          if (event.clientY <= 0) show();
+          if (event.clientY <= 0) show({ auto: true });
         }, { once: true });
-      } else {
-        window.setTimeout(show, Math.max(0, Number(popup.dataset.delay || 8)) * 1000);
+      } else if (popup.dataset.trigger === 'delay') {
+        window.setTimeout(() => show({ auto: true }), Math.max(0, Number(popup.dataset.delay || 8)) * 1000);
       }
     })();
   </script>`
@@ -7994,13 +8091,14 @@ function isGlobalHeaderBlock(block) {
 
 function getPageBlocks(site, pageId) {
   const blocks = Array.isArray(site?.blocks) ? site.blocks : []
-  if (site?.siteType !== 'landing_page' && site?.siteType !== 'standard_form') return blocks
+  if (site?.siteType !== 'landing_page' && site?.siteType !== 'standard_form') return blocks.filter(block => !isPopupBlock(block))
 
   const pages = normalizeSitePages(site)
   const activePage = pages.find(page => page.id === pageId) || pages[0]
   return blocks.filter(block => (
-    site?.siteType === 'landing_page' && isGlobalHeaderBlock(block)
-  ) || getBlockPageId(block, pages) === activePage.id)
+    !isPopupBlock(block) &&
+    ((site?.siteType === 'landing_page' && isGlobalHeaderBlock(block)) || getBlockPageId(block, pages) === activePage.id)
+  ))
 }
 
 function getStandardFormContentPages(site) {
@@ -8116,6 +8214,18 @@ function isPanelBlock(block) {
   return block && (block.blockType === 'header_panel' || block.blockType === 'footer_panel')
 }
 
+function isPopupBlock(block) {
+  const settings = block?.settings || {}
+  return cleanString(settings.popupId || settings.popup_id) === POPUP_SURFACE_ID ||
+    cleanString(settings.renderLocation || settings.render_location) === 'popup'
+}
+
+function getPopupBlocks(site) {
+  return (Array.isArray(site?.blocks) ? site.blocks : [])
+    .filter(isPopupBlock)
+    .sort((a, b) => a.sortOrder - b.sortOrder)
+}
+
 function getSectionColumns(block) {
   const value = Number(block?.settings?.sectionColumns ?? block?.settings?.columns)
   if (!Number.isFinite(value)) return 1
@@ -8226,6 +8336,9 @@ function getFormSubmitMetaEventName(site, pageId) {
 
 function resolveButtonHref(settings = {}, context = {}) {
   const action = cleanString(settings.buttonAction || settings.button_action || 'url')
+  if (action === 'open_popup') return '#rstk-site-popup'
+  if (action === 'close_popup') return '#'
+
   if (action === 'next_page') {
     const nextPage = getNextPage(context.site, context.pageId)
     if (nextPage) return pageHref(nextPage.id)
@@ -8239,6 +8352,13 @@ function resolveButtonHref(settings = {}, context = {}) {
   }
 
   return safeHref(settings.buttonUrl, '#form')
+}
+
+function renderButtonActionAttributes(settings = {}) {
+  const action = cleanString(settings.buttonAction || settings.button_action || 'url')
+  if (action === 'open_popup') return ' data-rstk-popup-open'
+  if (action === 'close_popup') return ' data-rstk-popup-close'
+  return ''
 }
 
 function getFormCompletionAction(blocks = []) {
@@ -8964,12 +9084,13 @@ function renderContentBlock(block, context = {}) {
 
   if (block.blockType === 'hero') {
     const buttonUrl = resolveButtonHref(settings, context)
+    const buttonActionAttrs = renderButtonActionAttributes(settings)
     return `
       <section class="rstk-hero">
         ${settings.kicker ? `<p class="rstk-kicker">${escapeHtml(settings.kicker)}</p>` : ''}
         <h1 class="rstk-headline">${content || escapeHtml(block.label)}</h1>
         ${settings.subtitle ? `<p class="rstk-subheading">${escapeHtml(settings.subtitle)}</p>` : ''}
-        ${settings.buttonText ? `<a class="rstk-button-link" href="${escapeHtml(buttonUrl)}"><span class="rstk-button-label">${escapeHtml(settings.buttonText)}</span></a>` : ''}
+        ${settings.buttonText ? `<a class="rstk-button-link" href="${escapeHtml(buttonUrl)}"${buttonActionAttrs}><span class="rstk-button-label">${escapeHtml(settings.buttonText)}</span></a>` : ''}
       </section>
     `
   }
@@ -8990,7 +9111,8 @@ function renderContentBlock(block, context = {}) {
 
   if (block.blockType === 'button') {
     const buttonUrl = resolveButtonHref(settings, context)
-    return `<a class="rstk-button-link" href="${escapeHtml(buttonUrl)}"><span class="rstk-button-label">${escapeHtml(settings.buttonText || block.content || block.label || 'Continuar')}</span></a>`
+    const buttonActionAttrs = renderButtonActionAttributes(settings)
+    return `<a class="rstk-button-link" href="${escapeHtml(buttonUrl)}"${buttonActionAttrs}><span class="rstk-button-label">${escapeHtml(settings.buttonText || block.content || block.label || 'Continuar')}</span></a>`
   }
 
   if (block.blockType === 'benefits') {
@@ -9061,11 +9183,12 @@ function renderContentBlock(block, context = {}) {
 
   if (block.blockType === 'cta') {
     const buttonUrl = resolveButtonHref(settings, context)
+    const buttonActionAttrs = renderButtonActionAttributes(settings)
     return `
       <section class="rstk-cta">
         <h2>${content || escapeHtml(block.label)}</h2>
         ${settings.subtitle ? `<p>${escapeHtml(settings.subtitle)}</p>` : ''}
-        ${settings.buttonText ? `<a class="rstk-button-link" href="${escapeHtml(buttonUrl)}"><span class="rstk-button-label">${escapeHtml(settings.buttonText)}</span></a>` : ''}
+        ${settings.buttonText ? `<a class="rstk-button-link" href="${escapeHtml(buttonUrl)}"${buttonActionAttrs}><span class="rstk-button-label">${escapeHtml(settings.buttonText)}</span></a>` : ''}
       </section>
     `
   }
@@ -10674,6 +10797,69 @@ function buildImportedButtonActionScript(site, { pageId = DEFAULT_FUNNEL_PAGE_ID
           return [];
         }
       };
+      const isImportedPopupCandidate = (element) => {
+        if (!element || !element.matches) return false;
+        if (element.matches('[data-rstk-site-popup], dialog, [role="dialog"], [aria-modal="true"]')) return true;
+        const signature = [
+          element.id || '',
+          typeof element.className === 'string' ? element.className : '',
+          element.getAttribute('data-popup') || '',
+          element.getAttribute('data-modal') || '',
+          element.getAttribute('data-dialog') || ''
+        ].join(' ').toLowerCase();
+        return /(popup|pop-up|modal|dialog|lightbox|overlay|exit-intent|newsletter)/.test(signature);
+      };
+      const getImportedPopupCandidates = (source) => {
+        const candidates = Array.from(document.querySelectorAll('dialog, [role="dialog"], [aria-modal="true"], [id], [class], [data-popup], [data-modal], [data-dialog]'))
+          .filter(isImportedPopupCandidate);
+        const closest = source && source.closest ? source.closest('dialog, [role="dialog"], [aria-modal="true"], [id], [class]') : null;
+        return closest && isImportedPopupCandidate(closest)
+          ? [closest, ...candidates.filter(item => item !== closest)]
+          : candidates;
+      };
+      const openImportedPopup = (source) => {
+        let opened = false;
+        if (typeof window.ristakOpenSitePopup === 'function') {
+          window.ristakOpenSitePopup();
+          opened = true;
+        }
+        getImportedPopupCandidates(source).forEach(element => {
+          try {
+            if (element.tagName === 'DIALOG' && typeof element.showModal === 'function' && !element.open) {
+              element.showModal();
+            }
+          } catch (_) {}
+          element.hidden = false;
+          element.removeAttribute('hidden');
+          element.removeAttribute('aria-hidden');
+          element.setAttribute('open', '');
+          element.classList.add('open', 'active', 'show', 'is-open');
+          const computed = window.getComputedStyle(element);
+          if (computed.display === 'none') element.style.display = element.matches('[data-rstk-site-popup]') ? 'grid' : 'flex';
+          opened = true;
+        });
+        return opened;
+      };
+      const closeImportedPopup = (source) => {
+        let closed = false;
+        if (typeof window.ristakCloseSitePopup === 'function') {
+          window.ristakCloseSitePopup();
+          closed = true;
+        }
+        getImportedPopupCandidates(source).forEach(element => {
+          if (element.tagName === 'DIALOG' && typeof element.close === 'function' && element.open) {
+            try { element.close(); } catch (_) {}
+          }
+          element.hidden = true;
+          element.setAttribute('hidden', '');
+          element.setAttribute('aria-hidden', 'true');
+          element.removeAttribute('open');
+          element.classList.remove('open', 'active', 'show', 'is-open');
+          element.style.display = 'none';
+          closed = true;
+        });
+        return closed;
+      };
       const legacyActionFromElement = (element) => {
         const action = String(element.getAttribute('data-rstk-button-action') || element.getAttribute('data-ristak-button-action') || element.getAttribute('data-ristack-button-action') || '').trim();
         if (!action || action === 'none') return [];
@@ -10734,6 +10920,14 @@ function buildImportedButtonActionScript(site, { pageId = DEFAULT_FUNNEL_PAGE_ID
         if (!action || !action.action || action.action === 'none') return;
         if (action.action === 'submit') {
           await submitFormAndWait(source.closest ? source.closest('form') : context.form, source);
+          return;
+        }
+        if (action.action === 'open_popup') {
+          if (!openImportedPopup(source)) showActionMessage(source, 'No encontramos un pop up para abrir', 'error');
+          return;
+        }
+        if (action.action === 'close_popup') {
+          if (!closeImportedPopup(source)) showActionMessage(source, 'No encontramos un pop up para cerrar', 'error');
           return;
         }
         if (action.action === 'automation' || action.action === 'notify_team' || action.action === 'add_tag' || action.action === 'send_whatsapp' || action.action === 'create_payment') {
@@ -11056,7 +11250,10 @@ export async function renderPublicSiteHtml(site, { pageId, trackingEnabled = tru
     : ''
   const metaPixelSnippet = await buildMetaPixelSnippet(site, trackingEnabled, activePage)
   const headerTrackingCode = buildHeaderTrackingCode(site, activePage)
-  const popupHtml = renderSitePopup(site)
+  const popupHtml = renderSitePopup(site, {
+    popupBlocks: getPopupBlocks(site),
+    renderContext
+  })
 
   return `<!doctype html>
 <html lang="es">

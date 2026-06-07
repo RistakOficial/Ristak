@@ -151,7 +151,18 @@ export interface SiteTheme {
   popupButtonText?: string
   popupButtonUrl?: string
   popupDelaySeconds?: number
-  popupTrigger?: 'delay' | 'exit_intent'
+  popupTrigger?: 'never' | 'delay' | 'exit_intent'
+  popupBackdropColor?: string
+  popupBackgroundColor?: string
+  popupTextColor?: string
+  popupBorderColor?: string
+  popupBorderWidth?: number
+  popupMaxWidth?: number
+  popupRadius?: number
+  popupPadding?: number
+  popupCloseDisplay?: 'icon' | 'text' | 'both'
+  popupCloseIcon?: 'x' | 'arrow' | 'chevron' | 'none'
+  popupCloseText?: string
   submitText?: string
   submitSubtitle?: string
   submitBg?: string
@@ -370,6 +381,8 @@ export type ImportedButtonAction =
   | 'url'
   | 'next_page'
   | 'specific_page'
+  | 'open_popup'
+  | 'close_popup'
   | 'submit'
   | 'disqualify'
   | 'automation'

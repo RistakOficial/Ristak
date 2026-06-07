@@ -481,6 +481,7 @@ const writePreviewLoadingPage = (previewWindow: Window) => {
 
 const PAGE_SELECTED_ID = '__page__'
 const POPUP_SELECTED_ID = '__popup__'
+const POPUP_SURFACE_ID = 'site-popup'
 const isEditorSurfaceSelection = (id: string) => id === PAGE_SELECTED_ID || id === POPUP_SELECTED_ID
 const LANDING_DEFAULT_PAGE_PADDING = 36
 const HEADER_PANEL_BLOCK_TYPE: SiteBlockType = 'header_panel'
@@ -730,8 +731,11 @@ type LandingBlockOrderGroup = {
   blocks: SiteBlock[]
 }
 
-type ButtonAction = 'url' | 'next_page' | 'specific_page'
+type ButtonAction = 'url' | 'next_page' | 'specific_page' | 'open_popup' | 'close_popup'
 type FormCompletionAction = 'form_default' | 'next_page' | 'next_page_if_qualified'
+type PopupTrigger = NonNullable<SiteTheme['popupTrigger']>
+type PopupCloseDisplay = NonNullable<SiteTheme['popupCloseDisplay']>
+type PopupCloseIcon = NonNullable<SiteTheme['popupCloseIcon']>
 
 const blockIcons: Partial<Record<SiteBlockType, React.ReactNode>> = {
   headline: <Type size={15} />,
@@ -1308,12 +1312,55 @@ const getThemeString = (theme: SiteTheme | undefined, key: keyof SiteTheme) => {
   return typeof value === 'string' ? value : ''
 }
 
+const getPopupTrigger = (theme?: SiteTheme | null): PopupTrigger => {
+  const trigger = theme?.popupTrigger
+  return trigger === 'delay' || trigger === 'exit_intent' || trigger === 'never' ? trigger : 'never'
+}
+
+const popupTriggerLabels: Record<PopupTrigger, string> = {
+  never: 'Nunca',
+  delay: 'Despues de unos segundos',
+  exit_intent: 'Cuando intenta salir'
+}
+
+const popupCloseDisplayLabels: Record<PopupCloseDisplay, string> = {
+  icon: 'Solo icono',
+  text: 'Solo texto',
+  both: 'Icono y texto'
+}
+
+const popupCloseIconLabels: Record<PopupCloseIcon, string> = {
+  x: 'X',
+  arrow: 'Flechita',
+  chevron: 'Chevron',
+  none: 'Sin icono'
+}
+
+const normalizePopupCloseDisplay = (value?: SiteTheme['popupCloseDisplay']): PopupCloseDisplay => (
+  value === 'text' || value === 'both' || value === 'icon' ? value : 'icon'
+)
+
+const normalizePopupCloseIcon = (value?: SiteTheme['popupCloseIcon']): PopupCloseIcon => (
+  value === 'arrow' || value === 'chevron' || value === 'none' || value === 'x' ? value : 'x'
+)
+
+const getPopupCloseIconText = (value?: SiteTheme['popupCloseIcon']) => {
+  const icon = normalizePopupCloseIcon(value)
+  if (icon === 'arrow') return '←'
+  if (icon === 'chevron') return '‹'
+  if (icon === 'none') return ''
+  return '×'
+}
+
 const hasThemePopupConfig = (theme?: SiteTheme | null) => Boolean(
   theme?.popupEnabled ||
+  getPopupTrigger(theme) !== 'never' ||
   getThemeString(theme || undefined, 'popupTitle').trim() ||
   getThemeString(theme || undefined, 'popupBody').trim() ||
   getThemeString(theme || undefined, 'popupButtonText').trim() ||
-  getThemeString(theme || undefined, 'popupButtonUrl').trim()
+  getThemeString(theme || undefined, 'popupButtonUrl').trim() ||
+  getThemeString(theme || undefined, 'popupBackgroundColor').trim() ||
+  getThemeString(theme || undefined, 'popupBackdropColor').trim()
 )
 
 const getThemeBackgroundVideo = (theme: SiteTheme | undefined) => {
@@ -1971,6 +2018,21 @@ const isPageHeaderBlock = (block: SiteBlock, pages: SitePage[], pageId?: string 
 const isSectionBlock = (block?: SiteBlock | null) => block?.blockType === SECTION_BLOCK_TYPE
 const isPanelBlock = (block?: SiteBlock | null) => Boolean(block && PANEL_BLOCK_TYPES.has(block.blockType))
 const isTopLevelLandingBlock = (block?: SiteBlock | null) => isSectionBlock(block) || isPanelBlock(block)
+const isPopupBlock = (block?: SiteBlock | null) => {
+  if (!block) return false
+  const settings = block.settings || {}
+  return getSettingString(settings, 'popupId') === POPUP_SURFACE_ID ||
+    getSettingString(settings, 'renderLocation') === 'popup'
+}
+const isPopupEditableBlockType = (blockType: SiteBlockType) => !PANEL_BLOCK_TYPES.has(blockType)
+const getPopupBlockSettings = (settings: Record<string, unknown> = {}) => ({
+  ...settings,
+  popupId: POPUP_SURFACE_ID,
+  renderLocation: 'popup'
+})
+const getPopupPaletteBlockTypes = (site: PublicSite) => (
+  (isLanding(site) ? landingBlockTypes : formBlockTypes).filter(isPopupEditableBlockType)
+)
 
 const getSectionColumns = (block?: SiteBlock | null) => {
   const value = Number(block?.settings?.sectionColumns ?? block?.settings?.columns)
@@ -2083,7 +2145,7 @@ const buildLandingBlockOrderGroups = (
 
 const getButtonAction = (settings: Record<string, unknown>): ButtonAction => {
   const action = getSettingString(settings, 'buttonAction') as ButtonAction
-  return ['url', 'next_page', 'specific_page'].includes(action) ? action : 'url'
+  return ['url', 'next_page', 'specific_page', 'open_popup', 'close_popup'].includes(action) ? action : 'url'
 }
 
 const getFormCompletionAction = (settings: Record<string, unknown>): FormCompletionAction => {
@@ -2801,9 +2863,13 @@ export const Sites: React.FC = () => {
   const activePage = pages.find(page => page.id === activePageId) || pages[0] || null
   const canvasBlocks = useMemo(
     () => hasEditablePages(selectedSite) && activePage
-      ? blocks.filter(block => isGlobalHeaderBlock(block) || getBlockPageId(block, pages) === activePage.id)
-      : blocks,
+      ? blocks.filter(block => !isPopupBlock(block) && (isGlobalHeaderBlock(block) || getBlockPageId(block, pages) === activePage.id))
+      : blocks.filter(block => !isPopupBlock(block)),
     [activePage, blocks, pages, selectedSite]
+  )
+  const popupBlocks = useMemo(
+    () => blocks.filter(isPopupBlock),
+    [blocks]
   )
   const globalHeaderBlock = useMemo(
     () => blocks.find(isGlobalHeaderBlock) || null,
@@ -2813,8 +2879,7 @@ export const Sites: React.FC = () => {
     () => activePage ? blocks.find(block => isPageHeaderBlock(block, pages, activePage.id)) || null : null,
     [activePage, blocks, pages]
   )
-  const selectedBlock = canvasBlocks.find(block => block.id === selectedBlockId) || null
-  const activeDragBlock = canvasBlocks.find(block => block.id === activeDragId) || null
+  const selectedBlock = [...canvasBlocks, ...popupBlocks].find(block => block.id === selectedBlockId) || null
   const editorSite = section === 'landings'
     ? (isLanding(selectedSite) ? selectedSite : null)
     : section === 'forms'
@@ -2829,7 +2894,9 @@ export const Sites: React.FC = () => {
     importedPopupDetected ||
     hasThemePopupConfig(editorSite.theme)
   ))
-  const popupPanelSelected = selectedBlockId === POPUP_SELECTED_ID && canConfigurePopup
+  const popupSurfaceSelected = canConfigurePopup && (selectedBlockId === POPUP_SELECTED_ID || popupBlocks.some(block => block.id === selectedBlockId))
+  const editableCanvasBlocks = popupSurfaceSelected ? popupBlocks : canvasBlocks
+  const activeDragBlock = editableCanvasBlocks.find(block => block.id === activeDragId) || null
   const activeAIGeneration = aiEditorGeneration && editorSite?.id === aiEditorGeneration.siteId ? aiEditorGeneration : null
   const editorAIGenerating = Boolean(activeAIGeneration)
   const formCanvasHasFields = Boolean(editorSite && isFormSite(editorSite) && canvasBlocks.some(block => fieldBlockTypes.has(block.blockType)))
@@ -2892,13 +2959,19 @@ export const Sites: React.FC = () => {
     () => editorSite && isLanding(editorSite) ? buildLandingSectionLanes(canvasBlocks) : [],
     [canvasBlocks, editorSite]
   )
+  const popupSectionLanes = useMemo(
+    () => editorSite && isLanding(editorSite) ? buildLandingSectionLanes(popupBlocks) : [],
+    [editorSite, popupBlocks]
+  )
   const hasLandingCanvasContent = landingSectionLanes.length > 0 || canvasBlocks.some(isPanelBlock)
   const palettePreviewBlock = editorSite && paletteDragPayload
     ? makePreviewBlock(
       paletteDragPayload.blockType,
       editorSite,
       hasEditablePages(editorSite) ? activePage?.id : undefined,
-      paletteDragPayload.initialSettings
+      popupSurfaceSelected
+        ? getPopupBlockSettings(paletteDragPayload.initialSettings || {})
+        : paletteDragPayload.initialSettings
     )
     : null
   const canvasPalettePreviewBlock = paletteDragging ? palettePreviewBlock : null
@@ -3026,21 +3099,22 @@ export const Sites: React.FC = () => {
   }, [activePageId, pages, selectEditorPage, selectedSite])
 
   useEffect(() => {
-    if (!canvasBlocks.length) {
+    const selectableBlocks = [...canvasBlocks, ...popupBlocks]
+    if (!selectableBlocks.length) {
       if (selectedBlockId && !isEditorSurfaceSelection(selectedBlockId)) setSelectedBlockId('')
       return
     }
     if (isEditorSurfaceSelection(selectedBlockId)) return
-    if (selectedBlockId && !canvasBlocks.some(block => block.id === selectedBlockId)) {
+    if (selectedBlockId && !selectableBlocks.some(block => block.id === selectedBlockId)) {
       setSelectedBlockId('')
     }
-  }, [canvasBlocks, selectedBlockId])
+  }, [canvasBlocks, popupBlocks, selectedBlockId])
 
   useEffect(() => {
-    if (selectedBlockId === POPUP_SELECTED_ID && !canConfigurePopup) {
+    if ((selectedBlockId === POPUP_SELECTED_ID || popupBlocks.some(block => block.id === selectedBlockId)) && !canConfigurePopup) {
       setSelectedBlockId('')
     }
-  }, [canConfigurePopup, selectedBlockId])
+  }, [canConfigurePopup, popupBlocks, selectedBlockId])
 
   useEffect(() => {
     const handleAIDraftCreated = (event: Event) => {
@@ -4272,6 +4346,46 @@ export const Sites: React.FC = () => {
       const initialSettings = options.initialSettings || {}
       let blockIdsBeforeContent = previousBlockIds
       let autoCreatedSection: SiteBlock | null = null
+      if (popupSurfaceSelected) {
+        if (!isPopupEditableBlockType(blockType)) {
+          showToast('error', 'Bloque no disponible', 'Ese panel no se puede usar dentro del pop up.')
+          return
+        }
+
+        payload.settings = getPopupBlockSettings({
+          ...(payload.settings || {}),
+          ...initialSettings
+        })
+
+        let site = await sitesService.createBlock(selectedSite.id, payload)
+        syncSelectedSite(site)
+        const added = [...(site.blocks || [])]
+          .filter(block => !blockIdsBeforeContent.has(block.id))
+          .find(isPopupBlock)
+
+        if (added && Number.isFinite(options.insertIndex)) {
+          const popupSiteBlocks = [...(site.blocks || [])]
+            .filter(isPopupBlock)
+            .sort((a, b) => a.sortOrder - b.sortOrder)
+          const withoutInserted = popupSiteBlocks.filter(block => block.id !== added.id)
+          const boundedIndex = Math.max(0, Math.min(Number(options.insertIndex), withoutInserted.length))
+          const orderedBlocks = [
+            ...withoutInserted.slice(0, boundedIndex),
+            added,
+            ...withoutInserted.slice(boundedIndex)
+          ]
+
+          site = await sitesService.reorderBlocks(
+            selectedSite.id,
+            orderedBlocks.map(block => block.id),
+            POPUP_SELECTED_ID
+          )
+          syncSelectedSite(site)
+        }
+
+        if (added) selectEditorBlock(added.id)
+        return
+      }
       if (isLanding(selectedSite) && activePage) {
         const pageSectionIds = new Set(canvasBlocks.filter(isSectionBlock).map(block => block.id))
         const isSection = blockType === SECTION_BLOCK_TYPE
@@ -4494,13 +4608,16 @@ export const Sites: React.FC = () => {
     markEditorDirty()
     const current = selectedSiteRef.current
     if (!current?.blocks) return
+    const sourceIsPopupBlock = isPopupBlock(sourceBlock)
     const sourcePageId = isLanding(current) ? getBlockPageId(sourceBlock, pages) : ''
     const next = {
       ...current,
       blocks: current.blocks.map(block => {
         const sameType = block.blockType === sourceBlock.blockType
-        const samePage = !isLanding(current) || getBlockPageId(block, pages) === sourcePageId
+        const sameSurface = sourceIsPopupBlock ? isPopupBlock(block) : !isPopupBlock(block)
+        const samePage = sourceIsPopupBlock || !isLanding(current) || getBlockPageId(block, pages) === sourcePageId
         return sameType && samePage
+          && sameSurface
           ? { ...block, settings: { ...(block.settings || {}), ...patch } }
           : block
       })
@@ -4512,11 +4629,13 @@ export const Sites: React.FC = () => {
   const handleSaveBlockCategory = async (sourceBlock = selectedBlock) => {
     const siteToSave = selectedSiteRef.current || selectedSite
     if (!siteToSave?.blocks || !sourceBlock) return
+    const sourceIsPopupBlock = isPopupBlock(sourceBlock)
     const sourcePageId = isLanding(siteToSave) ? getBlockPageId(sourceBlock, pages) : ''
     const targets = siteToSave.blocks.filter(block => {
       const sameType = block.blockType === sourceBlock.blockType
-      const samePage = !isLanding(siteToSave) || getBlockPageId(block, pages) === sourcePageId
-      return sameType && samePage
+      const sameSurface = sourceIsPopupBlock ? isPopupBlock(block) : !isPopupBlock(block)
+      const samePage = sourceIsPopupBlock || !isLanding(siteToSave) || getBlockPageId(block, pages) === sourcePageId
+      return sameType && samePage && sameSurface
     })
     if (!targets.length) return
 
@@ -4548,12 +4667,14 @@ export const Sites: React.FC = () => {
   }
 
   const getDeletedBlockIds = (blockId: string) => {
-    const block = canvasBlocks.find(item => item.id === blockId) || blocks.find(item => item.id === blockId)
+    const block = canvasBlocks.find(item => item.id === blockId) || popupBlocks.find(item => item.id === blockId) || blocks.find(item => item.id === blockId)
+    const sourceBlocks = isPopupBlock(block) ? popupBlocks : canvasBlocks
+    const sourceLanes = isPopupBlock(block) ? popupSectionLanes : landingSectionLanes
     if (!editorSite || !isLanding(editorSite) || !isSectionBlock(block)) return [blockId]
 
-    const lane = landingSectionLanes.find(item => item.section?.id === blockId)
+    const lane = sourceLanes.find(item => item.section?.id === blockId)
     const laneBlockIds = (lane?.columnBlocks || []).flat().map(item => item.id)
-    const explicitChildIds = canvasBlocks
+    const explicitChildIds = sourceBlocks
       .filter(item => item.id !== blockId && getBlockSectionId(item) === blockId)
       .map(item => item.id)
 
@@ -4568,7 +4689,9 @@ export const Sites: React.FC = () => {
   const handleDeleteBlock = async (blockId: string) => {
     if (!selectedSite) return
     try {
-      const beforeBlockIds = canvasBlocks.map(block => block.id)
+      const deletingPopupBlock = popupBlocks.some(block => block.id === blockId)
+      const sourceBlocks = deletingPopupBlock ? popupBlocks : canvasBlocks
+      const beforeBlockIds = sourceBlocks.map(block => block.id)
       const deletedBlockIds = getDeletedBlockIds(blockId)
       const deletedBlocks = getDeletedBlocks(blockId)
       const selectedBefore = selectedBlockId
@@ -4576,9 +4699,11 @@ export const Sites: React.FC = () => {
       syncSelectedSite(site)
       const normalizedSite = normalizeSiteForEditor(site)
       const normalizedPages = normalizeFunnelPages(normalizedSite)
-      const pageId = hasEditablePages(selectedSite) ? activePage?.id : undefined
+      const pageId = deletingPopupBlock ? POPUP_SELECTED_ID : hasEditablePages(selectedSite) ? activePage?.id : undefined
       const afterBlockIds = (normalizedSite.blocks || [])
-        .filter(block => !pageId || getBlockPageId(block, normalizedPages) === pageId)
+        .filter(block => deletingPopupBlock
+          ? isPopupBlock(block)
+          : !isPopupBlock(block) && (!pageId || getBlockPageId(block, normalizedPages) === pageId))
         .sort((a, b) => a.sortOrder - b.sortOrder)
         .map(block => block.id)
       if (deletedBlockIds.includes(selectedBlockId)) {
@@ -4602,7 +4727,7 @@ export const Sites: React.FC = () => {
   }
 
   const requestDeleteBlock = (blockId: string) => {
-    const block = canvasBlocks.find(item => item.id === blockId) || blocks.find(item => item.id === blockId)
+    const block = canvasBlocks.find(item => item.id === blockId) || popupBlocks.find(item => item.id === blockId) || blocks.find(item => item.id === blockId)
     const deletesContainer = Boolean(block && isLanding(selectedSite) && isSectionBlock(block))
     const deletedCount = getDeletedBlockIds(blockId).length
     const targetLabel = deletesContainer ? 'contenedor' : 'elemento'
@@ -4621,15 +4746,16 @@ export const Sites: React.FC = () => {
     )
   }
 
-  const persistCanvasBlockOrder = async (orderedBlocks: SiteBlock[]) => {
+  const persistCanvasBlockOrder = async (orderedBlocks: SiteBlock[], options: { popup?: boolean } = {}) => {
     if (!selectedSite) return false
 
     const wasAlreadyDirty = hasUnsavedChanges
-    const beforeBlockIds = canvasBlocks.map(block => block.id)
+    const sourceBlocks = options.popup ? popupBlocks : canvasBlocks
+    const beforeBlockIds = sourceBlocks.map(block => block.id)
     const afterBlockIds = orderedBlocks.map(block => block.id)
     if (beforeBlockIds.join('|') === afterBlockIds.join('|')) return true
     const selectedBefore = selectedBlockId
-    const pageId = hasEditablePages(selectedSite) ? activePage?.id : undefined
+    const pageId = options.popup ? POPUP_SELECTED_ID : hasEditablePages(selectedSite) ? activePage?.id : undefined
     const nextPageBlocks = orderedBlocks.map((block, index) => ({ ...block, sortOrder: index }))
     const nextPageBlocksById = new Map(nextPageBlocks.map(block => [block.id, block]))
     const nextBlocks = blocks.map(block => nextPageBlocksById.get(block.id) || block)
@@ -4643,7 +4769,7 @@ export const Sites: React.FC = () => {
       const site = await sitesService.reorderBlocks(
         selectedSite.id,
         nextPageBlocks.map(block => block.id),
-        hasEditablePages(selectedSite) ? activePage?.id : undefined
+        pageId
       )
       syncSelectedSite(site)
       pushEditorHistory({
@@ -4676,6 +4802,14 @@ export const Sites: React.FC = () => {
   const getBlockMoveState = (block: SiteBlock): BlockMoveState => {
     if (!editorSite) return { canMoveUp: false, canMoveDown: false }
 
+    if (isPopupBlock(block)) {
+      const index = popupBlocks.findIndex(item => item.id === block.id)
+      return {
+        canMoveUp: index > 0,
+        canMoveDown: index >= 0 && index < popupBlocks.length - 1
+      }
+    }
+
     if (isLanding(editorSite)) {
       if (isTopLevelLandingBlock(block)) {
         const groups = buildLandingBlockOrderGroups(canvasBlocks, landingSectionLanes)
@@ -4703,11 +4837,19 @@ export const Sites: React.FC = () => {
 
   const handleMoveBlock = async (blockId: string, direction: BlockMoveDirection) => {
     if (!selectedSite) return
-    const block = canvasBlocks.find(item => item.id === blockId)
+    const block = editableCanvasBlocks.find(item => item.id === blockId)
     if (!block) return
 
     const offset = direction === 'up' ? -1 : 1
     let nextPageBlocks: SiteBlock[] | null = null
+
+    if (isPopupBlock(block)) {
+      const oldIndex = popupBlocks.findIndex(item => item.id === block.id)
+      const newIndex = oldIndex + offset
+      if (oldIndex < 0 || newIndex < 0 || newIndex >= popupBlocks.length) return
+      await persistCanvasBlockOrder(arrayMove(popupBlocks, oldIndex, newIndex), { popup: true })
+      return
+    }
 
     if (isLanding(selectedSite)) {
       if (isTopLevelLandingBlock(block)) {
@@ -4747,11 +4889,12 @@ export const Sites: React.FC = () => {
     setActiveDragId(null)
     if (!selectedSite || !event.over || event.active.id === event.over.id) return
 
-    const oldIndex = canvasBlocks.findIndex(block => block.id === event.active.id)
-    const newIndex = canvasBlocks.findIndex(block => block.id === event.over?.id)
+    const sourceBlocks = popupSurfaceSelected ? popupBlocks : canvasBlocks
+    const oldIndex = sourceBlocks.findIndex(block => block.id === event.active.id)
+    const newIndex = sourceBlocks.findIndex(block => block.id === event.over?.id)
     if (oldIndex < 0 || newIndex < 0) return
 
-    await persistCanvasBlockOrder(arrayMove(canvasBlocks, oldIndex, newIndex))
+    await persistCanvasBlockOrder(arrayMove(sourceBlocks, oldIndex, newIndex), { popup: popupSurfaceSelected })
   }
 
   const getInsertIndexFromNodes = (nodes: HTMLElement[], y: number, fallbackIndex: number) => {
@@ -4766,6 +4909,13 @@ export const Sites: React.FC = () => {
   }
 
   const getPaletteInsertIndex = (event: React.DragEvent<HTMLDivElement>, payload?: PaletteDragPayload | null) => {
+    if (popupSurfaceSelected) {
+      const popupSurface = (event.currentTarget as HTMLElement).querySelector('[data-rstk-popup-surface="true"]')
+      if (!popupSurface) return popupBlocks.length
+      const blockNodes = Array.from(popupSurface.querySelectorAll<HTMLElement>('[data-rstk-block-index]'))
+      return getInsertIndexFromNodes(blockNodes, event.clientY, popupBlocks.length)
+    }
+
     const shell = (event.currentTarget as HTMLElement).querySelector('.rstk-shell')
     if (!shell) return canvasBlocks.length
 
@@ -4848,6 +4998,13 @@ export const Sites: React.FC = () => {
   }
 
   const getPaletteDropPlacement = (event: React.DragEvent<HTMLDivElement>, payload: PaletteDragPayload) => {
+    if (popupSurfaceSelected) {
+      return {
+        insertIndex: getPaletteInsertIndex(event, payload),
+        target: null
+      }
+    }
+
     if (editorSite && isLanding(editorSite) && !isTopLevelLandingBlockType(payload.blockType)) {
       const target = getDropSectionTarget(event)
       return {
@@ -4890,7 +5047,7 @@ export const Sites: React.FC = () => {
     setPaletteDragEventPosition(event)
     const payload = getPalettePayloadForDrag(event.dataTransfer)
     const placement = payload ? getPaletteDropPlacement(event, payload) : null
-    const insertIndex = placement?.insertIndex ?? paletteInsertIndex ?? canvasBlocks.length
+    const insertIndex = placement?.insertIndex ?? paletteInsertIndex ?? (popupSurfaceSelected ? popupBlocks.length : canvasBlocks.length)
     const target = placement?.target || paletteSectionTarget
     resetPaletteDrag()
     if (!payload) return
@@ -5007,7 +5164,7 @@ export const Sites: React.FC = () => {
                     {canConfigurePopup && (
                       <button
                         type="button"
-                        className={`${styles.seoToolbarButton} ${styles.headerToolbarButton} ${popupPanelSelected ? styles.headerToolbarButtonActive : ''}`}
+	                        className={`${styles.seoToolbarButton} ${styles.headerToolbarButton} ${popupSurfaceSelected ? styles.headerToolbarButtonActive : ''}`}
                         onClick={() => selectEditorBlock(POPUP_SELECTED_ID)}
                         disabled={editorAIGenerating}
                         title="Configurar Pop up"
@@ -5262,10 +5419,10 @@ export const Sites: React.FC = () => {
               ) : (
               <div className={`${styles.builderGrid} ${isLanding(editorSite) ? styles.builderGridLanding : styles.builderGridForm}`}>
                 <div className={styles.blocksRail}>
-                  <Palette
-	                    blockTypes={isLanding(editorSite) ? landingBlockTypes : formBlockTypes}
-	                    existingBlocks={canvasBlocks}
-	                    onAdd={handleAddBlock}
+	                  <Palette
+		                    blockTypes={popupSurfaceSelected ? getPopupPaletteBlockTypes(editorSite) : isLanding(editorSite) ? landingBlockTypes : formBlockTypes}
+		                    existingBlocks={editableCanvasBlocks}
+		                    onAdd={handleAddBlock}
 	                    onPaletteDragStart={(payload, position) => {
 	                      setActivePaletteDragPayload(payload)
 	                      setPaletteDragPosition(position)
@@ -5286,14 +5443,14 @@ export const Sites: React.FC = () => {
                     onDragEnd={handleDragEnd}
                     onDragCancel={() => setActiveDragId(null)}
                   >
-                    <SortableContext items={canvasBlocks.map(block => block.id)} strategy={verticalListSortingStrategy}>
+	                    <SortableContext items={editableCanvasBlocks.map(block => block.id)} strategy={verticalListSortingStrategy}>
                       <CanvasStage
                         designWidth={canvasTheme!.designWidth}
                         canvasClassName={`rstkCanvas ${canvasTheme!.bodyClass}`}
                         canvasStyle={canvasTheme!.vars}
                         active={paletteDragging}
-                        pageSelected={selectedBlockId === PAGE_SELECTED_ID}
-                        fluidAboveDesign={isLanding(editorSite) && device === 'desktop'}
+	                        pageSelected={selectedBlockId === PAGE_SELECTED_ID}
+	                        fluidAboveDesign={isLanding(editorSite) && device === 'desktop'}
                         onClear={() => {
                           selectEditorBlock(PAGE_SELECTED_ID)
                           setPaletteInsertIndex(null)
@@ -5394,10 +5551,32 @@ export const Sites: React.FC = () => {
                                 </div>
                               )}
                               </div>
-                            </div>
-                          </main>
-                        </div>
-                      </CanvasStage>
+	                            </div>
+	                          </main>
+	                          {popupSurfaceSelected && (
+	                            <PopupCanvasSurface
+	                              site={editorSite}
+	                              blocks={popupBlocks}
+	                              selectedBlockId={selectedBlockId}
+	                              forms={forms}
+	                              calendars={calendars}
+	                              pages={pages}
+	                              activePageId={activePage?.id || DEFAULT_FUNNEL_PAGE_ID}
+	                              selected={selectedBlockId === POPUP_SELECTED_ID}
+	                              palettePreviewBlock={canvasPalettePreviewBlock}
+	                              paletteInsertIndex={paletteInsertIndex}
+	                              onSelectPopup={() => selectEditorBlock(POPUP_SELECTED_ID)}
+	                              onSelectBlock={selectEditorBlock}
+	                              onDeleteBlock={requestDeleteBlock}
+	                              onMoveBlock={handleMoveBlock}
+	                              getBlockMoveState={getBlockMoveState}
+	                              onPatchBlock={patchBlockLocal}
+	                              onPatchBlockSettings={patchBlockSettingsLocal}
+	                              onSaveBlock={handleSaveBlock}
+	                            />
+	                          )}
+	                        </div>
+	                      </CanvasStage>
                     </SortableContext>
 	                    <DragOverlay dropAnimation={{ duration: 340, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' }}>
                       {activeDragBlock ? (
@@ -5413,10 +5592,11 @@ export const Sites: React.FC = () => {
 
                 <PropertiesPanel
                   site={editorSite}
-                  block={selectedBlock}
-                  surfaceSelectionId={selectedBlockId}
-                  blocks={canvasBlocks}
-                  allBlocks={blocks}
+	                  block={selectedBlock}
+	                  surfaceSelectionId={selectedBlockId}
+	                  blocks={editableCanvasBlocks}
+	                  allBlocks={blocks}
+	                  popupBlocks={popupBlocks}
                   forms={forms}
                   calendars={calendars}
                   customFields={customFields}
@@ -6753,6 +6933,8 @@ const importedButtonActionOptions: ImportedButtonActionOption[] = [
   { value: 'next_page', label: 'Ir a la siguiente página' },
   { value: 'specific_page', label: 'Ir a una página específica' },
   { value: 'url', label: 'Abrir enlace' },
+  { value: 'open_popup', label: 'Abrir pop up' },
+  { value: 'close_popup', label: 'Cerrar popup' },
   { value: 'automation', label: 'Enviar automatización', demo: true }
 ]
 
@@ -12374,6 +12556,159 @@ const SortableCanvasBlock: React.FC<SortableCanvasBlockProps> = ({
   )
 }
 
+interface PopupCanvasSurfaceProps {
+  site: PublicSite
+  blocks: SiteBlock[]
+  selectedBlockId: string
+  forms: PublicSite[]
+  calendars: CalendarType[]
+  pages: SitePage[]
+  activePageId: string
+  selected: boolean
+  palettePreviewBlock: SiteBlock | null
+  paletteInsertIndex: number | null
+  onSelectPopup: () => void
+  onSelectBlock: (blockId: string) => void
+  onDeleteBlock: (blockId: string) => void
+  onMoveBlock: (blockId: string, direction: BlockMoveDirection) => void
+  getBlockMoveState: (block: SiteBlock) => BlockMoveState
+  onPatchBlock: (blockId: string, patch: Partial<SiteBlock>) => void
+  onPatchBlockSettings: (block: SiteBlock, patch: Record<string, unknown>) => void
+  onSaveBlock: (blockId: string) => void
+}
+
+const PopupCanvasSurface: React.FC<PopupCanvasSurfaceProps> = ({
+  site,
+  blocks,
+  selectedBlockId,
+  forms,
+  calendars,
+  pages,
+  activePageId,
+  selected,
+  palettePreviewBlock,
+  paletteInsertIndex,
+  onSelectPopup,
+  onSelectBlock,
+  onDeleteBlock,
+  onMoveBlock,
+  getBlockMoveState,
+  onPatchBlock,
+  onPatchBlockSettings,
+  onSaveBlock
+}) => {
+  const theme = site.theme || {}
+  const closeDisplay = normalizePopupCloseDisplay(theme.popupCloseDisplay)
+  const closeIcon = getPopupCloseIconText(theme.popupCloseIcon)
+  const closeText = getThemeString(theme, 'popupCloseText') || 'Cerrar'
+  const showCloseIcon = closeDisplay !== 'text' && closeIcon
+  const showCloseText = closeDisplay !== 'icon'
+  const modalStyle = {
+    background: getThemePaint(theme, 'popupBackgroundColor', isSiteDark(site) ? '#0f172a' : '#ffffff'),
+    color: getThemePaint(theme, 'popupTextColor', isSiteDark(site) ? '#f8fafc' : '#111827'),
+    borderColor: getThemePaint(theme, 'popupBorderColor', 'rgba(148, 163, 184, 0.32)'),
+    borderWidth: getThemeNumber(theme, 'popupBorderWidth', 1, 0, 12),
+    borderRadius: getThemeNumber(theme, 'popupRadius', 18, 0, 60),
+    padding: getThemeNumber(theme, 'popupPadding', 24, 0, 96),
+    maxWidth: getThemeNumber(theme, 'popupMaxWidth', 560, 320, 960)
+  }
+
+  return (
+    <div
+      className="rstkPopupEditorLayer"
+      onClick={(event) => {
+        event.stopPropagation()
+        onSelectPopup()
+      }}
+    >
+      <div
+        className="rstkPopupEditorBackdrop"
+        style={{ background: getThemePaint(theme, 'popupBackdropColor', 'rgba(2, 6, 23, 0.62)') }}
+      />
+      <section
+        className={`rstkPopupEditorModal ${selected ? 'rstkPopupEditorModalSelected' : ''}`}
+        data-rstk-popup-surface="true"
+        style={{
+          background: modalStyle.background,
+          color: modalStyle.color,
+          borderColor: modalStyle.borderColor,
+          borderWidth: modalStyle.borderWidth,
+          borderRadius: modalStyle.borderRadius,
+          padding: modalStyle.padding,
+          width: `min(${modalStyle.maxWidth}px, calc(100% - 48px))`
+        }}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Pop up editable"
+        onClick={(event) => {
+          event.stopPropagation()
+          onSelectPopup()
+        }}
+      >
+        <button
+          type="button"
+          className="rstkPopupEditorClose"
+          onClick={(event) => {
+            event.stopPropagation()
+            onSelectPopup()
+          }}
+          aria-label="Cerrar"
+        >
+          {showCloseIcon && <span aria-hidden="true">{closeIcon}</span>}
+          {showCloseText && <strong>{closeText}</strong>}
+        </button>
+        <div className="rstkPopupEditorContent">
+          {palettePreviewBlock && paletteInsertIndex === 0 && (
+            <PaletteInsertPreview block={palettePreviewBlock} site={site} forms={forms} calendars={calendars} />
+          )}
+          {blocks.length === 0 ? (
+            palettePreviewBlock ? null : (
+              <div className="rstkDropEmpty rstkPopupDropEmpty">
+                <Plus size={22} />
+                <p>Arrastra bloques aqui o haz click en la barra izquierda.</p>
+              </div>
+            )
+          ) : (
+            blocks.map((block, index) => {
+              const moveState = getBlockMoveState(block)
+              return (
+                <React.Fragment key={block.id}>
+                  <SortableCanvasBlock
+                    block={block}
+                    blocks={blocks}
+                    index={index}
+                    selected={selectedBlockId === block.id}
+                    site={site}
+                    forms={forms}
+                    calendars={calendars}
+                    pages={pages}
+                    activePageId={activePageId}
+                    canMoveUp={moveState.canMoveUp}
+                    canMoveDown={moveState.canMoveDown}
+                    onSelect={() => onSelectBlock(block.id)}
+                    onDelete={() => onDeleteBlock(block.id)}
+                    onMoveUp={() => onMoveBlock(block.id, 'up')}
+                    onMoveDown={() => onMoveBlock(block.id, 'down')}
+                    onPatchBlock={(patch) => onPatchBlock(block.id, patch)}
+                    onPatchSettings={(patch) => onPatchBlockSettings(block, patch)}
+                    onSave={() => onSaveBlock(block.id)}
+                  />
+                  {palettePreviewBlock && paletteInsertIndex === index + 1 && (
+                    <PaletteInsertPreview block={palettePreviewBlock} site={site} forms={forms} calendars={calendars} />
+                  )}
+                </React.Fragment>
+              )
+            })
+          )}
+          {palettePreviewBlock && blocks.length > 0 && paletteInsertIndex !== null && paletteInsertIndex >= blocks.length && (
+            <PaletteInsertPreview block={palettePreviewBlock} site={site} forms={forms} calendars={calendars} />
+          )}
+        </div>
+      </section>
+    </div>
+  )
+}
+
 interface LandingCanvasSectionsProps {
   lanes: LandingSectionLane[]
   blocks: SiteBlock[]
@@ -13602,6 +13937,7 @@ interface PropertiesPanelProps {
   surfaceSelectionId?: string
   blocks: SiteBlock[]
   allBlocks?: SiteBlock[]
+  popupBlocks?: SiteBlock[]
   forms: PublicSite[]
   calendars: CalendarType[]
   customFields: CustomFieldDefinition[]
@@ -13752,20 +14088,23 @@ const FormGlobalStyleControls: React.FC<{
 
 const PopupInspector: React.FC<{
   site: PublicSite
+  popupBlocks: SiteBlock[]
   importedPopupDetected: boolean
   onPatchTheme: (patch: Partial<SiteTheme>) => void
   onSaveSite: () => void
-}> = ({ site, importedPopupDetected, onPatchTheme, onSaveSite }) => {
+}> = ({ site, popupBlocks, importedPopupDetected, onPatchTheme, onSaveSite }) => {
   const theme = site.theme || {}
-  const popupEnabled = Boolean(theme.popupEnabled)
-  const popupTrigger = theme.popupTrigger === 'exit_intent' ? 'exit_intent' : 'delay'
+  const popupTrigger = getPopupTrigger(theme)
   const delaySeconds = getThemeNumber(theme, 'popupDelaySeconds', 8, 0, 120)
+  const closeDisplay = normalizePopupCloseDisplay(theme.popupCloseDisplay)
+  const closeIcon = normalizePopupCloseIcon(theme.popupCloseIcon)
+  const statusLabel = popupBlocks.length > 0 ? `${popupBlocks.length} ${popupBlocks.length === 1 ? 'bloque' : 'bloques'}` : 'Sin contenido'
 
   return (
     <aside className={styles.propertiesPanel}>
       <div className={styles.panelHeader}>
         <strong>Pop up</strong>
-        <span>{popupEnabled ? 'Activo' : 'Apagado'}</span>
+        <span>{statusLabel}</span>
       </div>
       <div className={styles.propertiesBody}>
         <div className={styles.settingsGroup}>
@@ -13776,86 +14115,25 @@ const PopupInspector: React.FC<{
             </div>
           )}
 
-          <div className={`${styles.metaCard} ${popupEnabled ? styles.metaCardActive : ''}`}>
+          <div className={`${styles.metaCard} ${popupBlocks.length ? styles.metaCardActive : ''}`}>
             <span className={styles.metaMark} aria-hidden="true">P</span>
             <div className={styles.metaCardInfo}>
-              <strong>{popupEnabled ? 'Pop up encendido' : 'Pop up apagado'}</strong>
-              <small>{popupEnabled ? 'Se mostrara en la pagina publicada' : 'Activalo solo si esta pagina necesita un aviso o llamada a la accion'}</small>
+              <strong>{popupBlocks.length ? 'Pop up editable' : 'Pop up vacio'}</strong>
             </div>
-            <label className={styles.metaSwitch}>
-              <input
-                type="checkbox"
-                checked={popupEnabled}
-                aria-label="Activar Pop up"
-                onChange={(event) => {
-                  const enabled = event.target.checked
-                  onPatchTheme({
-                    popupEnabled: enabled,
-                    popupTitle: theme.popupTitle || 'Antes de irte',
-                    popupBody: theme.popupBody || 'Dejanos tus datos y te contactamos para ayudarte.',
-                    popupButtonText: theme.popupButtonText || 'Quiero informacion',
-                    popupDelaySeconds: theme.popupDelaySeconds ?? 8,
-                    popupTrigger: theme.popupTrigger || 'delay'
-                  })
-                  window.setTimeout(onSaveSite, 0)
-                }}
-              />
-              <span className={styles.metaSwitchTrack} />
-            </label>
           </div>
 
-          <div className={styles.panelSubheader}>Contenido</div>
-          <label className={styles.field}>
-            <span>Titulo</span>
-            <input
-              value={theme.popupTitle || ''}
-              placeholder="Antes de irte"
-              onChange={(event) => onPatchTheme({ popupTitle: event.target.value })}
-              onBlur={onSaveSite}
-            />
-          </label>
-          <label className={styles.field}>
-            <span>Mensaje</span>
-            <textarea
-              rows={4}
-              value={theme.popupBody || ''}
-              placeholder="Dejanos tus datos y te contactamos para ayudarte."
-              onChange={(event) => onPatchTheme({ popupBody: event.target.value })}
-              onBlur={onSaveSite}
-            />
-          </label>
+          <div className={styles.panelSubheader}>Cuando se activa</div>
           <div className={styles.twoColumn}>
             <label className={styles.field}>
-              <span>Texto boton</span>
-              <input
-                value={theme.popupButtonText || ''}
-                placeholder="Quiero informacion"
-                onChange={(event) => onPatchTheme({ popupButtonText: event.target.value })}
-                onBlur={onSaveSite}
-              />
-            </label>
-            <label className={styles.field}>
-              <span>URL boton</span>
-              <input
-                value={theme.popupButtonUrl || ''}
-                placeholder="https://..."
-                onChange={(event) => onPatchTheme({ popupButtonUrl: event.target.value })}
-                onBlur={onSaveSite}
-              />
-            </label>
-          </div>
-
-          <div className={styles.panelSubheader}>Aparicion</div>
-          <div className={styles.twoColumn}>
-            <label className={styles.field}>
-              <span>Cuando</span>
+              <span>Activacion</span>
               <select
                 value={popupTrigger}
                 onChange={(event) => onPatchTheme({ popupTrigger: event.target.value as SiteTheme['popupTrigger'] })}
                 onBlur={onSaveSite}
               >
-                <option value="delay">Despues de unos segundos</option>
-                <option value="exit_intent">Cuando intenta salir</option>
+                {Object.entries(popupTriggerLabels).map(([value, label]) => (
+                  <option key={value} value={value}>{label}</option>
+                ))}
               </select>
             </label>
             <label className={styles.field}>
@@ -13865,12 +14143,50 @@ const PopupInspector: React.FC<{
                 min={0}
                 max={120}
                 value={delaySeconds}
-                disabled={popupTrigger === 'exit_intent'}
+                disabled={popupTrigger !== 'delay'}
                 onChange={(event) => onPatchTheme({ popupDelaySeconds: Math.min(120, Math.max(0, Number(event.target.value) || 0)) })}
                 onBlur={onSaveSite}
               />
             </label>
           </div>
+
+          <div className={styles.panelSubheader}>Caja del pop up</div>
+          <div className={styles.twoColumn}>
+            <ColorField label="Fondo" value={getThemePaint(theme, 'popupBackgroundColor', isSiteDark(site) ? '#0f172a' : '#ffffff')} allowGradient onChange={(value) => onPatchTheme({ popupBackgroundColor: value })} onCommit={onSaveSite} />
+            <ColorField label="Texto" value={getThemePaint(theme, 'popupTextColor', isSiteDark(site) ? '#f8fafc' : '#111827')} allowGradient onChange={(value) => onPatchTheme({ popupTextColor: value })} onCommit={onSaveSite} />
+          </div>
+          <ColorField label="Fondo exterior" value={getThemePaint(theme, 'popupBackdropColor', 'rgba(2, 6, 23, 0.62)')} allowGradient onChange={(value) => onPatchTheme({ popupBackdropColor: value })} onCommit={onSaveSite} />
+          <div className={styles.twoColumn}>
+            <DimensionField label="Ancho" value={getThemeNumber(theme, 'popupMaxWidth', 560, 320, 960)} min={320} max={960} step={10} onChange={(value) => onPatchTheme({ popupMaxWidth: value })} onCommit={onSaveSite} />
+            <DimensionField label="Relleno" value={getThemeNumber(theme, 'popupPadding', 24, 0, 96)} min={0} max={96} onChange={(value) => onPatchTheme({ popupPadding: value })} onCommit={onSaveSite} />
+          </div>
+          <div className={styles.twoColumn}>
+            <DimensionField label="Radio" value={getThemeNumber(theme, 'popupRadius', 18, 0, 60)} min={0} max={60} onChange={(value) => onPatchTheme({ popupRadius: value })} onCommit={onSaveSite} />
+            <DimensionField label="Borde" value={getThemeNumber(theme, 'popupBorderWidth', 1, 0, 12)} min={0} max={12} onChange={(value) => onPatchTheme({ popupBorderWidth: value })} onCommit={onSaveSite} />
+          </div>
+          <ColorField label="Color borde" value={getThemePaint(theme, 'popupBorderColor', 'rgba(148, 163, 184, 0.32)')} allowGradient onChange={(value) => onPatchTheme({ popupBorderColor: value })} onCommit={onSaveSite} />
+
+          <div className={styles.panelSubheader}>Boton de cerrar</div>
+          <div className={styles.twoColumn}>
+            <label className={styles.field}>
+              <span>Mostrar</span>
+              <select value={closeDisplay} onChange={(event) => onPatchTheme({ popupCloseDisplay: event.target.value as SiteTheme['popupCloseDisplay'] })} onBlur={onSaveSite}>
+                {Object.entries(popupCloseDisplayLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+              </select>
+            </label>
+            <label className={styles.field}>
+              <span>Icono</span>
+              <select value={closeIcon} onChange={(event) => onPatchTheme({ popupCloseIcon: event.target.value as SiteTheme['popupCloseIcon'] })} onBlur={onSaveSite}>
+                {Object.entries(popupCloseIconLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+              </select>
+            </label>
+          </div>
+          {closeDisplay !== 'icon' && (
+            <label className={styles.field}>
+              <span>Texto</span>
+              <input value={theme.popupCloseText || ''} placeholder="Cerrar" onChange={(event) => onPatchTheme({ popupCloseText: event.target.value })} onBlur={onSaveSite} />
+            </label>
+          )}
         </div>
       </div>
     </aside>
@@ -14263,6 +14579,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   surfaceSelectionId,
   blocks,
   allBlocks,
+  popupBlocks = [],
   forms,
   calendars,
   customFields,
@@ -14285,6 +14602,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
     return (
       <PopupInspector
         site={site}
+        popupBlocks={popupBlocks}
         importedPopupDetected={importedPopupDetected}
         onPatchTheme={onPatchTheme}
         onSaveSite={onSaveSite}
@@ -14604,6 +14922,8 @@ const ButtonActionFields: React.FC<{
           <option value="url">Enviar a una URL</option>
           <option value="next_page">Ir a la siguiente pagina del embudo</option>
           <option value="specific_page">Ir a una pagina especifica del embudo</option>
+          <option value="open_popup">Abrir pop up</option>
+          <option value="close_popup">Cerrar pop up</option>
         </select>
       </label>
 
