@@ -5312,6 +5312,41 @@ function buildImportedAIRegionFallbackPageResult({ currentImport = {}, importedP
   }
 }
 
+function getImportedAIRegionMissingTargetMessage(fallbackResult = {}) {
+  if (!fallbackResult || fallbackResult.page) return ''
+  const fallbackType = cleanString(fallbackResult.type)
+  const reason = cleanString(fallbackResult.reason)
+  if (fallbackType === 'video_only') {
+    if (/no se detecto un video/i.test(reason)) {
+      return 'La zona que seleccionaste no incluye un video detectable. Para cambiar o dejar solo el video, selecciona tambien el video dentro del rectangulo.'
+    }
+    if (/ya no coincide/i.test(reason)) {
+      return 'El video de esa seleccion ya no coincide con el HTML guardado. Recarga la vista previa y vuelve a seleccionar la zona.'
+    }
+  }
+  if (fallbackType === 'centered_title_video_button') {
+    if (/faltan titular, video o boton/i.test(reason)) {
+      return 'La zona seleccionada no incluye todos los elementos necesarios: titulo, video y boton. Selecciona la franja completa que quieres reordenar.'
+    }
+    if (/ya no coinciden/i.test(reason)) {
+      return 'Los elementos de esa seleccion ya no coinciden con el HTML guardado. Recarga la vista previa y vuelve a seleccionar la zona.'
+    }
+  }
+  return ''
+}
+
+function buildImportedAIRegionMissingTargetResponse(debug, message = '') {
+  const reply = cleanString(message) || 'La zona seleccionada no incluye el elemento que pediste cambiar. Selecciona la parte correcta de la pagina y vuelve a intentar.'
+  debug.finalStatus = 'selection_target_missing'
+  addSitesAIEditDebugStep(debug, `No se guardo el HTML porque falta el objetivo en la seleccion: ${reply}`)
+  logSitesAIEditDebug(debug, 'selection_target_missing')
+  return {
+    status: 'needs_more_info',
+    reply,
+    debug: getSitesAIEditDebugPayload(debug)
+  }
+}
+
 export async function listSites() {
   const rows = await db.all(`
     SELECT
@@ -6962,6 +6997,10 @@ export async function updateImportedSiteHtmlWithAI(siteId, input = {}) {
         import: layoutResult.import,
         debug: getSitesAIEditDebugPayload(debug)
       }
+    }
+    const missingTargetMessage = getImportedAIRegionMissingTargetMessage(layoutFallbackResult)
+    if (missingTargetMessage) {
+      return buildImportedAIRegionMissingTargetResponse(debug, missingTargetMessage)
     }
     logSitesAIEditDebug(debug, 'fallback_not_applied')
   }

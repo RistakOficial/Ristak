@@ -8006,7 +8006,8 @@ const ImportedHtmlEditorPanel: React.FC<{
       )
 
       let result = await runRegionEdit()
-      if (result.status === 'needs_more_info' || !result.site || !result.import) {
+      const targetMissing = result.debug?.finalStatus === 'selection_target_missing'
+      if (!targetMissing && (result.status === 'needs_more_info' || !result.site || !result.import)) {
         result = await runRegionEdit({
           forceApply: true,
           previousReply: result.reply || 'La IA pidió más información.'
@@ -8014,8 +8015,11 @@ const ImportedHtmlEditorPanel: React.FC<{
       }
 
       if (result.status === 'needs_more_info' || !result.site || !result.import) {
+        const missingTarget = result.debug?.finalStatus === 'selection_target_missing'
         const message = result.reply
-          ? `La IA no aplicó cambios: ${result.reply}`
+          ? missingTarget
+            ? result.reply
+            : `La IA no aplicó cambios: ${result.reply}`
           : 'La IA no pudo aplicar ese cambio. Intenta decirlo como acción directa: "centra el título, pon el video debajo y el botón debajo del video".'
         setAiRegionError(message)
         setAIRegionAttemptStatus(aiRegionSelection, {
@@ -8901,7 +8905,9 @@ const ImportedHtmlEditorPanel: React.FC<{
                     )}
                     <p>
                       <b>Que hizo Ristak:</b>{' '}
-                      {aiRegionLastAttempt.debug.fallbackApplied
+                      {aiRegionLastAttempt.debug.finalStatus === 'selection_target_missing'
+                        ? 'Detuvo el guardado porque la zona seleccionada no incluye el elemento que pediste cambiar.'
+                        : aiRegionLastAttempt.debug.fallbackApplied
                         ? `Aplico ${aiRegionLastAttempt.debug.fallbackType || 'un ajuste automatico'} porque era mas confiable para esta zona.`
                         : aiRegionLastAttempt.debug.changedByAI
                           ? 'Guardo el HTML que devolvio la IA.'
