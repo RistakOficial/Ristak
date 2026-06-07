@@ -1095,6 +1095,61 @@
   padding: 9px 12px;
 }
 
+.aiVoiceDictation {
+  display: flex;
+  align-items: stretch;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+}
+
+.aiVoiceDictationActive {
+  justify-content: stretch;
+}
+
+.aiVoiceMicButton {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #334155;
+  cursor: pointer;
+  transition: border-color 160ms ease, background 160ms ease, color 160ms ease, box-shadow 160ms ease;
+}
+
+.aiVoiceMicButton:hover:not(:disabled) {
+  border-color: rgba(34, 197, 94, 0.46);
+  background: #f0fdf4;
+  color: #166534;
+}
+
+.aiVoiceMicButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+.aiVoiceMicActive {
+  border-color: rgba(34, 197, 94, 0.64);
+  background: #dcfce7;
+  color: #166534;
+  box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.14);
+}
+
+.aiVoiceComposerInline {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 44px;
+  padding: 7px 10px;
+}
+
+.aiVoiceComposerInline .aiCreationVoiceWaveform {
+  height: 26px;
+}
+
 .aiCreationVoiceWaveArea {
   position: relative;
   min-width: 0;
@@ -1814,6 +1869,28 @@
 :global([data-theme="dark"]) .aiCreationVoiceComposer {
   border-color: rgba(34, 197, 94, 0.24);
   background: rgba(34, 197, 94, 0.09);
+}
+
+:global(body.dark) .aiVoiceMicButton,
+:global([data-theme="dark"]) .aiVoiceMicButton {
+  border-color: rgba(148, 163, 184, 0.2);
+  background: #1a1b1f;
+  color: #e5e7eb;
+}
+
+:global(body.dark) .aiVoiceMicButton:hover:not(:disabled),
+:global([data-theme="dark"]) .aiVoiceMicButton:hover:not(:disabled) {
+  border-color: rgba(34, 197, 94, 0.38);
+  background: #22242a;
+  color: #bbf7d0;
+}
+
+:global(body.dark) .aiVoiceMicActive,
+:global([data-theme="dark"]) .aiVoiceMicActive {
+  border-color: rgba(34, 197, 94, 0.42);
+  background: rgba(34, 197, 94, 0.16);
+  color: #bbf7d0;
+  box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.1);
 }
 
 :global(body.dark) .aiCreationVoiceWaveform::before,

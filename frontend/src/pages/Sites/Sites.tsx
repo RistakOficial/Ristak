@@ -5356,6 +5356,280 @@ const formatAICreationVoiceDuration = (totalSeconds: number) => {
   return `${minutes}:${seconds.toString().padStart(2, '0')}`
 }
 
+type AIVoiceDictationState = 'idle' | 'recording' | 'transcribing'
+
+const appendDictatedText = (current: string, nextText: string) => {
+  const cleanText = nextText.trim()
+  if (!cleanText) return current
+  return current.trim() ? `${current.trim()}\n\n${cleanText}` : cleanText
+}
+
+function useAIVoiceDictation({
+  onTranscription,
+  onError,
+  onStart
+}: {
+  onTranscription: (text: string) => void
+  onError: (message: string) => void
+  onStart?: () => void
+}) {
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const mediaStreamRef = useRef<MediaStream | null>(null)
+  const audioContextRef = useRef<AudioContext | null>(null)
+  const audioSourceRef = useRef<MediaStreamAudioSourceNode | null>(null)
+  const analyserRef = useRef<AnalyserNode | null>(null)
+  const voiceAnimationFrameRef = useRef<number | null>(null)
+  const voiceLastWaveUpdateRef = useRef(0)
+  const voiceChunksRef = useRef<Blob[]>([])
+  const cancelRequestedRef = useRef(false)
+  const onTranscriptionRef = useRef(onTranscription)
+  const onErrorRef = useRef(onError)
+  const onStartRef = useRef(onStart)
+  const [voiceState, setVoiceState] = useState<AIVoiceDictationState>('idle')
+  const [voiceBars, setVoiceBars] = useState<number[]>(createAICreationVoiceBars)
+  const [voiceElapsed, setVoiceElapsed] = useState(0)
+
+  useEffect(() => {
+    onTranscriptionRef.current = onTranscription
+  }, [onTranscription])
+
+  useEffect(() => {
+    onErrorRef.current = onError
+  }, [onError])
+
+  useEffect(() => {
+    onStartRef.current = onStart
+  }, [onStart])
+
+  const resetVoiceUi = useCallback(() => {
+    setVoiceBars(createAICreationVoiceBars())
+    setVoiceElapsed(0)
+    setVoiceState('idle')
+  }, [])
+
+  const stopVoiceStream = useCallback(() => {
+    if (voiceAnimationFrameRef.current !== null) {
+      window.cancelAnimationFrame(voiceAnimationFrameRef.current)
+      voiceAnimationFrameRef.current = null
+    }
+
+    audioSourceRef.current?.disconnect()
+    audioSourceRef.current = null
+    analyserRef.current = null
+
+    if (audioContextRef.current) {
+      audioContextRef.current.close().catch(() => undefined)
+      audioContextRef.current = null
+    }
+
+    mediaStreamRef.current?.getTracks().forEach(track => track.stop())
+    mediaStreamRef.current = null
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      cancelRequestedRef.current = true
+      const recorder = mediaRecorderRef.current
+      if (recorder && recorder.state !== 'inactive') {
+        try {
+          recorder.stop()
+        } catch {
+          // Best effort cleanup for browser recorder state.
+        }
+      }
+      stopVoiceStream()
+    }
+  }, [stopVoiceStream])
+
+  useEffect(() => {
+    if (voiceState !== 'recording') return
+
+    const startedAt = Date.now()
+    const timer = window.setInterval(() => {
+      setVoiceElapsed(Math.floor((Date.now() - startedAt) / 1000))
+    }, 250)
+
+    return () => window.clearInterval(timer)
+  }, [voiceState])
+
+  const startVoiceMeter = useCallback(async () => {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    mediaStreamRef.current = stream
+
+    const AudioContextConstructor = getAICreationAudioContextConstructor()
+    if (!AudioContextConstructor) return stream
+
+    const audioContext = new AudioContextConstructor()
+    const analyser = audioContext.createAnalyser()
+    const source = audioContext.createMediaStreamSource(stream)
+
+    analyser.fftSize = 256
+    analyser.smoothingTimeConstant = 0.72
+    const samples = new Uint8Array(analyser.fftSize)
+    source.connect(analyser)
+
+    audioContextRef.current = audioContext
+    audioSourceRef.current = source
+    analyserRef.current = analyser
+    voiceLastWaveUpdateRef.current = 0
+
+    const drawWave = (timestamp: number) => {
+      if (!analyserRef.current) return
+
+      if (timestamp - voiceLastWaveUpdateRef.current > 55) {
+        analyserRef.current.getByteTimeDomainData(samples)
+        const nextHeight = getAICreationVoiceBarHeight(samples)
+
+        setVoiceBars(current => [...current.slice(1), nextHeight])
+        voiceLastWaveUpdateRef.current = timestamp
+      }
+
+      voiceAnimationFrameRef.current = window.requestAnimationFrame(drawWave)
+    }
+
+    voiceAnimationFrameRef.current = window.requestAnimationFrame(drawWave)
+
+    return stream
+  }, [])
+
+  const startVoice = useCallback(async () => {
+    onErrorRef.current('')
+    onStartRef.current?.()
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+      onErrorRef.current('Este navegador no permite grabar audio aquí.')
+      return
+    }
+
+    try {
+      cancelRequestedRef.current = false
+      setVoiceBars(createAICreationVoiceBars())
+      setVoiceElapsed(0)
+      const stream = await startVoiceMeter()
+      const mimeType = getAICreationAudioMimeType()
+      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined)
+      mediaRecorderRef.current = recorder
+      voiceChunksRef.current = []
+
+      recorder.ondataavailable = (event) => {
+        if (event.data?.size) voiceChunksRef.current.push(event.data)
+      }
+      recorder.onstop = () => {
+        const shouldCancel = cancelRequestedRef.current
+        const chunks = voiceChunksRef.current
+        const audioBlob = new Blob(chunks, { type: mimeType || chunks[0]?.type || 'audio/webm' })
+        stopVoiceStream()
+        voiceChunksRef.current = []
+        mediaRecorderRef.current = null
+        if (shouldCancel) {
+          cancelRequestedRef.current = false
+          resetVoiceUi()
+          return
+        }
+        if (!audioBlob.size) {
+          resetVoiceUi()
+          return
+        }
+        setVoiceState('transcribing')
+        void aiAgentService.transcribeVoice(audioBlob)
+          .then(result => {
+            onTranscriptionRef.current(result.text)
+            resetVoiceUi()
+          })
+          .catch(error => {
+            onErrorRef.current(error instanceof Error ? error.message : 'No se pudo transcribir el audio.')
+            resetVoiceUi()
+          })
+      }
+
+      recorder.start()
+      setVoiceState('recording')
+    } catch (error) {
+      stopVoiceStream()
+      setVoiceBars(createAICreationVoiceBars())
+      setVoiceElapsed(0)
+      onErrorRef.current(error instanceof Error ? error.message : 'No se pudo activar el micrófono.')
+      setVoiceState('idle')
+    }
+  }, [resetVoiceUi, startVoiceMeter, stopVoiceStream])
+
+  const stopVoice = useCallback(() => {
+    cancelRequestedRef.current = false
+    const recorder = mediaRecorderRef.current
+    if (recorder && recorder.state !== 'inactive') recorder.stop()
+  }, [])
+
+  const cancelVoice = useCallback(() => {
+    cancelRequestedRef.current = true
+    const recorder = mediaRecorderRef.current
+    if (recorder && recorder.state !== 'inactive') {
+      try {
+        recorder.stop()
+      } catch {
+        stopVoiceStream()
+        resetVoiceUi()
+      }
+      return
+    }
+    stopVoiceStream()
+    resetVoiceUi()
+  }, [resetVoiceUi, stopVoiceStream])
+
+  return {
+    voiceState,
+    voiceBars,
+    voiceElapsed,
+    formattedVoiceElapsed: formatAICreationVoiceDuration(voiceElapsed),
+    voiceIsActive: voiceState !== 'idle',
+    startVoice,
+    stopVoice,
+    cancelVoice
+  }
+}
+
+const AIVoiceDictationControl: React.FC<{
+  voice: ReturnType<typeof useAIVoiceDictation>
+  disabled?: boolean
+  className?: string
+}> = ({ voice, disabled = false, className = '' }) => {
+  const isRecording = voice.voiceState === 'recording'
+  const isTranscribing = voice.voiceState === 'transcribing'
+  const label = isRecording ? 'Detener dictado' : isTranscribing ? 'Transcribiendo audio' : 'Dictar con micrófono'
+
+  return (
+    <div className={`${styles.aiVoiceDictation} ${voice.voiceIsActive ? styles.aiVoiceDictationActive : ''} ${className}`}>
+      <button
+        type="button"
+        className={`${styles.aiVoiceMicButton} ${isRecording ? styles.aiVoiceMicActive : ''}`}
+        onClick={() => isRecording ? voice.stopVoice() : void voice.startVoice()}
+        disabled={disabled || isTranscribing}
+        title={label}
+        aria-label={label}
+      >
+        <Mic size={17} />
+      </button>
+      {voice.voiceIsActive && (
+        <div className={`${styles.aiCreationVoiceComposer} ${styles.aiVoiceComposerInline} ${isRecording ? styles.aiCreationVoiceRecording : styles.aiCreationVoiceProcessing}`} role="status" aria-live="polite">
+          <div className={styles.aiCreationVoiceWaveArea}>
+            <div className={styles.aiCreationVoiceWaveform} aria-hidden="true">
+              {voice.voiceBars.map((height, index) => (
+                <span
+                  key={`ai-dictation-voice-bar-${index}`}
+                  className={styles.aiCreationVoiceBar}
+                  style={{ '--voice-bar-height': `${height}px` } as React.CSSProperties}
+                />
+              ))}
+            </div>
+            <span className={styles.aiCreationVoiceLabel}>
+              {isTranscribing ? 'Transcribiendo audio...' : 'Escuchando...'}
+            </span>
+          </div>
+          <span className={styles.aiCreationVoiceTimer}>{voice.formattedVoiceElapsed}</span>
+        </div>
+      )}
+    </div>
+  )
+}
+
 const AIEditorGenerationPanel: React.FC<{
   editMode: boolean
   siteKind: SitesAICreationKind
@@ -5402,23 +5676,12 @@ const SitesAICreationModal: React.FC<{
   const editMode = Boolean(state.editSite)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const promptInputRef = useRef<HTMLTextAreaElement | null>(null)
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
-  const mediaStreamRef = useRef<MediaStream | null>(null)
-  const audioContextRef = useRef<AudioContext | null>(null)
-  const audioSourceRef = useRef<MediaStreamAudioSourceNode | null>(null)
-  const analyserRef = useRef<AnalyserNode | null>(null)
-  const voiceAnimationFrameRef = useRef<number | null>(null)
-  const voiceLastWaveUpdateRef = useRef(0)
-  const voiceChunksRef = useRef<Blob[]>([])
   const [prompt, setPrompt] = useState('')
   const [attachments, setAttachments] = useState<SitesAICreationAttachment[]>([])
   const [funnelStyle, setFunnelStyle] = useState<FunnelStyleId | ''>('')
   const [primaryAction, setPrimaryAction] = useState<FunnelPrimaryActionId | ''>('')
   const [chatgptModel, setChatgptModel] = useState(() => getDefaultSiteChatGPTModel(editMode))
   const [attachmentError, setAttachmentError] = useState('')
-  const [voiceState, setVoiceState] = useState<'idle' | 'recording' | 'transcribing'>('idle')
-  const [voiceBars, setVoiceBars] = useState<number[]>(createAICreationVoiceBars)
-  const [voiceElapsed, setVoiceElapsed] = useState(0)
   const [voiceError, setVoiceError] = useState('')
   const [assistantReply, setAssistantReply] = useState('')
   const [submitError, setSubmitError] = useState('')
@@ -5426,33 +5689,18 @@ const SitesAICreationModal: React.FC<{
   const selectedFunnelStyle = getFunnelStyleOption(funnelStyle || undefined)
   const selectedChatGPTModel = getChatGPTSiteModelOption(chatgptModel, editMode)
   const canWritePrompt = !shouldPickFunnelStyle || Boolean(selectedFunnelStyle)
-  const voiceIsActive = voiceState !== 'idle'
-  const formattedVoiceElapsed = formatAICreationVoiceDuration(voiceElapsed)
-
-  useEffect(() => {
-    return () => {
-      const recorder = mediaRecorderRef.current
-      if (recorder && recorder.state !== 'inactive') {
-        try {
-          recorder.stop()
-        } catch {
-          // Best effort cleanup for browser recorder state.
-        }
-      }
-      stopVoiceStream()
-    }
+  const appendPromptText = useCallback((text: string) => {
+    setPrompt(current => appendDictatedText(current, text))
   }, [])
-
-  useEffect(() => {
-    if (voiceState !== 'recording') return
-
-    const startedAt = Date.now()
-    const timer = window.setInterval(() => {
-      setVoiceElapsed(Math.floor((Date.now() - startedAt) / 1000))
-    }, 250)
-
-    return () => window.clearInterval(timer)
-  }, [voiceState])
+  const voiceDictation = useAIVoiceDictation({
+    onTranscription: appendPromptText,
+    onError: setVoiceError,
+    onStart: () => {
+      setVoiceError('')
+      setAssistantReply('')
+      setSubmitError('')
+    }
+  })
 
   useEffect(() => {
     if (!canWritePrompt) return
@@ -5484,71 +5732,6 @@ const SitesAICreationModal: React.FC<{
     </label>
   )
 
-  const stopVoiceStream = () => {
-    if (voiceAnimationFrameRef.current !== null) {
-      window.cancelAnimationFrame(voiceAnimationFrameRef.current)
-      voiceAnimationFrameRef.current = null
-    }
-
-    audioSourceRef.current?.disconnect()
-    audioSourceRef.current = null
-    analyserRef.current = null
-
-    if (audioContextRef.current) {
-      audioContextRef.current.close().catch(() => undefined)
-      audioContextRef.current = null
-    }
-
-    mediaStreamRef.current?.getTracks().forEach(track => track.stop())
-    mediaStreamRef.current = null
-  }
-
-  const startVoiceMeter = async () => {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-    mediaStreamRef.current = stream
-
-    const AudioContextConstructor = getAICreationAudioContextConstructor()
-    if (!AudioContextConstructor) return stream
-
-    const audioContext = new AudioContextConstructor()
-    const analyser = audioContext.createAnalyser()
-    const source = audioContext.createMediaStreamSource(stream)
-
-    analyser.fftSize = 256
-    analyser.smoothingTimeConstant = 0.72
-    const samples = new Uint8Array(analyser.fftSize)
-    source.connect(analyser)
-
-    audioContextRef.current = audioContext
-    audioSourceRef.current = source
-    analyserRef.current = analyser
-    voiceLastWaveUpdateRef.current = 0
-
-    const drawWave = (timestamp: number) => {
-      if (!analyserRef.current) return
-
-      if (timestamp - voiceLastWaveUpdateRef.current > 55) {
-        analyserRef.current.getByteTimeDomainData(samples)
-        const nextHeight = getAICreationVoiceBarHeight(samples)
-
-        setVoiceBars(current => [...current.slice(1), nextHeight])
-        voiceLastWaveUpdateRef.current = timestamp
-      }
-
-      voiceAnimationFrameRef.current = window.requestAnimationFrame(drawWave)
-    }
-
-    voiceAnimationFrameRef.current = window.requestAnimationFrame(drawWave)
-
-    return stream
-  }
-
-  const appendPromptText = (text: string) => {
-    const cleanText = text.trim()
-    if (!cleanText) return
-    setPrompt(current => current.trim() ? `${current.trim()}\n\n${cleanText}` : cleanText)
-  }
-
   const handlePickFiles = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files || [])
     event.target.value = ''
@@ -5561,67 +5744,6 @@ const SitesAICreationModal: React.FC<{
     } catch (error) {
       setAttachmentError(error instanceof Error ? error.message : 'No se pudo leer el archivo.')
     }
-  }
-
-  const startVoice = async () => {
-    setVoiceError('')
-    setAssistantReply('')
-    setSubmitError('')
-    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
-      setVoiceError('Este navegador no permite grabar audio aquí.')
-      return
-    }
-
-    try {
-      setVoiceBars(createAICreationVoiceBars())
-      setVoiceElapsed(0)
-      const stream = await startVoiceMeter()
-      const mimeType = getAICreationAudioMimeType()
-      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined)
-      mediaRecorderRef.current = recorder
-      voiceChunksRef.current = []
-
-      recorder.ondataavailable = (event) => {
-        if (event.data?.size) voiceChunksRef.current.push(event.data)
-      }
-      recorder.onstop = () => {
-        const chunks = voiceChunksRef.current
-        const audioBlob = new Blob(chunks, { type: mimeType || chunks[0]?.type || 'audio/webm' })
-        stopVoiceStream()
-        if (!audioBlob.size) {
-          setVoiceState('idle')
-          return
-        }
-        setVoiceState('transcribing')
-        void aiAgentService.transcribeVoice(audioBlob)
-          .then(result => {
-            appendPromptText(result.text)
-            setVoiceBars(createAICreationVoiceBars())
-            setVoiceElapsed(0)
-            setVoiceState('idle')
-          })
-          .catch(error => {
-            setVoiceError(error instanceof Error ? error.message : 'No se pudo transcribir el audio.')
-            setVoiceBars(createAICreationVoiceBars())
-            setVoiceElapsed(0)
-            setVoiceState('idle')
-          })
-      }
-
-      recorder.start()
-      setVoiceState('recording')
-    } catch (error) {
-      stopVoiceStream()
-      setVoiceBars(createAICreationVoiceBars())
-      setVoiceElapsed(0)
-      setVoiceError(error instanceof Error ? error.message : 'No se pudo activar el micrófono.')
-      setVoiceState('idle')
-    }
-  }
-
-  const stopVoice = () => {
-    const recorder = mediaRecorderRef.current
-    if (recorder && recorder.state !== 'inactive') recorder.stop()
   }
 
   const removeAttachment = (id: string) => {
@@ -5799,25 +5921,7 @@ const SitesAICreationModal: React.FC<{
                       placeholder={getSitesAICreationPlaceholder(state.siteKind, editMode)}
                       rows={7}
                     />
-                    {voiceIsActive && (
-                      <div className={`${styles.aiCreationVoiceComposer} ${voiceState === 'recording' ? styles.aiCreationVoiceRecording : styles.aiCreationVoiceProcessing}`} role="status" aria-live="polite">
-                        <div className={styles.aiCreationVoiceWaveArea}>
-                          <div className={styles.aiCreationVoiceWaveform} aria-hidden="true">
-                            {voiceBars.map((height, index) => (
-                              <span
-                                key={`ai-creation-voice-bar-${index}`}
-                                className={styles.aiCreationVoiceBar}
-                                style={{ '--voice-bar-height': `${height}px` } as React.CSSProperties}
-                              />
-                            ))}
-                          </div>
-                          <span className={styles.aiCreationVoiceLabel}>
-                            {voiceState === 'transcribing' ? 'Transcribiendo audio...' : 'Escuchando...'}
-                          </span>
-                        </div>
-                        <span className={styles.aiCreationVoiceTimer}>{formattedVoiceElapsed}</span>
-                      </div>
-                    )}
+                    <AIVoiceDictationControl voice={voiceDictation} disabled={!canWritePrompt || creating} />
                   </label>
                 </>
               )}
@@ -5860,16 +5964,6 @@ const SitesAICreationModal: React.FC<{
                   <button type="button" onClick={() => fileInputRef.current?.click()} title="Subir archivo">
                     <Paperclip size={16} />
                     <span>Archivo</span>
-                  </button>
-                  <button
-                    type="button"
-                    className={voiceState === 'recording' ? styles.aiCreationMicActive : ''}
-                    onClick={() => voiceState === 'recording' ? stopVoice() : void startVoice()}
-                    disabled={voiceState === 'transcribing'}
-                    title={voiceState === 'recording' ? 'Detener audio' : 'Dictar con micrófono'}
-                  >
-                    <Mic size={16} />
-                    <span>{voiceState === 'recording' ? 'Detener' : voiceState === 'transcribing' ? 'Transcribiendo' : 'Micrófono'}</span>
                   </button>
                 </div>
               ) : (
@@ -7318,6 +7412,14 @@ const ImportedHtmlEditorPanel: React.FC<{
       ignored: fields.filter(field => field.ignored || field.destinationType === 'ignored').length
     }
   }, [importData])
+  const appendAIRegionPromptText = useCallback((text: string) => {
+    setAiRegionPrompt(current => appendDictatedText(current, text))
+  }, [])
+  const aiRegionVoiceDictation = useAIVoiceDictation({
+    onTranscription: appendAIRegionPromptText,
+    onError: setAiRegionError,
+    onStart: () => setAiRegionError('')
+  })
 
   useEffect(() => {
     if (!routeEditing) setRouteDraft(getRouteEditorValue(site))
@@ -7352,9 +7454,10 @@ const ImportedHtmlEditorPanel: React.FC<{
     setAiRegionSelection(null)
     setAiRegionPrompt('')
     setAiRegionError('')
+    aiRegionVoiceDictation.cancelVoice()
     setFieldEditor(null)
     setContentError('')
-  }, [activeImportedPage?.id, site.id, previewVersion])
+  }, [activeImportedPage?.id, aiRegionVoiceDictation.cancelVoice, site.id, previewVersion])
 
   const getInlineEditorPosition = useCallback((element: HTMLElement) => {
     const iframe = iframeRef.current
@@ -7494,6 +7597,7 @@ const ImportedHtmlEditorPanel: React.FC<{
   const startAIRegionMode = useCallback(() => {
     selectedIframeElementRef.current?.classList.remove('rstk-imported-selected')
     selectedIframeElementRef.current = null
+    aiRegionVoiceDictation.cancelVoice()
     setInlineEditor(null)
     setButtonEditor(null)
     setChoiceEditor(null)
@@ -7502,14 +7606,15 @@ const ImportedHtmlEditorPanel: React.FC<{
     setAiRegionPrompt('')
     setAiRegionError('')
     setAiRegionMode(true)
-  }, [])
+  }, [aiRegionVoiceDictation.cancelVoice])
 
   const cancelAIRegionMode = useCallback(() => {
+    aiRegionVoiceDictation.cancelVoice()
     setAiRegionMode(false)
     setAiRegionSelection(null)
     setAiRegionPrompt('')
     setAiRegionError('')
-  }, [])
+  }, [aiRegionVoiceDictation.cancelVoice])
 
   const applyAIRegionEdit = async () => {
     if (!aiRegionSelection) return
@@ -8328,6 +8433,7 @@ const ImportedHtmlEditorPanel: React.FC<{
                 name="rstk-imported-ai-region-prompt"
                 {...importedEditorNoAutocompleteAttrs}
               />
+              <AIVoiceDictationControl voice={aiRegionVoiceDictation} disabled={aiRegionSaving} />
             </label>
             {aiRegionError && (
               <div className={styles.importedAIRegionError}>
