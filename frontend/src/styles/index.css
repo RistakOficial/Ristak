@@ -2150,6 +2150,14 @@ body[data-design-preset][data-phone-chat-theme='active'] {
   --native-control-height: 42px;
 }
 
+html[data-phone-app='active'],
+body[data-phone-app='active'],
+#root[data-phone-app='active'] {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
 body[data-phone-chat-theme='active'] {
   color: #0b0b0d;
   background: #fbfaf6;
