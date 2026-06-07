@@ -102,6 +102,10 @@ const CHAT_SWIPE_OPEN_THRESHOLD = 44
 const CHAT_SWIPE_CLOSE_THRESHOLD = 132
 const CHAT_SWIPE_ACTIVATE_THRESHOLD = 7
 const CHAT_SWIPE_RENDER_STEP = 1
+const MESSAGE_INFO_SWIPE_ACTION_WIDTH = 46
+const MESSAGE_INFO_SWIPE_OPEN_THRESHOLD = 38
+const MESSAGE_INFO_SWIPE_ACTIVATE_THRESHOLD = 9
+const MESSAGE_INFO_SWIPE_RENDER_STEP = 2
 const MAX_VOICE_MESSAGE_BYTES = 16 * 1024 * 1024
 const MIN_VOICE_RECORDING_MS = 600
 const MAX_VOICE_RECORDING_MS = 3 * 60 * 1000
@@ -165,6 +169,15 @@ interface ChatSwipeGesture {
   startX: number
   startY: number
   startOffset: number
+  offset: number
+  lastRenderedOffset: number
+  active: boolean
+}
+
+interface MessageInfoSwipeGesture {
+  messageId: string
+  startX: number
+  startY: number
   offset: number
   lastRenderedOffset: number
   active: boolean
@@ -246,6 +259,9 @@ interface ChatMessage {
   direction: 'inbound' | 'outbound' | 'system'
   status?: string
   errorReason?: string
+  sentAt?: string
+  deliveredAt?: string
+  readAt?: string
   businessPhone?: string
   businessPhoneNumberId?: string
   transport?: 'api' | 'qr' | string
@@ -813,6 +829,25 @@ function getJourneyMessageError(event: JourneyEvent) {
   ).trim()
 }
 
+function pickMessageTimestamp(data: Record<string, unknown>, keys: string[]) {
+  for (const key of keys) {
+    const value = data[key]
+    if (value === null || value === undefined || value === '') continue
+
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      const timestamp = value > 1_000_000_000_000 ? value : value * 1000
+      const date = new Date(timestamp)
+      if (!Number.isNaN(date.getTime())) return date.toISOString()
+      continue
+    }
+
+    const date = new Date(String(value))
+    if (!Number.isNaN(date.getTime())) return date.toISOString()
+  }
+
+  return ''
+}
+
 function isMessageFailed(message: ChatMessage) {
   return FAILED_MESSAGE_STATUSES.has(String(message.status || '').trim().toLowerCase()) || Boolean(message.errorReason)
 }
@@ -899,6 +934,9 @@ function getMessageSignature(message: ChatMessage) {
     message.direction,
     message.status,
     message.errorReason,
+    message.sentAt,
+    message.deliveredAt,
+    message.readAt,
     message.businessPhone,
     message.businessPhoneNumberId,
     message.transport,
@@ -1087,6 +1125,7 @@ function getContactInfoArchiveItems(journey: JourneyEvent[] = []): ContactInfoAr
 function getJourneyMessage(event: JourneyEvent, index: number): ChatMessage | null {
   const isMetaMessage = event.type === 'meta_message'
   if (event.type !== 'whatsapp_message' && !isMetaMessage) return null
+  const eventData = (event.data || {}) as Record<string, unknown>
 
   const text = String(
     event.data?.message_text ||
@@ -1112,6 +1151,37 @@ function getJourneyMessage(event: JourneyEvent, index: number): ChatMessage | nu
     direction,
     status: String(event.data?.status || ''),
     errorReason: getJourneyMessageError(event),
+    sentAt: pickMessageTimestamp(eventData, [
+      'sent_at',
+      'sentAt',
+      'message_sent_at',
+      'messageSentAt',
+      'created_at',
+      'createdAt',
+      'timestamp'
+    ]) || event.date,
+    deliveredAt: pickMessageTimestamp(eventData, [
+      'delivered_at',
+      'deliveredAt',
+      'delivery_at',
+      'deliveryAt',
+      'message_delivered_at',
+      'messageDeliveredAt',
+      'delivered_timestamp',
+      'deliveredTimestamp'
+    ]),
+    readAt: pickMessageTimestamp(eventData, [
+      'read_at',
+      'readAt',
+      'seen_at',
+      'seenAt',
+      'message_read_at',
+      'messageReadAt',
+      'read_timestamp',
+      'readTimestamp',
+      'played_at',
+      'playedAt'
+    ]),
     businessPhone: String(event.data?.business_phone || ''),
     businessPhoneNumberId: String(event.data?.business_phone_number_id || ''),
     transport: String(event.data?.transport || (isMetaMessage ? event.data?.social_platform || 'meta' : 'api')),
@@ -2051,6 +2121,9 @@ export const PhoneChat: React.FC = () => {
   const [contactJourney, setContactJourney] = useState<JourneyEvent[]>([])
   const [messagesLoading, setMessagesLoading] = useState(false)
   const [messagesRefreshing, setMessagesRefreshing] = useState(false)
+  const [messageInfoOpen, setMessageInfoOpen] = useState(false)
+  const [messageInfoMessageId, setMessageInfoMessageId] = useState<string | null>(null)
+  const [draggingMessageInfoSwipe, setDraggingMessageInfoSwipe] = useState<{ messageId: string; offset: number } | null>(null)
   const [messageText, setMessageText] = useState('')
   const [draftAttachments, setDraftAttachments] = useState<MobilePhotoAttachment[]>([])
   const [cameraSharePhoto, setCameraSharePhoto] = useState<MobilePhotoAttachment | null>(null)
@@ -2173,6 +2246,7 @@ export const PhoneChat: React.FC = () => {
   const messageAudioAnimationFrameRef = useRef<number | null>(null)
   const messageAudioAnimationMessageIdRef = useRef<string | null>(null)
   const chatSwipeGestureRef = useRef<ChatSwipeGesture | null>(null)
+  const messageInfoSwipeGestureRef = useRef<MessageInfoSwipeGesture | null>(null)
   const handledRouteAppointmentRef = useRef<string | null>(null)
   const closeSheetNow = useCallback(() => setSheet(null), [])
   const handleSwitchToWebView = useCallback(() => {
@@ -2316,6 +2390,10 @@ export const PhoneChat: React.FC = () => {
     [activeContactId, aiAgentConversationOpen, chats]
   )
   const conversationVisible = conversationOpen && (aiAgentConversationOpen || Boolean(activeContact))
+  const messageInfoMessage = useMemo(
+    () => messageInfoMessageId ? messages.find((message) => message.id === messageInfoMessageId) || null : null,
+    [messageInfoMessageId, messages]
+  )
   const conversationMessageGroups = useMemo(() => {
     const groups: Array<{
       key: string
@@ -3806,6 +3884,10 @@ export const PhoneChat: React.FC = () => {
     setConversationOpen(true)
     actionSheetDismiss.requestClose()
     setContactInfoOpen(false)
+    setMessageInfoOpen(false)
+    setMessageInfoMessageId(null)
+    messageInfoSwipeGestureRef.current = null
+    setDraggingMessageInfoSwipe(null)
     setContactQuery('')
     setDraftAttachments([])
     setVoiceDraft(null)
@@ -3820,6 +3902,10 @@ export const PhoneChat: React.FC = () => {
     setConversationOpen(true)
     actionSheetDismiss.requestClose()
     setContactInfoOpen(false)
+    setMessageInfoOpen(false)
+    setMessageInfoMessageId(null)
+    messageInfoSwipeGestureRef.current = null
+    setDraggingMessageInfoSwipe(null)
     setContactQuery('')
     setDraftAttachments([])
     setVoiceDraft(null)
@@ -3833,6 +3919,10 @@ export const PhoneChat: React.FC = () => {
     setConversationOpen(false)
     actionSheetDismiss.requestClose()
     setContactInfoOpen(false)
+    setMessageInfoOpen(false)
+    setMessageInfoMessageId(null)
+    messageInfoSwipeGestureRef.current = null
+    setDraggingMessageInfoSwipe(null)
     setDraftAttachments([])
     setVoiceDraft(null)
   }
@@ -3841,6 +3931,7 @@ export const PhoneChat: React.FC = () => {
     if (!activeContact) return
 
     actionSheetDismiss.requestClose()
+    setMessageInfoOpen(false)
     setContactInfoOpen(true)
     setContactInfoError('')
 
@@ -4139,6 +4230,85 @@ export const PhoneChat: React.FC = () => {
     if (event.key !== 'Enter' && event.key !== ' ') return
     event.preventDefault()
     action()
+  }
+
+  const closeMessageInfo = useCallback(() => {
+    messageInfoSwipeGestureRef.current = null
+    setDraggingMessageInfoSwipe(null)
+    setMessageInfoOpen(false)
+  }, [])
+
+  const openMessageInfo = useCallback((message: ChatMessage) => {
+    if (message.direction === 'system') return
+    messageInfoSwipeGestureRef.current = null
+    setDraggingMessageInfoSwipe(null)
+    setMessageInfoMessageId(message.id)
+    setMessageInfoOpen(true)
+    actionSheetDismiss.requestClose()
+    setContactInfoOpen(false)
+  }, [actionSheetDismiss])
+
+  const handleMessageInfoTouchStart = (message: ChatMessage, event: React.TouchEvent<HTMLDivElement>) => {
+    if (message.direction === 'system' || event.touches.length !== 1 || messageInfoOpen) return
+
+    const target = event.target as HTMLElement | null
+    if (target?.closest('button, a, input, textarea, select, [contenteditable="true"]')) return
+
+    const touch = event.touches[0]
+    if (!touch) return
+
+    messageInfoSwipeGestureRef.current = {
+      messageId: message.id,
+      startX: touch.clientX,
+      startY: touch.clientY,
+      offset: 0,
+      lastRenderedOffset: 0,
+      active: false
+    }
+  }
+
+  const handleMessageInfoTouchMove = (event: React.TouchEvent<HTMLDivElement>) => {
+    const gesture = messageInfoSwipeGestureRef.current
+    const touch = event.touches[0]
+    if (!gesture || !touch) return
+    if (!conversationVisible || messageInfoOpen) {
+      messageInfoSwipeGestureRef.current = null
+      setDraggingMessageInfoSwipe(null)
+      return
+    }
+
+    const deltaX = touch.clientX - gesture.startX
+    const deltaY = touch.clientY - gesture.startY
+    const horizontalDistance = Math.abs(deltaX)
+
+    if (!gesture.active) {
+      if (deltaX >= 0 || horizontalDistance < MESSAGE_INFO_SWIPE_ACTIVATE_THRESHOLD || horizontalDistance <= Math.abs(deltaY)) return
+      gesture.active = true
+    }
+
+    event.preventDefault()
+    const nextOffset = Math.round(Math.min(
+      MESSAGE_INFO_SWIPE_ACTION_WIDTH,
+      Math.max(0, -deltaX)
+    ))
+
+    gesture.offset = nextOffset
+    if (Math.abs(nextOffset - gesture.lastRenderedOffset) < MESSAGE_INFO_SWIPE_RENDER_STEP) return
+    gesture.lastRenderedOffset = nextOffset
+    setDraggingMessageInfoSwipe({ messageId: gesture.messageId, offset: nextOffset })
+  }
+
+  const handleMessageInfoTouchEnd = () => {
+    const gesture = messageInfoSwipeGestureRef.current
+    if (!gesture) return
+
+    if (gesture.active && gesture.offset >= MESSAGE_INFO_SWIPE_OPEN_THRESHOLD) {
+      const message = messages.find((item) => item.id === gesture.messageId)
+      if (message) openMessageInfo(message)
+    }
+
+    setDraggingMessageInfoSwipe(null)
+    messageInfoSwipeGestureRef.current = null
   }
 
   const handleUnavailableAttachment = (label: string) => {
@@ -6055,6 +6225,111 @@ export const PhoneChat: React.FC = () => {
     )
   }
 
+  const renderMessageInfoScreen = () => {
+    const message = messageInfoMessage
+    if (!message) return null
+
+    const isOutbound = message.direction === 'outbound'
+    const receiptStatus = getMessageReceiptStatus(message)
+    const sentAt = formatLocalDateTime(message.sentAt || message.date)
+    const deliveredAt = message.deliveredAt ? formatLocalDateTime(message.deliveredAt) : ''
+    const readAt = message.readAt ? formatLocalDateTime(message.readAt) : ''
+    const previewText = message.text || (message.attachment ? getMessageTypeLabel(message.attachment.type, 'Mensaje adjunto') : 'Mensaje')
+    const previewAttachmentLabel = message.attachment ? getMessageTypeLabel(message.attachment.type, 'Archivo') : ''
+    const rows = [
+      {
+        id: 'sent',
+        label: isOutbound ? 'Enviado' : 'Recibido',
+        value: sentAt || 'Sin hora guardada',
+        Icon: Clock
+      }
+    ]
+
+    if (isOutbound) {
+      rows.push({
+        id: 'delivered',
+        label: 'Entregado',
+        value: deliveredAt || (receiptStatus === 'delivered' || receiptStatus === 'read'
+          ? 'Confirmado, sin hora exacta'
+          : isMessageFailed(message) ? 'No entregado' : 'Sin confirmación'),
+        Icon: Check
+      })
+      rows.push({
+        id: 'read',
+        label: 'Leído',
+        value: readAt || (receiptStatus === 'read' ? 'Leído, sin hora exacta' : 'Aún no leído'),
+        Icon: CheckCheck
+      })
+    } else {
+      rows.push({
+        id: 'read',
+        label: 'Leído por ti',
+        value: readAt || 'Sin registro guardado',
+        Icon: CheckCheck
+      })
+    }
+
+    const errorReason = isMessageFailed(message) ? (message.errorReason || 'No se guardó la razón exacta del error.') : ''
+
+    return (
+      <section
+        className={`${styles.contactInfoScreen} ${styles.messageInfoScreen} ${messageInfoOpen ? styles.contactInfoScreenOpen : ''}`}
+        aria-label="Info del mensaje"
+        aria-hidden={!messageInfoOpen}
+      >
+        <header className={styles.contactInfoTopbar}>
+          <button type="button" className={styles.backButton} onClick={closeMessageInfo} aria-label="Volver al chat">
+            <ChevronLeft size={32} />
+          </button>
+          <strong>Info del mensaje</strong>
+          <span className={styles.contactInfoTopbarSpacer} aria-hidden="true" />
+        </header>
+
+        <div className={styles.messageInfoContent} data-phone-chat-scrollable="true">
+          <section className={styles.messageInfoPreview} aria-label="Mensaje seleccionado">
+            <div className={`${styles.messageInfoPreviewRow} ${isOutbound ? styles.messageInfoPreviewRowOutbound : styles.messageInfoPreviewRowInbound}`}>
+              <div className={`${styles.messageBubble} ${styles.messageInfoPreviewBubble}`}>
+                {previewAttachmentLabel && (
+                  <span className={styles.messageInfoAttachmentTag}>
+                    <FileText size={14} />
+                    {previewAttachmentLabel}
+                  </span>
+                )}
+                <p>{previewText}</p>
+                {renderMessageMeta(message)}
+              </div>
+            </div>
+          </section>
+
+          <section className={styles.messageInfoRows} aria-label="Registro del mensaje">
+            {rows.map(({ id, label, value, Icon: RowIcon }) => (
+              <div key={id} className={styles.messageInfoRow}>
+                <span className={styles.messageInfoRowIcon} aria-hidden="true">
+                  <RowIcon size={18} />
+                </span>
+                <span className={styles.messageInfoRowText}>
+                  <strong>{label}</strong>
+                  <small>{value}</small>
+                </span>
+              </div>
+            ))}
+            {errorReason && (
+              <div className={`${styles.messageInfoRow} ${styles.messageInfoRowDanger}`}>
+                <span className={styles.messageInfoRowIcon} aria-hidden="true">
+                  <CircleAlert size={18} />
+                </span>
+                <span className={styles.messageInfoRowText}>
+                  <strong>Error</strong>
+                  <small>{errorReason}</small>
+                </span>
+              </div>
+            )}
+          </section>
+        </div>
+      </section>
+    )
+  }
+
   const renderMessages = () => {
     if (aiAgentConversationOpen) {
       return (
@@ -6132,13 +6407,26 @@ export const PhoneChat: React.FC = () => {
               const isVideoMessage = message.attachment?.type === 'video' && Boolean(message.attachment.dataUrl || message.attachment.url)
               const isFileMessage = Boolean(message.attachment && ['document', 'file'].includes(message.attachment.type))
               const hasRichAttachment = isAudioAttachment || isVideoMessage || isFileMessage
+              const messageSwipeOffset = draggingMessageInfoSwipe?.messageId === message.id ? draggingMessageInfoSwipe.offset : 0
+              const canOpenMessageInfo = message.direction !== 'system'
 
               return (
                 <div
                   key={message.id}
                   className={`${styles.messageRow} ${styles[`messageRow_${message.direction}`]}`}
                 >
-                  <div className={`${styles.messageBubble} ${isAudioMessage ? styles.messageAudioBubble : ''} ${isFileMessage ? styles.messageFileBubble : ''}`}>
+                  <div className={`${styles.messageSwipeWrap} ${messageSwipeOffset > 0 ? styles.messageSwipeWrapActive : ''}`}>
+                    <span className={styles.messageInfoSwipeCue} aria-hidden="true">
+                      <ReceiptText size={17} />
+                    </span>
+                    <div
+                      className={`${styles.messageBubble} ${isAudioMessage ? styles.messageAudioBubble : ''} ${isFileMessage ? styles.messageFileBubble : ''} ${messageSwipeOffset > 0 ? styles.messageBubbleSwipeDragging : ''}`}
+                      style={messageSwipeOffset > 0 ? { transform: `translate3d(-${messageSwipeOffset}px, 0, 0)` } : undefined}
+                      onTouchStart={canOpenMessageInfo ? (event) => handleMessageInfoTouchStart(message, event) : undefined}
+                      onTouchMove={canOpenMessageInfo ? handleMessageInfoTouchMove : undefined}
+                      onTouchEnd={canOpenMessageInfo ? handleMessageInfoTouchEnd : undefined}
+                      onTouchCancel={canOpenMessageInfo ? handleMessageInfoTouchEnd : undefined}
+                    >
                     {message.attachment?.type === 'image' && (message.attachment.dataUrl || message.attachment.url) && (
                       <img className={styles.messageImage} src={message.attachment.dataUrl || message.attachment.url} alt={message.attachment.name || 'Foto enviada'} />
                     )}
@@ -6157,6 +6445,7 @@ export const PhoneChat: React.FC = () => {
                     {!hasRichAttachment && message.text && <p>{message.text}</p>}
                     {hasRichAttachment && !isAudioMessage && message.text && <p>{message.text}</p>}
                     {!isAudioMessage && renderMessageMeta(message)}
+                    </div>
                   </div>
                 </div>
               )
@@ -8032,6 +8321,7 @@ export const PhoneChat: React.FC = () => {
           )}
         </section>
 
+        {renderMessageInfoScreen()}
         {renderContactInfoScreen()}
         {renderCameraShareScreen()}
       </PhonePageTransition>

@@ -1058,6 +1058,11 @@
   transform: translateX(0);
 }
 
+.messageInfoScreen {
+  z-index: 30;
+  background: var(--phone-chat-bg);
+}
+
 .contactInfoTopbar {
   display: grid;
   grid-template-columns: 44px minmax(0, 1fr) 44px;
@@ -1095,6 +1100,113 @@
   width: 38px;
   height: 38px;
   justify-self: end;
+}
+
+.messageInfoContent {
+  min-height: 0;
+  padding: 18px 16px calc(32px + env(safe-area-inset-bottom));
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.messageInfoPreview {
+  padding: 6px 0 22px;
+}
+
+.messageInfoPreviewRow {
+  display: flex;
+  width: 100%;
+}
+
+.messageInfoPreviewRowInbound {
+  justify-content: flex-start;
+}
+
+.messageInfoPreviewRowOutbound {
+  justify-content: flex-end;
+}
+
+.messageInfoPreviewBubble {
+  max-width: min(78%, 560px);
+  box-shadow: none;
+}
+
+.messageInfoPreviewRowOutbound .messageInfoPreviewBubble {
+  color: var(--phone-chat-outbound-text);
+  background: var(--phone-chat-outbound);
+}
+
+.messageInfoAttachmentTag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  max-width: 100%;
+  margin: 0 0 6px;
+  padding: 5px 8px;
+  border-radius: 999px;
+  color: var(--phone-chat-muted);
+  background: color-mix(in srgb, var(--phone-chat-surface-soft) 82%, transparent);
+  font-size: 12px;
+  font-weight: 780;
+  line-height: 1;
+}
+
+.messageInfoRows {
+  display: grid;
+  gap: 0;
+  border-top: 1px solid var(--phone-chat-border);
+  border-bottom: 1px solid var(--phone-chat-border);
+}
+
+.messageInfoRow {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  min-height: 64px;
+  padding: 10px 0;
+  color: var(--phone-chat-text);
+}
+
+.messageInfoRow + .messageInfoRow {
+  border-top: 1px solid var(--phone-chat-border);
+}
+
+.messageInfoRowIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  color: var(--phone-chat-primary);
+  background: color-mix(in srgb, var(--phone-chat-primary) 12%, transparent);
+}
+
+.messageInfoRowText {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.messageInfoRowText strong {
+  color: var(--phone-chat-text);
+  font-size: 16px;
+  font-weight: 850;
+  line-height: 1.1;
+}
+
+.messageInfoRowText small {
+  color: var(--phone-chat-muted);
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1.22;
+}
+
+.messageInfoRowDanger .messageInfoRowIcon {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.13);
 }
 
 .cameraShareScreen {
@@ -2350,6 +2462,53 @@
 
 .messageRow_system {
   justify-content: center;
+}
+
+.messageSwipeWrap {
+  position: relative;
+  display: flex;
+  max-width: min(74%, 560px);
+  min-width: 0;
+  touch-action: pan-y;
+}
+
+.messageRow_system .messageSwipeWrap {
+  max-width: 88%;
+}
+
+.messageSwipeWrap .messageBubble {
+  max-width: 100%;
+  transition: transform 160ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  will-change: transform;
+  z-index: 1;
+}
+
+.messageBubbleSwipeDragging {
+  transition: none !important;
+}
+
+.messageInfoSwipeCue {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  z-index: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  color: var(--phone-chat-text-on-primary);
+  background: var(--phone-chat-primary);
+  opacity: 0;
+  transform: translateY(-50%) scale(0.86);
+  transition: opacity 140ms ease, transform 140ms ease;
+  pointer-events: none;
+}
+
+.messageSwipeWrapActive .messageInfoSwipeCue {
+  opacity: 1;
+  transform: translateY(-50%) scale(1);
 }
 
 .messageBubble {
