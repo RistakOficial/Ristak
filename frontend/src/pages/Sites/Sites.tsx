@@ -6310,7 +6310,8 @@ const collectImportedAIRegionElements = (
 const buildImportedAIRegionPrompt = (
   userPrompt: string,
   selection: ImportedAIRegionSelection,
-  site: PublicSite
+  site: PublicSite,
+  options: { forceApply?: boolean; previousReply?: string } = {}
 ) => {
   const elementLines = selection.elements.length
     ? selection.elements.map((element, index) => {
@@ -6327,6 +6328,8 @@ const buildImportedAIRegionPrompt = (
 
   return `
 El usuario selecciono una zona especifica del HTML importado y quiere que la IA modifique SOLO esa zona salvo que sea indispensable ajustar CSS cercano para que se vea bien.
+${options.forceApply ? '\nLa respuesta anterior pidio mas informacion, pero esta peticion ya es suficiente. No preguntes otra vez; aplica la mejor interpretacion posible.' : ''}
+${options.previousReply ? `\nRespuesta anterior que NO debe repetirse: ${options.previousReply}` : ''}
 
 Pagina activa: ${selection.pageTitle} (${selection.pageId})
 Site: ${site.title || site.name}
@@ -6341,6 +6344,10 @@ ${userPrompt.trim()}
 Reglas para esta edicion:
 - Devuelve el HTML completo actualizado, conservando todas las paginas del embudo si existen.
 - No cambies otras secciones que el usuario no selecciono.
+- La instruccion del usuario es suficiente aunque no mencione ids exactos. Si dice titular, video, boton, arriba, abajo, centrado, hero, orden o layout, identifica esos elementos dentro del rectangulo seleccionado y aplica el cambio.
+- Si hay varios candidatos, usa el mas importante por jerarquia visual: titular principal, video/player dentro de la zona y CTA principal.
+- No respondas con needs_more_info ni con preguntas para cambios de posicion, alineacion, orden, tamano, video, boton, titular o layout. Haz tu mejor edicion con el HTML actual.
+- Si el usuario pide titular arriba, video debajo y boton debajo, convierte esa zona en un layout vertical centrado y conserva los estilos visuales importantes.
 - Si la solicitud pide insertar un video, acepta URL o codigo iframe/embed y colocalo como un elemento editable de video con data-rstk-editable="true", data-rstk-edit-type="video", data-rstk-label y data-rstk-edit-id.
 - Conserva formularios, campos, rutas de datos y acciones de botones existentes salvo que el usuario pida cambiarlos.
 `.trim()
@@ -6813,16 +6820,26 @@ const ImportedHtmlEditorPanel: React.FC<{
     setAiRegionSaving(true)
     setAiRegionError('')
     try {
-      const result = await sitesService.editImportedHtmlWithAI(site.id, {
-        siteKind: getAIAgentSiteKindForSite(site),
-        messages: [{
-          role: 'user',
-          content: buildImportedAIRegionPrompt(prompt, aiRegionSelection, site)
-        }]
-      })
+      const runRegionEdit = (options: { forceApply?: boolean; previousReply?: string } = {}) => (
+        sitesService.editImportedHtmlWithAI(site.id, {
+          siteKind: getAIAgentSiteKindForSite(site),
+          messages: [{
+            role: 'user',
+            content: buildImportedAIRegionPrompt(prompt, aiRegionSelection, site, options)
+          }]
+        })
+      )
+
+      let result = await runRegionEdit()
+      if (result.status === 'needs_more_info' || !result.site || !result.import) {
+        result = await runRegionEdit({
+          forceApply: true,
+          previousReply: result.reply || 'La IA pidio mas informacion.'
+        })
+      }
 
       if (result.status === 'needs_more_info' || !result.site || !result.import) {
-        setAiRegionError(result.reply || 'La IA necesita un poco mas de detalle para editar esa zona.')
+        setAiRegionError('La IA no pudo aplicar ese cambio. Intenta decirlo como accion directa: "centra el titulo, pon el video debajo y el boton debajo del video".')
         return
       }
 

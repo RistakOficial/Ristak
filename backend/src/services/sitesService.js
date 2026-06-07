@@ -4447,6 +4447,8 @@ Modo edicion:
 - Conserva formularios, ids, name, data-rstk-form, data-rstk-form-id, data-rstk-field, data-ristak-field, data-rstk-custom-field, data-rstk-edit-id, data-rstk-editable, data-rstk-edit-type, data-rstk-label, data-rstk-section, data-rstk-button-actions, data-rstk-button-action, data-rstk-button-url, data-rstk-button-page-id, data-rstk-button-message, data-rstk-choice-actions y sus aliases data-ristak-* / data-ristack-* cuando el usuario no pida cambiarlos.
 - Si cambias campos, deja convenciones claras para que Ristak pueda redetectar y mapear.
 - Puedes cambiar titulo, imagenes, videos, orden de secciones, colores, layout, copy y campos segun lo que pida el usuario.
+- En ediciones de una zona seleccionada, las instrucciones de posicion, orden o alineacion como "centra el titular", "pon el video debajo" o "mueve el boton abajo" ya son suficientes. No respondas needs_more_info por no tener ids exactos; identifica titulo, video/player y CTA por jerarquia visual dentro de la zona y aplica el cambio.
+- Usa needs_more_info solo si literalmente no hay una accion que ejecutar o la peticion contradice el HTML actual de forma imposible.
 ` : `
 Modo creacion:
 - Si el usuario pidio formulario, incluyelo completo y bien mapeado.
