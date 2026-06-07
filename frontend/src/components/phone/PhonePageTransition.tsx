@@ -23,6 +23,11 @@ interface PhonePageTransitionProps extends React.HTMLAttributes<HTMLDivElement> 
 function resetPhoneDocumentHorizontalScroll() {
   if (typeof window === 'undefined') return
 
+  const rootScrollLeft = document.documentElement.scrollLeft || 0
+  const bodyScrollLeft = document.body.scrollLeft || 0
+  const windowScrollX = window.scrollX || 0
+  if (rootScrollLeft === 0 && bodyScrollLeft === 0 && windowScrollX === 0) return
+
   const scrollY = window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0
   document.documentElement.scrollLeft = 0
   document.body.scrollLeft = 0
@@ -36,13 +41,11 @@ function readInitialDirection(active: PhoneSection): PhoneRouteDirection {
   const targetSection = window.sessionStorage.getItem(PHONE_NAV_TRANSITION_TARGET_SECTION_KEY)
   const hasMatchingIntent = targetSection === active && (storedDirection === 'forward' || storedDirection === 'back')
   const previousSection = window.sessionStorage.getItem(PHONE_NAV_ROUTE_SECTION_KEY)
-  const shouldSkipSettingsToChatSlide = active === 'chat' && previousSection === 'settings'
 
   window.sessionStorage.removeItem(PHONE_NAV_TRANSITION_DIRECTION_KEY)
   window.sessionStorage.removeItem(PHONE_NAV_TRANSITION_TARGET_KEY)
   window.sessionStorage.removeItem(PHONE_NAV_TRANSITION_TARGET_SECTION_KEY)
 
-  if (shouldSkipSettingsToChatSlide) return 'none'
   if (hasMatchingIntent) return storedDirection
 
   if (!isPhoneSection(previousSection)) return 'none'

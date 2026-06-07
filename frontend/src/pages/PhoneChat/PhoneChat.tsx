@@ -2105,6 +2105,7 @@ export const PhoneChat: React.FC = () => {
   const [aiMessageText, setAiMessageText] = useState('')
   const [aiSending, setAiSending] = useState(false)
   const [aiSuggestionLoading, setAiSuggestionLoading] = useState(false)
+  const [conversationScrollSettling, setConversationScrollSettling] = useState(false)
   const messagesPaneRef = useRef<HTMLDivElement | null>(null)
   const messagesContentRef = useRef<HTMLDivElement | null>(null)
   const messageTextRef = useRef('')
@@ -2118,6 +2119,7 @@ export const PhoneChat: React.FC = () => {
   })
   const bottomScrollFrameRef = useRef<number | null>(null)
   const bottomScrollTimeoutRefs = useRef<number[]>([])
+  const conversationScrollSettlingTimeoutRef = useRef<number | null>(null)
   const previousMessagesScrollRef = useRef({
     activeContactId: null as string | null,
     conversationOpen: false,
@@ -2211,13 +2213,28 @@ export const PhoneChat: React.FC = () => {
       event.currentTarget.scrollLeft = 0
     }
   }, [isConversationBottomLockActive])
+  const markConversationScrollSettling = useCallback((duration = 620) => {
+    if (conversationScrollSettlingTimeoutRef.current !== null) {
+      window.clearTimeout(conversationScrollSettlingTimeoutRef.current)
+    }
+
+    setConversationScrollSettling(true)
+    conversationScrollSettlingTimeoutRef.current = window.setTimeout(() => {
+      conversationScrollSettlingTimeoutRef.current = null
+      setConversationScrollSettling(false)
+    }, duration)
+  }, [])
   const scrollMessagesPaneToBottom = useCallback(() => {
     const pane = messagesPaneRef.current
     if (pane) {
       const nextScrollTop = Math.max(0, pane.scrollHeight - pane.clientHeight)
       pane.style.scrollBehavior = 'auto'
-      pane.scrollTop = nextScrollTop
-      pane.scrollLeft = 0
+      if (Math.abs(pane.scrollTop - nextScrollTop) > 1) {
+        pane.scrollTop = nextScrollTop
+      }
+      if (pane.scrollLeft !== 0) {
+        pane.scrollLeft = 0
+      }
     }
     messagesPaneNearBottomRef.current = true
   }, [])
@@ -2249,13 +2266,20 @@ export const PhoneChat: React.FC = () => {
   }, [scrollMessagesPaneToBottom])
   const runConversationOpenBottomScrollSequence = useCallback(() => {
     clearQueuedBottomScrolls()
+    markConversationScrollSettling()
     scrollMessagesPaneToBottom()
     queueMessagesPaneBottomScroll(0)
-    const settlingDelays = [80, 180, 300, 430, 650, 920, 1250]
+    const settlingDelays = [70, 160, 300, 520]
     settlingDelays.forEach((delay) => {
       queueMessagesPaneBottomScroll(delay)
     })
-  }, [clearQueuedBottomScrolls, queueMessagesPaneBottomScroll, scrollMessagesPaneToBottom])
+  }, [clearQueuedBottomScrolls, markConversationScrollSettling, queueMessagesPaneBottomScroll, scrollMessagesPaneToBottom])
+  const handleConversationTransitionEnd = useCallback((event: React.TransitionEvent<HTMLElement>) => {
+    if (event.currentTarget !== event.target || event.propertyName !== 'transform') return
+    if (!conversationOpenRef.current) return
+
+    scrollMessagesPaneToBottom()
+  }, [scrollMessagesPaneToBottom])
 
   const activeContact = useMemo(
     () => aiAgentConversationOpen ? null : chats.find((contact) => contact.id === activeContactId) || null,
@@ -3238,11 +3262,20 @@ export const PhoneChat: React.FC = () => {
 
   useEffect(() => () => {
     clearQueuedBottomScrolls()
+    if (conversationScrollSettlingTimeoutRef.current !== null) {
+      window.clearTimeout(conversationScrollSettlingTimeoutRef.current)
+      conversationScrollSettlingTimeoutRef.current = null
+    }
   }, [clearQueuedBottomScrolls])
 
   useEffect(() => {
     if (!conversationOpen) {
       clearQueuedBottomScrolls()
+      if (conversationScrollSettlingTimeoutRef.current !== null) {
+        window.clearTimeout(conversationScrollSettlingTimeoutRef.current)
+        conversationScrollSettlingTimeoutRef.current = null
+      }
+      setConversationScrollSettling(false)
     }
   }, [clearQueuedBottomScrolls, conversationOpen])
 
@@ -3358,7 +3391,6 @@ export const PhoneChat: React.FC = () => {
     })
 
     resizeObserver.observe(content)
-    resizeObserver.observe(pane)
 
     return () => {
       resizeObserver.disconnect()
@@ -7669,6 +7701,7 @@ export const PhoneChat: React.FC = () => {
       data-phone-chat-tone={resolvedPhoneChatTheme}
       data-phone-chat-mode={safeChatThemePreference}
       data-phone-chat-device={deviceMode}
+      data-phone-chat-scroll-settling={conversationScrollSettling ? 'true' : undefined}
       aria-label="Chat móvil de Ristak"
     >
       <div className={styles.portraitLock} role="status" aria-live="polite">
@@ -7765,7 +7798,11 @@ export const PhoneChat: React.FC = () => {
 
         </section>
 
-        <section className={styles.conversationScreen} aria-label="Conversación">
+        <section
+          className={styles.conversationScreen}
+          aria-label="Conversación"
+          onTransitionEnd={handleConversationTransitionEnd}
+        >
           <header className={styles.conversationHeader}>
             <button type="button" className={styles.backButton} onClick={handleBackToChats} aria-label="Volver a chats">
               <ChevronLeft size={32} />
@@ -7826,6 +7863,7 @@ export const PhoneChat: React.FC = () => {
             ref={messagesPaneRef}
             className={styles.messagesPane}
             data-phone-chat-scrollable="true"
+            data-phone-chat-scroll-settling={conversationScrollSettling ? 'true' : undefined}
             onScroll={handleMessagesPaneScroll}
           >
             <div ref={messagesContentRef} className={styles.messagesContent}>

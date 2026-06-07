@@ -1,21 +1,23 @@
 .transitionFrame {
-  transform: translate3d(0, 0, 0);
   transform-origin: center;
-  backface-visibility: hidden;
-  will-change: transform;
 }
 
 .forward {
   animation: phonePageForward 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  backface-visibility: hidden;
+  will-change: transform;
 }
 
 .back {
   animation: phonePageBack 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  backface-visibility: hidden;
+  will-change: transform;
 }
 
 .none {
   animation: none;
-  transform: translate3d(0, 0, 0);
+  transform: none;
+  will-change: auto;
 }
 
 @keyframes phonePageForward {

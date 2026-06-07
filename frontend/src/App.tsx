@@ -289,6 +289,9 @@ const PhoneRouteEffects: React.FC = () => {
     }
 
     let viewportFrame = 0
+    let lastVisualViewportHeight = ''
+    let lastVisualViewportTop = ''
+    let lastKeyboardInset = ''
     const syncPhoneViewport = () => {
       const visualViewport = window.visualViewport
       const layoutHeight = Math.max(root.clientHeight, window.innerHeight)
@@ -296,10 +299,22 @@ const PhoneRouteEffects: React.FC = () => {
       const viewportTop = visualViewport?.offsetTop ?? 0
       const keyboardInset = Math.max(0, layoutHeight - visibleHeight - viewportTop)
       const roundedInset = keyboardInset > 48 ? Math.round(keyboardInset) : 0
+      const nextVisualViewportHeight = `${Math.round(visibleHeight)}px`
+      const nextVisualViewportTop = `${Math.round(viewportTop)}px`
+      const nextKeyboardInset = `${roundedInset}px`
 
-      root.style.setProperty('--phone-visual-viewport-height', `${Math.round(visibleHeight)}px`)
-      root.style.setProperty('--phone-visual-viewport-top', `${Math.round(viewportTop)}px`)
-      root.style.setProperty('--phone-keyboard-inset', `${roundedInset}px`)
+      if (lastVisualViewportHeight !== nextVisualViewportHeight) {
+        root.style.setProperty('--phone-visual-viewport-height', nextVisualViewportHeight)
+        lastVisualViewportHeight = nextVisualViewportHeight
+      }
+      if (lastVisualViewportTop !== nextVisualViewportTop) {
+        root.style.setProperty('--phone-visual-viewport-top', nextVisualViewportTop)
+        lastVisualViewportTop = nextVisualViewportTop
+      }
+      if (lastKeyboardInset !== nextKeyboardInset) {
+        root.style.setProperty('--phone-keyboard-inset', nextKeyboardInset)
+        lastKeyboardInset = nextKeyboardInset
+      }
     }
     const schedulePhoneViewportSync = () => {
       if (viewportFrame) window.cancelAnimationFrame(viewportFrame)
