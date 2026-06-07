@@ -1807,12 +1807,24 @@ export async function buildContactsList ({ startDate, endDate, type = 'interesad
       appointments,
       firstSession,
       source: contact.source || null,
-      ad_name: contact.attribution_ad_name || contact.meta_ad_name || null,
+      ad_name: contact.meta_ad_name || contact.attribution_ad_name || null,
       ad_id: contact.attribution_ad_id || null,
       campaign_id: contact.campaign_id || null,
       campaign_name: contact.campaign_name || null,
       adset_id: contact.adset_id || null,
       adset_name: contact.adset_name || null,
+      metaAttribution: contact.attribution_ad_id && (contact.meta_ad_name || contact.campaign_name || contact.adset_name)
+        ? {
+            source: 'meta_ads',
+            matchType: 'ad_id',
+            campaignId: contact.campaign_id || null,
+            campaignName: contact.campaign_name || null,
+            adsetId: contact.adset_id || null,
+            adsetName: contact.adset_name || null,
+            adId: contact.attribution_ad_id || null,
+            adName: contact.meta_ad_name || contact.attribution_ad_name || null
+          }
+        : null,
       lifetimeLtv,
       lifetimePurchases,
       isCustomer,

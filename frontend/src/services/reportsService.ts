@@ -1,3 +1,4 @@
+import type { ContactMetaAttribution } from '@/types'
 import { dedupeContacts } from '@/utils/contactDedup'
 import apiClient from './apiClient'
 
@@ -159,6 +160,11 @@ export interface ContactListItem {
   source?: string
   ad_name?: string
   ad_id?: string
+  campaign_id?: string | null
+  campaign_name?: string | null
+  adset_id?: string | null
+  adset_name?: string | null
+  metaAttribution?: ContactMetaAttribution | null
   lifetimeLtv?: number
   lifetimePurchases?: number
   isCustomer?: boolean

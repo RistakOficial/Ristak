@@ -19,6 +19,9 @@ const isWhatsAppJourneyEvent = (event?: JourneyEvent | null) => {
   return event.type === 'whatsapp_message' || source.includes('whatsapp')
 }
 
+const isDailyContactJourneyEvent = (event?: JourneyEvent | null) =>
+  Boolean(event && (event.type === 'contact_created' || isWhatsAppJourneyEvent(event)))
+
 const getEventIcon = (event: JourneyEvent) => {
   if (isWhatsAppJourneyEvent(event)) {
     return 'whatsapp'
@@ -345,7 +348,9 @@ const isAdAttributedEvent = (event: JourneyEvent): boolean => {
     data.is_ad_attributed ||
     data.attribution_ad_id ||
     data.referral_source_id ||
-    data.referral_ctwa_clid
+    data.referral_ctwa_clid ||
+    data.campaign_name ||
+    data.adset_name
   )
 }
 
@@ -384,29 +389,26 @@ const getLocalDayKey = (date: string, timezone: string): string => {
   return formatter.format(parsed)
 }
 
-const getWhatsAppJourneyGroupKey = (event: JourneyEvent, timezone: string): string => {
-  const dayKey = getLocalDayKey(event.date, timezone)
-  return `${dayKey}:${isAdAttributedEvent(event) ? 'ad' : 'direct'}`
-}
+const getDailyContactJourneyGroupKey = (event: JourneyEvent, timezone: string): string =>
+  getLocalDayKey(event.date, timezone)
 
-// Colapsa los eventos de WhatsApp por día local y tipo de origen. Mantiene separado
-// un mensaje directo de otro que sí vino de anuncio para no pintar "Facebook" en el
-// viaje cuando el contacto escribió directo por WhatsApp.
+// Colapsa los eventos de contacto/WhatsApp por día local. Si el mismo día hay varios,
+// gana el que trae metadata de anuncio (source_id, CTWA, campaña o anuncio resuelto).
 const buildDisplayJourney = (events: JourneyEvent[], timezone: string): JourneyEvent[] => {
-  const whatsappEvents: JourneyEvent[] = []
+  const dailyContactEvents: JourneyEvent[] = []
   const otherEvents: JourneyEvent[] = []
 
   events.forEach(event => {
-    if (event && isWhatsAppJourneyEvent(event)) {
-      whatsappEvents.push(event)
+    if (event && isDailyContactJourneyEvent(event)) {
+      dailyContactEvents.push(event)
     } else if (event) {
       otherEvents.push(event)
     }
   })
 
   const byGroup = new Map<string, JourneyEvent[]>()
-  whatsappEvents.forEach(event => {
-    const key = getWhatsAppJourneyGroupKey(event, timezone)
+  dailyContactEvents.forEach(event => {
+    const key = getDailyContactJourneyGroupKey(event, timezone)
     const bucket = byGroup.get(key)
     if (bucket) {
       bucket.push(event)
@@ -415,10 +417,11 @@ const buildDisplayJourney = (events: JourneyEvent[], timezone: string): JourneyE
     }
   })
 
-  const mergedWhatsapp: JourneyEvent[] = []
+  const mergedDailyContactEvents: JourneyEvent[] = []
   byGroup.forEach(dayEvents => {
     const sorted = [...dayEvents].sort((a, b) => whatsAppEventScore(b) - whatsAppEventScore(a))
     const primary = sorted[0]
+    const hasWhatsAppEvent = dayEvents.some(isWhatsAppJourneyEvent)
 
     const mergedData: Record<string, any> = {}
     sorted.forEach(event => {
@@ -431,10 +434,14 @@ const buildDisplayJourney = (events: JourneyEvent[], timezone: string): JourneyE
     })
     mergedData.is_ad_attributed = dayEvents.some(isAdAttributedEvent)
 
-    mergedWhatsapp.push({ ...primary, type: 'whatsapp_message', data: mergedData })
+    mergedDailyContactEvents.push({
+      ...primary,
+      type: hasWhatsAppEvent ? 'whatsapp_message' : primary.type,
+      data: mergedData
+    })
   })
 
-  return [...otherEvents, ...mergedWhatsapp].sort(
+  return [...otherEvents, ...mergedDailyContactEvents].sort(
     (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
   )
 }
@@ -457,7 +464,7 @@ export const ContactJourney = ({ contactId }: ContactJourneyProps) => {
     loadJourney()
   }, [contactId])
 
-  // Agrupa los eventos de WhatsApp a uno por día (en la zona horaria mostrada) antes de pintar.
+  // Agrupa contacto/WhatsApp a un solo evento por día local antes de pintar.
   const displayJourney = useMemo(() => buildDisplayJourney(journey, timezone), [journey, timezone])
 
   if (loading) {

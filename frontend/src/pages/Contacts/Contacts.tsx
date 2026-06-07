@@ -340,7 +340,10 @@ const mergeContactDetailRecords = (
     if (!merged.email && contact.email) merged.email = contact.email
     if (!merged.phone && contact.phone) merged.phone = contact.phone
     if (!merged.source && contact.source) merged.source = contact.source
+    if (!merged.metaAttribution && contact.metaAttribution) merged.metaAttribution = contact.metaAttribution
+    if (contact.metaAttribution?.adName) merged.ad_name = contact.metaAttribution.adName
     if (!merged.ad_name && contact.ad_name) merged.ad_name = contact.ad_name
+    if (contact.metaAttribution?.adId) merged.ad_id = contact.metaAttribution.adId
     if (!merged.ad_id && contact.ad_id) merged.ad_id = contact.ad_id
     merged.customFields = mergeCustomFields(merged.customFields, contact.customFields)
 

@@ -2451,7 +2451,12 @@ export const Reports: React.FC = () => {
             appointments: contact.appointments,
             source: contact.source,
             ad_name: contact.ad_name,
-            ad_id: contact.ad_id
+            ad_id: contact.ad_id,
+            campaign_id: contact.campaign_id,
+            campaign_name: contact.campaign_name,
+            adset_id: contact.adset_id,
+            adset_name: contact.adset_name,
+            metaAttribution: contact.metaAttribution
           }))}
           loading={modalState.loading}
           type={modalState.type === 'customers' ? 'sales' : modalState.type === 'sales' ? 'sales' : (modalState.type === 'appointments' || modalState.type === 'attendances') ? 'appointments' : 'interesados'}

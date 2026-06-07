@@ -6,7 +6,7 @@ import { CONTACT_STAGE_BADGE_VARIANTS, getContactStageBadge } from '@/utils/cont
 import { buildSearchIndex, prepareSearchQuery, searchIndexIncludes } from '@/utils/searchText'
 import { useLabels } from '@/contexts/LabelsContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
-import type { ContactCustomField, ContactCustomFieldValue } from '@/types'
+import type { ContactCustomField, ContactCustomFieldValue, ContactMetaAttribution } from '@/types'
 import styles from './ContactDetailsModal.module.css'
 
 interface ContactPaymentDetail {
@@ -69,6 +69,7 @@ interface ContactDetail {
   campaign_name?: string | null
   adset_id?: string | null
   adset_name?: string | null
+  metaAttribution?: ContactMetaAttribution | null
   lifetimeLtv?: number
   lifetimePurchases?: number
   isCustomer?: boolean
@@ -118,6 +119,13 @@ const getWhatsAppPhoneLabel = (phone: WhatsAppPhoneOption) => {
 
 const getPreferredWhatsAppPhoneNumberId = (contact?: ContactDetail | null) =>
   String(contact?.preferredWhatsAppPhoneNumberId || contact?.preferred_whatsapp_phone_number_id || '')
+
+const getResolvedAttributionDisplay = (contact?: ContactDetail | null) => ({
+  campaignName: contact?.metaAttribution?.campaignName || contact?.campaign_name || null,
+  adsetName: contact?.metaAttribution?.adsetName || contact?.adset_name || null,
+  adName: contact?.metaAttribution?.adName || contact?.ad_name || null,
+  adId: contact?.metaAttribution?.adId || contact?.ad_id || null
+})
 
 const WHATSAPP_RESERVED_CUSTOM_FIELD_KEYS = new Set([
   'whatsapp_api_provider',
@@ -428,6 +436,10 @@ export function ContactDetailsModal({
       !isTestPayment(p) && (p.amount < 0 || p.status?.toLowerCase() === 'refunded' || p.status?.toLowerCase() === 'cancelled')
     ) || []
   }, [selectedContact])
+  const resolvedAttribution = useMemo(
+    () => getResolvedAttributionDisplay(selectedContact),
+    [selectedContact]
+  )
 
   return (
     <Modal
@@ -824,7 +836,7 @@ export function ContactDetailsModal({
                 )}
 
                 {/* Atribución (solo si NO hay firstSession) */}
-                {!selectedContact.firstSession && (selectedContact.source || selectedContact.campaign_name || selectedContact.adset_name || selectedContact.ad_name || selectedContact.ad_id) && (
+                {!selectedContact.firstSession && (selectedContact.source || resolvedAttribution.campaignName || resolvedAttribution.adsetName || resolvedAttribution.adName) && (
                   <div className={styles.detailSection}>
                     <h5 className={styles.detailSectionTitle}>
                       De dónde llegó el contacto:
@@ -839,30 +851,30 @@ export function ContactDetailsModal({
                           </div>
                         </div>
                       )}
-                      {selectedContact.campaign_name && (
+                      {resolvedAttribution.campaignName && (
                         <div className={styles.detailItem}>
                           <Icon name="megaphone" size={16} />
                           <div>
                             <span className={styles.detailItemLabel}>Campaña:</span>
-                            <span> {selectedContact.campaign_name}</span>
+                            <span> {resolvedAttribution.campaignName}</span>
                           </div>
                         </div>
                       )}
-                      {selectedContact.adset_name && (
+                      {resolvedAttribution.adsetName && (
                         <div className={styles.detailItem}>
                           <Icon name="layers" size={16} />
                           <div>
                             <span className={styles.detailItemLabel}>Conjunto de anuncios:</span>
-                            <span> {selectedContact.adset_name}</span>
+                            <span> {resolvedAttribution.adsetName}</span>
                           </div>
                         </div>
                       )}
-                      {selectedContact.ad_name && (
+                      {resolvedAttribution.adName && (
                         <div className={styles.detailItem}>
                           <Icon name="file-text" size={16} />
                           <div>
                             <span className={styles.detailItemLabel}>Anuncio:</span>
-                            <span> {selectedContact.ad_name}</span>
+                            <span> {resolvedAttribution.adName}</span>
                           </div>
                         </div>
                       )}

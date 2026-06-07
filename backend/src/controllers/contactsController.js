@@ -504,7 +504,8 @@ const getMetaAttributionForContact = async (contact = {}, firstSession = null, w
   const adIdCandidates = uniqueValues([
     contact.attribution_ad_id,
     firstSession?.ad_id,
-    whatsappAttribution?.referral_source_id
+    whatsappAttribution?.referral_source_id,
+    whatsappAttribution?.ad_id_thru_message
   ])
 
   if (adIdCandidates.length > 0) {
@@ -541,6 +542,86 @@ const getMetaAttributionForContact = async (contact = {}, firstSession = null, w
   }
 
   return null
+}
+
+const buildResolvedMetaAdFields = (contact = {}, metaAttribution = null) => ({
+  ad_name: metaAttribution?.adName || contact.meta_ad_name || contact.attribution_ad_name || contact.ad_name || null,
+  ad_id: metaAttribution?.adId || contact.attribution_ad_id || contact.ad_id || null,
+  campaign_id: metaAttribution?.campaignId || contact.campaign_id || null,
+  campaign_name: metaAttribution?.campaignName || contact.campaign_name || null,
+  adset_id: metaAttribution?.adsetId || contact.adset_id || null,
+  adset_name: metaAttribution?.adsetName || contact.adset_name || null
+})
+
+const loadMetaAdsByAdIds = async (adIds = []) => {
+  const uniqueIds = [...new Set(adIds.map(cleanString).filter(Boolean))]
+  const byAdId = new Map()
+  if (uniqueIds.length === 0) return byAdId
+
+  const rows = await db.all(
+    `SELECT
+       date,
+       campaign_id,
+       campaign_name,
+       adset_id,
+       adset_name,
+       ad_id,
+       ad_name,
+       creative_thumbnail_url,
+       creative_image_url,
+       creative_video_url,
+       creative_preview_url
+     FROM meta_ads
+     WHERE ad_id IN (${uniqueIds.map(() => '?').join(', ')})
+     ORDER BY date DESC`,
+    uniqueIds
+  )
+
+  rows.forEach(row => {
+    const adId = cleanString(row.ad_id)
+    if (adId && !byAdId.has(adId)) {
+      byAdId.set(adId, mapMetaAttributionRow(row, 'ad_id'))
+    }
+  })
+
+  return byAdId
+}
+
+const enrichWhatsAppJourneyEventsWithMetaAds = async (events = []) => {
+  const adIds = events.flatMap(event => {
+    const data = event?.data || {}
+    return [
+      data.attribution_ad_id,
+      data.referral_source_id,
+      data.ad_id_thru_message
+    ]
+  })
+  const metaByAdId = await loadMetaAdsByAdIds(adIds)
+  if (metaByAdId.size === 0) return events
+
+  return events.map(event => {
+    const data = event?.data || {}
+    const adId = cleanString(data.attribution_ad_id || data.referral_source_id || data.ad_id_thru_message)
+    const metaAttribution = metaByAdId.get(adId)
+    if (!metaAttribution) return event
+
+    return {
+      ...event,
+      data: {
+        ...data,
+        campaign_id: metaAttribution.campaignId || data.campaign_id || null,
+        campaign_name: metaAttribution.campaignName || data.campaign_name || null,
+        adset_id: metaAttribution.adsetId || data.adset_id || null,
+        adset_name: metaAttribution.adsetName || data.adset_name || null,
+        attribution_ad_id: metaAttribution.adId || data.attribution_ad_id || data.referral_source_id || null,
+        attribution_ad_name: metaAttribution.adName || data.attribution_ad_name || data.referral_headline || null,
+        creative_thumbnail_url: metaAttribution.creativeThumbnailUrl || data.creative_thumbnail_url || null,
+        creative_image_url: metaAttribution.creativeImageUrl || data.creative_image_url || null,
+        creative_video_url: metaAttribution.creativeVideoUrl || data.creative_video_url || null,
+        creative_preview_url: metaAttribution.creativePreviewUrl || data.creative_preview_url || null
+      }
+    }
+  })
 }
 
 export const getContactCustomFieldDefinitions = async (req, res) => {
@@ -1501,6 +1582,7 @@ ${CONTACT_META_PROFILE_SELECT},
     const whatsappAttribution = whatsappAttributionsByContact.get(id)
     const attributionFields = buildContactAttributionFields(contact, whatsappAttribution)
     const metaAttribution = await getMetaAttributionForContact(contact, firstSession, whatsappAttribution)
+    const resolvedAdFields = buildResolvedMetaAdFields(contact, metaAttribution)
 
     // Mapear campos de base de datos a nombres esperados por frontend
     const mappedContact = {
@@ -1514,8 +1596,12 @@ ${CONTACT_META_PROFILE_SELECT},
       lastPurchase: contact.last_purchase_date,
       purchases: contact.purchases_count || 0,
       source: contact.source,
-      ad_name: contact.attribution_ad_name,
-      ad_id: contact.attribution_ad_id,
+      ad_name: resolvedAdFields.ad_name,
+      ad_id: resolvedAdFields.ad_id,
+      campaign_id: resolvedAdFields.campaign_id,
+      campaign_name: resolvedAdFields.campaign_name,
+      adset_id: resolvedAdFields.adset_id,
+      adset_name: resolvedAdFields.adset_name,
       preferredWhatsAppPhoneNumberId: contact.preferred_whatsapp_phone_number_id || '',
       preferred_whatsapp_phone_number_id: contact.preferred_whatsapp_phone_number_id || '',
       profilePhotoUrl: getContactProfilePhotoUrl(contact) || null,
@@ -2178,7 +2264,9 @@ export const getContactJourney = async (req, res) => {
       SELECT
         contacts.*,
         meta_ads.campaign_name,
+        meta_ads.campaign_id,
         meta_ads.adset_name,
+        meta_ads.adset_id,
         meta_ads.ad_name as meta_ad_name
       FROM contacts
       LEFT JOIN meta_ads ON meta_ads.ad_id = contacts.attribution_ad_id
@@ -2329,7 +2417,8 @@ export const getContactJourney = async (req, res) => {
         referral_thumbnail_url: msg.referral_thumbnail_url,
         referral_ctwa_clid: msg.referral_ctwa_clid,
         attribution_source: 'whatsapp_attribution',
-        attribution_record_id: msg.id
+        attribution_record_id: msg.id,
+        ad_id_thru_message: msg.ad_id_thru_message
       }
       const isAdAttributed = hasRealWhatsAppAdAttribution({
         ...data,
@@ -2441,7 +2530,8 @@ export const getContactJourney = async (req, res) => {
       })
     })
 
-    addWhatsAppJourneyEvents(whatsappJourneyEvents)
+    const enrichedWhatsAppJourneyEvents = await enrichWhatsAppJourneyEventsWithMetaAds(whatsappJourneyEvents)
+    addWhatsAppJourneyEvents(enrichedWhatsAppJourneyEvents)
 
     const metaSocialMessages = await db.all(
       `SELECT
@@ -2504,6 +2594,9 @@ export const getContactJourney = async (req, res) => {
     })
 
     // 3. Contacto creado
+    const adAttributedWhatsAppEvent = enrichedWhatsAppJourneyEvents.find(event => event?.data?.is_ad_attributed)
+    const resolvedContactAdFields = buildResolvedMetaAdFields(contact, null)
+
     journey.push({
       type: 'contact_created',
       date: contact.created_at,
@@ -2512,10 +2605,12 @@ export const getContactJourney = async (req, res) => {
         email: contact.email,
         phone: contact.phone,
         source: contact.source,
-        attribution_ad_name: contact.meta_ad_name || contact.attribution_ad_name,
-        attribution_ad_id: contact.attribution_ad_id,
-        campaign_name: contact.campaign_name,
-        adset_name: contact.adset_name
+        attribution_ad_name: adAttributedWhatsAppEvent?.data?.attribution_ad_name || resolvedContactAdFields.ad_name,
+        attribution_ad_id: adAttributedWhatsAppEvent?.data?.attribution_ad_id || resolvedContactAdFields.ad_id,
+        campaign_id: adAttributedWhatsAppEvent?.data?.campaign_id || resolvedContactAdFields.campaign_id,
+        campaign_name: adAttributedWhatsAppEvent?.data?.campaign_name || resolvedContactAdFields.campaign_name,
+        adset_id: adAttributedWhatsAppEvent?.data?.adset_id || resolvedContactAdFields.adset_id,
+        adset_name: adAttributedWhatsAppEvent?.data?.adset_name || resolvedContactAdFields.adset_name
       }
     })
 
