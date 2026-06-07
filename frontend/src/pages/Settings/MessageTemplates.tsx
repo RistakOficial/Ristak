@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import {
   ArrowLeft,
-  Check,
   Edit3,
   Eye,
   File,
@@ -10,8 +9,11 @@ import {
   FolderInput,
   FolderPlus,
   Globe2,
+  GripVertical,
+  Hash,
   Image,
   ListTree,
+  Loader2,
   MapPin,
   MessageSquare,
   MousePointerClick,
@@ -51,6 +53,7 @@ const ROOT_FOLDER_KEY = '__root__'
 const DRAG_DATA_TYPE = 'application/x-ristak-template-manager'
 const VARIABLE_PATTERN = /{{\s*([a-zA-Z0-9_.-]+)\s*}}/g
 const META_VARIABLE_PATTERN = /{{\s*(\d+)\s*}}/g
+type TemplateFolderFilter = 'all' | 'unfiled' | string
 
 const emptyLocation = {
   latitude: '',
@@ -317,6 +320,14 @@ function templateMatchesPhone(template: MessageTemplate, phone?: WhatsAppApiPhon
   return false
 }
 
+function isTemplateFolderId(folderId: TemplateFolderFilter | null): folderId is string {
+  return Boolean(folderId && folderId !== 'all' && folderId !== 'unfiled')
+}
+
+function getTemplateFolderTargetId(folderId: TemplateFolderFilter | null) {
+  return isTemplateFolderId(folderId) ? folderId : null
+}
+
 interface MessageTemplatesProps {
   embedded?: boolean
   title?: string
@@ -337,7 +348,7 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
   })
   const [loading, setLoading] = useState(true)
   const [view, setView] = useState<'list' | 'editor'>('list')
-  const [activeFolderId, setActiveFolderId] = useState<string | null>(null)
+  const [activeFolderId, setActiveFolderId] = useState<TemplateFolderFilter>('all')
   const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null)
   const [draft, setDraft] = useState<MessageTemplateDraft>(() => createEmptyDraft(null))
   const [searchTerm, setSearchTerm] = useState('')
@@ -350,11 +361,9 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
   const [syncing, setSyncing] = useState(false)
   const [sendingTest, setSendingTest] = useState(false)
   const [testPhone, setTestPhone] = useState('')
-  const [showFolderForm, setShowFolderForm] = useState(false)
   const [folderName, setFolderName] = useState('')
   const [creatingFolder, setCreatingFolder] = useState(false)
   const [selectedTemplateIds, setSelectedTemplateIds] = useState<Set<string>>(() => new Set())
-  const [selectedFolderIds, setSelectedFolderIds] = useState<Set<string>>(() => new Set())
   const [bulkTargetFolderId, setBulkTargetFolderId] = useState(ROOT_FOLDER_KEY)
   const [bulkWorking, setBulkWorking] = useState(false)
   const [dragging, setDragging] = useState<{ templateIds: string[]; folderIds: string[] } | null>(null)
@@ -367,11 +376,8 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
 
   useEffect(() => {
     const templateIds = new Set(bundle.templates.map((template) => template.id))
-    const folderIds = new Set(bundle.folders.map((folder) => folder.id))
-
     setSelectedTemplateIds((current) => new Set([...current].filter((id) => templateIds.has(id))))
-    setSelectedFolderIds((current) => new Set([...current].filter((id) => folderIds.has(id))))
-  }, [bundle.templates, bundle.folders])
+  }, [bundle.templates])
 
   useEffect(() => {
     if (templatePhoneFilter === 'all') return
@@ -424,22 +430,6 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
     return rows
   }, [bundle.folders])
 
-  const activeTrail = useMemo(() => {
-    const trail = []
-    const visited = new Set<string>()
-    let cursor = activeFolderId
-
-    while (cursor && !visited.has(cursor)) {
-      visited.add(cursor)
-      const folder = folderMap.get(cursor)
-      if (!folder) break
-      trail.unshift(folder)
-      cursor = folder.parentId || null
-    }
-
-    return trail
-  }, [activeFolderId, folderMap])
-
   const phoneById = useMemo(() => (
     new Map(whatsappPhones.map((phone) => [phone.id, phone]))
   ), [whatsappPhones])
@@ -452,34 +442,34 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
     templateStatusFilter !== 'all'
   )
 
-  const currentFolders = useMemo(() => {
-    const query = searchTerm.trim().toLowerCase()
-    if (query) {
-      return bundle.folders.filter((folder) => folder.name.toLowerCase().includes(query))
-    }
-    return bundle.folders.filter((folder) => (folder.parentId || null) === activeFolderId)
-  }, [activeFolderId, bundle.folders, searchTerm])
-
   const visibleTemplates = useMemo(() => {
     const query = searchTerm.trim().toLowerCase()
     return bundle.templates.filter((template) => {
-      const matchesLocation = !query
-        ? (template.folderId || null) === activeFolderId
-        : [
+      const matchesFolder =
+        activeFolderId === 'all' ||
+        (activeFolderId === 'unfiled' ? !template.folderId : template.folderId === activeFolderId)
+
+      if (!matchesFolder) return false
+
+      const matchesSearch = !query || [
         template.name,
+        template.description || '',
         template.bodyText,
         template.headerText || '',
-        template.footerText || ''
+        template.footerText || '',
+        getCategoryLabel(template.category),
+        getYCloudStatusLabel(template.ycloudStatus),
+        folderMap.get(template.folderId || '')?.name || ''
       ].some((value) => value.toLowerCase().includes(query))
 
-      if (!matchesLocation) return false
+      if (!matchesSearch) return false
       if (templateCategoryFilter !== 'all' && template.category !== templateCategoryFilter) return false
       if (templateStatusFilter !== 'all' && getTemplateReviewStatus(template) !== templateStatusFilter) return false
       if (templatePhoneFilter !== 'all' && !templateMatchesPhone(template, selectedFilterPhone)) return false
 
       return true
     })
-  }, [activeFolderId, bundle.templates, searchTerm, selectedFilterPhone, templateCategoryFilter, templatePhoneFilter, templateStatusFilter])
+  }, [activeFolderId, bundle.templates, folderMap, searchTerm, selectedFilterPhone, templateCategoryFilter, templatePhoneFilter, templateStatusFilter])
 
   const templateCountsByFolder = useMemo(() => {
     const counts = new Map<string, number>()
@@ -490,6 +480,10 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
     return counts
   }, [bundle.templates])
 
+  const unfiledTemplateCount = useMemo(() => (
+    bundle.templates.filter((template) => !template.folderId).length
+  ), [bundle.templates])
+
   const childFoldersByParent = useMemo(() => {
     const rows = new Map<string, typeof bundle.folders>()
     for (const folder of bundle.folders) {
@@ -499,46 +493,32 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
     return rows
   }, [bundle.folders])
 
-  const descendantFolderIdsByFolder = useMemo(() => {
-    const rows = new Map<string, Set<string>>()
-    const collect = (folderId: string, target: Set<string>) => {
-      for (const child of childFoldersByParent.get(folderId) || []) {
-        if (target.has(child.id)) continue
-        target.add(child.id)
-        collect(child.id, target)
+  const folderRows = useMemo(() => {
+    const rows: Array<{ folder: MessageTemplateFolder; depth: number }> = []
+
+    const walk = (parentId: string, depth: number) => {
+      for (const folder of childFoldersByParent.get(parentId) || []) {
+        rows.push({ folder, depth })
+        walk(folder.id, depth + 1)
       }
     }
 
-    for (const folder of bundle.folders) {
-      const descendants = new Set<string>()
-      collect(folder.id, descendants)
-      rows.set(folder.id, descendants)
-    }
-
+    walk(ROOT_FOLDER_KEY, 0)
     return rows
-  }, [bundle.folders, childFoldersByParent])
+  }, [childFoldersByParent])
 
   const selectedTemplates = useMemo(() => (
     bundle.templates.filter((template) => selectedTemplateIds.has(template.id))
   ), [bundle.templates, selectedTemplateIds])
 
-  const selectedFolders = useMemo(() => (
-    bundle.folders.filter((folder) => selectedFolderIds.has(folder.id))
-  ), [bundle.folders, selectedFolderIds])
-
   const visibleTemplateIds = useMemo(() => (
     visibleTemplates.map((template) => template.id)
   ), [visibleTemplates])
 
-  const visibleFolderIds = useMemo(() => (
-    currentFolders.map((folder) => folder.id)
-  ), [currentFolders])
-
-  const selectedTotal = selectedTemplateIds.size + selectedFolderIds.size
+  const selectedTotal = selectedTemplateIds.size
   const allVisibleSelected = Boolean(
-    (visibleTemplateIds.length || visibleFolderIds.length) &&
-    visibleTemplateIds.every((id) => selectedTemplateIds.has(id)) &&
-    visibleFolderIds.every((id) => selectedFolderIds.has(id))
+    visibleTemplateIds.length &&
+    visibleTemplateIds.every((id) => selectedTemplateIds.has(id))
   )
 
   const variableByMergeField = useMemo(() => (
@@ -587,7 +567,7 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
 
   const startNewTemplate = () => {
     setSelectedTemplateId(null)
-    setDraft(createEmptyDraft(activeFolderId))
+    setDraft(createEmptyDraft(getTemplateFolderTargetId(activeFolderId)))
     setTestPhone('')
     setView('editor')
   }
@@ -651,7 +631,7 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
 
       setSelectedTemplateId(saved.id)
       setDraft(templateToDraft(saved))
-      setActiveFolderId(saved.folderId || null)
+      setActiveFolderId(saved.folderId || 'unfiled')
       await loadBundle()
       if (!options.silent) {
         showToast('success', 'Plantilla guardada', `${saved.name} quedó lista`)
@@ -723,7 +703,6 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
 
   const clearSelection = () => {
     setSelectedTemplateIds(new Set())
-    setSelectedFolderIds(new Set())
   }
 
   const toggleTemplateSelection = (templateId: string) => {
@@ -735,15 +714,6 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
     })
   }
 
-  const toggleFolderSelection = (folderId: string) => {
-    setSelectedFolderIds((current) => {
-      const next = new Set(current)
-      if (next.has(folderId)) next.delete(folderId)
-      else next.add(folderId)
-      return next
-    })
-  }
-
   const toggleVisibleSelection = () => {
     if (allVisibleSelected) {
       setSelectedTemplateIds((current) => {
@@ -751,44 +721,16 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
         visibleTemplateIds.forEach((id) => next.delete(id))
         return next
       })
-      setSelectedFolderIds((current) => {
-        const next = new Set(current)
-        visibleFolderIds.forEach((id) => next.delete(id))
-        return next
-      })
       return
     }
 
     setSelectedTemplateIds((current) => new Set([...current, ...visibleTemplateIds]))
-    setSelectedFolderIds((current) => new Set([...current, ...visibleFolderIds]))
-  }
-
-  const canMoveFolderTo = (folderId: string, targetFolderId: string | null) => {
-    if (!targetFolderId) return true
-    if (folderId === targetFolderId) return false
-    return !descendantFolderIdsByFolder.get(folderId)?.has(targetFolderId)
   }
 
   const moveTemplatesToFolder = async (templates: MessageTemplate[], folderId: string | null) => {
     for (const template of templates) {
       if ((template.folderId || null) === folderId) continue
       await messageTemplatesService.updateTemplate(template.id, templateToPayload(template, folderId))
-    }
-  }
-
-  const moveFoldersToFolder = async (folders: MessageTemplateFolder[], folderId: string | null) => {
-    const invalid = folders.find((folder) => !canMoveFolderTo(folder.id, folderId))
-    if (invalid) {
-      throw new Error(`No puedes meter ${invalid.name} dentro de si misma o de una subcarpeta propia`)
-    }
-
-    for (const folder of folders) {
-      if ((folder.parentId || null) === folderId) continue
-      await messageTemplatesService.updateFolder(folder.id, {
-        name: folder.name,
-        parentId: folderId,
-        sortOrder: folder.sortOrder
-      })
     }
   }
 
@@ -799,7 +741,6 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
     setBulkWorking(true)
     try {
       await moveTemplatesToFolder(selectedTemplates, targetFolderId)
-      await moveFoldersToFolder(selectedFolders, targetFolderId)
       clearSelection()
       await loadBundle()
       showToast('success', 'Movido', 'La seleccion quedo en su nueva carpeta')
@@ -835,15 +776,12 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
 
     showConfirm(
       'Eliminar seleccion',
-      `Se eliminaran ${selectedTotal} elemento${selectedTotal === 1 ? '' : 's'}. Las plantillas dentro de carpetas eliminadas quedaran sueltas.`,
+      `Se eliminaran ${selectedTotal} plantilla${selectedTotal === 1 ? '' : 's'}.`,
       async () => {
         setBulkWorking(true)
         try {
           for (const template of selectedTemplates) {
             await messageTemplatesService.deleteTemplate(template.id)
-          }
-          for (const folder of selectedFolders) {
-            await messageTemplatesService.deleteFolder(folder.id)
           }
           clearSelection()
           await loadBundle()
@@ -859,22 +797,15 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
     )
   }
 
-  const getDragPayload = (type: 'template' | 'folder', id: string) => {
-    if (type === 'template') {
-      return {
-        templateIds: selectedTemplateIds.has(id) ? [...selectedTemplateIds] : [id],
-        folderIds: selectedFolderIds.has(id) ? [...selectedFolderIds] : []
-      }
-    }
-
+  const getDragPayload = (id: string) => {
     return {
-      templateIds: selectedTemplateIds.has(id) ? [...selectedTemplateIds] : [],
-      folderIds: selectedFolderIds.has(id) ? [...selectedFolderIds] : [id]
+      templateIds: selectedTemplateIds.has(id) ? [...selectedTemplateIds] : [id],
+      folderIds: []
     }
   }
 
-  const handleDragStart = (event: React.DragEvent, type: 'template' | 'folder', id: string) => {
-    const payload = getDragPayload(type, id)
+  const handleDragStart = (event: React.DragEvent, id: string) => {
+    const payload = getDragPayload(id)
     setDragging(payload)
     event.dataTransfer.effectAllowed = 'move'
     event.dataTransfer.setData(DRAG_DATA_TYPE, JSON.stringify(payload))
@@ -892,9 +823,7 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
 
   const handleFolderDragOver = (event: React.DragEvent, folderId: string | null) => {
     const payload = dragging
-    if (!payload) return
-    const canDrop = payload.folderIds.every((draggedFolderId) => canMoveFolderTo(draggedFolderId, folderId))
-    if (!canDrop) return
+    if (!payload?.templateIds.length) return
 
     event.preventDefault()
     event.dataTransfer.dropEffect = 'move'
@@ -907,15 +836,13 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
     if (!payload || bulkWorking) return
 
     const templates = bundle.templates.filter((template) => payload.templateIds.includes(template.id))
-    const folders = bundle.folders.filter((folder) => payload.folderIds.includes(folder.id))
 
     setBulkWorking(true)
     try {
       await moveTemplatesToFolder(templates, folderId)
-      await moveFoldersToFolder(folders, folderId)
       clearSelection()
       await loadBundle()
-      showToast('success', 'Movido', folderId ? `Guardado en ${folderMap.get(folderId)?.name || 'carpeta'}` : 'Guardado en Inicio')
+      showToast('success', 'Movido', folderId ? `Guardado en ${folderMap.get(folderId)?.name || 'carpeta'}` : 'Guardado sin carpeta')
     } catch (error) {
       showToast('error', 'No se pudo mover', getErrorMessage(error, 'Intenta con otra carpeta'))
     } finally {
@@ -975,12 +902,11 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
     try {
       await messageTemplatesService.createFolder({
         name: folderName.trim(),
-        parentId: activeFolderId
+        parentId: getTemplateFolderTargetId(activeFolderId)
       })
       setFolderName('')
-      setShowFolderForm(false)
       await loadBundle()
-      showToast('success', activeFolderId ? 'Subcarpeta creada' : 'Carpeta creada', folderName.trim())
+      showToast('success', getTemplateFolderTargetId(activeFolderId) ? 'Subcarpeta creada' : 'Carpeta creada', folderName.trim())
     } catch (error) {
       showToast('error', 'No se pudo crear', getErrorMessage(error, 'Intenta nuevamente'))
     } finally {
@@ -998,7 +924,7 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
       async () => {
         try {
           await messageTemplatesService.deleteFolder(folder.id)
-          if (activeFolderId === folder.id) setActiveFolderId(folder.parentId || null)
+          if (activeFolderId === folder.id) setActiveFolderId('all')
           await loadBundle()
           showToast('success', 'Carpeta eliminada', folder.name)
         } catch (error) {
@@ -1199,313 +1125,299 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
     </aside>
   )
 
-  const renderList = () => (
-    <div className={styles.managerGrid}>
-      <section className={styles.listPanel}>
-        <div className={styles.toolbar}>
-          <div className={styles.searchBox}>
-            <Search size={16} />
-            <input
-              value={searchTerm}
-              onChange={(event) => setSearchTerm(event.target.value)}
-              placeholder="Buscar plantilla o carpeta"
-            />
-          </div>
-          <Button variant="outline" onClick={() => {
-            setFolderName('')
-            setShowFolderForm((current) => !current)
-          }}>
-            <FolderPlus size={16} />
-            {activeFolderId ? 'Subcarpeta' : 'Carpeta'}
-          </Button>
-          <Button variant="outline" onClick={syncAllTemplates} loading={syncing}>
-            <RefreshCw size={16} />
-            Sincronizar
-          </Button>
-          <Button onClick={startNewTemplate}>
-            <Plus size={16} />
-            Plantilla
-          </Button>
-        </div>
+  const renderList = () => {
+    const activeFolderName = activeFolderId === 'all'
+      ? 'Todas las plantillas'
+      : activeFolderId === 'unfiled'
+        ? 'Sin carpeta'
+        : folderMap.get(activeFolderId)?.name || 'Carpeta'
+    const emptyTitle = hasTemplateFilters || searchTerm.trim()
+      ? 'Sin resultados'
+      : activeFolderId === 'all'
+        ? 'Todavia no hay plantillas'
+        : 'No hay plantillas en esta carpeta'
 
-        <div className={styles.filterBar}>
-          <div className={styles.filterTitle}>
-            <SlidersHorizontal size={16} />
-            <span>Filtros</span>
+    return (
+      <div className={styles.managerGrid}>
+        <aside className={styles.folders} aria-label="Carpetas de plantillas">
+          <div className={styles.folderHeader}>
+            <strong>Carpetas</strong>
+            <span>{bundle.folders.length} activas</span>
           </div>
-          <label className={styles.filterControl}>
-            <span>Número</span>
-            <select
-              value={templatePhoneFilter}
-              onChange={(event) => setTemplatePhoneFilter(event.target.value)}
-              disabled={!whatsappPhones.length}
-            >
-              <option value="all">{whatsappPhones.length ? 'Todos los números' : 'Sin números conectados'}</option>
-              {whatsappPhones.map((phone) => (
-                <option key={phone.id} value={phone.id}>{getPhoneFilterLabel(phone)}</option>
-              ))}
-            </select>
-          </label>
-          <label className={styles.filterControl}>
-            <span>Tipo</span>
-            <select
-              value={templateCategoryFilter}
-              onChange={(event) => setTemplateCategoryFilter(event.target.value as 'all' | MessageTemplateCategory)}
-            >
-              <option value="all">Todos los tipos</option>
-              {categoryOptions.map((option) => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </select>
-          </label>
-          <label className={styles.filterControl}>
-            <span>Estado</span>
-            <select
-              value={templateStatusFilter}
-              onChange={(event) => setTemplateStatusFilter(event.target.value as TemplateReviewStatusFilter)}
-            >
-              {reviewStatusFilterOptions.map((option) => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </select>
-          </label>
-          <span className={styles.filterCount}>{visibleTemplates.length} de {bundle.templates.length} plantillas</span>
-          {hasTemplateFilters && (
-            <button
-              type="button"
-              className={styles.clearFiltersButton}
-              onClick={() => {
-                setTemplatePhoneFilter('all')
-                setTemplateCategoryFilter('all')
-                setTemplateStatusFilter('all')
-              }}
-            >
-              Limpiar filtros
-            </button>
-          )}
-        </div>
 
-        <div className={styles.breadcrumbs}>
           <button
             type="button"
-            className={dropTargetFolderId === ROOT_FOLDER_KEY ? styles.dropTargetActive : ''}
-            onClick={() => setActiveFolderId(null)}
+            className={`${styles.folderItem} ${activeFolderId === 'all' ? styles.folderItemActive : ''}`}
+            onClick={() => setActiveFolderId('all')}
+          >
+            <Hash size={16} />
+            <span>Todas las plantillas</span>
+            <b>{bundle.templates.length}</b>
+          </button>
+
+          <button
+            type="button"
+            className={`${styles.folderItem} ${activeFolderId === 'unfiled' ? styles.folderItemActive : ''} ${dropTargetFolderId === ROOT_FOLDER_KEY ? styles.folderDropActive : ''}`}
+            onClick={() => setActiveFolderId('unfiled')}
             onDragOver={(event) => handleFolderDragOver(event, null)}
             onDragLeave={() => setDropTargetFolderId(null)}
             onDrop={(event) => handleDropOnFolder(event, null)}
           >
-            Inicio
+            <Hash size={16} />
+            <span>Sin carpeta</span>
+            <b>{unfiledTemplateCount}</b>
           </button>
-          {activeTrail.map((folder) => (
-            <React.Fragment key={folder.id}>
-              <span>/</span>
-              <button
-                type="button"
-                className={dropTargetFolderId === folder.id ? styles.dropTargetActive : ''}
-                onClick={() => setActiveFolderId(folder.id)}
+
+          <div className={styles.folderList}>
+            {folderRows.map(({ folder, depth }) => (
+              <div
+                key={folder.id}
+                className={`${styles.folderRow} ${activeFolderId === folder.id ? styles.folderRowActive : ''} ${dropTargetFolderId === folder.id ? styles.folderDropActive : ''}`}
                 onDragOver={(event) => handleFolderDragOver(event, folder.id)}
                 onDragLeave={() => setDropTargetFolderId(null)}
                 onDrop={(event) => handleDropOnFolder(event, folder.id)}
               >
-                {folder.name}
-              </button>
-            </React.Fragment>
-          ))}
-        </div>
+                <button type="button" onClick={() => setActiveFolderId(folder.id)}>
+                  <Folder size={16} />
+                  <span style={{ paddingLeft: depth ? depth * 12 : 0 }}>{folder.name}</span>
+                  <b>{templateCountsByFolder.get(folder.id) || 0}</b>
+                </button>
+                <button
+                  type="button"
+                  className={styles.iconButton}
+                  aria-label={`Eliminar ${folder.name}`}
+                  title="Eliminar carpeta"
+                  onClick={() => confirmDeleteFolder(folder.id)}
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
+            ))}
+          </div>
 
-        {selectedTotal > 0 && (
-          <div className={styles.bulkBar}>
-            <strong>{selectedTotal} seleccionado{selectedTotal === 1 ? '' : 's'}</strong>
-            <button type="button" onClick={toggleVisibleSelection}>
-              {allVisibleSelected ? 'Quitar visibles' : 'Seleccionar visibles'}
+          <div className={styles.newFolder}>
+            <input
+              value={folderName}
+              placeholder={isTemplateFolderId(activeFolderId) ? 'Nueva subcarpeta' : 'Nueva carpeta'}
+              onChange={(event) => setFolderName(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') void submitFolder()
+              }}
+            />
+            <button
+              type="button"
+              disabled={!folderName.trim() || creatingFolder}
+              onClick={() => void submitFolder()}
+              aria-label="Crear carpeta"
+              title="Crear carpeta"
+            >
+              {creatingFolder ? <Loader2 size={15} className={styles.spin} /> : <FolderPlus size={15} />}
             </button>
-            <label>
-              <span>Mover a</span>
-              <select value={bulkTargetFolderId} onChange={(event) => setBulkTargetFolderId(event.target.value)}>
-                <option value={ROOT_FOLDER_KEY}>Inicio</option>
-                {folderOptions.map((option) => (
-                  <option key={option.id} value={option.id}>{option.label}</option>
+          </div>
+        </aside>
+
+        <main className={styles.tablePanel}>
+          <div className={styles.toolbar}>
+            <label className={styles.searchBox}>
+              <Search size={16} />
+              <input
+                value={searchTerm}
+                onChange={(event) => setSearchTerm(event.target.value)}
+                placeholder="Buscar por nombre, texto, carpeta o estado"
+              />
+            </label>
+            <div className={styles.toolbarActions}>
+              <span className={styles.toolbarCount}>{visibleTemplates.length} plantillas</span>
+              <Button variant="outline" onClick={syncAllTemplates} loading={syncing}>
+                <RefreshCw size={16} />
+                Sincronizar
+              </Button>
+              <Button onClick={startNewTemplate}>
+                <Plus size={16} />
+                Plantilla
+              </Button>
+            </div>
+          </div>
+
+          <div className={styles.filterBar}>
+            <div className={styles.filterTitle}>
+              <SlidersHorizontal size={16} />
+              <span>{activeFolderName}</span>
+            </div>
+            <label className={styles.filterControl}>
+              <span>Numero</span>
+              <select
+                value={templatePhoneFilter}
+                onChange={(event) => setTemplatePhoneFilter(event.target.value)}
+                disabled={!whatsappPhones.length}
+              >
+                <option value="all">{whatsappPhones.length ? 'Todos los numeros' : 'Sin numeros conectados'}</option>
+                {whatsappPhones.map((phone) => (
+                  <option key={phone.id} value={phone.id}>{getPhoneFilterLabel(phone)}</option>
                 ))}
               </select>
             </label>
-            <Button variant="outline" size="sm" onClick={() => moveSelectionToFolder()} loading={bulkWorking}>
-              <FolderInput size={15} />
-              Mover
-            </Button>
-            <Button variant="outline" size="sm" onClick={syncSelectedTemplates} disabled={!selectedTemplates.length || bulkWorking}>
-              <RefreshCw size={15} />
-              Sincronizar
-            </Button>
-            <Button variant="danger" size="sm" onClick={deleteSelection} disabled={bulkWorking}>
-              <Trash2 size={15} />
-              Eliminar
-            </Button>
-            <Button variant="ghost" size="sm" onClick={clearSelection} disabled={bulkWorking}>
-              <X size={15} />
-            </Button>
-          </div>
-        )}
-
-        {showFolderForm && (
-          <div className={styles.folderForm}>
-            <FolderPlus size={18} />
-            <input
-              value={folderName}
-              onChange={(event) => setFolderName(event.target.value)}
-              placeholder={activeFolderId ? 'Nombre de la subcarpeta' : 'Nombre de la carpeta'}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') submitFolder()
-              }}
-            />
-            <Button variant="ghost" size="sm" onClick={() => setShowFolderForm(false)} disabled={creatingFolder}>
-              <X size={15} />
-            </Button>
-            <Button size="sm" onClick={submitFolder} loading={creatingFolder}>
-              <Check size={15} />
-              Crear
-            </Button>
-          </div>
-        )}
-
-        {currentFolders.length || visibleTemplates.length ? (
-          <div className={styles.collectionTableWrap}>
-            <table className={styles.collectionTable}>
-              <thead>
-                <tr>
-                  <th aria-label="Seleccionar" />
-                  <th>Tipo</th>
-                  <th>Nombre</th>
-                  <th>Detalle</th>
-                  <th>Estado</th>
-                  <th>Acciones</th>
-                </tr>
-              </thead>
-              <tbody>
-                {currentFolders.map((folder) => (
-                  <tr
-                    key={folder.id}
-                    className={`${selectedFolderIds.has(folder.id) ? styles.collectionRowSelected : ''} ${dropTargetFolderId === folder.id ? styles.collectionRowDropTarget : ''}`}
-                    draggable
-                    onDragStart={(event) => handleDragStart(event, 'folder', folder.id)}
-                    onDragEnd={() => {
-                      setDragging(null)
-                      setDropTargetFolderId(null)
-                    }}
-                    onDragOver={(event) => handleFolderDragOver(event, folder.id)}
-                    onDragLeave={() => setDropTargetFolderId(null)}
-                    onDrop={(event) => handleDropOnFolder(event, folder.id)}
-                  >
-                    <td>
-                      <label className={styles.itemCheck} aria-label={`Seleccionar ${folder.name}`}>
-                        <input
-                          type="checkbox"
-                          checked={selectedFolderIds.has(folder.id)}
-                          onChange={() => toggleFolderSelection(folder.id)}
-                        />
-                      </label>
-                    </td>
-                    <td>
-                      <span className={`${styles.collectionTypeBadge} ${styles.collectionTypeFolder}`}>
-                        <Folder size={14} />
-                        Carpeta
-                      </span>
-                    </td>
-                    <td>
-                      <button type="button" className={styles.collectionNameButton} onClick={() => {
-                        setActiveFolderId(folder.id)
-                        setSearchTerm('')
-                      }}>
-                        <strong>{folder.name}</strong>
-                        <small>{activeFolderId ? 'Subcarpeta' : 'Carpeta'}</small>
-                      </button>
-                    </td>
-                    <td>{templateCountsByFolder.get(folder.id) || 0} plantilla{(templateCountsByFolder.get(folder.id) || 0) === 1 ? '' : 's'}</td>
-                    <td><span className={styles.collectionMuted}>Sin revisión</span></td>
-                    <td>
-                      <div className={styles.collectionTableActions}>
-                        <button
-                          type="button"
-                          className={styles.iconButton}
-                          onClick={() => confirmDeleteFolder(folder.id)}
-                          aria-label={`Eliminar ${folder.name}`}
-                          title="Eliminar"
-                        >
-                          <Trash2 size={15} />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
+            <label className={styles.filterControl}>
+              <span>Tipo</span>
+              <select
+                value={templateCategoryFilter}
+                onChange={(event) => setTemplateCategoryFilter(event.target.value as 'all' | MessageTemplateCategory)}
+              >
+                <option value="all">Todos los tipos</option>
+                {categoryOptions.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
                 ))}
+              </select>
+            </label>
+            <label className={styles.filterControl}>
+              <span>Estado</span>
+              <select
+                value={templateStatusFilter}
+                onChange={(event) => setTemplateStatusFilter(event.target.value as TemplateReviewStatusFilter)}
+              >
+                {reviewStatusFilterOptions.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+            </label>
+            <span className={styles.filterCount}>{visibleTemplates.length} de {bundle.templates.length}</span>
+            {hasTemplateFilters && (
+              <button
+                type="button"
+                className={styles.clearFiltersButton}
+                onClick={() => {
+                  setTemplatePhoneFilter('all')
+                  setTemplateCategoryFilter('all')
+                  setTemplateStatusFilter('all')
+                }}
+              >
+                Limpiar filtros
+              </button>
+            )}
+          </div>
 
-                {visibleTemplates.map((template) => (
-                  <tr
-                    key={template.id}
-                    className={selectedTemplateIds.has(template.id) ? styles.collectionRowSelected : ''}
-                    draggable
-                    onDragStart={(event) => handleDragStart(event, 'template', template.id)}
-                    onDragEnd={() => {
-                      setDragging(null)
-                      setDropTargetFolderId(null)
-                    }}
-                  >
-                    <td>
-                      <label className={styles.itemCheck} aria-label={`Seleccionar ${template.name}`}>
+          {selectedTotal > 0 && (
+            <div className={styles.bulkBar}>
+              <strong>{selectedTotal} seleccionada{selectedTotal === 1 ? '' : 's'}</strong>
+              <button type="button" onClick={toggleVisibleSelection}>
+                {allVisibleSelected ? 'Quitar visibles' : 'Seleccionar visibles'}
+              </button>
+              <label>
+                <span>Mover a</span>
+                <select value={bulkTargetFolderId} onChange={(event) => setBulkTargetFolderId(event.target.value)}>
+                  <option value={ROOT_FOLDER_KEY}>Sin carpeta</option>
+                  {folderOptions.map((option) => (
+                    <option key={option.id} value={option.id}>{option.label}</option>
+                  ))}
+                </select>
+              </label>
+              <Button variant="outline" size="sm" onClick={() => moveSelectionToFolder()} loading={bulkWorking}>
+                <FolderInput size={15} />
+                Mover
+              </Button>
+              <Button variant="outline" size="sm" onClick={syncSelectedTemplates} disabled={!selectedTemplates.length || bulkWorking}>
+                <RefreshCw size={15} />
+                Sincronizar
+              </Button>
+              <Button variant="danger" size="sm" onClick={deleteSelection} disabled={bulkWorking}>
+                <Trash2 size={15} />
+                Eliminar
+              </Button>
+              <Button variant="ghost" size="sm" onClick={clearSelection} disabled={bulkWorking}>
+                <X size={15} />
+              </Button>
+            </div>
+          )}
+
+          {visibleTemplates.length ? (
+            <div className={styles.collectionTableWrap}>
+              <table className={styles.collectionTable}>
+                <thead>
+                  <tr>
+                    <th className={styles.selectionHead}>
+                      <input
+                        type="checkbox"
+                        aria-label="Seleccionar plantillas visibles"
+                        checked={allVisibleSelected}
+                        onChange={toggleVisibleSelection}
+                      />
+                    </th>
+                    <th>Plantilla</th>
+                    <th>Tipo</th>
+                    <th>Carpeta</th>
+                    <th>Idioma</th>
+                    <th>Estado</th>
+                    <th aria-label="Acciones" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {visibleTemplates.map((template) => (
+                    <tr
+                      key={template.id}
+                      className={selectedTemplateIds.has(template.id) ? styles.collectionRowSelected : ''}
+                      draggable
+                      onDragStart={(event) => handleDragStart(event, template.id)}
+                      onDragEnd={() => {
+                        setDragging(null)
+                        setDropTargetFolderId(null)
+                      }}
+                    >
+                      <td className={styles.selectionCell}>
+                        <span className={styles.dragHandle} aria-hidden="true">
+                          <GripVertical size={15} />
+                        </span>
                         <input
                           type="checkbox"
+                          aria-label={`Seleccionar ${template.name}`}
                           checked={selectedTemplateIds.has(template.id)}
                           onChange={() => toggleTemplateSelection(template.id)}
                         />
-                      </label>
-                    </td>
-                    <td>
-                      <span className={`${styles.collectionTypeBadge} ${styles.collectionTypeTemplate}`}>
-                        <FileText size={14} />
-                        Plantilla
-                      </span>
-                    </td>
-                    <td>
-                      <button type="button" className={styles.collectionNameButton} onClick={() => editTemplate(template)}>
-                        <strong>{template.name}</strong>
-                        <small>{template.bodyText || template.description || 'Sin texto principal'}</small>
-                      </button>
-                    </td>
-                    <td>
-                      <div className={styles.collectionMetaStack}>
-                        <span>{getCategoryLabel(template.category)} · {template.language}</span>
-                        <small>{getStatusLabel(template.status)}</small>
-                      </div>
-                    </td>
-                    <td>
-                      <span className={`${styles.ycloudBadge} ${styles[`ycloudBadge${getYCloudStatusTone(template.ycloudStatus)}`]}`}>
-                        {getYCloudStatusLabel(template.ycloudStatus)}
-                      </span>
-                    </td>
-                    <td>
-                      <div className={styles.collectionTableActions}>
-                        <button type="button" className={styles.iconButton} onClick={() => editTemplate(template)} aria-label={`Editar ${template.name}`} title="Editar">
-                          <Edit3 size={15} />
+                      </td>
+                      <td>
+                        <button type="button" className={styles.collectionNameButton} onClick={() => editTemplate(template)}>
+                          <strong>{template.name}</strong>
+                          <small>{template.bodyText || template.description || 'Sin texto principal'}</small>
                         </button>
-                        <button type="button" className={styles.iconButton} onClick={() => confirmDeleteTemplate(template)} aria-label={`Eliminar ${template.name}`} title="Eliminar">
-                          <Trash2 size={15} />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <div className={styles.emptyState}>
-            <ListTree size={28} />
-            <strong>{hasTemplateFilters ? 'Sin resultados' : 'Sin plantillas'}</strong>
-            {hasTemplateFilters && <span>Prueba con otro número, tipo o estado.</span>}
-          </div>
-        )}
-      </section>
-
-    </div>
-  )
+                      </td>
+                      <td>
+                        <span className={`${styles.collectionTypeBadge} ${styles.collectionTypeTemplate}`}>
+                          <FileText size={14} />
+                          {getCategoryLabel(template.category)}
+                        </span>
+                      </td>
+                      <td>{folderMap.get(template.folderId || '')?.name || 'Sin carpeta'}</td>
+                      <td>{template.language}</td>
+                      <td>
+                        <span className={`${styles.ycloudBadge} ${styles[`ycloudBadge${getYCloudStatusTone(template.ycloudStatus)}`]}`}>
+                          {getYCloudStatusLabel(template.ycloudStatus)}
+                        </span>
+                      </td>
+                      <td>
+                        <div className={styles.collectionTableActions}>
+                          <button type="button" className={styles.iconButton} onClick={() => editTemplate(template)} aria-label={`Editar ${template.name}`} title="Editar">
+                            <Edit3 size={15} />
+                          </button>
+                          <button type="button" className={styles.iconButton} onClick={() => confirmDeleteTemplate(template)} aria-label={`Eliminar ${template.name}`} title="Eliminar">
+                            <Trash2 size={15} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className={styles.emptyState}>
+              <ListTree size={28} />
+              <strong>{emptyTitle}</strong>
+              <span>{hasTemplateFilters ? 'Prueba con otro numero, tipo o estado.' : 'Crea una plantilla nueva o cambia de carpeta.'}</span>
+            </div>
+          )}
+        </main>
+      </div>
+    )
+  }
 
   const renderHeaderFields = () => {
     if (!draft.headerEnabled) return null
