@@ -162,6 +162,12 @@ type AIEditorGenerationState = {
   editMode: boolean
 } | null
 
+type CompletedAIGenerationRedirect = {
+  pendingSiteId: string
+  siteId: string
+  editorPath: string
+} | null
+
 type SitesAICreationModalSubmit = {
   siteKind: SitesAICreationKind
   prompt: string
@@ -2668,6 +2674,7 @@ export const Sites: React.FC = () => {
   const [savingImportMapping, setSavingImportMapping] = useState(false)
   const selectedSiteRef = useRef<PublicSite | null>(null)
   const pendingAIGenerationSiteRef = useRef<PublicSite | null>(null)
+  const completedAIGenerationRedirectRef = useRef<CompletedAIGenerationRedirect>(null)
   const importFileInputRef = useRef<HTMLInputElement | null>(null)
   const pendingImportSiteTypeRef = useRef<SiteType>('landing_page')
   const paletteDragPayloadRef = useRef<PaletteDragPayload | null>(null)
@@ -3187,6 +3194,14 @@ export const Sites: React.FC = () => {
 
       const pendingGenerationSite = pendingAIGenerationSiteRef.current || selectedSiteRef.current
       const isPendingGenerationRoute = routeState.siteId.startsWith('ai-pending-')
+      const completedGenerationRedirect = completedAIGenerationRedirectRef.current
+      if (isPendingGenerationRoute && completedGenerationRedirect?.pendingSiteId === routeState.siteId) {
+        navigate(completedGenerationRedirect.editorPath, { replace: true })
+        return
+      }
+      if (completedGenerationRedirect?.siteId === routeState.siteId) {
+        completedAIGenerationRedirectRef.current = null
+      }
       if ((aiEditorGeneration?.siteId === routeState.siteId || isPendingGenerationRoute) && pendingGenerationSite?.id === routeState.siteId) {
         if (selectedSite?.id !== pendingGenerationSite.id) {
           setSelectedSite(pendingGenerationSite)
@@ -3220,6 +3235,12 @@ export const Sites: React.FC = () => {
       return
     }
 
+    const completedGenerationRedirect = completedAIGenerationRedirectRef.current
+    if (completedGenerationRedirect) {
+      navigate(completedGenerationRedirect.editorPath, { replace: true })
+      return
+    }
+
     suppressEditorRouteRestoreRef.current = false
 
     if (selectedSite || selectedBlockId || activePageId !== DEFAULT_FUNNEL_PAGE_ID) {
@@ -3231,6 +3252,7 @@ export const Sites: React.FC = () => {
     aiEditorGeneration?.siteId,
     activePageId,
     loading,
+    navigate,
     navigateSitesCreateFlow,
     routeState.blockId,
     routeState.createFlow,
@@ -3794,6 +3816,7 @@ export const Sites: React.FC = () => {
       message: string
     ) => {
       pendingAIGenerationSiteRef.current = null
+      completedAIGenerationRedirectRef.current = null
       setAiEditorGeneration(null)
       if (editSite) {
         const restoredSite = normalizeSiteForEditor(editSite)
@@ -3823,6 +3846,7 @@ export const Sites: React.FC = () => {
     }
 
     pendingAIGenerationSiteRef.current = editSite ? null : pendingSite
+    completedAIGenerationRedirectRef.current = null
     setCreating(true)
     setAiCreationModal(null)
     setImportReview(null)
@@ -3866,6 +3890,20 @@ export const Sites: React.FC = () => {
 
       const normalizedSite = normalizeSiteForEditor(result.site)
       const nextPageId = normalizeFunnelPages(normalizedSite)[0]?.id || DEFAULT_FUNNEL_PAGE_ID
+      const finalEditorPath = buildSitesEditorPath({
+        section: getSiteSection(normalizedSite),
+        siteId: normalizedSite.id,
+        pageId: nextPageId,
+        device,
+        focus: editorFocusMode
+      })
+      completedAIGenerationRedirectRef.current = editSite
+        ? null
+        : {
+          pendingSiteId,
+          siteId: normalizedSite.id,
+          editorPath: finalEditorPath
+        }
       setSites(current => {
         const withoutPending = current.filter(item => item.id !== pendingSiteId)
         const exists = withoutPending.some(item => item.id === normalizedSite.id)
@@ -3884,13 +3922,7 @@ export const Sites: React.FC = () => {
       setAiCreationModal(null)
       pendingAIGenerationSiteRef.current = null
       setAiEditorGeneration(null)
-      navigate(buildSitesEditorPath({
-        section: getSiteSection(normalizedSite),
-        siteId: normalizedSite.id,
-        pageId: nextPageId,
-        device,
-        focus: editorFocusMode
-      }), { replace: true })
+      navigate(finalEditorPath, { replace: true })
       showToast(
         'success',
         editSite ? 'Página actualizada con IA' : 'Página creada con IA',
