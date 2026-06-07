@@ -14893,12 +14893,6 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
           onSave={onSave}
         />
 
-        <div className={styles.propertiesActions}>
-          <Button variant="secondary" onClick={onSave}>
-            <Save size={16} />
-            Guardar bloque
-          </Button>
-        </div>
       </div>
     </aside>
   )

@@ -12343,3 +12343,91 @@
 .pageFrame .containerFocused .sitesShellFocused .spacingHeader {
   align-items: center;
 }
+
+/* Final properties/palette polish: composite controls own the border, inner
+   inputs stay invisible so there are no nested text boxes. */
+.pageFrame .containerFocused .sitesShellFocused :is(
+  .dimensionBox input,
+  .spacingBox > div input,
+  .colorRow .colorHex
+) {
+  min-height: 0 !important;
+  height: auto !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  outline: none !important;
+}
+
+.pageFrame .containerFocused .sitesShellFocused :is(
+  .dimensionBox input,
+  .spacingBox > div input,
+  .colorRow .colorHex
+):hover,
+.pageFrame .containerFocused .sitesShellFocused :is(
+  .dimensionBox input,
+  .spacingBox > div input,
+  .colorRow .colorHex
+):focus {
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.pageFrame .containerFocused .sitesShellFocused :is(.dimensionBox, .spacingBox > div, .colorRow) {
+  overflow: hidden;
+}
+
+.pageFrame .containerFocused .sitesShellFocused .dimensionBox small,
+.pageFrame .containerFocused .sitesShellFocused .spacingBox small {
+  padding-left: 6px;
+  border-left: 1px solid var(--sites-editor-section-border);
+}
+
+.pageFrame .containerFocused .sitesShellFocused .colorRow .colorHex {
+  text-align: left;
+}
+
+.pageFrame .containerFocused .sitesShellFocused .paletteGroups {
+  gap: 14px;
+}
+
+.pageFrame .containerFocused .sitesShellFocused .paletteGroup {
+  gap: 8px;
+}
+
+.pageFrame .containerFocused .sitesShellFocused .paletteItem {
+  min-height: 42px;
+  border: 1px solid var(--sites-editor-border) !important;
+  border-radius: var(--design-control-radius, 8px);
+  background: var(--sites-editor-control-bg) !important;
+  padding: 0 10px;
+  cursor: grab;
+}
+
+.pageFrame .containerFocused .sitesShellFocused .paletteItem:hover {
+  border-color: var(--sites-editor-border-strong) !important;
+  background: var(--sites-editor-hover-bg) !important;
+}
+
+.pageFrame .containerFocused .sitesShellFocused .paletteItem:active {
+  cursor: grabbing;
+}
+
+.pageFrame .containerFocused .sitesShellFocused .paletteIcon {
+  background: var(--design-panel-bg, var(--color-background-secondary));
+  border: 1px solid var(--sites-editor-section-border);
+}
+
+.pageFrame .containerFocused .sitesShellFocused .paletteGrip {
+  display: block;
+  flex: 0 0 auto;
+  color: var(--color-text-tertiary);
+  opacity: 0.65;
+}
+
+.pageFrame .containerFocused .sitesShellFocused .paletteItem:hover .paletteGrip {
+  opacity: 1;
+}
