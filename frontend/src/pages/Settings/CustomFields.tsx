@@ -509,15 +509,14 @@ export const CustomFields: React.FC = () => {
             <span>{folders.length} activas</span>
           </div>
 
-          <button
-            type="button"
-            className={`${styles.folderItem} ${activeFolder === 'all' ? styles.folderItemActive : ''}`}
-            onClick={() => setActiveFolder('all')}
-          >
-            <Hash size={16} />
-            <span>Todos los campos</span>
-            <b>{fields.length}</b>
-          </button>
+          <div className={`${styles.folderRow} ${styles.folderSystemRow} ${activeFolder === 'all' ? styles.folderSystemRowActive : ''}`}>
+            <button type="button" onClick={() => setActiveFolder('all')}>
+              <Hash size={16} />
+              <span>Todos los campos</span>
+              <b>{fields.length}</b>
+            </button>
+            <span className={styles.folderActionSpacer} aria-hidden="true" />
+          </div>
 
           <div className={styles.folderList}>
             {folders.map(folder => (
