@@ -9645,17 +9645,17 @@
 .containerFocused:has(.builder) {
   width: 100%;
   padding: 0;
-  --sites-editor-topbar-h: 72px;
+  --sites-editor-topbar-h: var(--header-height, 84px);
   --editor-control-h: 44px;
-  --sites-editor-toolbar-offset: 102px;
+  --sites-editor-toolbar-offset: calc(var(--sites-editor-topbar-h, 84px) + 30px);
 }
 
 .containerFocused:has(.builder) .editorHeader {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 8px;
-  min-height: var(--sites-editor-topbar-h, 72px);
-  padding: calc((var(--sites-editor-topbar-h, 72px) - var(--editor-control-h, 44px)) / 2) 16px;
+  min-height: var(--sites-editor-topbar-h, 84px);
+  padding: calc((var(--sites-editor-topbar-h, 84px) - var(--editor-control-h, 44px)) / 2) 16px;
   border: 0;
   border-bottom: 1px solid var(--color-border-subtle, rgba(148, 163, 184, 0.18));
   border-radius: 0;
@@ -10003,8 +10003,8 @@
 /* Editor toolbar v2: actions pinned top-right, pages integrated under title. */
 .containerFocused:has(.builder) .editorHeader {
   gap: 0;
-  min-height: var(--sites-editor-topbar-h, 72px);
-  padding: calc((var(--sites-editor-topbar-h, 72px) - var(--editor-control-h, 44px)) / 2) 16px;
+  min-height: var(--sites-editor-topbar-h, 84px);
+  padding: calc((var(--sites-editor-topbar-h, 84px) - var(--editor-control-h, 44px)) / 2) 16px;
   border: 0;
   border-bottom: 1px solid rgba(148, 163, 184, 0.12);
   border-radius: 0;
