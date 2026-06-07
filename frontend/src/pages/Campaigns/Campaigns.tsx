@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { KpiCard, Card, DateRangePicker, Table, Icon, ContactDetailsModal, VisitorDetailsModal, PageContainer, ViewSelector, AreaChart, Loading, TabList } from '@/components/common'
 import type { Column } from '@/components/common'
 import {
@@ -106,6 +106,66 @@ interface CampaignData {
 
 type ChartView = 'revenue' | 'leads' | 'appointments' | 'visitors'
 type CampaignTableView = 'classic' | 'adsets' | 'ads'
+type CampaignWinnersCategory = 'campaigns' | 'adsets' | 'ads'
+type CampaignSearchLevel = 'campaign' | 'adset' | 'ad'
+
+const campaignTableViews: CampaignTableView[] = ['classic', 'adsets', 'ads']
+const campaignWinnersCategories: CampaignWinnersCategory[] = ['campaigns', 'adsets', 'ads']
+const campaignChartViews: ChartView[] = ['revenue', 'leads', 'appointments', 'visitors']
+
+const isCampaignTableView = (value?: string): value is CampaignTableView =>
+  campaignTableViews.includes(value as CampaignTableView)
+
+const isCampaignWinnersCategory = (value?: string): value is CampaignWinnersCategory =>
+  campaignWinnersCategories.includes(value as CampaignWinnersCategory)
+
+const isCampaignChartView = (value?: string): value is ChartView =>
+  campaignChartViews.includes(value as ChartView)
+const getCampaignChartView = (value: string | null): ChartView | null =>
+  value && isCampaignChartView(value) ? value : null
+
+const buildCampaignsPath = (mode: 'campaigns' | 'winners', tableView: CampaignTableView, winnersCategory: CampaignWinnersCategory) =>
+  mode === 'winners' ? `/campaigns/winners/${winnersCategory}` : `/campaigns/${tableView}`
+
+const parseCampaignsPath = (pathname: string) => {
+  const parts = pathname.replace(/^\/campaigns\/?/, '').split('/').filter(Boolean)
+
+  if (parts[0] === 'winners') {
+    return {
+      viewMode: 'winners' as const,
+      campaignTableView: 'classic' as CampaignTableView,
+      winnersCategory: isCampaignWinnersCategory(parts[1]) ? parts[1] : 'ads',
+      routeTarget: null as null | {
+        level: CampaignSearchLevel
+        itemId: string
+        campaignId: string | null
+        adsetId: string | null
+        adId: string | null
+      }
+    }
+  }
+
+  const campaignTableView = isCampaignTableView(parts[0]) ? parts[0] : 'classic'
+  const campaignId = parts[1] === 'campaigns' ? parts[2] || null : null
+  const adsetId = parts[3] === 'adsets' ? parts[4] || null : null
+  const adId = parts[5] === 'ads' ? parts[6] || null : null
+  const level: CampaignSearchLevel = adId ? 'ad' : adsetId ? 'adset' : 'campaign'
+
+  return {
+    viewMode: 'campaigns' as const,
+    campaignTableView,
+    winnersCategory: 'ads' as CampaignWinnersCategory,
+    routeTarget: campaignId
+      ? {
+          level,
+          itemId: adId || adsetId || campaignId,
+          campaignId,
+          adsetId,
+          adId
+        }
+      : null
+  }
+}
 
 interface ChartConfig {
   title: string
@@ -131,8 +191,6 @@ const parseAnalyticsFlag = (value: unknown) => {
   }
   return Boolean(value)
 }
-
-type CampaignSearchLevel = 'campaign' | 'adset' | 'ad'
 
 const getCampaignTableRowKey = (item: any) =>
   `${item.level}_${item.id}_${item.campaignId || ''}_${item.adSetId || ''}`
@@ -190,9 +248,14 @@ const renderRevenueAmount = (value: number, item: { revenue?: number | null; spe
 }
 
 export const Campaigns: React.FC = () => {
+  const location = useLocation()
+  const navigate = useNavigate()
   const { dateRange, setDateRange } = useDateRange()
   const [searchParams, setSearchParams] = useSearchParams()
   const { labels } = useLabels()
+  const routeState = React.useMemo(() => parseCampaignsPath(location.pathname), [location.pathname])
+  const routeChart = searchParams.get('chart')
+  const routeChartView = getCampaignChartView(routeChart)
 
   // Sistema híbrido de configuración
   const [visitorSourceConfig] = useAppConfig<'platform' | 'tracking'>('visitor_source', 'platform')
@@ -211,11 +274,11 @@ export const Campaigns: React.FC = () => {
   const [syncStatus, setSyncStatus] = useState<any>(null)
   const [expandedCampaigns, setExpandedCampaigns] = useState<Set<string>>(new Set())
   const [expandedAdSets, setExpandedAdSets] = useState<Set<string>>(new Set())
-  const [viewMode, setViewMode] = useState<'campaigns' | 'winners'>('campaigns')
-  const [campaignTableView, setCampaignTableView] = useState<CampaignTableView>('classic')
-  const [winnersCategory, setWinnersCategory] = useState<'campaigns' | 'adsets' | 'ads'>('ads')
+  const [viewMode, setViewMode] = useState<'campaigns' | 'winners'>(routeState.viewMode)
+  const [campaignTableView, setCampaignTableView] = useState<CampaignTableView>(routeState.campaignTableView)
+  const [winnersCategory, setWinnersCategory] = useState<CampaignWinnersCategory>(routeState.winnersCategory)
   const [campaignSummary, setCampaignSummary] = useState<CampaignsReport['summary'] | null>(null)
-  const [selectedChart, setSelectedChart] = useState<ChartView>('revenue')
+  const [selectedChart, setSelectedChart] = useState<ChartView>(routeChartView ?? 'revenue')
 
   // Datos para diferentes gráficos
   const [revenueData, setRevenueData] = useState<any[]>([])
@@ -245,6 +308,55 @@ export const Campaigns: React.FC = () => {
   const [highlightedRowKey, setHighlightedRowKey] = useState<string | null>(null)
   const handledOpenCampaignRef = React.useRef<string | null>(null)
   const adjustedCampaignRangeRef = React.useRef<string | null>(null)
+
+  useEffect(() => {
+    const nextPath = buildCampaignsPath(routeState.viewMode, routeState.campaignTableView, routeState.winnersCategory)
+    const shouldNormalize = !routeState.routeTarget && location.pathname !== nextPath
+
+    if (shouldNormalize) {
+      navigate({ pathname: nextPath, search: location.search }, { replace: true })
+      return
+    }
+
+    setViewMode(current => current === routeState.viewMode ? current : routeState.viewMode)
+    setCampaignTableView(current => current === routeState.campaignTableView ? current : routeState.campaignTableView)
+    setWinnersCategory(current => current === routeState.winnersCategory ? current : routeState.winnersCategory)
+  }, [
+    location.pathname,
+    location.search,
+    navigate,
+    routeState.campaignTableView,
+    routeState.routeTarget,
+    routeState.viewMode,
+    routeState.winnersCategory
+  ])
+
+  useEffect(() => {
+    if (routeChartView) {
+      setSelectedChart(current => current === routeChartView ? current : routeChartView)
+      return
+    }
+
+    if (routeChart) {
+      const nextParams = new URLSearchParams(searchParams)
+      nextParams.delete('chart')
+      setSearchParams(nextParams, { replace: true })
+    }
+  }, [routeChart, routeChartView, searchParams, setSearchParams])
+
+  const navigateCampaignsView = useCallback((next: {
+    viewMode?: 'campaigns' | 'winners'
+    campaignTableView?: CampaignTableView
+    winnersCategory?: CampaignWinnersCategory
+  }) => {
+    const nextViewMode = next.viewMode || viewMode
+    const nextCampaignTableView = next.campaignTableView || campaignTableView
+    const nextWinnersCategory = next.winnersCategory || winnersCategory
+    const nextPath = buildCampaignsPath(nextViewMode, nextCampaignTableView, nextWinnersCategory)
+
+    if (location.pathname === nextPath) return
+    navigate({ pathname: nextPath, search: location.search })
+  }, [campaignTableView, location.pathname, location.search, navigate, viewMode, winnersCategory])
 
   /**
    * Agrupa datos de gráfico por semana o mes según el rango
@@ -955,23 +1067,24 @@ export const Campaigns: React.FC = () => {
   }, [])
 
   useEffect(() => {
+    const routeTarget = routeState.routeTarget
     const openType = searchParams.get('open')
 
-    if (openType !== 'campaign') {
+    if (!routeTarget && openType !== 'campaign') {
       handledOpenCampaignRef.current = null
       adjustedCampaignRangeRef.current = null
       return
     }
 
     const rawLevel = searchParams.get('level')
-    const level: CampaignSearchLevel = rawLevel === 'adset' || rawLevel === 'ad' ? rawLevel : 'campaign'
-    const itemId = searchParams.get('id')
+    const level: CampaignSearchLevel = routeTarget?.level || (rawLevel === 'adset' || rawLevel === 'ad' ? rawLevel : 'campaign')
+    const itemId = routeTarget?.itemId || searchParams.get('id')
 
     if (!itemId) return
 
-    const campaignId = searchParams.get('campaignId') || (level === 'campaign' ? itemId : null)
-    const adsetId = searchParams.get('adsetId') || (level === 'adset' ? itemId : null)
-    const adId = searchParams.get('adId') || (level === 'ad' ? itemId : null)
+    const campaignId = routeTarget?.campaignId || searchParams.get('campaignId') || (level === 'campaign' ? itemId : null)
+    const adsetId = routeTarget?.adsetId || searchParams.get('adsetId') || (level === 'adset' ? itemId : null)
+    const adId = routeTarget?.adId || searchParams.get('adId') || (level === 'ad' ? itemId : null)
 
     if (!campaignId) return
 
@@ -1068,7 +1181,7 @@ export const Campaigns: React.FC = () => {
     nextParams.delete('adId')
     nextParams.delete('date')
     setSearchParams(nextParams, { replace: true })
-  }, [campaigns, dateRange, loading, searchParams, setDateRange, setSearchParams])
+  }, [campaigns, dateRange, loading, routeState.routeTarget, searchParams, setDateRange, setSearchParams])
 
   useEffect(() => {
     if (!highlightedRowKey) return
@@ -1445,10 +1558,10 @@ export const Campaigns: React.FC = () => {
   ], [])
 
   const handleCampaignTableViewChange = React.useCallback((value: string) => {
-    if (value === 'classic' || value === 'adsets' || value === 'ads') {
-      setCampaignTableView(value)
+    if (isCampaignTableView(value)) {
+      navigateCampaignsView({ viewMode: 'campaigns', campaignTableView: value })
     }
-  }, [])
+  }, [navigateCampaignsView])
 
   // Preparar datos planos para la tabla
   const getClassicCampaignTableData = () => {
@@ -2077,8 +2190,15 @@ export const Campaigns: React.FC = () => {
   const selectedConfig = chartConfigs[selectedChart]
 
   const handleChartChange = (value: string) => {
-    if (chartOptions.some(option => option.value === value)) {
-      setSelectedChart(value as ChartView)
+    if (isCampaignChartView(value)) {
+      setSelectedChart(value)
+      const nextParams = new URLSearchParams(searchParams)
+      if (value === 'revenue') {
+        nextParams.delete('chart')
+      } else {
+        nextParams.set('chart', value)
+      }
+      setSearchParams(nextParams)
     }
   }
 
@@ -2139,12 +2259,11 @@ export const Campaigns: React.FC = () => {
               className={styles.viewToggleButton}
               onClick={() => {
                 if (viewMode === 'campaigns') {
-                  setWinnersCategory('ads')
-                  setViewMode('winners')
+                  navigateCampaignsView({ viewMode: 'winners', winnersCategory: 'ads' })
                   return
                 }
 
-                setViewMode('campaigns')
+                navigateCampaignsView({ viewMode: 'campaigns' })
               }}
               aria-pressed={viewMode === 'winners'}
             >
@@ -2348,7 +2467,11 @@ export const Campaigns: React.FC = () => {
                 { value: 'ads', label: 'Anuncios' }
               ]}
               activeTab={winnersCategory}
-              onTabChange={(value) => setWinnersCategory(value as 'campaigns' | 'adsets' | 'ads')}
+              onTabChange={(value) => {
+                if (isCampaignWinnersCategory(value)) {
+                  navigateCampaignsView({ viewMode: 'winners', winnersCategory: value })
+                }
+              }}
             />
           </div>
           <Card padding="none">

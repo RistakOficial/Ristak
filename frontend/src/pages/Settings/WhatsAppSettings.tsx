@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import {
   AlertTriangle,
   Cloud,
@@ -117,9 +118,22 @@ function isQrWorkingStatus(status?: string | null) {
   return ['connected', 'qr_pending', 'starting', 'restarting', 'reconnecting'].includes(String(status || '').toLowerCase())
 }
 
+const whatsappSections: ConnectedSection[] = ['numbers', 'templates', 'alerts']
+const isWhatsAppSection = (value?: string): value is ConnectedSection => whatsappSections.includes(value as ConnectedSection)
+const parseWhatsAppSection = (pathname: string): ConnectedSection => {
+  const segments = pathname.replace(/^\/+|\/+$/g, '').split('/').filter(Boolean)
+  const whatsappIndex = segments.indexOf('whatsapp')
+  const section = whatsappIndex >= 0 ? segments[whatsappIndex + 1] : ''
+  return isWhatsAppSection(section) ? section : 'numbers'
+}
+const buildWhatsAppSettingsPath = (section: ConnectedSection) => `/settings/whatsapp/${section}`
+
 export const WhatsAppSettings: React.FC = () => {
   const { showToast, showConfirm } = useNotification()
-  const [activeSection, setActiveSection] = useState<ConnectedSection>('numbers')
+  const navigate = useNavigate()
+  const location = useLocation()
+  const routeSection = useMemo(() => parseWhatsAppSection(location.pathname), [location.pathname])
+  const [activeSection, setActiveSection] = useState<ConnectedSection>(routeSection)
   const [phoneFilter, setPhoneFilter] = useState<PhoneFilter>('all')
   const [alertFilter, setAlertFilter] = useState<AlertFilter>('all')
   const [phoneSearch, setPhoneSearch] = useState('')
@@ -137,6 +151,15 @@ export const WhatsAppSettings: React.FC = () => {
   const [defaultingPhoneId, setDefaultingPhoneId] = useState('')
 
   const apiConnected = Boolean(apiStatus?.connected)
+
+  useEffect(() => {
+    setActiveSection(current => current === routeSection ? current : routeSection)
+  }, [routeSection])
+
+  const selectSection = (section: ConnectedSection) => {
+    setActiveSection(section)
+    navigate(buildWhatsAppSettingsPath(section))
+  }
 
   const selectedPhone = useMemo(() => {
     return apiStatus?.phoneNumbers.find(phone => phone.id === selectedPhoneId) || apiStatus?.selectedPhone || apiStatus?.phoneNumbers[0] || null
@@ -217,7 +240,7 @@ export const WhatsAppSettings: React.FC = () => {
       })
       setApiStatus(nextStatus)
       setApiKey('')
-      setActiveSection('numbers')
+      selectSection('numbers')
 
       showToast('success', 'WhatsApp conectado', 'Ristak sincronizo los numeros disponibles de WhatsApp API')
     } catch (error) {
@@ -737,7 +760,7 @@ export const WhatsAppSettings: React.FC = () => {
           <FileText size={36} />
           <h3>Conecta WhatsApp para enviar plantillas a Meta</h3>
           <p>Cuando la conexión esté lista, aquí podrás crear plantillas, enviarlas a revisión y ver si Meta las aprobó o rechazó.</p>
-          <Button onClick={() => setActiveSection('numbers')}>
+          <Button onClick={() => selectSection('numbers')}>
             <Cloud size={17} />
             Ir a numeros
           </Button>
@@ -776,7 +799,7 @@ export const WhatsAppSettings: React.FC = () => {
             <button
               type="button"
               className={`${styles.headerActionButton} ${activeSection === 'numbers' ? styles.headerActionActive : ''}`}
-              onClick={() => setActiveSection('numbers')}
+              onClick={() => selectSection('numbers')}
             >
               <SiWhatsapp size={15} />
               Numeros
@@ -784,7 +807,7 @@ export const WhatsAppSettings: React.FC = () => {
             <button
               type="button"
               className={`${styles.headerActionButton} ${activeSection === 'templates' ? styles.headerActionActive : ''}`}
-              onClick={() => setActiveSection('templates')}
+              onClick={() => selectSection('templates')}
             >
               <FileText size={15} />
               Plantillas
@@ -792,7 +815,7 @@ export const WhatsAppSettings: React.FC = () => {
             <button
               type="button"
               className={`${styles.headerActionButton} ${activeSection === 'alerts' ? styles.headerActionActive : ''}`}
-              onClick={() => setActiveSection('alerts')}
+              onClick={() => selectSection('alerts')}
             >
               <AlertTriangle size={15} />
               Alertas

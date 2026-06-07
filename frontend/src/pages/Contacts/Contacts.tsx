@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react'
 import { createPortal } from 'react-dom'
-import { useSearchParams } from 'react-router-dom'
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { KpiCard, Card, Button, Table, DateRangePicker, PageContainer, TabList, Badge, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, ContactDetailsModal, Loading, TreeFilter } from '@/components/common'
 import type { Column } from '@/components/common'
 import {
@@ -55,6 +55,43 @@ const REVENUE_PAYMENT_STATUSES = new Set(['succeeded', 'paid', 'completed', 'com
 const DELETE_CONFIRMATION_WORD = 'ELIMINAR'
 const CONTACTS_PAGE_SIZE = 100
 const MAX_CONTACTS_BACKGROUND_PAGES = 100
+type ContactViewMode = 'all' | 'by-date'
+const contactViewModes: ContactViewMode[] = ['all', 'by-date']
+const contactFilters = ['all', 'leads', 'appointments', 'attendances', 'customers']
+const isContactViewMode = (value?: string): value is ContactViewMode => contactViewModes.includes(value as ContactViewMode)
+const isContactFilter = (value?: string) => Boolean(value && contactFilters.includes(value))
+
+const parseContactsRoute = (pathname: string) => {
+  const segments = pathname.replace(/^\/+|\/+$/g, '').split('/').filter(Boolean)
+  const contactsIndex = segments.indexOf('contacts')
+  const routeSegments = contactsIndex >= 0 ? segments.slice(contactsIndex + 1) : []
+  const first = routeSegments[0]
+
+  if (first === 'new') {
+    return { viewMode: 'all' as ContactViewMode, filter: 'all', contactId: '', editContactId: '', create: true }
+  }
+
+  const editIndex = routeSegments.indexOf('edit')
+  if (editIndex > 0) {
+    return {
+      viewMode: 'all' as ContactViewMode,
+      filter: 'all',
+      contactId: '',
+      editContactId: decodeURIComponent(routeSegments[editIndex - 1]),
+      create: false
+    }
+  }
+
+  const viewMode = isContactViewMode(first) ? first : 'all'
+  const filter = isContactFilter(routeSegments[1]) ? routeSegments[1] : 'all'
+  const contactId = routeSegments[2] ? decodeURIComponent(routeSegments[2]) : ''
+
+  return { viewMode, filter, contactId, editContactId: '', create: false }
+}
+
+const buildContactsPath = (viewMode: ContactViewMode, filter: string) => `/contacts/${viewMode}/${filter}`
+const buildContactDetailPath = (viewMode: ContactViewMode, filter: string, contactId: string) =>
+  `${buildContactsPath(viewMode, filter)}/${encodeURIComponent(contactId)}`
 
 const ContactPhoneField: React.FC<{ defaultValue?: string; autoFocus?: boolean }> = ({ defaultValue = '', autoFocus = false }) => {
   const detected = useMemo(() => getDetectedAccountLocaleDefaults(), [])
@@ -398,14 +435,17 @@ const mergeContactDetailRecords = (
 
 export const Contacts: React.FC = () => {
   const { dateRange, setDateRange } = useDateRange()
+  const navigate = useNavigate()
+  const location = useLocation()
   const [searchParams, setSearchParams] = useSearchParams()
+  const routeState = useMemo(() => parseContactsRoute(location.pathname), [location.pathname])
   const { showToast } = useNotification()
   const { labels } = useLabels()
   const { formatLocalDateShort } = useTimezone()
   const { locationId, accessToken } = useAuth()
   const [contacts, setContacts] = useState<Contact[]>([])
   const [stats, setStats] = useState<ContactStats | null>(null)
-  const [filter, setFilter] = useState('all')
+  const [filter, setFilter] = useState(routeState.filter)
   const [selectedFilters, setSelectedFilters] = useState<Record<string, string[]>>({})
   const [selectedContact, setSelectedContact] = useState<Contact | null>(null)
   const [selectedContactDetails, setSelectedContactDetails] = useState<Contact | null>(null)
@@ -420,7 +460,7 @@ export const Contacts: React.FC = () => {
   const [deletingContacts, setDeletingContacts] = useState(false)
   const [loading, setLoading] = useState(false)
   const [loadingEvents, setLoadingEvents] = useState(false) // Loading específico para eventos de calendarios
-  const [viewMode, setViewMode] = useState<'all' | 'by-date'>('all') // Por defecto 'all' (Todos)
+  const [viewMode, setViewMode] = useState<ContactViewMode>(routeState.viewMode)
   const [isClient, setIsClient] = useState(false)
   const [allEvents, setAllEvents] = useState<CalendarEvent[]>([]) // Eventos de calendarios
   const [hasLoadedContacts, setHasLoadedContacts] = useState(false)
@@ -432,6 +472,7 @@ export const Contacts: React.FC = () => {
     setSelectedContactDetails(null)
     setSelectedContactId(contact.id)
     setContactDetailsLoading(true)
+    navigate(buildContactDetailPath(viewMode, filter, contact.id))
   }
 
   const closeContactModal = () => {
@@ -439,13 +480,15 @@ export const Contacts: React.FC = () => {
     setSelectedContactId(null)
     setContactDetailsLoading(false)
     setSelectedContactDetails(null)
+    navigate(buildContactsPath(viewMode, filter), { replace: true })
   }
 
   useEffect(() => {
     const openType = searchParams.get('open')
-    const contactId = searchParams.get('id')
+    const legacyContactId = openType === 'contact' ? searchParams.get('id') : ''
+    const contactId = routeState.contactId || legacyContactId
 
-    if (openType !== 'contact' || !contactId) {
+    if (!contactId) {
       handledOpenContactRef.current = null
       return
     }
@@ -458,6 +501,7 @@ export const Contacts: React.FC = () => {
     let isMounted = true
 
     const clearOpenParams = () => {
+      if (!legacyContactId) return
       const nextParams = new URLSearchParams(searchParams)
       nextParams.delete('open')
       nextParams.delete('id')
@@ -490,11 +534,56 @@ export const Contacts: React.FC = () => {
     return () => {
       isMounted = false
     }
-  }, [contacts, searchParams, setSearchParams, showToast])
+  }, [contacts, routeState.contactId, searchParams, setSearchParams, showToast])
+
+  useEffect(() => {
+    setViewMode(current => current === routeState.viewMode ? current : routeState.viewMode)
+    setFilter(current => current === routeState.filter ? current : routeState.filter)
+
+    if (!routeState.contactId && selectedContact) {
+      setSelectedContact(null)
+      setSelectedContactId(null)
+      setContactDetailsLoading(false)
+      setSelectedContactDetails(null)
+    }
+  }, [routeState.contactId, routeState.filter, routeState.viewMode, selectedContact])
 
   useEffect(() => {
     fetchData()
   }, [dateRange, viewMode])
+
+  useEffect(() => {
+    setShowNewContactModal(routeState.create)
+  }, [routeState.create])
+
+  useEffect(() => {
+    const contactId = routeState.editContactId
+    if (!contactId) {
+      if (editingContact) setEditingContact(null)
+      return
+    }
+
+    let mounted = true
+    const existingContact = contacts.find(contact => contact.id === contactId)
+    if (existingContact) {
+      setEditingContact(existingContact)
+      return () => {
+        mounted = false
+      }
+    }
+
+    contactsService.getContactDetails(contactId)
+      .then(contact => {
+        if (mounted) setEditingContact(contact)
+      })
+      .catch(() => {
+        if (mounted) showToast('error', 'No se pudo abrir el contacto', 'No se pudo cargar la información para editar.')
+      })
+
+    return () => {
+      mounted = false
+    }
+  }, [contacts, editingContact, routeState.editContactId, showToast])
 
   useEffect(() => {
     let cancelled = false
@@ -1413,7 +1502,10 @@ export const Contacts: React.FC = () => {
                 )}
 
                 {/* Editar */}
-                <DropdownMenuItem onClick={() => setEditingContact(item)}>
+                <DropdownMenuItem onClick={() => {
+                  setEditingContact(item)
+                  navigate(`/contacts/${encodeURIComponent(item.id)}/edit`)
+                }}>
                   <Pencil size={16} />
                   <span style={{ marginLeft: '8px' }}>Editar contacto</span>
                 </DropdownMenuItem>
@@ -1456,6 +1548,7 @@ export const Contacts: React.FC = () => {
       const newContact = await contactsService.createContact(contact)
       setContacts(prev => dedupeContacts<Contact>([...prev, newContact]))
       setShowNewContactModal(false)
+      openContactModal(newContact)
       showToast('success', '¡Contacto creado exitosamente!', `${contact.name} se agregó a tu lista de contactos`)
       fetchData()
     } catch (error) {
@@ -1514,7 +1607,12 @@ export const Contacts: React.FC = () => {
                 }
               ]}
               activeTab={viewMode}
-              onTabChange={(value) => setViewMode(value as 'all' | 'by-date')}
+              onTabChange={(value) => {
+                if (isContactViewMode(value)) {
+                  setViewMode(value)
+                  navigate(buildContactsPath(value, filter))
+                }
+              }}
               variant="compact"
             />
             {viewMode === 'by-date' && (
@@ -1533,7 +1631,10 @@ export const Contacts: React.FC = () => {
             <Button
               type="button"
               variant="secondary"
-              onClick={() => setShowNewContactModal(true)}
+              onClick={() => {
+                setShowNewContactModal(true)
+                navigate('/contacts/new')
+              }}
             >
               <Plus size={16} />
               Nuevo contacto
@@ -1590,7 +1691,10 @@ export const Contacts: React.FC = () => {
           pageSize={20}
           filters={filterOptions}
           activeFilter={filter}
-          onFilterChange={setFilter}
+          onFilterChange={(value) => {
+            setFilter(value)
+            navigate(buildContactsPath(viewMode, value))
+          }}
           tableId="contacts_v2"
           toolbarStart={contactSelectionToolbar}
           rowSelection={{
@@ -1618,18 +1722,24 @@ export const Contacts: React.FC = () => {
       )}
 
       {isClient && showNewContactModal && createPortal(
-        <div className={styles.modalOverlay} onClick={() => setShowNewContactModal(false)}>
+        <div className={styles.modalOverlay} onClick={() => {
+          setShowNewContactModal(false)
+          navigate(buildContactsPath(viewMode, filter), { replace: true })
+        }}>
           <div className={styles.modal} onClick={(e) => e.stopPropagation()}>
             <div className={styles.modalHeader}>
               <div>
                 <h2>Nuevo contacto</h2>
                 <p className={styles.modalSubtitle}>Guarda a la persona para verla en tu lista y usarla en pagos o seguimiento.</p>
               </div>
-              <button
-                className={styles.closeButton}
-                onClick={() => setShowNewContactModal(false)}
-                type="button"
-              >
+	              <button
+	                className={styles.closeButton}
+	                onClick={() => {
+                    setShowNewContactModal(false)
+                    navigate(buildContactsPath(viewMode, filter), { replace: true })
+                  }}
+	                type="button"
+	              >
                 <X size={20} />
               </button>
             </div>
@@ -1662,7 +1772,10 @@ export const Contacts: React.FC = () => {
                 <input name="source" type="text" placeholder="Manual, WhatsApp, referido..." />
               </div>
               <div className={styles.formActions}>
-                <Button type="button" variant="ghost" onClick={() => setShowNewContactModal(false)}>
+	                <Button type="button" variant="ghost" onClick={() => {
+                    setShowNewContactModal(false)
+                    navigate(buildContactsPath(viewMode, filter), { replace: true })
+                  }}>
                   Cancelar
                 </Button>
                 <Button type="submit">
@@ -1676,14 +1789,20 @@ export const Contacts: React.FC = () => {
       )}
 
       {isClient && editingContact && createPortal(
-        <div className={styles.modalOverlay} onClick={() => setEditingContact(null)}>
+        <div className={styles.modalOverlay} onClick={() => {
+          setEditingContact(null)
+          navigate(buildContactsPath(viewMode, filter), { replace: true })
+        }}>
           <div className={styles.modal} onClick={(e) => e.stopPropagation()}>
             <div className={styles.modalHeader}>
               <h2>Editar Contacto</h2>
-              <button
-                className={styles.closeButton}
-                onClick={() => setEditingContact(null)}
-              >
+	              <button
+	                className={styles.closeButton}
+	                onClick={() => {
+                    setEditingContact(null)
+                    navigate(buildContactsPath(viewMode, filter), { replace: true })
+                  }}
+	              >
                 <X size={20} />
               </button>
             </div>
@@ -1698,9 +1817,10 @@ export const Contacts: React.FC = () => {
               }
 
               try {
-                await contactsService.updateContact(editingContact.id, updatedContact)
-                setEditingContact(null)
-                showToast('success', '¡Contacto actualizado!', 'Los cambios se guardaron correctamente')
+	                await contactsService.updateContact(editingContact.id, updatedContact)
+	                setEditingContact(null)
+                  navigate(buildContactsPath(viewMode, filter), { replace: true })
+	                showToast('success', '¡Contacto actualizado!', 'Los cambios se guardaron correctamente')
                 fetchData()
               } catch (error) {
                 showToast('error', 'Error al actualizar', 'No se pudo actualizar el contacto')
@@ -1736,7 +1856,10 @@ export const Contacts: React.FC = () => {
                 />
               </div>
               <div className={styles.formActions}>
-                <Button type="button" variant="ghost" onClick={() => setEditingContact(null)}>
+	                <Button type="button" variant="ghost" onClick={() => {
+                    setEditingContact(null)
+                    navigate(buildContactsPath(viewMode, filter), { replace: true })
+                  }}>
                   Cancelar
                 </Button>
                 <Button type="submit">

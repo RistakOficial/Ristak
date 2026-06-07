@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { Card, Button, Icon, Modal } from '@/components/common'
 import { ArrowLeft, ArrowRight, CheckCircle, ExternalLink, Pencil, Power, RefreshCw, Trash2, XCircle } from 'lucide-react'
 import { useNotification } from '@/contexts/NotificationContext'
@@ -49,6 +50,15 @@ type MetaMessagingPlatform = 'messenger' | 'instagram'
 
 const MASKED_SECRET_PREFIX = '***'
 const SECRET_MASK_FILL = '*'.repeat(180)
+const metaStepSlugs = ['token', 'ad-account', 'pixel', 'pages'] as const
+const parseMetaStep = (pathname: string) => {
+  const segments = pathname.replace(/^\/+|\/+$/g, '').split('/').filter(Boolean)
+  const metaIndex = segments.indexOf('meta-ads')
+  const step = metaIndex >= 0 ? segments[metaIndex + 1] : ''
+  const index = metaStepSlugs.indexOf(step as typeof metaStepSlugs[number])
+  return index >= 0 ? index : 0
+}
+const buildMetaAdsSettingsPath = (stepIndex: number) => `/settings/meta-ads/${metaStepSlugs[Math.max(0, Math.min(stepIndex, metaStepSlugs.length - 1))]}`
 
 const isMaskedSecretValue = (value = '') => value.trim().startsWith(MASKED_SECRET_PREFIX)
 
@@ -93,6 +103,9 @@ const tokenSetupScopes = [
 ]
 
 export const MetaAdsIntegration: React.FC = () => {
+  const navigate = useNavigate()
+  const location = useLocation()
+  const routeStep = parseMetaStep(location.pathname)
   const [isLoading, setIsLoading] = useState(true)
   const [credentials, setCredentials] = useState<MetaCredentials>({
     adAccountId: '',
@@ -122,7 +135,7 @@ export const MetaAdsIntegration: React.FC = () => {
   const [isEditingMetaConfig, setIsEditingMetaConfig] = useState(false)
   const [isDisconnectModalOpen, setIsDisconnectModalOpen] = useState(false)
   const [isDisconnectingMeta, setIsDisconnectingMeta] = useState(false)
-  const [activeStep, setActiveStep] = useState(0)
+  const [activeStep, setActiveStep] = useState(routeStep)
   const accessTokenInputRef = useRef<HTMLInputElement>(null)
 
   const { showToast } = useNotification()
@@ -137,6 +150,16 @@ export const MetaAdsIntegration: React.FC = () => {
   useEffect(() => {
     loadCredentials()
   }, [])
+
+  useEffect(() => {
+    setActiveStep(current => current === routeStep ? current : routeStep)
+  }, [routeStep])
+
+  const goToMetaStep = (stepIndex: number, options?: { replace?: boolean }) => {
+    const nextStep = Math.max(0, Math.min(stepIndex, metaStepSlugs.length - 1))
+    setActiveStep(nextStep)
+    navigate(buildMetaAdsSettingsPath(nextStep), { replace: options?.replace })
+  }
 
   const loadCredentials = async () => {
     setIsLoading(true)
@@ -447,7 +470,7 @@ export const MetaAdsIntegration: React.FC = () => {
       setInstagramAccounts([])
       setSavedPageId('')
       setSavedInstagramAccountId('')
-      setActiveStep(0)
+      goToMetaStep(0, { replace: true })
     } else if (field === 'adAccountId') {
       setCredentials(prev => ({
         ...prev,
@@ -456,14 +479,14 @@ export const MetaAdsIntegration: React.FC = () => {
         pixelApiToken: ''
       }))
       setPixels([])
-      setActiveStep(1)
+      goToMetaStep(1, { replace: true })
     } else if (field === 'pixelId') {
       setCredentials(prev => ({
         ...prev,
         pixelId: '',
         pixelApiToken: ''
       }))
-      setActiveStep(2)
+      goToMetaStep(2, { replace: true })
     } else if (field === 'pageId') {
       setCredentials(prev => ({ ...prev, pageId: '' }))
       setSavedPageId('')
@@ -570,7 +593,7 @@ export const MetaAdsIntegration: React.FC = () => {
     setRealAccessToken('')
     setSavedPageId('')
     setSavedInstagramAccountId('')
-    setActiveStep(0)
+    goToMetaStep(0, { replace: true })
     setIsEditingMetaConfig(false)
   }
 
@@ -599,7 +622,7 @@ export const MetaAdsIntegration: React.FC = () => {
         showToast('success', 'Token válido', 'Selecciona tu cuenta de anuncios')
       }
 
-      setActiveStep(1)
+      goToMetaStep(1)
     } catch {
       showToast('error', 'Error', 'No se pudo validar el token o cargar las cuentas')
       setRealAccessToken('')
@@ -630,7 +653,7 @@ export const MetaAdsIntegration: React.FC = () => {
 
       if (data.success) {
         showToast('success', 'Cuenta guardada', `${account.name} configurada`)
-        setActiveStep(2)
+        goToMetaStep(2)
         const token = realAccessToken || credentials.accessToken
         if (token) {
           fetchPixels(account.id, token)
@@ -667,7 +690,7 @@ export const MetaAdsIntegration: React.FC = () => {
       if (data.success) {
         showToast('success', 'Pixel guardado', `${pixel.name} configurado`)
         await loadCredentials()
-        setActiveStep(3)
+        goToMetaStep(3)
       } else {
         showToast('error', 'Error', data.error || 'No se pudo guardar el pixel')
       }
@@ -779,12 +802,12 @@ export const MetaAdsIntegration: React.FC = () => {
     }
 
     setIsEditingMetaConfig(false)
-    setActiveStep(0)
+    goToMetaStep(0, { replace: true })
   }
 
   const handleEditMetaConfig = () => {
     setIsEditingMetaConfig(true)
-    setActiveStep(0)
+    goToMetaStep(0, { replace: true })
   }
 
   const handleDisconnectMetaConfig = async () => {
@@ -1088,15 +1111,15 @@ export const MetaAdsIntegration: React.FC = () => {
     }
 
     if (activeStep === 2 && !hasPixel) {
-      setActiveStep(3)
+      goToMetaStep(3)
       return
     }
 
-    setActiveStep(step => Math.min(step + 1, metaSetupSteps.length - 1))
+    goToMetaStep(Math.min(activeStep + 1, metaSetupSteps.length - 1))
   }
 
   const handlePreviousStep = () => {
-    setActiveStep(step => step === 3 && !hasPixel ? 2 : Math.max(step - 1, 0))
+    goToMetaStep(activeStep === 3 && !hasPixel ? 2 : Math.max(activeStep - 1, 0))
   }
 
   const handleSelectStep = (stepIndex: number) => {
@@ -1107,7 +1130,7 @@ export const MetaAdsIntegration: React.FC = () => {
       return
     }
 
-    setActiveStep(stepIndex)
+    goToMetaStep(stepIndex)
   }
 
   const renderStepContent = () => {

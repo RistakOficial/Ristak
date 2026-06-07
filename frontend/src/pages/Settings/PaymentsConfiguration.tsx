@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { Card, Button, NumberInput } from '@/components/common'
 import { CheckCircle, Clock, CreditCard, Loader2 } from 'lucide-react'
 import { useNotification } from '@/contexts/NotificationContext'
@@ -53,11 +54,23 @@ const UPCOMING_PAYMENT_GATEWAYS: PaymentGatewayOption[] = [
   }
 ]
 
+const paymentGatewayIds: PaymentGatewayId[] = ['highlevel', 'stripe', 'openpay', 'mercado-libre', 'clip', 'conekta', 'other']
+const isPaymentGatewayId = (value?: string): value is PaymentGatewayId => paymentGatewayIds.includes(value as PaymentGatewayId)
+const parsePaymentGatewayRoute = (pathname: string) => {
+  const segments = pathname.replace(/^\/+|\/+$/g, '').split('/').filter(Boolean)
+  const paymentsIndex = segments.indexOf('payments')
+  const gateway = paymentsIndex >= 0 ? segments[paymentsIndex + 1] : ''
+  return isPaymentGatewayId(gateway) ? gateway : ''
+}
+
 export const PaymentsConfiguration: React.FC = () => {
+  const navigate = useNavigate()
+  const location = useLocation()
+  const routeGateway = parsePaymentGatewayRoute(location.pathname)
   const { showToast } = useNotification()
   const { connected: highLevelConnected, loading: loadingHighLevelConnection } = useHighLevelConnected()
 
-  const [selectedGateway, setSelectedGateway] = useState<PaymentGatewayId>('stripe')
+  const [selectedGateway, setSelectedGateway] = useState<PaymentGatewayId>(routeGateway || 'stripe')
   const [paymentTitle, setPaymentTitle] = useState('PAGO')
   const [paymentNumberPrefix, setPaymentNumberPrefix] = useState('INV-')
   const [paymentDueDays, setPaymentDueDays] = useState(7)
@@ -70,12 +83,12 @@ export const PaymentsConfiguration: React.FC = () => {
   useEffect(() => {
     if (loadingHighLevelConnection) return
 
-    setSelectedGateway(highLevelConnected ? 'highlevel' : 'stripe')
+    setSelectedGateway(routeGateway || (highLevelConnected ? 'highlevel' : 'stripe'))
 
     if (highLevelConnected) {
       loadPaymentConfig()
     }
-  }, [highLevelConnected, loadingHighLevelConnection])
+  }, [highLevelConnected, loadingHighLevelConnection, routeGateway])
 
   const gatewayOptions: PaymentGatewayOption[] = highLevelConnected
     ? [
@@ -147,6 +160,7 @@ export const PaymentsConfiguration: React.FC = () => {
 
   const handleSelectGateway = (gateway: PaymentGatewayOption) => {
     setSelectedGateway(gateway.id)
+    navigate(`/settings/payments/${gateway.id}`)
 
     if (gateway.status === 'soon') {
       showToast('info', 'Próximamente', `${gateway.name} todavía no está disponible para conectar.`)

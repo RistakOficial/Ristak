@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react'
 import { createPortal } from 'react-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import {
   Card,
   Button,
@@ -67,6 +68,23 @@ const GOOGLE_HELP_LINKS = {
   calendarId: 'https://support.google.com/calendar/answer/44105?hl=es-419',
   videoSearch: 'https://www.youtube.com/results?search_query=Google+Cloud+service+account+JSON+key+Google+Calendar+API'
 }
+
+const parseCalendarSettingsRoute = (pathname: string) => {
+  const segments = pathname.replace(/^\/+|\/+$/g, '').split('/').filter(Boolean)
+  const calendarsIndex = segments.indexOf('calendars')
+  const routeSegments = calendarsIndex >= 0 ? segments.slice(calendarsIndex + 1) : []
+  if (routeSegments[0] === 'google') return { view: 'google' as CalendarSettingsView, calendarId: '', create: false }
+  if (routeSegments[0] === 'new') return { view: 'calendars' as CalendarSettingsView, calendarId: '', create: true }
+  return {
+    view: 'calendars' as CalendarSettingsView,
+    calendarId: routeSegments[0] ? decodeURIComponent(routeSegments[0]) : '',
+    create: false
+  }
+}
+
+const buildCalendarSettingsPath = (view: CalendarSettingsView, calendarId?: string) => (
+  view === 'google' ? '/settings/calendars/google' : calendarId ? `/settings/calendars/${encodeURIComponent(calendarId)}` : '/settings/calendars'
+)
 
 const CALENDAR_COLOR_PALETTE = [
   { label: 'Azul', value: '#3b82f6' },
@@ -181,6 +199,9 @@ const getGoogleFailureHelp = (message = '') => {
 }
 
 export const CalendarsConfiguration: React.FC = () => {
+  const navigate = useNavigate()
+  const location = useLocation()
+  const routeState = useMemo(() => parseCalendarSettingsRoute(location.pathname), [location.pathname])
   const { showToast, showConfirm } = useNotification()
   const { locationId, accessToken, user } = useAuth()
 
@@ -200,7 +221,7 @@ export const CalendarsConfiguration: React.FC = () => {
   // Estados locales
   const [calendars, setCalendars] = useState<CalendarType[]>([])
   const [loadingCalendars, setLoadingCalendars] = useState(true)
-  const [activeView, setActiveView] = useState<CalendarSettingsView>('calendars')
+  const [activeView, setActiveView] = useState<CalendarSettingsView>(routeState.view)
   const [googleIntegration, setGoogleIntegration] = useState<GoogleCalendarIntegrationStatus | null>(null)
   const [loadingGoogleIntegration, setLoadingGoogleIntegration] = useState(true)
   const [savingGoogleIntegration, setSavingGoogleIntegration] = useState(false)
@@ -250,6 +271,22 @@ export const CalendarsConfiguration: React.FC = () => {
   useEffect(() => {
     loadGoogleIntegration()
   }, [])
+
+  useEffect(() => {
+    setActiveView(current => current === routeState.view ? current : routeState.view)
+    setShowCreateModal(routeState.create)
+
+    if (routeState.calendarId && calendars.length) {
+      const calendar = calendars.find(item => item.id === routeState.calendarId)
+      if (calendar) {
+        setSelectedCalendar(calendar)
+        setExpandedCalendarId(calendar.id)
+      }
+    } else if (!routeState.calendarId && expandedCalendarId) {
+      setExpandedCalendarId(null)
+      setSelectedCalendar(null)
+    }
+  }, [calendars, expandedCalendarId, routeState.calendarId, routeState.create, routeState.view])
 
   // Sin integración conectada el selector de origen queda oculto. Si había quedado
   // en "Solo HighLevel", se volvería a Ristak para no esconder sus calendarios
@@ -702,16 +739,19 @@ export const CalendarsConfiguration: React.FC = () => {
     if (expandedCalendarId === calendar.id) {
       setExpandedCalendarId(null)
       setSelectedCalendar(null)
+      navigate(buildCalendarSettingsPath('calendars'), { replace: true })
       return
     }
 
     setSelectedCalendar(calendar)
     setExpandedCalendarId(calendar.id)
+    navigate(buildCalendarSettingsPath('calendars', calendar.id))
   }
 
   const handleCloseCalendarEditor = () => {
     setExpandedCalendarId(null)
     setSelectedCalendar(null)
+    navigate(buildCalendarSettingsPath('calendars'), { replace: true })
   }
 
   const handleSaveCalendarConfig = async () => {
@@ -793,6 +833,9 @@ export const CalendarsConfiguration: React.FC = () => {
       }
 
       setShowCreateModal(false)
+      if (created?.id) {
+        navigate(buildCalendarSettingsPath('calendars', created.id), { replace: true })
+      }
       setNewCalendar({
         name: '',
         calendarType: 'event',
@@ -936,7 +979,10 @@ export const CalendarsConfiguration: React.FC = () => {
   const renderCreateCalendarModal = () => showCreateModal ? createPortal(
     <Modal
       isOpen={showCreateModal}
-      onClose={() => setShowCreateModal(false)}
+      onClose={() => {
+        setShowCreateModal(false)
+        navigate(buildCalendarSettingsPath('calendars'), { replace: true })
+      }}
       title="Crear calendario"
       size="md"
     >
@@ -1001,7 +1047,10 @@ export const CalendarsConfiguration: React.FC = () => {
               'Crear calendario'
             )}
           </Button>
-          <Button variant="ghost" onClick={() => setShowCreateModal(false)} disabled={creatingCalendar}>
+          <Button variant="ghost" onClick={() => {
+            setShowCreateModal(false)
+            navigate(buildCalendarSettingsPath('calendars'), { replace: true })
+          }} disabled={creatingCalendar}>
             Cancelar
           </Button>
         </div>
@@ -1747,7 +1796,10 @@ export const CalendarsConfiguration: React.FC = () => {
     <div className={pageStyles.tabPanel}>
       <div className={pageStyles.panelToolbar}>
         <div className={pageStyles.toolbarActions}>
-          <Button variant="outline" size="small" onClick={() => setShowCreateModal(true)}>
+          <Button variant="outline" size="small" onClick={() => {
+            setShowCreateModal(true)
+            navigate('/settings/calendars/new')
+          }}>
             <Plus size={16} />
             Crear calendario
           </Button>
@@ -1769,7 +1821,10 @@ export const CalendarsConfiguration: React.FC = () => {
           <Calendar size={34} />
           <h3>No hay calendarios todavía</h3>
           <p>Crea el primero para empezar a agendar desde Ristak.</p>
-          <Button onClick={() => setShowCreateModal(true)}>
+          <Button onClick={() => {
+            setShowCreateModal(true)
+            navigate('/settings/calendars/new')
+          }}>
             <Plus size={16} />
             Crear calendario
           </Button>
@@ -2138,6 +2193,7 @@ export const CalendarsConfiguration: React.FC = () => {
         onClick={() => {
           setActiveView('google')
           setEditingGoogleIntegration(!isConnected)
+          navigate(buildCalendarSettingsPath('google'))
         }}
       >
         <span className={pageStyles.googleCalendarMark}>
@@ -2167,7 +2223,10 @@ export const CalendarsConfiguration: React.FC = () => {
               <button
                 type="button"
                 className={pageStyles.backButton}
-                onClick={() => setActiveView('calendars')}
+                onClick={() => {
+                  setActiveView('calendars')
+                  navigate(buildCalendarSettingsPath('calendars'))
+                }}
                 aria-label="Volver a calendarios"
               >
                 <ArrowLeft size={18} />

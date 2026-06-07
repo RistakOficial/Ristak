@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState, useCallback } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import {
   Card,
   KpiCard,
@@ -148,6 +149,31 @@ const displayTabs = [
     description: 'Vista resumida por tarjetas y gráficas para comparar indicadores sin entrar al detalle de cada fila.'
   }
 ]
+
+const reportDisplayModes: DisplayMode[] = ['table', 'metrics']
+const reportViewTypes: ViewType[] = ['day', 'month', 'year']
+const reportTypes: ReportType[] = ['cashflow', 'attribution', 'campaigns']
+
+const isReportDisplayMode = (value?: string): value is DisplayMode =>
+  reportDisplayModes.includes(value as DisplayMode)
+
+const isReportViewType = (value?: string): value is ViewType =>
+  reportViewTypes.includes(value as ViewType)
+
+const isReportType = (value?: string): value is ReportType =>
+  reportTypes.includes(value as ReportType)
+
+const buildReportsPath = (displayMode: DisplayMode, viewType: ViewType, reportType: ReportType) =>
+  `/reports/${displayMode}/${viewType}/${reportType}`
+
+const parseReportsPath = (pathname: string) => {
+  const parts = pathname.replace(/^\/reports\/?/, '').split('/').filter(Boolean)
+  const displayMode = isReportDisplayMode(parts[0]) ? parts[0] : 'table'
+  const viewType = isReportViewType(parts[1]) ? parts[1] : 'month'
+  const reportType = isReportType(parts[2]) ? parts[2] : 'cashflow'
+
+  return { displayMode, viewType, reportType }
+}
 
 const monthRangeOptions = [
   { value: 'last12', label: 'Últimos 12 meses' },
@@ -1274,9 +1300,12 @@ const BusinessExpenseCell: React.FC<BusinessExpenseCellProps> = ({ value, row, s
 }
 
 export const Reports: React.FC = () => {
+  const location = useLocation()
+  const navigate = useNavigate()
   const { dateRange, setDateRange } = useDateRange()
   const { showToast } = useNotification()
   const { labels } = useLabels()
+  const routeState = useMemo(() => parseReportsPath(location.pathname), [location.pathname])
 
   // Detectar discrepancia de timezone con Meta
   const timezoneInfo = useMetaTimezone()
@@ -1292,14 +1321,14 @@ export const Reports: React.FC = () => {
   const visitorSource = visitorSourceConfig
   const analyticsEnabled = parseAnalyticsFlag(showAnalyticsConfig)
 
-  const [reportType, setReportType] = useState<ReportType>('cashflow')
+  const [reportType, setReportType] = useState<ReportType>(routeState.reportType)
   const reportTypeRef = React.useRef<ReportType>(reportType)
 
   useEffect(() => {
     reportTypeRef.current = reportType
   }, [reportType])
-  const [viewType, setViewType] = useState<ViewType>('month')
-  const [displayMode, setDisplayMode] = useState<DisplayMode>('table')
+  const [viewType, setViewType] = useState<ViewType>(routeState.viewType)
+  const [displayMode, setDisplayMode] = useState<DisplayMode>(routeState.displayMode)
   const [monthPreset, setMonthPreset] = useState<'last12' | 'thisYear' | 'custom'>('last12')
   const [yearRange, setYearRange] = useState(defaultYearRange)
 
@@ -1350,6 +1379,32 @@ export const Reports: React.FC = () => {
     subtitle: '',
     transactions: []
   })
+
+  useEffect(() => {
+    const nextPath = buildReportsPath(routeState.displayMode, routeState.viewType, routeState.reportType)
+    if (location.pathname !== nextPath) {
+      navigate({ pathname: nextPath, search: location.search }, { replace: true })
+      return
+    }
+
+    setDisplayMode(current => current === routeState.displayMode ? current : routeState.displayMode)
+    setViewType(current => current === routeState.viewType ? current : routeState.viewType)
+    setReportType(current => current === routeState.reportType ? current : routeState.reportType)
+  }, [location.pathname, location.search, navigate, routeState.displayMode, routeState.reportType, routeState.viewType])
+
+  const navigateReportsView = useCallback((next: {
+    displayMode?: DisplayMode
+    viewType?: ViewType
+    reportType?: ReportType
+  }) => {
+    const nextDisplayMode = next.displayMode || displayMode
+    const nextViewType = next.viewType || viewType
+    const nextReportType = next.reportType || reportType
+    const nextPath = buildReportsPath(nextDisplayMode, nextViewType, nextReportType)
+
+    if (location.pathname === nextPath) return
+    navigate({ pathname: nextPath, search: location.search })
+  }, [displayMode, location.pathname, location.search, navigate, reportType, viewType])
 
   const baseRange = {
     start: dateRange.start instanceof Date ? dateRange.start : new Date(dateRange.start),
@@ -2305,24 +2360,30 @@ export const Reports: React.FC = () => {
 
               {/* Todos los tabs juntos en la misma fila */}
               <div className={styles.tabsContainer}>
-                <TabList
-                  tabs={scopeTabs}
-                  activeTab={reportType}
-                  onTabChange={(value) => setReportType(value as ReportType)}
-                  variant="compact"
-                />
-                <TabList
-                  tabs={displayTabs}
-                  activeTab={displayMode}
-                  onTabChange={(value) => setDisplayMode(value as DisplayMode)}
-                  variant="compact"
-                />
-                <TabList
-                  tabs={viewTabs}
-                  activeTab={viewType}
-                  onTabChange={(value) => setViewType(value as ViewType)}
-                  variant="compact"
-                />
+	                <TabList
+	                  tabs={scopeTabs}
+	                  activeTab={reportType}
+	                  onTabChange={(value) => {
+	                    if (isReportType(value)) navigateReportsView({ reportType: value })
+	                  }}
+	                  variant="compact"
+	                />
+	                <TabList
+	                  tabs={displayTabs}
+	                  activeTab={displayMode}
+	                  onTabChange={(value) => {
+	                    if (isReportDisplayMode(value)) navigateReportsView({ displayMode: value })
+	                  }}
+	                  variant="compact"
+	                />
+	                <TabList
+	                  tabs={viewTabs}
+	                  activeTab={viewType}
+	                  onTabChange={(value) => {
+	                    if (isReportViewType(value)) navigateReportsView({ viewType: value })
+	                  }}
+	                  variant="compact"
+	                />
               </div>
             </div>
           </div>

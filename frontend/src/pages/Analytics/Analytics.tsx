@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { useDateRange } from '../../contexts/DateRangeContext'
 import { useTimezone } from '../../contexts/TimezoneContext'
 import { useLabels } from '../../contexts/LabelsContext'
@@ -55,6 +56,25 @@ const viewTabs = [
   { value: 'month', label: 'Mes' },
   { value: 'year', label: 'Año' }
 ]
+
+const analyticsViewTypes: ViewType[] = ['day', 'month', 'year']
+const analyticsMainChartViews: AnalyticsMainChartView[] = ['traffic', 'visitors-registrations', 'sessions-visitors', 'identity-returning']
+const analyticsConversionChartViews: AnalyticsConversionChartView[] = ['registrations-customers', 'appointments-attendances', 'prospects-customers', 'messages-appointments', 'appointments-patients']
+const isAnalyticsViewType = (value?: string): value is ViewType => analyticsViewTypes.includes(value as ViewType)
+const isAnalyticsMainChartView = (value?: string): value is AnalyticsMainChartView => analyticsMainChartViews.includes(value as AnalyticsMainChartView)
+const isAnalyticsConversionChartView = (value?: string): value is AnalyticsConversionChartView => analyticsConversionChartViews.includes(value as AnalyticsConversionChartView)
+const parseAnalyticsRoute = (pathname: string) => {
+  const segments = pathname.replace(/^\/+|\/+$/g, '').split('/').filter(Boolean)
+  const analyticsIndex = segments.indexOf('analytics')
+  const routeSegments = analyticsIndex >= 0 ? segments.slice(analyticsIndex + 1) : []
+  return {
+    viewType: isAnalyticsViewType(routeSegments[0]) ? routeSegments[0] : 'day',
+    mainChart: isAnalyticsMainChartView(routeSegments[1]) ? routeSegments[1] : 'traffic',
+    conversionChart: isAnalyticsConversionChartView(routeSegments[2]) ? routeSegments[2] : 'registrations-customers'
+  }
+}
+const buildAnalyticsPath = (viewType: ViewType, mainChart: AnalyticsMainChartView, conversionChart: AnalyticsConversionChartView) =>
+  `/analytics/${viewType}/${mainChart}/${conversionChart}`
 
 const monthRangeOptions = [
   { value: 'last12', label: 'Últimos 12 meses' },
@@ -714,6 +734,9 @@ const mapTrendToChartData = <T extends { label: string }>(
 }))
 
 const Analytics: React.FC = () => {
+  const navigate = useNavigate()
+  const location = useLocation()
+  const routeState = React.useMemo(() => parseAnalyticsRoute(location.pathname), [location.pathname])
   const { dateRange, setDateRange } = useDateRange()
   const { convertToLocalTime } = useTimezone()
   const { labels: appLabels } = useLabels()
@@ -752,12 +775,31 @@ const Analytics: React.FC = () => {
   const [osData, setOsData] = useState<any[]>([])
   const [browserData, setBrowserData] = useState<any[]>([])
   const [topVisitors, setTopVisitors] = useState<any[]>([])
-  const [viewType, setViewType] = useState<ViewType>('day')
+  const [viewType, setViewType] = useState<ViewType>(routeState.viewType)
   const [monthPreset, setMonthPreset] = useState<MonthPreset>('last12')
   const [yearRange, setYearRange] = useState(defaultYearRange)
-  const [selectedMainChartView, setSelectedMainChartView] = useState<AnalyticsMainChartView>('traffic')
-  const [selectedConversionChartView, setSelectedConversionChartView] = useState<AnalyticsConversionChartView>('registrations-customers')
+  const [selectedMainChartView, setSelectedMainChartView] = useState<AnalyticsMainChartView>(routeState.mainChart)
+  const [selectedConversionChartView, setSelectedConversionChartView] = useState<AnalyticsConversionChartView>(routeState.conversionChart)
   const [conversionChartTouched, setConversionChartTouched] = useState(false)
+
+  const navigateAnalyticsView = useCallback((next?: {
+    viewType?: ViewType
+    mainChart?: AnalyticsMainChartView
+    conversionChart?: AnalyticsConversionChartView
+    replace?: boolean
+  }) => {
+    navigate(buildAnalyticsPath(
+      next?.viewType ?? viewType,
+      next?.mainChart ?? selectedMainChartView,
+      next?.conversionChart ?? selectedConversionChartView
+    ), { replace: next?.replace })
+  }, [navigate, selectedConversionChartView, selectedMainChartView, viewType])
+
+  useEffect(() => {
+    setViewType(current => current === routeState.viewType ? current : routeState.viewType)
+    setSelectedMainChartView(current => current === routeState.mainChart ? current : routeState.mainChart)
+    setSelectedConversionChartView(current => current === routeState.conversionChart ? current : routeState.conversionChart)
+  }, [routeState.conversionChart, routeState.mainChart, routeState.viewType])
 
   // Guardar el valor ORIGINAL de registros para restaurar al quitar filtros
   const [originalRegistros, setOriginalRegistros] = useState<number>(0)
@@ -1852,8 +1894,9 @@ const Analytics: React.FC = () => {
   useEffect(() => {
     if (!webTrackingConfigured && selectedMainChartView !== 'traffic') {
       setSelectedMainChartView('traffic')
+      navigateAnalyticsView({ mainChart: 'traffic', replace: true })
     }
-  }, [selectedMainChartView, webTrackingConfigured])
+  }, [navigateAnalyticsView, selectedMainChartView, webTrackingConfigured])
 
   useEffect(() => {
     if (!webTrackingConfigured && Object.keys(selectedFilters).length > 0) {
@@ -1893,14 +1936,17 @@ const Analytics: React.FC = () => {
       selectedConversionChartView !== 'registrations-customers'
     ) {
       setSelectedConversionChartView('registrations-customers')
+      navigateAnalyticsView({ conversionChart: 'registrations-customers', replace: true })
       return
     }
 
     const validValues = conversionChartOptions.map(opt => opt.value)
     if (!validValues.includes(selectedConversionChartView)) {
-      setSelectedConversionChartView(conversionChartOptions[0]?.value as AnalyticsConversionChartView)
+      const nextChart = conversionChartOptions[0]?.value as AnalyticsConversionChartView
+      setSelectedConversionChartView(nextChart)
+      navigateAnalyticsView({ conversionChart: nextChart, replace: true })
     }
-  }, [conversionChartOptions, conversionChartTouched, selectedConversionChartView, webTrackingConfigured])
+  }, [conversionChartOptions, conversionChartTouched, navigateAnalyticsView, selectedConversionChartView, webTrackingConfigured])
 
   const sessionTrendData = React.useMemo(
     () => buildSessionTrendData(sessionsForCharts, viewType, convertToLocalTime),
@@ -2152,7 +2198,12 @@ const Analytics: React.FC = () => {
               <TabList
                 tabs={viewTabs}
                 activeTab={viewType}
-                onTabChange={(value) => setViewType(value as ViewType)}
+                onTabChange={(value) => {
+                  if (isAnalyticsViewType(value)) {
+                    setViewType(value)
+                    navigateAnalyticsView({ viewType: value })
+                  }
+                }}
                 variant="compact"
               />
             </div>
@@ -2181,7 +2232,12 @@ const Analytics: React.FC = () => {
                 variant="title"
                 options={mainChartOptions}
                 value={selectedMainChartView}
-                onChange={(value) => setSelectedMainChartView(value as AnalyticsMainChartView)}
+                onChange={(value) => {
+                  if (isAnalyticsMainChartView(value)) {
+                    setSelectedMainChartView(value)
+                    navigateAnalyticsView({ mainChart: value })
+                  }
+                }}
               />
               <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
                 {mainChartConfig.description}
@@ -2241,7 +2297,10 @@ const Analytics: React.FC = () => {
                   value={selectedConversionChartView}
                   onChange={(value) => {
                     setConversionChartTouched(true)
-                    setSelectedConversionChartView(value as AnalyticsConversionChartView)
+                    if (isAnalyticsConversionChartView(value)) {
+                      setSelectedConversionChartView(value)
+                      navigateAnalyticsView({ conversionChart: value })
+                    }
                   }}
                 />
                 <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">

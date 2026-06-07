@@ -658,14 +658,14 @@ const AppWithNotifications: React.FC = () => {
             }
           >
             <Route index element={<Navigate to="/dashboard" replace />} />
-            <Route path="dashboard" element={<Dashboard />} />
-            <Route path="reports" element={<Reports />} />
-            <Route path="campaigns" element={<Campaigns />} />
-            <Route path="transactions" element={<Transactions />} />
-            <Route path="contacts" element={<Contacts />} />
-            <Route path="appointments" element={<Appointments />} />
-            <Route path="sites" element={<Sites />} />
-            <Route path="analytics" element={<Analytics />} />
+            <Route path="dashboard/*" element={<Dashboard />} />
+            <Route path="reports/*" element={<Reports />} />
+            <Route path="campaigns/*" element={<Campaigns />} />
+            <Route path="transactions/*" element={<Transactions />} />
+            <Route path="contacts/*" element={<Contacts />} />
+            <Route path="appointments/*" element={<Appointments />} />
+            <Route path="sites/*" element={<Sites />} />
+            <Route path="analytics/*" element={<Analytics />} />
             <Route path="settings/*" element={<Settings />} />
           </Route>
         </Routes>

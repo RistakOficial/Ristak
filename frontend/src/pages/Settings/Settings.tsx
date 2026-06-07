@@ -135,14 +135,14 @@ export const Settings: React.FC = () => {
             <Routes>
               <Route index element={<Navigate to="account" replace />} />
               <Route path="highlevel" element={<HighLevelIntegration />} />
-              <Route path="costs" element={<Costs />} />
-              <Route path="meta-ads" element={<MetaAdsIntegration />} />
-              <Route path="whatsapp" element={<WhatsAppSettings />} />
-              <Route path="calendars" element={<CalendarsConfiguration />} />
-              <Route path="tracking" element={<WebTracking />} />
-              <Route path="domains" element={<Domains />} />
-              <Route path="payments" element={<PaymentsConfiguration />} />
-              <Route path="custom-fields" element={<CustomFields />} />
+              <Route path="costs/*" element={<Costs />} />
+              <Route path="meta-ads/*" element={<MetaAdsIntegration />} />
+              <Route path="whatsapp/*" element={<WhatsAppSettings />} />
+              <Route path="calendars/*" element={<CalendarsConfiguration />} />
+              <Route path="tracking/*" element={<WebTracking />} />
+              <Route path="domains/*" element={<Domains />} />
+              <Route path="payments/*" element={<PaymentsConfiguration />} />
+              <Route path="custom-fields/*" element={<CustomFields />} />
               <Route path="ai-agent" element={<AIAgentSettings />} />
               <Route path="api-access" element={<APIAccessSettings />} />
               <Route path="mobile-app" element={<MobileAppSettings />} />
