@@ -590,6 +590,7 @@ html body .rstkCanvas.rstk-kind-form.rstk-choice-pills .rstk-option input[type='
 
 /* Scroll viewport that holds the scaled page. */
 .canvasViewport {
+  position: relative;
   min-height: 620px;
   max-height: calc(100vh - 230px);
   overflow: auto;
@@ -679,15 +680,24 @@ html body .rstkCanvas.rstk-kind-form.rstk-choice-pills .rstk-option input[type='
     inset 0 0 0 6px color-mix(in srgb, var(--rstk-accent, #2563eb) 16%, transparent);
 }
 
+.rstkPopupEditorHost {
+  position: absolute;
+  inset: 0;
+  z-index: 320;
+  min-height: 100%;
+  pointer-events: none;
+}
+
 .rstkPopupEditorLayer {
   position: absolute;
   inset: 0;
-  z-index: 260;
   display: grid;
   place-items: start center;
-  min-height: 100%;
+  min-height: max(100%, 620px);
   padding: 74px 32px;
   cursor: pointer;
+  overflow: visible;
+  pointer-events: auto;
 }
 
 .rstkPopupEditorBackdrop {
@@ -715,7 +725,8 @@ html body .rstkCanvas.rstk-kind-form.rstk-choice-pills .rstk-option input[type='
 .rstkPopupEditorClose {
   position: absolute;
   top: 12px;
-  right: 12px;
+  right: auto;
+  left: 12px;
   z-index: 4;
   min-width: 34px;
   height: 34px;

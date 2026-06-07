@@ -7590,7 +7590,7 @@ function safeUrl(value) {
 function normalizePopupTrigger(theme = {}) {
   const trigger = cleanString(theme.popupTrigger ?? theme.popup_trigger)
   if (trigger === 'never' || trigger === 'delay' || trigger === 'exit_intent') return trigger
-  return normalizeBoolean(theme.popupEnabled ?? theme.popup_enabled) ? 'delay' : 'never'
+  return 'never'
 }
 
 function normalizePopupCloseDisplay(value = '') {
@@ -7677,7 +7677,7 @@ function renderSitePopup(site, context = {}) {
     .rstk-site-popup__content:empty{min-height:96px}
     .rstk-site-popup h2{margin:0;color:inherit;font:800 1.35rem/1.15 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;letter-spacing:0}
     .rstk-site-popup p{margin:12px 0 0;color:inherit;opacity:.78;font:500 .96rem/1.55 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
-    .rstk-site-popup__close{position:absolute;top:12px;right:12px;min-width:34px;height:34px;display:inline-flex;align-items:center;justify-content:center;gap:6px;border:1px solid rgba(148,163,184,.24);border-radius:10px;background:rgba(255,255,255,.08);color:inherit;padding:0 10px;font:800 14px/1 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;cursor:pointer}
+    .rstk-site-popup__close{position:absolute;top:12px;right:auto;left:12px;min-width:34px;height:34px;display:inline-flex;align-items:center;justify-content:center;gap:6px;border:1px solid rgba(148,163,184,.24);border-radius:10px;background:rgba(255,255,255,.08);color:inherit;padding:0 10px;font:800 14px/1 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;cursor:pointer}
     .rstk-site-popup__close span{font-size:22px;line-height:1}
     .rstk-site-popup__close strong{font-size:12px;line-height:1}
     .rstk-site-popup__action{display:inline-flex;align-items:center;justify-content:center;min-height:44px;margin-top:18px;border:0;border-radius:10px;background:#3b82f6;color:#fff;padding:0 18px;font:800 .92rem/1 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;text-decoration:none;cursor:pointer}

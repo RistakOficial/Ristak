@@ -4706,16 +4706,22 @@ export const Sites: React.FC = () => {
           : !isPopupBlock(block) && (!pageId || getBlockPageId(block, normalizedPages) === pageId))
         .sort((a, b) => a.sortOrder - b.sortOrder)
         .map(block => block.id)
-      if (deletedBlockIds.includes(selectedBlockId)) {
-        setSelectedBlockId('')
-        navigateSitesEditor({ site, blockId: '' })
+      const deletedSelectedBlock = deletedBlockIds.includes(selectedBlockId)
+      const selectedAfter = deletedSelectedBlock
+        ? (deletingPopupBlock ? POPUP_SELECTED_ID : PAGE_SELECTED_ID)
+        : selectedBlockId
+      setActiveDragId(null)
+      resetPaletteDrag()
+      if (deletedSelectedBlock) {
+        setSelectedBlockId(selectedAfter)
+        navigateSitesEditor({ site, blockId: selectedAfter })
       }
       pushEditorHistory({
         action: 'delete',
         siteId: selectedSite.id,
         pageId,
         selectedBefore,
-        selectedAfter: deletedBlockIds.includes(selectedBlockId) ? '' : selectedBlockId,
+        selectedAfter,
         beforeBlockIds,
         afterBlockIds,
         deletedRootBlockId: blockId,
@@ -5164,8 +5170,8 @@ export const Sites: React.FC = () => {
                     {canConfigurePopup && (
                       <button
                         type="button"
-	                        className={`${styles.seoToolbarButton} ${styles.headerToolbarButton} ${popupSurfaceSelected ? styles.headerToolbarButtonActive : ''}`}
-                        onClick={() => selectEditorBlock(POPUP_SELECTED_ID)}
+                        className={`${styles.seoToolbarButton} ${styles.headerToolbarButton} ${popupSurfaceSelected ? styles.headerToolbarButtonActive : ''}`}
+                        onClick={() => selectEditorBlock(popupSurfaceSelected ? PAGE_SELECTED_ID : POPUP_SELECTED_ID)}
                         disabled={editorAIGenerating}
                         title="Configurar Pop up"
                       >
@@ -5458,6 +5464,34 @@ export const Sites: React.FC = () => {
                         onDragOver={handleCanvasDragOver}
                         onDragLeave={handleCanvasDragLeave}
                         onDrop={handleCanvasDrop}
+                        overlay={popupSurfaceSelected ? (
+                          <div
+                            className={`rstkCanvas ${canvasTheme!.bodyClass} rstkPopupEditorHost`}
+                            style={{ ...canvasTheme!.vars, ['--rstk-scale' as string]: 1 } as React.CSSProperties}
+                          >
+                            <PopupCanvasSurface
+                              site={editorSite}
+                              blocks={popupBlocks}
+                              selectedBlockId={selectedBlockId}
+                              forms={forms}
+                              calendars={calendars}
+                              pages={pages}
+                              activePageId={activePage?.id || DEFAULT_FUNNEL_PAGE_ID}
+                              selected={selectedBlockId === POPUP_SELECTED_ID}
+                              palettePreviewBlock={canvasPalettePreviewBlock}
+                              paletteInsertIndex={paletteInsertIndex}
+                              onSelectPopup={() => selectEditorBlock(POPUP_SELECTED_ID)}
+                              onClosePopup={() => selectEditorBlock(PAGE_SELECTED_ID)}
+                              onSelectBlock={selectEditorBlock}
+                              onDeleteBlock={requestDeleteBlock}
+                              onMoveBlock={handleMoveBlock}
+                              getBlockMoveState={getBlockMoveState}
+                              onPatchBlock={patchBlockLocal}
+                              onPatchBlockSettings={patchBlockSettingsLocal}
+                              onSaveBlock={handleSaveBlock}
+                            />
+                          </div>
+                        ) : null}
                       >
                         <div className="rstk-frame">
                           <CanvasBackgroundVideo theme={editorSite.theme} />
@@ -5551,32 +5585,10 @@ export const Sites: React.FC = () => {
                                 </div>
                               )}
                               </div>
-	                            </div>
-	                          </main>
-	                          {popupSurfaceSelected && (
-	                            <PopupCanvasSurface
-	                              site={editorSite}
-	                              blocks={popupBlocks}
-	                              selectedBlockId={selectedBlockId}
-	                              forms={forms}
-	                              calendars={calendars}
-	                              pages={pages}
-	                              activePageId={activePage?.id || DEFAULT_FUNNEL_PAGE_ID}
-	                              selected={selectedBlockId === POPUP_SELECTED_ID}
-	                              palettePreviewBlock={canvasPalettePreviewBlock}
-	                              paletteInsertIndex={paletteInsertIndex}
-	                              onSelectPopup={() => selectEditorBlock(POPUP_SELECTED_ID)}
-	                              onSelectBlock={selectEditorBlock}
-	                              onDeleteBlock={requestDeleteBlock}
-	                              onMoveBlock={handleMoveBlock}
-	                              getBlockMoveState={getBlockMoveState}
-	                              onPatchBlock={patchBlockLocal}
-	                              onPatchBlockSettings={patchBlockSettingsLocal}
-	                              onSaveBlock={handleSaveBlock}
-	                            />
-	                          )}
-	                        </div>
-	                      </CanvasStage>
+                            </div>
+                          </main>
+                        </div>
+                      </CanvasStage>
                     </SortableContext>
 	                    <DragOverlay dropAnimation={{ duration: 340, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' }}>
                       {activeDragBlock ? (
@@ -12370,11 +12382,12 @@ interface CanvasStageProps {
   onDragOver?: React.DragEventHandler<HTMLDivElement>
   onDragLeave?: React.DragEventHandler<HTMLDivElement>
   onDrop?: React.DragEventHandler<HTMLDivElement>
+  overlay?: React.ReactNode
   children: React.ReactNode
 }
 
 const CanvasStage: React.FC<CanvasStageProps> = ({
-  designWidth, canvasClassName, canvasStyle, active, pageSelected, fluidAboveDesign, onClear, onDragOver, onDragLeave, onDrop, children
+  designWidth, canvasClassName, canvasStyle, active, pageSelected, fluidAboveDesign, onClear, onDragOver, onDragLeave, onDrop, overlay, children
 }) => {
   const viewportRef = useRef<HTMLDivElement>(null)
   const stageRef = useRef<HTMLDivElement>(null)
@@ -12423,6 +12436,7 @@ const CanvasStage: React.FC<CanvasStageProps> = ({
           {children}
         </div>
       </div>
+      {overlay}
     </div>
   )
 }
@@ -12568,6 +12582,7 @@ interface PopupCanvasSurfaceProps {
   palettePreviewBlock: SiteBlock | null
   paletteInsertIndex: number | null
   onSelectPopup: () => void
+  onClosePopup: () => void
   onSelectBlock: (blockId: string) => void
   onDeleteBlock: (blockId: string) => void
   onMoveBlock: (blockId: string, direction: BlockMoveDirection) => void
@@ -12589,6 +12604,7 @@ const PopupCanvasSurface: React.FC<PopupCanvasSurfaceProps> = ({
   palettePreviewBlock,
   paletteInsertIndex,
   onSelectPopup,
+  onClosePopup,
   onSelectBlock,
   onDeleteBlock,
   onMoveBlock,
@@ -12650,7 +12666,7 @@ const PopupCanvasSurface: React.FC<PopupCanvasSurfaceProps> = ({
           className="rstkPopupEditorClose"
           onClick={(event) => {
             event.stopPropagation()
-            onSelectPopup()
+            onClosePopup()
           }}
           aria-label="Cerrar"
         >
