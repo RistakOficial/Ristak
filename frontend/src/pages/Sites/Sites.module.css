@@ -184,6 +184,109 @@
   line-height: 1.45;
 }
 
+.importedQuickEditBox {
+  display: grid;
+  gap: 12px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(148, 163, 184, 0.16);
+}
+
+.importedQuickEditHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.importedQuickEditHeader > div {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-text-primary);
+  font-size: 0.82rem;
+  font-weight: 850;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.importedQuickEditHeader svg {
+  color: var(--color-primary);
+}
+
+.importedQuickEditHeader strong {
+  flex: 0 0 auto;
+  max-width: 132px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(34, 197, 94, 0.12);
+  color: #15803d;
+  padding: 4px 8px;
+  font-size: 0.72rem;
+  font-weight: 850;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.importedQuickEditBox p {
+  margin: 0;
+  color: var(--color-text-tertiary);
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
+.importedQuickEditForm {
+  display: grid;
+  gap: 10px;
+}
+
+.importedQuickEditForm label {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+
+.importedQuickEditForm label > span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  font-size: 0.78rem;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.importedQuickEditForm input,
+.importedQuickEditForm textarea {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 8px;
+  background: var(--color-background-primary);
+  color: var(--color-text-primary);
+  padding: 10px 11px;
+  font: inherit;
+  font-size: 0.88rem;
+  line-height: 1.4;
+}
+
+.importedQuickEditForm textarea {
+  resize: vertical;
+}
+
+.importedQuickEditForm input:focus,
+.importedQuickEditForm textarea:focus {
+  border-color: rgba(34, 197, 94, 0.7);
+  box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.16);
+  outline: none;
+}
+
+.importedQuickEditForm small {
+  color: var(--color-danger);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
 .importedDataRouteBox {
   display: grid;
   gap: 12px;

@@ -87,6 +87,8 @@ import {
   blockLabels,
   fieldBlockTypes,
   formBlockTypes,
+  type ImportedEditableContentType,
+  type ImportedSiteCreateResult,
   type ImportedSiteFieldMapping,
   type ImportedSiteFormMapping,
   type ImportedSiteImport,
@@ -3309,6 +3311,14 @@ export const Sites: React.FC = () => {
     handleCreateSiteWithAI(getAIAgentSiteKindForSite(site), site)
   }
 
+  const handleImportedContentUpdated = (result: ImportedSiteCreateResult) => {
+    const normalizedSite = normalizeSiteForEditor(result.site)
+    setSites(current => current.map(item => item.id === normalizedSite.id ? { ...item, ...normalizedSite } : item))
+    selectedSiteRef.current = normalizedSite
+    setSelectedSite(normalizedSite)
+    setSelectedImportData(result.import)
+  }
+
   const handleSaveSite = async (statusOverride?: PublicSite['status'], options: { silent?: boolean } = {}) => {
     const siteToSave = selectedSiteRef.current || selectedSite
     if (!siteToSave) return
@@ -4319,6 +4329,7 @@ export const Sites: React.FC = () => {
                   onPublish={() => handleSaveSite('published')}
                   onEditWithAI={() => handleEditImportedHtmlWithAI(editorSite)}
                   onEditFields={() => void handleOpenImportMappingEditor(editorSite)}
+                  onContentUpdated={handleImportedContentUpdated}
                   onUpdateRoute={handleUpdateLibraryRoute}
                   onDelete={() => void handleDeleteSite(editorSite)}
                 />
@@ -4534,6 +4545,116 @@ export const Sites: React.FC = () => {
   )
 }
 
+type ImportedEditableSelection = {
+  editId: string
+  editType: ImportedEditableContentType | 'section'
+  label: string
+  value: string
+  tagName: string
+}
+
+const importedEditableSelector = [
+  '[data-rstk-edit-id]',
+  '[data-ristak-edit-id]',
+  '[data-ristack-edit-id]',
+  '[data-rstk-editable="true"]',
+  '[data-ristak-editable="true"]',
+  '[data-ristack-editable="true"]'
+].join(', ')
+
+const importedSectionSelector = [
+  '[data-rstk-section]',
+  '[data-ristak-section]',
+  '[data-ristack-section]'
+].join(', ')
+
+const editableTypeLabels: Record<ImportedEditableSelection['editType'], string> = {
+  heading: 'Titulo',
+  text: 'Texto',
+  button: 'Boton',
+  form_label: 'Texto de campo',
+  placeholder: 'Placeholder',
+  image: 'Imagen',
+  background_image: 'Imagen de fondo',
+  section: 'Seccion'
+}
+
+const importedEditableAttributeAliases = {
+  id: ['data-rstk-edit-id', 'data-ristak-edit-id', 'data-ristack-edit-id'],
+  type: ['data-rstk-edit-type', 'data-ristak-edit-type', 'data-ristack-edit-type'],
+  label: ['data-rstk-label', 'data-ristak-label', 'data-ristack-label'],
+  section: ['data-rstk-section', 'data-ristak-section', 'data-ristack-section']
+}
+
+const getImportedEditableAttribute = (element: Element, key: keyof typeof importedEditableAttributeAliases) => {
+  for (const alias of importedEditableAttributeAliases[key]) {
+    const value = element.getAttribute(alias)
+    if (value) return value.trim()
+  }
+  return ''
+}
+
+const inferImportedEditableType = (element: HTMLElement): ImportedEditableContentType => {
+  const tagName = element.tagName.toLowerCase()
+  if (tagName === 'img') return 'image'
+  if (element.getAttribute('style')?.match(/background(?:-image)?\s*:/i)) return 'background_image'
+  if (tagName === 'input' || tagName === 'textarea') {
+    const type = element.getAttribute('type')?.toLowerCase() || ''
+    return ['button', 'submit'].includes(type) ? 'button' : 'placeholder'
+  }
+  if (/^h[1-6]$/.test(tagName)) return 'heading'
+  if (tagName === 'label') return 'form_label'
+  if (tagName === 'button') return 'button'
+  return 'text'
+}
+
+const normalizeImportedEditableType = (value: string, element: HTMLElement): ImportedEditableContentType => {
+  const type = value.trim().toLowerCase().replace(/[-\s]+/g, '_')
+  if (['heading', 'text', 'button', 'form_label', 'placeholder', 'image', 'background_image'].includes(type)) {
+    return type as ImportedEditableContentType
+  }
+  return inferImportedEditableType(element)
+}
+
+const extractCssBackgroundImageUrl = (styleValue: string) => {
+  const match = styleValue.match(/url\(\s*(?:"([^"]*)"|'([^']*)'|([^)]*?))\s*\)/i)
+  return (match?.[1] || match?.[2] || match?.[3] || '').trim()
+}
+
+const getEditableElementValue = (element: HTMLElement, editType: ImportedEditableSelection['editType']) => {
+  const tagName = element.tagName.toLowerCase()
+  if (editType === 'image' && tagName === 'img') return element.getAttribute('src') || ''
+  if (editType === 'background_image') return extractCssBackgroundImageUrl(element.getAttribute('style') || '')
+  if (editType === 'placeholder') return element.getAttribute('placeholder') || ''
+  if (editType === 'button' && tagName === 'input') return element.getAttribute('value') || ''
+  return (element.textContent || '').replace(/\s+/g, ' ').trim()
+}
+
+const readImportedEditableSelection = (element: HTMLElement): ImportedEditableSelection | null => {
+  const editId = getImportedEditableAttribute(element, 'id')
+  if (!editId) return null
+  const editType = normalizeImportedEditableType(getImportedEditableAttribute(element, 'type'), element)
+  const label = getImportedEditableAttribute(element, 'label') || editableTypeLabels[editType]
+  return {
+    editId,
+    editType,
+    label,
+    value: getEditableElementValue(element, editType),
+    tagName: element.tagName.toLowerCase()
+  }
+}
+
+const readImportedSectionSelection = (element: HTMLElement): ImportedEditableSelection => {
+  const label = getImportedEditableAttribute(element, 'section') || getImportedEditableAttribute(element, 'label') || 'Seccion'
+  return {
+    editId: label,
+    editType: 'section',
+    label,
+    value: '',
+    tagName: element.tagName.toLowerCase()
+  }
+}
+
 const ImportedHtmlEditorPanel: React.FC<{
   site: PublicSite
   pages: SitePage[]
@@ -4549,6 +4670,7 @@ const ImportedHtmlEditorPanel: React.FC<{
   onPublish: () => void
   onEditWithAI: () => void
   onEditFields: () => void
+  onContentUpdated: (result: ImportedSiteCreateResult) => void
   onUpdateRoute: (site: PublicSite, route: string) => Promise<void>
   onDelete: () => void
 }> = ({
@@ -4566,9 +4688,13 @@ const ImportedHtmlEditorPanel: React.FC<{
   onPublish,
   onEditWithAI,
   onEditFields,
+  onContentUpdated,
   onUpdateRoute,
   onDelete
 }) => {
+  const { showToast } = useNotification()
+  const iframeRef = useRef<HTMLIFrameElement | null>(null)
+  const selectedIframeElementRef = useRef<HTMLElement | null>(null)
   const [routeEditing, setRouteEditing] = useState(false)
   const [routeDraft, setRouteDraft] = useState(getRouteEditorValue(site))
   const [routeSaving, setRouteSaving] = useState(false)
@@ -4576,6 +4702,10 @@ const ImportedHtmlEditorPanel: React.FC<{
   const [previewLoading, setPreviewLoading] = useState(true)
   const [previewError, setPreviewError] = useState('')
   const [previewVersion, setPreviewVersion] = useState(0)
+  const [selectedEditable, setSelectedEditable] = useState<ImportedEditableSelection | null>(null)
+  const [editDraft, setEditDraft] = useState('')
+  const [contentSaving, setContentSaving] = useState(false)
+  const [contentError, setContentError] = useState('')
   const importedPages = pages.length ? pages : [{ id: DEFAULT_FUNNEL_PAGE_ID, title: 'Pagina 1', sortOrder: 0 }]
   const activeImportedPage = importedPages.find(page => page.id === activePageId) || importedPages[0]
   const mappingStats = useMemo(() => {
@@ -4614,6 +4744,100 @@ const ImportedHtmlEditorPanel: React.FC<{
     void loadInlinePreview()
   }, [loadInlinePreview])
 
+  useEffect(() => {
+    selectedIframeElementRef.current?.classList.remove('rstk-imported-selected')
+    selectedIframeElementRef.current = null
+    setSelectedEditable(null)
+    setEditDraft('')
+    setContentError('')
+  }, [activeImportedPage?.id, site.id, previewVersion])
+
+  useEffect(() => {
+    if (previewLoading || !previewHtml) return
+    const iframe = iframeRef.current
+    if (!iframe) return
+
+    let cleanupDocument = () => {}
+    let cancelled = false
+    const installEditorHooks = () => {
+      if (cancelled) return
+      cleanupDocument()
+      const doc = iframe.contentDocument
+      if (!doc) return
+
+      const style = doc.createElement('style')
+      style.setAttribute('data-rstk-imported-editor-overlay', 'true')
+      style.textContent = `
+        ${importedEditableSelector} {
+          cursor: pointer !important;
+          outline-offset: 3px !important;
+        }
+        ${importedEditableSelector}:hover {
+          outline: 2px solid rgba(34, 197, 94, 0.72) !important;
+          box-shadow: 0 0 0 5px rgba(34, 197, 94, 0.16) !important;
+        }
+        ${importedSectionSelector} {
+          scroll-margin: 40px !important;
+        }
+        .rstk-imported-selected {
+          outline: 3px solid #22c55e !important;
+          box-shadow: 0 0 0 6px rgba(34, 197, 94, 0.2) !important;
+        }
+      `
+      doc.head?.appendChild(style)
+
+      const selectElement = (element: HTMLElement) => {
+        selectedIframeElementRef.current?.classList.remove('rstk-imported-selected')
+        selectedIframeElementRef.current = element
+        element.classList.add('rstk-imported-selected')
+      }
+
+      const handleFrameClick = (event: MouseEvent) => {
+        const target = event.target as Element | null
+        if (!target || typeof target.closest !== 'function') return
+
+        const editableElement = target.closest(importedEditableSelector) as HTMLElement | null
+        if (editableElement) {
+          const selection = readImportedEditableSelection(editableElement)
+          if (!selection) return
+          event.preventDefault()
+          event.stopPropagation()
+          selectElement(editableElement)
+          setSelectedEditable(selection)
+          setEditDraft(selection.value)
+          setContentError('')
+          return
+        }
+
+        const sectionElement = target.closest(importedSectionSelector) as HTMLElement | null
+        if (sectionElement) {
+          event.preventDefault()
+          event.stopPropagation()
+          selectElement(sectionElement)
+          setSelectedEditable(readImportedSectionSelection(sectionElement))
+          setEditDraft('')
+          setContentError('')
+        }
+      }
+
+      doc.addEventListener('click', handleFrameClick, true)
+      cleanupDocument = () => {
+        doc.removeEventListener('click', handleFrameClick, true)
+        style.remove()
+      }
+    }
+
+    iframe.addEventListener('load', installEditorHooks)
+    const installTimeout = window.setTimeout(installEditorHooks, 0)
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(installTimeout)
+      iframe.removeEventListener('load', installEditorHooks)
+      cleanupDocument()
+    }
+  }, [previewHtml, previewLoading, previewVersion])
+
   const routeValue = getRouteEditorValue(site)
   const saveRoute = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -4632,6 +4856,45 @@ const ImportedHtmlEditorPanel: React.FC<{
       setRouteSaving(false)
     }
   }
+
+  const saveSelectedEditable = async () => {
+    if (!selectedEditable || selectedEditable.editType === 'section') return
+    const value = editDraft.trim()
+    if (!value) {
+      setContentError('Escribe el nuevo contenido antes de guardar.')
+      return
+    }
+
+    setContentSaving(true)
+    setContentError('')
+    try {
+      const result = await sitesService.updateImportedContent(site.id, {
+        editId: selectedEditable.editId,
+        editType: selectedEditable.editType,
+        value
+      })
+      onContentUpdated(result)
+      setSelectedEditable(null)
+      setEditDraft('')
+      selectedIframeElementRef.current?.classList.remove('rstk-imported-selected')
+      selectedIframeElementRef.current = null
+      await loadInlinePreview()
+      showToast('success', 'Cambio guardado', 'La pagina conserva formularios, campos y tracking.')
+    } catch (error) {
+      setContentError(error instanceof Error ? error.message : 'No se pudo guardar el cambio')
+    } finally {
+      setContentSaving(false)
+    }
+  }
+
+  const canSaveSelectedEditable = Boolean(
+    selectedEditable &&
+    selectedEditable.editType !== 'section' &&
+    editDraft.trim() &&
+    editDraft.trim() !== selectedEditable.value.trim() &&
+    !contentSaving
+  )
+  const selectedEditableIsImage = selectedEditable?.editType === 'image' || selectedEditable?.editType === 'background_image'
 
   return (
     <div className={styles.importedEditorPanel}>
@@ -4671,11 +4934,12 @@ const ImportedHtmlEditorPanel: React.FC<{
           )}
           {!previewLoading && !previewError && previewHtml && (
             <iframe
+              ref={iframeRef}
               key={`${site.id}-${activeImportedPage?.id || DEFAULT_FUNNEL_PAGE_ID}-${previewVersion}-${device}`}
               className={styles.importedPreviewFrame}
               title={`Vista previa de ${activeImportedPage?.title || site.name}`}
               srcDoc={previewHtml}
-              sandbox=""
+              sandbox="allow-same-origin"
               referrerPolicy="no-referrer-when-downgrade"
             />
           )}
@@ -4693,8 +4957,50 @@ const ImportedHtmlEditorPanel: React.FC<{
           <Upload size={24} />
           <div>
             <strong>{site.title || site.name}</strong>
-            <p>Esta pagina usa el archivo que subiste. Revisa la vista previa antes de publicarla.</p>
+            <p>Selecciona textos o imagenes en la vista previa para cambiarlos sin tocar codigo.</p>
           </div>
+        </div>
+
+        <div className={styles.importedQuickEditBox}>
+          <div className={styles.importedQuickEditHeader}>
+            <div>
+              {selectedEditableIsImage ? <Image size={17} /> : <Type size={17} />}
+              <span>Edicion rapida</span>
+            </div>
+            <strong>{selectedEditable ? editableTypeLabels[selectedEditable.editType] : 'Lista'}</strong>
+          </div>
+
+          {!selectedEditable ? (
+            <p>Haz clic en un texto, boton, placeholder o imagen de la vista previa.</p>
+          ) : selectedEditable.editType === 'section' ? (
+            <p>Seccion detectada: {selectedEditable.label}. Para cambiar contenido, selecciona un texto o imagen dentro de esta seccion.</p>
+          ) : (
+            <div className={styles.importedQuickEditForm}>
+              <label>
+                <span>{selectedEditable.label}</span>
+                {selectedEditableIsImage ? (
+                  <input
+                    value={editDraft}
+                    onChange={(event) => setEditDraft(event.target.value)}
+                    placeholder="https://..."
+                    disabled={contentSaving}
+                  />
+                ) : (
+                  <textarea
+                    rows={selectedEditable.editType === 'heading' || selectedEditable.editType === 'button' || selectedEditable.editType === 'placeholder' ? 2 : 4}
+                    value={editDraft}
+                    onChange={(event) => setEditDraft(event.target.value)}
+                    disabled={contentSaving}
+                  />
+                )}
+              </label>
+              {contentError && <small>{contentError}</small>}
+              <Button type="button" onClick={() => void saveSelectedEditable()} disabled={!canSaveSelectedEditable} loading={contentSaving}>
+                <Save size={15} />
+                Guardar cambio
+              </Button>
+            </div>
+          )}
         </div>
 
         <div className={styles.importedDataRouteBox}>

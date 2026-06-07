@@ -339,6 +339,21 @@ export interface ImportedSiteCreateResult {
   import: ImportedSiteImport
 }
 
+export type ImportedEditableContentType =
+  | 'heading'
+  | 'text'
+  | 'button'
+  | 'form_label'
+  | 'placeholder'
+  | 'image'
+  | 'background_image'
+
+export interface ImportedEditableContentUpdate {
+  editId: string
+  editType: ImportedEditableContentType
+  value: string
+}
+
 export type SitesAICreationKind = 'landing' | 'form' | 'interactive_form'
 
 export interface SitesAICreationMessage {
@@ -472,6 +487,10 @@ export const sitesService = {
 
   editImportedHtmlWithAI(siteId: string, payload: { siteKind: SitesAICreationKind; messages: SitesAICreationMessage[] }) {
     return apiClient.post<SitesAICreationResult>(`/sites/${siteId}/ai-edit-html`, payload)
+  },
+
+  updateImportedContent(siteId: string, payload: ImportedEditableContentUpdate) {
+    return apiClient.patch<ImportedSiteCreateResult>(`/sites/${siteId}/import-content`, payload)
   },
 
   importHtmlSite(payload: {

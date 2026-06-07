@@ -159,6 +159,22 @@ const IMPORTED_STATIC_FALLBACK_STYLE = `<style data-rstk-import-static-fallback>
   transform: none !important;
 }
 </style>`
+const IMPORTED_EDITABLE_ATTR_ALIASES = {
+  id: ['data-rstk-edit-id', 'data-ristak-edit-id', 'data-ristack-edit-id'],
+  editable: ['data-rstk-editable', 'data-ristak-editable', 'data-ristack-editable'],
+  type: ['data-rstk-edit-type', 'data-ristak-edit-type', 'data-ristack-edit-type'],
+  label: ['data-rstk-label', 'data-ristak-label', 'data-ristack-label'],
+  section: ['data-rstk-section', 'data-ristak-section', 'data-ristack-section']
+}
+const IMPORTED_EDITABLE_CONTENT_TYPES = new Set([
+  'heading',
+  'text',
+  'button',
+  'form_label',
+  'placeholder',
+  'image',
+  'background_image'
+])
 const IMPORTED_FORM_STANDARD_FIELDS = new Set(['full_name', 'first_name', 'last_name', 'phone', 'email', 'message'])
 const IMPORTED_AMBIGUOUS_PERSON_NAME_ALIASES = [
   'name',
@@ -989,6 +1005,336 @@ function assignImportedFormIds(html = '', forms = []) {
 
     return `<form${attrsText} data-rstk-form-id="${escapeHtml(formId)}">`
   })
+}
+
+function getImportedEditableAttr(attrs = {}, key = '') {
+  const aliases = IMPORTED_EDITABLE_ATTR_ALIASES[key] || []
+  for (const alias of aliases) {
+    const value = cleanString(attrs[alias])
+    if (value) return value
+  }
+  return ''
+}
+
+function hasImportedEditableAttr(attrs = {}, key = '') {
+  return Boolean(getImportedEditableAttr(attrs, key))
+}
+
+function collectImportedEditableIds(html = '') {
+  const ids = new Set()
+  const tagPattern = /<[a-z][\w:-]*\b([^>]*)>/gi
+  let match
+  while ((match = tagPattern.exec(String(html || '')))) {
+    const id = getImportedEditableAttr(parseHtmlAttributes(match[1] || ''), 'id')
+    if (id) ids.add(id)
+  }
+  return ids
+}
+
+function normalizeImportedEditableContentType(value = '') {
+  const type = cleanString(value).toLowerCase().replace(/[-\s]+/g, '_')
+  return IMPORTED_EDITABLE_CONTENT_TYPES.has(type) ? type : ''
+}
+
+function makeImportedEditableId(type = 'text', label = '', usedIds = new Set()) {
+  const base = normalizeImportedFieldKey(`${type}_${label || 'elemento'}`, `${type}_elemento`).slice(0, 72)
+  let candidate = base
+  let index = 2
+  while (usedIds.has(candidate)) {
+    candidate = `${base}_${index}`
+    index += 1
+  }
+  usedIds.add(candidate)
+  return candidate
+}
+
+function buildImportedEditableAttributes(attrsText = '', { type = 'text', label = '', usedIds = new Set() } = {}) {
+  const attrs = parseHtmlAttributes(attrsText)
+  const additions = []
+  const normalizedType = normalizeImportedEditableContentType(type) || 'text'
+  const normalizedLabel = limitString(stripHtmlTags(label) || attrs.alt || attrs.placeholder || attrs.name || attrs.id || normalizedType, 80)
+
+  if (!hasImportedEditableAttr(attrs, 'editable')) additions.push('data-rstk-editable="true"')
+  if (!hasImportedEditableAttr(attrs, 'type')) additions.push(`data-rstk-edit-type="${escapeHtml(normalizedType)}"`)
+  if (!hasImportedEditableAttr(attrs, 'label')) additions.push(`data-rstk-label="${escapeHtml(normalizedLabel)}"`)
+  if (!hasImportedEditableAttr(attrs, 'id')) {
+    additions.push(`data-rstk-edit-id="${escapeHtml(makeImportedEditableId(normalizedType, normalizedLabel, usedIds))}"`)
+  }
+
+  return additions.length ? ` ${additions.join(' ')}` : ''
+}
+
+function buildImportedSectionAttributes(attrsText = '', { label = '' } = {}) {
+  const attrs = parseHtmlAttributes(attrsText)
+  const additions = []
+  const normalizedLabel = limitString(stripHtmlTags(label) || attrs.id || attrs.class || 'Seccion', 80)
+
+  if (!hasImportedEditableAttr(attrs, 'section')) additions.push(`data-rstk-section="${escapeHtml(normalizedLabel)}"`)
+  if (!hasImportedEditableAttr(attrs, 'label')) additions.push(`data-rstk-label="${escapeHtml(normalizedLabel)}"`)
+
+  return additions.length ? ` ${additions.join(' ')}` : ''
+}
+
+function addImportedEditableAttributesToTag(tagName = 'div', attrsText = '', selfClose = '', options = {}) {
+  return `<${tagName}${attrsText}${buildImportedEditableAttributes(attrsText, options)}${selfClose ? ' /' : ''}>`
+}
+
+function addImportedSectionAttributesToTag(tagName = 'section', attrsText = '', selfClose = '', options = {}) {
+  return `<${tagName}${attrsText}${buildImportedSectionAttributes(attrsText, options)}${selfClose ? ' /' : ''}>`
+}
+
+function isSimpleEditableTextHtml(innerHtml = '') {
+  const text = stripHtmlTags(innerHtml)
+  if (!text || text.length > 700) return false
+  return !/<(script|style|form|fieldset|input|textarea|select|option|button|a|img|picture|svg|video|iframe|table|ul|ol|li|section|article|header|footer|main|div)\b/i.test(innerHtml)
+}
+
+function getImportedElementLabel(tagName = '', attrs = {}, fallback = '') {
+  return limitString(
+    attrs['aria-label'] ||
+    attrs.alt ||
+    attrs.placeholder ||
+    attrs.value ||
+    attrs.name ||
+    attrs.id ||
+    attrs.class ||
+    fallback ||
+    tagName,
+    80
+  )
+}
+
+function getImportedTextEditType(tagName = '', attrs = {}) {
+  const tag = cleanString(tagName).toLowerCase()
+  if (/^h[1-6]$/.test(tag)) return 'heading'
+  if (tag === 'label') return 'form_label'
+  if (tag === 'button') return 'button'
+  if (tag === 'a') {
+    const buttonHint = `${attrs.role || ''} ${attrs.class || ''} ${attrs.id || ''}`.toLowerCase()
+    return /\b(button|btn|cta|call|action)\b/.test(buttonHint) ? 'button' : 'text'
+  }
+  return 'text'
+}
+
+function annotateImportedTextTags(html = '', usedIds = new Set()) {
+  return String(html || '').replace(/<(h[1-6]|p|label|button|a)\b([^>]*)>([\s\S]*?)<\/\1>/gi, (match, tagName, attrsText = '', innerHtml = '') => {
+    if (!isSimpleEditableTextHtml(innerHtml)) return match
+    const attrs = parseHtmlAttributes(attrsText)
+    const openTag = addImportedEditableAttributesToTag(tagName, attrsText, '', {
+      type: getImportedTextEditType(tagName, attrs),
+      label: getImportedElementLabel(tagName, attrs, stripHtmlTags(innerHtml)),
+      usedIds
+    })
+    return `${openTag}${innerHtml}</${tagName}>`
+  })
+}
+
+function annotateImportedInputs(html = '', usedIds = new Set()) {
+  let nextHtml = String(html || '').replace(/<input\b([^>]*?)\s*(\/?)>/gi, (match, attrsText = '', selfClose = '') => {
+    const attrs = parseHtmlAttributes(attrsText)
+    const type = cleanString(attrs.type || 'text').toLowerCase()
+    if (['hidden', 'reset', 'file', 'checkbox', 'radio'].includes(type)) return match
+    if (['submit', 'button'].includes(type)) {
+      return addImportedEditableAttributesToTag('input', attrsText, selfClose, {
+        type: 'button',
+        label: getImportedElementLabel('input', attrs, attrs.value || 'Boton'),
+        usedIds
+      })
+    }
+    if (!cleanString(attrs.placeholder)) return match
+    return addImportedEditableAttributesToTag('input', attrsText, selfClose, {
+      type: 'placeholder',
+      label: getImportedElementLabel('input', attrs, attrs.placeholder),
+      usedIds
+    })
+  })
+
+  nextHtml = nextHtml.replace(/<textarea\b([^>]*)>([\s\S]*?)<\/textarea>/gi, (match, attrsText = '', innerHtml = '') => {
+    const attrs = parseHtmlAttributes(attrsText)
+    if (!cleanString(attrs.placeholder)) return match
+    const openTag = addImportedEditableAttributesToTag('textarea', attrsText, '', {
+      type: 'placeholder',
+      label: getImportedElementLabel('textarea', attrs, attrs.placeholder),
+      usedIds
+    })
+    return `${openTag}${innerHtml}</textarea>`
+  })
+
+  return nextHtml
+}
+
+function annotateImportedImages(html = '', usedIds = new Set()) {
+  return String(html || '').replace(/<img\b([^>]*?)\s*(\/?)>/gi, (match, attrsText = '', selfClose = '') => {
+    const attrs = parseHtmlAttributes(attrsText)
+    if (!cleanString(attrs.src)) return match
+    return addImportedEditableAttributesToTag('img', attrsText, selfClose, {
+      type: 'image',
+      label: getImportedElementLabel('img', attrs, 'Imagen'),
+      usedIds
+    })
+  })
+}
+
+function annotateImportedBackgroundImages(html = '', usedIds = new Set()) {
+  return String(html || '').replace(/<([a-z][\w:-]*)\b([^>]*)>/gi, (match, tagName, attrsText = '') => {
+    const tag = cleanString(tagName).toLowerCase()
+    if (['img', 'html', 'head', 'meta', 'link', 'style', 'script'].includes(tag)) return match
+    const attrs = parseHtmlAttributes(attrsText)
+    if (!cleanString(attrs.style) || !/background(?:-image)?\s*:/i.test(attrs.style) || !/url\s*\(/i.test(attrs.style)) return match
+    if (hasImportedEditableAttr(attrs, 'type')) return match
+    return addImportedEditableAttributesToTag(tagName, attrsText, '', {
+      type: 'background_image',
+      label: getImportedElementLabel(tagName, attrs, 'Imagen de fondo'),
+      usedIds
+    })
+  })
+}
+
+function annotateImportedSections(html = '') {
+  return String(html || '').replace(/<(section|header|main|footer|article|div)\b([^>]*)>/gi, (match, tagName, attrsText = '') => {
+    const attrs = parseHtmlAttributes(attrsText)
+    const tag = cleanString(tagName).toLowerCase()
+    const classHint = `${attrs.id || ''} ${attrs.class || ''}`.toLowerCase()
+    const shouldMark = tag !== 'div' || /\b(hero|section|container|wrapper|banner|features|services|contact|form|cta|footer|header|main)\b/.test(classHint)
+    if (!shouldMark) return match
+    return addImportedSectionAttributesToTag(tagName, attrsText, '', {
+      label: getImportedElementLabel(tagName, attrs, tag === 'div' ? 'Seccion' : tag)
+    })
+  })
+}
+
+function annotateImportedEditableHtml(html = '') {
+  const usedIds = collectImportedEditableIds(html)
+  let nextHtml = annotateImportedSections(html)
+  nextHtml = annotateImportedTextTags(nextHtml, usedIds)
+  nextHtml = annotateImportedInputs(nextHtml, usedIds)
+  nextHtml = annotateImportedImages(nextHtml, usedIds)
+  nextHtml = annotateImportedBackgroundImages(nextHtml, usedIds)
+  return nextHtml
+}
+
+function hasImportedEditId(attrsText = '', editId = '') {
+  return getImportedEditableAttr(parseHtmlAttributes(attrsText), 'id') === editId
+}
+
+function getImportedEditTypeFromAttrs(attrsText = '') {
+  return normalizeImportedEditableContentType(getImportedEditableAttr(parseHtmlAttributes(attrsText), 'type'))
+}
+
+function setHtmlAttribute(openingTag = '', _attrsText = '', attrName = '', value = '') {
+  const escapedValue = escapeHtml(value)
+  const attrPattern = new RegExp(`(\\s${escapeRegExp(attrName)}\\s*=\\s*)("[^"]*"|'[^']*'|[^\\s>]+)`, 'i')
+  if (attrPattern.test(openingTag)) {
+    return openingTag.replace(attrPattern, (_match, prefix) => `${prefix}"${escapedValue}"`)
+  }
+
+  const insertAt = openingTag.endsWith('/>') ? openingTag.length - 2 : openingTag.length - 1
+  const spacer = openingTag[insertAt - 1] === ' ' ? '' : ' '
+  return `${openingTag.slice(0, insertAt)}${spacer}${attrName}="${escapedValue}"${openingTag.slice(insertAt)}`
+}
+
+function normalizeImportedEditableImageUrl(value = '') {
+  const raw = cleanString(value)
+  if (!raw) {
+    const error = new Error('La URL de la imagen esta vacia')
+    error.status = 400
+    throw error
+  }
+  if (raw.startsWith('/')) return raw
+  const absoluteUrl = safeUrl(raw)
+  if (absoluteUrl) return absoluteUrl
+  const error = new Error('Usa una URL completa de imagen con http o https')
+  error.status = 400
+  throw error
+}
+
+function setStyleBackgroundUrl(style = '', url = '') {
+  const nextUrl = normalizeImportedEditableImageUrl(url)
+  const safeBackground = `url("${nextUrl.replace(/"/g, '%22')}")`
+  if (/url\s*\(/i.test(style)) {
+    return String(style || '').replace(/url\s*\(\s*(?:"[^"]*"|'[^']*'|[^)]*)\s*\)/i, safeBackground)
+  }
+  const prefix = cleanString(style).replace(/;?\s*$/, '')
+  return `${prefix}${prefix ? '; ' : ''}background-image: ${safeBackground}`
+}
+
+function getImportedEditableTextValue(input = {}) {
+  const value = limitString(String(input.value ?? input.text ?? input.url ?? ''), 5000).trim()
+  if (!value) {
+    const error = new Error('El contenido nuevo esta vacio')
+    error.status = 400
+    throw error
+  }
+  return value
+}
+
+function applyImportedEditableContentUpdate(html = '', input = {}) {
+  const editId = cleanString(input.editId || input.edit_id)
+  const editType = normalizeImportedEditableContentType(input.editType || input.edit_type)
+  const value = getImportedEditableTextValue(input)
+
+  if (!editId || !editType) {
+    const error = new Error('Seleccion invalida para editar contenido')
+    error.status = 400
+    throw error
+  }
+
+  let updated = false
+  let nextHtml = annotateImportedEditableHtml(html)
+
+  if (editType === 'image') {
+    const imageUrl = normalizeImportedEditableImageUrl(value)
+    nextHtml = nextHtml.replace(/<img\b([^>]*?)\s*(\/?)>/gi, (match, attrsText = '') => {
+      if (updated || !hasImportedEditId(attrsText, editId) || getImportedEditTypeFromAttrs(attrsText) !== 'image') return match
+      updated = true
+      return setHtmlAttribute(match, attrsText, 'src', imageUrl)
+    })
+  } else if (editType === 'background_image') {
+    nextHtml = nextHtml.replace(/<([a-z][\w:-]*)\b([^>]*)>/gi, (match, _tagName, attrsText = '') => {
+      if (updated || !hasImportedEditId(attrsText, editId) || getImportedEditTypeFromAttrs(attrsText) !== 'background_image') return match
+      const attrs = parseHtmlAttributes(attrsText)
+      updated = true
+      return setHtmlAttribute(match, attrsText, 'style', setStyleBackgroundUrl(attrs.style || '', value))
+    })
+  } else if (editType === 'placeholder') {
+    nextHtml = nextHtml.replace(/<input\b([^>]*?)\s*(\/?)>/gi, (match, attrsText = '') => {
+      if (updated || !hasImportedEditId(attrsText, editId) || getImportedEditTypeFromAttrs(attrsText) !== 'placeholder') return match
+      updated = true
+      return setHtmlAttribute(match, attrsText, 'placeholder', value)
+    })
+    nextHtml = nextHtml.replace(/<textarea\b([^>]*)>/gi, (match, attrsText = '') => {
+      if (updated || !hasImportedEditId(attrsText, editId) || getImportedEditTypeFromAttrs(attrsText) !== 'placeholder') return match
+      updated = true
+      return setHtmlAttribute(match, attrsText, 'placeholder', value)
+    })
+  } else if (editType === 'button') {
+    nextHtml = nextHtml.replace(/<input\b([^>]*?)\s*(\/?)>/gi, (match, attrsText = '') => {
+      if (updated || !hasImportedEditId(attrsText, editId) || getImportedEditTypeFromAttrs(attrsText) !== 'button') return match
+      updated = true
+      return setHtmlAttribute(match, attrsText, 'value', value)
+    })
+    nextHtml = nextHtml.replace(/<(button|a)\b([^>]*)>([\s\S]*?)<\/\1>/gi, (match, tagName, attrsText = '') => {
+      if (updated || !hasImportedEditId(attrsText, editId) || getImportedEditTypeFromAttrs(attrsText) !== 'button') return match
+      updated = true
+      return `<${tagName}${attrsText}>${escapeHtml(value)}</${tagName}>`
+    })
+  } else {
+    nextHtml = nextHtml.replace(/<(h[1-6]|p|label|a|span|strong|em|small|li)\b([^>]*)>([\s\S]*?)<\/\1>/gi, (match, tagName, attrsText = '') => {
+      if (updated || !hasImportedEditId(attrsText, editId)) return match
+      const currentType = getImportedEditTypeFromAttrs(attrsText)
+      if (currentType && currentType !== editType) return match
+      updated = true
+      return `<${tagName}${attrsText}>${escapeHtml(value)}</${tagName}>`
+    })
+  }
+
+  if (!updated) {
+    const error = new Error('No encontramos ese elemento editable en la pagina')
+    error.status = 404
+    throw error
+  }
+
+  return nextHtml
 }
 
 function inferImportedFieldDestination(field = {}) {
@@ -3313,6 +3659,15 @@ Reglas duras:
 - No metas tarjetas dentro de tarjetas sin necesidad; usa secciones limpias, buena jerarquia y aire visual.
 - Tipo solicitado: ${targetSiteType}.
 
+Marcado para edicion rapida:
+- Marca los elementos importantes que el usuario podria querer cambiar sin tocar codigo.
+- Usa data-rstk-editable="true", data-rstk-edit-type, data-rstk-label y data-rstk-edit-id.
+- Cuando puedas, agrega tambien aliases data-ristak-* o data-ristack-* para compatibilidad.
+- Tipos permitidos: heading, text, button, form_label, placeholder, image, background_image.
+- Marca titulares, subtitulares, parrafos breves, botones, labels de formularios, placeholders, imagenes, logos y elementos con fondo de imagen.
+- Marca secciones principales con data-rstk-section y un nombre claro.
+- No envuelvas textos editables en demasiadas etiquetas. Deja un elemento claro para cada texto importante.
+
 Convenciones de formularios para Ristak:
 - Cada formulario debe tener data-rstk-form="lead_capture" y method="post".
 - Cada campo debe tener id, name, label visible y autocomplete cuando aplique.
@@ -3349,7 +3704,7 @@ ${editMode ? `
 Modo edicion:
 - Recibiras el HTML actual y la peticion del usuario.
 - Devuelve el HTML completo actualizado, no solo un fragmento.
-- Conserva formularios, ids, name, data-rstk-form, data-rstk-form-id, data-rstk-field, data-ristak-field y data-rstk-custom-field cuando el usuario no pida cambiarlos.
+- Conserva formularios, ids, name, data-rstk-form, data-rstk-form-id, data-rstk-field, data-ristak-field, data-rstk-custom-field, data-rstk-edit-id, data-rstk-editable, data-rstk-edit-type, data-rstk-label, data-rstk-section y sus aliases data-ristak-* / data-ristack-* cuando el usuario no pida cambiarlos.
 - Si cambias campos, deja convenciones claras para que Ristak pueda redetectar y mapear.
 - Puedes cambiar titulo, imagenes, orden de secciones, colores, layout, copy y campos segun lo que pida el usuario.
 ` : `
@@ -4019,6 +4374,7 @@ async function prepareImportedZipContent({ filename, fileBase64, siteId, importI
       })))
       let pageHtml = assignImportedFormIds(sanitized.html, pageForms)
       pageHtml = rewriteImportedHtmlReferences(pageHtml, file.assetPath, siteId, availablePaths)
+      pageHtml = annotateImportedEditableHtml(pageHtml)
 
       for (const item of sanitized.report) {
         securityReport.push(`${file.assetPath}: ${item}`)
@@ -4106,8 +4462,28 @@ export async function getImportedSiteBySiteId(siteId) {
   if (!row) return null
   let detectedForms = parseJson(row.detected_forms_json, [])
   let formMappings = parseJson(row.form_mappings_json, [])
-  const htmlSanitized = row.html_sanitized || ''
+  let htmlOriginal = row.html_original || ''
+  let htmlSanitized = row.html_sanitized || ''
   const status = row.status || 'mapping_pending'
+
+  if (htmlSanitized) {
+    const annotatedHtml = annotateImportedEditableHtml(htmlSanitized)
+    if (annotatedHtml !== htmlSanitized) {
+      htmlSanitized = annotatedHtml
+      htmlOriginal = htmlOriginal ? annotateImportedEditableHtml(htmlOriginal) : htmlSanitized
+      await db.run(`
+        UPDATE public_site_imports SET
+          html_original = ?,
+          html_sanitized = ?,
+          updated_at = CURRENT_TIMESTAMP
+        WHERE site_id = ?
+      `, [
+        htmlOriginal,
+        htmlSanitized,
+        siteId
+      ])
+    }
+  }
 
   if (status === 'mapping_pending' && htmlSanitized) {
     const redetectedForms = detectImportedForms(htmlSanitized)
@@ -4139,7 +4515,7 @@ export async function getImportedSiteBySiteId(siteId) {
     siteId: row.site_id,
     originalFilename: row.original_filename || '',
     importType: row.import_type || 'html',
-    htmlOriginal: row.html_original || '',
+    htmlOriginal,
     htmlSanitized,
     detectedForms,
     formMappings,
@@ -4208,7 +4584,7 @@ export async function createImportedSiteFromHtml(input = {}) {
       importType: 'html',
       rawHtml,
       sanitized: {
-        html: assignImportedFormIds(sanitized.html, detectedForms),
+        html: annotateImportedEditableHtml(assignImportedFormIds(sanitized.html, detectedForms)),
         report: sanitized.report
       },
       detectedForms,
@@ -4330,7 +4706,7 @@ async function replaceImportedSiteHtml(siteId, input = {}) {
 
   const sanitized = sanitizeImportedHtml(rawHtml)
   const detectedForms = namespaceImportedPageForms(detectImportedForms(sanitized.html), '', new Set())
-  const htmlSanitized = assignImportedFormIds(sanitized.html, detectedForms)
+  const htmlSanitized = annotateImportedEditableHtml(assignImportedFormIds(sanitized.html, detectedForms))
   const nextMappings = mergeImportedFormMappings(
     currentImport.formMappings,
     buildDefaultImportedFormMappings(detectedForms)
@@ -4350,6 +4726,69 @@ async function replaceImportedSiteHtml(siteId, input = {}) {
     WHERE site_id = ?
   `, [
     rawHtml,
+    htmlSanitized,
+    jsonString(detectedForms),
+    jsonString(nextMappings),
+    jsonString(sanitized.report),
+    siteId
+  ])
+
+  await db.run(`
+    UPDATE public_sites SET
+      title = ?,
+      description = ?,
+      updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `, [
+    publicTitle,
+    publicDescription || null,
+    siteId
+  ])
+
+  return {
+    site: await getSite(siteId, { includeBlocks: true, includeSubmissions: true }),
+    import: await getImportedSiteBySiteId(siteId)
+  }
+}
+
+export async function updateImportedSiteEditableContent(siteId, input = {}) {
+  const currentImport = await getImportedSiteBySiteId(siteId)
+  if (!currentImport) {
+    const error = new Error('Importacion no encontrada')
+    error.status = 404
+    throw error
+  }
+
+  if (currentImport.importType !== 'html') {
+    const error = new Error('La edicion rapida funciona con paginas HTML de un solo archivo. Para ZIP, sube una nueva version del archivo.')
+    error.status = 400
+    throw error
+  }
+
+  const currentHtml = currentImport.htmlSanitized || currentImport.htmlOriginal || ''
+  const editedHtml = applyImportedEditableContentUpdate(currentHtml, input)
+  const sanitized = sanitizeImportedHtml(editedHtml)
+  const detectedForms = namespaceImportedPageForms(detectImportedForms(sanitized.html), '', new Set())
+  const htmlSanitized = annotateImportedEditableHtml(assignImportedFormIds(sanitized.html, detectedForms))
+  const nextMappings = mergeImportedFormMappings(
+    currentImport.formMappings,
+    buildDefaultImportedFormMappings(detectedForms)
+  )
+  const publicTitle = getImportedHtmlTitle(htmlSanitized, 'Pagina importada')
+  const publicDescription = getImportedHtmlDescription(htmlSanitized, '')
+
+  await db.run(`
+    UPDATE public_site_imports SET
+      html_original = ?,
+      html_sanitized = ?,
+      detected_forms_json = ?,
+      form_mappings_json = ?,
+      security_report_json = ?,
+      status = 'mapping_pending',
+      updated_at = CURRENT_TIMESTAMP
+    WHERE site_id = ?
+  `, [
+    htmlSanitized,
     htmlSanitized,
     jsonString(detectedForms),
     jsonString(nextMappings),

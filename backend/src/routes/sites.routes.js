@@ -19,6 +19,7 @@ import {
   restoreBlocksHandler,
   submitPublicSiteHandler,
   updateBlockHandler,
+  updateImportedSiteEditableContentHandler,
   updateImportedSiteHtmlWithAIHandler,
   updateImportedSiteMappingHandler,
   updateSiteHandler,
@@ -47,6 +48,7 @@ router.get('/:siteId', getSiteHandler)
 router.put('/:siteId', updateSiteHandler)
 router.delete('/:siteId', deleteSiteHandler)
 router.post('/:siteId/ai-edit-html', updateImportedSiteHtmlWithAIHandler)
+router.patch('/:siteId/import-content', updateImportedSiteEditableContentHandler)
 router.put('/:siteId/import-mapping', updateImportedSiteMappingHandler)
 router.post('/:siteId/verify-domain', verifySiteDomainHandler)
 router.post('/:siteId/blocks', createBlockHandler)

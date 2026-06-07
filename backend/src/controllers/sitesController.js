@@ -23,6 +23,7 @@ import {
   resolvePublicSiteForHost,
   restoreBlocks,
   updateBlock,
+  updateImportedSiteEditableContent,
   updateImportedSiteHtmlWithAI,
   updateImportedSiteFormMappings,
   updateSite
@@ -100,6 +101,17 @@ export async function updateImportedSiteHtmlWithAIHandler(req, res) {
     logger.error(`Error editando HTML importado con IA: ${error.message}`)
     error.status = error.status || 400
     sendError(res, error, 'Error editando HTML con IA')
+  }
+}
+
+export async function updateImportedSiteEditableContentHandler(req, res) {
+  try {
+    const result = await updateImportedSiteEditableContent(req.params.siteId, req.body || {})
+    res.json({ success: true, data: result })
+  } catch (error) {
+    logger.error(`Error editando contenido HTML importado: ${error.message}`)
+    error.status = error.status || 400
+    sendError(res, error, 'Error editando contenido HTML')
   }
 }
 
