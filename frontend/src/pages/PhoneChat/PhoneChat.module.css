@@ -2586,6 +2586,38 @@
   -webkit-touch-callout: default;
 }
 
+.messageBubbleActionTarget {
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.messageBubbleActionTarget * {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.messageStarBadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: flex-end;
+  gap: 2px;
+  min-width: 14px;
+  min-height: 14px;
+  margin: 3px 0 -1px 8px;
+  color: #6b7f72;
+  line-height: 1;
+}
+
+.messageRow_outbound .messageStarBadge {
+  color: var(--phone-chat-outbound-meta);
+}
+
 .messageRow_outbound .messageBubble {
   color: var(--phone-chat-outbound-text);
   background: var(--phone-chat-outbound);
@@ -3117,6 +3149,228 @@
   background: rgba(147, 231, 182, 0.16);
 }
 
+.messageActionOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 94;
+  pointer-events: auto;
+}
+
+.messageActionBackdrop {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: rgba(15, 23, 42, 0.18);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.messageActionContent {
+  position: absolute;
+  top: var(--message-action-top);
+  left: var(--message-action-left);
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  width: var(--message-action-width);
+  max-width: calc(100vw - 24px);
+  animation: messageActionContentIn 150ms cubic-bezier(0.2, 0.82, 0.18, 1);
+}
+
+.messageActionContentAbove {
+  flex-direction: column-reverse;
+}
+
+.messageActionContentAlignEnd {
+  align-items: flex-end;
+}
+
+.messageActionPreviewBubble {
+  width: min(var(--message-action-bubble-width), var(--message-action-width));
+  max-width: var(--message-action-width);
+  transform: translateY(-8px) scale(1.015);
+  animation: messageActionBubbleLift 170ms cubic-bezier(0.2, 0.82, 0.18, 1);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.16);
+  pointer-events: none;
+}
+
+.messageActionContentAlignEnd .messageActionPreviewBubble {
+  margin-left: auto;
+}
+
+.messageActionPreviewOutbound {
+  color: var(--phone-chat-outbound-text);
+  background: var(--phone-chat-outbound);
+}
+
+.messageActionPreviewBubble.messageBubbleScheduled {
+  border: 1.5px dashed color-mix(in srgb, var(--phone-chat-outbound) 62%, #064e3b 38%);
+  background: var(--phone-chat-outbound);
+}
+
+.messageActionAttachmentPreview {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 7px 9px;
+  border-radius: 9px;
+  color: var(--phone-chat-text);
+  background: rgba(15, 23, 42, 0.07);
+  font-size: 13px;
+  font-weight: 760;
+  line-height: 1.15;
+  letter-spacing: 0;
+}
+
+.messageActionPreviewOutbound .messageActionAttachmentPreview {
+  color: var(--phone-chat-outbound-text);
+  background: rgba(8, 61, 37, 0.1);
+}
+
+.messageActionPreviewMeta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  align-self: flex-end;
+  gap: 4px;
+  min-width: 0;
+  margin-top: 3px;
+}
+
+.messageActionPreviewMeta .messageMeta {
+  margin: 0;
+}
+
+.messageActionMenu {
+  display: grid;
+  width: min(246px, calc(100vw - 24px));
+  overflow: hidden;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.18);
+}
+
+.messageActionMenu button {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  min-height: 43px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 0;
+  color: #111827;
+  background: transparent;
+  font-size: 15px;
+  font-weight: 720;
+  line-height: 1;
+  letter-spacing: 0;
+  text-align: left;
+}
+
+.messageActionMenu button + button {
+  border-top: 1px solid rgba(15, 23, 42, 0.07);
+}
+
+.messageActionMenu button:active {
+  background: rgba(15, 23, 42, 0.06);
+}
+
+.messageActionMenu button:disabled {
+  opacity: 0.62;
+  cursor: default;
+}
+
+.messageActionMenu svg {
+  justify-self: center;
+  color: currentColor;
+  stroke-width: 2.35;
+}
+
+.messageActionDanger {
+  color: #b91c1c !important;
+}
+
+.messageActionDivider {
+  display: block;
+  width: 100%;
+  height: 8px;
+  border-top: 1px solid rgba(15, 23, 42, 0.08);
+  background: rgba(15, 23, 42, 0.035);
+}
+
+.phoneChatPage[data-phone-chat-tone="dark"] .messageActionBackdrop {
+  background: rgba(0, 0, 0, 0.34);
+}
+
+.phoneChatPage[data-phone-chat-tone="dark"] .messageActionPreviewBubble {
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.46);
+}
+
+.phoneChatPage[data-phone-chat-tone="dark"] .messageActionPreviewBubble.messageBubbleScheduled {
+  border-color: color-mix(in srgb, var(--phone-chat-outbound) 54%, #83f3b1 46%);
+}
+
+.phoneChatPage[data-phone-chat-tone="dark"] .messageActionAttachmentPreview {
+  color: var(--phone-chat-text);
+  background: rgba(233, 237, 239, 0.1);
+}
+
+.phoneChatPage[data-phone-chat-tone="dark"] .messageActionMenu {
+  border-color: rgba(233, 237, 239, 0.1);
+  background: rgba(32, 44, 51, 0.97);
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.48);
+}
+
+.phoneChatPage[data-phone-chat-tone="dark"] .messageActionMenu button {
+  color: var(--phone-chat-text);
+}
+
+.phoneChatPage[data-phone-chat-tone="dark"] .messageActionMenu button + button,
+.phoneChatPage[data-phone-chat-tone="dark"] .messageActionDivider {
+  border-color: rgba(233, 237, 239, 0.1);
+}
+
+.phoneChatPage[data-phone-chat-tone="dark"] .messageActionDivider {
+  background: rgba(233, 237, 239, 0.05);
+}
+
+.phoneChatPage[data-phone-chat-tone="dark"] .messageActionDanger {
+  color: #fca5a5 !important;
+}
+
+@keyframes messageActionContentIn {
+  from {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes messageActionBubbleLift {
+  from {
+    opacity: 0.72;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(-8px) scale(1.015);
+  }
+}
+
 .messageErrorIcon {
   color: #dc2626;
 }
@@ -3270,6 +3524,69 @@
 
 .aiSuggestionBar button:disabled {
   opacity: 0.55;
+}
+
+.replyPreviewBar {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) 30px;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin: 6px 9px 0 46px;
+  padding: 7px 8px 7px 9px;
+  border-left: 3px solid var(--phone-chat-accent);
+  border-radius: 10px;
+  color: var(--phone-chat-text);
+  background: color-mix(in srgb, var(--phone-chat-surface) 92%, var(--phone-chat-accent) 8%);
+}
+
+.replyPreviewIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  color: var(--phone-chat-primary);
+  background: rgba(var(--phone-chat-primary-rgb), 0.08);
+}
+
+.replyPreviewText {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.replyPreviewText strong {
+  color: var(--phone-chat-text);
+  font-size: 12px;
+  font-weight: 860;
+  line-height: 1.1;
+  letter-spacing: 0;
+}
+
+.replyPreviewText small {
+  overflow: hidden;
+  color: var(--phone-chat-muted);
+  font-size: 12px;
+  font-weight: 640;
+  line-height: 1.2;
+  letter-spacing: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.replyPreviewBar button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  color: var(--phone-chat-muted);
+  background: transparent;
 }
 
 .composer {

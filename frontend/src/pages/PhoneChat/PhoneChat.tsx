@@ -15,12 +15,15 @@ import {
   CircleAlert,
   CircleDollarSign,
   Clock,
+  Copy,
   CreditCard,
   DollarSign,
   FileText,
+  Forward,
   Globe2,
   Image as ImageIcon,
   Layers,
+  Languages,
   Link2,
   Loader2,
   Mail,
@@ -35,13 +38,16 @@ import {
   Pause,
   Pencil,
   Phone,
+  Pin,
   Play,
   Plus,
   ReceiptText,
+  Reply,
   Search,
   Send,
   Sparkles,
   Smartphone,
+  Star,
   Sun,
   Tag,
   Trash2,
@@ -92,6 +98,7 @@ const SCROLLABLE_CHAT_SELECTOR = '[data-phone-chat-scrollable="true"], [data-pho
 const CHAT_READ_STATE_KEY = 'ristak_phone_chat_read_state_v1'
 const CHAT_ARCHIVED_STATE_KEY = 'ristak_phone_chat_archived_state_v1'
 const CHAT_MUTED_STATE_KEY = 'ristak_phone_chat_muted_state_v1'
+const CHAT_STARRED_MESSAGES_KEY = 'ristak_phone_chat_starred_messages_v1'
 const PAYMENT_BANK_CLABES_CONFIG_KEY = 'payment_bank_clabes'
 const CONTACT_INFO_CUSTOM_FIELDS_CONFIG_KEY = 'mobile_chat_contact_info_custom_field_ids'
 const AI_AGENT_CHAT_ID = 'ristak-ai-agent-mobile-chat'
@@ -106,6 +113,8 @@ const MESSAGE_INFO_SWIPE_ACTION_WIDTH = 46
 const MESSAGE_INFO_SWIPE_OPEN_THRESHOLD = 38
 const MESSAGE_INFO_SWIPE_ACTIVATE_THRESHOLD = 9
 const MESSAGE_INFO_SWIPE_RENDER_STEP = 2
+const MESSAGE_ACTION_LONG_PRESS_MS = 460
+const MESSAGE_ACTION_MOVE_TOLERANCE = 9
 const MAX_VOICE_MESSAGE_BYTES = 16 * 1024 * 1024
 const MAX_DOCUMENT_ATTACHMENT_BYTES = 20 * 1024 * 1024
 const DOCUMENT_ATTACHMENT_ACCEPT = [
@@ -175,6 +184,9 @@ type PhotoPickDestination = 'chat' | 'cameraShare'
 type ContactInfoDetailPanel = 'payments' | 'appointments' | null
 type ContactInfoArchiveTab = 'media' | 'links' | 'documents'
 type ChatAttachmentType = 'image' | 'audio' | 'video' | 'document' | 'file'
+type MessageActionMenuMode = 'main' | 'more'
+type MessageActionMenuPlacement = 'above' | 'below'
+type MessageActionMenuAlign = 'start' | 'end'
 type SendMessageOptions = {
   textOverride?: string
   preserveComposer?: boolean
@@ -222,6 +234,28 @@ interface MessageInfoSwipeGesture {
   offset: number
   lastRenderedOffset: number
   active: boolean
+}
+
+interface MessageActionMenuState {
+  messageId: string
+  mode: MessageActionMenuMode
+  rect: {
+    top: number
+    left: number
+    width: number
+    bubbleWidth: number
+    height: number
+  }
+  placement: MessageActionMenuPlacement
+  align: MessageActionMenuAlign
+}
+
+interface MessageActionPressGesture {
+  messageId: string
+  pointerId: number
+  startX: number
+  startY: number
+  timerId: number
 }
 
 const SUCCESS_PAYMENT_STATUSES = new Set(['succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success'])
@@ -680,6 +714,20 @@ function createDefaultScheduleDraft(): ScheduleDraft {
   const date = new Date(Date.now() + 15 * 60 * 1000)
   const minutes = date.getMinutes()
   date.setMinutes(minutes + ((5 - (minutes % 5)) % 5), 0, 0)
+
+  const hour24 = date.getHours()
+  const hour12 = hour24 % 12 || 12
+  return {
+    date: formatDateInputValue(date),
+    hour: String(hour12),
+    minute: padTwoDigits(date.getMinutes()),
+    period: hour24 >= 12 ? 'PM' : 'AM'
+  }
+}
+
+function createScheduleDraftFromDate(value?: string | null): ScheduleDraft {
+  const date = value ? new Date(value) : null
+  if (!date || Number.isNaN(date.getTime())) return createDefaultScheduleDraft()
 
   const hour24 = date.getHours()
   const hour12 = hour24 % 12 || 12
@@ -1360,6 +1408,35 @@ function getMessageTypeLabel(type = '', fallback = 'Mensaje de WhatsApp') {
   if (normalized.includes('postback')) return 'Respuesta rápida'
   if (normalized.includes('reaction')) return 'Reacción'
   return fallback
+}
+
+function getMessageAttachmentActionLabel(message: ChatMessage) {
+  if (!message.attachment) return ''
+  return message.attachment.name || getMessageTypeLabel(message.attachment.type, 'Archivo')
+}
+
+function getMessageActionText(message: ChatMessage) {
+  const text = message.text.trim()
+  if (text) return text
+  return getMessageAttachmentActionLabel(message) || 'Mensaje'
+}
+
+async function copyTextToClipboard(text: string) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text)
+    return
+  }
+
+  const textarea = document.createElement('textarea')
+  textarea.value = text
+  textarea.setAttribute('readonly', '')
+  textarea.style.position = 'fixed'
+  textarea.style.left = '-9999px'
+  textarea.style.top = '0'
+  document.body.appendChild(textarea)
+  textarea.select()
+  document.execCommand('copy')
+  textarea.remove()
 }
 
 function getReadableValue(value?: string | number | null) {
@@ -2329,6 +2406,7 @@ export const PhoneChat: React.FC = () => {
   const [archivedViewOpen, setArchivedViewOpen] = useState(false)
   const [archivedChatIds, setArchivedChatIds] = useState<string[]>(() => readStoredChatIds(CHAT_ARCHIVED_STATE_KEY))
   const [mutedChatIds, setMutedChatIds] = useState<string[]>(() => readStoredChatIds(CHAT_MUTED_STATE_KEY))
+  const [starredMessageIds, setStarredMessageIds] = useState<string[]>(() => readStoredChatIds(CHAT_STARRED_MESSAGES_KEY))
   const [openSwipeChatId, setOpenSwipeChatId] = useState<string | null>(null)
   const [draggingSwipe, setDraggingSwipe] = useState<{ contactId: string; offset: number } | null>(null)
   const [closingSwipeChatId, setClosingSwipeChatId] = useState<string | null>(null)
@@ -2348,6 +2426,8 @@ export const PhoneChat: React.FC = () => {
   const [messageInfoOpen, setMessageInfoOpen] = useState(false)
   const [messageInfoMessageId, setMessageInfoMessageId] = useState<string | null>(null)
   const [draggingMessageInfoSwipe, setDraggingMessageInfoSwipe] = useState<{ messageId: string; offset: number } | null>(null)
+  const [messageActionMenu, setMessageActionMenu] = useState<MessageActionMenuState | null>(null)
+  const [replyingToMessageId, setReplyingToMessageId] = useState<string | null>(null)
   const [messageText, setMessageText] = useState('')
   const [draftAttachments, setDraftAttachments] = useState<MobileChatAttachment[]>([])
   const [cameraSharePhoto, setCameraSharePhoto] = useState<MobilePhotoAttachment | null>(null)
@@ -2367,8 +2447,10 @@ export const PhoneChat: React.FC = () => {
   const [messageAudioPlayback, setMessageAudioPlayback] = useState<Record<string, MessageAudioPlaybackState>>({})
   const [composerStatus, setComposerStatus] = useState<ComposerStatus>('idle')
   const [scheduleDraft, setScheduleDraft] = useState<ScheduleDraft>(() => createDefaultScheduleDraft())
+  const [scheduleEditingMessageId, setScheduleEditingMessageId] = useState<string | null>(null)
   const [scheduleError, setScheduleError] = useState('')
   const [schedulingMessage, setSchedulingMessage] = useState(false)
+  const [cancelingScheduledMessageId, setCancelingScheduledMessageId] = useState<string | null>(null)
   const [whatsappStatus, setWhatsappStatus] = useState<WhatsAppApiStatus | null>(null)
   const [calendars, setCalendars] = useState<Calendar[]>([])
   const [calendarsLoading, setCalendarsLoading] = useState(false)
@@ -2433,6 +2515,7 @@ export const PhoneChat: React.FC = () => {
     messagesLoading: false,
     count: 0
   })
+  const messageActionPressRef = useRef<MessageActionPressGesture | null>(null)
   const composerInputRef = useRef<HTMLDivElement | null>(null)
   const cameraShareCaptionRef = useRef<HTMLDivElement | null>(null)
   const cameraInputRef = useRef<HTMLInputElement | null>(null)
@@ -2621,6 +2704,14 @@ export const PhoneChat: React.FC = () => {
   const messageInfoMessage = useMemo(
     () => messageInfoMessageId ? messages.find((message) => message.id === messageInfoMessageId) || null : null,
     [messageInfoMessageId, messages]
+  )
+  const messageActionMenuMessage = useMemo(
+    () => messageActionMenu ? messages.find((message) => message.id === messageActionMenu.messageId) || null : null,
+    [messageActionMenu, messages]
+  )
+  const replyingToMessage = useMemo(
+    () => replyingToMessageId ? messages.find((message) => message.id === replyingToMessageId) || null : null,
+    [replyingToMessageId, messages]
   )
   const conversationMessageGroups = useMemo(() => {
     const groups: Array<{
@@ -2892,6 +2983,7 @@ export const PhoneChat: React.FC = () => {
   const hasChats = chats.length > 0
   const archivedChatIdSet = useMemo(() => new Set(archivedChatIds), [archivedChatIds])
   const mutedChatIdSet = useMemo(() => new Set(mutedChatIds), [mutedChatIds])
+  const starredMessageIdSet = useMemo(() => new Set(starredMessageIds), [starredMessageIds])
   const archivedChatCount = archivedChatIds.length
   const listBaseChats = useMemo(
     () => chats.filter((contact) => archivedViewOpen ? archivedChatIdSet.has(contact.id) : !archivedChatIdSet.has(contact.id)),
@@ -3729,6 +3821,42 @@ export const PhoneChat: React.FC = () => {
     setSavingCustomFieldId(null)
   }, [activeContactId])
 
+  useEffect(() => () => {
+    const gesture = messageActionPressRef.current
+    if (gesture) {
+      window.clearTimeout(gesture.timerId)
+      messageActionPressRef.current = null
+    }
+  }, [])
+
+  useEffect(() => {
+    const gesture = messageActionPressRef.current
+    if (gesture) {
+      window.clearTimeout(gesture.timerId)
+      messageActionPressRef.current = null
+    }
+    setMessageActionMenu(null)
+  }, [activeContactId, contactInfoOpen, conversationVisible, messageInfoOpen, sheet])
+
+  useEffect(() => {
+    if (messageActionMenu && !messageActionMenuMessage) {
+      setMessageActionMenu(null)
+    }
+  }, [messageActionMenu, messageActionMenuMessage])
+
+  useEffect(() => {
+    if (!messageActionMenu) return
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setMessageActionMenu(null)
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [messageActionMenu])
+
   useEffect(() => {
     if (accessState !== 'allowed') return
 
@@ -4156,6 +4284,7 @@ export const PhoneChat: React.FC = () => {
     const nextContact = ensureChatContact(contact)
     closeSwipeActions()
     handleCancelVoiceDraft()
+    clearMessageActionPress()
     markContactReadState(chatContact)
     startConversationBottomLock(nextContact.id)
     runConversationOpenBottomScrollSequence()
@@ -4168,6 +4297,9 @@ export const PhoneChat: React.FC = () => {
     setContactInfoOpen(false)
     setMessageInfoOpen(false)
     setMessageInfoMessageId(null)
+    setMessageActionMenu(null)
+    setReplyingToMessageId(null)
+    setScheduleEditingMessageId(null)
     messageInfoSwipeGestureRef.current = null
     setDraggingMessageInfoSwipe(null)
     setContactQuery('')
@@ -4178,6 +4310,7 @@ export const PhoneChat: React.FC = () => {
   const handleOpenAIAgentChat = () => {
     closeSwipeActions()
     handleCancelVoiceDraft()
+    clearMessageActionPress()
     startConversationBottomLock(AI_AGENT_CHAT_ID)
     runConversationOpenBottomScrollSequence()
     setActiveContactId(AI_AGENT_CHAT_ID)
@@ -4186,6 +4319,9 @@ export const PhoneChat: React.FC = () => {
     setContactInfoOpen(false)
     setMessageInfoOpen(false)
     setMessageInfoMessageId(null)
+    setMessageActionMenu(null)
+    setReplyingToMessageId(null)
+    setScheduleEditingMessageId(null)
     messageInfoSwipeGestureRef.current = null
     setDraggingMessageInfoSwipe(null)
     setContactQuery('')
@@ -4198,11 +4334,15 @@ export const PhoneChat: React.FC = () => {
     clearQueuedBottomScrolls()
     closeSwipeActions()
     handleCancelVoiceDraft()
+    clearMessageActionPress()
     setConversationOpen(false)
     actionSheetDismiss.requestClose()
     setContactInfoOpen(false)
     setMessageInfoOpen(false)
     setMessageInfoMessageId(null)
+    setMessageActionMenu(null)
+    setReplyingToMessageId(null)
+    setScheduleEditingMessageId(null)
     messageInfoSwipeGestureRef.current = null
     setDraggingMessageInfoSwipe(null)
     setDraftAttachments([])
@@ -4512,6 +4652,200 @@ export const PhoneChat: React.FC = () => {
     if (event.key !== 'Enter' && event.key !== ' ') return
     event.preventDefault()
     action()
+  }
+
+  const clearMessageActionPress = useCallback(() => {
+    const gesture = messageActionPressRef.current
+    if (!gesture) return
+
+    window.clearTimeout(gesture.timerId)
+    messageActionPressRef.current = null
+  }, [])
+
+  const closeMessageActionMenu = useCallback(() => {
+    clearMessageActionPress()
+    setMessageActionMenu(null)
+  }, [clearMessageActionPress])
+
+  const openMessageActionMenu = useCallback((message: ChatMessage, element: HTMLElement) => {
+    if (message.direction === 'system' || !conversationVisible) return
+
+    clearMessageActionPress()
+    messageInfoSwipeGestureRef.current = null
+    setDraggingMessageInfoSwipe(null)
+    setMessageInfoOpen(false)
+    actionSheetDismiss.requestClose()
+    setContactInfoOpen(false)
+
+    const rect = element.getBoundingClientRect()
+    const viewportWidth = Math.max(320, window.innerWidth || document.documentElement.clientWidth || 390)
+    const viewportHeight = Math.max(480, window.innerHeight || document.documentElement.clientHeight || 740)
+    const bubbleWidth = Math.min(Math.max(96, Math.round(rect.width)), viewportWidth - 24)
+    const scheduled = message.direction === 'outbound' && isMessageScheduled(message)
+    const menuWidth = Math.min(Math.max(bubbleWidth, scheduled ? 252 : 246), viewportWidth - 24)
+    const align: MessageActionMenuAlign = message.direction === 'outbound' ? 'end' : 'start'
+    const preferredLeft = align === 'end' ? rect.right - menuWidth : rect.left
+    const left = Math.max(12, Math.min(Math.round(preferredLeft), viewportWidth - menuWidth - 12))
+    const placement: MessageActionMenuPlacement = rect.bottom > viewportHeight - 250 && rect.top > 210 ? 'above' : 'below'
+    const estimatedMenuHeight = scheduled ? 126 : 300
+    const top = placement === 'above'
+      ? Math.max(12, Math.round(rect.top - estimatedMenuHeight - 12))
+      : Math.max(12, Math.min(Math.round(rect.top), viewportHeight - 96))
+
+    setMessageActionMenu({
+      messageId: message.id,
+      mode: 'main',
+      rect: {
+        top,
+        left,
+        width: menuWidth,
+        bubbleWidth,
+        height: Math.round(rect.height)
+      },
+      placement,
+      align
+    })
+  }, [actionSheetDismiss, clearMessageActionPress, conversationVisible])
+
+  const handleMessageActionPointerDown = (message: ChatMessage, event: React.PointerEvent<HTMLDivElement>) => {
+    if (message.direction === 'system' || messageActionMenu) return
+    if (event.pointerType === 'mouse' && event.button !== 0) return
+
+    const target = event.target as HTMLElement | null
+    if (target?.closest('button, a, input, textarea, select, video, audio, [contenteditable="true"]')) return
+
+    clearMessageActionPress()
+    const element = event.currentTarget
+    const timerId = window.setTimeout(() => {
+      openMessageActionMenu(message, element)
+    }, MESSAGE_ACTION_LONG_PRESS_MS)
+
+    messageActionPressRef.current = {
+      messageId: message.id,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      timerId
+    }
+  }
+
+  const handleMessageActionPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    const gesture = messageActionPressRef.current
+    if (!gesture || gesture.pointerId !== event.pointerId) return
+
+    const moved = Math.max(
+      Math.abs(event.clientX - gesture.startX),
+      Math.abs(event.clientY - gesture.startY)
+    )
+    if (moved > MESSAGE_ACTION_MOVE_TOLERANCE) {
+      clearMessageActionPress()
+    }
+  }
+
+  const handleMessageActionPointerEnd = () => {
+    clearMessageActionPress()
+  }
+
+  const handleMessageActionContextMenu = (message: ChatMessage, event: React.MouseEvent<HTMLDivElement>) => {
+    if (message.direction === 'system') return
+    event.preventDefault()
+    openMessageActionMenu(message, event.currentTarget)
+  }
+
+  const getScheduledMessageActionId = (message: ChatMessage) => (
+    message.scheduledMessageId ||
+    (message.id.startsWith('scheduled-') ? message.id.slice('scheduled-'.length) : '')
+  )
+
+  const handleReplyMessage = (message: ChatMessage) => {
+    setReplyingToMessageId(message.id)
+    closeMessageActionMenu()
+    requestAnimationFrame(() => composerInputRef.current?.focus())
+    showToast('info', 'Respuesta lista', 'Escribe tu mensaje y mándalo cuando esté listo.')
+  }
+
+  const handleForwardMessage = () => {
+    closeMessageActionMenu()
+    showToast('info', 'Reenviar aún no está activo', 'Ya dejamos la opción lista para conectarla después.')
+  }
+
+  const handleCopyMessage = async (message: ChatMessage) => {
+    const text = getMessageActionText(message)
+    if (!text) {
+      showToast('warning', 'Nada para copiar', 'Este mensaje no tiene texto disponible.')
+      return
+    }
+
+    try {
+      await copyTextToClipboard(text)
+      closeMessageActionMenu()
+      showToast('success', 'Copiado', 'El texto del mensaje quedó en el portapapeles.')
+    } catch {
+      showToast('error', 'No se pudo copiar', 'Intenta seleccionarlo manualmente.')
+    }
+  }
+
+  const handleToggleStarMessage = (message: ChatMessage) => {
+    setStarredMessageIds((current) => {
+      const exists = current.includes(message.id)
+      const next = exists ? current.filter((id) => id !== message.id) : [message.id, ...current]
+      writeStoredChatIds(CHAT_STARRED_MESSAGES_KEY, next)
+      showToast('success', exists ? 'Destacado quitado' : 'Mensaje destacado', exists ? 'Se quitó la marca de este mensaje.' : 'El mensaje quedó marcado para encontrarlo rápido.')
+      return next
+    })
+    closeMessageActionMenu()
+  }
+
+  const handleUnavailableMessageAction = (label: string) => {
+    closeMessageActionMenu()
+    showToast('info', `${label} todavía no está activo`, 'La opción ya aparece, pero no ejecuta cambios todavía.')
+  }
+
+  const handleEditScheduledMessage = (message: ChatMessage) => {
+    const scheduledMessageId = getScheduledMessageActionId(message)
+    if (!scheduledMessageId) {
+      showToast('error', 'No se pudo editar', 'No encontramos la programación de este mensaje.')
+      return
+    }
+
+    setScheduleEditingMessageId(scheduledMessageId)
+    setComposerMessageText(message.text)
+    if (composerInputRef.current) {
+      composerInputRef.current.textContent = message.text
+    }
+    setDraftAttachments([])
+    stopVoicePreview(true)
+    voiceSendAfterStopRef.current = false
+    setVoiceDraft(null)
+    setScheduleDraft(createScheduleDraftFromDate(message.scheduledAt || message.date))
+    setScheduleError('')
+    closeMessageActionMenu()
+    setSheet('schedule')
+  }
+
+  const handleCancelScheduledMessage = async (message: ChatMessage) => {
+    if (!activeContact || cancelingScheduledMessageId) return
+
+    const scheduledMessageId = getScheduledMessageActionId(message)
+    if (!scheduledMessageId) {
+      showToast('error', 'No se pudo eliminar', 'No encontramos la programación de este mensaje.')
+      return
+    }
+
+    setCancelingScheduledMessageId(scheduledMessageId)
+    closeMessageActionMenu()
+
+    try {
+      await whatsappApiService.cancelScheduledMessage(scheduledMessageId, activeContact.id)
+      setMessages((current) => current.filter((item) => item.id !== message.id && item.scheduledMessageId !== scheduledMessageId))
+      await loadConversation(activeContact.id, { silent: true, useCache: false })
+      await loadChats({ silent: true, useCache: false })
+      showToast('success', 'Programación eliminada', 'Ese mensaje ya no se enviará.')
+    } catch (error: any) {
+      showToast('error', 'No se eliminó', getErrorMessage(error, 'Intenta eliminar la programación otra vez.'))
+    } finally {
+      setCancelingScheduledMessageId(null)
+    }
   }
 
   const closeMessageInfo = useCallback(() => {
@@ -5114,6 +5448,7 @@ export const PhoneChat: React.FC = () => {
 
     setScheduleDraft(createDefaultScheduleDraft())
     setScheduleError('')
+    setScheduleEditingMessageId(null)
     setSheet('schedule')
   }
 
@@ -5195,9 +5530,11 @@ export const PhoneChat: React.FC = () => {
 
     setSchedulingMessage(true)
     setScheduleError('')
+    const editingScheduledMessageId = scheduleEditingMessageId
 
     try {
       const scheduledMessage = await whatsappApiService.scheduleMessage({
+        id: editingScheduledMessageId || undefined,
         contactId: activeContact.id,
         provider,
         channel,
@@ -5206,11 +5543,13 @@ export const PhoneChat: React.FC = () => {
         toPhone: activeContact.phone || undefined,
         fromPhone: selectedBusinessPhoneValue || undefined,
         businessPhoneNumberId: selectedBusinessPhone?.id || undefined,
-        scheduledAt: scheduledDate.toISOString()
+        scheduledAt: scheduledDate.toISOString(),
+        externalId: editingScheduledMessageId || undefined
       })
       const scheduledBubble = getScheduledChatMessageBubble(scheduledMessage)
 
       setComposerMessageText('')
+      setReplyingToMessageId(null)
       if (composerInputRef.current) {
         composerInputRef.current.textContent = ''
       }
@@ -5229,14 +5568,19 @@ export const PhoneChat: React.FC = () => {
                 lastMessageDate: scheduledBubble.date,
                 lastMessageDirection: 'outbound',
                 lastMessageChannel: provider === 'highlevel' ? channel : contact.lastMessageChannel,
-                messageCount: Number(contact.messageCount || 0) + 1
+                messageCount: Number(contact.messageCount || 0) + (editingScheduledMessageId ? 0 : 1)
               }
             : contact
         )))
       }
 
       setSheet(null)
-      showToast('success', 'Mensaje programado', formatScheduledMessageLabel(scheduledDate.toISOString()))
+      setScheduleEditingMessageId(null)
+      showToast(
+        'success',
+        editingScheduledMessageId ? 'Programación actualizada' : 'Mensaje programado',
+        formatScheduledMessageLabel(scheduledDate.toISOString())
+      )
     } catch (error: any) {
       const errorMessage = getErrorMessage(error, 'No se pudo programar el mensaje.')
       setScheduleError(errorMessage)
@@ -5289,6 +5633,7 @@ export const PhoneChat: React.FC = () => {
       setComposerStatus('sending')
       if (!preserveComposer) {
         setComposerMessageText('')
+        setReplyingToMessageId(null)
         if (composerInputRef.current) {
           composerInputRef.current.textContent = ''
         }
@@ -5436,6 +5781,7 @@ export const PhoneChat: React.FC = () => {
     setComposerStatus('sending')
     if (!preserveComposer) {
       setComposerMessageText('')
+      setReplyingToMessageId(null)
       if (composerInputRef.current) {
         composerInputRef.current.textContent = ''
       }
@@ -6847,6 +7193,183 @@ export const PhoneChat: React.FC = () => {
     )
   }
 
+  const renderReplyPreviewBar = () => {
+    if (!replyingToMessage) return null
+
+    const replyText = getMessageActionText(replyingToMessage) || 'Mensaje'
+
+    return (
+      <div className={styles.replyPreviewBar} aria-label="Mensaje que vas a responder">
+        <span className={styles.replyPreviewIcon} aria-hidden="true">
+          <Reply size={16} />
+        </span>
+        <span className={styles.replyPreviewText}>
+          <strong>Respondiendo</strong>
+          <small>{replyText}</small>
+        </span>
+        <button type="button" onClick={() => setReplyingToMessageId(null)} aria-label="Quitar respuesta">
+          <X size={16} />
+        </button>
+      </div>
+    )
+  }
+
+  const renderMessageActionPreviewContent = (message: ChatMessage) => {
+    const isAudioAttachment = message.attachment?.type === 'audio'
+    const isVideoMessage = message.attachment?.type === 'video' && Boolean(message.attachment.dataUrl || message.attachment.url)
+    const isFileMessage = Boolean(message.attachment && ['document', 'file'].includes(message.attachment.type))
+    const hasRichAttachment = isAudioAttachment || isVideoMessage || isFileMessage || message.attachment?.type === 'image'
+    const starred = starredMessageIdSet.has(message.id)
+
+    return (
+      <>
+        {message.attachment?.type === 'image' && (message.attachment.dataUrl || message.attachment.url) && (
+          <img className={styles.messageImage} src={message.attachment.dataUrl || message.attachment.url} alt={message.attachment.name || 'Foto enviada'} />
+        )}
+        {isVideoMessage && (
+          <span className={styles.messageActionAttachmentPreview}>
+            <Video size={17} />
+            Video
+          </span>
+        )}
+        {isFileMessage && (
+          <span className={styles.messageActionAttachmentPreview}>
+            <FileText size={17} />
+            {getMessageAttachmentActionLabel(message)}
+          </span>
+        )}
+        {isAudioAttachment && (
+          <span className={styles.messageActionAttachmentPreview}>
+            <FaMicrophone size={14} />
+            Mensaje de voz
+          </span>
+        )}
+        {!hasRichAttachment && message.text && <p>{message.text}</p>}
+        {hasRichAttachment && message.text && <p>{message.text}</p>}
+        <span className={styles.messageActionPreviewMeta}>
+          {starred && (
+            <span className={styles.messageStarBadge} aria-label="Mensaje destacado">
+              <Star size={12} fill="currentColor" />
+            </span>
+          )}
+          {renderMessageMeta(message, styles.messageMeta, { showTransport: false })}
+        </span>
+      </>
+    )
+  }
+
+  const renderMessageActionMenu = () => {
+    if (!messageActionMenu || !messageActionMenuMessage) return null
+
+    const message = messageActionMenuMessage
+    const scheduled = message.direction === 'outbound' && isMessageScheduled(message)
+    const starred = starredMessageIdSet.has(message.id)
+    const scheduledMessageId = scheduled ? getScheduledMessageActionId(message) : ''
+    const deletingScheduled = Boolean(scheduledMessageId && cancelingScheduledMessageId === scheduledMessageId)
+    const overlayStyle = {
+      '--message-action-top': `${messageActionMenu.rect.top}px`,
+      '--message-action-left': `${messageActionMenu.rect.left}px`,
+      '--message-action-width': `${messageActionMenu.rect.width}px`,
+      '--message-action-bubble-width': `${messageActionMenu.rect.bubbleWidth}px`
+    } as React.CSSProperties
+    const previewClassName = [
+      styles.messageActionPreviewBubble,
+      styles.messageBubble,
+      message.direction === 'outbound' ? styles.messageActionPreviewOutbound : '',
+      scheduled ? styles.messageBubbleScheduled : '',
+      message.attachment?.type === 'audio' ? styles.messageAudioBubble : '',
+      message.attachment && ['document', 'file'].includes(message.attachment.type) ? styles.messageFileBubble : ''
+    ].filter(Boolean).join(' ')
+
+    return (
+      <div className={styles.messageActionOverlay} style={overlayStyle} role="presentation">
+        <button
+          type="button"
+          className={styles.messageActionBackdrop}
+          onClick={closeMessageActionMenu}
+          aria-label="Cerrar acciones del mensaje"
+        />
+        <div
+          className={`${styles.messageActionContent} ${messageActionMenu.placement === 'above' ? styles.messageActionContentAbove : ''} ${messageActionMenu.align === 'end' ? styles.messageActionContentAlignEnd : ''}`}
+          role="dialog"
+          aria-modal="true"
+          aria-label={scheduled ? 'Acciones de mensaje programado' : 'Acciones del mensaje'}
+        >
+          <div className={previewClassName}>
+            {renderMessageActionPreviewContent(message)}
+          </div>
+
+          <div className={styles.messageActionMenu}>
+            {scheduled ? (
+              <>
+                <button type="button" onClick={() => handleEditScheduledMessage(message)}>
+                  <Pencil size={18} />
+                  Editar programación
+                </button>
+                <button
+                  type="button"
+                  className={styles.messageActionDanger}
+                  onClick={() => handleCancelScheduledMessage(message)}
+                  disabled={deletingScheduled}
+                >
+                  {deletingScheduled ? <Loader2 size={18} className={styles.spinIcon} /> : <Trash2 size={18} />}
+                  Eliminar mensaje programado
+                </button>
+              </>
+            ) : messageActionMenu.mode === 'more' ? (
+              <>
+                <button type="button" onClick={() => handleUnavailableMessageAction('Fijar')}>
+                  <Pin size={18} />
+                  Fijar
+                </button>
+                <button type="button" onClick={() => handleUnavailableMessageAction('Traducir')}>
+                  <Languages size={18} />
+                  Traducir
+                </button>
+                <button type="button" className={styles.messageActionDanger} onClick={() => handleUnavailableMessageAction('Eliminar')}>
+                  <Trash2 size={18} />
+                  Eliminar
+                </button>
+                <span className={styles.messageActionDivider} aria-hidden="true" />
+                <button type="button" onClick={() => setMessageActionMenu((current) => current ? { ...current, mode: 'main' } : current)}>
+                  <MoreHorizontal size={18} />
+                  Más
+                </button>
+              </>
+            ) : (
+              <>
+                <button type="button" onClick={() => handleReplyMessage(message)}>
+                  <Reply size={18} />
+                  Responder
+                </button>
+                <button type="button" onClick={handleForwardMessage}>
+                  <Forward size={18} />
+                  Reenviar
+                </button>
+                <button type="button" onClick={() => handleCopyMessage(message)}>
+                  <Copy size={18} />
+                  Copiar
+                </button>
+                <button type="button" onClick={() => handleToggleStarMessage(message)}>
+                  <Star size={18} fill={starred ? 'currentColor' : 'none'} />
+                  {starred ? 'Quitar destacado' : 'Destacar'}
+                </button>
+                <button type="button" onClick={() => setMessageActionMenu((current) => current ? { ...current, mode: 'more' } : current)}>
+                  <MoreHorizontal size={18} />
+                  Más
+                </button>
+                <button type="button" className={styles.messageActionDanger} onClick={() => handleUnavailableMessageAction('Eliminar')}>
+                  <Trash2 size={18} />
+                  Eliminar
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   const renderMessages = () => {
     if (aiAgentConversationOpen) {
       return (
@@ -6948,8 +7471,14 @@ export const PhoneChat: React.FC = () => {
                       <ReceiptText size={17} />
                     </span>
                     <div
-                      className={`${styles.messageBubble} ${scheduled ? styles.messageBubbleScheduled : ''} ${isAudioMessage ? styles.messageAudioBubble : ''} ${isFileMessage ? styles.messageFileBubble : ''} ${messageSwipeOffset > 0 ? styles.messageBubbleSwipeDragging : ''}`}
+                      className={`${styles.messageBubble} ${styles.messageBubbleActionTarget} ${scheduled ? styles.messageBubbleScheduled : ''} ${isAudioMessage ? styles.messageAudioBubble : ''} ${isFileMessage ? styles.messageFileBubble : ''} ${messageSwipeOffset > 0 ? styles.messageBubbleSwipeDragging : ''}`}
+                      data-chat-message-id={message.id}
                       style={messageSwipeOffset > 0 ? { transform: `translate3d(-${messageSwipeOffset}px, 0, 0)` } : undefined}
+                      onPointerDown={canOpenMessageInfo ? (event) => handleMessageActionPointerDown(message, event) : undefined}
+                      onPointerMove={canOpenMessageInfo ? handleMessageActionPointerMove : undefined}
+                      onPointerUp={canOpenMessageInfo ? handleMessageActionPointerEnd : undefined}
+                      onPointerCancel={canOpenMessageInfo ? handleMessageActionPointerEnd : undefined}
+                      onContextMenu={canOpenMessageInfo ? (event) => handleMessageActionContextMenu(message, event) : undefined}
                       onTouchStart={canOpenMessageInfo ? (event) => handleMessageInfoTouchStart(message, event) : undefined}
                       onTouchMove={canOpenMessageInfo ? handleMessageInfoTouchMove : undefined}
                       onTouchEnd={canOpenMessageInfo ? handleMessageInfoTouchEnd : undefined}
@@ -6972,6 +7501,11 @@ export const PhoneChat: React.FC = () => {
                     {isAudioAttachment && !isAudioMessage && renderAudioUnavailableMessage(message)}
                     {!hasRichAttachment && message.text && <p>{message.text}</p>}
                     {hasRichAttachment && !isAudioMessage && message.text && <p>{message.text}</p>}
+                    {starredMessageIdSet.has(message.id) && (
+                      <span className={styles.messageStarBadge} aria-label="Mensaje destacado">
+                        <Star size={12} fill="currentColor" />
+                      </span>
+                    )}
                     {!isAudioMessage && renderMessageMeta(message)}
                     </div>
                   </div>
@@ -8555,7 +9089,7 @@ export const PhoneChat: React.FC = () => {
           disabled={!canSubmitSchedule}
         >
           {schedulingMessage ? <Loader2 size={17} className={styles.spinIcon} /> : <Clock size={17} />}
-          Enviar programación
+          {scheduleEditingMessageId ? 'Guardar cambios' : 'Enviar programación'}
         </button>
       </div>
     )
@@ -8869,6 +9403,7 @@ export const PhoneChat: React.FC = () => {
                 <>
                   {renderSenderBar()}
                   {!composerBlockedByReplyWindow && renderAISuggestionBar()}
+                  {!composerBlockedByReplyWindow && renderReplyPreviewBar()}
                   {!composerBlockedByReplyWindow && renderDraftAttachments()}
                   {composerBlockedByReplyWindow ? (
                     <div className={styles.replyWindowBlockedComposer}>
@@ -8966,6 +9501,8 @@ export const PhoneChat: React.FC = () => {
         {renderCameraShareScreen()}
       </PhonePageTransition>
 
+      {renderMessageActionMenu()}
+
       {deviceMode !== 'tablet' && !conversationOpen && !cameraSharePhoto && <PhoneEcosystemNav active="chat" badges={{ chat: unreadTotal }} />}
 
       <input
@@ -9018,7 +9555,7 @@ export const PhoneChat: React.FC = () => {
                     {sheet === 'settings' && 'Ajustes del chat'}
                     {sheet === 'newChat' && 'Nuevo chat'}
                     {sheet === 'chatMore' && 'Más acciones'}
-                    {sheet === 'schedule' && 'Programar mensaje'}
+                    {sheet === 'schedule' && (scheduleEditingMessageId ? 'Editar programación' : 'Programar mensaje')}
                   </h2>
                 </div>
               </div>

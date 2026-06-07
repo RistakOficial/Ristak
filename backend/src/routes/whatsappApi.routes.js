@@ -1,5 +1,6 @@
 import express from 'express'
 import {
+  cancelScheduledChatMessageView,
   connectWhatsAppApiView,
   connectWhatsAppQrView,
   disconnectWhatsAppApiView,
@@ -37,6 +38,7 @@ router.post('/qr/connect', connectWhatsAppQrView)
 router.post('/qr/disconnect', disconnectWhatsAppQrView)
 router.get('/messages/scheduled', listScheduledChatMessagesView)
 router.post('/messages/scheduled', scheduleChatMessageView)
+router.delete('/messages/scheduled/:id', cancelScheduledChatMessageView)
 router.post('/messages/text', sendWhatsAppApiTextMessageView)
 router.post('/messages/image', sendWhatsAppApiImageMessageView)
 router.post('/messages/document', sendWhatsAppApiDocumentMessageView)

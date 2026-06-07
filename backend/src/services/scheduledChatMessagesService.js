@@ -213,6 +213,38 @@ export async function listScheduledChatMessages({ contactId, statuses = ['schedu
   return rows.map(normalizeScheduledMessageRow).filter(Boolean)
 }
 
+export async function cancelScheduledChatMessage({ id, contactId } = {}) {
+  const scheduledId = cleanString(id)
+  const cleanContactId = cleanString(contactId)
+  if (!scheduledId) {
+    throw createServiceError('Elige el mensaje programado que quieres eliminar.')
+  }
+
+  const params = [nowIso(), scheduledId]
+  let contactClause = ''
+  if (cleanContactId) {
+    contactClause = 'AND contact_id = ?'
+    params.push(cleanContactId)
+  }
+
+  const result = await db.run(`
+    UPDATE scheduled_chat_messages
+    SET status = 'cancelled',
+        error_message = NULL,
+        updated_at = ?
+    WHERE id = ?
+      ${contactClause}
+      AND status IN ('scheduled', 'error')
+  `, params)
+
+  if (Number(result?.changes || 0) === 0) {
+    throw createServiceError('No se encontró un mensaje programado que se pueda eliminar.', 404)
+  }
+
+  const row = await db.get('SELECT * FROM scheduled_chat_messages WHERE id = ?', [scheduledId])
+  return normalizeScheduledMessageRow(row)
+}
+
 async function markScheduledMessageStatus(id, patch = {}) {
   const updatedAt = nowIso()
   await db.run(`

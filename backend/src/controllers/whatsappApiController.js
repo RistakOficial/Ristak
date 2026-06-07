@@ -19,6 +19,7 @@ import {
   setWhatsAppApiDefaultPhoneNumber
 } from '../services/whatsappApiService.js'
 import {
+  cancelScheduledChatMessage,
   createScheduledChatMessage,
   listScheduledChatMessages
 } from '../services/scheduledChatMessagesService.js'
@@ -218,6 +219,7 @@ export async function sendWhatsAppApiTextMessageView(req, res) {
 export async function scheduleChatMessageView(req, res) {
   try {
     const data = await createScheduledChatMessage({
+      id: req.body?.id,
       contactId: req.body?.contactId,
       provider: req.body?.provider,
       channel: req.body?.channel,
@@ -235,6 +237,22 @@ export async function scheduleChatMessageView(req, res) {
     res.status(error.statusCode || 400).json({
       success: false,
       error: error.message || 'No se pudo programar el mensaje'
+    })
+  }
+}
+
+export async function cancelScheduledChatMessageView(req, res) {
+  try {
+    const data = await cancelScheduledChatMessage({
+      id: req.params?.id,
+      contactId: req.body?.contactId || req.query?.contactId
+    })
+    res.json({ success: true, data })
+  } catch (error) {
+    logger.error(`Error eliminando mensaje programado: ${error.message}`)
+    res.status(error.statusCode || 400).json({
+      success: false,
+      error: error.message || 'No se pudo eliminar el mensaje programado'
     })
   }
 }
