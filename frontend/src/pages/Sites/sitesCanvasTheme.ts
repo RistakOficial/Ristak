@@ -476,6 +476,7 @@ export const buildCanvasTheme = (site: PublicSite, device: 'desktop' | 'mobile' 
   const ink = textPaint ? paintFallbackColor(textPaint, v.ink) : v.ink
 
 	const vars = {
+    '--rstk-color-scheme': template.mode,
     '--rstk-font': baseFont,
     '--rstk-display': display,
     '--rstk-ease': 'cubic-bezier(.16,.84,.44,1)',
