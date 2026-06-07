@@ -6340,7 +6340,9 @@ export const PhoneChat: React.FC = () => {
     return (
       <span className={className}>
         {transportBadge && <em className={styles.messageTransport}>{transportBadge}</em>}
-        {formatMessageTime(scheduled ? message.scheduledAt || message.date : message.date)}
+        {scheduled
+          ? `Programado para ${formatMessageTime(message.scheduledAt || message.date)}`
+          : formatMessageTime(message.date)}
         {message.direction === 'outbound' && (failed ? (
           <button
             type="button"
