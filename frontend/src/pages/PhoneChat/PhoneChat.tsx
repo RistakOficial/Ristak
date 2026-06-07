@@ -1952,6 +1952,7 @@ export const PhoneChat: React.FC = () => {
   const messagesPaneNearBottomRef = useRef(true)
   const activeContactIdRef = useRef<string | null>(null)
   const conversationOpenRef = useRef(false)
+  const conversationLoadGenerationRef = useRef(0)
   const conversationInitialBottomLockRef = useRef({
     contactId: null as string | null,
     expiresAt: 0
@@ -1989,7 +1990,7 @@ export const PhoneChat: React.FC = () => {
   const voiceStartPendingRef = useRef(false)
   const voiceStopAfterStartRef = useRef(false)
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     activeContactIdRef.current = activeContactId
     conversationOpenRef.current = conversationOpen
   }, [activeContactId, conversationOpen])
@@ -2583,6 +2584,12 @@ export const PhoneChat: React.FC = () => {
   }, [])
 
   const loadConversation = useCallback(async (contactId: string, options: { showCacheRefresh?: boolean; useCache?: boolean; silent?: boolean } = {}) => {
+    const loadGeneration = conversationLoadGenerationRef.current + 1
+    conversationLoadGenerationRef.current = loadGeneration
+    const isCurrentConversationLoad = () => (
+      conversationLoadGenerationRef.current === loadGeneration &&
+      activeContactIdRef.current === contactId
+    )
     const silentRefresh = options.silent === true
     const showCacheRefresh = options.showCacheRefresh === true && !silentRefresh
     const useCache = options.useCache !== false && !silentRefresh
@@ -2602,12 +2609,15 @@ export const PhoneChat: React.FC = () => {
       setMessagesLoading(false)
       setMessagesRefreshing(showCacheRefresh)
     } else if (!silentRefresh) {
+      setMessages([])
+      setContactJourney([])
       setMessagesLoading(true)
       setMessagesRefreshing(false)
     }
 
     try {
       const journey = await contactsService.getContactJourney(contactId)
+      if (!isCurrentConversationLoad()) return
       setContactJourney((currentJourney) => (
         getJourneySignature(currentJourney) === getJourneySignature(journey) ? currentJourney : journey
       ))
@@ -2621,13 +2631,15 @@ export const PhoneChat: React.FC = () => {
       ))
       writePhoneDailyCache(cacheKey, { journey, messages: nextMessages }, { maxEntryChars: 360_000 })
     } catch {
-      if (!showedCachedConversation && !silentRefresh) {
+      if (isCurrentConversationLoad() && !showedCachedConversation && !silentRefresh) {
         setMessages([])
         setContactJourney([])
       }
     } finally {
-      setMessagesLoading(false)
-      setMessagesRefreshing(false)
+      if (isCurrentConversationLoad()) {
+        setMessagesLoading(false)
+        setMessagesRefreshing(false)
+      }
     }
   }, [locationId])
 
@@ -3021,7 +3033,7 @@ export const PhoneChat: React.FC = () => {
     }
   }, [clearQueuedBottomScrolls, conversationOpen])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!activeContact?.id || accessState !== 'allowed') {
       setMessages([])
       setContactJourney([])
