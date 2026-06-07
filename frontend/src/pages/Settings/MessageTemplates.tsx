@@ -16,6 +16,7 @@ import {
   Loader2,
   MapPin,
   MessageSquare,
+  MoreHorizontal,
   MousePointerClick,
   Phone,
   Plus,
@@ -368,6 +369,7 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
   const [bulkWorking, setBulkWorking] = useState(false)
   const [dragging, setDragging] = useState<{ templateIds: string[]; folderIds: string[] } | null>(null)
   const [dropTargetFolderId, setDropTargetFolderId] = useState<string | null>(null)
+  const [openFolderMenuId, setOpenFolderMenuId] = useState<string | null>(null)
 
   useEffect(() => {
     loadBundle()
@@ -1145,28 +1147,40 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
             <span>{bundle.folders.length} activas</span>
           </div>
 
-          <button
-            type="button"
-            className={`${styles.folderItem} ${activeFolderId === 'all' ? styles.folderItemActive : ''}`}
-            onClick={() => setActiveFolderId('all')}
-          >
-            <Hash size={16} />
-            <span>Todas las plantillas</span>
-            <b>{bundle.templates.length}</b>
-          </button>
+          <div className={`${styles.folderRow} ${styles.folderSystemRow} ${activeFolderId === 'all' ? styles.folderSystemRowActive : ''}`}>
+            <button
+              type="button"
+              onClick={() => {
+                setActiveFolderId('all')
+                setOpenFolderMenuId(null)
+              }}
+            >
+              <Hash size={16} />
+              <span>Todas las plantillas</span>
+              <b>{bundle.templates.length}</b>
+            </button>
+            <span className={styles.folderActionSpacer} aria-hidden="true" />
+          </div>
 
-          <button
-            type="button"
-            className={`${styles.folderItem} ${activeFolderId === 'unfiled' ? styles.folderItemActive : ''} ${dropTargetFolderId === ROOT_FOLDER_KEY ? styles.folderDropActive : ''}`}
-            onClick={() => setActiveFolderId('unfiled')}
+          <div
+            className={`${styles.folderRow} ${styles.folderSystemRow} ${activeFolderId === 'unfiled' ? styles.folderSystemRowActive : ''} ${dropTargetFolderId === ROOT_FOLDER_KEY ? styles.folderDropActive : ''}`}
             onDragOver={(event) => handleFolderDragOver(event, null)}
             onDragLeave={() => setDropTargetFolderId(null)}
             onDrop={(event) => handleDropOnFolder(event, null)}
           >
-            <Hash size={16} />
-            <span>Sin carpeta</span>
-            <b>{unfiledTemplateCount}</b>
-          </button>
+            <button
+              type="button"
+              onClick={() => {
+                setActiveFolderId('unfiled')
+                setOpenFolderMenuId(null)
+              }}
+            >
+              <Hash size={16} />
+              <span>Sin carpeta</span>
+              <b>{unfiledTemplateCount}</b>
+            </button>
+            <span className={styles.folderActionSpacer} aria-hidden="true" />
+          </div>
 
           <div className={styles.folderList}>
             {folderRows.map(({ folder, depth }) => (
@@ -1177,20 +1191,42 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
                 onDragLeave={() => setDropTargetFolderId(null)}
                 onDrop={(event) => handleDropOnFolder(event, folder.id)}
               >
-                <button type="button" onClick={() => setActiveFolderId(folder.id)}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveFolderId(folder.id)
+                    setOpenFolderMenuId(null)
+                  }}
+                >
                   <Folder size={16} />
                   <span style={{ paddingLeft: depth ? depth * 12 : 0 }}>{folder.name}</span>
                   <b>{templateCountsByFolder.get(folder.id) || 0}</b>
                 </button>
                 <button
                   type="button"
-                  className={styles.iconButton}
-                  aria-label={`Eliminar ${folder.name}`}
-                  title="Eliminar carpeta"
-                  onClick={() => confirmDeleteFolder(folder.id)}
+                  className={styles.folderMenuButton}
+                  aria-label={`Opciones de ${folder.name}`}
+                  aria-expanded={openFolderMenuId === folder.id}
+                  title="Opciones"
+                  onClick={() => setOpenFolderMenuId((current) => current === folder.id ? null : folder.id)}
                 >
-                  <Trash2 size={14} />
+                  <MoreHorizontal size={16} />
                 </button>
+                {openFolderMenuId === folder.id && (
+                  <div className={styles.folderMenu} role="menu">
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setOpenFolderMenuId(null)
+                        confirmDeleteFolder(folder.id)
+                      }}
+                    >
+                      <Trash2 size={14} />
+                      <span>Eliminar carpeta</span>
+                    </button>
+                  </div>
+                )}
               </div>
             ))}
           </div>
