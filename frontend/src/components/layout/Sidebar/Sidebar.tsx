@@ -420,7 +420,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onLogout }) => {
             aria-expanded={showUserMenu}
             aria-haspopup="menu"
           >
-            <span className="ml-1.5 mr-1.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-[rgba(255,238,219,0.92)] text-xs font-semibold text-[#2f251b]">
+            <span className="ml-1.5 mr-3 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-[rgba(255,238,219,0.92)] text-xs font-semibold text-[#2f251b]">
               {initials}
             </span>
             <span className="min-w-0 flex-1">
