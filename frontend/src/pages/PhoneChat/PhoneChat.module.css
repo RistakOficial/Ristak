@@ -4277,7 +4277,16 @@
 }
 
 .phoneChatPage[data-phone-chat-device="tablet"] .composerShell {
-  padding-inline: clamp(18px, 4vw, 54px);
+  padding-inline: clamp(8px, 1.4vw, 18px);
+}
+
+.phoneChatPage[data-phone-chat-device="tablet"] .composer {
+  gap: 6px;
+  padding-inline: 0;
+}
+
+.phoneChatPage[data-phone-chat-device="tablet"] .composerHasContent {
+  gap: 5px;
 }
 
 .phoneChatPage[data-phone-chat-device="tablet"] .mobileDock {
