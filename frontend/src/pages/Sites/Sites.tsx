@@ -4147,21 +4147,6 @@ export const Sites: React.FC = () => {
                   </div>
                   <div className={styles.editorActions}>
                     <div className={styles.editorRouteControls}>
-                      <label className={styles.routeField}>
-                        <span className={`${styles.publicRouteBox} ${domainConfig.domain ? '' : styles.publicRouteBoxStandalone}`}>
-                          <span className={styles.publicRouteDomain} title={getPublicDomainPreview(domainConfig)}>
-                            {getPublicDomainPreview(domainConfig)}
-                          </span>
-                          <span className={styles.publicRouteSlash} aria-hidden="true">/</span>
-                          <input
-                            value={getRouteEditorValue(editorSite)}
-                            aria-label="Ruta pública"
-                            placeholder={editorSite.siteType === 'landing_page' ? 'embudo-01' : 'formulario-01'}
-                            onChange={(event) => updateSelectedSite({ slug: normalizeRouteEditorInput(event.target.value, domainConfig) })}
-                            onBlur={() => handleSaveSite(undefined, { silent: true })}
-                          />
-                        </span>
-                      </label>
                       {hasEditablePages(editorSite) && (
                         <FunnelPagesPanel
                           pages={pages}
@@ -4183,6 +4168,21 @@ export const Sites: React.FC = () => {
                           onRenamePage={handleRenamePage}
                         />
                       )}
+                      <label className={styles.routeField}>
+                        <span className={`${styles.publicRouteBox} ${domainConfig.domain ? '' : styles.publicRouteBoxStandalone}`}>
+                          <span className={styles.publicRouteDomain} title={getPublicDomainPreview(domainConfig)}>
+                            {getPublicDomainPreview(domainConfig)}
+                          </span>
+                          <span className={styles.publicRouteSlash} aria-hidden="true">/</span>
+                          <input
+                            value={getRouteEditorValue(editorSite)}
+                            aria-label="Ruta pública"
+                            placeholder={editorSite.siteType === 'landing_page' ? 'embudo-01' : 'formulario-01'}
+                            onChange={(event) => updateSelectedSite({ slug: normalizeRouteEditorInput(event.target.value, domainConfig) })}
+                            onBlur={() => handleSaveSite(undefined, { silent: true })}
+                          />
+                        </span>
+                      </label>
                     </div>
                     <div className={styles.deviceToggle} role="group" aria-label="Vista previa del dispositivo">
                       <button type="button" className={device === 'desktop' ? styles.deviceActive : ''} onClick={() => setDevice('desktop')} title="Escritorio">
