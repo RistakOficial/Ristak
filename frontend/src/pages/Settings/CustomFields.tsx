@@ -1,13 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import {
-  Archive,
   ChevronRight,
   Edit3,
   Folder,
   FolderPlus,
-  GripVertical,
   Hash,
   Loader2,
+  MoreHorizontal,
   Plus,
   Save,
   Search,
@@ -130,6 +129,7 @@ export const CustomFields: React.FC = () => {
   const [movingFields, setMovingFields] = useState(false)
   const [draggingFieldIds, setDraggingFieldIds] = useState<string[]>([])
   const [dropTarget, setDropTarget] = useState<FolderFilter | null>(null)
+  const [openFolderMenuId, setOpenFolderMenuId] = useState<string | null>(null)
 
   const loadCatalog = async () => {
     setLoading(true)
@@ -438,22 +438,23 @@ export const CustomFields: React.FC = () => {
 
   const handleArchiveFolder = (folder: CustomFieldFolder) => {
     showConfirm(
-      'Archivar carpeta',
-      `Los campos dentro de "${folder.name}" no se eliminan; solo quedan sin carpeta.`,
+      'Eliminar carpeta',
+      `Los campos dentro de "${folder.name}" no se eliminan; se quedan guardados sin carpeta.`,
       () => {
         const archive = async () => {
           try {
             await customFieldsService.archiveFolder(folder.id)
             if (activeFolder === folder.id) setActiveFolder('all')
+            setOpenFolderMenuId(null)
             await loadCatalog()
-            showToast('success', 'Carpeta archivada', 'Los campos se conservaron.')
+            showToast('success', 'Carpeta eliminada', 'Los campos se conservaron.')
           } catch (error) {
-            showToast('error', 'No se pudo archivar', error instanceof Error ? error.message : 'Intenta otra vez')
+            showToast('error', 'No se pudo eliminar', error instanceof Error ? error.message : 'Intenta otra vez')
           }
         }
         void archive()
       },
-      'Archivar',
+      'Eliminar',
       'Cancelar'
     )
   }
@@ -514,19 +515,6 @@ export const CustomFields: React.FC = () => {
             <b>{fields.length}</b>
           </button>
 
-          <button
-            type="button"
-            className={`${styles.folderItem} ${activeFolder === 'unfiled' ? styles.folderItemActive : ''} ${dropTarget === 'unfiled' ? styles.folderDropActive : ''}`}
-            onClick={() => setActiveFolder('unfiled')}
-            onDragOver={(event) => handleFolderDragOver('unfiled', event)}
-            onDragLeave={(event) => handleFolderDragLeave('unfiled', event)}
-            onDrop={(event) => handleFolderDrop('unfiled', event)}
-          >
-            <Hash size={16} />
-            <span>Sin carpeta</span>
-            <b>{folderCounts.get('unfiled') || 0}</b>
-          </button>
-
           <div className={styles.folderList}>
             {folders.map(folder => (
               <div
@@ -543,13 +531,25 @@ export const CustomFields: React.FC = () => {
                 </button>
                 <button
                   type="button"
-                  className={styles.iconButton}
-                  aria-label={`Archivar ${folder.name}`}
-                  title="Archivar carpeta"
-                  onClick={() => handleArchiveFolder(folder)}
+                  className={styles.folderMenuButton}
+                  aria-label={`Opciones de ${folder.name}`}
+                  aria-expanded={openFolderMenuId === folder.id}
+                  title="Opciones"
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    setOpenFolderMenuId(current => current === folder.id ? null : folder.id)
+                  }}
                 >
-                  <Archive size={14} />
+                  <MoreHorizontal size={16} />
                 </button>
+                {openFolderMenuId === folder.id && (
+                  <div className={styles.folderMenu} role="menu">
+                    <button type="button" role="menuitem" onClick={() => handleArchiveFolder(folder)}>
+                      <Trash2 size={14} />
+                      <span>Eliminar carpeta</span>
+                    </button>
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -628,15 +628,12 @@ export const CustomFields: React.FC = () => {
                     return (
                     <tr
                       key={field.definitionId}
-                      className={`${selected ? styles.rowSelected : ''} ${dragging ? styles.rowDragging : ''}`}
+                      className={`${styles.draggableRow} ${selected ? styles.rowSelected : ''} ${dragging ? styles.rowDragging : ''}`}
                       draggable={!movingFields}
                       onDragStart={(event) => handleFieldDragStart(field, event)}
                       onDragEnd={handleDragEnd}
                     >
                       <td className={styles.selectionCell}>
-                        <span className={styles.dragHandle} aria-hidden="true">
-                          <GripVertical size={15} />
-                        </span>
                         <input
                           type="checkbox"
                           aria-label={`Seleccionar ${field.label}`}

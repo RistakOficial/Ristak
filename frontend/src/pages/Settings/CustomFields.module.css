@@ -158,19 +158,21 @@
 }
 
 .folderRow {
+  position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 34px;
+  grid-template-columns: minmax(0, 1fr) 32px;
   align-items: center;
   gap: 4px;
 }
 
 .iconButton,
-.rowActions button {
+.rowActions button,
+.folderMenuButton {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 34px;
-  height: 34px;
+  width: 32px;
+  height: 32px;
   border: 1px solid rgba(148, 163, 184, 0.18);
   border-radius: 8px;
   background: transparent;
@@ -180,10 +182,55 @@
 }
 
 .iconButton:hover,
-.rowActions button:hover {
+.rowActions button:hover,
+.folderMenuButton:hover {
   border-color: rgba(148, 163, 184, 0.28);
   background: rgba(148, 163, 184, 0.08);
   color: var(--color-text-primary);
+}
+
+.folderMenuButton {
+  opacity: 0;
+  border-color: transparent;
+}
+
+.folderRow:hover .folderMenuButton,
+.folderMenuButton:focus-visible,
+.folderMenuButton[aria-expanded='true'] {
+  opacity: 1;
+}
+
+.folderMenu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 5;
+  min-width: 168px;
+  overflow: hidden;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 8px;
+  background: var(--color-background-primary);
+  box-shadow: 0 18px 42px -28px rgba(15, 23, 42, 0.7);
+}
+
+.folderMenu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 36px;
+  padding: 0 11px;
+  border: 0;
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  font-size: 13px;
+  text-align: left;
+}
+
+.folderMenu button:hover {
+  background: rgba(239, 68, 68, 0.08);
+  color: var(--color-status-error);
 }
 
 .field input,
@@ -286,7 +333,8 @@
   position: sticky;
   top: 0;
   z-index: 1;
-  padding: 12px 14px;
+  height: 42px;
+  padding: 0 14px;
   background: var(--color-background-primary);
   color: var(--color-text-tertiary);
   font-size: 11px;
@@ -297,11 +345,12 @@
 }
 
 .table td {
-  padding: 15px 14px;
+  height: 56px;
+  padding: 8px 14px;
   border-top: 1px solid rgba(148, 163, 184, 0.14);
   color: var(--color-text-secondary);
   font-size: 13px;
-  vertical-align: top;
+  vertical-align: middle;
 }
 
 .table tbody tr {
@@ -312,44 +361,53 @@
   background: rgba(148, 163, 184, 0.055);
 }
 
+.draggableRow {
+  cursor: grab;
+}
+
+.draggableRow:active {
+  cursor: grabbing;
+}
+
+.draggableRow td,
+.draggableRow code,
+.draggableRow .typePill {
+  cursor: grab;
+}
+
+.draggableRow:active td,
+.draggableRow:active code,
+.draggableRow:active .typePill {
+  cursor: grabbing;
+}
+
 .selectionHead,
 .selectionCell {
-  width: 64px;
+  width: 44px;
+  padding-right: 8px;
 }
 
 .selectionHead input,
 .selectionCell input {
   width: 16px;
   height: 16px;
+  margin: 0;
   accent-color: rgb(20, 184, 166);
+  cursor: pointer;
 }
 
 .selectionCell {
+  text-align: center;
   white-space: nowrap;
 }
 
-.selectionCell input,
-.dragHandle {
+.selectionCell input {
   opacity: 0;
   transition: opacity 0.15s ease;
 }
 
-.dragHandle {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  margin-right: 6px;
-  color: var(--color-text-tertiary);
-  cursor: grab;
-  vertical-align: middle;
-}
-
 .table tbody tr:hover .selectionCell input,
-.table tbody tr:hover .dragHandle,
-.rowSelected .selectionCell input,
-.rowSelected .dragHandle {
+.rowSelected .selectionCell input {
   opacity: 1;
 }
 
@@ -385,7 +443,7 @@
   max-width: 220px;
   overflow: hidden;
   text-overflow: ellipsis;
-  padding: 5px 7px;
+  padding: 4px 7px;
   border-radius: 6px;
   background: rgba(148, 163, 184, 0.1);
   color: var(--color-text-primary);
@@ -396,7 +454,7 @@
 .typePill {
   display: inline-flex;
   align-items: center;
-  min-height: 26px;
+  min-height: 24px;
   padding: 0 9px;
   border: 1px solid rgba(20, 184, 166, 0.24);
   border-radius: 999px;
@@ -409,8 +467,14 @@
 
 .rowActions {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
   gap: 6px;
+}
+
+.rowActions button,
+.table tbody input {
+  cursor: pointer;
 }
 
 .loadingState,
