@@ -8757,6 +8757,11 @@
   scrollbar-color: rgba(148, 163, 184, 0.34) transparent;
 }
 
+.containerFocused .propertiesPanel {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
 .editorHeaderPages .pageList::-webkit-scrollbar,
 .editorHeaderMain .editorTopControls::-webkit-scrollbar,
 .containerFocused .propertiesPanel::-webkit-scrollbar,
@@ -12077,4 +12082,12 @@
 .pageFrame .containerFocused .pagesDropdownAddButton:hover {
   border-color: rgba(var(--color-primary-rgb), 0.34);
   background: rgba(var(--color-primary-rgb), 0.08);
+}
+
+/* Keep the right inspector from resizing its controls when the scrollbar appears. */
+.pageFrame .containerFocused:has(.builder) .propertiesPanel,
+.pageFrame .containerEditorFocus .propertiesPanel,
+.containerEditorFocus .propertiesPanel {
+  overflow-y: scroll;
+  scrollbar-gutter: stable;
 }
