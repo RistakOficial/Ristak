@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { ArrowRight, BookOpen, CheckCircle, Copy, KeyRound, RefreshCw, Trash2, XCircle } from 'lucide-react'
+import { ArrowRight, BookOpen, CheckCircle, ChevronDown, Copy, KeyRound, RefreshCw, Trash2, XCircle } from 'lucide-react'
 import { Button, Card } from '@/components/common'
 import { useAuth } from '@/contexts/AuthContext'
 import { useNotification } from '@/contexts/NotificationContext'
@@ -30,6 +30,7 @@ export const APIAccessSettings: React.FC = () => {
   const [isLoadingApiToken, setIsLoadingApiToken] = useState(false)
   const [isRotatingApiToken, setIsRotatingApiToken] = useState(false)
   const [isRevokingApiToken, setIsRevokingApiToken] = useState(false)
+  const [areWebhooksOpen, setAreWebhooksOpen] = useState(false)
 
   const origin = (API_URL || window.location.origin).replace(/\/+$/, '')
   const externalApiBaseUrl = `${origin}/api/external`
@@ -308,73 +309,116 @@ export const APIAccessSettings: React.FC = () => {
             paddingTop: '1.5rem',
             borderTop: '1px solid rgba(148, 163, 184, 0.16)'
           }}>
-            <div style={{ marginBottom: '1rem' }}>
-              <h3 style={{
-                fontSize: '1rem',
-                fontWeight: 600,
-                color: 'var(--color-text-primary)',
-                margin: '0 0 0.5rem 0',
+            <button
+              type="button"
+              onClick={() => setAreWebhooksOpen((current) => !current)}
+              aria-expanded={areWebhooksOpen}
+              aria-controls="api-webhooks-panel"
+              style={{
+                width: '100%',
                 display: 'flex',
                 alignItems: 'center',
-                gap: '0.5rem'
+                justifyContent: 'space-between',
+                gap: '1rem',
+                padding: '0.875rem 0',
+                border: 0,
+                background: 'transparent',
+                cursor: 'pointer',
+                textAlign: 'left'
               }}>
-                <ArrowRight size={18} />
-                Webhooks
-              </h3>
-              <p style={{
-                fontSize: '0.875rem',
-                color: 'var(--color-text-tertiary)',
-                margin: 0,
-                maxWidth: '48rem'
+              <span style={{ display: 'grid', gap: '0.25rem', minWidth: 0 }}>
+                <span style={{
+                  color: 'var(--color-text-primary)',
+                  fontSize: '1rem',
+                  fontWeight: 600
+                }}>
+                  Webhooks
+                </span>
+                <span style={{
+                  color: 'var(--color-text-tertiary)',
+                  fontSize: '0.875rem',
+                  lineHeight: 1.45
+                }}>
+                  URLs POST listas para recibir eventos externos.
+                </span>
+              </span>
+              <span style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.5rem',
+                color: 'var(--color-text-secondary)',
+                fontSize: '0.8125rem',
+                fontWeight: 600,
+                whiteSpace: 'nowrap'
               }}>
-                Copia la URL del evento y pégala en el sistema que lo va a mandar. Cuando ese sistema haga POST, Ristak recibirá la información.
-              </p>
-            </div>
+                {webhookEndpoints.length} URLs
+                <ChevronDown
+                  size={18}
+                  style={{
+                    transition: 'transform 160ms ease',
+                    transform: areWebhooksOpen ? 'rotate(180deg)' : 'rotate(0deg)'
+                  }}
+                />
+              </span>
+            </button>
 
-            <div style={{ display: 'grid', gap: '0.875rem' }}>
-              {webhookEndpoints.map((endpoint) => {
-                const url = `${origin}${endpoint.path}`
+            {areWebhooksOpen && (
+              <div id="api-webhooks-panel" style={{ paddingTop: '0.25rem' }}>
+                <p style={{
+                  fontSize: '0.875rem',
+                  color: 'var(--color-text-tertiary)',
+                  margin: '0 0 1rem 0',
+                  maxWidth: '48rem'
+                }}>
+                  Copia la URL del evento y pégala en el sistema que lo va a mandar. Cuando ese sistema haga POST, Ristak recibirá la información.
+                </p>
 
-                return (
-                  <div
-                    key={endpoint.path}
-                    style={{
-                      display: 'grid',
-                      gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 18rem), 1fr))',
-                      gap: '1rem',
-                      alignItems: 'center',
-                      padding: '0.875rem 0',
-                      borderBottom: '1px solid rgba(148, 163, 184, 0.12)'
-                    }}
-                  >
-                    <div>
-                      <p style={{
-                        margin: '0 0 0.25rem 0',
-                        color: 'var(--color-text-primary)',
-                        fontSize: '0.925rem',
-                        fontWeight: 600
-                      }}>
-                        {endpoint.label}
-                      </p>
-                      <p style={{
-                        margin: 0,
-                        color: 'var(--color-text-tertiary)',
-                        fontSize: '0.78rem',
-                        lineHeight: 1.45
-                      }}>
-                        {endpoint.description}
-                      </p>
-                    </div>
+                <div style={{ display: 'grid', gap: '0.875rem' }}>
+                  {webhookEndpoints.map((endpoint) => {
+                    const url = `${origin}${endpoint.path}`
 
-                    <ReadonlyField
-                      label={`URL POST para ${endpoint.label}`}
-                      value={url}
-                      onCopy={() => copyText(url, `webhook de ${endpoint.label}`)}
-                    />
-                  </div>
-                )
-              })}
-            </div>
+                    return (
+                      <div
+                        key={endpoint.path}
+                        style={{
+                          display: 'grid',
+                          gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 18rem), 1fr))',
+                          gap: '1rem',
+                          alignItems: 'center',
+                          padding: '0.875rem 0',
+                          borderBottom: '1px solid rgba(148, 163, 184, 0.12)'
+                        }}
+                      >
+                        <div>
+                          <p style={{
+                            margin: '0 0 0.25rem 0',
+                            color: 'var(--color-text-primary)',
+                            fontSize: '0.925rem',
+                            fontWeight: 600
+                          }}>
+                            {endpoint.label}
+                          </p>
+                          <p style={{
+                            margin: 0,
+                            color: 'var(--color-text-tertiary)',
+                            fontSize: '0.78rem',
+                            lineHeight: 1.45
+                          }}>
+                            {endpoint.description}
+                          </p>
+                        </div>
+
+                        <ReadonlyField
+                          label={`URL POST para ${endpoint.label}`}
+                          value={url}
+                          onCopy={() => copyText(url, `webhook de ${endpoint.label}`)}
+                        />
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
           </div>
 
           <a
