@@ -1624,6 +1624,11 @@ function getContactInfoJourneyDayKey(date: string, timezone: string) {
   return formatter.format(parsed)
 }
 
+function getContactInfoWhatsAppGroupKey(event: JourneyEvent, timezone: string) {
+  const dayKey = getContactInfoJourneyDayKey(event.date, timezone)
+  return `${dayKey}:${isAdAttributedJourneyEvent(event) ? 'ad' : 'direct'}`
+}
+
 function enrichJourneyDataWithMeta(
   data: Record<string, any>,
   metaAttribution?: Contact['metaAttribution'] | null
@@ -1666,19 +1671,19 @@ function buildContactInfoJourney(
     }
   })
 
-  const whatsappByDay = new Map<string, JourneyEvent[]>()
+  const whatsappByGroup = new Map<string, JourneyEvent[]>()
   whatsappEvents.forEach((event) => {
-    const dayKey = getContactInfoJourneyDayKey(event.date, timezone)
-    const dayEvents = whatsappByDay.get(dayKey)
-    if (dayEvents) {
-      dayEvents.push(event)
+    const groupKey = getContactInfoWhatsAppGroupKey(event, timezone)
+    const groupEvents = whatsappByGroup.get(groupKey)
+    if (groupEvents) {
+      groupEvents.push(event)
     } else {
-      whatsappByDay.set(dayKey, [event])
+      whatsappByGroup.set(groupKey, [event])
     }
   })
 
   const mergedWhatsAppEvents: JourneyEvent[] = []
-  whatsappByDay.forEach((dayEvents) => {
+  whatsappByGroup.forEach((dayEvents) => {
     const sorted = [...dayEvents].sort((left, right) => getWhatsAppJourneyEventScore(right) - getWhatsAppJourneyEventScore(left))
     const primary = sorted[0]
     const mergedData: Record<string, any> = {}

@@ -384,9 +384,14 @@ const getLocalDayKey = (date: string, timezone: string): string => {
   return formatter.format(parsed)
 }
 
-// Colapsa los eventos de WhatsApp (incluido "Contacto creado" de contactos de WhatsApp) a
-// UN marcador por día local, fusionando la info y priorizando la atribución de anuncio. El
-// resto de eventos (visitas, citas, pagos, contactos no-WhatsApp) pasan intactos.
+const getWhatsAppJourneyGroupKey = (event: JourneyEvent, timezone: string): string => {
+  const dayKey = getLocalDayKey(event.date, timezone)
+  return `${dayKey}:${isAdAttributedEvent(event) ? 'ad' : 'direct'}`
+}
+
+// Colapsa los eventos de WhatsApp por día local y tipo de origen. Mantiene separado
+// un mensaje directo de otro que sí vino de anuncio para no pintar "Facebook" en el
+// viaje cuando el contacto escribió directo por WhatsApp.
 const buildDisplayJourney = (events: JourneyEvent[], timezone: string): JourneyEvent[] => {
   const whatsappEvents: JourneyEvent[] = []
   const otherEvents: JourneyEvent[] = []
@@ -399,19 +404,19 @@ const buildDisplayJourney = (events: JourneyEvent[], timezone: string): JourneyE
     }
   })
 
-  const byDay = new Map<string, JourneyEvent[]>()
+  const byGroup = new Map<string, JourneyEvent[]>()
   whatsappEvents.forEach(event => {
-    const key = getLocalDayKey(event.date, timezone)
-    const bucket = byDay.get(key)
+    const key = getWhatsAppJourneyGroupKey(event, timezone)
+    const bucket = byGroup.get(key)
     if (bucket) {
       bucket.push(event)
     } else {
-      byDay.set(key, [event])
+      byGroup.set(key, [event])
     }
   })
 
   const mergedWhatsapp: JourneyEvent[] = []
-  byDay.forEach(dayEvents => {
+  byGroup.forEach(dayEvents => {
     const sorted = [...dayEvents].sort((a, b) => whatsAppEventScore(b) - whatsAppEventScore(a))
     const primary = sorted[0]
 

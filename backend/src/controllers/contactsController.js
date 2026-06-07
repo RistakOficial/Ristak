@@ -99,6 +99,38 @@ const CONTACT_META_PROFILE_SELECT = `
 const cleanString = (value) => String(value || '').trim()
 const hasOwn = (object, key) => Object.prototype.hasOwnProperty.call(object || {}, key)
 const isTruthyQueryValue = (value) => ['1', 'true', 'yes', 'si', 'sí'].includes(cleanString(value).toLowerCase())
+const hasTextValue = (value) => cleanString(value).length > 0
+const sourceTypeLooksLikeAd = (value) => {
+  const normalized = cleanString(value).toLowerCase().replace(/[\s-]+/g, '_')
+  return ['ad', 'ads', 'advertisement', 'click_to_whatsapp', 'ctwa'].includes(normalized)
+}
+
+const hasRealWhatsAppAdAttribution = (data = {}) => {
+  const hasAdIdentifier = [
+    data.referral_source_id,
+    data.source_id,
+    data.ad_id,
+    data.ad_id_thru_message,
+    data.attribution_ad_id,
+    data.referral_ctwa_clid,
+    data.ctwa_clid,
+    data.attribution_ctwa_clid
+  ].some(hasTextValue)
+
+  if (hasAdIdentifier) return true
+
+  const sourceUrl = cleanString(data.referral_source_url || data.source_url || data.attribution_url)
+  if (!sourceUrl) return false
+
+  return [
+    data.referral_source_type,
+    data.source_type,
+    data.referral_source_app,
+    data.source_app,
+    data.referral_entry_point,
+    data.entry_point
+  ].some(sourceTypeLooksLikeAd)
+}
 const HIGHLEVEL_MESSAGE_REFRESH_LIMIT = 12
 const HIGHLEVEL_REFRESHABLE_STATUS = new Set(['', 'pending', 'queued', 'processing', 'scheduled', 'sent', 'accepted'])
 const HIGHLEVEL_STATUS_PRIORITY = {
@@ -2297,16 +2329,20 @@ export const getContactJourney = async (req, res) => {
         referral_thumbnail_url: msg.referral_thumbnail_url,
         referral_ctwa_clid: msg.referral_ctwa_clid,
         attribution_source: 'whatsapp_attribution',
-        attribution_record_id: msg.id,
-        is_ad_attributed: true
+        attribution_record_id: msg.id
       }
+      const isAdAttributed = hasRealWhatsAppAdAttribution({
+        ...data,
+        ad_id_thru_message: msg.ad_id_thru_message
+      })
 
       whatsappJourneyEvents.push({
         type: 'whatsapp_message',
         date: msg.created_at,
         data: {
           ...data,
-          ad_platform: detectWhatsAppAdPlatform(data)
+          is_ad_attributed: isAdAttributed,
+          ad_platform: isAdAttributed ? detectWhatsAppAdPlatform(data) : null
         }
       })
     })
@@ -2354,13 +2390,6 @@ export const getContactJourney = async (req, res) => {
     )
 
     whatsappApiMessages.forEach(msg => {
-      const isAdAttributed = Boolean(
-        msg.attribution_id ||
-        msg.detected_ctwa_clid ||
-        msg.detected_source_id ||
-        msg.detected_source_url ||
-        msg.detected_headline
-      )
       const payloadMedia = getWhatsAppMediaFromPayload(msg.raw_payload_json, msg.message_type)
       const media = {
         media_url: cleanString(msg.media_url) || payloadMedia.media_url,
@@ -2397,16 +2426,17 @@ export const getContactJourney = async (req, res) => {
         direction: msg.direction || 'inbound',
         status: msg.status || null,
         error_code: msg.error_code || null,
-        error_message: msg.error_message || null,
-        is_ad_attributed: isAdAttributed
+        error_message: msg.error_message || null
       }
+      const isAdAttributed = hasRealWhatsAppAdAttribution(data)
 
       whatsappJourneyEvents.push({
         type: 'whatsapp_message',
         date: msg.message_timestamp || msg.created_at,
         data: {
           ...data,
-          ad_platform: detectWhatsAppAdPlatform(data)
+          is_ad_attributed: isAdAttributed,
+          ad_platform: isAdAttributed ? detectWhatsAppAdPlatform(data) : null
         }
       })
     })
