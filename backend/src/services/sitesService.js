@@ -4653,6 +4653,30 @@ function hasSitesAIHtmlPayload(aiPayload = {}) {
   )
 }
 
+function normalizeImportedHtmlForChangeDetection(html = '') {
+  return String(html || '')
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/\s+/g, ' ')
+    .replace(/>\s+</g, '><')
+    .trim()
+}
+
+function didAIChangeImportedHtml(page = {}, currentImport = {}, importedPages = []) {
+  if (Array.isArray(page.pages) && page.pages.length > 0) {
+    return page.pages.some(nextPage => {
+      const currentPage = importedPages.find(candidate => (
+        cleanString(candidate.id) === cleanString(nextPage.id) ||
+        cleanString(candidate.filename) === cleanString(nextPage.filename)
+      ))
+      if (!currentPage) return true
+      return normalizeImportedHtmlForChangeDetection(nextPage.html) !== normalizeImportedHtmlForChangeDetection(currentPage.html)
+    })
+  }
+
+  const currentHtml = currentImport?.htmlSanitized || currentImport?.htmlOriginal || ''
+  return normalizeImportedHtmlForChangeDetection(page.html) !== normalizeImportedHtmlForChangeDetection(currentHtml)
+}
+
 export async function listSites() {
   const rows = await db.all(`
     SELECT
@@ -6131,6 +6155,13 @@ export async function updateImportedSiteHtmlWithAI(siteId, input = {}) {
   }
 
   const page = normalizeAIHtmlPagePayload(aiPayload, siteKind)
+  if (!didAIChangeImportedHtml(page, currentImport, importedPages)) {
+    return {
+      status: 'needs_more_info',
+      reply: 'La IA devolvió el mismo HTML sin cambios visibles. Reintenta indicando exactamente qué debe cambiar en la zona seleccionada.'
+    }
+  }
+
   const result = await replaceImportedSiteHtml(siteId, {
     html: page.html,
     pages: page.pages,

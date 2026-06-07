@@ -5829,6 +5829,7 @@ type ImportedAIRegionElement = {
   role?: string
   label?: string
   text?: string
+  sourcePath?: string
   rect?: string
   coverage?: string
   visual?: string
@@ -5840,6 +5841,7 @@ type ImportedAIRegionSelection = {
   pageId: string
   pageTitle: string
   visualSummary?: string
+  visualContext?: SitesAIPreviewVisualContext | null
   bounds: {
     x: number
     y: number
@@ -6566,6 +6568,37 @@ const formatImportedRegionRect = (rect: DOMRect, region: { left: number; top: nu
   `x=${Math.round(rect.left - region.left)}, y=${Math.round(rect.top - region.top)}, w=${Math.round(rect.width)}, h=${Math.round(rect.height)}`
 )
 
+const getImportedRegionElementSourcePath = (element: HTMLElement) => {
+  const parts: string[] = []
+  let current: HTMLElement | null = element
+  while (current && current.nodeType === 1 && current.tagName.toLowerCase() !== 'html' && parts.length < 7) {
+    const tagName = current.tagName.toLowerCase()
+    const editId = getImportedEditableAttribute(current, 'id')
+    const section = getImportedEditableAttribute(current, 'section')
+    const id = current.getAttribute('id')
+    const classNames = String(current.getAttribute('class') || '')
+      .split(/\s+/)
+      .map(value => value.trim())
+      .filter(Boolean)
+      .filter(value => !value.startsWith('rstk-imported-'))
+      .slice(0, 2)
+    const siblings = current.parentElement
+      ? Array.from(current.parentElement.children).filter(sibling => sibling.tagName === current?.tagName)
+      : []
+    const siblingIndex = siblings.length > 1 ? `:nth-of-type(${siblings.indexOf(current) + 1})` : ''
+    parts.unshift([
+      tagName,
+      id ? `#${id}` : '',
+      classNames.length ? `.${classNames.join('.')}` : '',
+      editId ? `[edit-id="${editId}"]` : '',
+      section ? `[section="${section}"]` : '',
+      siblingIndex
+    ].filter(Boolean).join(''))
+    current = current.parentElement
+  }
+  return parts.join(' > ')
+}
+
 const getImportedRegionElementRole = (
   element: HTMLElement,
   selection: ImportedEditableSelection | null,
@@ -6695,6 +6728,7 @@ const collectImportedAIRegionElements = (
         role,
         label: selection?.label || sectionLabel || element.getAttribute('aria-label') || element.getAttribute('title') || '',
         text: compactImportedRegionText(element.textContent || ''),
+        sourcePath: getImportedRegionElementSourcePath(element),
         rect: formatImportedRegionRect(rect, region),
         coverage: `elemento=${Math.round(coverageOfElement * 100)}%, zona=${Math.round(coverageOfRegion * 100)}%`,
         visual: getImportedRegionVisualSummaryForElement(element, rect),
@@ -6731,6 +6765,120 @@ const buildImportedAIRegionVisualSummary = (
   ].filter(Boolean).join('\n')
 }
 
+const parseImportedRegionRect = (value = '') => {
+  const match = value.match(/\bx=(-?\d+),\s*y=(-?\d+),\s*w=(\d+),\s*h=(\d+)/)
+  if (!match) return { x: 0, y: 0, width: 120, height: 44 }
+  return {
+    x: Number(match[1]) || 0,
+    y: Number(match[2]) || 0,
+    width: Number(match[3]) || 120,
+    height: Number(match[4]) || 44
+  }
+}
+
+const getImportedRegionSvgFill = (element: ImportedAIRegionElement) => {
+  if (element.issue) return '#fee2e2'
+  if (element.role === 'titular') return '#e0f2fe'
+  if (element.role === 'video/player') return '#111827'
+  if (element.role === 'boton/cta') return '#dbeafe'
+  if (element.role === 'imagen/fondo') return '#dcfce7'
+  if (element.role === 'formulario/campo') return '#f8fafc'
+  if (/contenedor|seccion/.test(element.role || '')) return '#eff6ff'
+  return '#ffffff'
+}
+
+const getImportedRegionSvgStroke = (element: ImportedAIRegionElement) => {
+  if (element.issue) return '#ef4444'
+  if (element.role === 'titular') return '#0284c7'
+  if (element.role === 'video/player') return '#0f172a'
+  if (element.role === 'boton/cta') return '#2563eb'
+  if (element.role === 'imagen/fondo') return '#16a34a'
+  if (element.role === 'formulario/campo') return '#64748b'
+  if (/contenedor|seccion/.test(element.role || '')) return '#60a5fa'
+  return '#94a3b8'
+}
+
+const renderImportedAIRegionContextSvg = (selection: ImportedAIRegionSelection) => {
+  const width = IMPORTED_AI_VISUAL_SCREENSHOT_WIDTH
+  const height = IMPORTED_AI_VISUAL_SCREENSHOT_HEIGHT
+  const regionWidth = Math.max(1, selection.bounds.width)
+  const regionHeight = Math.max(1, selection.bounds.height)
+  const scale = Math.min((width - 64) / regionWidth, (height - 192) / regionHeight, 1.45)
+  const offsetX = Math.round((width - regionWidth * scale) / 2)
+  const offsetY = 132
+  const markup = selection.elements.map((element, index) => {
+    const rect = parseImportedRegionRect(element.rect || '')
+    const x = Math.max(30, Math.min(width - 60, offsetX + rect.x * scale))
+    const y = Math.max(118, Math.min(height - 50, offsetY + rect.y * scale))
+    const rectWidth = Math.max(28, Math.min(width - x - 24, rect.width * scale))
+    const rectHeight = Math.max(18, Math.min(height - y - 24, rect.height * scale))
+    const fill = getImportedRegionSvgFill(element)
+    const stroke = getImportedRegionSvgStroke(element)
+    const textColor = element.role === 'video/player' ? '#f8fafc' : '#0f172a'
+    return `
+      <g>
+        <rect x="${x}" y="${y}" width="${rectWidth}" height="${rectHeight}" rx="8" fill="${fill}" stroke="${stroke}" stroke-width="${element.issue ? 3 : 2}" opacity="0.92"/>
+        <text x="${x + 8}" y="${y + 18}" fill="${textColor}" font-size="12" font-weight="800">${escapeSvgText(`${index + 1}. ${element.role || element.tagName}`)}</text>
+        <text x="${x + 8}" y="${y + 36}" fill="${textColor}" font-size="12">${escapeSvgText(limitSitesAIContextText(element.text || element.label || element.tagName, 70))}</text>
+      </g>
+    `
+  }).join('')
+
+  return `
+    <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+      <rect width="${width}" height="${height}" fill="#0f172a"/>
+      <rect x="20" y="20" width="${width - 40}" height="88" rx="18" fill="#111827" stroke="#38bdf8" stroke-width="2"/>
+      <text x="44" y="54" fill="#f8fafc" font-family="Inter, Arial, sans-serif" font-size="22" font-weight="900">${escapeSvgText(`Zona seleccionada: ${selection.pageTitle}`)}</text>
+      <text x="44" y="84" fill="#bae6fd" font-family="Inter, Arial, sans-serif" font-size="16">${escapeSvgText(`${Math.round(selection.bounds.width)}x${Math.round(selection.bounds.height)} px · ${selection.elements.length} elementos detectados`)}</text>
+      <rect x="${offsetX}" y="${offsetY}" width="${regionWidth * scale}" height="${regionHeight * scale}" rx="16" fill="#f8fafc" stroke="#38bdf8" stroke-width="3"/>
+      ${markup}
+    </svg>
+  `.trim()
+}
+
+const buildImportedAIRegionVisualContext = async (
+  site: PublicSite,
+  selection: ImportedAIRegionSelection
+): Promise<SitesAIPreviewVisualContext> => {
+  const elements = selection.elements.slice(0, IMPORTED_AI_VISUAL_MAX_ELEMENTS).map((element): SitesAIPreviewVisualElement => {
+    const rect = parseImportedRegionRect(element.rect || '')
+    return {
+      type: element.role || element.editType || element.tagName,
+      label: element.label || element.sourcePath || element.tagName,
+      text: [
+        element.text || element.label || element.tagName,
+        element.issue ? `Problema visual: ${element.issue}` : '',
+        element.visual ? `Visual: ${element.visual}` : '',
+        element.sourcePath ? `Código: ${element.sourcePath}` : ''
+      ].filter(Boolean).join(' | '),
+      x: rect.x,
+      y: rect.y,
+      width: rect.width,
+      height: rect.height
+    }
+  })
+  const summary = [
+    'Contexto específico de la zona seleccionada por el usuario.',
+    selection.visualSummary || buildImportedAIRegionVisualSummary(selection),
+    'Ubicación del código detrás de la zona:',
+    selection.elements.slice(0, 12).map((element, index) => (
+      `${index + 1}. ${element.role || element.tagName} ${element.label || ''} -> ${element.sourcePath || 'sin ruta'} | ${element.html || ''}`
+    )).join('\n')
+  ].filter(Boolean).join('\n\n')
+  const screenshotDataUrl = await svgToPngDataUrl(renderImportedAIRegionContextSvg(selection))
+
+  return {
+    siteId: site.id,
+    pageId: selection.pageId,
+    pageTitle: `${selection.pageTitle} · zona seleccionada`,
+    summary,
+    screenshotDataUrl,
+    screenshotFormat: screenshotDataUrl ? 'internal-preview-png' : undefined,
+    capturedAt: new Date().toISOString(),
+    elements
+  }
+}
+
 const buildImportedAIRegionPrompt = (
   userPrompt: string,
   selection: ImportedAIRegionSelection,
@@ -6745,6 +6893,7 @@ const buildImportedAIRegionPrompt = (
         element.editId ? `editId=${element.editId}` : '',
         element.editType ? `editType=${element.editType}` : '',
         element.label ? `label=${element.label}` : '',
+        element.sourcePath ? `sourcePath=${element.sourcePath}` : '',
         element.rect ? `rect=${element.rect}` : '',
         element.coverage ? `coverage=${element.coverage}` : '',
         element.visual ? `visual=${element.visual}` : '',
@@ -6785,6 +6934,14 @@ Reglas para esta edicion:
 - Conserva formularios, campos, rutas de datos y acciones de botones existentes salvo que el usuario pida cambiarlos.
 `.trim()
 }
+
+const normalizeImportedAIRegionPreviewHtml = (html = '') => (
+  html
+    .replace(/<script\b[\s\S]*?<\/script>/gi, '')
+    .replace(/\sdata-rstk-imported-editor-overlay="[^"]*"/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+)
 
 const getDefaultImportedAdditionalAction = (actions: ImportedButtonActionStep[]): ImportedButtonAction => {
   const used = new Set(actions.map(action => action.action))
@@ -7262,11 +7419,14 @@ const ImportedHtmlEditorPanel: React.FC<{
     setAiRegionSaving(true)
     setAiRegionError('')
     try {
+      const beforePreviewHtml = previewHtml
+      const regionVisualContext = aiRegionSelection.visualContext ||
+        (previewVisualContextRef.current?.siteId === site.id ? previewVisualContextRef.current : null)
       const runRegionEdit = (options: { forceApply?: boolean; previousReply?: string } = {}) => (
         sitesService.editImportedHtmlWithAI(site.id, {
           siteKind: getAIAgentSiteKindForSite(site),
           model: DEFAULT_SITE_CHATGPT_EDIT_MODEL,
-          visualContext: previewVisualContextRef.current?.siteId === site.id ? previewVisualContextRef.current : null,
+          visualContext: regionVisualContext,
           messages: [{
             role: 'user',
             content: buildImportedAIRegionPrompt(prompt, aiRegionSelection, site, options)
@@ -7287,11 +7447,22 @@ const ImportedHtmlEditorPanel: React.FC<{
         return
       }
 
+      const refreshedHtml = await sitesService.getPreviewHtml(site.id, activeImportedPage?.id || DEFAULT_FUNNEL_PAGE_ID, { test: true })
+      const beforeFingerprint = normalizeImportedAIRegionPreviewHtml(beforePreviewHtml)
+      const afterFingerprint = normalizeImportedAIRegionPreviewHtml(refreshedHtml)
+      if (beforeFingerprint && afterFingerprint && beforeFingerprint === afterFingerprint) {
+        setPreviewHtml(refreshedHtml)
+        setPreviewVersion(current => current + 1)
+        setAiRegionError('La IA respondió, pero no cambió el HTML visible de esa zona. Ya le mandé la captura/contexto específico; intenta aplicar de nuevo o escribe una instrucción más directa sobre qué elemento cambiar.')
+        return
+      }
+
       onContentUpdated({ site: result.site, import: result.import })
       setAiRegionMode(false)
       setAiRegionSelection(null)
       setAiRegionPrompt('')
-      await loadInlinePreview()
+      setPreviewHtml(refreshedHtml)
+      setPreviewVersion(current => current + 1)
       showToast('success', 'Zona actualizada', 'La IA aplicó el cambio solo en la parte que seleccionaste.')
     } catch (error) {
       setAiRegionError(error instanceof Error ? error.message : 'No se pudo editar esa zona con IA.')
@@ -7672,7 +7843,7 @@ const ImportedHtmlEditorPanel: React.FC<{
           updateRegionBox(moveEvent.clientX, moveEvent.clientY)
         }
 
-        const handleUp = (upEvent: MouseEvent) => {
+        const handleUp = async (upEvent: MouseEvent) => {
           upEvent.preventDefault()
           upEvent.stopPropagation()
           doc.removeEventListener('mousemove', handleMove, true)
@@ -7714,6 +7885,7 @@ const ImportedHtmlEditorPanel: React.FC<{
             elements: selectedElements
           }
           nextRegionSelection.visualSummary = buildImportedAIRegionVisualSummary(nextRegionSelection)
+          nextRegionSelection.visualContext = await buildImportedAIRegionVisualContext(site, nextRegionSelection)
           setAiRegionSelection({
             ...nextRegionSelection
           })
