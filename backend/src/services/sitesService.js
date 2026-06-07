@@ -5445,6 +5445,9 @@ function applyImportedAIRegionTextReplacementOperation(html = '', { promptText =
   if (!replacementText || !targetKind) {
     return { html: source, attempted: false, applied: false, operation: 'replace_text', reason: 'La solicitud no pidio reemplazar un texto concreto.' }
   }
+  if (!hints.length) {
+    return { html: source, attempted: false, applied: false, operation: 'replace_text', reason: 'Sin zona seleccionada; la edicion de texto se delega a OpenAI con toda la pagina.' }
+  }
 
   const hint = pickImportedAIRegionTextHint(hints, targetKind)
   if (!hint) {
@@ -5519,6 +5522,9 @@ function applyImportedAIRegionVideoReplacementOperation(html = '', { promptText 
 
   const operationalPrompt = buildImportedAIRegionOperationalPromptText(promptText, requestText)
   const hints = parseImportedAIRegionElementHints(operationalPrompt)
+  if (!hints.length) {
+    return { html: source, attempted: false, applied: false, operation: 'replace_video', reason: 'Sin zona seleccionada; el reemplazo de video se delega a OpenAI con toda la pagina.' }
+  }
   const videoHint = getImportedAIRegionVideoHint(hints)
   if (!videoHint) {
     return {
@@ -5603,9 +5609,11 @@ function applyImportedAIRegionContrastFallbackToHtml(html = '', promptText = '')
 function applyImportedAIRegionAgentOperationsToHtml(html = '', { promptText = '', requestText = '' } = {}) {
   const source = String(html || '')
   const operationalPrompt = buildImportedAIRegionOperationalPromptText(promptText, requestText)
+  const regionHints = parseImportedAIRegionElementHints(operationalPrompt)
+  const hasSelectedRegionHints = regionHints.length > 0
   const operations = []
 
-  if (shouldApplyImportedAIRegionVideoOnlyFallback(requestText)) {
+  if (hasSelectedRegionHints && shouldApplyImportedAIRegionVideoOnlyFallback(requestText)) {
     const videoOnly = applyImportedAIRegionVideoOnlyFallbackToHtml(source, operationalPrompt)
     return {
       html: videoOnly.html,
@@ -5638,7 +5646,7 @@ function applyImportedAIRegionAgentOperationsToHtml(html = '', { promptText = ''
   const videoBlocker = runOperation(videoReplaceResult)
   if (videoBlocker) return { ...videoBlocker, operations }
 
-  if (shouldApplyImportedAIRegionCenteredLayoutFallback(requestText)) {
+  if (hasSelectedRegionHints && shouldApplyImportedAIRegionCenteredLayoutFallback(requestText)) {
     const centered = applyImportedAIRegionCenteredLayoutFallbackToHtml(nextHtml, operationalPrompt)
     operations.push(`centered_title_video_button: ${centered.reason || 'sin detalle'}`)
     if (centered.applied) {
@@ -5656,7 +5664,7 @@ function applyImportedAIRegionAgentOperationsToHtml(html = '', { promptText = ''
     }
   }
 
-  if (shouldApplyImportedAIRegionContrastFallback(requestText)) {
+  if (hasSelectedRegionHints && shouldApplyImportedAIRegionContrastFallback(requestText)) {
     const contrast = applyImportedAIRegionContrastFallbackToHtml(nextHtml, operationalPrompt)
     operations.push(`solid_contrast: ${contrast.reason || 'sin detalle'}`)
     if (contrast.applied) {
@@ -7330,6 +7338,7 @@ export async function updateImportedSiteHtmlWithAI(siteId, input = {}) {
   const activePageId = getImportedAIActivePageId(input, visualContext)
   const promptText = getSitesAIConversationText(messages)
   const operationalPromptText = buildImportedAIRegionOperationalPromptText(promptText, aiRegionRequest)
+  const hasSelectedRegionHints = parseImportedAIRegionElementHints(operationalPromptText).length > 0
   const debug = createSitesAIEditDebug({
     traceId,
     siteId,
@@ -7441,7 +7450,7 @@ export async function updateImportedSiteHtmlWithAI(siteId, input = {}) {
   )
   const changedByAI = didAIChangeImportedHtml(page, currentImport, mergeImportedPages)
 
-  if (shouldApplyImportedAIRegionCenteredLayoutFallback(operationalPromptText) || shouldApplyImportedAIRegionVideoOnlyFallback(operationalPromptText)) {
+  if (hasSelectedRegionHints && (shouldApplyImportedAIRegionCenteredLayoutFallback(operationalPromptText) || shouldApplyImportedAIRegionVideoOnlyFallback(operationalPromptText))) {
     debug.fallbackAttempted = true
     const layoutFallbackPages = await getImportedSitePagesForAIContext(currentSite, currentImport, { htmlLimit: 0 })
     const layoutFallbackResult = buildImportedAIRegionFallbackPageResult({
@@ -7477,38 +7486,42 @@ export async function updateImportedSiteHtmlWithAI(siteId, input = {}) {
   }
 
   if (!changedByAI) {
-    const fallbackImportedPages = mergeImportedPages.length > 1
-      ? mergeImportedPages
-      : importedPages
-    const fallbackResultPage = buildImportedAIRegionFallbackPageResult({
-      currentImport,
-      importedPages: fallbackImportedPages,
-      activePageId,
-      promptText: operationalPromptText,
-      siteKind
-    })
-    const fallbackPage = fallbackResultPage.page
-    if (fallbackPage && didAIChangeImportedHtml(fallbackPage, currentImport, fallbackImportedPages)) {
-      const fallbackResult = await replaceImportedSiteHtml(siteId, {
-        html: fallbackPage.html,
-        pages: fallbackPage.pages,
-        title: fallbackPage.title || currentSite.title,
-        description: fallbackPage.description || currentSite.description
+    if (hasSelectedRegionHints) {
+      const fallbackImportedPages = mergeImportedPages.length > 1
+        ? mergeImportedPages
+        : importedPages
+      const fallbackResultPage = buildImportedAIRegionFallbackPageResult({
+        currentImport,
+        importedPages: fallbackImportedPages,
+        activePageId,
+        promptText: operationalPromptText,
+        siteKind
       })
+      const fallbackPage = fallbackResultPage.page
+      if (fallbackPage && didAIChangeImportedHtml(fallbackPage, currentImport, fallbackImportedPages)) {
+        const fallbackResult = await replaceImportedSiteHtml(siteId, {
+          html: fallbackPage.html,
+          pages: fallbackPage.pages,
+          title: fallbackPage.title || currentSite.title,
+          description: fallbackPage.description || currentSite.description
+        })
 
-      return {
-        status: 'updated',
-        reply: fallbackResultPage.type === 'video_only'
-          ? 'La IA no hizo cambios visibles, asi que Ristak dejo solo el video grande y centrado en la zona seleccionada.'
-          : 'La IA no hizo cambios visibles, asi que Ristak aplico el ajuste de layout en la zona seleccionada.',
-        site: fallbackResult.site,
-        import: fallbackResult.import
+        return {
+          status: 'updated',
+          reply: fallbackResultPage.type === 'video_only'
+            ? 'La IA no hizo cambios visibles, asi que Ristak dejo solo el video grande y centrado en la zona seleccionada.'
+            : 'La IA no hizo cambios visibles, asi que Ristak aplico el ajuste de layout en la zona seleccionada.',
+          site: fallbackResult.site,
+          import: fallbackResult.import
+        }
       }
     }
 
     return {
       status: 'needs_more_info',
-      reply: 'La IA devolvio el mismo HTML sin cambios visibles. Reintenta indicando exactamente que debe cambiar en la zona seleccionada.'
+      reply: hasSelectedRegionHints
+        ? 'La IA devolvio el mismo HTML sin cambios visibles. Reintenta indicando exactamente que debe cambiar en la zona seleccionada.'
+        : 'La IA devolvio el mismo HTML sin cambios visibles. Reintenta indicando exactamente que debe cambiar en la pagina.'
     }
   }
 

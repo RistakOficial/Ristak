@@ -4190,11 +4190,6 @@ export const Sites: React.FC = () => {
     }
   }
 
-  const handleEditImportedHtmlWithAI = (site: PublicSite) => {
-    if (!isImportedHtmlSite(site)) return
-    handleCreateSiteWithAI(getAIAgentSiteKindForSite(site), site)
-  }
-
   const handleImportedContentUpdated = (result: ImportedSiteCreateResult) => {
     const normalizedSite = normalizeSiteForEditor(result.site)
     setSites(current => current.map(item => item.id === normalizedSite.id ? { ...item, ...normalizedSite } : item))
@@ -5451,7 +5446,6 @@ export const Sites: React.FC = () => {
                   onSelectPage={selectEditorPage}
                   onPreview={handlePreviewSite}
                   onPublish={() => handleSaveSite('published')}
-                  onEditWithAI={() => handleEditImportedHtmlWithAI(editorSite)}
                   onEditFields={() => void handleOpenImportMappingEditor(editorSite)}
                   onPreviewContextChange={handleImportedPreviewContextChange}
                   onContentUpdated={handleImportedContentUpdated}
@@ -7703,8 +7697,36 @@ Reglas para esta edicion:
 - Si el usuario menciona que algo "se transparenta", "se ve muy transparente", "no se lee", "se pierde", "muy claro" o "poco contraste", usa el resumen visual para localizar fondos/textos con alpha u opacidad baja y vuelve esa parte mas solida/legible sin cambiar contenido.
 - Si la solicitud pide insertar un video, acepta URL o codigo iframe/embed y colocalo como un elemento editable de video con data-rstk-editable="true", data-rstk-edit-type="video", data-rstk-label y data-rstk-edit-id.
 - Conserva formularios, campos, rutas de datos y acciones de botones existentes salvo que el usuario pida cambiarlos.
-`.trim()
+  `.trim()
 }
+
+const buildImportedAIPagePrompt = (
+  userPrompt: string,
+  site: PublicSite,
+  page: SitePage | undefined,
+  visualContext: SitesAIPreviewVisualContext | null,
+  options: { forceApply?: boolean; previousReply?: string } = {}
+) => `
+El usuario quiere modificar la pagina HTML completa desde el panel derecho del editor. No selecciono una zona especifica, asi que puedes usar toda la pagina activa como contexto.
+${options.forceApply ? '\nLa respuesta anterior pidio mas informacion, pero esta peticion ya es suficiente. No preguntes otra vez; aplica la mejor interpretacion posible.' : ''}
+${options.previousReply ? `\nRespuesta anterior que NO debe repetirse: ${options.previousReply}` : ''}
+
+Pagina activa: ${page?.title || site.title || site.name} (${page?.id || DEFAULT_FUNNEL_PAGE_ID})
+Site: ${site.title || site.name}
+
+Resumen visual de la pagina:
+${visualContext?.summary || 'Sin resumen visual disponible.'}
+
+Solicitud del usuario:
+${userPrompt.trim()}
+
+Reglas para esta edicion:
+- Devuelve el HTML completo actualizado, conservando todas las paginas del embudo si existen.
+- Aplica el cambio a la pagina activa completa.
+- Conserva formularios, campos, rutas de datos, tracking y acciones de botones salvo que el usuario pida cambiarlos.
+- Si el usuario pide cambiar copy, layout, video, contraste, imagenes o botones, aplica el cambio directamente con el HTML actual.
+- Usa needs_more_info solo si no hay una accion concreta que ejecutar.
+`.trim()
 
 const normalizeImportedAIRegionPreviewHtml = (html = '') => (
   html
@@ -7921,7 +7943,6 @@ const ImportedHtmlEditorPanel: React.FC<{
   onSelectPage: (pageId: string) => void
   onPreview: () => void
   onPublish: () => void
-  onEditWithAI: () => void
   onEditFields: () => void
   onPreviewContextChange: (siteId: string, context: SitesAIPreviewVisualContext) => void
   onContentUpdated: (result: ImportedSiteCreateResult) => void
@@ -7940,7 +7961,6 @@ const ImportedHtmlEditorPanel: React.FC<{
   onSelectPage,
   onPreview,
   onPublish,
-  onEditWithAI,
   onEditFields,
   onPreviewContextChange,
   onContentUpdated,
@@ -8197,7 +8217,6 @@ const ImportedHtmlEditorPanel: React.FC<{
     setChoiceEditor(null)
     setContentError('')
     setAiRegionSelection(null)
-    setAiRegionPrompt('')
     setAiRegionError('')
     setAiRegionLastAttempt(null)
     setAiRegionMode(true)
@@ -8207,52 +8226,67 @@ const ImportedHtmlEditorPanel: React.FC<{
     aiRegionVoiceDictation.cancelVoice()
     setAiRegionMode(false)
     setAiRegionSelection(null)
-    setAiRegionPrompt('')
     setAiRegionError('')
-    setAiRegionLastAttempt(null)
   }, [aiRegionVoiceDictation.cancelVoice])
 
   const setAIRegionAttemptStatus = (
-    selection: ImportedAIRegionSelection,
+    selection: ImportedAIRegionSelection | null,
     nextAttempt: Pick<ImportedAIRegionAttempt, 'status' | 'message' | 'prompt'> & { debug?: SitesAIEditDebug }
   ) => {
+    const activePageId = activeImportedPage?.id || DEFAULT_FUNNEL_PAGE_ID
+    const fullPageVisualContext = previewVisualContextRef.current?.siteId === site.id &&
+      previewVisualContextRef.current?.pageId === activePageId
+      ? previewVisualContextRef.current
+      : null
     setAiRegionLastAttempt({
       ...nextAttempt,
       at: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-      pageTitle: selection.pageTitle || activeImportedPage?.title || 'Página actual',
-      elementCount: selection.elements.length || 1
+      pageTitle: selection?.pageTitle || activeImportedPage?.title || 'Página actual',
+      elementCount: selection?.elements.length || fullPageVisualContext?.elements.length || 0
     })
   }
 
   const applyAIRegionEdit = async () => {
-    if (!aiRegionSelection) return
     const prompt = aiRegionPrompt.trim()
     if (!prompt) {
-      setAiRegionError('Escribe que quieres que cambie la IA en esa zona.')
+      setAiRegionError(aiRegionSelection
+        ? 'Escribe que quieres que cambie la IA en esa zona.'
+        : 'Escribe que quieres que cambie la IA en la pagina.'
+      )
       return
     }
 
+    const currentSelection = aiRegionSelection
+    const activePageId = currentSelection?.pageId || activeImportedPage?.id || DEFAULT_FUNNEL_PAGE_ID
+    const fullPageVisualContext = previewVisualContextRef.current?.siteId === site.id &&
+      previewVisualContextRef.current?.pageId === activePageId
+      ? previewVisualContextRef.current
+      : null
+    const editVisualContext = currentSelection?.visualContext || fullPageVisualContext
+
     setAiRegionSaving(true)
     setAiRegionError('')
-    setAIRegionAttemptStatus(aiRegionSelection, {
+    setAIRegionAttemptStatus(currentSelection, {
       status: 'running',
-      message: 'La IA está intentando aplicar el cambio en la zona seleccionada.',
+      message: currentSelection
+        ? 'La IA está intentando aplicar el cambio en la zona seleccionada.'
+        : 'La IA está intentando aplicar el cambio en toda la página.',
       prompt
     })
     try {
       const beforePreviewHtml = previewHtml
-      const regionVisualContext = aiRegionSelection.visualContext ||
-        (previewVisualContextRef.current?.siteId === site.id ? previewVisualContextRef.current : null)
       const runRegionEdit = (options: { forceApply?: boolean; previousReply?: string } = {}) => (
         sitesService.editImportedHtmlWithAI(site.id, {
           siteKind: getAIAgentSiteKindForSite(site),
           model: DEFAULT_SITE_CHATGPT_EDIT_MODEL,
-          pageId: aiRegionSelection.pageId || activeImportedPage?.id || DEFAULT_FUNNEL_PAGE_ID,
-          visualContext: regionVisualContext,
+          pageId: activePageId,
+          visualContext: editVisualContext,
           aiRegionRequest: prompt,
           messages: [{
             role: 'user',
-            content: buildImportedAIRegionPrompt(prompt, aiRegionSelection, site, options)
+            content: currentSelection
+              ? buildImportedAIRegionPrompt(prompt, currentSelection, site, options)
+              : buildImportedAIPagePrompt(prompt, site, activeImportedPage, editVisualContext, options)
           }]
         })
       )
@@ -8274,7 +8308,7 @@ const ImportedHtmlEditorPanel: React.FC<{
             : `La IA no aplicó cambios: ${result.reply}`
           : 'La IA no pudo aplicar ese cambio. Intenta decirlo como acción directa: "centra el título, pon el video debajo y el botón debajo del video".'
         setAiRegionError(message)
-        setAIRegionAttemptStatus(aiRegionSelection, {
+        setAIRegionAttemptStatus(currentSelection, {
           status: 'error',
           message,
           prompt,
@@ -8283,15 +8317,17 @@ const ImportedHtmlEditorPanel: React.FC<{
         return
       }
 
-      const refreshedHtml = await sitesService.getPreviewHtml(site.id, activeImportedPage?.id || DEFAULT_FUNNEL_PAGE_ID, { test: true })
+      const refreshedHtml = await sitesService.getPreviewHtml(site.id, activePageId, { test: true })
       const beforeFingerprint = normalizeImportedAIRegionPreviewHtml(beforePreviewHtml)
       const afterFingerprint = normalizeImportedAIRegionPreviewHtml(refreshedHtml)
       if (beforeFingerprint && afterFingerprint && beforeFingerprint === afterFingerprint) {
         setPreviewHtml(refreshedHtml)
         setPreviewVersion(current => current + 1)
-        const message = 'La IA respondió, pero no cambió el HTML visible de esa zona. Conservé tu selección para que puedas aplicar de nuevo o ajustar la instrucción.'
+        const message = currentSelection
+          ? 'La IA respondió, pero no cambió el HTML visible de esa zona. Conservé tu selección para que puedas aplicar de nuevo o ajustar la instrucción.'
+          : 'La IA respondió, pero no cambió el HTML visible de la página. Puedes aplicar de nuevo con una instrucción más directa.'
         setAiRegionError(message)
-        setAIRegionAttemptStatus(aiRegionSelection, {
+        setAIRegionAttemptStatus(currentSelection, {
           status: 'unchanged',
           message,
           prompt,
@@ -8303,7 +8339,7 @@ const ImportedHtmlEditorPanel: React.FC<{
       onContentUpdated({ site: result.site, import: result.import })
       setAiRegionMode(false)
       setAiRegionError('')
-      setAIRegionAttemptStatus(aiRegionSelection, {
+      setAIRegionAttemptStatus(currentSelection, {
         status: 'success',
         message: result.reply || 'La IA aplicó cambios en el HTML visible.',
         prompt,
@@ -8311,11 +8347,17 @@ const ImportedHtmlEditorPanel: React.FC<{
       })
       setPreviewHtml(refreshedHtml)
       setPreviewVersion(current => current + 1)
-      showToast('success', 'Zona actualizada', 'La IA aplicó el cambio solo en la parte que seleccionaste.')
+      showToast(
+        'success',
+        currentSelection ? 'Zona actualizada' : 'Página actualizada',
+        currentSelection
+          ? 'La IA aplicó el cambio solo en la parte que seleccionaste.'
+          : 'La IA aplicó el cambio en toda la página activa.'
+      )
     } catch (error) {
       const message = error instanceof Error ? error.message : 'No se pudo editar esa zona con IA.'
       setAiRegionError(message)
-      setAIRegionAttemptStatus(aiRegionSelection, {
+      setAIRegionAttemptStatus(currentSelection, {
         status: 'error',
         message,
         prompt
@@ -8643,7 +8685,6 @@ const ImportedHtmlEditorPanel: React.FC<{
           removeMediaActionButton()
           setAiRegionMode(false)
           setAiRegionSelection(null)
-          setAiRegionPrompt('')
           setAiRegionError('')
           if (selection.editType === 'image' || selection.editType === 'background_image' || selection.editType === 'video') {
             setButtonEditor(null)
@@ -8775,7 +8816,6 @@ const ImportedHtmlEditorPanel: React.FC<{
           setAiRegionSelection({
             ...nextRegionSelection
           })
-          setAiRegionPrompt('')
           setAiRegionError('')
           setAiRegionMode(false)
           removeRegionBox()
@@ -9060,64 +9100,42 @@ const ImportedHtmlEditorPanel: React.FC<{
       </section>
 
       <aside className={styles.importedSidePanel}>
-        <div className={styles.importedSidePanelActions}>
-          {aiAgentAvailable && (
-            <>
-              <Button type="button" variant="secondary" onClick={onEditWithAI} disabled={saving || aiRegionSaving}>
-                <Sparkles size={15} />
-                Modificar con IA
-              </Button>
-              <Button
-                type="button"
-                variant={aiRegionMode ? 'primary' : 'secondary'}
-                onClick={aiRegionMode ? cancelAIRegionMode : startAIRegionMode}
-                disabled={saving || aiRegionSaving || previewLoading || Boolean(previewError)}
-              >
-                <MousePointerClick size={15} />
-                {aiRegionMode ? 'Cancelar seleccion' : 'Seleccionar y modificar con IA'}
-              </Button>
-            </>
-          )}
-          <Button type="button" variant="secondary" onClick={onEditFields} disabled={loadingImportData}>
-            {loadingImportData ? <RefreshCw size={15} /> : <Settings2 size={15} />}
-            Editar ruta de datos
-          </Button>
-        </div>
-
-        {aiRegionMode && (
-          <div className={styles.importedAIRegionBox}>
-            <div className={styles.importedButtonActionHeader}>
-              <MousePointerClick size={17} />
-              <div>
-                <span>Seleccion con IA</span>
-                <strong>Dibuja un rectangulo</strong>
-              </div>
-            </div>
-            <p>Arrastra sobre la vista previa la parte exacta que quieres cambiar.</p>
-          </div>
-        )}
-
-        {aiRegionSelection && (
+        {aiAgentAvailable && (
           <div className={styles.importedAIRegionBox}>
             <div className={styles.importedButtonActionHeader}>
               <Sparkles size={17} />
               <div>
-                <span>Zona seleccionada</span>
-                <strong>{aiRegionSelection.elements.length || 1} elementos detectados</strong>
+                <span>Modificar con IA</span>
+                <strong>
+                  {aiRegionMode
+                    ? 'Dibuja una zona'
+                    : aiRegionSelection
+                      ? `${aiRegionSelection.elements.length || 1} elementos detectados`
+                      : 'Toda la pagina activa'}
+                </strong>
               </div>
             </div>
             <label className={styles.importedActionField}>
-              <span>Que quieres que cambie la IA?</span>
+              <span>{aiRegionSelection ? 'Que quieres cambiar en esta zona?' : 'Que quieres cambiar en esta pagina?'}</span>
               <textarea
                 rows={5}
                 value={aiRegionPrompt}
                 onChange={(event) => setAiRegionPrompt(event.target.value)}
-                placeholder="Ejemplo: Inserta este video de Wistia aqui y conserva el diseño..."
+                placeholder={aiRegionSelection
+                  ? 'Ejemplo: centra el titular, pon el video debajo y deja el boton al final...'
+                  : 'Ejemplo: mejora el hero, reemplaza el video o reorganiza la pagina...'}
                 disabled={aiRegionSaving}
                 name="rstk-imported-ai-region-prompt"
                 {...importedEditorNoAutocompleteAttrs}
               />
             </label>
+            {aiRegionMode ? (
+              <p>Arrastra sobre la vista previa la parte exacta que quieres cambiar. La instruccion se queda aqui lista para aplicar.</p>
+            ) : aiRegionSelection ? (
+              <p>La IA usara esta zona como contexto. Puedes cambiar la seleccion o escribir algo para toda la pagina despues.</p>
+            ) : (
+              <p>Si no seleccionas zona, la IA revisa toda la pagina activa y aplica el cambio completo.</p>
+            )}
             {aiRegionError && (
               <div className={styles.importedAIRegionError}>
                 <AlertTriangle size={14} />
@@ -9190,8 +9208,15 @@ const ImportedHtmlEditorPanel: React.FC<{
                 disabled={aiRegionSaving}
                 className={styles.importedAIRegionFooterVoice}
               />
-              <Button type="button" variant="secondary" size="sm" onClick={cancelAIRegionMode} disabled={aiRegionSaving}>
-                Cancelar
+              <Button
+                type="button"
+                variant={aiRegionMode ? 'primary' : 'secondary'}
+                size="sm"
+                onClick={aiRegionMode ? cancelAIRegionMode : startAIRegionMode}
+                disabled={saving || aiRegionSaving || previewLoading || Boolean(previewError)}
+              >
+                <MousePointerClick size={14} />
+                {aiRegionMode ? 'Cancelar seleccion' : 'Seleccionar y modificar con IA'}
               </Button>
               <Button
                 type="button"
@@ -9206,6 +9231,13 @@ const ImportedHtmlEditorPanel: React.FC<{
             </div>
           </div>
         )}
+
+        <div className={styles.importedSidePanelActions}>
+          <Button type="button" variant="secondary" onClick={onEditFields} disabled={loadingImportData}>
+            {loadingImportData ? <RefreshCw size={15} /> : <Settings2 size={15} />}
+            Editar ruta de datos
+          </Button>
+        </div>
 
         {buttonEditor && (
           <div className={styles.importedButtonActionBox}>
