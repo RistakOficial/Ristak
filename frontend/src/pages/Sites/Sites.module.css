@@ -9202,9 +9202,9 @@
 /* Canvas-first editor pass: reduce the editor chrome and add a temporary
    focus mode where the page itself becomes the working surface. */
 .containerFocused:has(.builder) .editorHeader {
-  --editor-control-h: 36px;
-  gap: 6px;
-  padding: 8px 14px 7px;
+  --editor-control-h: 44px;
+  gap: 8px;
+  padding: 11px 16px;
 }
 
 .containerFocused:has(.builder) .editorHeaderMain {
@@ -9333,21 +9333,22 @@
 }
 
 .containerFocused:has(.builder) .deviceToggle {
-  height: 34px;
-  padding: 2px;
+  height: var(--editor-control-h, 44px);
+  padding: 3px;
   border-radius: 8px;
 }
 
 .containerFocused:has(.builder) .deviceToggle button {
-  width: 29px;
-  height: 28px;
+  width: 34px;
+  height: calc(var(--editor-control-h, 44px) - 8px);
   border-radius: 6px;
 }
 
 .containerFocused:has(.builder) .editorActions > button {
-  height: 34px;
+  height: var(--editor-control-h, 44px);
+  min-height: var(--editor-control-h, 44px);
   border-radius: 9px;
-  padding-inline: 11px;
+  padding-inline: 12px;
   font-size: 0.84rem;
 }
 
@@ -9578,14 +9579,15 @@
 .containerFocused:has(.builder) {
   width: 100%;
   padding: 0;
+  --sites-editor-toolbar-offset: 96px;
 }
 
 .containerFocused:has(.builder) .editorHeader {
-  --editor-control-h: 30px;
+  --editor-control-h: 44px;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 1px;
-  padding: 4px 8px 2px;
+  gap: 8px;
+  padding: 11px 16px;
   border: 0;
   border-bottom: 1px solid var(--color-border-subtle, rgba(148, 163, 184, 0.18));
   border-radius: 0;
@@ -9848,16 +9850,16 @@
 }
 
 .containerFocused:has(.builder) .builder {
-  padding-top: 0 !important;
+  padding-top: 0;
 }
 
 .containerFocused:has(.builder) .canvasColumn {
-  padding-top: 0 !important;
+  padding-top: 0;
 }
 
 .containerFocused:has(.builder):not(.containerEditorFocus) :global(.canvasViewport) {
-  min-height: calc(100dvh - var(--header-height, 48px) - 68px) !important;
-  max-height: calc(100dvh - var(--header-height, 48px) - 68px) !important;
+  min-height: calc(100dvh - var(--header-height, 48px) - var(--sites-editor-toolbar-offset, 96px));
+  max-height: calc(100dvh - var(--header-height, 48px) - var(--sites-editor-toolbar-offset, 96px));
 }
 
 .containerEditorFocus .editorHeader {
@@ -9932,9 +9934,9 @@
 
 /* Editor toolbar v2: actions pinned top-right, pages integrated under title. */
 .containerFocused:has(.builder) .editorHeader {
-  --editor-control-h: 36px;
+  --editor-control-h: 44px;
   gap: 0;
-  padding: 8px 14px 7px;
+  padding: 11px 16px;
   border: 0;
   border-bottom: 1px solid rgba(148, 163, 184, 0.12);
   border-radius: 0;
@@ -9952,21 +9954,22 @@
 
 .editorToolbarTop {
   min-width: 0;
-  min-height: 38px;
+  min-height: var(--editor-control-h, 44px);
   display: grid;
   grid-template-columns: minmax(0, max-content) minmax(0, 1fr);
   align-items: center;
-  gap: 10px;
+  gap: 12px;
 }
 
 .editorToolbarLeft {
   min-width: 0;
+  min-height: var(--editor-control-h, 44px);
   display: flex;
   align-items: center;
   gap: 9px;
   overflow-x: auto;
   overflow-y: hidden;
-  padding: 1px 8px 2px 0;
+  padding: 0 8px 0 0;
   scrollbar-width: none;
 }
 
@@ -10472,7 +10475,8 @@
 }
 
 .containerFocused:has(.builder) .seoToolbarButton {
-  height: var(--editor-page-tab-h);
+  height: var(--editor-control-h, 44px);
+  min-height: var(--editor-control-h, 44px);
   justify-self: start;
   padding-inline: 12px;
 }
@@ -10563,12 +10567,12 @@
 }
 
 .containerFocused:has(.builder) .builder {
-  padding-top: 0 !important;
+  padding-top: 0;
 }
 
 .containerFocused:has(.builder):not(.containerEditorFocus) :global(.canvasViewport) {
-  min-height: calc(100dvh - var(--header-height, 48px) - 74px) !important;
-  max-height: calc(100dvh - var(--header-height, 48px) - 74px) !important;
+  min-height: calc(100dvh - var(--header-height, 48px) - var(--sites-editor-toolbar-offset, 96px));
+  max-height: calc(100dvh - var(--header-height, 48px) - var(--sites-editor-toolbar-offset, 96px));
 }
 
 @media (max-width: 1220px) {
@@ -10661,8 +10665,8 @@
 
 /* Sites editor header: SEO sits with the title, pages open as a full-width panel. */
 .editorToolbarTop .editorToolbarLeft .seoToolbarButton {
-  height: 34px;
-  min-height: 34px;
+  height: var(--editor-control-h, 44px);
+  min-height: var(--editor-control-h, 44px);
   max-width: 118px;
   padding-inline: 10px;
 }
