@@ -187,6 +187,7 @@ const SITES_EDITOR_ACTIVE_EVENT = 'ristak-sites-editor-active'
 const DEFAULT_FUNNEL_PAGE_ID = 'page-1'
 const FORM_THANK_YOU_PAGE_ID = 'page-2'
 const FORM_DISQUALIFIED_PAGE_ID = 'page-3'
+const FORM_FINAL_PAGE_IDS = new Set([FORM_THANK_YOU_PAGE_ID, FORM_DISQUALIFIED_PAGE_ID])
 const PREVIEW_LOADING_HTML = `<!doctype html>
 <html lang="es">
   <head>
@@ -533,7 +534,9 @@ const isStandardForm = (site?: PublicSite | null) => site?.siteType === 'standar
 const isInteractiveForm = (site?: PublicSite | null) => site?.siteType === 'interactive_form'
 const isFormSite = (site?: PublicSite | null) => site?.siteType === 'standard_form' || site?.siteType === 'interactive_form'
 const hasEditablePages = (site?: PublicSite | null) => isLanding(site) || isInteractiveForm(site) || isStandardForm(site)
-const canManagePages = (site?: PublicSite | null) => !isStandardForm(site)
+const canManagePages = (site?: PublicSite | null) => hasEditablePages(site)
+const isFormFinalPageId = (pageId?: string) => Boolean(pageId && FORM_FINAL_PAGE_IDS.has(pageId))
+const isFormFinalPage = (page?: SitePage | null) => isFormFinalPageId(page?.id)
 
 const formatDate = (value?: string | null) => {
   if (!value) return 'Sin fecha'
@@ -1610,16 +1613,25 @@ const normalizePageList = (rawPages: SitePage[] = []): SitePage[] => {
 const normalizeFormPages = (site?: PublicSite | null): SitePage[] => {
   const normalized = normalizePageList(Array.isArray(site?.theme?.pages) ? site.theme.pages : [])
   const byId = new Map(normalized.map(page => [page.id, page]))
-
-  return getDefaultFormPages().map((page, index) => {
-    const existing = byId.get(page.id) || normalized[index]
+  const defaults = getDefaultFormPages()
+  const contentPages = normalized.filter(page => !isFormFinalPage(page))
+  const inputPages = contentPages.length ? contentPages : [byId.get(DEFAULT_FUNNEL_PAGE_ID) || defaults[0]]
+  const mergeFinalPage = (page: SitePage): SitePage => {
+    const existing = byId.get(page.id)
     return {
       ...page,
+      title: existing?.title || page.title,
       metaCapiEnabled: Boolean(existing?.metaCapiEnabled),
       metaEventName: normalizeMetaEventName(existing?.metaEventName, 'none'),
       metaTrigger: normalizeMetaTrigger(existing?.metaTrigger)
     }
-  })
+  }
+
+  return [
+    ...inputPages,
+    mergeFinalPage(defaults[1]),
+    mergeFinalPage(defaults[2])
+  ].map((page, index) => ({ ...page, sortOrder: index }))
 }
 
 const normalizeFunnelPages = (site?: PublicSite | null): SitePage[] => {
@@ -1627,6 +1639,28 @@ const normalizeFunnelPages = (site?: PublicSite | null): SitePage[] => {
 
   const normalized = normalizePageList(Array.isArray(site?.theme?.pages) ? site.theme.pages : [])
   return normalized.length ? normalized : [{ id: DEFAULT_FUNNEL_PAGE_ID, title: 'Pagina 1', sortOrder: 0 }]
+}
+
+const getFormContentPages = (pages: SitePage[]) => pages.filter(page => !isFormFinalPage(page))
+
+const getOrderedPagesForSite = (site: PublicSite, nextPages: SitePage[]) => (
+  isStandardForm(site)
+    ? normalizeFormPages({ ...site, theme: { ...(site.theme || {}), pages: nextPages } })
+    : nextPages
+)
+
+const getFormAddPageIndex = (site: PublicSite, pages: SitePage[]) => (
+  isStandardForm(site)
+    ? pages.findIndex(isFormFinalPage) >= 0
+      ? pages.findIndex(isFormFinalPage)
+      : pages.length
+    : pages.length
+)
+
+const isLastFormContentPage = (site: PublicSite, pages: SitePage[], pageId?: string) => {
+  if (!isStandardForm(site) || !pageId || isFormFinalPageId(pageId)) return true
+  const contentPages = getFormContentPages(pages)
+  return contentPages[contentPages.length - 1]?.id === pageId
 }
 
 const makeFunnelPage = (index: number): SitePage => ({
@@ -2345,6 +2379,10 @@ export const Sites: React.FC = () => {
     : section === 'forms'
       ? (isFormSite(selectedSite) ? selectedSite : null)
       : null
+  const formCanvasHasFields = Boolean(editorSite && isFormSite(editorSite) && canvasBlocks.some(block => fieldBlockTypes.has(block.blockType)))
+  const formCanvasActionLabel = editorSite && activePage && isStandardForm(editorSite) && !isLastFormContentPage(editorSite, pages, activePage.id)
+    ? 'Continuar'
+    : undefined
   const seoValidation = editorSite ? getSeoValidationState(editorSite) : null
   const editorActive = Boolean(editorSite)
   const isCanvasFocusMode = editorFocusMode && Boolean(editorSite)
@@ -2892,12 +2930,13 @@ export const Sites: React.FC = () => {
 
   const persistFunnelPages = async (nextPages: SitePage[], nextActivePageId?: string) => {
     if (!selectedSite || !hasEditablePages(selectedSite)) return
+    const orderedPages = getOrderedPagesForSite(selectedSite, nextPages)
 
     setSaving(true)
     try {
       const theme = {
         ...(selectedSite.theme || {}),
-        pages: normalizePagesForSave(nextPages)
+        pages: normalizePagesForSave(orderedPages)
       }
       const site = await saveSiteTheme(selectedSite, theme)
       syncSelectedSite(site)
@@ -2912,8 +2951,14 @@ export const Sites: React.FC = () => {
 
   const handleAddPage = () => {
     if (!selectedSite || !hasEditablePages(selectedSite) || !canManagePages(selectedSite)) return
-    const nextPage = makeFunnelPage(pages.length)
-    void persistFunnelPages([...pages, nextPage], nextPage.id)
+    const nextPage = makeFunnelPage(isStandardForm(selectedSite) ? getFormContentPages(pages).length : pages.length)
+    const insertIndex = getFormAddPageIndex(selectedSite, pages)
+    const nextPages = [
+      ...pages.slice(0, insertIndex),
+      nextPage,
+      ...pages.slice(insertIndex)
+    ]
+    void persistFunnelPages(nextPages, nextPage.id)
   }
 
   const cloneBlockForPage = (block: SiteBlock, pageId: string): Partial<SiteBlock> & { blockType: SiteBlockType } => ({
@@ -2931,23 +2976,25 @@ export const Sites: React.FC = () => {
 
   const handleDuplicatePage = async (pageId: string) => {
     if (!selectedSite || !hasEditablePages(selectedSite) || !canManagePages(selectedSite)) return
+    if (isStandardForm(selectedSite) && isFormFinalPageId(pageId)) return
 
     const sourceIndex = pages.findIndex(page => page.id === pageId)
     if (sourceIndex < 0) return
 
-    const nextPage = makeFunnelPage(pages.length)
+    const nextPage = makeFunnelPage(isStandardForm(selectedSite) ? getFormContentPages(pages).length : pages.length)
     nextPage.title = `${pages[sourceIndex].title} copia`
     const nextPages = [
       ...pages.slice(0, sourceIndex + 1),
       nextPage,
       ...pages.slice(sourceIndex + 1)
     ]
+    const orderedPages = getOrderedPagesForSite(selectedSite, nextPages)
 
     setSaving(true)
     try {
       let site = await saveSiteTheme(selectedSite, {
         ...(selectedSite.theme || {}),
-        pages: normalizePagesForSave(nextPages)
+        pages: normalizePagesForSave(orderedPages)
       })
       const sourceBlocks = blocks.filter(block => getBlockPageId(block, pages) === pageId)
       for (const block of sourceBlocks) {
@@ -2966,7 +3013,12 @@ export const Sites: React.FC = () => {
 
   const handleDeletePage = async (pageId: string) => {
     if (!selectedSite || !hasEditablePages(selectedSite) || !canManagePages(selectedSite)) return
-    if (pages.length <= 1) {
+    if (isStandardForm(selectedSite) && isFormFinalPageId(pageId)) {
+      showToast('warning', 'Pagina fija', 'Esta pagina se usa para cerrar el formulario y no se puede eliminar.')
+      return
+    }
+    const deletablePageCount = isStandardForm(selectedSite) ? getFormContentPages(pages).length : pages.length
+    if (deletablePageCount <= 1) {
       showToast('warning', 'No se puede eliminar', `${getSiteTypeLabel(selectedSite)} debe tener al menos una pagina.`)
       return
     }
@@ -2978,8 +3030,9 @@ export const Sites: React.FC = () => {
         const deletePage = async () => {
           const pageIndex = pages.findIndex(page => page.id === pageId)
           const nextPages = pages.filter(page => page.id !== pageId)
+          const orderedPages = getOrderedPagesForSite(selectedSite, nextPages)
           const nextActive = activePageId === pageId
-            ? nextPages[Math.max(0, pageIndex - 1)]?.id || nextPages[0]?.id
+            ? orderedPages[Math.max(0, pageIndex - 1)]?.id || orderedPages[0]?.id
             : activePageId
 
           setSaving(true)
@@ -2993,7 +3046,7 @@ export const Sites: React.FC = () => {
             }
             site = await saveSiteTheme(site, {
               ...(site.theme || {}),
-              pages: normalizePagesForSave(nextPages)
+              pages: normalizePagesForSave(orderedPages)
             })
             syncSelectedSite(site)
             setActivePageId(nextActive || DEFAULT_FUNNEL_PAGE_ID)
@@ -3016,6 +3069,18 @@ export const Sites: React.FC = () => {
   const handleReorderPages = (sourcePageId: string, targetPageId: string) => {
     if (!selectedSite || !canManagePages(selectedSite)) return
     if (!sourcePageId || sourcePageId === targetPageId) return
+    if (isStandardForm(selectedSite)) {
+      if (isFormFinalPageId(sourcePageId) || isFormFinalPageId(targetPageId)) return
+      const contentPages = getFormContentPages(pages)
+      const oldIndex = contentPages.findIndex(page => page.id === sourcePageId)
+      const newIndex = contentPages.findIndex(page => page.id === targetPageId)
+      if (oldIndex < 0 || newIndex < 0) return
+      void persistFunnelPages([
+        ...arrayMove(contentPages, oldIndex, newIndex),
+        ...pages.filter(isFormFinalPage)
+      ], activePageId)
+      return
+    }
     const oldIndex = pages.findIndex(page => page.id === sourcePageId)
     const newIndex = pages.findIndex(page => page.id === targetPageId)
     if (oldIndex < 0 || newIndex < 0) return
@@ -4007,6 +4072,11 @@ export const Sites: React.FC = () => {
                         activePageId={activePage?.id || DEFAULT_FUNNEL_PAGE_ID}
                         locked={!canManagePages(editorSite)}
                         draggingPageId={draggingPageId}
+                        isFixedPage={isStandardForm(editorSite) ? isFormFinalPage : undefined}
+                        canDeletePage={(page) => isStandardForm(editorSite)
+                          ? !isFormFinalPage(page) && getFormContentPages(pages).length > 1
+                          : pages.length > 1}
+                        canDuplicatePage={(page) => !isStandardForm(editorSite) || !isFormFinalPage(page)}
                         onSelectPage={setActivePageId}
                         onAddPage={handleAddPage}
                         onDuplicatePage={handleDuplicatePage}
@@ -4281,9 +4351,9 @@ export const Sites: React.FC = () => {
                                   })}
                                 </>
                               )}
-                              {isFormSite(editorSite) && canvasBlocks.some(block => fieldBlockTypes.has(block.blockType)) && (
+                              {formCanvasHasFields && (
                                 <div className="rstk-actions">
-                                  <button type="button" data-submit><SubmitButtonContent theme={editorSite.theme} /></button>
+                                  <button type="button" data-submit><SubmitButtonContent theme={editorSite.theme} label={formCanvasActionLabel} /></button>
                                 </div>
                               )}
                               </div>
@@ -4308,6 +4378,7 @@ export const Sites: React.FC = () => {
                   site={editorSite}
                   block={selectedBlock}
                   blocks={canvasBlocks}
+                  allBlocks={blocks}
                   forms={forms}
                   calendars={calendars}
                   pages={pages}
@@ -6192,9 +6263,9 @@ const CanvasChrome: React.FC<{
   )
 }
 
-const SubmitButtonContent: React.FC<{ theme?: SiteTheme }> = ({ theme }) => {
-  const label = getThemeString(theme, 'submitText') || 'Enviar'
-  const subtitle = getThemeString(theme, 'submitSubtitle')
+const SubmitButtonContent: React.FC<{ theme?: SiteTheme; label?: string; subtitle?: string }> = ({ theme, label: labelOverride, subtitle: subtitleOverride }) => {
+  const label = labelOverride || getThemeString(theme, 'submitText') || 'Enviar'
+  const subtitle = subtitleOverride !== undefined ? subtitleOverride : getThemeString(theme, 'submitSubtitle')
 
   return (
     <>
@@ -6560,6 +6631,9 @@ interface FunnelPagesPanelProps {
   activePageId: string
   locked?: boolean
   draggingPageId: string | null
+  isFixedPage?: (page: SitePage) => boolean
+  canDeletePage?: (page: SitePage) => boolean
+  canDuplicatePage?: (page: SitePage) => boolean
   onSelectPage: (pageId: string) => void
   onAddPage: () => void
   onDuplicatePage: (pageId: string) => void
@@ -6574,6 +6648,9 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
   activePageId,
   locked = false,
   draggingPageId,
+  isFixedPage = () => false,
+  canDeletePage = () => pages.length > 1,
+  canDuplicatePage = () => true,
   onSelectPage,
   onAddPage,
   onDuplicatePage,
@@ -6591,13 +6668,23 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
         <ChevronRight size={15} />
       </div>
       <div className={styles.pageList}>
-        {pages.map((page, index) => (
-          <React.Fragment key={page.id}>
+        {pages.map((page, index) => {
+          const fixedPage = isFixedPage(page)
+          const pageCanDelete = !locked && canDeletePage(page)
+          const pageCanDuplicate = !locked && canDuplicatePage(page)
+          const pageToneClass = page.id === FORM_THANK_YOU_PAGE_ID
+            ? styles.pageItemThankYou
+            : page.id === FORM_DISQUALIFIED_PAGE_ID
+              ? styles.pageItemDisqualified
+              : ''
+
+          return (
+            <React.Fragment key={page.id}>
             <div
               className={`${styles.pageItemWrap} ${draggingPageId === page.id ? styles.pageItemDragging : ''}`}
-              draggable={!locked}
+              draggable={!locked && !fixedPage}
               onDragStart={(event) => {
-                if (locked) {
+                if (locked || fixedPage) {
                   event.preventDefault()
                   return
                 }
@@ -6609,13 +6696,13 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
                 onDragPage(page.id)
               }}
               onDragOver={(event) => {
-                if (locked) return
+                if (locked || fixedPage) return
                 if (event.dataTransfer.types.includes('application/ristak-page')) {
                   event.preventDefault()
                 }
               }}
               onDrop={(event) => {
-                if (locked) return
+                if (locked || fixedPage) return
                 event.preventDefault()
                 const sourcePageId = event.dataTransfer.getData('application/ristak-page')
                 onDragPage(null)
@@ -6626,7 +6713,7 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
               <div
                 role="button"
                 tabIndex={0}
-                className={`${styles.pageItem} ${activePageId === page.id ? styles.pageItemActive : ''}`}
+                className={`${styles.pageItem} ${pageToneClass} ${fixedPage ? styles.pageItemFixed : ''} ${activePageId === page.id ? styles.pageItemActive : ''}`}
                 onClick={() => onSelectPage(page.id)}
                 onKeyDown={(event) => {
                   if (event.key === 'Enter' || event.key === ' ') onSelectPage(page.id)
@@ -6668,12 +6755,12 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
                         <Pencil size={14} />
                         Cambiar nombre
                       </DropdownMenuItem>
-                      <DropdownMenuItem onSelect={() => onDuplicatePage(page.id)}>
+                      <DropdownMenuItem disabled={!pageCanDuplicate} onSelect={() => onDuplicatePage(page.id)}>
                         <Copy size={14} />
                         Duplicar pagina
                       </DropdownMenuItem>
                       <DropdownMenuItem
-                        disabled={pages.length <= 1}
+                        disabled={!pageCanDelete}
                         className={styles.pageMenuDanger}
                         onSelect={() => onDeletePage(page.id)}
                       >
@@ -6690,8 +6777,9 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
                 <ChevronRight size={14} />
               </span>
             )}
-          </React.Fragment>
-        ))}
+            </React.Fragment>
+          )
+        })}
         {!locked && (
           <button type="button" className={styles.addPageButton} onClick={onAddPage}>
             <Plus size={15} />
@@ -8320,6 +8408,7 @@ interface PropertiesPanelProps {
   site: PublicSite
   block: SiteBlock | null
   blocks: SiteBlock[]
+  allBlocks?: SiteBlock[]
   forms: PublicSite[]
   calendars: CalendarType[]
   pages: SitePage[]
@@ -8752,6 +8841,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   site,
   block,
   blocks,
+  allBlocks,
   forms,
   calendars,
   pages,
@@ -8886,7 +8976,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
         )}
 
         {isChoiceBlock(block.blockType) && (
-          <OptionsRulesEditor block={block} blocks={blocks} onPatchBlock={onPatchBlock} onSave={onSave} />
+          <OptionsRulesEditor block={block} blocks={allBlocks || blocks} pages={pages} onPatchBlock={onPatchBlock} onSave={onSave} />
         )}
 
         {!isField && (
@@ -8926,13 +9016,18 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 interface OptionsRulesEditorProps {
   block: SiteBlock
   blocks: SiteBlock[]
+  pages: SitePage[]
   onPatchBlock: (patch: Partial<SiteBlock>) => void
   onSave: () => void
 }
 
-const OptionsRulesEditor: React.FC<OptionsRulesEditorProps> = ({ block, blocks, onPatchBlock, onSave }) => {
+const OptionsRulesEditor: React.FC<OptionsRulesEditorProps> = ({ block, blocks, pages, onPatchBlock, onSave }) => {
   const options = getOptions(block)
   const fieldTargets = blocks.filter(item => fieldBlockTypes.has(item.blockType) && item.id !== block.id)
+  const getTargetLabel = (target: SiteBlock) => {
+    const page = pages.find(item => item.id === getBlockPageId(target, pages))
+    return page ? `${target.label} - ${page.title}` : target.label
+  }
 
   const patchOption = (index: number, patch: Partial<SiteBlockOption>) => {
     const next = options.map((option, optionIndex) => optionIndex === index ? { ...option, ...patch } : option)
@@ -9010,7 +9105,7 @@ const OptionsRulesEditor: React.FC<OptionsRulesEditorProps> = ({ block, blocks, 
               <span>Saltar a pregunta</span>
               <select value={option.targetBlockId || ''} onChange={(event) => patchOption(index, { targetBlockId: event.target.value })} onBlur={onSave}>
                 <option value="">Selecciona una pregunta</option>
-                {fieldTargets.map(target => <option key={target.id} value={target.id}>{target.label}</option>)}
+                {fieldTargets.map(target => <option key={target.id} value={target.id}>{getTargetLabel(target)}</option>)}
               </select>
             </label>
           )}

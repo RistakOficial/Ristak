@@ -8193,6 +8193,52 @@
   font-size: 0.78rem;
 }
 
+.pageItemFixed > svg:first-child {
+  opacity: 0.42;
+}
+
+.pageItemThankYou {
+  border-color: rgba(96, 165, 250, 0.26);
+  background:
+    linear-gradient(180deg, rgba(219, 234, 254, 0.72), rgba(239, 246, 255, 0.58)),
+    var(--color-background-primary);
+  color: #1e3a8a;
+}
+
+.pageItemThankYou .pageTitleText,
+.pageItemThankYou span {
+  color: #1e3a8a;
+}
+
+.pageItemThankYou:hover,
+.pageItemThankYou.pageItemActive {
+  border-color: rgba(59, 130, 246, 0.42);
+  background:
+    linear-gradient(180deg, rgba(191, 219, 254, 0.78), rgba(219, 234, 254, 0.66)),
+    var(--color-background-primary);
+}
+
+.pageItemDisqualified {
+  border-color: rgba(248, 113, 113, 0.28);
+  background:
+    linear-gradient(180deg, rgba(254, 226, 226, 0.76), rgba(254, 242, 242, 0.62)),
+    var(--color-background-primary);
+  color: #7f1d1d;
+}
+
+.pageItemDisqualified .pageTitleText,
+.pageItemDisqualified span {
+  color: #7f1d1d;
+}
+
+.pageItemDisqualified:hover,
+.pageItemDisqualified.pageItemActive {
+  border-color: rgba(239, 68, 68, 0.4);
+  background:
+    linear-gradient(180deg, rgba(254, 202, 202, 0.78), rgba(254, 226, 226, 0.68)),
+    var(--color-background-primary);
+}
+
 .containerFocused:has(.builder) .blocksRail,
 .containerFocused:has(.builder) .propertiesPanel {
   padding-top: 10px;

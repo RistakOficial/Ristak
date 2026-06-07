@@ -98,6 +98,7 @@ const PUBLIC_DOMAIN_VERIFY_TIMEOUT_MS = 6000
 const DEFAULT_FUNNEL_PAGE_ID = 'page-1'
 const FORM_THANK_YOU_PAGE_ID = 'page-2'
 const FORM_DISQUALIFIED_PAGE_ID = 'page-3'
+const FORM_FINAL_PAGE_IDS = new Set([FORM_THANK_YOU_PAGE_ID, FORM_DISQUALIFIED_PAGE_ID])
 const SITE_META_NO_EVENT = 'none'
 const SITE_META_EVENTS = new Set(['Lead', 'Schedule', 'Purchase', 'FormSubmitted', 'ViewContent', 'CompleteRegistration', 'Contact'])
 const META_STANDARD_PIXEL_EVENTS = new Set(['Lead', 'Schedule', 'Purchase', 'ViewContent', 'CompleteRegistration', 'Contact'])
@@ -5227,16 +5228,25 @@ function normalizePageList(rawPages = []) {
 function normalizeFormPages(site) {
   const pages = normalizePageList(Array.isArray(site?.theme?.pages) ? site.theme.pages : [])
   const byId = new Map(pages.map(page => [page.id, page]))
-
-  return getDefaultFormPages().map((page, index) => {
-    const existing = byId.get(page.id) || pages[index]
+  const defaults = getDefaultFormPages()
+  const contentPages = pages.filter(page => !FORM_FINAL_PAGE_IDS.has(page.id))
+  const inputPages = contentPages.length ? contentPages : [byId.get(DEFAULT_FUNNEL_PAGE_ID) || defaults[0]]
+  const mergeFinalPage = (page) => {
+    const existing = byId.get(page.id)
     return {
       ...page,
+      title: existing?.title || page.title,
       metaCapiEnabled: Boolean(existing?.metaCapiEnabled),
       metaEventName: normalizeSiteMetaEventName(existing?.metaEventName, { allowNone: true, fallback: SITE_META_NO_EVENT }),
       metaTrigger: normalizeSiteMetaTrigger(existing?.metaTrigger)
     }
-  })
+  }
+
+  return [
+    ...inputPages,
+    mergeFinalPage(defaults[1]),
+    mergeFinalPage(defaults[2])
+  ].map((page, index) => ({ ...page, sortOrder: index }))
 }
 
 function normalizeSitePages(site) {
@@ -5258,6 +5268,28 @@ function getPageBlocks(site, pageId) {
   const pages = normalizeSitePages(site)
   const activePage = pages.find(page => page.id === pageId) || pages[0]
   return blocks.filter(block => getBlockPageId(block, pages) === activePage.id)
+}
+
+function getStandardFormContentPages(site) {
+  return normalizeSitePages(site).filter(page => !FORM_FINAL_PAGE_IDS.has(page.id))
+}
+
+function getStandardFormContentBlocks(site, blocks = []) {
+  const pages = normalizeSitePages(site)
+  const pageIndexes = new Map(pages.map((page, index) => [page.id, index]))
+  const contentPageIds = new Set(pages.filter(page => !FORM_FINAL_PAGE_IDS.has(page.id)).map(page => page.id))
+
+  return [...(Array.isArray(blocks) ? blocks : [])]
+    .filter(block => contentPageIds.has(getBlockPageId(block, pages)))
+    .sort((a, b) => {
+      const pageDelta = (pageIndexes.get(getBlockPageId(a, pages)) || 0) - (pageIndexes.get(getBlockPageId(b, pages)) || 0)
+      if (pageDelta !== 0) return pageDelta
+
+      const orderDelta = Number(a.sortOrder || 0) - Number(b.sortOrder || 0)
+      if (orderDelta !== 0) return orderDelta
+
+      return String(a.createdAt || '').localeCompare(String(b.createdAt || ''))
+    })
 }
 
 function getDefaultFormThankYouBlocks(siteId) {
@@ -6059,7 +6091,7 @@ function wrapRenderedBlock(block, html) {
 
 function renderPublicBlock(block, context = {}) {
   const pages = Array.isArray(context.pages) ? context.pages : normalizeSitePages(context.site)
-  const blockPageId = context.isInteractive ? getBlockPageId(block, pages) : ''
+  const blockPageId = context.isInteractive || context.isStandardForm ? getBlockPageId(block, pages) : ''
   const html = FIELD_BLOCK_TYPES.has(block.blockType)
     ? renderFieldBlock(block, false, blockPageId, context)
     : renderContentBlock(block, context)
@@ -7936,6 +7968,11 @@ export async function renderPublicSiteHtml(site, { pageId, trackingEnabled = tru
     : []
   const interactivePageCount = interactivePageIds.length
   const interactiveInitialIndex = Math.max(0, interactivePageIds.indexOf(activePage?.id || ''))
+  const standardFormContentPages = isStandardFormType ? getStandardFormContentPages(site) : []
+  const standardFormContentPageIds = standardFormContentPages.map(page => page.id)
+  const standardFormPageIndex = isStandardFormType ? standardFormContentPageIds.indexOf(activePage?.id || '') : -1
+  const isStandardFormIntermediatePage = isStandardFormType && standardFormPageIndex >= 0 && standardFormPageIndex < standardFormContentPageIds.length - 1
+  const standardFormNextPage = isStandardFormIntermediatePage ? standardFormContentPages[standardFormPageIndex + 1] : null
   const nativeFormContext = getNativeFormContext(site, blocks)
   const hasForm = fieldBlocks.length > 0
   const completionAction = isLandingType
@@ -7945,6 +7982,7 @@ export async function renderPublicSiteHtml(site, { pageId, trackingEnabled = tru
       : 'form_default'
   const nextPage = (isLandingType || isStandardFormType) ? getNextPage(site, activePage?.id) : null
   const nextPageUrl = nextPage ? pageHref(nextPage.id) : ''
+  const standardFormNextPageUrl = standardFormNextPage ? pageHref(standardFormNextPage.id) : ''
 	  const disqualifiedPage = isStandardFormType ? pages.find(page => page.id === FORM_DISQUALIFIED_PAGE_ID) : null
 	  const disqualifiedPageUrl = disqualifiedPage ? pageHref(disqualifiedPage.id) : ''
 	  const submitText = cleanString(theme.submitText) || 'Enviar'
@@ -7997,17 +8035,24 @@ export async function renderPublicSiteHtml(site, { pageId, trackingEnabled = tru
 	  ].filter(Boolean).join(' ')
 
 	  const phoneLocale = await getAccountLocaleSettings().catch(() => ({ countryCode: 'MX', currency: 'MXN', dialCode: '52' }))
-	  const renderContext = { site, pageId: activePage?.id, pages, isInteractive, isLandingType, submitText, submitSubtitle, phoneLocale }
+	  const renderContext = { site, pageId: activePage?.id, pages, isInteractive, isLandingType, isStandardForm: isStandardFormType, submitText, submitSubtitle, phoneLocale }
   const bodyBlocks = isLandingType
     ? renderLandingBlocks(blocks, renderContext)
     : blocks.map(block => renderPublicBlock(block, renderContext)).join('\n')
+  const fieldBlockPageMap = isStandardFormType
+    ? Object.fromEntries(
+      collectFieldBlocks(Array.isArray(site.blocks) ? site.blocks : [])
+        .map(block => [block.id, getBlockPageId(block, pages)])
+    )
+    : {}
 
   const submitArea = hasForm && !isLandingType
     ? `
       <div class="rstk-actions">
         ${isInteractive && interactivePageCount > 1 ? '<button type="button" class="rstk-secondary" data-back hidden>Anterior</button>' : ''}
         ${isInteractive && interactivePageCount > 1 ? '<button type="button" data-next>Siguiente</button>' : ''}
-	        <button type="submit" ${isInteractive && interactivePageCount > 1 ? 'hidden' : ''} data-submit>${renderSubmitButtonContent(submitText, submitSubtitle)}</button>
+        ${isStandardFormIntermediatePage ? '<button type="button" data-form-next>Continuar</button>' : ''}
+	        <button type="submit" ${isInteractive && interactivePageCount > 1 || isStandardFormIntermediatePage ? 'hidden' : ''} data-submit>${renderSubmitButtonContent(submitText, submitSubtitle)}</button>
       </div>
       <p class="rstk-submit-message" data-message role="status"></p>
     `
@@ -8061,17 +8106,24 @@ export async function renderPublicSiteHtml(site, { pageId, trackingEnabled = tru
       const fields = Array.from(form.querySelectorAll('.rstk-field'));
       const pageContents = Array.from(form.querySelectorAll('[data-interactive-page-content]'));
       const nextButton = form.querySelector('[data-next]');
+      const formNextButton = form.querySelector('[data-form-next]');
       const backButton = form.querySelector('[data-back]');
       const submitButton = form.querySelector('[data-submit]');
       const message = form.querySelector('[data-message]');
       const progressLabel = document.querySelector('[data-progress-label]');
       const progressFill = document.querySelector('[data-progress-fill]');
       const isInteractive = ${isInteractive ? 'true' : 'false'};
+      const isStandardForm = ${isStandardFormType ? 'true' : 'false'};
+      const isStandardFormIntermediatePage = ${isStandardFormIntermediatePage ? 'true' : 'false'};
       const stepPages = ${JSON.stringify(interactivePageIds)};
+      const standardFormPageIds = ${JSON.stringify(standardFormContentPageIds)};
+      const targetBlockPageMap = ${JSON.stringify(fieldBlockPageMap)};
       const completionAction = ${JSON.stringify(completionAction)};
       const nextPageUrl = ${JSON.stringify(nextPageUrl)};
+      const standardFormNextPageUrl = ${JSON.stringify(standardFormNextPageUrl)};
       const disqualifiedPageUrl = ${JSON.stringify(disqualifiedPageUrl)};
       let index = Math.max(0, stepPages.indexOf(pageId));
+      const storageKey = 'rstk:form:' + siteId;
 
       const parseRule = (value) => {
         if (!value) return null;
@@ -8143,6 +8195,82 @@ export async function renderPublicSiteHtml(site, { pageId, trackingEnabled = tru
         return input ? input.value : '';
       };
 
+      const writeFieldValue = (field, value) => {
+        if (value === undefined || value === null) return;
+        const type = field.getAttribute('data-field-type');
+        if (type === 'checkboxes') {
+          const selected = new Set(Array.isArray(value) ? value.map(String) : []);
+          field.querySelectorAll('input[type="checkbox"]').forEach((input) => {
+            input.checked = selected.has(input.value);
+          });
+          return;
+        }
+        if (type === 'radio') {
+          field.querySelectorAll('input[type="radio"]').forEach((input) => {
+            input.checked = String(value) === input.value;
+          });
+          return;
+        }
+        if (type === 'phone') {
+          const input = field.querySelector('[data-phone-number-input]') || field.querySelector('input[type="tel"], input');
+          if (input) input.value = String(value || '').replace(/^\\+/, '');
+          return;
+        }
+        const input = field.querySelector('input, textarea, select');
+        if (input) input.value = String(value || '');
+      };
+
+      const getCurrentResponses = () => {
+        const responses = {};
+        fields.forEach((field) => {
+          responses[field.getAttribute('data-block-id')] = readFieldValue(field);
+        });
+        return responses;
+      };
+
+      const readStoredResponses = () => {
+        if (!isStandardForm) return {};
+        try {
+          const raw = window.sessionStorage ? window.sessionStorage.getItem(storageKey) : '';
+          const parsed = raw ? JSON.parse(raw) : {};
+          return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+        } catch {
+          return {};
+        }
+      };
+
+      const writeStoredResponses = (responses) => {
+        if (!isStandardForm) return;
+        try {
+          if (window.sessionStorage) window.sessionStorage.setItem(storageKey, JSON.stringify(responses || {}));
+        } catch {}
+      };
+
+      const clearStoredResponses = () => {
+        if (!isStandardForm) return;
+        try {
+          if (window.sessionStorage) window.sessionStorage.removeItem(storageKey);
+        } catch {}
+      };
+
+      const hydrateStoredResponses = () => {
+        if (!isStandardForm) return;
+        const stored = readStoredResponses();
+        fields.forEach((field) => {
+          const blockId = field.getAttribute('data-block-id');
+          if (Object.prototype.hasOwnProperty.call(stored, blockId)) {
+            writeFieldValue(field, stored[blockId]);
+          }
+        });
+      };
+
+      const pageUrl = (targetPageId) => {
+        if (!targetPageId) return '';
+        const url = new URL(window.location.href);
+        url.searchParams.set('page', targetPageId);
+        return url.toString();
+      };
+
       const readSelectedRules = (field) => {
         const type = field.getAttribute('data-field-type');
         if (type === 'checkboxes') {
@@ -8211,6 +8339,34 @@ export async function renderPublicSiteHtml(site, { pageId, trackingEnabled = tru
         renderStep();
       });
 
+      formNextButton && formNextButton.addEventListener('click', () => {
+        const currentFields = fields;
+        if (!currentFields.every(validateField)) return;
+        const currentResponses = getCurrentResponses();
+        const mergedResponses = { ...readStoredResponses(), ...currentResponses };
+        const rules = currentFields.flatMap((field) => readSelectedRules(field)).filter(item => item.action && item.action !== 'continue');
+        const blockingRule = rules.find(item => item.action === 'show_message' || item.action === 'disqualify' || item.action === 'end_form' || item.action === 'redirect');
+        if (blockingRule) {
+          writeStoredResponses(mergedResponses);
+          if (message) message.textContent = blockingRule.action === 'redirect' ? 'Enviando...' : (blockingRule.message || 'Gracias. Tu informacion fue recibida.');
+          form.dataset.ruleSubmit = 'true';
+          form.requestSubmit();
+          return;
+        }
+
+        writeStoredResponses(mergedResponses);
+        const jumpRule = rules.find(item => item.action === 'jump' && item.targetBlockId);
+        const targetPageId = jumpRule && jumpRule.targetBlockId ? targetBlockPageMap[jumpRule.targetBlockId] : '';
+        const targetIndex = standardFormPageIds.indexOf(targetPageId);
+        const currentIndex = standardFormPageIds.indexOf(pageId);
+        const targetUrl = targetIndex >= 0 && targetIndex !== currentIndex
+          ? pageUrl(targetPageId)
+          : standardFormNextPageUrl;
+        if (targetUrl) {
+          window.location.href = targetUrl;
+        }
+      });
+
       backButton && backButton.addEventListener('click', () => {
         index = Math.max(index - 1, 0);
         renderStep();
@@ -8226,16 +8382,16 @@ export async function renderPublicSiteHtml(site, { pageId, trackingEnabled = tru
           return;
         }
 
-        const responses = {};
-        fields.forEach((field) => {
-          responses[field.getAttribute('data-block-id')] = readFieldValue(field);
-        });
+        const responses = isStandardForm
+          ? { ...readStoredResponses(), ...getCurrentResponses() }
+          : getCurrentResponses();
 
         const url = new URL(window.location.href);
         const params = Object.fromEntries(url.searchParams.entries());
         const nativeIdentity = window.ristakNativeIdentity ? window.ristakNativeIdentity() : {};
         const nativeTracking = window.ristakNativeBuildData ? window.ristakNativeBuildData({ conversion_type: 'form_submit' }) : null;
         if (submitButton) submitButton.disabled = true;
+        if (formNextButton) formNextButton.disabled = true;
         if (message) message.textContent = 'Enviando...';
 
         try {
@@ -8253,6 +8409,8 @@ export async function renderPublicSiteHtml(site, { pageId, trackingEnabled = tru
                 params,
                 visitorId: nativeIdentity.visitorId || null,
                 sessionId: nativeIdentity.sessionId || null,
+                ruleSubmit,
+                formFinalSubmit: isStandardForm && !ruleSubmit && !isStandardFormIntermediatePage,
                 tracking: nativeTracking,
                 fbp: (document.cookie.match(/(?:^|; )_fbp=([^;]+)/) || [])[1] || null,
                 fbc: (document.cookie.match(/(?:^|; )_fbc=([^;]+)/) || [])[1] || null
@@ -8277,6 +8435,7 @@ export async function renderPublicSiteHtml(site, { pageId, trackingEnabled = tru
             }, metaEventName);
           }
           form.reset();
+          clearStoredResponses();
           initPhoneCountryFields();
           if (window.ristakNativeRememberContact && submission.contactId) {
             window.ristakNativeRememberContact({
@@ -8306,10 +8465,12 @@ export async function renderPublicSiteHtml(site, { pageId, trackingEnabled = tru
         } finally {
           delete form.dataset.ruleSubmit;
           if (submitButton) submitButton.disabled = false;
+          if (formNextButton) formNextButton.disabled = false;
         }
       });
 
       initPhoneCountryFields();
+      hydrateStoredResponses();
       renderStep();
     })();
   </script>
@@ -9352,12 +9513,25 @@ export async function createSubmissionFromRequest(req, body = {}) {
     ? site.blocks
     : await hydrateEmbeddedForms(await listSiteBlocks(site.id))
   const submittedPageId = cleanString(body.pageId || body.page_id || body.meta?.pageId || body.meta?.page_id)
+  const isFinalStandardFormSubmit = site.siteType === 'standard_form' && normalizeBoolean(
+    body.finalSubmit ||
+    body.final_submit ||
+    body.meta?.formFinalSubmit ||
+    body.meta?.form_final_submit
+  )
+  const siteWithBlocks = { ...site, blocks }
   const orderedSubmissionBlocks = site.siteType === 'interactive_form'
-    ? getInteractiveFormBlocks({ ...site, blocks })
+    ? getInteractiveFormBlocks(siteWithBlocks)
     : blocks
-  const submissionBlocks = (site.siteType === 'landing_page' || site.siteType === 'standard_form') && submittedPageId
-    ? getPageBlocks({ ...site, blocks }, submittedPageId)
-    : orderedSubmissionBlocks
+  const submissionBlocks = site.siteType === 'standard_form'
+    ? isFinalStandardFormSubmit
+      ? getStandardFormContentBlocks(siteWithBlocks, blocks)
+      : submittedPageId
+        ? getPageBlocks(siteWithBlocks, submittedPageId)
+        : orderedSubmissionBlocks
+    : site.siteType === 'landing_page' && submittedPageId
+      ? getPageBlocks(siteWithBlocks, submittedPageId)
+      : orderedSubmissionBlocks
   const { responses, errors } = normalizeSubmissionResponses(submissionBlocks, body.responses || {})
   if (errors.length) {
     const error = new Error(errors.join(', '))
