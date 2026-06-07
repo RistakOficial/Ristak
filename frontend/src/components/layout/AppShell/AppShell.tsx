@@ -255,10 +255,10 @@ export const AppShell: React.FC = () => {
       >
         <div className={styles.mainPane}>
           <Layout
-            sidebar={<Sidebar locationName={locationName} locationLogo={locationLogo} />}
+            sidebar={<Sidebar onLogout={handleLogout} locationName={locationName} locationLogo={locationLogo} />}
           >
             <div className="flex flex-col min-h-full">
-              {!sitesEditorActive && <Header onLogout={handleLogout} />}
+              {!sitesEditorActive && <Header />}
               <div className="flex-1 overflow-auto">
                 <Outlet />
               </div>

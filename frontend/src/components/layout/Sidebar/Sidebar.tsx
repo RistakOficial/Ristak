@@ -10,12 +10,18 @@ import {
   Settings,
   BarChart3,
   PanelTop,
-  GripVertical
+  GripVertical,
+  Check,
+  ChevronDown,
+  LogOut,
+  Moon,
+  Palette,
+  Sun
 } from 'lucide-react'
 import { cn } from '@/utils/cn'
-import { Logo } from '@/components/common'
 import { useAppConfig, useLogoContrast, useIsRenderDomain } from '@/hooks'
 import { useTheme } from '@/contexts/ThemeContext'
+import { useAuth } from '@/contexts/AuthContext'
 import {
   DndContext,
   closestCenter,
@@ -38,6 +44,7 @@ import { CSS } from '@dnd-kit/utilities'
 
 interface SidebarProps {
   onNavigate?: () => void
+  onLogout?: () => void
   locationName?: string
   locationLogo?: string | null
 }
@@ -72,6 +79,20 @@ const analyticsNavigation: NavItem = {
 
 const getNavigationItems = (_showAnalytics: boolean, _isRenderDomain: boolean): NavItem[] => {
   return [...baseNavigation, analyticsNavigation]
+}
+
+const getInitials = (name?: string, email?: string) => {
+  if (name) {
+    const parts = name.trim().split(' ').filter(Boolean)
+    if (parts.length === 1) {
+      return parts[0].slice(0, 2).toUpperCase()
+    }
+    return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase()
+  }
+  if (email) {
+    return email.slice(0, 2).toUpperCase()
+  }
+  return 'U'
 }
 
 interface NavigationItemProps {
@@ -185,9 +206,19 @@ const SortableItem: React.FC<SortableItemProps> = ({ item, isActive, isDragging,
   )
 }
 
-export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, locationName, locationLogo }) => {
+export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onLogout, locationName, locationLogo }) => {
   const location = useLocation()
-  const { theme } = useTheme()
+  const {
+    theme,
+    toggleTheme,
+    themeSource,
+    resetToSystem,
+    isSystemTheme,
+    designPreset,
+    setDesignPreset,
+    designPresets
+  } = useTheme()
+  const { user } = useAuth()
   const [mounted, setMounted] = useState(false)
   const [analyticsEnabled] = useAppConfig<boolean>('show_analytics', false)
   const [sidebarOrder, setSidebarOrder] = useAppConfig<string[]>('sidebar_navigation_order', [])
@@ -195,12 +226,15 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, locationName, loca
   const [navigation, setNavigation] = useState<NavItem[]>(() => getNavigationItems(false, isRenderDomain))
   const [activeId, setActiveId] = useState<string | null>(null)
   const [isEditMode, setIsEditMode] = useState(false)
+  const [showUserMenu, setShowUserMenu] = useState(false)
   const longPressTimerRef = React.useRef<number | null>(null)
   const longPressStartPos = React.useRef<{ x: number; y: number } | null>(null)
+  const userMenuRef = React.useRef<HTMLDivElement>(null)
 
   // Detectar si el logo necesita contraste en modo oscuro
   const isDarkMode = theme === 'dark'
   const { needsContrast } = useLogoContrast(locationLogo, isDarkMode)
+  const initials = getInitials(user?.name, user?.email)
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -299,6 +333,22 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, locationName, loca
   }, [])
 
   useEffect(() => {
+    if (!showUserMenu) return
+
+    const handleClickOutside = (event: MouseEvent) => {
+      if (userMenuRef.current && !userMenuRef.current.contains(event.target as Node)) {
+        setShowUserMenu(false)
+      }
+    }
+
+    document.addEventListener('mousedown', handleClickOutside)
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [showUserMenu])
+
+  useEffect(() => {
     const showAnalytics = Boolean(analyticsEnabled)
     const items = getNavigationItems(showAnalytics, isRenderDomain)
     setNavigation(applyOrder(items, sidebarOrder))
@@ -357,6 +407,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, locationName, loca
   const handleNavigate = () => {
     cancelLongPress()
     setIsEditMode(false)
+    setShowUserMenu(false)
     onNavigate?.()
   }
 
@@ -364,33 +415,170 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate, locationName, loca
 
   return (
     <div data-ristak-sidebar className="flex flex-col h-full">
-      {/* Header con logo */}
+      {/* Header con cuenta */}
       <div
         data-ristak-sidebar-header
-        className="flex items-center justify-center px-4 gap-2 border-b border-[rgba(148,163,184,0.12)]"
+        className="relative flex items-stretch border-b border-[rgba(148,163,184,0.12)]"
         style={{ height: 'var(--header-height)' }}
       >
-        {mounted && locationLogo ? (
-          <div className="w-24 h-10 flex items-center justify-center">
+        <div className="flex w-14 flex-shrink-0 items-center justify-center border-r border-[rgba(148,163,184,0.12)]">
+          <picture className="block h-7 w-7">
+            <source srcSet="/ristak-r-mark.webp" type="image/webp" />
             <img
-              src={locationLogo}
-              alt={locationName || 'Logo'}
-              className="max-w-full max-h-full object-contain"
-              style={{
-                filter: needsContrast ? 'invert(1) brightness(1.2)' : undefined,
-                transition: 'filter 0.2s ease'
-              }}
+              src="/ristak-r-mark.png"
+              alt="Ristak"
+              className="h-full w-full object-contain"
+              decoding="async"
+              style={theme === 'light' ? undefined : { filter: 'invert(1) brightness(1.15)' }}
             />
-          </div>
-        ) : mounted && locationName && locationName !== 'Mi Negocio' ? (
-          <div className="w-full flex items-center justify-center px-2">
-            <span className="text-lg font-bold text-[var(--color-text-primary)] truncate max-w-[180px] text-center">
-              {locationName}
+          </picture>
+        </div>
+
+        <div ref={userMenuRef} className="relative flex min-w-0 flex-1 items-center">
+          <button
+            type="button"
+            className="flex h-full min-w-0 flex-1 items-center gap-2 px-3 text-left transition-colors hover:bg-[rgba(148,163,184,0.08)] focus:outline-none"
+            onClick={() => setShowUserMenu((current) => !current)}
+            aria-expanded={showUserMenu}
+            aria-haspopup="menu"
+          >
+            <span className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-[rgba(255,238,219,0.92)] text-xs font-semibold text-[#2f251b]">
+              {initials}
             </span>
-          </div>
-        ) : (
-          <Logo size="2xl" />
-        )}
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-sm font-medium text-[var(--color-text-primary)]">
+                {user?.name || user?.username || 'Usuario'}
+              </span>
+              {mounted && locationLogo ? (
+                <span className="mt-0.5 flex items-center gap-1.5 truncate text-[11px] font-medium text-[var(--color-text-tertiary)]">
+                  <img
+                    src={locationLogo}
+                    alt={locationName || 'Negocio'}
+                    className="h-3.5 w-3.5 flex-shrink-0 rounded-sm object-contain"
+                    style={{
+                      filter: needsContrast ? 'invert(1) brightness(1.2)' : undefined,
+                      transition: 'filter 0.2s ease'
+                    }}
+                  />
+                  <span className="truncate">{locationName || 'Mi Negocio'}</span>
+                </span>
+              ) : mounted && locationName && locationName !== 'Mi Negocio' ? (
+                <span className="mt-0.5 block truncate text-[11px] font-medium text-[var(--color-text-tertiary)]">
+                  {locationName}
+                </span>
+              ) : null}
+            </span>
+            <ChevronDown
+              className={cn(
+                'h-3.5 w-3.5 flex-shrink-0 text-[var(--color-text-tertiary)] transition-transform',
+                showUserMenu && 'rotate-180'
+              )}
+            />
+          </button>
+
+          {showUserMenu && (
+            <div
+              data-ristak-user-menu
+              className="absolute left-2 top-[calc(100%-0.5rem)] z-50 w-[min(22rem,calc(100vw-1rem))] overflow-hidden rounded-xl border border-[rgba(148,163,184,0.18)] bg-[var(--color-background-secondary)] shadow-xl"
+              role="menu"
+            >
+              <div className="border-b border-[rgba(148,163,184,0.1)] p-4">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-[rgba(255,238,219,0.92)] text-sm font-semibold text-[#2f251b]">
+                    {initials}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-semibold text-[var(--color-text-primary)]">{user?.name || user?.username || 'Usuario'}</p>
+                    <p className="truncate text-xs text-[var(--color-text-tertiary)]">{user?.email || 'Sin correo guardado'}</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="py-2">
+                <div className="px-4 py-2">
+                  <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase text-[var(--color-text-tertiary)]">
+                    <Palette className="h-3.5 w-3.5" />
+                    Diseño de app
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    {designPresets.map((preset) => {
+                      const isActive = preset.id === designPreset
+
+                      return (
+                        <button
+                          key={preset.id}
+                          type="button"
+                          title={preset.description}
+                          onClick={() => setDesignPreset(preset.id)}
+                          className={cn(
+                            'flex min-h-[58px] items-center gap-2 rounded-lg border border-[rgba(148,163,184,0.14)] px-2.5 py-2 text-left text-sm text-[var(--color-text-primary)] transition-colors hover:glass-hover',
+                            isActive && 'border-[rgba(var(--color-primary-rgb),0.28)] bg-[rgba(var(--color-primary-rgb),0.12)]'
+                          )}
+                          aria-pressed={isActive}
+                        >
+                          <span
+                            className="design-preset-preview"
+                            data-preset={preset.id}
+                            aria-hidden="true"
+                          />
+                          <span className="min-w-0 flex-1 truncate font-medium">{preset.label}</span>
+                          {isActive && <Check className="h-4 w-4 flex-shrink-0 text-[var(--color-status-success)]" />}
+                        </button>
+                      )
+                    })}
+                  </div>
+                  <div className="mt-3 grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={toggleTheme}
+                      className="flex min-h-[42px] items-center justify-center gap-2 rounded-lg border border-[rgba(148,163,184,0.14)] px-3 py-2 text-sm font-semibold text-[var(--color-text-primary)] transition-colors hover:glass-hover"
+                    >
+                      {theme === 'light' ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
+                      {theme === 'light' ? 'Modo noche' : 'Modo claro'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={resetToSystem}
+                      disabled={isSystemTheme}
+                      className={cn(
+                        'flex min-h-[42px] items-center justify-center gap-2 rounded-lg border border-[rgba(148,163,184,0.14)] px-3 py-2 text-sm font-semibold text-[var(--color-text-primary)] transition-colors',
+                        isSystemTheme ? 'opacity-70' : 'hover:glass-hover'
+                      )}
+                    >
+                      {isSystemTheme && <Check className="h-4 w-4 text-[var(--color-status-success)]" />}
+                      {themeSource === 'system' ? 'Automático' : 'Auto'}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="mx-4 my-2 border-t border-[rgba(148,163,184,0.12)]" />
+
+                <Link
+                  to="/settings"
+                  onClick={handleNavigate}
+                  className="flex items-center gap-3 px-4 py-2.5 text-sm text-[var(--color-text-primary)] transition-colors hover:glass-hover"
+                  role="menuitem"
+                >
+                  <Settings className="h-4 w-4" />
+                  Configuración
+                </Link>
+                <div className="mx-4 my-2 border-t border-[rgba(148,163,184,0.12)]" />
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowUserMenu(false)
+                    onLogout?.()
+                  }}
+                  className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm text-red-500 transition-colors hover:glass-hover"
+                  role="menuitem"
+                >
+                  <LogOut className="h-4 w-4" />
+                  Cerrar sesión
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Navigation */}
