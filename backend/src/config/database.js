@@ -11,6 +11,108 @@ const usePostgres = !!DATABASE_URL
 
 let db
 
+const WHATSAPP_API_SYSTEM_CUSTOM_FIELD_KEYS = new Set([
+  'whatsapp_api_provider',
+  'whatsapp_api_first_message',
+  'whatsapp_api_source_id',
+  'whatsapp_api_ctwa_clid',
+  'whatsapp_api_source_url'
+])
+
+const normalizeCustomFieldKey = (value) => String(value || '')
+  .trim()
+  .toLowerCase()
+  .replace(/[^a-z0-9]+/g, '_')
+  .replace(/^_+|_+$/g, '')
+
+function parseCustomFieldsPayload(value) {
+  if (value === null || value === undefined || value === '') return []
+  if (Array.isArray(value) || (typeof value === 'object' && value)) return value
+
+  try {
+    return JSON.parse(value)
+  } catch {
+    return value
+  }
+}
+
+function isWhatsAppApiSystemCustomField(field = {}, fallbackKey = '') {
+  const tokens = [
+    fallbackKey,
+    field?.id,
+    field?.key,
+    field?.fieldKey,
+    field?.field_key,
+    field?.name,
+    field?.label
+  ].map(normalizeCustomFieldKey).filter(Boolean)
+
+  return tokens.some(token => WHATSAPP_API_SYSTEM_CUSTOM_FIELD_KEYS.has(token))
+}
+
+function removeWhatsAppApiSystemCustomFieldsFromPayload(value) {
+  const parsed = parseCustomFieldsPayload(value)
+
+  if (Array.isArray(parsed)) {
+    const next = parsed.filter(field => !isWhatsAppApiSystemCustomField(field))
+    return {
+      changed: next.length !== parsed.length,
+      value: next
+    }
+  }
+
+  if (parsed && typeof parsed === 'object') {
+    const next = {}
+    let changed = false
+    for (const [key, fieldValue] of Object.entries(parsed)) {
+      const field = fieldValue && typeof fieldValue === 'object' ? fieldValue : { value: fieldValue }
+      if (isWhatsAppApiSystemCustomField(field, key)) {
+        changed = true
+        continue
+      }
+      next[key] = fieldValue
+    }
+    return { changed, value: next }
+  }
+
+  return { changed: false, value: parsed }
+}
+
+async function cleanupWhatsAppApiSystemCustomFields() {
+  const definitionRows = await db.all(`
+    SELECT id
+    FROM contact_custom_field_definitions
+    WHERE LOWER(field_key) IN (${Array.from(WHATSAPP_API_SYSTEM_CUSTOM_FIELD_KEYS).map(() => '?').join(', ')})
+  `, Array.from(WHATSAPP_API_SYSTEM_CUSTOM_FIELD_KEYS))
+
+  for (const row of definitionRows) {
+    await db.run('DELETE FROM contact_custom_field_definition_sources WHERE definition_id = ?', [row.id])
+    await db.run('DELETE FROM contact_custom_field_definitions WHERE id = ?', [row.id])
+  }
+
+  const contactRows = await db.all(`
+    SELECT id, custom_fields
+    FROM contacts
+    WHERE custom_fields IS NOT NULL
+  `)
+  let cleanedContacts = 0
+
+  for (const row of contactRows) {
+    const cleaned = removeWhatsAppApiSystemCustomFieldsFromPayload(row.custom_fields)
+    if (!cleaned.changed) continue
+
+    await db.run(
+      `UPDATE contacts SET custom_fields = ${usePostgres ? '?::jsonb' : '?'} WHERE id = ?`,
+      [JSON.stringify(cleaned.value), row.id]
+    )
+    cleanedContacts += 1
+  }
+
+  if (definitionRows.length || cleanedContacts) {
+    logger.info(`Limpieza WhatsApp API: ${definitionRows.length} definiciones y ${cleanedContacts} contactos sin campos personalizados internos.`)
+  }
+}
+
 if (usePostgres) {
   // PostgreSQL (Producción en Render)
   logger.info('Usando PostgreSQL')
@@ -2514,6 +2616,12 @@ async function initTables() {
     `)
 
     await db.run('CREATE INDEX IF NOT EXISTS idx_report_manual_business_expenses_period ON report_manual_business_expenses(period_type, period_start)')
+
+    try {
+      await cleanupWhatsAppApiSystemCustomFields()
+    } catch (err) {
+      logger.warn('Advertencia al limpiar campos internos de WhatsApp API:', err.message)
+    }
 
     try {
       await reconcileCanonicalContactPhones()

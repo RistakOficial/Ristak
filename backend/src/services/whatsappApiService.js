@@ -1708,7 +1708,6 @@ async function syncYCloudContacts(contacts = []) {
     const localContact = await upsertLocalContact({
       phone: contact.phone,
       profileName: contact.profileName,
-      messageText: '',
       messageTimestamp: contact.seenAt,
       attribution: {
         sourceId: contact.sourceId,
@@ -2460,7 +2459,7 @@ function getStoredContactDisplayName(existing = {}, fallbackName = '', phone = '
   return phone
 }
 
-async function upsertLocalContact({ phone, profileName, messageText, messageTimestamp, attribution }) {
+async function upsertLocalContact({ phone, profileName, messageTimestamp, attribution }) {
   const canonicalPhone = normalizePhoneForStorage(phone) || cleanString(phone)
   if (!canonicalPhone) return { id: null, created: false }
 
@@ -2470,21 +2469,12 @@ async function upsertLocalContact({ phone, profileName, messageText, messageTime
 
   if (!existing) {
     const contactId = hashId('waapi_contact', canonicalPhone)
-    const customFieldsValue = JSON.stringify([
-      { key: 'whatsapp_api_provider', field_value: PROVIDER_NAME },
-      { key: 'whatsapp_api_first_message', field_value: messageText || '' },
-      { key: 'whatsapp_api_source_id', field_value: attribution.sourceId || '' },
-      { key: 'whatsapp_api_ctwa_clid', field_value: attribution.ctwaClid || '' },
-      { key: 'whatsapp_api_source_url', field_value: attribution.sourceUrl || '' }
-    ])
-    const customFieldsPlaceholder = isPostgres() ? '?::jsonb' : '?'
-
     await db.run(`
       INSERT INTO contacts (
         id, phone, full_name, first_name, source, attribution_url, attribution_session_source,
         attribution_medium, attribution_ctwa_clid, attribution_ad_name, attribution_ad_id,
-        custom_fields, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${customFieldsPlaceholder}, ?, CURRENT_TIMESTAMP)
+        created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
     `, [
       contactId,
       canonicalPhone,
@@ -2497,7 +2487,6 @@ async function upsertLocalContact({ phone, profileName, messageText, messageTime
       attribution.ctwaClid || null,
       attribution.headline || attribution.sourceId || null,
       attribution.sourceId || null,
-      customFieldsValue,
       messageTimestamp || nowIso()
     ])
 
@@ -2875,7 +2864,6 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
   const localContact = await upsertLocalContact({
     phone: identity.phone,
     profileName,
-    messageText,
     messageTimestamp,
     attribution
   })
