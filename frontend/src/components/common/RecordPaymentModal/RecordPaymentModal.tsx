@@ -129,6 +129,18 @@ const normalizePaymentContact = (contact?: Partial<Contact> | null): Contact | n
   }
 }
 
+const getContactInitials = (contact?: Partial<Contact> | null) => {
+  const source = contact?.name || `${contact?.firstName || ''} ${contact?.lastName || ''}`.trim() || contact?.email || contact?.phone || ''
+  const initials = source
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join('')
+
+  return initials || 'C'
+}
+
 const EMAIL_SEND_METHODS = new Set<SendMethod>(['email', 'email_whatsapp', 'email_sms', 'all'])
 const PHONE_SEND_METHODS = new Set<SendMethod>(['whatsapp', 'sms', 'email_whatsapp', 'email_sms', 'all'])
 const SMS_SEND_METHODS = new Set<SendMethod>(['sms', 'email_sms', 'all'])
@@ -1453,6 +1465,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
     const taxAmount = includeIVA ? normalizeAmount(subtotalAmount * IVA_RATE) : 0
     const totalAmount = includeIVA ? normalizeAmount(subtotalAmount + taxAmount) : subtotalAmount
+    const isEmbedded = variant === 'embedded'
 
     const renderPaymentModeField = () => {
       // Las parcialidades dependen de HighLevel. En modo local solo hay pago único.
@@ -1506,22 +1519,23 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
               </div>
             ) : (
               <div className={styles.searchWrapper}>
-                <div className={styles.searchInput}>
+                <div className={isEmbedded ? styles.contactSearchBox : styles.searchInput}>
                   <Search size={16} className={styles.searchIcon} />
                   <input
                     type="text"
-                    placeholder="Buscar por nombre, email o teléfono..."
+                    placeholder={isEmbedded ? 'Buscar contacto' : 'Buscar por nombre, email o teléfono...'}
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     className={styles.input}
+                    aria-label="Buscar contacto para cobrar"
                   />
                   {searchingContact && <Loader2 size={16} className={styles.loadingIcon} />}
                 </div>
 
                 {showContactDropdown && (
-                  <div className={styles.dropdown}>
+                  <div className={isEmbedded ? styles.contactList : styles.dropdown} data-phone-scrollable="true">
                     {searchingContact && contacts.length === 0 ? (
-                      <div className={styles.dropdownEmpty}>
+                      <div className={isEmbedded ? styles.contactListState : styles.dropdownEmpty}>
                         Buscando contactos...
                       </div>
                     ) : contacts.length > 0 ? (
@@ -1529,17 +1543,29 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                         <button
                           key={contact.id}
                           type="button"
-                          className={styles.dropdownItem}
+                          className={isEmbedded ? styles.contactOption : styles.dropdownItem}
                           onClick={() => handleSelectContact(contact)}
                         >
-                          <p className={styles.dropdownName}>{contact.name || 'Sin nombre'}</p>
-                          <p className={styles.dropdownDetail}>
-                            {contact.email || contact.phone || 'Sin información de contacto'}
-                          </p>
+                          {isEmbedded ? (
+                            <>
+                              <span className={styles.contactAvatar}>{getContactInitials(contact)}</span>
+                              <span className={styles.contactMain}>
+                                <strong>{contact.name || 'Sin nombre'}</strong>
+                                <small>{contact.email || contact.phone || 'Sin información de contacto'}</small>
+                              </span>
+                            </>
+                          ) : (
+                            <>
+                              <p className={styles.dropdownName}>{contact.name || 'Sin nombre'}</p>
+                              <p className={styles.dropdownDetail}>
+                                {contact.email || contact.phone || 'Sin información de contacto'}
+                              </p>
+                            </>
+                          )}
                         </button>
                       ))
                     ) : (
-                      <div className={styles.dropdownEmpty}>
+                      <div className={isEmbedded ? styles.contactListState : styles.dropdownEmpty}>
                         No se encontraron contactos
                       </div>
                     )}
@@ -2484,8 +2510,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           {step === 'processing' && renderProcessing()}
           {step === 'form' && renderForm()}
           {step === 'options' && renderPaymentOptions()}
+          {renderFooter()}
         </div>
-        {renderFooter()}
       </div>
     )
   }

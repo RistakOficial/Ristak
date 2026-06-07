@@ -261,6 +261,38 @@
   position: relative;
 }
 
+.contactSearchBox {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  min-height: 48px;
+  padding: 0 13px;
+  border: 0;
+  border-radius: 999px;
+  color: #4b5563;
+  background: #ffffff;
+}
+
+.contactSearchBox .searchIcon,
+.contactSearchBox .loadingIcon {
+  position: static;
+}
+
+.contactSearchBox .loadingIcon {
+  justify-self: end;
+}
+
+.contactSearchBox .input {
+  width: 100%;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  box-shadow: none;
+}
+
 .searchInput {
   position: relative;
   display: flex;
@@ -348,6 +380,87 @@
   text-align: center;
   font-size: 12px;
   color: var(--color-text-tertiary);
+}
+
+.contactList {
+  min-height: 0;
+  max-height: 280px;
+  margin-top: 10px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.contactOption {
+  appearance: none;
+  -webkit-appearance: none;
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 72px;
+  padding: 8px 4px;
+  border: 0;
+  border-bottom: 1px solid rgba(17, 17, 17, 0.08);
+  border-radius: 0;
+  color: #050505;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.contactAvatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 999px;
+  color: #ffffff;
+  background: #00a884;
+  font-size: 15px;
+  font-weight: 850;
+  overflow: hidden;
+}
+
+.contactMain {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.contactOption strong,
+.contactOption small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.contactOption strong {
+  color: #050505;
+  font-size: 17px;
+  font-weight: 830;
+  line-height: 1.12;
+}
+
+.contactOption small {
+  color: #7a7a7a;
+  font-size: 14px;
+  font-weight: 620;
+  line-height: 1.2;
+}
+
+.contactListState {
+  display: grid;
+  place-items: center;
+  min-height: 108px;
+  padding: 18px;
+  color: #8e8e93;
+  text-align: center;
+  font-size: 14px;
+  font-weight: 650;
 }
 
 /* Amount input */
@@ -1536,23 +1649,23 @@ body.dark .tooltipInfo {
 
 .embeddedRoot .content,
 .embeddedRoot .optionsContent {
-  padding: 6px 2px 16px;
-  gap: 13px;
+  box-sizing: border-box;
+  width: min(100%, 430px);
+  margin: 0 auto;
+  padding: 8px clamp(18px, 5vw, 24px) 8px;
+  gap: 15px;
   background: var(--record-payment-embedded-bg);
 }
 
 .embeddedRoot .footer {
-  flex: 0 0 auto;
-  position: relative;
-  z-index: 2;
-  margin: 0;
+  box-sizing: border-box;
+  width: min(100%, 430px);
+  margin: 6px auto 0;
   justify-content: stretch;
-  padding: 14px 2px calc(env(safe-area-inset-bottom, 0px) + 14px);
-  border-top: 1px solid var(--record-payment-embedded-border);
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--record-payment-embedded-bg) 78%, transparent), var(--record-payment-embedded-bg) 24%),
-    var(--record-payment-embedded-bg);
-  box-shadow: 0 -14px 28px rgba(15, 23, 42, 0.06);
+  padding: 10px clamp(18px, 5vw, 24px) calc(env(safe-area-inset-bottom, 0px) + 30px);
+  border-top: 0;
+  background: var(--record-payment-embedded-bg);
+  box-shadow: none;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
@@ -1605,6 +1718,27 @@ body.dark .tooltipInfo {
 .embeddedRoot .input::placeholder,
 .embeddedRoot .textArea::placeholder,
 .embeddedRoot .searchInput input::placeholder {
+  color: var(--record-payment-embedded-muted);
+}
+
+.embeddedRoot .contactSearchBox {
+  min-height: 48px;
+  background: var(--record-payment-embedded-panel);
+  color: var(--record-payment-embedded-muted);
+}
+
+.embeddedRoot .contactSearchBox .input {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  color: var(--record-payment-embedded-text);
+  background: transparent;
+  font-size: 16px;
+  font-weight: 650;
+}
+
+.embeddedRoot .contactSearchBox .input::placeholder {
   color: var(--record-payment-embedded-muted);
 }
 
@@ -1688,4 +1822,24 @@ body.dark .tooltipInfo {
 
 .embeddedRoot .dropdownItem:hover {
   background: var(--record-payment-embedded-soft);
+}
+
+.embeddedRoot .contactList {
+  max-height: min(310px, 42dvh);
+}
+
+.embeddedRoot .contactOption {
+  color: var(--record-payment-embedded-text);
+  border-bottom-color: var(--record-payment-embedded-border);
+  background: transparent;
+  box-shadow: none;
+}
+
+.embeddedRoot .contactOption strong {
+  color: var(--record-payment-embedded-text);
+}
+
+.embeddedRoot .contactOption small,
+.embeddedRoot .contactListState {
+  color: var(--record-payment-embedded-muted);
 }
