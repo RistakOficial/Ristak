@@ -181,6 +181,19 @@ export interface WhatsAppApiImageSendPayload {
   phoneNumberId?: string
 }
 
+export interface WhatsAppApiDocumentSendPayload {
+  to: string
+  from?: string
+  documentDataUrl?: string
+  documentUrl?: string
+  filename?: string
+  mimeType?: string
+  caption?: string
+  externalId?: string
+  transport?: 'api' | 'qr'
+  phoneNumberId?: string
+}
+
 export interface WhatsAppApiAudioSendPayload {
   to: string
   from?: string
@@ -216,6 +229,22 @@ export interface WhatsAppApiSendResponse {
     mimeType?: string
     filename?: string
   } | null
+  image?: {
+    link?: string
+    url?: string
+    mimeType?: string
+    mimetype?: string
+    caption?: string
+  }
+  document?: {
+    link?: string
+    url?: string
+    mimeType?: string
+    mimetype?: string
+    filename?: string
+    fileName?: string
+    caption?: string
+  }
 }
 
 export interface WhatsAppQrSession {
@@ -259,6 +288,7 @@ export const whatsappApiService = {
   }),
   sendText: (payload: WhatsAppApiTextSendPayload) => apiClient.post<WhatsAppApiSendResponse>('/whatsapp-api/messages/text', payload),
   sendImage: (payload: WhatsAppApiImageSendPayload) => apiClient.post<WhatsAppApiSendResponse>('/whatsapp-api/messages/image', payload),
+  sendDocument: (payload: WhatsAppApiDocumentSendPayload) => apiClient.post<WhatsAppApiSendResponse>('/whatsapp-api/messages/document', payload),
   sendAudio: (payload: WhatsAppApiAudioSendPayload) => apiClient.post<WhatsAppApiSendResponse>('/whatsapp-api/messages/audio', payload),
   sendTemplate: (payload: WhatsAppApiTemplateSendPayload) => apiClient.post<WhatsAppApiSendResponse>('/whatsapp-api/templates/send', payload)
 }

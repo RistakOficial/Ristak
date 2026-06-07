@@ -11,6 +11,7 @@ import {
   refreshWhatsAppApiView,
   resetWhatsAppApiCredentialsView,
   sendWhatsAppApiAudioMessageView,
+  sendWhatsAppApiDocumentMessageView,
   sendWhatsAppApiImageMessageView,
   sendWhatsAppApiTemplateMessageView,
   sendWhatsAppApiTextMessageView,
@@ -34,6 +35,7 @@ router.post('/qr/connect', connectWhatsAppQrView)
 router.post('/qr/disconnect', disconnectWhatsAppQrView)
 router.post('/messages/text', sendWhatsAppApiTextMessageView)
 router.post('/messages/image', sendWhatsAppApiImageMessageView)
+router.post('/messages/document', sendWhatsAppApiDocumentMessageView)
 router.post('/messages/audio', sendWhatsAppApiAudioMessageView)
 router.get('/templates', getWhatsAppApiTemplatesView)
 router.post('/templates/send', sendWhatsAppApiTemplateMessageView)

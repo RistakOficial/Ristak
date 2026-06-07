@@ -14,6 +14,7 @@ import {
   getWhatsAppQrSession,
   getWhatsAppQrSessions,
   sendWhatsAppQrAudioMessage,
+  sendWhatsAppQrDocumentMessage,
   sendWhatsAppQrImageMessage,
   sendWhatsAppQrTextMessage,
   startWhatsAppQrConnection
@@ -36,6 +37,9 @@ const MAX_WHATSAPP_IMAGE_BYTES = 8 * 1024 * 1024
 const WHATSAPP_AUDIO_UPLOAD_ROOT = join(__dirname, '../../uploads/whatsapp-audio')
 const WHATSAPP_AUDIO_PUBLIC_PATH = '/uploads/whatsapp-audio'
 const MAX_WHATSAPP_AUDIO_BYTES = 16 * 1024 * 1024
+const WHATSAPP_DOCUMENT_UPLOAD_ROOT = join(__dirname, '../../uploads/whatsapp-documents')
+const WHATSAPP_DOCUMENT_PUBLIC_PATH = '/uploads/whatsapp-documents'
+const MAX_WHATSAPP_DOCUMENT_BYTES = 20 * 1024 * 1024
 const WHATSAPP_VOICE_NOTE_MIME_TYPE = 'audio/ogg; codecs=opus'
 const WHATSAPP_API_PROFILE_PICTURE_CACHE_TTL_MS = 24 * 60 * 60 * 1000
 const WHATSAPP_API_PROFILE_PICTURE_BATCH_LIMIT = 40
@@ -55,6 +59,20 @@ const AUDIO_EXTENSION_BY_MIME = {
   'audio/wav': 'wav',
   'audio/x-wav': 'wav'
 }
+const DOCUMENT_EXTENSION_BY_MIME = {
+  'application/pdf': 'pdf',
+  'application/msword': 'doc',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+  'application/vnd.ms-excel': 'xls',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+  'application/vnd.ms-powerpoint': 'ppt',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'pptx',
+  'text/plain': 'txt',
+  'text/csv': 'csv'
+}
+const DOCUMENT_MIME_BY_EXTENSION = Object.fromEntries(
+  Object.entries(DOCUMENT_EXTENSION_BY_MIME).map(([mimeType, extension]) => [extension, mimeType])
+)
 const API_FALLBACK_PHONE_STATUSES = new Set([
   'BANNED',
   'BLOCKED',
@@ -438,17 +456,17 @@ function isPrivateHost(hostname = '') {
     /^172\.(1[6-9]|2\d|3[0-1])\./.test(host)
 }
 
-function requirePublicHttpsBaseUrl(baseUrl = '') {
+function requirePublicHttpsBaseUrl(baseUrl = '', mediaLabel = 'archivos') {
   const normalized = normalizePublicBaseUrl(baseUrl)
   let parsed
   try {
     parsed = new URL(normalized)
   } catch {
-    throw new Error('Para enviar fotos por WhatsApp, configura una URL pública HTTPS de Ristak.')
+    throw new Error(`Para enviar ${mediaLabel} por WhatsApp, configura una URL pública HTTPS de Ristak.`)
   }
 
   if (parsed.protocol !== 'https:' || isPrivateHost(parsed.hostname)) {
-    throw new Error('Para enviar fotos por WhatsApp, Ristak necesita estar publicado en una URL HTTPS que WhatsApp pueda abrir.')
+    throw new Error(`Para enviar ${mediaLabel} por WhatsApp, Ristak necesita estar publicado en una URL HTTPS que WhatsApp pueda abrir.`)
   }
 
   return normalized
@@ -520,6 +538,51 @@ function parseAudioDataUrl(value = '') {
   }
 
   return { buffer, mimeType, params, extension }
+}
+
+function sanitizeDocumentFilename(value = '', mimeType = '') {
+  const extension = DOCUMENT_EXTENSION_BY_MIME[mimeType] || 'pdf'
+  const rawName = cleanString(value).split(/[\\/]/).pop() || `documento-${Date.now()}.${extension}`
+  const withoutControlChars = rawName.replace(/[\u0000-\u001f\u007f]/g, '')
+  const sanitized = withoutControlChars.replace(/[<>:"/\\|?*]+/g, '_').replace(/\s+/g, ' ').trim()
+  const finalName = sanitized || `documento-${Date.now()}.${extension}`
+  return /\.[a-z0-9]{2,8}$/i.test(finalName) ? finalName.slice(0, 180) : `${finalName.slice(0, 170)}.${extension}`
+}
+
+function parseDocumentDataUrl(value = '', filename = '', providedMimeType = '') {
+  const match = cleanString(value).match(/^data:([^;,]*)?(?:;[^,]*)?;base64,([a-z0-9+/=\s]+)$/i)
+  if (!match) {
+    throw new Error('El documento no llegó en un formato válido.')
+  }
+
+  const extension = cleanString(filename).toLowerCase().split('.').pop()
+  const directMimeType = cleanString(providedMimeType).toLowerCase()
+  const dataUrlMimeType = cleanString(match[1]).toLowerCase()
+  const mimeType = DOCUMENT_EXTENSION_BY_MIME[directMimeType]
+    ? directMimeType
+    : DOCUMENT_EXTENSION_BY_MIME[dataUrlMimeType]
+      ? dataUrlMimeType
+      : DOCUMENT_MIME_BY_EXTENSION[extension]
+
+  if (!mimeType) {
+    throw new Error('El documento debe ser PDF, Word, Excel, PowerPoint, TXT o CSV.')
+  }
+
+  const buffer = Buffer.from(match[2].replace(/\s/g, ''), 'base64')
+  if (!buffer.length) {
+    throw new Error('El documento está vacío.')
+  }
+
+  if (buffer.length > MAX_WHATSAPP_DOCUMENT_BYTES) {
+    throw new Error('El documento pesa demasiado. Elige uno de menos de 20 MB para poder enviarlo por WhatsApp.')
+  }
+
+  return {
+    buffer,
+    mimeType,
+    extension: DOCUMENT_EXTENSION_BY_MIME[mimeType],
+    filename: sanitizeDocumentFilename(filename, mimeType)
+  }
 }
 
 function audioNeedsWhatsAppConversion({ mimeType, params }) {
@@ -645,6 +708,26 @@ export async function saveWhatsAppAudioDataUrl(dataUrl = '') {
     filePath,
     publicPath: `${WHATSAPP_AUDIO_PUBLIC_PATH}/${dayKey}/${filename}`,
     filename
+  }
+}
+
+async function saveWhatsAppDocumentDataUrl(dataUrl = '', filename = '', mimeType = '') {
+  const parsed = parseDocumentDataUrl(dataUrl, filename, mimeType)
+  const dayKey = new Date().toISOString().slice(0, 10)
+  const folder = join(WHATSAPP_DOCUMENT_UPLOAD_ROOT, dayKey)
+  const storedFilename = `${crypto.randomUUID()}.${parsed.extension}`
+  const filePath = join(folder, storedFilename)
+
+  await fs.mkdir(folder, { recursive: true })
+  await fs.writeFile(filePath, parsed.buffer)
+
+  return {
+    mimeType: parsed.mimeType,
+    size: parsed.buffer.length,
+    filePath,
+    publicPath: `${WHATSAPP_DOCUMENT_PUBLIC_PATH}/${dayKey}/${storedFilename}`,
+    storedFilename,
+    filename: parsed.filename
   }
 }
 
@@ -1675,6 +1758,25 @@ async function retryFailedOfficialApiMessageViaQr({
         fromPhone,
         toPhone,
         requestAudio: { link },
+        externalId: fallbackExternalId,
+        fallbackReason: reason
+      })
+    }
+
+    if (messageType === 'document') {
+      const document = normalizedMessage?.document || {}
+      const link = cleanString(document.link || document.url)
+      if (!link) return null
+      return await sendDocumentViaQrFallback({
+        phoneNumberId: phoneRow.id,
+        fromPhone,
+        toPhone,
+        requestDocument: {
+          link,
+          ...(document.caption ? { caption: document.caption } : {}),
+          ...(document.filename || document.fileName ? { filename: document.filename || document.fileName } : {}),
+          ...(document.mimeType || document.mimetype ? { mimeType: document.mimeType || document.mimetype } : {})
+        },
         externalId: fallbackExternalId,
         fallbackReason: reason
       })
@@ -3935,6 +4037,65 @@ async function sendImageViaQrFallback({ fromPhone, toPhone, requestImage, imageD
   }
 }
 
+async function sendDocumentViaQrFallback({ fromPhone, toPhone, requestDocument, documentDataUrl, externalId, phoneNumberId, localMedia, publicBaseUrl, fallbackReason, originalError } = {}) {
+  try {
+    const localMediaUrl = buildLocalMediaUrl(localMedia, publicBaseUrl)
+    const response = await sendWhatsAppQrDocumentMessage({
+      phoneNumberId,
+      from: fromPhone,
+      to: toPhone,
+      documentDataUrl,
+      documentUrl: requestDocument?.link || requestDocument?.url || localMediaUrl,
+      caption: requestDocument?.caption,
+      filename: requestDocument?.filename || requestDocument?.fileName || localMedia?.filename,
+      mimeType: requestDocument?.mimeType || requestDocument?.mimetype || localMedia?.mimeType,
+      externalId
+    })
+    const finalDocument = {
+      ...(requestDocument || {}),
+      ...(response.document || {}),
+      link: cleanString(response.document?.link || requestDocument?.link || requestDocument?.url || localMediaUrl),
+      url: cleanString(response.document?.url || response.document?.link || requestDocument?.url || requestDocument?.link || localMediaUrl),
+      mimeType: cleanString(response.document?.mimeType || requestDocument?.mimeType || requestDocument?.mimetype || localMedia?.mimeType),
+      filename: cleanString(response.document?.filename || requestDocument?.filename || requestDocument?.fileName || localMedia?.filename),
+      ...(requestDocument?.caption || response.document?.caption ? { caption: requestDocument?.caption || response.document?.caption } : {})
+    }
+
+    await upsertMessage({
+      payload: {
+        id: response.id || externalId || hashId('waqr_doc_event', `${fromPhone}|${toPhone}|${finalDocument.link}`),
+        type: fallbackReason ? 'whatsapp.qr.message.fallback_sent' : 'whatsapp.qr.message.sent',
+        transport: 'qr',
+        fallbackReason: fallbackReason || null,
+        createTime: response.createTime || nowIso(),
+        whatsappMessage: response
+      },
+      message: {
+        ...response,
+        from: response.from || fromPhone,
+        to: response.to || toPhone,
+        type: response.type || 'document',
+        document: finalDocument,
+        transport: 'qr',
+        createTime: response.createTime || nowIso()
+      },
+      direction: 'outbound',
+      transport: 'qr'
+    })
+
+    return {
+      ...decorateQrFallbackResponse(response, fallbackReason),
+      document: finalDocument,
+      localMedia: localMedia
+        ? { ...localMedia, publicUrl: localMediaUrl }
+        : localMedia
+    }
+  } catch (fallbackError) {
+    if (originalError) throw buildQrFallbackError(originalError, fallbackError)
+    throw fallbackError
+  }
+}
+
 async function sendAudioViaQrFallback({ fromPhone, toPhone, requestAudio, audioDataUrl, externalId, phoneNumberId, localMedia, publicBaseUrl, durationMs, fallbackReason, originalError } = {}) {
   try {
     const localMediaUrl = buildLocalMediaUrl(localMedia, publicBaseUrl)
@@ -4127,7 +4288,7 @@ export async function sendWhatsAppApiImageMessage({
     if (cleanTransport === 'qr') {
       link = buildLocalMediaUrl(savedImage, publicBaseUrl)
     } else {
-      const baseUrl = requirePublicHttpsBaseUrl(publicBaseUrl || process.env.RENDER_EXTERNAL_URL || process.env.PUBLIC_URL)
+      const baseUrl = requirePublicHttpsBaseUrl(publicBaseUrl || process.env.RENDER_EXTERNAL_URL || process.env.PUBLIC_URL, 'fotos')
       link = `${baseUrl}${savedImage.publicPath}`
     }
   }
@@ -4243,6 +4404,167 @@ export async function sendWhatsAppApiImageMessage({
   }
 }
 
+export async function sendWhatsAppApiDocumentMessage({
+  to,
+  from,
+  documentDataUrl,
+  documentUrl,
+  filename,
+  mimeType,
+  caption,
+  externalId,
+  transport = 'api',
+  publicBaseUrl,
+  phoneNumberId
+} = {}) {
+  const config = await loadConfig({ includeSecrets: true })
+  const cleanTransport = cleanString(transport).toLowerCase() === 'qr' ? 'qr' : 'api'
+  if (cleanTransport !== 'qr' && (!config.enabled || !config.apiKey)) {
+    throw new Error('WhatsApp_API no está conectado')
+  }
+
+  const fromPhone = normalizePhoneForStorage(from || config.senderPhone) || cleanString(from || config.senderPhone)
+  const toPhone = normalizePhoneForStorage(to) || cleanString(to)
+  const cleanCaption = cleanString(caption).slice(0, 1024)
+  const cleanDocumentUrl = cleanString(documentUrl)
+
+  if (!fromPhone) throw new Error('Falta el número emisor de WhatsApp_API')
+  if (!toPhone) throw new Error('Falta el número destino')
+
+  let link = cleanDocumentUrl
+  let savedDocument = null
+
+  if (!link) {
+    savedDocument = await saveWhatsAppDocumentDataUrl(documentDataUrl, filename, mimeType)
+    if (cleanTransport === 'qr') {
+      link = buildLocalMediaUrl(savedDocument, publicBaseUrl)
+    } else {
+      const baseUrl = requirePublicHttpsBaseUrl(publicBaseUrl || process.env.RENDER_EXTERNAL_URL || process.env.PUBLIC_URL, 'documentos')
+      link = `${baseUrl}${savedDocument.publicPath}`
+    }
+  }
+
+  if (cleanTransport !== 'qr' && !/^https:\/\//i.test(link)) {
+    throw new Error('El documento necesita un enlace público HTTPS para poder enviarse por WhatsApp.')
+  }
+
+  const requestBody = {
+    from: fromPhone,
+    to: toPhone,
+    type: 'document',
+    document: {
+      link,
+      filename: savedDocument?.filename || sanitizeDocumentFilename(filename, savedDocument?.mimeType || cleanString(mimeType).toLowerCase()),
+      ...(cleanCaption ? { caption: cleanCaption } : {})
+    },
+    filterUnsubscribed: true,
+    filterBlocked: true,
+    ...(externalId ? { externalId } : {})
+  }
+
+  if (cleanTransport === 'qr') {
+    return sendDocumentViaQrFallback({
+      phoneNumberId,
+      fromPhone,
+      toPhone,
+      requestDocument: {
+        ...requestBody.document,
+        ...(savedDocument?.mimeType ? { mimeType: savedDocument.mimeType } : {})
+      },
+      documentDataUrl,
+      externalId,
+      localMedia: savedDocument,
+      publicBaseUrl
+    })
+  }
+
+  const fallbackDecision = await getOfficialApiFallbackDecision({
+    config,
+    fromPhone,
+    phoneNumberId
+  })
+  if (fallbackDecision.shouldFallback) {
+    return sendDocumentViaQrFallback({
+      phoneNumberId: fallbackDecision.phoneRow?.id || phoneNumberId,
+      fromPhone,
+      toPhone,
+      requestDocument: {
+        ...requestBody.document,
+        ...(savedDocument?.mimeType ? { mimeType: savedDocument.mimeType } : {})
+      },
+      documentDataUrl,
+      externalId,
+      localMedia: savedDocument,
+      publicBaseUrl,
+      fallbackReason: fallbackDecision.reason
+    })
+  }
+
+  let response
+  try {
+    response = await ycloudRequest('/whatsapp/messages', {
+      apiKey: config.apiKey,
+      method: 'POST',
+      body: requestBody
+    })
+  } catch (error) {
+    const retryDecision = await getOfficialApiFallbackDecision({
+      config,
+      fromPhone,
+      phoneNumberId,
+      error
+    })
+    if (retryDecision.shouldFallback) {
+      logger.warn(`[WhatsApp API] Envio de documento API fallo; usando QR para ${fromPhone}: ${retryDecision.reason}`)
+      return sendDocumentViaQrFallback({
+        phoneNumberId: retryDecision.phoneRow?.id || phoneNumberId,
+        fromPhone,
+        toPhone,
+        requestDocument: {
+          ...requestBody.document,
+          ...(savedDocument?.mimeType ? { mimeType: savedDocument.mimeType } : {})
+        },
+        documentDataUrl,
+        externalId,
+        localMedia: savedDocument,
+        publicBaseUrl,
+        fallbackReason: retryDecision.reason,
+        originalError: error
+      })
+    }
+    throw error
+  }
+
+  await upsertMessage({
+    payload: {
+      id: response.id || externalId || hashId('waapi_doc_event', `${fromPhone}|${toPhone}|${link}`),
+      type: 'whatsapp.message.updated',
+      createTime: nowIso(),
+      whatsappMessage: response
+    },
+    message: {
+      ...response,
+      from: response.from || fromPhone,
+      to: response.to || toPhone,
+      type: response.type || 'document',
+      document: response.document || requestBody.document,
+      transport: 'api',
+      createTime: response.createTime || nowIso()
+    },
+    direction: 'outbound',
+    transport: 'api'
+  })
+
+  return {
+    ...response,
+    document: response.document || {
+      ...requestBody.document,
+      ...(savedDocument?.mimeType ? { mimeType: savedDocument.mimeType } : {})
+    },
+    localMedia: savedDocument
+  }
+}
+
 export async function sendWhatsAppApiAudioMessage({
   to,
   from,
@@ -4277,7 +4599,7 @@ export async function sendWhatsAppApiAudioMessage({
     if (cleanTransport === 'qr') {
       link = buildLocalMediaUrl(savedAudio, publicBaseUrl)
     } else {
-      const baseUrl = requirePublicHttpsBaseUrl(publicBaseUrl || process.env.RENDER_EXTERNAL_URL || process.env.PUBLIC_URL)
+      const baseUrl = requirePublicHttpsBaseUrl(publicBaseUrl || process.env.RENDER_EXTERNAL_URL || process.env.PUBLIC_URL, 'audios')
       link = `${baseUrl}${savedAudio.publicPath}`
     }
   }

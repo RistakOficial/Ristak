@@ -34,6 +34,17 @@ const AUDIO_MIME_BY_EXTENSION = {
   wav: 'audio/wav',
   webm: 'audio/webm'
 }
+const DOCUMENT_MIME_BY_EXTENSION = {
+  pdf: 'application/pdf',
+  doc: 'application/msword',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  xls: 'application/vnd.ms-excel',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  ppt: 'application/vnd.ms-powerpoint',
+  pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  txt: 'text/plain',
+  csv: 'text/csv'
+}
 const WHATSAPP_VOICE_NOTE_MIME_TYPE = 'audio/ogg; codecs=opus'
 
 const liveSessions = new Map()
@@ -115,6 +126,22 @@ function inferAudioMimeType({ mimeType, url } = {}) {
   const cleanMimeType = cleanString(mimeType).toLowerCase()
   if (cleanMimeType) return cleanMimeType
   return AUDIO_MIME_BY_EXTENSION[getFileExtensionFromUrl(url)] || 'audio/mpeg'
+}
+
+function getFilenameFromUrl(url = '') {
+  try {
+    const parsed = new URL(cleanString(url))
+    return decodeURIComponent(parsed.pathname.split('/').pop() || '')
+  } catch {
+    return cleanString(url).split('?')[0].split('#')[0].split('/').pop() || ''
+  }
+}
+
+function inferDocumentMimeType({ mimeType, url, filename } = {}) {
+  const cleanMimeType = cleanString(mimeType).toLowerCase()
+  if (cleanMimeType) return cleanMimeType
+  const extension = getFileExtensionFromUrl(filename) || getFileExtensionFromUrl(url)
+  return DOCUMENT_MIME_BY_EXTENSION[extension] || 'application/octet-stream'
 }
 
 function normalizeVoiceNoteMimeType(mimeType = '') {
@@ -1595,6 +1622,62 @@ export async function sendWhatsAppQrAudioMessage({ phoneNumberId, from, to, audi
       ptt: true,
       ...(seconds ? { seconds } : {}),
       ...(durationMs ? { durationMs } : {})
+    },
+    status: sendResult.status,
+    transport: 'qr',
+    createTime: nowIso(),
+    raw: sendResult.raw
+  }
+}
+
+export async function sendWhatsAppQrDocumentMessage({ phoneNumberId, from, to, documentDataUrl, documentUrl, caption, filename, mimeType, externalId } = {}) {
+  const phone = await resolveQrPhone({ phoneNumberId, from })
+  const toPhone = normalizePhoneForStorage(to) || cleanString(to)
+  const cleanCaption = cleanString(caption).slice(0, 1024)
+  const cleanFilename = cleanString(filename).slice(0, 180) || getFilenameFromUrl(documentUrl) || `documento-${Date.now()}.pdf`
+
+  if (await markMissingAuthStateIfNeeded(phone)) {
+    throw new Error('El QR necesita reconectarse. Abre Configuracion > WhatsApp y genera un QR nuevo.')
+  }
+  if (Number(phone.qr_send_enabled || 0) !== 1) {
+    throw new Error('Ese numero no tiene el envio por QR activado')
+  }
+  if (!toPhone) throw new Error('Falta el numero destino')
+
+  const media = buildQrMediaPayload({
+    dataUrl: documentDataUrl,
+    url: documentUrl,
+    label: 'el documento'
+  })
+  const documentMimeType = inferDocumentMimeType({
+    mimeType: media.mimeType || mimeType,
+    url: media.sourceUrl || documentUrl,
+    filename: cleanFilename
+  })
+  const sock = await ensureOpenSocket(phone)
+  const recipient = await resolveRecipientJid(sock, toPhone)
+  const response = await sock.sendMessage(recipient.jid, {
+    document: media.content,
+    mimetype: documentMimeType,
+    fileName: cleanFilename,
+    ...(cleanCaption ? { caption: cleanCaption } : {})
+  })
+  const sendResult = await finalizeQrSendResponse({ response, recipient, externalId })
+
+  return {
+    id: sendResult.id,
+    wamid: sendResult.wamid,
+    from: phone.expectedPhone,
+    to: recipient.verifiedPhone || toPhone,
+    recipientJid: sendResult.recipientJid,
+    type: 'document',
+    document: {
+      link: media.sourceUrl || cleanString(documentUrl),
+      url: media.sourceUrl || cleanString(documentUrl),
+      mimeType: documentMimeType,
+      mimetype: documentMimeType,
+      filename: cleanFilename,
+      ...(cleanCaption ? { caption: cleanCaption } : {})
     },
     status: sendResult.status,
     transport: 'qr',

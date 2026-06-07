@@ -12,6 +12,7 @@ import {
   refreshWhatsAppApi,
   resetWhatsAppApiCredentials,
   sendWhatsAppApiAudioMessage,
+  sendWhatsAppApiDocumentMessage,
   sendWhatsAppApiImageMessage,
   sendWhatsAppApiTemplateMessage,
   sendWhatsAppApiTextMessage,
@@ -229,6 +230,31 @@ export async function sendWhatsAppApiImageMessageView(req, res) {
     res.status(400).json({
       success: false,
       error: error.message || 'No se pudo enviar la foto por WhatsApp_API'
+    })
+  }
+}
+
+export async function sendWhatsAppApiDocumentMessageView(req, res) {
+  try {
+    const data = await sendWhatsAppApiDocumentMessage({
+      to: req.body?.to,
+      from: req.body?.from,
+      documentDataUrl: req.body?.documentDataUrl,
+      documentUrl: req.body?.documentUrl,
+      filename: req.body?.filename,
+      mimeType: req.body?.mimeType,
+      caption: req.body?.caption,
+      externalId: req.body?.externalId,
+      transport: req.body?.transport,
+      phoneNumberId: req.body?.phoneNumberId,
+      publicBaseUrl: getPublicBaseUrl(req)
+    })
+    res.json({ success: true, data })
+  } catch (error) {
+    logger.error(`Error enviando documento WhatsApp_API: ${error.message}`)
+    res.status(400).json({
+      success: false,
+      error: error.message || 'No se pudo enviar el documento por WhatsApp_API'
     })
   }
 }

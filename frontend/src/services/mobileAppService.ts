@@ -13,6 +13,7 @@ import type { PushSubscriptionResult } from './pushNotificationsService'
 
 type NativePlatform = 'ios' | 'android' | 'web'
 type PhotoSource = 'camera' | 'photos'
+type DocumentSource = 'documents'
 type MobileShellTheme = 'light' | 'dark'
 
 export interface MobilePhotoAttachment {
@@ -20,8 +21,22 @@ export interface MobilePhotoAttachment {
   name: string
   type: string
   dataUrl: string
+  attachmentType: 'image'
   source: PhotoSource
+  size?: number
 }
+
+export interface MobileDocumentAttachment {
+  id: string
+  name: string
+  type: string
+  dataUrl: string
+  attachmentType: 'document'
+  source: DocumentSource
+  size: number
+}
+
+export type MobileChatAttachment = MobilePhotoAttachment | MobileDocumentAttachment
 
 let shellConfigured = false
 let notificationListenersConfigured = false
@@ -101,6 +116,7 @@ async function readMediaAsDataUrl(result: MediaResult, source: PhotoSource): Pro
     name: source === 'camera' ? `foto-${Date.now()}.${format}` : `imagen-${Date.now()}.${format}`,
     type: `image/${format}`,
     dataUrl: `data:image/${format};base64,${base64}`,
+    attachmentType: 'image',
     source
   }
 }

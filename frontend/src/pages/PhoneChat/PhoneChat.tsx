@@ -70,7 +70,7 @@ import {
   type MessageTemplateCategory,
   type MessageTemplatePayload
 } from '@/services/messageTemplatesService'
-import { mobileAppService, type MobilePhotoAttachment } from '@/services/mobileAppService'
+import { mobileAppService, type MobileChatAttachment, type MobileDocumentAttachment, type MobilePhotoAttachment } from '@/services/mobileAppService'
 import { getPhoneDailyCacheKey, readPhoneDailyCache, writePhoneDailyCache } from '@/services/phoneDailyCache'
 import { pushNotificationsService } from '@/services/pushNotificationsService'
 import { whatsappApiService, type WhatsAppApiStatus, type WhatsAppApiTemplate } from '@/services/whatsappApiService'
@@ -107,6 +107,38 @@ const MESSAGE_INFO_SWIPE_OPEN_THRESHOLD = 38
 const MESSAGE_INFO_SWIPE_ACTIVATE_THRESHOLD = 9
 const MESSAGE_INFO_SWIPE_RENDER_STEP = 2
 const MAX_VOICE_MESSAGE_BYTES = 16 * 1024 * 1024
+const MAX_DOCUMENT_ATTACHMENT_BYTES = 20 * 1024 * 1024
+const DOCUMENT_ATTACHMENT_ACCEPT = [
+  '.pdf',
+  '.doc',
+  '.docx',
+  '.xls',
+  '.xlsx',
+  '.ppt',
+  '.pptx',
+  '.txt',
+  '.csv',
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.ms-powerpoint',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  'text/plain',
+  'text/csv'
+].join(',')
+const DOCUMENT_MIME_BY_EXTENSION: Record<string, string> = {
+  pdf: 'application/pdf',
+  doc: 'application/msword',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  xls: 'application/vnd.ms-excel',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  ppt: 'application/vnd.ms-powerpoint',
+  pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  txt: 'text/plain',
+  csv: 'text/csv'
+}
 const MIN_VOICE_RECORDING_MS = 600
 const MAX_VOICE_RECORDING_MS = 3 * 60 * 1000
 const VOICE_HOLD_TO_PREVIEW_MS = 430
@@ -1990,6 +2022,48 @@ function messageCanOpenWhatsAppReplyWindow(message: ChatMessage) {
   return !transport || ['api', 'qr', 'whatsapp', 'whatsapp_qr', 'baileys', 'bailey'].includes(transport)
 }
 
+function getFileExtension(name = '') {
+  const cleanName = String(name || '').trim().toLowerCase()
+  const extension = cleanName.split('.').pop() || ''
+  return extension === cleanName ? '' : extension
+}
+
+function getDocumentMimeType(file: File) {
+  const fileType = String(file.type || '').trim().toLowerCase()
+  const extension = getFileExtension(file.name)
+  return DOCUMENT_MIME_BY_EXTENSION[extension] || fileType || 'application/octet-stream'
+}
+
+function isSupportedDocumentFile(file: File) {
+  const extension = getFileExtension(file.name)
+  const mimeType = getDocumentMimeType(file)
+  return Boolean(DOCUMENT_MIME_BY_EXTENSION[extension] || Object.values(DOCUMENT_MIME_BY_EXTENSION).includes(mimeType))
+}
+
+function normalizeDataUrlMimeType(dataUrl: string, mimeType: string) {
+  if (!mimeType || !dataUrl.startsWith('data:')) return dataUrl
+  return dataUrl.replace(/^data:[^;,]*(;[^,]*)?,/i, (_match, params = '') => `data:${mimeType}${params || ';base64'},`)
+}
+
+function getDraftAttachmentKind(attachment: MobileChatAttachment): ChatAttachmentType {
+  return attachment.attachmentType === 'image' ? 'image' : 'document'
+}
+
+function getAttachmentPreviewText(attachments: MobileChatAttachment[], fallbackText = '') {
+  if (!attachments.length) return fallbackText
+  const hasDocument = attachments.some((attachment) => getDraftAttachmentKind(attachment) !== 'image')
+  if (attachments.length > 1) return hasDocument ? 'Archivos' : 'Fotos'
+  return hasDocument ? 'Documento' : 'Foto'
+}
+
+function formatAttachmentSize(size?: number) {
+  const value = Number(size || 0)
+  if (!Number.isFinite(value) || value <= 0) return 'Documento'
+  if (value >= 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(value >= 10 * 1024 * 1024 ? 0 : 1)} MB`
+  if (value >= 1024) return `${Math.round(value / 1024)} KB`
+  return `${value} B`
+}
+
 function toPaymentContact(contact: Contact | null) {
   if (!contact) return null
   return {
@@ -2145,7 +2219,7 @@ export const PhoneChat: React.FC = () => {
   const [messageInfoMessageId, setMessageInfoMessageId] = useState<string | null>(null)
   const [draggingMessageInfoSwipe, setDraggingMessageInfoSwipe] = useState<{ messageId: string; offset: number } | null>(null)
   const [messageText, setMessageText] = useState('')
-  const [draftAttachments, setDraftAttachments] = useState<MobilePhotoAttachment[]>([])
+  const [draftAttachments, setDraftAttachments] = useState<MobileChatAttachment[]>([])
   const [cameraSharePhoto, setCameraSharePhoto] = useState<MobilePhotoAttachment | null>(null)
   const [cameraShareQuery, setCameraShareQuery] = useState('')
   const [cameraShareCaption, setCameraShareCaption] = useState('')
@@ -2230,6 +2304,7 @@ export const PhoneChat: React.FC = () => {
   const cameraShareCaptionRef = useRef<HTMLDivElement | null>(null)
   const cameraInputRef = useRef<HTMLInputElement | null>(null)
   const photosInputRef = useRef<HTMLInputElement | null>(null)
+  const documentInputRef = useRef<HTMLInputElement | null>(null)
   const photoPickDestinationRef = useRef<PhotoPickDestination>('chat')
   const voiceRecorderRef = useRef<MediaRecorder | null>(null)
   const voiceStreamRef = useRef<MediaStream | null>(null)
@@ -4341,9 +4416,9 @@ export const PhoneChat: React.FC = () => {
     showToast('info', label, 'Esta opción ya está en el menú. La conexión real se activa cuando los archivos del celular estén conectados.')
   }
 
-  const addDraftAttachment = (attachment: MobilePhotoAttachment) => {
+  const addDraftAttachment = (attachment: MobileChatAttachment) => {
     setDraftAttachments((current) => [attachment, ...current].slice(0, 4))
-    showToast('success', 'Foto lista', 'Revisa la vista previa y toca enviar.')
+    showToast('success', attachment.attachmentType === 'image' ? 'Foto lista' : 'Documento listo', 'Revisa la vista previa y toca enviar.')
   }
 
   const openCameraShare = (attachment: MobilePhotoAttachment) => {
@@ -4402,6 +4477,8 @@ export const PhoneChat: React.FC = () => {
         name: file.name || `photo-${Date.now()}`,
         type: file.type || 'image/jpeg',
         dataUrl,
+        attachmentType: 'image',
+        size: file.size,
         source
       }, destination)
     }
@@ -4432,6 +4509,53 @@ export const PhoneChat: React.FC = () => {
 
     const input = source === 'camera' ? cameraInputRef.current : photosInputRef.current
     input?.click()
+  }
+
+  const readDocumentFile = (file: File) => {
+    if (!isSupportedDocumentFile(file)) {
+      showToast('error', 'Archivo no válido', 'Elige un PDF, Word, Excel, PowerPoint, TXT o CSV.')
+      return
+    }
+
+    if (file.size > MAX_DOCUMENT_ATTACHMENT_BYTES) {
+      showToast('error', 'Archivo muy pesado', 'Elige un documento de menos de 20 MB para mandarlo por WhatsApp.')
+      return
+    }
+
+    const mimeType = getDocumentMimeType(file)
+    const reader = new FileReader()
+    reader.onload = () => {
+      const dataUrl = typeof reader.result === 'string' ? normalizeDataUrlMimeType(reader.result, mimeType) : ''
+      if (!dataUrl) {
+        showToast('error', 'No se pudo leer', 'Intenta elegir el documento otra vez.')
+        return
+      }
+
+      const attachment: MobileDocumentAttachment = {
+        id: `document-${Date.now()}`,
+        name: file.name || `documento-${Date.now()}`,
+        type: mimeType,
+        dataUrl,
+        attachmentType: 'document',
+        source: 'documents',
+        size: file.size
+      }
+      addDraftAttachment(attachment)
+    }
+    reader.onerror = () => showToast('error', 'No se pudo leer', 'Intenta elegir el documento otra vez.')
+    reader.readAsDataURL(file)
+  }
+
+  const handleWebDocumentSelected = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+    readDocumentFile(file)
+  }
+
+  const handlePickDocument = () => {
+    actionSheetDismiss.requestClose()
+    documentInputRef.current?.click()
   }
 
   const syncCameraShareCaption = (element: HTMLDivElement) => {
@@ -4815,7 +4939,7 @@ export const PhoneChat: React.FC = () => {
       }
 
       if (attachmentsToSend.length > 0) {
-        showToast('warning', 'Solo texto o voz por ahora', 'HighLevel desde este chat todavía no manda fotos.')
+        showToast('warning', 'Solo texto o voz por ahora', 'HighLevel desde este chat todavía no manda archivos.')
         return
       }
 
@@ -5012,7 +5136,7 @@ export const PhoneChat: React.FC = () => {
         }]
       : attachmentsToSend.length > 0
       ? attachmentsToSend.map((attachment, index) => ({
-          id: `${optimisticId}-image-${index}`,
+          id: `${optimisticId}-attachment-${index}`,
           text: index === 0 ? text : '',
           date: sentAt,
           direction: 'outbound',
@@ -5021,9 +5145,10 @@ export const PhoneChat: React.FC = () => {
           businessPhoneNumberId: selectedBusinessPhone?.id || '',
           transport: resolvedTransport,
           attachment: {
-            type: 'image',
+            type: getDraftAttachmentKind(attachment),
             dataUrl: attachment.dataUrl,
-            name: attachment.name
+            name: attachment.name,
+            mimeType: attachment.type
           }
         }))
       : [{
@@ -5042,7 +5167,7 @@ export const PhoneChat: React.FC = () => {
       contact.id === activeContact.id
         ? {
             ...contact,
-            lastMessageText: voiceToSend ? 'Mensaje de voz' : attachmentsToSend.length > 0 ? (text || 'Foto') : text,
+            lastMessageText: voiceToSend ? 'Mensaje de voz' : attachmentsToSend.length > 0 ? (text || getAttachmentPreviewText(attachmentsToSend)) : text,
             lastMessageDate: sentAt,
             lastMessageDirection: 'outbound',
             messageCount: Number(contact.messageCount || 0) + Math.max(1, voiceToSend ? 1 : attachmentsToSend.length)
@@ -5084,23 +5209,50 @@ export const PhoneChat: React.FC = () => {
         )))
       } else if (attachmentsToSend.length > 0) {
         const results = await Promise.all(attachmentsToSend.map((attachment, index) => (
-          whatsappApiService.sendImage({
-            to: activeContact.phone || '',
-            from: selectedBusinessPhoneValue,
-            imageDataUrl: attachment.dataUrl,
-            caption: index === 0 ? text : '',
-            externalId: `${optimisticId}-image-${index}`,
-            transport: resolvedTransport,
-            phoneNumberId: selectedBusinessPhone?.id || undefined
-          })
+          getDraftAttachmentKind(attachment) === 'image'
+            ? whatsappApiService.sendImage({
+                to: activeContact.phone || '',
+                from: selectedBusinessPhoneValue,
+                imageDataUrl: attachment.dataUrl,
+                caption: index === 0 ? text : '',
+                externalId: `${optimisticId}-attachment-${index}`,
+                transport: resolvedTransport,
+                phoneNumberId: selectedBusinessPhone?.id || undefined
+              })
+            : whatsappApiService.sendDocument({
+                to: activeContact.phone || '',
+                from: selectedBusinessPhoneValue,
+                documentDataUrl: attachment.dataUrl,
+                filename: attachment.name,
+                mimeType: attachment.type,
+                caption: index === 0 ? text : '',
+                externalId: `${optimisticId}-attachment-${index}`,
+                transport: resolvedTransport,
+                phoneNumberId: selectedBusinessPhone?.id || undefined
+              })
         )))
         setMessages((current) => current.map((message) => (
-          message.id.startsWith(`${optimisticId}-image-`)
-            ? {
-                ...message,
-                status: results[Number(message.id.replace(`${optimisticId}-image-`, ''))]?.status || 'sent',
-                transport: results[Number(message.id.replace(`${optimisticId}-image-`, ''))]?.transport || message.transport
-              }
+          message.id.startsWith(`${optimisticId}-attachment-`)
+            ? (() => {
+                const result = results[Number(message.id.replace(`${optimisticId}-attachment-`, ''))]
+                const resultMedia = result?.document || result?.image || null
+                const mediaUrl = resultMedia?.link || resultMedia?.url || result?.localMedia?.publicUrl || ''
+                const mediaMimeType = resultMedia?.mimeType || resultMedia?.mimetype || result?.localMedia?.mimeType || ''
+                const mediaFilename = result?.document?.filename || result?.document?.fileName || result?.localMedia?.filename || ''
+                return {
+                  ...message,
+                  status: result?.status || 'sent',
+                  transport: result?.transport || message.transport,
+                  attachment: message.attachment
+                    ? {
+                        ...message.attachment,
+                        ...(mediaUrl ? { url: mediaUrl } : {}),
+                        ...(mediaMimeType ? { mimeType: mediaMimeType } : {}),
+                        ...(mediaFilename ? { name: mediaFilename } : {})
+                      }
+                    : message.attachment
+                }
+              })()
             : message
         )))
       } else {
@@ -5123,7 +5275,7 @@ export const PhoneChat: React.FC = () => {
     } catch (error: any) {
       const errorMessage = getErrorMessage(error, 'Intenta enviar el mensaje otra vez.')
       setMessages((current) => current.map((message) => (
-        message.id === optimisticId || message.id === `${optimisticId}-audio` || message.id.startsWith(`${optimisticId}-image-`)
+        message.id === optimisticId || message.id === `${optimisticId}-audio` || message.id.startsWith(`${optimisticId}-attachment-`)
           ? { ...message, status: 'error', errorReason: errorMessage }
           : message
       )))
@@ -6046,6 +6198,7 @@ export const PhoneChat: React.FC = () => {
 
     const fileLabel = attachment.name || getMessageTypeLabel(attachment.type)
     const detail = attachment.mimeType ? getReadableValue(attachment.mimeType) : 'Archivo'
+    const fileUrl = attachment.url || attachment.dataUrl
     const content = (
       <>
         <span className={styles.messageFileIcon}>
@@ -6058,9 +6211,9 @@ export const PhoneChat: React.FC = () => {
       </>
     )
 
-    if (attachment.url) {
+    if (fileUrl) {
       return (
-        <a className={styles.messageFile} href={attachment.url} target="_blank" rel="noreferrer">
+        <a className={styles.messageFile} href={fileUrl} target="_blank" rel="noreferrer">
           {content}
         </a>
       )
@@ -6495,9 +6648,17 @@ export const PhoneChat: React.FC = () => {
     return (
       <div className={styles.draftAttachments} data-phone-chat-scrollable="true">
         {draftAttachments.map((attachment) => (
-          <figure key={attachment.id} className={styles.draftAttachment}>
-            <img src={attachment.dataUrl} alt={attachment.name || 'Foto lista'} />
-            <button type="button" onClick={() => removeDraftAttachment(attachment.id)} aria-label="Quitar foto">
+          <figure key={attachment.id} className={`${styles.draftAttachment} ${attachment.attachmentType !== 'image' ? styles.draftAttachmentFile : ''}`}>
+            {attachment.attachmentType === 'image' ? (
+              <img src={attachment.dataUrl} alt={attachment.name || 'Foto lista'} />
+            ) : (
+              <span className={styles.draftAttachmentFileContent}>
+                <FileText size={21} />
+                <strong>{attachment.name || 'Documento'}</strong>
+                <small>{formatAttachmentSize(attachment.size)}</small>
+              </span>
+            )}
+            <button type="button" onClick={() => removeDraftAttachment(attachment.id)} aria-label={attachment.attachmentType === 'image' ? 'Quitar foto' : 'Quitar documento'}>
               <X size={15} />
             </button>
           </figure>
@@ -7975,7 +8136,7 @@ export const PhoneChat: React.FC = () => {
       { label: 'Plantillas', Icon: FileText, className: styles.actionTemplate, onClick: handleOpenTemplatesSheet },
       { label: 'Fotos', Icon: ImageIcon, className: styles.actionBlue, onClick: () => handlePickPhoto('photos') },
       { label: 'Cámara', Icon: Camera, className: styles.actionDark, onClick: () => handlePickPhoto('camera') },
-      { label: 'Documentos', Icon: FileText, className: styles.actionSky, onClick: () => handleUnavailableAttachment('Documentos') },
+      { label: 'Documentos', Icon: FileText, className: styles.actionSky, onClick: handlePickDocument },
       { label: 'Ubicación', Icon: MapPin, className: styles.actionGreen, onClick: () => handleUnavailableAttachment('Ubicación') },
       { label: 'CLABE', Icon: Banknote, className: styles.actionClabe, onClick: handleOpenClabeSheet }
     ]
@@ -8380,6 +8541,13 @@ export const PhoneChat: React.FC = () => {
         accept="image/*"
         className={styles.hiddenFileInput}
         onChange={(event) => handleWebPhotoSelected('photos', event)}
+      />
+      <input
+        ref={documentInputRef}
+        type="file"
+        accept={DOCUMENT_ATTACHMENT_ACCEPT}
+        className={styles.hiddenFileInput}
+        onChange={handleWebDocumentSelected}
       />
 
       {sheet && (

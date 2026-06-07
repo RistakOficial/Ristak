@@ -3726,6 +3726,45 @@
   object-fit: cover;
 }
 
+.draftAttachmentFile {
+  display: grid;
+  width: 150px;
+  background: var(--phone-chat-surface);
+}
+
+.draftAttachmentFileContent {
+  display: grid;
+  align-content: center;
+  gap: 2px;
+  min-width: 0;
+  height: 100%;
+  padding: 9px 32px 9px 10px;
+  color: var(--phone-chat-text);
+}
+
+.draftAttachmentFileContent svg {
+  color: #0f766e;
+}
+
+.draftAttachmentFileContent strong,
+.draftAttachmentFileContent small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.draftAttachmentFileContent strong {
+  font-size: 12px;
+  font-weight: 820;
+}
+
+.draftAttachmentFileContent small {
+  color: var(--phone-chat-muted);
+  font-size: 11px;
+  font-weight: 720;
+}
+
 .draftAttachment button {
   position: absolute;
   top: 5px;
