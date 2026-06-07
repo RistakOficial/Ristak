@@ -1,9 +1,9 @@
 import express from 'express';
 import {
-  archiveCustomField,
   archiveCustomFieldFolder,
   createCustomField,
   createCustomFieldFolder,
+  deleteCustomField,
   getTimezone,
   listCustomFields,
   setTimezone,
@@ -44,7 +44,7 @@ router.post('/timezone', setTimezone);
 router.get('/custom-fields', listCustomFields);
 router.post('/custom-fields', createCustomField);
 router.put('/custom-fields/:definitionId', updateCustomField);
-router.delete('/custom-fields/:definitionId', archiveCustomField);
+router.delete('/custom-fields/:definitionId', deleteCustomField);
 
 router.post('/custom-field-folders', createCustomFieldFolder);
 router.put('/custom-field-folders/:folderId', updateCustomFieldFolder);

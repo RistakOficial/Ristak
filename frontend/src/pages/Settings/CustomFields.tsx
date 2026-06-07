@@ -281,15 +281,19 @@ export const CustomFields: React.FC = () => {
   }
 
   const handleSaveField = async () => {
-    const payload = buildPayload()
-    if (!payload) return
-
     setSaving(true)
     try {
       if (editingField) {
-        await customFieldsService.updateField(editingField.definitionId, payload)
+        const label = draft.label.trim()
+        if (!label) {
+          showToast('warning', 'Falta nombre', 'Ponle un nombre al campo.')
+          return
+        }
+        await customFieldsService.updateField(editingField.definitionId, { label })
         showToast('success', 'Campo actualizado', 'Ya quedo guardado.')
       } else {
+        const payload = buildPayload()
+        if (!payload) return
         await customFieldsService.createField(payload)
         showToast('success', 'Campo creado', 'Ya puedes usarlo en formularios.')
       }
@@ -461,21 +465,21 @@ export const CustomFields: React.FC = () => {
 
   const handleArchiveField = (field: CustomFieldDefinition) => {
     showConfirm(
-      'Archivar campo',
-      `El campo "${field.label}" dejara de aparecer como opcion nueva. Los datos ya guardados se conservan.`,
+      'Eliminar campo',
+      `El campo "${field.label}" se quitara del sistema. Sus datos ya guardados se conservan y podras volver a usar el ID "${field.fieldKey || field.key}" si creas otro campo.`,
       () => {
         const archive = async () => {
           try {
-            await customFieldsService.archiveField(field.definitionId)
+            await customFieldsService.deleteField(field.definitionId)
             await loadCatalog()
-            showToast('success', 'Campo archivado', 'Ya no aparece como opcion activa.')
+            showToast('success', 'Campo eliminado', 'Ese ID ya puede usarse de nuevo.')
           } catch (error) {
-            showToast('error', 'No se pudo archivar', error instanceof Error ? error.message : 'Intenta otra vez')
+            showToast('error', 'No se pudo eliminar', error instanceof Error ? error.message : 'Intenta otra vez')
           }
         }
         void archive()
       },
-      'Archivar',
+      'Eliminar',
       'Cancelar'
     )
   }
@@ -656,7 +660,7 @@ export const CustomFields: React.FC = () => {
                           <button type="button" onClick={() => openEditEditor(field)} aria-label={`Editar ${field.label}`} title="Editar">
                             <Edit3 size={15} />
                           </button>
-                          <button type="button" onClick={() => handleArchiveField(field)} aria-label={`Archivar ${field.label}`} title="Archivar">
+                          <button type="button" onClick={() => handleArchiveField(field)} aria-label={`Eliminar ${field.label}`} title="Eliminar">
                             <Trash2 size={15} />
                           </button>
                         </div>
@@ -695,17 +699,23 @@ export const CustomFields: React.FC = () => {
                 <input
                   value={draft.fieldKey}
                   placeholder="presupuesto_mensual"
+                  disabled={Boolean(editingField)}
                   onChange={(event) => {
+                    if (editingField) return
                     setKeyTouched(true)
                     patchDraft({ fieldKey: normalizeFieldKey(event.target.value) })
                   }}
                 />
-                <small>Este ID es el nombre interno para guardar el valor.</small>
+                <small>{editingField ? 'Este ID ya quedo fijo. Para usar otro ID, elimina este campo y crea uno nuevo.' : 'Este ID es el nombre interno para guardar el valor.'}</small>
               </label>
 
               <label className={styles.field}>
                 <span>Tipo</span>
-                <select value={draft.dataType} onChange={(event) => patchDraft({ dataType: event.target.value as CustomFieldDataType })}>
+                <select
+                  value={draft.dataType}
+                  disabled={Boolean(editingField)}
+                  onChange={(event) => patchDraft({ dataType: event.target.value as CustomFieldDataType })}
+                >
                   {fieldTypes.map(type => (
                     <option key={type.value} value={type.value}>{type.label}</option>
                   ))}
@@ -714,30 +724,34 @@ export const CustomFields: React.FC = () => {
 
               <div className={styles.typeHint}>
                 <ChevronRight size={15} />
-                <span>{fieldTypes.find(type => type.value === draft.dataType)?.detail}</span>
+                <span>{editingField ? 'El tipo y sus opciones no se pueden cambiar despues de crear el campo.' : fieldTypes.find(type => type.value === draft.dataType)?.detail}</span>
               </div>
 
-              <label className={styles.field}>
-                <span>Carpeta</span>
-                <select value={draft.folderId} onChange={(event) => patchDraft({ folderId: event.target.value })}>
-                  <option value="">Sin carpeta</option>
-                  {folders.map(folder => (
-                    <option key={folder.id} value={folder.id}>{folder.name}</option>
-                  ))}
-                </select>
-              </label>
+              {!editingField && (
+                <label className={styles.field}>
+                  <span>Carpeta</span>
+                  <select value={draft.folderId} onChange={(event) => patchDraft({ folderId: event.target.value })}>
+                    <option value="">Sin carpeta</option>
+                    {folders.map(folder => (
+                      <option key={folder.id} value={folder.id}>{folder.name}</option>
+                    ))}
+                  </select>
+                </label>
+              )}
 
-              <label className={styles.field}>
-                <span>Descripcion opcional</span>
-                <textarea
-                  rows={3}
-                  value={draft.description}
-                  placeholder="Para que el equipo sepa cuando usarlo."
-                  onChange={(event) => patchDraft({ description: event.target.value })}
-                />
-              </label>
+              {!editingField && (
+                <label className={styles.field}>
+                  <span>Descripcion opcional</span>
+                  <textarea
+                    rows={3}
+                    value={draft.description}
+                    placeholder="Para que el equipo sepa cuando usarlo."
+                    onChange={(event) => patchDraft({ description: event.target.value })}
+                  />
+                </label>
+              )}
 
-              {choiceTypes.has(draft.dataType) && (
+              {!editingField && choiceTypes.has(draft.dataType) && (
                 <label className={styles.field}>
                   <span>Opciones</span>
                   <textarea
@@ -756,7 +770,7 @@ export const CustomFields: React.FC = () => {
                 Cancelar
               </Button>
               <Button type="button" onClick={() => void handleSaveField()} loading={saving} leftIcon={<Save size={16} />}>
-                Guardar campo
+                {editingField ? 'Guardar nombre' : 'Guardar campo'}
               </Button>
             </div>
           </section>

@@ -582,6 +582,15 @@
   box-shadow: 0 0 0 3px rgba(20, 184, 166, 0.12);
 }
 
+.field input:disabled,
+.field select:disabled,
+.field textarea:disabled {
+  border-color: rgba(148, 163, 184, 0.14);
+  background: rgba(148, 163, 184, 0.08);
+  color: var(--color-text-tertiary);
+  cursor: not-allowed;
+}
+
 .typeHint {
   display: flex;
   align-items: center;

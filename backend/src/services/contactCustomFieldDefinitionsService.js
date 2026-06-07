@@ -366,6 +366,7 @@ async function findDefinitionByKey(fieldKey, ownerUserId = null) {
     FROM contact_custom_field_definitions
     WHERE LOWER(field_key) = LOWER(?)
       AND COALESCE(owner_user_id, 0) = ?
+      AND archived = 0
     LIMIT 1
   `, [key, ownerUserId || 0])
 
@@ -375,7 +376,7 @@ async function findDefinitionByKey(fieldKey, ownerUserId = null) {
 async function findDefinitionByInput(input = {}) {
   const definitionId = limitString(input.definitionId, 180)
   if (definitionId) {
-    const byId = mapDefinition(await db.get('SELECT * FROM contact_custom_field_definitions WHERE id = ?', [definitionId]))
+    const byId = mapDefinition(await db.get('SELECT * FROM contact_custom_field_definitions WHERE id = ? AND archived = 0', [definitionId]))
     if (byId) return byId
   }
 
@@ -520,14 +521,16 @@ export async function upsertContactCustomFieldDefinition(rawField = {}, context 
   const updateFieldGroup = input.folderId ? fieldGroup : ''
 
   if (existing) {
+    if (rawField.createOnly) {
+      const error = new Error('Ese ID ya existe. Elimina el campo anterior antes de volver a usarlo.')
+      error.status = 409
+      throw error
+    }
+
     await db.run(`
       UPDATE contact_custom_field_definitions SET
-        label = COALESCE(NULLIF(?, ''), label),
-        description = COALESCE(NULLIF(?, ''), description),
-        data_type = COALESCE(NULLIF(?, ''), data_type),
         folder_id = COALESCE(?, folder_id),
         field_group = COALESCE(NULLIF(?, ''), field_group),
-        options_json = CASE WHEN ? != '[]' THEN ? ELSE options_json END,
         sync_target = COALESCE(NULLIF(?, ''), sync_target),
         source_type = COALESCE(NULLIF(source_type, ''), ?),
         source_id = COALESCE(NULLIF(source_id, ''), ?),
@@ -543,13 +546,8 @@ export async function upsertContactCustomFieldDefinition(rawField = {}, context 
         updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
     `, [
-      input.label,
-      input.description,
-      input.dataType,
       input.folderId,
       updateFieldGroup,
-      optionsJson,
-      optionsJson,
       input.syncTarget,
       input.sourceType,
       input.sourceId,
@@ -653,6 +651,47 @@ export async function prepareContactCustomFieldsForStorage(fields = [], context 
   return normalizeContactCustomFields({ customFields: enrichedFields })
 }
 
+function normalizeOptionsForComparison(options = []) {
+  return normalizeOptions(options).map(option => ({
+    label: option.label || '',
+    value: option.value || ''
+  }))
+}
+
+function assertImmutableFieldIdentity(current, input = {}) {
+  const hasKeyInput = input.key !== undefined || input.fieldKey !== undefined || input.field_key !== undefined
+  const hasTypeInput = input.dataType !== undefined || input.type !== undefined || input.data_type !== undefined
+  const hasOptionsInput = input.options !== undefined
+
+  if (hasKeyInput) {
+    const nextKey = normalizeContactCustomFieldKey(input.key || input.fieldKey || input.field_key)
+    if (nextKey !== current.fieldKey) {
+      const error = new Error('El ID del campo no se puede cambiar. Elimina el campo y crea uno nuevo si necesitas otro ID.')
+      error.status = 400
+      throw error
+    }
+  }
+
+  if (hasTypeInput) {
+    const nextDataType = normalizeDataType(input.dataType || input.type || input.data_type)
+    if (nextDataType !== current.dataType) {
+      const error = new Error('El tipo del campo no se puede cambiar despues de crearlo.')
+      error.status = 400
+      throw error
+    }
+  }
+
+  if (hasOptionsInput) {
+    const nextOptionsJson = jsonString(normalizeOptionsForComparison(input.options))
+    const currentOptionsJson = jsonString(normalizeOptionsForComparison(current.options))
+    if (nextOptionsJson !== currentOptionsJson) {
+      const error = new Error('Las opciones del campo no se pueden cambiar despues de crearlo.')
+      error.status = 400
+      throw error
+    }
+  }
+}
+
 export async function updateContactCustomFieldDefinition(definitionId, input = {}) {
   const id = cleanString(definitionId)
   if (!id) return null
@@ -661,11 +700,9 @@ export async function updateContactCustomFieldDefinition(definitionId, input = {
   if (!existing) return null
 
   const current = mapDefinition(existing)
-  const nextKey = input.key || input.fieldKey || input.field_key
-    ? normalizeContactCustomFieldKey(input.key || input.fieldKey || input.field_key)
-    : current.fieldKey
+  assertImmutableFieldIdentity(current, input)
 
-  if (!nextKey || isStandardContactFieldKey(nextKey)) {
+  if (!current.fieldKey || isStandardContactFieldKey(current.fieldKey)) {
     const error = new Error('Ese nombre interno esta reservado para campos principales del contacto')
     error.status = 400
     throw error
@@ -679,26 +716,16 @@ export async function updateContactCustomFieldDefinition(definitionId, input = {
 
   await db.run(`
     UPDATE contact_custom_field_definitions SET
-      field_key = ?,
       label = ?,
-      description = ?,
-      data_type = ?,
       folder_id = ?,
       field_group = ?,
-      options_json = ?,
-      sync_target = ?,
       archived = ?,
       updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
   `, [
-    nextKey,
     limitString(input.label || input.name || current.label, 180),
-    input.description === undefined ? current.description || null : limitString(input.description, 600) || null,
-    normalizeDataType(input.dataType || input.type || current.dataType),
     nextFolderId,
     nextFieldGroup,
-    jsonString(normalizeOptions(input.options !== undefined ? input.options : current.options)),
-    normalizeSyncTarget(input.syncTarget || input.sync_target || current.syncTarget, 'local'),
     input.archived === undefined ? (current.archived ? 1 : 0) : (input.archived ? 1 : 0),
     id
   ])
@@ -710,4 +737,22 @@ export async function updateContactCustomFieldDefinition(definitionId, input = {
     WHERE d.id = ?
   `, [id])
   return mapDefinition(row)
+}
+
+export async function deleteContactCustomFieldDefinition(definitionId) {
+  const id = cleanString(definitionId)
+  if (!id) return null
+
+  const row = await db.get(`
+    SELECT d.*, f.name AS folder_name
+    FROM contact_custom_field_definitions d
+    LEFT JOIN contact_custom_field_folders f ON f.id = d.folder_id
+    WHERE d.id = ?
+  `, [id])
+  const definition = mapDefinition(row)
+  if (!definition) return null
+
+  await db.run('DELETE FROM contact_custom_field_definition_sources WHERE definition_id = ?', [id])
+  await db.run('DELETE FROM contact_custom_field_definitions WHERE id = ?', [id])
+  return definition
 }

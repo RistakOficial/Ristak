@@ -766,7 +766,8 @@ async function initTables() {
 
     await db.run('CREATE INDEX IF NOT EXISTS idx_contact_custom_field_folders_archived ON contact_custom_field_folders(archived)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_contact_custom_field_folders_sort ON contact_custom_field_folders(sort_order, name)')
-    await db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_contact_custom_field_definitions_owner_key ON contact_custom_field_definitions(COALESCE(owner_user_id, 0), LOWER(field_key))')
+    await db.run('DROP INDEX IF EXISTS idx_contact_custom_field_definitions_owner_key')
+    await db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_contact_custom_field_definitions_owner_key ON contact_custom_field_definitions(COALESCE(owner_user_id, 0), LOWER(field_key)) WHERE archived = 0')
     await db.run('CREATE INDEX IF NOT EXISTS idx_contact_custom_field_definitions_folder ON contact_custom_field_definitions(folder_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_contact_custom_field_definitions_source_site ON contact_custom_field_definitions(source_site_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_contact_custom_field_definitions_archived ON contact_custom_field_definitions(archived)')

@@ -78,7 +78,7 @@ export const customFieldsService = {
     return apiClient.put<CustomFieldDefinition>(`/settings/custom-fields/${definitionId}`, input)
   },
 
-  archiveField(definitionId: string) {
+  deleteField(definitionId: string) {
     return apiClient.delete<CustomFieldDefinition>(`/settings/custom-fields/${definitionId}`)
   },
 

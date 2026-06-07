@@ -9,6 +9,7 @@ import {
 import {
   archiveContactCustomFieldFolder,
   createContactCustomFieldFolder,
+  deleteContactCustomFieldDefinition,
   listContactCustomFieldDefinitions,
   listContactCustomFieldFolders,
   updateContactCustomFieldDefinition,
@@ -133,6 +134,7 @@ export const createCustomField = async (req, res) => {
   try {
     const field = await upsertContactCustomFieldDefinition({
       ...(req.body || {}),
+      createOnly: true,
       sourceType: 'manual',
       syncTarget: req.body?.syncTarget || 'local',
       ownerUserId: getRequestUserId(req)
@@ -166,17 +168,17 @@ export const updateCustomField = async (req, res) => {
   }
 };
 
-export const archiveCustomField = async (req, res) => {
+export const deleteCustomField = async (req, res) => {
   try {
-    const field = await updateContactCustomFieldDefinition(req.params.definitionId, { archived: true });
+    const field = await deleteContactCustomFieldDefinition(req.params.definitionId);
     if (!field) {
       return res.status(404).json({ success: false, error: 'Campo personalizado no encontrado' });
     }
 
     res.json({ success: true, data: field });
   } catch (error) {
-    logger.error(`Error en archiveCustomField: ${error.message}`);
-    sendSettingsError(res, error, 'Error al archivar campo personalizado');
+    logger.error(`Error en deleteCustomField: ${error.message}`);
+    sendSettingsError(res, error, 'Error al eliminar campo personalizado');
   }
 };
 
